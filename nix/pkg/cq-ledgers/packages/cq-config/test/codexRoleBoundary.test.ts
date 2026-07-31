@@ -266,4 +266,35 @@ describe("T1330 Codex role process boundary", () => {
       }),
     ).toThrow('resultCapability must contain scope "store-result" and a non-empty token');
   });
+
+  test("D227 projects the exact result-stored acknowledgement to the dispatch handle", () => {
+    const intercepted = interceptCodexRoleBoundaryResult(
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          type: "agent_message",
+          text: JSON.stringify({ state: "result-stored", ...HANDLE }),
+        },
+      }),
+      HANDLE,
+    );
+
+    expect(intercepted).toEqual(HANDLE);
+
+    for (const rejected of [
+      { state: "prepared", ...HANDLE },
+      { state: "result-stored", ...HANDLE, output: { leaked: true } },
+      { state: "result-stored", ...HANDLE, generation: HANDLE.generation + 1 },
+    ]) {
+      expect(() =>
+        interceptCodexRoleBoundaryResult(
+          JSON.stringify({
+            type: "item.completed",
+            item: { type: "agent_message", text: JSON.stringify(rejected) },
+          }),
+          HANDLE,
+        ),
+      ).toThrow("handle-only contract");
+    }
+  });
 });

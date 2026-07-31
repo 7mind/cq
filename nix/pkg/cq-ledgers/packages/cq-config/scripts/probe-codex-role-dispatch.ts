@@ -534,7 +534,7 @@ function functionCallResponse(requestIndex: number, toolName: string, args: unkn
 function finalMessageResponse(handle: RoleInvocation["handle"]): Response {
   const responseId = "resp_t1493_final";
   const itemId = "msg_t1493_final";
-  const text = serialized(handle);
+  const text = serialized({ state: "result-stored", ...handle });
   const content = { type: "output_text", annotations: [], logprobs: [], text };
   const item = {
     id: itemId,
@@ -1074,7 +1074,7 @@ async function main(): Promise<void> {
         firstStore: "result-stored",
         identicalRetry: "same-acknowledgement-no-second-write",
         differentOutput: "conflict",
-        finalMessage: "verified-handle-only",
+        finalMessage: "result-stored-acknowledgement-normalized-to-handle",
         confirmation: "consumed",
         storeAfterTerminalization: "rejected",
         firstParentFetch: { state: "consumed", output: EXPECTED_RESULT },

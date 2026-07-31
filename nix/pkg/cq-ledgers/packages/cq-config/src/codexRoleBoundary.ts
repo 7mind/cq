@@ -261,10 +261,39 @@ function finalAgentMessage(jsonl: string): string | undefined {
   return finalMessage;
 }
 
+function resultStoredAcknowledgementHandle(
+  message: string,
+  expected: DispatchHandle,
+): DispatchHandle | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(message.trim()) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return undefined;
+  }
+  const record = parsed as Record<string, unknown>;
+  if (
+    Object.keys(record).length !== 3 ||
+    !Object.hasOwn(record, "state") ||
+    !Object.hasOwn(record, "attestationId") ||
+    !Object.hasOwn(record, "generation") ||
+    record.state !== "result-stored" ||
+    record.attestationId !== expected.attestationId ||
+    record.generation !== expected.generation
+  ) {
+    return undefined;
+  }
+  return expected;
+}
+
 /**
  * Intercept the raw Codex JSONL stream and release only the expected dispatch
- * handle. Child prose, tool results, and echoed structured output never reach
- * the caller.
+ * handle. The exact fixed `result-stored` acknowledgement is projected to that
+ * handle; child prose, result bodies, and other echoed output never reach the
+ * caller.
  */
 export function interceptCodexRoleBoundaryResult(
   jsonl: string,
@@ -273,6 +302,10 @@ export function interceptCodexRoleBoundaryResult(
   const finalMessage = finalAgentMessage(jsonl);
   if (finalMessage === undefined) {
     throw new CodexRoleBoundaryError("child emitted no completed agent message");
+  }
+  const storedAcknowledgement = resultStoredAcknowledgementHandle(finalMessage, expectedHandle);
+  if (storedAcknowledgement !== undefined) {
+    return storedAcknowledgement;
   }
   const verdict = classifyCodexFinalMessage(finalMessage, expectedHandle);
   if (verdict.verdict !== "handle-only") {
