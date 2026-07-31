@@ -154,6 +154,8 @@ export interface LedgerStatusOptions {
   setIntervalFn?: (cb: () => void, ms: number) => unknown;
   /** Timer disposer; defaults to clearInterval. */
   clearIntervalFn?: (handle: unknown) => void;
+  /** Optional observation seam for attributed refresh failures. */
+  onError?: (err: unknown, phase: "counts" | "paint" | "terminal") => void;
 }
 
 /**
@@ -176,6 +178,7 @@ export function registerLedgerStatus(api: StatusRegistrationApi, options?: Ledge
   const pollIntervalMs = options?.pollIntervalMs ?? POLL_INTERVAL_MS;
   const setIntervalFn = options?.setIntervalFn ?? defaultSetInterval;
   const clearIntervalFn = options?.clearIntervalFn ?? defaultClearInterval;
+  const onError = options?.onError;
 
   let inFlight = false;
   // Latest ctx seen from any event; the poll (which carries no ctx of its own)
@@ -197,12 +200,21 @@ export function registerLedgerStatus(api: StatusRegistrationApi, options?: Ledge
     }
     inFlight = true;
     try {
-      const stdout = await runCounts(ctx.cwd);
-      setStatus(ctx, formatStatus(parseCounts(stdout)));
-    } catch {
-      // Fail-fast at the boundary: on spawn or parse failure, degrade the slot
-      // to a short marker. NEVER throw into the host loop, never spam.
-      setStatus(ctx, FAILURE_MARKER);
+      let status: string;
+      try {
+        const stdout = await runCounts(ctx.cwd);
+        status = formatStatus(parseCounts(stdout));
+      } catch (err) {
+        onError?.(err, "counts");
+        setStatus(ctx, FAILURE_MARKER);
+        return;
+      }
+      try {
+        setStatus(ctx, status);
+      } catch (err) {
+        onError?.(err, "paint");
+        setStatus(ctx, FAILURE_MARKER);
+      }
     } finally {
       inFlight = false;
     }
@@ -212,19 +224,19 @@ export function registerLedgerStatus(api: StatusRegistrationApi, options?: Ledge
   // typings (dist/core/extensions/types.d.ts): session_start (L846), turn_end
   // (L864), tool_execution_end (L870), session_shutdown (L852).
   api.on("session_start", (_event, ctx) => {
-    void refresh(ctx); // (a) initial on-load paint
+    void refresh(ctx).catch((err: unknown) => onError?.(err, "terminal")); // (a) initial on-load paint
   });
   api.on("turn_end", (_event, ctx) => {
-    void refresh(ctx); // (b) post-turn
+    void refresh(ctx).catch((err: unknown) => onError?.(err, "terminal")); // (b) post-turn
   });
   api.on("tool_execution_end", (_event, ctx) => {
-    void refresh(ctx); // (b) post-tool
+    void refresh(ctx).catch((err: unknown) => onError?.(err, "terminal")); // (b) post-tool
   });
 
   // (c) periodic poll for external/concurrent ledger mutations.
   const pollHandle = setIntervalFn(() => {
     if (lastCtx) {
-      void refresh(lastCtx);
+      void refresh(lastCtx).catch((err: unknown) => onError?.(err, "terminal"));
     }
   }, pollIntervalMs);
 
