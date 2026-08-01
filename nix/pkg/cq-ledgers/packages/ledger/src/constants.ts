@@ -444,9 +444,12 @@ export const HANDOFFS_SCHEMA: LedgerSchema = {
  * carry no required milestone field beyond the ambient attachment. Like goals
  * (T83), every idea attaches to the immortal bootstrap milestone
  * `M-AMBIENT` (`MILESTONES_AMBIENT_ID`) and renders as a FLAT list — there is
- * no per-idea user milestone. The schema therefore declares only `title`
- * (required) and `description` (optional); the ambient attachment is supplied
- * by the store, not by a schema field.
+ * no per-idea user milestone. The schema declares `title` (required),
+ * `description` (optional), and optional advisory `ledgerRefs` for cross-item
+ * links (for example, `goals:<G>` from `/cq:plan` and `/cq:plan/follow-up`).
+ * `ledgerRefs` remains unvalidated/advisory (not `DEPENDENCY_REF_FIELDS`), and
+ * the ambient milestone attachment is supplied by the store, not by a schema
+ * field.
  */
 export const IDEAS_SCHEMA: LedgerSchema = {
   statusValues: ["open", "planned", "discarded", "postponed"],
@@ -464,6 +467,7 @@ export const IDEAS_SCHEMA: LedgerSchema = {
   fields: {
     title: { type: "string", required: true },
     description: { type: "string", required: false },
+    ledgerRefs: { type: "id[]", required: false },
   },
 };
 

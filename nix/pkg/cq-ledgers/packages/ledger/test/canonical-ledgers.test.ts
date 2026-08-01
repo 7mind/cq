@@ -1294,10 +1294,11 @@ describe("T335: IDEAS_SCHEMA shape", () => {
     expect(IDEAS_SCHEMA.idPrefix).toBe("I");
   });
 
-  it("declares exactly two fields: title (required), description (optional)", () => {
-    expect(Object.keys(IDEAS_SCHEMA.fields).sort()).toEqual(["description", "title"]);
+  it("declares title, description, and advisory ledgerRefs fields", () => {
+    expect(Object.keys(IDEAS_SCHEMA.fields).sort()).toEqual(["description", "ledgerRefs", "title"]);
     expect(IDEAS_SCHEMA.fields["title"]).toEqual({ type: "string", required: true });
     expect(IDEAS_SCHEMA.fields["description"]).toEqual({ type: "string", required: false });
+    expect(IDEAS_SCHEMA.fields["ledgerRefs"]).toEqual({ type: "id[]", required: false });
   });
 
   it("declares NO required milestone field beyond the ambient attachment", () => {

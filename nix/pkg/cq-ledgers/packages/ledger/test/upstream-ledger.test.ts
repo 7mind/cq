@@ -8,6 +8,7 @@ import {
   createLedgerMcpTools,
   FsLedgerStore,
   GOALS_LEDGER,
+  IDEAS_LEDGER,
   InMemoryLedgerStore,
   PLAN_MANAGED_GOAL_FIELD_NAMES,
   PLAN_REVIEW_DRAFT_FIELD,
@@ -173,6 +174,7 @@ function prePlanLifecycleSchema(ledgerName: string, schema: LedgerSchema): Ledge
     for (const field of PLAN_MANAGED_GOAL_FIELD_NAMES) delete compatible.fields[field];
   }
   if (ledgerName === REVIEWS_LEDGER) delete compatible.fields[PLAN_REVIEW_DRAFT_FIELD];
+  if (ledgerName === IDEAS_LEDGER) delete compatible.fields.ledgerRefs;
   return compatible;
 }
 

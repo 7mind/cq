@@ -186,7 +186,7 @@ describe("eligibleColumnFields", () => {
         "tags",
         "sourceRefs",
       ],
-      ideas: [],
+      ideas: ["ledgerRefs"],
       researches: [
         "scope",
         "findings",

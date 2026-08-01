@@ -24,6 +24,7 @@ import {
   GitObjectLedgerBackend,
   GitPlumbing,
   GOALS_LEDGER,
+  IDEAS_LEDGER,
   InMemoryLedgerStore,
   LEDGER_STORAGE_DIRNAME,
   parseRegistry,
@@ -115,6 +116,8 @@ function withoutPlanLifecycleSchemaFields(snapshot: PublicSnapshot): PublicSnaps
   }
   const reviews = compatible[REVIEWS_LEDGER];
   if (reviews !== undefined) delete reviews.schema.fields[PLAN_REVIEW_DRAFT_FIELD];
+  const ideas = compatible[IDEAS_LEDGER];
+  if (ideas !== undefined) delete ideas.schema.fields.ledgerRefs;
   return compatible;
 }
 
@@ -127,6 +130,7 @@ function withoutPlanLifecycleFields(
     for (const field of PLAN_MANAGED_GOAL_FIELD_NAMES) delete compatible.fields[field];
   }
   if (ledgerName === REVIEWS_LEDGER) delete compatible.fields[PLAN_REVIEW_DRAFT_FIELD];
+  if (ledgerName === IDEAS_LEDGER) delete compatible.fields.ledgerRefs;
   return compatible;
 }
 
