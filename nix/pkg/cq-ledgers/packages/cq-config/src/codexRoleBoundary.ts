@@ -281,9 +281,11 @@ function resultStoredAcknowledgementHandle(
     candidate.attestationId === expected.attestationId &&
     candidate.generation === expected.generation;
   if (
-    hasExactKeys(record, ["state", "attestationId", "generation"]) &&
+    hasExactKeys(record, ["state", "attestationId", "generation", "outputDigest"]) &&
     record.state === "result-stored" &&
-    matchesHandle(record)
+    matchesHandle(record) &&
+    typeof record.outputDigest === "string" &&
+    record.outputDigest.trim() !== ""
   ) {
     return expected;
   }

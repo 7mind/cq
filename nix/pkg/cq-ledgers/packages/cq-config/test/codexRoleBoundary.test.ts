@@ -71,7 +71,12 @@ describe("T1330 Codex role process boundary", () => {
           type: "item.completed",
           item: {
             type: "agent_message",
-            text: JSON.stringify({ ...HANDLE, output: { leaked: true } }),
+            text: JSON.stringify({
+              state: "result-stored",
+              ...HANDLE,
+              outputDigest: "digest-bound-output",
+              output: { leaked: true },
+            }),
           },
         }),
         HANDLE,
@@ -267,19 +272,51 @@ describe("T1330 Codex role process boundary", () => {
     ).toThrow('resultCapability must contain scope "store-result" and a non-empty token');
   });
 
-  test("D227/D228 project exact result-stored acknowledgements to the dispatch handle", () => {
-    const intercepted = interceptCodexRoleBoundaryResult(
-      JSON.stringify({
-        type: "item.completed",
-        item: {
-          type: "agent_message",
-          text: JSON.stringify({ state: "result-stored", ...HANDLE }),
-        },
-      }),
-      HANDLE,
-    );
+  test("T1582 accepts only the exact flat digest-bound result-stored acknowledgement", () => {
+    const acknowledgement = {
+      state: "result-stored",
+      ...HANDLE,
+      outputDigest: "digest-bound-output",
+    } as const;
 
-    expect(intercepted).toEqual(HANDLE);
+    expect(
+      interceptCodexRoleBoundaryResult(
+        JSON.stringify({
+          type: "item.completed",
+          item: {
+            type: "agent_message",
+            text: JSON.stringify(acknowledgement),
+          },
+        }),
+        HANDLE,
+      ),
+    ).toEqual(HANDLE);
+
+    for (const rejected of [
+      { state: "result-stored", ...HANDLE },
+      { ...acknowledgement, outputDigest: "" },
+      { ...acknowledgement, outputDigest: "   " },
+      { ...acknowledgement, outputDigest: 7 },
+      { ...acknowledgement, outputDigest: null },
+      { ...acknowledgement, state: "prepared" },
+      { ...acknowledgement, attestationId: "att_wrong" },
+      { ...acknowledgement, generation: HANDLE.generation + 1 },
+      { ...acknowledgement, output: { leaked: true } },
+      { ...acknowledgement, body: { leaked: true } },
+    ]) {
+      expect(() =>
+        interceptCodexRoleBoundaryResult(
+          JSON.stringify({
+            type: "item.completed",
+            item: { type: "agent_message", text: JSON.stringify(rejected) },
+          }),
+          HANDLE,
+        ),
+      ).toThrow("handle-only contract");
+    }
+  });
+
+  test("D228 projects the exact nested result-stored acknowledgement to the dispatch handle", () => {
     expect(
       interceptCodexRoleBoundaryResult(
         JSON.stringify({
@@ -302,9 +339,6 @@ describe("T1330 Codex role process boundary", () => {
     ).toEqual(HANDLE);
 
     for (const rejected of [
-      { state: "prepared", ...HANDLE },
-      { state: "result-stored", ...HANDLE, output: { leaked: true } },
-      { state: "result-stored", ...HANDLE, generation: HANDLE.generation + 1 },
       {
         state: "result-stored",
         result: {
