@@ -1,5 +1,5 @@
 /**
- * T579 — `cq predicates` / `cq counts` / `cq advance-gate` against a
+ * T579 — `cq predicates` / `cq counts` against a
  * `backend = 'postgres'` cq.toml, driven as REAL subprocesses of the actual
  * `cq` entrypoint (`packages/cq-cli/src/main.ts`) — proving the whole
  * product wire (arg parsing, dispatch, createLedgerStore) works over this
@@ -101,11 +101,11 @@ describe("cq advance-gate session contract", () => {
 });
 
 if (PG_URL === undefined || PG_URL.length === 0) {
-  describe.skip("cq predicates/counts/advance-gate over backend='postgres' (T579)", () => {
+  describe.skip("cq predicates/counts over backend='postgres' (T579)", () => {
     it("requires CQ_TEST_PG_URL", () => {});
   });
 } else {
-  describe("cq predicates/counts/advance-gate over backend='postgres' (T579)", () => {
+  describe("cq predicates/counts over backend='postgres' (T579)", () => {
     it("predicates --cwd <pg repo> emits valid JSON", async () => {
       const dir = await postgresRepo();
       const { stdout, exitCode } = await runCq(["predicates", "--cwd", dir], dir, {
