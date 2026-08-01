@@ -24,7 +24,9 @@ import { randomUUID, createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { serializePromptSurfaceManifest } from "@cq/config";
 import { openPgPool, ensureSchema, PostgresLedgerStore } from "@cq/ledger";
+import { FileSystemPromptArtifactStore } from "@cq/ledger-mcp";
 import {
   parseHubArgs,
   resolveHubDsn,
@@ -314,6 +316,54 @@ describe("cq serve — CQ_SERVE_TOKEN satisfies the non-loopback gate (no live P
   });
 });
 
+const HUB_PROMPT_ROLE_ID = "plan-advance";
+const HUB_PROMPT_BYTES = "hub claude {{cq:literal}} and $ARGUMENTS\n";
+
+async function writeHubPromptFixture(promptRoot: string): Promise<void> {
+  await fs.mkdir(path.join(promptRoot, "roles"));
+  const catalogJson = JSON.stringify([
+    {
+      roleId: HUB_PROMPT_ROLE_ID,
+      roleKind: "dispatched-subagent",
+      sidecar: { schemaRoleId: HUB_PROMPT_ROLE_ID },
+    },
+  ]);
+  await fs.writeFile(path.join(promptRoot, "catalog.json"), catalogJson);
+  await fs.writeFile(
+    path.join(promptRoot, "surface.json"),
+    serializePromptSurfaceManifest(
+      "claude",
+      createHash("sha256").update(catalogJson, "utf8").digest("hex"),
+      [
+        {
+          roleId: HUB_PROMPT_ROLE_ID,
+          version: 1,
+          sha256: createHash("sha256").update(HUB_PROMPT_BYTES, "utf8").digest("hex"),
+        },
+      ],
+    ),
+  );
+  await fs.writeFile(
+    path.join(promptRoot, "roles", `${HUB_PROMPT_ROLE_ID}.md`),
+    HUB_PROMPT_BYTES,
+  );
+}
+
+describe("cq serve prompt fixture", () => {
+  it("passes production prompt-reader validation without PostgreSQL", async () => {
+    const promptRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cq-serve-prompt-fixture-"));
+    try {
+      await writeHubPromptFixture(promptRoot);
+      const store = new FileSystemPromptArtifactStore("claude", promptRoot);
+      expect(new TextDecoder().decode(store.readRole(HUB_PROMPT_ROLE_ID).bytes)).toBe(
+        HUB_PROMPT_BYTES,
+      );
+    } finally {
+      await fs.rm(promptRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 type T586PostgresDisposition =
   | { kind: "live"; pgUrl: string }
   | { kind: "skip"; pgUrl: undefined };
@@ -359,7 +409,6 @@ describe.skipIf(t586PostgresDisposition.kind === "skip")("cq serve — live boot
   let projectKey: string;
   let displayName: string;
   let promptRoot: string;
-  const PROMPT_BYTES = "hub claude {{cq:literal}} and $ARGUMENTS\n";
 
   beforeAll(async () => {
     outdir = await fs.mkdtemp(path.join(os.tmpdir(), "cq-serve-out-"));
@@ -367,36 +416,7 @@ describe.skipIf(t586PostgresDisposition.kind === "skip")("cq serve — live boot
     projectKey = `${tag}-proj`;
     displayName = `T586 Hub Test ${tag}`;
     promptRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cq-serve-prompts-"));
-    await fs.mkdir(path.join(promptRoot, "roles"));
-    const catalogJson = JSON.stringify([
-      {
-        roleId: "plan-advance",
-        roleKind: "dispatched-subagent",
-        sidecar: { schemaRoleId: "plan-advance" },
-      },
-    ]);
-    await fs.writeFile(path.join(promptRoot, "catalog.json"), catalogJson);
-    const surfaceCore = {
-      surface: "claude",
-      catalogMetadataHash: createHash("sha256").update(catalogJson, "utf8").digest("hex"),
-      roles: [
-        {
-          roleId: "plan-advance",
-          version: 1,
-          sha256: createHash("sha256").update(PROMPT_BYTES, "utf8").digest("hex"),
-        },
-      ],
-    };
-    await fs.writeFile(
-      path.join(promptRoot, "surface.json"),
-      JSON.stringify({
-        ...surfaceCore,
-        surfaceDigest: createHash("sha256")
-          .update(JSON.stringify(surfaceCore), "utf8")
-          .digest("hex"),
-      }),
-    );
-    await fs.writeFile(path.join(promptRoot, "roles", "plan-advance.md"), PROMPT_BYTES);
+    await writeHubPromptFixture(promptRoot);
     // Register a tenant directly (mirrors postgres-list-projects.test.ts) so
     // GET /api/projects has something of ours to find.
     const pool = openPgPool(PG_URL!);
@@ -473,7 +493,7 @@ describe.skipIf(t586PostgresDisposition.kind === "skip")("cq serve — live boot
         const prompt = JSON.parse(
           (promptResult.content as Array<{ text: string }>)[0]!.text,
         ) as { promptTemplate: string };
-        expect(prompt.promptTemplate).toBe(PROMPT_BYTES);
+        expect(prompt.promptTemplate).toBe(HUB_PROMPT_BYTES);
       } finally {
         await client.close();
       }

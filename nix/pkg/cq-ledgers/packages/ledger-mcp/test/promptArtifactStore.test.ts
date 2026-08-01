@@ -3,6 +3,8 @@ import {
   PROMPT_FRAGMENT_SLOTS,
   PROMPT_SURFACE_MANIFEST_FIELDS,
   PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS,
+  serializePromptSurfaceManifest,
+  type PromptSurface,
 } from "@cq/config";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -95,7 +97,7 @@ function sha256Bytes(bytes: Uint8Array): string {
  * can target exactly one verification layer.
  */
 function surfaceManifestBytes(
-  surface: string,
+  surface: PromptSurface,
   manifestBytes: Uint8Array,
   roles: readonly Readonly<Record<string, unknown>>[],
   artifacts: readonly InMemoryPromptRoleArtifact[],
@@ -114,25 +116,27 @@ function surfaceManifestBytes(
       sha256: sha256Bytes(bytes ?? new Uint8Array()),
     };
   });
-  const core = {
+  const serialized = serializePromptSurfaceManifest(
     surface,
-    catalogMetadataHash: sha256Bytes(manifestBytes),
-    roles: entries,
-  };
-  const manifest = {
-    ...core,
-    surfaceDigest: sha256Bytes(encoder.encode(JSON.stringify(core))),
+    sha256Bytes(manifestBytes),
+    entries,
+  );
+  const manifest = JSON.parse(serialized) as {
+    catalogMetadataHash: string;
+    roles: { roleId: string; version: number | null; sha256: string }[];
+    surfaceDigest: string;
   };
   if (mutate !== undefined) {
     mutate(manifest);
-    const restampedCore = {
-      surface,
-      catalogMetadataHash: manifest.catalogMetadataHash,
-      roles: manifest.roles,
-    };
-    manifest.surfaceDigest = sha256Bytes(encoder.encode(JSON.stringify(restampedCore)));
+    return encoder.encode(
+      serializePromptSurfaceManifest(
+        surface,
+        manifest.catalogMetadataHash,
+        manifest.roles,
+      ),
+    );
   }
-  return encoder.encode(JSON.stringify(manifest));
+  return encoder.encode(serialized);
 }
 
 function fixture(

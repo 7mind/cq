@@ -6,6 +6,7 @@ import * as path from "node:path";
 import {
   PROMPT_SURFACE_MANIFEST_FIELDS,
   PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS,
+  serializePromptSurfaceManifest,
 } from "../packages/cq-config/src/promptRenderer.js";
 import {
   NodePromptPublicationStore,
@@ -37,15 +38,11 @@ function surfaceManifestJson(tree: readonly PromptFile[], surface = "claude"): s
       sha256: createHash("sha256").update(roleFile.content, "utf8").digest("hex"),
     };
   });
-  const core = {
-    surface,
-    catalogMetadataHash: createHash("sha256").update(catalogFile.content, "utf8").digest("hex"),
+  return serializePromptSurfaceManifest(
+    surface as "claude" | "codex" | "pi",
+    createHash("sha256").update(catalogFile.content, "utf8").digest("hex"),
     roles,
-  };
-  return JSON.stringify({
-    ...core,
-    surfaceDigest: createHash("sha256").update(JSON.stringify(core), "utf8").digest("hex"),
-  });
+  );
 }
 
 /** Replace a fixture tree's surface.json with a freshly stamped manifest. */

@@ -7,6 +7,7 @@ import {
   getRoleSidecar,
   PI_ROLE_TOOL_PROFILE_MANIFEST_PATH,
   serializePiRoleToolProfileManifest,
+  serializePromptSurfaceManifest,
   verifyPromptCatalog,
   type PromptSurface,
   type PromptVerificationRoot,
@@ -224,21 +225,15 @@ function independentlyRenderRoot(
       sha256: createHash("sha256").update(roleArtifacts[index]!.content, "utf8").digest("hex"),
     };
   });
-  const core = {
-    surface,
-    catalogMetadataHash: createHash("sha256").update(catalogJson, "utf8").digest("hex"),
-    roles: manifestRoles,
-  };
   return rootFromArtifacts(surface, [
     { path: "catalog.json", content: catalogJson },
     {
       path: "surface.json",
-      content: JSON.stringify({
-        ...core,
-        surfaceDigest: createHash("sha256")
-          .update(JSON.stringify(core), "utf8")
-          .digest("hex"),
-      }),
+      content: serializePromptSurfaceManifest(
+        surface,
+        createHash("sha256").update(catalogJson, "utf8").digest("hex"),
+        manifestRoles,
+      ),
     },
     ...(surface === "pi"
       ? [

@@ -209,6 +209,41 @@
               --backend=copyfile \
               --ignore-scripts
 
+            # D240: Bun nondeterministically materializes dependency-local
+            # node_modules/.bin directories. These package-script PATH entries
+            # are unused because this --ignore-scripts FOD executes no package
+            # scripts; preserve the root and workspace-package executable sets.
+            top_level_bins() {
+              for bin_dir in node_modules/.bin packages/*/node_modules/.bin; do
+                if [ -d "$bin_dir" ]; then
+                  find "$bin_dir" -mindepth 1 -maxdepth 1 -print
+                fi
+              done | sort
+            }
+            top_level_bins_before="$(top_level_bins)"
+            for modules_dir in node_modules packages/*/node_modules; do
+              if [ -d "$modules_dir" ]; then
+                find "$modules_dir" -mindepth 2 -type d -name .bin \
+                  -prune -exec rm -rf {} +
+              fi
+            done
+            if [ "$(top_level_bins)" != "$top_level_bins_before" ]; then
+              echo "nested .bin normalization changed a top-level executable set" >&2
+              exit 1
+            fi
+            nested_bins="$({
+              for modules_dir in node_modules packages/*/node_modules; do
+                if [ -d "$modules_dir" ]; then
+                  find "$modules_dir" -mindepth 2 -type d -name .bin -print
+                fi
+              done
+            } | sort)"
+            if [ -n "$nested_bins" ]; then
+              echo "nested node_modules/.bin directory survived normalization" >&2
+              printf '%s\n' "$nested_bins" >&2
+              exit 1
+            fi
+
             runHook postBuild
           '';
 
@@ -243,8 +278,8 @@
           # system. To add a system: set its entry to nixpkgs lib.fakeHash
           # (sha256-AAAA…), `nix build .#node-modules`, paste the reported `got:`.
           outputHash = {
-            "x86_64-linux" = "sha256-dlNmkLEryFAmKmcF45XrHAp2TbQjbMEnZpLIiwaYx1Y=";
-            "aarch64-darwin" = "sha256-6GKBLb1aDb5T9zKZZ8Kv4vcBRrwpNKtUs1VJkbBG9Ks=";
+            "x86_64-linux" = "sha256-m8Ulp2N1CCwc/X+bZcMAMe0NqAbAjv7oXl1VonkV764=";
+            "aarch64-darwin" = "sha256-EahA0RWCjCelK7RhCqbJXDhqzB9R4dmVBDnA0v6SzZQ=";
           }.${system} or (throw "ledger-node-modules: no FOD hash pinned for ${system}");
         };
 

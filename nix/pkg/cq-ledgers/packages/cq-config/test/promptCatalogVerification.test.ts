@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   PROMPT_SURFACE_MANIFEST_FIELDS,
   PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS,
+  serializePromptSurfaceManifest,
   verifyPromptCatalog,
   type PromptCatalogVerificationInput,
   type PromptSurface,
@@ -53,12 +54,7 @@ function stampSurfaceManifest(
   if (roles.length !== roleIds.length) {
     throw new Error("fixture root role artifacts do not cover the catalog");
   }
-  const core = {
-    surface,
-    catalogMetadataHash: sha256Hex(catalogJson),
-    roles,
-  };
-  return JSON.stringify({ ...core, surfaceDigest: sha256Hex(JSON.stringify(core)) });
+  return serializePromptSurfaceManifest(surface, sha256Hex(catalogJson), roles);
 }
 
 /** Recompute every packaged (and local Claude) surface manifest after a byte mutation. */

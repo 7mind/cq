@@ -13,6 +13,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { serializePromptSurfaceManifest } from "@cq/config";
 import {
   createAttestationStoreForConstruction,
   createLedgerStore,
@@ -75,30 +76,25 @@ beforeAll(async () => {
       sidecar: { schemaRoleId: "implement-worker" },
     },
   ]);
-  const surfaceCore = {
-    surface: "codex",
-    catalogMetadataHash: createHash("sha256").update(catalogJson, "utf8").digest("hex"),
-    roles: [
-      {
-        roleId: "plan-advance",
-        version: 1,
-        sha256: createHash("sha256").update(PROMPT_BYTES, "utf8").digest("hex"),
-      },
-      {
-        roleId: "implement-worker",
-        version: 1,
-        sha256: createHash("sha256").update(WORKER_PROMPT_BYTES, "utf8").digest("hex"),
-      },
-    ],
-  };
+  const roles = [
+    {
+      roleId: "plan-advance",
+      version: 1,
+      sha256: createHash("sha256").update(PROMPT_BYTES, "utf8").digest("hex"),
+    },
+    {
+      roleId: "implement-worker",
+      version: 1,
+      sha256: createHash("sha256").update(WORKER_PROMPT_BYTES, "utf8").digest("hex"),
+    },
+  ];
   await fs.writeFile(
     path.join(promptRoot, "surface.json"),
-    JSON.stringify({
-      ...surfaceCore,
-      surfaceDigest: createHash("sha256")
-        .update(JSON.stringify(surfaceCore), "utf8")
-        .digest("hex"),
-    }),
+    serializePromptSurfaceManifest(
+      "codex",
+      createHash("sha256").update(catalogJson, "utf8").digest("hex"),
+      roles,
+    ),
   );
   await fs.writeFile(path.join(promptRoot, "catalog.json"), catalogJson);
   await fs.writeFile(path.join(promptRoot, "roles", "plan-advance.md"), PROMPT_BYTES);

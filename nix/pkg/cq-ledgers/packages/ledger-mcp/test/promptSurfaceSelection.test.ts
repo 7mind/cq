@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { serializePromptSurfaceManifest } from "@cq/config";
 import {
   CQ_PROMPT_ROOT_ENV,
   CQ_PROMPT_SURFACE_ENV,
@@ -34,21 +35,18 @@ function writePromptRoot(root: string, surface: PromptSurface, body: string): vo
       },
     ]),
   );
-  const core = {
+  const roles = [
+    {
+      roleId: ROLE_ID,
+      version: 1,
+      sha256: createHash("sha256").update(roleBytes).digest("hex"),
+    },
+  ];
+  const surfaceJson = serializePromptSurfaceManifest(
     surface,
-    catalogMetadataHash: createHash("sha256").update(catalogBytes).digest("hex"),
-    roles: [
-      {
-        roleId: ROLE_ID,
-        version: 1,
-        sha256: createHash("sha256").update(roleBytes).digest("hex"),
-      },
-    ],
-  };
-  const surfaceJson = JSON.stringify({
-    ...core,
-    surfaceDigest: createHash("sha256").update(JSON.stringify(core), "utf8").digest("hex"),
-  });
+    createHash("sha256").update(catalogBytes).digest("hex"),
+    roles,
+  );
   writeFileSync(path.join(root, "surface.json"), surfaceJson);
   writeFileSync(path.join(root, "catalog.json"), catalogBytes);
   writeFileSync(path.join(root, "roles", `${ROLE_ID}.md`), roleBytes);

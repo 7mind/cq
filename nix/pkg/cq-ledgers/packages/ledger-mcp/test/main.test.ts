@@ -23,6 +23,7 @@ import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { serializePromptSurfaceManifest } from "@cq/config";
 import {
   createLedgerStore,
   CANONICAL_LEDGERS,
@@ -97,27 +98,22 @@ beforeAll(async () => {
       sidecar: { schemaRoleId: roleId },
     },
   ]);
-  const surfaceCore = {
-    surface: "claude",
-    catalogMetadataHash: createHash("sha256").update(catalogJson, "utf8").digest("hex"),
-    roles: [
-      {
-        roleId,
-        version: 2,
-        sha256: createHash("sha256").update(roleBytes, "utf8").digest("hex"),
-      },
-    ],
-  };
+  const roles = [
+    {
+      roleId,
+      version: 2,
+      sha256: createHash("sha256").update(roleBytes, "utf8").digest("hex"),
+    },
+  ];
   await fs.mkdir(path.join(dispatchPromptRoot, "roles"), { recursive: true });
   await fs.writeFile(path.join(dispatchPromptRoot, "catalog.json"), catalogJson);
   await fs.writeFile(
     path.join(dispatchPromptRoot, "surface.json"),
-    JSON.stringify({
-      ...surfaceCore,
-      surfaceDigest: createHash("sha256")
-        .update(JSON.stringify(surfaceCore), "utf8")
-        .digest("hex"),
-    }),
+    serializePromptSurfaceManifest(
+      "claude",
+      createHash("sha256").update(catalogJson, "utf8").digest("hex"),
+      roles,
+    ),
   );
   await fs.writeFile(path.join(dispatchPromptRoot, "roles", `${roleId}.md`), roleBytes);
   await fs.writeFile(path.join(tmpRoot, "cq.toml"), xdgLedgerToml(path.basename(tmpRoot)), "utf8");

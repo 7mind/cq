@@ -9,6 +9,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { serializePromptSurfaceManifest } from "@cq/config";
 import {
   createAttestationStoreForConstruction,
   resolveSingleProjectAttestationNamespace,
@@ -250,35 +251,32 @@ beforeAll(async () => {
     await fs.writeFile(path.join(surfaceRoot, "catalog.json"), catalogJson);
     const dispatchedBytes = PROMPT_BYTES[surface];
     const orchestratorBytes = `orchestrator ${surface}\n`;
-    const core = {
-      surface,
-      catalogMetadataHash: createHash("sha256").update(catalogJson, "utf8").digest("hex"),
-      roles: [
-        {
-          roleId: DISPATCHED_ROLE_ID,
-          version: 1,
-          sha256: createHash("sha256").update(dispatchedBytes, "utf8").digest("hex"),
-        },
-        {
-          roleId: ORCHESTRATOR_ROLE_ID,
-          version: null,
-          sha256: createHash("sha256").update(orchestratorBytes, "utf8").digest("hex"),
-        },
-        {
-          roleId: WORKER_ROLE_ID,
-          version: 1,
-          sha256: createHash("sha256")
-            .update(WORKER_PROMPT_BYTES[surface], "utf8")
-            .digest("hex"),
-        },
-      ],
-    };
+    const roles = [
+      {
+        roleId: DISPATCHED_ROLE_ID,
+        version: 1,
+        sha256: createHash("sha256").update(dispatchedBytes, "utf8").digest("hex"),
+      },
+      {
+        roleId: ORCHESTRATOR_ROLE_ID,
+        version: null,
+        sha256: createHash("sha256").update(orchestratorBytes, "utf8").digest("hex"),
+      },
+      {
+        roleId: WORKER_ROLE_ID,
+        version: 1,
+        sha256: createHash("sha256")
+          .update(WORKER_PROMPT_BYTES[surface], "utf8")
+          .digest("hex"),
+      },
+    ];
     await fs.writeFile(
       path.join(surfaceRoot, "surface.json"),
-      JSON.stringify({
-        ...core,
-        surfaceDigest: createHash("sha256").update(JSON.stringify(core), "utf8").digest("hex"),
-      }),
+      serializePromptSurfaceManifest(
+        surface,
+        createHash("sha256").update(catalogJson, "utf8").digest("hex"),
+        roles,
+      ),
     );
     await fs.writeFile(
       path.join(surfaceRoot, "roles", `${DISPATCHED_ROLE_ID}.md`),

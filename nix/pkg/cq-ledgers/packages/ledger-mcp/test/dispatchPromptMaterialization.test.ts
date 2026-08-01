@@ -12,6 +12,7 @@ import {
   DISPATCH_OVERLAY_REGISTRY,
   createDispatchOverlayRegistry,
   materializeDispatchPrompt,
+  serializePromptSurfaceManifest,
 } from "@cq/config";
 import { InMemoryPromptArtifactStore } from "../src/promptArtifactStore.js";
 
@@ -60,16 +61,10 @@ function sha256Bytes(bytes: Uint8Array): string {
 
 function attestedStore(): InMemoryPromptArtifactStore {
   const manifestBytes = encoder.encode(JSON.stringify([CATALOG_ROLE]));
-  const core = {
-    surface: PROMPT_SURFACE,
-    catalogMetadataHash: sha256Bytes(manifestBytes),
-    roles: [{ roleId: ROLE_ID, version: 1, sha256: sha256Bytes(ARTIFACT_BYTES) }],
-  };
   const surfaceBytes = encoder.encode(
-    JSON.stringify({
-      ...core,
-      surfaceDigest: sha256Bytes(encoder.encode(JSON.stringify(core))),
-    }),
+    serializePromptSurfaceManifest(PROMPT_SURFACE, sha256Bytes(manifestBytes), [
+      { roleId: ROLE_ID, version: 1, sha256: sha256Bytes(ARTIFACT_BYTES) },
+    ]),
   );
   return new InMemoryPromptArtifactStore(PROMPT_SURFACE, surfaceBytes, manifestBytes, [
     { roleId: ROLE_ID, bytes: ARTIFACT_BYTES },

@@ -23,7 +23,11 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { getRoleSidecar, isAllowlistedValidateInputCaller } from "@cq/config";
+import {
+  getRoleSidecar,
+  isAllowlistedValidateInputCaller,
+  serializePromptSurfaceManifest,
+} from "@cq/config";
 import { UnknownRoleError, NoSchemaForRoleError, type PromptCatalogCapability } from "@cq/ledger";
 import { createPromptCatalogCapability } from "../src/promptCatalogCapability.js";
 import {
@@ -106,10 +110,8 @@ const CATALOG_DIGEST = sha256Bytes(MANIFEST_BYTES);
 
 /** The attested surface manifest (T683) binding the fixture's exact role bytes. */
 function surfaceManifestBytes(dispatchedVersion: number): Uint8Array {
-  const core = {
-    surface: PROMPT_SURFACE,
-    catalogMetadataHash: CATALOG_DIGEST,
-    roles: [
+  return new TextEncoder().encode(
+    serializePromptSurfaceManifest(PROMPT_SURFACE, CATALOG_DIGEST, [
       {
         roleId: DISPATCHED_ROLE,
         version: dispatchedVersion,
@@ -120,13 +122,7 @@ function surfaceManifestBytes(dispatchedVersion: number): Uint8Array {
         version: null,
         sha256: sha256Bytes(ROLE_ARTIFACTS[1].bytes),
       },
-    ],
-  };
-  return new TextEncoder().encode(
-    JSON.stringify({
-      ...core,
-      surfaceDigest: sha256Bytes(new TextEncoder().encode(JSON.stringify(core))),
-    }),
+    ]),
   );
 }
 
