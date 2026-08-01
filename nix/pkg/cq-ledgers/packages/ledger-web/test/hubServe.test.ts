@@ -7,11 +7,12 @@
  *   - resolveHubDsn: --pg-url > CQ_LEDGER_PG_URL > DATABASE_URL precedence,
  *     and the actionable HubDsnResolutionError when none resolves.
  *
- * Env-gated on CQ_TEST_PG_URL (same gate as every other postgres-backend
- * suite): the live-boot acceptance check spawns the real `hubServe.ts` binary
- * as a subprocess (its own Bun.build run, mirroring serveEmbedded.test.ts) with
- * `--port 0` and asserts it boots with NO repo cwd, `GET /` serves the web
- * bundle, and `GET /api/projects` lists every registered tenant.
+ * The live-boot acceptance check runs when CQ_TEST_PG_URL supplies a DSN and
+ * otherwise skips unless CQ_TEST_REQUIRE_PG=1 makes the missing DSN fatal. It
+ * spawns the real `hubServe.ts` binary as a subprocess (its own Bun.build run,
+ * mirroring serveEmbedded.test.ts) with `--port 0` and asserts it boots with NO
+ * repo cwd, `GET /` serves the web bundle, and `GET /api/projects` lists every
+ * registered tenant.
  */
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "bun:test";
@@ -313,8 +314,46 @@ describe("cq serve — CQ_SERVE_TOKEN satisfies the non-loopback gate (no live P
   });
 });
 
-describe.skipIf(!process.env["CQ_TEST_PG_URL"])("cq serve — live boot (T586)", () => {
-  const PG_URL = process.env["CQ_TEST_PG_URL"];
+type T586PostgresDisposition =
+  | { kind: "live"; pgUrl: string }
+  | { kind: "skip"; pgUrl: undefined };
+
+function resolveT586PostgresDisposition(
+  env: Readonly<Record<string, string | undefined>>,
+): T586PostgresDisposition {
+  const pgUrl = env["CQ_TEST_PG_URL"]?.trim();
+  if (pgUrl) return { kind: "live", pgUrl };
+  if (env["CQ_TEST_REQUIRE_PG"] === "1") {
+    throw new Error("CQ_TEST_REQUIRE_PG=1 requires CQ_TEST_PG_URL to contain a PostgreSQL DSN");
+  }
+  return { kind: "skip", pgUrl: undefined };
+}
+
+const t586PostgresDisposition = resolveT586PostgresDisposition(process.env);
+
+describe("T586 PostgreSQL live-test disposition", () => {
+  it("skips an ordinary local run without CQ_TEST_PG_URL", () => {
+    expect(resolveT586PostgresDisposition({})).toEqual({ kind: "skip", pgUrl: undefined });
+  });
+
+  it("requires CQ_TEST_PG_URL when required-live mode is selected", () => {
+    expect(() => resolveT586PostgresDisposition({ CQ_TEST_REQUIRE_PG: "1" })).toThrow(
+      /CQ_TEST_PG_URL/,
+    );
+  });
+
+  it("selects the supplied CQ_TEST_PG_URL", () => {
+    expect(
+      resolveT586PostgresDisposition({
+        CQ_TEST_PG_URL: "postgres://localhost/cq-test",
+        CQ_TEST_REQUIRE_PG: "1",
+      }),
+    ).toEqual({ kind: "live", pgUrl: "postgres://localhost/cq-test" });
+  });
+});
+
+describe.skipIf(t586PostgresDisposition.kind === "skip")("cq serve — live boot (T586)", () => {
+  const PG_URL = t586PostgresDisposition.pgUrl;
   let outdir: string;
   let tag: string;
   let projectKey: string;
