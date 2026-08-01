@@ -13,7 +13,7 @@ under `nix/` (see `nix/hm/dev-llm.nix`, `nix/pkg/{yolo,codex,claude-code,…}`).
 
 - `bun test` — full suite (run from `nix/pkg/cq-ledgers/`).
 - `bun run typecheck` (`tsc -b`) and `bun run lint` (`eslint .`).
-- `bun run check` — all three. Run it before declaring work done.
+- `bun run check` (`tsc -b && bun run lint && bun test`) — all three. Run it before declaring work done.
 - `decisions:K172` — the gate-reachable ledger-status teardown guard lives at
   `nix/pkg/cq-ledgers/packages/cq-config/test/ledgerStatusTeardownSafety.test.ts`.
 - `decisions:K172` — the guard's process arm recursively resolves the pinned

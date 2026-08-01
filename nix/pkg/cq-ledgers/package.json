@@ -12,9 +12,9 @@
     "packages/ledger-web"
   ],
   "scripts": {
-    "check": "tsc -b && eslint . && bun test",
+    "check": "tsc -b && bun run lint && bun test",
     "typecheck": "tsc -b",
-    "lint": "eslint packages",
+    "lint": "eslint .",
     "format": "prettier --write .",
     "test": "bun test --pass-with-no-tests",
     "bench:store": "bun run packages/ledger/bench/storeBackendBench.ts",
