@@ -161,7 +161,7 @@ function assertFollowUpPlannerResumeWorkflow(
   const descriptionMutation = followUp.indexOf(
     "Append each scope to the existing description",
   );
-  const ideaMutation = followUp.indexOf("For each idea, preserve refs while adding");
+  const ideaMutation = followUp.indexOf("For each idea, merge");
 
   expect(claim).toBeGreaterThanOrEqual(0);
   expect(descriptionMutation).toBeGreaterThan(claim);
@@ -187,6 +187,14 @@ function assertFollowUpPlannerResumeWorkflow(
   expect(followUp).toMatch(
     /For an unmanaged goal now in `clarifying`, run\s+`CQ::plan\/advance <goalId>` inline/,
   );
+}
+
+function assertIdeaGoalReverseLinks(plan: string, followUp: string): void {
+  const reverseLinkWrite =
+    /`ideas:<ideaId>` into the goal's `fields\.sourceRefs` and\s+`goals:<goalId>` into the idea's `fields\.ledgerRefs`, preserving all entries\s+already stored in both arrays/;
+
+  expect(plan).toMatch(reverseLinkWrite);
+  expect(followUp).toMatch(reverseLinkWrite);
 }
 
 describe("orchestrator command prompt sources", () => {
@@ -373,10 +381,16 @@ describe("orchestrator command prompt sources", () => {
         }
       }
 
+      const planIndex = catalog.findIndex(({ roleId }) => roleId === "plan");
       const followUpIndex = catalog.findIndex(({ roleId }) => roleId === "plan/follow-up");
       const advanceIndex = catalog.findIndex(({ roleId }) => roleId === "plan/advance");
+      expect(planIndex).toBeGreaterThanOrEqual(0);
       expect(followUpIndex).toBeGreaterThanOrEqual(0);
       expect(advanceIndex).toBeGreaterThanOrEqual(0);
+      assertIdeaGoalReverseLinks(
+        first.artifacts[planIndex + 2]!.content,
+        first.artifacts[followUpIndex + 2]!.content,
+      );
       assertFollowUpPlannerResumeWorkflow(
         first.artifacts[followUpIndex + 2]!.content,
         first.artifacts[advanceIndex + 2]!.content,

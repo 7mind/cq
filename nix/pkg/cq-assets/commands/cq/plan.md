@@ -46,8 +46,9 @@ For each idea id:
 
 1. Fetch the full idea; report and skip missing ids.
 2. Create the milestone and goal using the idea title and verbatim description.
-3. Add `ideas:<ideaId>` to the goal and `goals:<goalId>` to the idea while
-   preserving existing refs.
+3. Merge `ideas:<ideaId>` into the goal's `fields.sourceRefs` and
+   `goals:<goalId>` into the idea's `fields.ledgerRefs`, preserving all entries
+   already stored in both arrays.
 4. Set the idea to `planned`.
 
 The coordination milestone contains the goal, clarification questions, reviews,

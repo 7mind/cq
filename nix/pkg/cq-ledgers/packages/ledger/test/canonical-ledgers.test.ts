@@ -1874,7 +1874,7 @@ describe("T1319: managed follow-up claim ordering and planner resume", () => {
     const descriptionMutation = text.indexOf(
       "Append each scope to the existing description",
     );
-    const ideaMutation = text.indexOf("For each idea, preserve refs while adding");
+    const ideaMutation = text.indexOf("For each idea, merge");
 
     expect(claim).toBeGreaterThanOrEqual(0);
     expect(descriptionMutation).toBeGreaterThan(claim);

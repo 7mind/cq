@@ -66,8 +66,9 @@ Append each scope to the existing description without replacing history:
 <scope>
 ```
 
-For each idea, preserve refs while adding `ideas:<ideaId>` to the goal and
-`goals:<goalId>` to the idea, then set the idea `planned`.
+For each idea, merge `ideas:<ideaId>` into the goal's `fields.sourceRefs` and
+`goals:<goalId>` into the idea's `fields.ledgerRefs`, preserving all entries
+already stored in both arrays; then set the idea `planned`.
 
 ## Enter planning
 
