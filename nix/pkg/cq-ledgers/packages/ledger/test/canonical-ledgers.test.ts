@@ -40,6 +40,7 @@ import {
   InvalidStatusError,
   InvalidTransitionError,
   SchemaValidationError,
+  schemaCompatible,
   BootstrapViolationError,
   MissingRequiredFieldError,
   DEFECTS_SCHEMA,
@@ -1324,6 +1325,71 @@ describe("T335: IDEAS_SCHEMA shape", () => {
   it("CANONICAL_LEDGERS includes ideas", () => {
     expect(CANONICAL_LEDGERS.map((c) => c.name)).toContain(IDEAS_LEDGER);
   });
+});
+
+describe("T1519: ideas ledgerRefs write path and schema widening", () => {
+  const preLedgerRefsIdeasSchema: LedgerSchema = {
+    ...IDEAS_SCHEMA,
+    fields: Object.fromEntries(
+      Object.entries(IDEAS_SCHEMA.fields).filter(([name]) => name !== "ledgerRefs"),
+    ),
+  };
+
+  it("treats the pre-ledgerRefs schema as compatible, but rejects a required widening", () => {
+    expect(schemaCompatible(preLedgerRefsIdeasSchema, IDEAS_SCHEMA)).toBe(true);
+    const requiredWidening: LedgerSchema = {
+      ...IDEAS_SCHEMA,
+      fields: {
+        ...IDEAS_SCHEMA.fields,
+        requiredFutureField: { type: "string", required: true },
+      },
+    };
+    expect(schemaCompatible(preLedgerRefsIdeasSchema, requiredWidening)).toBe(false);
+  });
+
+  for (const factory of [inMem, fs_]) {
+    it(`${factory.name} round-trips ledgerRefs through create and update`, async () => {
+      const store = await factory.build();
+      try {
+        const idea = await store.createItem(IDEAS_LEDGER, MILESTONES_AMBIENT_ID, {
+          status: "open",
+          fields: { title: "Link idea to goal", ledgerRefs: ["goals:G1"] },
+        });
+        expect(store.fetchItem(IDEAS_LEDGER, idea.id).fields["ledgerRefs"]).toEqual(["goals:G1"]);
+
+        await store.updateItem(IDEAS_LEDGER, idea.id, {
+          fields: { ledgerRefs: ["goals:G2"] },
+        });
+        expect(store.fetchItem(IDEAS_LEDGER, idea.id).fields["ledgerRefs"]).toEqual(["goals:G2"]);
+      } finally {
+        await store.dispose();
+      }
+    });
+
+    it(`${factory.name} rejects unknown idea fields on create and update`, async () => {
+      const store = await factory.build();
+      try {
+        await expect(
+          store.createItem(IDEAS_LEDGER, MILESTONES_AMBIENT_ID, {
+            status: "open",
+            fields: { title: "Invalid idea", unknownField: "unexpected" },
+          }),
+        ).rejects.toThrow(SchemaValidationError);
+
+        const idea = await store.createItem(IDEAS_LEDGER, MILESTONES_AMBIENT_ID, {
+          status: "open",
+          fields: { title: "Valid idea" },
+        });
+        await expect(
+          store.updateItem(IDEAS_LEDGER, idea.id, {
+            fields: { unknownField: "unexpected" },
+          }),
+        ).rejects.toThrow(SchemaValidationError);
+      } finally {
+        await store.dispose();
+      }
+    });
+  }
 });
 
 describe("T335: ideas ledger — fresh FsLedgerStore bootstrap + lifecycle + flat M-AMBIENT attachment", () => {
