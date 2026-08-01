@@ -30,6 +30,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
 import type { SQL } from "bun";
@@ -52,6 +53,7 @@ import {
   type PlanFinalizeInput,
   type PlanLifecycleStore,
 } from "../src/index.js";
+import type { PlanLifecycleSerializationContender } from "../src/store/planLifecycleSerialization.js";
 import {
   cloneTenant,
   dropTenant,
@@ -59,6 +61,10 @@ import {
   postgresTestDsn,
   T851_PROJECT_KEY_PREFIX,
 } from "./planLifecyclePostgresAdapter.js";
+import {
+  OneShotSerializationBoundary,
+  type SerializationRaceResult,
+} from "./planLifecycleSerializationBoundary.js";
 
 const PG_URL = process.env.CQ_TEST_PG_URL;
 
@@ -108,6 +114,20 @@ class Harness {
     const store = await openTenantStore(this.dsn, this.projectKey);
     this.stores.push(store);
     return store;
+  }
+
+  /** Open a store whose goal-row lock can hold a selected lifecycle contender. */
+  async openAtGoalRowLock(barrier: GoalRowLockBarrier): Promise<LifecycleStore> {
+    const rawPool = openPgPool(this.dsn);
+    await ensureSchema(rawPool);
+    const store = new PostgresLedgerStore({
+      pool: barrier.wrapPool(rawPool),
+      projectKey: this.projectKey,
+      displayName: this.projectKey,
+    });
+    await store.init();
+    this.stores.push(store as LifecycleStore);
+    return store as LifecycleStore;
   }
 
   /** Open a store whose pool can be told to fail the Nth statement of a transaction. */
@@ -288,14 +308,70 @@ function interleavingPool(dsn: string, marker: string, hook: () => Promise<void>
   }) as unknown as SQL;
 }
 
-function verifier(value: string): string {
-  return createHash("sha256").update(value, "utf8").digest("hex");
+/**
+ * Holds one selected operation immediately after its `lockGoalRows` query
+ * completes, keeping that transaction open while its peer is launched.
+ */
+class GoalRowLockBarrier {
+  private readonly contender = new AsyncLocalStorage<PlanLifecycleSerializationContender>();
+  private readonly boundary = new OneShotSerializationBoundary();
+
+  run<Result>(
+    contender: PlanLifecycleSerializationContender,
+    operation: () => Promise<Result>,
+  ): Promise<Result> {
+    return this.contender.run(contender, operation);
+  }
+
+  race<Holder, Peer>(
+    contender: PlanLifecycleSerializationContender,
+    startHolder: () => Promise<Holder>,
+    startPeer: () => Promise<Peer>,
+    timeoutMs?: number,
+  ): Promise<SerializationRaceResult<Holder, Peer>> {
+    return this.boundary.race(contender, startHolder, startPeer, timeoutMs);
+  }
+
+  wrapPool(pool: SQL): SQL {
+    return this.proxySql(pool, true);
+  }
+
+  private proxySql<Sql extends SQL>(sql: Sql, wrapBegin: boolean): Sql {
+    return new Proxy(sql, {
+      apply: (target, _thisArgument, argumentsList) => {
+        const query = Reflect.apply(
+          target as unknown as (...args: unknown[]) => unknown,
+          target,
+          argumentsList,
+        );
+        if (!this.isGoalRowLock(argumentsList[0])) return query;
+        const contender = this.contender.getStore();
+        if (contender === undefined) return query;
+        return Promise.resolve(query).then(async (result) => {
+          await this.boundary.hook(contender);
+          return result;
+        });
+      },
+      get: (target, property) => {
+        if (wrapBegin && property === "begin") {
+          return <Result>(callback: SQL.TransactionContextCallback<Result>) =>
+            target.begin((transaction) => callback(this.proxySql(transaction, false)));
+        }
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as Sql;
+  }
+
+  private isGoalRowLock(template: unknown): boolean {
+    if (!Array.isArray(template)) return false;
+    const sql = template.join("?");
+    return /SELECT\s+1\s+FROM\s+items[\s\S]*FOR\s+UPDATE/i.test(sql);
+  }
 }
 
-/** Dispatch `op` a few milliseconds late, so the other racer reaches its lock first. */
-async function delayed<T>(op: () => Promise<T>): Promise<T> {
-  await Bun.sleep(5);
-  return op();
+function verifier(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
 async function seedGoal(store: LifecycleStore, goalId: string): Promise<void> {
@@ -777,11 +853,72 @@ describe.skipIf(!PG_URL)("postgres plan-lifecycle fence (T851)", () => {
     }
   }, 30_000);
 
+  test("the goal-row lock barrier rejects an opposite contender and times out when no lock arrives", async () => {
+    const h = await newHarness();
+    const setup = await h.open();
+    await seedGoal(setup, GOAL_ID);
+    const { taskIds } = await driveToFinalized(setup, "R51");
+    const [first] = taskIds;
+    if (first === undefined) throw new Error("manifest is short");
+
+    const barrier = new GoalRowLockBarrier();
+    const starter = await h.openAtGoalRowLock(barrier);
+    const replacer = await h.openAtGoalRowLock(barrier);
+    const startTask = (): Promise<"started" | "rejected"> =>
+      barrier.run("task-start", () =>
+        starter.updateItem(TASKS_LEDGER, first, { status: "wip", ...PROVENANCE }).then(
+          () => "started" as const,
+          () => "rejected" as const,
+        ),
+      );
+    const followUp = (): ReturnType<LifecycleStore["claimPlan"]> =>
+      barrier.run("follow-up-claim", () =>
+        replacer.claimPlan({
+          goalId: GOAL_ID,
+          purpose: "follow-up",
+          claimRequestId: "race-control",
+          ownerFenceToken: OWNER_TOKEN,
+          expectedGeneration: 1,
+          ...PROVENANCE,
+        }),
+      );
+
+    let peerStarted = false;
+    await expect(
+      barrier.race("task-start", followUp, async () => {
+        peerStarted = true;
+        return await startTask();
+      }),
+    ).rejects.toThrow(
+      /wrong serialization boundary arrival: expected task-start, received follow-up-claim/,
+    );
+    expect(peerStarted).toBe(false);
+
+    const observer = await h.open();
+    expect(observer.fetchItem(TASKS_LEDGER, first).status).toBe("planned");
+    expect(Number(observer.fetchItem(GOALS_LEDGER, GOAL_ID).fields[PLAN_GENERATION_FIELD])).toBe(1);
+
+    let releaseMissedBoundary!: () => void;
+    const missedBoundary = new Promise<void>((resolve) => {
+      releaseMissedBoundary = resolve;
+    });
+    try {
+      await expect(
+        barrier.race(
+          "task-start",
+          () => missedBoundary,
+          async () => {
+            throw new Error("peer must not launch before the goal-row lock");
+          },
+          25,
+        ),
+      ).rejects.toThrow(/timed out after 25ms waiting for task-start serialization boundary/);
+    } finally {
+      releaseMissedBoundary();
+    }
+  }, 30_000);
+
   test("a raw task start racing a follow-up claim on independent connections yields ONE authority", async () => {
-    // Both operations reach the goal-row lock in a handful of round-trips, so
-    // whoever is dispatched first wins essentially every time. Staggering the
-    // launch is what makes BOTH orders reachable — without it only one branch
-    // below would ever execute, and the other would be a dead assertion.
     const outcomes: string[] = [];
     for (const headStart of ["starter", "replacer"] as const) {
       const h = await newHarness();
@@ -792,42 +929,52 @@ describe.skipIf(!PG_URL)("postgres plan-lifecycle fence (T851)", () => {
         const [first] = taskIds;
         if (first === undefined) throw new Error("manifest is short");
 
-        // Two INDEPENDENT connections, contending for the same goal. Neither
-        // has committed when the other is dispatched — the loser blocks on the
-        // goal row rather than reading around it.
-        const starter = await h.open();
-        const replacer = await h.open();
+        const barrier = new GoalRowLockBarrier();
+        const starter = await h.openAtGoalRowLock(barrier);
+        const replacer = await h.openAtGoalRowLock(barrier);
         const startTask = (): Promise<"started" | "rejected"> =>
-          starter
-            .updateItem(TASKS_LEDGER, first, { status: "wip", ...PROVENANCE })
-            .then(
+          barrier.run("task-start", () =>
+            starter.updateItem(TASKS_LEDGER, first, { status: "wip", ...PROVENANCE }).then(
               () => "started" as const,
               () => "rejected" as const,
-            );
+            ),
+          );
         const followUp = (): ReturnType<LifecycleStore["claimPlan"]> =>
-          replacer.claimPlan({
-            goalId: GOAL_ID,
-            purpose: "follow-up",
-            claimRequestId: `race-${headStart}`,
-            ownerFenceToken: OWNER_TOKEN,
-            expectedGeneration: 1,
-            ...PROVENANCE,
-          });
+          barrier.run("follow-up-claim", () =>
+            replacer.claimPlan({
+              goalId: GOAL_ID,
+              purpose: "follow-up",
+              claimRequestId: `race-${headStart}`,
+              ownerFenceToken: OWNER_TOKEN,
+              expectedGeneration: 1,
+              ...PROVENANCE,
+            }),
+          );
 
-        const [startOutcome, claimOutcome] =
-          headStart === "starter"
-            ? await Promise.all([startTask(), delayed(followUp)])
-            : await Promise.all([delayed(startTask), followUp()]);
+        let startOutcome: Awaited<ReturnType<typeof startTask>>;
+        let claimOutcome: Awaited<ReturnType<typeof followUp>>;
+        if (headStart === "starter") {
+          const raced = await barrier.race("task-start", startTask, followUp);
+          expect(raced.arrivals).toEqual(["task-start"]);
+          startOutcome = raced.holder;
+          claimOutcome = raced.peer;
+        } else {
+          const raced = await barrier.race("follow-up-claim", followUp, startTask);
+          expect(raced.arrivals).toEqual(["follow-up-claim"]);
+          claimOutcome = raced.holder;
+          startOutcome = raced.peer;
+        }
 
         const observer = await h.open();
         const task = observer.fetchItem(TASKS_LEDGER, first);
         const goal = observer.fetchItem(GOALS_LEDGER, GOAL_ID);
         const generation = Number(goal.fields[PLAN_GENERATION_FIELD]);
 
-        if (claimOutcome.ok) {
+        if (headStart === "replacer") {
           // The replacement won: it must have observed a startable task and
           // abandoned it, and the raw start must have lost.
           outcomes.push("replacer-won");
+          expect(claimOutcome.ok).toBe(true);
           expect(startOutcome).toBe("rejected");
           expect(task.status).toBe("abandoned");
           expect(generation).toBe(2);
@@ -836,7 +983,14 @@ describe.skipIf(!PG_URL)("postgres plan-lifecycle fence (T851)", () => {
           // implementation is active, and the generation must not have moved.
           outcomes.push("starter-won");
           expect(startOutcome).toBe("started");
-          expect(claimOutcome.conflict.code).toBe("implementation-active");
+          expect(claimOutcome).toEqual({
+            ok: false,
+            conflict: {
+              code: "implementation-active",
+              goalId: GOAL_ID,
+              tasks: [{ taskId: first, status: "wip" }],
+            },
+          });
           expect(task.status).toBe("wip");
           expect(generation).toBe(1);
         }
@@ -866,37 +1020,52 @@ describe.skipIf(!PG_URL)("postgres plan-lifecycle fence (T851)", () => {
         if (first === undefined) throw new Error("manifest is short");
         await setup.updateItem(TASKS_LEDGER, first, { status: "wip", ...PROVENANCE });
 
-        // Two INDEPENDENT connections, contending for the same goal.
-        const parker = await h.open();
-        const replacer = await h.open();
+        const barrier = new GoalRowLockBarrier();
+        const parker = await h.openAtGoalRowLock(barrier);
+        const replacer = await h.openAtGoalRowLock(barrier);
         const blockTask = (): Promise<"blocked" | "rejected"> =>
-          parker
-            .updateItem(TASKS_LEDGER, first, { status: "blocked", ...PROVENANCE })
-            .then(
+          barrier.run("task-block", () =>
+            parker.updateItem(TASKS_LEDGER, first, { status: "blocked", ...PROVENANCE }).then(
               () => "blocked" as const,
               () => "rejected" as const,
-            );
+            ),
+          );
         const followUp = (): ReturnType<LifecycleStore["claimPlan"]> =>
-          replacer.claimPlan({
-            goalId: GOAL_ID,
-            purpose: "follow-up",
-            claimRequestId: `race-park-${headStart}`,
-            ownerFenceToken: OWNER_TOKEN,
-            expectedGeneration: 1,
-            ...PROVENANCE,
-          });
+          barrier.run("follow-up-claim", () =>
+            replacer.claimPlan({
+              goalId: GOAL_ID,
+              purpose: "follow-up",
+              claimRequestId: `race-park-${headStart}`,
+              ownerFenceToken: OWNER_TOKEN,
+              expectedGeneration: 1,
+              ...PROVENANCE,
+            }),
+          );
 
-        const [blockOutcome, claimOutcome] =
-          headStart === "parker"
-            ? await Promise.all([blockTask(), delayed(followUp)])
-            : await Promise.all([delayed(blockTask), followUp()]);
+        let blockOutcome: Awaited<ReturnType<typeof blockTask>>;
+        let claimOutcome: Awaited<ReturnType<typeof followUp>>;
+        if (headStart === "parker") {
+          const raced = await barrier.race("task-block", blockTask, followUp);
+          expect(raced.arrivals).toEqual(["task-block"]);
+          blockOutcome = raced.holder;
+          claimOutcome = raced.peer;
+        } else {
+          const raced = await barrier.race("follow-up-claim", followUp, blockTask);
+          expect(raced.arrivals).toEqual(["follow-up-claim"]);
+          claimOutcome = raced.holder;
+          blockOutcome = raced.peer;
+        }
 
         // ONE result under both orders: the park commits, the claim is
         // refused BECAUSE implementation is active, and nothing else moved.
         expect(blockOutcome).toBe("blocked");
         expect(claimOutcome.ok).toBe(false);
         if (claimOutcome.ok) throw new Error("follow-up superseded active work");
-        expect(claimOutcome.conflict.code).toBe("implementation-active");
+        expect(claimOutcome.conflict).toEqual({
+          code: "implementation-active",
+          goalId: GOAL_ID,
+          tasks: [{ taskId: first, status: headStart === "parker" ? "blocked" : "wip" }],
+        });
 
         const observer = await h.open();
         const task = observer.fetchItem(TASKS_LEDGER, first);
