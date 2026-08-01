@@ -13,8 +13,16 @@
 import { describe, expect, test } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
 // The 2020-12 dialect entrypoint: the catalog schemas declare
 // `$schema: …/draft/2020-12/schema`, so they must compile under Ajv's 2020 build.
@@ -286,7 +294,9 @@ function createExclusiveFileAtAbsolutePath(absolutePath: string): () => void {
   return () => unlinkSync(absolutePath);
 }
 
-function createUnrelatedDirtyFixture(): UnrelatedDirtyFixture {
+function createUnrelatedDirtyFixture(
+  createFixtureFile: (absolutePath: string) => () => void,
+): UnrelatedDirtyFixture {
   const fixtureDirectory = mkdtempSync(join(REPOSITORY_ROOT, ".t1579-unrelated-dirty-"));
   const fixtureFile = join(fixtureDirectory, "fixture");
   const relativePath = relative(REPOSITORY_ROOT, fixtureFile);
@@ -294,7 +304,19 @@ function createUnrelatedDirtyFixture(): UnrelatedDirtyFixture {
     rmdirSync(fixtureDirectory);
     throw new Error("repository fixture allocation escaped the repository");
   }
-  const removeFixtureFile = createExclusiveFileAtAbsolutePath(fixtureFile);
+  let removeFixtureFile: () => void;
+  try {
+    removeFixtureFile = createFixtureFile(fixtureFile);
+  } catch (error) {
+    try {
+      if (readdirSync(fixtureDirectory).length === 0) {
+        rmdirSync(fixtureDirectory);
+      }
+    } catch (cleanupError) {
+      void cleanupError;
+    }
+    throw error;
+  }
   return {
     relativePath,
     cleanup: () => {
@@ -413,7 +435,7 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
   });
 
   test("uses HEAD^ for an unrelated dirty file, preserving the unchanged-version guard", () => {
-    const unrelatedFixture = createUnrelatedDirtyFixture();
+    const unrelatedFixture = createUnrelatedDirtyFixture(createExclusiveFileAtAbsolutePath);
     try {
       expect(unrelatedFixture.relativePath).not.toMatch(/^(?:\/|\.\.(?:\/|$))/);
       expect(resolve(REPOSITORY_ROOT, unrelatedFixture.relativePath)).toStartWith(`${REPOSITORY_ROOT}/`);
@@ -462,6 +484,19 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
       unlinkSync(fixtureFile);
       rmdirSync(fixtureDirectory);
     }
+  });
+
+  test("removes its owned directory and preserves the file-creation error", () => {
+    const expectedError = new Error("injected fixture creation failure");
+    let fixtureDirectory: string | undefined;
+
+    expect(() =>
+      createUnrelatedDirtyFixture((fixtureFile) => {
+        fixtureDirectory = dirname(fixtureFile);
+        throw expectedError;
+      }),
+    ).toThrow(expectedError);
+    expect(existsSync(fixtureDirectory!)).toBe(false);
   });
 
   test("uses HEAD when the pin table or a sidecar schema has uncommitted changes", () => {
