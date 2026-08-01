@@ -157,14 +157,17 @@ function schemaPinsFromSource(source: string): Readonly<Record<string, SchemaPin
   return pins;
 }
 
-function readGitRef(revision: string): string {
+function readGitRefs(args: readonly string[], description: string): readonly string[] {
   try {
-    return execFileSync("git", ["rev-parse", "--verify", revision], {
+    return execFileSync("git", args, {
       cwd: REPOSITORY_ROOT,
       encoding: "utf8",
-    }).trim();
+    })
+      .trim()
+      .split("\n")
+      .filter((revision) => revision !== "");
   } catch (error) {
-    throw new Error(`required predecessor ${revision} could not be resolved`, { cause: error });
+    throw new Error(`${description} could not be inspected`, { cause: error });
   }
 }
 
@@ -185,27 +188,112 @@ function relevantPathsChanged(): boolean {
   throw new Error(`relevant sidecar history inspection failed with exit ${result.status}`);
 }
 
-function selectHistoricalBaselineRef(
-  resolveRef: (revision: string) => string,
-  hasRelevantChanges: boolean,
-): string {
-  const head = resolveRef("HEAD");
-  const predecessor = resolveRef("HEAD^");
-  return hasRelevantChanges ? head : predecessor;
+function schemaPinsFromHistorySources(
+  sources: readonly (string | undefined)[],
+): readonly Readonly<Record<string, SchemaPin>>[] {
+  const history: Readonly<Record<string, SchemaPin>>[] = [];
+  let pinTableIntroduced = false;
+
+  for (const source of sources) {
+    if (source === undefined) {
+      if (!pinTableIntroduced) {
+        continue;
+      }
+      throw new Error("schema pin table could not be read after its introduction");
+    }
+    const hasPinDeclaration = /const SCHEMA_PINS(?:_JSON)?\s*(?::|=)/.test(source);
+    if (!pinTableIntroduced && !hasPinDeclaration) {
+      continue;
+    }
+    pinTableIntroduced = true;
+    history.push(schemaPinsFromSource(source));
+  }
+
+  if (!pinTableIntroduced) {
+    throw new Error("schema pin table introduction could not be located");
+  }
+  return history;
 }
 
-function historicalSchemaPins(): Readonly<Record<string, SchemaPin>> {
-  const baselineRef = selectHistoricalBaselineRef(readGitRef, relevantPathsChanged());
-  let source: string;
-  try {
-    source = execFileSync("git", ["show", `${baselineRef}:${PIN_TABLE_PATH}`], {
-      cwd: REPOSITORY_ROOT,
-      encoding: "utf8",
-    });
-  } catch (error) {
-    throw new Error(`schema pin table could not be read from ${baselineRef}`, { cause: error });
+function historicalSchemaPinHistory(): readonly Readonly<Record<string, SchemaPin>>[] {
+  const introduction = readGitRefs(
+    [
+      "log",
+      "--first-parent",
+      "--reverse",
+      "--format=%H",
+      "-G",
+      "const SCHEMA_PINS",
+      "--",
+      PIN_TABLE_PATH,
+    ],
+    "schema pin table introduction",
+  )[0];
+  if (introduction === undefined) {
+    throw new Error("schema pin table introduction could not be located");
   }
-  return schemaPinsFromSource(source);
+  const historyRefs = [
+    introduction,
+    ...readGitRefs(
+      ["rev-list", "--first-parent", "--reverse", `${introduction}..HEAD`],
+      "schema pin first-parent history",
+    ),
+  ];
+
+  const sources = historyRefs.map((revision) => {
+    try {
+      return execFileSync("git", ["show", `${revision}:${PIN_TABLE_PATH}`], {
+        cwd: REPOSITORY_ROOT,
+        encoding: "utf8",
+      });
+    } catch (error) {
+      throw new Error(`schema pin table could not be read from ${revision}`, { cause: error });
+    }
+  });
+  return schemaPinsFromHistorySources(sources);
+}
+
+function schemaPinTransitionErrors(
+  previousPins: Readonly<Record<string, SchemaPin>>,
+  nextPins: Readonly<Record<string, SchemaPin>>,
+): readonly string[] {
+  const errors: string[] = [];
+  for (const roleId of Object.keys(previousPins)) {
+    const previousPin = previousPins[roleId]!;
+    const nextPin = nextPins[roleId];
+    if (nextPin === undefined) {
+      continue;
+    }
+    if (nextPin.version < previousPin.version) {
+      errors.push(`schema pin version regressed for ${roleId}`);
+    }
+    if (nextPin.version === previousPin.version && nextPin.digest !== previousPin.digest) {
+      errors.push(`schema pin digest changed without version advance for ${roleId}`);
+    }
+  }
+  return errors;
+}
+
+function schemaPinHistoryErrors(
+  history: readonly Readonly<Record<string, SchemaPin>>[],
+): readonly string[] {
+  if (history.length === 0) {
+    throw new Error("schema pin history cannot be empty");
+  }
+  const errors: string[] = [];
+  for (let index = 1; index < history.length; index += 1) {
+    errors.push(...schemaPinTransitionErrors(history[index - 1]!, history[index]!));
+  }
+  return errors;
+}
+
+function currentSchemaPinHistoryErrors(): readonly string[] {
+  const history = historicalSchemaPinHistory();
+  const errors = [...schemaPinHistoryErrors(history)];
+  if (relevantPathsChanged()) {
+    errors.push(...schemaPinTransitionErrors(history.at(-1)!, SCHEMA_PINS));
+  }
+  return errors;
 }
 
 function canonicalJson(value: unknown): string {
@@ -337,9 +425,7 @@ const ROSTER_DISPATCHED_IDS = AGENT_ROLE_TIERS.filter((r) => r.agentTierKey !== 
   (r) => r.id,
 );
 /** The orchestrator-command role ids (null agentTierKey) — must have NO sidecar. */
-const ROSTER_COMMAND_IDS = AGENT_ROLE_TIERS.filter((r) => r.agentTierKey === null).map(
-  (r) => r.id,
-);
+const ROSTER_COMMAND_IDS = AGENT_ROLE_TIERS.filter((r) => r.agentTierKey === null).map((r) => r.id);
 
 describe("typed prompt-catalog store — roster cross-check (T341)", () => {
   test("the exported role entries reject reassignment at compile time", () => {
@@ -388,9 +474,10 @@ describe("typed prompt-catalog store — schemas validate as JSON Schema (T341)"
 
 describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
   test("the committed pins cover every sidecar and match its versioned schema contract", () => {
-    expect(verifySchemaPins(historicalSchemaPins(), DISPATCHED_ROLE_SIDECARS, SCHEMA_PINS)).toEqual(
-      [],
-    );
+    expect([
+      ...currentSchemaPinHistoryErrors(),
+      ...verifySchemaPins(SCHEMA_PINS, DISPATCHED_ROLE_SIDECARS, SCHEMA_PINS),
+    ]).toEqual([]);
   });
 
   // regression: T1579 — a schema mutation without a sidecar version bump escaped the catalog checks.
@@ -435,23 +522,8 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
     expect(verifySchemaPins(SCHEMA_PINS, sidecars, pins)).toEqual([]);
   });
 
-  test("uses HEAD^ for an unrelated dirty file, preserving the unchanged-version guard", () => {
-    const unrelatedFixture = createUnrelatedDirtyFixture(createExclusiveFileAtAbsolutePath, rmdirSync);
-    try {
-      expect(unrelatedFixture.relativePath).not.toMatch(/^(?:\/|\.\.(?:\/|$))/);
-      expect(resolve(REPOSITORY_ROOT, unrelatedFixture.relativePath)).toStartWith(`${REPOSITORY_ROOT}/`);
-      expect(
-        execFileSync("git", ["status", "--short", "--", unrelatedFixture.relativePath], {
-          cwd: REPOSITORY_ROOT,
-          encoding: "utf8",
-        }).trim(),
-      ).not.toBe("");
-      expect(relevantPathsChanged()).toBe(false);
-      expect(selectHistoricalBaselineRef(readGitRef, relevantPathsChanged())).toBe(readGitRef("HEAD^"));
-    } finally {
-      unrelatedFixture.cleanup();
-    }
-
+  // regression: D242 — a bad refresh followed by a preserving commit must remain observable.
+  test("rejects a two-commit same-version refresh that its successor preserves", () => {
     const sidecars = cloneSidecars();
     const implementWorker = sidecars["implement-worker"]!;
     const changedImplementWorker = {
@@ -459,7 +531,7 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
       inputSchema: { ...implementWorker.inputSchema, minProperties: 1 },
     };
     sidecars["implement-worker"] = changedImplementWorker;
-    const pins = {
+    const refreshedPins = {
       ...SCHEMA_PINS,
       "implement-worker": {
         version: changedImplementWorker.version,
@@ -467,9 +539,50 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
       },
     };
 
-    expect(verifySchemaPins(SCHEMA_PINS, sidecars, pins)).toEqual([
+    expect(schemaPinHistoryErrors([SCHEMA_PINS, refreshedPins, refreshedPins])).toEqual([
       "schema pin digest changed without version advance for implement-worker",
     ]);
+  });
+
+  test("accepts a multi-commit schema history with a real version advance", () => {
+    const sidecars = cloneSidecars();
+    const implementWorker = sidecars["implement-worker"]!;
+    const advancedImplementWorker = {
+      ...implementWorker,
+      version: implementWorker.version + 1,
+      inputSchema: { ...implementWorker.inputSchema, minProperties: 1 },
+    };
+    sidecars["implement-worker"] = advancedImplementWorker;
+    const advancedPins = {
+      ...SCHEMA_PINS,
+      "implement-worker": {
+        version: advancedImplementWorker.version,
+        digest: schemaDigest(advancedImplementWorker),
+      },
+    };
+
+    expect(schemaPinHistoryErrors([SCHEMA_PINS, advancedPins, advancedPins])).toEqual([]);
+  });
+
+  test("owns only its unrelated-dirt fixture", () => {
+    const unrelatedFixture = createUnrelatedDirtyFixture(
+      createExclusiveFileAtAbsolutePath,
+      rmdirSync,
+    );
+    try {
+      expect(unrelatedFixture.relativePath).not.toMatch(/^(?:\/|\.\.(?:\/|$))/);
+      expect(resolve(REPOSITORY_ROOT, unrelatedFixture.relativePath)).toStartWith(
+        `${REPOSITORY_ROOT}/`,
+      );
+      expect(
+        execFileSync("git", ["status", "--short", "--", unrelatedFixture.relativePath], {
+          cwd: REPOSITORY_ROOT,
+          encoding: "utf8",
+        }).trim(),
+      ).not.toBe("");
+    } finally {
+      unrelatedFixture.cleanup();
+    }
   });
 
   // regression: D246 — an unrelated-dirt fixture must not claim or remove a pre-existing file.
@@ -493,13 +606,10 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
 
     let caught: unknown;
     try {
-      createUnrelatedDirtyFixture(
-        (fixtureFile) => {
-          fixtureDirectory = dirname(fixtureFile);
-          throw expectedError;
-        },
-        rmdirSync,
-      );
+      createUnrelatedDirtyFixture((fixtureFile) => {
+        fixtureDirectory = dirname(fixtureFile);
+        throw expectedError;
+      }, rmdirSync);
     } catch (error) {
       caught = error;
     }
@@ -539,13 +649,16 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
     }
   });
 
-  test("uses HEAD when the pin table or a sidecar schema has uncommitted changes", () => {
-    expect(
-      selectHistoricalBaselineRef(
-        (revision) => (revision === "HEAD" ? "current" : "predecessor"),
-        true,
-      ),
-    ).toBe("current");
+  test("treats sources before the pin declaration as the history boundary", () => {
+    const pinTableSource = `const SCHEMA_PINS_JSON = String.raw\`${SCHEMA_PINS_JSON}\`;`;
+    expect(schemaPinsFromHistorySources(["export {};\n", pinTableSource])).toEqual([SCHEMA_PINS]);
+  });
+
+  test("fails closed when a source becomes unreadable after pin-table introduction", () => {
+    const pinTableSource = `const SCHEMA_PINS_JSON = String.raw\`${SCHEMA_PINS_JSON}\`;`;
+    expect(() => schemaPinsFromHistorySources([pinTableSource, undefined])).toThrow(
+      "schema pin table could not be read after its introduction",
+    );
   });
 
   test("fails closed when a historical pin table cannot be parsed", () => {
