@@ -14,7 +14,7 @@ import { describe, expect, test } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
 // The 2020-12 dialect entrypoint: the catalog schemas declare
 // `$schema: …/draft/2020-12/schema`, so they must compile under Ajv's 2020 build.
@@ -273,10 +273,35 @@ function cloneSidecars(): Record<string, SidecarContract> {
   return structuredClone(DISPATCHED_ROLE_SIDECARS);
 }
 
-function createUnrelatedDirtyFixture(relativePath: string): () => void {
-  const fixtureFile = resolve(REPOSITORY_ROOT, relativePath);
-  writeFileSync(fixtureFile, "unrelated\n", { flag: "wx" });
-  return () => unlinkSync(fixtureFile);
+interface UnrelatedDirtyFixture {
+  readonly relativePath: string;
+  readonly cleanup: () => void;
+}
+
+function createExclusiveFileAtAbsolutePath(absolutePath: string): () => void {
+  if (!isAbsolute(absolutePath)) {
+    throw new TypeError("exclusive fixture path must be absolute");
+  }
+  writeFileSync(absolutePath, "unrelated\n", { flag: "wx" });
+  return () => unlinkSync(absolutePath);
+}
+
+function createUnrelatedDirtyFixture(): UnrelatedDirtyFixture {
+  const fixtureDirectory = mkdtempSync(join(REPOSITORY_ROOT, ".t1579-unrelated-dirty-"));
+  const fixtureFile = join(fixtureDirectory, "fixture");
+  const relativePath = relative(REPOSITORY_ROOT, fixtureFile);
+  if (relativePath === "" || isAbsolute(relativePath) || relativePath.startsWith("..")) {
+    rmdirSync(fixtureDirectory);
+    throw new Error("repository fixture allocation escaped the repository");
+  }
+  const removeFixtureFile = createExclusiveFileAtAbsolutePath(fixtureFile);
+  return {
+    relativePath,
+    cleanup: () => {
+      removeFixtureFile();
+      rmdirSync(fixtureDirectory);
+    },
+  };
 }
 
 /** A fresh Ajv compiling draft 2020-12 schemas; `strict:false` allows annotations. */
@@ -388,11 +413,12 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
   });
 
   test("uses HEAD^ for an unrelated dirty file, preserving the unchanged-version guard", () => {
-    const unrelatedPath = `.t1579-unrelated-dirty-${process.pid}`;
-    const removeFixture = createUnrelatedDirtyFixture(unrelatedPath);
+    const unrelatedFixture = createUnrelatedDirtyFixture();
     try {
+      expect(unrelatedFixture.relativePath).not.toMatch(/^(?:\/|\.\.(?:\/|$))/);
+      expect(resolve(REPOSITORY_ROOT, unrelatedFixture.relativePath)).toStartWith(`${REPOSITORY_ROOT}/`);
       expect(
-        execFileSync("git", ["status", "--short", "--", unrelatedPath], {
+        execFileSync("git", ["status", "--short", "--", unrelatedFixture.relativePath], {
           cwd: REPOSITORY_ROOT,
           encoding: "utf8",
         }).trim(),
@@ -400,7 +426,7 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
       expect(relevantPathsChanged()).toBe(false);
       expect(selectHistoricalBaselineRef(readGitRef, relevantPathsChanged())).toBe(readGitRef("HEAD^"));
     } finally {
-      removeFixture();
+      unrelatedFixture.cleanup();
     }
 
     const sidecars = cloneSidecars();
@@ -430,7 +456,7 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
     const originalContents = "pre-existing\n";
     writeFileSync(fixtureFile, originalContents);
     try {
-      expect(() => createUnrelatedDirtyFixture(fixtureFile)).toThrow(/EEXIST/);
+      expect(() => createExclusiveFileAtAbsolutePath(fixtureFile)).toThrow(/EEXIST/);
       expect(readFileSync(fixtureFile, "utf8")).toBe(originalContents);
     } finally {
       unlinkSync(fixtureFile);
