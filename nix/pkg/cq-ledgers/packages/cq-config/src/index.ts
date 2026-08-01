@@ -151,8 +151,22 @@ export type {
   RenderPromptSurfaceTreeInput,
   RenderedPromptArtifact,
   RenderedPromptSurfaceTree,
+  PromptSurfaceRoleAttestation,
+  PromptSurfaceManifestCoreField,
+  PromptSurfaceManifestField,
+  PromptSurfaceRoleAttestationField,
+  PromptSurfaceManifestCore,
+  PromptSurfaceManifest,
 } from "./promptRenderer.js";
-export { PromptRendererError, renderPromptSurfaceTree } from "./promptRenderer.js";
+export {
+  PROMPT_SURFACE_MANIFEST_CORE_FIELDS,
+  PROMPT_SURFACE_MANIFEST_FIELDS,
+  PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS,
+  serializePromptSurfaceManifestCore,
+  serializePromptSurfaceManifest,
+  PromptRendererError,
+  renderPromptSurfaceTree,
+} from "./promptRenderer.js";
 export type {
   PromptVerificationRoot,
   PromptFragmentObservation,

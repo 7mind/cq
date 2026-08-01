@@ -60,6 +60,48 @@ export interface PromptSurfaceRoleAttestation {
   readonly sha256: string;
 }
 
+export const PROMPT_SURFACE_MANIFEST_CORE_FIELDS = [
+  "surface",
+  "catalogMetadataHash",
+  "roles",
+] as const;
+export type PromptSurfaceManifestCoreField =
+  (typeof PROMPT_SURFACE_MANIFEST_CORE_FIELDS)[number];
+
+export const PROMPT_SURFACE_MANIFEST_FIELDS = [
+  ...PROMPT_SURFACE_MANIFEST_CORE_FIELDS,
+  "surfaceDigest",
+] as const;
+export type PromptSurfaceManifestField = (typeof PROMPT_SURFACE_MANIFEST_FIELDS)[number];
+
+export const PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS = ["roleId", "version", "sha256"] as const;
+export type PromptSurfaceRoleAttestationField =
+  (typeof PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS)[number];
+
+export interface PromptSurfaceManifestCore {
+  readonly surface: PromptSurface;
+  readonly catalogMetadataHash: string;
+  readonly roles: readonly PromptSurfaceRoleAttestation[];
+}
+
+export interface PromptSurfaceManifest extends PromptSurfaceManifestCore {
+  readonly surfaceDigest: string;
+}
+
+/** Serialize the canonical digest-bearing core of a packaged-surface manifest. */
+export function serializePromptSurfaceManifestCore(
+  surface: PromptSurface,
+  catalogMetadataHash: string,
+  roles: readonly PromptSurfaceRoleAttestation[],
+): string {
+  const core: PromptSurfaceManifestCore = {
+    surface,
+    catalogMetadataHash,
+    roles: roles.map(({ roleId, version, sha256 }) => ({ roleId, version, sha256 })),
+  };
+  return JSON.stringify(core);
+}
+
 /**
  * Serialize the attested packaged-surface manifest (`surface.json`).
  *
@@ -82,8 +124,8 @@ export function serializePromptSurfaceManifest(
   catalogMetadataHash: string,
   roles: readonly PromptSurfaceRoleAttestation[],
 ): string {
-  const core = { surface, catalogMetadataHash, roles };
-  return JSON.stringify({ ...core, surfaceDigest: sha256Hex(JSON.stringify(core)) });
+  const core = serializePromptSurfaceManifestCore(surface, catalogMetadataHash, roles);
+  return `${core.slice(0, -1)},"surfaceDigest":"${sha256Hex(core)}"}`;
 }
 
 export interface RenderedPromptSurfaceTree {

@@ -5,9 +5,13 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { DISPATCHED_ROLE_VERSIONS } from "@cq/config";
 import {
+  PROMPT_SURFACE_MANIFEST_CORE_FIELDS,
+  PROMPT_SURFACE_MANIFEST_FIELDS,
+  PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS,
   PromptRendererError,
   renderPromptSurfaceTree,
   serializePromptSurfaceManifest,
+  serializePromptSurfaceManifestCore,
   type PromptCatalogFileInput,
   type PromptFragmentFileInput,
 } from "@cq/config/prompt-renderer";
@@ -462,6 +466,39 @@ describe("deterministic prompt renderer core", () => {
 });
 
 describe("attested surface manifest (T683)", () => {
+  // specified: the canonical public byte contract needs an implementation-independent oracle.
+  test("pins the pre-refactor surface.json bytes and digest", () => {
+    const core =
+      '{"surface":"codex","catalogMetadataHash":"0000000000000000000000000000000000000000000000000000000000000000","roles":[{"roleId":"plan-advance","version":7,"sha256":"1111111111111111111111111111111111111111111111111111111111111111"},{"roleId":"advance","version":null,"sha256":"2222222222222222222222222222222222222222222222222222222222222222"}]}';
+    const digest = "a3630b4c415b8aee1cdce7ee7fa07af9ccb25f107464561a0751a213a0a92c16";
+    const manifest =
+      '{"surface":"codex","catalogMetadataHash":"0000000000000000000000000000000000000000000000000000000000000000","roles":[{"roleId":"plan-advance","version":7,"sha256":"1111111111111111111111111111111111111111111111111111111111111111"},{"roleId":"advance","version":null,"sha256":"2222222222222222222222222222222222222222222222222222222222222222"}],"surfaceDigest":"a3630b4c415b8aee1cdce7ee7fa07af9ccb25f107464561a0751a213a0a92c16"}';
+    const roles = [
+      {
+        roleId: "plan-advance",
+        version: 7,
+        sha256: "1111111111111111111111111111111111111111111111111111111111111111",
+      },
+      {
+        roleId: "advance",
+        version: null,
+        sha256: "2222222222222222222222222222222222222222222222222222222222222222",
+      },
+    ] as const;
+
+    expect(createHash("sha256").update(core, "utf8").digest("hex")).toBe(digest);
+    expect(serializePromptSurfaceManifestCore("codex", "0".repeat(64), roles)).toBe(core);
+    expect(
+      serializePromptSurfaceManifest("codex", "0".repeat(64), roles),
+    ).toBe(manifest);
+    const parsedCore = JSON.parse(core) as { readonly roles: readonly object[] };
+    expect(Object.keys(parsedCore)).toEqual([...PROMPT_SURFACE_MANIFEST_CORE_FIELDS]);
+    expect(Object.keys(JSON.parse(manifest) as object)).toEqual([...PROMPT_SURFACE_MANIFEST_FIELDS]);
+    expect(Object.keys(parsedCore.roles[0]!)).toEqual([
+      ...PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS,
+    ]);
+  });
+
   test("emits byte-identical manifests for byte-identical inputs", () => {
     const fixture = makeFixture();
     const first = render(fixture);
