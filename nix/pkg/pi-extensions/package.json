@@ -1,14 +1,16 @@
 {
-  "name": "@cq/auto-driver",
+  "name": "@cq/pi-extensions",
   "version": "0.0.1",
+  "private": true,
   "type": "module",
-  "description": "Pure auto-driver decision logic (standalone, NOT part of the cq-ledgers bun workspace)",
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.82.1"
+  },
   "devDependencies": {
-    "@types/node": "^22.20.1",
     "bun-types": "^1.1.0",
     "typescript": "5.9.3"
   }

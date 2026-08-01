@@ -6,10 +6,11 @@
     "moduleResolution": "bundler",
     "target": "es2022",
     "lib": ["es2022"],
-    "types": ["node", "bun-types"],
+    "types": ["bun-types"],
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true
   },
-  "include": ["*.ts", "test-fixtures/**/*.ts"]
+  "include": ["*.ts"]
 }
