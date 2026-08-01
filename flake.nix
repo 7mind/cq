@@ -510,6 +510,36 @@
               echo "$smoke" >&2
               exit 1
             fi
+
+            fakeCodex=$TMPDIR/fake-codex
+            cat > "$fakeCodex" <<'EOF'
+#!${pkgs.runtimeShell}
+set -eu
+test "$1" = exec
+cat > "$TMPDIR/cq-codex-role.launch"
+printf '%s\n' '{"attestationId":"att_packaged_role_acknowledgement","generation":7,"inputCapability":{"scope":"fetch-input","token":"cq_input_packaged_role_acknowledgement"},"resultCapability":{"scope":"store-result","token":"cq_result_packaged_role_acknowledgement"}}' | \
+  cmp -s - "$TMPDIR/cq-codex-role.launch"
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"state\":\"result-stored\",\"attestationId\":\"att_packaged_role_acknowledgement\",\"generation\":7,\"outputDigest\":\"digest-bound-output\"}"}}'
+EOF
+            chmod +x "$fakeCodex"
+
+            roleCwd=$TMPDIR/role-cwd
+            ledgerCwd=$TMPDIR/ledger-cwd
+            mkdir -p "$roleCwd" "$ledgerCwd"
+            roleStdout=$TMPDIR/cq-codex-role.stdout
+            if ! printf '%s\n' '{"roleId":"implement-worker","handle":{"attestationId":"att_packaged_role_acknowledgement","generation":7},"inputCapability":{"scope":"fetch-input","token":"cq_input_packaged_role_acknowledgement"},"resultCapability":{"scope":"store-result","token":"cq_result_packaged_role_acknowledgement"},"cwd":"'"$roleCwd"'","ledgerCwd":"'"$ledgerCwd"'","model":"test-model","reasoningEffort":"high","sandboxMode":"read-only","timeoutMs":30000}' | \
+              HOME=$TMPDIR \
+              CQ_CODEX_EXECUTABLE="$fakeCodex" \
+              $out/bin/cq-codex-role > "$roleStdout"; then
+              echo "cq-codex-role packaged acknowledgement check FAILED" >&2
+              exit 1
+            fi
+            if ! printf '%s\n' '{"attestationId":"att_packaged_role_acknowledgement","generation":7}' | \
+              cmp -s - "$roleStdout"; then
+              echo "cq-codex-role packaged acknowledgement check emitted unexpected stdout:" >&2
+              cat "$roleStdout" >&2
+              exit 1
+            fi
             runHook postInstallCheck
           '';
 
