@@ -12,7 +12,8 @@
     "packages/ledger-web"
   ],
   "scripts": {
-    "check": "tsc -b && bun run lint && bun test",
+    "check": "tsc -b && bun run lint && bun test && bun run check:flake-enumeration",
+    "check:flake-enumeration": "cd ../../.. && nix flake show --all-systems --json",
     "typecheck": "tsc -b",
     "lint": "eslint .",
     "format": "prettier --write .",
