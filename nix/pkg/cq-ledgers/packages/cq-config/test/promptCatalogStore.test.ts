@@ -17,7 +17,6 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmdirSync,
   unlinkSync,
   writeFileSync,
@@ -296,6 +295,7 @@ function createExclusiveFileAtAbsolutePath(absolutePath: string): () => void {
 
 function createUnrelatedDirtyFixture(
   createFixtureFile: (absolutePath: string) => () => void,
+  removeDirectory: (absolutePath: string) => void,
 ): UnrelatedDirtyFixture {
   const fixtureDirectory = mkdtempSync(join(REPOSITORY_ROOT, ".t1579-unrelated-dirty-"));
   const fixtureFile = join(fixtureDirectory, "fixture");
@@ -309,11 +309,12 @@ function createUnrelatedDirtyFixture(
     removeFixtureFile = createFixtureFile(fixtureFile);
   } catch (error) {
     try {
-      if (readdirSync(fixtureDirectory).length === 0) {
-        rmdirSync(fixtureDirectory);
-      }
+      removeDirectory(fixtureDirectory);
     } catch (cleanupError) {
-      void cleanupError;
+      throw new AggregateError(
+        [error, cleanupError],
+        "fixture allocation failed and its directory could not be removed",
+      );
     }
     throw error;
   }
@@ -435,7 +436,7 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
   });
 
   test("uses HEAD^ for an unrelated dirty file, preserving the unchanged-version guard", () => {
-    const unrelatedFixture = createUnrelatedDirtyFixture(createExclusiveFileAtAbsolutePath);
+    const unrelatedFixture = createUnrelatedDirtyFixture(createExclusiveFileAtAbsolutePath, rmdirSync);
     try {
       expect(unrelatedFixture.relativePath).not.toMatch(/^(?:\/|\.\.(?:\/|$))/);
       expect(resolve(REPOSITORY_ROOT, unrelatedFixture.relativePath)).toStartWith(`${REPOSITORY_ROOT}/`);
@@ -490,13 +491,52 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
     const expectedError = new Error("injected fixture creation failure");
     let fixtureDirectory: string | undefined;
 
-    expect(() =>
-      createUnrelatedDirtyFixture((fixtureFile) => {
-        fixtureDirectory = dirname(fixtureFile);
-        throw expectedError;
-      }),
-    ).toThrow(expectedError);
+    let caught: unknown;
+    try {
+      createUnrelatedDirtyFixture(
+        (fixtureFile) => {
+          fixtureDirectory = dirname(fixtureFile);
+          throw expectedError;
+        },
+        rmdirSync,
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBe(expectedError);
     expect(existsSync(fixtureDirectory!)).toBe(false);
+  });
+
+  test("reports fixture creation and rollback failures together", () => {
+    const expectedCreationError = new Error("injected fixture creation failure");
+    const expectedCleanupError = new Error("injected fixture cleanup failure");
+    let fixtureDirectory: string | undefined;
+    let caught: unknown;
+
+    try {
+      createUnrelatedDirtyFixture(
+        (fixtureFile) => {
+          fixtureDirectory = dirname(fixtureFile);
+          throw expectedCreationError;
+        },
+        () => {
+          throw expectedCleanupError;
+        },
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    try {
+      expect(caught).toBeInstanceOf(AggregateError);
+      expect((caught as AggregateError).errors).toEqual([
+        expectedCreationError,
+        expectedCleanupError,
+      ]);
+      expect(existsSync(fixtureDirectory!)).toBe(true);
+    } finally {
+      rmdirSync(fixtureDirectory!);
+    }
   });
 
   test("uses HEAD when the pin table or a sidecar schema has uncommitted changes", () => {
