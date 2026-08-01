@@ -107,8 +107,17 @@ configured, dispatch the panel concurrently. Native reviewers use the
 surface-specific dispatch protocol. External reviewers run through their
 configured non-interactive adapter and the shared implement-review rubric.
 
-A returned external failure, empty output, malformed result, or off-enum
-verdict abstains and must be logged. Do not impose a silent timeout. If every
+**External reviewer usable-verdict rule.** Fence-strip and validate stdout
+first. A complete, parseable verdict counts as a vote despite a non-zero shell
+exit; log that exit anomaly. Require full-object validation before accepting the
+verdict. Only a returned external failure without such a verdict, empty output,
+malformed result, or off-enum verdict abstains and must be logged.
+
+**External reviewer no-timeout rule.** Do not impose a silent timeout.
+Fence-strip and validate stdout first. A complete, parseable verdict counts as a
+vote despite a non-zero shell exit; log that exit anomaly. A non-zero exit
+causes abstention only when no complete, parseable, fully validated verdict
+exists; a genuinely stalled adapter remains an operational failure. If every
 configured reviewer abstains, use one native reviewer; zero successful
 reviewers can never approve a task.
 

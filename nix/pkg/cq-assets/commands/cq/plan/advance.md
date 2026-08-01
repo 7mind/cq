@@ -107,9 +107,19 @@ over another round.
 
 Dispatch every configured planner concurrently in candidate mode through its
 configured adapter. Each returns the same candidate DAG and writes nothing.
-Malformed or failed returned results abstain and are logged; a stalled adapter
-remains an operational failure rather than a silent abstention. If all
-abstain, use the single-planner fallback under the same claim.
+**Candidate usable-payload rule.** Fence-strip and validate stdout first. A
+complete, parseable candidate counts as a usable candidate despite a non-zero
+shell exit; log that exit anomaly. Require full-object validation before
+accepting the candidate. Only empty, unparseable, invalid, or off-contract
+candidate output abstains and is logged.
+
+**Candidate no-timeout rule.** No wall-clock timeout is imposed. Fence-strip
+and validate stdout first. A complete, parseable candidate counts as a usable
+candidate despite a non-zero shell exit; log that exit anomaly. A non-zero exit
+causes abstention only when no complete, parseable, fully validated candidate
+exists; a stalled adapter remains an operational failure rather than a silent
+abstention. If all abstain, use the single-planner fallback under the same
+claim.
 
 Synthesize one manifest:
 
@@ -147,9 +157,18 @@ Stamp the recovered review with the exact current draft identity:
 #### Configured reviewer panel
 
 Dispatch all configured reviewers concurrently through their adapters.
-Reviewers return structured verdicts and write nothing. A returned failure,
-empty/malformed result, or off-enum verdict abstains and is logged. If all
-abstain, use the single-reviewer fallback.
+**Configured reviewer wrapper rule.** Standalone non-interactive wrappers may
+fast-fail with a non-zero shell exit. Fence-strip and validate stdout first. A
+complete, parseable verdict counts as a vote despite a non-zero shell exit; log
+that exit anomaly. Do not drop the emitted verdict solely for that exit.
+
+Reviewers return structured verdicts and write nothing.
+**Reviewer usable-verdict rule.** Fence-strip and validate stdout first. A
+complete, parseable verdict counts as a vote despite a non-zero shell exit; log
+that exit anomaly. Require full-object validation before accepting the verdict.
+Only a returned failure without such a verdict, empty/malformed result, or
+off-enum verdict abstains and is logged. If all abstain, use the single-reviewer
+fallback.
 
 Reconcile surviving reviews in configured order:
 
