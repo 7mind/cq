@@ -13,8 +13,9 @@
 import { describe, expect, test } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { unlinkSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdtempSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 // The 2020-12 dialect entrypoint: the catalog schemas declare
 // `$schema: …/draft/2020-12/schema`, so they must compile under Ajv's 2020 build.
 import Ajv2020 from "ajv/dist/2020";
@@ -272,6 +273,12 @@ function cloneSidecars(): Record<string, SidecarContract> {
   return structuredClone(DISPATCHED_ROLE_SIDECARS);
 }
 
+function createUnrelatedDirtyFixture(relativePath: string): () => void {
+  const fixtureFile = resolve(REPOSITORY_ROOT, relativePath);
+  writeFileSync(fixtureFile, "unrelated\n", { flag: "wx" });
+  return () => unlinkSync(fixtureFile);
+}
+
 /** A fresh Ajv compiling draft 2020-12 schemas; `strict:false` allows annotations. */
 function newAjv(): Ajv2020 {
   return new Ajv2020({ strict: false, allErrors: true });
@@ -382,8 +389,7 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
 
   test("uses HEAD^ for an unrelated dirty file, preserving the unchanged-version guard", () => {
     const unrelatedPath = `.t1579-unrelated-dirty-${process.pid}`;
-    const unrelatedFile = resolve(REPOSITORY_ROOT, unrelatedPath);
-    writeFileSync(unrelatedFile, "unrelated\n");
+    const removeFixture = createUnrelatedDirtyFixture(unrelatedPath);
     try {
       expect(
         execFileSync("git", ["status", "--short", "--", unrelatedPath], {
@@ -394,7 +400,7 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
       expect(relevantPathsChanged()).toBe(false);
       expect(selectHistoricalBaselineRef(readGitRef, relevantPathsChanged())).toBe(readGitRef("HEAD^"));
     } finally {
-      unlinkSync(unrelatedFile);
+      removeFixture();
     }
 
     const sidecars = cloneSidecars();
@@ -415,6 +421,21 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
     expect(verifySchemaPins(SCHEMA_PINS, sidecars, pins)).toEqual([
       "schema pin digest changed without version advance for implement-worker",
     ]);
+  });
+
+  // regression: D246 — an unrelated-dirt fixture must not claim or remove a pre-existing file.
+  test("rejects an existing unrelated-dirty fixture without modifying its bytes", () => {
+    const fixtureDirectory = mkdtempSync(join(tmpdir(), "t1579-unrelated-dirty-"));
+    const fixtureFile = join(fixtureDirectory, "fixture");
+    const originalContents = "pre-existing\n";
+    writeFileSync(fixtureFile, originalContents);
+    try {
+      expect(() => createUnrelatedDirtyFixture(fixtureFile)).toThrow(/EEXIST/);
+      expect(readFileSync(fixtureFile, "utf8")).toBe(originalContents);
+    } finally {
+      unlinkSync(fixtureFile);
+      rmdirSync(fixtureDirectory);
+    }
   });
 
   test("uses HEAD when the pin table or a sidecar schema has uncommitted changes", () => {
