@@ -97,12 +97,18 @@ function schemaDigest(sidecar: SidecarContract): string {
 }
 
 function verifySchemaPins(
+  baselinePins: Readonly<Record<string, SchemaPin>>,
   sidecars: Readonly<Record<string, SidecarContract>>,
   pins: Readonly<Record<string, SchemaPin>>,
 ): readonly string[] {
   const sidecarIds = Object.keys(sidecars).sort();
+  const baselinePinIds = Object.keys(baselinePins).sort();
   const pinIds = Object.keys(pins).sort();
   const errors: string[] = [];
+
+  if (canonicalJson(sidecarIds) !== canonicalJson(baselinePinIds)) {
+    errors.push("baseline pin table keys do not match sidecar keys");
+  }
 
   if (canonicalJson(sidecarIds) !== canonicalJson(pinIds)) {
     errors.push("pin table keys do not match sidecar keys");
@@ -110,13 +116,24 @@ function verifySchemaPins(
 
   for (const roleId of sidecarIds) {
     const sidecar = sidecars[roleId]!;
+    const baselinePin = baselinePins[roleId];
     const pin = pins[roleId];
+    if (baselinePin === undefined) {
+      errors.push(`missing baseline pin for ${roleId}`);
+      continue;
+    }
     if (pin === undefined) {
       errors.push(`missing pin for ${roleId}`);
       continue;
     }
     if (pin.version !== sidecar.version || pin.digest !== schemaDigest(sidecar)) {
       errors.push(`schema pin mismatch for ${roleId}`);
+    }
+    if (pin.version < baselinePin.version) {
+      errors.push(`schema pin version regressed for ${roleId}`);
+    }
+    if (pin.version === baselinePin.version && pin.digest !== baselinePin.digest) {
+      errors.push(`schema pin digest changed without version advance for ${roleId}`);
     }
   }
 
@@ -188,20 +205,28 @@ describe("typed prompt-catalog store — schemas validate as JSON Schema (T341)"
 
 describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
   test("the committed pins cover every sidecar and match its versioned schema contract", () => {
-    expect(verifySchemaPins(DISPATCHED_ROLE_SIDECARS, SCHEMA_PINS)).toEqual([]);
+    expect(verifySchemaPins(SCHEMA_PINS, DISPATCHED_ROLE_SIDECARS, SCHEMA_PINS)).toEqual([]);
   });
 
   // regression: T1579 — a schema mutation without a sidecar version bump escaped the catalog checks.
-  test("rejects an implement-worker input-schema mutation at the existing version", () => {
+  test("rejects an implement-worker input-schema mutation with a refreshed pin at the existing version", () => {
     const sidecars = cloneSidecars();
     const implementWorker = sidecars["implement-worker"]!;
-    sidecars["implement-worker"] = {
+    const changedImplementWorker = {
       ...implementWorker,
       inputSchema: { ...implementWorker.inputSchema, minProperties: 1 },
     };
+    sidecars["implement-worker"] = changedImplementWorker;
+    const pins = {
+      ...SCHEMA_PINS,
+      "implement-worker": {
+        version: changedImplementWorker.version,
+        digest: schemaDigest(changedImplementWorker),
+      },
+    };
 
-    expect(verifySchemaPins(sidecars, SCHEMA_PINS)).toEqual([
-      "schema pin mismatch for implement-worker",
+    expect(verifySchemaPins(SCHEMA_PINS, sidecars, pins)).toEqual([
+      "schema pin digest changed without version advance for implement-worker",
     ]);
   });
 
@@ -222,6 +247,6 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
       },
     };
 
-    expect(verifySchemaPins(sidecars, pins)).toEqual([]);
+    expect(verifySchemaPins(SCHEMA_PINS, sidecars, pins)).toEqual([]);
   });
 });
