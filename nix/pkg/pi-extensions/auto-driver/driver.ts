@@ -524,8 +524,8 @@ export async function runAutoDriver(deps: DriverDeps): Promise<DriverResult> {
       // types.d.ts L199). The context window usage will be null right after
       // compaction and until the next LLM response; the decision core's null-guard
       // on contextPercent prevents a spurious second compaction.
-      await new Promise<void>((resolve) => {
-        ctx.compact({ onComplete: () => resolve() });
+      await new Promise<void>((resolve, reject) => {
+        ctx.compact({ onComplete: () => resolve(), onError: (error) => reject(error) });
       });
     }
 

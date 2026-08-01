@@ -548,6 +548,49 @@ describe("T466 signals: contextPercent > 0.80 → compact then redrive", () => {
     expect(sends.length).toBeGreaterThanOrEqual(2);
     expect(compactIdx).toBeLessThan(sends[1]!);
   });
+
+  // Behavioral-Active Blackbox-Group; regression origin: compaction failures must settle the driver.
+  test("compact onError rejects the driver with the same Error", async () => {
+    const events: string[] = [];
+    const api = makeFakeApi(events);
+    const sentinel = new Error("compaction failed");
+    let signalCompactStarted!: () => void;
+    const compactStarted = new Promise<void>((resolve) => {
+      signalCompactStarted = resolve;
+    });
+    const ctx: DriverContext = {
+      ...makeFakeCtx({ events, contextPercent: 85 }),
+      compact(options): void {
+        events.push("compact");
+        options?.onError?.(sentinel);
+        signalCompactStarted();
+      },
+    };
+
+    const driverOutcome = runAutoDriver({
+      ctx,
+      api,
+      preset: planPreset,
+      getPredicates: scriptedOracle([withPlanWork(["G1"]), ALL_FALSE]),
+    }).then(
+      (result) => ({ kind: "resolved" as const, result }),
+      (error: unknown) => ({ kind: "rejected" as const, error }),
+    );
+
+    await compactStarted;
+    const outcome = await Promise.race([
+      driverOutcome,
+      new Promise<{ readonly kind: "pending" }>((resolve) => {
+        setTimeout(() => resolve({ kind: "pending" }), 0);
+      }),
+    ]);
+
+    expect(outcome.kind).toBe("rejected");
+    if (outcome.kind !== "rejected") {
+      throw new Error(`expected driver rejection, received ${outcome.kind}`);
+    }
+    expect(outcome.error).toBe(sentinel);
+  });
 });
 
 describe("T466 signals: contextPercent null → no compaction", () => {
