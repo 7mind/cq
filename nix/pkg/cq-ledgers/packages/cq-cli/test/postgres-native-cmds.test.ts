@@ -6,9 +6,9 @@
  * backend with zero product changes, and that each command still emits
  * valid JSON on stdout.
  *
- * Env-gated on CQ_TEST_PG_URL (Q286, same gate as every other
- * postgres-*.test.ts): no live Postgres in this sandbox/CI by default, so
- * this file SKIPS cleanly offline and `bun run check` stays green.
+ * Only the PostgreSQL communication cases are gated on CQ_TEST_PG_URL (Q286,
+ * same gate as every other postgres-*.test.ts). The session contract stays
+ * offline so `bun run check` exercises it without a live PostgreSQL service.
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
@@ -64,7 +64,7 @@ async function runCq(
   }
 }
 
-describe("cq advance-gate session requirement", () => {
+describe("cq advance-gate session contract", () => {
   it("requires an explicit session", async () => {
     const runtimeDir = await mkdtemp(path.join(tmpdir(), "cq-native-cmds-runtime-"));
     runtimeDirs.push(runtimeDir);
@@ -77,6 +77,26 @@ describe("cq advance-gate session requirement", () => {
     expect(stderr).toBe(
       "cq: fatal: cq advance-gate: no session id (pass --session <id> or set $CLAUDE_CODE_SESSION_ID)\n",
     );
+  });
+
+  it("allows an explicit session without an active marker", async () => {
+    const runtimeDir = await mkdtemp(path.join(tmpdir(), "cq-native-cmds-runtime-"));
+    runtimeDirs.push(runtimeDir);
+    const sessionId = randomUUID();
+    const sessionlessEnv: NodeJS.ProcessEnv = { ...process.env, XDG_RUNTIME_DIR: runtimeDir };
+    delete sessionlessEnv.CLAUDE_CODE_SESSION_ID;
+    const { stdout, stderr, exitCode } = await runCq(
+      ["advance-gate", "--session", sessionId],
+      process.cwd(),
+      sessionlessEnv,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    const parsed = JSON.parse(stdout) as { block: boolean; reason: string; predicates: unknown };
+    expect(parsed.block).toBe(false);
+    expect(typeof parsed.reason).toBe("string");
+    expect(parsed.predicates).toBeDefined();
   });
 });
 
@@ -109,19 +129,6 @@ if (PG_URL === undefined || PG_URL.length === 0) {
       expect(parsed.ledgers).toContain("tasks");
       expect(parsed.ledgers).toContain("milestones");
       expect(typeof parsed.counts["tasks"]).toBe("number");
-    });
-
-    it("advance-gate --cwd <pg repo> emits a valid verdict JSON and allows on a fresh tenant", async () => {
-      const dir = await postgresRepo();
-      const { stdout, exitCode } = await runCq(["advance-gate", "--cwd", dir], dir, {
-        ...process.env,
-        CQ_LEDGER_PG_URL: PG_URL,
-      });
-      expect(exitCode).toBe(0);
-      const parsed = JSON.parse(stdout) as { block: boolean; reason: string; predicates: unknown };
-      expect(parsed.block).toBe(false);
-      expect(typeof parsed.reason).toBe("string");
-      expect(parsed.predicates).toBeDefined();
     });
   });
 }
