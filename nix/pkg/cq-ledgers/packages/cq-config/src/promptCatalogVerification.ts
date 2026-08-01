@@ -3,6 +3,12 @@ import {
   type IntentionalDifferenceDeclaration,
   type PromptSurface,
 } from "./promptCatalog.js";
+import {
+  PROMPT_SURFACE_MANIFEST_FIELDS,
+  PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS,
+  serializePromptSurfaceManifestCore,
+  type PromptSurfaceRoleAttestation,
+} from "./promptRenderer.js";
 
 const SLOT_MARKER_PREFIX = "{{cq:fragment:";
 const SLOT_MARKER_PATTERN = /\{\{cq:fragment:([^{}\r\n]+)\}\}/g;
@@ -619,14 +625,7 @@ function assertSurfaceManifest(
     fail(surfacePath, "expected an object");
   }
   const fields = Object.keys(value).sort();
-  if (
-    !sameOrderedValues(fields, [
-      "catalogMetadataHash",
-      "roles",
-      "surface",
-      "surfaceDigest",
-    ])
-  ) {
+  if (!sameOrderedValues(fields, [...PROMPT_SURFACE_MANIFEST_FIELDS].sort())) {
     fail(surfacePath, "expected exactly surface, catalogMetadataHash, roles, and surfaceDigest");
   }
   if (value.surface !== root.surface) {
@@ -649,6 +648,7 @@ function assertSurfaceManifest(
   if (entries.length !== roles.length) {
     fail(`${surfacePath}.roles`, `expected ${roles.length} role attestations`);
   }
+  const validatedEntries: PromptSurfaceRoleAttestation[] = [];
   for (const [index, role] of roles.entries()) {
     const entry = entries[index]!;
     const entryPath = `${surfacePath}.roles[${index}]`;
@@ -656,7 +656,7 @@ function assertSurfaceManifest(
       fail(entryPath, "expected an object");
     }
     const entryFields = Object.keys(entry).sort();
-    if (!sameOrderedValues(entryFields, ["roleId", "sha256", "version"])) {
+    if (!sameOrderedValues(entryFields, [...PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS].sort())) {
       fail(entryPath, "expected exactly roleId, version, and sha256");
     }
     if (entry.roleId !== role.roleId) {
@@ -669,27 +669,25 @@ function assertSurfaceManifest(
     if (digest !== sha256(root.artifacts[`roles/${role.roleId}.md`]!)) {
       fail(`${entryPath}.sha256`, "does not match the installed role artifact bytes");
     }
+    const version = entry.version;
     if (role.roleKind === "dispatched-subagent") {
       if (
-        typeof entry.version !== "number" ||
-        !Number.isSafeInteger(entry.version) ||
-        entry.version < 1
+        typeof version !== "number" ||
+        !Number.isSafeInteger(version) ||
+        version < 1
       ) {
         fail(`${entryPath}.version`, "expected a positive integer schema-sidecar version");
       }
-    } else if (entry.version !== null) {
+    } else if (version !== null) {
       fail(`${entryPath}.version`, "orchestrator-command roles must carry null");
     }
+    validatedEntries.push({ roleId: role.roleId, version, sha256: digest });
   }
-  const canonicalCore = JSON.stringify({
-    surface: value.surface,
-    catalogMetadataHash: catalogHash,
-    roles: entries.map((entry) => ({
-      roleId: entry.roleId,
-      version: entry.version,
-      sha256: entry.sha256,
-    })),
-  });
+  const canonicalCore = serializePromptSurfaceManifestCore(
+    root.surface,
+    catalogHash,
+    validatedEntries,
+  );
   if (value.surfaceDigest !== sha256(canonicalCore)) {
     fail(
       `${surfacePath}.surfaceDigest`,

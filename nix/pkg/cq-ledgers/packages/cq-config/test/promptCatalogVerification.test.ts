@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import {
+  PROMPT_SURFACE_MANIFEST_FIELDS,
+  PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS,
   verifyPromptCatalog,
   type PromptCatalogVerificationInput,
   type PromptSurface,
@@ -404,6 +406,53 @@ describe("prompt-catalog centralized verification mutation fixtures", () => {
     expect(() => verifyPromptCatalog(staleDigest)).toThrow(
       "does not match the installed role artifact bytes",
     );
+  });
+
+  // Behavioral-Active Blackbox-Group: catalog verification follows the exported shape.
+  test("surface validation accepts exactly the canonical exported field sets", () => {
+    const exact = mutableFixture();
+    const exactArtifacts = exact.packagedRoots.claude.artifacts as Record<string, string>;
+    const manifest = JSON.parse(exactArtifacts["surface.json"]!) as Record<string, unknown>;
+    const roles = manifest.roles as Array<Record<string, unknown>>;
+    expect(Object.keys(manifest)).toEqual([...PROMPT_SURFACE_MANIFEST_FIELDS]);
+    expect(Object.keys(roles[0]!)).toEqual([...PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS]);
+    expect(() => verifyPromptCatalog(exact)).not.toThrow();
+
+    const expectRejected = (mutate: (candidate: Record<string, unknown>) => void): void => {
+      const input = mutableFixture();
+      const artifacts = input.packagedRoots.claude.artifacts as Record<string, string>;
+      const candidate = JSON.parse(artifacts["surface.json"]!) as Record<string, unknown>;
+      mutate(candidate);
+      artifacts["surface.json"] = JSON.stringify(candidate);
+      expect(() => verifyPromptCatalog(input)).toThrow();
+    };
+
+    for (const field of PROMPT_SURFACE_MANIFEST_FIELDS) {
+      expectRejected((candidate) => {
+        delete candidate[field];
+      });
+      expectRejected((candidate) => {
+        candidate[`${field}Renamed`] = candidate[field];
+        delete candidate[field];
+      });
+    }
+    expectRejected((candidate) => {
+      candidate.extra = true;
+    });
+
+    for (const field of PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS) {
+      expectRejected((candidate) => {
+        delete (candidate.roles as Array<Record<string, unknown>>)[0]![field];
+      });
+      expectRejected((candidate) => {
+        const role = (candidate.roles as Array<Record<string, unknown>>)[0]!;
+        role[`${field}Renamed`] = role[field];
+        delete role[field];
+      });
+    }
+    expectRejected((candidate) => {
+      (candidate.roles as Array<Record<string, unknown>>)[0]!.extra = true;
+    });
   });
 
   test("fails closed on stale catalog, aggregate, version, and roster attestation drift", () => {

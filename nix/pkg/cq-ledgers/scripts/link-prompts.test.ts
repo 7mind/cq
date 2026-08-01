@@ -4,6 +4,10 @@ import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
+  PROMPT_SURFACE_MANIFEST_FIELDS,
+  PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS,
+} from "../packages/cq-config/src/promptRenderer.js";
+import {
   NodePromptPublicationStore,
   checkLinks,
   linksFromCatalog,
@@ -710,6 +714,55 @@ publicationContract("memory dummy", makeMemoryHarness);
 publicationContract("real temporary filesystem", makeRealHarness);
 
 describe("rendered Claude root validation", () => {
+  // Behavioral-Active Blackbox-Group: publication validation follows the exported shape.
+  test("surface validation accepts exactly the canonical exported field sets", () => {
+    const surface = OLD_TREE.find((file) => file.path === "surface.json")!;
+    const manifest = JSON.parse(surface.content) as Record<string, unknown>;
+    const roles = manifest.roles as Array<Record<string, unknown>>;
+    expect(Object.keys(manifest)).toEqual([...PROMPT_SURFACE_MANIFEST_FIELDS]);
+    expect(Object.keys(roles[0]!)).toEqual([...PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS]);
+    expect(() => validateRenderedClaudeRoot(OLD_TREE)).not.toThrow();
+
+    const expectRejected = (candidate: Record<string, unknown>): void => {
+      expect(() =>
+        validateRenderedClaudeRoot(
+          OLD_TREE.map((file) =>
+            file.path === "surface.json"
+              ? { ...file, content: JSON.stringify(candidate) }
+              : file,
+          ),
+        ),
+      ).toThrow();
+    };
+
+    for (const field of PROMPT_SURFACE_MANIFEST_FIELDS) {
+      const missing = structuredClone(manifest);
+      delete missing[field];
+      expectRejected(missing);
+
+      const renamed = structuredClone(manifest);
+      renamed[`${field}Renamed`] = renamed[field];
+      delete renamed[field];
+      expectRejected(renamed);
+    }
+    expectRejected({ ...manifest, extra: true });
+
+    for (const field of PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS) {
+      const missing = structuredClone(manifest);
+      delete (missing.roles as Array<Record<string, unknown>>)[0]![field];
+      expectRejected(missing);
+
+      const renamed = structuredClone(manifest);
+      const renamedRole = (renamed.roles as Array<Record<string, unknown>>)[0]!;
+      renamedRole[`${field}Renamed`] = renamedRole[field];
+      delete renamedRole[field];
+      expectRejected(renamed);
+    }
+    const extraRoleField = structuredClone(manifest);
+    (extraRoleField.roles as Array<Record<string, unknown>>)[0]!.extra = true;
+    expectRejected(extraRoleField);
+  });
+
   test("requires the immutable Claude surface identity", () => {
     expect(() =>
       validateRenderedClaudeRoot(OLD_TREE.filter((file) => file.path !== "surface.json")),

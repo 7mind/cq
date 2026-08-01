@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { PROMPT_FRAGMENT_SLOTS } from "@cq/config";
+import {
+  PROMPT_FRAGMENT_SLOTS,
+  PROMPT_SURFACE_MANIFEST_FIELDS,
+  PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS,
+} from "@cq/config";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -510,6 +514,54 @@ function runPromptArtifactStoreContract(adapter: StoreAdapter): void {
 
 runPromptArtifactStoreContract(memoryAdapter());
 runPromptArtifactStoreContract(filesystemAdapter());
+
+// Behavioral-Active Blackbox-Group: the store boundary follows the exported manifest shape.
+test("surface validation accepts exactly the canonical exported field sets", () => {
+  const manifest = JSON.parse(decoder.decode(CONTRACT_FIXTURE.surfaceBytes)) as Record<
+    string,
+    unknown
+  >;
+  const roles = manifest.roles as Array<Record<string, unknown>>;
+  expect(Object.keys(manifest)).toEqual([...PROMPT_SURFACE_MANIFEST_FIELDS]);
+  expect(Object.keys(roles[0]!)).toEqual([...PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS]);
+  expect(() => memoryAdapter().create(CONTRACT_FIXTURE)).not.toThrow();
+
+  const expectRejected = (candidate: Record<string, unknown>): void => {
+    expect(() =>
+      memoryAdapter().create({
+        ...CONTRACT_FIXTURE,
+        surfaceBytes: encoder.encode(JSON.stringify(candidate)),
+      }),
+    ).toThrow();
+  };
+
+  for (const field of PROMPT_SURFACE_MANIFEST_FIELDS) {
+    const missing = structuredClone(manifest);
+    delete missing[field];
+    expectRejected(missing);
+
+    const renamed = structuredClone(manifest);
+    renamed[`${field}Renamed`] = renamed[field];
+    delete renamed[field];
+    expectRejected(renamed);
+  }
+  expectRejected({ ...manifest, extra: true });
+
+  for (const field of PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS) {
+    const missing = structuredClone(manifest);
+    delete (missing.roles as Array<Record<string, unknown>>)[0]![field];
+    expectRejected(missing);
+
+    const renamed = structuredClone(manifest);
+    const renamedRole = (renamed.roles as Array<Record<string, unknown>>)[0]!;
+    renamedRole[`${field}Renamed`] = renamedRole[field];
+    delete renamedRole[field];
+    expectRejected(renamed);
+  }
+  const extraRoleField = structuredClone(manifest);
+  (extraRoleField.roles as Array<Record<string, unknown>>)[0]!.extra = true;
+  expectRejected(extraRoleField);
+});
 
 test("the filesystem contract leg constructs the production adapter", () => {
   const handle = filesystemAdapter().create(CONTRACT_FIXTURE);

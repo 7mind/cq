@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import * as path from "node:path";
-import { PROMPT_FRAGMENT_SLOTS } from "@cq/config";
+import {
+  PROMPT_FRAGMENT_SLOTS,
+  PROMPT_SURFACE_MANIFEST_FIELDS,
+  PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS,
+  serializePromptSurfaceManifestCore,
+} from "@cq/config";
 import type {
   PromptFragmentBinding,
   PromptIntentionalDifference,
@@ -16,13 +21,6 @@ const SAFE_ROLE_ID_PATTERN = /^[a-z0-9-]+(?:\/[a-z0-9-]+)*$/;
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 const MANIFEST_FILENAME = "catalog.json";
 const SURFACE_METADATA_FILENAME = "surface.json";
-const SURFACE_MANIFEST_FIELDS = [
-  "surface",
-  "catalogMetadataHash",
-  "roles",
-  "surfaceDigest",
-] as const;
-const SURFACE_ROLE_FIELDS = ["roleId", "version", "sha256"] as const;
 const ROLE_ARTIFACTS_DIRECTORY = "roles";
 const PROMPT_SURFACES = ["claude", "codex", "pi"] as const;
 const PROMPT_RENDERER_CAPABILITIES =
@@ -198,7 +196,7 @@ function parseSurfaceAttestation(surfaceBytes: Uint8Array): PromptSurfaceAttesta
   }
   const fields = Object.keys(value);
   const unexpectedField = fields.find(
-    (field) => !(SURFACE_MANIFEST_FIELDS as readonly string[]).includes(field),
+    (field) => !(PROMPT_SURFACE_MANIFEST_FIELDS as readonly string[]).includes(field),
   );
   if (unexpectedField !== undefined) {
     throw new PromptArtifactStoreError(
@@ -206,7 +204,7 @@ function parseSurfaceAttestation(surfaceBytes: Uint8Array): PromptSurfaceAttesta
       "unexpected field in the attested surface manifest",
     );
   }
-  for (const field of SURFACE_MANIFEST_FIELDS) {
+  for (const field of PROMPT_SURFACE_MANIFEST_FIELDS) {
     if (!(field in value)) {
       throw new PromptArtifactStoreError(
         `${SURFACE_METADATA_FILENAME}.${field}`,
@@ -244,7 +242,7 @@ function parseSurfaceAttestation(surfaceBytes: Uint8Array): PromptSurfaceAttesta
     }
     const entryFields = Object.keys(candidate);
     const unexpectedEntryField = entryFields.find(
-      (field) => !(SURFACE_ROLE_FIELDS as readonly string[]).includes(field),
+      (field) => !(PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS as readonly string[]).includes(field),
     );
     if (unexpectedEntryField !== undefined) {
       throw new PromptArtifactStoreError(
@@ -252,7 +250,7 @@ function parseSurfaceAttestation(surfaceBytes: Uint8Array): PromptSurfaceAttesta
         "unexpected field in the role attestation",
       );
     }
-    for (const field of SURFACE_ROLE_FIELDS) {
+    for (const field of PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS) {
       if (!(field in candidate)) {
         throw new PromptArtifactStoreError(
           `${entryPath}.${field}`,
@@ -298,11 +296,15 @@ function parseSurfaceAttestation(surfaceBytes: Uint8Array): PromptSurfaceAttesta
       "expected a lowercase hex SHA-256 digest",
     );
   }
-  const canonicalCore = JSON.stringify({
+  const canonicalCore = serializePromptSurfaceManifestCore(
     surface,
-    catalogMetadataHash: catalogHash,
-    roles: roles.map((role) => ({ roleId: role.roleId, version: role.version, sha256: role.digest })),
-  });
+    catalogHash,
+    roles.map((role) => ({
+      roleId: role.roleId,
+      version: role.version,
+      sha256: role.digest,
+    })),
+  );
   if (sha256Hex(canonicalCore) !== surfaceDigest) {
     throw new PromptArtifactStoreError(
       `${SURFACE_METADATA_FILENAME}.surfaceDigest`,

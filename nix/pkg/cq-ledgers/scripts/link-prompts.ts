@@ -24,6 +24,12 @@ import {
 } from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  PROMPT_SURFACE_MANIFEST_FIELDS,
+  PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS,
+  serializePromptSurfaceManifestCore,
+  type PromptSurfaceRoleAttestation,
+} from "../packages/cq-config/src/promptRenderer.js";
 
 const LEDGERS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FLAKE_ROOT = path.resolve(LEDGERS_ROOT, "..", "..", "..");
@@ -181,6 +187,14 @@ function sha256Hex(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex");
 }
 
+function hasExactFields(value: object, expectedFields: readonly string[]): boolean {
+  const fields = Object.keys(value);
+  return (
+    fields.length === expectedFields.length &&
+    fields.every((field) => expectedFields.includes(field))
+  );
+}
+
 /**
  * Validate the attested surface manifest (T683) against the in-memory
  * rendered tree: exact field shape, `"claude"` identity, catalog metadata
@@ -201,14 +215,7 @@ function validateClaudeSurface(
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("rendered prompt surface.json must contain an object");
   }
-  const fields = Object.keys(value).sort();
-  if (
-    fields.length !== 4 ||
-    fields[0] !== "catalogMetadataHash" ||
-    fields[1] !== "roles" ||
-    fields[2] !== "surface" ||
-    fields[3] !== "surfaceDigest"
-  ) {
+  if (!hasExactFields(value, PROMPT_SURFACE_MANIFEST_FIELDS)) {
     throw new Error(
       'rendered prompt surface.json must contain exactly "surface", "catalogMetadataHash", "roles", and "surfaceDigest"',
     );
@@ -230,17 +237,11 @@ function validateClaudeSurface(
   if (!Array.isArray(attestedRoles) || attestedRoles.length !== catalog.length) {
     throw new Error("rendered prompt surface.json.roles must cover every catalog role");
   }
-  attestedRoles.forEach((entry, index) => {
+  const validatedRoles = attestedRoles.map((entry, index): PromptSurfaceRoleAttestation => {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
       throw new Error(`rendered prompt surface.json.roles[${index}] must contain an object`);
     }
-    const entryFields = Object.keys(entry).sort();
-    if (
-      entryFields.length !== 3 ||
-      entryFields[0] !== "roleId" ||
-      entryFields[1] !== "sha256" ||
-      entryFields[2] !== "version"
-    ) {
+    if (!hasExactFields(entry, PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS)) {
       throw new Error(
         `rendered prompt surface.json.roles[${index}] must contain exactly "roleId", "version", and "sha256"`,
       );
@@ -272,16 +273,13 @@ function validateClaudeSurface(
         `rendered prompt surface.json.roles[${index}].sha256 does not match the installed role bytes`,
       );
     }
+    return { roleId: catalog[index]!.roleId, version, sha256: digest };
   });
-  const canonicalCore = JSON.stringify({
-    surface: "claude",
-    catalogMetadataHash: catalogHash,
-    roles: (attestedRoles as readonly Record<string, unknown>[]).map((entry) => ({
-      roleId: entry.roleId,
-      version: entry.version,
-      sha256: entry.sha256,
-    })),
-  });
+  const canonicalCore = serializePromptSurfaceManifestCore(
+    "claude",
+    catalogHash,
+    validatedRoles,
+  );
   if (Reflect.get(value, "surfaceDigest") !== sha256Hex(canonicalCore)) {
     throw new Error(
       "rendered prompt surface.json.surfaceDigest does not match the attested contents",
