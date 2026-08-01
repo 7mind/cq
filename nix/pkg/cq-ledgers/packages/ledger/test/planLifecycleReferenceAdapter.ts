@@ -32,14 +32,14 @@ import {
   type PlanReviewDefectBatch,
   type PlanWriteProvenance,
 } from "../src/index.js";
+import type { PlanLifecycleSerializationContender } from "../src/store/planLifecycleSerialization.js";
+import {
+  OneShotSerializationBoundary,
+  type SerializationRaceResult,
+} from "./planLifecycleSerializationBoundary.js";
 
 export type ReferenceGoalPhase =
-  | "clarifying"
-  | "planning"
-  | "planned"
-  | "building"
-  | "done"
-  | "abandoned";
+  "clarifying" | "planning" | "planned" | "building" | "done" | "abandoned";
 
 export interface ReferencePublicClaim {
   readonly goalId: string;
@@ -176,6 +176,11 @@ export interface SeedDecisionOptions {
 
 export interface PlanLifecycleContractFixture {
   readonly lifecycle: PlanLifecycleStore;
+  raceAtSerializationBoundary<Holder, Peer>(
+    contender: PlanLifecycleSerializationContender,
+    startHolder: () => Promise<Holder>,
+    startPeer: () => Promise<Peer>,
+  ): Promise<SerializationRaceResult<Holder, Peer>>;
   seedGoal(options: SeedGoalOptions): Promise<void>;
   seedWork(goalId: string, options: SeedWorkOptions): Promise<void>;
   seedReview(options: SeedReviewOptions): Promise<void>;
@@ -324,7 +329,16 @@ interface RecordedOperation {
 class ReferenceMutex {
   private tail: Promise<void> = Promise.resolve();
 
-  async run<T>(operation: () => T | Promise<T>): Promise<T> {
+  constructor(
+    private readonly boundaryHook: (
+      contender: PlanLifecycleSerializationContender,
+    ) => Promise<void>,
+  ) {}
+
+  async run<T>(
+    operation: () => T | Promise<T>,
+    contender?: PlanLifecycleSerializationContender,
+  ): Promise<T> {
     let release!: () => void;
     const predecessor = this.tail;
     this.tail = new Promise<void>((resolve) => {
@@ -332,6 +346,7 @@ class ReferenceMutex {
     });
     await predecessor;
     try {
+      if (contender !== undefined) await this.boundaryHook(contender);
       return await operation();
     } finally {
       release();
@@ -340,7 +355,7 @@ class ReferenceMutex {
 }
 
 class ReferencePlanLifecycleBackend {
-  readonly mutex = new ReferenceMutex();
+  readonly mutex: ReferenceMutex;
   readonly goals = new Map<string, MutableGoal>();
   readonly claims = new Map<string, PlanPrivateClaimRecord>();
   readonly operations = new Map<string, RecordedOperation>();
@@ -358,6 +373,10 @@ class ReferencePlanLifecycleBackend {
   researchCounter = 0;
   defectCounter = 0;
   decisionCounter = 0;
+
+  constructor(readonly serializationBoundary: OneShotSerializationBoundary) {
+    this.mutex = new ReferenceMutex(serializationBoundary.hook);
+  }
 }
 
 interface SerializedReferencePlanLifecycleBackend {
@@ -407,9 +426,12 @@ function serializeBackend(backend: ReferencePlanLifecycleBackend): string {
   return JSON.stringify(state);
 }
 
-function deserializeBackend(serialized: string): ReferencePlanLifecycleBackend {
+function deserializeBackend(
+  serialized: string,
+  serializationBoundary: OneShotSerializationBoundary,
+): ReferencePlanLifecycleBackend {
   const state = JSON.parse(serialized) as SerializedReferencePlanLifecycleBackend;
-  const backend = new ReferencePlanLifecycleBackend();
+  const backend = new ReferencePlanLifecycleBackend(serializationBoundary);
   for (const [key, value] of state.goals) backend.goals.set(key, value);
   for (const [key, value] of state.claims) backend.claims.set(key, value);
   for (const [key, value] of state.operations) backend.operations.set(key, value);
@@ -447,10 +469,7 @@ function payloadVerifier(input: unknown): string {
   return createHash("sha256").update(JSON.stringify(input), "utf8").digest("hex");
 }
 
-function sameDraftIdentity(
-  left: PlanDraftIdentity | null,
-  right: PlanDraftIdentity,
-): boolean {
+function sameDraftIdentity(left: PlanDraftIdentity | null, right: PlanDraftIdentity): boolean {
   return (
     left !== null &&
     left.goalId === right.goalId &&
@@ -545,6 +564,14 @@ export class ReferencePlanLifecycleAdapter
   readonly lifecycle: PlanLifecycleStore = this;
 
   constructor(private readonly backend: ReferencePlanLifecycleBackend) {}
+
+  raceAtSerializationBoundary<Holder, Peer>(
+    contender: PlanLifecycleSerializationContender,
+    startHolder: () => Promise<Holder>,
+    startPeer: () => Promise<Peer>,
+  ): Promise<SerializationRaceResult<Holder, Peer>> {
+    return this.backend.serializationBoundary.race(contender, startHolder, startPeer);
+  }
 
   async seedGoal(options: SeedGoalOptions): Promise<void> {
     await this.backend.mutex.run(() => {
@@ -687,12 +714,12 @@ export class ReferencePlanLifecycleAdapter
       const claim =
         goal.activeClaimId === null
           ? null
-          : [...this.backend.claims.values()].find(
+          : ([...this.backend.claims.values()].find(
               (record) =>
                 record.goalId === goalId &&
                 record.claimId === goal.activeClaimId &&
                 record.state === "active",
-            ) ?? null;
+            ) ?? null);
       const tasks = [...this.backend.tasks.values()]
         .filter((task) => task.goalId === goalId)
         .sort((left, right) => left.id.localeCompare(right.id));
@@ -740,9 +767,12 @@ export class ReferencePlanLifecycleAdapter
   }
 
   async restart(): Promise<PlanLifecycleContractFixture> {
-    return this.backend.mutex.run(
-      () => new ReferencePlanLifecycleAdapter(deserializeBackend(serializeBackend(this.backend))),
-    );
+    return this.backend.mutex.run(() => {
+      const serializationBoundary = new OneShotSerializationBoundary();
+      return new ReferencePlanLifecycleAdapter(
+        deserializeBackend(serializeBackend(this.backend), serializationBoundary),
+      );
+    });
   }
 
   async rawMutateManagedState(goalId: string): Promise<void> {
@@ -771,7 +801,7 @@ export class ReferencePlanLifecycleAdapter
       }
       task.status = "wip";
       task.provenance = clone(provenance);
-    });
+    }, "task-start");
   }
 
   async blockTask(taskId: string, provenance: PlanWriteProvenance): Promise<void> {
@@ -786,7 +816,7 @@ export class ReferencePlanLifecycleAdapter
       }
       task.status = "blocked";
       task.provenance = clone(provenance);
-    });
+    }, "task-block");
   }
 
   async seedQuestion(goalId: string, refs: readonly string[]): Promise<{ id: string }> {
@@ -813,9 +843,7 @@ export class ReferencePlanLifecycleAdapter
       const task = this.backend.tasks.get(taskId);
       if (task === undefined) throw new Error(`task not found: ${taskId}`);
       if (task.status !== "done" && task.status !== "abandoned") {
-        throw new Error(
-          `cannot reopen task ${taskId} in non-terminal status ${task.status}`,
-        );
+        throw new Error(`cannot reopen task ${taskId} in non-terminal status ${task.status}`);
       }
       if (!task.executable) {
         throw new Error("task belongs to a draft or superseded manifest");
@@ -828,145 +856,144 @@ export class ReferencePlanLifecycleAdapter
 
   async claimPlan(rawInput: PlanClaimInput): Promise<PlanClaimResult> {
     const input = PlanClaimInputSchema.parse(rawInput);
-    return this.backend.mutex.run(() => {
-      const existing = this.backend.claims.get(
-        claimScope(input.goalId, input.claimRequestId),
-      );
-      if (existing !== undefined) return replayPlanClaim(existing, input);
+    return this.backend.mutex.run(
+      () => {
+        const existing = this.backend.claims.get(claimScope(input.goalId, input.claimRequestId));
+        if (existing !== undefined) return replayPlanClaim(existing, input);
 
-      const goal = this.backend.goals.get(input.goalId);
-      if (goal === undefined) {
-        return PlanClaimResultSchema.parse({
-          ok: false,
-          conflict: { code: "goal-not-found", goalId: input.goalId },
-        });
-      }
-      if (goal.activeClaimId !== null) {
-        const current = [...this.backend.claims.values()].find(
-          (record) =>
-            record.goalId === input.goalId &&
-            record.claimId === goal.activeClaimId &&
-            record.state === "active",
-        );
-        if (current === undefined) throw new Error("active claim record is absent");
-        return PlanClaimResultSchema.parse({
-          ok: false,
-          conflict: {
-            code: "claim-active",
-            goalId: current.goalId,
-            claimId: current.claimId,
-            generation: current.generation,
-          },
-        });
-      }
-      const phase = resolvePlanClaimPhase(input.goalId, input.purpose, goal.phase);
-      if (!phase.ok) {
-        return PlanClaimResultSchema.parse({ ok: false, conflict: phase.conflict });
-      }
-      if (goal.generation !== input.expectedGeneration) {
-        return PlanClaimResultSchema.parse({
-          ok: false,
-          conflict: {
-            code: "stale-generation",
-            goalId: input.goalId,
-            expectedGeneration: input.expectedGeneration,
-            currentGeneration: goal.generation,
-          },
-        });
-      }
-      const activeResearchIds = goal.waitingResearches.filter((id) => {
-        const status = this.backend.researches.get(id)?.status;
-        return status === "open" || status === "wip" || status === "inconclusive";
-      });
-      if (activeResearchIds.length > 0) {
-        return PlanClaimResultSchema.parse({
-          ok: false,
-          conflict: {
-            code: "research-wait-active",
-            goalId: input.goalId,
-            researchIds: activeResearchIds,
-          },
-        });
-      }
-
-      if (input.purpose === "follow-up") {
-        const activeTasks = this.declaredTasks(goal).filter(
-          ({ status }) => status === "wip" || status === "blocked",
-        );
-        if (activeTasks.length > 0) {
+        const goal = this.backend.goals.get(input.goalId);
+        if (goal === undefined) {
+          return PlanClaimResultSchema.parse({
+            ok: false,
+            conflict: { code: "goal-not-found", goalId: input.goalId },
+          });
+        }
+        if (goal.activeClaimId !== null) {
+          const current = [...this.backend.claims.values()].find(
+            (record) =>
+              record.goalId === input.goalId &&
+              record.claimId === goal.activeClaimId &&
+              record.state === "active",
+          );
+          if (current === undefined) throw new Error("active claim record is absent");
           return PlanClaimResultSchema.parse({
             ok: false,
             conflict: {
-              code: "implementation-active",
-              goalId: input.goalId,
-              tasks: activeTasks.map(({ id, status }) => ({
-                taskId: id,
-                status,
-              })),
+              code: "claim-active",
+              goalId: current.goalId,
+              claimId: current.claimId,
+              generation: current.generation,
             },
           });
         }
-      }
+        const phase = resolvePlanClaimPhase(input.goalId, input.purpose, goal.phase);
+        if (!phase.ok) {
+          return PlanClaimResultSchema.parse({ ok: false, conflict: phase.conflict });
+        }
+        if (goal.generation !== input.expectedGeneration) {
+          return PlanClaimResultSchema.parse({
+            ok: false,
+            conflict: {
+              code: "stale-generation",
+              goalId: input.goalId,
+              expectedGeneration: input.expectedGeneration,
+              currentGeneration: goal.generation,
+            },
+          });
+        }
+        const activeResearchIds = goal.waitingResearches.filter((id) => {
+          const status = this.backend.researches.get(id)?.status;
+          return status === "open" || status === "wip" || status === "inconclusive";
+        });
+        if (activeResearchIds.length > 0) {
+          return PlanClaimResultSchema.parse({
+            ok: false,
+            conflict: {
+              code: "research-wait-active",
+              goalId: input.goalId,
+              researchIds: activeResearchIds,
+            },
+          });
+        }
 
-      const adoptedManifest =
-        goal.generation === null
-          ? {
-              milestoneIds: [...goal.milestoneIds],
-              taskIds: this.declaredTasks(goal).map(({ id }) => id),
-            }
-          : { milestoneIds: [], taskIds: [] };
-      if (input.purpose === "follow-up") this.applyFollowUpCleanup(goal);
+        if (input.purpose === "follow-up") {
+          const activeTasks = this.declaredTasks(goal).filter(
+            ({ status }) => status === "wip" || status === "blocked",
+          );
+          if (activeTasks.length > 0) {
+            return PlanClaimResultSchema.parse({
+              ok: false,
+              conflict: {
+                code: "implementation-active",
+                goalId: input.goalId,
+                tasks: activeTasks.map(({ id, status }) => ({
+                  taskId: id,
+                  status,
+                })),
+              },
+            });
+          }
+        }
 
-      const priorGeneration = goal.generation;
-      const generation = (goal.generation ?? 0) + 1;
-      const claimId = `claim_${++this.backend.claimCounter}`;
-      goal.generation = generation;
-      goal.activeClaimId = claimId;
-      goal.phase = phase.goalPhase;
-      goal.waitingResearches = [];
+        const adoptedManifest =
+          goal.generation === null
+            ? {
+                milestoneIds: [...goal.milestoneIds],
+                taskIds: this.declaredTasks(goal).map(({ id }) => id),
+              }
+            : { milestoneIds: [], taskIds: [] };
+        if (input.purpose === "follow-up") this.applyFollowUpCleanup(goal);
 
-      const record = PlanPrivateClaimRecordSchema.parse({
-        goalId: input.goalId,
-        claimId,
-        generation,
-        purpose: input.purpose,
-        claimRequestId: input.claimRequestId,
-        ownerFenceTokenVerifier: verifier(input.ownerFenceToken),
-        expectedGeneration: input.expectedGeneration,
-        priorGeneration,
-        previousGoalPhase: phase.previousGoalPhase,
-        goalPhase: phase.goalPhase,
-        legacyAdopted: adoptedManifest.milestoneIds.length > 0,
-        adoptedManifest,
-        waitingResearches: [],
-        author: input.author,
-        session: input.session,
-        state: "active",
-      });
-      this.backend.claims.set(claimScope(input.goalId, input.claimRequestId), record);
-      return PlanClaimResultSchema.parse({
-        ok: true,
-        replayed: false,
-        acknowledgement: {
+        const priorGeneration = goal.generation;
+        const generation = (goal.generation ?? 0) + 1;
+        const claimId = `claim_${++this.backend.claimCounter}`;
+        goal.generation = generation;
+        goal.activeClaimId = claimId;
+        goal.phase = phase.goalPhase;
+        goal.waitingResearches = [];
+
+        const record = PlanPrivateClaimRecordSchema.parse({
           goalId: input.goalId,
           claimId,
           generation,
           purpose: input.purpose,
           claimRequestId: input.claimRequestId,
-          ownerFenceToken: input.ownerFenceToken,
+          ownerFenceTokenVerifier: verifier(input.ownerFenceToken),
+          expectedGeneration: input.expectedGeneration,
+          priorGeneration,
           previousGoalPhase: phase.previousGoalPhase,
           goalPhase: phase.goalPhase,
           legacyAdopted: adoptedManifest.milestoneIds.length > 0,
           adoptedManifest,
           waitingResearches: [],
-        },
-      });
-    });
+          author: input.author,
+          session: input.session,
+          state: "active",
+        });
+        this.backend.claims.set(claimScope(input.goalId, input.claimRequestId), record);
+        return PlanClaimResultSchema.parse({
+          ok: true,
+          replayed: false,
+          acknowledgement: {
+            goalId: input.goalId,
+            claimId,
+            generation,
+            purpose: input.purpose,
+            claimRequestId: input.claimRequestId,
+            ownerFenceToken: input.ownerFenceToken,
+            previousGoalPhase: phase.previousGoalPhase,
+            goalPhase: phase.goalPhase,
+            legacyAdopted: adoptedManifest.milestoneIds.length > 0,
+            adoptedManifest,
+            waitingResearches: [],
+          },
+        });
+      },
+      input.purpose === "follow-up" ? "follow-up-claim" : undefined,
+    );
   }
 
-  async publishPlanDraft(
-    rawInput: PlanPublishDraftInput,
-  ): Promise<PlanPublishDraftResult> {
+  async publishPlanDraft(rawInput: PlanPublishDraftInput): Promise<PlanPublishDraftResult> {
     const input = PlanPublishDraftInputSchema.parse(rawInput);
     return this.backend.mutex.run(() => {
       const replay = this.replayOperation(input, "publish-draft", true);
@@ -1034,9 +1061,7 @@ export class ReferencePlanLifecycleAdapter
       const replay = this.replayOperation(input, "release", input.kind === "pause");
       if (replay !== null) return PlanReleaseResultSchema.parse(replay);
       const conflict =
-        input.kind === "pause"
-          ? this.ownerConflict(input)
-          : this.publicAbandonConflict(input);
+        input.kind === "pause" ? this.ownerConflict(input) : this.publicAbandonConflict(input);
       if (conflict !== null) {
         return PlanReleaseResultSchema.parse({ ok: false, conflict });
       }
@@ -1178,11 +1203,10 @@ export class ReferencePlanLifecycleAdapter
           },
         });
       }
-      const binding = resolvePlanFinalizeDraftBinding(
-        input,
-        goal.currentDraft.identity,
-        { reviewId: review.id, draft: review.draft },
-      );
+      const binding = resolvePlanFinalizeDraftBinding(input, goal.currentDraft.identity, {
+        reviewId: review.id,
+        draft: review.draft,
+      });
       if (!binding.ok) {
         return PlanFinalizeResultSchema.parse({
           ok: false,
@@ -1256,9 +1280,7 @@ export class ReferencePlanLifecycleAdapter
   /** Tasks under the goal's DECLARED milestones — the manifest the guard sees (T856). */
   private declaredTasks(goal: MutableGoal): MutableTask[] {
     const declared = new Set(goal.milestoneIds);
-    return [...this.backend.tasks.values()].filter((task) =>
-      declared.has(task.milestoneId),
-    );
+    return [...this.backend.tasks.values()].filter((task) => declared.has(task.milestoneId));
   }
 
   private static stripRefId(ref: string): string {
@@ -1392,16 +1414,8 @@ export class ReferencePlanLifecycleAdapter
         suggestedModel: task.suggestedModel ?? null,
         sourceRefs: [...(task.sourceRefs ?? [])],
         tags: [...(task.tags ?? [])],
-        dependsOn: materializeReferences(
-          task.dependsOn,
-          milestoneAllocations,
-          taskAllocations,
-        ),
-        blockedBy: materializeReferences(
-          task.blockedBy,
-          milestoneAllocations,
-          taskAllocations,
-        ),
+        dependsOn: materializeReferences(task.dependsOn, milestoneAllocations, taskAllocations),
+        blockedBy: materializeReferences(task.blockedBy, milestoneAllocations, taskAllocations),
         executable: false,
         provenance: { author: input.author, session: input.session },
       });
@@ -1438,12 +1452,7 @@ export class ReferencePlanLifecycleAdapter
     if (goal === undefined) return { code: "goal-not-found", goalId: input.goalId };
     const current = this.activeClaim(goal);
     if (current === null) {
-      return claimConflict(
-        "claim-not-active",
-        input.goalId,
-        input.claimId,
-        input.generation,
-      );
+      return claimConflict("claim-not-active", input.goalId, input.claimId, input.generation);
     }
     if (current.claimId !== input.claimId) {
       return {
@@ -1480,12 +1489,7 @@ export class ReferencePlanLifecycleAdapter
     if (goal === undefined) return { code: "goal-not-found", goalId: input.goalId };
     const current = this.activeClaim(goal);
     if (current === null) {
-      return claimConflict(
-        "claim-not-active",
-        input.goalId,
-        input.claimId,
-        input.generation,
-      );
+      return claimConflict("claim-not-active", input.goalId, input.claimId, input.generation);
     }
     if (current.claimId !== input.claimId) {
       return {
@@ -1511,10 +1515,13 @@ export class ReferencePlanLifecycleAdapter
     input: PlanPublishDraftInput | PlanReleaseInput | PlanFinalizeInput,
     operation: "publish-draft" | "release" | "finalize",
     requiresOwner: boolean,
-  ): { readonly ok: true; readonly replayed: true; readonly acknowledgement: unknown } | {
-    readonly ok: false;
-    readonly conflict: PlanConflict;
-  } | null {
+  ):
+    | { readonly ok: true; readonly replayed: true; readonly acknowledgement: unknown }
+    | {
+        readonly ok: false;
+        readonly conflict: PlanConflict;
+      }
+    | null {
     const key = operationScope(
       input.goalId,
       input.claimId,
@@ -1526,9 +1533,7 @@ export class ReferencePlanLifecycleAdapter
     if (recorded === undefined) return null;
     if (requiresOwner) {
       const ownerInput = input as
-        | PlanPublishDraftInput
-        | Extract<PlanReleaseInput, { kind: "pause" }>
-        | PlanFinalizeInput;
+        PlanPublishDraftInput | Extract<PlanReleaseInput, { kind: "pause" }> | PlanFinalizeInput;
       const claim = [...this.backend.claims.values()].find(
         (candidate) =>
           candidate.goalId === input.goalId &&
@@ -1578,13 +1583,7 @@ export class ReferencePlanLifecycleAdapter
     acknowledgement: unknown,
   ): void {
     this.backend.operations.set(
-      operationScope(
-        input.goalId,
-        input.claimId,
-        input.generation,
-        operation,
-        input.operationId,
-      ),
+      operationScope(input.goalId, input.claimId, input.generation, operation, input.operationId),
       {
         replay: {
           goalId: input.goalId,
@@ -1599,11 +1598,7 @@ export class ReferencePlanLifecycleAdapter
     );
   }
 
-  private releaseClaim(
-    goal: MutableGoal,
-    claimId: string,
-    state: "released" | "finalized",
-  ): void {
+  private releaseClaim(goal: MutableGoal, claimId: string, state: "released" | "finalized"): void {
     const entry = [...this.backend.claims.entries()].find(
       ([, record]) =>
         record.goalId === goal.goalId &&
@@ -1621,6 +1616,8 @@ export const referencePlanLifecycleFactory: PlanLifecycleContractFactory = {
   classification: "Behavioral-Active Blackbox-Atomic",
   progression: false,
   async build(): Promise<PlanLifecycleContractFixture> {
-    return new ReferencePlanLifecycleAdapter(new ReferencePlanLifecycleBackend());
+    return new ReferencePlanLifecycleAdapter(
+      new ReferencePlanLifecycleBackend(new OneShotSerializationBoundary()),
+    );
   },
 };

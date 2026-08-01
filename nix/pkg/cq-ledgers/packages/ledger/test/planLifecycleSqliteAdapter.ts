@@ -20,13 +20,25 @@ import type {
   PlanLifecycleContractFactory,
   PlanLifecycleContractFixture,
 } from "./planLifecycleReferenceAdapter.js";
+import type {
+  SqliteRaceOperation,
+  SqliteRaceOperationResult,
+  SqliteRaceWorkerResponse,
+} from "./planLifecycleSqliteRaceProtocol.js";
+import {
+  OneShotSerializationBoundary,
+  type SerializationLaunchRole,
+} from "./planLifecycleSerializationBoundary.js";
 
 type SqliteLifecycleStore = SqliteLedgerStore & PlanLifecycleStore;
 
 class AlternatingSqliteLifecycle implements PlanLifecycleStore {
   private nextIndex = 0;
 
-  constructor(private readonly stores: readonly SqliteLifecycleStore[]) {}
+  constructor(
+    private readonly stores: readonly SqliteLifecycleStore[],
+    private readonly raceWorker: SqliteRaceWorker,
+  ) {}
 
   private next(): SqliteLifecycleStore {
     const store = this.stores[this.nextIndex % this.stores.length];
@@ -36,7 +48,12 @@ class AlternatingSqliteLifecycle implements PlanLifecycleStore {
   }
 
   claimPlan(input: PlanClaimInput): Promise<PlanClaimResult> {
-    return this.next().claimPlan(input);
+    const store = this.next();
+    const role = this.raceWorker.currentLaunchRole();
+    if (input.purpose === "follow-up" && role !== null) {
+      return this.raceWorker.run<PlanClaimResult>({ kind: "follow-up-claim", input }, role);
+    }
+    return store.claimPlan(input);
   }
 
   publishPlanDraft(input: PlanPublishDraftInput): Promise<PlanPublishDraftResult> {
@@ -52,6 +69,75 @@ class AlternatingSqliteLifecycle implements PlanLifecycleStore {
   }
 }
 
+const HOLD_STATE_INDEX = 0;
+const RELEASED = 2;
+
+class SqliteRaceWorker {
+  constructor(
+    private readonly dbPath: string,
+    private readonly serializationBoundary: OneShotSerializationBoundary,
+  ) {}
+
+  currentLaunchRole(): SerializationLaunchRole | null {
+    return this.serializationBoundary.currentLaunchRole();
+  }
+
+  run<Result extends SqliteRaceOperationResult>(
+    operation: SqliteRaceOperation,
+    role: SerializationLaunchRole,
+  ): Promise<Result> {
+    const expected = role === "holder" ? this.serializationBoundary.expectedContender() : null;
+    if (role === "holder" && expected === null) {
+      throw new Error("SQLite serialization holder started without an armed contender");
+    }
+    const holdBuffer = role === "holder" ? new SharedArrayBuffer(4) : null;
+    const worker = new Worker(new URL("./planLifecycleSqliteRaceWorker.ts", import.meta.url).href);
+    return new Promise<Result>((resolve, reject) => {
+      let settled = false;
+      const releaseWorker = (): void => {
+        if (holdBuffer === null) return;
+        const state = new Int32Array(holdBuffer);
+        Atomics.store(state, HOLD_STATE_INDEX, RELEASED);
+        Atomics.notify(state, HOLD_STATE_INDEX);
+      };
+      const finish = (result: Result): void => {
+        if (settled) return;
+        settled = true;
+        worker.terminate();
+        resolve(result);
+      };
+      const fail = (error: unknown): void => {
+        if (settled) return;
+        settled = true;
+        releaseWorker();
+        worker.terminate();
+        reject(error);
+      };
+      worker.onmessage = (event: MessageEvent<SqliteRaceWorkerResponse>): void => {
+        const response = event.data;
+        if (response.type === "held") {
+          void this.serializationBoundary.arrive(response.contender).then(releaseWorker, fail);
+          return;
+        }
+        if (response.type === "error") {
+          fail(new Error(response.message));
+          return;
+        }
+        finish(response.result as Result);
+      };
+      worker.onerror = (event): void => {
+        fail(new Error(event.message));
+      };
+      worker.postMessage({
+        dbPath: this.dbPath,
+        operation,
+        expected,
+        holdBuffer,
+      });
+    });
+  }
+}
+
 class SqlitePlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<SqliteLifecycleStore> {
   /**
    * Fixtures spawned by {@link restart}. Each owns its OWN mkdtemp root (a
@@ -64,14 +150,19 @@ class SqlitePlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<SqliteL
     readonly root: string,
     readonly dbPath: string,
     readonly stores: readonly [SqliteLifecycleStore, SqliteLifecycleStore],
+    serializationBoundary: OneShotSerializationBoundary,
+    private readonly raceWorker: SqliteRaceWorker,
   ) {
-    super(stores[0], new AlternatingSqliteLifecycle(stores));
+    super(
+      stores[0],
+      new AlternatingSqliteLifecycle(stores, raceWorker),
+      undefined,
+      serializationBoundary,
+    );
   }
 
-  static async createFromPath(
-    root: string,
-    dbPath: string,
-  ): Promise<SqlitePlanLifecycleFixture> {
+  static async createFromPath(root: string, dbPath: string): Promise<SqlitePlanLifecycleFixture> {
+    const serializationBoundary = new OneShotSerializationBoundary();
     const first = new SqliteLedgerStore({ dbPath });
     const second = new SqliteLedgerStore({ dbPath });
     await first.init();
@@ -80,7 +171,27 @@ class SqlitePlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<SqliteL
       root,
       dbPath,
       [first as SqliteLifecycleStore, second as SqliteLifecycleStore],
+      serializationBoundary,
+      new SqliteRaceWorker(dbPath, serializationBoundary),
     );
+  }
+
+  override async startTask(
+    taskId: string,
+    provenance: { author: string; session?: string },
+  ): Promise<void> {
+    const role = this.raceWorker.currentLaunchRole();
+    if (role === null) return super.startTask(taskId, provenance);
+    await this.raceWorker.run<void>({ kind: "task-start", taskId, provenance }, role);
+  }
+
+  override async blockTask(
+    taskId: string,
+    provenance: { author: string; session?: string },
+  ): Promise<void> {
+    const role = this.raceWorker.currentLaunchRole();
+    if (role === null) return super.blockTask(taskId, provenance);
+    await this.raceWorker.run<void>({ kind: "task-block", taskId, provenance }, role);
   }
 
   static async create(): Promise<SqlitePlanLifecycleFixture> {

@@ -45,21 +45,13 @@ import {
   LedgerError,
   LedgerNotFoundError,
 } from "../types.js";
-import {
-  parseLedger,
-  parseArchive,
-  parseMilestoneItemArchive,
-} from "../parser/parse.js";
+import { parseLedger, parseArchive, parseMilestoneItemArchive } from "../parser/parse.js";
 import {
   serializeLedger,
   serializeArchive as serializeArchiveImpl,
   serializeMilestoneItemArchive,
 } from "../parser/serialize.js";
-import {
-  EMPTY_REGISTRY,
-  parseRegistry,
-  serializeRegistry,
-} from "../registry.js";
+import { EMPTY_REGISTRY, parseRegistry, serializeRegistry } from "../registry.js";
 import type { LedgerRegistry, LedgerRegistryEntry } from "../types.js";
 import {
   applyCreateItem,
@@ -142,6 +134,11 @@ import {
   assertRawPlanCreateAllowed,
   assertRawPlanUpdateAllowed,
 } from "./planLifecycleGuards.js";
+import {
+  rawTaskSerializationContender,
+  type PlanLifecycleSerializationBoundaryHook,
+  type PlanLifecycleSerializationContender,
+} from "./planLifecycleSerialization.js";
 
 // Moved to schemaCompat.ts (T527) so the sqlite backend's module graph stays
 // free of this file's parser/serialize funnel; re-exported for compatibility.
@@ -171,6 +168,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
   protected initialised = false;
   private readonly planClaims = new Map<string, PlanPrivateClaimRecord>();
   private readonly planOperations = new Map<string, InMemoryPlanOperationRecord>();
+  private readonly planSerializationBoundaryHook: PlanLifecycleSerializationBoundaryHook | null;
 
   protected constructor(opts: {
     persistence: P;
@@ -178,12 +176,14 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     now: () => string;
     onMutation: OnMutation | null;
     onSchemaDivergence: "backup-reinit" | "abort";
+    planSerializationBoundaryHook: PlanLifecycleSerializationBoundaryHook | null;
   }) {
     this.persistence = opts.persistence;
     this.lockfile = opts.lockfile;
     this.now = opts.now;
     this.onMutation = opts.onMutation;
     this.onSchemaDivergence = opts.onSchemaDivergence;
+    this.planSerializationBoundaryHook = opts.planSerializationBoundaryHook;
   }
 
   // ---------------------------------------------------------------------------
@@ -204,10 +204,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
    * are rebuilt, and the user `onMutation` hook has run. The FS backend overrides
    * this to schedule its `~/.cache` mirror. Default: no-op. MUST NOT throw.
    */
-  protected afterMutation(
-    _ledgerId: string,
-    _op: "create" | "update" | "archive",
-  ): void {
+  protected afterMutation(_ledgerId: string, _op: "create" | "update" | "archive"): void {
     /* default: backends with no post-write side-channel do nothing */
   }
 
@@ -233,10 +230,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
    * The ARCHIVED FTS docs (which only change on an `archive` op, and require
    * I/O) are refreshed by `archiveMilestone`/`unarchiveItem` themselves.
    */
-  protected fireMutation(
-    ledgerId: string,
-    op: "create" | "update" | "archive",
-  ): void {
+  protected fireMutation(ledgerId: string, op: "create" | "update" | "archive"): void {
     this.rebuildLedgerIndexActive(ledgerId);
     if (this.onMutation !== null) {
       try {
@@ -263,9 +257,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
       this.searchIndex.rebuildLedgerActive(ledgerId, activeItemsOf(ledger));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
-        `LedgerStore: FTS active-rebuild threw for ${ledgerId}: ${msg}\n`,
-      );
+      process.stderr.write(`LedgerStore: FTS active-rebuild threw for ${ledgerId}: ${msg}\n`);
     }
   }
 
@@ -282,9 +274,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
       this.searchIndex.setLedgerArchived(ledgerId, archived);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
-        `LedgerStore: FTS archived-refresh threw for ${ledgerId}: ${msg}\n`,
-      );
+      process.stderr.write(`LedgerStore: FTS archived-refresh threw for ${ledgerId}: ${msg}\n`);
     }
   }
 
@@ -306,9 +296,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     const isMilestones = ledger.id === MILESTONES_LEDGER;
     for (const ptr of ledger.archivePointers) {
       if (ptr.title !== "" && ptr.status !== "") continue; // already populated
-      const locator = isMilestones
-        ? ptr.path
-        : `./archive/${MILESTONES_LEDGER}/${ptr.id}.md`;
+      const locator = isMilestones ? ptr.path : `./archive/${MILESTONES_LEDGER}/${ptr.id}.md`;
       let text: string;
       try {
         text = await this.persistence.readArchive(locator);
@@ -435,13 +423,11 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
       }
       if (isMilestones) {
         // Bootstrap the immortal M-AMBIENT milestone (§8b) if missing.
-        const before = ledger.milestones.find(
-          (m) => m.id === MILESTONES_ACTIVE_GROUP_ID,
-        )?.items.length;
+        const before = ledger.milestones.find((m) => m.id === MILESTONES_ACTIVE_GROUP_ID)?.items
+          .length;
         applyEnsureAmbientMilestone(ledger, this.now());
-        const after = ledger.milestones.find(
-          (m) => m.id === MILESTONES_ACTIVE_GROUP_ID,
-        )?.items.length;
+        const after = ledger.milestones.find((m) => m.id === MILESTONES_ACTIVE_GROUP_ID)?.items
+          .length;
         if (before !== after) needsWrite = true;
       }
       if (needsWrite) await this.writeLedgerFile(ledger);
@@ -467,9 +453,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
   }
 
   async dispose(): Promise<void> {
-    const drains = Array.from(this.mutexes.values()).map((m) =>
-      m.run(async () => undefined),
-    );
+    const drains = Array.from(this.mutexes.values()).map((m) => m.run(async () => undefined));
     await Promise.all(drains);
     // Drain any backend-owned in-flight fire-and-forget work (e.g. the FS
     // cache mirror) — extends the D-LED-06 drain contract to the backend.
@@ -482,23 +466,22 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
   }
 
   async claimPlan(input: PlanClaimInput): Promise<PlanClaimResult> {
-    return this.runPlanLifecycleMutation((state) => claimInMemoryPlan(state, input));
+    return this.runPlanLifecycleMutation(
+      (state) => claimInMemoryPlan(state, input),
+      input.purpose === "follow-up" ? "follow-up-claim" : null,
+    );
   }
 
   async publishPlanDraft(input: PlanPublishDraftInput): Promise<PlanPublishDraftResult> {
-    return this.runPlanLifecycleMutation((state) =>
-      publishInMemoryPlanDraft(state, input),
-    );
+    return this.runPlanLifecycleMutation((state) => publishInMemoryPlanDraft(state, input), null);
   }
 
   async releasePlanClaim(input: PlanReleaseInput): Promise<PlanReleaseResult> {
-    return this.runPlanLifecycleMutation((state) =>
-      releaseInMemoryPlanClaim(state, input),
-    );
+    return this.runPlanLifecycleMutation((state) => releaseInMemoryPlanClaim(state, input), null);
   }
 
   async finalizePlan(input: PlanFinalizeInput): Promise<PlanFinalizeResult> {
-    return this.runPlanLifecycleMutation((state) => finalizeInMemoryPlan(state, input));
+    return this.runPlanLifecycleMutation((state) => finalizeInMemoryPlan(state, input), null);
   }
 
   // ---------------------------------------------------------------------------
@@ -511,10 +494,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
   }
 
   fetch(ledgerId: string): FetchedLedger {
-    return materialiseFetchedLedger(
-      this.getLedger(ledgerId),
-      this.getLedger(MILESTONES_LEDGER),
-    );
+    return materialiseFetchedLedger(this.getLedger(ledgerId), this.getLedger(MILESTONES_LEDGER));
   }
 
   fetchItem(ledgerId: string, itemId: string): Item {
@@ -566,9 +546,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     const ledger = this.getLedger(ledgerId);
     const ptr = ledger.archivePointers.find((p) => p.id === archiveId);
     if (ptr === undefined) {
-      throw new LedgerError(
-        `archive ${archiveId} not found in ledger ${ledgerId}`,
-      );
+      throw new LedgerError(`archive ${archiveId} not found in ledger ${ledgerId}`);
     }
     const text = await this.persistence.readArchive(ptr.path);
     if (ledgerId === MILESTONES_LEDGER) {
@@ -640,10 +618,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     };
   }
 
-  async updateMilestone(
-    milestoneId: string,
-    patch: UpdateMilestoneItemPatch,
-  ): Promise<Item> {
+  async updateMilestone(milestoneId: string, patch: UpdateMilestoneItemPatch): Promise<Item> {
     const item = await this.withMilestonesLock(async () => {
       // H41/D61: reload the milestones ledger from the ref tip under the lock so
       // we mutate fresh in-memory state (counters + items), not a stale cache.
@@ -664,13 +639,13 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     return item;
   }
 
-  async updateItem(
-    ledgerId: string,
-    itemId: string,
-    patch: UpdateItemPatch,
-  ): Promise<Item> {
+  async updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Promise<Item> {
     const it = await this.withFreshGoalsForPlanGuard(ledgerId, () =>
       this.withLock(ledgerId, async () => {
+        const contender = rawTaskSerializationContender(ledgerId, patch.status);
+        if (contender !== null && this.planSerializationBoundaryHook !== null) {
+          await this.planSerializationBoundaryHook(contender);
+        }
         // H41/D61: reload from the ref tip under the lock before reading/mutating.
         await this.reloadLedgerFromDisk(ledgerId);
         const ledger = this.getLedger(ledgerId);
@@ -682,12 +657,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
           itemId,
           patch,
         );
-        const precondition = this.statusChangePrecondition(
-          ledgerId,
-          ledger,
-          itemId,
-          patch,
-        );
+        const precondition = this.statusChangePrecondition(ledgerId, ledger, itemId, patch);
         const x = applyUpdateItem(
           ledger,
           itemId,
@@ -704,11 +674,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     return it;
   }
 
-  async createItem(
-    ledgerId: string,
-    milestoneId: string,
-    init: CreateItemInit,
-  ): Promise<Item> {
+  async createItem(ledgerId: string, milestoneId: string, init: CreateItemInit): Promise<Item> {
     if (ledgerId === MILESTONES_LEDGER) {
       throw new BootstrapViolationError(
         `use createMilestone to add an item to the ${MILESTONES_LEDGER} ledger`,
@@ -725,11 +691,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
           // allocation + mutation so fresh counters/items are used.
           await this.reloadLedgerFromDisk(ledgerId);
           const ledger = this.getLedger(ledgerId);
-          assertRawPlanCreateAllowed(
-            (id) => this.planGuardLedger(id),
-            ledgerId,
-            init.fields,
-          );
+          assertRawPlanCreateAllowed((id) => this.planGuardLedger(id), ledgerId, init.fields);
           const x = applyCreateItem(
             ledger,
             milestoneId,
@@ -768,14 +730,10 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
   async createLedger(name: string, schema: LedgerSchema): Promise<FetchedLedger> {
     this.assertInit();
     if (name === MILESTONES_LEDGER) {
-      throw new BootstrapViolationError(
-        `ledger name "${MILESTONES_LEDGER}" is reserved`,
-      );
+      throw new BootstrapViolationError(`ledger name "${MILESTONES_LEDGER}" is reserved`);
     }
     if (!/^[A-Za-z0-9_-]+$/.test(name)) {
-      throw new LedgerError(
-        `invalid ledger name "${name}": only A-Za-z0-9_- are allowed`,
-      );
+      throw new LedgerError(`invalid ledger name "${name}": only A-Za-z0-9_- are allowed`);
     }
     validateSchema(schema);
     if (this.ledgers.has(name)) {
@@ -810,11 +768,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     return result;
   }
 
-  async reopenItem(
-    ledgerId: string,
-    itemId: string,
-    toStatus: string,
-  ): Promise<Item> {
+  async reopenItem(ledgerId: string, itemId: string, toStatus: string): Promise<Item> {
     const it = await this.withFreshGoalsForPlanGuard(ledgerId, () =>
       this.withLock(ledgerId, async () => {
         // H41/D61: reload from the ref tip under the lock before reading/mutating.
@@ -845,11 +799,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     return it;
   }
 
-  async unarchiveItem(
-    ledgerId: string,
-    milestoneId: string,
-    itemId: string,
-  ): Promise<Item> {
+  async unarchiveItem(ledgerId: string, milestoneId: string, itemId: string): Promise<Item> {
     const isMilestones = ledgerId === MILESTONES_LEDGER;
     const reattached = await this.withLock(ledgerId, async () => {
       // H41/D61: reload from the ref tip under the lock before reading/mutating.
@@ -874,12 +824,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
             `archived item file ${milestoneId} in ledger ${ledgerId} does not contain item ${itemId}`,
           );
         }
-        const out = applyReattachItem(
-          ledger,
-          archivedItem.milestoneId,
-          archivedItem,
-          this.now(),
-        );
+        const out = applyReattachItem(ledger, archivedItem.milestoneId, archivedItem, this.now());
         // Per-item archive always becomes empty on extraction: remove the
         // file + its pointer entirely.
         await this.persistence.removeArchive(locator);
@@ -924,10 +869,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     return reattached;
   }
 
-  async archiveMilestone(
-    milestoneId: string,
-    summary: string,
-  ): Promise<ArchivePointer> {
+  async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
     // Snapshot the set of ledgers that will be archived so we can fire
     // per-participant hooks AFTER all writes complete + locks release.
     let participatingLedgers: string[] = [];
@@ -1103,10 +1045,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
    * order. `goals` sorts before `tasks`, so taking goals here and the target
    * ledger inside `fn` preserves the global order; do NOT invert them.
    */
-  private async withFreshGoalsForPlanGuard<T>(
-    ledgerId: string,
-    fn: () => Promise<T>,
-  ): Promise<T> {
+  private async withFreshGoalsForPlanGuard<T>(ledgerId: string, fn: () => Promise<T>): Promise<T> {
     if (ledgerId !== TASKS_LEDGER || !this.ledgers.has(GOALS_LEDGER)) return fn();
     return this.withLock(GOALS_LEDGER, async () => {
       await this.reloadLedgerFromDisk(GOALS_LEDGER);
@@ -1219,14 +1158,16 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
   }
 
   private async runPlanLifecycleMutation<T>(
-    mutate: (
-      state: InMemoryPlanLifecycleState,
-    ) => { result: T; dirtyLedgers: readonly string[] },
+    mutate: (state: InMemoryPlanLifecycleState) => { result: T; dirtyLedgers: readonly string[] },
+    contender: PlanLifecycleSerializationContender | null,
   ): Promise<T> {
     this.assertInit();
     const ledgerIds = this.lockableLedgerIds();
     const mutation = await this.withMilestonesLock(() =>
       this.withLocksInOrder(ledgerIds, async () => {
+        if (contender !== null && this.planSerializationBoundaryHook !== null) {
+          await this.planSerializationBoundaryHook(contender);
+        }
         await this.replayPlanLifecycleCommitUnderHeldLocks(ledgerIds);
         const beforeLedgers = cloneMap(this.ledgers);
         const beforeClaims = cloneMap(this.planClaims);
@@ -1288,10 +1229,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     return out;
   }
 
-  private async performArchive(
-    milestoneId: string,
-    summary: string,
-  ): Promise<ArchivePointer> {
+  private async performArchive(milestoneId: string, summary: string): Promise<ArchivePointer> {
     if (milestoneId === MILESTONES_ACTIVE_GROUP_ID) {
       throw new BootstrapViolationError(
         `the bootstrap group ${MILESTONES_ACTIVE_GROUP_ID} cannot be archived`,
@@ -1332,13 +1270,9 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     }
     // Phase 1b — verify the milestone-item itself is terminal.
     const milestonesLedger = this.getLedger(MILESTONES_LEDGER);
-    const group = milestonesLedger.milestones.find(
-      (m) => m.id === MILESTONES_ACTIVE_GROUP_ID,
-    );
+    const group = milestonesLedger.milestones.find((m) => m.id === MILESTONES_ACTIVE_GROUP_ID);
     if (group === undefined) {
-      throw new BootstrapViolationError(
-        `milestones ledger is missing its bootstrap group`,
-      );
+      throw new BootstrapViolationError(`milestones ledger is missing its bootstrap group`);
     }
     const milestoneItem = group.items.find((it) => it.id === milestoneId);
     if (milestoneItem === undefined) {
@@ -1365,7 +1299,8 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     }
     // Extract title and status from the milestoneItem (guaranteed non-null and
     // terminal after Phase 1b; used to populate the ArchivePointer fields).
-    const msTitle = typeof milestoneItem?.fields["title"] === "string" ? milestoneItem.fields["title"] : "";
+    const msTitle =
+      typeof milestoneItem?.fields["title"] === "string" ? milestoneItem.fields["title"] : "";
     const msStatus = milestoneItem?.status ?? "";
     // Phase 2 — for each non-milestones ledger with a matching group: detach
     // in-memory, write the archive file, write the ledger file.
@@ -1440,10 +1375,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     });
   }
 
-  private async withLocksInOrder<T>(
-    ledgerIds: string[],
-    fn: () => Promise<T>,
-  ): Promise<T> {
+  private async withLocksInOrder<T>(ledgerIds: string[], fn: () => Promise<T>): Promise<T> {
     if (ledgerIds.length === 0) return fn();
     const [head, ...tail] = ledgerIds;
     if (head === undefined) return fn();
@@ -1535,10 +1467,7 @@ function cloneFields(
 
 function cloneMap<K, V>(source: ReadonlyMap<K, V>): Map<K, V> {
   return new Map(
-    [...source.entries()].map(([key, value]) => [
-      key,
-      JSON.parse(JSON.stringify(value)) as V,
-    ]),
+    [...source.entries()].map(([key, value]) => [key, JSON.parse(JSON.stringify(value)) as V]),
   );
 }
 

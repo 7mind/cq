@@ -34,6 +34,7 @@ import { GitPlumbing } from "./GitPlumbing.js";
 import { GitPersistence } from "./GitPersistence.js";
 import type { ReadLogResult } from "../../mcp/readLog.js";
 import { DEFAULT_ON_SCHEMA_DIVERGENCE, LEDGER_STORAGE_DIRNAME } from "../../constants.js";
+import type { PlanLifecycleSerializationBoundaryHook } from "../planLifecycleSerialization.js";
 
 /** Default orphan branch the ledger tree lives on (short name, no `refs/`). */
 const DEFAULT_BRANCH = "cq-ledger";
@@ -69,6 +70,8 @@ export interface GitObjectLedgerBackendOpts {
    * MUST NOT block; a throw is logged and swallowed by the base.
    */
   onMutation?: OnMutation;
+  /** Test-only hook reached after the decisive plan-serialization lock stack is held. */
+  planSerializationBoundaryHook?: PlanLifecycleSerializationBoundaryHook;
   /**
    * Policy for an on-ref canonical ledger whose schema diverged from canon
    * (detected at init()):
@@ -94,8 +97,7 @@ export class GitObjectLedgerBackend
     const branch = opts.ref ?? DEFAULT_BRANCH;
     const ref = `refs/heads/${branch}`;
     const now = opts.now ?? (() => new Date().toISOString());
-    const git =
-      opts.git ?? GitPlumbing.withCwd(repoRoot, path.join(repoRoot, ".git"));
+    const git = opts.git ?? GitPlumbing.withCwd(repoRoot, path.join(repoRoot, ".git"));
     const persistence = new GitPersistence({ git, ref, now, repoRoot });
     super({
       persistence,
@@ -103,6 +105,7 @@ export class GitObjectLedgerBackend
       now,
       onMutation: opts.onMutation ?? null,
       onSchemaDivergence: opts.onSchemaDivergence ?? DEFAULT_ON_SCHEMA_DIVERGENCE,
+      planSerializationBoundaryHook: opts.planSerializationBoundaryHook ?? null,
     });
     this.repoRoot = repoRoot;
     this.locksDir = path.join(repoRoot, LEDGER_STORAGE_DIRNAME, ".locks");

@@ -149,6 +149,11 @@ import {
   assertRawPlanUpdateAllowed,
 } from "../planLifecycleGuards.js";
 import {
+  rawTaskSerializationContender,
+  type PlanLifecycleSerializationBoundaryHook,
+  type PlanLifecycleSerializationContender,
+} from "../planLifecycleSerialization.js";
+import {
   MAX_READ_LOG_BYTES,
   ReadLogNotImplementedError,
   type ReadLogResult,
@@ -176,6 +181,8 @@ export interface SqliteLedgerStoreOpts {
    * the write transaction COMMITs. Guarded: a throw is logged, never unwinds.
    */
   onMutation?: OnMutation;
+  /** Test-only synchronous hook reached immediately after `BEGIN IMMEDIATE`. */
+  planSerializationBoundaryHook?: PlanLifecycleSerializationBoundaryHook;
   /**
    * Policy for a persisted canonical-ledger schema that diverged from canon
    * (detected at init(), same detection as AbstractLedgerStore via
@@ -274,6 +281,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly now: () => string;
   /** Fired post-COMMIT by {@link fireMutation}; guarded. */
   protected readonly onMutation: OnMutation | null;
+  private readonly planSerializationBoundaryHook: PlanLifecycleSerializationBoundaryHook | null;
   private readonly onSchemaDivergence: "backup-reinit" | "abort";
   /** D170 destructive-intent gate — see {@link SqliteLedgerStoreOpts}. */
   private readonly allowDestructiveReinitOfPopulatedStore: boolean;
@@ -294,6 +302,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.logsDir = opts.logsDir;
     this.now = opts.now ?? (() => new Date().toISOString());
     this.onMutation = opts.onMutation ?? null;
+    this.planSerializationBoundaryHook = opts.planSerializationBoundaryHook ?? null;
     this.onSchemaDivergence = opts.onSchemaDivergence ?? DEFAULT_ON_SCHEMA_DIVERGENCE;
     this.allowDestructiveReinitOfPopulatedStore =
       opts.allowDestructiveReinitOfPopulatedStore ?? false;
@@ -556,9 +565,9 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
    * skips an already-v2 store, running twice yields byte-identical rows.
    */
   private migrateStoredRefsToV2(db: Database): void {
-    const versionRow = db
-      .query("SELECT value FROM meta WHERE key = 'schema_version'")
-      .get() as { value: number } | null;
+    const versionRow = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
+      value: number;
+    } | null;
     const version = versionRow === null ? 1 : Number(versionRow.value);
     if (version >= SCHEMA_VERSION) return;
 
@@ -579,14 +588,18 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       // input buildRefValidationContext feeds the writers, so the migration
       // resolves bare ids exactly as a subsequent write would.
       const registry = buildPrefixRegistry(
-        ledgerRows.map((r) => ({ name: r.name, schema: JSON.parse(r.schema_json) as LedgerSchema })),
+        ledgerRows.map((r) => ({
+          name: r.name,
+          schema: JSON.parse(r.schema_json) as LedgerSchema,
+        })),
       );
 
       // (b) Canonicalize dependsOn/blockedBy in active AND archived rows.
       for (const table of ["items", "archived_items"] as const) {
-        const rows = db
-          .query(`SELECT rowid AS rid, fields_json FROM ${table}`)
-          .all() as Array<{ rid: number; fields_json: string }>;
+        const rows = db.query(`SELECT rowid AS rid, fields_json FROM ${table}`).all() as Array<{
+          rid: number;
+          fields_json: string;
+        }>;
         const update = db.query(`UPDATE ${table} SET fields_json = ? WHERE rowid = ?`);
         for (const row of rows) {
           const fields = JSON.parse(row.fields_json) as Record<string, FieldValue>;
@@ -706,9 +719,9 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   // ---------------------------------------------------------------------------
 
   enumerate(): string[] {
-    const rows = this.db()
-      .query("SELECT name FROM ledgers ORDER BY name")
-      .all() as Array<{ name: string }>;
+    const rows = this.db().query("SELECT name FROM ledgers ORDER BY name").all() as Array<{
+      name: string;
+    }>;
     return rows.map((r) => r.name);
   }
 
@@ -762,9 +775,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   snapshot(): LedgerSnapshot {
-    return this.read(() =>
-      buildSnapshot(this.enumerate().map((name) => this.fetchView(name))),
-    );
+    return this.read(() => buildSnapshot(this.enumerate().map((name) => this.fetchView(name))));
   }
 
   search(ledgerId: string, query: string): Item[] {
@@ -852,10 +863,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   // reload-under-lock pattern: every read inside the transaction is fresh.
   // ---------------------------------------------------------------------------
 
-  async updateMilestone(
-    milestoneId: string,
-    patch: UpdateMilestoneItemPatch,
-  ): Promise<Item> {
+  async updateMilestone(milestoneId: string, patch: UpdateMilestoneItemPatch): Promise<Item> {
     const item = immediateWriteTransaction(this.db(), () => {
       const shim = this.singleItemShim(MILESTONES_LEDGER, milestoneId);
       const x = applyUpdateMilestoneItem(
@@ -874,12 +882,10 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     return item;
   }
 
-  async updateItem(
-    ledgerId: string,
-    itemId: string,
-    patch: UpdateItemPatch,
-  ): Promise<Item> {
+  async updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Promise<Item> {
+    const contender = rawTaskSerializationContender(ledgerId, patch.status);
     const item = immediateWriteTransaction(this.db(), () => {
+      if (contender !== null) this.reachPlanSerializationBoundary(contender);
       const shim = this.singleItemShim(ledgerId, itemId);
       assertRawPlanUpdateAllowed(
         this.planGuardStore(),
@@ -906,11 +912,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     return item;
   }
 
-  async createItem(
-    ledgerId: string,
-    milestoneId: string,
-    init: CreateItemInit,
-  ): Promise<Item> {
+  async createItem(ledgerId: string, milestoneId: string, init: CreateItemInit): Promise<Item> {
     if (ledgerId === MILESTONES_LEDGER) {
       throw new BootstrapViolationError(
         `use createMilestone to add an item to the ${MILESTONES_LEDGER} ledger`,
@@ -921,11 +923,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       // parity with AbstractLedgerStore.createItem: this check runs BEFORE
       // the target-ledger existence check (createItemShim below).
       assertMilestoneActive(this.loadLedger(MILESTONES_LEDGER), milestoneId);
-      assertRawPlanCreateAllowed(
-        (id) => this.loadLedger(id),
-        ledgerId,
-        init.fields,
-      );
+      assertRawPlanCreateAllowed((id) => this.loadLedger(id), ledgerId, init.fields);
       // T538 (D87): a MINIMAL shim of the target ledger (targeted row
       // queries) instead of materialising all N rows via loadLedger.
       const shim = this.createItemShim(ledgerId, milestoneId, init.id);
@@ -955,20 +953,17 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   async createLedger(name: string, schema: LedgerSchema): Promise<FetchedLedger> {
     this.assertInit();
     if (name === MILESTONES_LEDGER) {
-      throw new BootstrapViolationError(
-        `ledger name "${MILESTONES_LEDGER}" is reserved`,
-      );
+      throw new BootstrapViolationError(`ledger name "${MILESTONES_LEDGER}" is reserved`);
     }
     if (!LEDGER_NAME_RE.test(name)) {
-      throw new LedgerError(
-        `invalid ledger name "${name}": only A-Za-z0-9_- are allowed`,
-      );
+      throw new LedgerError(`invalid ledger name "${name}": only A-Za-z0-9_- are allowed`);
     }
     validateSchema(schema);
     const view = immediateWriteTransaction(this.db(), () => {
-      const rows = this.db()
-        .query("SELECT name, schema_json FROM ledgers")
-        .all() as Array<{ name: string; schema_json: string }>;
+      const rows = this.db().query("SELECT name, schema_json FROM ledgers").all() as Array<{
+        name: string;
+        schema_json: string;
+      }>;
       if (rows.some((r) => r.name === name)) {
         throw new DuplicateIdError("ledger", name);
       }
@@ -1023,11 +1018,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
    * `archived_items` row, and drops the `archive_pointers` row too when the
    * group archive becomes empty (parity with AbstractLedgerStore.unarchiveItem).
    */
-  async unarchiveItem(
-    ledgerId: string,
-    milestoneId: string,
-    itemId: string,
-  ): Promise<Item> {
+  async unarchiveItem(ledgerId: string, milestoneId: string, itemId: string): Promise<Item> {
     const isMilestones = ledgerId === MILESTONES_LEDGER;
     const item = immediateWriteTransaction(this.db(), () => {
       const db = this.db();
@@ -1074,9 +1065,11 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         reattached.author ?? null,
         reattached.session ?? null,
       );
-      db.query(
-        "DELETE FROM archived_items WHERE ledger = ? AND pointer_id = ? AND id = ?",
-      ).run(ledgerId, milestoneId, itemId);
+      db.query("DELETE FROM archived_items WHERE ledger = ? AND pointer_id = ? AND id = ?").run(
+        ledgerId,
+        milestoneId,
+        itemId,
+      );
       const remaining = db
         .query("SELECT COUNT(*) AS n FROM archived_items WHERE ledger = ? AND pointer_id = ?")
         .get(ledgerId, milestoneId) as { n: number };
@@ -1235,29 +1228,30 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     for (const id of participating) this.fireMutation(id, "archive");
     this.fireMutation(MILESTONES_LEDGER, "archive");
     if (pointer === undefined) {
-      throw new LedgerError(`SqliteLedgerStore: archiveMilestone(${milestoneId}) produced no pointer`);
+      throw new LedgerError(
+        `SqliteLedgerStore: archiveMilestone(${milestoneId}) produced no pointer`,
+      );
     }
     return pointer;
   }
 
   async claimPlan(input: PlanClaimInput): Promise<PlanClaimResult> {
-    return this.runPlanLifecycleMutation((state) => claimInMemoryPlan(state, input));
+    return this.runPlanLifecycleMutation(
+      (state) => claimInMemoryPlan(state, input),
+      input.purpose === "follow-up" ? "follow-up-claim" : null,
+    );
   }
 
   async publishPlanDraft(input: PlanPublishDraftInput): Promise<PlanPublishDraftResult> {
-    return this.runPlanLifecycleMutation((state) =>
-      publishInMemoryPlanDraft(state, input),
-    );
+    return this.runPlanLifecycleMutation((state) => publishInMemoryPlanDraft(state, input), null);
   }
 
   async releasePlanClaim(input: PlanReleaseInput): Promise<PlanReleaseResult> {
-    return this.runPlanLifecycleMutation((state) =>
-      releaseInMemoryPlanClaim(state, input),
-    );
+    return this.runPlanLifecycleMutation((state) => releaseInMemoryPlanClaim(state, input), null);
   }
 
   async finalizePlan(input: PlanFinalizeInput): Promise<PlanFinalizeResult> {
-    return this.runPlanLifecycleMutation((state) => finalizeInMemoryPlan(state, input));
+    return this.runPlanLifecycleMutation((state) => finalizeInMemoryPlan(state, input), null);
   }
 
   // ---------------------------------------------------------------------------
@@ -1297,8 +1291,10 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   private runPlanLifecycleMutation<T>(
     mutate: (state: InMemoryPlanLifecycleState) => InMemoryPlanMutation<T>,
+    contender: PlanLifecycleSerializationContender | null,
   ): T {
     const mutation = immediateWriteTransaction(this.db(), () => {
+      if (contender !== null) this.reachPlanSerializationBoundary(contender);
       const state = this.loadPlanLifecycleState();
       const result = mutate(state);
       for (const ledgerId of new Set(result.dirtyLedgers)) {
@@ -1321,6 +1317,16 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     return mutation.result;
   }
 
+  private reachPlanSerializationBoundary(contender: PlanLifecycleSerializationContender): void {
+    if (this.planSerializationBoundaryHook === null) return;
+    const result = this.planSerializationBoundaryHook(contender);
+    if (result instanceof Promise) {
+      throw new LedgerError(
+        "SqliteLedgerStore planSerializationBoundaryHook must complete synchronously",
+      );
+    }
+  }
+
   private loadPlanLifecycleState(): InMemoryPlanLifecycleState {
     const ledgers = new Map(
       this.enumerate().map((ledgerId) => [ledgerId, this.loadLedger(ledgerId)]),
@@ -1335,10 +1341,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     for (const row of this.db()
       .query("SELECT scope, record_json FROM plan_operations")
       .all() as PlanRecordRow[]) {
-      operations.set(
-        row.scope,
-        JSON.parse(row.record_json) as InMemoryPlanOperationRecord,
-      );
+      operations.set(row.scope, JSON.parse(row.record_json) as InMemoryPlanOperationRecord);
     }
     return { ledgers, claims, operations, now: this.now };
   }
@@ -1360,9 +1363,11 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     const db = this.db();
     db.query("DELETE FROM items WHERE ledger = ?").run(ledger.id);
     db.query("DELETE FROM groups WHERE ledger = ?").run(ledger.id);
-    db.query(
-      "UPDATE ledgers SET milestone_counter = ?, item_counter = ? WHERE name = ?",
-    ).run(ledger.counters.milestone, ledger.counters.item, ledger.id);
+    db.query("UPDATE ledgers SET milestone_counter = ?, item_counter = ? WHERE name = ?").run(
+      ledger.counters.milestone,
+      ledger.counters.item,
+      ledger.id,
+    );
     const insertGroup = db.query(
       "INSERT INTO groups (ledger, id, title, description) VALUES (?, ?, ?, ?)",
     );
@@ -1373,12 +1378,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     for (const milestone of ledger.milestones) {
-      insertGroup.run(
-        ledger.id,
-        milestone.id,
-        milestone.title,
-        milestone.description,
-      );
+      insertGroup.run(ledger.id, milestone.id, milestone.title, milestone.description);
       for (const item of milestone.items) {
         insertItem.run(
           ledger.id,
@@ -1407,9 +1407,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       this.searchIndex.upsertActiveDoc(ledgerId, cloneItem(item));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
-        `LedgerStore: FTS active-upsert threw for ${ledgerId}: ${msg}\n`,
-      );
+      process.stderr.write(`LedgerStore: FTS active-upsert threw for ${ledgerId}: ${msg}\n`);
     }
   }
 
@@ -1427,9 +1425,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       this.searchIndex.upsertArchivedDoc(ledgerId, cloneItem(item));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
-        `LedgerStore: FTS archive-move threw for ${ledgerId}: ${msg}\n`,
-      );
+      process.stderr.write(`LedgerStore: FTS archive-move threw for ${ledgerId}: ${msg}\n`);
     }
   }
 
@@ -1447,9 +1443,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       this.searchIndex.upsertActiveDoc(ledgerId, cloneItem(item));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
-        `LedgerStore: FTS unarchive-move threw for ${ledgerId}: ${msg}\n`,
-      );
+      process.stderr.write(`LedgerStore: FTS unarchive-move threw for ${ledgerId}: ${msg}\n`);
     }
   }
 
@@ -1474,9 +1468,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       this.searchIndex.rebuildLedgerActive(ledgerId, rows.map(rowToItem));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
-        `LedgerStore: FTS active-rebuild threw for ${ledgerId}: ${msg}\n`,
-      );
+      process.stderr.write(`LedgerStore: FTS active-rebuild threw for ${ledgerId}: ${msg}\n`);
     }
   }
 
@@ -1498,9 +1490,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       this.searchIndex.setLedgerArchived(ledgerId, rows.map(rowToItem));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
-        `LedgerStore: FTS archived-refresh threw for ${ledgerId}: ${msg}\n`,
-      );
+      process.stderr.write(`LedgerStore: FTS archived-refresh threw for ${ledgerId}: ${msg}\n`);
     }
   }
 
@@ -1807,9 +1797,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   private assertLedgerExists(ledgerId: string): void {
-    const row = this.db()
-      .query("SELECT name FROM ledgers WHERE name = ?")
-      .get(ledgerId);
+    const row = this.db().query("SELECT name FROM ledgers WHERE name = ?").get(ledgerId);
     if (row === null) throw new LedgerNotFoundError(ledgerId);
   }
 
@@ -1867,22 +1855,17 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       // The pointer path is derived, not stored: this backend has no archive
       // FILES — T529 materialises ArchiveContent from archived_items rows —
       // but the ArchivePointer shape carries the fs-convention locator.
-      archivePointers: pointerRows.map(
-        (p): ArchivePointer => ({
-          id: p.id,
-          path: `./archive/${name}/${p.id}.md`,
-          summary: p.summary,
-          title: p.title,
-          status: p.status,
-        }),
-      ),
+      archivePointers: pointerRows.map((p): ArchivePointer => ({
+        id: p.id,
+        path: `./archive/${name}/${p.id}.md`,
+        summary: p.summary,
+        title: p.title,
+        status: p.status,
+      })),
     };
   }
 
   private fetchView(ledgerId: string): FetchedLedger {
-    return materialiseFetchedLedger(
-      this.loadLedger(ledgerId),
-      this.loadLedger(MILESTONES_LEDGER),
-    );
+    return materialiseFetchedLedger(this.loadLedger(ledgerId), this.loadLedger(MILESTONES_LEDGER));
   }
 }

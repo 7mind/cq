@@ -16,6 +16,7 @@ import type {
   PlanLifecycleContractFactory,
   PlanLifecycleContractFixture,
 } from "./planLifecycleReferenceAdapter.js";
+import { OneShotSerializationBoundary } from "./planLifecycleSerializationBoundary.js";
 
 type PersistentStore = LedgerStore & PlanLifecycleStore;
 
@@ -48,14 +49,22 @@ class PersistentPlanLifecycleFixture extends InMemoryPlanLifecycleFixture {
   private constructor(
     store: PersistentStore,
     private readonly location: PersistentLocation,
-    private readonly openStore: () => Promise<PersistentStore>,
+    private readonly openStore: (
+      serializationBoundary: OneShotSerializationBoundary,
+    ) => Promise<PersistentStore>,
+    serializationBoundary: OneShotSerializationBoundary,
   ) {
-    super(store, openStore, (ledgerIds) => persistDirectLedgers(store, ledgerIds));
+    super(
+      store,
+      () => openStore(new OneShotSerializationBoundary()),
+      (ledgerIds) => persistDirectLedgers(store, ledgerIds),
+      serializationBoundary,
+    );
   }
 
   static async createAt(
     root: string,
-    openStore: () => Promise<PersistentStore>,
+    openStore: (serializationBoundary: OneShotSerializationBoundary) => Promise<PersistentStore>,
   ): Promise<PersistentPlanLifecycleFixture> {
     const location = new PersistentLocation(root);
     return PersistentPlanLifecycleFixture.open(location, openStore);
@@ -63,11 +72,12 @@ class PersistentPlanLifecycleFixture extends InMemoryPlanLifecycleFixture {
 
   private static async open(
     location: PersistentLocation,
-    openStore: () => Promise<PersistentStore>,
+    openStore: (serializationBoundary: OneShotSerializationBoundary) => Promise<PersistentStore>,
   ): Promise<PersistentPlanLifecycleFixture> {
-    const store = await openStore();
+    const serializationBoundary = new OneShotSerializationBoundary();
+    const store = await openStore(serializationBoundary);
     location.track(store);
-    return new PersistentPlanLifecycleFixture(store, location, openStore);
+    return new PersistentPlanLifecycleFixture(store, location, openStore, serializationBoundary);
   }
 
   override async restart(): Promise<PlanLifecycleContractFixture> {
@@ -85,8 +95,11 @@ export const fsPlanLifecycleFactory: PlanLifecycleContractFactory = {
   progression: false,
   async build() {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-lifecycle-fs-"));
-    return PersistentPlanLifecycleFixture.createAt(root, async () => {
-      const store = new FsLedgerStore({ root });
+    return PersistentPlanLifecycleFixture.createAt(root, async (serializationBoundary) => {
+      const store = new FsLedgerStore({
+        root,
+        planSerializationBoundaryHook: serializationBoundary.hook,
+      });
       await store.init();
       return store;
     });
@@ -100,8 +113,11 @@ export const gitPlanLifecycleFactory: PlanLifecycleContractFactory = {
   async build() {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-lifecycle-git-"));
     execFileSync("git", ["init", "--quiet"], { cwd: root });
-    return PersistentPlanLifecycleFixture.createAt(root, async () => {
-      const store = new GitObjectLedgerBackend({ repoRoot: root });
+    return PersistentPlanLifecycleFixture.createAt(root, async (serializationBoundary) => {
+      const store = new GitObjectLedgerBackend({
+        repoRoot: root,
+        planSerializationBoundaryHook: serializationBoundary.hook,
+      });
       await store.init();
       return store;
     });

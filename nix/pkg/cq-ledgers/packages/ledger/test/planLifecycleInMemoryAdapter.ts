@@ -24,6 +24,7 @@ import {
 } from "../src/index.js";
 import type { InMemoryPlanOperationRecord } from "../src/store/inMemoryPlanLifecycle.js";
 import { readInMemoryPlanState } from "../src/store/inMemoryPlanLifecycle.js";
+import type { PlanLifecycleSerializationContender } from "../src/store/planLifecycleSerialization.js";
 import type {
   PlanLifecycleContractFactory,
   PlanLifecycleContractFixture,
@@ -39,6 +40,10 @@ import type {
   SeedReviewOptions,
   SeedWorkOptions,
 } from "./planLifecycleReferenceAdapter.js";
+import {
+  OneShotSerializationBoundary,
+  type SerializationRaceResult,
+} from "./planLifecycleSerializationBoundary.js";
 
 const SEED_PROVENANCE = { author: "seed", session: "seed-session" } as const;
 
@@ -55,7 +60,11 @@ function internals(store: LifecycleBackedLedgerStore): InMemoryInternals {
   return store as unknown as InMemoryInternals;
 }
 
-function findMutableItem(store: LifecycleBackedLedgerStore, ledgerId: string, itemId: string): Item {
+function findMutableItem(
+  store: LifecycleBackedLedgerStore,
+  ledgerId: string,
+  itemId: string,
+): Item {
   const source = internals(store).ledgers.get(ledgerId);
   if (source === undefined) throw new Error(`ledger not found: ${ledgerId}`);
   for (const milestone of source.milestones) {
@@ -109,9 +118,7 @@ function stripInternalRef(ref: string): string {
 }
 
 function reviewId(item: Item): string {
-  const ref = refValues(item, "ledgerRefs").find((value) =>
-    value.startsWith(`${REVIEWS_LEDGER}:`),
-  );
+  const ref = refValues(item, "ledgerRefs").find((value) => value.startsWith(`${REVIEWS_LEDGER}:`));
   if (ref === undefined) throw new Error(`missing review link on ${item.id}`);
   return ref.slice(REVIEWS_LEDGER.length + 1);
 }
@@ -123,7 +130,16 @@ export abstract class LedgerStorePlanLifecycleFixture<
     readonly store: Store,
     readonly lifecycle: PlanLifecycleStore = store,
     protected readonly persistDirect?: (ledgerIds: readonly string[]) => Promise<void>,
+    protected readonly serializationBoundary = new OneShotSerializationBoundary(),
   ) {}
+
+  raceAtSerializationBoundary<Holder, Peer>(
+    contender: PlanLifecycleSerializationContender,
+    startHolder: () => Promise<Holder>,
+    startPeer: () => Promise<Peer>,
+  ): Promise<SerializationRaceResult<Holder, Peer>> {
+    return this.serializationBoundary.race(contender, startHolder, startPeer);
+  }
 
   protected abstract seedUpdate(
     ledgerId: string,
@@ -215,19 +231,13 @@ export abstract class LedgerStorePlanLifecycleFixture<
         ...SEED_PROVENANCE,
       });
     }
-    await this.persistDirect?.([
-      MILESTONES_LEDGER,
-      TASKS_LEDGER,
-      GOALS_LEDGER,
-    ]);
+    await this.persistDirect?.([MILESTONES_LEDGER, TASKS_LEDGER, GOALS_LEDGER]);
   }
 
   async seedReview(options: SeedReviewOptions): Promise<void> {
     const defectIds = allItems(this.store, DEFECTS_LEDGER)
       .filter((item) =>
-        refValues(item, "ledgerRefs").includes(
-          `${REVIEWS_LEDGER}:${options.reviewId}`,
-        ),
+        refValues(item, "ledgerRefs").includes(`${REVIEWS_LEDGER}:${options.reviewId}`),
       )
       .map(({ id }) => id);
     await this.store.createItem(REVIEWS_LEDGER, MILESTONES_AMBIENT_ID, {
@@ -239,9 +249,7 @@ export abstract class LedgerStorePlanLifecycleFixture<
         ...(defectIds.length === 0 ? {} : { defects: defectIds }),
       },
       author: options.provenance.author,
-      ...(options.provenance.session === undefined
-        ? {}
-        : { session: options.provenance.session }),
+      ...(options.provenance.session === undefined ? {} : { session: options.provenance.session }),
     });
   }
 
@@ -251,15 +259,10 @@ export abstract class LedgerStorePlanLifecycleFixture<
       status: "locked",
       fields: {
         headline: options.headline,
-        ledgerRefs: [
-          `${GOALS_LEDGER}:${options.goalId}`,
-          `${REVIEWS_LEDGER}:${options.reviewId}`,
-        ],
+        ledgerRefs: [`${GOALS_LEDGER}:${options.goalId}`, `${REVIEWS_LEDGER}:${options.reviewId}`],
       },
       author: options.provenance.author,
-      ...(options.provenance.session === undefined
-        ? {}
-        : { session: options.provenance.session }),
+      ...(options.provenance.session === undefined ? {} : { session: options.provenance.session }),
     });
   }
 
@@ -296,98 +299,82 @@ export abstract class LedgerStorePlanLifecycleFixture<
     const milestones = [...milestoneIds]
       .map((id) => this.store.fetchItem(MILESTONES_LEDGER, id))
       .sort((a, b) => a.id.localeCompare(b.id))
-      .map(
-        (item): ReferencePublicMilestone => ({
-          id: item.id,
-          goalId,
-          status: item.status as ReferencePublicMilestone["status"],
-          title: optionalString(item, "title") ?? "",
-          description: optionalString(item, "description"),
-          dependsOn: refValues(item, "dependsOn").map(stripInternalRef),
-          blockedBy: refValues(item, "blockedBy").map(stripInternalRef),
-          taskIds: tasks
-            .filter(({ milestoneId }) => milestoneId === item.id)
-            .map(({ id }) => id),
-          provenance: provenance(item),
-        }),
-      );
-    const finalizedTaskIds = new Set(
-      plan.finalizedManifest?.tasks.map(({ id }) => id) ?? [],
-    );
-    const publicTasks = tasks.map(
-      (item): ReferencePublicTask => ({
+      .map((item): ReferencePublicMilestone => ({
         id: item.id,
         goalId,
-        milestoneId: item.milestoneId,
-        status: item.status as ReferencePublicTask["status"],
-        headline: optionalString(item, "headline") ?? "",
+        status: item.status as ReferencePublicMilestone["status"],
+        title: optionalString(item, "title") ?? "",
         description: optionalString(item, "description"),
-        acceptance: optionalString(item, "acceptance"),
-        suggestedModel: optionalString(item, "suggestedModel"),
-        sourceRefs: refValues(item, "sourceRefs"),
-        tags: refValues(item, "tags"),
         dependsOn: refValues(item, "dependsOn").map(stripInternalRef),
         blockedBy: refValues(item, "blockedBy").map(stripInternalRef),
-        executable: finalizedTaskIds.has(item.id),
+        taskIds: tasks.filter(({ milestoneId }) => milestoneId === item.id).map(({ id }) => id),
         provenance: provenance(item),
-      }),
-    );
+      }));
+    const finalizedTaskIds = new Set(plan.finalizedManifest?.tasks.map(({ id }) => id) ?? []);
+    const publicTasks = tasks.map((item): ReferencePublicTask => ({
+      id: item.id,
+      goalId,
+      milestoneId: item.milestoneId,
+      status: item.status as ReferencePublicTask["status"],
+      headline: optionalString(item, "headline") ?? "",
+      description: optionalString(item, "description"),
+      acceptance: optionalString(item, "acceptance"),
+      suggestedModel: optionalString(item, "suggestedModel"),
+      sourceRefs: refValues(item, "sourceRefs"),
+      tags: refValues(item, "tags"),
+      dependsOn: refValues(item, "dependsOn").map(stripInternalRef),
+      blockedBy: refValues(item, "blockedBy").map(stripInternalRef),
+      executable: finalizedTaskIds.has(item.id),
+      provenance: provenance(item),
+    }));
     const questions = goalOwned(allItems(this.store, QUESTIONS_LEDGER), goalId)
       .sort((a, b) => a.id.localeCompare(b.id))
-      .map(
-        (item): ReferencePublicQuestion => ({
-          id: item.id,
-          goalId,
-          status: item.status,
-          text: optionalString(item, "question") ?? "",
-          context: optionalString(item, "context"),
-          suggestions: refValues(item, "suggestions"),
-          recommendation: optionalString(item, "recommendation"),
-          ledgerRefs: refValues(item, "ledgerRefs"),
-          provenance: provenance(item),
-        }),
-      );
+      .map((item): ReferencePublicQuestion => ({
+        id: item.id,
+        goalId,
+        status: item.status,
+        text: optionalString(item, "question") ?? "",
+        context: optionalString(item, "context"),
+        suggestions: refValues(item, "suggestions"),
+        recommendation: optionalString(item, "recommendation"),
+        ledgerRefs: refValues(item, "ledgerRefs"),
+        provenance: provenance(item),
+      }));
     const researches = goalOwned(allItems(this.store, RESEARCHES_LEDGER), goalId)
       .sort((a, b) => a.id.localeCompare(b.id))
-      .map(
-        (item): ReferencePublicResearch => ({
-          id: item.id,
-          goalId,
-          status: item.status,
-          text: optionalString(item, "question") ?? "",
-          scope: optionalString(item, "scope"),
-          provenance: provenance(item),
-        }),
-      );
+      .map((item): ReferencePublicResearch => ({
+        id: item.id,
+        goalId,
+        status: item.status,
+        text: optionalString(item, "question") ?? "",
+        scope: optionalString(item, "scope"),
+        provenance: provenance(item),
+      }));
     const defects = goalOwned(allItems(this.store, DEFECTS_LEDGER), goalId)
       .sort((a, b) => a.id.localeCompare(b.id))
-      .map(
-        (item): ReferencePublicDefect => ({
-          id: item.id,
-          goalId,
-          status: item.status,
-          text: optionalString(item, "headline") ?? "",
-          reviewId: reviewId(item),
-          severity: optionalString(item, "severity") as ReferencePublicDefect["severity"],
-          description: optionalString(item, "description"),
-          rootCause: optionalString(item, "rootCause"),
-          suggestedFix: optionalString(item, "suggestedFix"),
-          sourceRefs: refValues(item, "sourceRefs"),
-          tags: refValues(item, "tags"),
-          provenance: provenance(item),
-        }),
-      );
+      .map((item): ReferencePublicDefect => ({
+        id: item.id,
+        goalId,
+        status: item.status,
+        text: optionalString(item, "headline") ?? "",
+        reviewId: reviewId(item),
+        severity: optionalString(item, "severity") as ReferencePublicDefect["severity"],
+        description: optionalString(item, "description"),
+        rootCause: optionalString(item, "rootCause"),
+        suggestedFix: optionalString(item, "suggestedFix"),
+        sourceRefs: refValues(item, "sourceRefs"),
+        tags: refValues(item, "tags"),
+        provenance: provenance(item),
+      }));
     const reviews = goalOwned(allItems(this.store, REVIEWS_LEDGER), goalId)
       .sort((a, b) => a.id.localeCompare(b.id))
-      .map(
-        (item): ReferencePublicReview => ({
-          id: item.id,
-          goalId,
-          status: item.status as ReferencePublicReview["status"],
-          draft: JSON.parse(optionalString(item, PLAN_REVIEW_DRAFT_FIELD) ?? "null"),
-          provenance: provenance(item),
-        }),
-      );
+      .map((item): ReferencePublicReview => ({
+        id: item.id,
+        goalId,
+        status: item.status as ReferencePublicReview["status"],
+        draft: JSON.parse(optionalString(item, PLAN_REVIEW_DRAFT_FIELD) ?? "null"),
+        provenance: provenance(item),
+      }));
     const decisions = goalOwned(allItems(this.store, DECISIONS_LEDGER), goalId)
       .sort((a, b) => a.id.localeCompare(b.id))
       .map((item) => ({
@@ -483,14 +470,18 @@ export class InMemoryPlanLifecycleFixture extends LedgerStorePlanLifecycleFixtur
     store: LifecycleBackedLedgerStore,
     private readonly restartBuilder?: () => Promise<LifecycleBackedLedgerStore>,
     persistDirect?: (ledgerIds: readonly string[]) => Promise<void>,
+    serializationBoundary = new OneShotSerializationBoundary(),
   ) {
-    super(store, store, persistDirect);
+    super(store, store, persistDirect, serializationBoundary);
   }
 
   static async create(): Promise<InMemoryPlanLifecycleFixture> {
-    const store = new InMemoryLedgerStore();
+    const serializationBoundary = new OneShotSerializationBoundary();
+    const store = new InMemoryLedgerStore({
+      planSerializationBoundaryHook: serializationBoundary.hook,
+    });
     await store.init();
-    return new InMemoryPlanLifecycleFixture(store);
+    return new InMemoryPlanLifecycleFixture(store, undefined, undefined, serializationBoundary);
   }
 
   protected async seedUpdate(
@@ -510,9 +501,13 @@ export class InMemoryPlanLifecycleFixture extends LedgerStorePlanLifecycleFixtur
         this.persistDirect === undefined
           ? undefined
           : async (ledgerIds) => persistDirectLedgers(next, ledgerIds),
+        new OneShotSerializationBoundary(),
       );
     }
-    const next = new InMemoryLedgerStore();
+    const serializationBoundary = new OneShotSerializationBoundary();
+    const next = new InMemoryLedgerStore({
+      planSerializationBoundaryHook: serializationBoundary.hook,
+    });
     await next.init();
     const source = internals(this.store);
     const target = internals(next);
@@ -526,7 +521,7 @@ export class InMemoryPlanLifecycleFixture extends LedgerStorePlanLifecycleFixtur
     for (const [key, value] of source.planOperations!) {
       target.planOperations!.set(key, clone(value));
     }
-    return new InMemoryPlanLifecycleFixture(next);
+    return new InMemoryPlanLifecycleFixture(next, undefined, undefined, serializationBoundary);
   }
 }
 

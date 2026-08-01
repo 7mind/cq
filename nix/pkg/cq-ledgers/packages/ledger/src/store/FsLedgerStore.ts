@@ -42,6 +42,7 @@ import {
 } from "../constants.js";
 import { AbstractLedgerStore, activeItemsOf } from "./AbstractLedgerStore.js";
 import { FsPersistence } from "./FsPersistence.js";
+import type { PlanLifecycleSerializationBoundaryHook } from "./planLifecycleSerialization.js";
 
 /**
  * Result of {@link FsLedgerStore.reset}: the absolute path the prior on-disk
@@ -77,6 +78,8 @@ export interface FsLedgerStoreOpts {
    * ledger, including the milestones ledger). NOT fired for reads.
    */
   onMutation?: OnMutation;
+  /** Test-only hook reached after the decisive plan-serialization lock stack is held. */
+  planSerializationBoundaryHook?: PlanLifecycleSerializationBoundaryHook;
   /**
    * Policy for an on-disk canonical ledger whose schema has diverged from
    * its canonical bootstrap schema (detected at init()).
@@ -90,10 +93,7 @@ export interface FsLedgerStoreOpts {
   onSchemaDivergence?: "backup-reinit" | "abort";
 }
 
-export class FsLedgerStore
-  extends AbstractLedgerStore<FsPersistence>
-  implements LedgerStore
-{
+export class FsLedgerStore extends AbstractLedgerStore<FsPersistence> implements LedgerStore {
   private readonly root: string;
   private readonly logsDir: string;
   private readonly locksDir: string;
@@ -114,6 +114,7 @@ export class FsLedgerStore
       now,
       onMutation: opts.onMutation ?? null,
       onSchemaDivergence: opts.onSchemaDivergence ?? DEFAULT_ON_SCHEMA_DIVERGENCE,
+      planSerializationBoundaryHook: opts.planSerializationBoundaryHook ?? null,
     });
     // The seam's divergence backup must enumerate the store's CURRENT registry
     // (held in the base) to copy + unlink the non-canonical ledger files; bind
@@ -227,10 +228,7 @@ export class FsLedgerStore
     // Normalise the requested relative path, then resolve under logsDir and
     // verify containment (defence-in-depth against `..` traversal).
     const resolved = path.resolve(this.logsDir, rel);
-    if (
-      resolved !== this.logsDir &&
-      !resolved.startsWith(this.logsDir + path.sep)
-    ) {
+    if (resolved !== this.logsDir && !resolved.startsWith(this.logsDir + path.sep)) {
       throw new LedgerError(
         `read_log: path escapes ${LEDGER_LOGS_RELATIVE_PREFIX} root: ${relPath}`,
       );

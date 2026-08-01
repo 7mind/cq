@@ -25,6 +25,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { SQL } from "bun";
 import {
   ensureSchema,
@@ -41,11 +42,13 @@ import {
   type PlanReleaseInput,
   type PlanReleaseResult,
 } from "../src/index.js";
+import type { PlanLifecycleSerializationContender } from "../src/store/planLifecycleSerialization.js";
 import { LedgerStorePlanLifecycleFixture } from "./planLifecycleInMemoryAdapter.js";
 import type {
   PlanLifecycleContractFactory,
   PlanLifecycleContractFixture,
 } from "./planLifecycleReferenceAdapter.js";
+import { OneShotSerializationBoundary } from "./planLifecycleSerializationBoundary.js";
 
 const PG_URL_ENV = "CQ_TEST_PG_URL";
 /** Prefix distinguishing this suite's throwaway tenants from every other one. */
@@ -65,12 +68,64 @@ export function postgresTestDsn(): string {
 export async function openTenantStore(
   dsn: string,
   projectKey: string,
+  serializationHarness?: PostgresSerializationHarness,
 ): Promise<PostgresLifecycleStore> {
-  const pool = openPgPool(dsn);
-  await ensureSchema(pool);
+  const rawPool = openPgPool(dsn);
+  await ensureSchema(rawPool);
+  const pool = serializationHarness?.wrapPool(rawPool) ?? rawPool;
   const store = new PostgresLedgerStore({ pool, projectKey, displayName: projectKey });
   await store.init();
   return store as PostgresLifecycleStore;
+}
+
+class PostgresSerializationHarness {
+  private readonly contender = new AsyncLocalStorage<PlanLifecycleSerializationContender>();
+
+  constructor(readonly boundary: OneShotSerializationBoundary) {}
+
+  run<Result>(
+    contender: PlanLifecycleSerializationContender,
+    operation: () => Promise<Result>,
+  ): Promise<Result> {
+    return this.contender.run(contender, operation);
+  }
+
+  wrapPool(pool: SQL): SQL {
+    return this.proxySql(pool, true);
+  }
+
+  private proxySql<Sql extends SQL>(sql: Sql, wrapBegin: boolean): Sql {
+    return new Proxy(sql, {
+      apply: (target, _thisArgument, argumentsList) => {
+        const query = Reflect.apply(
+          target as unknown as (...args: unknown[]) => unknown,
+          target,
+          argumentsList,
+        );
+        if (!this.isGoalRowLock(argumentsList[0])) return query;
+        const contender = this.contender.getStore();
+        if (contender === undefined) return query;
+        return Promise.resolve(query).then(async (result) => {
+          await this.boundary.hook(contender);
+          return result;
+        });
+      },
+      get: (target, property) => {
+        if (wrapBegin && property === "begin") {
+          return <Result>(callback: SQL.TransactionContextCallback<Result>) =>
+            target.begin((transaction) => callback(this.proxySql(transaction, false)));
+        }
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as Sql;
+  }
+
+  private isGoalRowLock(template: unknown): boolean {
+    if (!Array.isArray(template)) return false;
+    const sql = template.join("?");
+    return /SELECT\s+1\s+FROM\s+items[\s\S]*FOR\s+UPDATE/i.test(sql);
+  }
 }
 
 /** Copy every row this tenant owns into `to` — the fixture's restart primitive. */
@@ -139,7 +194,10 @@ export async function dropTenant(admin: SQL, projectKey: string): Promise<void> 
 class AlternatingPostgresLifecycle implements PlanLifecycleStore {
   private nextIndex = 0;
 
-  constructor(private readonly stores: readonly PostgresLifecycleStore[]) {}
+  constructor(
+    private readonly stores: readonly PostgresLifecycleStore[],
+    private readonly serializationHarness: PostgresSerializationHarness,
+  ) {}
 
   private next(): PostgresLifecycleStore {
     const store = this.stores[this.nextIndex % this.stores.length];
@@ -148,9 +206,7 @@ class AlternatingPostgresLifecycle implements PlanLifecycleStore {
     return store;
   }
 
-  private async dispatch<T>(
-    op: (store: PostgresLifecycleStore) => Promise<T>,
-  ): Promise<T> {
+  private async dispatch<T>(op: (store: PostgresLifecycleStore) => Promise<T>): Promise<T> {
     const store = this.next();
     try {
       return await op(store);
@@ -162,6 +218,11 @@ class AlternatingPostgresLifecycle implements PlanLifecycleStore {
   }
 
   claimPlan(input: PlanClaimInput): Promise<PlanClaimResult> {
+    if (input.purpose === "follow-up") {
+      return this.serializationHarness.run("follow-up-claim", () =>
+        this.dispatch((store) => store.claimPlan(input)),
+      );
+    }
     return this.dispatch((store) => store.claimPlan(input));
   }
 
@@ -206,8 +267,14 @@ class PostgresPlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<Postg
     private readonly lease: TenantLease,
     private readonly ownsAdmin: boolean,
     stores: readonly [PostgresLifecycleStore, PostgresLifecycleStore],
+    private readonly serializationHarness: PostgresSerializationHarness,
   ) {
-    super(stores[0], new AlternatingPostgresLifecycle(stores));
+    super(
+      stores[0],
+      new AlternatingPostgresLifecycle(stores, serializationHarness),
+      undefined,
+      serializationHarness.boundary,
+    );
   }
 
   private static async openOver(
@@ -215,13 +282,36 @@ class PostgresPlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<Postg
     lease: TenantLease,
     ownsAdmin: boolean,
   ): Promise<PostgresPlanLifecycleFixture> {
+    const serializationHarness = new PostgresSerializationHarness(
+      new OneShotSerializationBoundary(),
+    );
     // Sequential init: both stores auto-register the same tenant on connect, so
     // letting them race the bootstrap writes would be testing Postgres, not the
     // fence.
-    const first = await openTenantStore(lease.dsn, lease.projectKey);
-    const second = await openTenantStore(lease.dsn, lease.projectKey);
+    const first = await openTenantStore(lease.dsn, lease.projectKey, serializationHarness);
+    const second = await openTenantStore(lease.dsn, lease.projectKey, serializationHarness);
     lease.stores.push(first, second);
-    return new PostgresPlanLifecycleFixture(admin, lease, ownsAdmin, [first, second]);
+    return new PostgresPlanLifecycleFixture(
+      admin,
+      lease,
+      ownsAdmin,
+      [first, second],
+      serializationHarness,
+    );
+  }
+
+  override startTask(
+    taskId: string,
+    provenance: { author: string; session?: string },
+  ): Promise<void> {
+    return this.serializationHarness.run("task-start", () => super.startTask(taskId, provenance));
+  }
+
+  override blockTask(
+    taskId: string,
+    provenance: { author: string; session?: string },
+  ): Promise<void> {
+    return this.serializationHarness.run("task-block", () => super.blockTask(taskId, provenance));
   }
 
   static async create(): Promise<PostgresPlanLifecycleFixture> {

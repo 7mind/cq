@@ -8,13 +8,7 @@
  * `__milestones__` global mutex is mirrored here as well.
  */
 
-import type {
-  ArchivePointer,
-  Item,
-  Ledger,
-  LedgerSchema,
-  Milestone,
-} from "../types.js";
+import type { ArchivePointer, Item, Ledger, LedgerSchema, Milestone } from "../types.js";
 import {
   BootstrapViolationError,
   DuplicateIdError,
@@ -80,14 +74,15 @@ import {
   assertRawPlanCreateAllowed,
   assertRawPlanUpdateAllowed,
 } from "./planLifecycleGuards.js";
+import {
+  rawTaskSerializationContender,
+  type PlanLifecycleSerializationBoundaryHook,
+  type PlanLifecycleSerializationContender,
+} from "./planLifecycleSerialization.js";
 import type { LedgerSnapshot } from "../snapshot.js";
 import { buildSnapshot } from "../snapshot.js";
 import { LedgerSearchIndex } from "../search/LedgerSearchIndex.js";
-import type {
-  FetchedLedger,
-  FetchedMilestoneGroup,
-  ResolvedMilestone,
-} from "../types.js";
+import type { FetchedLedger, FetchedMilestoneGroup, ResolvedMilestone } from "../types.js";
 import { AsyncMutex } from "./mutex.js";
 import {
   CANONICAL_LEDGERS,
@@ -113,6 +108,8 @@ export interface InMemoryLedgerStoreOpts {
    * adapters uniformly. Fires AFTER every successful write.
    */
   onMutation?: OnMutation;
+  /** Test-only hook reached after the decisive plan-serialization lock is held. */
+  planSerializationBoundaryHook?: PlanLifecycleSerializationBoundaryHook;
 }
 
 /** Lock key for the global milestones mutex. */
@@ -125,6 +122,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly mutexes = new Map<string, AsyncMutex>();
   private readonly now: () => string;
   private readonly onMutation: OnMutation | null;
+  private readonly planSerializationBoundaryHook: PlanLifecycleSerializationBoundaryHook | null;
   private readonly searchIndex = new LedgerSearchIndex();
   private readonly planClaims = new Map<string, PlanPrivateClaimRecord>();
   private readonly planOperations = new Map<string, InMemoryPlanOperationRecord>();
@@ -135,6 +133,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.now = opts.now ?? (() => new Date().toISOString());
     this.initialSeed = opts.seed ?? [];
     this.onMutation = opts.onMutation ?? null;
+    this.planSerializationBoundaryHook = opts.planSerializationBoundaryHook ?? null;
   }
 
   /**
@@ -142,10 +141,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
    * written to stderr so the write completes — matches the FS adapter
    * semantics so the dual-tests pattern stays observationally identical.
    */
-  private fireMutation(
-    ledgerId: string,
-    op: "create" | "update" | "archive",
-  ): void {
+  private fireMutation(ledgerId: string, op: "create" | "update" | "archive"): void {
     // Keep the derived FTS index coherent with the write FIRST (guarded so an
     // index error never unwinds the already-committed write), then fire the
     // user hook. Archived docs only change on an `archive` op.
@@ -264,9 +260,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   async dispose(): Promise<void> {
-    const drains = Array.from(this.mutexes.values()).map((m) =>
-      m.run(async () => undefined),
-    );
+    const drains = Array.from(this.mutexes.values()).map((m) => m.run(async () => undefined));
     await Promise.all(drains);
     this.ledgers.clear();
     this.archives.clear();
@@ -283,10 +277,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   fetch(ledgerId: string): FetchedLedger {
-    return materialiseFetchedLedger(
-      this.getLedger(ledgerId),
-      this.getLedger(MILESTONES_LEDGER),
-    );
+    return materialiseFetchedLedger(this.getLedger(ledgerId), this.getLedger(MILESTONES_LEDGER));
   }
 
   fetchItem(ledgerId: string, itemId: string): Item {
@@ -382,10 +373,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     };
   }
 
-  async updateMilestone(
-    milestoneId: string,
-    patch: UpdateMilestoneItemPatch,
-  ): Promise<Item> {
+  async updateMilestone(milestoneId: string, patch: UpdateMilestoneItemPatch): Promise<Item> {
     const item = await this.withMilestonesLock(async () => {
       const ledger = this.getLedger(MILESTONES_LEDGER);
       return cloneItem(
@@ -437,15 +425,12 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   async updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Promise<Item> {
     const item = await this.withLock(ledgerId, async () => {
+      const contender = rawTaskSerializationContender(ledgerId, patch.status);
+      if (contender !== null && this.planSerializationBoundaryHook !== null) {
+        await this.planSerializationBoundaryHook(contender);
+      }
       const ledger = this.getLedger(ledgerId);
-      assertRawPlanUpdateAllowed(
-        this,
-        (id) => this.getLedger(id),
-        ledgerId,
-        ledger,
-        itemId,
-        patch,
-      );
+      assertRawPlanUpdateAllowed(this, (id) => this.getLedger(id), ledgerId, ledger, itemId, patch);
       const precondition = this.statusChangePrecondition(ledgerId, ledger, itemId, patch);
       return cloneItem(
         applyUpdateItem(
@@ -462,11 +447,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     return item;
   }
 
-  async createItem(
-    ledgerId: string,
-    milestoneId: string,
-    init: CreateItemInit,
-  ): Promise<Item> {
+  async createItem(ledgerId: string, milestoneId: string, init: CreateItemInit): Promise<Item> {
     if (ledgerId === MILESTONES_LEDGER) {
       throw new BootstrapViolationError(
         `use createMilestone to add an item to the ${MILESTONES_LEDGER} ledger`,
@@ -477,11 +458,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     const item = await this.withMilestonesLock(async () => {
       assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), milestoneId);
       return this.withLock(ledgerId, async () => {
-        assertRawPlanCreateAllowed(
-          (id) => this.getLedger(id),
-          ledgerId,
-          init.fields,
-        );
+        assertRawPlanCreateAllowed((id) => this.getLedger(id), ledgerId, init.fields);
         return cloneItem(
           applyCreateItem(
             this.getLedger(ledgerId),
@@ -511,9 +488,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   async createLedger(name: string, schema: LedgerSchema): Promise<FetchedLedger> {
     this.assertInit();
     if (name === MILESTONES_LEDGER) {
-      throw new BootstrapViolationError(
-        `ledger name "${MILESTONES_LEDGER}" is reserved`,
-      );
+      throw new BootstrapViolationError(`ledger name "${MILESTONES_LEDGER}" is reserved`);
     }
     validateSchema(schema);
     if (this.ledgers.has(name)) throw new DuplicateIdError("ledger", name);
@@ -529,18 +504,11 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     return result;
   }
 
-  async reopenItem(
-    ledgerId: string,
-    itemId: string,
-    toStatus: string,
-  ): Promise<Item> {
+  async reopenItem(ledgerId: string, itemId: string, toStatus: string): Promise<Item> {
     const item = await this.withLock(ledgerId, async () => {
       const ledger = this.getLedger(ledgerId);
       if (ledgerId === GOALS_LEDGER) {
-        assertManagedGoalTransitionAllowed(
-          findItem(ledger, itemId).item,
-          toStatus,
-        );
+        assertManagedGoalTransitionAllowed(findItem(ledger, itemId).item, toStatus);
       }
       if (ledgerId === TASKS_LEDGER) {
         assertManagedTaskTransitionAllowed(
@@ -556,11 +524,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     return item;
   }
 
-  async unarchiveItem(
-    ledgerId: string,
-    milestoneId: string,
-    itemId: string,
-  ): Promise<Item> {
+  async unarchiveItem(ledgerId: string, milestoneId: string, itemId: string): Promise<Item> {
     // The milestones ledger keeps per-ITEM archive files; un-archiving a
     // milestone-item is a later concern (T146 covers MCP wrappers). Here the
     // group-keyed path covers non-milestones ledgers; the itemId path applies
@@ -576,12 +540,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
             `no archived item ${itemId} under milestone ${milestoneId} in ledger ${ledgerId}`,
           );
         }
-        const out = applyReattachItem(
-          ledger,
-          archivedItem.milestoneId,
-          archivedItem,
-          this.now(),
-        );
+        const out = applyReattachItem(ledger, archivedItem.milestoneId, archivedItem, this.now());
         this.itemArchives.delete(key);
         this.removeArchivePointer(ledger, milestoneId);
         return out;
@@ -621,10 +580,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     return reattached;
   }
 
-  async archiveMilestone(
-    milestoneId: string,
-    summary: string,
-  ): Promise<ArchivePointer> {
+  async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
     let participatingLedgers: string[] = [];
     const ptr = await this.withMilestonesLock(async () => {
       // Acquire every per-ledger lock in alphabetic order so we never
@@ -646,23 +602,22 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   async claimPlan(input: PlanClaimInput): Promise<PlanClaimResult> {
-    return this.runPlanLifecycleMutation((state) => claimInMemoryPlan(state, input));
+    return this.runPlanLifecycleMutation(
+      (state) => claimInMemoryPlan(state, input),
+      input.purpose === "follow-up" ? "follow-up-claim" : null,
+    );
   }
 
   async publishPlanDraft(input: PlanPublishDraftInput): Promise<PlanPublishDraftResult> {
-    return this.runPlanLifecycleMutation((state) =>
-      publishInMemoryPlanDraft(state, input),
-    );
+    return this.runPlanLifecycleMutation((state) => publishInMemoryPlanDraft(state, input), null);
   }
 
   async releasePlanClaim(input: PlanReleaseInput): Promise<PlanReleaseResult> {
-    return this.runPlanLifecycleMutation((state) =>
-      releaseInMemoryPlanClaim(state, input),
-    );
+    return this.runPlanLifecycleMutation((state) => releaseInMemoryPlanClaim(state, input), null);
   }
 
   async finalizePlan(input: PlanFinalizeInput): Promise<PlanFinalizeResult> {
-    return this.runPlanLifecycleMutation((state) => finalizeInMemoryPlan(state, input));
+    return this.runPlanLifecycleMutation((state) => finalizeInMemoryPlan(state, input), null);
   }
 
   /**
@@ -685,16 +640,16 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   private async runPlanLifecycleMutation<T>(
-    mutate: (
-      state: InMemoryPlanLifecycleState,
-    ) => { result: T; dirtyLedgers: readonly string[] },
+    mutate: (state: InMemoryPlanLifecycleState) => { result: T; dirtyLedgers: readonly string[] },
+    contender: PlanLifecycleSerializationContender | null,
   ): Promise<T> {
     this.assertInit();
-    const ledgerIds = [...this.ledgers.keys()]
-      .filter((id) => id !== MILESTONES_LEDGER)
-      .sort();
+    const ledgerIds = [...this.ledgers.keys()].filter((id) => id !== MILESTONES_LEDGER).sort();
     const mutation = await this.withMilestonesLock(() =>
       this.withLocksInOrder(ledgerIds, async () => {
+        if (contender !== null && this.planSerializationBoundaryHook !== null) {
+          await this.planSerializationBoundaryHook(contender);
+        }
         const beforeLedgers = cloneLedgerMap(this.ledgers);
         const beforeClaims = cloneMap(this.planClaims);
         const beforeOperations = cloneMap(this.planOperations);
@@ -814,7 +769,8 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
         );
       }
     }
-    const msTitle = typeof milestoneItem?.fields["title"] === "string" ? milestoneItem.fields["title"] : "";
+    const msTitle =
+      typeof milestoneItem?.fields["title"] === "string" ? milestoneItem.fields["title"] : "";
     const msStatus = milestoneItem?.status ?? "";
     // Phase 2: archive each non-milestones ledger that has a group.
     for (const [name, ledger] of this.ledgers) {
@@ -855,10 +811,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     const mutex = this.mutexFor(MILESTONES_MUTEX_KEY);
     return mutex.run(fn);
   }
-  private async withLocksInOrder<T>(
-    ledgerIds: string[],
-    fn: () => Promise<T>,
-  ): Promise<T> {
+  private async withLocksInOrder<T>(ledgerIds: string[], fn: () => Promise<T>): Promise<T> {
     // Recurse so each lock is held for the duration of all inner work.
     if (ledgerIds.length === 0) return fn();
     const [head, ...tail] = ledgerIds;
@@ -886,10 +839,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
 
 // --- shared materialiser + clone helpers ---
 
-export function materialiseFetchedLedger(
-  ledger: Ledger,
-  milestonesLedger: Ledger,
-): FetchedLedger {
+export function materialiseFetchedLedger(ledger: Ledger, milestonesLedger: Ledger): FetchedLedger {
   const groups: FetchedMilestoneGroup[] = ledger.milestones.map((m) => {
     let resolved: ResolvedMilestone;
     if (ledger.id === MILESTONES_LEDGER) {
@@ -907,13 +857,12 @@ export function materialiseFetchedLedger(
       // If the milestone is missing (e.g. archived, or running before
       // bootstrap), surface an empty view so the caller can still render
       // the group. Errors here would hide the broken state from the UI.
-      resolved =
-        view ?? {
-          id: m.id,
-          status: "unknown",
-          title: "",
-          description: "",
-        };
+      resolved = view ?? {
+        id: m.id,
+        status: "unknown",
+        title: "",
+        description: "",
+      };
     }
     return { id: m.id, milestone: resolved, items: m.items.map(cloneItem) };
   });
@@ -947,9 +896,7 @@ function cloneSchema(s: LedgerSchema): LedgerSchema {
   const out: LedgerSchema = {
     statusValues: [...s.statusValues],
     terminalStatuses: [...s.terminalStatuses],
-    fields: Object.fromEntries(
-      Object.entries(s.fields).map(([k, v]) => [k, { ...v }]),
-    ),
+    fields: Object.fromEntries(Object.entries(s.fields).map(([k, v]) => [k, { ...v }])),
   };
   if (s.idPrefix !== undefined) out.idPrefix = s.idPrefix;
   if (s.transitions !== undefined) {
@@ -982,12 +929,7 @@ function cloneLedgerMap(source: ReadonlyMap<string, Ledger>): Map<string, Ledger
 }
 
 function cloneMap<T>(source: ReadonlyMap<string, T>): Map<string, T> {
-  return new Map(
-    [...source].map(([key, value]) => [
-      key,
-      JSON.parse(JSON.stringify(value)) as T,
-    ]),
-  );
+  return new Map([...source].map(([key, value]) => [key, JSON.parse(JSON.stringify(value)) as T]));
 }
 
 function replaceMap<T>(target: Map<string, T>, replacement: ReadonlyMap<string, T>): void {
