@@ -215,6 +215,10 @@ function schemaPinsFromHistorySources(
   return history;
 }
 
+function pinTableHistoryArgs(introduction: string): readonly string[] {
+  return ["rev-list", "--first-parent", "--reverse", `${introduction}..HEAD`, "--", PIN_TABLE_PATH];
+}
+
 function historicalSchemaPinHistory(): readonly Readonly<Record<string, SchemaPin>>[] {
   const introduction = readGitRefs(
     [
@@ -234,10 +238,7 @@ function historicalSchemaPinHistory(): readonly Readonly<Record<string, SchemaPi
   }
   const historyRefs = [
     introduction,
-    ...readGitRefs(
-      ["rev-list", "--first-parent", "--reverse", `${introduction}..HEAD`],
-      "schema pin first-parent history",
-    ),
+    ...readGitRefs(pinTableHistoryArgs(introduction), "schema pin first-parent history"),
   ];
 
   const sources = historyRefs.map((revision) => {
@@ -258,6 +259,11 @@ function schemaPinTransitionErrors(
   nextPins: Readonly<Record<string, SchemaPin>>,
 ): readonly string[] {
   const errors: string[] = [];
+  if (
+    canonicalJson(Object.keys(previousPins).sort()) !== canonicalJson(Object.keys(nextPins).sort())
+  ) {
+    errors.push("schema pin keys changed between revisions");
+  }
   for (const roleId of Object.keys(previousPins)) {
     const previousPin = previousPins[roleId]!;
     const nextPin = nextPins[roleId];
@@ -562,6 +568,35 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
     };
 
     expect(schemaPinHistoryErrors([SCHEMA_PINS, advancedPins, advancedPins])).toEqual([]);
+  });
+
+  test("rejects deletion and reintroduction within the established role set", () => {
+    const implementWorkerPin = SCHEMA_PINS["implement-worker"]!;
+    const deletedPins = { ...SCHEMA_PINS };
+    delete deletedPins["implement-worker"];
+    const reintroducedPins = {
+      ...deletedPins,
+      "implement-worker": {
+        ...implementWorkerPin,
+        digest: "0".repeat(64),
+      },
+    };
+
+    expect(schemaPinHistoryErrors([SCHEMA_PINS, deletedPins, reintroducedPins])).toEqual([
+      "schema pin keys changed between revisions",
+      "schema pin keys changed between revisions",
+    ]);
+  });
+
+  test("scopes first-parent pin history to the pin table path", () => {
+    expect(pinTableHistoryArgs("0123456789abcdef")).toEqual([
+      "rev-list",
+      "--first-parent",
+      "--reverse",
+      "0123456789abcdef..HEAD",
+      "--",
+      PIN_TABLE_PATH,
+    ]);
   });
 
   test("owns only its unrelated-dirt fixture", () => {
