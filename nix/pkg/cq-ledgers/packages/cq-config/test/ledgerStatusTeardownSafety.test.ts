@@ -112,13 +112,13 @@ const SCENARIOS: Scenario[] = [
   },
   {
     name: "S5-live-fulfilled",
-    trigger: "session_start",
+    trigger: "turn_end",
     hasUI: true,
     outcome: "fulfilled",
     shutdownBeforeSettlement: true,
     expectedPhases: { counts: 0, paint: 0, terminal: 0 },
-    expectedUiCalls: 1,
-    expectedLiveUiCallsAfterShutdown: 1,
+    expectedUiCalls: 0,
+    expectedLiveUiCallsAfterShutdown: 0,
   },
   {
     name: "S5-stale",
@@ -133,13 +133,13 @@ const SCENARIOS: Scenario[] = [
   },
   {
     name: "S5-live-rejected",
-    trigger: "session_start",
+    trigger: "turn_end",
     hasUI: true,
     outcome: "rejected",
     shutdownBeforeSettlement: true,
-    expectedPhases: { counts: 1, paint: 0, terminal: 0 },
-    expectedUiCalls: 1,
-    expectedLiveUiCallsAfterShutdown: 1,
+    expectedPhases: { counts: 0, paint: 0, terminal: 0 },
+    expectedUiCalls: 0,
+    expectedLiveUiCallsAfterShutdown: 0,
   },
   {
     name: "S6",
@@ -240,6 +240,9 @@ describe("ledger-status teardown safety Arm A: in-process seams", () => {
 
     expect(Array.from(refresh.matchAll(/\bsetStatus\(ctx, /g))).toHaveLength(1);
     expect(refresh).not.toMatch(/catch\s*\([^)]*\)\s*\{[^}]*\bsetStatus\(/s);
+    expect(refresh).toMatch(/const stdout = await runCounts\(ctx\.cwd\);\s*if \(!active\) return;/);
+    expect(refresh).toMatch(/catch \(err\) \{\s*if \(!active\) return;\s*onError\?\.\(err, "counts"\);/);
+    expect(refresh).toMatch(/if \(!active\) return;\s*try \{\s*setStatus\(ctx, text\);/);
   });
 
   test.each(SCENARIOS)("$name", async (scenario) => {
@@ -330,10 +333,10 @@ describe("ledger-status teardown safety Arm B: pinned-node process boundary", ()
     );
     expect(escaped).toEqual(SCENARIOS.map((scenario) => [scenario.name, 0]));
     expect(probe.stdout).not.toContain("FRAME ");
-    expect(probe.stdout).toContain("S5-live-fulfilled ui-calls-after-shutdown=1\n");
+    expect(probe.stdout).toContain("S5-live-fulfilled ui-calls-after-shutdown=0\n");
     expect(probe.stdout).toContain("S5-stale ui-calls-after-shutdown=0\n");
-    expect(probe.stdout).toContain("S5-live-rejected ui-calls-after-shutdown=1\n");
-    expect(probe.stdout).toContain("S5-live-rejected counts-notification-before-shutdown=1\n");
+    expect(probe.stdout).toContain("S5-live-rejected ui-calls-after-shutdown=0\n");
+    expect(probe.stdout).toContain("S5-live-rejected counts-notification-after-shutdown=0\n");
 
     const exitProbe = spawnSync(resolution.nodePath, [EXIT_CODE_PROBE_PATH], {
       cwd: REPO_ROOT,

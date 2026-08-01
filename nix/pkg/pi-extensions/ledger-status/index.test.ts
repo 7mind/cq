@@ -271,14 +271,24 @@ describe("registered triggers", () => {
     expect(statusCalls).toHaveLength(0);
   });
 
-  test("session_shutdown clears the poll interval", () => {
+  test("session_shutdown clears the poll interval and retains no callable refresh", async () => {
+    const statusCalls: StatusCall[] = [];
     const api = makeFakeApi();
     const timer = makeFakeTimer();
     registerLedgerStatus(api, { runCounts: fullCounts, ...timer.opts });
 
+    const ctx = makeFakeCtx(statusCalls);
+    api.fire("turn_end", ctx);
+    await flush();
+    statusCalls.length = 0;
+
     expect(timer.cleared()).toBe(false);
-    api.fire("session_shutdown", makeFakeCtx([]));
+    api.fire("session_shutdown", ctx);
     expect(timer.cleared()).toBe(true);
+    timer.tick();
+    await flush();
+
+    expect(statusCalls).toHaveLength(0);
   });
 });
 

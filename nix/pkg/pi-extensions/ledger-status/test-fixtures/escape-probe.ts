@@ -40,19 +40,18 @@ function noHookObservation(): void {
   }
 }
 
-async function runScenario(registerLedgerStatus: (api: RegistrationApi, options: { runCounts: () => Promise<string>; setIntervalFn: () => unknown; clearIntervalFn: () => void }) => void, scenario: Scenario): Promise<void> {
+async function runScenario(registerLedgerStatus: (api: RegistrationApi, options: { runCounts: () => Promise<string>; setIntervalFn: () => unknown; clearIntervalFn: () => void; onError: (error: unknown, phase: "counts" | "paint" | "terminal") => void }) => void, scenario: Scenario): Promise<void> {
   const handlers = new Map<EventName, Handler>();
   const api: RegistrationApi = { on: (event, handler) => handlers.set(event, handler) };
   let settled = false;
   let shutdown = false;
   let escaped = 0;
   let uiCallsAfterShutdown = 0;
-  let countsNotificationBeforeShutdown = 0;
+  let countsNotificationAfterShutdown = 0;
   const frames: string[] = [];
   let resolveCounts: ((stdout: string) => void) | undefined;
   let rejectCounts: ((reason: Error) => void) | undefined;
   const runCounts = (): Promise<string> => {
-    if (!shutdown) countsNotificationBeforeShutdown += 1;
     return new Promise<string>((resolve, reject) => {
       resolveCounts = resolve;
       rejectCounts = reject;
@@ -86,11 +85,14 @@ async function runScenario(registerLedgerStatus: (api: RegistrationApi, options:
       runCounts,
       setIntervalFn: () => Symbol("fixture-poll"),
       clearIntervalFn: () => undefined,
+      onError: (_error, phase) => {
+        if (shutdown && phase === "counts") countsNotificationAfterShutdown += 1;
+      },
     });
-    const start = handlers.get("session_start");
+    const start = handlers.get("turn_end");
     const stop = handlers.get("session_shutdown");
     if (start === undefined || stop === undefined) throw new Error(`${scenario.name}: missing lifecycle handler`);
-    start({ type: "session_start" }, context);
+    start({ type: "turn_end" }, context);
     if (scenario.shutdownBeforeSettlement) {
       shutdown = true;
       stop({ type: "session_shutdown" }, context);
@@ -107,8 +109,8 @@ async function runScenario(registerLedgerStatus: (api: RegistrationApi, options:
   console.log(`${scenario.name} escaped-counts=${escaped}`);
   if (scenario.shutdownBeforeSettlement) console.log(`${scenario.name} ui-calls-after-shutdown=${uiCallsAfterShutdown}`);
   if (scenario.name === "S5-live-rejected") {
-    if (countsNotificationBeforeShutdown !== 1) throw new Error("S5-live-rejected notification measurement failed");
-    console.log(`S5-live-rejected counts-notification-before-shutdown=${countsNotificationBeforeShutdown}`);
+    if (countsNotificationAfterShutdown !== 0) throw new Error("S5-live-rejected notification measurement failed");
+    console.log(`S5-live-rejected counts-notification-after-shutdown=${countsNotificationAfterShutdown}`);
   }
   for (const frame of frames) console.log(`FRAME ${scenario.name}: ${frame}`);
 }

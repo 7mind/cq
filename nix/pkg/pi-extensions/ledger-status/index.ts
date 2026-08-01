@@ -180,6 +180,7 @@ export function registerLedgerStatus(api: StatusRegistrationApi, options?: Ledge
   const clearIntervalFn = options?.clearIntervalFn ?? defaultClearInterval;
   const onError = options?.onError;
 
+  let active = true;
   let inFlight = false;
   // Latest ctx seen from any event; the poll (which carries no ctx of its own)
   // reuses it.
@@ -198,6 +199,9 @@ export function registerLedgerStatus(api: StatusRegistrationApi, options?: Ledge
   }
 
   async function refresh(ctx: StatusContext): Promise<void> {
+    if (!active) {
+      return;
+    }
     lastCtx = ctx;
     // Single-flight: skip if a refresh is already running so overlapping
     // triggers (turn_end + tool_execution_end + poll) don't stack spawns.
@@ -209,11 +213,14 @@ export function registerLedgerStatus(api: StatusRegistrationApi, options?: Ledge
       let text: string;
       try {
         const stdout = await runCounts(ctx.cwd);
+        if (!active) return;
         text = formatStatus(parseCounts(stdout));
       } catch (err) {
+        if (!active) return;
         onError?.(err, "counts");
         text = FAILURE_MARKER;
       }
+      if (!active) return;
       try {
         setStatus(ctx, text);
       } catch (err) {
@@ -228,25 +235,30 @@ export function registerLedgerStatus(api: StatusRegistrationApi, options?: Ledge
   // typings (dist/core/extensions/types.d.ts): session_start (L846), turn_end
   // (L864), tool_execution_end (L870), session_shutdown (L852).
   api.on("session_start", (_event, ctx) => {
+    if (!active) return;
     void refresh(ctx).catch((err: unknown) => onError?.(err, "terminal")); // (a) initial on-load paint
   });
   api.on("turn_end", (_event, ctx) => {
+    if (!active) return;
     void refresh(ctx).catch((err: unknown) => onError?.(err, "terminal")); // (b) post-turn
   });
   api.on("tool_execution_end", (_event, ctx) => {
+    if (!active) return;
     void refresh(ctx).catch((err: unknown) => onError?.(err, "terminal")); // (b) post-tool
   });
 
   // (c) periodic poll for external/concurrent ledger mutations.
   const pollHandle = setIntervalFn(() => {
-    if (lastCtx) {
+    if (active && lastCtx) {
       void refresh(lastCtx).catch((err: unknown) => onError?.(err, "terminal"));
     }
   }, pollIntervalMs);
 
   // Lifecycle: clear the poll on teardown (quit/reload/session replacement).
   api.on("session_shutdown", () => {
+    active = false;
     clearIntervalFn(pollHandle);
+    lastCtx = undefined;
   });
 }
 
