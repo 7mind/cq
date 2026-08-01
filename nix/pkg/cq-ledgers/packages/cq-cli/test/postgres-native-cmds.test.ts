@@ -22,11 +22,14 @@ import { promisify } from "node:util";
 const exec = promisify(execFile);
 const PG_URL = process.env.CQ_TEST_PG_URL;
 const dirs: string[] = [];
+const runtimeDirs: string[] = [];
 
 const CQ_MAIN = path.resolve(import.meta.dir, "../src/main.ts");
 
 afterAll(async () => {
-  await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }).catch(() => undefined)));
+  await Promise.all(
+    [...dirs, ...runtimeDirs].map((d) => rm(d, { recursive: true, force: true }).catch(() => undefined)),
+  );
 });
 
 /** A throwaway initialised git repo (stable projectKey) with cq.toml selecting postgres. */
@@ -44,18 +47,38 @@ async function postgresRepo(): Promise<string> {
   return dir;
 }
 
-async function runCq(args: string[], cwd: string): Promise<{ stdout: string; exitCode: number }> {
+async function runCq(
+  args: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   try {
-    const { stdout } = await exec(process.execPath, ["run", CQ_MAIN, ...args], {
+    const { stdout, stderr } = await exec(process.execPath, ["run", CQ_MAIN, ...args], {
       cwd,
-      env: { ...process.env, CQ_LEDGER_PG_URL: PG_URL },
+      env,
     });
-    return { stdout, exitCode: 0 };
+    return { stdout, stderr, exitCode: 0 };
   } catch (e) {
-    const err = e as { stdout?: string; code?: number };
-    return { stdout: err.stdout ?? "", exitCode: err.code ?? 1 };
+    const err = e as { stdout?: string; stderr?: string; code?: number };
+    return { stdout: err.stdout ?? "", stderr: err.stderr ?? "", exitCode: err.code ?? 1 };
   }
 }
+
+describe("cq advance-gate session requirement", () => {
+  it("requires an explicit session", async () => {
+    const runtimeDir = await mkdtemp(path.join(tmpdir(), "cq-native-cmds-runtime-"));
+    runtimeDirs.push(runtimeDir);
+    const sessionlessEnv: NodeJS.ProcessEnv = { ...process.env, XDG_RUNTIME_DIR: runtimeDir };
+    delete sessionlessEnv.CLAUDE_CODE_SESSION_ID;
+    const { stdout, stderr, exitCode } = await runCq(["advance-gate"], process.cwd(), sessionlessEnv);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toBe(
+      "cq: fatal: cq advance-gate: no session id (pass --session <id> or set $CLAUDE_CODE_SESSION_ID)\n",
+    );
+  });
+});
 
 if (PG_URL === undefined || PG_URL.length === 0) {
   describe.skip("cq predicates/counts/advance-gate over backend='postgres' (T579)", () => {
@@ -65,7 +88,10 @@ if (PG_URL === undefined || PG_URL.length === 0) {
   describe("cq predicates/counts/advance-gate over backend='postgres' (T579)", () => {
     it("predicates --cwd <pg repo> emits valid JSON", async () => {
       const dir = await postgresRepo();
-      const { stdout, exitCode } = await runCq(["predicates", "--cwd", dir], dir);
+      const { stdout, exitCode } = await runCq(["predicates", "--cwd", dir], dir, {
+        ...process.env,
+        CQ_LEDGER_PG_URL: PG_URL,
+      });
       expect(exitCode).toBe(0);
       const parsed = JSON.parse(stdout) as { predicates: Record<string, unknown> };
       expect(parsed.predicates).toBeDefined();
@@ -74,7 +100,10 @@ if (PG_URL === undefined || PG_URL.length === 0) {
 
     it("counts --cwd <pg repo> emits valid JSON naming the canonical ledgers", async () => {
       const dir = await postgresRepo();
-      const { stdout, exitCode } = await runCq(["counts", "--cwd", dir], dir);
+      const { stdout, exitCode } = await runCq(["counts", "--cwd", dir], dir, {
+        ...process.env,
+        CQ_LEDGER_PG_URL: PG_URL,
+      });
       expect(exitCode).toBe(0);
       const parsed = JSON.parse(stdout) as { ledgers: string[]; counts: Record<string, number> };
       expect(parsed.ledgers).toContain("tasks");
@@ -84,7 +113,10 @@ if (PG_URL === undefined || PG_URL.length === 0) {
 
     it("advance-gate --cwd <pg repo> emits a valid verdict JSON and allows on a fresh tenant", async () => {
       const dir = await postgresRepo();
-      const { stdout, exitCode } = await runCq(["advance-gate", "--cwd", dir], dir);
+      const { stdout, exitCode } = await runCq(["advance-gate", "--cwd", dir], dir, {
+        ...process.env,
+        CQ_LEDGER_PG_URL: PG_URL,
+      });
       expect(exitCode).toBe(0);
       const parsed = JSON.parse(stdout) as { block: boolean; reason: string; predicates: unknown };
       expect(parsed.block).toBe(false);
