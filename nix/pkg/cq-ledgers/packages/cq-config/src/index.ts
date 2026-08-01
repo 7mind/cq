@@ -168,6 +168,15 @@ export {
   renderPromptSurfaceTree,
 } from "./promptRenderer.js";
 export type {
+  PackagedPromptSurfaceRoleArtifact,
+  PackagedPromptSurfaceInput,
+} from "./packagedPromptSurface.js";
+export {
+  PackagedPromptSurfaceError,
+  validatePackagedPromptSurface,
+  validatePackagedPromptSurfaceRoot,
+} from "./packagedPromptSurface.js";
+export type {
   PromptVerificationRoot,
   PromptFragmentObservation,
   PromptCatalogVerificationInput,

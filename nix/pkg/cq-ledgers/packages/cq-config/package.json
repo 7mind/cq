@@ -3,6 +3,9 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "scripts": {
+    "validate-prompt-surface-attestation": "bun run scripts/validate-prompt-surface-attestation.ts"
+  },
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
@@ -13,6 +16,10 @@
     "./prompt-renderer": {
       "import": "./src/promptRenderer.ts",
       "types": "./src/promptRenderer.ts"
+    },
+    "./packaged-prompt-surface": {
+      "import": "./src/packagedPromptSurface.ts",
+      "types": "./src/packagedPromptSurface.ts"
     }
   },
   "dependencies": {

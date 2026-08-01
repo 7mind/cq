@@ -131,33 +131,29 @@
           inherit pkgs piPromptRoot;
         };
 
-        # Shared *-prompt-root check snippet (T683): verify the attested
-        # packaged-surface manifest against the exact installed bytes —
-        # surface identity, catalog metadata hash, per-role digests,
-        # version/role-kind pairing, and the surface aggregate digest.
+        packagedPromptSurfaceVerifierSource =
+          let
+            configRoot = ./nix/pkg/cq-ledgers/packages/cq-config;
+          in
+          pkgs.lib.fileset.toSource {
+            root = configRoot;
+            fileset = pkgs.lib.fileset.unions [
+              (configRoot + "/scripts/validate-prompt-surface-attestation.ts")
+              (configRoot + "/src/packagedPromptSurface.ts")
+              (configRoot + "/src/promptCatalog.ts")
+              (configRoot + "/src/promptRenderer.ts")
+            ];
+          };
+
+        # Shared *-prompt-root check snippet (T1597): validate the attested
+        # packaged-surface manifest and exact catalog-derived role closure
+        # through the canonical TypeScript serializer contract.
         verifySurfaceAttestation = surface: root: ''
           set -eu
-          surface_json=${root}/surface.json
-          test "$(${pkgs.jq}/bin/jq -r '.surface' "$surface_json")" = "${surface}"
-          test "$(${pkgs.jq}/bin/jq '.roles | length' "$surface_json")" -eq 24
-          test "$(${pkgs.jq}/bin/jq -r '.catalogMetadataHash' "$surface_json")" = \
-            "$(sha256sum ${root}/catalog.json | cut -d' ' -f1)"
-          test "$(${pkgs.jq}/bin/jq -r '.surfaceDigest' "$surface_json")" = \
-            "$(${pkgs.jq}/bin/jq -cj 'del(.surfaceDigest)' "$surface_json" | sha256sum | cut -d' ' -f1)"
-          ${pkgs.jq}/bin/jq -e -n \
-            --slurpfile surface "$surface_json" \
-            --slurpfile catalog ${root}/catalog.json \
-            '([$surface[0].roles[] | select(.version != null) | .roleId] | sort)
-               == ([$catalog[0][] | select(.sidecar != null) | .roleId] | sort)
-             and all($surface[0].roles[];
-               .version == null
-               or ((.version | type) == "number" and .version >= 1
-                   and (.version | floor) == .version))' \
-            > /dev/null
-          ${pkgs.jq}/bin/jq -r '.roles[] | .roleId + " " + .sha256' "$surface_json" \
-            | while read -r role_id digest; do
-                test "$(sha256sum "${root}/roles/''${role_id}.md" | cut -d' ' -f1)" = "''${digest}"
-              done
+          ${pkgs.bun}/bin/bun run \
+            ${packagedPromptSurfaceVerifierSource}/scripts/validate-prompt-surface-attestation.ts \
+            ${pkgs.lib.escapeShellArg surface} \
+            ${pkgs.lib.escapeShellArg (toString root)}
         '';
 
         # Fixed-output derivation: fetches all npm dependencies via
