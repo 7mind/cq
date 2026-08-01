@@ -1856,11 +1856,11 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       // FILES — T529 materialises ArchiveContent from archived_items rows —
       // but the ArchivePointer shape carries the fs-convention locator.
       archivePointers: pointerRows.map((p): ArchivePointer => ({
-        id: p.id,
-        path: `./archive/${name}/${p.id}.md`,
-        summary: p.summary,
-        title: p.title,
-        status: p.status,
+          id: p.id,
+          path: `./archive/${name}/${p.id}.md`,
+          summary: p.summary,
+          title: p.title,
+          status: p.status,
       })),
     };
   }

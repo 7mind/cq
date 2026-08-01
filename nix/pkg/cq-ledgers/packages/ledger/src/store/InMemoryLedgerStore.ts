@@ -858,11 +858,11 @@ export function materialiseFetchedLedger(ledger: Ledger, milestonesLedger: Ledge
       // bootstrap), surface an empty view so the caller can still render
       // the group. Errors here would hide the broken state from the UI.
       resolved = view ?? {
-        id: m.id,
-        status: "unknown",
-        title: "",
-        description: "",
-      };
+          id: m.id,
+          status: "unknown",
+          title: "",
+          description: "",
+        };
     }
     return { id: m.id, milestone: resolved, items: m.items.map(cloneItem) };
   });
