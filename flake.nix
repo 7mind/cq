@@ -841,6 +841,116 @@ EOF
             claude-prompt-home = claudePromptHomeTest;
           }
           // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+            # T1587: the real-adapter leg for T586. Local Bun runs keep their
+            # explicit PostgreSQL skip; this check provisions the dependency
+            # and makes that skip a failure.
+            cq-serve-live-boot = pkgs.stdenv.mkDerivation {
+              pname = "cq-serve-live-boot-check";
+              version = "0.0.1";
+
+              src = ./nix/pkg/cq-ledgers;
+
+              nativeBuildInputs = [ pkgs.bun ];
+              nativeCheckInputs = [
+                pkgs.postgresql
+                pkgs.postgresqlTestHook
+                pkgs.python3
+              ];
+
+              dontConfigure = true;
+              dontBuild = true;
+              doCheck = true;
+              postgresqlEnableTCP = 1;
+
+              postPatch = ''
+                ln -s ${bunNodeModules}/node_modules node_modules
+                for package in cq-config ledger ledger-live ledger-mcp ledger-web; do
+                  cp -r "${bunNodeModules}/packages/$package/node_modules" \
+                    "packages/$package/node_modules"
+                done
+              '';
+
+              # runHook invokes this string before postgresqlTestHook's
+              # postgresqlStart pre-check hook.
+              preCheck = ''
+                export HOME="$NIX_BUILD_TOP/home"
+                mkdir -p "$HOME"
+
+                negativeLog="$NIX_BUILD_TOP/t586-required-live-negative.log"
+                set +e
+                env -u CQ_TEST_PG_URL CQ_TEST_REQUIRE_PG=1 \
+                  ${pkgs.bun}/bin/bun test packages/ledger-web/test/hubServe.test.ts \
+                    --test-name-pattern 'cq serve — live boot \(T586\)' \
+                    > "$negativeLog" 2>&1
+                negativeCode=$?
+                set -e
+                if [ "$negativeCode" -eq 0 ]; then
+                  echo "T586 required-live preflight passed without CQ_TEST_PG_URL" >&2
+                  cat "$negativeLog" >&2
+                  exit 1
+                fi
+                if ! grep -Fq \
+                  'CQ_TEST_REQUIRE_PG=1 requires CQ_TEST_PG_URL to contain a PostgreSQL DSN' \
+                  "$negativeLog"; then
+                  echo "T586 required-live preflight failed for an unexpected reason" >&2
+                  cat "$negativeLog" >&2
+                  exit 1
+                fi
+
+                PGPORT="$(${pkgs.python3}/bin/python3 - <<'PY'
+import socket
+
+with socket.socket() as listener:
+    listener.bind(("127.0.0.1", 0))
+    print(listener.getsockname()[1])
+PY
+                )"
+                export PGPORT
+                postgresqlExtraSettings="
+                listen_addresses = '127.0.0.1'
+                port = $PGPORT
+                "
+                export postgresqlExtraSettings
+              '';
+
+              checkPhase = ''
+                runHook preCheck
+
+                ${pkgs.postgresql}/bin/pg_isready \
+                  --host 127.0.0.1 \
+                  --port "$PGPORT" \
+                  --username "$PGUSER" \
+                  --dbname "$PGDATABASE"
+                export CQ_TEST_PG_URL="postgresql://$PGUSER@127.0.0.1:$PGPORT/$PGDATABASE?sslmode=disable"
+                export CQ_TEST_REQUIRE_PG=1
+
+                positiveLog="$NIX_BUILD_TOP/t586-live.log"
+                if ! ${pkgs.bun}/bin/bun test packages/ledger-web/test/hubServe.test.ts \
+                  --test-name-pattern 'cq serve — live boot \(T586\)' \
+                  > "$positiveLog" 2>&1; then
+                  cat "$positiveLog" >&2
+                  exit 1
+                fi
+                cat "$positiveLog"
+                expectedPass='(pass) cq serve — live boot (T586) > boots with --pg-url --port 0, no repo cwd; serves the bundle + the projects listing'
+                if ! grep -Fq "$expectedPass" "$positiveLog"; then
+                  echo "T586 live selector did not execute its acceptance test" >&2
+                  exit 1
+                fi
+                if [ "$(grep -cF '(pass)' "$positiveLog")" -ne 1 ] || \
+                   grep -Fq '(skip)' "$positiveLog"; then
+                  echo "T586 live selector executed an unexpected test set or skipped" >&2
+                  exit 1
+                fi
+
+                runHook postCheck
+              '';
+
+              installPhase = ''
+                touch "$out"
+              '';
+            };
+
             # Boot a NixOS VM with services.cq-server enabled and prove the hub
             # comes up over a native, tuned Postgres: the schema bootstraps, the
             # web bundle serves, and /api/projects answers.
