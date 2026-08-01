@@ -307,10 +307,10 @@
           buildPhase = ''
             runHook preBuild
 
-            export HOME=$(mktemp -d)
-            export XDG_CACHE_HOME="$HOME/.cache"
-            export BUN_INSTALL_CACHE_DIR="$HOME/.bun-cache"
-            mkdir -p "$BUN_INSTALL_CACHE_DIR"
+            cacheRoot="$NIX_BUILD_TOP/pi-extensions-cache"
+            export XDG_CACHE_HOME="$cacheRoot/xdg"
+            export BUN_INSTALL_CACHE_DIR="$cacheRoot/bun-install"
+            mkdir -p "$XDG_CACHE_HOME" "$BUN_INSTALL_CACHE_DIR"
 
             for project in . auto-driver ledger-status; do
               (
@@ -321,6 +321,35 @@
                   --backend=copyfile \
                   --ignore-scripts
               )
+            done
+
+            top_level_bins() {
+              bin_dir="$1/node_modules/.bin"
+              if [ -d "$bin_dir" ]; then
+                find "$bin_dir" -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort
+              fi
+            }
+            for project in . auto-driver ledger-status; do
+              modules_dir="$project/node_modules"
+              top_level_bins_before="$(top_level_bins "$project")"
+              if [ -d "$modules_dir" ]; then
+                find "$modules_dir" -mindepth 2 -type d -name .bin \
+                  -prune -exec rm -rf {} +
+              fi
+              if [ "$(top_level_bins "$project")" != "$top_level_bins_before" ]; then
+                echo "nested .bin normalization changed the top-level executable set for $project" >&2
+                exit 1
+              fi
+              nested_bins="$({
+                if [ -d "$modules_dir" ]; then
+                  find "$modules_dir" -mindepth 2 -type d -name .bin -print
+                fi
+              } | LC_ALL=C sort)"
+              if [ -n "$nested_bins" ]; then
+                echo "nested node_modules/.bin directory survived normalization for $project" >&2
+                printf '%s\n' "$nested_bins" >&2
+                exit 1
+              fi
             done
 
             runHook postBuild
@@ -740,9 +769,11 @@ EOF
                 repository="$NIX_BUILD_TOP/repository"
                 cp -r "$src" "$repository"
                 chmod -R u+w "$repository"
-                export HOME="$NIX_BUILD_TOP/home"
-                export XDG_CACHE_HOME="$HOME/.cache"
-                mkdir -p "$XDG_CACHE_HOME"
+                cacheRoot="$NIX_BUILD_TOP/pi-extensions-test-cache"
+                export XDG_CACHE_HOME="$cacheRoot/xdg"
+                export BUN_INSTALL_CACHE_DIR="$cacheRoot/bun-install"
+                export XDG_STATE_HOME="$NIX_BUILD_TOP/pi-extensions-test-state"
+                mkdir -p "$XDG_CACHE_HOME" "$BUN_INSTALL_CACHE_DIR" "$XDG_STATE_HOME"
                 cd "$repository"
 
                 testManifest="$NIX_BUILD_TOP/pi-extensions-tests.manifest"
