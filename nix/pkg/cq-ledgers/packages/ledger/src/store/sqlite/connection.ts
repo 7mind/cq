@@ -18,6 +18,12 @@ import { Database } from "bun:sqlite";
 /** Cross-process write-lock timeout (ms) — a writer waits this long on SQLITE_BUSY (Q246). */
 export const BUSY_TIMEOUT_MS = 5_000;
 
+/** Number of mandatory WAL-conversion attempts under initialization contention. */
+export const WAL_CONVERSION_ATTEMPTS = 5;
+
+/** Delay between contended WAL-conversion attempts (ms), matching cq-config. */
+export const WAL_RETRY_SLEEP_MS = 25;
+
 /**
  * Open a bun:sqlite connection to the ledger database at `dbPath` (created if
  * absent) with the standard pragma set applied. Does NOT apply the DDL —
@@ -40,10 +46,32 @@ export function openExistingLedgerDb(dbPath: string): Database {
 }
 
 function configureLedgerDb(db: Database): void {
-  db.exec("PRAGMA journal_mode = WAL");
   db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+  enableWalWithRetry(
+    () => db.exec("PRAGMA journal_mode = WAL"),
+    (delayMs) => Bun.sleepSync(delayMs),
+  );
   db.exec("PRAGMA foreign_keys = ON");
   db.exec("PRAGMA synchronous = NORMAL");
+}
+
+/**
+ * Complete mandatory WAL negotiation despite concurrent initialization.
+ * Both effects are required inputs so the retry policy can be exercised
+ * deterministically without replacing bun:sqlite globals.
+ */
+export function enableWalWithRetry(executeWal: () => void, sleep: (delayMs: number) => void): void {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      executeWal();
+      return;
+    } catch (error) {
+      if (!isSqliteBusyError(error) || attempt >= WAL_CONVERSION_ATTEMPTS) {
+        throw error;
+      }
+      sleep(WAL_RETRY_SLEEP_MS);
+    }
+  }
 }
 
 /**
