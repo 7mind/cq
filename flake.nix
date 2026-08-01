@@ -279,6 +279,89 @@
           }.${system} or (throw "ledger-node-modules: no FOD hash pinned for ${system}");
         };
 
+        # The Pi extensions remain three standalone Bun projects outside the
+        # cq-ledgers workspace. Fetch only their manifests and lockfiles in the
+        # fixed-output derivation so source-only edits do not invalidate the
+        # dependency closure.
+        piExtensionsNodeModules = pkgs.stdenv.mkDerivation {
+          pname = "pi-extensions-node-modules";
+          version = "0.0.1";
+
+          src = pkgs.lib.fileset.toSource {
+            root = ./nix/pkg/pi-extensions;
+            fileset = pkgs.lib.fileset.unions [
+              ./nix/pkg/pi-extensions/package.json
+              ./nix/pkg/pi-extensions/bun.lock
+              ./nix/pkg/pi-extensions/auto-driver/package.json
+              ./nix/pkg/pi-extensions/auto-driver/bun.lock
+              ./nix/pkg/pi-extensions/ledger-status/package.json
+              ./nix/pkg/pi-extensions/ledger-status/bun.lock
+            ];
+          };
+
+          nativeBuildInputs = [ pkgs.bun pkgs.cacert ];
+
+          dontConfigure = true;
+          dontFixup = true;
+
+          buildPhase = ''
+            runHook preBuild
+
+            export HOME=$(mktemp -d)
+            export XDG_CACHE_HOME="$HOME/.cache"
+            export BUN_INSTALL_CACHE_DIR="$HOME/.bun-cache"
+            mkdir -p "$BUN_INSTALL_CACHE_DIR"
+
+            for project in . auto-driver ledger-status; do
+              (
+                cd "$project"
+                bun install \
+                  --frozen-lockfile \
+                  --no-progress \
+                  --backend=copyfile \
+                  --ignore-scripts
+              )
+            done
+
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            runHook preInstall
+
+            mkdir -p "$out/auto-driver" "$out/ledger-status"
+            cp -r node_modules "$out/node_modules"
+            cp -r auto-driver/node_modules "$out/auto-driver/node_modules"
+            cp -r ledger-status/node_modules "$out/ledger-status/node_modules"
+
+            runHook postInstall
+          '';
+
+          outputHashMode = "recursive";
+          outputHashAlgo = "sha256";
+          outputHash = {
+            "x86_64-linux" = "sha256-03RGIEh/k4p/MhSw7foaGgezF3Oh371+trMU2oo8UaU=";
+            "aarch64-darwin" = "sha256-xoPqllqrZ7pI1XK5Wow9uYzO8WuB5z33EFq6EldKNzA=";
+          }.${system} or (throw "pi-extensions-node-modules: no FOD hash pinned for ${system}");
+        };
+
+        # Preserve repository-relative paths because the false-drained
+        # regression locates cq-ledgers from the test file. The source closure
+        # deliberately excludes every dependency tree.
+        piExtensionsTestSource = pkgs.lib.fileset.toSource {
+          root = ./.;
+          fileset = pkgs.lib.fileset.unions [
+            ./nix/pkg/pi-extensions
+            ./nix/pkg/cq-ledgers/package.json
+            ./nix/pkg/cq-ledgers/bun.lock
+            ./nix/pkg/cq-ledgers/bunfig.toml
+            ./nix/pkg/cq-ledgers/tsconfig.base.json
+            ./nix/pkg/cq-ledgers/packages/cq-cli
+            ./nix/pkg/cq-ledgers/packages/cq-config
+            ./nix/pkg/cq-ledgers/packages/ledger
+          ];
+        };
+
         # Shell fragment: wire @cq/config as a RUNTIME dep of @cq/ledger. Since
         # T357, createLedgerStore() (in @cq/ledger) calls loadConfig() at startup
         # to pick the [ledger] backend, so @cq/config must resolve from inside
@@ -640,6 +723,87 @@ EOF
         # outside the Nix builder; see docs/macos-home-manager.md.
         checks =
           {
+            pi-extensions-tests = pkgs.stdenvNoCC.mkDerivation {
+              pname = "pi-extensions-tests";
+              version = "0.0.1";
+              src = piExtensionsTestSource;
+
+              nativeBuildInputs = [ pkgs.bun pkgs.nodejs_22 ];
+
+              dontConfigure = true;
+              dontInstall = true;
+
+              buildPhase = ''
+                runHook preBuild
+                set -eu
+
+                repository="$NIX_BUILD_TOP/repository"
+                cp -r "$src" "$repository"
+                chmod -R u+w "$repository"
+                export HOME="$NIX_BUILD_TOP/home"
+                export XDG_CACHE_HOME="$HOME/.cache"
+                mkdir -p "$XDG_CACHE_HOME"
+                cd "$repository"
+
+                testManifest="$NIX_BUILD_TOP/pi-extensions-tests.manifest"
+                find nix/pkg/pi-extensions -type f -name '*.test.ts' -print \
+                  | LC_ALL=C sort > "$testManifest"
+                if grep -Fq node_modules "$testManifest"; then
+                  echo "the source-only Pi extension test manifest contains node_modules" >&2
+                  cat "$testManifest" >&2
+                  exit 1
+                fi
+                echo "pi-extensions source-only test manifest:"
+                cat "$testManifest"
+
+                piExtensionsRoot="$repository/nix/pkg/pi-extensions"
+                cp -r ${piExtensionsNodeModules}/node_modules \
+                  "$piExtensionsRoot/node_modules"
+                cp -r ${piExtensionsNodeModules}/auto-driver/node_modules \
+                  "$piExtensionsRoot/auto-driver/node_modules"
+                cp -r ${piExtensionsNodeModules}/ledger-status/node_modules \
+                  "$piExtensionsRoot/ledger-status/node_modules"
+                chmod -R u+w \
+                  "$piExtensionsRoot/node_modules" \
+                  "$piExtensionsRoot/auto-driver/node_modules" \
+                  "$piExtensionsRoot/ledger-status/node_modules"
+                patchShebangs \
+                  "$piExtensionsRoot/node_modules" \
+                  "$piExtensionsRoot/auto-driver/node_modules" \
+                  "$piExtensionsRoot/ledger-status/node_modules"
+
+                cqLedgersRoot="$repository/nix/pkg/cq-ledgers"
+                ln -s ${bunNodeModules}/node_modules "$cqLedgersRoot/node_modules"
+                for package in cq-cli cq-config ledger; do
+                  cp -r "${bunNodeModules}/packages/$package/node_modules" \
+                    "$cqLedgersRoot/packages/$package/node_modules"
+                done
+
+                for project in \
+                  nix/pkg/pi-extensions \
+                  nix/pkg/pi-extensions/auto-driver \
+                  nix/pkg/pi-extensions/ledger-status; do
+                  echo "typecheck: $project"
+                  (cd "$project" && ${pkgs.bun}/bin/bun run typecheck)
+                  echo "typecheck succeeded: $project"
+                done
+
+                set --
+                while IFS= read -r testPath; do
+                  set -- "$@" "$testPath"
+                done < "$testManifest"
+                if [ "$#" -ne 7 ]; then
+                  echo "expected seven Pi extension test arguments, got $#" >&2
+                  exit 1
+                fi
+                set -x
+                ${pkgs.bun}/bin/bun test "$@"
+                set +x
+
+                runHook postBuild
+                touch "$out"
+              '';
+            };
             yolo-profile =
               pkgs.runCommand "yolo-profile"
                 {
