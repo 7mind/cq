@@ -30,6 +30,7 @@ const FAKE_CODEX_SOURCE = fileURLToPath(new URL("./codexLifecycleFake.ts", impor
 const GATE_FIXTURE = fileURLToPath(
   new URL("./codexGateCommandFixture.ts", import.meta.url),
 );
+const TIMEOUT_CLEANUP_WINDOW_MS = 2_000;
 
 interface LifecycleFixture {
   readonly root: string;
@@ -269,7 +270,7 @@ describe("T1625 Codex and canonical-worktree gate lifecycle [Effectual-GoodCommu
     let dispatch: DispatchProcess | undefined;
     try {
       gate = await launchGate(fixture);
-      dispatch = launchDispatch(fixture, "wait", 200);
+      dispatch = launchDispatch(fixture, "wait", TIMEOUT_CLEANUP_WINDOW_MS);
       const codexPid = await waitForPid(fixture.codexReady);
       const codexIdentity = await readProcessIdentity(codexPid);
       if (codexIdentity === null) throw new Error("fake Codex exited before timeout");
@@ -277,7 +278,9 @@ describe("T1625 Codex and canonical-worktree gate lifecycle [Effectual-GoodCommu
 
       expect(await dispatch.child.exited).toBe(1);
       expect(await dispatch.stdout).toBe("");
-      expect(await dispatch.stderr).toContain("child exceeded its 200 ms window");
+      expect(await dispatch.stderr).toContain(
+        `child exceeded its ${String(TIMEOUT_CLEANUP_WINDOW_MS)} ms window`,
+      );
       await waitForDead(rootRegistration);
       await waitForDead(gate.command.registration);
     } finally {
