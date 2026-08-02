@@ -86,6 +86,11 @@ export const CQ_TOML_TEMPLATE: string = `\
 # [agent_efforts]
 #   plan-reviewer = "max"
 
+# Global dispatch policy. This stays the same under claude, codex, and pi;
+# it cannot be placed in a [harness.<name>] block.
+[dispatch]
+  forceShellout = false
+
 # Panels + tier->model map for the default (claude) harness. Tiers are
 # harness-specific — there is no shared [tiers]. This map is what makes a model
 # dispatchable; an alias named by no tier here is inert.

@@ -108,6 +108,7 @@ export function computeConfig(repoRoot: string): GetConfigResult {
       tiers: null,
       agentTiers: null,
       agentEfforts: {},
+      dispatch: { forceShellout: false },
     };
   }
   assertDispatchable(config);
@@ -164,6 +165,7 @@ function projectConfig(config: CqConfig): GetConfigResult {
     tiers,
     agentTiers: config.agentTiers,
     agentEfforts: config.agentEfforts,
+    dispatch: config.dispatch,
   };
 }
 
@@ -181,6 +183,7 @@ function projectConfig(config: CqConfig): GetConfigResult {
 function groupByHarness(tokens: readonly ReviewerToken[]): AgentModelEntry["modelMappings"] {
   const byHarness: Record<Harness, Set<string>> = {
     claude: new Set(),
+    codex: new Set(),
     pi: new Set(),
   };
   for (const t of tokens) {
@@ -189,7 +192,7 @@ function groupByHarness(tokens: readonly ReviewerToken[]): AgentModelEntry["mode
       t.effort === null || t.effort === undefined ? base : `${base}:${t.effort}`,
     );
   }
-  const mappings: { claude?: readonly string[]; pi?: readonly string[] } = {};
+  const mappings: { claude?: readonly string[]; codex?: readonly string[]; pi?: readonly string[] } = {};
   for (const harness of HARNESSES) {
     const models = [...byHarness[harness]].sort();
     if (models.length > 0) {
@@ -246,7 +249,7 @@ export function computeAgentModels(repoRoot: string): AgentModelsResult {
     const effective =
       token === undefined ? undefined : applyAgentEffort(config, role.agentTierKey, token);
     const modelMappings = groupByHarness(effective === undefined ? [] : [effective]);
-    const hasLiveToken = modelMappings.claude !== undefined || modelMappings.pi !== undefined;
+    const hasLiveToken = modelMappings.claude !== undefined || modelMappings.codex !== undefined || modelMappings.pi !== undefined;
     return {
       id: role.id,
       status: hasLiveToken ? "resolved" : "no-live-token",

@@ -940,7 +940,7 @@ type Equal<Left, Right> =
 
 const dispatchModelMappingKeysStayExecutable: Equal<
   keyof AgentModelEntry["modelMappings"],
-  "claude" | "pi"
+  "claude" | "codex" | "pi"
 > = true;
 
 const T861_CODEX_FIXTURE = [

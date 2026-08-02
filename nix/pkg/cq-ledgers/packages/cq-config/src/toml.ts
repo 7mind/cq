@@ -67,6 +67,11 @@ export interface RawProject {
   readonly name: unknown;
 }
 
+/** The one global dispatch policy; it never participates in harness layering. */
+export interface RawDispatch {
+  readonly forceShellout: unknown;
+}
+
 /**
  * A single `[harness.<name>]` override block (Q240): the raw per-harness
  * subset of the SHARED config that may be overridden for one harness. Each
@@ -113,6 +118,7 @@ export interface RawToml {
   readonly ledger: RawLedger | null;
   /** The `[project]` table, or null if absent (T570). */
   readonly project: RawProject | null;
+  readonly dispatch: RawDispatch | null;
   /**
    * The `[harness.<name>]` per-harness override tables (Q240, T861): ACTIVE
    * CONFIGURATION SELECTOR name (`claude`/`pi`/`codex`) -> its raw overridable
@@ -140,6 +146,7 @@ const ALLOWED_TOP_LEVEL = new Set([
   "agent_efforts",
   "ledger",
   "project",
+  "dispatch",
   "harness",
 ]);
 
@@ -273,6 +280,14 @@ function parseProjectRaw(value: unknown): RawProject {
   return { name: value.name };
 }
 
+function parseDispatchRaw(value: unknown): RawDispatch {
+  if (!isTable(value)) throw new TomlSyntaxError("[dispatch] must be a table");
+  for (const key of Object.keys(value)) {
+    if (key !== "forceShellout") throw new TomlSyntaxError(`unexpected key "${key}" in [dispatch]`);
+  }
+  return { forceShellout: value.forceShellout };
+}
+
 /**
  * Structurally validate the `[harness]` table of per-harness override blocks
  * (Q240, T861): each sub-table key must be a known ACTIVE CONFIGURATION
@@ -364,6 +379,7 @@ export function parseToml(source: string): RawToml {
       : null;
   const ledger = "ledger" in doc ? parseLedgerRaw(doc.ledger) : null;
   const project = "project" in doc ? parseProjectRaw(doc.project) : null;
+  const dispatch = "dispatch" in doc ? parseDispatchRaw(doc.dispatch) : null;
   const harnessOverrides =
     "harness" in doc ? parseHarnessOverrides(doc.harness) : null;
 
@@ -377,6 +393,7 @@ export function parseToml(source: string): RawToml {
     agentEfforts,
     ledger,
     project,
+    dispatch,
     harnessOverrides,
   };
 }

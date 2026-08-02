@@ -29,7 +29,7 @@
  * never appear here. The `ReviewerToken` grammar, the effort vocabularies, and
  * the per-harness dispatch model-mapping keys are all keyed on this union.
  */
-export const HARNESSES = ["claude", "pi"] as const;
+export const HARNESSES = ["claude", "codex", "pi"] as const;
 
 /** A reviewer harness identifier (the part before the `:` in a token). */
 export type Harness = (typeof HARNESSES)[number];
@@ -90,11 +90,28 @@ export const CLAUDE_EFFORTS = [
   "max",
 ] as const;
 
+/**
+ * Reasoning-effort values accepted by the packaged Codex executable. These are
+ * deliberately maintained separately from Pi's provider vocabulary: Codex
+ * consumes `model_reasoning_effort`, while Pi passes its suffix to a provider.
+ */
+export const CODEX_EFFORTS = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
+export type CodexEffort = (typeof CODEX_EFFORTS)[number];
+
 /** A Claude effort level (the trailing `:<effort>` suffix for claude tokens). */
 export type ClaudeEffort = (typeof CLAUDE_EFFORTS)[number];
 
 /** The union of all recognised effort strings across harnesses. */
-export type Effort = PiEffort | ClaudeEffort;
+export type Effort = PiEffort | ClaudeEffort | CodexEffort;
 
 /**
  * Type guard: is `value` a valid effort string for the given `harness`?
@@ -105,6 +122,9 @@ export type Effort = PiEffort | ClaudeEffort;
 export function isEffort(harness: Harness, value: string): value is Effort {
   if (harness === "pi") {
     return (PI_EFFORTS as readonly string[]).includes(value);
+  }
+  if (harness === "codex") {
+    return (CODEX_EFFORTS as readonly string[]).includes(value);
   }
   return (CLAUDE_EFFORTS as readonly string[]).includes(value);
 }
@@ -354,6 +374,11 @@ export interface ProjectConfig {
   readonly name: string | null;
 }
 
+/** Global dispatch policy, deliberately shared by every active harness. */
+export interface DispatchConfig {
+  readonly forceShellout: boolean;
+}
+
 /**
  * The parsed cq.toml configuration (T170, T223, T349).
  *
@@ -403,6 +428,7 @@ export interface CqConfig {
   readonly ledger: LedgerConfig | null;
   /** The `[project]` table (name), or null if absent. */
   readonly project: ProjectConfig | null;
+  readonly dispatch: DispatchConfig;
   /**
    * The ACTIVE selector's fail-closed violation message, or null when there is
    * none (T861). Raised at dispatch-panel resolution, never at parse time.

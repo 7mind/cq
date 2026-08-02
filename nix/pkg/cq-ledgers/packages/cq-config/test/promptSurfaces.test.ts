@@ -25,7 +25,7 @@ const differenceKindTypeIsClosed: Equal<
   IntentionalDifferenceKind,
   "invocation-syntax" | "dispatch-protocol" | "recursion-protocol" | "tool-vocabulary"
 > = true;
-const dispatchHarnessRemainsDistinct: Equal<Harness, "claude" | "pi"> = true;
+const dispatchHarnessRemainsDistinct: Equal<Harness, "claude" | "codex" | "pi"> = true;
 /**
  * T861: THREE domains coexist and must not collapse. A prompt surface selects a
  * rendered prompt representation; an ActiveHarness selects which `[harness.*]`
@@ -34,7 +34,7 @@ const dispatchHarnessRemainsDistinct: Equal<Harness, "claude" | "pi"> = true;
  * stay out of the third.
  */
 const activeSelectorAdmitsCodex: Equal<ActiveHarness, "claude" | "pi" | "codex"> = true;
-const codexIsNeverADispatchTransport: Equal<Extract<ActiveHarness, Harness>, "claude" | "pi"> =
+const codexIsNeverADispatchTransport: Equal<Extract<ActiveHarness, Harness>, "claude" | "codex" | "pi"> =
   true;
 
 const NIX_FIXTURE_URL = new URL("../../../../../lib/prompt-surfaces-fixture.json", import.meta.url);
@@ -48,7 +48,7 @@ describe("typed prompt surfaces", () => {
     expect(codexIsNeverADispatchTransport).toBe(true);
     expect(PROMPT_SURFACES).toEqual(["claude", "codex", "pi"]);
     expect(ACTIVE_HARNESSES).toEqual(["claude", "pi", "codex"]);
-    expect(HARNESSES).toEqual(["claude", "pi"]);
+    expect(HARNESSES).toEqual(["claude", "codex", "pi"]);
     expect(INTENTIONAL_DIFFERENCE_KINDS).toEqual([
       "invocation-syntax",
       "dispatch-protocol",

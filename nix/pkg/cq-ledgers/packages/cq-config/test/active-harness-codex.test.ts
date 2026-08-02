@@ -66,14 +66,14 @@ type Equal<Left, Right> =
 /** The ACTIVE configuration-selector domain gains codex. */
 const activeSelectorDomainIncludesCodex: Equal<ActiveHarness, "claude" | "pi" | "codex"> = true;
 /** The EXECUTABLE dispatch-token domain does NOT. */
-const dispatchTokenDomainStaysExecutable: Equal<Harness, "claude" | "pi"> = true;
+const dispatchTokenDomainStaysExecutable: Equal<Harness, "claude" | "codex" | "pi"> = true;
 /** Every executable harness is also a selectable configuration selector. */
-const everyDispatchHarnessIsSelectable: Equal<Extract<ActiveHarness, Harness>, "claude" | "pi"> =
+const everyDispatchHarnessIsSelectable: Equal<Extract<ActiveHarness, Harness>, "claude" | "codex" | "pi"> =
   true;
 /** A parsed reviewer/planner token can never name a codex transport. */
-const reviewerTokenHarnessStaysExecutable: Equal<ReviewerToken["harness"], "claude" | "pi"> = true;
+const reviewerTokenHarnessStaysExecutable: Equal<ReviewerToken["harness"], "claude" | "codex" | "pi"> = true;
 /** Nor can a `[tiers]` dispatch entry. */
-const tierEntryTokenStaysExecutable: Equal<TierEntry["token"]["harness"], "claude" | "pi"> = true;
+const tierEntryTokenStaysExecutable: Equal<TierEntry["token"]["harness"], "claude" | "codex" | "pi"> = true;
 /** The effort rules are keyed on the executable domain, so codex has no efforts. */
 const effortRulesStayExecutable: Equal<Parameters<typeof isEffort>[0], Harness> = true;
 /** Each guard narrows to its OWN domain and no further. */
@@ -153,24 +153,25 @@ describe("T861: the active configuration-selector vocabulary admits codex", () =
     expect(effortRulesStayExecutable).toBe(true);
 
     expect(ACTIVE_HARNESSES).toEqual(["claude", "pi", "codex"]);
-    expect(HARNESSES).toEqual(["claude", "pi"]);
+    expect(HARNESSES).toEqual(["claude", "codex", "pi"]);
 
     expect(activeGuardNarrowsToSelector("codex")).toBe(true);
-    expect(dispatchGuardNarrowsToHarness("codex")).toBe(false);
+    expect(dispatchGuardNarrowsToHarness("codex")).toBe(true);
     expect(isActiveHarness("codex")).toBe(true);
-    expect(isHarness("codex")).toBe(false);
+    expect(isHarness("codex")).toBe(true);
     expect(isActiveHarness("bogus")).toBe(false);
 
     // Every executable transport is selectable; the converse does not hold.
     for (const harness of HARNESSES) {
       expect(isActiveHarness(harness)).toBe(true);
     }
-    expect(HARNESSES.length).toBeLessThan(ACTIVE_HARNESSES.length);
+    expect(HARNESSES.length).toBe(ACTIVE_HARNESSES.length);
 
     // codex has no effort vocabulary of its own — efforts are keyed on the
     // executable transports only.
     expect(isEffort("pi", "xhigh")).toBe(true);
     expect(isEffort("claude", "off")).toBe(false);
+    expect(isEffort("codex", "none")).toBe(true);
   });
 
   it("resolves CQ_HARNESS=codex to the codex selector", () => {

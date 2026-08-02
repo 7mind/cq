@@ -54,6 +54,7 @@ const CONFIG_RESULT = {
   },
   agentTiers: { "plan-reviewer": "frontier" },
   agentEfforts: { "plan-reviewer": "high" },
+  dispatch: { forceShellout: false },
 } as const;
 const PROMPT_RESULT = {
   roleId: "plan-reviewer",

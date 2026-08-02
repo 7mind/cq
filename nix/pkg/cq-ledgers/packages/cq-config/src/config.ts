@@ -39,8 +39,10 @@ import {
   DEFAULT_TIER,
   PI_EFFORTS,
   CLAUDE_EFFORTS,
+  CODEX_EFFORTS,
   type ActiveHarness,
   type CqConfig,
+  type DispatchConfig,
   type Effort,
   type Harness,
   type LedgerConfig,
@@ -121,7 +123,7 @@ export function parseReviewerToken(token: string): ReviewerToken {
   }
   if (!isHarness(harness)) {
     throw new CqConfigError(
-      `unknown harness "${harness}" in token "${token}" (expected "claude" or "pi")`,
+      `unknown harness "${harness}" in token "${token}" (expected "claude", "codex", or "pi")`,
     );
   }
 
@@ -174,10 +176,12 @@ export function parseReviewerToken(token: string): ReviewerToken {
     return { harness, model, provider, effort };
   }
 
-  // harness === "claude": provider qualifiers are pi-only.
+  // Claude and Codex tokens never carry a provider qualifier; Pi remains the
+  // sole provider-routed grammar, so pi:openai-codex/... cannot be mistaken for
+  // a codex dispatch token.
   if (slash >= 0) {
     throw new CqConfigError(
-      `claude token "${token}" must not contain a provider qualifier '/' (provider qualifiers are pi-only)`,
+      `${harness} token "${token}" must not contain a provider qualifier '/' (provider qualifiers are pi-only)`,
     );
   }
   // `:` is reserved inside the claude model after stripping a valid effort.
@@ -191,7 +195,7 @@ export function parseReviewerToken(token: string): ReviewerToken {
 
 /** The legal effort set for a harness, rendered for error messages. */
 function legalEfforts(harness: ReviewerToken["harness"]): string {
-  return (harness === "pi" ? PI_EFFORTS : CLAUDE_EFFORTS).join(" | ");
+  return (harness === "pi" ? PI_EFFORTS : harness === "codex" ? CODEX_EFFORTS : CLAUDE_EFFORTS).join(" | ");
 }
 
 /** The default git branch for the git-object ledger backend. */
@@ -373,6 +377,14 @@ function parseProject(raw: RawProject): ProjectConfig {
   return { name };
 }
 
+function parseDispatch(raw: import("./toml.js").RawDispatch | null): DispatchConfig {
+  if (raw === null || raw.forceShellout === undefined) return { forceShellout: false };
+  if (typeof raw.forceShellout !== "boolean") {
+    throw new CqConfigError("[dispatch] forceShellout must be a boolean");
+  }
+  return { forceShellout: raw.forceShellout };
+}
+
 /**
  * Parse a cq.toml document string into a typed CqConfig for one ACTIVE harness.
  *
@@ -471,6 +483,7 @@ export function parseConfig(
     raw.agentEfforts === null ? {} : parseAgentEfforts(raw.agentEfforts);
   const ledger = raw.ledger === null ? null : parseLedger(raw.ledger);
   const project = raw.project === null ? null : parseProject(raw.project);
+  const dispatch = parseDispatch(raw.dispatch);
   return {
     aliases,
     reviewers,
@@ -481,6 +494,7 @@ export function parseConfig(
     agentEfforts,
     ledger,
     project,
+    dispatch,
     dispatchViolation,
   };
 }

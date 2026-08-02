@@ -133,6 +133,8 @@ export interface GetConfigResult {
    * absent from cq.toml (or no cq.toml exists).
    */
   readonly agentEfforts: Record<string, string>;
+  /** Global dispatch policy, independent of the active harness. */
+  readonly dispatch: { readonly forceShellout: boolean };
 }
 
 /**
@@ -171,6 +173,7 @@ export interface AgentModelEntry {
   readonly modelClass: "frontier" | "standard" | "fast" | null;
   readonly modelMappings: {
     readonly claude?: readonly string[];
+    readonly codex?: readonly string[];
     readonly pi?: readonly string[];
   };
 }

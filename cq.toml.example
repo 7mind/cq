@@ -260,6 +260,7 @@ planners = ["opus"]
 #   [ledger]         — storage backend (fs / git-object)
 #   [agent_tiers]    — agent-name -> tier class map
 #   [agent_efforts]  — agent-name -> reasoning-effort override map
+#   [dispatch]       — global dispatch policy (`forceShellout = false` by default)
 #
 # PER-HARNESS OVERRIDABLE (present in [harness.<name>]):
 #   reviewers = [...]         — REPLACES shared top-level reviewers

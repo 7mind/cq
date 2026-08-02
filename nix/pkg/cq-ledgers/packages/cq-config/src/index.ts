@@ -17,6 +17,7 @@ export type {
   TiersConfig,
   PiEffort,
   ClaudeEffort,
+  CodexEffort,
   Effort,
   LedgerBackend,
   LedgerBackupMode,
@@ -26,6 +27,7 @@ export type {
   RemoteServerUrl,
   RemoteLedgerToken,
   ProjectConfig,
+  DispatchConfig,
 } from "./types.js";
 export {
   HARNESSES,
@@ -37,6 +39,7 @@ export {
   DEFAULT_TIER,
   PI_EFFORTS,
   CLAUDE_EFFORTS,
+  CODEX_EFFORTS,
   isEffort,
   LEDGER_BACKENDS,
   isLedgerBackend,
@@ -66,7 +69,7 @@ export {
   CQ_HARNESS_ENV,
   CLAUDE_CODE_SESSION_ID_ENV,
 } from "./activeHarness.js";
-export type { RawToml, RawWebui, RawLedger, RawProject, RawHarnessOverride } from "./toml.js";
+export type { RawToml, RawWebui, RawLedger, RawProject, RawDispatch, RawHarnessOverride } from "./toml.js";
 export { parseToml } from "./toml.js";
 export {
   CQ_LEDGER_REMOTE_TOKEN_ENV,

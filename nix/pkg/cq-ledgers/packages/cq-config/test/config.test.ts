@@ -80,6 +80,24 @@ describe("parseReviewerToken", () => {
   });
 });
 
+describe("codex token and global dispatch configuration", () => {
+  it("round-trips a codex token without stealing Pi's openai-codex provider route", () => {
+    expect(parseReviewerToken("codex:gpt-5.6-sol:xhigh")).toEqual({
+      harness: "codex", model: "gpt-5.6-sol", provider: null, effort: "xhigh",
+    });
+    expect(parseReviewerToken("pi:openai-codex/gpt-5.6-sol:xhigh")).toEqual({
+      harness: "pi", model: "gpt-5.6-sol", provider: "openai-codex", effort: "xhigh",
+    });
+    expect(() => parseReviewerToken("codex:gpt-5.6-sol:off")).toThrow(CqConfigError);
+  });
+
+  it("defaults forceShellout to false and reads its sole global dispatch location", () => {
+    expect(parseConfig("[aliases]\n").dispatch).toEqual({ forceShellout: false });
+    expect(parseConfig("[dispatch]\nforceShellout = true\n").dispatch).toEqual({ forceShellout: true });
+    expect(() => parseConfig("[harness.pi.dispatch]\nforceShellout = true\n")).toThrow(/unexpected key "dispatch"/);
+  });
+});
+
 // T231: provider qualifier grammar (BREAKING — bare pi is rejected).
 describe("parseReviewerToken — provider qualifier (T231)", () => {
   it("splits a pi token into provider + model on the first '/'", () => {
@@ -964,7 +982,7 @@ fast = "gemini:flash"
     }
     expect(caught).toBeInstanceOf(CqConfigError);
     expect((caught as CqConfigError).message).toBe(
-      'cq.toml: unknown harness "gemini" in token "gemini:flash" (expected "claude" or "pi")',
+      'cq.toml: unknown harness "gemini" in token "gemini:flash" (expected "claude", "codex", or "pi")',
     );
   });
 

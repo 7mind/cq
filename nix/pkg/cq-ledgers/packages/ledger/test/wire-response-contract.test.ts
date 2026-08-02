@@ -554,6 +554,7 @@ describe("wire serialization", () => {
       },
       agentTiers: { "plan-reviewer": "frontier" },
       agentEfforts: { "plan-reviewer": "max" },
+      dispatch: { forceShellout: false },
     };
     const prompt: FetchPromptResult = {
       roleId: "plan-reviewer",
