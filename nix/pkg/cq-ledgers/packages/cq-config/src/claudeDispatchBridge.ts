@@ -478,10 +478,15 @@ function parseClaudePrintResult(value: unknown): ClaudePrintResult | undefined {
  * the result capability, consumes the raw terminal JSON inside this function,
  * and returns only transport facts to the lifecycle sequencer.
  */
-export function launchClaudePrint(
+interface ClaudePrintInvocation {
+  readonly boundRoleId: string;
+  readonly argv: readonly string[];
+}
+
+function claudePrintInvocation(
   context: ClaudeNativeLaunchContext,
   options: ClaudePrintLaunchOptions,
-): ClaudeNativeLaunchReport {
+): ClaudePrintInvocation {
   const boundRoleId = boundClaudePrintRole(context, options.rolePrompt);
   const serverName = assertObservedTransportString(options.storeServer.name, "storeServer.name");
   const allowedToolNames = exposedLedgerToolsForRole(boundRoleId).map(
@@ -501,8 +506,9 @@ export function launchClaudePrint(
       },
     },
   });
-  const processResult = Bun.spawnSync(
-    [
+  return Object.freeze({
+    boundRoleId,
+    argv: Object.freeze([
       options.claudeExecutable,
       ...options.claudeArgsPrefix,
       "-p",
@@ -527,30 +533,44 @@ export function launchClaudePrint(
       "--permission-mode",
       "dontAsk",
       "--no-session-persistence",
-    ],
-    {
-      cwd: options.cwd,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: context.childWindowMs,
-    },
-  );
-  const raw = processResult.stdout.toString().trim();
+    ]),
+  });
+}
+
+interface ClaudePrintProcessObservation {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode: number;
+  readonly cancelled: boolean;
+}
+
+function claudePrintLaunchReport(
+  context: ClaudeNativeLaunchContext,
+  boundRoleId: string,
+  processResult: ClaudePrintProcessObservation,
+): ClaudeNativeLaunchReport {
+  const raw = processResult.stdout.trim();
   const observedAt = new Date().toISOString();
   if (raw === "") {
     return failedClaudePrintReport(
       context,
       processResult.exitCode,
       observedAt,
-      processResult.stderr.toString(),
+      processResult.stderr,
+      processResult.cancelled,
     );
   }
   let decoded: unknown;
   try {
     decoded = JSON.parse(raw);
   } catch {
-    return failedClaudePrintReport(context, processResult.exitCode, observedAt, raw);
+    return failedClaudePrintReport(
+      context,
+      processResult.exitCode,
+      observedAt,
+      raw,
+      processResult.cancelled,
+    );
   }
   const parsed = parseClaudePrintResult(decoded);
   if (parsed === undefined) {
@@ -559,13 +579,14 @@ export function launchClaudePrint(
       processResult.exitCode,
       observedAt,
       "malformed Claude print terminal result",
+      processResult.cancelled,
     );
   }
   const model = Object.values(parsed.modelUsage ?? {})
     .map((usage) => usage.canonicalModel)
     .find((candidate): candidate is string => typeof candidate === "string" && candidate !== "");
   return Object.freeze({
-    cancelled: Boolean(processResult.signalCode),
+    cancelled: processResult.cancelled,
     terminal: Object.freeze({
       subtype: parsed.subtype,
       isError: parsed.is_error || processResult.exitCode !== 0,
@@ -585,14 +606,71 @@ export function launchClaudePrint(
   });
 }
 
+export function launchClaudePrint(
+  context: ClaudeNativeLaunchContext,
+  options: ClaudePrintLaunchOptions,
+): ClaudeNativeLaunchReport {
+  const invocation = claudePrintInvocation(context, options);
+  const processResult = Bun.spawnSync([...invocation.argv], {
+    cwd: options.cwd,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: context.childWindowMs,
+  });
+  return claudePrintLaunchReport(context, invocation.boundRoleId, {
+    stdout: processResult.stdout.toString(),
+    stderr: processResult.stderr.toString(),
+    exitCode: processResult.exitCode,
+    cancelled: Boolean(processResult.signalCode),
+  });
+}
+
+/** Async form used when the scoped child endpoint is hosted by this process. */
+export async function launchClaudePrintAsync(
+  context: ClaudeNativeLaunchContext,
+  options: ClaudePrintLaunchOptions,
+): Promise<ClaudeNativeLaunchReport> {
+  const invocation = claudePrintInvocation(context, options);
+  const child = Bun.spawn([...invocation.argv], {
+    cwd: options.cwd,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stdout = new Response(child.stdout).text();
+  const stderr = new Response(child.stderr).text();
+  let timedOut = false;
+  let forceKill: ReturnType<typeof setTimeout> | undefined;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    child.kill("SIGTERM");
+    forceKill = setTimeout(() => child.kill("SIGKILL"), 1_000);
+  }, context.childWindowMs);
+  const [exitCode, completedStdout, completedStderr] = await Promise.all([
+    child.exited,
+    stdout,
+    stderr,
+  ]);
+  clearTimeout(timeout);
+  if (forceKill !== undefined) clearTimeout(forceKill);
+  return claudePrintLaunchReport(context, invocation.boundRoleId, {
+    stdout: completedStdout,
+    stderr: completedStderr,
+    exitCode,
+    cancelled: timedOut || child.signalCode !== null,
+  });
+}
+
 function failedClaudePrintReport(
   context: ClaudeNativeLaunchContext,
   exitStatus: number,
   observedAt: string,
   detail: string,
+  cancelled = false,
 ): ClaudeNativeLaunchReport {
   return Object.freeze({
-    cancelled: false,
+    cancelled,
     terminal: Object.freeze({
       subtype: "error",
       isError: true,

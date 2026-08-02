@@ -71,6 +71,21 @@ export interface CodexRoleBoundaryPlan {
   readonly interceptStdout: true;
 }
 
+export interface CodexRoleBoundaryExecutionResult {
+  readonly handle: DispatchHandle;
+  readonly observation: {
+    readonly agentType: string;
+    /** Parent-minted label carried on the registered subprocess launch, never read from child text. */
+    readonly correlationId: string;
+    /** Actual thread.started id intercepted from the child JSONL transport. */
+    readonly threadId: string;
+    /** Actual terminal turn event intercepted from the child JSONL transport. */
+    readonly outcome: "completed" | "transport-failed";
+    /** Actual registered target exit status; corroborating evidence only. */
+    readonly exitStatus: number;
+  };
+}
+
 export const CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX = "CQ_CODEX_BOUNDARY_DIAGNOSTIC ";
 
 export const CODEX_ROLE_BOUNDARY_DIAGNOSTIC_VERDICTS = [
@@ -287,6 +302,7 @@ export function createCodexRoleBoundaryPlan(
 
 interface CodexExecEvent {
   readonly type?: unknown;
+  readonly thread_id?: unknown;
   readonly item?: {
     readonly type?: unknown;
     readonly text?: unknown;
@@ -330,6 +346,8 @@ interface CodexRoleBoundaryStreamObservation {
   readonly completedAgentMessageCount: number;
   readonly malformedJsonlCount: number;
   readonly matchingResultStoredAcknowledgementPresent: boolean;
+  readonly threadIds: readonly string[];
+  readonly turnOutcomes: readonly ("completed" | "transport-failed")[];
 }
 
 function observeCodexRoleBoundaryStream(
@@ -340,6 +358,8 @@ function observeCodexRoleBoundaryStream(
   let completedAgentMessageCount = 0;
   let malformedJsonlCount = 0;
   let matchingResultStoredAcknowledgementPresent = false;
+  const threadIds: string[] = [];
+  const turnOutcomes: ("completed" | "transport-failed")[] = [];
   for (const line of jsonl.split("\n")) {
     if (line.trim() === "") continue;
     let parsed: unknown;
@@ -354,6 +374,15 @@ function observeCodexRoleBoundaryStream(
       continue;
     }
     const event = parsed as CodexExecEvent;
+    if (
+      event.type === "thread.started" &&
+      typeof event.thread_id === "string" &&
+      event.thread_id.trim() !== ""
+    ) {
+      threadIds.push(event.thread_id);
+    }
+    if (event.type === "turn.completed") turnOutcomes.push("completed");
+    if (event.type === "turn.failed") turnOutcomes.push("transport-failed");
     if (eventCarriesMatchingResultStoredAcknowledgement(event, expectedHandle)) {
       matchingResultStoredAcknowledgementPresent = true;
     }
@@ -371,6 +400,40 @@ function observeCodexRoleBoundaryStream(
     completedAgentMessageCount,
     malformedJsonlCount,
     matchingResultStoredAcknowledgementPresent,
+    threadIds: Object.freeze(threadIds),
+    turnOutcomes: Object.freeze(turnOutcomes),
+  });
+}
+
+function observedCodexRoleBoundaryResult(
+  jsonl: string,
+  plan: CodexRoleBoundaryPlan,
+  correlationId: string,
+  exitStatus: number,
+): CodexRoleBoundaryExecutionResult {
+  if (correlationId.trim() === "") {
+    throw new CodexRoleBoundaryError("launch correlation id must be non-empty");
+  }
+  const observation = observeCodexRoleBoundaryStream(jsonl, plan.expectedHandle);
+  if (observation.threadIds.length !== 1 || observation.threadIds[0] === undefined) {
+    throw new CodexRoleBoundaryError(
+      `child emitted ${String(observation.threadIds.length)} thread.started events; expected exactly one`,
+    );
+  }
+  if (observation.turnOutcomes.length !== 1 || observation.turnOutcomes[0] === undefined) {
+    throw new CodexRoleBoundaryError(
+      `child emitted ${String(observation.turnOutcomes.length)} terminal turn events; expected exactly one`,
+    );
+  }
+  return Object.freeze({
+    handle: interceptCodexRoleBoundaryResult(jsonl, plan.expectedHandle),
+    observation: Object.freeze({
+      agentType: plan.roleId,
+      correlationId,
+      threadId: observation.threadIds[0],
+      outcome: observation.turnOutcomes[0],
+      exitStatus,
+    }),
   });
 }
 
@@ -509,9 +572,15 @@ function boundaryDiagnostic(
  * a valid stored-result handle wins even when Codex exits non-zero during
  * teardown, matching the compact dispatch protocol's completion semantics.
  */
+export function executeCodexRoleBoundary(plan: CodexRoleBoundaryPlan): Promise<DispatchHandle>;
+export function executeCodexRoleBoundary(
+  plan: CodexRoleBoundaryPlan,
+  correlationId: string,
+): Promise<CodexRoleBoundaryExecutionResult>;
 export async function executeCodexRoleBoundary(
   plan: CodexRoleBoundaryPlan,
-): Promise<DispatchHandle> {
+  correlationId?: string,
+): Promise<DispatchHandle | CodexRoleBoundaryExecutionResult> {
   type StopCause = "SIGINT" | "SIGTERM" | "timeout";
   let stop: ((cause: StopCause) => void) | undefined;
   let requestedStop: StopCause | undefined;
@@ -576,10 +645,14 @@ export async function executeCodexRoleBoundary(
   try {
     let launched;
     try {
+      const childEnvironment: NodeJS.ProcessEnv =
+        correlationId === undefined
+          ? process.env
+          : { ...process.env, CQ_CODEX_ROLE_CORRELATION_ID: correlationId };
       launched = await launchRegisteredProcessGroup({
         argv: plan.argv,
         cwd: plan.cwd,
-        env: process.env,
+        env: childEnvironment,
         stdio: { stdin: "pipe", stdout: "pipe", stderr: "pipe" } as const,
         register: async (registration) => {
           rootRegistration = registration;
@@ -628,7 +701,11 @@ export async function executeCodexRoleBoundary(
     child.stdin.write(plan.stdin);
     child.stdin.end();
     const execution = Promise.all([launched.exited, stdout, stderr]).then(
-      ([, completedStdout]) => ({ kind: "completed" as const, stdout: completedStdout }),
+      ([exitStatus, completedStdout]) => ({
+        kind: "completed" as const,
+        stdout: completedStdout,
+        exitStatus,
+      }),
       (error: unknown) => ({ kind: "failed" as const, error }),
     );
     const outcome = await Promise.race([
@@ -644,6 +721,14 @@ export async function executeCodexRoleBoundary(
       throw new CodexRoleBoundaryError(`wrapper received ${outcome.cause}`);
     }
     if (outcome.kind === "failed") throw outcome.error;
+    if (correlationId !== undefined) {
+      return observedCodexRoleBoundaryResult(
+        outcome.stdout,
+        plan,
+        correlationId,
+        outcome.exitStatus,
+      );
+    }
     return interceptCodexRoleBoundaryResult(outcome.stdout, plan.expectedHandle);
   } catch (error) {
     try {

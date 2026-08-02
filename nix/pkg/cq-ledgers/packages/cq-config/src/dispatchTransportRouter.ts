@@ -23,7 +23,7 @@ import type {
 } from "./compactDispatchProtocol.js";
 import {
   buildClaudeCompactNativeLaunch,
-  launchClaudePrint,
+  launchClaudePrintAsync,
   type ClaudePrintLaunchOptions,
 } from "./claudeDispatchBridge.js";
 import {
@@ -154,7 +154,7 @@ export type ClaudeProcessAdapterBindingResolver = (
 export function createClaudeProcessDispatchAdapter(
   resolve: ClaudeProcessAdapterBindingResolver,
 ): DispatchTransportAdapter {
-  return createAdapter("claude", "process", (context) => {
+  return createAdapter("claude", "process", async (context) => {
     const binding = resolve(context);
     const gate = claudeLaunchGate(context.prepared, binding.now());
     if (!gate.launch) {
@@ -165,7 +165,7 @@ export function createClaudeProcessDispatchAdapter(
       };
     }
     const handle = handleOf(context.prepared);
-    const report = launchClaudePrint(
+    const report = await launchClaudePrintAsync(
       {
         envelope: buildClaudeCompactNativeLaunch({
           roleId: context.prepared.promptProvenance.roleId,
@@ -271,7 +271,7 @@ export function createCodexProcessDispatchAdapter(
     };
     const plan = createCodexRoleBoundaryPlan(request);
     try {
-      const observedHandle = await executeCodexRoleBoundary(plan);
+      const observed = await executeCodexRoleBoundary(plan, binding.correlation.correlationId);
       const observedAt = binding.now();
       const decision = decideCodexCompletion({
         handle,
@@ -279,13 +279,9 @@ export function createCodexProcessDispatchAdapter(
         observation: {
           source: "transport",
           mode: CODEX_FALLBACK_DELIVERY_MODE,
-          agentType: context.prepared.promptProvenance.roleId,
-          correlationId: binding.correlation.correlationId,
-          threadId: binding.correlation.threadId,
-          outcome: "completed",
-          finalMessage: JSON.stringify(observedHandle),
+          ...observed.observation,
+          finalMessage: JSON.stringify(observed.handle),
           observedAt,
-          exitStatus: 0,
         },
       });
       if (decision.action === "abort") {
@@ -293,7 +289,7 @@ export function createCodexProcessDispatchAdapter(
       }
       return {
         outcome: "completed",
-        handle: observedHandle,
+        handle: observed.handle,
         nativeCompletion: decision.nativeCompletion,
         handleOnlyEnforcement: "structural",
       };

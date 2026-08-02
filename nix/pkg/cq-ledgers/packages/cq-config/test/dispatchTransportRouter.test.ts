@@ -25,6 +25,7 @@ import {
   type AttestationNamespace,
   type ClaudeChildCorrelation,
   type CodexChildCorrelation,
+  type DispatchAdapterLaunchContext,
   type DispatchAdapterLaunchResult,
   type DispatchHandle,
   type DispatchJSONValue,
@@ -71,11 +72,84 @@ interface CodexRecordingFixture {
   readonly root: string;
   readonly executable: string;
   readonly capturePath: string;
+  readonly endpoint: RecordedCapabilityEndpoint;
+}
+
+interface RecordedCapabilityEndpoint {
+  readonly url: string;
+  readonly counts: { input: number; store: number };
+  bind(context: DispatchAdapterLaunchContext): void;
+  stop(): void;
+}
+
+function createRecordedCapabilityEndpoint(): RecordedCapabilityEndpoint {
+  let context: DispatchAdapterLaunchContext | undefined;
+  const counts = { input: 0, store: 0 };
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      try {
+        if (context === undefined) throw new Error("recorded capability endpoint was not bound");
+        const body = (await request.json()) as Readonly<Record<string, unknown>>;
+        const expectedHandle = handleOf(context.prepared);
+        if (new URL(request.url).pathname === "/fetch") {
+          if (
+            JSON.stringify(body) !==
+            JSON.stringify({
+              ...expectedHandle,
+              inputCapability: context.prepared.inputCapability,
+            })
+          ) {
+            throw new Error("recorded child sent the wrong fetch capability request");
+          }
+          counts.input += 1;
+          return Response.json(context.child.materializeInput());
+        }
+        if (new URL(request.url).pathname === "/store") {
+          if (
+            JSON.stringify(body) !==
+            JSON.stringify({
+              resultCapability: context.prepared.resultCapability,
+              output: OUTPUT,
+            })
+          ) {
+            throw new Error("recorded child sent the wrong store capability request");
+          }
+          counts.store += 1;
+          return Response.json(context.child.storeResult(OUTPUT));
+        }
+        throw new Error("recorded child requested an unknown capability operation");
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : String(error) },
+          { status: 409 },
+        );
+      }
+    },
+  });
+  return {
+    url: `http://127.0.0.1:${String(server.port)}`,
+    counts,
+    bind: (boundContext) => {
+      if (context !== undefined) throw new Error("recorded capability endpoint bound twice");
+      context = boundContext;
+    },
+    stop: () => server.stop(true),
+  };
 }
 
 function createCodexRecordingFixture(
-  mode: "echo" | "malformed" | "success" | "wait",
+  mode:
+    | "echo"
+    | "failed-outcome"
+    | "malformed"
+    | "success"
+    | "unused-capabilities"
+    | "wait"
+    | "wrong-thread",
 ): CodexRecordingFixture {
+  const endpoint = createRecordedCapabilityEndpoint();
   const root = mkdtempSync(join(tmpdir(), "cq-t1631-codex-"));
   const executable = join(root, "codex-recording");
   const capturePath = join(root, "launch.json");
@@ -86,12 +160,15 @@ function createCodexRecordingFixture(
   chmodSync(executable, 0o700);
   process.env["CQ_T1631_CODEX_MODE"] = mode;
   process.env["CQ_T1631_CODEX_CAPTURE"] = capturePath;
-  return { root, executable, capturePath };
+  process.env["CQ_T1631_CAPABILITY_ENDPOINT"] = endpoint.url;
+  return { root, executable, capturePath, endpoint };
 }
 
 function removeCodexRecordingFixture(fixture: CodexRecordingFixture): void {
   delete process.env["CQ_T1631_CODEX_MODE"];
   delete process.env["CQ_T1631_CODEX_CAPTURE"];
+  delete process.env["CQ_T1631_CAPABILITY_ENDPOINT"];
+  fixture.endpoint.stop();
   rmSync(fixture.root, { recursive: true, force: true });
 }
 
@@ -189,32 +266,19 @@ function successfulLaunch(
   };
 }
 
-function storeRecordedOutput(
-  context: Parameters<ReturnType<typeof createNativeDispatchAdapter>["launch"]>[0],
-  counts: { input: number; store: number },
-): void {
-  counts.input += 1;
-  context.child.materializeInput();
-  counts.store += 1;
-  const stored = context.child.storeResult(OUTPUT);
-  if (stored.state === "aborted") {
-    throw new Error(`recorded child store aborted: ${stored.result.reason}`);
-  }
-}
-
-function claudeRecordingResolver(counts: {
-  input: number;
-  store: number;
-}): Parameters<typeof createClaudeProcessDispatchAdapter>[0] {
+function claudeRecordingResolver(
+  endpoint: RecordedCapabilityEndpoint,
+  extraArgs: readonly string[] = [],
+): Parameters<typeof createClaudeProcessDispatchAdapter>[0] {
   return (context) => {
-    storeRecordedOutput(context, counts);
+    endpoint.bind(context);
     return {
       correlation: CLAUDE_CORRELATION,
       model: "recorded-claude-model",
       now: () => T0,
       launchOptions: {
         claudeExecutable: process.execPath,
-        claudeArgsPrefix: ["run", CLAUDE_RECORDING_FIXTURE],
+        claudeArgsPrefix: ["run", CLAUDE_RECORDING_FIXTURE, ...extraArgs],
         cwd: import.meta.dir,
         rolePrompt: CLAUDE_ROLE_PROMPT,
         storeServer: {
@@ -222,7 +286,10 @@ function claudeRecordingResolver(counts: {
           command: "cq-not-called-by-recording",
           args: ["mcp", "--dispatch-store"],
           cwd: import.meta.dir,
-          env: { T688_SCOPE: "one-dispatch" },
+          env: {
+            T688_SCOPE: "one-dispatch",
+            CQ_T1631_CAPABILITY_ENDPOINT: endpoint.url,
+          },
           capabilityEnv: "T688_CAPABILITY",
         },
       },
@@ -232,23 +299,13 @@ function claudeRecordingResolver(counts: {
 
 function codexRecordingResolver(
   fixture: CodexRecordingFixture,
-  counts: { input: number; store: number },
   options?: {
     readonly correlation?: CodexChildCorrelation;
     readonly now?: string;
-    readonly storeResult?: boolean;
   },
 ): Parameters<typeof createCodexProcessDispatchAdapter>[0] {
   return (context) => {
-    counts.input += 1;
-    context.child.materializeInput();
-    if (options?.storeResult !== false) {
-      counts.store += 1;
-      const stored = context.child.storeResult(OUTPUT);
-      if (stored.state === "aborted") {
-        throw new Error(`recorded child store aborted: ${stored.result.reason}`);
-      }
-    }
+    fixture.endpoint.bind(context);
     return {
       correlation: options?.correlation ?? CODEX_CORRELATION,
       now: () => options?.now ?? T0,
@@ -405,37 +462,71 @@ describe("T1631 shared three-harness transport router", () => {
   });
 
   test("Claude process adapter launches the recorded production boundary", async () => {
+    const endpoint = createRecordedCapabilityEndpoint();
     const fixture = preparedFixture("claude", 20, {
       expectedChild: claudeExpectedChild(CLAUDE_CORRELATION),
       promptDigest: promptDigestOf(CLAUDE_ROLE_PROMPT),
     });
-    const counts = { input: 0, store: 0 };
-    const registry = new DispatchTransportAdapterRegistry([
-      createClaudeProcessDispatchAdapter(claudeRecordingResolver(counts)),
-    ]);
-    const result = await runPreparedDispatch(
-      {
-        namespace: NAMESPACE,
-        prepared: fixture.prepared,
-        activeHarness: "pi",
-        targetHarness: "claude",
-        forceShellout: false,
-      },
-      registry,
-      fixture.deps,
-    );
-    expect(result).toMatchObject({
-      outcome: "consumed",
-      adapterId: "claude:process",
-      output: OUTPUT,
-    });
-    expect(counts).toEqual({ input: 1, store: 1 });
-    expect(
-      fetchDispatchResult(
-        { namespace: NAMESPACE, actor: "trusted-parent", ...handleOf(fixture.prepared) },
+    try {
+      const registry = new DispatchTransportAdapterRegistry([
+        createClaudeProcessDispatchAdapter(claudeRecordingResolver(endpoint)),
+      ]);
+      const result = await runPreparedDispatch(
+        {
+          namespace: NAMESPACE,
+          prepared: fixture.prepared,
+          activeHarness: "pi",
+          targetHarness: "claude",
+          forceShellout: false,
+        },
+        registry,
         fixture.deps,
-      ).state,
-    ).toBe("output-already-materialized");
+      );
+      expect(result).toMatchObject({
+        outcome: "consumed",
+        adapterId: "claude:process",
+        output: OUTPUT,
+      });
+      expect(endpoint.counts).toEqual({ input: 1, store: 1 });
+      expect(
+        fetchDispatchResult(
+          { namespace: NAMESPACE, actor: "trusted-parent", ...handleOf(fixture.prepared) },
+          fixture.deps,
+        ).state,
+      ).toBe("output-already-materialized");
+    } finally {
+      endpoint.stop();
+    }
+  });
+
+  test("a Claude child that uses neither scoped capability cannot complete", async () => {
+    const endpoint = createRecordedCapabilityEndpoint();
+    const fixture = preparedFixture("claude", 26, {
+      expectedChild: claudeExpectedChild(CLAUDE_CORRELATION),
+      promptDigest: promptDigestOf(CLAUDE_ROLE_PROMPT),
+    });
+    try {
+      const registry = new DispatchTransportAdapterRegistry([
+        createClaudeProcessDispatchAdapter(
+          claudeRecordingResolver(endpoint, ["--skip-capabilities"]),
+        ),
+      ]);
+      const result = await runPreparedDispatch(
+        {
+          namespace: NAMESPACE,
+          prepared: fixture.prepared,
+          activeHarness: "pi",
+          targetHarness: "claude",
+          forceShellout: false,
+        },
+        registry,
+        fixture.deps,
+      );
+      expect(result).toMatchObject({ outcome: "aborted", abort: { reason: "missing-result" } });
+      expect(endpoint.counts).toEqual({ input: 0, store: 0 });
+    } finally {
+      endpoint.stop();
+    }
   });
 
   test("Codex process adapter launches and records the production boundary plan", async () => {
@@ -445,9 +536,8 @@ describe("T1631 shared three-harness transport router", () => {
         expectedChild: codexExpectedChild(CODEX_CORRELATION),
         promptDigest: promptDigestOf(CLAUDE_ROLE_PROMPT),
       });
-      const counts = { input: 0, store: 0 };
       const registry = new DispatchTransportAdapterRegistry([
-        createCodexProcessDispatchAdapter(codexRecordingResolver(processFixture, counts)),
+        createCodexProcessDispatchAdapter(codexRecordingResolver(processFixture)),
       ]);
       const result = await runPreparedDispatch(
         {
@@ -466,13 +556,15 @@ describe("T1631 shared three-harness transport router", () => {
         adapterId: "codex:process",
         output: OUTPUT,
       });
-      expect(counts).toEqual({ input: 1, store: 1 });
+      expect(processFixture.endpoint.counts).toEqual({ input: 1, store: 1 });
       const capture = JSON.parse(readFileSync(processFixture.capturePath, "utf8")) as {
         readonly argv: readonly string[];
+        readonly correlationId: string;
         readonly launch: Readonly<Record<string, unknown>>;
       };
       expect(capture.argv).toContain("--ignore-user-config");
       expect(capture.argv).toContain("--strict-config");
+      expect(capture.correlationId).toBe(CODEX_CORRELATION.correlationId);
       expect(capture.launch).toEqual({
         attestationId: fixture.prepared.attestationId,
         generation: fixture.prepared.generation,
@@ -490,6 +582,67 @@ describe("T1631 shared three-harness transport router", () => {
     }
   });
 
+  for (const [mode, sequence] of [
+    ["wrong-thread", 27],
+    ["failed-outcome", 28],
+  ] as const) {
+    test(`Codex process adapter rejects the recorded ${mode} observation`, async () => {
+      const processFixture = createCodexRecordingFixture(mode);
+      try {
+        const fixture = preparedFixture("codex", sequence, {
+          expectedChild: codexExpectedChild(CODEX_CORRELATION),
+          promptDigest: promptDigestOf(CLAUDE_ROLE_PROMPT),
+        });
+        const registry = new DispatchTransportAdapterRegistry([
+          createCodexProcessDispatchAdapter(codexRecordingResolver(processFixture)),
+        ]);
+        const result = await runPreparedDispatch(
+          {
+            namespace: NAMESPACE,
+            prepared: fixture.prepared,
+            activeHarness: "claude",
+            targetHarness: "codex",
+            forceShellout: false,
+          },
+          registry,
+          fixture.deps,
+        );
+        expect(result).toMatchObject({ outcome: "aborted", abort: { reason: "native-failure" } });
+        expect(processFixture.endpoint.counts).toEqual({ input: 1, store: 1 });
+      } finally {
+        removeCodexRecordingFixture(processFixture);
+      }
+    });
+  }
+
+  test("a Codex child that uses neither scoped capability cannot complete", async () => {
+    const processFixture = createCodexRecordingFixture("unused-capabilities");
+    try {
+      const fixture = preparedFixture("codex", 29, {
+        expectedChild: codexExpectedChild(CODEX_CORRELATION),
+        promptDigest: promptDigestOf(CLAUDE_ROLE_PROMPT),
+      });
+      const registry = new DispatchTransportAdapterRegistry([
+        createCodexProcessDispatchAdapter(codexRecordingResolver(processFixture)),
+      ]);
+      const result = await runPreparedDispatch(
+        {
+          namespace: NAMESPACE,
+          prepared: fixture.prepared,
+          activeHarness: "claude",
+          targetHarness: "codex",
+          forceShellout: false,
+        },
+        registry,
+        fixture.deps,
+      );
+      expect(result).toMatchObject({ outcome: "aborted", abort: { reason: "missing-result" } });
+      expect(processFixture.endpoint.counts).toEqual({ input: 0, store: 0 });
+    } finally {
+      removeCodexRecordingFixture(processFixture);
+    }
+  });
+
   for (const mode of ["malformed", "echo"] as const) {
     test(`Codex production boundary maps ${mode} final output to protocol-violation`, async () => {
       const processFixture = createCodexRecordingFixture(mode);
@@ -498,9 +651,8 @@ describe("T1631 shared three-harness transport router", () => {
           expectedChild: codexExpectedChild(CODEX_CORRELATION),
           promptDigest: promptDigestOf(CLAUDE_ROLE_PROMPT),
         });
-        const counts = { input: 0, store: 0 };
         const registry = new DispatchTransportAdapterRegistry([
-          createCodexProcessDispatchAdapter(codexRecordingResolver(processFixture, counts)),
+          createCodexProcessDispatchAdapter(codexRecordingResolver(processFixture)),
         ]);
         const result = await runPreparedDispatch(
           {
@@ -517,7 +669,7 @@ describe("T1631 shared three-harness transport router", () => {
           outcome: "aborted",
           abort: { reason: "protocol-violation" },
         });
-        expect(counts).toEqual({ input: 1, store: 1 });
+        expect(processFixture.endpoint.counts).toEqual({ input: 1, store: 1 });
       } finally {
         removeCodexRecordingFixture(processFixture);
       }
@@ -531,14 +683,13 @@ describe("T1631 shared three-harness transport router", () => {
         expectedChild: codexExpectedChild(CODEX_CORRELATION),
         promptDigest: promptDigestOf(CLAUDE_ROLE_PROMPT),
       });
-      const counts = { input: 0, store: 0 };
       const wrongCorrelation: CodexChildCorrelation = {
         ...CODEX_CORRELATION,
         correlationId: "T1631WrongCorrelation0123456789abcdef",
       };
       const registry = new DispatchTransportAdapterRegistry([
         createCodexProcessDispatchAdapter(
-          codexRecordingResolver(processFixture, counts, { correlation: wrongCorrelation }),
+          codexRecordingResolver(processFixture, { correlation: wrongCorrelation }),
         ),
       ]);
       const result = await runPreparedDispatch(
@@ -553,7 +704,7 @@ describe("T1631 shared three-harness transport router", () => {
         fixture.deps,
       );
       expect(result).toMatchObject({ outcome: "aborted", abort: { reason: "native-failure" } });
-      expect(counts).toEqual({ input: 1, store: 1 });
+      expect(processFixture.endpoint.counts).toEqual({ input: 1, store: 1 });
     } finally {
       removeCodexRecordingFixture(processFixture);
     }
@@ -566,14 +717,10 @@ describe("T1631 shared three-harness transport router", () => {
         expectedChild: codexExpectedChild(CODEX_CORRELATION),
         promptDigest: promptDigestOf(CLAUDE_ROLE_PROMPT),
       });
-      const launchAt = new Date(Date.parse(fixture.prepared.responseStoreNow) - 100).toISOString();
-      const counts = { input: 0, store: 0 };
+      const launchAt = new Date(Date.parse(fixture.prepared.responseStoreNow) - 1_000).toISOString();
       const registry = new DispatchTransportAdapterRegistry([
         createCodexProcessDispatchAdapter(
-          codexRecordingResolver(processFixture, counts, {
-            now: launchAt,
-            storeResult: false,
-          }),
+          codexRecordingResolver(processFixture, { now: launchAt }),
         ),
       ]);
       const result = await runPreparedDispatch(
@@ -591,7 +738,7 @@ describe("T1631 shared three-harness transport router", () => {
         outcome: "aborted",
         abort: { reason: "deadline-exceeded" },
       });
-      expect(counts).toEqual({ input: 1, store: 0 });
+      expect(processFixture.endpoint.counts).toEqual({ input: 1, store: 0 });
     } finally {
       removeCodexRecordingFixture(processFixture);
     }
