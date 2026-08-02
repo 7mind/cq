@@ -313,6 +313,9 @@ in
     assert codexMcpRegistration.command == ledgerMcpRegistration.command;
     assert codexMcpRegistration.args == [ "mcp" ];
     assert codexMcpRegistration.env.CQ_HARNESS == "codex";
+    assert !(codexMcpRegistration ? enabled);
+    assert !(codexMcpRegistration ? url);
+    assert !(codexMcpRegistration ? headers);
     assert lib.all (entry: entry.assertion) evaluatedCodexModule.config.assertions;
     true;
 }
