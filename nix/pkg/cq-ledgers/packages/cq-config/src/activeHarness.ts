@@ -6,10 +6,11 @@
  * know WHICH one launched the current invocation so the config layer can pick
  * the matching `[harness.<name>]` block.
  *
- * NOTE the domain (T861): this resolver ranges over {@link ActiveHarness}, NOT
- * over the narrower EXECUTABLE {@link Harness} dispatch-token domain. `codex`
- * selects a configuration block; it is never a dispatchable reviewer/planner
- * transport. The resolution rule (Q238 decision) is, in priority order:
+ * NOTE the domain (T861): this resolver ranges over the {@link ActiveHarness}
+ * configuration-selector domain, not the executable {@link Harness}
+ * dispatch-token domain. Both currently admit `claude`, `codex`, and `pi`, but
+ * remain distinct types because selecting configuration and routing a token
+ * are separate operations. The resolution rule (Q238 decision) is, in priority order:
  *
  *  1. An EXPLICIT `CQ_HARNESS` signal wins. `nix/hm/pi.nix` sets
  *     `CQ_HARNESS=pi` when it launches pi (wired in a later task); we also

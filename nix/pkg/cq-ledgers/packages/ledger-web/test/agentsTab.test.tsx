@@ -236,8 +236,8 @@ describe("Agents tab — live model overlay (T297)", () => {
     expect(text).toContain("sonnet-4.6");
     // Codex mappings must render alongside the other executable harnesses.
     expect(text).toContain("gpt-5.6-sol:ultra");
-    // Codex mappings must render alongside the other executable harnesses.
-    expect(text).toContain("gpt-5.6-sol:ultra");
+    // The token must be labeled with the Codex harness, not merely rendered.
+    expect(text).toContain("codex");
     // The build-time pi token "grok-build" must NOT appear — overlay takes precedence.
     expect(text).not.toContain("grok-build");
   });

@@ -105,7 +105,7 @@ planners = ["opus"]
   # ladder: sol (flagship, most capable) > terra (balanced everyday) > luna
   # (fast, cheap). These three back the [harness.pi]/[harness.codex] examples
   # further down. The Codex selector may use this Pi-backed ladder or native
-  # codex:<model> tokens:
+  # Pi-provider tokens for OpenAI Codex models:
   codex      = "pi:openai-codex/gpt-5.6-sol:xhigh"    # frontier — GPT-5.6 sol (flagship)
   terra      = "pi:openai-codex/gpt-5.6-terra:high"   # standard — balanced everyday
   luna       = "pi:openai-codex/gpt-5.6-luna:low"     # fast — high-volume lightweight
@@ -115,7 +115,7 @@ planners = ["opus"]
 # this map) is a direct lookup, independent of the reviewers/planners panels.
 #
 # Each KEY is a tier class.  Each VALUE is an alias name from [aliases] or a
-# full token (claude:<model> | pi:<provider>/<model>).  TOML keys are unique, so
+# full token (claude:<model> | codex:<model> | pi:<provider>/<model>). TOML keys are unique, so
 # a tier names exactly one model; a single model MAY serve several tiers
 # (e.g. frontier = "opus" AND standard = "opus").  An agent whose tier is not in
 # this map throws CqConfigError at resolve time.

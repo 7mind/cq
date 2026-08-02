@@ -13,7 +13,11 @@
  *    E.g. `claude:opus-4.8[1m]`, `claude:opus-4.8[1m]:high`
  *    Legal claude efforts: low | medium | high | xhigh | max
  *    `:` is RESERVED in the model name (T286).
- * Bare pi tokens, provider qualifiers on claude tokens, and invalid effort
+ *  - codex tokens MUST be `codex:<model>[:<effort>]`
+ *    E.g. `codex:gpt-5.6-sol`, `codex:gpt-5.6-sol:ultra`
+ *    Legal codex efforts: low | medium | high | xhigh | max | ultra
+ *    `:` is RESERVED in the model name.
+ * Bare pi tokens, provider qualifiers on claude/codex tokens, and invalid effort
  * suffixes are rejected as CqConfigErrors. See parseReviewerToken for the full
  * grammar and fail-fast effort validation (T286).
  */
@@ -83,6 +87,9 @@ export class CqConfigError extends Error {
  *    - The FIRST `:` separates the harness from the model.
  *    - No `/` is permitted in the model (provider qualifiers are pi-only).
  *    - A `/` in the model is rejected as a CqConfigError.
+ *  - codex tokens MUST be `codex:<model>` with the same provider-free model
+ *    grammar as Claude; an optional Codex effort suffix is validated against
+ *    the packaged executable vocabulary during resolution.
  *
  * EFFORT SUFFIX (T286, Q160): an OPTIONAL trailing `:<effort>` may follow the
  * full token. After the harness is split off the FIRST `:`, the LAST `:` in
@@ -936,7 +943,7 @@ export function resolveAgentModel(
 /**
  * Render a {@link ReviewerToken} back to its canonical string grammar.
  *
- * Grammar: `<harness>:<model>[:<effort>]` for claude tokens and
+ * Grammar: `<harness>:<model>[:<effort>]` for claude/codex tokens and
  * `<harness>:<provider>/<model>[:<effort>]` for pi tokens.
  *
  * The effort suffix is appended ONLY when `token.effort` is a non-null,
