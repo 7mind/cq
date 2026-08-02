@@ -5,6 +5,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { waitForPiChild } from "./cq-subagent-process-lifecycle.ts";
 
 // cq subagent-dispatch extension (T224).
 //
@@ -747,7 +748,7 @@ interface AssistantPart {
   type: string;
   text?: string;
 }
-interface ChildMessage {
+export interface ChildMessage {
   role?: string;
   content?: AssistantPart[];
   /** Pi tags each assistant message with the provider/model it ran against. */
@@ -755,8 +756,22 @@ interface ChildMessage {
   model?: string;
 }
 
+export function parseChildJsonEvent(line: string): ChildMessage | null {
+  if (!line.trim()) return null;
+  let event: { type?: string; message?: ChildMessage };
+  try {
+    event = JSON.parse(line) as { type?: string; message?: ChildMessage };
+  } catch {
+    return null;
+  }
+  if ((event.type === "message_end" || event.type === "tool_result_end") && event.message) {
+    return event.message;
+  }
+  return null;
+}
+
 /** Walk back to the last assistant message and join ALL its text parts. */
-function getFinalOutput(messages: ChildMessage[]): string {
+export function getFinalOutput(messages: ChildMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     if (msg && msg.role === "assistant" && Array.isArray(msg.content)) {
@@ -947,67 +962,45 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
       let stderr = "";
 
       try {
-        const exitCode = await new Promise<number>((resolve) => {
-          const invocation = getPiInvocation(childArgs);
-          // Strip the codex-inline companion env before spawning the child pi.
-          // When this extension runs under a codex orchestrator (openai-codex
-          // provider), the process carries CODEX_COMPANION_SESSION_ID /
-          // CLAUDE_PLUGIN_DATA; a child pi that inherits them BLOCKS INDEFINITELY
-          // on the companion handshake whenever the companion is down or busy —
-          // an output-less hang that makes the auto-driver's waitForIdle stall
-          // for the whole dispatch. This is the SAME hazard the pi:* shellout
-          // mitigates with `env -u … pi -p … </dev/null`; detaching stdin
-          // (stdio[0]="ignore", below) is the other half of that mitigation.
-          const childEnv = { ...process.env };
-          delete childEnv.CODEX_COMPANION_SESSION_ID;
-          delete childEnv.CLAUDE_PLUGIN_DATA;
-          const proc = spawn(invocation.command, invocation.args, {
-            cwd: ctx.cwd,
-            shell: false,
-            stdio: ["ignore", "pipe", "pipe"],
-            env: childEnv,
-          });
-          let buffer = "";
-
-          const processLine = (line: string): void => {
-            if (!line.trim()) return;
-            let event: { type?: string; message?: ChildMessage };
-            try {
-              event = JSON.parse(line) as { type?: string; message?: ChildMessage };
-            } catch {
-              return;
-            }
-            if ((event.type === "message_end" || event.type === "tool_result_end") && event.message) {
-              messages.push(event.message);
-            }
-          };
-
-          proc.stdout.on("data", (data: Buffer) => {
-            buffer += data.toString();
-            const lines = buffer.split("\n");
-            buffer = lines.pop() ?? "";
-            for (const line of lines) processLine(line);
-          });
-          proc.stderr.on("data", (data: Buffer) => {
-            stderr += data.toString();
-          });
-          proc.on("close", (code) => {
-            if (buffer.trim()) processLine(buffer);
-            resolve(code ?? 0);
-          });
-          proc.on("error", () => resolve(1));
-
-          if (signal) {
-            const killProc = (): void => {
-              proc.kill("SIGTERM");
-              setTimeout(() => {
-                if (!proc.killed) proc.kill("SIGKILL");
-              }, 5000);
-            };
-            if (signal.aborted) killProc();
-            else signal.addEventListener("abort", killProc, { once: true });
-          }
+        const invocation = getPiInvocation(childArgs);
+        // Strip the codex-inline companion env before spawning the child pi.
+        // When this extension runs under a codex orchestrator (openai-codex
+        // provider), the process carries CODEX_COMPANION_SESSION_ID /
+        // CLAUDE_PLUGIN_DATA; a child pi that inherits them BLOCKS INDEFINITELY
+        // on the companion handshake whenever the companion is down or busy —
+        // an output-less hang that makes the auto-driver's waitForIdle stall
+        // for the whole dispatch. This is the SAME hazard the pi:* shellout
+        // mitigates with `env -u … pi -p … </dev/null`; detaching stdin
+        // (stdio[0]="ignore", below) is the other half of that mitigation.
+        const childEnv = { ...process.env };
+        delete childEnv.CODEX_COMPANION_SESSION_ID;
+        delete childEnv.CLAUDE_PLUGIN_DATA;
+        const proc = spawn(invocation.command, invocation.args, {
+          cwd: ctx.cwd,
+          detached: true,
+          shell: false,
+          stdio: ["ignore", "pipe", "pipe"],
+          env: childEnv,
         });
+        let buffer = "";
+
+        const processLine = (line: string): void => {
+          const message = parseChildJsonEvent(line);
+          if (message !== null) messages.push(message);
+        };
+
+        proc.stdout.on("data", (data: Buffer) => {
+          buffer += data.toString();
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) processLine(line);
+        });
+        proc.stderr.on("data", (data: Buffer) => {
+          stderr += data.toString();
+        });
+
+        const exitCode = await waitForPiChild(proc, signal);
+        if (buffer.trim()) processLine(buffer);
 
         details.exitCode = exitCode;
         details.stderr = stderr;

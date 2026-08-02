@@ -890,6 +890,9 @@ EOF
                   cp -r "${bunNodeModules}/packages/$package/node_modules" \
                     "$cqLedgersRoot/packages/$package/node_modules"
                 done
+                mkdir -p "$piExtensionsRoot/node_modules/@cq"
+                ln -s "$cqLedgersRoot/packages/process-control" \
+                  "$piExtensionsRoot/node_modules/@cq/process-control"
 
                 for project in \
                   nix/pkg/pi-extensions \
@@ -904,8 +907,8 @@ EOF
                 while IFS= read -r testPath; do
                   set -- "$@" "$testPath"
                 done < "$testManifest"
-                if [ "$#" -ne 7 ]; then
-                  echo "expected seven Pi extension test arguments, got $#" >&2
+                if [ "$#" -ne 9 ]; then
+                  echo "expected nine Pi extension test arguments, got $#" >&2
                   exit 1
                 fi
                 set -x
@@ -1157,6 +1160,10 @@ EOF
               cmp ${builtins.toFile "cq-expected-prompt-catalog.json" llmAssets.catalogJson} \
                 ${piPromptRoot}/catalog.json
               ${verifySurfaceAttestation "pi" piPromptRoot}
+              test -f ${piPromptRootTest.dispatchExtension}
+              test -e ${piPromptRootTest.dispatchExtensionDir}/node_modules/@cq/process-control/src/index.ts
+              ${pkgs.ripgrep}/bin/rg -q 'from "@cq/process-control"' \
+                ${piPromptRootTest.dispatchExtensionDir}/cq-subagent-process-lifecycle.ts
               ${pkgs.jq}/bin/jq -e '
                 .mcpServers.ledger.lifecycle == "keep-alive"
                 and .mcpServers.ledger.directTools == true

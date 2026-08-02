@@ -90,6 +90,14 @@ let
   files = evaluatedPiModule.config.home.file;
   piPackage = evaluatedPiModule.config.programs.pi.package;
   piSettings = evaluatedPiModule.config.programs.pi.settings;
+  dispatchExtension = lib.findFirst (
+    extension: lib.hasSuffix "cq-subagent-dispatch.ts" extension
+  ) null piSettings.extensions;
+  dispatchExtensionDir =
+    if dispatchExtension == null then
+      throw "Pi settings do not install cq-subagent-dispatch.ts"
+    else
+      builtins.dirOf dispatchExtension;
   command = files."/home/test/.pi/agent/prompts/cq:begin.md";
   externalCommand = files."/home/test/.pi/agent/prompts/other:example.md";
   agent = files.".pi/agent/cq-agents/plan-reviewer.md";
@@ -101,7 +109,7 @@ let
   ledgerServer = mcpParsed.mcpServers.ledger;
 in
 {
-  inherit mcpJson;
+  inherit mcpJson dispatchExtension dispatchExtensionDir;
   package = piPackage;
   passed =
     assert command.source == "${piPromptRoot}/roles/begin.md";
@@ -112,9 +120,7 @@ in
     assert piPackage.promptSurface == "pi";
     assert piPackage.promptRoot == piPromptRoot;
     assert lib.hasInfix ''fetch_prompt("investigate/advance")'' appendSystem.text;
-    assert lib.any (
-      extension: lib.hasSuffix "cq-subagent-dispatch.ts" extension
-    ) piSettings.extensions;
+    assert dispatchExtension != null;
     assert lib.all (entry: entry.assertion) evaluatedPiModule.config.assertions;
     # Pi MCP override: Pi-only fields present, optional null/empty fields absent.
     assert ledgerServer.lifecycle == "keep-alive";
