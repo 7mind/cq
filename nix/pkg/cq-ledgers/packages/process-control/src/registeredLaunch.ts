@@ -35,7 +35,12 @@ export interface RegisteredLaunchBootstrapSpecification<TStdio> {
 export interface RegisteredLaunchBootstrap<TProcess, TExit> {
   readonly process: TProcess;
   readonly pid: number | undefined;
-  readonly exited: Promise<TExit>;
+  /**
+   * Resolves after process closure and every piped descriptor has drained.
+   * Node adapters use ChildProcess `close`; Bun adapters must explicitly drain
+   * configured output streams in addition to awaiting Subprocess.exited.
+   */
+  readonly closed: Promise<TExit>;
   terminate(signal: NodeJS.Signals): Promise<void> | void;
 }
 
@@ -63,7 +68,7 @@ export interface LaunchRegisteredProcessGroupOptions<TProcess, TExit, TStdio> {
 export interface LaunchedRegisteredProcessGroup<TProcess, TExit> {
   readonly process: TProcess;
   readonly registration: ProcessGroupRegistration;
-  /** Resolves exactly as the adapter's bootstrap handle, after target completion. */
+  /** Resolves with the adapter result only after target closure and stdio drain. */
   readonly exited: Promise<TExit>;
 }
 
@@ -205,7 +210,7 @@ async function waitForBootstrapExit<TProcess, TExit>(
     const timeout = setTimeout(() => {
       rejectExit(new Error("@cq/process-control: fenced bootstrap did not exit after SIGKILL"));
     }, FAILURE_EXIT_WAIT_MS);
-    void bootstrap.exited.then(
+    void bootstrap.closed.then(
       () => {
         clearTimeout(timeout);
         resolveExit();
@@ -283,7 +288,7 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
     };
     bootstrap = options.launchBootstrap(specification);
     const exit: ExitObservation = { settled: false, error: undefined };
-    void bootstrap.exited.then(
+    void bootstrap.closed.then(
       () => {
         exit.settled = true;
       },
@@ -307,7 +312,7 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
     return {
       process: bootstrap.process,
       registration,
-      exited: bootstrap.exited,
+      exited: bootstrap.closed,
     };
   } catch (error) {
     return await failClosed(error, bootstrap, registration);

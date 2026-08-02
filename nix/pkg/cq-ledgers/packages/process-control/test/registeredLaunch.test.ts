@@ -15,12 +15,12 @@ import {
 
 const roots: string[] = [];
 
-function exited(
+function closed(
   child: ChildProcess,
 ): Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }> {
   return new Promise((resolve, reject) => {
     child.once("error", reject);
-    child.once("exit", (exitCode, signal) => resolve({ exitCode, signal }));
+    child.once("close", (exitCode, signal) => resolve({ exitCode, signal }));
   });
 }
 
@@ -34,7 +34,7 @@ function nodeBootstrap(specification: RegisteredLaunchBootstrapSpecification<Std
   return {
     process: child,
     pid: child.pid,
-    exited: exited(child),
+    closed: closed(child),
     terminate: (signal: NodeJS.Signals) => {
       child.kill(signal);
     },
@@ -47,6 +47,14 @@ async function waitForIdentityToDisappear(pid: number): Promise<void> {
     await Bun.sleep(2);
   }
   throw new Error(`test process ${pid} did not exit`);
+}
+
+async function waitForFile(path: string): Promise<void> {
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
+    if (await Bun.file(path).exists()) return;
+    await Bun.sleep(2);
+  }
+  throw new Error(`test file ${path} was not created`);
 }
 
 function streamText(stream: NodeJS.ReadableStream): Promise<string> {
@@ -220,7 +228,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       join(protocolDirectory, "release.json"),
       JSON.stringify({ nonce: "mismatched-nonce", pgid: child.pid }),
     );
-    const outcome = await exited(child);
+    const outcome = await closed(child);
     expect(outcome.exitCode).toBe(1);
     expect(await Bun.file(marker).exists()).toBe(false);
     expect(await Bun.file(join(protocolDirectory, "status.json")).exists()).toBe(false);
@@ -273,6 +281,145 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     expect(stderrText).toBe("stderr:stdin payload");
   });
 
+  test("keeps completion pending after target exit until inherited pipes close", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-delayed-close-"));
+    roots.push(root);
+    const holderReady = join(root, "holder-ready");
+    const holderRelease = join(root, "holder-release");
+    const targetPidPath = join(root, "target-pid");
+    const holder = [
+      "const { existsSync, writeFileSync } = require('node:fs');",
+      `writeFileSync(${JSON.stringify(holderReady)}, String(process.pid));`,
+      `const timer = setInterval(() => {`,
+      `  if (existsSync(${JSON.stringify(holderRelease)})) {`,
+      "    clearInterval(timer);",
+      "    process.stdout.write('holder-stdout-close\\n');",
+      "    process.stderr.write('holder-stderr-close\\n');",
+      "  }",
+      "}, 2);",
+    ].join("\n");
+    const target = [
+      "const { spawn } = require('node:child_process');",
+      "const { existsSync, writeFileSync } = require('node:fs');",
+      `writeFileSync(${JSON.stringify(targetPidPath)}, String(process.pid));`,
+      `const child = spawn(process.execPath, ['-e', ${JSON.stringify(holder)}], {`,
+      "  detached: false,",
+      "  stdio: ['ignore', 'inherit', 'inherit'],",
+      "});",
+      "child.unref();",
+      `const timer = setInterval(() => {`,
+      `  if (existsSync(${JSON.stringify(holderReady)})) {`,
+      "    clearInterval(timer);",
+      "  }",
+      "}, 2);",
+    ].join("\n");
+    const launched = await launchRegisteredProcessGroup({
+      argv: [process.execPath, "-e", target],
+      cwd: root,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"] as const,
+      register: async () => {},
+      launchBootstrap: nodeBootstrap,
+    });
+    if (launched.process.stdout === null || launched.process.stderr === null) {
+      throw new Error("test bootstrap did not expose output pipes");
+    }
+    const stdout = streamText(launched.process.stdout);
+    const stderr = streamText(launched.process.stderr);
+    await waitForFile(targetPidPath);
+    await waitForFile(holderReady);
+    await waitForIdentityToDisappear(Number(await readFile(targetPidPath, "utf8")));
+
+    const completionBeforeClose = await Promise.race([
+      launched.exited.then(() => "completed" as const),
+      Bun.sleep(250).then(() => "pending" as const),
+    ]);
+    await writeFile(holderRelease, "release");
+    await launched.exited;
+    const [stdoutText, stderrText] = await Promise.all([stdout, stderr]);
+
+    expect(completionBeforeClose).toBe("pending");
+    expect(stdoutText).toBe("holder-stdout-close\n");
+    expect(stderrText).toBe("holder-stderr-close\n");
+  });
+
+  test("completion implies stdout and stderr EOF with every buffered payload byte", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-drain-"));
+    roots.push(root);
+    const holderReady = join(root, "drain-holder-ready");
+    const holderRelease = join(root, "drain-holder-release");
+    const targetPidPath = join(root, "drain-target-pid");
+    const bufferSize = 16 * 1024;
+    const bufferCount = 64;
+    const holder = [
+      "const { existsSync, writeFileSync, writeSync } = require('node:fs');",
+      `writeFileSync(${JSON.stringify(holderReady)}, String(process.pid));`,
+      "const timer = setInterval(() => {",
+      `  if (!existsSync(${JSON.stringify(holderRelease)})) return;`,
+      "  clearInterval(timer);",
+      `  const size = ${bufferSize};`,
+      `  const count = ${bufferCount};`,
+      "  for (let index = 0; index < count; index += 1) {",
+      "    writeSync(1, Buffer.alloc(size, 65 + (index % 26)));",
+      "    writeSync(2, Buffer.alloc(size, 97 + (index % 26)));",
+      "  }",
+      "}, 2);",
+    ].join("\n");
+    const target = [
+      "const { spawn } = require('node:child_process');",
+      "const { existsSync, writeFileSync } = require('node:fs');",
+      `writeFileSync(${JSON.stringify(targetPidPath)}, String(process.pid));`,
+      `const child = spawn(process.execPath, ['-e', ${JSON.stringify(holder)}], {`,
+      "  detached: false,",
+      "  stdio: ['ignore', 'inherit', 'inherit'],",
+      "});",
+      "child.unref();",
+      "const timer = setInterval(() => {",
+      `  if (existsSync(${JSON.stringify(holderReady)})) clearInterval(timer);`,
+      "}, 2);",
+    ].join("\n");
+    const expectedStdout = Array.from({ length: bufferCount }, (_, index) =>
+      String.fromCharCode(65 + (index % 26)).repeat(bufferSize),
+    ).join("");
+    const expectedStderr = Array.from({ length: bufferCount }, (_, index) =>
+      String.fromCharCode(97 + (index % 26)).repeat(bufferSize),
+    ).join("");
+    const launched = await launchRegisteredProcessGroup({
+      argv: [process.execPath, "-e", target],
+      cwd: root,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"] as const,
+      register: async () => {},
+      launchBootstrap: nodeBootstrap,
+    });
+    if (launched.process.stdout === null || launched.process.stderr === null) {
+      throw new Error("test bootstrap did not expose output pipes");
+    }
+    let stdoutEnded = false;
+    let stderrEnded = false;
+    launched.process.stdout.once("end", () => {
+      stdoutEnded = true;
+    });
+    launched.process.stderr.once("end", () => {
+      stderrEnded = true;
+    });
+    const stdout = streamText(launched.process.stdout);
+    const stderr = streamText(launched.process.stderr);
+    await waitForFile(targetPidPath);
+    await waitForFile(holderReady);
+    await waitForIdentityToDisappear(Number(await readFile(targetPidPath, "utf8")));
+    const delayedRelease = Bun.sleep(250).then(() => writeFile(holderRelease, "release"));
+
+    await launched.exited;
+    const eofAtCompletion = { stdout: stdoutEnded, stderr: stderrEnded };
+    await delayedRelease;
+    const [stdoutText, stderrText] = await Promise.all([stdout, stderr]);
+
+    expect(eofAtCompletion).toEqual({ stdout: true, stderr: true });
+    expect(stdoutText).toBe(expectedStdout);
+    expect(stderrText).toBe(expectedStderr);
+  });
+
   test("maps the same bootstrap specification onto Bun adapter pipes", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-bun-"));
     roots.push(root);
@@ -292,10 +439,12 @@ describe("registered process-group launch bootstrap [T1624]", () => {
           stdout: specification.stdio.stdout,
           stderr: specification.stdio.stderr,
         });
+        const stdout = new Response(child.stdout).text();
+        const stderr = new Response(child.stderr).text();
         return {
-          process: child,
+          process: { subprocess: child, stdout, stderr },
           pid: child.pid,
-          exited: child.exited,
+          closed: Promise.all([child.exited, stdout, stderr]).then(([exitCode]) => exitCode),
           terminate: (signal: NodeJS.Signals) => {
             child.kill(signal);
           },
@@ -304,8 +453,8 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     });
     const [exitCode, stdout, stderr] = await Promise.all([
       launched.exited,
-      new Response(launched.process.stdout).text(),
-      new Response(launched.process.stderr).text(),
+      launched.process.stdout,
+      launched.process.stderr,
     ]);
     expect(exitCode).toBe(0);
     expect(stdout).toBe("bun-pipe:exact bun argument");
