@@ -660,6 +660,7 @@
               --add-flags "run $WORKSPACE/packages/cq-config/scripts/codex-role-dispatch.ts --" \
               --set-default CQ_PROMPT_ROOT "$WORKSPACE/prompt-surfaces/codex" \
               --set-default CQ_CODEX_LEDGER_COMMAND "$out/bin/cq" \
+              --set CQ_PROCESS_IDENTITY_HELPER "$out/libexec/cq-process-identity" \
               --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 pkgs.git ]}
 
             runHook postInstall

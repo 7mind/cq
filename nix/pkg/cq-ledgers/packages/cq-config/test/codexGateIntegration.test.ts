@@ -8,11 +8,12 @@ import {
   GateBusyError,
   acquireWorktreeGate,
   closeWorktreeGate,
+  isRegisteredProcessGroupAlive,
   launchRegisteredGateCommand,
   readProcessIdentity,
-  releaseWorktreeGate,
   settleProcessGroups,
   type LaunchedGateCommand,
+  type ProcessIdentity,
   type ProcessGroupRegistration,
   type WorktreeGateLease,
 } from "@cq/process-control";
@@ -30,7 +31,13 @@ const FAKE_CODEX_SOURCE = fileURLToPath(new URL("./codexLifecycleFake.ts", impor
 const GATE_FIXTURE = fileURLToPath(
   new URL("./codexGateCommandFixture.ts", import.meta.url),
 );
-const TIMEOUT_CLEANUP_WINDOW_MS = 2_000;
+const ROLE_TIMEOUT_WINDOW_MS = 30_000;
+
+interface CodexGroupObservation {
+  readonly registration: ProcessGroupRegistration;
+  readonly members: readonly ProcessIdentity[];
+  readonly identityHelper: string | null;
+}
 
 interface LifecycleFixture {
   readonly root: string;
@@ -39,10 +46,10 @@ interface LifecycleFixture {
   readonly promptRoot: string;
   readonly fakeCodex: string;
   readonly codexReady: string;
-  readonly codexGroupRole: string;
+  readonly codexGroup: string;
   readonly codexSignals: string;
-  readonly gateReady: string;
-  readonly gateSignals: string;
+  readonly gateReady: readonly [string, string];
+  readonly gateSignals: readonly [string, string];
 }
 
 interface DispatchProcess {
@@ -74,10 +81,10 @@ async function createLifecycleFixture(): Promise<LifecycleFixture> {
     promptRoot,
     fakeCodex,
     codexReady: join(root, "codex.ready"),
-    codexGroupRole: join(root, "codex.group-role"),
+    codexGroup: join(root, "codex.group.json"),
     codexSignals: join(root, "codex.signals"),
-    gateReady: join(root, "gate.ready"),
-    gateSignals: join(root, "gate.signals"),
+    gateReady: [join(root, "gate-0.ready"), join(root, "gate-1.ready")],
+    gateSignals: [join(root, "gate-0.signals"), join(root, "gate-1.signals")],
   };
 }
 
@@ -120,7 +127,7 @@ function launchDispatch(
       CQ_CODEX_LEDGER_COMMAND: "cq-not-invoked-by-fake",
       CQ_TEST_CODEX_MODE: mode,
       CQ_TEST_CODEX_READY: fixture.codexReady,
-      CQ_TEST_CODEX_GROUP_ROLE: fixture.codexGroupRole,
+      CQ_TEST_CODEX_GROUP: fixture.codexGroup,
       CQ_TEST_CODEX_SIGNALS: fixture.codexSignals,
     },
     stdin: "pipe",
@@ -149,31 +156,69 @@ async function waitForPid(path: string): Promise<number> {
   throw new Error(`process did not publish ${path}`);
 }
 
-async function waitForDead(registration: ProcessGroupRegistration): Promise<void> {
+async function waitForCodexGroup(path: string): Promise<CodexGroupObservation> {
   for (let attempt = 0; attempt < 500; attempt += 1) {
-    const observed = await readProcessIdentity(registration.leader.pid);
-    if (observed === null || observed.startTime !== registration.leader.startTime) return;
+    try {
+      return JSON.parse(await readFile(path, "utf8")) as CodexGroupObservation;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
     await Bun.sleep(2);
   }
-  throw new Error(`process ${String(registration.leader.pid)} remained alive`);
+  throw new Error(`Codex group did not publish ${path}`);
+}
+
+async function waitForIdentityDead(identity: ProcessIdentity): Promise<void> {
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    const observed = await readProcessIdentity(identity.pid);
+    if (observed === null || observed.startTime !== identity.startTime) return;
+    await Bun.sleep(2);
+  }
+  throw new Error(`process ${String(identity.pid)} remained alive`);
+}
+
+async function expectCodexGroupDead(observation: CodexGroupObservation): Promise<void> {
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    if (!(await isRegisteredProcessGroupAlive(observation.registration))) break;
+    await Bun.sleep(2);
+  }
+  expect(await isRegisteredProcessGroupAlive(observation.registration)).toBe(false);
+  await Promise.all(observation.members.map(waitForIdentityDead));
 }
 
 async function launchGate(
   fixture: LifecycleFixture,
-): Promise<{ readonly lease: WorktreeGateLease; readonly command: LaunchedGateCommand }> {
+): Promise<{
+  readonly lease: WorktreeGateLease;
+  readonly commands: readonly LaunchedGateCommand[];
+}> {
   const lease = await acquireWorktreeGate({
     worktree: fixture.worktree,
     commandCwd: fixture.worktree,
   });
-  const command = await launchRegisteredGateCommand(lease, [
-    process.execPath,
-    "run",
-    GATE_FIXTURE,
-    fixture.gateReady,
-    fixture.gateSignals,
-  ]);
-  await waitForPid(fixture.gateReady);
-  return { lease, command };
+  try {
+    const commands: LaunchedGateCommand[] = [];
+    for (let index = 0; index < fixture.gateReady.length; index += 1) {
+      const ready = fixture.gateReady[index];
+      const signals = fixture.gateSignals[index];
+      if (ready === undefined || signals === undefined) {
+        throw new Error(`gate fixture ${String(index)} has incomplete paths`);
+      }
+      const command = await launchRegisteredGateCommand(lease, [
+        process.execPath,
+        "run",
+        GATE_FIXTURE,
+        ready,
+        signals,
+      ]);
+      commands.push(command);
+      await waitForPid(ready);
+    }
+    return { lease, commands };
+  } catch (error) {
+    await closeWorktreeGate(lease);
+    throw error;
+  }
 }
 
 async function readSignals(path: string): Promise<string[]> {
@@ -189,6 +234,18 @@ async function settleRegistration(registration: ProcessGroupRegistration): Promi
   await settleProcessGroups([registration], { termGraceMs: 100, killGraceMs: 1_000 });
 }
 
+async function settleDispatchFixture(dispatch: DispatchProcess | undefined): Promise<void> {
+  if (dispatch === undefined) return;
+  dispatch.child.kill("SIGTERM");
+  const exited = await Promise.race([
+    dispatch.child.exited.then(() => true),
+    Bun.sleep(6_000).then(() => false),
+  ]);
+  if (exited) return;
+  dispatch.child.kill("SIGKILL");
+  await dispatch.child.exited;
+}
+
 describe("T1625 Codex and canonical-worktree gate lifecycle [Effectual-GoodCommunication]", () => {
   test("successful stored-result completion emits only its handle and preserves a yielded gate", async () => {
     const fixture = await createLifecycleFixture();
@@ -199,10 +256,22 @@ describe("T1625 Codex and canonical-worktree gate lifecycle [Effectual-GoodCommu
       expect(await dispatch.child.exited).toBe(0);
       expect(await dispatch.stdout).toBe(`${JSON.stringify(HANDLE)}\n`);
       expect(await dispatch.stderr).toBe("");
-      expect(await readFile(fixture.codexGroupRole, "utf8")).toBe("member\n");
-      expect(await readProcessIdentity(gate.command.registration.leader.pid)).toEqual(
-        gate.command.registration.leader,
-      );
+      const codexGroup = await waitForCodexGroup(fixture.codexGroup);
+      expect(codexGroup.registration.leader.pid).toBe(codexGroup.registration.pgid);
+      expect(codexGroup.members).toHaveLength(1);
+      expect(codexGroup.members[0]?.pid).not.toBe(codexGroup.registration.pgid);
+      if (INSTALLED_DISPATCH !== undefined) {
+        expect(codexGroup.identityHelper).not.toBeNull();
+      }
+      if (INSTALLED_DISPATCH !== undefined && process.platform === "darwin") {
+        expect(codexGroup.registration.leader.startTime).toMatch(/^\d+\.\d+$/u);
+      }
+      expect(gate.commands).toHaveLength(2);
+      for (const command of gate.commands) {
+        expect(await readProcessIdentity(command.registration.leader.pid)).toEqual(
+          command.registration.leader,
+        );
+      }
 
       const sentinel = join(fixture.root, "second-gate-sentinel");
       const attemptSecondGate = async (): Promise<void> => {
@@ -233,15 +302,15 @@ describe("T1625 Codex and canonical-worktree gate lifecycle [Effectual-GoodCommu
   test("repeated wrapper termination signals settle Codex and gate groups once", async () => {
     const fixture = await createLifecycleFixture();
     let gate: Awaited<ReturnType<typeof launchGate>> | undefined;
-    let rootRegistration: ProcessGroupRegistration | undefined;
+    let codexGroup: CodexGroupObservation | undefined;
     let dispatch: DispatchProcess | undefined;
     try {
       gate = await launchGate(fixture);
-      dispatch = launchDispatch(fixture, "wait", 30_000);
-      const codexPid = await waitForPid(fixture.codexReady);
-      const codexIdentity = await readProcessIdentity(codexPid);
-      if (codexIdentity === null) throw new Error("fake Codex exited before signal delivery");
-      rootRegistration = { pgid: codexPid, leader: codexIdentity };
+      dispatch = launchDispatch(fixture, "wait", ROLE_TIMEOUT_WINDOW_MS);
+      codexGroup = await waitForCodexGroup(fixture.codexGroup);
+      expect(codexGroup.registration.leader.pid).toBe(codexGroup.registration.pgid);
+      expect(codexGroup.members).toHaveLength(2);
+      expect(codexGroup.members.map(({ pid }) => pid)).not.toContain(codexGroup.registration.pgid);
 
       dispatch.child.kill("SIGINT");
       await Bun.sleep(2);
@@ -251,14 +320,18 @@ describe("T1625 Codex and canonical-worktree gate lifecycle [Effectual-GoodCommu
       expect(await dispatch.child.exited).toBe(1);
       expect(await dispatch.stdout).toBe("");
       expect(await dispatch.stderr).toMatch(/wrapper received SIG(?:INT|TERM)/u);
-      await waitForDead(rootRegistration);
-      await waitForDead(gate.command.registration);
+      await expectCodexGroupDead(codexGroup);
+      await Promise.all(
+        gate.commands.map(({ registration }) => waitForIdentityDead(registration.leader)),
+      );
       expect(await readSignals(fixture.codexSignals)).toEqual(["SIGTERM"]);
-      expect(await readSignals(fixture.gateSignals)).toEqual(["SIGTERM"]);
+      for (const signals of fixture.gateSignals) {
+        expect(await readSignals(signals)).toEqual(["SIGTERM"]);
+      }
     } finally {
-      if (rootRegistration !== undefined) await settleRegistration(rootRegistration);
-      if (gate !== undefined) await releaseWorktreeGate(gate.lease);
-      dispatch?.child.kill("SIGKILL");
+      await settleDispatchFixture(dispatch);
+      if (codexGroup !== undefined) await settleRegistration(codexGroup.registration);
+      if (gate !== undefined) await closeWorktreeGate(gate.lease);
       await rm(fixture.root, { recursive: true, force: true });
     }
   });
@@ -266,27 +339,29 @@ describe("T1625 Codex and canonical-worktree gate lifecycle [Effectual-GoodCommu
   test("timeout removes the Codex root and every registered gate process group", async () => {
     const fixture = await createLifecycleFixture();
     let gate: Awaited<ReturnType<typeof launchGate>> | undefined;
-    let rootRegistration: ProcessGroupRegistration | undefined;
+    let codexGroup: CodexGroupObservation | undefined;
     let dispatch: DispatchProcess | undefined;
     try {
       gate = await launchGate(fixture);
-      dispatch = launchDispatch(fixture, "wait", TIMEOUT_CLEANUP_WINDOW_MS);
-      const codexPid = await waitForPid(fixture.codexReady);
-      const codexIdentity = await readProcessIdentity(codexPid);
-      if (codexIdentity === null) throw new Error("fake Codex exited before timeout");
-      rootRegistration = { pgid: codexPid, leader: codexIdentity };
+      dispatch = launchDispatch(fixture, "wait", ROLE_TIMEOUT_WINDOW_MS);
+      codexGroup = await waitForCodexGroup(fixture.codexGroup);
+      expect(codexGroup.registration.leader.pid).toBe(codexGroup.registration.pgid);
+      expect(codexGroup.members).toHaveLength(2);
+      dispatch.child.kill("SIGALRM");
 
       expect(await dispatch.child.exited).toBe(1);
       expect(await dispatch.stdout).toBe("");
       expect(await dispatch.stderr).toContain(
-        `child exceeded its ${String(TIMEOUT_CLEANUP_WINDOW_MS)} ms window`,
+        `child exceeded its ${String(ROLE_TIMEOUT_WINDOW_MS)} ms window`,
       );
-      await waitForDead(rootRegistration);
-      await waitForDead(gate.command.registration);
+      await expectCodexGroupDead(codexGroup);
+      await Promise.all(
+        gate.commands.map(({ registration }) => waitForIdentityDead(registration.leader)),
+      );
     } finally {
-      if (rootRegistration !== undefined) await settleRegistration(rootRegistration);
-      if (gate !== undefined) await releaseWorktreeGate(gate.lease);
-      dispatch?.child.kill("SIGKILL");
+      await settleDispatchFixture(dispatch);
+      if (codexGroup !== undefined) await settleRegistration(codexGroup.registration);
+      if (gate !== undefined) await closeWorktreeGate(gate.lease);
       await rm(fixture.root, { recursive: true, force: true });
     }
   });

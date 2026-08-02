@@ -378,8 +378,10 @@ export async function executeCodexRoleBoundary(
   };
   const onSigint = (): void => requestStop("SIGINT");
   const onSigterm = (): void => requestStop("SIGTERM");
+  const onSigalrm = (): void => requestStop("timeout");
   process.on("SIGINT", onSigint);
   process.on("SIGTERM", onSigterm);
+  process.on("SIGALRM", onSigalrm);
   const timeout = setTimeout(() => requestStop("timeout"), plan.timeoutMs);
 
   let rootRegistration: ProcessGroupRegistration | undefined;
@@ -501,5 +503,6 @@ export async function executeCodexRoleBoundary(
     clearTimeout(timeout);
     process.off("SIGINT", onSigint);
     process.off("SIGTERM", onSigterm);
+    process.off("SIGALRM", onSigalrm);
   }
 }
