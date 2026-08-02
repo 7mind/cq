@@ -514,10 +514,17 @@ export type {
   CodexRoleBoundaryInvocation,
   CodexRoleLedgerMcpConfiguration,
   CodexRoleBoundaryPlan,
+  CodexRoleBoundaryDiagnosticVerdict,
+  CodexRoleBoundaryDiagnosticDetailCode,
+  CodexRoleBoundaryDiagnostic,
 } from "./codexRoleBoundary.js";
 export {
   CODEX_ROLE_SANDBOX_MODES,
+  CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX,
+  CODEX_ROLE_BOUNDARY_DIAGNOSTIC_VERDICTS,
+  CODEX_ROLE_BOUNDARY_DIAGNOSTIC_DETAIL_CODES,
   CodexRoleBoundaryError,
+  formatCodexRoleBoundaryDiagnostic,
   assertCodexDispatchedRoleId,
   createCodexRoleBoundaryPlan,
   interceptCodexRoleBoundaryResult,

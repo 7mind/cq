@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { constants } from "node:os";
 import {
   launchRegisteredProcessGroup,
@@ -70,11 +71,55 @@ export interface CodexRoleBoundaryPlan {
   readonly interceptStdout: true;
 }
 
+export const CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX = "CQ_CODEX_BOUNDARY_DIAGNOSTIC ";
+
+export const CODEX_ROLE_BOUNDARY_DIAGNOSTIC_VERDICTS = [
+  "no-completed-message",
+  "echo",
+  "wrong-handle",
+  "unparseable",
+] as const;
+
+export type CodexRoleBoundaryDiagnosticVerdict =
+  (typeof CODEX_ROLE_BOUNDARY_DIAGNOSTIC_VERDICTS)[number];
+
+export const CODEX_ROLE_BOUNDARY_DIAGNOSTIC_DETAIL_CODES = [
+  "no-completed-agent-message",
+  "surplus-fields",
+  "mismatched-handle",
+  "invalid-json",
+  "invalid-shape",
+  "invalid-handle-shape",
+] as const;
+
+export type CodexRoleBoundaryDiagnosticDetailCode =
+  (typeof CODEX_ROLE_BOUNDARY_DIAGNOSTIC_DETAIL_CODES)[number];
+
+export interface CodexRoleBoundaryDiagnostic {
+  readonly version: 1;
+  readonly verdict: CodexRoleBoundaryDiagnosticVerdict;
+  readonly detailCode: CodexRoleBoundaryDiagnosticDetailCode;
+  readonly finalMessageByteLength: number;
+  readonly finalMessageSha256: string;
+  readonly completedAgentMessageCount: number;
+  readonly malformedJsonlCount: number;
+  readonly matchingResultStoredAcknowledgementPresent: boolean;
+}
+
 export class CodexRoleBoundaryError extends Error {
-  constructor(message: string) {
+  readonly diagnostic: CodexRoleBoundaryDiagnostic | undefined;
+
+  constructor(message: string, diagnostic?: CodexRoleBoundaryDiagnostic) {
     super(`Codex role boundary: ${message}`);
     this.name = "CodexRoleBoundaryError";
+    this.diagnostic = diagnostic;
   }
+}
+
+export function formatCodexRoleBoundaryDiagnostic(
+  diagnostic: CodexRoleBoundaryDiagnostic,
+): string {
+  return `${CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX}${JSON.stringify(diagnostic)}`;
 }
 
 const DISPATCHED_ROLE_ID_SET: ReadonlySet<string> = new Set(DISPATCHED_ROLE_IDS);
@@ -245,18 +290,67 @@ interface CodexExecEvent {
   readonly item?: {
     readonly type?: unknown;
     readonly text?: unknown;
+    readonly server?: unknown;
+    readonly tool?: unknown;
+    readonly result?: unknown;
   };
 }
 
-function finalAgentMessage(jsonl: string): string | undefined {
+function eventCarriesMatchingResultStoredAcknowledgement(
+  event: CodexExecEvent,
+  expectedHandle: DispatchHandle,
+): boolean {
+  const item = event.item;
+  if (
+    event.type !== "item.completed" ||
+    item?.type !== "mcp_tool_call" ||
+    item.server !== "ledger" ||
+    item.tool !== "store_result" ||
+    item.result === null ||
+    typeof item.result !== "object" ||
+    Array.isArray(item.result)
+  ) {
+    return false;
+  }
+  const content = (item.result as Record<string, unknown>)["content"];
+  if (!Array.isArray(content)) return false;
+  return content.some((part: unknown) => {
+    if (part === null || typeof part !== "object" || Array.isArray(part)) return false;
+    const record = part as Record<string, unknown>;
+    return (
+      record["type"] === "text" &&
+      typeof record["text"] === "string" &&
+      resultStoredAcknowledgementHandle(record["text"], expectedHandle) !== undefined
+    );
+  });
+}
+
+interface CodexRoleBoundaryStreamObservation {
+  readonly finalMessage: string | undefined;
+  readonly completedAgentMessageCount: number;
+  readonly malformedJsonlCount: number;
+  readonly matchingResultStoredAcknowledgementPresent: boolean;
+}
+
+function observeCodexRoleBoundaryStream(
+  jsonl: string,
+  expectedHandle: DispatchHandle,
+): CodexRoleBoundaryStreamObservation {
   let finalMessage: string | undefined;
+  let completedAgentMessageCount = 0;
+  let malformedJsonlCount = 0;
+  let matchingResultStoredAcknowledgementPresent = false;
   for (const line of jsonl.split("\n")) {
     if (line.trim() === "") continue;
     let event: CodexExecEvent;
     try {
       event = JSON.parse(line) as CodexExecEvent;
     } catch {
+      malformedJsonlCount += 1;
       continue;
+    }
+    if (eventCarriesMatchingResultStoredAcknowledgement(event, expectedHandle)) {
+      matchingResultStoredAcknowledgementPresent = true;
     }
     if (
       event.type === "item.completed" &&
@@ -264,9 +358,15 @@ function finalAgentMessage(jsonl: string): string | undefined {
       typeof event.item.text === "string"
     ) {
       finalMessage = event.item.text;
+      completedAgentMessageCount += 1;
     }
   }
-  return finalMessage;
+  return Object.freeze({
+    finalMessage,
+    completedAgentMessageCount,
+    malformedJsonlCount,
+    matchingResultStoredAcknowledgementPresent,
+  });
 }
 
 function resultStoredAcknowledgementHandle(
@@ -337,9 +437,17 @@ export function interceptCodexRoleBoundaryResult(
   jsonl: string,
   expectedHandle: DispatchHandle,
 ): DispatchHandle {
-  const finalMessage = finalAgentMessage(jsonl);
+  const observation = observeCodexRoleBoundaryStream(jsonl, expectedHandle);
+  const finalMessage = observation.finalMessage;
   if (finalMessage === undefined) {
-    throw new CodexRoleBoundaryError("child emitted no completed agent message");
+    throw new CodexRoleBoundaryError(
+      "child emitted no completed agent message",
+      boundaryDiagnostic(
+        observation,
+        "no-completed-message",
+        "no-completed-agent-message",
+      ),
+    );
   }
   const storedAcknowledgement = resultStoredAcknowledgementHandle(finalMessage, expectedHandle);
   if (storedAcknowledgement !== undefined) {
@@ -349,9 +457,46 @@ export function interceptCodexRoleBoundaryResult(
   if (verdict.verdict !== "handle-only") {
     throw new CodexRoleBoundaryError(
       `child final message failed the handle-only contract (${verdict.verdict})`,
+      boundaryDiagnostic(observation, verdict.verdict, diagnosticDetailCode(verdict)),
     );
   }
   return verdict.handle;
+}
+
+function diagnosticDetailCode(
+  verdict: Exclude<ReturnType<typeof classifyCodexFinalMessage>, { verdict: "handle-only" }>,
+): CodexRoleBoundaryDiagnosticDetailCode {
+  switch (verdict.verdict) {
+    case "echo":
+      return "surplus-fields";
+    case "wrong-handle":
+      return "mismatched-handle";
+    case "unparseable":
+      if (verdict.detail.startsWith("not JSON:")) return "invalid-json";
+      if (verdict.detail === "expected a JSON object carrying exactly the dispatch handle") {
+        return "invalid-shape";
+      }
+      return "invalid-handle-shape";
+  }
+}
+
+function boundaryDiagnostic(
+  observation: CodexRoleBoundaryStreamObservation,
+  verdict: CodexRoleBoundaryDiagnosticVerdict,
+  detailCode: CodexRoleBoundaryDiagnosticDetailCode,
+): CodexRoleBoundaryDiagnostic {
+  const finalMessage = observation.finalMessage ?? "";
+  return Object.freeze({
+    version: 1 as const,
+    verdict,
+    detailCode,
+    finalMessageByteLength: Buffer.byteLength(finalMessage),
+    finalMessageSha256: createHash("sha256").update(finalMessage).digest("hex"),
+    completedAgentMessageCount: observation.completedAgentMessageCount,
+    malformedJsonlCount: observation.malformedJsonlCount,
+    matchingResultStoredAcknowledgementPresent:
+      observation.matchingResultStoredAcknowledgementPresent,
+  });
 }
 
 /**

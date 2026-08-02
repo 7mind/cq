@@ -4,8 +4,11 @@ import { readFile } from "node:fs/promises";
 import * as path from "node:path";
 import {
   assertCodexDispatchedRoleId,
+  CodexRoleBoundaryError,
   createCodexRoleBoundaryPlan,
   executeCodexRoleBoundary,
+  formatCodexRoleBoundaryDiagnostic,
+  type CodexRoleBoundaryDiagnostic,
   type CodexRoleBoundaryInvocation,
 } from "../src/index.js";
 
@@ -25,6 +28,19 @@ function requiredEnvironment(name: string): string {
     throw new Error(`codex-role-dispatch: ${name} must name the packaged Codex prompt root`);
   }
   return value;
+}
+
+function boundaryDiagnosticFromError(
+  error: unknown,
+): CodexRoleBoundaryDiagnostic | undefined {
+  if (error instanceof CodexRoleBoundaryError) return error.diagnostic;
+  if (error instanceof AggregateError) {
+    for (const nested of error.errors) {
+      const diagnostic = boundaryDiagnosticFromError(nested);
+      if (diagnostic !== undefined) return diagnostic;
+    }
+  }
+  return undefined;
 }
 
 export async function main(): Promise<void> {
@@ -50,6 +66,10 @@ export async function main(): Promise<void> {
 const meta = import.meta as unknown as { main?: boolean };
 if (meta.main === true) {
   void main().catch((error: unknown) => {
+    const diagnostic = boundaryDiagnosticFromError(error);
+    if (diagnostic !== undefined) {
+      process.stderr.write(`${formatCodexRoleBoundaryDiagnostic(diagnostic)}\n`);
+    }
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${message}\n`);
     process.exit(1);
