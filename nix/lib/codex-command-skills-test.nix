@@ -311,8 +311,16 @@ in
     # Regression: exercise the production programs.mcp registry boundary rather
     # than injecting a complete transport directly into Codex's destination.
     assert codexMcpRegistration.command == ledgerMcpRegistration.command;
-    assert codexMcpRegistration.args == [ "mcp" ];
+    assert codexMcpRegistration.args == [
+      "mcp"
+      "--prompt-surface"
+      "codex"
+      "--prompt-root"
+      (toString promptRoot)
+    ];
     assert codexMcpRegistration.env.CQ_HARNESS == "codex";
+    assert codexMcpRegistration.env.CQ_PROMPT_ROOT == toString promptRoot;
+    assert codexMcpRegistration.env.CQ_PROMPT_SURFACE == "codex";
     assert lib.all (entry: entry.assertion) evaluatedCodexModule.config.assertions;
     true;
 }

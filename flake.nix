@@ -990,7 +990,8 @@ EOF
                   {
                     printf '%s\n' \
                       '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"codex-mcp-harness-selection","version":"1"}}}' \
-                      '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_config","arguments":{"section":"planners"}}}'
+                      '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_config","arguments":{"section":"planners"}}}' \
+                      '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"prepare_dispatch","arguments":{"roleId":"implement-worker","input":{"taskId":"T1627","headline":"Bind Codex preparation to the exact Codex prompt artifact","description":"Verify the materialized registration provenance.","acceptance":"Persist the exact Codex prompt digest.","worktreePath":"/tmp/wt-T1627","branch":"implement/T1627","baseCommit":"1c0405a6a3c287eab42502520ed5f2807d6d3f7b"},"idempotencyKey":"T1627-nix-codex-provenance","timeoutMs":600000,"expectedChild":{"childId":"nix-check-child","runId":"nix-check-run"}}}}'
                   } | env -i \
                     HOME="$NIX_BUILD_TOP/home" \
                     XDG_STATE_HOME="$state" \
@@ -1004,12 +1005,30 @@ EOF
                       | .result.content[0].text
                     ' responses.jsonl
                   )"
+                  prepared_payload="$(
+                    ${pkgs.jq}/bin/jq -r '
+                      select(.id == 3)
+                      | .result.content[0].text
+                    ' responses.jsonl
+                  )"
+                  expected_prompt_digest="$(${pkgs.coreutils}/bin/sha256sum \
+                    ${codexPromptRoot}/roles/implement-worker.md | ${pkgs.coreutils}/bin/cut -d ' ' -f 1)"
                   ${pkgs.jq}/bin/jq -e '
                     .command == ${builtins.toJSON registration.command}
-                    and .args == ["mcp"]
-                    and .env == {"CQ_HARNESS":"codex"}
+                    and .args == [
+                      "mcp",
+                      "--prompt-surface",
+                      "codex",
+                      "--prompt-root",
+                      ${builtins.toJSON (toString codexPromptRoot)}
+                    ]
+                    and .env == {
+                      "CQ_HARNESS":"codex",
+                      "CQ_PROMPT_ROOT":${builtins.toJSON (toString codexPromptRoot)},
+                      "CQ_PROMPT_SURFACE":"codex"
+                    }
                   ' ${registrationJson} >/dev/null || {
-                    echo "materialized registration omitted exact CQ_HARNESS=codex" >&2
+                    echo "materialized registration omitted exact Codex prompt selectors/environment" >&2
                     printf '%s\n' "$planner_payload" >&2
                     exit 1
                   }
@@ -1018,6 +1037,12 @@ EOF
                     and ([.planners[].alias] == ["codex"])
                     and ([.planners[] | select(.alias == "opus" or .harness == "claude")] | length == 0)
                   ' >/dev/null
+                  printf '%s\n' "$prepared_payload" | tee /dev/stderr | ${pkgs.jq}/bin/jq -e \
+                    --arg expectedPromptDigest "$expected_prompt_digest" '
+                      .accepted == true
+                      and .prepared.promptProvenance.surface == "codex"
+                      and .prepared.promptProvenance.promptDigest == $expectedPromptDigest
+                    ' >/dev/null
                   touch "$out"
                 '';
             codex-cq-skills =

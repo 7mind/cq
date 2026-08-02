@@ -75,6 +75,20 @@ function artifactStore(surface: PromptSurface): PromptArtifactStore {
   };
 }
 
+function artifactStoreWithSurfaces(
+  manifestSurface: PromptSurface,
+  roleSurface: PromptSurface,
+): PromptArtifactStore {
+  const base = artifactStore(roleSurface);
+  return {
+    readManifest: () => ({
+      ...base.readManifest(),
+      promptSurface: manifestSurface,
+    }),
+    readRole: base.readRole,
+  };
+}
+
 function runtime(
   surface: PromptSurface = "claude",
   narrativeSource?: DispatchNarrativeSource,
@@ -173,6 +187,73 @@ describe("live compact-dispatch capability", () => {
       expect(store.snapshot().map(attestationRowDigest)).toEqual(before);
     }
     expect(roleReads).toBe(0);
+  });
+
+  test("a Codex request against a Claude artifact rejects before durable allocation", async () => {
+    const store = new InMemoryAttestationStore(NAMESPACE);
+    const source: DispatchNarrativeSource = {
+      projectKey: NAMESPACE.projectKey,
+      readItem: (ledger, id) =>
+        ledger === TASKS_LEDGER && id === "T977"
+          ? {
+              id,
+              status: "wip",
+              fields: {
+                headline: INLINE_INPUT.headline,
+                description: INLINE_INPUT.description,
+                acceptance: INLINE_INPUT.acceptance,
+              },
+            }
+          : undefined,
+    };
+    const capability = createDispatchCapability({
+      backend: new InMemoryAttestationBackend(store),
+      promptArtifactStore: artifactStore("claude"),
+      narrativeSource: source,
+      now: () => NOW,
+      randomBytes: sequentialDispatchRandomBytes(0),
+    });
+    const outcome = await capability.prepare({
+      refs: {
+        roleId: "implement-worker",
+        surface: "codex",
+        projectKey: NAMESPACE.projectKey,
+        taskId: "T977",
+        coordinates: {
+          worktreePath: INLINE_INPUT.worktreePath,
+          branch: INLINE_INPUT.branch,
+          baseCommit: INLINE_INPUT.baseCommit,
+        },
+      },
+      idempotencyKey: "T977-cross-surface",
+      timeoutMs: 600_000,
+      expectedChild: EXPECTED_CHILD,
+    });
+
+    expect(outcome.accepted).toBe(false);
+    if (outcome.accepted) throw new Error("expected cross-surface rejection");
+    expect(outcome.reason).toBe("invalid-launch-envelope");
+    expect(outcome.allocated).toBe(false);
+    expect(store.snapshot()).toHaveLength(0);
+  });
+
+  test("manifest and role-artifact surfaces must agree before durable allocation", async () => {
+    const store = new InMemoryAttestationStore(NAMESPACE);
+    const capability = createDispatchCapability({
+      backend: new InMemoryAttestationBackend(store),
+      promptArtifactStore: artifactStoreWithSurfaces("codex", "claude"),
+      now: () => NOW,
+      randomBytes: sequentialDispatchRandomBytes(0),
+    });
+    const outcome = await capability.prepare(
+      inlineRequest({ idempotencyKey: "T977-incoherent-artifact" }),
+    );
+
+    expect(outcome.accepted).toBe(false);
+    if (outcome.accepted) throw new Error("expected incoherent-artifact rejection");
+    expect(outcome.reason).toBe("invalid-launch-envelope");
+    expect(outcome.allocated).toBe(false);
+    expect(store.snapshot()).toHaveLength(0);
   });
 
   test("identical same-runtime retries replay raw capabilities; a conflict fails closed", async () => {

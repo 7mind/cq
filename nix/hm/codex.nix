@@ -18,7 +18,7 @@ let
   assets = import ../pkg/cq-assets/assets.nix { inherit lib; };
   codexHarnessEnv = import ../lib/codex-harness-env.nix { inherit lib; };
   codexLedgerMcpRegistration =
-    import ../lib/codex-ledger-mcp-registration.nix { inherit lib; };
+    import ../lib/codex-ledger-mcp-registration.nix { inherit lib codexPromptRoot; };
   codexPromptRoot = import ../pkg/cq-assets/render-prompt-surface.nix {
     inherit pkgs lib;
     surface = "codex";

@@ -214,7 +214,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       }
       let roleId: string;
       let dispatchInput: Parameters<typeof dispatchPayloadDigest>[0];
-      let surface: string | undefined;
+      let requestedSurface: string | undefined;
       if (input.refs !== undefined) {
         if (input.roleId !== undefined || input.input !== undefined) {
           return rejectLaunch(
@@ -239,7 +239,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         }
         roleId = assembly.roleId;
         dispatchInput = assembly.input;
-        surface = assembly.surface;
+        requestedSurface = assembly.surface;
       } else {
         if (input.roleId === undefined || input.input === undefined) {
           return rejectLaunch(
@@ -252,15 +252,21 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       }
 
       const manifest = options.promptArtifactStore.readManifest();
-      surface ??= manifest.promptSurface;
-      if (surface === undefined) {
+      const manifestSurface = manifest.promptSurface;
+      if (manifestSurface === undefined) {
         throw new Error("prepare_dispatch requires an attested prompt surface");
+      }
+      if (requestedSurface !== undefined && requestedSurface !== manifestSurface) {
+        return rejectLaunch(
+          "refs.surface",
+          `requested prompt surface "${requestedSurface}" does not match attested manifest surface "${manifestSurface}"`,
+        );
       }
       if (input.refs === undefined) {
         const validation = validateDispatchInput({
           roleId,
           input: dispatchInput,
-          surface,
+          surface: manifestSurface,
           ...(input.overlays === undefined ? {} : { overlays: input.overlays }),
           registry: DISPATCH_OVERLAY_REGISTRY,
         });
@@ -275,21 +281,27 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       const artifact = options.promptArtifactStore.readRole(roleId);
       const promptDigest = artifact.metadata.promptDigest;
       const catalogHash = manifest.catalogHash;
-      surface = artifact.metadata.promptSurface ?? surface;
+      const artifactSurface = artifact.metadata.promptSurface;
       if (
         artifact.metadata.roleKind !== "dispatched-subagent" ||
         promptDigest === undefined ||
         catalogHash === undefined ||
-        surface === undefined
+        artifactSurface === undefined
       ) {
         throw new Error(
           `prepare_dispatch requires an attested dispatched-role artifact for "${roleId}"`,
         );
       }
+      if (artifactSurface !== manifestSurface) {
+        return rejectLaunch(
+          `roles.${roleId}.promptSurface`,
+          `role-artifact surface "${artifactSurface}" does not match attested manifest surface "${manifestSurface}"`,
+        );
+      }
       const request = {
           namespace,
           roleId,
-          surface,
+          surface: manifestSurface,
           input: dispatchInput,
           idempotencyKey: input.idempotencyKey,
           timeoutMs: input.timeoutMs,
