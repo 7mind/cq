@@ -84,6 +84,7 @@ export const CQ_TOML_TEMPLATE: string = `\
 # token's effort. Values must be legal for the agent's RESOLVED harness:
 #   pi     — off | none | minimal | low | medium | high | xhigh | max
 #   claude — low | medium | high | xhigh | max
+#   codex  — low | medium | high | xhigh | max | ultra
 # [agent_efforts]
 #   plan-reviewer = "max"
 

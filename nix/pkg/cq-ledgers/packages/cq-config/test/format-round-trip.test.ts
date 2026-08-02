@@ -6,6 +6,7 @@
  *   claude:opus-4.8[1m]:high
  *   pi:ollama-cloud/minimax-m3
  *   claude:opus-4.8[1m]
+ *   codex:gpt-5.6-sol:ultra
  * formatReviewerToken(parseReviewerToken(s)) === s.
  *
  * Also verifies that effort:null emits no trailing :<effort>.
@@ -22,6 +23,7 @@ const ROUND_TRIP_CASES: string[] = [
   "claude:opus-4.8[1m]:high",
   "pi:ollama-cloud/minimax-m3",
   "claude:opus-4.8[1m]",
+  "codex:gpt-5.6-sol:ultra",
 ];
 
 describe("formatReviewerToken — round-trip (T288)", () => {
