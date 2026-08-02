@@ -1161,16 +1161,16 @@ export async function dispatch(
     io.err(USAGE);
     return { exitCode: EXIT_USAGE, longRunning: false };
   }
+  if (first === "gate") {
+    const outcome = await runGateRun(argv.slice(1), io);
+    return { ...outcome, longRunning: false };
+  }
   const args = parseSubcommandArgs(argv.slice(1));
   // `log` is a namespace subcommand — intercept it before the generic handler
   // dispatch so runLogCmd receives the raw post-"log" argv for sub-subcommand
   // routing and `log put` argument parsing.
   if (first === "log") {
     const outcome = await runLogCmd(args, argv.slice(1), io);
-    return { ...outcome, longRunning: false };
-  }
-  if (first === "gate") {
-    const outcome = await runGateRun(argv.slice(1), io);
     return { ...outcome, longRunning: false };
   }
   const outcome = await HANDLERS[first](args, io);

@@ -200,6 +200,98 @@ describe("canonical worktree gate [Effectual-GoodCommunication]", () => {
     await closeWorktreeGate(reclaimed, { termGraceMs: 0, killGraceMs: 0 });
   });
 
+  test("settles registered command groups before reclaiming a dead holder", async () => {
+    const { root, stateDir } = await repositoryFixture();
+    const lease = await acquireWorktreeGate({ worktree: root, commandCwd: root, stateDir });
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    const pid = child.pid;
+    if (pid === undefined) throw new Error("test command did not return a pid");
+    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    try {
+      const leader = await readProcessIdentity(pid);
+      if (leader === null) throw new Error("test command identity disappeared");
+      await registerProcessGroup(lease, { pgid: pid, leader });
+      await writeFile(join(lease.gateDir, "closing.json"), JSON.stringify({ nonce: lease.nonce }));
+      const holderPath = join(lease.gateDir, "holder.json");
+      const holder = JSON.parse(await readFile(holderPath, "utf8")) as Record<string, unknown>;
+      await writeFile(
+        holderPath,
+        JSON.stringify({ ...holder, holder: { pid: 999_999_999, startTime: "dead" } }),
+      );
+
+      const reclaimed = await acquireWorktreeGate({ worktree: root, commandCwd: root, stateDir });
+      expect(await readProcessIdentity(pid)).toBeNull();
+      await closeWorktreeGate(reclaimed, { termGraceMs: 0, killGraceMs: 0 });
+    } finally {
+      signalProcessGroup(pid, "SIGKILL");
+      await exited;
+    }
+  });
+
+  test("close never observes a partially published command identity", async () => {
+    const { root, stateDir } = await repositoryFixture();
+    const lease = await acquireWorktreeGate({ worktree: root, commandCwd: root, stateDir });
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    const pid = child.pid;
+    if (pid === undefined) throw new Error("test command did not return a pid");
+    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    try {
+      const leader = await readProcessIdentity(pid);
+      if (leader === null) throw new Error("test command identity disappeared");
+      const publicationPadding = "x".repeat(1024 * 1024);
+      const registration = {
+        pgid: pid,
+        leader,
+        toJSON: () => ({ pgid: pid, leader, publicationPadding }),
+      };
+      const commandsDirectory = join(lease.gateDir, "commands");
+      const observerReady = join(root, "observer-ready");
+      const observerScript = [
+        "const fs = require('node:fs');",
+        "const directory = process.argv[1];",
+        "fs.writeFileSync(process.argv[2], 'ready');",
+        "const deadline = Date.now() + 3000;",
+        "while (Date.now() < deadline) {",
+        "  const name = fs.readdirSync(directory).find((entry) => entry.endsWith('.json'));",
+        "  if (name !== undefined) {",
+        "    try { JSON.parse(fs.readFileSync(directory + '/' + name, 'utf8')); process.exit(0); }",
+        "    catch { process.exit(17); }",
+        "  }",
+        "}",
+        "process.exit(18);",
+      ].join("\n");
+      const observer = spawn(
+        process.execPath,
+        ["-e", observerScript, commandsDirectory, observerReady],
+        {
+          stdio: "ignore",
+        },
+      );
+      const observerExit = new Promise<number | null>((resolve) =>
+        observer.once("exit", (exitCode) => resolve(exitCode)),
+      );
+      while (!(await Bun.file(observerReady).exists())) await Bun.sleep(1);
+      const registrations = Array.from({ length: 4 }, () =>
+        registerProcessGroup(lease, registration),
+      );
+      const registrationOutcomes = Promise.allSettled(registrations);
+      expect(await observerExit).toBe(0);
+      await closeWorktreeGate(lease, { termGraceMs: 0, killGraceMs: 1_000 });
+      await registrationOutcomes;
+      await exited;
+    } finally {
+      signalProcessGroup(pid, "SIGKILL");
+      await releaseWorktreeGate(lease);
+      await exited;
+    }
+  });
+
   test("validates an existing in-worktree command directory separately", async () => {
     const { root, stateDir } = await repositoryFixture();
     const commandCwd = join(root, "nested");

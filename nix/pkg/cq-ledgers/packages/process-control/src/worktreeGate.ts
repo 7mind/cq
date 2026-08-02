@@ -10,7 +10,6 @@ import {
   rename,
   rm,
   stat,
-  writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
@@ -34,6 +33,9 @@ const CLOSING_FILENAME = "closing.json";
 const RECORD_VERSION = 1;
 const IDENTITY_RETRY_COUNT = 100;
 const IDENTITY_RETRY_DELAY_MS = 2;
+const PENDING_REGISTRATION_PREFIX = ".pending-";
+const REGISTRATION_SETTLE_TIMEOUT_MS = 30_000;
+const REGISTRATION_SETTLE_POLL_MS = 2;
 
 export interface AcquireWorktreeGateOptions {
   readonly worktree: string;
@@ -123,14 +125,24 @@ async function resolveCommandCwd(worktree: string, candidate: string): Promise<s
   return commandCwd;
 }
 
+async function writeJsonFile(target: string, value: unknown): Promise<void> {
+  const handle = await open(target, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(value)}\n`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 async function writeJsonAtomic(target: string, value: unknown): Promise<void> {
   const temporary = `${target}.tmp-${process.pid}-${randomUUID()}`;
-  await writeFile(temporary, `${JSON.stringify(value)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-    flag: "wx",
-  });
-  await rename(temporary, target);
+  try {
+    await writeJsonFile(temporary, value);
+    await rename(temporary, target);
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }
 
 async function readHolder(gateDir: string): Promise<HolderRecord> {
@@ -205,13 +217,65 @@ async function publishLease(
   }
 }
 
-async function reclaimDeadGate(gateDir: string, stateRoot: string): Promise<boolean> {
+async function writeClosingMarker(lease: WorktreeGateCapability): Promise<void> {
+  try {
+    await writeJsonFile(join(lease.gateDir, CLOSING_FILENAME), { nonce: lease.nonce });
+  } catch (error) {
+    if (!isNodeError(error, "EEXIST")) throw error;
+  }
+}
+
+async function waitForPendingRegistrations(gateDir: string): Promise<void> {
+  const commandsDirectory = join(gateDir, COMMANDS_DIRECTORY);
+  const deadline = Date.now() + REGISTRATION_SETTLE_TIMEOUT_MS;
+  for (;;) {
+    const pending = (await readdir(commandsDirectory)).some((name) =>
+      name.startsWith(PENDING_REGISTRATION_PREFIX),
+    );
+    if (!pending) return;
+    if (Date.now() >= deadline) {
+      throw new Error("cq gate: timed out waiting for command identity publication");
+    }
+    await new Promise((resolve) => setTimeout(resolve, REGISTRATION_SETTLE_POLL_MS));
+  }
+}
+
+async function settleRegisteredProcessGroups(
+  lease: WorktreeGateCapability,
+  options: SettleProcessGroupsOptions,
+): Promise<SettleProcessGroupsResult> {
+  await waitForPendingRegistrations(lease.gateDir);
+  const registrations = await readRegisteredProcessGroups(lease);
+  const result = await settleProcessGroups(registrations, options);
+  if (result.survivors.length > 0) {
+    throw new Error(`cq gate: process groups did not settle: ${result.survivors.join(", ")}`);
+  }
+  return result;
+}
+
+async function reclaimDeadGate(
+  gateDir: string,
+  stateRoot: string,
+  observed: HolderRecord,
+): Promise<boolean> {
+  const lease: WorktreeGateCapability = { gateDir, nonce: observed.nonce };
+  await writeClosingMarker(lease);
+  try {
+    await settleRegisteredProcessGroups(lease, {});
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return false;
+    throw error;
+  }
   const tombstone = join(stateRoot, `.stale-${process.pid}-${randomUUID()}`);
   try {
     await rename(gateDir, tombstone);
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return false;
     throw error;
+  }
+  const movedHolder = await readHolder(tombstone);
+  if (movedHolder.nonce !== observed.nonce) {
+    throw new Error("cq gate: holder nonce changed during stale-gate reclaim");
   }
   await rm(tombstone, { recursive: true, force: true });
   return true;
@@ -250,7 +314,7 @@ export async function acquireWorktreeGate(
     }
     if (await isProcessIdentityAlive(observed.holder))
       throw new GateBusyError(worktree, observed.holder);
-    await reclaimDeadGate(gateDir, stateRoot);
+    await reclaimDeadGate(gateDir, stateRoot, observed);
   }
 }
 
@@ -285,15 +349,21 @@ export async function registerProcessGroup(
     COMMANDS_DIRECTORY,
     `${registration.pgid}-${randomUUID()}.json`,
   );
-  const handle = await open(target, "wx", 0o600);
+  const pending = join(
+    lease.gateDir,
+    COMMANDS_DIRECTORY,
+    `${PENDING_REGISTRATION_PREFIX}${process.pid}-${randomUUID()}`,
+  );
   try {
-    await handle.writeFile(`${JSON.stringify(record)}\n`, "utf8");
-    await handle.sync();
+    await writeJsonFile(pending, record);
+    if (await pathExists(closingPath)) {
+      throw new Error("cq gate: command group raced with gate close");
+    }
+    await rename(pending, target);
   } finally {
-    await handle.close();
+    await rm(pending, { force: true });
   }
   if (await pathExists(closingPath)) {
-    await rm(target, { force: true });
     throw new Error("cq gate: command group raced with gate close");
   }
 }
@@ -389,21 +459,8 @@ export async function closeWorktreeGate(
   options: SettleProcessGroupsOptions = {},
 ): Promise<SettleProcessGroupsResult> {
   await assertLeaseNonce(lease);
-  const closing = join(lease.gateDir, CLOSING_FILENAME);
-  try {
-    await writeFile(closing, `${JSON.stringify({ nonce: lease.nonce })}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-      flag: "wx",
-    });
-  } catch (error) {
-    if (!isNodeError(error, "EEXIST")) throw error;
-  }
-  const registrations = await readRegisteredProcessGroups(lease);
-  const result = await settleProcessGroups(registrations, options);
-  if (result.survivors.length > 0) {
-    throw new Error(`cq gate: process groups did not settle: ${result.survivors.join(", ")}`);
-  }
+  await writeClosingMarker(lease);
+  const result = await settleRegisteredProcessGroups(lease, options);
   if (!(await releaseWorktreeGate(lease)))
     throw new Error("cq gate: lease nonce changed before release");
   return result;

@@ -75,4 +75,28 @@ describe("cq gate run [BG]", () => {
     ).rejects.toThrow("contained in worktree");
     expect(await Bun.file(marker).exists()).toBe(false);
   });
+
+  test("passes child arguments after the separator verbatim", async () => {
+    const root = await repositoryFixture();
+    const marker = join(root, "argv.json");
+    const result = await dispatch(
+      [
+        "gate",
+        "run",
+        "--worktree",
+        root,
+        "--command-cwd",
+        root,
+        "--",
+        process.execPath,
+        "-e",
+        `await Bun.write(${JSON.stringify(marker)}, JSON.stringify(process.argv.slice(1)))`,
+        "--",
+        "--cwd",
+      ],
+      io(),
+    );
+    expect(result).toEqual({ exitCode: 0, longRunning: false });
+    expect(JSON.parse(await readFile(marker, "utf8"))).toEqual(["--cwd"]);
+  });
 });
