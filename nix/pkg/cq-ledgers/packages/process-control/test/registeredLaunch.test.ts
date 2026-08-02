@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -15,12 +15,20 @@ import {
 
 const roots: string[] = [];
 
-function closed(
+function exited(
   child: ChildProcess,
 ): Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }> {
   return new Promise((resolve, reject) => {
     child.once("error", reject);
-    child.once("close", (exitCode, signal) => resolve({ exitCode, signal }));
+    child.once("exit", (exitCode, signal) => resolve({ exitCode, signal }));
+  });
+}
+
+function streamDrained(stream: NodeJS.ReadableStream | null): Promise<void> {
+  if (stream === null) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    stream.once("end", resolve);
+    stream.once("error", reject);
   });
 }
 
@@ -34,7 +42,14 @@ function nodeBootstrap(specification: RegisteredLaunchBootstrapSpecification<Std
   return {
     process: child,
     pid: child.pid,
-    closed: closed(child),
+    exited: exited(child),
+    outputDrained: Promise.all([streamDrained(child.stdout), streamDrained(child.stderr)]).then(
+      () => {},
+    ),
+    resultFromTargetOutcome: (outcome: {
+      exitCode: number | null;
+      signal: NodeJS.Signals | null;
+    }) => outcome,
     terminate: (signal: NodeJS.Signals) => {
       child.kill(signal);
     },
@@ -228,7 +243,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       join(protocolDirectory, "release.json"),
       JSON.stringify({ nonce: "mismatched-nonce", pgid: child.pid }),
     );
-    const outcome = await closed(child);
+    const outcome = await exited(child);
     expect(outcome.exitCode).toBe(1);
     expect(await Bun.file(marker).exists()).toBe(false);
     expect(await Bun.file(join(protocolDirectory, "status.json")).exists()).toBe(false);
@@ -281,40 +296,53 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     expect(stderrText).toBe("stderr:stdin payload");
   });
 
-  test("keeps completion pending after target exit until inherited pipes close", async () => {
-    const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-delayed-close-"));
+  test("preserves the target signal outcome", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-signal-"));
     roots.push(root);
-    const holderReady = join(root, "holder-ready");
-    const holderRelease = join(root, "holder-release");
+    const launched = await launchRegisteredProcessGroup({
+      argv: [process.execPath, "-e", "process.kill(process.pid, 'SIGTERM')"],
+      cwd: root,
+      env: process.env,
+      stdio: "ignore" as const,
+      register: async () => {},
+      launchBootstrap: nodeBootstrap,
+    });
+
+    expect(await launched.exited).toEqual({ exitCode: null, signal: "SIGTERM" });
+  });
+
+  test("keeps the registered supervisor alive until settlement drains inherited pipes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-supervisor-"));
+    roots.push(root);
+    const writerReady = join(root, "writer-ready");
     const targetPidPath = join(root, "target-pid");
-    const holder = [
-      "const { existsSync, writeFileSync } = require('node:fs');",
-      `writeFileSync(${JSON.stringify(holderReady)}, String(process.pid));`,
-      `const timer = setInterval(() => {`,
-      `  if (existsSync(${JSON.stringify(holderRelease)})) {`,
-      "    clearInterval(timer);",
-      "    process.stdout.write('holder-stdout-close\\n');",
-      "    process.stderr.write('holder-stderr-close\\n');",
-      "  }",
-      "}, 2);",
+    const writer = [
+      "const { writeFileSync } = require('node:fs');",
+      "process.on('SIGTERM', () => {});",
+      "process.stdout.write('writer-stdout\\n');",
+      "process.stderr.write('writer-stderr\\n');",
+      `writeFileSync(${JSON.stringify(writerReady)}, String(process.pid));`,
+      "setInterval(() => {}, 1000);",
     ].join("\n");
     const target = [
       "const { spawn } = require('node:child_process');",
       "const { existsSync, writeFileSync } = require('node:fs');",
       `writeFileSync(${JSON.stringify(targetPidPath)}, String(process.pid));`,
-      `const child = spawn(process.execPath, ['-e', ${JSON.stringify(holder)}], {`,
+      `const child = spawn(process.execPath, ['-e', ${JSON.stringify(writer)}], {`,
       "  detached: false,",
       "  stdio: ['ignore', 'inherit', 'inherit'],",
       "});",
       "child.unref();",
-      `const timer = setInterval(() => {`,
-      `  if (existsSync(${JSON.stringify(holderReady)})) {`,
-      "    clearInterval(timer);",
-      "  }",
+      "const ready = setInterval(() => {",
+      `  if (!existsSync(${JSON.stringify(writerReady)})) return;`,
+      "  clearInterval(ready);",
+      "  process.stdout.write('target-stdout\\n');",
+      "  process.stderr.write('target-stderr\\n');",
+      "  process.exitCode = 23;",
       "}, 2);",
     ].join("\n");
     const launched = await launchRegisteredProcessGroup({
-      argv: [process.execPath, "-e", target],
+      argv: ["node", "-e", target],
       cwd: root,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"] as const,
@@ -326,21 +354,47 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     }
     const stdout = streamText(launched.process.stdout);
     const stderr = streamText(launched.process.stderr);
-    await waitForFile(targetPidPath);
-    await waitForFile(holderReady);
-    await waitForIdentityToDisappear(Number(await readFile(targetPidPath, "utf8")));
+    let writerPid = 0;
+    try {
+      await waitForFile(targetPidPath);
+      await waitForFile(writerReady);
+      writerPid = Number(await readFile(writerReady, "utf8"));
+      await waitForIdentityToDisappear(Number(await readFile(targetPidPath, "utf8")));
 
-    const completionBeforeClose = await Promise.race([
-      launched.exited.then(() => "completed" as const),
-      Bun.sleep(250).then(() => "pending" as const),
-    ]);
-    await writeFile(holderRelease, "release");
-    await launched.exited;
-    const [stdoutText, stderrText] = await Promise.all([stdout, stderr]);
+      expect(
+        await Promise.race([
+          launched.exited.then(() => "completed" as const),
+          Bun.sleep(250).then(() => "pending" as const),
+        ]),
+      ).toBe("pending");
+      expect(await readProcessIdentity(launched.registration.leader.pid)).toEqual(
+        launched.registration.leader,
+      );
+      expect(await readProcessIdentity(writerPid)).not.toBeNull();
 
-    expect(completionBeforeClose).toBe("pending");
-    expect(stdoutText).toBe("holder-stdout-close\n");
-    expect(stderrText).toBe("holder-stderr-close\n");
+      expect(
+        await settleProcessGroups([launched.registration], {
+          termGraceMs: 50,
+          killGraceMs: 1_000,
+          pollIntervalMs: 2,
+        }),
+      ).toEqual({ signaled: [launched.registration.pgid], survivors: [] });
+      await waitForIdentityToDisappear(writerPid);
+      await waitForIdentityToDisappear(launched.registration.leader.pid);
+      const [outcome, stdoutText, stderrText] = await Promise.all([
+        launched.exited,
+        stdout,
+        stderr,
+      ]);
+
+      expect(outcome).toEqual({ exitCode: 23, signal: null });
+      expect(stdoutText).toBe("writer-stdout\ntarget-stdout\n");
+      expect(stderrText).toBe("writer-stderr\ntarget-stderr\n");
+    } finally {
+      signalProcessGroup(launched.registration.pgid, "SIGKILL");
+      if (writerPid > 1) await waitForIdentityToDisappear(writerPid);
+      await launched.exited.catch(() => {});
+    }
   });
 
   test("completion implies stdout and stderr EOF with every buffered payload byte", async () => {
@@ -444,7 +498,16 @@ describe("registered process-group launch bootstrap [T1624]", () => {
         return {
           process: { subprocess: child, stdout, stderr },
           pid: child.pid,
-          closed: Promise.all([child.exited, stdout, stderr]).then(([exitCode]) => exitCode),
+          exited: child.exited,
+          outputDrained: Promise.all([stdout, stderr]).then(() => {}),
+          resultFromTargetOutcome: (outcome: {
+            exitCode: number | null;
+            signal: NodeJS.Signals | null;
+          }) => {
+            if (outcome.exitCode !== null) return outcome.exitCode;
+            if (outcome.signal === null) return 1;
+            return 128 + (constants.signals[outcome.signal] ?? 1);
+          },
           terminate: (signal: NodeJS.Signals) => {
             child.kill(signal);
           },

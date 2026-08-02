@@ -1,9 +1,11 @@
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { constants, tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  assertSupportedPlatform,
   isProcessGroupAlive,
   isProcessIdentityAlive,
   readProcessIdentity,
@@ -14,6 +16,7 @@ import {
 const IDENTITY_TIMEOUT_MS = 30_000;
 const HANDSHAKE_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 2;
+const COMPLETION_POLL_INTERVAL_MS = 25;
 const FAILURE_KILL_GRACE_MS = 1_000;
 const FAILURE_EXIT_WAIT_MS = 1_000;
 
@@ -31,16 +34,21 @@ export interface RegisteredLaunchBootstrapSpecification<TStdio> {
   readonly stdio: TStdio;
 }
 
+export interface RegisteredTargetOutcome {
+  readonly exitCode: number | null;
+  readonly signal: NodeJS.Signals | null;
+}
+
 /** A Bun subprocess or Node ChildProcess plus the small common control surface. */
 export interface RegisteredLaunchBootstrap<TProcess, TExit> {
   readonly process: TProcess;
   readonly pid: number | undefined;
-  /**
-   * Resolves after process closure and every piped descriptor has drained.
-   * Node adapters use ChildProcess `close`; Bun adapters must explicitly drain
-   * configured output streams in addition to awaiting Subprocess.exited.
-   */
-  readonly closed: Promise<TExit>;
+  /** Resolves with the native bootstrap outcome as soon as the process exits. */
+  readonly exited: Promise<TExit>;
+  /** Resolves only after every configured bootstrap output pipe reaches EOF. */
+  readonly outputDrained: Promise<void>;
+  /** Maps the explicit target outcome onto the adapter's native result type. */
+  resultFromTargetOutcome(outcome: RegisteredTargetOutcome): TExit;
   terminate(signal: NodeJS.Signals): Promise<void> | void;
 }
 
@@ -72,12 +80,29 @@ export interface LaunchedRegisteredProcessGroup<TProcess, TExit> {
   readonly exited: Promise<TExit>;
 }
 
-interface BootstrapStatus {
+interface BootstrapLaunchedStatus {
   readonly nonce: string;
   readonly pgid: number;
-  readonly state: "launched" | "failed";
+  readonly state: "launched";
+}
+
+interface BootstrapFailedStatus {
+  readonly nonce: string;
+  readonly pgid: number;
+  readonly state: "failed";
   readonly error?: string;
 }
+
+interface BootstrapExitedStatus extends RegisteredTargetOutcome {
+  readonly nonce: string;
+  readonly pgid: number;
+  readonly state: "exited";
+}
+
+type BootstrapStatus =
+  | BootstrapLaunchedStatus
+  | BootstrapFailedStatus
+  | BootstrapExitedStatus;
 
 interface ExitObservation {
   settled: boolean;
@@ -157,17 +182,39 @@ function parseStatus(value: unknown, nonce: string, pgid: number): BootstrapStat
   if (status["nonce"] !== nonce || status["pgid"] !== pgid) {
     throw new Error("@cq/process-control: registered-launch bootstrap status identity mismatch");
   }
-  if (status["state"] !== "launched" && status["state"] !== "failed") {
-    throw new Error("@cq/process-control: malformed registered-launch bootstrap status");
+  if (status["state"] === "launched") return { nonce, pgid, state: "launched" };
+  if (status["state"] === "failed") {
+    if (status["error"] !== undefined && typeof status["error"] !== "string") {
+      throw new Error("@cq/process-control: malformed registered-launch bootstrap status");
+    }
+    return {
+      nonce,
+      pgid,
+      state: "failed",
+      ...(typeof status["error"] === "string" ? { error: status["error"] } : {}),
+    };
   }
-  if (status["error"] !== undefined && typeof status["error"] !== "string") {
+  const exitCode = status["exitCode"];
+  const signal = status["signal"];
+  const validExitCode =
+    exitCode === null || (typeof exitCode === "number" && Number.isSafeInteger(exitCode) && exitCode >= 0);
+  const validSignal =
+    signal === null ||
+    (typeof signal === "string" && Object.hasOwn(constants.signals, signal));
+  if (
+    status["state"] !== "exited" ||
+    !validExitCode ||
+    !validSignal ||
+    (exitCode === null) === (signal === null)
+  ) {
     throw new Error("@cq/process-control: malformed registered-launch bootstrap status");
   }
   return {
     nonce,
     pgid,
-    state: status["state"],
-    ...(typeof status["error"] === "string" ? { error: status["error"] } : {}),
+    state: "exited",
+    exitCode: exitCode as number | null,
+    signal: signal as NodeJS.Signals | null,
   };
 }
 
@@ -203,6 +250,121 @@ async function waitForBootstrapStatus(
   }
 }
 
+function parseLinuxProcessGroup(stat: string): number {
+  const commandEnd = stat.lastIndexOf(")");
+  if (commandEnd < 0) {
+    throw new Error("@cq/process-control: malformed /proc stat (missing command terminator)");
+  }
+  const processGroup = stat
+    .slice(commandEnd + 1)
+    .trim()
+    .split(/\s+/u)[2];
+  if (processGroup === undefined || !/^\d+$/u.test(processGroup)) {
+    throw new Error("@cq/process-control: malformed /proc stat (missing process group)");
+  }
+  return Number(processGroup);
+}
+
+async function hasProcessGroupMembersOtherThanLeader(
+  registration: ProcessGroupRegistration,
+): Promise<boolean> {
+  if (!(await isProcessIdentityAlive(registration.leader))) return false;
+  if (assertSupportedPlatform() === "darwin") {
+    const result = spawnSync("ps", ["-axo", "pid=,pgid="], { encoding: "utf8" });
+    if (result.status !== 0) {
+      throw new Error(
+        `@cq/process-control: could not inspect Darwin process groups: ${result.stderr.trim()}`,
+      );
+    }
+    return result.stdout.split("\n").some((line) => {
+      const fields = line.trim().split(/\s+/u);
+      return (
+        Number(fields[1]) === registration.pgid &&
+        Number(fields[0]) !== registration.leader.pid
+      );
+    });
+  }
+
+  const entries = await readdir("/proc", { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^\d+$/u.test(entry.name)) continue;
+    const pid = Number(entry.name);
+    if (pid === registration.leader.pid) continue;
+    try {
+      const stat = await readFile(`/proc/${entry.name}/stat`, "utf8");
+      if (parseLinuxProcessGroup(stat) === registration.pgid) return true;
+    } catch (error) {
+      if (!nodeError(error, "ENOENT") && !nodeError(error, "ESRCH")) throw error;
+    }
+  }
+  return false;
+}
+
+async function waitForTargetOutcome(
+  statusPath: string,
+  nonce: string,
+  pgid: number,
+  exit: ExitObservation,
+): Promise<RegisteredTargetOutcome | null> {
+  for (;;) {
+    try {
+      const status = parseStatus(JSON.parse(await readFile(statusPath, "utf8")), nonce, pgid);
+      if (status.state === "failed") {
+        throw new Error(
+          `@cq/process-control: target launch failed${status.error === undefined ? "" : `: ${status.error}`}`,
+        );
+      }
+      if (status.state === "exited") {
+        return { exitCode: status.exitCode, signal: status.signal };
+      }
+    } catch (error) {
+      if (!nodeError(error, "ENOENT")) throw error;
+    }
+    if (exit.settled) {
+      if (exit.error !== undefined) throw exit.error;
+      return null;
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, POLL_INTERVAL_MS));
+  }
+}
+
+async function completeRegisteredLaunch<TProcess, TExit>(
+  bootstrap: RegisteredLaunchBootstrap<TProcess, TExit>,
+  registration: ProcessGroupRegistration,
+  statusPath: string,
+  completionPath: string,
+  nonce: string,
+  exit: ExitObservation,
+  output: ExitObservation,
+): Promise<TExit> {
+  const targetOutcome = await waitForTargetOutcome(
+    statusPath,
+    nonce,
+    registration.pgid,
+    exit,
+  );
+  if (targetOutcome === null) {
+    const bootstrapOutcome = await bootstrap.exited;
+    await bootstrap.outputDrained;
+    return bootstrapOutcome;
+  }
+
+  while (!exit.settled) {
+    if (output.error !== undefined) throw output.error;
+    if (output.settled || !(await hasProcessGroupMembersOtherThanLeader(registration))) {
+      if (await isProcessIdentityAlive(registration.leader)) {
+        await writeJsonAtomic(completionPath, { nonce, pgid: registration.pgid });
+      }
+      break;
+    }
+    await new Promise((resolveDelay) =>
+      setTimeout(resolveDelay, COMPLETION_POLL_INTERVAL_MS),
+    );
+  }
+  await Promise.all([bootstrap.exited, bootstrap.outputDrained]);
+  return bootstrap.resultFromTargetOutcome(targetOutcome);
+}
+
 async function waitForBootstrapExit<TProcess, TExit>(
   bootstrap: RegisteredLaunchBootstrap<TProcess, TExit>,
 ): Promise<void> {
@@ -210,7 +372,7 @@ async function waitForBootstrapExit<TProcess, TExit>(
     const timeout = setTimeout(() => {
       rejectExit(new Error("@cq/process-control: fenced bootstrap did not exit after SIGKILL"));
     }, FAILURE_EXIT_WAIT_MS);
-    void bootstrap.closed.then(
+    void bootstrap.exited.then(
       () => {
         clearTimeout(timeout);
         resolveExit();
@@ -274,6 +436,7 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
   const nonce = randomUUID();
   const releasePath = join(protocolDirectory, "release.json");
   const statusPath = join(protocolDirectory, "status.json");
+  const completionPath = join(protocolDirectory, "completion.json");
   const bootstrapExecutable = fileURLToPath(new URL("./commandBootstrap.ts", import.meta.url));
   let bootstrap: RegisteredLaunchBootstrap<TProcess, TExit> | null = null;
   let registration: ProcessGroupRegistration | null = null;
@@ -288,13 +451,23 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
     };
     bootstrap = options.launchBootstrap(specification);
     const exit: ExitObservation = { settled: false, error: undefined };
-    void bootstrap.closed.then(
+    void bootstrap.exited.then(
       () => {
         exit.settled = true;
       },
       (error: unknown) => {
         exit.error = error;
         exit.settled = true;
+      },
+    );
+    const output: ExitObservation = { settled: false, error: undefined };
+    void bootstrap.outputDrained.then(
+      () => {
+        output.settled = true;
+      },
+      (error: unknown) => {
+        output.error = error;
+        output.settled = true;
       },
     );
     const pid = bootstrap.pid;
@@ -309,14 +482,24 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
     }
     await writeJsonAtomic(releasePath, { nonce, pgid: registration.pgid });
     await waitForBootstrapStatus(statusPath, nonce, registration.pgid, exit);
+    const exited = completeRegisteredLaunch(
+      bootstrap,
+      registration,
+      statusPath,
+      completionPath,
+      nonce,
+      exit,
+      output,
+    )
+      .catch((error: unknown) => failClosed(error, bootstrap, registration))
+      .finally(() => rm(protocolDirectory, { recursive: true, force: true }));
     return {
       process: bootstrap.process,
       registration,
-      exited: bootstrap.closed,
+      exited,
     };
   } catch (error) {
-    return await failClosed(error, bootstrap, registration);
-  } finally {
     await rm(protocolDirectory, { recursive: true, force: true });
+    return await failClosed(error, bootstrap, registration);
   }
 }

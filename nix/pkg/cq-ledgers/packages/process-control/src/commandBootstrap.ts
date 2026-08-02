@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
-import { constants } from "node:os";
 import { join } from "node:path";
 
 const START_POLL_MS = 2;
+const COMPLETION_POLL_MS = 25;
 const START_TIMEOUT_MS = 30_000;
 
 function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoException {
@@ -55,16 +55,37 @@ function childSpawned(child: ChildProcess): Promise<void> {
   });
 }
 
-function childClose(child: ChildProcess): Promise<number> {
+interface TargetOutcome {
+  readonly exitCode: number | null;
+  readonly signal: NodeJS.Signals | null;
+}
+
+function childExit(child: ChildProcess): Promise<TargetOutcome> {
   return new Promise((resolve) => {
-    child.once("close", (code, signal) => {
-      if (code !== null) resolve(code);
-      else resolve(128 + signalNumber(signal));
-    });
+    child.once("exit", (exitCode, signal) => resolve({ exitCode, signal }));
   });
 }
 
-async function main(argv: readonly string[]): Promise<number> {
+async function waitForCompletion(
+  path: string,
+  expectedNonce: string,
+  expectedPgid: number,
+): Promise<void> {
+  for (;;) {
+    try {
+      const value = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+      if (value["nonce"] !== expectedNonce || value["pgid"] !== expectedPgid) {
+        throw new Error("cq registered-launch bootstrap: completion identity mismatch");
+      }
+      return;
+    } catch (error) {
+      if (!isNodeError(error, "ENOENT")) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, COMPLETION_POLL_MS));
+  }
+}
+
+async function main(argv: readonly string[]): Promise<TargetOutcome> {
   const protocolDirectory = argv[0];
   const nonce = argv[1];
   const commandCwd = argv[2];
@@ -84,11 +105,12 @@ async function main(argv: readonly string[]): Promise<number> {
 
   const releasePath = join(protocolDirectory, "release.json");
   const statusPath = join(protocolDirectory, "status.json");
+  const completionPath = join(protocolDirectory, "completion.json");
   await waitForRelease(releasePath, nonce, process.pid);
   await rm(releasePath, { force: true });
 
   let child: ChildProcess;
-  let closed: Promise<number>;
+  let exited: Promise<TargetOutcome>;
   try {
     child = spawn(executable, argv.slice(4), {
       cwd: commandCwd,
@@ -96,7 +118,7 @@ async function main(argv: readonly string[]): Promise<number> {
       stdio: "inherit",
       env: process.env,
     });
-    closed = childClose(child);
+    exited = childExit(child);
     await childSpawned(child);
   } catch (error) {
     await writeJsonAtomic(statusPath, {
@@ -109,21 +131,32 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   await writeJsonAtomic(statusPath, { nonce, pgid: process.pid, state: "launched" });
-  return closed;
-}
-
-function signalNumber(signal: NodeJS.Signals | null): number {
-  if (signal === null) return 1;
-  const number = constants.signals[signal];
-  return number ?? 1;
+  const outcome = await exited;
+  await writeJsonAtomic(statusPath, {
+    nonce,
+    pgid: process.pid,
+    state: "exited",
+    ...outcome,
+  });
+  await waitForCompletion(completionPath, nonce, process.pid);
+  await rm(completionPath, { force: true });
+  return outcome;
 }
 
 void main(process.argv.slice(2)).then(
-  (exitCode) => {
-    process.exitCode = exitCode;
+  (outcome) => {
+    if (outcome.exitCode !== null) {
+      process.exitCode = outcome.exitCode;
+    } else if (outcome.signal !== null) {
+      process.kill(process.pid, outcome.signal);
+    } else {
+      process.exitCode = 1;
+    }
   },
   (error: unknown) => {
     process.exitCode = 1;
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    if (!process.stderr.writableEnded) {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    }
   },
 );

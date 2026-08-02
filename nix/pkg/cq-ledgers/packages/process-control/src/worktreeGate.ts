@@ -485,12 +485,12 @@ export async function readRegisteredProcessGroups(
   return registrations;
 }
 
-function childClose(
+function childExit(
   child: ChildProcess,
 ): Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }> {
   return new Promise((resolve, reject) => {
     child.once("error", reject);
-    child.once("close", (exitCode, signal) => resolve({ exitCode, signal }));
+    child.once("exit", (exitCode, signal) => resolve({ exitCode, signal }));
   });
 }
 
@@ -522,7 +522,9 @@ export async function launchRegisteredGateCommand(
       return {
         process: child,
         pid: child.pid,
-        closed: childClose(child),
+        exited: childExit(child),
+        outputDrained: Promise.resolve(),
+        resultFromTargetOutcome: (outcome) => outcome,
         terminate: (signal: NodeJS.Signals) => {
           child.kill(signal);
         },
