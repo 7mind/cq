@@ -6,4 +6,6 @@ The private launch envelope contains exactly `attestationId`, `generation`,
 assignment. After producing the role-defined structured result, call
 `store_result` exactly once with that object and `resultCapability`. Only a
 `result-stored` acknowledgement permits completion. Reply with the prepared
-dispatch handle only; never return the result body or either capability.
+dispatch handle only as the exact one-line JSON
+`{"attestationId":"<prepared attestation id>","generation":<prepared generation>}`;
+never return the result body or either capability.

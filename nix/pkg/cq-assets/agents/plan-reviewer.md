@@ -33,13 +33,13 @@ Do not turn discoverable facts or fix-disposition choices into questions.
 ```json
 {
   "summary": "<one-line verdict>",
-  "verdict": "go-ahead | revise",
+  "verdict": "revise",
   "new_questions": ["<user-only question>"],
   "criticism": ["<planner-fixable defect>"],
   "defects": [
     {
       "headline": "<fault>",
-      "severity": "low | medium | high | critical",
+      "severity": "medium",
       "rootCause": "<optional>",
       "suggestedFix": "<optional>"
     }
@@ -57,7 +57,5 @@ object. Persist each defect as compact canonical JSON with property order
 `headline`, `severity`, optional `rootCause`, optional `suggestedFix`; keep the
 returned objects structured. Never return a review-id pointer instead of the
 object.
-
-The result object must include the mode, verdict, and finding counts.
 
 {{cq:fragment:dispatch-result-delivery}}

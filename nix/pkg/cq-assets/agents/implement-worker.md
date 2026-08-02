@@ -9,7 +9,7 @@ description: Implement exactly one task in an isolated worktree, prove its guard
 ## Catalogue
 ```yaml
 inputs:
-  - "task specification, isolated worktree/branch, verified base, optional prior criticism"
+  - "task specification, isolated worktree/branch, verified base, round, authoritative starting commit, optional prior criticism"
 outputs:
   - "one verified task commit, stored structured result, and handle-only final reply"
 ioSchema:
@@ -30,13 +30,10 @@ specification. Address every supplied prior criticism.
 ## Procedure
 
 1. **Verify the base before other work.**
-   - Initial round: require `git rev-parse HEAD` to equal `baseCommit`. You may
-     repair only with `git reset --hard <baseCommit>` inside this worktree,
-     followed by the same equality check.
-   - Criticism round: require
-     `git merge-base --is-ancestor <baseCommit> HEAD` to exit zero; never reset
-     away prior task commits.
-   Report `fail` if the check cannot be satisfied.
+   Require `git rev-parse HEAD` to equal `startingCommit`, then require
+   `git merge-base --is-ancestor <baseCommit> HEAD` to exit zero. These checks
+   apply to every initial and criticism round. Report `fail` if either check
+   cannot be satisfied; never reset away prior task commits.
 
 2. **Install dependencies when needed.** A fresh worktree has no
    `node_modules`; run the workspace install. Never reuse another checkout via
@@ -56,8 +53,9 @@ specification. Address every supplied prior criticism.
    record nonzero test counts. Check wrapped prose with a multiline-aware
    operation.
 
-6. **Run the full gate in the foreground.** From the worktree root, run
-   `bun run check`. Capture start/end time and assign its exit status
+6. **Run the full gate in the foreground.** From the worktree root, run exactly
+   `cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check`.
+   Capture start/end time and assign its exit status
    immediately after the command, independent of any pipe or wrapper. Preserve
    `REAL_CHECK_EXIT=<n>`, the verbatim result tail, and `gateDurationMs`.
    Iterate until zero. An unrelated-failure claim requires an A/B reproduction
@@ -71,7 +69,8 @@ specification. Address every supplied prior criticism.
    - `git merge-base --is-ancestor <baseCommit> HEAD` exits zero.
    Immediately before constructing the result, rerun
    `git rev-parse --verify HEAD` and copy its stdout verbatim into
-   `resultCommit`.
+   `resultCommit`, then require
+   `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.
 
 ## Result
 
@@ -96,4 +95,6 @@ ancestry.
 
 Store the object exactly once through the dispatch-scoped `store_result` tool. Only a
 `result-stored` acknowledgement permits the final response. Then reply with the
-prepared dispatch handle only; never return the result body or a capability.
+prepared dispatch handle only as the exact one-line JSON
+`{"attestationId":"<prepared attestation id>","generation":<prepared generation>}`
+and nothing else; never return the result body or a capability.

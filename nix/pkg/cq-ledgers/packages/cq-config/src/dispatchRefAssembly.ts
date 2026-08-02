@@ -167,6 +167,7 @@ export const REFS_SUPPLIED_INPUT_FIELDS = [
   "branch",
   "baseCommit",
   "round",
+  "startingCommit",
   "resolvedModel",
 ] as const;
 
@@ -270,8 +271,10 @@ export interface DispatchInputRefs {
   readonly projectKey: string;
   readonly taskId: string;
   readonly coordinates: DispatchWorktreeCoordinates;
-  /** The review round; 0 (or absent) is the first dispatch. */
-  readonly round?: number;
+  /** The review round; 0 is the first dispatch. */
+  readonly round: number;
+  /** The authoritative worktree tip immediately before this round launches. */
+  readonly startingCommit: string;
   /** The prior round's review, whose `criticism[]` prepare reads server-side. */
   readonly priorReviewId?: string;
   /** Typed bounded parent guidance. */
@@ -288,6 +291,7 @@ export const DISPATCH_INPUT_REFS_FIELDS = [
   "taskId",
   "coordinates",
   "round",
+  "startingCommit",
   "priorReviewId",
   "guidance",
   "resolvedModel",
@@ -308,6 +312,7 @@ const TASK_ID_RE = new RegExp(TASK_ID_PATTERN);
 const REVIEW_ID_RE = new RegExp(REVIEW_ID_PATTERN);
 const QUESTION_ID_RE = new RegExp(QUESTION_ID_PATTERN);
 const PROJECT_KEY_RE = new RegExp(PROJECT_KEY_PATTERN);
+const COMMIT_ID_RE = /^[0-9a-f]{40}$/;
 
 const guidanceSchema: JSONSchema = {
   type: "array",
@@ -358,13 +363,22 @@ function refsSchemaProperties(roleIds: readonly string[]): Readonly<Record<strin
       additionalProperties: false,
     },
     round: { type: "integer", minimum: 0 },
+    startingCommit: { type: "string", pattern: "^[0-9a-f]{40}$" },
     priorReviewId: { type: "string", pattern: REVIEW_ID_PATTERN },
     guidance: guidanceSchema,
     resolvedModel: { type: "string", minLength: 1, pattern: "\\S" },
   };
 }
 
-const REFS_REQUIRED = ["roleId", "surface", "projectKey", "taskId", "coordinates"] as const;
+const REFS_REQUIRED = [
+  "roleId",
+  "surface",
+  "projectKey",
+  "taskId",
+  "coordinates",
+  "round",
+  "startingCommit",
+] as const;
 
 /**
  * The schema pinning the refs-only form. `additionalProperties: false` over
@@ -562,6 +576,7 @@ interface NormalizedRefs {
   readonly taskId: string;
   readonly coordinates: DispatchWorktreeCoordinates;
   readonly round: number;
+  readonly startingCommit: string;
   readonly priorReviewId?: string;
   readonly guidance: readonly ParentGuidance[];
   readonly resolvedModel?: string;
@@ -736,11 +751,19 @@ function normalizeRefs(
     }
   }
   const round: unknown = raw.round;
-  if (round !== undefined && (!Number.isInteger(round) || (round as number) < 0)) {
+  if (!Number.isInteger(round) || (round as number) < 0) {
     return dispatchPreLaunchRejection(
       "invalid-refs-form",
       "refs.round",
       `expected a non-negative integer round, got "${String(round)}"`,
+    );
+  }
+  const startingCommit: unknown = raw.startingCommit;
+  if (typeof startingCommit !== "string" || !COMMIT_ID_RE.test(startingCommit)) {
+    return dispatchPreLaunchRejection(
+      "invalid-refs-form",
+      "refs.startingCommit",
+      `expected a full lowercase commit id, got "${String(startingCommit)}"`,
     );
   }
   const priorReviewId: unknown = raw.priorReviewId;
@@ -779,7 +802,8 @@ function normalizeRefs(
       branch: coordinates.branch as string,
       baseCommit: coordinates.baseCommit as string,
     },
-    round: round === undefined ? 0 : (round as number),
+    round: round as number,
+    startingCommit,
     ...(priorReviewId === undefined ? {} : { priorReviewId: priorReviewId as string }),
     guidance,
     ...(resolvedModel === undefined ? {} : { resolvedModel: resolvedModel as string }),
@@ -896,6 +920,8 @@ function assembleImplementWorkerInput(
     worktreePath: refs.coordinates.worktreePath,
     branch: refs.coordinates.branch,
     baseCommit: refs.coordinates.baseCommit,
+    round: refs.round,
+    startingCommit: refs.startingCommit,
     ...(priorCriticism.length === 0 ? {} : { priorCriticism }),
     ...(refs.resolvedModel === undefined ? {} : { resolvedModel: refs.resolvedModel }),
   };

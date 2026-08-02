@@ -1,6 +1,6 @@
 > **Implement-worker dispatch.** In Pi, for each
 > `implement-worker`,
-> compose `{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit, priorCriticism? }` against the role's typed `inputSchema`, dispatch
+> compose `{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit, round, startingCommit, priorCriticism? }` against the role's typed `inputSchema`, dispatch
 > `CQ_SUBAGENT` with the composed input and `isolation: "worktree"`. The held
 > direct-delivery Pi adapter cannot yet produce the parent-minted
 > prepare/store/confirm/fetch proof required by the command, so its raw

@@ -223,6 +223,8 @@ describe("ledger-mcp stdio binary", () => {
               worktreePath: "/tmp/wt-T695",
               branch: "implement/T695",
               baseCommit: "33a9f1fc",
+              round: 0,
+              startingCommit: "3".repeat(40),
             },
             idempotencyKey: "T695-production-stdio",
             timeoutMs: 120_000,

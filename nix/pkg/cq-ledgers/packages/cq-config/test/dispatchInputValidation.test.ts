@@ -180,6 +180,8 @@ describe("the inside-prepare validation entry point", () => {
       worktreePath: "/tmp/wt-T976",
       branch: "implement/T976",
       baseCommit: "557c7e7a",
+      round: 0,
+      startingCommit: "5".repeat(40),
     };
     expect(rejectionOf(validate({ input: workerInput })).reason).toBe("invalid-role-input");
     expect(validate({ roleId: "implement-worker", input: workerInput }).accepted).toBe(true);

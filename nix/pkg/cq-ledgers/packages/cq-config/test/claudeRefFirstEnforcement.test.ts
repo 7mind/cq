@@ -71,6 +71,8 @@ const INPUT: DispatchJSONValue = {
   worktreePath: "/tmp/cq-worktrees/t689",
   branch: "implement/T689",
   baseCommit: "f91fc407e4aa357c563b432c0d2750ff8dfb584c",
+  round: 0,
+  startingCommit: "f91fc407e4aa357c563b432c0d2750ff8dfb584c",
 };
 
 const OUTPUT: DispatchJSONValue = {

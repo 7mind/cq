@@ -135,6 +135,8 @@ const INPUT: DispatchJSONValue = {
   worktreePath: "/tmp/wt-T685",
   branch: "implement/T685",
   baseCommit: "0be2cc034dd490d484bdac0dfad5efb9be52c068",
+  round: 0,
+  startingCommit: "0be2cc034dd490d484bdac0dfad5efb9be52c068",
 };
 
 const OUTPUT: DispatchJSONValue = {
@@ -600,6 +602,8 @@ describe("prepare validates role, input and timeout, then allocates", () => {
           branch: "implement/T685",
           baseCommit: "0be2cc034dd490d484bdac0dfad5efb9be52c068",
         },
+        round: 0,
+        startingCommit: "0be2cc034dd490d484bdac0dfad5efb9be52c068",
       },
       { source, registry: DISPATCH_OVERLAY_REGISTRY },
     );

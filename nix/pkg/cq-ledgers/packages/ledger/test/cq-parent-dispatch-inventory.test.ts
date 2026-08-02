@@ -245,9 +245,9 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
 
   it("pins the live T977 worker-input protocol without migrating the held Pi path", () => {
     const narrativeCourier =
-      "{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit, priorCriticism? }";
+      "{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit, round, startingCommit, priorCriticism? }";
     const refsOnly =
-      "{ roleId, surface, projectKey, taskId, coordinates, round?, priorReviewId?, guidance?, resolvedModel? }";
+      "{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, priorReviewId?, guidance?, resolvedModel? }";
 
     for (const body of [claudeImplementDispatch, codexImplementDispatch]) {
       expect(normalize(body)).toContain(normalize(refsOnly));
@@ -297,7 +297,7 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
     expect(mergeGate).toContain("If that cannot be done, fail closed");
   });
 
-  it("T902 verifies and records the dispatch base before worker launch", () => {
+  it("T1629 verifies and records the base plus authoritative tip before worker launch", () => {
     const body = bodyOf("implement");
     const dispatchStart = body.indexOf("## 2. Dispatch workers");
     const dispatchEnd = body.indexOf("## 3. Review");
@@ -307,7 +307,15 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
 
     expect(dispatchGate).toContain("`git rev-parse --verify`");
     expect(dispatchGate).toContain("`git cat-file -t`");
-    expect(dispatchGate).toContain("Retain that exact `baseCommit`");
+    expect(dispatchGate).toContain(
+      "Retain the exact `baseCommit`, `round`, and `startingCommit`",
+    );
+    expect(dispatchGate).toContain(
+      "worktree `HEAD` to equal that retained `startingCommit`",
+    );
+    expect(dispatchGate).toContain(
+      "`git merge-base --is-ancestor <verifiedBaseCommit> <startingCommit>`",
+    );
   });
 
   it("T902 makes verified-base ancestry a blocking merge precondition", () => {
@@ -325,7 +333,7 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
     expect(mergeGate).toContain("require the worker branch tip to equal `resultCommit`");
   });
 
-  it("T902 gives implement-worker a stale-worktree Step 0 before implementation", () => {
+  it("T1629 rejects a stale worker entry without resetting prior commits", () => {
     const body = normalize(implementWorker);
     const stepStart = body.indexOf("1. **Verify the base before other work.**");
     const implementStart = body.indexOf("3. **Implement surgically.**");
@@ -334,9 +342,9 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
     const step = body.slice(stepStart, implementStart);
 
     expect(step).toContain("`git rev-parse HEAD`");
-    expect(step).toContain("equal `baseCommit`");
-    expect(step).toContain("`git reset --hard <baseCommit>`");
+    expect(step).toContain("equal `startingCommit`");
+    expect(step).not.toContain("git reset --hard");
     expect(step).toContain("`git merge-base --is-ancestor <baseCommit> HEAD`");
-    expect(step).toContain("Criticism round");
+    expect(step).toContain("every initial and criticism round");
   });
 });

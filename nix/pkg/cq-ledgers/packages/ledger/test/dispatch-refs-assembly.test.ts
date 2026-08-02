@@ -90,6 +90,7 @@ const COORDINATES = {
   worktreePath: "/tmp/wt-T978",
   baseCommit: "cd711a055f823e45a24393db284aa1b35e21afd9",
 } as const;
+const STARTING_COMMIT = "ef8119d2912390345fb79861e6dbf53648f65e89";
 
 /**
  * The `@cq/config` narrative PORT, adapted onto a real ledger store. The store's
@@ -174,6 +175,8 @@ function refsFor(overrides: Partial<DispatchInputRefs> = {}): DispatchInputRefs 
     projectKey: PROJECT_KEY,
     taskId: fixture.task.id,
     coordinates: { ...COORDINATES, branch: `implement/${fixture.task.id}` },
+    round: 0,
+    startingCommit: STARTING_COMMIT,
     ...overrides,
   };
 }
@@ -200,7 +203,7 @@ function assembledOf(result: DispatchInputAssembly): DispatchInputAssembled {
  * What the PARENT used to render, from the `projection: "full"` items it held in
  * its own context. Field set verbatim from the T975 inventory's implement-worker
  * literal: `{ taskId, headline, description, acceptance, worktreePath, branch,
- * baseCommit, priorCriticism? }`.
+ * baseCommit, round, startingCommit, priorCriticism? }`.
  *
  * `foldedGuidanceLines` are supplied by the CALLER, spelled out literally, which
  * is how the parent produced them — this file deliberately does NOT import the
@@ -208,10 +211,10 @@ function assembledOf(result: DispatchInputAssembly): DispatchInputAssembled {
  */
 function renderParentDispatchInput(
   task: Item,
-  coordinates: {
-    readonly worktreePath: string;
-    readonly branch: string;
-    readonly baseCommit: string;
+  refs: {
+    readonly coordinates: DispatchInputRefs["coordinates"];
+    readonly round: number;
+    readonly startingCommit: string;
   },
   priorReview?: Item,
   foldedGuidanceLines: readonly string[] = [],
@@ -229,9 +232,11 @@ function renderParentDispatchInput(
     headline: task.fields.headline as string,
     description: task.fields.description as string,
     acceptance: task.fields.acceptance as string,
-    worktreePath: coordinates.worktreePath,
-    branch: coordinates.branch,
-    baseCommit: coordinates.baseCommit,
+    worktreePath: refs.coordinates.worktreePath,
+    branch: refs.coordinates.branch,
+    baseCommit: refs.coordinates.baseCommit,
+    round: refs.round,
+    startingCommit: refs.startingCommit,
   };
   if (criticism.length > 0) {
     rendered.priorCriticism = criticism;
@@ -253,7 +258,7 @@ describe("T978: server-side assembly is byte-equal to the pre-cutover parent ren
   it("assembles a first-round input identical to what the parent used to render", () => {
     const refs = refsFor();
     const assembled = assembledOf(assemble(refs));
-    const legacy = renderParentDispatchInput(fixture.task, refs.coordinates);
+    const legacy = renderParentDispatchInput(fixture.task, refs);
     expectByteEqual(assembled, legacy);
     expect(assembled.assembledFrom).toEqual([`tasks:${fixture.task.id}`]);
   });
@@ -261,7 +266,7 @@ describe("T978: server-side assembly is byte-equal to the pre-cutover parent ren
   it("assembles a re-dispatch input identical to the parent's, criticism included", () => {
     const refs = refsFor({ round: 1, priorReviewId: fixture.review.id });
     const assembled = assembledOf(assemble(refs));
-    const legacy = renderParentDispatchInput(fixture.task, refs.coordinates, fixture.review);
+    const legacy = renderParentDispatchInput(fixture.task, refs, fixture.review);
     expectByteEqual(assembled, legacy);
     expect(assembled.round).toBe(1);
     expect(
@@ -277,7 +282,7 @@ describe("T978: server-side assembly is byte-equal to the pre-cutover parent ren
     const refs = refsFor({ round: 2, priorReviewId: fixture.review.id, guidance });
     const assembled = assembledOf(assemble(refs));
     // The literal lines the parent used to compose, spelled out here.
-    const legacy = renderParentDispatchInput(fixture.task, refs.coordinates, fixture.review, [
+    const legacy = renderParentDispatchInput(fixture.task, refs, fixture.review, [
       `answered question ${fixture.question.id}: ${QUESTION_ANSWER}`,
       `operator note: ${OPERATOR_NOTE}`,
     ]);
@@ -294,7 +299,7 @@ describe("T978: server-side assembly is byte-equal to the pre-cutover parent ren
   it("the comparison catches a single altered narrative byte", () => {
     const refs = refsFor();
     const assembled = assembledOf(assemble(refs));
-    const legacy = renderParentDispatchInput(fixture.task, refs.coordinates);
+    const legacy = renderParentDispatchInput(fixture.task, refs);
     for (const field of ["headline", "description", "acceptance"] as const) {
       const altered = { ...legacy, [field]: `${legacy[field] as string} ` };
       expect(dispatchInputDigest(altered), field).not.toBe(assembled.inputDigest);
@@ -308,7 +313,7 @@ describe("T978: server-side assembly is byte-equal to the pre-cutover parent ren
     const refs = refsFor();
     const assembled = assembledOf(assemble(refs));
     for (const field of ["headline", "description", "acceptance"] as const) {
-      const lossy = renderParentDispatchInput(fixture.task, refs.coordinates);
+      const lossy = renderParentDispatchInput(fixture.task, refs);
       delete lossy[field];
       expect(dispatchInputDigest(lossy), field).not.toBe(assembled.inputDigest);
     }
@@ -317,7 +322,7 @@ describe("T978: server-side assembly is byte-equal to the pre-cutover parent ren
   it("the comparison catches a reordered criticism list", () => {
     const refs = refsFor({ round: 1, priorReviewId: fixture.review.id });
     const assembled = assembledOf(assemble(refs));
-    const reordered = renderParentDispatchInput(fixture.task, refs.coordinates, {
+    const reordered = renderParentDispatchInput(fixture.task, refs, {
       ...fixture.review,
       fields: { ...fixture.review.fields, criticism: [...REVIEW_CRITICISM].reverse() },
     });

@@ -15,6 +15,8 @@ const VALID_INPUT = Object.freeze({
   worktreePath: "/tmp/wt-T977-construction",
   branch: "implement/T977",
   baseCommit: "fe5d747b07669be02626da96a8ac441f8e0bf550",
+  round: 0,
+  startingCommit: "fe5d747b07669be02626da96a8ac441f8e0bf550",
 });
 
 interface ToolResultLike {

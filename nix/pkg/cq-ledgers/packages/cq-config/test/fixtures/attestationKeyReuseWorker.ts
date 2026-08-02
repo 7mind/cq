@@ -58,6 +58,8 @@ const request: PrepareDispatchRequest = {
     worktreePath: "/tmp/wt-T720",
     branch: "implement/T720",
     baseCommit: "8a8f94424a3eda1c2cb3aa1b0ccd47d5eca4ea2e",
+    round: 0,
+    startingCommit: "8a8f94424a3eda1c2cb3aa1b0ccd47d5eca4ea2e",
   },
   idempotencyKey: idempotencyKey!,
   timeoutMs: 600_000,

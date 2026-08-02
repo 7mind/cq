@@ -127,6 +127,8 @@ const INPUT: DispatchJSONValue = {
   worktreePath: "/tmp/wt-T690",
   branch: "implement/T690",
   baseCommit: "695c9f89d5bba3f11681534ab9ecddc70d36f571",
+  round: 0,
+  startingCommit: "695c9f89d5bba3f11681534ab9ecddc70d36f571",
 };
 
 /**

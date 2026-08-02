@@ -39,6 +39,8 @@ describe("D77 — implement-worker inputSchema.branch accepts both namings", () 
     acceptance: "a",
     worktreePath: "/tmp/wt",
     baseCommit: "deadbeef",
+    round: 0,
+    startingCommit: "d".repeat(40),
   };
 
   test("accepts implement/T123", () => {
@@ -151,6 +153,8 @@ describe("D77 — validateAgainstSchema (the exact ledger-mcp validate_input cod
       worktreePath: "/tmp/wt-T507",
       branch: WORKTREE_AGENT_LONG,
       baseCommit: "25c189a29555c03456521fa99eba469fe09b3820",
+      round: 0,
+      startingCommit: "25c189a29555c03456521fa99eba469fe09b3820",
     };
     const result = validateAgainstSchema(implementWorkerSidecar.inputSchema, payload);
     expect(result.ok).toBe(true);

@@ -47,6 +47,8 @@ const INLINE_INPUT = Object.freeze({
   worktreePath: "/tmp/wt-T977",
   branch: "implement/T977",
   baseCommit: "fe5d747b07669be02626da96a8ac441f8e0bf550",
+  round: 0,
+  startingCommit: "fe5d747b07669be02626da96a8ac441f8e0bf550",
 });
 
 function artifactStore(surface: PromptSurface): PromptArtifactStore {
@@ -224,6 +226,8 @@ describe("live compact-dispatch capability", () => {
           branch: INLINE_INPUT.branch,
           baseCommit: INLINE_INPUT.baseCommit,
         },
+        round: INLINE_INPUT.round,
+        startingCommit: INLINE_INPUT.startingCommit,
       },
       idempotencyKey: "T977-cross-surface",
       timeoutMs: 600_000,
@@ -439,6 +443,8 @@ describe("live compact-dispatch capability", () => {
         branch: "implement/T977",
         baseCommit: "fe5d747b07669be02626da96a8ac441f8e0bf550",
       },
+      round: 0,
+      startingCommit: "fe5d747b07669be02626da96a8ac441f8e0bf550",
     } as const;
     const parentRequest = {
       refs,

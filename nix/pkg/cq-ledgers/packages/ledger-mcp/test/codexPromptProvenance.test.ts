@@ -72,6 +72,8 @@ describe("Codex prepared prompt provenance", () => {
         worktreePath: "/tmp/wt-T1627",
         branch: "implement/T1627",
         baseCommit: "1c0405a6a3c287eab42502520ed5f2807d6d3f7b",
+        round: 0,
+        startingCommit: "1c0405a6a3c287eab42502520ed5f2807d6d3f7b",
       },
       idempotencyKey: "T1627-codex-provenance",
       timeoutMs: 600_000,

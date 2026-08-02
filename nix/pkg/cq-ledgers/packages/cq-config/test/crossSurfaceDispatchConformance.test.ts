@@ -208,7 +208,7 @@ const DISPATCH_EDGE_INPUTS: readonly {
 ];
 
 const T977_WORKER_REFS =
-  "{ roleId, surface, projectKey, taskId, coordinates, round?, priorReviewId?, guidance?, resolvedModel? }";
+  "{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, priorReviewId?, guidance?, resolvedModel? }";
 
 describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () => {
   it(
@@ -316,23 +316,62 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     );
   });
 
-  it("T902 renders worker Step 0 and verified-base merge authority on every surface", () => {
+  it("T1629 binds every worker round to its authoritative starting commit", () => {
     for (const surface of PROMPT_SURFACES) {
       const worker = normalize(renderedOf(surface, "implement-worker"));
       expect(worker).toContain("Verify the base before other work");
       expect(worker).toContain("`git rev-parse HEAD`");
-      expect(worker).toContain("equal `baseCommit`");
-      expect(worker).toContain("`git reset --hard <baseCommit>`");
+      expect(worker).toContain("equal `startingCommit`");
+      expect(worker).not.toContain("`git reset --hard <baseCommit>`");
       expect(worker).toContain("`git merge-base --is-ancestor <baseCommit> HEAD`");
+      expect(worker).toContain(
+        '`cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check`',
+      );
+      expect(worker).toContain(
+        '`git merge-base --is-ancestor <startingCommit> <resultCommit>`',
+      );
+      expect(worker).toContain(
+        '`{"attestationId":"<prepared attestation id>","generation":<prepared generation>}`',
+      );
 
       const advance = normalize(renderedOf(surface, "implement/advance"));
       expect(advance).toContain("`git rev-parse --verify`");
       expect(advance).toContain("`git cat-file -t`");
+      expect(advance).toContain("startingCommit");
+      expect(advance).toContain(
+        "worktree `HEAD` to equal that retained `startingCommit`",
+      );
+      expect(advance).toContain(
+        "`git merge-base --is-ancestor <verifiedBaseCommit> <startingCommit>`",
+      );
       expect(advance).toContain(
         "`git merge-base --is-ancestor <verifiedBaseCommit> <resultCommit>`",
       );
+      expect(
+        countOccurrences(
+          advance,
+          "`git merge-base --is-ancestor <startingCommit> <resultCommit>`",
+        ),
+      ).toBe(3);
       expect(advance).toContain("Any failure is a contract breach and forbids merge-back");
     }
+  });
+
+  it("T1629 orders bounded Codex invalid-output diagnostics before protocol abort", () => {
+    const advance = normalize(renderedOf("codex", "implement/advance"));
+    const stored = advance.indexOf("observe the `result-stored` acknowledgement");
+    const logged = advance.indexOf("`cq log put`", stored);
+    const aborted = advance.indexOf(
+      "`abort_dispatch` with reason `protocol-violation`",
+      logged,
+    );
+    expect(stored).toBeGreaterThanOrEqual(0);
+    expect(logged).toBeGreaterThan(stored);
+    expect(aborted).toBeGreaterThan(logged);
+    const invalidOutputContract = advance.slice(stored, aborted);
+    expect(invalidOutputContract).not.toContain("fetch_dispatch_result");
+    expect(invalidOutputContract).not.toContain("consume_dispatch_result");
+    expect(invalidOutputContract).not.toContain("result body");
   });
 
   it("T903 pins reviewer evidence as blocking and independently verifies commit object plus tip", () => {

@@ -1,7 +1,7 @@
 > **Implement-worker dispatch.** In Claude's ref-first
 > procedure, for each
 > `implement-worker`, compose refs only:
-> `{ roleId, surface, projectKey, taskId, coordinates, round?, priorReviewId?, guidance?, resolvedModel? }`.
+> `{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, priorReviewId?, guidance?, resolvedModel? }`.
 > Call `prepare_dispatch`; the server reads the task/review narrative, assembles
 > it against the generated role's `inputSchema`, and returns a handle plus a
 > distinct `inputCapability`. Retain the exact prepared handle independently of

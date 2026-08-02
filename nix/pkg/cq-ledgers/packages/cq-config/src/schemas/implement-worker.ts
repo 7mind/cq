@@ -83,6 +83,16 @@ const inputSchema = {
       description: "The commit the worktree was cut from (full or abbreviated sha).",
       minLength: 1,
     },
+    round: {
+      type: "integer",
+      description: "The zero-based implementation or correction round.",
+      minimum: 0,
+    },
+    startingCommit: {
+      type: "string",
+      description: "The authoritative worktree tip immediately before this round launches.",
+      pattern: "^[0-9a-f]{40}$",
+    },
     priorCriticism: {
       type: "array",
       items: { type: "string" },
@@ -93,7 +103,15 @@ const inputSchema = {
       description: "The resolved model class (informational).",
     },
   },
-  required: ["taskId", "acceptance", "worktreePath", "branch", "baseCommit"],
+  required: [
+    "taskId",
+    "acceptance",
+    "worktreePath",
+    "branch",
+    "baseCommit",
+    "round",
+    "startingCommit",
+  ],
   additionalProperties: false,
 } as const;
 
@@ -194,16 +212,14 @@ const outputSchema = {
 
 /**
  * The implement-worker per-role schema sidecar (storage-format decision 3).
- * `version: 2` (bumped from 1, T894, decisions:D185): the output contract's
- * validation is now STRICTER in a way old data can violate — `resultCommit`
- * gained the 40-hex sha pattern and `gateDurationMs`/`mutationTable` gained
- * conditional `required`s — so a stale deployed root rendered against the old
- * (v1) contract must not be mistaken for this one; DISPATCHED_ROLE_VERSIONS
- * derives this automatically, it is not hand-edited.
+ * `version: 3` (bumped from 2, T1629, decisions:D185): the input contract now
+ * requires `round` and the full authoritative `startingCommit`, so a stale
+ * deployed root rendered against the v2 contract must not be mistaken for this
+ * one. DISPATCHED_ROLE_VERSIONS derives this automatically; it is not hand-edited.
  */
 export const implementWorkerSidecar: RoleSchemaSidecar = {
   id: "implement-worker",
-  version: 2,
+  version: 3,
   inputSchema,
   outputSchema,
 };

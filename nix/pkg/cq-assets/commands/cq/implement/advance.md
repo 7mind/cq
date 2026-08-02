@@ -81,7 +81,14 @@ If no task is ready and no task awaits review or merge, report and stop.
 
 Before each initial or criticism-round dispatch, resolve the intended base with
 `git rev-parse --verify` and require `git cat-file -t` to return `commit`.
-Retain that exact `baseCommit`; never reconstruct it from a child report.
+After preparing or reusing the worktree, resolve its authoritative tip with
+`git -C <worktree> rev-parse --verify HEAD`, retain it as `startingCommit`, and
+require `git -C <worktree> cat-file -t <startingCommit>` to return `commit` plus
+`git merge-base --is-ancestor <verifiedBaseCommit> <startingCommit>` to exit
+zero. Immediately before prepare and again before launch, require the current
+worktree `HEAD` to equal that retained `startingCommit`. Retain the exact
+`baseCommit`, `round`, and `startingCommit`; never reconstruct them from a child
+report.
 
 For each selected task:
 
@@ -89,15 +96,20 @@ For each selected task:
    move a goal to a terminal status.
 2. Set the task `wip`.
 3. Prepare its worktree and dispatch `implement-worker` with the exact task
-   specification, worktree coordinates, verified base, and any prior
-   criticism.
-4. Accept only a consumed, schema-valid result through the dispatch protocol.
+   specification, worktree coordinates, verified base, required `round`,
+   authoritative `startingCommit`, and any prior criticism.
+4. Materialize only a consumed, schema-valid result through the dispatch
+   protocol. Before accepting a passing result, require its `resultCommit` to be
+   a commit, the worker branch tip to equal it, and
+   `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.
 
 Do not symlink another checkout's `node_modules`; the worker installs its own
 workspace dependencies.
 
 ## 3. Review
 
+Before any review dispatch, require
+`git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.
 Review each passing worker result against the actual `baseCommit..resultCommit`
 diff, acceptance criteria, and gate evidence. A worker failure enters the
 criticism loop using `blockedReason`.
@@ -171,7 +183,9 @@ Before rebase and immediately before merge:
 1. require `git cat-file -t <resultCommit>` to return `commit`;
 2. require the worker branch tip to equal `resultCommit`;
 3. require `git merge-base --is-ancestor <verifiedBaseCommit> <resultCommit>`
-   to exit zero.
+   to exit zero;
+4. require `git merge-base --is-ancestor <startingCommit> <resultCommit>` to
+   exit zero.
 
 Any failure is a contract breach and forbids merge-back.
 

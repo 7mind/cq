@@ -69,6 +69,8 @@ const ROLE_INPUTS = {
     worktreePath: "/tmp/wt-T682",
     branch: "implement/T682",
     baseCommit: "92129aeb",
+    round: 0,
+    startingCommit: "9".repeat(40),
   },
   "implement-reviewer": {
     taskId: "T682",

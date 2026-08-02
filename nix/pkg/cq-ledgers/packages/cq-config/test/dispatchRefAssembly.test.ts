@@ -76,6 +76,7 @@ const COORDINATES = {
   branch: "implement/T978",
   baseCommit: "cd711a055f823e45a24393db284aa1b35e21afd9",
 } as const;
+const STARTING_COMMIT = "ef8119cd35569977984f6dfc2bb27a9cbace2fc4";
 
 function item(
   id: string,
@@ -137,6 +138,8 @@ const REFS: DispatchInputRefs = {
   projectKey: PROJECT,
   taskId: "T978",
   coordinates: COORDINATES,
+  round: 0,
+  startingCommit: STARTING_COMMIT,
 };
 
 function assemble(
@@ -221,6 +224,20 @@ describe("the refs-only launch form is schema-pinned and narrative-free", () => 
     expect(assemble().accepted).toBe(true);
   });
 
+  test("round and startingCommit are required launch refs", () => {
+    for (const field of ["round", "startingCommit"] as const) {
+      const missing = { ...REFS } as Record<string, unknown>;
+      delete missing[field];
+      expect(validateAgainstSchema(DISPATCH_INPUT_REFS_SCHEMA, missing).ok, field).toBe(false);
+      const rejection = rejectionOf(assembleDispatchInput(missing, {
+        source: sourceFor(),
+        registry: DISPATCH_OVERLAY_REGISTRY,
+      }));
+      expect(rejection.reason, field).toBe("invalid-refs-form");
+      expect(rejection.path, field).toBe(`refs.${field}`);
+    }
+  });
+
   test("the closed key set is exactly the refs form, and carries no narrative", () => {
     expect(DISPATCH_INPUT_REFS_FIELDS).toEqual([
       "roleId",
@@ -229,6 +246,7 @@ describe("the refs-only launch form is schema-pinned and narrative-free", () => 
       "taskId",
       "coordinates",
       "round",
+      "startingCommit",
       "priorReviewId",
       "guidance",
       "resolvedModel",
@@ -343,6 +361,7 @@ describe("the assembled-narrative field set is DERIVED from the role sidecars", 
       "branch",
       "baseCommit",
       "round",
+      "startingCommit",
       "resolvedModel",
     ]);
   });
@@ -375,6 +394,8 @@ describe("server-side assembly reads the narrative the parent no longer carries"
       description: TASK_DESCRIPTION,
       acceptance: TASK_ACCEPTANCE,
       ...COORDINATES,
+      round: 0,
+      startingCommit: STARTING_COMMIT,
     });
     expect(assembled.assembledFrom).toEqual(["tasks:T978"]);
     expect(assembled.roleId).toBe("implement-worker");
@@ -400,9 +421,11 @@ describe("server-side assembly reads the narrative the parent no longer carries"
     expect(Object.hasOwn(assembled.input as object, "priorCriticism")).toBe(false);
   });
 
-  test("the round is NOT couriered into a contract that has no round field", () => {
+  test("round and the authoritative starting commit are assembled into every worker input", () => {
     const assembled = assembledOf(assemble({ round: 3, priorReviewId: "R42" }));
-    expect(Object.hasOwn(assembled.input as object, "round")).toBe(false);
+    expect(
+      assembled.input as { readonly round: number; readonly startingCommit: string },
+    ).toMatchObject({ round: 3, startingCommit: STARTING_COMMIT });
     expect(assembled.round).toBe(3);
   });
 

@@ -1,7 +1,7 @@
 > **Implement-worker dispatch.** In Codex, for each
 > `implement-worker`,
 > compose refs only:
-> `{ roleId, surface, projectKey, taskId, coordinates, round?, priorReviewId?, guidance?, resolvedModel? }`,
+> `{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, priorReviewId?, guidance?, resolvedModel? }`,
 > then call `prepare_dispatch`. The server reads the task/review narrative and
 > validates the assembled input against the role's typed `inputSchema`. Dispatch
 > `CQ_SUBAGENT` by writing the complete private request described above to the
@@ -15,6 +15,10 @@
 > consumed-only rule before interpreting the worker result; never key the
 > fetch on any child-reported identifier. Never put the input body or either
 > capability in argv.
+> If the adapter rejects an invalid final reply after it can observe the `result-stored` acknowledgement, the trusted parent persists only that
+> lifecycle state and the adapter's bounded diagnostic through `cq log put`,
+> then calls `abort_dispatch` with reason `protocol-violation`. Do not expose
+> the stored payload or use either materialization operation on this path.
 >
 > **Implement-reviewer dispatch.** For each process-boundary
 > `implement-reviewer`, compose `{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism? }`,
