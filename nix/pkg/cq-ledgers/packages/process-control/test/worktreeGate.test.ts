@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,7 +22,10 @@ import {
   readProcessIdentity,
   registerProcessGroup,
   releaseWorktreeGate,
+  settleWorktreeGateCommands,
   signalProcessGroup,
+  type ProcessGroupOperations,
+  type ProcessIdentity,
 } from "../src/index.js";
 
 const roots: string[] = [];
@@ -25,6 +37,26 @@ async function repositoryFixture(): Promise<{ root: string; stateDir: string }> 
   if (init.exitCode !== 0) throw new Error(init.stderr.toString());
   const stateDir = join(root, ".gate-state");
   return { root, stateDir };
+}
+
+async function detachedSleeper(): Promise<{
+  readonly pid: number;
+  readonly identity: ProcessIdentity;
+  readonly exited: Promise<void>;
+}> {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    detached: true,
+    stdio: "ignore",
+  });
+  const pid = child.pid;
+  if (pid === undefined) throw new Error("test command did not return a pid");
+  const identity = await readProcessIdentity(pid);
+  if (identity === null) throw new Error("test command identity disappeared");
+  return {
+    pid,
+    identity,
+    exited: new Promise<void>((resolve) => child.once("exit", () => resolve())),
+  };
 }
 
 afterEach(async () => {
@@ -227,6 +259,203 @@ describe("canonical worktree gate [Effectual-GoodCommunication]", () => {
       await closeWorktreeGate(reclaimed, { termGraceMs: 0, killGraceMs: 0 });
     } finally {
       signalProcessGroup(pid, "SIGKILL");
+      await exited;
+    }
+  });
+
+  test("settles live-holder command groups and repeats idempotently", async () => {
+    const { root, stateDir } = await repositoryFixture();
+    const lease = await acquireWorktreeGate({ worktree: root, commandCwd: root, stateDir });
+    const { pid, identity, exited } = await detachedSleeper();
+    try {
+      await registerProcessGroup(lease, { pgid: pid, leader: identity });
+
+      expect(
+        await settleWorktreeGateCommands({
+          worktree: root,
+          stateDir,
+          termGraceMs: 0,
+          killGraceMs: 1_000,
+        }),
+      ).toEqual({ signaled: [pid], survivors: [] });
+      await exited;
+      expect(
+        await settleWorktreeGateCommands({
+          worktree: root,
+          stateDir,
+          termGraceMs: 0,
+          killGraceMs: 0,
+        }),
+      ).toEqual({ signaled: [], survivors: [] });
+      await expect(
+        acquireWorktreeGate({ worktree: root, commandCwd: root, stateDir }),
+      ).rejects.toBeInstanceOf(GateBusyError);
+    } finally {
+      signalProcessGroup(pid, "SIGKILL");
+      await releaseWorktreeGate(lease);
+      await exited;
+    }
+  });
+
+  test("returns idempotently when the canonical worktree has no active gate", async () => {
+    const { root, stateDir } = await repositoryFixture();
+    expect(await settleWorktreeGateCommands({ worktree: root, stateDir })).toEqual({
+      signaled: [],
+      survivors: [],
+    });
+  });
+
+  test("rejects a command record whose nonce does not match the live holder", async () => {
+    const { root, stateDir } = await repositoryFixture();
+    const lease = await acquireWorktreeGate({ worktree: root, commandCwd: root, stateDir });
+    const { pid, identity, exited } = await detachedSleeper();
+    try {
+      await registerProcessGroup(lease, { pgid: pid, leader: identity });
+      const commandName = (await readdir(join(lease.gateDir, "commands"))).find((name) =>
+        name.endsWith(".json"),
+      );
+      if (commandName === undefined) throw new Error("test command registration disappeared");
+      const commandPath = join(lease.gateDir, "commands", commandName);
+      const record = JSON.parse(await readFile(commandPath, "utf8")) as Record<string, unknown>;
+      await writeFile(commandPath, JSON.stringify({ ...record, nonce: "mismatched-nonce" }));
+
+      await expect(settleWorktreeGateCommands({ worktree: root, stateDir })).rejects.toThrow(
+        "command identity nonce mismatch",
+      );
+      expect(await readProcessIdentity(pid)).toEqual(identity);
+    } finally {
+      signalProcessGroup(pid, "SIGKILL");
+      await releaseWorktreeGate(lease);
+      await exited;
+    }
+  });
+
+  test("does not signal a command group whose leader identity was reused", async () => {
+    const { root, stateDir } = await repositoryFixture();
+    const lease = await acquireWorktreeGate({ worktree: root, commandCwd: root, stateDir });
+    const { pid, identity, exited } = await detachedSleeper();
+    try {
+      await registerProcessGroup(lease, { pgid: pid, leader: identity });
+      const commandName = (await readdir(join(lease.gateDir, "commands"))).find((name) =>
+        name.endsWith(".json"),
+      );
+      if (commandName === undefined) throw new Error("test command registration disappeared");
+      const commandPath = join(lease.gateDir, "commands", commandName);
+      const record = JSON.parse(await readFile(commandPath, "utf8")) as {
+        readonly version: number;
+        readonly nonce: string;
+        readonly registration: {
+          readonly pgid: number;
+          readonly leader: { readonly pid: number; readonly startTime: string };
+        };
+      };
+      await writeFile(
+        commandPath,
+        JSON.stringify({
+          ...record,
+          registration: {
+            ...record.registration,
+            leader: {
+              ...record.registration.leader,
+              startTime: `${identity.startTime}-reused`,
+            },
+          },
+        }),
+      );
+
+      expect(await settleWorktreeGateCommands({ worktree: root, stateDir })).toEqual({
+        signaled: [],
+        survivors: [],
+      });
+      expect(await readProcessIdentity(pid)).toEqual(identity);
+    } finally {
+      signalProcessGroup(pid, "SIGKILL");
+      await releaseWorktreeGate(lease);
+      await exited;
+    }
+  });
+
+  test("closes concurrent registration before settling published command groups", async () => {
+    const { root, stateDir } = await repositoryFixture();
+    const lease = await acquireWorktreeGate({ worktree: root, commandCwd: root, stateDir });
+    const { pid, identity, exited } = await detachedSleeper();
+    let observedPublishedGroup = false;
+    const operations: ProcessGroupOperations = {
+      isAlive: async () => {
+        observedPublishedGroup = true;
+        return false;
+      },
+      signal: () => {
+        throw new Error("dead controlled group must not be signaled");
+      },
+      delay: async () => {
+        throw new Error("dead controlled group must not delay");
+      },
+    };
+    try {
+      await registerProcessGroup(lease, { pgid: pid, leader: identity });
+      const pendingPath = join(lease.gateDir, "commands", ".pending-controlled-test");
+      await writeFile(pendingPath, "publication in progress");
+      const settlement = settleWorktreeGateCommands({
+        worktree: root,
+        stateDir,
+        termGraceMs: 0,
+        killGraceMs: 1_000,
+        operations,
+      });
+      const closingPath = join(lease.gateDir, "closing.json");
+      for (let attempt = 0; attempt < 1_000; attempt += 1) {
+        if (await Bun.file(closingPath).exists()) break;
+        await Bun.sleep(1);
+      }
+      expect(await Bun.file(closingPath).exists()).toBe(true);
+      await Bun.sleep(10);
+      expect(observedPublishedGroup).toBe(false);
+      await expect(registerProcessGroup(lease, { pgid: pid, leader: identity })).rejects.toThrow(
+        "after close",
+      );
+      await rm(pendingPath);
+      expect(await settlement).toEqual({ signaled: [], survivors: [] });
+      expect(observedPublishedGroup).toBe(true);
+    } finally {
+      signalProcessGroup(pid, "SIGKILL");
+      await rm(join(lease.gateDir, "commands", ".pending-controlled-test"), { force: true });
+      await releaseWorktreeGate(lease);
+      await exited;
+    }
+  });
+
+  test("returns within configured bounds when an owned command group survives", async () => {
+    const { root, stateDir } = await repositoryFixture();
+    const lease = await acquireWorktreeGate({ worktree: root, commandCwd: root, stateDir });
+    const { pid, identity, exited } = await detachedSleeper();
+    const signals: NodeJS.Signals[] = [];
+    const operations: ProcessGroupOperations = {
+      isAlive: async () => true,
+      signal: (_registration, signal) => {
+        signals.push(signal);
+      },
+      delay: async () => {
+        throw new Error("zero-duration settlement must not delay");
+      },
+    };
+    try {
+      await registerProcessGroup(lease, { pgid: pid, leader: identity });
+      const startedAt = Date.now();
+      await expect(
+        settleWorktreeGateCommands({
+          worktree: root,
+          stateDir,
+          termGraceMs: 0,
+          killGraceMs: 0,
+          operations,
+        }),
+      ).rejects.toThrow(`process groups did not settle: ${pid}`);
+      expect(Date.now() - startedAt).toBeLessThan(1_000);
+      expect(signals).toEqual(["SIGTERM", "SIGSTOP", "SIGKILL"]);
+    } finally {
+      signalProcessGroup(pid, "SIGKILL");
+      await releaseWorktreeGate(lease);
       await exited;
     }
   });

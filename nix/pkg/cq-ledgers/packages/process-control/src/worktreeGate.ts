@@ -55,6 +55,11 @@ export interface WorktreeGateCapability {
   readonly nonce: string;
 }
 
+export interface SettleWorktreeGateCommandsOptions extends SettleProcessGroupsOptions {
+  readonly worktree: string;
+  readonly stateDir?: string;
+}
+
 interface HolderRecord {
   readonly version: number;
   readonly worktree: string;
@@ -222,6 +227,16 @@ async function writeClosingMarker(lease: WorktreeGateCapability): Promise<void> 
     await writeJsonFile(join(lease.gateDir, CLOSING_FILENAME), { nonce: lease.nonce });
   } catch (error) {
     if (!isNodeError(error, "EEXIST")) throw error;
+    const parsed: unknown = JSON.parse(
+      await readFile(join(lease.gateDir, CLOSING_FILENAME), "utf8"),
+    );
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      (parsed as Record<string, unknown>)["nonce"] !== lease.nonce
+    ) {
+      throw new Error("cq gate: closing marker nonce does not match holder");
+    }
   }
 }
 
@@ -251,6 +266,61 @@ async function settleRegisteredProcessGroups(
     throw new Error(`cq gate: process groups did not settle: ${result.survivors.join(", ")}`);
   }
   return result;
+}
+
+function sameHolder(left: HolderRecord, right: HolderRecord): boolean {
+  return (
+    left.version === right.version &&
+    left.worktree === right.worktree &&
+    left.nonce === right.nonce &&
+    left.holder.pid === right.holder.pid &&
+    left.holder.startTime === right.holder.startTime
+  );
+}
+
+async function removeClosingMarkerForNonce(gateDir: string, nonce: string): Promise<void> {
+  const closingPath = join(gateDir, CLOSING_FILENAME);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(closingPath, "utf8"));
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return;
+    throw error;
+  }
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    (parsed as Record<string, unknown>)["nonce"] === nonce
+  ) {
+    await rm(closingPath, { force: true });
+  }
+}
+
+export async function settleWorktreeGateCommands(
+  options: SettleWorktreeGateCommandsOptions,
+): Promise<SettleProcessGroupsResult> {
+  assertSupportedPlatform();
+  const worktree = await resolveWorktree(options.worktree);
+  const gateDir = gateDirectory(gateStateRoot(options.stateDir), worktree);
+  let observed: HolderRecord;
+  try {
+    observed = await readHolder(gateDir);
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return { signaled: [], survivors: [] };
+    throw error;
+  }
+  if (observed.worktree !== worktree) {
+    throw new Error("cq gate: holder worktree does not match canonical worktree");
+  }
+
+  const capability: WorktreeGateCapability = { gateDir, nonce: observed.nonce };
+  await writeClosingMarker(capability);
+  const current = await readHolder(gateDir);
+  if (!sameHolder(observed, current)) {
+    await removeClosingMarkerForNonce(gateDir, observed.nonce);
+    throw new Error("cq gate: holder identity changed during command settlement");
+  }
+  return settleRegisteredProcessGroups(capability, options);
 }
 
 async function reclaimDeadGate(
