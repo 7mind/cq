@@ -28,6 +28,7 @@
         "@cq/ledger-mcp": "workspace:*",
         "@cq/ledger-tui": "workspace:*",
         "@cq/ledger-web": "workspace:*",
+        "@cq/process-control": "workspace:*",
       },
       "devDependencies": {
         "bun-types": "^1.1.0",
@@ -43,6 +44,10 @@
       "devDependencies": {
         "bun-types": "^1.1.0",
       },
+    },
+    "packages/process-control": {
+      "name": "@cq/process-control",
+      "version": "0.0.1",
     },
     "packages/ledger": {
       "name": "@cq/ledger",
@@ -168,6 +173,8 @@
     "@cq/ledger-tui": ["@cq/ledger-tui@workspace:packages/ledger-tui"],
 
     "@cq/ledger-web": ["@cq/ledger-web@workspace:packages/ledger-web"],
+
+    "@cq/process-control": ["@cq/process-control@workspace:packages/process-control"],
 
     "@eslint-community/eslint-utils": ["@eslint-community/eslint-utils@4.9.1", "", { "dependencies": { "eslint-visitor-keys": "^3.4.3" }, "peerDependencies": { "eslint": "^6.0.0 || ^7.0.0 || >=8.0.0" } }, "sha512-phrYmNiYppR7znFEdqgfWHXR6NCkZEK7hwWDHZUjit/2/U0r6XvkDl0SYnoM51Hq7FhCGdLDT6zxCCOY1hexsQ=="],
 

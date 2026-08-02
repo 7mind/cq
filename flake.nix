@@ -174,6 +174,7 @@
               ./nix/pkg/cq-ledgers/bunfig.toml
               ./nix/pkg/cq-ledgers/packages/cq-config/package.json
               ./nix/pkg/cq-ledgers/packages/cq-cli/package.json
+              ./nix/pkg/cq-ledgers/packages/process-control/package.json
               ./nix/pkg/cq-ledgers/packages/ledger/package.json
               ./nix/pkg/cq-ledgers/packages/ledger-live/package.json
               ./nix/pkg/cq-ledgers/packages/ledger-mcp/package.json
@@ -247,6 +248,12 @@
             runHook preInstall
 
             mkdir -p $out
+
+            # @cq/process-control has no external runtime dependencies; its
+            # workspace link is staged from source by cqCli below. Excluding
+            # that source-relative link keeps this dependency-only FOD's
+            # output byte-identical across source-only workspace additions.
+            rm -f packages/cq-cli/node_modules/@cq/process-control
 
             # Root node_modules: the .bun/ hoisted store plus top-level symlinks.
             cp -r node_modules $out/node_modules
@@ -387,6 +394,7 @@
             ./nix/pkg/cq-ledgers/tsconfig.base.json
             ./nix/pkg/cq-ledgers/packages/cq-cli
             ./nix/pkg/cq-ledgers/packages/cq-config
+            ./nix/pkg/cq-ledgers/packages/process-control
             ./nix/pkg/cq-ledgers/packages/ledger
           ];
         };
@@ -572,8 +580,10 @@
             #  the tui/web SPA sources are staged by the closure fragments
             #  below — embedServerClosure / tuiClosure / webClosure.)
             cp -r packages/cq-cli "$WORKSPACE/packages/cq-cli"
+            cp -r packages/process-control "$WORKSPACE/packages/process-control"
             cp package.json bun.lock bunfig.toml tsconfig.base.json "$WORKSPACE/"
             rm -rf "$WORKSPACE/packages/cq-cli/node_modules"
+            rm -rf "$WORKSPACE/packages/process-control/node_modules"
 
             # ── 2. Union closure: cq dispatches mcp|tui|web in-process via ── #
             #   dynamic import("@cq/ledger-{mcp,tui,web}"), so its workspace
@@ -611,6 +621,15 @@
               "$WORKSPACE/packages/cq-cli/node_modules/@cq/ledger-web"
             ln -s "$WORKSPACE/packages/ledger-live" \
               "$WORKSPACE/packages/cq-cli/node_modules/@cq/ledger-live"
+            ln -s "$WORKSPACE/packages/process-control" \
+              "$WORKSPACE/packages/cq-cli/node_modules/@cq/process-control"
+
+            ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+              mkdir -p $out/libexec
+              $CC -Wall -Wextra -Werror \
+                packages/process-control/native/darwin-process-identity.c \
+                -o $out/libexec/cq-process-identity
+            ''}
 
             # ── 4. Immutable prompt surfaces ────────────────────────────── #
             mkdir -p "$WORKSPACE/prompt-surfaces"
@@ -626,7 +645,8 @@
               --add-flags "run $WORKSPACE/packages/cq-cli/src/main.ts --" \
               --run 'export LEDGER_WEB_OUTDIR="''${LEDGER_WEB_OUTDIR:-''${XDG_CACHE_HOME:-$HOME/.cache}/ledger-web/dist}"' \
               --set-default CQ_PROMPT_SURFACES_ROOT "$WORKSPACE/prompt-surfaces" \
-              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 ]}
+              --set CQ_PROCESS_IDENTITY_HELPER "$out/libexec/cq-process-identity" \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 pkgs.git ]}
             makeWrapper ${pkgs.bun}/bin/bun $out/bin/cq-codex-role \
               --add-flags "run $WORKSPACE/packages/cq-config/scripts/codex-role-dispatch.ts --" \
               --set-default CQ_PROMPT_ROOT "$WORKSPACE/prompt-surfaces/codex" \
@@ -683,6 +703,52 @@ EOF
               cat "$roleStdout" >&2
               exit 1
             fi
+
+            gateRepo=$TMPDIR/gate-repo
+            gateAlias=$TMPDIR/gate-repo-alias
+            gateOutside=$TMPDIR/gate-outside
+            mkdir -p "$gateRepo/nested" "$gateOutside"
+            ${pkgs.git}/bin/git init -q "$gateRepo"
+            ln -s "$gateRepo" "$gateAlias"
+            $out/bin/cq gate run \
+              --worktree "$gateRepo" \
+              --command-cwd "$gateRepo/nested" \
+              -- ${pkgs.runtimeShell} -c 'pwd > "$1"' shell "$TMPDIR/gate-pwd"
+            test "$(cat "$TMPDIR/gate-pwd")" = "$gateRepo/nested"
+            if $out/bin/cq gate run \
+              --worktree "$gateRepo" \
+              --command-cwd "$gateOutside" \
+              -- ${pkgs.runtimeShell} -c 'touch "$1"' shell "$TMPDIR/escaped-ran"; then
+              echo "cq gate accepted an escaping command-cwd" >&2
+              exit 1
+            fi
+            test ! -e "$TMPDIR/escaped-ran"
+
+            $out/bin/cq gate run \
+              --worktree "$gateRepo" \
+              --command-cwd "$gateRepo" \
+              -- ${pkgs.runtimeShell} -c \
+                'touch "$1"; while test ! -e "$2"; do sleep 0.02; done' \
+                shell "$TMPDIR/gate-ready" "$TMPDIR/gate-release" &
+            firstGate=$!
+            attempts=0
+            while test ! -e "$TMPDIR/gate-ready"; do
+              attempts=$((attempts + 1))
+              if test "$attempts" -ge 250; then
+                echo "cq gate contention holder did not start" >&2
+                exit 1
+              fi
+              sleep 0.02
+            done
+            if $out/bin/cq gate run \
+              --worktree "$gateAlias" \
+              --command-cwd "$gateAlias" \
+              -- ${pkgs.runtimeShell} -c true; then
+              echo "cq gate admitted a canonical-equivalent contender" >&2
+              exit 1
+            fi
+            touch "$TMPDIR/gate-release"
+            wait "$firstGate"
             runHook postInstallCheck
           '';
 

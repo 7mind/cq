@@ -53,6 +53,7 @@ import { runMigrate } from "./migrate.js";
 import { runAdvanceGate } from "./advanceGate.js";
 import { runPredicates } from "./predicates.js";
 import { runCounts } from "./counts.js";
+import { runGateRun } from "./gateRun.js";
 import { parseLogPutArgs, runLogPut, EXIT_USAGE as LOG_PUT_EXIT_USAGE } from "./logPut.js";
 import {
   resolvePostgresTenant,
@@ -75,7 +76,7 @@ export { type ConfirmIo, type ConfirmOutcome, defaultConfirmIo, confirmDestructi
 export const EXIT_USAGE = 2;
 
 /** The subcommands the dispatcher routes to. */
-export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "counts", "log", "backup", "restore", "migrate"] as const;
+export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "counts", "log", "backup", "restore", "migrate", "gate"] as const;
 export type Subcommand = (typeof SUBCOMMANDS)[number];
 
 function isSubcommand(s: string): s is Subcommand {
@@ -225,6 +226,9 @@ export const USAGE = [
   "                                                  backend to postgres; hard-refuses a",
   "                                                  non-empty tenant (no override). Either leg",
   "                                                  leaves its source untouched.",
+  "  gate run --worktree <path> --command-cwd <path> -- <command...>",
+  "                                                  run one bounded process group under the",
+  "                                                  canonical Git-worktree exclusive gate.",
   "",
   "ledger root: --cwd > $LEDGER_ROOT > current working directory",
 ].join("\n");
@@ -1124,6 +1128,10 @@ const HANDLERS: Record<Subcommand, (args: SubcommandArgs, io: DispatchIo) => Pro
   backup: runBackup,
   restore: runRestore,
   migrate: runMigrateCmd,
+  gate: async (_args, io) => {
+    io.err("cq gate: internal error — gate handler called without sub-argv");
+    return { exitCode: EXIT_USAGE };
+  },
 };
 
 /**
@@ -1159,6 +1167,10 @@ export async function dispatch(
   // routing and `log put` argument parsing.
   if (first === "log") {
     const outcome = await runLogCmd(args, argv.slice(1), io);
+    return { ...outcome, longRunning: false };
+  }
+  if (first === "gate") {
+    const outcome = await runGateRun(argv.slice(1), io);
     return { ...outcome, longRunning: false };
   }
   const outcome = await HANDLERS[first](args, io);

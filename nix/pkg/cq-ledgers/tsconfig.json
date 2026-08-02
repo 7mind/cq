@@ -3,6 +3,7 @@
   "references": [
     { "path": "./packages/cq-cli" },
     { "path": "./packages/cq-config" },
+    { "path": "./packages/process-control" },
     { "path": "./packages/ledger" },
     { "path": "./packages/ledger-live" },
     { "path": "./packages/ledger-mcp" },

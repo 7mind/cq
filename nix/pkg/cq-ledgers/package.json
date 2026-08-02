@@ -5,6 +5,7 @@
   "workspaces": [
     "packages/cq-cli",
     "packages/cq-config",
+    "packages/process-control",
     "packages/ledger",
     "packages/ledger-live",
     "packages/ledger-mcp",
