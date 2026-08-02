@@ -1,11 +1,10 @@
-import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { waitForPiChild } from "./cq-subagent-process-lifecycle.ts";
+import { launchPiChild } from "./cq-subagent-process-lifecycle.ts";
 
 // cq subagent-dispatch extension (T224).
 //
@@ -975,13 +974,16 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
         const childEnv = { ...process.env };
         delete childEnv.CODEX_COMPANION_SESSION_ID;
         delete childEnv.CLAUDE_PLUGIN_DATA;
-        const proc = spawn(invocation.command, invocation.args, {
-          cwd: ctx.cwd,
-          detached: true,
-          shell: false,
-          stdio: ["ignore", "pipe", "pipe"],
-          env: childEnv,
-        });
+        const launched = await launchPiChild(
+          [invocation.command, ...invocation.args],
+          ctx.cwd,
+          childEnv,
+          signal,
+        );
+        const proc = launched.process;
+        if (proc.stdout === null || proc.stderr === null) {
+          throw new Error("registered Pi child launch returned no output pipes");
+        }
         let buffer = "";
 
         const processLine = (line: string): void => {
@@ -999,7 +1001,7 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
           stderr += data.toString();
         });
 
-        const exitCode = await waitForPiChild(proc, signal);
+        const exitCode = await launched.exited;
         if (buffer.trim()) processLine(buffer);
 
         details.exitCode = exitCode;

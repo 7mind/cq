@@ -1162,8 +1162,16 @@ EOF
               ${verifySurfaceAttestation "pi" piPromptRoot}
               test -f ${piPromptRootTest.dispatchExtension}
               test -e ${piPromptRootTest.dispatchExtensionDir}/node_modules/@cq/process-control/src/index.ts
+              ${pkgs.bun}/bin/bun -e \
+                'await import(${builtins.toJSON "${piPromptRootTest.dispatchExtensionDir}/cq-subagent-process-lifecycle.ts"})'
               ${pkgs.ripgrep}/bin/rg -q 'from "@cq/process-control"' \
                 ${piPromptRootTest.dispatchExtensionDir}/cq-subagent-process-lifecycle.ts
+              ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+                test -x ${piPromptRootTest.dispatchExtensionDir}/libexec/cq-process-identity
+                ${pkgs.ripgrep}/bin/rg -Fq \
+                  ${pkgs.lib.escapeShellArg "${piPromptRootTest.dispatchExtensionDir}/libexec/cq-process-identity"} \
+                  ${piPromptRootTest.package}/bin/pi
+              ''}
               ${pkgs.jq}/bin/jq -e '
                 .mcpServers.ledger.lifecycle == "keep-alive"
                 and .mcpServers.ledger.directTools == true

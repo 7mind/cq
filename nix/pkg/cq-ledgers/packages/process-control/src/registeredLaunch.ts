@@ -71,6 +71,11 @@ export interface LaunchRegisteredProcessGroupOptions<TProcess, TExit, TStdio> {
   ) => RegisteredLaunchBootstrap<TProcess, TExit>;
   /** Publish the mandatory registration while the bootstrap leader is fenced. */
   readonly register: (registration: ProcessGroupRegistration) => Promise<void>;
+  /** Await adapter-owned settlement after target exit and before bootstrap release. */
+  readonly onTargetExit?: (
+    registration: ProcessGroupRegistration,
+    outcome: RegisteredTargetOutcome,
+  ) => Promise<void>;
 }
 
 export interface LaunchedRegisteredProcessGroup<TProcess, TExit> {
@@ -336,6 +341,7 @@ async function completeRegisteredLaunch<TProcess, TExit>(
   nonce: string,
   exit: ExitObservation,
   output: ExitObservation,
+  onTargetExit: LaunchRegisteredProcessGroupOptions<TProcess, TExit, unknown>["onTargetExit"],
 ): Promise<TExit> {
   const targetOutcome = await waitForTargetOutcome(
     statusPath,
@@ -347,6 +353,10 @@ async function completeRegisteredLaunch<TProcess, TExit>(
     const bootstrapOutcome = await bootstrap.exited;
     await bootstrap.outputDrained;
     return bootstrapOutcome;
+  }
+
+  if (onTargetExit !== undefined) {
+    await onTargetExit(registration, targetOutcome);
   }
 
   while (!exit.settled) {
@@ -490,6 +500,7 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
       nonce,
       exit,
       output,
+      options.onTargetExit,
     )
       .catch((error: unknown) => failClosed(error, bootstrap, registration))
       .finally(() => rm(protocolDirectory, { recursive: true, force: true }));

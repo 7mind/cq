@@ -89,6 +89,40 @@ afterEach(async () => {
 });
 
 describe("registered process-group launch bootstrap [T1624]", () => {
+  test("awaits the target-exit hook before completing the registered launch", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-target-exit-hook-"));
+    roots.push(root);
+    let hookCalls = 0;
+    let finishHook: (() => void) | undefined;
+    const launched = await launchRegisteredProcessGroup({
+      argv: [process.execPath, "-e", "process.exit(0)"],
+      cwd: root,
+      env: process.env,
+      stdio: "ignore" as const,
+      register: async () => {},
+      onTargetExit: async () => {
+        hookCalls += 1;
+        await new Promise<void>((resolve) => {
+          finishHook = resolve;
+        });
+      },
+      launchBootstrap: nodeBootstrap,
+    });
+    let completed = false;
+    void launched.exited.then(() => {
+      completed = true;
+    });
+
+    for (let attempt = 0; attempt < 100 && hookCalls === 0; attempt += 1) {
+      await Bun.sleep(2);
+    }
+    expect(hookCalls).toBe(1);
+    expect(completed).toBe(false);
+    if (finishHook === undefined) throw new Error("target-exit hook did not expose completion");
+    finishHook();
+    expect(await launched.exited).toEqual({ exitCode: 0, signal: null });
+  });
+
   test("registers a fenced leader before an immediate target exit can orphan its same-group fork", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-"));
     roots.push(root);

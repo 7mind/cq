@@ -1,6 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { spawn, type ChildProcess } from "node:child_process";
-import { EventEmitter } from "node:events";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,153 +10,178 @@ import {
   type SettleProcessGroupsResult,
 } from "@cq/process-control";
 import {
-  waitForPiChild,
-  waitForPiChildWithDependencies,
+  launchPiChild,
+  launchPiChildWithDependencies,
 } from "./cq-subagent-process-lifecycle.ts";
 
-const REGISTRATION: ProcessGroupRegistration = {
-  pgid: 42001,
-  leader: { pid: 42001, startTime: "100" },
-};
+const fixture = fileURLToPath(
+  new URL("./cq-subagent-process-lifecycle-fixture.ts", import.meta.url),
+);
 
-class FakeChild extends EventEmitter {
-  readonly pid = REGISTRATION.pgid;
+async function waitForFile(path: string): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      await access(path);
+      return;
+    } catch {
+      if (attempt === 99) throw new Error(`lifecycle fixture did not create ${path}`);
+      await Bun.sleep(2);
+    }
+  }
 }
 
-function asChild(child: FakeChild): ChildProcess {
-  return child as unknown as ChildProcess;
-}
-
-async function flush(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
+async function waitForIdentityToDisappear(pid: number): Promise<void> {
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
+    if ((await readProcessIdentity(pid)) === null) return;
+    await Bun.sleep(2);
+  }
+  throw new Error(`test process ${pid} did not exit`);
 }
 
 describe("Pi child process lifecycle [BA]", () => {
-  test("SIGTERM delivery does not count as exit and settlement remains joined", async () => {
-    const child = new FakeChild();
+  test("an immediate target exit cannot hide its same-group descendant from ownership", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-pi-child-immediate-exit-"));
+    const marker = join(root, "descendant-pid");
+    const registrations: ProcessGroupRegistration[] = [];
+
+    try {
+      const launched = await launchPiChildWithDependencies(
+        [process.execPath, "run", fixture, marker, "immediate-exit"],
+        root,
+        process.env,
+        undefined,
+        {
+          publishRegistration: async (registration) => {
+            registrations.push(registration);
+            await Bun.sleep(75);
+          },
+          settleGroups: settleProcessGroups,
+        },
+      );
+      await launched.exited;
+      await waitForFile(marker);
+      const descendantPid = Number.parseInt((await readFile(marker, "utf8")).trim(), 10);
+
+      expect(registrations).toHaveLength(1);
+      expect(registrations[0]!.leader.startTime).not.toBe("");
+      await waitForIdentityToDisappear(registrations[0]!.leader.pid);
+      await waitForIdentityToDisappear(descendantPid);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an abort settles an ignoring target and same-group descendant", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-pi-child-abort-"));
+    const marker = join(root, "descendant-pid");
     const controller = new AbortController();
+
+    try {
+      const launched = await launchPiChild(
+        [process.execPath, "run", fixture, marker, "persistent"],
+        root,
+        process.env,
+        controller.signal,
+      );
+      await waitForFile(marker);
+      const descendantPid = Number.parseInt((await readFile(marker, "utf8")).trim(), 10);
+      controller.abort();
+
+      expect(await launched.exited).toBe(0);
+      await waitForIdentityToDisappear(launched.process.pid!);
+      await waitForIdentityToDisappear(descendantPid);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("abort and target exit join one settlement promise before output completion", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-pi-child-settlement-"));
+    const controller = new AbortController();
+    let settlements = 0;
     let finishSettlement: (result: SettleProcessGroupsResult) => void = () => {
       throw new Error("settlement did not start");
     };
-    let settlements = 0;
-    const completion = waitForPiChildWithDependencies(asChild(child), controller.signal, {
-      readIdentity: async () => REGISTRATION.leader,
-      settleGroups: async () => {
-        settlements += 1;
-        return new Promise((resolve) => {
-          finishSettlement = resolve;
-        });
-      },
-    });
-    let completed = false;
-    void completion.then(() => {
-      completed = true;
-    });
-
-    controller.abort();
-    await flush();
-    expect(settlements).toBe(1);
-    expect(completed).toBe(false);
-
-    child.emit("close", null, "SIGKILL");
-    await flush();
-    expect(completed).toBe(false);
-    finishSettlement({ signaled: [REGISTRATION.pgid], survivors: [] });
-
-    expect(await completion).toBe(0);
-    expect(settlements).toBe(1);
-  });
-
-  test("error records failure but only close completes and settlement runs once", async () => {
-    const child = new FakeChild();
-    let settlements = 0;
-    const completion = waitForPiChildWithDependencies(asChild(child), undefined, {
-      readIdentity: async () => REGISTRATION.leader,
-      settleGroups: async () => {
-        settlements += 1;
-        return { signaled: [], survivors: [] };
-      },
-    });
-    let completed = false;
-    void completion.then(() => {
-      completed = true;
-    });
-
-    child.emit("error", new Error("spawn failure"));
-    await flush();
-    expect(settlements).toBe(1);
-    expect(completed).toBe(false);
-    child.emit("close", null, null);
-
-    expect(await completion).toBe(1);
-    expect(settlements).toBe(1);
-    expect(child.listenerCount("error")).toBe(0);
-    expect(child.listenerCount("close")).toBe(0);
-  });
-
-  test("exit starts one settlement while close remains the output-completion boundary", async () => {
-    const child = new FakeChild();
-    let settlements = 0;
-    const completion = waitForPiChildWithDependencies(asChild(child), undefined, {
-      readIdentity: async () => REGISTRATION.leader,
-      settleGroups: async () => {
-        settlements += 1;
-        return { signaled: [], survivors: [] };
-      },
-    });
-    let completed = false;
-    void completion.then(() => {
-      completed = true;
-    });
-
-    child.emit("exit", 0, null);
-    await flush();
-    expect(settlements).toBe(1);
-    expect(completed).toBe(false);
-    child.emit("close", 0, null);
-
-    expect(await completion).toBe(0);
-    expect(settlements).toBe(1);
-  });
-
-  test("an ignoring root and its same-group descendant disappear after escalation", async () => {
-    const root = await mkdtemp(join(tmpdir(), "cq-pi-child-lifecycle-"));
-    const marker = join(root, "descendant-pid");
-    const fixture = fileURLToPath(
-      new URL("./cq-subagent-process-lifecycle-fixture.ts", import.meta.url),
-    );
-    const child = spawn(process.execPath, ["run", fixture, marker], {
-      detached: true,
-      stdio: "ignore",
-    });
-    const pid = child.pid;
-    if (pid === undefined) throw new Error("lifecycle fixture did not return a pid");
-    const leader = await readProcessIdentity(pid);
-    if (leader === null) throw new Error("lifecycle fixture exited before identity observation");
 
     try {
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        try {
-          await access(marker);
-          break;
-        } catch {
-          if (attempt === 99) throw new Error("lifecycle fixture did not become ready");
-          await Bun.sleep(2);
-        }
-      }
-      const descendantPid = Number.parseInt((await readFile(marker, "utf8")).trim(), 10);
-      const descendant = await readProcessIdentity(descendantPid);
-      if (descendant === null) throw new Error("fixture descendant exited before cancellation");
+      const launched = await launchPiChildWithDependencies(
+        [process.execPath, "-e", "setTimeout(() => process.exit(0), 30)"],
+        root,
+        process.env,
+        controller.signal,
+        {
+          publishRegistration: async () => {},
+          settleGroups: async () => {
+            settlements += 1;
+            return new Promise((resolve) => {
+              finishSettlement = resolve;
+            });
+          },
+        },
+      );
+      let completed = false;
+      void launched.exited.then(() => {
+        completed = true;
+      });
 
-      const controller = new AbortController();
-      const completion = waitForPiChild(child, controller.signal);
       controller.abort();
-      expect(await completion).toBe(0);
-      expect(await readProcessIdentity(pid)).toBeNull();
-      expect(await readProcessIdentity(descendantPid)).toBeNull();
+      await Bun.sleep(75);
+      expect(settlements).toBe(1);
+      expect(completed).toBe(false);
+      finishSettlement({ signaled: [launched.process.pid!], survivors: [] });
+
+      expect(await launched.exited).toBe(0);
+      expect(settlements).toBe(1);
     } finally {
-      await settleProcessGroups([{ pgid: pid, leader }]);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("registration failure prevents target execution and settles the fenced group", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-pi-child-registration-failure-"));
+    const marker = join(root, "target-ran");
+    let registration: ProcessGroupRegistration | undefined;
+
+    try {
+      await expect(
+        launchPiChildWithDependencies(
+          [
+            process.execPath,
+            "-e",
+            `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`,
+          ],
+          root,
+          process.env,
+          undefined,
+          {
+            publishRegistration: async (candidate) => {
+              registration = candidate;
+              throw new Error("controlled Pi registration refusal");
+            },
+            settleGroups: settleProcessGroups,
+          },
+        ),
+      ).rejects.toThrow("controlled Pi registration refusal");
+      if (registration === undefined) throw new Error("registration failure was not observed");
+      await waitForIdentityToDisappear(registration.leader.pid);
+      expect(await Bun.file(marker).exists()).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("target launch failure propagates after fenced-group cleanup", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-pi-child-target-failure-"));
+    try {
+      await expect(
+        launchPiChild(
+          [join(root, "executable-does-not-exist")],
+          root,
+          process.env,
+          undefined,
+        ),
+      ).rejects.toThrow("target launch failed");
+    } finally {
       await rm(root, { recursive: true, force: true });
     }
   });

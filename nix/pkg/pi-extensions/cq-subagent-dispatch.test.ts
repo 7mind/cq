@@ -39,8 +39,7 @@ describe("Pi subagent JSON output [BA]", () => {
       fileURLToPath(new URL("./cq-subagent-dispatch.ts", import.meta.url)),
       "utf8",
     );
-    expect(source).toContain("detached: true");
-    expect(source).toContain("waitForPiChild(proc, signal)");
+    expect(source).toContain("await launchPiChild(");
     expect(source).not.toContain("proc.killed");
     expect(source).not.toContain("proc.kill(");
     expect(source).not.toContain("setTimeout(");
