@@ -62,6 +62,34 @@ export {
   resolveAgentModel,
   loadConfig,
 } from "./config.js";
+export type {
+  DispatchTransport,
+  DispatchTransportRouteRequest,
+  DispatchTransportRoute,
+  DispatchAdapterChildPort,
+  DispatchAdapterLaunchContext,
+  DispatchAdapterCompletion,
+  DispatchAdapterAbortion,
+  DispatchAdapterLaunchResult,
+  DispatchAdapterLauncher,
+  DispatchTransportAdapter,
+  RunPreparedDispatchRequest,
+  RoutedDispatchConsumed,
+  RoutedDispatchAborted,
+  RoutedDispatchResult,
+} from "./dispatchTransportRouter.js";
+export {
+  DISPATCH_TRANSPORTS,
+  DispatchTransportRoutingError,
+  DispatchTransportAbort,
+  DispatchTransportAdapterRegistry,
+  routeDispatchTransport,
+  createNativeDispatchAdapter,
+  createClaudeProcessDispatchAdapter,
+  createCodexProcessDispatchAdapter,
+  createPiProcessDispatchAdapter,
+  runPreparedDispatch,
+} from "./dispatchTransportRouter.js";
 export {
   resolveActiveHarness,
   resolveActiveHarnessFromProcess,
