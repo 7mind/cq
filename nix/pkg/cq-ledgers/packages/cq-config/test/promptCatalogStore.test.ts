@@ -17,12 +17,14 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   rmdirSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 // The 2020-12 dialect entrypoint: the catalog schemas declare
 // `$schema: …/draft/2020-12/schema`, so they must compile under Ajv's 2020 build.
 import Ajv2020 from "ajv/dist/2020";
@@ -157,10 +159,14 @@ function schemaPinsFromSource(source: string): Readonly<Record<string, SchemaPin
   return pins;
 }
 
-function readGitRefs(args: readonly string[], description: string): readonly string[] {
+function readGitRefs(
+  args: readonly string[],
+  description: string,
+  repositoryRoot: string,
+): readonly string[] {
   try {
     return execFileSync("git", args, {
-      cwd: REPOSITORY_ROOT,
+      cwd: repositoryRoot,
       encoding: "utf8",
     })
       .trim()
@@ -219,7 +225,21 @@ function pinTableHistoryArgs(introduction: string): readonly string[] {
   return ["rev-list", "--first-parent", "--reverse", `${introduction}..HEAD`, "--", PIN_TABLE_PATH];
 }
 
-function historicalSchemaPinHistory(): readonly Readonly<Record<string, SchemaPin>>[] {
+function requireCompleteGitHistory(repositoryRoot: string): void {
+  const shallowState = readGitRefs(
+    ["rev-parse", "--is-shallow-repository"],
+    "repository history completeness",
+    repositoryRoot,
+  );
+  if (shallowState.length !== 1 || shallowState[0] !== "false") {
+    throw new Error("schema pin history requires a non-shallow repository");
+  }
+}
+
+function historicalSchemaPinHistory(
+  repositoryRoot: string,
+): readonly Readonly<Record<string, SchemaPin>>[] {
+  requireCompleteGitHistory(repositoryRoot);
   const introduction = readGitRefs(
     [
       "log",
@@ -232,19 +252,24 @@ function historicalSchemaPinHistory(): readonly Readonly<Record<string, SchemaPi
       PIN_TABLE_PATH,
     ],
     "schema pin table introduction",
+    repositoryRoot,
   )[0];
   if (introduction === undefined) {
     throw new Error("schema pin table introduction could not be located");
   }
   const historyRefs = [
     introduction,
-    ...readGitRefs(pinTableHistoryArgs(introduction), "schema pin first-parent history"),
+    ...readGitRefs(
+      pinTableHistoryArgs(introduction),
+      "schema pin first-parent history",
+      repositoryRoot,
+    ),
   ];
 
   const sources = historyRefs.map((revision) => {
     try {
       return execFileSync("git", ["show", `${revision}:${PIN_TABLE_PATH}`], {
-        cwd: REPOSITORY_ROOT,
+        cwd: repositoryRoot,
         encoding: "utf8",
       });
     } catch (error) {
@@ -294,7 +319,7 @@ function schemaPinHistoryErrors(
 }
 
 function currentSchemaPinHistoryErrors(): readonly string[] {
-  const history = historicalSchemaPinHistory();
+  const history = historicalSchemaPinHistory(REPOSITORY_ROOT);
   const errors = [...schemaPinHistoryErrors(history)];
   if (relevantPathsChanged()) {
     errors.push(...schemaPinTransitionErrors(history.at(-1)!, SCHEMA_PINS));
@@ -597,6 +622,38 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
       "--",
       PIN_TABLE_PATH,
     ]);
+  });
+
+  // regression: D251 — partial Git history can make a later table rewrite look like its origin.
+  test("rejects a real shallow clone before inferring schema pin history", () => {
+    const fixtureDirectory = mkdtempSync(join(tmpdir(), "t1579-shallow-clone-"));
+    const shallowRepository = join(fixtureDirectory, "repository");
+    try {
+      execFileSync(
+        "git",
+        [
+          "clone",
+          "--quiet",
+          "--depth",
+          "6",
+          "--no-tags",
+          pathToFileURL(REPOSITORY_ROOT).href,
+          shallowRepository,
+        ],
+        { encoding: "utf8" },
+      );
+      expect(
+        execFileSync("git", ["rev-parse", "--is-shallow-repository"], {
+          cwd: shallowRepository,
+          encoding: "utf8",
+        }).trim(),
+      ).toBe("true");
+      expect(() => historicalSchemaPinHistory(shallowRepository)).toThrow(
+        "schema pin history requires a non-shallow repository",
+      );
+    } finally {
+      rmSync(fixtureDirectory, { recursive: true });
+    }
   });
 
   test("owns only its unrelated-dirt fixture", () => {
