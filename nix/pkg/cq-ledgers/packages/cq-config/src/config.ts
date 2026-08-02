@@ -146,6 +146,10 @@ export function parseReviewerToken(token: string): ReviewerToken {
     }
   }
 
+  if (modelSegment === "") {
+    throw new CqConfigError(`token "${token}" has an empty model`);
+  }
+
   const slash = modelSegment.indexOf("/");
 
   if (harness === "pi") {
@@ -706,7 +710,7 @@ function parseAgentTiers(raw: Record<string, string>): Record<string, Tier> {
  * (Q254).
  *
  * Every value must be a member of the OVERALL effort vocabulary (the union of
- * the pi and claude effort sets) — the agent's harness is unknown at parse
+ * the pi, Claude, and Codex effort sets) — the agent's harness is unknown at parse
  * time, so harness-specific validity is deferred to resolution time
  * ({@link applyAgentEffort} via `isEffort`). A value outside the union fails
  * fast here with a precise CqConfigError.
@@ -714,11 +718,15 @@ function parseAgentTiers(raw: Record<string, string>): Record<string, Tier> {
 function parseAgentEfforts(raw: Record<string, string>): Record<string, Effort> {
   const result: Record<string, Effort> = {};
   for (const [agentName, effortName] of Object.entries(raw)) {
-    // PI_EFFORTS is a superset of CLAUDE_EFFORTS, but check the union
-    // explicitly so the vocabularies may diverge without silent breakage.
-    if (!isEffort("pi", effortName) && !isEffort("claude", effortName)) {
+    // Check every executable harness explicitly so their vocabularies may
+    // diverge without silently rejecting a harness-specific valid effort.
+    if (
+      !isEffort("pi", effortName) &&
+      !isEffort("claude", effortName) &&
+      !isEffort("codex", effortName)
+    ) {
       throw new CqConfigError(
-        `agent_efforts["${agentName}"] = "${effortName}" is not a valid effort (expected ${PI_EFFORTS.join(" | ")})`,
+        `agent_efforts["${agentName}"] = "${effortName}" is not a valid effort`,
       );
     }
     result[agentName] = effortName;

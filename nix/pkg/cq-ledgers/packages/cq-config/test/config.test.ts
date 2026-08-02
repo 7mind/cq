@@ -78,6 +78,11 @@ describe("parseReviewerToken", () => {
   it("throws on an empty model segment", () => {
     expect(() => parseReviewerToken("claude:")).toThrow();
   });
+
+  it("throws when a valid Codex effort leaves no model before it", () => {
+    expect(() => parseReviewerToken("codex::low")).toThrow(CqConfigError);
+    expect(() => parseReviewerToken("codex::ultra")).toThrow(CqConfigError);
+  });
 });
 
 describe("codex token and global dispatch configuration", () => {

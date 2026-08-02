@@ -50,6 +50,13 @@ describe("[agent_efforts] parsing (Q254)", () => {
     expect(config.agentEfforts).toEqual({ "plan-reviewer": "max" });
   });
 
+  it("accepts the Codex-only ultra effort before resolved-harness validation", () => {
+    const config = parseConfig(
+      `${BASE}\n[agent_efforts]\n  implement-worker = "ultra"\n`,
+    );
+    expect(config.agentEfforts).toEqual({ "implement-worker": "ultra" });
+  });
+
   it("defaults agentEfforts to {} when [agent_efforts] is absent", () => {
     const config = parseConfig(BASE);
     expect(config.agentEfforts).toEqual({});

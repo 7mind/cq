@@ -245,7 +245,7 @@ const NOT_MODEL_CONFIGURABLE_ROLE_IDS = [
 const RESOLVED_LIVE_ENTRIES: readonly AgentModelEntry[] = [
   { id: "plan-advance",                  status: "resolved", modelClass: "frontier", modelMappings: { claude: ["sonnet-4.7"]           } },
   { id: "plan-reviewer",                 status: "resolved", modelClass: "frontier", modelMappings: { claude: ["opus-4.8[2m]"]          } },
-  { id: "implement-worker",              status: "resolved", modelClass: "standard", modelMappings: { claude: ["sonnet-4.6"]            } },
+  { id: "implement-worker",              status: "resolved", modelClass: "standard", modelMappings: { claude: ["sonnet-4.6"], codex: ["gpt-5.6-sol:ultra"] } },
   { id: "implement-reviewer",            status: "resolved", modelClass: "frontier", modelMappings: { claude: ["sonnet-4.7"]            } },
   { id: "implement-conflict-resolver",   status: "resolved", modelClass: "standard", modelMappings: { claude: ["sonnet-4.6"]            } },
   { id: "investigate-explorer",          status: "resolved", modelClass: "frontier", modelMappings: { claude: ["sonnet-4.7"]            } },

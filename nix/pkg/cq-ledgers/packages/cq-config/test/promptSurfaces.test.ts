@@ -30,11 +30,10 @@ const dispatchHarnessRemainsDistinct: Equal<Harness, "claude" | "codex" | "pi"> 
  * T861: THREE domains coexist and must not collapse. A prompt surface selects a
  * rendered prompt representation; an ActiveHarness selects which `[harness.*]`
  * config block is in force; a Harness names an EXECUTABLE dispatch transport.
- * Codex participates in the first two and — having no dispatch transport — must
- * stay out of the third.
+ * Codex participates in all three domains.
  */
 const activeSelectorAdmitsCodex: Equal<ActiveHarness, "claude" | "pi" | "codex"> = true;
-const codexIsNeverADispatchTransport: Equal<Extract<ActiveHarness, Harness>, "claude" | "codex" | "pi"> =
+const codexIsAnExecutableDispatchTransport: Equal<Extract<ActiveHarness, Harness>, "claude" | "codex" | "pi"> =
   true;
 
 const NIX_FIXTURE_URL = new URL("../../../../../lib/prompt-surfaces-fixture.json", import.meta.url);
@@ -45,7 +44,7 @@ describe("typed prompt surfaces", () => {
     expect(differenceKindTypeIsClosed).toBe(true);
     expect(dispatchHarnessRemainsDistinct).toBe(true);
     expect(activeSelectorAdmitsCodex).toBe(true);
-    expect(codexIsNeverADispatchTransport).toBe(true);
+    expect(codexIsAnExecutableDispatchTransport).toBe(true);
     expect(PROMPT_SURFACES).toEqual(["claude", "codex", "pi"]);
     expect(ACTIVE_HARNESSES).toEqual(["claude", "pi", "codex"]);
     expect(HARNESSES).toEqual(["claude", "codex", "pi"]);

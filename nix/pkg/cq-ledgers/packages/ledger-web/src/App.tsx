@@ -2732,7 +2732,7 @@ function HelpOverlay({
  *                       no overlay entry; renders the offline fallback.
  */
 export type AgentModelView =
-  | { kind: "resolved"; modelClass: "frontier" | "standard" | "fast"; mappings: { claude?: readonly string[]; pi?: readonly string[] } }
+  | { kind: "resolved"; modelClass: "frontier" | "standard" | "fast"; mappings: { claude?: readonly string[]; codex?: readonly string[]; pi?: readonly string[] } }
   | { kind: "no-live-token"; tier: string | null }
   | { kind: "not-configured" }
   | { kind: "not-model-configurable" }
@@ -2779,6 +2779,7 @@ function AgentModelCell({ view }: { view: AgentModelView }): React.ReactElement 
     case "resolved": {
       const entries: [string, readonly string[]][] = [];
       if (view.mappings.claude !== undefined) entries.push(["claude", view.mappings.claude]);
+      if (view.mappings.codex !== undefined) entries.push(["codex", view.mappings.codex]);
       if (view.mappings.pi !== undefined) entries.push(["pi", view.mappings.pi]);
       return (
         <span className="lw-agent-model-resolved">

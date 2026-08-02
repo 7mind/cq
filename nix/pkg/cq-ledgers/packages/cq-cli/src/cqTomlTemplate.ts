@@ -12,8 +12,8 @@
  *    one harness's kind — so they live under `[harness.claude]` / `[harness.pi]` /
  *    `[harness.codex]`, not at top level. The active CONFIGURATION SELECTOR is
  *    chosen at runtime (CQ_HARNESS, else claude), so the default `cq init`
- *    config resolves the claude panel. `codex` is a selector only — it has no
- *    executable dispatch transport of its own — so `[harness.codex]` is
+ *    config resolves the claude panel. `codex` names both a selector and an
+ *    executable dispatch transport, so `[harness.codex]` is
  *    FAIL-CLOSED (T861): it must define its own reviewers, planners, AND
  *    `[harness.codex.tiers]` (no fall-through to the shared/claude/pi values),
  *    and every active alias it references must resolve to a non-claude token.
@@ -114,8 +114,8 @@ export const CQ_TOML_TEMPLATE: string = `\
   fast     = "luna"                # fast, high-volume
 
 # The codex harness: active when CQ_HARNESS=codex (set by the packaged Codex
-# wrapper, T863). "codex" is a CONFIGURATION SELECTOR with no executable
-# dispatch transport of its own, so this block is FAIL-CLOSED (T861): it must
+# wrapper, T863). "codex" is both a CONFIGURATION SELECTOR and executable
+# dispatch transport, so this block is FAIL-CLOSED (T861): it must
 # define reviewers, planners, AND [harness.codex.tiers] itself (no fall-through
 # to the shared/claude/pi values above), and every active alias it references
 # must resolve to a non-claude token — a dispatch-panel read (resolveReviewers /
