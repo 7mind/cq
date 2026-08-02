@@ -38,6 +38,7 @@ interface LifecycleFixture {
   readonly promptRoot: string;
   readonly fakeCodex: string;
   readonly codexReady: string;
+  readonly codexGroupRole: string;
   readonly codexSignals: string;
   readonly gateReady: string;
   readonly gateSignals: string;
@@ -72,6 +73,7 @@ async function createLifecycleFixture(): Promise<LifecycleFixture> {
     promptRoot,
     fakeCodex,
     codexReady: join(root, "codex.ready"),
+    codexGroupRole: join(root, "codex.group-role"),
     codexSignals: join(root, "codex.signals"),
     gateReady: join(root, "gate.ready"),
     gateSignals: join(root, "gate.signals"),
@@ -117,6 +119,7 @@ function launchDispatch(
       CQ_CODEX_LEDGER_COMMAND: "cq-not-invoked-by-fake",
       CQ_TEST_CODEX_MODE: mode,
       CQ_TEST_CODEX_READY: fixture.codexReady,
+      CQ_TEST_CODEX_GROUP_ROLE: fixture.codexGroupRole,
       CQ_TEST_CODEX_SIGNALS: fixture.codexSignals,
     },
     stdin: "pipe",
@@ -195,6 +198,7 @@ describe("T1625 Codex and canonical-worktree gate lifecycle [Effectual-GoodCommu
       expect(await dispatch.child.exited).toBe(0);
       expect(await dispatch.stdout).toBe(`${JSON.stringify(HANDLE)}\n`);
       expect(await dispatch.stderr).toBe("");
+      expect(await readFile(fixture.codexGroupRole, "utf8")).toBe("member\n");
       expect(await readProcessIdentity(gate.command.registration.leader.pid)).toEqual(
         gate.command.registration.leader,
       );

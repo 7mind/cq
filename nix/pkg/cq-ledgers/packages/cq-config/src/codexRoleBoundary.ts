@@ -1,6 +1,7 @@
 import * as path from "node:path";
+import { constants } from "node:os";
 import {
-  readProcessIdentity,
+  launchRegisteredProcessGroup,
   settleProcessGroups,
   settleWorktreeGateCommands,
   type ProcessGroupRegistration,
@@ -361,18 +362,6 @@ export function interceptCodexRoleBoundaryResult(
 export async function executeCodexRoleBoundary(
   plan: CodexRoleBoundaryPlan,
 ): Promise<DispatchHandle> {
-  const child = Bun.spawn([...plan.argv], {
-    cwd: plan.cwd,
-    detached: true,
-    env: process.env,
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const rootIdentity = readProcessIdentity(child.pid).then(
-    (leader): ProcessGroupRegistration | undefined =>
-      leader === null ? undefined : { pgid: child.pid, leader },
-  );
   type StopCause = "SIGINT" | "SIGTERM" | "timeout";
   let stop: ((cause: StopCause) => void) | undefined;
   let requestedStop: StopCause | undefined;
@@ -393,6 +382,7 @@ export async function executeCodexRoleBoundary(
   process.on("SIGTERM", onSigterm);
   const timeout = setTimeout(() => requestStop("timeout"), plan.timeoutMs);
 
+  let rootRegistration: ProcessGroupRegistration | undefined;
   let settlement: Promise<void> | undefined;
   const settle = (): Promise<void> => {
     settlement ??= (async () => {
@@ -407,9 +397,8 @@ export async function executeCodexRoleBoundary(
       let rootResult: SettleProcessGroupsResult = { signaled: [], survivors: [] };
       let rootError: unknown;
       try {
-        const registration = await rootIdentity;
-        if (registration !== undefined) {
-          rootResult = await settleProcessGroups([registration]);
+        if (rootRegistration !== undefined) {
+          rootResult = await settleProcessGroups([rootRegistration]);
         }
       } catch (error) {
         rootError = error;
@@ -435,15 +424,62 @@ export async function executeCodexRoleBoundary(
   };
 
   try {
+    let launched;
+    try {
+      launched = await launchRegisteredProcessGroup({
+        argv: plan.argv,
+        cwd: plan.cwd,
+        env: process.env,
+        stdio: { stdin: "pipe", stdout: "pipe", stderr: "pipe" } as const,
+        register: async (registration) => {
+          rootRegistration = registration;
+          if (requestedStop !== undefined) {
+            throw new CodexRoleBoundaryError(`wrapper received ${requestedStop}`);
+          }
+        },
+        launchBootstrap: (specification) => {
+          const child = Bun.spawn([...specification.argv], {
+            cwd: specification.cwd,
+            detached: specification.detached,
+            env: specification.env,
+            stdin: specification.stdio.stdin,
+            stdout: specification.stdio.stdout,
+            stderr: specification.stdio.stderr,
+          });
+          const stdout = new Response(child.stdout).text();
+          const stderr = new Response(child.stderr).text();
+          return {
+            process: { child, stdout, stderr },
+            pid: child.pid,
+            exited: child.exited,
+            outputDrained: Promise.all([stdout, stderr]).then(() => undefined),
+            resultFromTargetOutcome: (outcome) => {
+              if (outcome.exitCode !== null) return outcome.exitCode;
+              if (outcome.signal === null) return 1;
+              return 128 + (constants.signals[outcome.signal] ?? 1);
+            },
+            terminate: (signal: NodeJS.Signals) => {
+              child.kill(signal);
+            },
+          };
+        },
+      });
+    } catch (error) {
+      if (requestedStop === undefined) throw error;
+      await settle();
+      if (requestedStop === "timeout") {
+        throw new CodexRoleBoundaryError(
+          `child exceeded its ${String(plan.timeoutMs)} ms window`,
+        );
+      }
+      throw new CodexRoleBoundaryError(`wrapper received ${requestedStop}`);
+    }
+
+    const { child, stdout, stderr } = launched.process;
     child.stdin.write(plan.stdin);
     child.stdin.end();
-    const execution = Promise.all([
-      rootIdentity,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-      child.exited,
-    ]).then(
-      ([, stdout]) => ({ kind: "completed" as const, stdout }),
+    const execution = Promise.all([launched.exited, stdout, stderr]).then(
+      ([, completedStdout]) => ({ kind: "completed" as const, stdout: completedStdout }),
       (error: unknown) => ({ kind: "failed" as const, error }),
     );
     const outcome = await Promise.race([
