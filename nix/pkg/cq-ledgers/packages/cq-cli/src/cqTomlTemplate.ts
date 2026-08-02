@@ -26,8 +26,8 @@
  *    GPT-5.6 ladder under codex). A model is dispatchable only if its
  *    harness's tiers block names it for some tier. `[harness.pi.tiers]` and
  *    `[harness.codex.tiers]` intentionally ship the SAME frontier/standard/fast
- *    ladder (sol/terra/luna) — codex has no dispatch transport of its own, so
- *    it reuses the identical pi-executable GPT-5.6 tokens.
+ *    ladder (sol/terra/luna). Native `codex:<model>` tokens are equally valid
+ *    when the Codex executable should dispatch directly.
  *  - `[ledger]` sets `backend = "xdg"` (T501): the out-of-tree bun:sqlite
  *    primary is the default for a FRESH `cq init`. This ONLY affects fresh
  *    inits — an existing repo's cq.toml (untouched by `cq init` without
@@ -50,7 +50,8 @@ export const CQ_TOML_TEMPLATE: string = `\
 # Optional trailing reasoning-effort suffix ":<effort>" (higher = more thinking):
 #   pi     — off | none | minimal | low | medium | high | xhigh | max  (used at dispatch)
 #   claude — low | medium | high | xhigh | max                         (parsed; not yet used)
-# GPT-5.6 accepts none | low | medium | high | xhigh | max.
+#   codex  — low | medium | high | xhigh | max | ultra                 (used at dispatch)
+# Codex values are the packaged executable's gpt-5.6-sol vocabulary.
 # The openai-codex provider serves the GPT-5.6 family, a capability tier ladder:
 # sol (flagship, most capable) > terra (balanced everyday) > luna (fast, cheap).
 [aliases]

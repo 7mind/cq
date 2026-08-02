@@ -184,10 +184,10 @@ export function parseReviewerToken(token: string): ReviewerToken {
       `${harness} token "${token}" must not contain a provider qualifier '/' (provider qualifiers are pi-only)`,
     );
   }
-  // `:` is reserved inside the claude model after stripping a valid effort.
+  // `:` is reserved inside Claude and Codex models after stripping a valid effort.
   if (modelSegment.includes(":")) {
     throw new CqConfigError(
-      `claude token "${token}" has a reserved ':' in its model "${modelSegment}" that is not a valid effort (legal effort: ${legalEfforts(harness)})`,
+      `${harness} token "${token}" has a reserved ':' in its model "${modelSegment}" that is not a valid effort (legal effort: ${legalEfforts(harness)})`,
     );
   }
   return { harness, model: modelSegment, provider: null, effort };
@@ -195,7 +195,9 @@ export function parseReviewerToken(token: string): ReviewerToken {
 
 /** The legal effort set for a harness, rendered for error messages. */
 function legalEfforts(harness: ReviewerToken["harness"]): string {
-  return (harness === "pi" ? PI_EFFORTS : harness === "codex" ? CODEX_EFFORTS : CLAUDE_EFFORTS).join(" | ");
+  const efforts =
+    harness === "pi" ? PI_EFFORTS : harness === "codex" ? CODEX_EFFORTS : CLAUDE_EFFORTS;
+  return efforts.join(" | ");
 }
 
 /** The default git branch for the git-object ledger backend. */
@@ -407,8 +409,8 @@ function parseDispatch(raw: import("./toml.js").RawDispatch | null): DispatchCon
  * the SHARED `[aliases]`).
  *
  * `activeHarness` is an {@link ActiveHarness} CONFIGURATION SELECTOR
- * (`claude | pi | codex`), NOT an executable {@link Harness} dispatch token
- * (T861). It defaults to {@link DEFAULT_HARNESS}, so an omitted argument
+ * (`claude | pi | codex`) that also names an executable {@link Harness}. It
+ * defaults to {@link DEFAULT_HARNESS}, so an omitted argument
  * reproduces the pre-override behaviour exactly. A flat cq.toml with no
  * `[harness.*]` table parses identically under the `claude`, `pi`, and default
  * selectors; it is NEVER a valid `codex` configuration (see the fail-closed
@@ -503,8 +505,7 @@ export function parseConfig(
  * Judge the FAIL-CLOSED rule for an ACTIVE `codex` selector (T861), returning
  * the violation message (unprefixed) or `null` when the panels are compliant.
  *
- * `codex` is a CONFIGURATION SELECTOR with no dispatch transport of its own, so
- * a Codex-hosted run must state its executable panels explicitly. This
+ * A Codex-hosted run must state its executable panels explicitly. This
  * deliberately narrows Q239's general layered fallback in two ways:
  *
  *  1. NO FALL-THROUGH. `[harness.codex]` must exist and must itself carry
@@ -961,8 +962,8 @@ export function formatReviewerToken(token: ReviewerToken): string {
  * {@link resolveReviewers} / {@link resolvePlanners} / {@link tierModel}
  * instead — still before any dispatch (T861).
  *
- * `harness` is an {@link ActiveHarness} selector (`claude | pi | codex`), not
- * an executable dispatch token (T861). It defaults to
+ * `harness` is an {@link ActiveHarness} selector (`claude | pi | codex`) and
+ * an executable dispatch-token name. It defaults to
  * {@link resolveActiveHarnessFromProcess}, so the active selector is read from
  * `process.env` (Q238) unless the caller injects one.
  */

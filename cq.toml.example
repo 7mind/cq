@@ -77,8 +77,9 @@ planners = ["opus"]
 #
 # [tiers] grammar: KEY is a tier (fast|standard|frontier); VALUE is an alias
 # name from this [aliases] table, or a full token in the grammar above
-# (claude:<model>[:<effort>] | pi:<provider>/<model>[:<effort>]).  A bare pi
-# VALUE or unknown harness is rejected as a CONFIG ERROR at parse time.
+# (claude:<model>[:<effort>] | codex:<model>[:<effort>] |
+# pi:<provider>/<model>[:<effort>]). A bare pi VALUE or unknown harness is
+# rejected as a CONFIG ERROR at parse time.
 #
 # Reference: D36 (pi provider routing), T286 (effort suffix), T438 (decoupling), T440 (opus-only panels)
 [aliases]
@@ -99,8 +100,8 @@ planners = ["opus"]
   # The openai-codex provider serves the GPT-5.6 family, a capability tier
   # ladder: sol (flagship, most capable) > terra (balanced everyday) > luna
   # (fast, cheap). These three back the [harness.pi]/[harness.codex] examples
-  # further down (both ship the SAME ladder — codex has no dispatch transport
-  # of its own, so it reuses these identical pi-executable tokens):
+  # further down. The Codex selector may use this Pi-backed ladder or native
+  # codex:<model> tokens:
   codex      = "pi:openai-codex/gpt-5.6-sol:xhigh"    # frontier — GPT-5.6 sol (flagship)
   terra      = "pi:openai-codex/gpt-5.6-terra:high"   # standard — balanced everyday
   luna       = "pi:openai-codex/gpt-5.6-luna:low"     # fast — high-volume lightweight
@@ -240,8 +241,8 @@ planners = ["opus"]
 # overrides the shared top-level config for that selector only.  Absent
 # blocks fall through to the shared values above — backward compatible with
 # flat cq.toml — EXCEPT for "codex": it is a CONFIGURATION SELECTOR with no
-# executable dispatch transport of its own (the EXECUTABLE {claude|pi} token
-# domain stays two-valued), so it is FAIL-CLOSED rather than falling
+# configuration has an explicit panel policy, so it is FAIL-CLOSED rather than
+# falling
 # through — see the codex-specific note below the pi example.
 #
 # LAYERING SEMANTICS:
@@ -260,7 +261,8 @@ planners = ["opus"]
 #   [ledger]         — storage backend (fs / git-object)
 #   [agent_tiers]    — agent-name -> tier class map
 #   [agent_efforts]  — agent-name -> reasoning-effort override map
-#   [dispatch]       — global dispatch policy (`forceShellout = false` by default)
+#   [dispatch]       — global dispatch policy (`forceShellout = false` by default),
+#                        never per-harness
 #
 # PER-HARNESS OVERRIDABLE (present in [harness.<name>]):
 #   reviewers = [...]         — REPLACES shared top-level reviewers
@@ -281,8 +283,8 @@ planners = ["opus"]
 # is NO fall-through to the shared top-level (or [harness.pi]/[harness.claude])
 # values, even though [harness.pi]/[harness.claude] fall through when absent.
 # Every alias the ACTIVE codex panels/tiers reference must resolve to a
-# NON-CLAUDE executable token (`codex` has no dispatch transport of its own —
-# there is no way to invoke Claude Code from a Codex host); an active alias
+# NON-CLAUDE executable token (a Codex-hosted dispatch cannot invoke Claude
+# Code); an active alias
 # that resolves to a `claude:*` token is a CONFIG ERROR. Shared Claude aliases
 # (like `opus` above) remain perfectly legal INACTIVE definitions — only the
 # MERGED, ACTIVE codex panels are checked. This is a DISPATCH-PANEL rule: a

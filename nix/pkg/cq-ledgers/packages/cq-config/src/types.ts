@@ -9,7 +9,8 @@
  * Token grammar (BREAKING in T237):
  *  - pi tokens: `pi:<provider>/<model>` (e.g. pi:ollama-cloud/minimax-m3)
  *  - claude tokens: `claude:<model>` (e.g. claude:opus-4.8[1m])
- * Bare pi tokens (no provider) and provider qualifiers on claude tokens
+ *  - codex tokens: `codex:<model>` (e.g. codex:gpt-5.6-sol)
+ * Bare pi tokens (no provider) and provider qualifiers on Claude or Codex tokens
  * are CONFIG ERRORs.
  *
  * Token grammar with effort (T284):
@@ -23,11 +24,9 @@
  * The EXECUTABLE dispatch transports cq knows how to drive (T861).
  *
  * This is the DISPATCH-TOKEN domain: the set of harnesses a reviewer, planner,
- * or `[tiers]` model may actually be INVOKED through. It is deliberately
- * NARROWER than the {@link ACTIVE_HARNESSES} configuration-selector domain —
- * `codex` selects a config block but has no dispatch transport, so it must
- * never appear here. The `ReviewerToken` grammar, the effort vocabularies, and
- * the per-harness dispatch model-mapping keys are all keyed on this union.
+ * or `[tiers]` model may actually be invoked through. The `ReviewerToken`
+ * grammar, effort vocabularies, and per-harness dispatch model-mapping keys
+ * are all keyed on this union.
  */
 export const HARNESSES = ["claude", "codex", "pi"] as const;
 
@@ -43,12 +42,8 @@ export type Harness = (typeof HARNESSES)[number];
  * `harness` argument, and the `[harness.<name>]` TOML keys all range over THIS
  * union.
  *
- * `codex` is a selector-only member: a Codex-hosted invocation picks
- * `[harness.codex]`, but the reviewers/planners/tiers that block names must
- * still resolve to {@link Harness} tokens, because cq has no Codex dispatch
- * transport. That is enforced fail-closed: `parseConfig` records the verdict as
- * `CqConfig.dispatchViolation` and every dispatch-panel resolver raises it
- * before handing out a panel (see `parseConfig`'s docstring).
+ * Every executable harness is also selectable. `codex` therefore names both
+ * the `[harness.codex]` override and executable `codex:<model>` tokens.
  */
 export const ACTIVE_HARNESSES = ["claude", "pi", "codex"] as const;
 
@@ -96,13 +91,12 @@ export const CLAUDE_EFFORTS = [
  * consumes `model_reasoning_effort`, while Pi passes its suffix to a provider.
  */
 export const CODEX_EFFORTS = [
-  "none",
-  "minimal",
   "low",
   "medium",
   "high",
   "xhigh",
   "max",
+  "ultra",
 ] as const;
 
 export type CodexEffort = (typeof CODEX_EFFORTS)[number];
@@ -118,6 +112,7 @@ export type Effort = PiEffort | ClaudeEffort | CodexEffort;
  *
  * - pi accepts: off | none | minimal | low | medium | high | xhigh | max
  * - claude accepts: low | medium | high | xhigh | max
+ * - codex accepts: low | medium | high | xhigh | max | ultra
  */
 export function isEffort(harness: Harness, value: string): value is Effort {
   if (harness === "pi") {
@@ -138,9 +133,9 @@ export function isEffort(harness: Harness, value: string): value is Effort {
  *    parses to `{ harness: "pi", model: "minimax-m3", provider: "ollama-cloud" }`.
  *    A bare pi token (e.g. `pi:minimax`) missing the provider qualifier is a
  *    CONFIG ERROR (BREAKING).
- *  - claude tokens MUST be `claude:<model>` and never carry a provider.
- *    `provider` is always null for claude tokens, and a `/` in the model
- *    segment is a CONFIG ERROR.
+ *  - claude and codex tokens MUST be `<harness>:<model>` and never carry a
+ *    provider. `provider` is always null for those tokens, and a `/` in the
+ *    model segment is a CONFIG ERROR.
  *
  * Optional trailing effort suffix (T284):
  *  - Append `:<effort>` after the full token to override the provider/model
@@ -149,6 +144,7 @@ export function isEffort(harness: Harness, value: string): value is Effort {
  *  - `null` means absent (omitted) — the harness/model default applies.
  *  - pi efforts: off | none | minimal | low | medium | high | xhigh | max
  *  - claude efforts: low | medium | high | xhigh | max
+ *  - codex efforts: low | medium | high | xhigh | max | ultra
  *  Parsing of the effort suffix is deferred to T286; this field is populated
  *  as `null` at existing construction sites until T286 is implemented.
  *

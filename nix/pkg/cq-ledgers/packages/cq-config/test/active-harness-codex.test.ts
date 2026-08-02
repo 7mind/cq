@@ -8,10 +8,10 @@
  *     is in force for this invocation. `CQ_HARNESS`, `parseConfig`'s
  *     `activeHarness` argument, `loadConfig`'s `harness` argument, and the
  *     `[harness.<name>]` TOML keys all live in THIS domain.
- *  2. {@link Harness} (`claude | pi`) — who can actually be INVOKED as a
+ *  2. {@link Harness} (`claude | codex | pi`) — who can actually be INVOKED as a
  *     reviewer / planner / tier model. The `ReviewerToken` grammar, the effort
  *     vocabularies, and the dispatch model-mapping keys stay in THIS domain,
- *     because cq has no Codex dispatch transport.
+ *     because every active harness now has a dispatch transport.
  *
  * FAIL-CLOSED CODEX RULE (deliberately narrower than Q239's general layered
  * fallback): under an ACTIVE `codex` selector the `[harness.codex]` block must
@@ -65,16 +65,16 @@ type Equal<Left, Right> =
 
 /** The ACTIVE configuration-selector domain gains codex. */
 const activeSelectorDomainIncludesCodex: Equal<ActiveHarness, "claude" | "pi" | "codex"> = true;
-/** The EXECUTABLE dispatch-token domain does NOT. */
+/** The EXECUTABLE dispatch-token domain includes Codex. */
 const dispatchTokenDomainStaysExecutable: Equal<Harness, "claude" | "codex" | "pi"> = true;
 /** Every executable harness is also a selectable configuration selector. */
 const everyDispatchHarnessIsSelectable: Equal<Extract<ActiveHarness, Harness>, "claude" | "codex" | "pi"> =
   true;
-/** A parsed reviewer/planner token can never name a codex transport. */
+/** A parsed reviewer/planner token can name every executable transport. */
 const reviewerTokenHarnessStaysExecutable: Equal<ReviewerToken["harness"], "claude" | "codex" | "pi"> = true;
 /** Nor can a `[tiers]` dispatch entry. */
 const tierEntryTokenStaysExecutable: Equal<TierEntry["token"]["harness"], "claude" | "codex" | "pi"> = true;
-/** The effort rules are keyed on the executable domain, so codex has no efforts. */
+/** The effort rules are keyed on the executable domain, including Codex. */
 const effortRulesStayExecutable: Equal<Parameters<typeof isEffort>[0], Harness> = true;
 /** Each guard narrows to its OWN domain and no further. */
 const activeGuardNarrowsToSelector: (value: string) => value is ActiveHarness = isActiveHarness;
@@ -161,17 +161,17 @@ describe("T861: the active configuration-selector vocabulary admits codex", () =
     expect(isHarness("codex")).toBe(true);
     expect(isActiveHarness("bogus")).toBe(false);
 
-    // Every executable transport is selectable; the converse does not hold.
+    // Every executable transport is selectable.
     for (const harness of HARNESSES) {
       expect(isActiveHarness(harness)).toBe(true);
     }
     expect(HARNESSES.length).toBe(ACTIVE_HARNESSES.length);
 
-    // codex has no effort vocabulary of its own — efforts are keyed on the
-    // executable transports only.
+    // Codex has its own packaged-executable effort vocabulary.
     expect(isEffort("pi", "xhigh")).toBe(true);
     expect(isEffort("claude", "off")).toBe(false);
-    expect(isEffort("codex", "none")).toBe(true);
+    expect(isEffort("codex", "ultra")).toBe(true);
+    expect(isEffort("codex", "none")).toBe(false);
   });
 
   it("resolves CQ_HARNESS=codex to the codex selector", () => {
@@ -190,10 +190,11 @@ describe("T861: the active configuration-selector vocabulary admits codex", () =
     ).toBe("codex");
   });
 
-  it("never lets codex become a dispatchable reviewer/planner token", () => {
-    expect(() => parseReviewerToken("codex:gpt-5.4")).toThrow(CqConfigError);
-    expect(() => parseReviewerToken("codex:gpt-5.4")).toThrow(/unknown harness "codex"/);
-    expect(() => parseReviewerToken("codex:openai/gpt-5.4")).toThrow(CqConfigError);
+  it("accepts codex as a dispatchable reviewer/planner token", () => {
+    expect(parseReviewerToken("codex:gpt-5.6-sol:ultra")).toEqual({
+      harness: "codex", model: "gpt-5.6-sol", provider: null, effort: "ultra",
+    });
+    expect(() => parseReviewerToken("codex:openai/gpt-5.6-sol")).toThrow(CqConfigError);
   });
 });
 

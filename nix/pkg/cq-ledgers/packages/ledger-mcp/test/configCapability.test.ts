@@ -129,6 +129,35 @@ describe("T695: sectioned get_config parity and independent fallbacks", () => {
   });
 });
 
+describe("T1630: get_config projects Codex mappings and the global dispatch policy", () => {
+  it("returns a codex mapping and forceShellout from get_config(all)", () => {
+    writeCqToml([
+      'reviewers = ["sol"]',
+      "",
+      "[aliases]",
+      '  sol = "codex:gpt-5.6-sol:ultra"',
+      "",
+      "[tiers]",
+      '  standard = "sol"',
+      "",
+      "[agent_tiers]",
+      '  implement-worker = "standard"',
+      "",
+      "[dispatch]",
+      "  forceShellout = true",
+      "",
+    ].join("\n"));
+
+    const config = computeConfig(dir);
+    expect(computeSection(dir, "all")).toEqual(config);
+    expect(config.dispatch).toEqual({ forceShellout: true });
+
+    const worker = agentEntry(computeAgentModels(dir), "implement-worker");
+    expect(worker.modelMappings.codex).toEqual(["gpt-5.6-sol:ultra"]);
+    expect(worker.modelMappings.pi).toBeUndefined();
+  });
+});
+
 describe("T232: provider threading — computePlanners", () => {
   it("returns provider:null for the claude planner token", () => {
     writeCqToml(FIXTURE);
@@ -928,10 +957,8 @@ describe("T518 (Q254): computeAgentModels applies the [agent_efforts] override",
 // ---- T861: codex is an ACTIVE SELECTOR, never a dispatch transport ---------
 //
 // The config capability reads through loadConfig, so `CQ_HARNESS=codex` must
-// select `[harness.codex]` here too. What must NOT happen is codex leaking into
-// the EXECUTABLE dispatch-token domain: the `modelMappings` keys stay
-// `claude | pi`, because there is no Codex dispatch transport to invoke.
-// (Projecting a dedicated Codex panel through MCP is T862, not this task.)
+// select `[harness.codex]` here too. Codex now belongs to the executable
+// dispatch-token domain, so `modelMappings` can carry `claude | codex | pi`.
 
 type Equal<Left, Right> =
   (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2

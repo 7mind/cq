@@ -81,20 +81,30 @@ describe("parseReviewerToken", () => {
 });
 
 describe("codex token and global dispatch configuration", () => {
-  it("round-trips a codex token without stealing Pi's openai-codex provider route", () => {
+  it("round-trips all three executable prefixes without stealing Pi's openai-codex provider route", () => {
+    expect(parseReviewerToken("claude:opus:high")).toEqual({
+      harness: "claude", model: "opus", provider: null, effort: "high",
+    });
     expect(parseReviewerToken("codex:gpt-5.6-sol:xhigh")).toEqual({
       harness: "codex", model: "gpt-5.6-sol", provider: null, effort: "xhigh",
     });
     expect(parseReviewerToken("pi:openai-codex/gpt-5.6-sol:xhigh")).toEqual({
       harness: "pi", model: "gpt-5.6-sol", provider: "openai-codex", effort: "xhigh",
     });
-    expect(() => parseReviewerToken("codex:gpt-5.6-sol:off")).toThrow(CqConfigError);
+    expect(() => parseReviewerToken("codex:gpt-5.6-sol:none")).toThrow(CqConfigError);
+    expect(() => parseReviewerToken("codex:gpt-5.6-sol:minimal")).toThrow(CqConfigError);
+    expect(() => parseReviewerToken("codex:gpt-5.6-sol:unknown")).toThrow(CqConfigError);
   });
 
-  it("defaults forceShellout to false and reads its sole global dispatch location", () => {
+  it("defaults forceShellout to false and resolves the same global setting under every active harness", () => {
     expect(parseConfig("[aliases]\n").dispatch).toEqual({ forceShellout: false });
-    expect(parseConfig("[dispatch]\nforceShellout = true\n").dispatch).toEqual({ forceShellout: true });
-    expect(() => parseConfig("[harness.pi.dispatch]\nforceShellout = true\n")).toThrow(/unexpected key "dispatch"/);
+    const source = "[dispatch]\nforceShellout = true\n";
+    for (const harness of ["claude", "codex", "pi"] as const) {
+      expect(parseConfig(source, harness).dispatch).toEqual({ forceShellout: true });
+      expect(() => parseConfig(`[harness.${harness}]\nforceShellout = false\n`)).toThrow(
+        /forceShellout/,
+      );
+    }
   });
 });
 

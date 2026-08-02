@@ -230,6 +230,19 @@ A typical run:
    implement — autonomously, pausing only when it needs something from you
    (an unanswered question or a user action). Re-run it after you unblock it.
 
+## Project dispatch configuration
+
+`cq init` writes `cq.toml`; [`cq.toml.example`](cq.toml.example) documents the
+complete schema. Model tokens use exactly one executable prefix:
+`claude:<model>`, `codex:<model>`, or `pi:<provider>/<model>`. In particular,
+`pi:openai-codex/gpt-5.6-sol:xhigh` remains a Pi provider route, while
+`codex:gpt-5.6-sol:ultra` selects the Codex executable. The packaged Codex
+vocabulary accepts `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`.
+
+`[dispatch]` has one global boolean, `forceShellout`, which defaults to
+`false`. It applies identically under the `claude`, `codex`, and `pi` active
+harnesses; `[harness.*]` blocks cannot override it.
+
 ---
 
 ## Development (ledger workspace)

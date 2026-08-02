@@ -181,7 +181,7 @@ function agent(agents: readonly AgentEntry[], id: string): AgentEntry {
 
 // The [harness.codex] ladder the fixture ships: the pi-EXECUTABLE openai-codex
 // GPT-5.6 family. `codex` selects the block; the tokens it names are pi tokens,
-// because codex has no dispatch transport of its own (T861).
+// because Codex-hosted dispatches must not select Claude tokens (T861).
 const SOL: PanelEntry = {
   harness: "pi",
   model: "gpt-5.6-sol",
