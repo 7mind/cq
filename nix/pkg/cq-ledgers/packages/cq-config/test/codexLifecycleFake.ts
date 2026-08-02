@@ -19,6 +19,7 @@ const launch = JSON.parse(input) as LaunchEnvelope;
 const readyPath = process.env["CQ_TEST_CODEX_READY"];
 const groupPath = process.env["CQ_TEST_CODEX_GROUP"];
 const signalPath = process.env["CQ_TEST_CODEX_SIGNALS"];
+const releasePath = process.env["CQ_TEST_CODEX_RELEASE"];
 if (readyPath === undefined || groupPath === undefined || signalPath === undefined) {
   throw new Error(
     "fake Codex requires CQ_TEST_CODEX_READY, CQ_TEST_CODEX_GROUP, and CQ_TEST_CODEX_SIGNALS",
@@ -56,8 +57,9 @@ if (leader === null || target === null) {
   throw new Error("fake Codex could not capture its registered group identities");
 }
 
+const mode = process.env["CQ_TEST_CODEX_MODE"];
 const members: ProcessIdentity[] = [target];
-if (process.env["CQ_TEST_CODEX_MODE"] !== "success") {
+if (mode === "wait") {
   const memberReady = `${groupPath}.member-ready`;
   const member = Bun.spawn([process.execPath, "run", GROUP_MEMBER_FIXTURE, memberReady], {
     stdin: "ignore",
@@ -93,7 +95,7 @@ writeFileSync(
   "utf8",
 );
 
-if (process.env["CQ_TEST_CODEX_MODE"] === "success") {
+if (mode === "success") {
   process.stdout.write(
     `${JSON.stringify({ type: "diagnostic", secret: "raw-child-output" })}\n`,
   );
@@ -111,7 +113,26 @@ if (process.env["CQ_TEST_CODEX_MODE"] === "success") {
       },
     })}\n`,
   );
-} else {
+} else if (mode === "invalid-result") {
+  if (releasePath === undefined) {
+    throw new Error("invalid-result fake Codex requires CQ_TEST_CODEX_RELEASE");
+  }
+  for (;;) {
+    try {
+      readFileSync(releasePath, "utf8");
+      break;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+    await Bun.sleep(2);
+  }
+  process.stdout.write(
+    `${JSON.stringify({
+      type: "item.completed",
+      item: { type: "agent_message", text: "not-a-dispatch-handle" },
+    })}\n`,
+  );
+} else if (mode === "wait") {
   let stopping = false;
   const stop = (signal: NodeJS.Signals): void => {
     if (stopping) return;
@@ -122,4 +143,6 @@ if (process.env["CQ_TEST_CODEX_MODE"] === "success") {
   process.on("SIGINT", () => stop("SIGINT"));
   process.on("SIGTERM", () => stop("SIGTERM"));
   await new Promise<void>(() => {});
+} else {
+  throw new Error(`fake Codex received unknown mode ${JSON.stringify(mode)}`);
 }

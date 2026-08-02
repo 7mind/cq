@@ -8,6 +8,7 @@ import {
   GateBusyError,
   acquireWorktreeGate,
   closeWorktreeGate,
+  isProcessGroupAlive,
   isRegisteredProcessGroupAlive,
   launchRegisteredGateCommand,
   readProcessIdentity,
@@ -32,11 +33,27 @@ const GATE_FIXTURE = fileURLToPath(
   new URL("./codexGateCommandFixture.ts", import.meta.url),
 );
 const ROLE_TIMEOUT_WINDOW_MS = 30_000;
+const CONTROLLED_DEADLINE_MS = 2_000;
+
+interface ProcessGroupMemberObservation {
+  readonly identity: ProcessIdentity;
+  readonly pgid: number;
+}
 
 interface CodexGroupObservation {
   readonly registration: ProcessGroupRegistration;
   readonly members: readonly ProcessIdentity[];
   readonly identityHelper: string | null;
+}
+
+interface RegisteredGroupObservation {
+  readonly registration: ProcessGroupRegistration;
+  readonly members: readonly ProcessGroupMemberObservation[];
+}
+
+interface GateReadyRecord {
+  readonly targetPid: number;
+  readonly memberPid: number;
 }
 
 interface LifecycleFixture {
@@ -48,6 +65,7 @@ interface LifecycleFixture {
   readonly codexReady: string;
   readonly codexGroup: string;
   readonly codexSignals: string;
+  readonly codexRelease: string;
   readonly gateReady: readonly [string, string];
   readonly gateSignals: readonly [string, string];
 }
@@ -83,6 +101,7 @@ async function createLifecycleFixture(): Promise<LifecycleFixture> {
     codexReady: join(root, "codex.ready"),
     codexGroup: join(root, "codex.group.json"),
     codexSignals: join(root, "codex.signals"),
+    codexRelease: join(root, "codex.release"),
     gateReady: [join(root, "gate-0.ready"), join(root, "gate-1.ready")],
     gateSignals: [join(root, "gate-0.signals"), join(root, "gate-1.signals")],
   };
@@ -111,7 +130,7 @@ function invocation(fixture: LifecycleFixture, timeoutMs: number): string {
 
 function launchDispatch(
   fixture: LifecycleFixture,
-  mode: "success" | "wait",
+  mode: "invalid-result" | "success" | "wait",
   timeoutMs: number,
 ): DispatchProcess {
   const argv =
@@ -129,6 +148,7 @@ function launchDispatch(
       CQ_TEST_CODEX_READY: fixture.codexReady,
       CQ_TEST_CODEX_GROUP: fixture.codexGroup,
       CQ_TEST_CODEX_SIGNALS: fixture.codexSignals,
+      CQ_TEST_CODEX_RELEASE: fixture.codexRelease,
     },
     stdin: "pipe",
     stdout: "pipe",
@@ -143,17 +163,24 @@ function launchDispatch(
   };
 }
 
-async function waitForPid(path: string): Promise<number> {
+async function waitForGateReady(path: string): Promise<GateReadyRecord> {
   for (let attempt = 0; attempt < 500; attempt += 1) {
     try {
-      const pid = Number.parseInt((await readFile(path, "utf8")).trim(), 10);
-      if (Number.isSafeInteger(pid) && pid > 1) return pid;
+      const record = JSON.parse(await readFile(path, "utf8")) as GateReadyRecord;
+      if (
+        Number.isSafeInteger(record.targetPid) &&
+        record.targetPid > 1 &&
+        Number.isSafeInteger(record.memberPid) &&
+        record.memberPid > 1
+      ) {
+        return record;
+      }
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
     await Bun.sleep(2);
   }
-  throw new Error(`process did not publish ${path}`);
+  throw new Error(`gate command did not publish ${path}`);
 }
 
 async function waitForCodexGroup(path: string): Promise<CodexGroupObservation> {
@@ -177,13 +204,67 @@ async function waitForIdentityDead(identity: ProcessIdentity): Promise<void> {
   throw new Error(`process ${String(identity.pid)} remained alive`);
 }
 
-async function expectCodexGroupDead(observation: CodexGroupObservation): Promise<void> {
+async function readProcessGroup(pid: number): Promise<number> {
+  if (process.platform === "linux") {
+    const stat = await readFile(`/proc/${String(pid)}/stat`, "utf8");
+    const commandEnd = stat.lastIndexOf(")");
+    if (commandEnd < 0) throw new Error(`process ${String(pid)} exposed malformed stat data`);
+    const processGroup = stat
+      .slice(commandEnd + 1)
+      .trim()
+      .split(/\s+/u)[2];
+    if (processGroup === undefined) {
+      throw new Error(`process ${String(pid)} exposed no process group`);
+    }
+    return Number.parseInt(processGroup, 10);
+  }
+  const processGroup = spawnSync("ps", ["-o", "pgid=", "-p", String(pid)], {
+    encoding: "utf8",
+  });
+  if (processGroup.status !== 0 || processGroup.stdout.trim() === "") {
+    throw new Error(`could not resolve process group for ${String(pid)}`);
+  }
+  return Number.parseInt(processGroup.stdout.trim(), 10);
+}
+
+async function observeRegisteredGroup(
+  registration: ProcessGroupRegistration,
+  members: readonly ProcessIdentity[],
+): Promise<RegisteredGroupObservation> {
+  return {
+    registration,
+    members: await Promise.all(
+      members.map(async (identity) => ({
+        identity,
+        pgid: await readProcessGroup(identity.pid),
+      })),
+    ),
+  };
+}
+
+async function expectRegisteredGroupAlive(observation: RegisteredGroupObservation): Promise<void> {
+  expect(observation.registration.leader.pid).toBe(observation.registration.pgid);
+  expect(await isRegisteredProcessGroupAlive(observation.registration)).toBe(true);
+  expect(await readProcessIdentity(observation.registration.leader.pid)).toEqual(
+    observation.registration.leader,
+  );
+  for (const member of observation.members) {
+    expect(member.pgid).toBe(observation.registration.pgid);
+    expect(await readProcessIdentity(member.identity.pid)).toEqual(member.identity);
+  }
+}
+
+async function expectRegisteredGroupDead(observation: RegisteredGroupObservation): Promise<void> {
   for (let attempt = 0; attempt < 500; attempt += 1) {
-    if (!(await isRegisteredProcessGroupAlive(observation.registration))) break;
+    if (!isProcessGroupAlive(observation.registration.pgid)) break;
     await Bun.sleep(2);
   }
+  expect(isProcessGroupAlive(observation.registration.pgid)).toBe(false);
   expect(await isRegisteredProcessGroupAlive(observation.registration)).toBe(false);
-  await Promise.all(observation.members.map(waitForIdentityDead));
+  await Promise.all([
+    waitForIdentityDead(observation.registration.leader),
+    ...observation.members.map(({ identity }) => waitForIdentityDead(identity)),
+  ]);
 }
 
 async function launchGate(
@@ -191,6 +272,7 @@ async function launchGate(
 ): Promise<{
   readonly lease: WorktreeGateLease;
   readonly commands: readonly LaunchedGateCommand[];
+  readonly groups: readonly RegisteredGroupObservation[];
 }> {
   const lease = await acquireWorktreeGate({
     worktree: fixture.worktree,
@@ -198,6 +280,7 @@ async function launchGate(
   });
   try {
     const commands: LaunchedGateCommand[] = [];
+    const groups: RegisteredGroupObservation[] = [];
     for (let index = 0; index < fixture.gateReady.length; index += 1) {
       const ready = fixture.gateReady[index];
       const signals = fixture.gateSignals[index];
@@ -212,9 +295,15 @@ async function launchGate(
         signals,
       ]);
       commands.push(command);
-      await waitForPid(ready);
+      const readyRecord = await waitForGateReady(ready);
+      const target = await readProcessIdentity(readyRecord.targetPid);
+      const member = await readProcessIdentity(readyRecord.memberPid);
+      if (target === null || member === null) {
+        throw new Error(`gate fixture ${String(index)} exposed a dead target or member`);
+      }
+      groups.push(await observeRegisteredGroup(command.registration, [target, member]));
     }
-    return { lease, commands };
+    return { lease, commands, groups };
   } catch (error) {
     await closeWorktreeGate(lease);
     throw error;
@@ -267,10 +356,8 @@ describe("T1625 Codex and canonical-worktree gate lifecycle [Effectual-GoodCommu
         expect(codexGroup.registration.leader.startTime).toMatch(/^\d+\.\d+$/u);
       }
       expect(gate.commands).toHaveLength(2);
-      for (const command of gate.commands) {
-        expect(await readProcessIdentity(command.registration.leader.pid)).toEqual(
-          command.registration.leader,
-        );
+      for (const group of gate.groups) {
+        await expectRegisteredGroupAlive(group);
       }
 
       const sentinel = join(fixture.root, "second-gate-sentinel");
@@ -308,9 +395,13 @@ describe("T1625 Codex and canonical-worktree gate lifecycle [Effectual-GoodCommu
       gate = await launchGate(fixture);
       dispatch = launchDispatch(fixture, "wait", ROLE_TIMEOUT_WINDOW_MS);
       codexGroup = await waitForCodexGroup(fixture.codexGroup);
-      expect(codexGroup.registration.leader.pid).toBe(codexGroup.registration.pgid);
       expect(codexGroup.members).toHaveLength(2);
-      expect(codexGroup.members.map(({ pid }) => pid)).not.toContain(codexGroup.registration.pgid);
+      const observedCodexGroup = await observeRegisteredGroup(
+        codexGroup.registration,
+        codexGroup.members,
+      );
+      await expectRegisteredGroupAlive(observedCodexGroup);
+      for (const group of gate.groups) await expectRegisteredGroupAlive(group);
 
       dispatch.child.kill("SIGINT");
       await Bun.sleep(2);
@@ -320,14 +411,43 @@ describe("T1625 Codex and canonical-worktree gate lifecycle [Effectual-GoodCommu
       expect(await dispatch.child.exited).toBe(1);
       expect(await dispatch.stdout).toBe("");
       expect(await dispatch.stderr).toMatch(/wrapper received SIG(?:INT|TERM)/u);
-      await expectCodexGroupDead(codexGroup);
-      await Promise.all(
-        gate.commands.map(({ registration }) => waitForIdentityDead(registration.leader)),
-      );
+      await expectRegisteredGroupDead(observedCodexGroup);
+      for (const group of gate.groups) await expectRegisteredGroupDead(group);
       expect(await readSignals(fixture.codexSignals)).toEqual(["SIGTERM"]);
       for (const signals of fixture.gateSignals) {
         expect(await readSignals(signals)).toEqual(["SIGTERM"]);
       }
+    } finally {
+      await settleDispatchFixture(dispatch);
+      if (codexGroup !== undefined) await settleRegistration(codexGroup.registration);
+      if (gate !== undefined) await closeWorktreeGate(gate.lease);
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  test("an installed early interception failure settles Codex and every gate group", async () => {
+    const fixture = await createLifecycleFixture();
+    let gate: Awaited<ReturnType<typeof launchGate>> | undefined;
+    let codexGroup: CodexGroupObservation | undefined;
+    let dispatch: DispatchProcess | undefined;
+    try {
+      gate = await launchGate(fixture);
+      dispatch = launchDispatch(fixture, "invalid-result", ROLE_TIMEOUT_WINDOW_MS);
+      codexGroup = await waitForCodexGroup(fixture.codexGroup);
+      expect(codexGroup.members).toHaveLength(1);
+      const observedCodexGroup = await observeRegisteredGroup(
+        codexGroup.registration,
+        codexGroup.members,
+      );
+      await expectRegisteredGroupAlive(observedCodexGroup);
+      for (const group of gate.groups) await expectRegisteredGroupAlive(group);
+
+      await writeFile(fixture.codexRelease, "release\n");
+      expect(await dispatch.child.exited).toBe(1);
+      expect(await dispatch.stdout).toBe("");
+      expect(await dispatch.stderr).toContain("handle-only contract");
+      await expectRegisteredGroupDead(observedCodexGroup);
+      for (const group of gate.groups) await expectRegisteredGroupDead(group);
     } finally {
       await settleDispatchFixture(dispatch);
       if (codexGroup !== undefined) await settleRegistration(codexGroup.registration);
@@ -343,21 +463,23 @@ describe("T1625 Codex and canonical-worktree gate lifecycle [Effectual-GoodCommu
     let dispatch: DispatchProcess | undefined;
     try {
       gate = await launchGate(fixture);
-      dispatch = launchDispatch(fixture, "wait", ROLE_TIMEOUT_WINDOW_MS);
+      dispatch = launchDispatch(fixture, "wait", CONTROLLED_DEADLINE_MS);
       codexGroup = await waitForCodexGroup(fixture.codexGroup);
-      expect(codexGroup.registration.leader.pid).toBe(codexGroup.registration.pgid);
       expect(codexGroup.members).toHaveLength(2);
-      dispatch.child.kill("SIGALRM");
+      const observedCodexGroup = await observeRegisteredGroup(
+        codexGroup.registration,
+        codexGroup.members,
+      );
+      await expectRegisteredGroupAlive(observedCodexGroup);
+      for (const group of gate.groups) await expectRegisteredGroupAlive(group);
 
       expect(await dispatch.child.exited).toBe(1);
       expect(await dispatch.stdout).toBe("");
       expect(await dispatch.stderr).toContain(
-        `child exceeded its ${String(ROLE_TIMEOUT_WINDOW_MS)} ms window`,
+        `child exceeded its ${String(CONTROLLED_DEADLINE_MS)} ms window`,
       );
-      await expectCodexGroupDead(codexGroup);
-      await Promise.all(
-        gate.commands.map(({ registration }) => waitForIdentityDead(registration.leader)),
-      );
+      await expectRegisteredGroupDead(observedCodexGroup);
+      for (const group of gate.groups) await expectRegisteredGroupDead(group);
     } finally {
       await settleDispatchFixture(dispatch);
       if (codexGroup !== undefined) await settleRegistration(codexGroup.registration);

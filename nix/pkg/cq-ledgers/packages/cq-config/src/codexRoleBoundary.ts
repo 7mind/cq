@@ -378,10 +378,8 @@ export async function executeCodexRoleBoundary(
   };
   const onSigint = (): void => requestStop("SIGINT");
   const onSigterm = (): void => requestStop("SIGTERM");
-  const onSigalrm = (): void => requestStop("timeout");
   process.on("SIGINT", onSigint);
   process.on("SIGTERM", onSigterm);
-  process.on("SIGALRM", onSigalrm);
   const timeout = setTimeout(() => requestStop("timeout"), plan.timeoutMs);
 
   let rootRegistration: ProcessGroupRegistration | undefined;
@@ -468,7 +466,6 @@ export async function executeCodexRoleBoundary(
       });
     } catch (error) {
       if (requestedStop === undefined) throw error;
-      await settle();
       if (requestedStop === "timeout") {
         throw new CodexRoleBoundaryError(
           `child exceeded its ${String(plan.timeoutMs)} ms window`,
@@ -489,7 +486,6 @@ export async function executeCodexRoleBoundary(
       stopRequested.then((cause) => ({ kind: "stopped" as const, cause })),
     ]);
     if (outcome.kind === "stopped") {
-      await settle();
       if (outcome.cause === "timeout") {
         throw new CodexRoleBoundaryError(
           `child exceeded its ${String(plan.timeoutMs)} ms window`,
@@ -499,10 +495,19 @@ export async function executeCodexRoleBoundary(
     }
     if (outcome.kind === "failed") throw outcome.error;
     return interceptCodexRoleBoundaryResult(outcome.stdout, plan.expectedHandle);
+  } catch (error) {
+    try {
+      await settle();
+    } catch (settlementError) {
+      throw new AggregateError(
+        [error, settlementError],
+        "Codex role boundary failed and process-group settlement failed",
+      );
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
     process.off("SIGINT", onSigint);
     process.off("SIGTERM", onSigterm);
-    process.off("SIGALRM", onSigalrm);
   }
 }
