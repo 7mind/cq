@@ -660,7 +660,7 @@
               --add-flags "run $WORKSPACE/packages/cq-config/scripts/codex-role-dispatch.ts --" \
               --set-default CQ_PROMPT_ROOT "$WORKSPACE/prompt-surfaces/codex" \
               --set-default CQ_CODEX_LEDGER_COMMAND "$out/bin/cq" \
-              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 ]}
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 pkgs.git ]}
 
             runHook postInstall
           '';
@@ -758,7 +758,8 @@ EOF
             fi
             touch "$TMPDIR/gate-release"
             wait "$firstGate"
-            CQ_TEST_CODEX_ROLE_EXECUTABLE=$out/bin/cq-codex-role \
+            PATH=${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 pkgs.git ]}:$PATH \
+              CQ_TEST_CODEX_ROLE_EXECUTABLE=$out/bin/cq-codex-role \
               CQ_TEST_GIT_EXECUTABLE=${pkgs.git}/bin/git \
               ${pkgs.bun}/bin/bun test \
                 "$WORKSPACE/packages/cq-config/test/codexGateIntegration.test.ts"

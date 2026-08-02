@@ -437,23 +437,30 @@ export async function executeCodexRoleBoundary(
   try {
     child.stdin.write(plan.stdin);
     child.stdin.end();
-    return await Promise.race([
-      Promise.all([
-        rootIdentity,
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-        child.exited,
-      ]).then(([, stdout]) => interceptCodexRoleBoundaryResult(stdout, plan.expectedHandle)),
-      stopRequested.then(async (cause) => {
-        await settle();
-        if (cause === "timeout") {
-          throw new CodexRoleBoundaryError(
-            `child exceeded its ${String(plan.timeoutMs)} ms window`,
-          );
-        }
-        throw new CodexRoleBoundaryError(`wrapper received ${cause}`);
-      }),
+    const execution = Promise.all([
+      rootIdentity,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]).then(
+      ([, stdout]) => ({ kind: "completed" as const, stdout }),
+      (error: unknown) => ({ kind: "failed" as const, error }),
+    );
+    const outcome = await Promise.race([
+      execution,
+      stopRequested.then((cause) => ({ kind: "stopped" as const, cause })),
     ]);
+    if (outcome.kind === "stopped") {
+      await settle();
+      if (outcome.cause === "timeout") {
+        throw new CodexRoleBoundaryError(
+          `child exceeded its ${String(plan.timeoutMs)} ms window`,
+        );
+      }
+      throw new CodexRoleBoundaryError(`wrapper received ${outcome.cause}`);
+    }
+    if (outcome.kind === "failed") throw outcome.error;
+    return interceptCodexRoleBoundaryResult(outcome.stdout, plan.expectedHandle);
   } finally {
     clearTimeout(timeout);
     process.off("SIGINT", onSigint);
