@@ -21,6 +21,30 @@ import type {
   MaterializedDispatchInput,
   NativeCompletionProof,
 } from "./compactDispatchProtocol.js";
+import {
+  buildClaudeCompactNativeLaunch,
+  launchClaudePrint,
+  type ClaudePrintLaunchOptions,
+} from "./claudeDispatchBridge.js";
+import {
+  CLAUDE_CROSS_HARNESS_DELIVERY_MODE,
+  claudeLaunchGate,
+  decideClaudeCompletion,
+  type ClaudeChildCorrelation,
+} from "./claudeDispatchProtocol.js";
+import {
+  CodexRoleBoundaryError,
+  createCodexRoleBoundaryPlan,
+  executeCodexRoleBoundary,
+  type CodexRoleBoundaryRequest,
+  type CodexRoleSandboxMode,
+} from "./codexRoleBoundary.js";
+import {
+  CODEX_FALLBACK_DELIVERY_MODE,
+  codexLaunchGate,
+  decideCodexCompletion,
+  type CodexChildCorrelation,
+} from "./codexDispatchProtocol.js";
 import type { ActiveHarness, Harness } from "./types.js";
 
 export const DISPATCH_TRANSPORTS = ["native", "process"] as const;
@@ -52,9 +76,9 @@ export function routeDispatchTransport(
   });
 }
 
-export class DispatchTransportRoutingError extends Error {
+export class DispatchTransportRoutingError extends AttestationContractError {
   constructor(message: string) {
-    super(`Dispatch transport router: ${message}`);
+    super("dispatch.transport", message);
     this.name = "DispatchTransportRoutingError";
   }
 }
@@ -116,16 +140,213 @@ export function createNativeDispatchAdapter(
   return createAdapter(targetHarness, "native", launch);
 }
 
-export function createClaudeProcessDispatchAdapter(
-  launch: DispatchAdapterLauncher,
-): DispatchTransportAdapter {
-  return createAdapter("claude", "process", launch);
+export interface ClaudeProcessAdapterBinding {
+  readonly correlation: ClaudeChildCorrelation;
+  readonly model: string;
+  readonly now: () => string;
+  readonly launchOptions: ClaudePrintLaunchOptions;
 }
 
-export function createCodexProcessDispatchAdapter(
-  launch: DispatchAdapterLauncher,
+export type ClaudeProcessAdapterBindingResolver = (
+  context: DispatchAdapterLaunchContext,
+) => ClaudeProcessAdapterBinding;
+
+export function createClaudeProcessDispatchAdapter(
+  resolve: ClaudeProcessAdapterBindingResolver,
 ): DispatchTransportAdapter {
-  return createAdapter("codex", "process", launch);
+  return createAdapter("claude", "process", (context) => {
+    const binding = resolve(context);
+    const gate = claudeLaunchGate(context.prepared, binding.now());
+    if (!gate.launch) {
+      return {
+        outcome: "aborted",
+        reason: gate.abortReason,
+        details: { refusal: gate.refusal, detail: gate.detail },
+      };
+    }
+    const handle = handleOf(context.prepared);
+    const report = launchClaudePrint(
+      {
+        envelope: buildClaudeCompactNativeLaunch({
+          roleId: context.prepared.promptProvenance.roleId,
+          model: binding.model,
+          handle,
+          inputCapability: context.prepared.inputCapability,
+        }),
+        preparedProvenance: provenanceBindingOf(context.prepared),
+        expectedCorrelation: binding.correlation,
+        resultCapability: context.prepared.resultCapability,
+        childWindowMs: gate.childWindowMs,
+      },
+      binding.launchOptions,
+    );
+    if (report.submission?.state === "aborted") {
+      return {
+        outcome: "aborted",
+        reason: report.submission.result.reason,
+        ...(report.submission.result.details === undefined
+          ? {}
+          : { details: report.submission.result.details }),
+      };
+    }
+    const decision = decideClaudeCompletion({
+      handle,
+      expectedChild: binding.correlation,
+      observation: {
+        source: "transport",
+        mode: CLAUDE_CROSS_HARNESS_DELIVERY_MODE,
+        roleId: report.correlation.roleId,
+        launchNonce: report.correlation.launchNonce,
+        sessionId: report.correlation.sessionId,
+        cancelled: report.cancelled,
+        terminal: report.terminal,
+        finalMessage: report.finalMessage,
+        observedAt: report.observedAt,
+      },
+    });
+    if (decision.action === "abort") {
+      return { outcome: "aborted", reason: decision.reason, details: decision.details };
+    }
+    return {
+      outcome: "completed",
+      handle,
+      nativeCompletion: decision.nativeCompletion,
+      handleOnlyEnforcement: decision.handleOnlyEnforcement,
+    };
+  });
+}
+
+export interface CodexProcessAdapterBoundary {
+  readonly roleInstructions: string;
+  readonly cwd: string;
+  readonly ledgerCwd: string;
+  readonly model: string;
+  readonly reasoningEffort: string;
+  readonly sandboxMode: CodexRoleSandboxMode;
+  readonly promptRoot: string;
+  readonly ledgerCommand: string;
+  readonly codexExecutable: string;
+}
+
+export interface CodexProcessAdapterBinding {
+  readonly boundary: CodexProcessAdapterBoundary;
+  readonly correlation: CodexChildCorrelation;
+  readonly now: () => string;
+}
+
+export type CodexProcessAdapterBindingResolver = (
+  context: DispatchAdapterLaunchContext,
+) => CodexProcessAdapterBinding;
+
+export function createCodexProcessDispatchAdapter(
+  resolve: CodexProcessAdapterBindingResolver,
+): DispatchTransportAdapter {
+  return createAdapter("codex", "process", async (context) => {
+    const binding = resolve(context);
+    const gate = codexLaunchGate(context.prepared, binding.now());
+    if (!gate.launch) {
+      return {
+        outcome: "aborted",
+        reason: gate.abortReason,
+        details: { refusal: gate.refusal, detail: gate.detail },
+      };
+    }
+    const handle = handleOf(context.prepared);
+    const promptDigest = new Bun.CryptoHasher("sha256")
+      .update(binding.boundary.roleInstructions)
+      .digest("hex");
+    if (promptDigest !== context.prepared.promptProvenance.promptDigest) {
+      throw new DispatchTransportRoutingError(
+        `Codex role instructions digest ${JSON.stringify(promptDigest)} does not match prepared ` +
+          `digest ${JSON.stringify(context.prepared.promptProvenance.promptDigest)}`,
+      );
+    }
+    const request: CodexRoleBoundaryRequest = {
+      ...binding.boundary,
+      roleId: context.prepared.promptProvenance.roleId,
+      handle,
+      inputCapability: context.prepared.inputCapability,
+      resultCapability: context.prepared.resultCapability,
+      timeoutMs: gate.childWindowMs,
+    };
+    const plan = createCodexRoleBoundaryPlan(request);
+    try {
+      const observedHandle = await executeCodexRoleBoundary(plan);
+      const observedAt = binding.now();
+      const decision = decideCodexCompletion({
+        handle,
+        expectedChild: binding.correlation,
+        observation: {
+          source: "transport",
+          mode: CODEX_FALLBACK_DELIVERY_MODE,
+          agentType: context.prepared.promptProvenance.roleId,
+          correlationId: binding.correlation.correlationId,
+          threadId: binding.correlation.threadId,
+          outcome: "completed",
+          finalMessage: JSON.stringify(observedHandle),
+          observedAt,
+          exitStatus: 0,
+        },
+      });
+      if (decision.action === "abort") {
+        return { outcome: "aborted", reason: decision.reason, details: decision.details };
+      }
+      return {
+        outcome: "completed",
+        handle: observedHandle,
+        nativeCompletion: decision.nativeCompletion,
+        handleOnlyEnforcement: "structural",
+      };
+    } catch (error) {
+      return codexProcessBoundaryFailure(error);
+    }
+  });
+}
+
+function codexProcessBoundaryFailure(error: unknown): DispatchAdapterAbortion {
+  const boundaryError = findCodexRoleBoundaryError(error);
+  if (boundaryError?.diagnostic !== undefined) {
+    return {
+      outcome: "aborted",
+      reason: "protocol-violation",
+      details: {
+        source: "codex-role-boundary",
+        verdict: boundaryError.diagnostic.verdict,
+        detailCode: boundaryError.diagnostic.detailCode,
+      },
+    };
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (/child exceeded .* ms window/u.test(message)) {
+    return {
+      outcome: "aborted",
+      reason: "deadline-exceeded",
+      details: { source: "codex-role-boundary", message },
+    };
+  }
+  if (/wrapper received SIG(?:INT|TERM)/u.test(message)) {
+    return {
+      outcome: "aborted",
+      reason: "cancelled",
+      details: { source: "codex-role-boundary", message },
+    };
+  }
+  return {
+    outcome: "aborted",
+    reason: "native-failure",
+    details: { source: "codex-role-boundary", message },
+  };
+}
+
+function findCodexRoleBoundaryError(error: unknown): CodexRoleBoundaryError | undefined {
+  if (error instanceof CodexRoleBoundaryError) return error;
+  if (error instanceof AggregateError) {
+    for (const nested of error.errors) {
+      const found = findCodexRoleBoundaryError(nested);
+      if (found !== undefined) return found;
+    }
+  }
+  return undefined;
 }
 
 /** Lifecycle-conformant target-Pi process seam; T1632 supplies its launcher. */
@@ -274,7 +495,7 @@ function assertCompletionShape(
     });
   }
   const requiredActor =
-    route.transport === "native" && route.targetHarness === "pi"
+    route.transport === "process" || route.targetHarness === "pi"
       ? "trusted-extension"
       : "trusted-parent";
   if (completion.nativeCompletion.actor !== requiredActor) {
