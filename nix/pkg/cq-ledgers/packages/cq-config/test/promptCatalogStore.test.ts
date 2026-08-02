@@ -13,16 +13,8 @@
 import { describe, expect, test } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  rmdirSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 // The 2020-12 dialect entrypoint: the catalog schemas declare
@@ -177,9 +169,9 @@ function readGitRefs(
   }
 }
 
-function relevantPathsChanged(): boolean {
+function relevantPathsChanged(repositoryRoot: string): boolean {
   const result = spawnSync("git", ["diff", "--quiet", "HEAD", "--", ...PIN_HISTORY_PATHS], {
-    cwd: REPOSITORY_ROOT,
+    cwd: repositoryRoot,
     encoding: "utf8",
   });
   if (result.error !== undefined || result.status === null) {
@@ -284,15 +276,11 @@ function schemaPinTransitionErrors(
   nextPins: Readonly<Record<string, SchemaPin>>,
 ): readonly string[] {
   const errors: string[] = [];
-  if (
-    canonicalJson(Object.keys(previousPins).sort()) !== canonicalJson(Object.keys(nextPins).sort())
-  ) {
-    errors.push("schema pin keys changed between revisions");
-  }
   for (const roleId of Object.keys(previousPins)) {
     const previousPin = previousPins[roleId]!;
     const nextPin = nextPins[roleId];
     if (nextPin === undefined) {
+      errors.push(`schema pin removed for ${roleId}`);
       continue;
     }
     if (nextPin.version < previousPin.version) {
@@ -300,6 +288,11 @@ function schemaPinTransitionErrors(
     }
     if (nextPin.version === previousPin.version && nextPin.digest !== previousPin.digest) {
       errors.push(`schema pin digest changed without version advance for ${roleId}`);
+    }
+  }
+  for (const roleId of Object.keys(nextPins)) {
+    if (previousPins[roleId] === undefined && nextPins[roleId]!.version !== 1) {
+      errors.push(`new schema pin must start at version 1 for ${roleId}`);
     }
   }
   return errors;
@@ -318,11 +311,14 @@ function schemaPinHistoryErrors(
   return errors;
 }
 
-function currentSchemaPinHistoryErrors(): readonly string[] {
-  const history = historicalSchemaPinHistory(REPOSITORY_ROOT);
+function currentSchemaPinHistoryErrors(
+  repositoryRoot: string,
+  currentPins: Readonly<Record<string, SchemaPin>>,
+): readonly string[] {
+  const history = historicalSchemaPinHistory(repositoryRoot);
   const errors = [...schemaPinHistoryErrors(history)];
-  if (relevantPathsChanged()) {
-    errors.push(...schemaPinTransitionErrors(history.at(-1)!, SCHEMA_PINS));
+  if (relevantPathsChanged(repositoryRoot)) {
+    errors.push(...schemaPinTransitionErrors(history.at(-1)!, currentPins));
   }
   return errors;
 }
@@ -399,53 +395,6 @@ function cloneSidecars(): Record<string, SidecarContract> {
   return structuredClone(DISPATCHED_ROLE_SIDECARS);
 }
 
-interface UnrelatedDirtyFixture {
-  readonly relativePath: string;
-  readonly cleanup: () => void;
-}
-
-function createExclusiveFileAtAbsolutePath(absolutePath: string): () => void {
-  if (!isAbsolute(absolutePath)) {
-    throw new TypeError("exclusive fixture path must be absolute");
-  }
-  writeFileSync(absolutePath, "unrelated\n", { flag: "wx" });
-  return () => unlinkSync(absolutePath);
-}
-
-function createUnrelatedDirtyFixture(
-  createFixtureFile: (absolutePath: string) => () => void,
-  removeDirectory: (absolutePath: string) => void,
-): UnrelatedDirtyFixture {
-  const fixtureDirectory = mkdtempSync(join(REPOSITORY_ROOT, ".t1579-unrelated-dirty-"));
-  const fixtureFile = join(fixtureDirectory, "fixture");
-  const relativePath = relative(REPOSITORY_ROOT, fixtureFile);
-  if (relativePath === "" || isAbsolute(relativePath) || relativePath.startsWith("..")) {
-    rmdirSync(fixtureDirectory);
-    throw new Error("repository fixture allocation escaped the repository");
-  }
-  let removeFixtureFile: () => void;
-  try {
-    removeFixtureFile = createFixtureFile(fixtureFile);
-  } catch (error) {
-    try {
-      removeDirectory(fixtureDirectory);
-    } catch (cleanupError) {
-      throw new AggregateError(
-        [error, cleanupError],
-        "fixture allocation failed and its directory could not be removed",
-      );
-    }
-    throw error;
-  }
-  return {
-    relativePath,
-    cleanup: () => {
-      removeFixtureFile();
-      rmdirSync(fixtureDirectory);
-    },
-  };
-}
-
 /** A fresh Ajv compiling draft 2020-12 schemas; `strict:false` allows annotations. */
 function newAjv(): Ajv2020 {
   return new Ajv2020({ strict: false, allErrors: true });
@@ -506,7 +455,7 @@ describe("typed prompt-catalog store — schemas validate as JSON Schema (T341)"
 describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
   test("the committed pins cover every sidecar and match its versioned schema contract", () => {
     expect([
-      ...currentSchemaPinHistoryErrors(),
+      ...currentSchemaPinHistoryErrors(REPOSITORY_ROOT, SCHEMA_PINS),
       ...verifySchemaPins(SCHEMA_PINS, DISPATCHED_ROLE_SIDECARS, SCHEMA_PINS),
     ]).toEqual([]);
   });
@@ -595,7 +544,43 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
     expect(schemaPinHistoryErrors([SCHEMA_PINS, advancedPins, advancedPins])).toEqual([]);
   });
 
-  test("rejects deletion and reintroduction within the established role set", () => {
+  // regression: D245 — a new dispatched role may join the catalog at version 1.
+  test("accepts a new role whose initial schema pin starts at version 1", () => {
+    const extendedPins = {
+      ...SCHEMA_PINS,
+      "new-dispatched-role": {
+        version: 1,
+        digest: "0".repeat(64),
+      },
+    };
+
+    expect(schemaPinHistoryErrors([SCHEMA_PINS, extendedPins])).toEqual([]);
+  });
+
+  test("rejects a new role whose initial schema pin starts above version 1", () => {
+    const extendedPins = {
+      ...SCHEMA_PINS,
+      "new-dispatched-role": {
+        version: 2,
+        digest: "0".repeat(64),
+      },
+    };
+
+    expect(schemaPinHistoryErrors([SCHEMA_PINS, extendedPins])).toEqual([
+      "new schema pin must start at version 1 for new-dispatched-role",
+    ]);
+  });
+
+  test("rejects removal of an established role", () => {
+    const deletedPins = { ...SCHEMA_PINS };
+    delete deletedPins["implement-worker"];
+
+    expect(schemaPinHistoryErrors([SCHEMA_PINS, deletedPins])).toEqual([
+      "schema pin removed for implement-worker",
+    ]);
+  });
+
+  test("retains a removal error after the role is reintroduced at version 1", () => {
     const implementWorkerPin = SCHEMA_PINS["implement-worker"]!;
     const deletedPins = { ...SCHEMA_PINS };
     delete deletedPins["implement-worker"];
@@ -603,13 +588,13 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
       ...deletedPins,
       "implement-worker": {
         ...implementWorkerPin,
+        version: 1,
         digest: "0".repeat(64),
       },
     };
 
     expect(schemaPinHistoryErrors([SCHEMA_PINS, deletedPins, reintroducedPins])).toEqual([
-      "schema pin keys changed between revisions",
-      "schema pin keys changed between revisions",
+      "schema pin removed for implement-worker",
     ]);
   });
 
@@ -656,88 +641,34 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
     }
   });
 
-  test("owns only its unrelated-dirt fixture", () => {
-    const unrelatedFixture = createUnrelatedDirtyFixture(
-      createExclusiveFileAtAbsolutePath,
-      rmdirSync,
-    );
+  // regression: D246 — unrelated working-tree dirt must not select a pin transition edge.
+  test("ignores unrelated working-tree dirt in the real history verifier", () => {
+    const fixtureDirectory = mkdtempSync(join(tmpdir(), "t1579-unrelated-dirt-"));
+    const repository = join(fixtureDirectory, "repository");
     try {
-      expect(unrelatedFixture.relativePath).not.toMatch(/^(?:\/|\.\.(?:\/|$))/);
-      expect(resolve(REPOSITORY_ROOT, unrelatedFixture.relativePath)).toStartWith(
-        `${REPOSITORY_ROOT}/`,
+      execFileSync(
+        "git",
+        ["clone", "--quiet", "--no-tags", pathToFileURL(REPOSITORY_ROOT).href, repository],
+        { encoding: "utf8" },
       );
+      writeFileSync(join(repository, "unrelated-dirt"), "unrelated\n", { flag: "wx" });
       expect(
-        execFileSync("git", ["status", "--short", "--", unrelatedFixture.relativePath], {
-          cwd: REPOSITORY_ROOT,
+        execFileSync("git", ["status", "--short", "--", "unrelated-dirt"], {
+          cwd: repository,
           encoding: "utf8",
         }).trim(),
-      ).not.toBe("");
-    } finally {
-      unrelatedFixture.cleanup();
-    }
-  });
+      ).toBe("?? unrelated-dirt");
 
-  // regression: D246 — an unrelated-dirt fixture must not claim or remove a pre-existing file.
-  test("rejects an existing unrelated-dirty fixture without modifying its bytes", () => {
-    const fixtureDirectory = mkdtempSync(join(tmpdir(), "t1579-unrelated-dirty-"));
-    const fixtureFile = join(fixtureDirectory, "fixture");
-    const originalContents = "pre-existing\n";
-    writeFileSync(fixtureFile, originalContents);
-    try {
-      expect(() => createExclusiveFileAtAbsolutePath(fixtureFile)).toThrow(/EEXIST/);
-      expect(readFileSync(fixtureFile, "utf8")).toBe(originalContents);
-    } finally {
-      unlinkSync(fixtureFile);
-      rmdirSync(fixtureDirectory);
-    }
-  });
-
-  test("removes its owned directory and preserves the file-creation error", () => {
-    const expectedError = new Error("injected fixture creation failure");
-    let fixtureDirectory: string | undefined;
-
-    let caught: unknown;
-    try {
-      createUnrelatedDirtyFixture((fixtureFile) => {
-        fixtureDirectory = dirname(fixtureFile);
-        throw expectedError;
-      }, rmdirSync);
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toBe(expectedError);
-    expect(existsSync(fixtureDirectory!)).toBe(false);
-  });
-
-  test("reports fixture creation and rollback failures together", () => {
-    const expectedCreationError = new Error("injected fixture creation failure");
-    const expectedCleanupError = new Error("injected fixture cleanup failure");
-    let fixtureDirectory: string | undefined;
-    let caught: unknown;
-
-    try {
-      createUnrelatedDirtyFixture(
-        (fixtureFile) => {
-          fixtureDirectory = dirname(fixtureFile);
-          throw expectedCreationError;
+      const invalidWorkingPins = {
+        ...SCHEMA_PINS,
+        "implement-worker": {
+          ...SCHEMA_PINS["implement-worker"]!,
+          digest: "0".repeat(64),
         },
-        () => {
-          throw expectedCleanupError;
-        },
-      );
-    } catch (error) {
-      caught = error;
-    }
-
-    try {
-      expect(caught).toBeInstanceOf(AggregateError);
-      expect((caught as AggregateError).errors).toEqual([
-        expectedCreationError,
-        expectedCleanupError,
-      ]);
-      expect(existsSync(fixtureDirectory!)).toBe(true);
+      };
+      expect(currentSchemaPinHistoryErrors(repository, invalidWorkingPins)).toEqual([]);
     } finally {
-      rmdirSync(fixtureDirectory!);
+      rmSync(fixtureDirectory, { recursive: true });
     }
   });
 
