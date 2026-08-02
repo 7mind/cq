@@ -66,6 +66,10 @@
           lib = pkgs.lib;
           surface = "codex";
         };
+        codexLedgerMcpRegistration = import ./nix/lib/codex-ledger-mcp-registration.nix {
+          lib = pkgs.lib;
+          inherit codexPromptRoot;
+        };
         codexProjection = mkCodexCommandSkills {
           catalog = llmAssets.catalog;
           promptRoot = codexPromptRoot;
@@ -960,7 +964,10 @@ EOF
               pkgs.runCommand "codex-harness-env" { } "touch $out";
             codex-mcp-harness-selection =
               let
-                registration = codexCommandSkillsTest.mcpRegistration;
+                registration = codexLedgerMcpRegistration {
+                  command = "${cqCli}/bin/cq";
+                  args = [ "mcp" ];
+                };
                 registrationJson = pkgs.writeText
                   "codex-ledger-mcp-registration.json"
                   (builtins.toJSON registration);

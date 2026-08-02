@@ -10,7 +10,8 @@
 #               asset-bundle merge + `merged.*` views, the `programs.mcp`
 #               registry, and the common host packages. (needs inputs + self)
 #   claude.nix  Claude Code configuration (programs.claude-code).
-#   codex.nix   Codex configuration (programs.codex).
+#   codex.nix   Codex configuration (programs.codex); codex-ledger-mcp.nix
+#               binds its ledger registration to the rendered Codex prompt root.
 #   pi.nix      Pi configuration (programs.pi); also carries the in-flake
 #               programs.pi module definition (shared factory + Pi options).
 #   yolo.nix    the bubblewrap `yolo` sandbox wrapper + its options. (needs inputs)
@@ -23,6 +24,7 @@
     (import ./tools.nix { inherit inputs self; })
     (import ./claude.nix { inherit inputs self; })
     ./codex.nix
+    ./codex-ledger-mcp.nix
     ./pi.nix
     (import ./yolo.nix { inherit inputs; })
   ];
