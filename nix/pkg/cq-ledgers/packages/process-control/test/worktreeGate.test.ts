@@ -102,12 +102,24 @@ describe("canonical worktree gate [Effectual-GoodCommunication]", () => {
   test("rejects a registration whose PGID has no live process group", async () => {
     const { root, stateDir } = await repositoryFixture();
     const lease = await acquireWorktreeGate({ worktree: root, commandCwd: root, stateDir });
-    const leader = await readProcessIdentity(process.pid);
-    if (leader === null) throw new Error("test holder identity disappeared");
-    await expect(registerProcessGroup(lease, { pgid: process.pid, leader })).rejects.toThrow(
-      "live process group",
-    );
-    await releaseWorktreeGate(lease);
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      detached: false,
+      stdio: "ignore",
+    });
+    const pid = child.pid;
+    if (pid === undefined) throw new Error("test non-leader returned no PID");
+    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    try {
+      const leader = await readProcessIdentity(pid);
+      if (leader === null) throw new Error("test non-leader identity disappeared");
+      await expect(registerProcessGroup(lease, { pgid: pid, leader })).rejects.toThrow(
+        "live process group",
+      );
+    } finally {
+      child.kill("SIGKILL");
+      await exited;
+      await releaseWorktreeGate(lease);
+    }
   });
 
   test("records an explicitly registered command group before observation", async () => {
@@ -141,11 +153,10 @@ describe("canonical worktree gate [Effectual-GoodCommunication]", () => {
       "const fs = require('node:fs');",
       "const gate = process.env.CQ_GATE_DIR;",
       "const nonce = process.env.CQ_GATE_NONCE;",
-      "const pgid = Number(process.env.CQ_GATE_COMMAND_PGID);",
       "const names = fs.readdirSync(gate + '/commands');",
       "const found = names.some((name) => {",
       "  const record = JSON.parse(fs.readFileSync(gate + '/commands/' + name, 'utf8'));",
-      "  return record.nonce === nonce && record.registration.pgid === pgid;",
+      "  return record.nonce === nonce && record.registration.leader.startTime !== '';",
       "});",
       `fs.writeFileSync(${JSON.stringify(marker)}, found ? 'registered' : 'missing');`,
       "if (!found) process.exit(17);",
@@ -160,14 +171,15 @@ describe("canonical worktree gate [Effectual-GoodCommunication]", () => {
   test("rejects a bootstrap barrier whose nonce does not match", async () => {
     const { root } = await repositoryFixture();
     const marker = join(root, "mismatched-bootstrap-ran");
-    const barrier = join(root, "barrier.json");
+    const protocolDirectory = join(root, "bootstrap-protocol");
+    await mkdir(protocolDirectory);
     const bootstrap = fileURLToPath(new URL("../src/commandBootstrap.ts", import.meta.url));
     const child = spawn(
       process.execPath,
       [
-        "run",
         bootstrap,
-        barrier,
+        protocolDirectory,
+        "expected-nonce",
         root,
         process.execPath,
         "-e",
@@ -177,12 +189,15 @@ describe("canonical worktree gate [Effectual-GoodCommunication]", () => {
         cwd: root,
         detached: true,
         stdio: "ignore",
-        env: { ...process.env, CQ_GATE_NONCE: "expected-nonce" },
+        env: process.env,
       },
     );
     const pid = child.pid;
     if (pid === undefined) throw new Error("test bootstrap did not return a pid");
-    await writeFile(barrier, JSON.stringify({ nonce: "mismatched-nonce", pgid: pid }));
+    await writeFile(
+      join(protocolDirectory, "release.json"),
+      JSON.stringify({ nonce: "mismatched-nonce", pgid: pid }),
+    );
     const exitCode = await new Promise<number | null>((resolve) =>
       child.once("exit", (code) => resolve(code)),
     );

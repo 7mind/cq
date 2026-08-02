@@ -14,26 +14,23 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   assertSupportedPlatform,
   isProcessGroupAlive,
   isProcessIdentityAlive,
   readProcessIdentity,
   settleProcessGroups,
-  signalProcessGroup,
   type ProcessGroupRegistration,
   type ProcessIdentity,
   type SettleProcessGroupsOptions,
   type SettleProcessGroupsResult,
 } from "./processGroup.js";
+import { launchRegisteredProcessGroup } from "./registeredLaunch.js";
 
 const HOLDER_FILENAME = "holder.json";
 const COMMANDS_DIRECTORY = "commands";
 const CLOSING_FILENAME = "closing.json";
 const RECORD_VERSION = 1;
-const IDENTITY_RETRY_COUNT = 100;
-const IDENTITY_RETRY_DELAY_MS = 2;
 const PENDING_REGISTRATION_PREFIX = ".pending-";
 const REGISTRATION_SETTLE_TIMEOUT_MS = 30_000;
 const REGISTRATION_SETTLE_POLL_MS = 2;
@@ -488,15 +485,6 @@ export async function readRegisteredProcessGroups(
   return registrations;
 }
 
-async function waitForIdentity(pid: number): Promise<ProcessIdentity> {
-  for (let attempt = 0; attempt < IDENTITY_RETRY_COUNT; attempt += 1) {
-    const identity = await readProcessIdentity(pid);
-    if (identity !== null) return identity;
-    await new Promise((resolve) => setTimeout(resolve, IDENTITY_RETRY_DELAY_MS));
-  }
-  throw new Error(`cq gate: launched process ${pid} never exposed a process identity`);
-}
-
 function childExit(
   child: ChildProcess,
 ): Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }> {
@@ -514,32 +502,34 @@ export async function launchRegisteredGateCommand(
     throw new Error("cq gate: command after -- must not be empty");
   }
   await assertLeaseNonce(lease);
-  const barrier = join(lease.gateDir, `.exec-${randomUUID()}`);
-  const bootstrap = fileURLToPath(new URL("./commandBootstrap.ts", import.meta.url));
-  const child = spawn(process.execPath, ["run", bootstrap, barrier, lease.commandCwd, ...command], {
+  const launched = await launchRegisteredProcessGroup({
+    argv: command,
     cwd: lease.commandCwd,
-    detached: true,
-    stdio: "inherit",
     env: {
       ...process.env,
       CQ_GATE_DIR: lease.gateDir,
       CQ_GATE_NONCE: lease.nonce,
     },
+    stdio: "inherit" as const,
+    register: (registration) => registerProcessGroup(lease, registration),
+    launchBootstrap: (specification) => {
+      const child = spawn(specification.argv[0], specification.argv.slice(1), {
+        cwd: specification.cwd,
+        detached: specification.detached,
+        stdio: specification.stdio,
+        env: specification.env,
+      });
+      return {
+        process: child,
+        pid: child.pid,
+        exited: childExit(child),
+        terminate: (signal: NodeJS.Signals) => {
+          child.kill(signal);
+        },
+      };
+    },
   });
-  const pid = child.pid;
-  if (pid === undefined) throw new Error("cq gate: command bootstrap did not return a PID");
-
-  try {
-    const leader = await waitForIdentity(pid);
-    const registration: ProcessGroupRegistration = { pgid: pid, leader };
-    await registerProcessGroup(lease, registration);
-    await writeJsonAtomic(barrier, { nonce: lease.nonce, pgid: pid });
-    return { registration, exited: childExit(child) };
-  } catch (error) {
-    signalProcessGroup(pid, "SIGKILL");
-    await rm(barrier, { force: true });
-    throw error;
-  }
+  return { registration: launched.registration, exited: launched.exited };
 }
 
 export async function closeWorktreeGate(

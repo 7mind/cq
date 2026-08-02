@@ -45,10 +45,6 @@
         "bun-types": "^1.1.0",
       },
     },
-    "packages/process-control": {
-      "name": "@cq/process-control",
-      "version": "0.0.1",
-    },
     "packages/ledger": {
       "name": "@cq/ledger",
       "version": "0.0.1",
@@ -128,6 +124,13 @@
         "@happy-dom/global-registrator": "^20.11.1",
         "@types/react": "19.2.17",
         "@types/react-dom": "19.2.3",
+        "bun-types": "^1.1.0",
+      },
+    },
+    "packages/process-control": {
+      "name": "@cq/process-control",
+      "version": "0.0.1",
+      "devDependencies": {
         "bun-types": "^1.1.0",
       },
     },
