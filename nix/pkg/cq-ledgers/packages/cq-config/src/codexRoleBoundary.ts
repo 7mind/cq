@@ -1,4 +1,11 @@
 import * as path from "node:path";
+import {
+  readProcessIdentity,
+  settleProcessGroups,
+  settleWorktreeGateCommands,
+  type ProcessGroupRegistration,
+  type SettleProcessGroupsResult,
+} from "@cq/process-control";
 import type {
   DispatchHandle,
   InputCapability,
@@ -356,31 +363,100 @@ export async function executeCodexRoleBoundary(
 ): Promise<DispatchHandle> {
   const child = Bun.spawn([...plan.argv], {
     cwd: plan.cwd,
+    detached: true,
     env: process.env,
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
   });
-  child.stdin.write(plan.stdin);
-  child.stdin.end();
+  const rootIdentity = readProcessIdentity(child.pid).then(
+    (leader): ProcessGroupRegistration | undefined =>
+      leader === null ? undefined : { pgid: child.pid, leader },
+  );
+  type StopCause = "SIGINT" | "SIGTERM" | "timeout";
+  let stop: ((cause: StopCause) => void) | undefined;
+  let requestedStop: StopCause | undefined;
+  const stopRequested = new Promise<StopCause>((resolve) => {
+    stop = (cause) => {
+      if (requestedStop !== undefined) return;
+      requestedStop = cause;
+      resolve(cause);
+    };
+  });
+  const requestStop = (cause: StopCause): void => {
+    if (stop === undefined) throw new Error("Codex role boundary stop channel was not initialized");
+    stop(cause);
+  };
+  const onSigint = (): void => requestStop("SIGINT");
+  const onSigterm = (): void => requestStop("SIGTERM");
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
+  const timeout = setTimeout(() => requestStop("timeout"), plan.timeoutMs);
 
-  let timedOut = false;
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    child.kill("SIGKILL");
-  }, plan.timeoutMs);
+  let settlement: Promise<void> | undefined;
+  const settle = (): Promise<void> => {
+    settlement ??= (async () => {
+      let gateResult: SettleProcessGroupsResult | undefined;
+      let gateError: unknown;
+      try {
+        gateResult = await settleWorktreeGateCommands({ worktree: plan.cwd });
+      } catch (error) {
+        gateError = error;
+      }
+
+      let rootResult: SettleProcessGroupsResult = { signaled: [], survivors: [] };
+      let rootError: unknown;
+      try {
+        const registration = await rootIdentity;
+        if (registration !== undefined) {
+          rootResult = await settleProcessGroups([registration]);
+        }
+      } catch (error) {
+        rootError = error;
+      }
+
+      const survivors = [
+        ...(gateResult?.survivors ?? []),
+        ...rootResult.survivors,
+      ];
+      if (gateError !== undefined || rootError !== undefined) {
+        throw new AggregateError(
+          [gateError, rootError].filter((error) => error !== undefined),
+          "Codex role boundary could not settle every owned process group",
+        );
+      }
+      if (survivors.length > 0) {
+        throw new CodexRoleBoundaryError(
+          `process-group settlement left survivors ${survivors.join(", ")}`,
+        );
+      }
+    })();
+    return settlement;
+  };
+
   try {
-    const [stdout] = await Promise.all([
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-      child.exited,
+    child.stdin.write(plan.stdin);
+    child.stdin.end();
+    return await Promise.race([
+      Promise.all([
+        rootIdentity,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ]).then(([, stdout]) => interceptCodexRoleBoundaryResult(stdout, plan.expectedHandle)),
+      stopRequested.then(async (cause) => {
+        await settle();
+        if (cause === "timeout") {
+          throw new CodexRoleBoundaryError(
+            `child exceeded its ${String(plan.timeoutMs)} ms window`,
+          );
+        }
+        throw new CodexRoleBoundaryError(`wrapper received ${cause}`);
+      }),
     ]);
-    if (timedOut) {
-      throw new CodexRoleBoundaryError(`child exceeded its ${String(plan.timeoutMs)} ms window`);
-    }
-    return interceptCodexRoleBoundaryResult(stdout, plan.expectedHandle);
   } finally {
     clearTimeout(timeout);
-    child.unref();
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
   }
 }

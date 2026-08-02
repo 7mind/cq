@@ -257,7 +257,10 @@
             # workspace link is staged from source by cqCli below. Excluding
             # that source-relative link keeps this dependency-only FOD's
             # output byte-identical across source-only workspace additions.
-            rm -f packages/cq-cli/node_modules/@cq/process-control
+            rm -f \
+              packages/cq-cli/node_modules/@cq/process-control \
+              packages/cq-config/node_modules/@cq/process-control
+            rmdir packages/cq-config/node_modules/@cq 2>/dev/null || true
 
             # Root node_modules: the .bun/ hoisted store plus top-level symlinks.
             cp -r node_modules $out/node_modules
@@ -406,17 +409,19 @@
         # Shell fragment: wire @cq/config as a RUNTIME dep of @cq/ledger. Since
         # T357, createLedgerStore() (in @cq/ledger) calls loadConfig() at startup
         # to pick the [ledger] backend, so @cq/config must resolve from inside
-        # @cq/ledger AND its own deps (ajv + smol-toml) must be staged. Expects
-        # $WORKSPACE/packages/cq-config already staged (node_modules removed) and
+        # @cq/ledger AND its own dependencies must be staged. Expects
+        # $WORKSPACE/packages/{cq-config,process-control} already staged and
         # $WORKSPACE/packages/ledger/node_modules already created.
         cqConfigForLedger = ''
-          mkdir -p "$WORKSPACE/packages/cq-config/node_modules"
+          mkdir -p "$WORKSPACE/packages/cq-config/node_modules/@cq"
           for dep in ajv smol-toml; do
             if [ -e "${bunNodeModules}/packages/cq-config/node_modules/$dep" ]; then
               ln -s "${bunNodeModules}/packages/cq-config/node_modules/$dep" \
                 "$WORKSPACE/packages/cq-config/node_modules/$dep"
             fi
           done
+          ln -s "$WORKSPACE/packages/process-control" \
+            "$WORKSPACE/packages/cq-config/node_modules/@cq/process-control"
           mkdir -p "$WORKSPACE/packages/ledger/node_modules/@cq"
           ln -s "$WORKSPACE/packages/cq-config" \
             "$WORKSPACE/packages/ledger/node_modules/@cq/config"
@@ -753,6 +758,10 @@ EOF
             fi
             touch "$TMPDIR/gate-release"
             wait "$firstGate"
+            CQ_TEST_CODEX_ROLE_EXECUTABLE=$out/bin/cq-codex-role \
+              CQ_TEST_GIT_EXECUTABLE=${pkgs.git}/bin/git \
+              ${pkgs.bun}/bin/bun test \
+                "$WORKSPACE/packages/cq-config/test/codexGateIntegration.test.ts"
             runHook postInstallCheck
           '';
 

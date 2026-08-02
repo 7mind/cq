@@ -38,6 +38,7 @@
       "name": "@cq/config",
       "version": "0.0.1",
       "dependencies": {
+        "@cq/process-control": "workspace:*",
         "ajv": "^8.20.0",
         "smol-toml": "^1.7.0",
       },
