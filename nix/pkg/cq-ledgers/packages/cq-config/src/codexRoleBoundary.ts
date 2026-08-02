@@ -342,13 +342,18 @@ function observeCodexRoleBoundaryStream(
   let matchingResultStoredAcknowledgementPresent = false;
   for (const line of jsonl.split("\n")) {
     if (line.trim() === "") continue;
-    let event: CodexExecEvent;
+    let parsed: unknown;
     try {
-      event = JSON.parse(line) as CodexExecEvent;
+      parsed = JSON.parse(line) as unknown;
     } catch {
       malformedJsonlCount += 1;
       continue;
     }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      malformedJsonlCount += 1;
+      continue;
+    }
+    const event = parsed as CodexExecEvent;
     if (eventCarriesMatchingResultStoredAcknowledgement(event, expectedHandle)) {
       matchingResultStoredAcknowledgementPresent = true;
     }

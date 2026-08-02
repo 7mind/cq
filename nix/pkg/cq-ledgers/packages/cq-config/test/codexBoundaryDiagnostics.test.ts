@@ -171,6 +171,20 @@ describe("T1628 Codex boundary diagnostics", () => {
     expectNoBoundaryContent(missing);
   });
 
+  test("counts syntactically valid non-event JSON without escaping a raw TypeError", () => {
+    const observed = captureBoundaryError(
+      ["null", completedAgentMessage(FINAL_NARRATIVE_SENTINEL)].join("\n"),
+    );
+    expect(observed.diagnostic).toMatchObject({
+      verdict: "unparseable",
+      detailCode: "invalid-json",
+      completedAgentMessageCount: 1,
+      malformedJsonlCount: 1,
+      matchingResultStoredAcknowledgementPresent: false,
+    });
+    expectNoBoundaryContent(observed);
+  });
+
   test("preserves the valid one-line handle contract without a diagnostic", () => {
     expect(interceptCodexRoleBoundaryResult(completedAgentMessage(HANDLE.attestationId), HANDLE))
       .toEqual(HANDLE);
@@ -189,7 +203,7 @@ describe("T1628 Codex boundary diagnostics", () => {
       await writeFile(join(promptRoot, "roles", "implement-worker.md"), "Store one result.\n");
       await writeFile(
         fakeCodex,
-        `#!/bin/sh\nprintf '%s\\n' '${completedAgentMessage(FINAL_NARRATIVE_SENTINEL)}'\n`,
+        `#!/bin/sh\nprintf '%s\\n' 'null' '${completedAgentMessage(FINAL_NARRATIVE_SENTINEL)}'\n`,
       );
       await chmod(fakeCodex, 0o700);
       const child = Bun.spawn([process.execPath, "run", DISPATCH_SCRIPT], {
@@ -247,7 +261,7 @@ describe("T1628 Codex boundary diagnostics", () => {
         verdict: "unparseable",
         detailCode: "invalid-json",
         completedAgentMessageCount: 1,
-        malformedJsonlCount: 0,
+        malformedJsonlCount: 1,
         matchingResultStoredAcknowledgementPresent: false,
       });
       expect(stderr).not.toContain(FINAL_NARRATIVE_SENTINEL);
