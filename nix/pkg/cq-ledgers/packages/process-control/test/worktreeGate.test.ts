@@ -305,6 +305,65 @@ describe("canonical worktree gate [Effectual-GoodCommunication]", () => {
     });
   });
 
+  test("publishes a complete closing marker across concurrent settlement", async () => {
+    const { root, stateDir } = await repositoryFixture();
+    const acquired = await acquireWorktreeGate({ worktree: root, commandCwd: root, stateDir });
+    const holderPath = join(acquired.gateDir, "holder.json");
+    const holder = JSON.parse(await readFile(holderPath, "utf8")) as Record<string, unknown>;
+    const publicationNonce = "x".repeat(1024 * 1024);
+    await writeFile(holderPath, JSON.stringify({ ...holder, nonce: publicationNonce }));
+    const lease = { ...acquired, nonce: publicationNonce };
+    try {
+      const processControl = fileURLToPath(new URL("../src/index.ts", import.meta.url));
+      const readyDirectory = join(root, "settlement-probes-ready");
+      const startPath = join(root, "settlement-probes-start");
+      await mkdir(readyDirectory);
+      const probe = [
+        `const { writeFile } = await import("node:fs/promises");`,
+        `const { settleWorktreeGateCommands } = await import(${JSON.stringify(processControl)});`,
+        `await writeFile(${JSON.stringify(`${readyDirectory}/`)} + process.pid, "ready");`,
+        `while (!(await Bun.file(${JSON.stringify(startPath)}).exists())) await Bun.sleep(1);`,
+        `await settleWorktreeGateCommands(${JSON.stringify({ worktree: root, stateDir })});`,
+      ].join("\n");
+      const probes = Array.from({ length: 32 }, () =>
+        Bun.spawn([process.execPath, "-e", probe], {
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "pipe",
+        }),
+      );
+      for (let attempt = 0; attempt < 1_000; attempt += 1) {
+        if ((await readdir(readyDirectory)).length === probes.length) break;
+        await Bun.sleep(1);
+      }
+      expect((await readdir(readyDirectory)).length).toBe(probes.length);
+      await writeFile(startPath, "start");
+      const outcomes = await Promise.all(
+        probes.map(async (child) => ({
+          exitCode: await child.exited,
+          stderr: await new Response(child.stderr).text(),
+        })),
+      );
+      expect(outcomes).toEqual(Array.from({ length: 32 }, () => ({ exitCode: 0, stderr: "" })));
+    } finally {
+      await releaseWorktreeGate(lease);
+    }
+  });
+
+  test("returns idempotently when the live holder closes during settlement", async () => {
+    const { root, stateDir } = await repositoryFixture();
+    const lease = await acquireWorktreeGate({ worktree: root, commandCwd: root, stateDir });
+    await writeFile(join(lease.gateDir, "closing.json"), JSON.stringify({ nonce: lease.nonce }));
+
+    const settlements = Array.from({ length: 32 }, () =>
+      settleWorktreeGateCommands({ worktree: root, stateDir }),
+    );
+    const outcomes = await Promise.all([...settlements, closeWorktreeGate(lease)]);
+    expect(
+      outcomes.every((outcome) => outcome.signaled.length === 0 && outcome.survivors.length === 0),
+    ).toBe(true);
+  });
+
   test("rejects a command record whose nonce does not match the live holder", async () => {
     const { root, stateDir } = await repositoryFixture();
     const lease = await acquireWorktreeGate({ worktree: root, commandCwd: root, stateDir });

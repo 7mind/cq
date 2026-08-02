@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   access,
+  link,
   mkdir,
   open,
   readdir,
@@ -150,6 +151,16 @@ async function writeJsonAtomic(target: string, value: unknown): Promise<void> {
   }
 }
 
+async function writeJsonExclusiveAtomic(target: string, value: unknown): Promise<void> {
+  const temporary = `${target}.tmp-${process.pid}-${randomUUID()}`;
+  try {
+    await writeJsonFile(temporary, value);
+    await link(temporary, target);
+  } finally {
+    await rm(temporary, { force: true });
+  }
+}
+
 async function readHolder(gateDir: string): Promise<HolderRecord> {
   const parsed: unknown = JSON.parse(await readFile(join(gateDir, HOLDER_FILENAME), "utf8"));
   if (!isHolderRecord(parsed)) throw new Error(`cq gate: malformed holder identity in ${gateDir}`);
@@ -224,7 +235,9 @@ async function publishLease(
 
 async function writeClosingMarker(lease: WorktreeGateCapability): Promise<void> {
   try {
-    await writeJsonFile(join(lease.gateDir, CLOSING_FILENAME), { nonce: lease.nonce });
+    await writeJsonExclusiveAtomic(join(lease.gateDir, CLOSING_FILENAME), {
+      nonce: lease.nonce,
+    });
   } catch (error) {
     if (!isNodeError(error, "EEXIST")) throw error;
     const parsed: unknown = JSON.parse(
@@ -314,13 +327,18 @@ export async function settleWorktreeGateCommands(
   }
 
   const capability: WorktreeGateCapability = { gateDir, nonce: observed.nonce };
-  await writeClosingMarker(capability);
-  const current = await readHolder(gateDir);
-  if (!sameHolder(observed, current)) {
-    await removeClosingMarkerForNonce(gateDir, observed.nonce);
-    throw new Error("cq gate: holder identity changed during command settlement");
+  try {
+    await writeClosingMarker(capability);
+    const current = await readHolder(gateDir);
+    if (!sameHolder(observed, current)) {
+      await removeClosingMarkerForNonce(gateDir, observed.nonce);
+      throw new Error("cq gate: holder identity changed during command settlement");
+    }
+    return await settleRegisteredProcessGroups(capability, options);
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return { signaled: [], survivors: [] };
+    throw error;
   }
-  return settleRegisteredProcessGroups(capability, options);
 }
 
 async function reclaimDeadGate(
