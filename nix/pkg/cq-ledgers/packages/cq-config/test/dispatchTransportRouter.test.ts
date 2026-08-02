@@ -210,6 +210,8 @@ function preparedFixture(
         worktreePath: "/tmp/T1631",
         branch: "implement/T1631",
         baseCommit: "2fe2c7d5",
+        round: 0,
+        startingCommit: "2".repeat(40),
       },
       idempotencyKey: `T1631-${targetHarness}-${sequence}`,
       timeoutMs: options?.timeoutMs ?? 60_000,
