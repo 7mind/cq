@@ -274,13 +274,13 @@ function historicalSchemaPinHistory(
 function schemaPinTransitionErrors(
   previousPins: Readonly<Record<string, SchemaPin>>,
   nextPins: Readonly<Record<string, SchemaPin>>,
+  lastObservedPins: Readonly<Record<string, SchemaPin>>,
 ): readonly string[] {
   const errors: string[] = [];
   for (const roleId of Object.keys(previousPins)) {
     const previousPin = previousPins[roleId]!;
     const nextPin = nextPins[roleId];
     if (nextPin === undefined) {
-      errors.push(`schema pin removed for ${roleId}`);
       continue;
     }
     if (nextPin.version < previousPin.version) {
@@ -291,8 +291,18 @@ function schemaPinTransitionErrors(
     }
   }
   for (const roleId of Object.keys(nextPins)) {
-    if (previousPins[roleId] === undefined && nextPins[roleId]!.version !== 1) {
+    if (previousPins[roleId] !== undefined) {
+      continue;
+    }
+    const nextPin = nextPins[roleId]!;
+    const lastObservedPin = lastObservedPins[roleId];
+    if (lastObservedPin === undefined && nextPin.version !== 1) {
       errors.push(`new schema pin must start at version 1 for ${roleId}`);
+    }
+    if (lastObservedPin !== undefined && nextPin.version <= lastObservedPin.version) {
+      errors.push(
+        `reintroduced schema pin must advance beyond version ${lastObservedPin.version} for ${roleId}`,
+      );
     }
   }
   return errors;
@@ -305,8 +315,13 @@ function schemaPinHistoryErrors(
     throw new Error("schema pin history cannot be empty");
   }
   const errors: string[] = [];
+  const lastObservedPins: Record<string, SchemaPin> = { ...history[0]! };
   for (let index = 1; index < history.length; index += 1) {
-    errors.push(...schemaPinTransitionErrors(history[index - 1]!, history[index]!));
+    const nextPins = history[index]!;
+    errors.push(
+      ...schemaPinTransitionErrors(history[index - 1]!, nextPins, lastObservedPins),
+    );
+    Object.assign(lastObservedPins, nextPins);
   }
   return errors;
 }
@@ -316,11 +331,10 @@ function currentSchemaPinHistoryErrors(
   currentPins: Readonly<Record<string, SchemaPin>>,
 ): readonly string[] {
   const history = historicalSchemaPinHistory(repositoryRoot);
-  const errors = [...schemaPinHistoryErrors(history)];
   if (relevantPathsChanged(repositoryRoot)) {
-    errors.push(...schemaPinTransitionErrors(history.at(-1)!, currentPins));
+    return schemaPinHistoryErrors([...history, currentPins]);
   }
-  return errors;
+  return schemaPinHistoryErrors(history);
 }
 
 function canonicalJson(value: unknown): string {
@@ -571,16 +585,34 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
     ]);
   });
 
-  test("rejects removal of an established role", () => {
+  test("accepts removal of an established role", () => {
     const deletedPins = { ...SCHEMA_PINS };
     delete deletedPins["implement-worker"];
 
-    expect(schemaPinHistoryErrors([SCHEMA_PINS, deletedPins])).toEqual([
-      "schema pin removed for implement-worker",
-    ]);
+    expect(schemaPinHistoryErrors([SCHEMA_PINS, deletedPins])).toEqual([]);
   });
 
-  test("retains a removal error after the role is reintroduced at version 1", () => {
+  test.each([1, 2])(
+    "rejects reintroduction at version %i when the last historical version is 2",
+    (version) => {
+      const implementWorkerPin = SCHEMA_PINS["implement-worker"]!;
+      const deletedPins = { ...SCHEMA_PINS };
+      delete deletedPins["implement-worker"];
+      const reintroducedPins = {
+        ...deletedPins,
+        "implement-worker": {
+          ...implementWorkerPin,
+          version,
+        },
+      };
+
+      expect(schemaPinHistoryErrors([SCHEMA_PINS, deletedPins, reintroducedPins])).toEqual([
+        "reintroduced schema pin must advance beyond version 2 for implement-worker",
+      ]);
+    },
+  );
+
+  test("accepts reintroduction above the last historical version", () => {
     const implementWorkerPin = SCHEMA_PINS["implement-worker"]!;
     const deletedPins = { ...SCHEMA_PINS };
     delete deletedPins["implement-worker"];
@@ -588,14 +620,11 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
       ...deletedPins,
       "implement-worker": {
         ...implementWorkerPin,
-        version: 1,
-        digest: "0".repeat(64),
+        version: implementWorkerPin.version + 1,
       },
     };
 
-    expect(schemaPinHistoryErrors([SCHEMA_PINS, deletedPins, reintroducedPins])).toEqual([
-      "schema pin removed for implement-worker",
-    ]);
+    expect(schemaPinHistoryErrors([SCHEMA_PINS, deletedPins, reintroducedPins])).toEqual([]);
   });
 
   test("scopes first-parent pin history to the pin table path", () => {
