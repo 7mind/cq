@@ -30,6 +30,10 @@
       "import": "./src/refs.ts",
       "types": "./src/refs.ts"
     },
+    "./testing": {
+      "import": "./src/testing/killHarness.ts",
+      "types": "./src/testing/killHarness.ts"
+    },
     "./finalize": {
       "import": "./src/finalize.ts",
       "types": "./src/finalize.ts"
