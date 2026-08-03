@@ -5,6 +5,7 @@ import {
   releaseWorktreeGate,
   type WorktreeGateLease,
 } from "@cq/process-control";
+import { DISPATCH_UTC_TIMESTAMP_PATTERN } from "@cq/config";
 
 export interface GateRunIo {
   err(line: string): void;
@@ -22,6 +23,8 @@ interface ParsedGateRun {
 }
 
 export const GATE_DEADLINE_EXIT_CODE = 124;
+
+const DISPATCH_UTC_TIMESTAMP = new RegExp(DISPATCH_UTC_TIMESTAMP_PATTERN, "u");
 
 const SIGNAL_EXIT_CODES: Readonly<Partial<Record<NodeJS.Signals, number>>> = {
   SIGHUP: 129,
@@ -73,12 +76,16 @@ function parseGateRun(argv: readonly string[]): ParsedGateRun {
 
 function parseDeadline(value: string): number {
   const deadlineMs = Date.parse(value);
-  if (!Number.isFinite(deadlineMs)) {
+  if (!DISPATCH_UTC_TIMESTAMP.test(value) || !Number.isFinite(deadlineMs)) {
     throw new Error(
-      `cq gate run: --deadline requires an ISO-8601 instant, got ${JSON.stringify(value)}`,
+      `cq gate run: --deadline requires a dispatch UTC timestamp, got ${JSON.stringify(value)}`,
     );
   }
   return deadlineMs;
+}
+
+function deadlineReached(deadlineMs: number | undefined): boolean {
+  return deadlineMs !== undefined && Date.now() >= deadlineMs;
 }
 
 export async function runGateRun(argv: readonly string[], _io: GateRunIo): Promise<GateRunOutcome> {
@@ -88,12 +95,17 @@ export async function runGateRun(argv: readonly string[], _io: GateRunIo): Promi
     commandCwd: parsed.commandCwd,
   });
   try {
-    if (parsed.deadlineMs !== undefined && Date.now() >= parsed.deadlineMs) {
+    if (deadlineReached(parsed.deadlineMs)) {
       await closeWorktreeGate(lease);
       lease = null;
       return { exitCode: GATE_DEADLINE_EXIT_CODE };
     }
     const launched = await launchRegisteredGateCommand(lease, parsed.command);
+    if (deadlineReached(parsed.deadlineMs)) {
+      await closeWorktreeGate(lease);
+      lease = null;
+      return { exitCode: GATE_DEADLINE_EXIT_CODE };
+    }
     let interrupt: ((signal: NodeJS.Signals) => void) | null = null;
     const interrupted = new Promise<NodeJS.Signals>((resolve) => {
       interrupt = resolve;
@@ -104,13 +116,14 @@ export async function runGateRun(argv: readonly string[], _io: GateRunIo): Promi
       return { signal, handler };
     });
     let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    const deadlineMs = parsed.deadlineMs;
     const deadline =
-      parsed.deadlineMs === undefined
+      deadlineMs === undefined
         ? undefined
         : new Promise<"deadline">((resolve) => {
             deadlineTimer = setTimeout(
               () => resolve("deadline"),
-              Math.max(0, parsed.deadlineMs! - Date.now()),
+              Math.max(0, deadlineMs - Date.now()),
             );
           });
     try {
@@ -122,7 +135,9 @@ export async function runGateRun(argv: readonly string[], _io: GateRunIo): Promi
       const outcome = await Promise.race(candidates);
       await closeWorktreeGate(lease);
       lease = null;
-      if (outcome.kind === "deadline") return { exitCode: GATE_DEADLINE_EXIT_CODE };
+      if (deadlineReached(parsed.deadlineMs) || outcome.kind === "deadline") {
+        return { exitCode: GATE_DEADLINE_EXIT_CODE };
+      }
       if (outcome.kind === "signal") return { exitCode: SIGNAL_EXIT_CODES[outcome.signal] ?? 1 };
       if (outcome.exit.exitCode !== null) return { exitCode: outcome.exit.exitCode };
       return { exitCode: SIGNAL_EXIT_CODES[outcome.exit.signal ?? "SIGTERM"] ?? 1 };

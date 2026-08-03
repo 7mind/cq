@@ -217,7 +217,7 @@ export const DISPATCH_PROTOCOL_OPERATIONS = [
 export type DispatchProtocolOperation = (typeof DISPATCH_PROTOCOL_OPERATIONS)[number];
 
 const DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema";
-const ISO_TIMESTAMP_PATTERN =
+export const DISPATCH_UTC_TIMESTAMP_PATTERN =
   "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$";
 const SHA256_PATTERN = "^[0-9a-f]{64}$";
 const ATTESTATION_ID_PATTERN = "^att_[A-Za-z0-9_-]{32,}$";
@@ -230,9 +230,9 @@ const handleProperties = {
 } as const;
 
 const deadlineProperties = {
-  responseStoreNow: { type: "string", pattern: ISO_TIMESTAMP_PATTERN },
-  childCancelAt: { type: "string", pattern: ISO_TIMESTAMP_PATTERN },
-  launchDeadline: { type: "string", pattern: ISO_TIMESTAMP_PATTERN },
+  responseStoreNow: { type: "string", pattern: DISPATCH_UTC_TIMESTAMP_PATTERN },
+  childCancelAt: { type: "string", pattern: DISPATCH_UTC_TIMESTAMP_PATTERN },
+  launchDeadline: { type: "string", pattern: DISPATCH_UTC_TIMESTAMP_PATTERN },
 } as const;
 
 const promptProvenanceSchema = {
@@ -276,7 +276,7 @@ const nativeCompletionSchema = {
     actor: { type: "string", enum: ["trusted-parent", "trusted-extension"] },
     childId: { type: "string", minLength: 1 },
     runId: { type: "string", minLength: 1 },
-    completedAt: { type: "string", pattern: ISO_TIMESTAMP_PATTERN },
+    completedAt: { type: "string", pattern: DISPATCH_UTC_TIMESTAMP_PATTERN },
   },
   required: ["kind", "actor", "childId", "runId", "completedAt"],
   additionalProperties: false,
@@ -405,7 +405,7 @@ export const MATERIALIZED_DISPATCH_INPUT_SCHEMA: JSONSchema = {
     ...handleProperties,
     input: {},
     promptProvenance: promptProvenanceSchema,
-    materializedAt: { type: "string", pattern: ISO_TIMESTAMP_PATTERN },
+    materializedAt: { type: "string", pattern: DISPATCH_UTC_TIMESTAMP_PATTERN },
   },
   required: ["state", "attestationId", "generation", "input", "promptProvenance", "materializedAt"],
   additionalProperties: false,
@@ -491,7 +491,7 @@ export const FETCH_DISPATCH_RESULT_SCHEMA: JSONSchema = {
     fetchVariant(
       "result-stored",
       {
-        storedAt: { type: "string", pattern: ISO_TIMESTAMP_PATTERN },
+        storedAt: { type: "string", pattern: DISPATCH_UTC_TIMESTAMP_PATTERN },
         promptProvenance: promptProvenanceSchema,
       },
       ["storedAt", "promptProvenance"],
@@ -499,7 +499,7 @@ export const FETCH_DISPATCH_RESULT_SCHEMA: JSONSchema = {
     fetchVariant(
       "consumed",
       {
-        consumedAt: { type: "string", pattern: ISO_TIMESTAMP_PATTERN },
+        consumedAt: { type: "string", pattern: DISPATCH_UTC_TIMESTAMP_PATTERN },
         output: {},
         promptProvenance: promptProvenanceSchema,
         nativeCompletion: nativeCompletionSchema,
@@ -509,7 +509,7 @@ export const FETCH_DISPATCH_RESULT_SCHEMA: JSONSchema = {
     fetchVariant(
       "aborted",
       {
-        abortedAt: { type: "string", pattern: ISO_TIMESTAMP_PATTERN },
+        abortedAt: { type: "string", pattern: DISPATCH_UTC_TIMESTAMP_PATTERN },
         reason: { type: "string", enum: [...DISPATCH_ABORT_REASONS] },
         details: {},
       },
@@ -519,7 +519,7 @@ export const FETCH_DISPATCH_RESULT_SCHEMA: JSONSchema = {
       "terminal-envelope-expired",
       {
         terminalKind: { type: "string", enum: ["consumed", "aborted"] },
-        reuseAfter: { type: "string", pattern: ISO_TIMESTAMP_PATTERN },
+        reuseAfter: { type: "string", pattern: DISPATCH_UTC_TIMESTAMP_PATTERN },
       },
       ["terminalKind", "reuseAfter"],
     ),
@@ -527,7 +527,7 @@ export const FETCH_DISPATCH_RESULT_SCHEMA: JSONSchema = {
     fetchVariant(
       "output-already-materialized",
       {
-        materializedAt: { type: "string", pattern: ISO_TIMESTAMP_PATTERN },
+        materializedAt: { type: "string", pattern: DISPATCH_UTC_TIMESTAMP_PATTERN },
       },
       ["materializedAt"],
     ),

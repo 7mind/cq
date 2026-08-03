@@ -1,8 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as processControl from "@cq/process-control";
 import { dispatch, type DispatchIo } from "../src/main.js";
+import { GATE_DEADLINE_EXIT_CODE, runGateRun } from "../src/gateRun.js";
 
 const roots: string[] = [];
 
@@ -145,4 +147,137 @@ describe("cq gate run [BG]", () => {
     );
     expect(afterSettlement).toEqual({ exitCode: 0, longRunning: false });
   }, 15_000);
+});
+
+describe("cq gate run absolute phase deadline [BA]", () => {
+  const lease = {
+    worktree: "/test/worktree",
+    commandCwd: "/test/worktree",
+    gateDir: "/test/gate",
+    nonce: "test-nonce",
+  };
+  const launched = {
+    registration: { pgid: 123, leader: { pid: 123, startTime: "1" } },
+    exited: Promise.resolve({ exitCode: 0, signal: null }),
+  };
+
+  function args(deadline: string): string[] {
+    return [
+      "run",
+      "--worktree",
+      lease.worktree,
+      "--command-cwd",
+      lease.commandCwd,
+      "--deadline",
+      deadline,
+      "--",
+      "true",
+    ];
+  }
+
+  test("rejects deadline values outside the dispatch UTC timestamp grammar", async () => {
+    await expect(
+      runGateRun(args("2099-08-03T12:34:56"), { err: () => {} }),
+    ).rejects.toThrow("dispatch UTC timestamp");
+  });
+
+  test("does not launch when gate acquisition consumes the remaining window", async () => {
+    const startMs = Date.parse("2099-08-03T12:34:56.000Z");
+    const deadlineMs = startMs + 1_000;
+    let nowMs = startMs;
+    const now = spyOn(Date, "now").mockImplementation(() => nowMs);
+    const acquire = spyOn(processControl, "acquireWorktreeGate").mockImplementation(async () => {
+      nowMs = deadlineMs;
+      return lease;
+    });
+    const launch = spyOn(processControl, "launchRegisteredGateCommand").mockResolvedValue(launched);
+    const close = spyOn(processControl, "closeWorktreeGate").mockResolvedValue({
+      signaled: [],
+      survivors: [],
+    });
+    try {
+      const outcome = await runGateRun(args(new Date(deadlineMs).toISOString()), {
+        err: () => {},
+      });
+      expect({ outcome, launchCalls: launch.mock.calls.length, closeCalls: close.mock.calls.length })
+        .toEqual({
+          outcome: { exitCode: GATE_DEADLINE_EXIT_CODE },
+          launchCalls: 0,
+          closeCalls: 1,
+        });
+    } finally {
+      close.mockRestore();
+      launch.mockRestore();
+      acquire.mockRestore();
+      now.mockRestore();
+    }
+  });
+
+  test("returns deadline exhaustion when registered launch consumes the remaining window", async () => {
+    const startMs = Date.parse("2099-08-03T12:34:56.000Z");
+    const deadlineMs = startMs + 1_000;
+    let nowMs = startMs;
+    const now = spyOn(Date, "now").mockImplementation(() => nowMs);
+    const schedule = spyOn(globalThis, "setTimeout").mockImplementation(
+      (() => 0 as unknown as ReturnType<typeof setTimeout>) as unknown as typeof setTimeout,
+    );
+    const acquire = spyOn(processControl, "acquireWorktreeGate").mockResolvedValue(lease);
+    const launch = spyOn(processControl, "launchRegisteredGateCommand").mockImplementation(
+      async () => {
+        nowMs = deadlineMs;
+        return launched;
+      },
+    );
+    const close = spyOn(processControl, "closeWorktreeGate").mockResolvedValue({
+      signaled: [],
+      survivors: [],
+    });
+    try {
+      const outcome = await runGateRun(args(new Date(deadlineMs).toISOString()), {
+        err: () => {},
+      });
+      expect({
+        outcome,
+        scheduleCalls: schedule.mock.calls.length,
+        closeCalls: close.mock.calls.length,
+      }).toEqual({
+        outcome: { exitCode: GATE_DEADLINE_EXIT_CODE },
+        scheduleCalls: 0,
+        closeCalls: 1,
+      });
+    } finally {
+      close.mockRestore();
+      launch.mockRestore();
+      acquire.mockRestore();
+      schedule.mockRestore();
+      now.mockRestore();
+    }
+  });
+
+  test("returns deadline exhaustion when normal-exit settlement overruns the window", async () => {
+    const startMs = Date.parse("2099-08-03T12:34:56.000Z");
+    const deadlineMs = startMs + 1_000;
+    let nowMs = startMs;
+    const now = spyOn(Date, "now").mockImplementation(() => nowMs);
+    const acquire = spyOn(processControl, "acquireWorktreeGate").mockResolvedValue(lease);
+    const launch = spyOn(processControl, "launchRegisteredGateCommand").mockResolvedValue(launched);
+    const close = spyOn(processControl, "closeWorktreeGate").mockImplementation(async () => {
+      nowMs = deadlineMs;
+      return { signaled: [], survivors: [] };
+    });
+    try {
+      const outcome = await runGateRun(args(new Date(deadlineMs).toISOString()), {
+        err: () => {},
+      });
+      expect({ outcome, closeCalls: close.mock.calls.length }).toEqual({
+        outcome: { exitCode: GATE_DEADLINE_EXIT_CODE },
+        closeCalls: 1,
+      });
+    } finally {
+      close.mockRestore();
+      launch.mockRestore();
+      acquire.mockRestore();
+      now.mockRestore();
+    }
+  });
 });
