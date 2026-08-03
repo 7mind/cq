@@ -1,6 +1,7 @@
 /** A self-describing partial-work artifact that can be safely harvested. */
 
 export const WIP_CHECKPOINT_STATUSES = ["done", "todo", "unmeasured"] as const;
+const WIP_CHECKPOINT_MARKER = "<!-- cq:wip-checkpoint -->";
 
 export type WipCheckpointStatus = (typeof WIP_CHECKPOINT_STATUSES)[number];
 
@@ -55,7 +56,8 @@ export function serializeWipArtifact(artifact: WipArtifact): string {
   );
   const sections = artifact.checkpoints
     .map(
-      (checkpoint, index) => `${index === 0 ? "" : "\n"}## ${checkpoint.name}\n${checkpoint.body}`,
+      (checkpoint, index) =>
+        `${index === 0 ? "" : "\n"}## ${checkpoint.name} ${WIP_CHECKPOINT_MARKER}\n${checkpoint.body}`,
     )
     .join("");
   return "```json\n" + headerText + "\n```\n" + sections;
@@ -200,7 +202,7 @@ function findCheckpointMarkers(
   name: string,
 ): readonly { sectionStart: number; headingStart: number; contentStart: number }[] {
   const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const matcher = new RegExp(`^## ${escapedName}\\r?\\n`, "gm");
+  const matcher = new RegExp(`^## ${escapedName} ${WIP_CHECKPOINT_MARKER}\\r?\\n`, "gm");
   return Array.from(markdown.matchAll(matcher), (match) => {
     const headingStart = match.index!;
     return {
