@@ -46,6 +46,7 @@ export type PromptRendererCapability =
   | "dispatch-result-delivery"
   | "inline-command-recursion"
   | "host-tool-vocabulary"
+  | "explorer-static-inspection"
   | "operational-tool-vocabulary"
   | "advance-run-guard"
   | "ledger-response-contract";

@@ -385,6 +385,19 @@ describe("packaged Pi prompt root", () => {
       "research-experimenter": ["dispatch_agent"],
     };
 
+    for (const role of ["investigate-explorer", "research-explorer"] as const) {
+      const explorer = readFileSync(path.join(output, "roles", `${role}.md`), "utf8").replace(
+        /\s+/g,
+        " ",
+      );
+      expect(explorer).toContain(
+        "Use the harness's dedicated filesystem read and search tools for static repository inspection; shell commands remain prohibited.",
+      );
+      expect(explorer).toContain(
+        "Mutation, tests, builds, benchmarks, package execution, shell networking, adjudication, and child dispatch remain prohibited.",
+      );
+    }
+
     for (const [agent, builtInExclusions] of Object.entries(expectedBuiltInExclusions)) {
       const exclusions = [
         ...builtInExclusions,

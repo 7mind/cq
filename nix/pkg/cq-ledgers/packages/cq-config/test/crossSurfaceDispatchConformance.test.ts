@@ -156,6 +156,8 @@ function countOccurrences(haystack: string, needle: string): number {
 
 const normalize = (text: string): string => text.replace(/\s+/g, " ");
 
+const EXPLORER_ROLES = ["investigate-explorer", "research-explorer"] as const;
+
 type LostReportViolation =
   | "missing-operational-definition"
   | "missing-contract-breach-log"
@@ -410,6 +412,55 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       } else {
         expect(advance).toContain("`prepare_dispatch` binds those absolute values");
       }
+    }
+  });
+
+  it("T1697 limits Codex explorer shell access to static repository inspection", () => {
+    for (const role of EXPLORER_ROLES) {
+      const rendered = normalize(renderedOf("codex", role));
+      expect(rendered).toContain(
+        "Only when the harness exposes no dedicated filesystem read or search tools may you use shell commands for static repository inspection.",
+      );
+      expect(rendered).toContain(
+        "Repository metadata and locating or displaying existing files are the only permitted shell purposes.",
+      );
+      expect(rendered).toContain(
+        "Limit shell use to non-mutating invocations of `git status`, `git log`, `git show`, `git diff`, `git grep`, `git ls-files`, `git rev-parse`, `pwd`, `ls`, `find`, `fd`, `rg`, `grep`, `sed -n`, `head`, `tail`, `cat`, `stat`, `file`, and `wc`.",
+      );
+      expect(rendered).toContain(
+        "Do not use redirection, command substitution, `find -delete`, `find -exec`, or any option with a write side effect.",
+      );
+      expect(rendered).toContain(
+        "Mutation, tests, builds, benchmarks, package execution, shell networking, adjudication, and child dispatch remain prohibited.",
+      );
+      expect(rendered).toContain(
+        "Dynamic evidence requires the corresponding prober or experimenter.",
+      );
+    }
+  });
+
+  it("T1697 keeps Claude and Pi explorer shell restrictions", () => {
+    for (const surface of ["claude", "pi"] as const) {
+      for (const role of EXPLORER_ROLES) {
+        const rendered = normalize(renderedOf(surface, role));
+        expect(rendered).toContain(
+          "Use the harness's dedicated filesystem read and search tools for static repository inspection; shell commands remain prohibited.",
+        );
+        expect(rendered).toContain(
+          "Mutation, tests, builds, benchmarks, package execution, shell networking, adjudication, and child dispatch remain prohibited.",
+        );
+      }
+    }
+  });
+
+  it("T1697 routes dynamic evidence to the corresponding execution role", () => {
+    for (const surface of PROMPT_SURFACES) {
+      expect(normalize(renderedOf(surface, "investigate-explorer"))).toContain(
+        "request an exact probe from the investigate-prober",
+      );
+      expect(normalize(renderedOf(surface, "research-explorer"))).toContain(
+        "request an exact experiment from the research-experimenter",
+      );
     }
   });
 

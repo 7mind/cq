@@ -374,6 +374,22 @@ describe("deterministic prompt renderer core", () => {
     });
   }
 
+  test("rejects shared prose that disables the Codex explorer static-read mechanism", () => {
+    const fixture = makeNixFixture("codex");
+    const source = fixture.sourcePaths.find(
+      ({ canonicalSource }) => canonicalSource === "agents/investigate-explorer.md",
+    );
+    expect(source).toBeDefined();
+    writeFileSync(
+      source!.path,
+      `${readFileSync(source!.path, "utf8")}\nDo not execute commands.\n`,
+    );
+
+    expect(() => renderNixFixture(fixture)).toThrow(
+      'rendered.investigate-explorer: forbidden vocabulary "execute commands" for surface "codex"',
+    );
+  });
+
   test("builds and executes the isolated prompt-renderer package export", () => {
     const root = mkdtempSync(path.join(tmpdir(), "cq-prompt-renderer-isolated-"));
     roots.push(root);

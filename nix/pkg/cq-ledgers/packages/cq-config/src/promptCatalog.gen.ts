@@ -799,6 +799,32 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [
+              "command execution",
+              "execute commands"
+            ],
+            "pi": []
+          },
+          "fragment": "explorer-static-inspection",
+          "intentionalDifference": {
+            "kind": "tool-vocabulary",
+            "reason": "Codex explorers need a static shell fallback when the harness exposes no dedicated filesystem reader, while Claude and Pi keep shell access disabled.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "explorer-only static repository inspection policy",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
             "claude": [
               "store_result"
             ],
@@ -841,6 +867,15 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "kind": "tool-vocabulary",
           "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "tool-vocabulary",
+          "reason": "Codex explorers need a static shell fallback when the harness exposes no dedicated filesystem reader, while Claude and Pi keep shell access disabled.",
           "surfaces": [
             "claude",
             "codex",
@@ -1087,6 +1122,32 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [
+              "command execution",
+              "execute commands"
+            ],
+            "pi": []
+          },
+          "fragment": "explorer-static-inspection",
+          "intentionalDifference": {
+            "kind": "tool-vocabulary",
+            "reason": "Codex explorers need a static shell fallback when the harness exposes no dedicated filesystem reader, while Claude and Pi keep shell access disabled.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "explorer-only static repository inspection policy",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
             "claude": [
               "store_result"
             ],
@@ -1129,6 +1190,15 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "kind": "tool-vocabulary",
           "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "tool-vocabulary",
+          "reason": "Codex explorers need a static shell fallback when the harness exposes no dedicated filesystem reader, while Claude and Pi keep shell access disabled.",
           "surfaces": [
             "claude",
             "codex",
@@ -3747,7 +3817,7 @@ export const PROMPT_CATALOG_PROJECTION = {
       ]
     }
   ],
-  "catalogMetadataHash": "e4d3451fcff0d5872dfbd42eea084ef5712c53502db078e6b9c9e589bce6a2f2",
+  "catalogMetadataHash": "c3d16e7301441861136f17a76f875aecdac336ebaba8324a38b1b74ded7d3eb8",
   "fragmentContracts": [
     {
       "forbiddenVocabulary": {
@@ -3971,6 +4041,31 @@ export const PROMPT_CATALOG_PROJECTION = {
       "intentionalDifference": {
         "kind": "tool-vocabulary",
         "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+        "surfaces": [
+          "claude",
+          "codex",
+          "pi"
+        ]
+      },
+      "supportedSurfaces": [
+        "claude",
+        "codex",
+        "pi"
+      ]
+    },
+    {
+      "forbiddenVocabulary": {
+        "claude": [],
+        "codex": [
+          "command execution",
+          "execute commands"
+        ],
+        "pi": []
+      },
+      "fragment": "explorer-static-inspection",
+      "intentionalDifference": {
+        "kind": "tool-vocabulary",
+        "reason": "Codex explorers need a static shell fallback when the harness exposes no dedicated filesystem reader, while Claude and Pi keep shell access disabled.",
         "surfaces": [
           "claude",
           "codex",

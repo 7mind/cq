@@ -208,6 +208,23 @@ let
       };
     }
     {
+      fragment = "explorer-static-inspection";
+      supportedSurfaces = promptSurfaces;
+      forbiddenVocabulary = {
+        claude = [ ];
+        codex = [
+          "command execution"
+          "execute commands"
+        ];
+        pi = [ ];
+      };
+      intentionalDifference = {
+        kind = "tool-vocabulary";
+        reason = "Codex explorers need a static shell fallback when the harness exposes no dedicated filesystem reader, while Claude and Pi keep shell access disabled.";
+        surfaces = promptSurfaces;
+      };
+    }
+    {
       fragment = "operational-tool-vocabulary";
       supportedSurfaces = promptSurfaces;
       forbiddenVocabulary = {
@@ -247,6 +264,7 @@ let
     inline-command-recursion = "inline chained-command execution instructions";
     advance-run-guard = "surface-specific run guard lifecycle";
     host-tool-vocabulary = "frontmatter host tool and isolation capabilities";
+    explorer-static-inspection = "explorer-only static repository inspection policy";
     operational-tool-vocabulary = "body-level mapping from canonical operational tokens to callable host tools";
     ledger-response-contract = "ledger item-read projection and mutation response contract";
   };
@@ -401,6 +419,7 @@ let
   R = "inline-command-recursion";
   A = "advance-run-guard";
   T = "host-tool-vocabulary";
+  S = "explorer-static-inspection";
   O = "operational-tool-vocabulary";
   C = "ledger-response-contract";
 
@@ -410,9 +429,9 @@ let
     (mkAgent "implement-worker" [ I T X ])
     (mkAgent "implement-reviewer" [ I T X ])
     (mkAgent "implement-conflict-resolver" [ I T X ])
-    (mkAgent "investigate-explorer" [ I T Y ])
+    (mkAgent "investigate-explorer" [ I T S Y ])
     (mkAgent "investigate-prober" [ I T Y ])
-    (mkAgent "research-explorer" [ I T Y ])
+    (mkAgent "research-explorer" [ I T S Y ])
     (mkAgent "research-experimenter" [ T Y ])
     (mkCommand "begin" [ I T R C ] [
       (recursion "plan")

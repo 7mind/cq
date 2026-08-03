@@ -124,6 +124,17 @@ describe("T1325 role tool capability matrix", () => {
     }
   });
 
+  test("T1697 does not widen either explorer ledger MCP profile", () => {
+    for (const role of ["investigate-explorer", "research-explorer"] as const) {
+      expect(exposedLedgerToolsForRole(role), role).toEqual([
+        "fetch_dispatch_input",
+        "store_result",
+      ]);
+      expect(excludedLedgerToolsForRole(role), role).toContain("fetch_item");
+      expect(excludedLedgerToolsForRole(role), role).toContain("fts_search");
+    }
+  });
+
   // Regression origin: tasks:T1329 acceptance (2026-07-31).
   test("every catalog role makes one fail-closed decision for every ledger tool", () => {
     for (const profile of Object.values(ROLE_TOOL_CAPABILITY_MATRIX)) {

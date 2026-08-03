@@ -176,6 +176,18 @@ describe("packaged Codex prompt root and command skills", () => {
       expect(representative).toContain("`spawn_agent` transport");
       expect(representative).toContain("$cq-<path>");
       expect(representative).toContain("$ARGUMENTS");
+      for (const role of ["investigate-explorer", "research-explorer"] as const) {
+        const explorer = readFileSync(path.join(promptRoot, "roles", `${role}.md`), "utf8").replace(
+          /\s+/g,
+          " ",
+        );
+        expect(explorer).toContain(
+          "Only when the harness exposes no dedicated filesystem read or search tools may you use shell commands for static repository inspection.",
+        );
+        expect(explorer).toContain(
+          "Mutation, tests, builds, benchmarks, package execution, shell networking, adjudication, and child dispatch remain prohibited.",
+        );
+      }
       const rendered = direct.artifacts
         .slice(1)
         .map(({ content }) => content)
