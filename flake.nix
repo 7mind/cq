@@ -655,7 +655,7 @@
               --run 'export LEDGER_WEB_OUTDIR="''${LEDGER_WEB_OUTDIR:-''${XDG_CACHE_HOME:-$HOME/.cache}/ledger-web/dist}"' \
               --set-default CQ_PROMPT_SURFACES_ROOT "$WORKSPACE/prompt-surfaces" \
               --set CQ_PROCESS_IDENTITY_HELPER "$out/libexec/cq-process-identity" \
-              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 pkgs.git ]}
+              --prefix PATH : ${pkgs.lib.makeBinPath ([ pkgs.bun pkgs.nodejs_22 pkgs.git ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.procps ])}
             makeWrapper ${pkgs.bun}/bin/bun $out/bin/cq-codex-role \
               --add-flags "run $WORKSPACE/packages/cq-config/scripts/codex-role-dispatch.ts --" \
               --set-default CQ_PROMPT_ROOT "$WORKSPACE/prompt-surfaces/codex" \
@@ -692,13 +692,16 @@ test "$1" = exec
 cat > "$TMPDIR/cq-codex-role.launch"
 printf '%s\n' '{"attestationId":"att_packaged_role_acknowledgement","generation":7,"inputCapability":{"scope":"fetch-input","token":"cq_input_packaged_role_acknowledgement"},"resultCapability":{"scope":"store-result","token":"cq_result_packaged_role_acknowledgement"}}' | \
   cmp -s - "$TMPDIR/cq-codex-role.launch"
+printf '%s\n' '{"type":"thread.started","thread_id":"packaged-role-thread"}'
 printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"state\":\"result-stored\",\"attestationId\":\"att_packaged_role_acknowledgement\",\"generation\":7,\"outputDigest\":\"digest-bound-output\"}"}}'
+printf '%s\n' '{"type":"turn.completed"}'
 EOF
             chmod +x "$fakeCodex"
 
             roleCwd=$TMPDIR/role-cwd
             ledgerCwd=$TMPDIR/ledger-cwd
             mkdir -p "$roleCwd" "$ledgerCwd"
+            ${pkgs.git}/bin/git init -q "$roleCwd"
             roleStdout=$TMPDIR/cq-codex-role.stdout
             if ! printf '%s\n' '{"roleId":"implement-worker","handle":{"attestationId":"att_packaged_role_acknowledgement","generation":7},"inputCapability":{"scope":"fetch-input","token":"cq_input_packaged_role_acknowledgement"},"resultCapability":{"scope":"store-result","token":"cq_result_packaged_role_acknowledgement"},"cwd":"'"$roleCwd"'","ledgerCwd":"'"$ledgerCwd"'","model":"test-model","reasoningEffort":"high","sandboxMode":"read-only","timeoutMs":30000}' | \
               HOME=$TMPDIR \
@@ -720,12 +723,15 @@ EOF
             mkdir -p "$gateRepo/nested" "$gateOutside"
             ${pkgs.git}/bin/git init -q "$gateRepo"
             ln -s "$gateRepo" "$gateAlias"
-            $out/bin/cq gate run \
+            gateRun() {
+              ${pkgs.lib.optionalString pkgs.stdenv.isLinux "${pkgs.util-linux}/bin/setsid"} $out/bin/cq gate run "$@"
+            }
+            gateRun \
               --worktree "$gateRepo" \
               --command-cwd "$gateRepo/nested" \
               -- ${pkgs.runtimeShell} -c 'pwd > "$1"' shell "$TMPDIR/gate-pwd"
             test "$(cat "$TMPDIR/gate-pwd")" = "$gateRepo/nested"
-            if $out/bin/cq gate run \
+            if gateRun \
               --worktree "$gateRepo" \
               --command-cwd "$gateOutside" \
               -- ${pkgs.runtimeShell} -c 'touch "$1"' shell "$TMPDIR/escaped-ran"; then
@@ -734,7 +740,7 @@ EOF
             fi
             test ! -e "$TMPDIR/escaped-ran"
 
-            $out/bin/cq gate run \
+            gateRun \
               --worktree "$gateRepo" \
               --command-cwd "$gateRepo" \
               -- ${pkgs.runtimeShell} -c \
@@ -750,7 +756,7 @@ EOF
               fi
               sleep 0.02
             done
-            if $out/bin/cq gate run \
+            if gateRun \
               --worktree "$gateAlias" \
               --command-cwd "$gateAlias" \
               -- ${pkgs.runtimeShell} -c true; then
@@ -759,9 +765,10 @@ EOF
             fi
             touch "$TMPDIR/gate-release"
             wait "$firstGate"
-            PATH=${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 pkgs.git ]}:$PATH \
+            PATH=${pkgs.lib.makeBinPath ([ pkgs.bun pkgs.nodejs_22 pkgs.git ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.procps ])}:$PATH \
               CQ_TEST_CODEX_ROLE_EXECUTABLE=$out/bin/cq-codex-role \
               CQ_TEST_GIT_EXECUTABLE=${pkgs.git}/bin/git \
+              ${pkgs.lib.optionalString pkgs.stdenv.isLinux "${pkgs.util-linux}/bin/setsid"} \
               ${pkgs.bun}/bin/bun test \
                 "$WORKSPACE/packages/cq-config/test/codexGateIntegration.test.ts"
             runHook postInstallCheck
