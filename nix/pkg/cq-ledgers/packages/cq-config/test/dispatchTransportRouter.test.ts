@@ -1,8 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  acquireWorktreeGate,
+  closeWorktreeGate,
+  isRegisteredProcessGroupAlive,
+  launchRegisteredGateCommand,
+  type WorktreeGateLease,
+} from "@cq/process-control";
 import {
   DISPATCH_OVERLAY_REGISTRY,
   FakeDispatchClock,
@@ -23,6 +30,7 @@ import {
   runPreparedDispatch,
   sequentialDispatchRandomBytes,
   type AttestationNamespace,
+  type AttestationRow,
   type ClaudeChildCorrelation,
   type CodexChildCorrelation,
   type DispatchAdapterLaunchContext,
@@ -169,6 +177,30 @@ interface PreparedFixture {
   readonly prepared: DispatchPrepared;
   readonly deps: DispatchServiceDeps;
   readonly expectedCompletion: NativeCompletionProof;
+  readonly store: RecordingAttestationStore;
+}
+
+interface RecordedReplacement {
+  readonly from: string;
+  readonly to: string;
+  readonly materializedOutput: boolean;
+}
+
+function rowState(row: AttestationRow): string {
+  return row.kind === "envelope" ? row.state : `tombstone:${row.terminalKind}`;
+}
+
+class RecordingAttestationStore extends InMemoryAttestationStore {
+  readonly replacements: RecordedReplacement[] = [];
+
+  override replace(expected: AttestationRow, next: AttestationRow): void {
+    this.replacements.push({
+      from: rowState(expected),
+      to: rowState(next),
+      materializedOutput: next.kind === "envelope" && next.outputMaterializedAt !== undefined,
+    });
+    super.replace(expected, next);
+  }
 }
 
 interface PreparedFixtureOptions {
@@ -185,7 +217,7 @@ function preparedFixture(
 ): PreparedFixture {
   const now = options?.now ?? T0;
   const clock = new FakeDispatchClock(now);
-  const store = new InMemoryAttestationStore(NAMESPACE);
+  const store = new RecordingAttestationStore(NAMESPACE);
   const expectedChild = options?.expectedChild ?? {
     childId: `${targetHarness}-child`,
     runId: `${targetHarness}-run`,
@@ -219,6 +251,7 @@ function preparedFixture(
   return {
     prepared: outcome.prepared,
     deps: { store, now: clock.now },
+    store,
     expectedCompletion: {
       kind: "native-completion",
       actor: "trusted-parent",
@@ -296,6 +329,7 @@ function codexRecordingResolver(
   fixture: CodexRecordingFixture,
   options?: {
     readonly correlation?: CodexChildCorrelation;
+    readonly cwd?: string;
     readonly now?: string;
   },
 ): Parameters<typeof createCodexProcessDispatchAdapter>[0] {
@@ -306,8 +340,8 @@ function codexRecordingResolver(
       now: () => options?.now ?? T0,
       boundary: {
         roleInstructions: CLAUDE_ROLE_PROMPT,
-        cwd: import.meta.dir,
-        ledgerCwd: import.meta.dir,
+        cwd: options?.cwd ?? import.meta.dir,
+        ledgerCwd: options?.cwd ?? import.meta.dir,
         model: "recorded-codex-model",
         reasoningEffort: "high",
         sandboxMode: "danger-full-access",
@@ -573,6 +607,96 @@ describe("T1631 shared three-harness transport router", () => {
         ).state,
       ).toBe("output-already-materialized");
     } finally {
+      removeCodexRecordingFixture(processFixture);
+    }
+  });
+
+  test("a stored Codex handle with a live owned gate aborts before confirm or fetch", async () => {
+    const processFixture = createCodexRecordingFixture("success");
+    const ownedWorktree = join(processFixture.root, "owned-worktree");
+    const unrelatedWorktree = join(processFixture.root, "unrelated-worktree");
+    mkdirSync(ownedWorktree);
+    mkdirSync(unrelatedWorktree);
+    for (const worktree of [ownedWorktree, unrelatedWorktree]) {
+      const initialized = Bun.spawnSync(["git", "init", "--quiet"], {
+        cwd: worktree,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (initialized.exitCode !== 0) {
+        throw new Error(new TextDecoder().decode(initialized.stderr));
+      }
+    }
+    let ownedLease: WorktreeGateLease | undefined;
+    let unrelatedLease: WorktreeGateLease | undefined;
+    try {
+      ownedLease = await acquireWorktreeGate({
+        worktree: ownedWorktree,
+        commandCwd: ownedWorktree,
+      });
+      unrelatedLease = await acquireWorktreeGate({
+        worktree: unrelatedWorktree,
+        commandCwd: unrelatedWorktree,
+      });
+      const ownedCommand = await launchRegisteredGateCommand(ownedLease, [
+        process.execPath,
+        "-e",
+        "setInterval(() => {}, 1000)",
+      ]);
+      const unrelatedCommand = await launchRegisteredGateCommand(unrelatedLease, [
+        process.execPath,
+        "-e",
+        "setInterval(() => {}, 1000)",
+      ]);
+      expect(await isRegisteredProcessGroupAlive(ownedCommand.registration)).toBe(true);
+      expect(await isRegisteredProcessGroupAlive(unrelatedCommand.registration)).toBe(true);
+
+      const fixture = preparedFixture("codex", 27, {
+        expectedChild: codexExpectedChild(CODEX_CORRELATION),
+        promptDigest: promptDigestOf(CLAUDE_ROLE_PROMPT),
+      });
+      const registry = new DispatchTransportAdapterRegistry([
+        createCodexProcessDispatchAdapter(
+          codexRecordingResolver(processFixture, { cwd: ownedWorktree }),
+        ),
+      ]);
+      const result = await runPreparedDispatch(
+        {
+          namespace: NAMESPACE,
+          prepared: fixture.prepared,
+          activeHarness: "claude",
+          targetHarness: "codex",
+          forceShellout: false,
+        },
+        registry,
+        fixture.deps,
+      );
+
+      expect(result).toMatchObject({
+        outcome: "aborted",
+        abort: { reason: "protocol-violation" },
+      });
+      expect(result).not.toHaveProperty("output");
+      expect(processFixture.endpoint.counts).toEqual({ input: 1, store: 1 });
+      expect(await isRegisteredProcessGroupAlive(ownedCommand.registration)).toBe(false);
+      expect(await isRegisteredProcessGroupAlive(unrelatedCommand.registration)).toBe(true);
+      expect(fixture.store.replacements.filter(({ to }) => to === "aborted")).toHaveLength(1);
+      expect(fixture.store.replacements.filter(({ to }) => to === "consumed")).toHaveLength(0);
+      expect(
+        fixture.store.replacements.filter(({ materializedOutput }) => materializedOutput),
+      ).toHaveLength(0);
+      const row = fixture.store.rows()[0];
+      expect(row).toMatchObject({
+        kind: "envelope",
+        state: "aborted",
+        abortReason: "protocol-violation",
+      });
+      if (row?.kind !== "envelope") throw new Error("expected one live attestation envelope");
+      expect(row.nativeCompletion).toBeUndefined();
+      expect(row.outputMaterializedAt).toBeUndefined();
+    } finally {
+      if (unrelatedLease !== undefined) await closeWorktreeGate(unrelatedLease);
+      if (ownedLease !== undefined) await closeWorktreeGate(ownedLease);
       removeCodexRecordingFixture(processFixture);
     }
   });

@@ -1,11 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 
@@ -20,6 +14,7 @@ const WORKER_PROMPT = path.join(
 );
 const EXACT_GATE =
   'cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check';
+const YIELDED_GATE_SESSION = "A yielded command-session handle remains the sole full-gate attempt";
 const temporaryDirectories: string[] = [];
 
 function temporaryDirectory(prefix: string): string {
@@ -31,9 +26,7 @@ function temporaryDirectory(prefix: string): string {
 function run(command: string[], cwd: string): string {
   const result = Bun.spawnSync(command, { cwd, stdout: "pipe", stderr: "pipe" });
   if (result.exitCode !== 0) {
-    throw new Error(
-      `${command.join(" ")} failed: ${new TextDecoder().decode(result.stderr)}`,
-    );
+    throw new Error(`${command.join(" ")} failed: ${new TextDecoder().decode(result.stderr)}`);
   }
   return new TextDecoder().decode(result.stdout).trim();
 }
@@ -50,6 +43,13 @@ describe("D244/D243 rendered worker gate and history contract", () => {
     expect(prompt.split(EXACT_GATE)).toHaveLength(2);
     expect(prompt).not.toContain("git reset --hard");
     expect(prompt).not.toContain("From the worktree root run `bun run check`");
+  });
+
+  it("requires a yielded gate session to settle before retry, store, or return", () => {
+    const prompt = readFileSync(WORKER_PROMPT, "utf8").replace(/\s+/gu, " ");
+    expect(prompt).toContain(YIELDED_GATE_SESSION);
+    expect(prompt).toContain("poll that exact session or explicitly terminate it");
+    expect(prompt).toContain("before retrying the gate, calling `store_result`, or returning");
   });
 
   it("executes the real rendered gate from a fresh worktree root", () => {

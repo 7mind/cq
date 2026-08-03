@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import {
-  GateBusyError,
   acquireWorktreeGate,
   closeWorktreeGate,
   isProcessGroupAlive,
@@ -29,9 +28,7 @@ const DISPATCH_SCRIPT = fileURLToPath(
 const INSTALLED_DISPATCH = process.env["CQ_TEST_CODEX_ROLE_EXECUTABLE"];
 const GIT_EXECUTABLE = process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git";
 const FAKE_CODEX_SOURCE = fileURLToPath(new URL("./codexLifecycleFake.ts", import.meta.url));
-const GATE_FIXTURE = fileURLToPath(
-  new URL("./codexGateCommandFixture.ts", import.meta.url),
-);
+const GATE_FIXTURE = fileURLToPath(new URL("./codexGateCommandFixture.ts", import.meta.url));
 const ROLE_TIMEOUT_WINDOW_MS = 30_000;
 const CONTROLLED_DEADLINE_MS = 2_000;
 
@@ -59,7 +56,6 @@ interface GateReadyRecord {
 interface LifecycleFixture {
   readonly root: string;
   readonly worktree: string;
-  readonly equivalentWorktree: string;
   readonly promptRoot: string;
   readonly fakeCodex: string;
   readonly codexReady: string;
@@ -79,7 +75,6 @@ interface DispatchProcess {
 async function createLifecycleFixture(): Promise<LifecycleFixture> {
   const root = await mkdtemp(join(tmpdir(), "cq-codex-lifecycle-"));
   const worktree = join(root, "worktree");
-  const equivalentWorktree = join(root, "worktree-link");
   const promptRoot = join(root, "prompts");
   const fakeCodex = join(root, "fake-codex");
   await mkdir(worktree);
@@ -87,15 +82,16 @@ async function createLifecycleFixture(): Promise<LifecycleFixture> {
     encoding: "utf8",
   });
   if (git.status !== 0) throw new Error(`git init failed: ${git.stderr}`);
-  await symlink(worktree, equivalentWorktree, "dir");
   await mkdir(join(promptRoot, "roles"), { recursive: true });
   await writeFile(join(promptRoot, "roles", "implement-worker.md"), "Store one result.\n");
-  await writeFile(fakeCodex, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(FAKE_CODEX_SOURCE)}\n`);
+  await writeFile(
+    fakeCodex,
+    `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(FAKE_CODEX_SOURCE)}\n`,
+  );
   await chmod(fakeCodex, 0o700);
   return {
     root,
     worktree,
-    equivalentWorktree,
     promptRoot,
     fakeCodex,
     codexReady: join(root, "codex.ready"),
@@ -267,9 +263,7 @@ async function expectRegisteredGroupDead(observation: RegisteredGroupObservation
   ]);
 }
 
-async function launchGate(
-  fixture: LifecycleFixture,
-): Promise<{
+async function launchGate(fixture: LifecycleFixture): Promise<{
   readonly lease: WorktreeGateLease;
   readonly commands: readonly LaunchedGateCommand[];
   readonly groups: readonly RegisteredGroupObservation[];
@@ -336,15 +330,18 @@ async function settleDispatchFixture(dispatch: DispatchProcess | undefined): Pro
 }
 
 describe("T1625 Codex and canonical-worktree gate lifecycle [Effectual-GoodCommunication]", () => {
-  test("successful stored-result completion emits only its handle and preserves a yielded gate", async () => {
+  test("a stored-result handle with a live gate emits nothing and settles only owned groups", async () => {
     const fixture = await createLifecycleFixture();
+    const unrelatedFixture = await createLifecycleFixture();
     let gate: Awaited<ReturnType<typeof launchGate>> | undefined;
+    let unrelatedGate: Awaited<ReturnType<typeof launchGate>> | undefined;
     try {
       gate = await launchGate(fixture);
+      unrelatedGate = await launchGate(unrelatedFixture);
       const dispatch = launchDispatch(fixture, "success", 30_000);
-      expect(await dispatch.child.exited).toBe(0);
-      expect(await dispatch.stdout).toBe(`${JSON.stringify(HANDLE)}\n`);
-      expect(await dispatch.stderr).toBe("");
+      expect(await dispatch.child.exited).toBe(1);
+      expect(await dispatch.stdout).toBe("");
+      expect(await dispatch.stderr).toContain("live registered gate at child completion");
       const codexGroup = await waitForCodexGroup(fixture.codexGroup);
       expect(codexGroup.registration.leader.pid).toBe(codexGroup.registration.pgid);
       expect(codexGroup.members).toHaveLength(1);
@@ -357,31 +354,13 @@ describe("T1625 Codex and canonical-worktree gate lifecycle [Effectual-GoodCommu
       }
       expect(gate.commands).toHaveLength(2);
       for (const group of gate.groups) {
-        await expectRegisteredGroupAlive(group);
+        await expectRegisteredGroupDead(group);
       }
-
-      const sentinel = join(fixture.root, "second-gate-sentinel");
-      const attemptSecondGate = async (): Promise<void> => {
-        const secondLease = await acquireWorktreeGate({
-          worktree: fixture.equivalentWorktree,
-          commandCwd: fixture.equivalentWorktree,
-        });
-        try {
-          await launchRegisteredGateCommand(secondLease, [
-            process.execPath,
-            "-e",
-            `require("node:fs").writeFileSync(${JSON.stringify(sentinel)}, "launched")`,
-          ]);
-        } finally {
-          await closeWorktreeGate(secondLease);
-        }
-      };
-      await expect(
-        attemptSecondGate(),
-      ).rejects.toBeInstanceOf(GateBusyError);
-      await expect(readFile(sentinel, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      for (const group of unrelatedGate.groups) await expectRegisteredGroupAlive(group);
     } finally {
+      if (unrelatedGate !== undefined) await closeWorktreeGate(unrelatedGate.lease);
       if (gate !== undefined) await closeWorktreeGate(gate.lease);
+      await rm(unrelatedFixture.root, { recursive: true, force: true });
       await rm(fixture.root, { recursive: true, force: true });
     }
   });

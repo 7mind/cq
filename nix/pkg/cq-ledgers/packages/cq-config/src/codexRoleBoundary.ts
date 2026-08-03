@@ -15,10 +15,7 @@ import type {
 } from "./compactDispatchProtocol.js";
 import { classifyCodexFinalMessage } from "./codexDispatchProtocol.js";
 import { DISPATCHED_ROLE_IDS } from "./promptCatalogStore.js";
-import {
-  exposedLedgerToolsForRole,
-  type LedgerCapabilityToolName,
-} from "./roleToolProfiles.js";
+import { exposedLedgerToolsForRole, type LedgerCapabilityToolName } from "./roleToolProfiles.js";
 
 export const CODEX_ROLE_SANDBOX_MODES = [
   "read-only",
@@ -93,6 +90,7 @@ export const CODEX_ROLE_BOUNDARY_DIAGNOSTIC_VERDICTS = [
   "echo",
   "wrong-handle",
   "unparseable",
+  "live-gate-at-completion",
 ] as const;
 
 export type CodexRoleBoundaryDiagnosticVerdict =
@@ -105,6 +103,7 @@ export const CODEX_ROLE_BOUNDARY_DIAGNOSTIC_DETAIL_CODES = [
   "invalid-json",
   "invalid-shape",
   "invalid-handle-shape",
+  "unsettled-full-gate-at-completion",
 ] as const;
 
 export type CodexRoleBoundaryDiagnosticDetailCode =
@@ -131,9 +130,7 @@ export class CodexRoleBoundaryError extends Error {
   }
 }
 
-export function formatCodexRoleBoundaryDiagnostic(
-  diagnostic: CodexRoleBoundaryDiagnostic,
-): string {
+export function formatCodexRoleBoundaryDiagnostic(diagnostic: CodexRoleBoundaryDiagnostic): string {
   return `${CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX}${JSON.stringify(diagnostic)}`;
 }
 
@@ -452,7 +449,8 @@ function resultStoredAcknowledgementHandle(
   }
   const record = parsed as Record<string, unknown>;
   const hasExactKeys = (candidate: Record<string, unknown>, keys: readonly string[]): boolean =>
-    Object.keys(candidate).length === keys.length && keys.every((key) => Object.hasOwn(candidate, key));
+    Object.keys(candidate).length === keys.length &&
+    keys.every((key) => Object.hasOwn(candidate, key));
   const matchesHandle = (candidate: Record<string, unknown>): boolean =>
     candidate.attestationId === expected.attestationId &&
     candidate.generation === expected.generation;
@@ -475,13 +473,7 @@ function resultStoredAcknowledgementHandle(
   ) {
     const nested = result as Record<string, unknown>;
     if (
-      hasExactKeys(nested, [
-        "state",
-        "attestationId",
-        "generation",
-        "storedAt",
-        "outputDigest",
-      ]) &&
+      hasExactKeys(nested, ["state", "attestationId", "generation", "storedAt", "outputDigest"]) &&
       nested.state === "result-stored" &&
       matchesHandle(nested) &&
       typeof nested.storedAt === "string" &&
@@ -510,11 +502,7 @@ export function interceptCodexRoleBoundaryResult(
   if (finalMessage === undefined) {
     throw new CodexRoleBoundaryError(
       "child emitted no completed agent message",
-      boundaryDiagnostic(
-        observation,
-        "no-completed-message",
-        "no-completed-agent-message",
-      ),
+      boundaryDiagnostic(observation, "no-completed-message", "no-completed-agent-message"),
     );
   }
   const storedAcknowledgement = resultStoredAcknowledgementHandle(finalMessage, expectedHandle);
@@ -602,8 +590,16 @@ export async function executeCodexRoleBoundary(
   const timeout = setTimeout(() => requestStop("timeout"), plan.timeoutMs);
 
   let rootRegistration: ProcessGroupRegistration | undefined;
-  let settlement: Promise<void> | undefined;
-  const settle = (): Promise<void> => {
+  let settlement:
+    | Promise<{
+        readonly gate: SettleProcessGroupsResult;
+        readonly root: SettleProcessGroupsResult;
+      }>
+    | undefined;
+  const settle = (): Promise<{
+    readonly gate: SettleProcessGroupsResult;
+    readonly root: SettleProcessGroupsResult;
+  }> => {
     settlement ??= (async () => {
       let gateResult: SettleProcessGroupsResult | undefined;
       let gateError: unknown;
@@ -623,10 +619,7 @@ export async function executeCodexRoleBoundary(
         rootError = error;
       }
 
-      const survivors = [
-        ...(gateResult?.survivors ?? []),
-        ...rootResult.survivors,
-      ];
+      const survivors = [...(gateResult?.survivors ?? []), ...rootResult.survivors];
       if (gateError !== undefined || rootError !== undefined) {
         throw new AggregateError(
           [gateError, rootError].filter((error) => error !== undefined),
@@ -638,6 +631,10 @@ export async function executeCodexRoleBoundary(
           `process-group settlement left survivors ${survivors.join(", ")}`,
         );
       }
+      return {
+        gate: gateResult ?? { signaled: [], survivors: [] },
+        root: rootResult,
+      };
     })();
     return settlement;
   };
@@ -690,9 +687,7 @@ export async function executeCodexRoleBoundary(
     } catch (error) {
       if (requestedStop === undefined) throw error;
       if (requestedStop === "timeout") {
-        throw new CodexRoleBoundaryError(
-          `child exceeded its ${String(plan.timeoutMs)} ms window`,
-        );
+        throw new CodexRoleBoundaryError(`child exceeded its ${String(plan.timeoutMs)} ms window`);
       }
       throw new CodexRoleBoundaryError(`wrapper received ${requestedStop}`);
     }
@@ -714,22 +709,27 @@ export async function executeCodexRoleBoundary(
     ]);
     if (outcome.kind === "stopped") {
       if (outcome.cause === "timeout") {
-        throw new CodexRoleBoundaryError(
-          `child exceeded its ${String(plan.timeoutMs)} ms window`,
-        );
+        throw new CodexRoleBoundaryError(`child exceeded its ${String(plan.timeoutMs)} ms window`);
       }
       throw new CodexRoleBoundaryError(`wrapper received ${outcome.cause}`);
     }
     if (outcome.kind === "failed") throw outcome.error;
-    if (correlationId !== undefined) {
-      return observedCodexRoleBoundaryResult(
-        outcome.stdout,
-        plan,
-        correlationId,
-        outcome.exitStatus,
+    const result =
+      correlationId !== undefined
+        ? observedCodexRoleBoundaryResult(outcome.stdout, plan, correlationId, outcome.exitStatus)
+        : interceptCodexRoleBoundaryResult(outcome.stdout, plan.expectedHandle);
+    const ownedSettlement = await settle();
+    if (ownedSettlement.gate.signaled.length > 0) {
+      throw new CodexRoleBoundaryError(
+        "live registered gate at child completion",
+        boundaryDiagnostic(
+          observeCodexRoleBoundaryStream(outcome.stdout, plan.expectedHandle),
+          "live-gate-at-completion",
+          "unsettled-full-gate-at-completion",
+        ),
       );
     }
-    return interceptCodexRoleBoundaryResult(outcome.stdout, plan.expectedHandle);
+    return result;
   } catch (error) {
     try {
       await settle();

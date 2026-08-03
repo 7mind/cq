@@ -166,19 +166,10 @@ type LostReportViolation =
 function lostReportContractViolations(body: string): readonly LostReportViolation[] {
   const normalized = normalize(body);
   const required: readonly [LostReportViolation, string][] = [
-    [
-      "missing-operational-definition",
-      "A missing or non-consumed native result is a LOST REPORT",
-    ],
+    ["missing-operational-definition", "A missing or non-consumed native result is a LOST REPORT"],
     ["missing-contract-breach-log", "Log it"],
-    [
-      "missing-single-retry",
-      "retry the same role once with a fresh prepared dispatch",
-    ],
-    [
-      "missing-second-loss-fail-closed",
-      "A second loss fails that task path closed",
-    ],
+    ["missing-single-retry", "retry the same role once with a fresh prepared dispatch"],
+    ["missing-second-loss-fail-closed", "A second loss fails that task path closed"],
     [
       "missing-result-classification",
       "cannot become a worker failure, reviewer abstention, or resolver verdict",
@@ -306,9 +297,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       expect(rendered).not.toContain("return a single fenced `json` block");
     }
 
-    const heldPiAdvance = normalize(
-      renderedOf("pi", "implement/advance").replace(/^>\s?/gm, ""),
-    );
+    const heldPiAdvance = normalize(renderedOf("pi", "implement/advance").replace(/^>\s?/gm, ""));
     expect(heldPiAdvance).toContain(
       normalize(
         "never interpret the held adapter's raw completion. Enter the bailout until the extension-local lifecycle can return a consumed fetched body.",
@@ -328,8 +317,11 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
         '`cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check`',
       );
       expect(worker).toContain(
-        '`git merge-base --is-ancestor <startingCommit> <resultCommit>`',
+        "A yielded command-session handle remains the sole full-gate attempt",
       );
+      expect(worker).toContain("poll that exact session or explicitly terminate it");
+      expect(worker).toContain("before retrying the gate, calling `store_result`, or returning");
+      expect(worker).toContain("`git merge-base --is-ancestor <startingCommit> <resultCommit>`");
       expect(worker).toContain(
         '`{"attestationId":"<prepared attestation id>","generation":<prepared generation>}`',
       );
@@ -338,9 +330,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       expect(advance).toContain("`git rev-parse --verify`");
       expect(advance).toContain("`git cat-file -t`");
       expect(advance).toContain("startingCommit");
-      expect(advance).toContain(
-        "worktree `HEAD` to equal that retained `startingCommit`",
-      );
+      expect(advance).toContain("worktree `HEAD` to equal that retained `startingCommit`");
       expect(advance).toContain(
         "`git merge-base --is-ancestor <verifiedBaseCommit> <startingCommit>`",
       );
@@ -348,10 +338,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
         "`git merge-base --is-ancestor <verifiedBaseCommit> <resultCommit>`",
       );
       expect(
-        countOccurrences(
-          advance,
-          "`git merge-base --is-ancestor <startingCommit> <resultCommit>`",
-        ),
+        countOccurrences(advance, "`git merge-base --is-ancestor <startingCommit> <resultCommit>`"),
       ).toBe(3);
       expect(advance).toContain("Any failure is a contract breach and forbids merge-back");
     }
@@ -361,10 +348,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     const advance = normalize(renderedOf("codex", "implement/advance"));
     const stored = advance.indexOf("observe the `result-stored` acknowledgement");
     const logged = advance.indexOf("`cq log put`", stored);
-    const aborted = advance.indexOf(
-      "`abort_dispatch` with reason `protocol-violation`",
-      logged,
-    );
+    const aborted = advance.indexOf("`abort_dispatch` with reason `protocol-violation`", logged);
     expect(stored).toBeGreaterThanOrEqual(0);
     expect(logged).toBeGreaterThan(stored);
     expect(aborted).toBeGreaterThan(logged);
@@ -377,9 +361,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
   it("T903 pins reviewer evidence as blocking and independently verifies commit object plus tip", () => {
     for (const surface of PROMPT_SURFACES) {
       const reviewer = normalize(renderedOf(surface, "implement-reviewer"));
-      expect(reviewer).toContain(
-        "Always state `gateReRan` and `resultCommitVerified`",
-      );
+      expect(reviewer).toContain("Always state `gateReRan` and `resultCommitVerified`");
       expect(reviewer).toContain(
         "`git -C <worktree> cat-file -t <resultCommit>` and require `commit`",
       );
@@ -393,7 +375,9 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     for (const surface of PROMPT_SURFACES) {
       const advance = normalize(renderedOf(surface, "implement/advance"));
       expect(advance).toContain(
-        normalize("Treat `gateDurationMs` below `50`, absent/zero, or below one quarter of the median for earlier rounds of this same task as implausible."),
+        normalize(
+          "Treat `gateDurationMs` below `50`, absent/zero, or below one quarter of the median for earlier rounds of this same task as implausible.",
+        ),
       );
       expect(advance).toContain(
         normalize("Re-run `bun run check` in the foreground and use its real exit status."),
@@ -526,9 +510,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     // silently.
     const projection = readFileSync(CODEX_SKILL_PROJECTION, "utf8");
     expect(projection).not.toContain("Read that role reference completely");
-    expect(projection).not.toContain(
-      "before dispatching it through the collaboration transport",
-    );
+    expect(projection).not.toContain("before dispatching it through the collaboration transport");
 
     // ...and neither of the conformant surfaces carries an equivalent
     // parent-read instruction for a dispatched role.

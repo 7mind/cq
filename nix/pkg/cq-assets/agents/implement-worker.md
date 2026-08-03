@@ -7,6 +7,7 @@ description: Implement exactly one task in an isolated worktree, prove its guard
 {{cq:fragment:cq-command-invocation}}
 
 ## Catalogue
+
 ```yaml
 inputs:
   - "task specification, isolated worktree/branch, verified base, round, authoritative starting commit, optional prior criticism"
@@ -55,6 +56,11 @@ specification. Address every supplied prior criticism.
 
 6. **Run the full gate in the foreground.** From the worktree root, run exactly
    `cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check`.
+   A yielded command-session handle remains the sole full-gate attempt. Continue
+   to poll that exact session or explicitly terminate it; after termination,
+   continue polling and require terminal settlement before retrying the gate,
+   calling `store_result`, or returning. Never launch a replacement full-gate
+   attempt while the prior session remains live.
    Capture start/end time and assign its exit status
    immediately after the command, independent of any pipe or wrapper. Preserve
    `REAL_CHECK_EXIT=<n>`, the verbatim result tail, and `gateDurationMs`.
@@ -67,10 +73,10 @@ specification. Address every supplied prior criticism.
    - `git cat-file -t <head>` returns `commit`;
    - `git status --porcelain --untracked-files=all` is empty;
    - `git merge-base --is-ancestor <baseCommit> HEAD` exits zero.
-   Immediately before constructing the result, rerun
-   `git rev-parse --verify HEAD` and copy its stdout verbatim into
-   `resultCommit`, then require
-   `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.
+     Immediately before constructing the result, rerun
+     `git rev-parse --verify HEAD` and copy its stdout verbatim into
+     `resultCommit`, then require
+     `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.
 
 ## Result
 
