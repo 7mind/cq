@@ -278,21 +278,25 @@ if [[ -n "${TMUX:-}" ]]; then
         --tmux-socket "$_tmux_sock" \
         --tmux "$_tmux_bin" &
       CLIP_BROKER_PID=$!
-      # Wait briefly for the listener; fail closed if it never appears.
+      # Readiness requires BOTH a live child and a successful connection to
+      # the freshly created socket (a connect+close probe speaking no
+      # protocol): a stale socket file or an exited child both fail closed.
+      _clip_ready=0
+      _clip_state="stale-socket"
       _clip_wait=0
-      while [[ ! -S "$_clip_sock" && $_clip_wait -lt 50 ]]; do
-        # Bail early if the broker died.
+      while [[ $_clip_wait -lt 100 ]]; do
         if ! kill -0 "$CLIP_BROKER_PID" 2>/dev/null; then
-          echo "warning: yolo clipboard broker exited before binding; clipboard disabled" >&2
-          CLIP_BROKER_PID=""
-          rm -rf "$CLIP_PROXY_DIR"
-          CLIP_PROXY_DIR=""
+          _clip_state="exited-child"
+          break
+        fi
+        if [[ -S "$_clip_sock" ]] && YOLO_CLIPBOARD_SOCK="$_clip_sock" "${YOLO_CLIPBOARD_PROXY}" client probe 2>/dev/null; then
+          _clip_ready=1
           break
         fi
         sleep 0.05
         _clip_wait=$((_clip_wait + 1))
       done
-      if [[ -n "$CLIP_BROKER_PID" && -S "$_clip_sock" ]]; then
+      if [[ $_clip_ready -eq 1 ]]; then
         CLIP_SHIM_DIR="${YOLO_CLIPBOARD_SHIM_DIR:-}"
         TMUX_BIND_ARGS+=(--rw "$CLIP_PROXY_DIR")
         TMUX_BIND_ARGS+=(--env "YOLO_CLIPBOARD_SOCK=$_clip_sock")
@@ -308,7 +312,11 @@ if [[ -n "${TMUX:-}" ]]; then
         fi
         rm -rf "$CLIP_PROXY_DIR"
         CLIP_PROXY_DIR=""
-        echo "warning: yolo clipboard broker socket did not appear; clipboard disabled" >&2
+        if [[ "$_clip_state" == "exited-child" ]]; then
+          echo "warning: yolo clipboard broker exited before becoming ready; clipboard disabled" >&2
+        else
+          echo "warning: yolo clipboard broker socket never accepted a connection (stale-socket or wedged broker); clipboard disabled" >&2
+        fi
         # No broker coordinate: keep detection off rather than leak the host
         # socket path or server PID into the sandbox.
         TMUX_BIND_ARGS+=(--env "TMUX=")
@@ -952,17 +960,26 @@ _yolo_cleanup() {
 }
 if [[ -n "$SECRET_TMPFILE" || -n "$SANDBOX_HOOKS_TMPFILE" || -n "$SSH_CONFIG_TMPFILE" || -n "$CLIP_BROKER_PID" ]]; then
   trap '_yolo_cleanup' EXIT
+  # Fatal signals must also pass through cleanup (an untrapped TERM/INT/HUP
+  # would skip the EXIT trap). A trapped signal only interrupts a `wait`
+  # builtin, never a foreground external command, so the sandbox runs as a
+  # background job: the trap fires immediately and re-raises as an exit.
+  trap 'exit 143' TERM
+  trap 'exit 130' INT
+  trap 'exit 129' HUP
   if [[ -n "$SECRET_TMPFILE" || -n "$SANDBOX_HOOKS_TMPFILE" ]]; then
     "$_yolo_sandbox" \
       "${BASE_ARGS[@]}" \
       "${EXTRA_ARGS[@]}" \
-      -- "$_yolo_entrypoint" "${EXEC_CMD[@]}"
+      -- "$_yolo_entrypoint" "${EXEC_CMD[@]}" &
   else
     "$_yolo_sandbox" \
       "${BASE_ARGS[@]}" \
       "${EXTRA_ARGS[@]}" \
-      -- "${EXEC_CMD[@]}"
+      -- "${EXEC_CMD[@]}" &
   fi
+  _yolo_sandbox_pid=$!
+  wait "$_yolo_sandbox_pid"
   exit $?
 fi
 

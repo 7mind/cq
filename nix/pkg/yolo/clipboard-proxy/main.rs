@@ -26,6 +26,7 @@ use std::convert::TryFrom;
 use std::env;
 use std::fs;
 use std::io::{self, ErrorKind, Read, Write};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -135,6 +136,14 @@ struct BrokerConfig {
 fn run_broker(args: &[String]) -> Result<(), String> {
     let cfg = parse_broker_args(args)?;
 
+    // The death-signal handler must know the cleanup path BEFORE any
+    // synchronization point or bind, or a death in between would strand it.
+    set_cleanup_socket(&cfg.listen);
+
+    // Parent-death handling arms BEFORE the broker binds or accepts clipboard
+    // authority; a registration failure is fatal and exits before binding.
+    arm_parent_death()?;
+
     if let Some(parent) = cfg.listen.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
         let mut perms = fs::metadata(parent)
@@ -154,9 +163,6 @@ fn run_broker(args: &[String]) -> Result<(), String> {
     sock_perms.set_mode(0o600);
     fs::set_permissions(&cfg.listen, sock_perms)
         .map_err(|e| format!("chmod {}: {e}", cfg.listen.display()))?;
-
-    // Parent-death: when yolo exits without reaping us, stop promptly.
-    install_pdeathsig_and_signals();
 
     eprintln!(
         "yolo-clipboard-proxy broker: listening on {} (tmux socket {})",
@@ -230,7 +236,14 @@ fn handle_client(mut stream: UnixStream, cfg: &BrokerConfig) -> Result<(), Strin
     let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
 
-    let tag = read_u8(&mut stream)?;
+    // A connect-and-close readiness probe speaks no protocol; it closes
+    // quietly instead of surfacing a client error.
+    let mut tag_byte = [0u8; 1];
+    let tag = match stream.read_exact(&mut tag_byte) {
+        Ok(()) => tag_byte[0],
+        Err(e) if e.kind() == ErrorKind::UnexpectedEof => return Ok(()),
+        Err(e) => return Err(format!("read tag: {e}")),
+    };
     match tag {
         TAG_SET => {
             let declared = read_u32_le(&mut stream)?;
@@ -278,7 +291,7 @@ fn handle_client(mut stream: UnixStream, cfg: &BrokerConfig) -> Result<(), Strin
                 Err(e) => write_err(&mut stream, &e),
             }
         }
-        other => write_ok(&mut stream),
+        other => write_err(&mut stream, &format!("unknown request tag {other}")),
     }
 }
 
@@ -499,7 +512,14 @@ fn run_client(args: &[String]) -> Result<(), String> {
                 .map_err(|e| format!("write stdout: {e}"))?;
             Ok(())
         }
-        other => Err(format!("client: unknown op '{other}' (expected set|get)")),
+        "probe" => {
+            // Readiness probe (tasks:T1795): connect and close, speaking no
+            // protocol operation.
+            UnixStream::connect(clipboard_sock_path()?)
+                .map_err(|e| format!("connect broker: {e}"))?;
+            Ok(())
+        }
+        other => Err(format!("client: unknown op '{other}' (expected set|get|probe)")),
     }
 }
 
@@ -767,22 +787,125 @@ fn read_err_message(r: &mut impl Read) -> Result<String, String> {
 }
 
 // ---------------------------------------------------------------------------
-// Process hygiene
+// Process hygiene (tasks:T1795)
 // ---------------------------------------------------------------------------
 
-fn install_pdeathsig_and_signals() {
-    // Best-effort: on Linux, die when the parent (yolo) disappears. Primary
-    // cleanup is still yolo.sh's EXIT trap (kill + rm socket dir).
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+fn raw_getppid() -> i32 {
+    extern "C" {
+        fn getppid() -> i32;
+    }
+    unsafe { getppid() }
+}
+
+/// Deterministic synchronization points for the lifecycle suite: when both
+/// YOLO_CLIPBOARD_SYNC_STAGE and YOLO_CLIPBOARD_SYNC_GATE name FIFOs, the
+/// broker writes one stage byte and then blocks until one gate byte arrives,
+/// so the suite can kill the parent at exact registration stages without any
+/// timing-dependent sleep. Both FIFOs are opened ONCE and held for the whole
+/// arming sequence — reopening per stage would close the gate read end
+/// between stages and SIGPIPE a concurrently gating suite.
+struct SyncFifos {
+    stage: fs::File,
+    gate: fs::File,
+}
+
+fn open_sync_fifos() -> Option<SyncFifos> {
+    let (Some(stage_path), Some(gate_path)) = (
+        env::var_os("YOLO_CLIPBOARD_SYNC_STAGE"),
+        env::var_os("YOLO_CLIPBOARD_SYNC_GATE"),
+    ) else {
+        return None;
+    };
+    let stage = fs::OpenOptions::new().write(true).open(&stage_path).ok()?;
+    let gate = fs::File::open(&gate_path).ok()?;
+    Some(SyncFifos { stage, gate })
+}
+
+fn sync_point(fifos: &mut Option<SyncFifos>, stage: u8) {
+    let Some(f) = fifos.as_mut() else {
+        return;
+    };
+    let _ = f.stage.write_all(&[stage]);
+    let _ = f.stage.flush();
+    let mut byte = [0u8; 1];
+    let _ = f.gate.read_exact(&mut byte);
+}
+
+const PDEATH_SIGNAL: i32 = 15; // SIGTERM
+
+// The launch-private socket path the death-signal handler unlinks, plus its
+// parent directory when empty. Written once before the accept loop; the
+// handler is async-signal-safe (unlink/rmdir/_exit only).
+static mut CLEANUP_SOCK: [u8; 4096] = [0u8; 4096];
+static CLEANUP_SOCK_LEN: AtomicUsize = AtomicUsize::new(0);
+
+extern "C" fn on_death_signal(_sig: i32) {
+    unsafe {
+        extern "C" {
+            fn unlink(path: *const u8) -> i32;
+            fn rmdir(path: *const u8) -> i32;
+            fn _exit(status: i32) -> !;
+        }
+        let len = CLEANUP_SOCK_LEN.load(Ordering::SeqCst);
+        if len > 0 && len < 4096 {
+            let _ = unlink(CLEANUP_SOCK.as_ptr());
+            let mut parent_end = len;
+            while parent_end > 0 && CLEANUP_SOCK[parent_end - 1] != b'/' {
+                parent_end -= 1;
+            }
+            if parent_end > 1 {
+                CLEANUP_SOCK[parent_end - 1] = 0;
+                let _ = rmdir(CLEANUP_SOCK.as_ptr());
+            }
+        }
+        _exit(128 + PDEATH_SIGNAL);
+    }
+}
+
+fn set_cleanup_socket(path: &Path) {
+    let bytes = path.as_os_str().as_bytes();
+    if bytes.len() + 1 <= 4096 {
+        unsafe {
+            CLEANUP_SOCK[..bytes.len()].copy_from_slice(bytes);
+            CLEANUP_SOCK[bytes.len()] = 0;
+            CLEANUP_SOCK_LEN.store(bytes.len(), Ordering::SeqCst);
+        }
+    }
+}
+
+/// Arm parent-death handling against the ORIGINAL parent identity: register
+/// the death signal and cleanup handler, then immediately recheck the parent
+/// identity so a death inside the fork/prctl window cannot orphan the broker.
+/// Registration failure is fatal and happens before any bind.
+fn arm_parent_death() -> Result<(), String> {
+    let original_ppid = raw_getppid();
+    let mut fifos = open_sync_fifos();
+    sync_point(&mut fifos, b'A');
     #[cfg(target_os = "linux")]
     {
-        // prctl(PR_SET_PDEATHSIG, SIGTERM) — no libc crate; call directly.
         unsafe {
             extern "C" {
                 fn prctl(option: i32, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> i32;
+                fn signal(signum: i32, handler: usize) -> usize;
             }
             const PR_SET_PDEATHSIG: i32 = 1;
-            const SIGTERM: u64 = 15;
-            let _ = prctl(PR_SET_PDEATHSIG, SIGTERM, 0, 0, 0);
+            const SIG_ERR: usize = usize::MAX;
+            if prctl(PR_SET_PDEATHSIG, PDEATH_SIGNAL as u64, 0, 0, 0) != 0 {
+                return Err("parent-death registration failed (prctl PR_SET_PDEATHSIG)".into());
+            }
+            if signal(PDEATH_SIGNAL, on_death_signal as usize) == SIG_ERR {
+                return Err("parent-death registration failed (signal SIGTERM)".into());
+            }
         }
     }
+    sync_point(&mut fifos, b'B');
+    // A parent that died in the fork/prctl window leaves the broker
+    // reparented; the recheck turns that window into a fatal failure.
+    if raw_getppid() != original_ppid {
+        return Err("original parent died during parent-death registration".into());
+    }
+    sync_point(&mut fifos, b'C');
+    Ok(())
 }
