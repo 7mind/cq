@@ -156,6 +156,38 @@ OUT="$(run_yolo_cmd)"
 assert_not_contains "wayland socket is not bound by default" "$OUT" "$WAYLAND_SOCKET"
 assert_not_contains "WAYLAND_DISPLAY is not set by default" "$OUT" "WAYLAND_DISPLAY=wayland-9"
 assert_contains "audio socket is bound by default" "$OUT" "$FAKE_XDG/pipewire-0"
+assert_not_contains "dynamic gpu devices are not bound by default" "$OUT" "/dev/dri,/dev/dri"
+
+OUT="$(run_yolo_cmd --enable=gpu)"
+assert_not_contains "--enable=gpu does not enable dynamic passthrough" "$OUT" "/dev/dri,/dev/dri"
+
+OUT="$(run_yolo_cmd --enable=dyngpu)"
+STATUS=$?
+assert_eq "--enable=dyngpu remains non-fatal" "0" "$STATUS"
+assert_contains "--enable=dyngpu binds DRM devices" "$OUT" "/dev/dri,/dev/dri"
+assert_contains "--enable=dyngpu binds AMD KFD" "$OUT" "/dev/kfd,/dev/kfd"
+assert_contains "--enable=dyngpu binds NVIDIA control devices" "$OUT" "/dev/nvidiactl,/dev/nvidiactl"
+assert_contains "--enable=dyngpu binds NVIDIA render devices" "$OUT" "/dev/nvidia0,/dev/nvidia0"
+assert_contains "--enable=dyngpu binds NixOS graphics and Vulkan drivers" "$OUT" "/run/opengl-driver"
+assert_contains "--enable=dyngpu binds 32-bit graphics and Vulkan drivers" "$OUT" "/run/opengl-driver-32"
+assert_contains "--enable=dyngpu binds device metadata" "$OUT" "/sys"
+if [[ ! -e /dev/dri && ! -e /dev/kfd && ! -e /dev/nvidiactl && ! -e /dev/nvidia0 ]]; then
+  assert_contains "--enable=dyngpu warns when GPU devices are absent" "$OUT" "no GPU device nodes found"
+fi
+
+OUT="$(run_yolo_cmd --enable=dyngpu --disable=dyngpu)"
+assert_not_contains "--disable drops enabled dynamic gpu devices" "$OUT" "/dev/dri,/dev/dri"
+
+STATIC_GPU_RECORD=$'/dev/static-gpu\tgpu'
+OUT="$(YOLO_EXTRA_DEV_PATHS="$STATIC_GPU_RECORD" run_yolo_cmd --disable=dyngpu)"
+assert_contains "--disable=dyngpu preserves static gpu devices" "$OUT" "/dev/static-gpu,/dev/static-gpu"
+
+OUT="$(YOLO_EXTRA_DEV_PATHS="$STATIC_GPU_RECORD" run_yolo_cmd --disable=gpu)"
+assert_not_contains "--disable=gpu drops static gpu devices" "$OUT" "/dev/static-gpu,/dev/static-gpu"
+
+OUT="$(YOLO_EXTRA_DEV_PATHS="$STATIC_GPU_RECORD" run_yolo_cmd --enable=dyngpu --disable=gpu)"
+assert_contains "--disable=gpu preserves enabled dynamic gpu devices" "$OUT" "/dev/dri,/dev/dri"
+assert_not_contains "--disable=gpu still drops static gpu devices with dyngpu enabled" "$OUT" "/dev/static-gpu,/dev/static-gpu"
 
 OUT="$(run_yolo_cmd --enable=display)"
 assert_contains "--enable=display binds the wayland socket" "$OUT" "$WAYLAND_SOCKET"
@@ -213,6 +245,7 @@ TEST_DISPLAY=":99"
 
 OUT="$(run_yolo --help)"
 assert_contains "usage documents --enable" "$OUT" "--enable=TAG"
+assert_contains "usage documents dynamic gpu passthrough" "$OUT" "dyngpu"
 
 if [[ $FAILURES -ne 0 ]]; then
   echo "$FAILURES of $TESTS_RUN tests failed"

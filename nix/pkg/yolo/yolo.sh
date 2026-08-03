@@ -53,10 +53,6 @@ UNSAFE_SHARE_HOME=0
 # tagged "codegraph" (`--disable=codegraph` skips it).
 # shellcheck disable=SC2034
 DISABLE_TAGS=()
-# Feature activation: --enable=TAG (same syntax) turns on a feature that is OFF
-# by default — currently only display passthrough (tag "display"). Everything
-# else is on by default, so --enable is a no-op for it. --disable always wins
-# over --enable for the same tag (see tag_active).
 ENABLE_TAGS=()
 # shellcheck source=/dev/null
 source "$YOLO_CUSTOM_PROMPT"
@@ -80,12 +76,12 @@ Flags (must precede the subcommand):
   -w, --work             Alias for `--profile work`
       --disable=TAG      Drop every device bind, prompt fragment and pre-start
                          hook carrying TAG (repeatable, comma-separated).
-                         Known tags: audio, gpu, codegraph.
+                         Known tags: audio, codegraph, display, dyngpu, gpu.
       --enable=TAG       Turn on a feature that is off by default (repeatable,
-                         comma-separated). Known tags: display (bind the
-                         Wayland compositor socket plus the X11/XWayland socket
-                         and auth file, so sandboxed commands can open
-                         windows). --disable=TAG wins over --enable=TAG.
+                         comma-separated). Known tags: display (bind Wayland
+                         and X11/XWayland), dyngpu (discover and bind Linux GPU
+                         devices, sysfs, and NixOS graphics/Vulkan drivers).
+                         --disable=TAG wins over --enable=TAG.
       --ro PATH          Ad-hoc read-only bind of a host PATH into the sandbox
                          at the same location (repeatable; skipped if missing).
       --rw PATH          Ad-hoc read-write bind of a host PATH (repeatable;
@@ -253,16 +249,54 @@ if [[ -n "${TMUX:-}" ]]; then
   fi
 fi
 
-# Device passthrough (configured via Nix from
+# Dynamic GPU passthrough is a built-in, default-off capability enabled only by
+# `--enable=dyngpu`. It supplies the common Intel/AMD/NVIDIA device candidates,
+# NixOS graphics/Vulkan driver trees, and sysfs independently of the static
+# Nix-configured device records below. The llm-sandbox layer skips candidates
+# absent on this host; yolo warns and continues when no GPU device exists.
+DYNGPU_ARGS=()
+if tag_active dyngpu off; then
+  _dyngpu_device_found=0
+  for _dyngpu_device in \
+    /dev/dri/* \
+    /dev/kfd \
+    /dev/nvidiactl \
+    /dev/nvidia-modeset \
+    /dev/nvidia-uvm \
+    /dev/nvidia-uvm-tools \
+    /dev/nvidia[0-9]*; do
+    [[ -e "$_dyngpu_device" ]] && _dyngpu_device_found=1
+  done
+  if [[ $_dyngpu_device_found -eq 0 ]]; then
+    echo "warning: --enable=dyngpu requested but no GPU device nodes found; continuing without GPU device access" >&2
+  fi
+  DYNGPU_ARGS+=(--dev-bind "/dev/dri,/dev/dri")
+  DYNGPU_ARGS+=(--dev-bind "/dev/kfd,/dev/kfd")
+  DYNGPU_ARGS+=(--dev-bind "/dev/nvidiactl,/dev/nvidiactl")
+  DYNGPU_ARGS+=(--dev-bind "/dev/nvidia-modeset,/dev/nvidia-modeset")
+  DYNGPU_ARGS+=(--dev-bind "/dev/nvidia-uvm,/dev/nvidia-uvm")
+  DYNGPU_ARGS+=(--dev-bind "/dev/nvidia-uvm-tools,/dev/nvidia-uvm-tools")
+  DYNGPU_ARGS+=(--dev-bind "/dev/nvidia0,/dev/nvidia0")
+  DYNGPU_ARGS+=(--dev-bind "/dev/nvidia-caps,/dev/nvidia-caps")
+  for _dyngpu_device in /dev/nvidia[0-9]*; do
+    if [[ -e "$_dyngpu_device" && "$_dyngpu_device" != "/dev/nvidia0" ]]; then
+      DYNGPU_ARGS+=(--dev-bind "$_dyngpu_device,$_dyngpu_device")
+    fi
+  done
+  DYNGPU_ARGS+=(--ro /run/opengl-driver)
+  DYNGPU_ARGS+=(--ro /run/opengl-driver-32)
+  DYNGPU_ARGS+=(--ro /sys)
+fi
+
+# Static device passthrough is configured via Nix from
 # smind.hm.dev.llm.yolo.extraDevicePaths -> YOLO_EXTRA_DEV_PATHS, one
-# `path<TAB>tags-csv` record per line). Each path is bind-mounted WITH device
-# access (bwrap --dev-bind); a directory exposes every device node under it
-# (e.g. /dev/dri for GPU render nodes). GPU passthrough is no longer special-
-# cased here — the consumer wires the device paths plus the non-device bits
-# (/run/opengl-driver, /sys via extraReadOnlyPaths) and the GPU system-prompt
-# note (via promptExtensions) from its own host config. A record is dropped if
-# any of its tags is in the --disable set. The llm-sandbox layer skips any path
-# absent on this host.
+# `path<TAB>tags-csv` record per line. Each path is bind-mounted with device
+# access (bwrap --dev-bind); a directory exposes every device node under it.
+# These records are active by default and independent of `dyngpu`; consumers
+# commonly tag GPU paths with `gpu` plus a vendor tag and supply related
+# `/run/opengl-driver`, `/sys`, and prompt entries through the corresponding
+# Home Manager options. A record is dropped if any of its tags is disabled.
+# The llm-sandbox layer skips paths absent on this host.
 DEV_ARGS=()
 if [[ -n "${YOLO_EXTRA_DEV_PATHS:-}" ]]; then
   while IFS=$'\t' read -r _dpath _dtags; do
@@ -508,6 +542,7 @@ BASE_ARGS=(
   "${ADHOC_BIND_ARGS[@]}"
   "${SOCKET_ARGS[@]}"
   "${TMUX_BIND_ARGS[@]}"
+  "${DYNGPU_ARGS[@]}"
   "${DEV_ARGS[@]}"
   "${AUDIO_ARGS[@]}"
   "${DISPLAY_ARGS[@]}"
