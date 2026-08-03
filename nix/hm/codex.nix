@@ -145,8 +145,10 @@ in
           model = "gpt-5.6-sol";
           model_reasoning_effort = "xhigh";
           project_doc_fallback_filenames = [ "CLAUDE.md" ];
+          features.apps = false;
           features.multi_agent = true;
           features.fast_mode = false;
+          features.plugins = false;
           features.steer = true;
           mcp_servers.ledger = lib.mkDefault (codexHarnessMcpRegistration (
             lib.hm.mcp.transformMcpServer {
