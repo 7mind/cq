@@ -255,6 +255,13 @@ export {
 } from "./promptCatalogStore.js";
 export type { ValidationError, ValidationResult } from "./validation.js";
 export { validateAgainstSchema } from "./validation.js";
+export type { WipArtifactCheckpoint, WipArtifact, WipCheckpointStatus } from "./wipArtifact.js";
+export {
+  WIP_CHECKPOINT_STATUSES,
+  WipArtifactParseError,
+  parseWipArtifact,
+  serializeWipArtifact,
+} from "./wipArtifact.js";
 export type {
   DispatchedRoleId,
   DispatchJSONValue,
