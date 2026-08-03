@@ -108,6 +108,20 @@ export type {
   UnresolvableDispatchBase,
   VerifiedDispatchBase,
 } from "./dispatchBase.js";
+export {
+  resolveDependencyResultCommits,
+  resolveDependencyResultCommitsForDispatch,
+} from "./dependencyResultCommits.js";
+export type {
+  DependencyResultCommit,
+  DependencyResultCommitResolution,
+  DependencyTaskSnapshot,
+  DependencyTaskSnapshotReader,
+  ReadyDependencyResultCommits,
+  ResolveDependencyResultCommitsForDispatchRequest,
+  ResolveDependencyResultCommitsRequest,
+  UnresolvableDependencyResultCommits,
+} from "./dependencyResultCommits.js";
 export { GitPersistence } from "./store/git/GitPersistence.js";
 export { GitObjectLedgerBackend } from "./store/git/GitObjectLedgerBackend.js";
 export type { GitObjectLedgerBackendOpts } from "./store/git/GitObjectLedgerBackend.js";
