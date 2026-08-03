@@ -2,6 +2,7 @@ import {
   AttestationBindingError,
   AttestationContractError,
   abortDispatch,
+  attestationInstantMs,
   confirmDispatchCompletion,
   fetchDispatchInput,
   fetchDispatchResult,
@@ -424,6 +425,12 @@ export interface RoutedDispatchAborted {
 export type RoutedDispatchResult = RoutedDispatchConsumed | RoutedDispatchAborted;
 
 const ABORT_REASON_SET: ReadonlySet<string> = new Set(DISPATCH_ABORT_REASONS);
+const NATIVE_COMPLETION_KEYS = ["actor", "childId", "completedAt", "kind", "runId"] as const;
+const NATIVE_COMPLETION_KEY_SET: ReadonlySet<string> = new Set(NATIVE_COMPLETION_KEYS);
+const NATIVE_COMPLETION_ACTOR_SET: ReadonlySet<string> = new Set([
+  "trusted-parent",
+  "trusted-extension",
+]);
 
 function handleOf(prepared: DispatchPrepared): DispatchHandle {
   return Object.freeze({
@@ -508,6 +515,46 @@ function assertCompletionShape(
   }
 }
 
+function assertNativeCompletionProof(value: unknown): asserts value is NativeCompletionProof {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new DispatchTransportAbort("protocol-violation", {
+      violation: "malformed-native-completion-proof",
+      observedType: value === null ? "null" : typeof value,
+    });
+  }
+  const proof = value as Readonly<Record<string, unknown>>;
+  const fields = Object.keys(proof).sort();
+  const missing = NATIVE_COMPLETION_KEYS.filter((field) => !Object.hasOwn(proof, field));
+  const surplus = fields.filter((field) => !NATIVE_COMPLETION_KEY_SET.has(field));
+  const invalid = NATIVE_COMPLETION_KEYS.filter((field) => {
+    const fieldValue = proof[field];
+    if (field === "kind") return fieldValue !== "native-completion";
+    if (field === "actor") {
+      return typeof fieldValue !== "string" || !NATIVE_COMPLETION_ACTOR_SET.has(fieldValue);
+    }
+    return typeof fieldValue !== "string" || fieldValue.trim() === "";
+  });
+  if (missing.length > 0 || surplus.length > 0 || invalid.length > 0) {
+    throw new DispatchTransportAbort("protocol-violation", {
+      violation: "malformed-native-completion-proof",
+      fields,
+      missing,
+      surplus,
+      invalid,
+    });
+  }
+  try {
+    attestationInstantMs(proof["completedAt"] as string, "adapter.nativeCompletion.completedAt");
+  } catch (error) {
+    if (!(error instanceof AttestationContractError)) throw error;
+    throw new DispatchTransportAbort("protocol-violation", {
+      violation: "malformed-native-completion-proof",
+      fields,
+      invalid: ["completedAt"],
+    });
+  }
+}
+
 function assertAdapterLaunchResult(value: unknown): asserts value is DispatchAdapterLaunchResult {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new DispatchTransportAbort("protocol-violation", {
@@ -539,14 +586,10 @@ function assertAdapterLaunchResult(value: unknown): asserts value is DispatchAda
     });
   }
   const handle = record["handle"];
-  const completion = record["nativeCompletion"];
   if (
     handle === null ||
     typeof handle !== "object" ||
     Array.isArray(handle) ||
-    completion === null ||
-    typeof completion !== "object" ||
-    Array.isArray(completion) ||
     (record["handleOnlyEnforcement"] !== "structural" &&
       record["handleOnlyEnforcement"] !== "prompt-best-effort")
   ) {
@@ -555,6 +598,7 @@ function assertAdapterLaunchResult(value: unknown): asserts value is DispatchAda
       fields: Object.keys(record).sort(),
     });
   }
+  assertNativeCompletionProof(record["nativeCompletion"]);
 }
 
 /**

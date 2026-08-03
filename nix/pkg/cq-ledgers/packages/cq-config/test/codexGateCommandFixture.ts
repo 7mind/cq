@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const GROUP_MEMBER_FIXTURE = fileURLToPath(
@@ -33,11 +33,13 @@ if (memberPid === undefined) {
   member.kill("SIGTERM");
   throw new Error("gate fixture member did not publish its PID");
 }
+const readyPublicationPath = `${readyPath}.pending-${String(process.pid)}`;
 writeFileSync(
-  readyPath,
+  readyPublicationPath,
   `${JSON.stringify({ targetPid: process.pid, memberPid })}\n`,
   "utf8",
 );
+renameSync(readyPublicationPath, readyPath);
 
 let stopping = false;
 const stop = (signal: NodeJS.Signals): void => {

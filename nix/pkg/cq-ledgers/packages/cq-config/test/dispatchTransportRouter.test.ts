@@ -802,6 +802,156 @@ describe("T1631 shared three-harness transport router", () => {
     expect(result).toMatchObject({ outcome: "aborted", abort: { reason: "protocol-violation" } });
   });
 
+  const malformedCompletionProofs: readonly [string, unknown][] = [
+    [
+      "missing kind",
+      {
+        actor: "trusted-extension",
+        childId: "pi-child",
+        runId: "pi-run",
+        completedAt: T0,
+      },
+    ],
+    [
+      "non-string child id",
+      {
+        kind: "native-completion",
+        actor: "trusted-extension",
+        childId: 7,
+        runId: "pi-run",
+        completedAt: T0,
+      },
+    ],
+    [
+      "missing actor",
+      {
+        kind: "native-completion",
+        childId: "pi-child",
+        runId: "pi-run",
+        completedAt: T0,
+      },
+    ],
+    [
+      "non-string actor",
+      {
+        kind: "native-completion",
+        actor: 7,
+        childId: "pi-child",
+        runId: "pi-run",
+        completedAt: T0,
+      },
+    ],
+    [
+      "empty child id",
+      {
+        kind: "native-completion",
+        actor: "trusted-extension",
+        childId: "",
+        runId: "pi-run",
+        completedAt: T0,
+      },
+    ],
+    [
+      "missing run id",
+      {
+        kind: "native-completion",
+        actor: "trusted-extension",
+        childId: "pi-child",
+        completedAt: T0,
+      },
+    ],
+    [
+      "non-string run id",
+      {
+        kind: "native-completion",
+        actor: "trusted-extension",
+        childId: "pi-child",
+        runId: 7,
+        completedAt: T0,
+      },
+    ],
+    [
+      "empty run id",
+      {
+        kind: "native-completion",
+        actor: "trusted-extension",
+        childId: "pi-child",
+        runId: "",
+        completedAt: T0,
+      },
+    ],
+    [
+      "non-string completion instant",
+      {
+        kind: "native-completion",
+        actor: "trusted-extension",
+        childId: "pi-child",
+        runId: "pi-run",
+        completedAt: 7,
+      },
+    ],
+    [
+      "invalid completion instant",
+      {
+        kind: "native-completion",
+        actor: "trusted-extension",
+        childId: "pi-child",
+        runId: "pi-run",
+        completedAt: "not-an-instant",
+      },
+    ],
+    [
+      "surplus field",
+      {
+        kind: "native-completion",
+        actor: "trusted-extension",
+        childId: "pi-child",
+        runId: "pi-run",
+        completedAt: T0,
+        output: OUTPUT,
+      },
+    ],
+  ];
+  for (const [label, nativeCompletion] of malformedCompletionProofs) {
+    test(`maps malformed ${label} completion proof to a typed protocol abort`, async () => {
+      const fixture = preparedFixture(
+        "pi",
+        60 + malformedCompletionProofs.findIndex(([name]) => name === label),
+      );
+      const registry = new DispatchTransportAdapterRegistry([
+        createPiProcessDispatchAdapter((context) => {
+          context.child.materializeInput();
+          context.child.storeResult(OUTPUT);
+          return {
+            outcome: "completed",
+            handle: handleOf(context.prepared),
+            nativeCompletion,
+            handleOnlyEnforcement: "structural",
+          } as unknown as DispatchAdapterLaunchResult;
+        }),
+      ]);
+
+      const result = await runPreparedDispatch(
+        {
+          namespace: NAMESPACE,
+          prepared: fixture.prepared,
+          activeHarness: "claude",
+          targetHarness: "pi",
+          forceShellout: false,
+        },
+        registry,
+        fixture.deps,
+      );
+      expect(result).toMatchObject({
+        outcome: "aborted",
+        abort: {
+          reason: "protocol-violation",
+          details: { violation: "malformed-native-completion-proof" },
+        },
+      });
+    });
+  }
+
   test("invalid structured output aborts through capability-scoped storage", async () => {
     const fixture = preparedFixture("pi", 40);
     const registry = new DispatchTransportAdapterRegistry([

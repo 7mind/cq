@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { spawnSync } from "node:child_process";
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { readProcessIdentity, type ProcessIdentity } from "@cq/process-control";
 
@@ -12,6 +12,12 @@ const GROUP_MEMBER_FIXTURE = fileURLToPath(
 interface LaunchEnvelope {
   readonly attestationId: string;
   readonly generation: number;
+}
+
+function publishFileSync(path: string, content: string): void {
+  const publicationPath = `${path}.pending-${String(process.pid)}`;
+  writeFileSync(publicationPath, content, "utf8");
+  renameSync(publicationPath, path);
 }
 
 const input = (await new Response(Bun.stdin.stream()).text()).trim();
@@ -25,7 +31,7 @@ if (readyPath === undefined || groupPath === undefined || signalPath === undefin
     "fake Codex requires CQ_TEST_CODEX_READY, CQ_TEST_CODEX_GROUP, and CQ_TEST_CODEX_SIGNALS",
   );
 }
-writeFileSync(readyPath, `${String(process.pid)}\n`, "utf8");
+publishFileSync(readyPath, `${String(process.pid)}\n`);
 
 let processGroupText: string;
 if (process.platform === "linux") {
@@ -85,14 +91,13 @@ if (mode === "wait") {
   }
 }
 
-writeFileSync(
+publishFileSync(
   groupPath,
   `${JSON.stringify({
     registration: { pgid, leader },
     members,
     identityHelper: process.env["CQ_PROCESS_IDENTITY_HELPER"] ?? null,
   })}\n`,
-  "utf8",
 );
 
 if (mode === "success") {
