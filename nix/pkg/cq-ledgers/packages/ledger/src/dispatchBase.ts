@@ -207,20 +207,21 @@ async function observeCommit(
   revision: string,
   run: DispatchBaseGitRunner,
 ): Promise<DispatchCommitObservation> {
-  const peelArgs = ["rev-parse", "--verify", "--quiet", `${revision}^{commit}`] as const;
-  const peeled = await run(cwd, peelArgs);
-  if (peeled.code === 0) {
-    return { status: "commit", commit: peeled.stdout.trim() };
-  }
-  if (peeled.code !== 1) {
-    throw new DispatchBaseGitCommandError(cwd, peelArgs, peeled);
-  }
-
   const existenceArgs = ["rev-parse", "--verify", "--quiet", `${revision}^{object}`] as const;
   const existence = await run(cwd, existenceArgs);
-  if (existence.code === 0) return { status: "non-commit" };
   if (existence.code === 1) return { status: "missing" };
-  throw new DispatchBaseGitCommandError(cwd, existenceArgs, existence);
+  if (existence.code !== 0) {
+    throw new DispatchBaseGitCommandError(cwd, existenceArgs, existence);
+  }
+
+  const object = existence.stdout.trim();
+  const typeArgs = ["cat-file", "-t", object] as const;
+  const objectType = await run(cwd, typeArgs);
+  if (objectType.code !== 0) {
+    throw new DispatchBaseGitCommandError(cwd, typeArgs, objectType);
+  }
+  if (objectType.stdout.trim() !== "commit") return { status: "non-commit" };
+  return { status: "commit", commit: object };
 }
 
 export async function observeDispatchBase(

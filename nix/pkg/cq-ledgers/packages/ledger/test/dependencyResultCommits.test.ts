@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import {
+  nodeDispatchBaseGitRunner,
   resolveDependencyResultCommits,
   resolveDependencyResultCommitsForDispatch,
 } from "../src/index.js";
@@ -184,6 +185,7 @@ class MemoryGit {
   readonly run: DispatchBaseGitRunner = async (_cwd, args) => {
     const [command, ...rest] = args;
     if (command === "rev-parse") return this.revParse(rest);
+    if (command === "cat-file") return this.catFile(rest);
     if (command === "merge-base") return this.mergeBase(rest);
     throw new Error(`unexpected git command: ${args.join(" ")}`);
   };
@@ -201,6 +203,14 @@ class MemoryGit {
     const kind = this.objects.get(raw);
     const exists = revision.endsWith(commitSuffix) ? kind === "commit" : kind !== undefined;
     return this.result(exists ? 0 : 1, exists ? `${raw}\n` : "");
+  }
+
+  private catFile(args: readonly string[]): DispatchBaseGitResult {
+    const object = args.at(-1);
+    if (object === undefined) throw new Error("missing object");
+    const kind = this.objects.get(object);
+    if (kind === undefined) return this.result(1, "");
+    return this.result(0, kind === "commit" ? "commit\n" : "blob\n");
   }
 
   private mergeBase(args: readonly string[]): DispatchBaseGitResult {
@@ -446,4 +456,71 @@ it("validates contained, absent, non-commit, and unrelated commits in a real rep
   }
 
   expect(observed).toEqual(cases.map(([, expectedStatus]) => [expectedStatus, expectedStatus]));
+});
+
+it("rejects an annotated-tag object ID as a dependency result or dispatch base", async () => {
+  const repository = await seedRepository();
+  await exec(
+    "git",
+    [
+      "-c",
+      "user.name=Dependency Result Test",
+      "-c",
+      "user.email=dependency-result@example.invalid",
+      "tag",
+      "--annotate",
+      "dependency-result",
+      repository.base,
+      "--message",
+      "dependency result",
+    ],
+    { cwd: repository.cwd },
+  );
+  const { stdout: tagOut } = await exec("git", ["rev-parse", "refs/tags/dependency-result"], {
+    cwd: repository.cwd,
+  });
+  const tagObject = tagOut.trim();
+  const reader = new MutableTaskSnapshotReader([
+    task("T9", "planned", ["T1"], null, false),
+    task("T1", "done", [], tagObject, true),
+  ]);
+
+  const dependencyResult = await resolveDependencyResultCommitsForDispatch(
+    {
+      cwd: repository.cwd,
+      rootTaskRef: "T9",
+      proposedDispatchBase: repository.head,
+    },
+    reader,
+    nodeDispatchBaseGitRunner,
+  );
+  reader.taskSnapshots = [
+    task("T9", "planned", ["T1"], null, false),
+    task("T1", "done", [], repository.base, true),
+  ];
+  const dispatchBaseResult = await resolveDependencyResultCommitsForDispatch(
+    {
+      cwd: repository.cwd,
+      rootTaskRef: "T9",
+      proposedDispatchBase: tagObject,
+    },
+    reader,
+    nodeDispatchBaseGitRunner,
+  );
+
+  expect({ dependencyResult, dispatchBaseResult }).toEqual({
+    dependencyResult: {
+      status: "unresolvable",
+      reason: "result-commit-object-not-commit",
+      dependencyRef: "tasks:T1",
+      resultCommit: tagObject,
+    },
+    dispatchBaseResult: {
+      status: "unresolvable",
+      reason: "dispatch-base-object-not-commit",
+      dependencyRef: "tasks:T1",
+      resultCommit: repository.base,
+      proposedDispatchBase: tagObject,
+    },
+  });
 });
