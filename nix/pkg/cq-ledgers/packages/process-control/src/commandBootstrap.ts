@@ -2,11 +2,7 @@ import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  isProcessIdentityAlive,
-  readProcessIdentity,
-  type ProcessIdentity,
-} from "./processGroup.js";
+import { readProcessIdentityWithDarwinHelper, type ProcessIdentity } from "./processGroup.js";
 import { REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS } from "./registeredLaunchProtocol.js";
 
 const START_POLL_MS = 2;
@@ -36,8 +32,14 @@ async function rejectOrphanedLauncher(protocolDirectory: string): Promise<never>
   throw new Error("cq registered-launch bootstrap: completion writer identity disappeared");
 }
 
-async function isInitialLauncherAlive(expected: ProcessIdentity): Promise<boolean> {
-  return process.ppid === expected.pid && (await isProcessIdentityAlive(expected));
+async function isInitialLauncherAlive(
+  expected: ProcessIdentity,
+  darwinHelper: string | null,
+): Promise<boolean> {
+  const observed = await readProcessIdentityWithDarwinHelper(expected.pid, darwinHelper);
+  return (
+    process.ppid === expected.pid && observed !== null && observed.startTime === expected.startTime
+  );
 }
 
 async function waitForRelease(
@@ -45,11 +47,12 @@ async function waitForRelease(
   expectedNonce: string,
   expectedPgid: number,
   expectedLauncher: ProcessIdentity,
+  launcherDarwinHelper: string | null,
   protocolDirectory: string,
 ): Promise<void> {
   const deadline = Date.now() + START_TIMEOUT_MS;
   for (;;) {
-    if (!(await isInitialLauncherAlive(expectedLauncher))) {
+    if (!(await isInitialLauncherAlive(expectedLauncher, launcherDarwinHelper))) {
       await rejectOrphanedLauncher(protocolDirectory);
     }
     try {
@@ -65,7 +68,7 @@ async function waitForRelease(
       ) {
         throw new Error("cq registered-launch bootstrap: release identity mismatch");
       }
-      if (!(await isInitialLauncherAlive(expectedLauncher))) {
+      if (!(await isInitialLauncherAlive(expectedLauncher, launcherDarwinHelper))) {
         await rejectOrphanedLauncher(protocolDirectory);
       }
       return;
@@ -102,10 +105,11 @@ async function waitForCompletion(
   expectedNonce: string,
   expectedPgid: number,
   expectedLauncher: ProcessIdentity,
+  launcherDarwinHelper: string | null,
   protocolDirectory: string,
 ): Promise<void> {
   for (;;) {
-    if (!(await isInitialLauncherAlive(expectedLauncher))) {
+    if (!(await isInitialLauncherAlive(expectedLauncher, launcherDarwinHelper))) {
       await rejectOrphanedLauncher(protocolDirectory);
     }
     try {
@@ -113,7 +117,7 @@ async function waitForCompletion(
       if (value["nonce"] !== expectedNonce || value["pgid"] !== expectedPgid) {
         throw new Error("cq registered-launch bootstrap: completion identity mismatch");
       }
-      if (!(await isInitialLauncherAlive(expectedLauncher))) {
+      if (!(await isInitialLauncherAlive(expectedLauncher, launcherDarwinHelper))) {
         await rejectOrphanedLauncher(protocolDirectory);
       }
       return;
@@ -124,11 +128,14 @@ async function waitForCompletion(
   }
 }
 
-async function authenticateInitialLauncher(expected: ProcessIdentity): Promise<void> {
+async function authenticateInitialLauncher(
+  expected: ProcessIdentity,
+  darwinHelper: string | null,
+): Promise<void> {
   if (process.ppid !== expected.pid) {
     throw new Error("cq registered-launch bootstrap: launcher PID does not match initial parent");
   }
-  const observed = await readProcessIdentity(expected.pid);
+  const observed = await readProcessIdentityWithDarwinHelper(expected.pid, darwinHelper);
   if (observed === null || observed.startTime !== expected.startTime) {
     throw new Error("cq registered-launch bootstrap: launcher start-time identity mismatch");
   }
@@ -139,8 +146,9 @@ async function main(argv: readonly string[]): Promise<TargetOutcome> {
   const nonce = argv[1];
   const launcherPidText = argv[2];
   const launcherStartTime = argv[3];
-  const commandCwd = argv[4];
-  const executable = argv[5];
+  const launcherDarwinHelperText = argv[4];
+  const commandCwd = argv[5];
+  const executable = argv[6];
   if (
     protocolDirectory === undefined ||
     protocolDirectory === "" ||
@@ -150,6 +158,7 @@ async function main(argv: readonly string[]): Promise<TargetOutcome> {
     launcherPidText === "" ||
     launcherStartTime === undefined ||
     launcherStartTime === "" ||
+    launcherDarwinHelperText === undefined ||
     commandCwd === undefined ||
     commandCwd === "" ||
     executable === undefined ||
@@ -162,14 +171,22 @@ async function main(argv: readonly string[]): Promise<TargetOutcome> {
   const statusPath = join(protocolDirectory, "status.json");
   const completionPath = join(protocolDirectory, "completion.json");
   const launcher = { pid: Number(launcherPidText), startTime: launcherStartTime };
-  await authenticateInitialLauncher(launcher);
-  await waitForRelease(releasePath, nonce, process.pid, launcher, protocolDirectory);
+  const launcherDarwinHelper = launcherDarwinHelperText === "" ? null : launcherDarwinHelperText;
+  await authenticateInitialLauncher(launcher, launcherDarwinHelper);
+  await waitForRelease(
+    releasePath,
+    nonce,
+    process.pid,
+    launcher,
+    launcherDarwinHelper,
+    protocolDirectory,
+  );
   await rm(releasePath, { force: true });
 
   let child: ChildProcess;
   let exited: Promise<TargetOutcome>;
   try {
-    child = spawn(executable, argv.slice(6), {
+    child = spawn(executable, argv.slice(7), {
       cwd: commandCwd,
       detached: false,
       stdio: "inherit",
@@ -195,7 +212,14 @@ async function main(argv: readonly string[]): Promise<TargetOutcome> {
     state: "exited",
     ...outcome,
   });
-  await waitForCompletion(completionPath, nonce, process.pid, launcher, protocolDirectory);
+  await waitForCompletion(
+    completionPath,
+    nonce,
+    process.pid,
+    launcher,
+    launcherDarwinHelper,
+    protocolDirectory,
+  );
   await rm(completionPath, { force: true });
   return outcome;
 }

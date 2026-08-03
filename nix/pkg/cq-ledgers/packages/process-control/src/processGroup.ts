@@ -64,9 +64,8 @@ function validatePid(pid: number): void {
   }
 }
 
-function darwinIdentity(pid: number): ProcessIdentity | null {
-  const helper = process.env["CQ_PROCESS_IDENTITY_HELPER"];
-  if (helper !== undefined && helper !== "") {
+function darwinIdentity(pid: number, helper: string | null): ProcessIdentity | null {
+  if (helper !== null) {
     const result = spawnSync(helper, [String(pid)], { encoding: "utf8" });
     if (result.status === 3) return null;
     if (result.status !== 0) {
@@ -88,10 +87,13 @@ function darwinIdentity(pid: number): ProcessIdentity | null {
   return { pid, startTime: result.stdout.trim().replace(/\s+/gu, " ") };
 }
 
-export async function readProcessIdentity(pid: number): Promise<ProcessIdentity | null> {
+export async function readProcessIdentityWithDarwinHelper(
+  pid: number,
+  darwinHelper: string | null,
+): Promise<ProcessIdentity | null> {
   validatePid(pid);
   const platform = assertSupportedPlatform();
-  if (platform === "darwin") return darwinIdentity(pid);
+  if (platform === "darwin") return darwinIdentity(pid, darwinHelper);
   try {
     const stat = await readFile(`/proc/${pid}/stat`, "utf8");
     return { pid, startTime: parseLinuxProcessStartTime(stat) };
@@ -99,6 +101,13 @@ export async function readProcessIdentity(pid: number): Promise<ProcessIdentity 
     if (isNodeError(error, "ENOENT") || isNodeError(error, "ESRCH")) return null;
     throw error;
   }
+}
+
+export async function readProcessIdentity(pid: number): Promise<ProcessIdentity | null> {
+  const configuredHelper = process.env["CQ_PROCESS_IDENTITY_HELPER"];
+  const darwinHelper =
+    configuredHelper === undefined || configuredHelper === "" ? null : configuredHelper;
+  return await readProcessIdentityWithDarwinHelper(pid, darwinHelper);
 }
 
 export async function isProcessIdentityAlive(identity: ProcessIdentity): Promise<boolean> {

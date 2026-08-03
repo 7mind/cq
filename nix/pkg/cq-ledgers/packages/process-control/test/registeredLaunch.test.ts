@@ -505,6 +505,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
           "expected-nonce",
           String(mutation.launcher.pid),
           mutation.launcher.startTime,
+          process.env["CQ_PROCESS_IDENTITY_HELPER"] ?? "",
           root,
           process.execPath,
           "-e",
@@ -569,6 +570,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
           "expected-nonce",
           String(launcher.pid),
           launcher.startTime,
+          process.env["CQ_PROCESS_IDENTITY_HELPER"] ?? "",
           root,
           process.execPath,
           "-e",
@@ -635,6 +637,91 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       input: "stdin payload",
     });
     expect(stderrText).toBe("stderr:stdin payload");
+  });
+
+  // Regression origin: D260 used different Darwin identity backends across the exact-env boundary.
+  test("preserves a different exact target helper while authenticating Darwin launcher identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-darwin-exact-env-"));
+    roots.push(root);
+    const identityHelper = join(root, "identity-helper");
+    await writeFile(identityHelper, "#!/bin/sh\nprintf '%s.0\\n' \"$1\"\n");
+    await chmod(identityHelper, 0o755);
+    const targetIdentityHelper = join(root, "target-identity-helper");
+    await writeFile(targetIdentityHelper, "#!/bin/sh\nprintf '%s.1\\n' \"$1\"\n");
+    await chmod(targetIdentityHelper, 0o755);
+    const originalPlatform = process.platform;
+    const originalIdentityHelper = process.env["CQ_PROCESS_IDENTITY_HELPER"];
+    const env = {
+      PATH: process.env["PATH"],
+      CQ_PROCESS_IDENTITY_HELPER: targetIdentityHelper,
+      T1694_TARGET_ONLY: "exact-target-environment",
+    };
+
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    process.env["CQ_PROCESS_IDENTITY_HELPER"] = identityHelper;
+    try {
+      let bootstrapStderr: Promise<string> | undefined;
+      const bootstrap = fileURLToPath(new URL("../src/commandBootstrap.ts", import.meta.url));
+      const bootstrapUrl = new URL("../src/commandBootstrap.ts", import.meta.url).href;
+      const wrapper = [
+        "Object.defineProperty(process, 'platform', { value: 'darwin' });",
+        `process.argv = [process.argv[0], ${JSON.stringify(bootstrap)}, ...process.argv.slice(1)];`,
+        `await import(${JSON.stringify(bootstrapUrl)});`,
+      ].join("\n");
+      const launched = await launchRegisteredProcessGroup({
+        argv: [process.execPath, "-e", "process.stdout.write(JSON.stringify(process.env))"],
+        cwd: root,
+        env,
+        stdio: ["ignore", "pipe", "pipe"] as StdioOptions,
+        register: async () => {},
+        launchBootstrap: (specification) => {
+          const child = spawn(
+            specification.argv[0],
+            ["-e", wrapper, ...specification.argv.slice(2)],
+            {
+              cwd: specification.cwd,
+              env: specification.env,
+              detached: specification.detached,
+              stdio: specification.stdio,
+            },
+          );
+          if (child.stderr !== null) bootstrapStderr = streamText(child.stderr);
+          return {
+            process: child,
+            pid: child.pid,
+            exited: exited(child),
+            outputDrained: Promise.all([
+              streamDrained(child.stdout),
+              bootstrapStderr ?? Promise.resolve(""),
+            ]).then(() => {}),
+            resultFromTargetOutcome: (outcome: {
+              exitCode: number | null;
+              signal: NodeJS.Signals | null;
+            }) => outcome,
+            terminate: (signal: NodeJS.Signals) => {
+              child.kill(signal);
+            },
+          };
+        },
+      }).catch(async (error: unknown) => {
+        const diagnostic = bootstrapStderr === undefined ? "unavailable" : await bootstrapStderr;
+        throw new Error(`bootstrap stderr: ${diagnostic}`, { cause: error });
+      });
+      if (launched.process.stdout === null || launched.process.stderr === null) {
+        throw new Error("test bootstrap did not expose stdout and stderr pipes");
+      }
+      const stdout = streamText(launched.process.stdout);
+      expect(await launched.exited).toEqual({ exitCode: 0, signal: null });
+      expect(await bootstrapStderr).toBe("");
+      expect(JSON.parse(await stdout)).toEqual(env);
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform });
+      if (originalIdentityHelper === undefined) {
+        delete process.env["CQ_PROCESS_IDENTITY_HELPER"];
+      } else {
+        process.env["CQ_PROCESS_IDENTITY_HELPER"] = originalIdentityHelper;
+      }
+    }
   });
 
   test("preserves the target signal outcome", async () => {

@@ -9,6 +9,7 @@ import {
   isProcessGroupAlive,
   isProcessIdentityAlive,
   readProcessIdentity,
+  readProcessIdentityWithDarwinHelper,
   settleProcessGroups,
   type ProcessGroupRegistration,
 } from "./processGroup.js";
@@ -444,7 +445,12 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
 ): Promise<LaunchedRegisteredProcessGroup<TProcess, TExit>> {
   assertTarget(options.argv, options.cwd);
   const cwd = targetCwd(options.cwd);
-  const launcher = await readProcessIdentity(process.pid);
+  const configuredLauncherHelper = process.env["CQ_PROCESS_IDENTITY_HELPER"];
+  const launcherDarwinHelper =
+    configuredLauncherHelper === undefined || configuredLauncherHelper === ""
+      ? null
+      : configuredLauncherHelper;
+  const launcher = await readProcessIdentityWithDarwinHelper(process.pid, launcherDarwinHelper);
   if (launcher === null) {
     throw new Error("@cq/process-control: registered-launch writer identity disappeared");
   }
@@ -466,6 +472,7 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
         nonce,
         String(launcher.pid),
         launcher.startTime,
+        launcherDarwinHelper ?? "",
         cwd,
         ...options.argv,
       ],

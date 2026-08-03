@@ -184,6 +184,7 @@ describe("canonical worktree gate [Effectual-GoodCommunication]", () => {
         "expected-nonce",
         String(launcher.pid),
         launcher.startTime,
+        process.env["CQ_PROCESS_IDENTITY_HELPER"] ?? "",
         root,
         process.execPath,
         "-e",
