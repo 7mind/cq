@@ -84,6 +84,31 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+async function readLinuxProcessState(pid: number): Promise<string | null> {
+  try {
+    const processStat = await readFile(`/proc/${String(pid)}/stat`, "utf8");
+    const commandEnd = processStat.lastIndexOf(")");
+    if (commandEnd < 0) throw new Error(`malformed /proc stat for test process ${String(pid)}`);
+    return (
+      processStat
+        .slice(commandEnd + 1)
+        .trim()
+        .split(/\s+/u)[0] ?? null
+    );
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function waitForLinuxProcessState(pid: number, expected: string): Promise<void> {
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
+    if ((await readLinuxProcessState(pid)) === expected) return;
+    await Bun.sleep(2);
+  }
+  throw new Error(`test process ${String(pid)} did not reach state ${expected}`);
+}
+
 async function completeBootstrapIfTargetRan(
   child: ChildProcess,
   protocolDirectory: string,
@@ -129,128 +154,157 @@ afterEach(async () => {
 
 describe("registered process-group launch bootstrap [T1624]", () => {
   // Regression origin: D260 exposed unauthenticated completion-writer cancellation.
-  test("settles an exited bootstrap when its completion writer is killed [Whitebox-GoodCommunication]", async () => {
-    const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-orphan-"));
-    roots.push(root);
-    const launcherStatePath = join(root, "launcher-state.json");
-    const registeredLaunchUrl = new URL("../src/registeredLaunch.ts", import.meta.url).href;
-    const launcherSource = [
-      "const { spawn } = require('node:child_process');",
-      "const { writeFileSync } = require('node:fs');",
-      `const { launchRegisteredProcessGroup } = await import(${JSON.stringify(registeredLaunchUrl)});`,
-      "let protocolDirectory;",
-      "const launched = await launchRegisteredProcessGroup({",
-      "  argv: [process.execPath, '-e', 'process.exit(0)'],",
-      `  cwd: ${JSON.stringify(root)},`,
-      "  env: process.env,",
-      "  stdio: ['ignore', 'ignore', 'inherit'],",
-      "  register: async () => {},",
-      "  onTargetExit: async () => new Promise(() => {}),",
-      "  launchBootstrap: (specification) => {",
-      "    protocolDirectory = specification.argv[2];",
-      "    const child = spawn(specification.argv[0], specification.argv.slice(1), {",
-      "      cwd: specification.cwd,",
-      "      env: specification.env,",
-      "      detached: specification.detached,",
-      "      stdio: specification.stdio,",
-      "    });",
-      "    return {",
-      "      process: child,",
-      "      pid: child.pid,",
-      "      exited: new Promise((resolve, reject) => {",
-      "        child.once('error', reject);",
-      "        child.once('exit', (exitCode, signal) => resolve({ exitCode, signal }));",
-      "      }),",
-      "      outputDrained: Promise.resolve(),",
-      "      resultFromTargetOutcome: (outcome) => outcome,",
-      "      terminate: (signal) => child.kill(signal),",
-      "    };",
-      "  },",
-      "});",
-      `writeFileSync(${JSON.stringify(launcherStatePath)}, JSON.stringify({`,
-      "  protocolDirectory,",
-      "  registration: launched.registration,",
-      "}));",
-      "setInterval(() => {}, 1000);",
-      "await launched.exited;",
-    ].join("\n");
-    const launcher = spawn(process.execPath, ["-e", launcherSource], {
-      cwd: root,
-      env: process.env,
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    const launcherPid = launcher.pid;
-    if (launcherPid === undefined) throw new Error("test launcher returned no PID");
-    if (launcher.stderr === null) throw new Error("test launcher returned no stderr pipe");
-    const launcherExited = exited(launcher);
-    const bootstrapStderr = streamText(launcher.stderr);
-    let protocolDirectory: string | undefined;
-    let registration: ProcessGroupRegistration | undefined;
+  test.skipIf(process.platform !== "linux")(
+    "settles an exited bootstrap while its killed completion writer remains unreaped [Whitebox-GoodCommunication]",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-orphan-"));
+      roots.push(root);
+      const launcherPidPath = join(root, "launcher-pid");
+      const launcherStatePath = join(root, "launcher-state.json");
+      const registeredLaunchUrl = new URL("../src/registeredLaunch.ts", import.meta.url).href;
+      const launcherSource = [
+        "const { spawn } = require('node:child_process');",
+        "const { writeFileSync } = require('node:fs');",
+        `const { launchRegisteredProcessGroup } = await import(${JSON.stringify(registeredLaunchUrl)});`,
+        "let protocolDirectory;",
+        "const launched = await launchRegisteredProcessGroup({",
+        "  argv: [process.execPath, '-e', 'process.exit(0)'],",
+        `  cwd: ${JSON.stringify(root)},`,
+        "  env: process.env,",
+        "  stdio: ['ignore', 'ignore', 'inherit'],",
+        "  register: async () => {},",
+        "  onTargetExit: async () => new Promise(() => {}),",
+        "  launchBootstrap: (specification) => {",
+        "    protocolDirectory = specification.argv[2];",
+        "    const child = spawn(specification.argv[0], specification.argv.slice(1), {",
+        "      cwd: specification.cwd,",
+        "      env: specification.env,",
+        "      detached: specification.detached,",
+        "      stdio: specification.stdio,",
+        "    });",
+        "    return {",
+        "      process: child,",
+        "      pid: child.pid,",
+        "      exited: new Promise((resolve, reject) => {",
+        "        child.once('error', reject);",
+        "        child.once('exit', (exitCode, signal) => resolve({ exitCode, signal }));",
+        "      }),",
+        "      outputDrained: Promise.resolve(),",
+        "      resultFromTargetOutcome: (outcome) => outcome,",
+        "      terminate: (signal) => child.kill(signal),",
+        "    };",
+        "  },",
+        "});",
+        `writeFileSync(${JSON.stringify(launcherStatePath)}, JSON.stringify({`,
+        "  protocolDirectory,",
+        "  registration: launched.registration,",
+        "}));",
+        "setInterval(() => {}, 1000);",
+        "await launched.exited;",
+      ].join("\n");
+      const launcherParentSource = [
+        "const { spawn } = require('node:child_process');",
+        "const { writeFileSync } = require('node:fs');",
+        `const launcher = spawn(process.execPath, ['-e', ${JSON.stringify(launcherSource)}], {`,
+        `  cwd: ${JSON.stringify(root)},`,
+        "  env: process.env,",
+        "  stdio: ['ignore', 'ignore', 'inherit'],",
+        "});",
+        `writeFileSync(${JSON.stringify(launcherPidPath)}, String(launcher.pid));`,
+        "setInterval(() => {}, 1000);",
+      ].join("\n");
+      const launcherParent = spawn(process.execPath, ["-e", launcherParentSource], {
+        cwd: root,
+        env: process.env,
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      const launcherParentPid = launcherParent.pid;
+      if (launcherParentPid === undefined) throw new Error("test launcher parent returned no PID");
+      if (launcherParent.stderr === null) {
+        throw new Error("test launcher parent returned no stderr pipe");
+      }
+      const launcherParentExited = exited(launcherParent);
+      const bootstrapStderr = streamText(launcherParent.stderr);
+      let launcherPid: number | undefined;
+      let protocolDirectory: string | undefined;
+      let registration: ProcessGroupRegistration | undefined;
 
-    try {
-      await waitForFile(launcherStatePath);
-      const launcherState = JSON.parse(await readFile(launcherStatePath, "utf8")) as {
-        readonly protocolDirectory: string;
-        readonly registration: ProcessGroupRegistration;
-      };
-      protocolDirectory = launcherState.protocolDirectory;
-      registration = launcherState.registration;
-      const statusPath = join(protocolDirectory, "status.json");
-      for (let attempt = 0; attempt < 1_000; attempt += 1) {
-        if (await Bun.file(statusPath).exists()) {
-          const status = JSON.parse(await readFile(statusPath, "utf8")) as {
-            readonly state?: string;
-          };
-          if (status.state === "exited") break;
+      try {
+        await waitForFile(launcherPidPath);
+        launcherPid = Number(await readFile(launcherPidPath, "utf8"));
+        await waitForFile(launcherStatePath);
+        const launcherState = JSON.parse(await readFile(launcherStatePath, "utf8")) as {
+          readonly protocolDirectory: string;
+          readonly registration: ProcessGroupRegistration;
+        };
+        protocolDirectory = launcherState.protocolDirectory;
+        registration = launcherState.registration;
+        const statusPath = join(protocolDirectory, "status.json");
+        for (let attempt = 0; attempt < 1_000; attempt += 1) {
+          if (await Bun.file(statusPath).exists()) {
+            const status = JSON.parse(await readFile(statusPath, "utf8")) as {
+              readonly state?: string;
+            };
+            if (status.state === "exited") break;
+          }
+          if (attempt === 999) throw new Error("target did not publish exited status");
+          await Bun.sleep(2);
         }
-        if (attempt === 999) throw new Error("target did not publish exited status");
-        await Bun.sleep(2);
-      }
-      expect(await Bun.file(join(protocolDirectory, "completion.json")).exists()).toBe(false);
+        expect(await Bun.file(join(protocolDirectory, "completion.json")).exists()).toBe(false);
 
-      launcher.kill("SIGKILL");
-      await launcherExited;
-      const settlementStarted = Date.now();
-      const deadline = settlementStarted + REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS;
-      let settlementObservedAt: number | undefined;
-      for (;;) {
-        const observedIdentity = await readProcessIdentity(registration.leader.pid);
-        const identityAlive =
-          observedIdentity !== null && observedIdentity.startTime === registration.leader.startTime;
-        const groupAlive = isProcessGroupAlive(registration.pgid);
-        const directoryAlive = await pathExists(protocolDirectory);
-        if (!identityAlive && !groupAlive && !directoryAlive) {
-          settlementObservedAt = Date.now();
-          break;
+        process.kill(launcherParentPid, "SIGSTOP");
+        await waitForLinuxProcessState(launcherParentPid, "T");
+        const settlementStarted = Date.now();
+        process.kill(launcherPid, "SIGKILL");
+        await waitForLinuxProcessState(launcherPid, "Z");
+        const deadline = settlementStarted + REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS;
+        let settlementObservedAt: number | undefined;
+        for (;;) {
+          const observedIdentity = await readProcessIdentity(registration.leader.pid);
+          const identityAlive =
+            observedIdentity !== null &&
+            observedIdentity.startTime === registration.leader.startTime;
+          const groupAlive = isProcessGroupAlive(registration.pgid);
+          const directoryAlive = await pathExists(protocolDirectory);
+          if (!identityAlive && !groupAlive && !directoryAlive) {
+            settlementObservedAt = Date.now();
+            break;
+          }
+          if (Date.now() >= deadline) {
+            expect({ identityAlive, groupAlive, directoryAlive }).toEqual({
+              identityAlive: false,
+              groupAlive: false,
+              directoryAlive: false,
+            });
+          }
+          await Bun.sleep(2);
         }
-        if (Date.now() >= deadline) {
-          expect({ identityAlive, groupAlive, directoryAlive }).toEqual({
-            identityAlive: false,
-            groupAlive: false,
-            directoryAlive: false,
-          });
+        expect(await readLinuxProcessState(launcherPid)).toBe("Z");
+        expect(settlementObservedAt).toBeDefined();
+        expect(settlementObservedAt! - settlementStarted).toBeLessThanOrEqual(
+          REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS,
+        );
+        launcherParent.kill("SIGKILL");
+        await launcherParentExited;
+        expect(await bootstrapStderr).toContain("completion writer identity disappeared");
+      } finally {
+        if (launcherPid !== undefined && (await readLinuxProcessState(launcherPid)) !== null) {
+          process.kill(launcherPid, "SIGKILL");
         }
-        await Bun.sleep(2);
+        if (launcherParent.exitCode === null && launcherParent.signalCode === null) {
+          launcherParent.kill("SIGKILL");
+          await launcherParentExited;
+        }
+        if (registration !== undefined) {
+          signalProcessGroup(registration.pgid, "SIGKILL");
+          await waitForIdentityToDisappear(registration.leader.pid);
+        }
+        if (protocolDirectory !== undefined) {
+          await rm(protocolDirectory, { recursive: true, force: true });
+        }
       }
-      expect(settlementObservedAt).toBeDefined();
-      expect(settlementObservedAt! - settlementStarted).toBeLessThanOrEqual(
-        REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS,
-      );
-      expect(await bootstrapStderr).toContain("completion writer identity disappeared");
-    } finally {
-      if (launcher.exitCode === null && launcher.signalCode === null) {
-        launcher.kill("SIGKILL");
-        await launcherExited;
-      }
-      if (registration !== undefined) {
-        signalProcessGroup(registration.pgid, "SIGKILL");
-        await waitForIdentityToDisappear(registration.leader.pid);
-      }
-      if (protocolDirectory !== undefined) {
-        await rm(protocolDirectory, { recursive: true, force: true });
-      }
-    }
-  });
+    },
+  );
 
   test("keeps the bootstrap alive through a delayed target-exit hook [Effectual-GoodCommunication]", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-target-exit-hook-"));

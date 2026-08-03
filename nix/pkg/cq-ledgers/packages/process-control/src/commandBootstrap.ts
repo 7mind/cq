@@ -36,6 +36,10 @@ async function rejectOrphanedLauncher(protocolDirectory: string): Promise<never>
   throw new Error("cq registered-launch bootstrap: completion writer identity disappeared");
 }
 
+async function isInitialLauncherAlive(expected: ProcessIdentity): Promise<boolean> {
+  return process.ppid === expected.pid && (await isProcessIdentityAlive(expected));
+}
+
 async function waitForRelease(
   path: string,
   expectedNonce: string,
@@ -45,7 +49,7 @@ async function waitForRelease(
 ): Promise<void> {
   const deadline = Date.now() + START_TIMEOUT_MS;
   for (;;) {
-    if (!(await isProcessIdentityAlive(expectedLauncher))) {
+    if (!(await isInitialLauncherAlive(expectedLauncher))) {
       await rejectOrphanedLauncher(protocolDirectory);
     }
     try {
@@ -61,7 +65,7 @@ async function waitForRelease(
       ) {
         throw new Error("cq registered-launch bootstrap: release identity mismatch");
       }
-      if (!(await isProcessIdentityAlive(expectedLauncher))) {
+      if (!(await isInitialLauncherAlive(expectedLauncher))) {
         await rejectOrphanedLauncher(protocolDirectory);
       }
       return;
@@ -101,7 +105,7 @@ async function waitForCompletion(
   protocolDirectory: string,
 ): Promise<void> {
   for (;;) {
-    if (!(await isProcessIdentityAlive(expectedLauncher))) {
+    if (!(await isInitialLauncherAlive(expectedLauncher))) {
       await rejectOrphanedLauncher(protocolDirectory);
     }
     try {
@@ -109,7 +113,7 @@ async function waitForCompletion(
       if (value["nonce"] !== expectedNonce || value["pgid"] !== expectedPgid) {
         throw new Error("cq registered-launch bootstrap: completion identity mismatch");
       }
-      if (!(await isProcessIdentityAlive(expectedLauncher))) {
+      if (!(await isInitialLauncherAlive(expectedLauncher))) {
         await rejectOrphanedLauncher(protocolDirectory);
       }
       return;
