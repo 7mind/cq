@@ -5,6 +5,7 @@
     "declaration": true,
     "declarationMap": true,
     "outDir": "./dist",
+    "rewriteRelativeImportExtensions": true,
     "types": ["bun-types"]
   },
   "include": ["src", "test"]

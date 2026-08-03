@@ -2,8 +2,8 @@ import {
   readProcessIdentityWithDarwinHelper,
   signalProcessGroup,
   type ProcessIdentity,
-} from "./processGroup.js";
-import { REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS } from "./registeredLaunchProtocol.js";
+} from "./processGroup.ts";
+import { REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS } from "./registeredLaunchProtocol.ts";
 
 const REAPER_POLL_MS = Math.min(25, REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS);
 

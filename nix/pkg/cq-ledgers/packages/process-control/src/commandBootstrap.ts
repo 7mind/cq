@@ -3,8 +3,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readProcessIdentityWithDarwinHelper, type ProcessIdentity } from "./processGroup.js";
-import { REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS } from "./registeredLaunchProtocol.js";
+import { readProcessIdentityWithDarwinHelper, type ProcessIdentity } from "./processGroup.ts";
+import { REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS } from "./registeredLaunchProtocol.ts";
 
 const START_POLL_MS = 2;
 const COMPLETION_POLL_MS = Math.min(25, REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS);
@@ -36,8 +36,12 @@ async function launchOrphanProcessGroupReaper(
   if (bootstrap === null) {
     throw new Error("cq registered-launch bootstrap: bootstrap identity disappeared");
   }
+  // The spawned sibling must exist under the runtime that loaded this module:
+  // the .ts source when running src directly (plain Node type-stripping, Bun,
+  // jiti), the compiled .js when running from dist (D273).
+  const selfExtension = fileURLToPath(import.meta.url).endsWith(".js") ? ".js" : ".ts";
   const reaperExecutable = fileURLToPath(
-    new URL("./orphanProcessGroupReaper.ts", import.meta.url),
+    new URL(`./orphanProcessGroupReaper${selfExtension}`, import.meta.url),
   );
   const reaper = spawn(
     process.execPath,

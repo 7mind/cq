@@ -12,9 +12,9 @@ import {
   readProcessIdentityWithDarwinHelper,
   settleProcessGroups,
   type ProcessGroupRegistration,
-} from "./processGroup.js";
+} from "./processGroup.ts";
 
-export { REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS } from "./registeredLaunchProtocol.js";
+export { REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS } from "./registeredLaunchProtocol.ts";
 
 const IDENTITY_TIMEOUT_MS = 30_000;
 const HANDSHAKE_TIMEOUT_MS = 30_000;
@@ -459,7 +459,14 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
   const releasePath = join(protocolDirectory, "release.json");
   const statusPath = join(protocolDirectory, "status.json");
   const completionPath = join(protocolDirectory, "completion.json");
-  const bootstrapExecutable = fileURLToPath(new URL("./commandBootstrap.ts", import.meta.url));
+  // The spawned sibling must exist under the runtime that loaded this module:
+  // the .ts source when running src directly (plain Node type-stripping, Bun,
+  // jiti), the compiled .js when running from dist. Node does not remap .js
+  // specifiers to .ts files (D273), so derive the extension from our own URL.
+  const selfExtension = fileURLToPath(import.meta.url).endsWith(".js") ? ".js" : ".ts";
+  const bootstrapExecutable = fileURLToPath(
+    new URL(`./commandBootstrap${selfExtension}`, import.meta.url),
+  );
   let bootstrap: RegisteredLaunchBootstrap<TProcess, TExit> | null = null;
   let registration: ProcessGroupRegistration | null = null;
 

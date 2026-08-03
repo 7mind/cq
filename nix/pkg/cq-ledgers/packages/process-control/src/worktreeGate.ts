@@ -24,8 +24,8 @@ import {
   type ProcessIdentity,
   type SettleProcessGroupsOptions,
   type SettleProcessGroupsResult,
-} from "./processGroup.js";
-import { launchRegisteredProcessGroup } from "./registeredLaunch.js";
+} from "./processGroup.ts";
+import { launchRegisteredProcessGroup } from "./registeredLaunch.ts";
 
 const HOLDER_FILENAME = "holder.json";
 const COMMANDS_DIRECTORY = "commands";

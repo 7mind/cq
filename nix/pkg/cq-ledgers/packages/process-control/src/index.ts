@@ -1,3 +1,3 @@
-export * from "./processGroup.js";
-export * from "./registeredLaunch.js";
-export * from "./worktreeGate.js";
+export * from "./processGroup.ts";
+export * from "./registeredLaunch.ts";
+export * from "./worktreeGate.ts";
