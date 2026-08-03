@@ -57,13 +57,13 @@ describe("WIP artifacts (T1284)", () => {
     ).toBe(prose);
   });
 
-  it("does not treat declared checkpoint headings in prose or fenced code as boundaries", () => {
+  it("does not treat checkpoint markers in prose or fenced code as boundaries", () => {
     const fixture = artifact([
       {
         name: "implementation",
         status: "done",
         body:
-          "A prose heading follows.\n\n## verification\n\nIt remains implementation evidence.\n\n```md\n## verification\n```\n",
+          "A prose heading follows.\n\n## verification\n\nIt remains implementation evidence.\n\n```md\n## verification <!-- cq:wip-checkpoint -->\n```\n",
       },
       { name: "verification", status: "todo", body: "Run the full gate.\n" },
     ]);

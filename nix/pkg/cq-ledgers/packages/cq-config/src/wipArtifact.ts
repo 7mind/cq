@@ -202,15 +202,50 @@ function findCheckpointMarkers(
   name: string,
 ): readonly { sectionStart: number; headingStart: number; contentStart: number }[] {
   const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const matcher = new RegExp(`^## ${escapedName} ${WIP_CHECKPOINT_MARKER}\\r?\\n`, "gm");
-  return Array.from(markdown.matchAll(matcher), (match) => {
-    const headingStart = match.index!;
-    return {
-      sectionStart: headingStart === 0 ? 0 : headingStart - 1,
-      headingStart,
-      contentStart: headingStart + match[0].length,
-    };
-  });
+  const matcher = new RegExp(`^## ${escapedName} ${WIP_CHECKPOINT_MARKER}\\r?\\n`);
+  const markers: { sectionStart: number; headingStart: number; contentStart: number }[] = [];
+  let fence: MarkdownFence | undefined;
+  let lineStart = 0;
+
+  for (const line of markdown.split(/(?<=\n)/)) {
+    if (fence !== undefined) {
+      if (closesMarkdownFence(line, fence)) {
+        fence = undefined;
+      }
+    } else {
+      const openingFence = opensMarkdownFence(line);
+      if (openingFence !== undefined) {
+        fence = openingFence;
+      } else {
+        const match = matcher.exec(line);
+        if (match !== null) {
+          markers.push({
+            sectionStart: lineStart === 0 ? 0 : lineStart - 1,
+            headingStart: lineStart,
+            contentStart: lineStart + match[0].length,
+          });
+        }
+      }
+    }
+    lineStart += line.length;
+  }
+
+  return markers;
+}
+
+type MarkdownFence = { readonly marker: "`" | "~"; readonly length: number };
+
+function opensMarkdownFence(line: string): MarkdownFence | undefined {
+  const match = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+  if (match === null) {
+    return undefined;
+  }
+  const marker = match[1]!;
+  return { marker: marker[0]! as "`" | "~", length: marker.length };
+}
+
+function closesMarkdownFence(line: string, fence: MarkdownFence): boolean {
+  return new RegExp(`^ {0,3}${fence.marker}{${fence.length},}[\\t ]*\\r?\\n?$`).test(line);
 }
 
 function requiredString(
