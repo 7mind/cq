@@ -81,6 +81,8 @@ BWRAP_ARGS=(
   --dev /dev
   --proc /proc
   --tmpfs /tmp
+  --dir /var
+  --symlink /run /var/run
 )
 
 # Bind /tmp/exchange for host<->sandbox file sharing (create if missing)

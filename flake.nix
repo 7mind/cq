@@ -935,9 +935,10 @@ EOF
                   cp -r ${./nix/pkg/yolo} yolo
                   chmod -R u+w yolo
                   cd yolo
-                  shellcheck --severity=warning custom-prompt.sh yolo.sh profile-test.sh codegraph-bootstrap.sh codegraph-bootstrap-test.sh
+                  shellcheck --severity=warning custom-prompt.sh yolo.sh profile-test.sh codegraph-bootstrap.sh codegraph-bootstrap-test.sh llm-sandbox.sh llm-sandbox-test.sh
                   bash profile-test.sh
                   bash codegraph-bootstrap-test.sh "$(command -v codegraph)" "$(command -v jq)" "$(command -v git)"
+                  bash llm-sandbox-test.sh
                   touch $out
                 '';
             yolo-darwin-profile =
