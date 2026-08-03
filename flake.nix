@@ -922,13 +922,33 @@ EOF
             yolo-profile =
               pkgs.runCommand "yolo-profile"
                 {
-                  nativeBuildInputs = [ pkgs.shellcheck pkgs.bash pkgs.jq pkgs.git self.packages.${system}.codegraph ];
+                  nativeBuildInputs = [
+                    pkgs.shellcheck
+                    pkgs.bash
+                    pkgs.jq
+                    pkgs.git
+                    pkgs.python3
+                    pkgs.rustc
+                    pkgs.gcc
+                    pkgs.tmux
+                    pkgs.bubblewrap
+                    self.packages.${system}.codegraph
+                  ];
                 }
                 ''
                   cp -r ${./nix/pkg/yolo} yolo
                   chmod -R u+w yolo
                   cd yolo
-                  shellcheck --severity=warning custom-prompt.sh yolo.sh profile-test.sh codegraph-bootstrap.sh codegraph-bootstrap-test.sh
+                  shellcheck --severity=warning custom-prompt.sh yolo.sh profile-test.sh codegraph-bootstrap.sh codegraph-bootstrap-test.sh clipboard-proxy-test.sh clipboard-escape-test.sh
+                  rustc -C opt-level=2 -o yolo-clipboard-proxy clipboard-proxy/main.rs
+                  bash clipboard-proxy-test.sh "$PWD/yolo-clipboard-proxy"
+                  # Nested bwrap is unavailable in some pure Nix build sandboxes;
+                  # run the D262 escape-proof when the kernel allows it.
+                  if bwrap --unshare-all --share-net --ro-bind /nix /nix -- /bin/true 2>/dev/null; then
+                    bash clipboard-escape-test.sh "$PWD/yolo-clipboard-proxy"
+                  else
+                    echo "clipboard-escape-test: skipped (nested bwrap unavailable)"
+                  fi
                   bash profile-test.sh
                   bash codegraph-bootstrap-test.sh "$(command -v codegraph)" "$(command -v jq)" "$(command -v git)"
                   touch $out
