@@ -264,7 +264,9 @@ const PUBLISH_DESCRIPTION =
   "Publish (or replace) the COMPLETE draft manifest of the claim you own. " +
   "Requires the private ownerFenceToken: the public claimId/generation pair " +
   "authorizes nothing here. Milestones and tasks are allocated atomically and " +
-  "stay non-actionable until finalize. `operationId` is the idempotency key " +
+  "stay non-actionable until finalize. Each task's declared ledgerRefs are " +
+  "de-duplicated with its mandatory goals:<goalId> owner reference while " +
+  "sourceRefs remain separate provenance. `operationId` is the idempotency key " +
   "scoped to claimId+generation+operation: the same id with the same payload " +
   "replays the same allocated ids (replayed:true); the same id with a changed " +
   "payload conflicts with idempotency-key-reused. An optional reviewDefects " +

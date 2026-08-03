@@ -47,7 +47,7 @@ const sourcePaths: PromptCatalogFileInput[] = catalog.map((role) => ({
   path: path.join(ASSETS_ROOT, role.canonicalSource),
 }));
 
-function candidateExample(surface: PromptSurface): unknown {
+function renderedPrompt(surface: PromptSurface): string {
   const fragmentPaths: PromptFragmentFileInput[] = fragmentSources
     .filter((entry) => entry.surface === surface)
     .map(({ roleId, fragment, source }) => ({
@@ -66,12 +66,48 @@ function candidateExample(surface: PromptSurface): unknown {
     (artifact) => artifact.path === "roles/plan-advance.md",
   )?.content;
   if (prompt === undefined) throw new Error(`surface ${surface} did not render plan-advance`);
+  return prompt;
+}
+
+function candidateExample(surface: PromptSurface): unknown {
+  const prompt = renderedPrompt(surface);
   const match = /## Candidate mode[\s\S]*?```json\n([\s\S]*?)\n```/.exec(prompt);
   if (match?.[1] === undefined) throw new Error(`surface ${surface} has no candidate JSON example`);
   return JSON.parse(match[1]) as unknown;
 }
 
 describe("plan-advance candidate prompt contract", () => {
+  test("accepts default defect-fix ownership only through task ledgerRefs", () => {
+    const validate = new Ajv2020({ strict: false, allErrors: true }).compile(
+      planAdvanceSidecar.outputSchema,
+    );
+    const result = {
+      mode: "default",
+      action: "draft",
+      manifest: {
+        milestones: [{ key: "correction", title: "Correct guarded planning" }],
+        tasks: [
+          {
+            key: "preserve_refs",
+            milestoneKey: "correction",
+            headline: "Preserve authoritative task ledger references",
+            sourceRefs: ["packages/ledger/src/planLifecycle.ts"],
+            ledgerRefs: ["goals:G1", "defects:D264"],
+          },
+        ],
+      },
+    };
+
+    expect(validate(result)).toBe(true);
+    expect(result.manifest.tasks[0]!.ledgerRefs).toEqual(["goals:G1", "defects:D264"]);
+    expect(result.manifest.tasks[0]!.sourceRefs).not.toContain("defects:D264");
+
+    const sourceRefsOnly = structuredClone(result);
+    delete (sourceRefsOnly.manifest.tasks[0] as { ledgerRefs?: string[] }).ledgerRefs;
+    sourceRefsOnly.manifest.tasks[0]!.sourceRefs.push("defects:D264");
+    expect(validate(sourceRefsOnly)).toBe(false);
+  });
+
   test("every generated surface emits a schema-valid candidate example", () => {
     const validate = new Ajv2020({ strict: false, allErrors: true }).compile(
       planAdvanceSidecar.outputSchema,
@@ -89,6 +125,13 @@ describe("plan-advance candidate prompt contract", () => {
         typeof example === "object" && example !== null && "mode" in example
           ? example.mode
           : undefined,
+      );
+      expect((example as { tasks: Array<{ ledgerRefs: string[] }> }).tasks[0]!.ledgerRefs).toEqual([
+        "goals:<G>",
+        "defects:<D>",
+      ]);
+      expect(renderedPrompt(surface)).toMatch(
+        /Defect-fix tasks\s+carry their defect ownership in `ledgerRefs`; `sourceRefs` records provenance only\./,
       );
     }
     expect(validationFailures).toEqual([]);

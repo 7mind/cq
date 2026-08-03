@@ -55,8 +55,8 @@ const REPOSITORY_ROOT = resolve(import.meta.dir, "../../../../../..");
 
 const SCHEMA_PINS_JSON = String.raw`{
   "plan-advance": {
-    "version": 1,
-    "digest": "298ce36978c831266000028da6f5ed6fc4df033a6a08716a329905b27bc43aa8"
+    "version": 2,
+    "digest": "095f30b6126d07f8e7ee85631376715c5beff89a6746c6c973def3a9ae5c4f3c"
   },
   "plan-reviewer": {
     "version": 1,
@@ -472,6 +472,28 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
       ...currentSchemaPinHistoryErrors(REPOSITORY_ROOT, SCHEMA_PINS),
       ...verifySchemaPins(SCHEMA_PINS, DISPATCHED_ROLE_SIDECARS, SCHEMA_PINS),
     ]).toEqual([]);
+  });
+
+  // regression: D264 — plan-advance changed its draft task contract without advancing its pin.
+  test("rejects a plan-advance schema digest change at the current sidecar version", () => {
+    const sidecars = cloneSidecars();
+    const planAdvance = sidecars["plan-advance"]!;
+    const changedPlanAdvance = {
+      ...planAdvance,
+      outputSchema: { ...planAdvance.outputSchema, minProperties: 1 },
+    };
+    sidecars["plan-advance"] = changedPlanAdvance;
+    const pins = {
+      ...SCHEMA_PINS,
+      "plan-advance": {
+        version: changedPlanAdvance.version,
+        digest: schemaDigest(changedPlanAdvance),
+      },
+    };
+
+    expect(verifySchemaPins(SCHEMA_PINS, sidecars, pins)).toEqual([
+      "schema pin digest changed without version advance for plan-advance",
+    ]);
   });
 
   // regression: T1579 — a schema mutation without a sidecar version bump escaped the catalog checks.

@@ -8,6 +8,7 @@ argument-hint: [milestoneId ...]
 {{cq:fragment:operational-tool-vocabulary}}
 
 ## Catalogue
+
 ```yaml
 inputs:
   - "optional milestone ids; empty resumes all active milestones with non-terminal tasks"
@@ -212,7 +213,8 @@ derived branch, and prune worktree metadata.
 
 For each linked defect, collect all fix tasks from the defect's task
 dependencies and reverse task links. When all are `done`, set the defect
-`resolved` with a concise fix summary.
+`resolved` with a concise fix summary. A discovered task in `planned`, `wip`,
+or `blocked` prevents resolution; never treat task discovery as task completion.
 
 Record exactly one terminal `reviews` item per task from the reconciled result:
 `go-ahead` for approval, otherwise `revise`, with source-tagged findings and

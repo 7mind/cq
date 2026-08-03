@@ -165,12 +165,17 @@ const draftTaskSchema = {
     description: { type: "string" },
     acceptance: { type: "string" },
     suggestedModel: { type: "string", enum: [...MODEL_TIERS] },
+    ledgerRefs: {
+      type: "array",
+      items: { type: "string", minLength: 1 },
+      minItems: 1,
+    },
     sourceRefs: { type: "array", items: { type: "string" } },
     tags: { type: "array", items: { type: "string" } },
     dependsOn: { type: "array", items: draftReferenceSchema },
     blockedBy: { type: "array", items: draftReferenceSchema },
   },
-  required: ["key", "milestoneKey", "headline"],
+  required: ["key", "milestoneKey", "headline", "ledgerRefs"],
   additionalProperties: false,
 } as const;
 
@@ -309,7 +314,7 @@ const candidateTaskSchema = {
     suggestedModel: { type: "string", enum: [...MODEL_TIERS] },
     milestone: { type: "string", minLength: 1 },
     dependsOn: { type: "array", items: { type: "string" } },
-    ledgerRefs: { type: "array", items: { type: "string" } },
+    ledgerRefs: { type: "array", items: { type: "string", minLength: 1 }, minItems: 1 },
   },
   required: ["headline", "acceptance", "suggestedModel", "milestone", "ledgerRefs"],
   additionalProperties: false,
@@ -360,7 +365,7 @@ const outputSchema = {
 /** The plan-advance per-role schema sidecar (storage-format decision 3). */
 export const planAdvanceSidecar: RoleSchemaSidecar = {
   id: "plan-advance",
-  version: 1,
+  version: 2,
   inputSchema,
   outputSchema,
 };

@@ -63,13 +63,19 @@ describe("plan-advance schema sidecar (T336 proof-of-one-role)", () => {
     const manifest = {
       milestones: [{ key: "delivery", title: "Deliver" }],
       tasks: [
-        { key: "contract", milestoneKey: "delivery", headline: "Publish the contract" },
+        {
+          key: "contract",
+          milestoneKey: "delivery",
+          headline: "Publish the contract",
+          ledgerRefs: ["goals:G41"],
+        },
         {
           key: "impl",
           milestoneKey: "delivery",
           headline: "Implement it",
           acceptance: "bun run check green",
           suggestedModel: "standard",
+          ledgerRefs: ["goals:G41"],
           dependsOn: [{ kind: "draft-task", key: "contract" }],
         },
       ],

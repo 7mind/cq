@@ -69,6 +69,7 @@ export interface ReferencePublicTask {
   readonly description: string | null;
   readonly acceptance: string | null;
   readonly suggestedModel: string | null;
+  readonly ledgerRefs: readonly string[];
   readonly sourceRefs: readonly string[];
   readonly tags: readonly string[];
   readonly dependsOn: readonly string[];
@@ -253,6 +254,7 @@ interface MutableTask {
   description: string | null;
   acceptance: string | null;
   suggestedModel: string | null;
+  ledgerRefs: string[];
   sourceRefs: string[];
   tags: string[];
   dependsOn: string[];
@@ -622,6 +624,7 @@ export class ReferencePlanLifecycleAdapter
           description: null,
           acceptance: null,
           suggestedModel: null,
+          ledgerRefs: [`goals:${goalId}`],
           sourceRefs: [],
           tags: [],
           dependsOn,
@@ -1412,6 +1415,7 @@ export class ReferencePlanLifecycleAdapter
         description: task.description ?? null,
         acceptance: task.acceptance ?? null,
         suggestedModel: task.suggestedModel ?? null,
+        ledgerRefs: [...new Set([`goals:${input.goalId}`, ...(task.ledgerRefs ?? [])])],
         sourceRefs: [...(task.sourceRefs ?? [])],
         tags: [...(task.tags ?? [])],
         dependsOn: materializeReferences(task.dependsOn, milestoneAllocations, taskAllocations),

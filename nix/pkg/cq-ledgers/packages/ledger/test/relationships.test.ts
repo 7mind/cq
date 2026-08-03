@@ -20,11 +20,12 @@ import type { Item } from "../src/index.js";
 function makeItem(
   id: string,
   fields: Record<string, string | string[]>,
+  status = "open",
 ): Item {
   return {
     id,
     milestoneId: "M1",
-    status: "open",
+    status,
     fields,
     createdAt: "2026-06-01T00:00:00.000Z",
     updatedAt: "2026-06-01T00:00:00.000Z",
@@ -97,6 +98,14 @@ describe("defectFixTaskIds", () => {
     const tasks: Item[] = [makeItem("T1", { ledgerRefs: ["defects:D1"] })];
 
     expect(defectFixTaskIds("D99", defects, tasks)).toEqual([]);
+  });
+
+  it("discovers a reverse-linked fix task throughout its implementation lifecycle", () => {
+    const defects = [makeItem("D264", {})];
+    for (const status of ["planned", "wip", "blocked", "done"]) {
+      const tasks = [makeItem("T1693", { ledgerRefs: ["defects:D264"] }, status)];
+      expect(defectFixTaskIds("D264", defects, tasks)).toEqual(["T1693"]);
+    }
   });
 
   it("resolves PREFIXED dependsOn entries (G80/M245 ref grammar) to bare task ids", () => {

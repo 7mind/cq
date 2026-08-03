@@ -75,6 +75,7 @@ const RICH_MANIFEST = {
       description: "Retain the task description",
       acceptance: "The contract remains unchanged across adapters",
       suggestedModel: "frontier",
+      ledgerRefs: ["goals:G1", "defects:D264", "defects:D264"],
       sourceRefs: ["nix/pkg/cq-ledgers/packages/ledger/src/planLifecycle.ts"],
       tags: ["contract", "guarded"],
       dependsOn: [
@@ -90,6 +91,7 @@ const RICH_MANIFEST = {
       description: "Retain implementation metadata",
       acceptance: "Only the finalized current draft becomes executable",
       suggestedModel: "frontier",
+      ledgerRefs: ["defects:D264"],
       sourceRefs: ["tasks:T846"],
       tags: ["implementation"],
       dependsOn: [{ kind: "draft-task", key: "contract" }],
@@ -1511,6 +1513,11 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
             publishInput(claim, "rich-draft", RICH_MANIFEST),
           );
           if (!first.ok) throw new Error("rich draft publication unexpectedly conflicted");
+            expect(
+              await fixture.lifecycle.publishPlanDraft(
+                publishInput(claim, "rich-draft", RICH_MANIFEST),
+              ),
+            ).toEqual({ ...first, replayed: true });
           const firstMilestones = Object.fromEntries(
             first.acknowledgement.manifest.milestones.map(({ key, id }) => [key, id]),
           );
@@ -1551,6 +1558,7 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
                 description: "Retain the task description",
                 acceptance: "The contract remains unchanged across adapters",
                 suggestedModel: "frontier",
+                  ledgerRefs: ["goals:G1", "defects:D264"],
                   sourceRefs: ["nix/pkg/cq-ledgers/packages/ledger/src/planLifecycle.ts"],
                 tags: ["contract", "guarded"],
                 dependsOn: [firstMilestones["design"], "researches:RS8"],
@@ -1565,6 +1573,7 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
                 description: "Retain implementation metadata",
                 acceptance: "Only the finalized current draft becomes executable",
                 suggestedModel: "frontier",
+                  ledgerRefs: ["goals:G1", "defects:D264"],
                 sourceRefs: ["tasks:T846"],
                 tags: ["implementation"],
                 dependsOn: [firstTasks["contract"]],
@@ -1574,7 +1583,6 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
               }),
             ]),
           );
-
           const replacement = await fixture.lifecycle.publishPlanDraft(
             publishInput(claim, "replacement-draft", COMPLETE_MANIFEST),
           );
@@ -1615,8 +1623,11 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
           expect(
             replacedState.tasks
               .filter(({ id }) => replacementTaskIds.includes(id))
-              .map(({ executable }) => executable),
-          ).toEqual([false, false]);
+                .map(({ executable, ledgerRefs }) => ({ executable, ledgerRefs })),
+            ).toEqual([
+              { executable: false, ledgerRefs: ["goals:G1"] },
+              { executable: false, ledgerRefs: ["goals:G1"] },
+            ]);
 
           const draft = {
             goalId: GOAL_ID,
@@ -1653,6 +1664,11 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
               .map(({ executable }) => executable),
           ).toEqual([false, false]);
           expect(finalizedState.readyTaskIds).toEqual([replacementTaskIds[0]!]);
+            expect(
+              finalizedState.tasks
+                .filter(({ id }) => replacementTaskIds.includes(id))
+                .map(({ ledgerRefs }) => ledgerRefs),
+            ).toEqual([["goals:G1"], ["goals:G1"]]);
             await expect(fixture.startTask(firstTasks["contract"]!, PROVENANCE_B)).rejects.toThrow(
               /draft|superseded/,
             );
@@ -1665,6 +1681,31 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
               /draft|superseded/,
             );
           expect(await fixture.observe(GOAL_ID)).toEqual(finalizedState);
+            const restartedAfterFinalize = await fixture.restart();
+            try {
+              const restartedTasks = (await restartedAfterFinalize.observe(GOAL_ID)).tasks;
+              expect(
+                restartedTasks
+                  .filter(({ id }) => Object.values(firstTasks).includes(id))
+                  .map(({ ledgerRefs, sourceRefs }) => ({ ledgerRefs, sourceRefs })),
+              ).toEqual([
+                {
+                  ledgerRefs: ["goals:G1", "defects:D264"],
+                  sourceRefs: ["nix/pkg/cq-ledgers/packages/ledger/src/planLifecycle.ts"],
+                },
+                {
+                  ledgerRefs: ["goals:G1", "defects:D264"],
+                  sourceRefs: ["tasks:T846"],
+                },
+              ]);
+              expect(
+                restartedTasks
+                  .filter(({ id }) => replacementTaskIds.includes(id))
+                  .map(({ ledgerRefs }) => ledgerRefs),
+              ).toEqual([["goals:G1"], ["goals:G1"]]);
+            } finally {
+              await restartedAfterFinalize.dispose();
+            }
         } finally {
           await fixture.dispose();
         }

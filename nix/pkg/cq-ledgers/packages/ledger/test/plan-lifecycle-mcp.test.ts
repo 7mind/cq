@@ -422,6 +422,45 @@ describe("T852 guarded plan lifecycle over MCP", () => {
     }
   });
 
+  it("publishes de-duplicated authoritative task refs separately from provenance", async () => {
+    const single = await buildSingle();
+    try {
+      const claim = winningClaim(
+        await single.call("claim_plan", claimArgs("refs_request", OWNER_A, null)),
+      );
+      const manifest = {
+        milestones: [{ key: "correction", title: "Correction" }],
+        tasks: [
+          {
+            key: "preserve_refs",
+            milestoneKey: "correction",
+            headline: "Preserve authoritative refs",
+            ledgerRefs: ["goals:G1", "defects:D264", "defects:D264"],
+            sourceRefs: ["packages/ledger/src/planLifecycle.ts"],
+          },
+        ],
+      };
+
+      const published = await single.call("publish_plan_draft", {
+        ...ownerArgs(claim, "publish_refs"),
+        manifest,
+      });
+      expect(published).toMatchObject({ ok: true, replayed: false });
+      expect(
+        await single.call("publish_plan_draft", {
+          ...ownerArgs(claim, "publish_refs"),
+          manifest,
+        }),
+      ).toEqual({ ...(published as object), replayed: true });
+      expect((await single.fixture.observe(GOAL_ID)).tasks[0]).toMatchObject({
+        ledgerRefs: ["goals:G1", "defects:D264"],
+        sourceRefs: ["packages/ledger/src/planLifecycle.ts"],
+      });
+    } finally {
+      await single.dispose();
+    }
+  });
+
   it("pauses on researches with the owner token and replaces the wait set", async () => {
     const single = await buildSingle();
     try {

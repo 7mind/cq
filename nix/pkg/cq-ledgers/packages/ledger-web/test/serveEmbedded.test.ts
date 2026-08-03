@@ -115,7 +115,7 @@ beforeAll(async () => {
   const roles = [
     {
       roleId: "plan-advance",
-      version: 1,
+      version: 2,
       sha256: createHash("sha256").update(PROMPT_BYTES, "utf8").digest("hex"),
     },
     {

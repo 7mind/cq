@@ -86,7 +86,8 @@ action and perform no mutation.
         "description": "<implementation scope>",
         "acceptance": "<observable verification>",
         "suggestedModel": "frontier | standard | fast",
-        "sourceRefs": ["<ledger>:<id>"],
+        "ledgerRefs": ["goals:<G>", "defects:<D>"],
+        "sourceRefs": ["<provenance ref>"],
         "dependsOn": [
           { "kind": "draft-task", "key": "<task key>" },
           { "kind": "ledger", "ref": "<ledger>:<id>" }
@@ -137,8 +138,9 @@ after that research exists. Set every task's model tier:
 - `standard` for ordinary nontrivial implementation;
 - `fast` for trivial mechanical work.
 
-Acceptance must name a command, observable result, or invariant. Defect-fix
-tasks carry the defect reference in `sourceRefs`.
+Acceptance must name a command, observable result, or invariant. Every task
+declares its owning `goals:<G>` reference in `ledgerRefs`. Defect-fix tasks
+carry their defect ownership in `ledgerRefs`; `sourceRefs` records provenance only.
 
 ### Choosing the action
 
@@ -197,7 +199,7 @@ the goal still needs clarification, return empty arrays and explain why in
       "suggestedModel": "standard",
       "milestone": "<milestone title>",
       "dependsOn": ["<other task headline>", "<persisted ledger ref>"],
-      "ledgerRefs": ["<relevant ledger ref>"]
+      "ledgerRefs": ["goals:<G>", "defects:<D>"]
     }
   ],
   "rationale": "<decomposition and sequencing rationale>"

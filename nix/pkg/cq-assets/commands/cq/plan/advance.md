@@ -10,6 +10,7 @@ argument-hint: [goalId]
 {{cq:fragment:ledger-response-contract}}
 
 ## Catalogue
+
 ```yaml
 inputs:
   - "optional goal id; empty selects every clarifying/planning goal"
@@ -128,7 +129,10 @@ Synthesize one manifest:
    edges from other candidates;
 3. deduplicate overlaps;
 4. assign stable milestone/task keys and translate title/headline references
-   into typed draft references; preserve persisted ledger references.
+   into typed draft references. Copy every selected candidate task's
+   `ledgerRefs` into the synthesized draft task's `ledgerRefs`, merge them with
+   the mandatory `goals:<goalId>` owner reference, and de-duplicate without
+   moving any entry into `sourceRefs`.
 
 Publish that complete manifest under the active claim. Empty candidate DAGs
 mean clarification remains necessary: pause with concrete questions when

@@ -334,6 +334,7 @@ export const PlanTaskDraftSchema = z
     description: z.string().optional(),
     acceptance: z.string().optional(),
     suggestedModel: z.string().optional(),
+    ledgerRefs: z.array(nonEmptyStringSchema).optional(),
     sourceRefs: z.array(z.string()).optional(),
     tags: z.array(z.string()).optional(),
     dependsOn: z.array(PlanDraftReferenceSchema).optional(),

@@ -254,7 +254,7 @@ beforeAll(async () => {
     const roles = [
       {
         roleId: DISPATCHED_ROLE_ID,
-        version: 1,
+        version: 2,
         sha256: createHash("sha256").update(dispatchedBytes, "utf8").digest("hex"),
       },
       {

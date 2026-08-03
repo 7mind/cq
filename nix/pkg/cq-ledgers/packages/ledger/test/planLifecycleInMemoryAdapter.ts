@@ -320,6 +320,7 @@ export abstract class LedgerStorePlanLifecycleFixture<
         description: optionalString(item, "description"),
         acceptance: optionalString(item, "acceptance"),
         suggestedModel: optionalString(item, "suggestedModel"),
+      ledgerRefs: refValues(item, "ledgerRefs"),
         sourceRefs: refValues(item, "sourceRefs"),
         tags: refValues(item, "tags"),
         dependsOn: refValues(item, "dependsOn").map(stripInternalRef),

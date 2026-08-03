@@ -75,6 +75,8 @@ const manifest = {
       key: "contract",
       milestoneKey: "api",
       headline: "Define the contract",
+      ledgerRefs: ["goals:G99", "defects:D264"],
+      sourceRefs: ["packages/ledger/src/planLifecycle.ts"],
     },
     {
       key: "implementation",

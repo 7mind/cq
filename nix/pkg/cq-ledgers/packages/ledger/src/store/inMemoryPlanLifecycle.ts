@@ -491,7 +491,7 @@ function materializeManifest(
     }
     const fields: Record<string, FieldValue> = {
       headline: draft.headline,
-      ledgerRefs: [`${GOALS_LEDGER}:${input.goalId}`],
+      ledgerRefs: [...new Set([`${GOALS_LEDGER}:${input.goalId}`, ...(draft.ledgerRefs ?? [])])],
     };
     if (draft.description !== undefined) fields["description"] = draft.description;
     if (draft.acceptance !== undefined) fields["acceptance"] = draft.acceptance;

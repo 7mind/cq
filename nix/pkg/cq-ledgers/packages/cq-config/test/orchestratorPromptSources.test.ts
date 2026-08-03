@@ -197,6 +197,24 @@ function assertIdeaGoalReverseLinks(plan: string, followUp: string): void {
   expect(followUp).toMatch(reverseLinkWrite);
 }
 
+function assertConfiguredCandidateLedgerRefs(advance: string): void {
+  expect(advance).toMatch(
+    /Copy every selected candidate task's\s+`ledgerRefs` into the synthesized draft task's `ledgerRefs`/,
+  );
+  expect(advance).toMatch(
+    /merge them with\s+the mandatory `goals:<goalId>` owner reference, and de-duplicate without\s+moving any entry into `sourceRefs`/,
+  );
+}
+
+function assertDefectFixClosure(implementAdvance: string): void {
+  expect(implementAdvance).toMatch(
+    /collect all fix tasks from the defect's task\s+dependencies and reverse task links/,
+  );
+  expect(implementAdvance).toMatch(
+    /A discovered task in `planned`, `wip`,\s+or `blocked` prevents resolution; never treat task discovery as task completion/,
+  );
+}
+
 describe("orchestrator command prompt sources", () => {
   test("derives every operational mapping target from the registered ledger tool surface", () => {
     for (const spec of OPERATIONAL_TOOL_SPECS) {
@@ -384,9 +402,13 @@ describe("orchestrator command prompt sources", () => {
       const planIndex = catalog.findIndex(({ roleId }) => roleId === "plan");
       const followUpIndex = catalog.findIndex(({ roleId }) => roleId === "plan/follow-up");
       const advanceIndex = catalog.findIndex(({ roleId }) => roleId === "plan/advance");
+      const implementAdvanceIndex = catalog.findIndex(
+        ({ roleId }) => roleId === "implement/advance",
+      );
       expect(planIndex).toBeGreaterThanOrEqual(0);
       expect(followUpIndex).toBeGreaterThanOrEqual(0);
       expect(advanceIndex).toBeGreaterThanOrEqual(0);
+      expect(implementAdvanceIndex).toBeGreaterThanOrEqual(0);
       assertIdeaGoalReverseLinks(
         first.artifacts[planIndex + 2]!.content,
         first.artifacts[followUpIndex + 2]!.content,
@@ -395,6 +417,8 @@ describe("orchestrator command prompt sources", () => {
         first.artifacts[followUpIndex + 2]!.content,
         first.artifacts[advanceIndex + 2]!.content,
       );
+      assertConfiguredCandidateLedgerRefs(first.artifacts[advanceIndex + 2]!.content);
+      assertDefectFixClosure(first.artifacts[implementAdvanceIndex + 2]!.content);
     }
   });
 
