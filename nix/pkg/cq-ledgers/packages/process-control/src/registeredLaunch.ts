@@ -13,6 +13,8 @@ import {
   type ProcessGroupRegistration,
 } from "./processGroup.js";
 
+export { REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS } from "./registeredLaunchProtocol.js";
+
 const IDENTITY_TIMEOUT_MS = 30_000;
 const HANDSHAKE_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 2;
@@ -442,6 +444,10 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
 ): Promise<LaunchedRegisteredProcessGroup<TProcess, TExit>> {
   assertTarget(options.argv, options.cwd);
   const cwd = targetCwd(options.cwd);
+  const launcher = await readProcessIdentity(process.pid);
+  if (launcher === null) {
+    throw new Error("@cq/process-control: registered-launch writer identity disappeared");
+  }
   const protocolDirectory = await mkdtemp(join(tmpdir(), "cq-registered-launch-"));
   const nonce = randomUUID();
   const releasePath = join(protocolDirectory, "release.json");
@@ -453,7 +459,16 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
 
   try {
     const specification: RegisteredLaunchBootstrapSpecification<TStdio> = {
-      argv: [process.execPath, bootstrapExecutable, protocolDirectory, nonce, cwd, ...options.argv],
+      argv: [
+        process.execPath,
+        bootstrapExecutable,
+        protocolDirectory,
+        nonce,
+        String(launcher.pid),
+        launcher.startTime,
+        cwd,
+        ...options.argv,
+      ],
       cwd,
       env: { ...options.env },
       detached: true,
@@ -490,7 +505,11 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
     if (!(await isProcessIdentityAlive(registration.leader))) {
       throw new Error("@cq/process-control: registered-launch bootstrap exited before release");
     }
-    await writeJsonAtomic(releasePath, { nonce, pgid: registration.pgid });
+    await writeJsonAtomic(releasePath, {
+      nonce,
+      pgid: registration.pgid,
+      launcher,
+    });
     await waitForBootstrapStatus(statusPath, nonce, registration.pgid, exit);
     const exited = completeRegisteredLaunch(
       bootstrap,

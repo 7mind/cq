@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   launchRegisteredProcessGroup,
+  isProcessGroupAlive,
+  REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS,
   readProcessIdentity,
   settleProcessGroups,
   signalProcessGroup,
@@ -72,6 +74,43 @@ async function waitForFile(path: string): Promise<void> {
   throw new Error(`test file ${path} was not created`);
 }
 
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function completeBootstrapIfTargetRan(
+  child: ChildProcess,
+  protocolDirectory: string,
+  nonce: string,
+): Promise<void> {
+  const pid = child.pid;
+  if (pid === undefined) throw new Error("test bootstrap returned no PID");
+  const statusPath = join(protocolDirectory, "status.json");
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    if (await pathExists(statusPath)) {
+      const status = JSON.parse(await readFile(statusPath, "utf8")) as {
+        readonly state?: string;
+      };
+      if (status.state === "exited") {
+        await writeFile(
+          join(protocolDirectory, "completion.json"),
+          JSON.stringify({ nonce, pgid: pid }),
+        );
+        return;
+      }
+    }
+    await Bun.sleep(2);
+  }
+  throw new Error("test bootstrap neither rejected the mutation nor ran the target");
+}
+
 function streamText(stream: NodeJS.ReadableStream): Promise<string> {
   return new Promise((resolve, reject) => {
     let text = "";
@@ -89,7 +128,131 @@ afterEach(async () => {
 });
 
 describe("registered process-group launch bootstrap [T1624]", () => {
-  test("awaits the target-exit hook before completing the registered launch", async () => {
+  // Regression origin: D260 exposed unauthenticated completion-writer cancellation.
+  test("settles an exited bootstrap when its completion writer is killed [Whitebox-GoodCommunication]", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-orphan-"));
+    roots.push(root);
+    const launcherStatePath = join(root, "launcher-state.json");
+    const registeredLaunchUrl = new URL("../src/registeredLaunch.ts", import.meta.url).href;
+    const launcherSource = [
+      "const { spawn } = require('node:child_process');",
+      "const { writeFileSync } = require('node:fs');",
+      `const { launchRegisteredProcessGroup } = await import(${JSON.stringify(registeredLaunchUrl)});`,
+      "let protocolDirectory;",
+      "const launched = await launchRegisteredProcessGroup({",
+      "  argv: [process.execPath, '-e', 'process.exit(0)'],",
+      `  cwd: ${JSON.stringify(root)},`,
+      "  env: process.env,",
+      "  stdio: ['ignore', 'ignore', 'inherit'],",
+      "  register: async () => {},",
+      "  onTargetExit: async () => new Promise(() => {}),",
+      "  launchBootstrap: (specification) => {",
+      "    protocolDirectory = specification.argv[2];",
+      "    const child = spawn(specification.argv[0], specification.argv.slice(1), {",
+      "      cwd: specification.cwd,",
+      "      env: specification.env,",
+      "      detached: specification.detached,",
+      "      stdio: specification.stdio,",
+      "    });",
+      "    return {",
+      "      process: child,",
+      "      pid: child.pid,",
+      "      exited: new Promise((resolve, reject) => {",
+      "        child.once('error', reject);",
+      "        child.once('exit', (exitCode, signal) => resolve({ exitCode, signal }));",
+      "      }),",
+      "      outputDrained: Promise.resolve(),",
+      "      resultFromTargetOutcome: (outcome) => outcome,",
+      "      terminate: (signal) => child.kill(signal),",
+      "    };",
+      "  },",
+      "});",
+      `writeFileSync(${JSON.stringify(launcherStatePath)}, JSON.stringify({`,
+      "  protocolDirectory,",
+      "  registration: launched.registration,",
+      "}));",
+      "setInterval(() => {}, 1000);",
+      "await launched.exited;",
+    ].join("\n");
+    const launcher = spawn(process.execPath, ["-e", launcherSource], {
+      cwd: root,
+      env: process.env,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    const launcherPid = launcher.pid;
+    if (launcherPid === undefined) throw new Error("test launcher returned no PID");
+    if (launcher.stderr === null) throw new Error("test launcher returned no stderr pipe");
+    const launcherExited = exited(launcher);
+    const bootstrapStderr = streamText(launcher.stderr);
+    let protocolDirectory: string | undefined;
+    let registration: ProcessGroupRegistration | undefined;
+
+    try {
+      await waitForFile(launcherStatePath);
+      const launcherState = JSON.parse(await readFile(launcherStatePath, "utf8")) as {
+        readonly protocolDirectory: string;
+        readonly registration: ProcessGroupRegistration;
+      };
+      protocolDirectory = launcherState.protocolDirectory;
+      registration = launcherState.registration;
+      const statusPath = join(protocolDirectory, "status.json");
+      for (let attempt = 0; attempt < 1_000; attempt += 1) {
+        if (await Bun.file(statusPath).exists()) {
+          const status = JSON.parse(await readFile(statusPath, "utf8")) as {
+            readonly state?: string;
+          };
+          if (status.state === "exited") break;
+        }
+        if (attempt === 999) throw new Error("target did not publish exited status");
+        await Bun.sleep(2);
+      }
+      expect(await Bun.file(join(protocolDirectory, "completion.json")).exists()).toBe(false);
+
+      launcher.kill("SIGKILL");
+      await launcherExited;
+      const settlementStarted = Date.now();
+      const deadline = settlementStarted + REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS;
+      let settlementObservedAt: number | undefined;
+      for (;;) {
+        const observedIdentity = await readProcessIdentity(registration.leader.pid);
+        const identityAlive =
+          observedIdentity !== null && observedIdentity.startTime === registration.leader.startTime;
+        const groupAlive = isProcessGroupAlive(registration.pgid);
+        const directoryAlive = await pathExists(protocolDirectory);
+        if (!identityAlive && !groupAlive && !directoryAlive) {
+          settlementObservedAt = Date.now();
+          break;
+        }
+        if (Date.now() >= deadline) {
+          expect({ identityAlive, groupAlive, directoryAlive }).toEqual({
+            identityAlive: false,
+            groupAlive: false,
+            directoryAlive: false,
+          });
+        }
+        await Bun.sleep(2);
+      }
+      expect(settlementObservedAt).toBeDefined();
+      expect(settlementObservedAt! - settlementStarted).toBeLessThanOrEqual(
+        REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS,
+      );
+      expect(await bootstrapStderr).toContain("completion writer identity disappeared");
+    } finally {
+      if (launcher.exitCode === null && launcher.signalCode === null) {
+        launcher.kill("SIGKILL");
+        await launcherExited;
+      }
+      if (registration !== undefined) {
+        signalProcessGroup(registration.pgid, "SIGKILL");
+        await waitForIdentityToDisappear(registration.leader.pid);
+      }
+      if (protocolDirectory !== undefined) {
+        await rm(protocolDirectory, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test("keeps the bootstrap alive through a delayed target-exit hook [Effectual-GoodCommunication]", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-target-exit-hook-"));
     roots.push(root);
     let hookCalls = 0;
@@ -117,6 +280,11 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       await Bun.sleep(2);
     }
     expect(hookCalls).toBe(1);
+    expect(completed).toBe(false);
+    await Bun.sleep(REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS + 100);
+    expect(await readProcessIdentity(launched.registration.leader.pid)).toEqual(
+      launched.registration.leader,
+    );
     expect(completed).toBe(false);
     if (finishHook === undefined) throw new Error("target-exit hook did not expose completion");
     finishHook();
@@ -252,35 +420,120 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     await waitForIdentityToDisappear(registrations[0]!.leader.pid);
   });
 
-  test("rejects a nonce-qualified release mismatch before the target runs", async () => {
+  test("rejects a launcher identity that differs from its initial parent [Whitebox-GoodCommunication]", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-parent-mismatch-"));
+    roots.push(root);
+    const bootstrap = fileURLToPath(new URL("../src/commandBootstrap.ts", import.meta.url));
+    const launcher = await readProcessIdentity(process.pid);
+    if (launcher === null) throw new Error("test launcher identity disappeared");
+    const mutations = [
+      {
+        name: "launcher PID mismatch",
+        launcher: { ...launcher, pid: launcher.pid + 1 },
+        expectedError: "launcher PID does not match initial parent",
+      },
+      {
+        name: "simulated PID-reuse start-time mismatch",
+        launcher: { ...launcher, startTime: `${launcher.startTime}-reused` },
+        expectedError: "launcher start-time identity mismatch",
+      },
+    ];
+
+    for (const mutation of mutations) {
+      const protocolDirectory = join(root, mutation.name.replaceAll(" ", "-"));
+      const marker = join(protocolDirectory, "target-ran");
+      await mkdir(protocolDirectory, { mode: 0o700 });
+      const child = spawn(
+        process.execPath,
+        [
+          bootstrap,
+          protocolDirectory,
+          "expected-nonce",
+          String(mutation.launcher.pid),
+          mutation.launcher.startTime,
+          root,
+          process.execPath,
+          "-e",
+          `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`,
+        ],
+        { cwd: root, env: process.env, detached: true, stdio: ["ignore", "ignore", "pipe"] },
+      );
+      if (child.pid === undefined) throw new Error("test bootstrap returned no PID");
+      if (child.stderr === null) throw new Error("test bootstrap returned no stderr pipe");
+      const outcomePromise = exited(child);
+      const stderr = streamText(child.stderr);
+      await writeFile(
+        join(protocolDirectory, "release.json"),
+        JSON.stringify({
+          nonce: "expected-nonce",
+          pgid: child.pid,
+          launcher: mutation.launcher,
+        }),
+      );
+      await completeBootstrapIfTargetRan(child, protocolDirectory, "expected-nonce");
+      const outcome = await outcomePromise;
+      expect(outcome.exitCode, mutation.name).toBe(1);
+      expect(await stderr, mutation.name).toContain(mutation.expectedError);
+      expect(await pathExists(marker), mutation.name).toBe(false);
+      expect(await pathExists(join(protocolDirectory, "status.json")), mutation.name).toBe(false);
+    }
+  });
+
+  test("rejects nonce/launcher release mutations [Whitebox-GoodCommunication]", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-mismatch-"));
     roots.push(root);
-    const protocolDirectory = join(root, "protocol");
-    const marker = join(root, "target-ran");
-    await mkdir(protocolDirectory, { mode: 0o700 });
     const bootstrap = fileURLToPath(new URL("../src/commandBootstrap.ts", import.meta.url));
-    const child = spawn(
-      process.execPath,
-      [
-        bootstrap,
-        protocolDirectory,
-        "expected-nonce",
-        root,
+    const launcher = await readProcessIdentity(process.pid);
+    if (launcher === null) throw new Error("test launcher identity disappeared");
+    const mutations = [
+      {
+        name: "nonce mismatch",
+        release: { nonce: "mismatched-nonce", launcher },
+      },
+      {
+        name: "launcher PID mismatch",
+        release: { nonce: "expected-nonce", launcher: { ...launcher, pid: launcher.pid + 1 } },
+      },
+      {
+        name: "launcher start-time mismatch",
+        release: {
+          nonce: "expected-nonce",
+          launcher: { ...launcher, startTime: `${launcher.startTime}-reused` },
+        },
+      },
+    ];
+
+    for (const mutation of mutations) {
+      const protocolDirectory = join(root, mutation.name.replaceAll(" ", "-"));
+      const marker = join(protocolDirectory, "target-ran");
+      await mkdir(protocolDirectory, { mode: 0o700 });
+      const child = spawn(
         process.execPath,
-        "-e",
-        `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`,
-      ],
-      { cwd: root, env: process.env, detached: true, stdio: "ignore" },
-    );
-    if (child.pid === undefined) throw new Error("test bootstrap returned no PID");
-    await writeFile(
-      join(protocolDirectory, "release.json"),
-      JSON.stringify({ nonce: "mismatched-nonce", pgid: child.pid }),
-    );
-    const outcome = await exited(child);
-    expect(outcome.exitCode).toBe(1);
-    expect(await Bun.file(marker).exists()).toBe(false);
-    expect(await Bun.file(join(protocolDirectory, "status.json")).exists()).toBe(false);
+        [
+          bootstrap,
+          protocolDirectory,
+          "expected-nonce",
+          String(launcher.pid),
+          launcher.startTime,
+          root,
+          process.execPath,
+          "-e",
+          `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`,
+        ],
+        { cwd: root, env: process.env, detached: true, stdio: "ignore" },
+      );
+      if (child.pid === undefined) throw new Error("test bootstrap returned no PID");
+      const outcomePromise = exited(child);
+      await writeFile(
+        join(protocolDirectory, "release.json"),
+        JSON.stringify({ ...mutation.release, pgid: child.pid }),
+      );
+      await completeBootstrapIfTargetRan(child, protocolDirectory, "expected-nonce");
+      const outcome = await outcomePromise;
+      expect(outcome.exitCode, mutation.name).toBe(1);
+      expect(await pathExists(marker), mutation.name).toBe(false);
+      expect(await pathExists(join(protocolDirectory, "status.json")), mutation.name).toBe(false);
+    }
   });
 
   test("preserves exact argv, cwd, env, and Node stdin/stdout/stderr pipes", async () => {
