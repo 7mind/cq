@@ -68,6 +68,29 @@ function captureStderr(stream: ReadableStream<Uint8Array>) {
   return { completed, snapshot: (): string => captured };
 }
 
+function captureEvents(
+  stream: ReadableStream<Uint8Array>,
+  record: (event: ChildEvent) => void,
+): Promise<void> {
+  const decoder = new TextDecoder();
+  return (async (): Promise<void> => {
+    const reader = stream.getReader();
+    let pending = "";
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      pending += decoder.decode(chunk.value, { stream: true });
+      const lines = pending.split("\n");
+      pending = lines.pop() ?? "";
+      lines.forEach((line) => {
+        if (line !== "") record(JSON.parse(line) as ChildEvent);
+      });
+    }
+    pending += decoder.decode();
+    if (pending !== "") record(JSON.parse(pending) as ChildEvent);
+  })();
+}
+
 function spawnFixture(
   childName: string,
   fixture: string,
@@ -79,13 +102,11 @@ function spawnFixture(
   const proc = Bun.spawn({
     cmd: [process.execPath, "run", fixture, ...args],
     stdin: "ignore",
-    stdout: "ignore",
+    stdout: "pipe",
     stderr: "pipe",
-    ipc(message: unknown) {
-      record(message as ChildEvent);
-    },
   });
   const stderr = captureStderr(proc.stderr);
+  const eventsCompleted = captureEvents(proc.stdout, record);
   let deadlineReport: string | undefined;
   const watchdog = (async (): Promise<void> => {
     const remainingMs = Math.max(0, scenarioStartedAt + CHILD_DEADLINE_MS - Date.now());
@@ -114,6 +135,7 @@ function spawnFixture(
     proc,
     scenarioStartedAt,
     stderr,
+    eventsCompleted,
     watchdog,
     get deadlineReport(): string | undefined {
       return deadlineReport;
@@ -157,6 +179,7 @@ async function reap(
   child.reapPromise ??= (async (): Promise<FixtureResult> => {
     const exitCode = await child.proc.exited;
     await child.watchdog;
+    await child.eventsCompleted;
     await child.stderr.completed;
     const elapsedMs = Date.now() - child.scenarioStartedAt;
     const result = {
@@ -203,6 +226,85 @@ function eventIndex(
 
 function sqliteError(message: string, code: string, errno: number): Error {
   return Object.assign(new Error(message), { code, errno });
+}
+
+function requireEventualWalSuccess(
+  requireInvariant: (condition: boolean, message: string) => void,
+  contenderId: string,
+  own: readonly (ChildEvent | ParentEvent)[],
+): void {
+  const attempts = own.filter(
+    (event): event is Extract<ChildEvent, { readonly type: "wal-attempt" }> =>
+      event.type === "wal-attempt",
+  );
+  const successful = own.find(
+    (event): event is Extract<ChildEvent, { readonly type: "wal-attempt-succeeded" }> =>
+      event.type === "wal-attempt-succeeded",
+  );
+  const initializer = own.find(
+    (event): event is Extract<ChildEvent, { readonly type: "initializer-succeeded" }> =>
+      event.type === "initializer-succeeded",
+  );
+  const busyFailures = own.filter(
+    (
+      event,
+    ): event is
+      | Extract<ChildEvent, { readonly type: "first-wal-busy-held" }>
+      | Extract<ChildEvent, { readonly type: "fixture-second-wal-busy-injected" }> =>
+      event.type === "first-wal-busy-held" || event.type === "fixture-second-wal-busy-injected",
+  );
+
+  requireInvariant(
+    successful !== undefined && successful.attempt >= 2,
+    `${contenderId} must have a successful WAL attempt at or after retry 2`,
+  );
+  if (successful === undefined) return;
+
+  requireInvariant(
+    initializer !== undefined && initializer.walAttempts === successful.attempt,
+    `${contenderId} initializer-success WAL count must equal the first successful WAL attempt`,
+  );
+  requireInvariant(
+    successful.attempt <= WAL_CONVERSION_ATTEMPTS,
+    `${contenderId} successful WAL attempt must stay within the retry ceiling`,
+  );
+  requireInvariant(
+    attempts.length === successful.attempt,
+    `${contenderId} WAL attempt transcript must end at its first successful attempt`,
+  );
+  attempts.forEach((attempt, index) => {
+    requireInvariant(
+      attempt.attempt === index + 1 && attempt.sql === WAL_PRAGMA,
+      `${contenderId} must report every exact WAL attempt in sequence`,
+    );
+  });
+  requireInvariant(
+    busyFailures.length === successful.attempt - 1 &&
+      busyFailures.every(
+        (failure, index) =>
+          failure.attempt === index + 1 &&
+          failure.primaryErrno === 5 &&
+          (failure.code === "SQLITE_BUSY" || failure.code === "SQLITE_BUSY_RECOVERY") &&
+          failure.callSite === PUBLIC_WAL_CALL_SITE,
+      ),
+    `${contenderId} must have contiguous busy-only failures before successful WAL`,
+  );
+}
+
+const FORMER_EXACT_SECOND_VIOLATION = "former exact-attempt-2 predicate violation";
+
+function formerExactSecondSuccessPredicate(
+  own: readonly (ChildEvent | ParentEvent)[],
+): string | undefined {
+  const succeededAtAttemptTwo = own.find(
+    (event) => event.type === "wal-attempt-succeeded" && event.attempt === 2,
+  );
+  const initializer = own.find((event) => event.type === "initializer-succeeded");
+  return succeededAtAttemptTwo !== undefined &&
+    initializer !== undefined &&
+    initializer.walAttempts === 2
+    ? undefined
+    : FORMER_EXACT_SECOND_VIOLATION;
 }
 
 function observeInjectedWalPolicy(errors: readonly Error[]): {
@@ -290,6 +392,76 @@ describe("mandatory WAL retry policy", () => {
   );
 });
 
+test("eventual WAL success guard accepts attempt 3 and rejects the former exact-second predicate", () => {
+  const contenderId = "guard-contender";
+  const own: ChildEvent[] = [
+    {
+      type: "wal-attempt",
+      contenderId,
+      attempt: 1,
+      sql: WAL_PRAGMA,
+      busyTimeoutInstalled: true,
+    },
+    {
+      type: "first-wal-busy-held",
+      contenderId,
+      attempt: 1,
+      callSite: PUBLIC_WAL_CALL_SITE,
+      busyTimeoutInstalled: true,
+      code: "SQLITE_BUSY",
+      errno: 5,
+      primaryErrno: 5,
+    },
+    {
+      type: "wal-attempt",
+      contenderId,
+      attempt: 2,
+      sql: WAL_PRAGMA,
+      busyTimeoutInstalled: true,
+    },
+    {
+      type: "fixture-second-wal-busy-injected",
+      contenderId,
+      attempt: 2,
+      callSite: PUBLIC_WAL_CALL_SITE,
+      code: "SQLITE_BUSY",
+      errno: 5,
+      primaryErrno: 5,
+    },
+    {
+      type: "wal-attempt",
+      contenderId,
+      attempt: 3,
+      sql: WAL_PRAGMA,
+      busyTimeoutInstalled: true,
+    },
+    {
+      type: "wal-attempt-succeeded",
+      contenderId,
+      attempt: 3,
+      sql: WAL_PRAGMA,
+      execution: "real",
+    },
+    {
+      type: "initializer-succeeded",
+      contenderId,
+      elapsedMs: 0,
+      walAttempts: 3,
+    },
+  ];
+  const violations: string[] = [];
+  requireEventualWalSuccess(
+    (condition, message) => {
+      if (!condition) violations.push(message);
+    },
+    contenderId,
+    own,
+  );
+
+  expect(violations).toEqual([]);
+  expect(formerExactSecondSuccessPredicate(own)).toBe(FORMER_EXACT_SECOND_VIOLATION);
+});
+
 test(
   "T1568 public initializer installs timeout before WAL and retries the held first busy error",
   async () => {
@@ -304,7 +476,11 @@ test(
 
     const root = await mkdtemp(path.join(tmpdir(), "cq-sqlite-contention-"));
     const dbPath = path.join(root, "shared.db");
+    const ownerReleasePath = path.join(root, "owner-release.ack");
     const releaseAckPath = path.join(root, "release.ack");
+    const peerReleaseAckPath = path.join(root, "peer-release.ack");
+    const secondWalReleasePath = path.join(root, "second-wal-release.ack");
+    const gatedContenderId = "contender-1";
     const transcript: TranscriptEntry[] = [];
     const children: FixtureProcess[] = [];
     let nextSequence = 1;
@@ -317,7 +493,7 @@ test(
       const owner = spawnFixture(
         "owner",
         OWNER_FIXTURE,
-        [dbPath],
+        [dbPath, ownerReleasePath],
         record,
         scenarioStartedAt,
         transcript,
@@ -345,7 +521,14 @@ test(
         const child = spawnFixture(
           contenderId,
           CONTENDER_FIXTURE,
-          ["public", dbPath, releaseAckPath, contenderId, String(scenarioStartedAt)],
+          [
+            "public",
+            dbPath,
+            contenderId === gatedContenderId ? releaseAckPath : peerReleaseAckPath,
+            contenderId,
+            String(scenarioStartedAt),
+            ...(contenderId === gatedContenderId ? [secondWalReleasePath] : []),
+          ],
           record,
           scenarioStartedAt,
           transcript,
@@ -372,7 +555,7 @@ test(
       );
 
       record({ type: "release-request" });
-      owner.proc.send({ type: "release-owner" });
+      await writeFile(ownerReleasePath, "released\n", { flag: "wx" });
       await waitFor(
         () => eventIndex(transcript, (event) => event.type === "owner-released") >= 0,
         childDeadlineAt,
@@ -382,6 +565,42 @@ test(
       );
       await writeFile(releaseAckPath, "released\n", { flag: "wx" });
       record({ type: "release-ack-written" });
+
+      await waitFor(
+        () =>
+          eventIndex(
+            transcript,
+            (event) =>
+              event.type === "second-wal-execution-held" && event.contenderId === gatedContenderId,
+          ) >= 0,
+        childDeadlineAt,
+        "gated contender to hold before WAL attempt 2",
+        transcript,
+        children,
+      );
+      const peerContenderId = contenders.find(
+        ({ contenderId }) => contenderId !== gatedContenderId,
+      )?.contenderId;
+      await writeFile(peerReleaseAckPath, "released\n", { flag: "wx" });
+      record({ type: "peer-release-ack-written" });
+      await waitFor(
+        () =>
+          peerContenderId !== undefined &&
+          eventIndex(
+            transcript,
+            (event) =>
+              event.type === "wal-attempt-succeeded" &&
+              event.contenderId === peerContenderId &&
+              event.attempt === 2 &&
+              event.execution === "real",
+          ) >= 0,
+        childDeadlineAt,
+        "peer contender to complete real WAL attempt 2",
+        transcript,
+        children,
+      );
+      await writeFile(secondWalReleasePath, "released\n", { flag: "wx" });
+      record({ type: "gated-second-wal-release-written" });
 
       await waitFor(
         () =>
@@ -453,9 +672,8 @@ test(
           `${contenderId} must not rethrow until request, owner release, and ack creation complete`,
         );
 
-        const attempts = own
-          .map(({ event }) => event)
-          .filter((event) => event.type === "wal-attempt");
+        const ownEvents = own.map(({ event }) => event);
+        const attempts = ownEvents.filter((event) => event.type === "wal-attempt");
         const firstAttemptIndex = eventIndex(
           transcript,
           (event) =>
@@ -470,20 +688,7 @@ test(
             event.contenderId === contenderId &&
             event.attempt === 2,
         );
-        const secondAttemptSucceededIndex = eventIndex(
-          transcript,
-          (event) =>
-            event.type === "wal-attempt-succeeded" &&
-            event.contenderId === contenderId &&
-            event.attempt === 2,
-        );
         requireInvariant(attempts.length >= 2, `${contenderId} must retry WAL after first busy`);
-        attempts.forEach((attempt, index) => {
-          requireInvariant(
-            attempt.attempt === index + 1 && attempt.sql === WAL_PRAGMA,
-            `${contenderId} must report every exact WAL attempt in sequence`,
-          );
-        });
         requireInvariant(
           attempts[0]?.busyTimeoutInstalled === true,
           `${contenderId} must install busy_timeout before WAL attempt 1`,
@@ -498,8 +703,8 @@ test(
         requireInvariant(
           ackIndex < rethrownIndex &&
             rethrownIndex < secondAttemptIndex &&
-            secondAttemptIndex < secondAttemptSucceededIndex,
-          `${contenderId} WAL attempt 2 must begin and complete after owner release and release acknowledgement`,
+            secondAttemptIndex < restoredIndex,
+          `${contenderId} WAL attempt 2 must begin after owner release and release acknowledgement`,
         );
 
         const held = own
@@ -514,15 +719,20 @@ test(
             held.callSite === PUBLIC_WAL_CALL_SITE,
           `${contenderId} must hold the exact first WAL busy error after timeout installation`,
         );
-        const succeeded = own
-          .map(({ event }) => event)
-          .find((event) => event.type === "initializer-succeeded");
+        const succeeded = ownEvents.find((event) => event.type === "initializer-succeeded");
         requireInvariant(
           succeeded?.type === "initializer-succeeded" &&
             succeeded.walAttempts === attempts.length &&
             succeeded.elapsedMs <= PUBLIC_INITIALIZER_CEILING_MS,
           `${contenderId} public initializer must succeed within its ceiling`,
         );
+        requireEventualWalSuccess(requireInvariant, contenderId, ownEvents);
+        if (contenderId === gatedContenderId) {
+          requireInvariant(
+            formerExactSecondSuccessPredicate(ownEvents) === FORMER_EXACT_SECOND_VIOLATION,
+            "gated contender must make the former exact-attempt-2 predicate report its expected violation",
+          );
+        }
         requireInvariant(
           !own.some(({ event }) => event.type === "initializer-error"),
           `${contenderId} public initializer propagated the captured first WAL busy error`,
@@ -535,6 +745,60 @@ test(
           `${contenderId} must restore Database.prototype.exec in finally`,
         );
       }
+
+      const gatedSecondHeldIndex = eventIndex(
+        transcript,
+        (event) =>
+          event.type === "second-wal-execution-held" && event.contenderId === gatedContenderId,
+      );
+      const peerSecondSucceededIndex = eventIndex(
+        transcript,
+        (event) =>
+          event.type === "wal-attempt-succeeded" &&
+          event.contenderId === peerContenderId &&
+          event.attempt === 2 &&
+          event.execution === "real",
+      );
+      const peerReleaseAckWrittenIndex = eventIndex(
+        transcript,
+        (event) => event.type === "peer-release-ack-written",
+      );
+      const gatedSecondReleaseWrittenIndex = eventIndex(
+        transcript,
+        (event) => event.type === "gated-second-wal-release-written",
+      );
+      const gatedSecondReleaseObservedIndex = eventIndex(
+        transcript,
+        (event) =>
+          event.type === "second-wal-release-observed" && event.contenderId === gatedContenderId,
+      );
+      const gatedInjectedBusyIndex = eventIndex(
+        transcript,
+        (event) =>
+          event.type === "fixture-second-wal-busy-injected" &&
+          event.contenderId === gatedContenderId &&
+          event.attempt === 2 &&
+          event.primaryErrno === 5 &&
+          event.code === "SQLITE_BUSY",
+      );
+      const gatedThirdSucceededIndex = eventIndex(
+        transcript,
+        (event) =>
+          event.type === "wal-attempt-succeeded" &&
+          event.contenderId === gatedContenderId &&
+          event.attempt === 3 &&
+          event.execution === "real",
+      );
+      requireInvariant(
+        ackIndex < gatedSecondHeldIndex &&
+          gatedSecondHeldIndex < peerReleaseAckWrittenIndex &&
+          peerReleaseAckWrittenIndex < peerSecondSucceededIndex &&
+          peerSecondSucceededIndex < gatedSecondReleaseWrittenIndex &&
+          gatedSecondReleaseWrittenIndex < gatedSecondReleaseObservedIndex &&
+          gatedSecondReleaseObservedIndex < gatedInjectedBusyIndex &&
+          gatedInjectedBusyIndex < gatedThirdSucceededIndex,
+        "owner acknowledgement must precede the held retry, peer real attempt 2, fixture busy release, and gated real attempt 3",
+      );
 
       outcomes.forEach((outcome, index) => {
         requireInvariant(

@@ -1,14 +1,35 @@
 import { Database } from "bun:sqlite";
-import type { ChildEvent, OwnerCommand } from "./sqliteConnectionContentionProtocol.js";
+import { existsSync } from "node:fs";
+import {
+  CHILD_DEADLINE_MS,
+  RELEASE_ACK_POLL_INTERVAL_MS,
+  type ChildEvent,
+} from "./sqliteConnectionContentionProtocol.js";
+
+const pollState = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
 
 function send(event: ChildEvent): void {
-  if (process.send === undefined) throw new Error("owner fixture requires Bun IPC");
-  process.send(event);
+  process.stdout.write(`${JSON.stringify(event)}\n`);
+}
+
+function waitForRelease(releasePath: string): void {
+  const deadline = Date.now() + CHILD_DEADLINE_MS;
+  while (!existsSync(releasePath)) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `owner release acknowledgement was not written before the ${String(CHILD_DEADLINE_MS)}ms child deadline`,
+      );
+    }
+    Atomics.wait(pollState, 0, 0, Math.min(RELEASE_ACK_POLL_INTERVAL_MS, deadline - Date.now()));
+  }
 }
 
 async function run(): Promise<void> {
   const dbPath = process.argv[2];
-  if (dbPath === undefined) throw new Error("owner fixture requires a database path");
+  const releasePath = process.argv[3];
+  if (dbPath === undefined || releasePath === undefined) {
+    throw new Error("owner fixture requires database and release acknowledgement paths");
+  }
 
   const db = new Database(dbPath, { create: true });
   try {
@@ -17,12 +38,7 @@ async function run(): Promise<void> {
     db.exec("BEGIN EXCLUSIVE");
     send({ type: "owner-lock-acquired" });
 
-    const command = await new Promise<unknown>((resolve) => {
-      process.once("message", resolve);
-    });
-    if ((command as Partial<OwnerCommand>).type !== "release-owner") {
-      throw new Error(`owner received invalid command: ${JSON.stringify(command)}`);
-    }
+    waitForRelease(releasePath);
 
     db.exec("COMMIT");
     send({ type: "owner-released" });

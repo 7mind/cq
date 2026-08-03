@@ -52,6 +52,7 @@ export type ContenderEvent =
       readonly contenderId: string;
       readonly attempt: number;
       readonly sql: typeof WAL_PRAGMA;
+      readonly execution: "real";
     }
   | ({
       readonly type: "first-wal-busy-held";
@@ -68,6 +69,20 @@ export type ContenderEvent =
       readonly type: "first-wal-busy-rethrown";
       readonly contenderId: string;
     }
+  | {
+      readonly type: "second-wal-execution-held";
+      readonly contenderId: string;
+    }
+  | {
+      readonly type: "second-wal-release-observed";
+      readonly contenderId: string;
+    }
+  | ({
+      readonly type: "fixture-second-wal-busy-injected";
+      readonly contenderId: string;
+      readonly attempt: 2;
+      readonly callSite: typeof PUBLIC_WAL_CALL_SITE;
+    } & SqliteErrorReport)
   | {
       readonly type: "initializer-succeeded";
       readonly contenderId: string;
@@ -100,6 +115,8 @@ export type ChildEvent = OwnerEvent | ContenderEvent | LegacyControlEvent;
 export type ParentEvent =
   | { readonly type: "release-request" }
   | { readonly type: "release-ack-written" }
+  | { readonly type: "peer-release-ack-written" }
+  | { readonly type: "gated-second-wal-release-written" }
   | {
       readonly type: "child-reaped";
       readonly childName: string;

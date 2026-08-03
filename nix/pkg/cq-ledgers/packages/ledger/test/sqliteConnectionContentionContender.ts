@@ -15,23 +15,29 @@ import {
 const pollState = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
 
 function send(event: ChildEvent): void {
-  if (process.send === undefined) throw new Error("contender fixture requires Bun IPC");
-  process.send(event);
+  process.stdout.write(`${JSON.stringify(event)}\n`);
 }
 
 function hasPrimaryBusyErrno(error: unknown): boolean {
   return sqliteErrorReport(error).primaryErrno === 5;
 }
 
-function waitForReleaseAck(releaseAckPath: string, deadline: number): void {
-  while (!existsSync(releaseAckPath)) {
+function waitForFile(filePath: string, description: string, deadline: number): void {
+  while (!existsSync(filePath)) {
     if (Date.now() >= deadline) {
       throw new Error(
-        `release acknowledgement was not written before the ${String(CHILD_DEADLINE_MS)}ms child deadline`,
+        `${description} was not written before the ${String(CHILD_DEADLINE_MS)}ms child deadline`,
       );
     }
     Atomics.wait(pollState, 0, 0, Math.min(RELEASE_ACK_POLL_INTERVAL_MS, deadline - Date.now()));
   }
+}
+
+function fixtureBusyError(): Error {
+  return Object.assign(new Error("fixture-injected SQLITE_BUSY before second WAL execution"), {
+    code: "SQLITE_BUSY",
+    errno: 5,
+  });
 }
 
 function legacyJournalBeforeTimeout(dbPath: string): void {
@@ -61,6 +67,7 @@ async function usePublicInitializer(
   releaseAckPath: string,
   contenderId: string,
   childDeadline: number,
+  secondWalReleasePath: string | undefined,
 ): Promise<void> {
   const originalExec = Database.prototype.exec;
   let busyTimeoutInstalled = false;
@@ -90,6 +97,20 @@ async function usePublicInitializer(
       sql: WAL_PRAGMA,
       busyTimeoutInstalled,
     });
+    if (walAttempts === 2 && secondWalReleasePath !== undefined) {
+      send({ type: "second-wal-execution-held", contenderId });
+      waitForFile(secondWalReleasePath, "second WAL release acknowledgement", childDeadline);
+      send({ type: "second-wal-release-observed", contenderId });
+      const error = fixtureBusyError();
+      send({
+        type: "fixture-second-wal-busy-injected",
+        contenderId,
+        attempt: 2,
+        callSite: PUBLIC_WAL_CALL_SITE,
+        ...sqliteErrorReport(error),
+      });
+      throw error;
+    }
     try {
       const result = originalExec.call(this, sql);
       send({
@@ -97,6 +118,7 @@ async function usePublicInitializer(
         contenderId,
         attempt: walAttempts,
         sql: WAL_PRAGMA,
+        execution: "real",
       });
       return result;
     } catch (error) {
@@ -110,7 +132,7 @@ async function usePublicInitializer(
         busyTimeoutInstalled,
         ...sqliteErrorReport(error),
       });
-      waitForReleaseAck(releaseAckPath, childDeadline);
+      waitForFile(releaseAckPath, "release acknowledgement", childDeadline);
       send({ type: "release-ack-observed", contenderId });
       send({ type: "first-wal-busy-rethrown", contenderId });
       throw error;
@@ -164,6 +186,7 @@ async function run(): Promise<void> {
   const releaseAckPath = process.argv[4];
   const contenderId = process.argv[5];
   const scenarioStartedAtText = process.argv[6];
+  const secondWalReleasePath = process.argv[7];
   if (mode === undefined || dbPath === undefined) {
     throw new Error("contender fixture requires mode and database path");
   }
@@ -186,6 +209,7 @@ async function run(): Promise<void> {
     releaseAckPath,
     contenderId,
     scenarioStartedAt + CHILD_DEADLINE_MS,
+    secondWalReleasePath,
   );
 }
 
