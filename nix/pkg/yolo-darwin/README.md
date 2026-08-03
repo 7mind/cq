@@ -51,9 +51,10 @@ yolo --profile personal claude
 yolo --work codex --search
 ```
 
-### Feature suppression
+### Feature suppression and activation
 
 - `--disable=TAG` — Exclude prompt fragments and pre-start hooks carrying `TAG`. Repeatable and comma-separated, matching Linux `yolo` parsing.
+- `--enable=TAG` — Turn on a feature that is off by default. Repeatable and comma-separated, matching Linux `yolo` parsing; `--disable=TAG` wins over `--enable=TAG` for the same tag. No Darwin feature is opt-in yet (Linux has `display` for Wayland passthrough).
 
 ```bash
 yolo --disable=gpu,ssh --disable=github claude

@@ -122,6 +122,7 @@ assert_nonzero "invalid profile '..' exits non-zero" "$STATUS"
 assert_contains "invalid profile '..' reports charset error" "$OUT" "invalid profile name"
 run_script
 assert_contains "usage mentions --disable" "$OUT" "--disable=TAG"
+assert_contains "usage mentions --enable" "$OUT" "--enable=TAG"
 
 # ── generated policy ─────────────────────────────────────────────────────────
 RENDERED="$(render_profile foo /tmp/x)"
@@ -349,6 +350,10 @@ assert_zero "claude launch with disabled prompt tags succeeds" "$STATUS"
 assert_contains "repeatable and comma-separated disable tags preserve untagged fragments" "$OUT" "prompt<<claude only>>"
 assert_not_contains "disabled gpu prompt fragment is excluded" "$OUT" "shared line"
 assert_not_contains "disabled audio prompt fragment is excluded" "$OUT" "audio line"
+run_prompt_exec --enable=display,audio --disable=audio claude
+assert_zero "claude launch with enable tags succeeds" "$STATUS"
+assert_not_contains "--disable beats --enable for the same tag" "$OUT" "audio line"
+assert_contains "--enable leaves default-on fragments intact" "$OUT" "shared line"
 
 # ── configured environment, secrets, packages, and hooks ─────────────────────
 EXTRA_BIN="$WORKDIR/extra-bin"

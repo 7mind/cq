@@ -26,6 +26,12 @@ CLEANUP_FILES=()
 # Feature suppression: --disable=TAG is repeatable and comma-separated.
 # shellcheck disable=SC2034
 DISABLE_TAGS=()
+# Feature activation: --enable=TAG (same syntax) turns on a feature that is OFF
+# by default. Prompt fragments and pre-start hooks are on by default, so on
+# Darwin --enable currently only feeds tag_active for future opt-in features;
+# --disable always wins over --enable for the same tag.
+# shellcheck disable=SC2034
+ENABLE_TAGS=()
 # shellcheck source=/dev/null
 source "$YOLO_CUSTOM_PROMPT"
 
@@ -56,6 +62,10 @@ Flags (must precede the subcommand):
   -w, --work             Alias for `--profile work`.
       --disable=TAG      Drop prompt fragments and pre-start hooks carrying TAG
                          (repeatable, comma-separated).
+      --enable=TAG       Turn on a feature that is off by default (repeatable,
+                         comma-separated). No Darwin feature is opt-in yet
+                         (Linux has "display"). --disable=TAG wins over
+                         --enable=TAG.
       --ro PATH          Grant ad-hoc read-only access to PATH (repeatable;
                          skipped if missing).
       --rw PATH          Grant ad-hoc read-write access to PATH (repeatable;
@@ -109,6 +119,10 @@ while [[ $# -gt 0 ]]; do
       IFS=',' read -ra _dtags <<< "${1#*=}"
       DISABLE_TAGS+=("${_dtags[@]}")
       shift ;;
+    --enable=*)
+      IFS=',' read -ra _etags <<< "${1#*=}"
+      ENABLE_TAGS+=("${_etags[@]}")
+      shift ;;
     --ro)
       if [[ $# -lt 2 || -z "$2" ]]; then
         echo "Error: $1 requires a path" >&2; exit 1
@@ -131,6 +145,31 @@ while [[ $# -gt 0 ]]; do
     *) break ;;
   esac
 done
+
+# Tag state helpers, mirroring the Linux wrapper: a built-in feature asks
+# `tag_active TAG on|off` with its default state, --disable=TAG always wins, and
+# --enable=TAG only matters for a default-off feature.
+is_disabled() {
+  local _t
+  for _t in "${DISABLE_TAGS[@]}"; do
+    [[ "$_t" == "$1" ]] && return 0
+  done
+  return 1
+}
+
+is_enabled() {
+  local _t
+  for _t in "${ENABLE_TAGS[@]}"; do
+    [[ "$_t" == "$1" ]] && return 0
+  done
+  return 1
+}
+
+tag_active() {
+  is_disabled "$1" && return 1
+  [[ "$2" == "on" ]] && return 0
+  is_enabled "$1"
+}
 
 # Profile names map directly to paths under ~/.config/yolo.
 if [[ -n "$PROFILE" && ( ! "$PROFILE" =~ ^[A-Za-z0-9._-]+$ || "$PROFILE" == "." || "$PROFILE" == ".." ) ]]; then

@@ -14,6 +14,12 @@
 # `smind.hm.dev.llm.*` options the consumer wires from its own NixOS config —
 # GPU passthrough is no longer built in, and plain read-only binds (e.g. an
 # ollama models dir) go through extraReadOnlyPaths.
+#
+# Runtime tag gating (both wrappers): `--disable=<tag>` drops a default-on
+# feature and `--enable=<tag>` turns on a default-off one, with --disable
+# winning when a tag appears in both. The Linux wrapper's built-in features are
+# audio (on by default) and Wayland display passthrough (tag "display", off by
+# default — `yolo --enable=display` binds the compositor socket).
 { inputs }:
 { config
 , lib

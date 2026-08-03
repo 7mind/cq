@@ -53,6 +53,11 @@ UNSAFE_SHARE_HOME=0
 # tagged "codegraph" (`--disable=codegraph` skips it).
 # shellcheck disable=SC2034
 DISABLE_TAGS=()
+# Feature activation: --enable=TAG (same syntax) turns on a feature that is OFF
+# by default — currently only Wayland passthrough (tag "display"). Everything
+# else is on by default, so --enable is a no-op for it. --disable always wins
+# over --enable for the same tag (see tag_active).
+ENABLE_TAGS=()
 # shellcheck source=/dev/null
 source "$YOLO_CUSTOM_PROMPT"
 ENV_ARGS=()
@@ -76,6 +81,10 @@ Flags (must precede the subcommand):
       --disable=TAG      Drop every device bind, prompt fragment and pre-start
                          hook carrying TAG (repeatable, comma-separated).
                          Known tags: audio, gpu, codegraph.
+      --enable=TAG       Turn on a feature that is off by default (repeatable,
+                         comma-separated). Known tags: display (bind the
+                         Wayland compositor socket so sandboxed commands can
+                         open windows). --disable=TAG wins over --enable=TAG.
       --ro PATH          Ad-hoc read-only bind of a host PATH into the sandbox
                          at the same location (repeatable; skipped if missing).
       --rw PATH          Ad-hoc read-write bind of a host PATH (repeatable;
@@ -107,6 +116,10 @@ while [[ $# -gt 0 ]]; do
     --disable=*)
       IFS=',' read -ra _dtags <<< "${1#*=}"
       DISABLE_TAGS+=("${_dtags[@]}")
+      shift ;;
+    --enable=*)
+      IFS=',' read -ra _etags <<< "${1#*=}"
+      ENABLE_TAGS+=("${_etags[@]}")
       shift ;;
     --ro)
       if [[ $# -lt 2 || -z "$2" ]]; then
@@ -142,6 +155,23 @@ any_disabled() {
     [[ -n "$_t" ]] && is_disabled "$_t" && return 0
   done
   return 1
+}
+
+# True if TAG is in the --enable set.
+is_enabled() {
+  local _t
+  for _t in "${ENABLE_TAGS[@]}"; do
+    [[ "$_t" == "$1" ]] && return 0
+  done
+  return 1
+}
+
+# Gate for a built-in feature: `tag_active TAG on|off` with TAG's default state.
+# --disable=TAG always wins; --enable=TAG only matters for a default-off feature.
+tag_active() {
+  is_disabled "$1" && return 1
+  [[ "$2" == "on" ]] && return 0
+  is_enabled "$1"
 }
 
 # Guard against path traversal / nesting: a profile name maps directly into a
@@ -397,12 +427,39 @@ fi
 # the devices, so socket routing is the correct path. On by default; tagged
 # "audio", so `--disable=audio` mutes it (parity with the device-bind tags).
 AUDIO_ARGS=()
-if ! is_disabled audio; then
+if tag_active audio on; then
   _xrd="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
   AUDIO_ARGS+=(--rw "$_xrd/pipewire-0")
   AUDIO_ARGS+=(--rw "$_xrd/pulse/native")
   AUDIO_ARGS+=(--ro "${HOME}/.config/pulse/cookie")
   AUDIO_ARGS+=(--env "PULSE_SERVER=unix:$_xrd/pulse/native")
+fi
+
+# Wayland display passthrough: bind the compositor socket read-write so
+# sandboxed commands can open windows on the host session. Tagged "display" and
+# OFF by default (`--enable=display` turns it on): the Wayland connection is a
+# capability the rest of the sandbox deliberately withholds — on a compositor
+# without security-context isolation a client can reach clipboard, screencopy
+# and virtual-input protocols. The socket is $WAYLAND_DISPLAY when absolute,
+# else relative to $XDG_RUNTIME_DIR (defaulting to "wayland-0"). Hardware
+# acceleration additionally needs the GPU device binds (tag "gpu"); a
+# software-rendered (wl_shm) client works with the socket alone.
+DISPLAY_ARGS=()
+if tag_active display off; then
+  _wl_xrd="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  _wl_name="${WAYLAND_DISPLAY:-wayland-0}"
+  if [[ "$_wl_name" == /* ]]; then
+    _wl_sock="$_wl_name"
+  else
+    _wl_sock="$_wl_xrd/$_wl_name"
+  fi
+  if [[ -S "$_wl_sock" ]]; then
+    DISPLAY_ARGS+=(--rw "$_wl_sock")
+    DISPLAY_ARGS+=(--env "WAYLAND_DISPLAY=$_wl_name")
+    DISPLAY_ARGS+=(--env "XDG_RUNTIME_DIR=$_wl_xrd")
+  else
+    echo "warning: no Wayland socket at $_wl_sock; --enable=display has no effect" >&2
+  fi
 fi
 
 # cq's XDG state store (ledger `xdg` backend primary lives under <base>/cq).
@@ -427,6 +484,7 @@ BASE_ARGS=(
   "${TMUX_BIND_ARGS[@]}"
   "${DEV_ARGS[@]}"
   "${AUDIO_ARGS[@]}"
+  "${DISPLAY_ARGS[@]}"
   "${EXTRA_PATH_ARGS[@]}"
   "${SECRET_FILE_ARGS[@]}"
   "${SANDBOX_HOOK_ARGS[@]}"

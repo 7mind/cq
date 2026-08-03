@@ -922,7 +922,7 @@ EOF
             yolo-profile =
               pkgs.runCommand "yolo-profile"
                 {
-                  nativeBuildInputs = [ pkgs.shellcheck pkgs.bash pkgs.jq pkgs.git self.packages.${system}.codegraph ];
+                  nativeBuildInputs = [ pkgs.shellcheck pkgs.bash pkgs.jq pkgs.git pkgs.python3 self.packages.${system}.codegraph ];
                 }
                 ''
                   cp -r ${./nix/pkg/yolo} yolo
