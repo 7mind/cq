@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import {
+  DispatchBaseGitCommandError,
   nodeDispatchBaseGitRunner,
   observeDispatchBase,
   verifyDispatchBase,
@@ -253,5 +254,65 @@ describe("dispatch-base Git adapter", () => {
         },
       ],
     );
+  });
+
+  it("ignores inherited repository selectors when resolving the explicit cwd", async () => {
+    const [first, second] = await Promise.all([
+      seedRepository("inherited repository"),
+      seedRepository("explicit cwd repository"),
+    ]);
+    const moduleUrl = new URL("../src/dispatchBase.ts", import.meta.url).href;
+    const probe = [
+      `import { nodeDispatchBaseGitRunner } from ${JSON.stringify(moduleUrl)};`,
+      'const result = await nodeDispatchBaseGitRunner(process.argv[1], ["rev-parse", "HEAD"]);',
+      "if (result.code !== 0) throw new Error(result.stderr);",
+      "process.stdout.write(result.stdout);",
+    ].join("\n");
+
+    const { stdout } = await exec(process.execPath, ["--eval", probe, second.cwd], {
+      env: {
+        ...process.env,
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: path.join(first.cwd, ".git", "objects"),
+        GIT_COMMON_DIR: path.join(first.cwd, ".git"),
+        GIT_DIR: path.join(first.cwd, ".git"),
+        GIT_INDEX_FILE: path.join(first.cwd, ".git", "index"),
+        GIT_OBJECT_DIRECTORY: path.join(first.cwd, ".git", "objects"),
+        GIT_WORK_TREE: first.cwd,
+      },
+    });
+
+    expect(stdout.trim()).toBe(second.head);
+  });
+
+  it("reports a non-repository command failure instead of missing revisions", async () => {
+    const cwd = await fs.mkdtemp(path.join(tmpdir(), "dispatch-base-non-repository-"));
+    repositories.push(cwd);
+
+    try {
+      await observeDispatchBase(
+        { cwd, baseRevision: "missing-base", headRevision: "HEAD" },
+        nodeDispatchBaseGitRunner,
+      );
+      throw new Error("expected observeDispatchBase to reject");
+    } catch (error) {
+      expect(error).toBeInstanceOf(DispatchBaseGitCommandError);
+      const commandError = error as DispatchBaseGitCommandError;
+      expect(commandError.result.code).toBe(128);
+      expect(commandError.result.stderr).toContain("not a git repository");
+    }
+  });
+
+  it("maps an absent revision in a repository to missing evidence", async () => {
+    const repository = await seedRepository("missing revision repository");
+    const observations = await observeDispatchBase(
+      { cwd: repository.cwd, baseRevision: "missing-base", headRevision: "HEAD" },
+      nodeDispatchBaseGitRunner,
+    );
+
+    expect(observations).toEqual({
+      base: { status: "missing" },
+      head: { status: "commit", commit: repository.head },
+      ancestry: "unobserved",
+    });
   });
 });

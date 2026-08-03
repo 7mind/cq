@@ -12,6 +12,36 @@ export type DispatchBaseGitRunner = (
   args: readonly string[],
 ) => Promise<DispatchBaseGitResult>;
 
+const DISPATCH_BASE_REPOSITORY_ENVIRONMENT_VARIABLES = [
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_CEILING_DIRECTORIES",
+  "GIT_COMMON_DIR",
+  "GIT_DIR",
+  "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+  "GIT_GRAFT_FILE",
+  "GIT_IMPLICIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_NAMESPACE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_PREFIX",
+  "GIT_REPLACE_REF_BASE",
+  "GIT_SHALLOW_FILE",
+  "GIT_WORK_TREE",
+] as const;
+
+function dispatchBaseGitEnvironment(): NodeJS.ProcessEnv {
+  const environment = { ...process.env };
+  for (const variable of DISPATCH_BASE_REPOSITORY_ENVIRONMENT_VARIABLES) {
+    delete environment[variable];
+  }
+  return {
+    ...environment,
+    GIT_TERMINAL_PROMPT: "0",
+    LANG: "C",
+    LC_ALL: "C",
+  };
+}
+
 export const nodeDispatchBaseGitRunner: DispatchBaseGitRunner = (cwd, args) =>
   new Promise<DispatchBaseGitResult>((resolve, reject) => {
     execFile(
@@ -20,12 +50,7 @@ export const nodeDispatchBaseGitRunner: DispatchBaseGitRunner = (cwd, args) =>
       {
         cwd,
         encoding: "utf8",
-        env: {
-          ...process.env,
-          GIT_TERMINAL_PROMPT: "0",
-          LANG: "C",
-          LC_ALL: "C",
-        },
+        env: dispatchBaseGitEnvironment(),
       },
       (error, stdout, stderr) => {
         if (error && typeof (error as { code?: unknown }).code !== "number") {
@@ -187,11 +212,14 @@ async function observeCommit(
   if (peeled.code === 0) {
     return { status: "commit", commit: peeled.stdout.trim() };
   }
+  if (peeled.code !== 1) {
+    throw new DispatchBaseGitCommandError(cwd, peelArgs, peeled);
+  }
 
-  const existenceArgs = ["cat-file", "-e", revision] as const;
+  const existenceArgs = ["rev-parse", "--verify", "--quiet", `${revision}^{object}`] as const;
   const existence = await run(cwd, existenceArgs);
   if (existence.code === 0) return { status: "non-commit" };
-  if (existence.code === 1 || existence.code === 128) return { status: "missing" };
+  if (existence.code === 1) return { status: "missing" };
   throw new DispatchBaseGitCommandError(cwd, existenceArgs, existence);
 }
 
