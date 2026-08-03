@@ -425,6 +425,8 @@ export interface RoutedDispatchAborted {
 export type RoutedDispatchResult = RoutedDispatchConsumed | RoutedDispatchAborted;
 
 const ABORT_REASON_SET: ReadonlySet<string> = new Set(DISPATCH_ABORT_REASONS);
+const DISPATCH_HANDLE_KEYS = ["attestationId", "generation"] as const;
+const DISPATCH_HANDLE_KEY_SET: ReadonlySet<string> = new Set(DISPATCH_HANDLE_KEYS);
 const NATIVE_COMPLETION_KEYS = ["actor", "childId", "completedAt", "kind", "runId"] as const;
 const NATIVE_COMPLETION_KEY_SET: ReadonlySet<string> = new Set(NATIVE_COMPLETION_KEYS);
 const NATIVE_COMPLETION_ACTOR_SET: ReadonlySet<string> = new Set([
@@ -596,6 +598,20 @@ function assertAdapterLaunchResult(value: unknown): asserts value is DispatchAda
     throw new DispatchTransportAbort("protocol-violation", {
       violation: "malformed-adapter-completion",
       fields: Object.keys(record).sort(),
+    });
+  }
+  const handleRecord = handle as Readonly<Record<string, unknown>>;
+  const handleFields = Object.keys(handleRecord).sort();
+  const missingHandleFields = DISPATCH_HANDLE_KEYS.filter(
+    (field) => !Object.hasOwn(handleRecord, field),
+  );
+  const surplusHandleFields = handleFields.filter((field) => !DISPATCH_HANDLE_KEY_SET.has(field));
+  if (missingHandleFields.length > 0 || surplusHandleFields.length > 0) {
+    throw new DispatchTransportAbort("protocol-violation", {
+      violation: "malformed-adapter-completion-handle",
+      fields: handleFields,
+      missing: missingHandleFields,
+      surplus: surplusHandleFields,
     });
   }
   assertNativeCompletionProof(record["nativeCompletion"]);

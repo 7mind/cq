@@ -140,13 +140,7 @@ function createRecordedCapabilityEndpoint(): RecordedCapabilityEndpoint {
 }
 
 function createCodexRecordingFixture(
-  mode:
-    | "echo"
-    | "failed-outcome"
-    | "malformed"
-    | "success"
-    | "unused-capabilities"
-    | "wait",
+  mode: "echo" | "failed-outcome" | "malformed" | "success" | "unused-capabilities" | "wait",
 ): CodexRecordingFixture {
   const endpoint = createRecordedCapabilityEndpoint();
   const root = mkdtempSync(join(tmpdir(), "cq-t1631-codex-"));
@@ -715,7 +709,9 @@ describe("T1631 shared three-harness transport router", () => {
         expectedChild: codexExpectedChild(CODEX_CORRELATION),
         promptDigest: promptDigestOf(CLAUDE_ROLE_PROMPT),
       });
-      const launchAt = new Date(Date.parse(fixture.prepared.responseStoreNow) - 1_000).toISOString();
+      const launchAt = new Date(
+        Date.parse(fixture.prepared.responseStoreNow) - 1_000,
+      ).toISOString();
       const registry = new DispatchTransportAdapterRegistry([
         createCodexProcessDispatchAdapter(
           codexRecordingResolver(processFixture, { now: launchAt }),
@@ -1006,6 +1002,60 @@ describe("T1631 shared three-harness transport router", () => {
     );
     expect(result).toMatchObject({ outcome: "aborted", abort: { reason: "protocol-violation" } });
   });
+
+  for (const [label, sequence, malformedHandle] of [
+    ["missing nested handle field", 70, { attestationId: "replaced below" }],
+    [
+      "surplus nested handle field",
+      71,
+      { attestationId: "replaced below", generation: 1, output: OUTPUT },
+    ],
+  ] as const) {
+    test(`rejects a completion with a ${label}`, async () => {
+      const fixture = preparedFixture("pi", sequence);
+      const handle = {
+        ...malformedHandle,
+        attestationId: fixture.prepared.attestationId,
+        ...(Object.hasOwn(malformedHandle, "generation")
+          ? { generation: fixture.prepared.generation }
+          : {}),
+      };
+      const registry = new DispatchTransportAdapterRegistry([
+        createPiProcessDispatchAdapter((context) => {
+          context.child.materializeInput();
+          context.child.storeResult(OUTPUT);
+          return {
+            outcome: "completed",
+            handle,
+            nativeCompletion: {
+              ...fixture.expectedCompletion,
+              actor: "trusted-extension",
+            },
+            handleOnlyEnforcement: "structural",
+          } as unknown as DispatchAdapterLaunchResult;
+        }),
+      ]);
+
+      const result = await runPreparedDispatch(
+        {
+          namespace: NAMESPACE,
+          prepared: fixture.prepared,
+          activeHarness: "claude",
+          targetHarness: "pi",
+          forceShellout: false,
+        },
+        registry,
+        fixture.deps,
+      );
+      expect(result).toMatchObject({
+        outcome: "aborted",
+        abort: {
+          reason: "protocol-violation",
+          details: { violation: "malformed-adapter-completion-handle" },
+        },
+      });
+    });
+  }
 
   test("maps a Pi completion-correlation mismatch to a typed native-failure abort", async () => {
     const fixture = preparedFixture("pi", 42);
