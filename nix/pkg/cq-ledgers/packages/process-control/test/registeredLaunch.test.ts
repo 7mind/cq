@@ -331,6 +331,41 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     },
   );
 
+  // Regression origin: a reused bootstrap PID must not authorize signaling its numeric PGID.
+  test("refuses to signal a process group after its bootstrap identity is reused [Whitebox-GoodCommunication]", async () => {
+    const reaperExecutable = fileURLToPath(
+      new URL("../src/orphanProcessGroupReaper.ts", import.meta.url),
+    );
+    const reusedGroup = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    const reusedGroupPid = reusedGroup.pid;
+    if (reusedGroupPid === undefined) throw new Error("test process group returned no PID");
+    const reusedGroupExited = exited(reusedGroup);
+    const reusedIdentity = await readProcessIdentity(reusedGroupPid);
+    if (reusedIdentity === null) throw new Error("test process group identity disappeared");
+
+    try {
+      const reaper = spawn(
+        process.execPath,
+        [
+          reaperExecutable,
+          String(reusedIdentity.pid),
+          `${reusedIdentity.startTime}-reused`,
+          process.env["CQ_PROCESS_IDENTITY_HELPER"] ?? "",
+          String(Date.now() + REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS),
+        ],
+        { stdio: "ignore" },
+      );
+      expect(await exited(reaper)).toEqual({ exitCode: 0, signal: null });
+      expect(await readProcessIdentity(reusedGroupPid)).toEqual(reusedIdentity);
+    } finally {
+      signalProcessGroup(reusedGroupPid, "SIGKILL");
+      await reusedGroupExited;
+    }
+  });
+
   test("keeps the bootstrap alive through a delayed target-exit hook [Effectual-GoodCommunication]", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-target-exit-hook-"));
     roots.push(root);

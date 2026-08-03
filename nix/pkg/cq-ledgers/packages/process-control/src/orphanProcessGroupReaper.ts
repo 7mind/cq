@@ -38,11 +38,8 @@ async function main(argv: readonly string[]): Promise<void> {
       bootstrap.pid,
       launcherDarwinHelper,
     );
-    if (
-      observed === null ||
-      observed.startTime !== bootstrap.startTime ||
-      Date.now() >= settlementDeadline
-    ) {
+    if (observed !== null && observed.startTime !== bootstrap.startTime) return;
+    if (observed === null || Date.now() >= settlementDeadline) {
       signalProcessGroup(bootstrap.pid, "SIGKILL");
       return;
     }
