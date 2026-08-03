@@ -385,6 +385,34 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     }
   });
 
+  it("T1696 preserves one prepare-bound reviewer phase and its exact exhaustion evidence", () => {
+    const exhaustion =
+      "Implementation-review phase budget exhausted before a complete acceptance verdict could be established.";
+    for (const surface of PROMPT_SURFACES) {
+      const reviewer = normalize(renderedOf(surface, "implement-reviewer"));
+      expect(reviewer).toContain(
+        "`gateCompleteBy`, `responseStoreNow`, and `synthesisStoreReserveMs`",
+      );
+      expect(reviewer).toContain("Never derive a new phase window");
+      expect(reviewer).toContain("only `now >= gateCompleteBy` exhausts the phase");
+      expect(reviewer).toContain("--deadline <gateCompleteBy> -- bun run check");
+      expect(reviewer).toContain(exhaustion);
+      expect(reviewer).toContain("`phase-budget-exhausted-before-result-commit-verification`");
+      expect(reviewer).toContain("`phase-budget-exhausted-before-gate-start`");
+      expect(reviewer).toContain("measured elapsed time through termination and settlement");
+
+      const advance = normalize(renderedOf(surface, "implement/advance"));
+      expect(advance).toContain(
+        "Omit `responseStoreNow`, `gateCompleteBy`, and `synthesisStoreReserveMs`",
+      );
+      if (surface === "pi") {
+        expect(advance).toContain("the authoritative dispatch lifecycle binds those");
+      } else {
+        expect(advance).toContain("`prepare_dispatch` binds those absolute values");
+      }
+    }
+  });
+
   // ── CHECK 3 — the structured input survives the render, per surface ─────
   for (const surface of PROMPT_SURFACES) {
     it(`${surface}: every dispatch edge survives rendering`, () => {

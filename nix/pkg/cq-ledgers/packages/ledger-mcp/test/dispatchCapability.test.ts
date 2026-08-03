@@ -6,11 +6,13 @@ import {
   DispatchStateConflictError,
   FakeDispatchClock,
   IDEMPOTENCY_HORIZON_MS,
+  IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
   REF_ASSEMBLED_ROLES,
   TERMINAL_ENVELOPE_RETENTION_MS,
   attestationRowDigest,
+  dispatchPayloadDigest,
   sequentialDispatchRandomBytes,
   sweepAttestationsOn,
   type AttestationEnvelope,
@@ -51,6 +53,21 @@ const INLINE_INPUT = Object.freeze({
   startingCommit: "fe5d747b07669be02626da96a8ac441f8e0bf550",
 });
 
+const REVIEWER_INPUT = Object.freeze({
+  taskId: "T1696",
+  acceptance: "Prepare binds one absolute reviewer phase window.",
+  worktreePath: "/tmp/wt-T1696",
+  branch: "implement/T1696",
+  baseCommit: "e65ce042ab4093398372f886e471e57f8f3efdae",
+  workerResult: {
+    resultCommit: "e65ce042ab4093398372f886e471e57f8f3efdae",
+    checkSummary: "REAL_CHECK_EXIT=0",
+    filesTouched: [],
+  },
+  round: 1,
+  priorCriticism: [],
+});
+
 function artifactStore(surface: PromptSurface): PromptArtifactStore {
   const metadata: PromptArtifactRoleMetadata = {
     roleId: "implement-worker",
@@ -70,6 +87,32 @@ function artifactStore(surface: PromptSurface): PromptArtifactStore {
     }),
     readRole: (roleId) => {
       if (roleId !== "implement-worker") {
+        throw new Error(`unexpected role artifact read for "${roleId}"`);
+      }
+      return { metadata, bytes: new Uint8Array([1]) };
+    },
+  };
+}
+
+function reviewerArtifactStore(surface: PromptSurface): PromptArtifactStore {
+  const metadata: PromptArtifactRoleMetadata = {
+    roleId: "implement-reviewer",
+    roleKind: "dispatched-subagent",
+    artifactPath: "roles/implement-reviewer.md",
+    sidecarSchemaRoleId: "implement-reviewer",
+    promptSurface: surface,
+    promptDigest: PROMPT_DIGEST,
+    schemaVersion: 3,
+  };
+  return {
+    readManifest: () => ({
+      bytes: new Uint8Array(),
+      roles: [metadata],
+      promptSurface: surface,
+      catalogHash: CATALOG_HASH,
+    }),
+    readRole: (roleId) => {
+      if (roleId !== "implement-reviewer") {
         throw new Error(`unexpected role artifact read for "${roleId}"`);
       }
       return { metadata, bytes: new Uint8Array([1]) };
@@ -117,6 +160,19 @@ function inlineRequest(
     input: INLINE_INPUT,
     idempotencyKey: "T977-round-0",
     timeoutMs: 600_000,
+    expectedChild: EXPECTED_CHILD,
+    ...overrides,
+  };
+}
+
+function reviewerRequest(
+  overrides: Readonly<Record<string, unknown>> = {},
+): Parameters<ReturnType<typeof createDispatchCapability>["prepare"]>[0] {
+  return {
+    roleId: "implement-reviewer",
+    input: REVIEWER_INPUT,
+    idempotencyKey: "T1696-review-round-1",
+    timeoutMs: IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
     expectedChild: EXPECTED_CHILD,
     ...overrides,
   };
@@ -276,10 +332,128 @@ describe("live compact-dispatch capability", () => {
     const conflicting = inlineRequest({
       input: { ...INLINE_INPUT, headline: "different but schema-valid narrative" },
     });
-    await expect(capability.prepare(conflicting)).rejects.toBeInstanceOf(
-      AttestationKeyReuseError,
-    );
+    await expect(capability.prepare(conflicting)).rejects.toBeInstanceOf(AttestationKeyReuseError);
     expect(store.snapshot().map(attestationRowDigest)).toEqual(before);
+  });
+
+  test("reviewer minimum and caller timing reject before allocation; 150000 ms is first accepted [BG]", async () => {
+    for (const timeoutMs of [60_000, 149_999]) {
+      const store = new InMemoryAttestationStore(NAMESPACE);
+      let clockReads = 0;
+      const capability = createDispatchCapability({
+        backend: new InMemoryAttestationBackend(store),
+        promptArtifactStore: reviewerArtifactStore("codex"),
+        now: () => {
+          clockReads += 1;
+          return NOW;
+        },
+        randomBytes: sequentialDispatchRandomBytes(timeoutMs),
+      });
+      const outcome = await capability.prepare(
+        reviewerRequest({ timeoutMs, idempotencyKey: `reviewer-timeout-${timeoutMs}` }),
+      );
+      expect(outcome.accepted).toBe(false);
+      if (outcome.accepted) throw new Error("expected reviewer timeout rejection");
+      expect(outcome.path).toBe("timeoutMs");
+      expect(clockReads).toBe(0);
+      expect(store.snapshot()).toHaveLength(0);
+    }
+
+    for (const [field, value] of [
+      ["responseStoreNow", NOW],
+      ["gateCompleteBy", NOW],
+      ["synthesisStoreReserveMs", 60_000],
+    ] as const) {
+      const store = new InMemoryAttestationStore(NAMESPACE);
+      let clockReads = 0;
+      const capability = createDispatchCapability({
+        backend: new InMemoryAttestationBackend(store),
+        promptArtifactStore: reviewerArtifactStore("codex"),
+        now: () => {
+          clockReads += 1;
+          return NOW;
+        },
+        randomBytes: sequentialDispatchRandomBytes(0),
+      });
+      const outcome = await capability.prepare(
+        reviewerRequest({
+          input: { ...REVIEWER_INPUT, [field]: value },
+          idempotencyKey: `reviewer-caller-${field}`,
+        }),
+      );
+      expect(outcome.accepted).toBe(false);
+      if (outcome.accepted) throw new Error("expected caller timing rejection");
+      expect(outcome.reason).toBe("invalid-role-input");
+      expect(clockReads).toBe(0);
+      expect(store.snapshot()).toHaveLength(0);
+    }
+  });
+
+  test("exact reviewer replay preserves the bound input and does not reset the phase clock [BG]", async () => {
+    const store = new InMemoryAttestationStore(NAMESPACE);
+    let clockReads = 0;
+    const capability = createDispatchCapability({
+      backend: new InMemoryAttestationBackend(store),
+      promptArtifactStore: reviewerArtifactStore("codex"),
+      now: () => {
+        clockReads += 1;
+        return NOW;
+      },
+      randomBytes: sequentialDispatchRandomBytes(0),
+    });
+    const request = reviewerRequest();
+    const first = await capability.prepare(request);
+    if (!first.accepted) throw new Error(first.detail);
+    expect(clockReads).toBe(1);
+    expect(await capability.prepare(request)).toEqual(first);
+    expect(clockReads).toBe(1);
+
+    const fetched = await capability.fetchInput({
+      ...first.handle,
+      inputCapability: first.prepared.inputCapability,
+    });
+    expect(fetched.input).toEqual({
+      ...REVIEWER_INPUT,
+      responseStoreNow: "2026-07-29T09:02:00.000Z",
+      gateCompleteBy: "2026-07-29T09:01:00.000Z",
+      synthesisStoreReserveMs: 60_000,
+    });
+    expect(fetched.promptProvenance.inputDigest).toBe(dispatchPayloadDigest(fetched.input));
+    expect(fetched.promptProvenance.inputDigest).not.toBe(dispatchPayloadDigest(REVIEWER_INPUT));
+  });
+
+  test("legal reviewer reprepare reads the phase clock once and binds a new window [BG]", async () => {
+    const store = new InMemoryAttestationStore(NAMESPACE);
+    let current = NOW;
+    let clockReads = 0;
+    const capability = createDispatchCapability({
+      backend: new InMemoryAttestationBackend(store),
+      promptArtifactStore: reviewerArtifactStore("codex"),
+      now: () => {
+        clockReads += 1;
+        return current;
+      },
+      randomBytes: sequentialDispatchRandomBytes(0),
+    });
+    const first = await capability.prepare(reviewerRequest());
+    if (!first.accepted) throw new Error(first.detail);
+    await capability.abort({ ...first.handle, reason: "cancelled" });
+
+    current = "2026-07-29T09:00:10.000Z";
+    clockReads = 0;
+    const second = await capability.prepare(
+      reviewerRequest({ idempotencyKey: "T1696-review-round-2", reprepareOf: first.handle }),
+    );
+    if (!second.accepted) throw new Error(second.detail);
+    expect(clockReads).toBe(1);
+    expect(second.handle).toEqual({ attestationId: first.handle.attestationId, generation: 2 });
+    const row = store.read(second.handle);
+    if (row === undefined || row.kind !== "envelope") throw new Error("expected envelope");
+    expect(row.input).toMatchObject({
+      responseStoreNow: "2026-07-29T09:02:10.000Z",
+      gateCompleteBy: "2026-07-29T09:01:10.000Z",
+      synthesisStoreReserveMs: 60_000,
+    });
   });
 
   test("a restart cannot replay raw capabilities and names the existing handle", async () => {
@@ -326,9 +500,7 @@ describe("live compact-dispatch capability", () => {
     if (!first.accepted) throw new Error(`unexpected rejection: ${first.detail}`);
     store.remove(first.handle);
 
-    await expect(capability.prepare(request)).rejects.toBeInstanceOf(
-      DispatchStateConflictError,
-    );
+    await expect(capability.prepare(request)).rejects.toBeInstanceOf(DispatchStateConflictError);
     expect(store.snapshot()).toHaveLength(0);
   });
 
@@ -413,9 +585,7 @@ describe("live compact-dispatch capability", () => {
     clock.advance(TERMINAL_ENVELOPE_RETENTION_MS);
     await sweepAttestationsOn(backend, { now: clock.now });
     const before = store.snapshot().map(attestationRowDigest);
-    await expect(capability.prepare(request)).rejects.toBeInstanceOf(
-      DispatchStateConflictError,
-    );
+    await expect(capability.prepare(request)).rejects.toBeInstanceOf(DispatchStateConflictError);
     expect(store.snapshot().map(attestationRowDigest)).toEqual(before);
   });
 
@@ -466,9 +636,7 @@ describe("live compact-dispatch capability", () => {
       inputCapability: prepared.prepared.inputCapability,
     });
     expect(JSON.stringify(child.input)).toContain(narrative);
-    expect(child.promptProvenance.inputDigest).toBe(
-      prepared.prepared.promptProvenance.inputDigest,
-    );
+    expect(child.promptProvenance.inputDigest).toBe(prepared.prepared.promptProvenance.inputDigest);
     await ledger.dispose();
   });
 });

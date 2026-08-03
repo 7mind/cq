@@ -67,8 +67,8 @@ const SCHEMA_PINS_JSON = String.raw`{
     "digest": "1de953b2ca12bc21155b0c29d04bd8cffde93249b689370efb96496acf4a5ba3"
   },
   "implement-reviewer": {
-    "version": 2,
-    "digest": "c6119d67521d1b2da62bc0325d1b418723f274f8ee6cf0c32254029d61d77876"
+    "version": 3,
+    "digest": "06de58a5e8c19bab5a3c1489099766e7b83c1185927146ef320f1a798559a1ce"
   },
   "implement-conflict-resolver": {
     "version": 1,
@@ -318,9 +318,7 @@ function schemaPinHistoryErrors(
   const lastObservedPins: Record<string, SchemaPin> = { ...history[0]! };
   for (let index = 1; index < history.length; index += 1) {
     const nextPins = history[index]!;
-    errors.push(
-      ...schemaPinTransitionErrors(history[index - 1]!, nextPins, lastObservedPins),
-    );
+    errors.push(...schemaPinTransitionErrors(history[index - 1]!, nextPins, lastObservedPins));
     Object.assign(lastObservedPins, nextPins);
   }
   return errors;

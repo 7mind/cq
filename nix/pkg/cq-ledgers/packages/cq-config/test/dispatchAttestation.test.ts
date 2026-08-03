@@ -36,6 +36,8 @@ import {
   InMemoryAttestationStore,
   INPUT_CAPABILITY_ENTROPY_BYTES,
   INPUT_CAPABILITY_OPERATIONS,
+  IMPLEMENT_REVIEWER_SYNTHESIS_STORE_RESERVE_MS,
+  IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
   LAUNCH_DEADLINE_MS,
   MATERIALIZED_DISPATCH_INPUT_SCHEMA,
   RESPONSE_STORE_LEAD_MS,
@@ -137,6 +139,23 @@ const INPUT: DispatchJSONValue = {
   baseCommit: "0be2cc034dd490d484bdac0dfad5efb9be52c068",
   round: 0,
   startingCommit: "0be2cc034dd490d484bdac0dfad5efb9be52c068",
+};
+
+const REVIEWER_INPUT: DispatchJSONValue = {
+  taskId: "T1696",
+  headline: "Bind absolute implementation-review phase deadlines during prepare",
+  description: "Prepare owns the review phase clock.",
+  acceptance: "The child receives one absolute review phase window.",
+  worktreePath: "/tmp/wt-T1696",
+  branch: "implement/T1696",
+  baseCommit: "0be2cc034dd490d484bdac0dfad5efb9be52c068",
+  workerResult: {
+    resultCommit: "0be2cc034dd490d484bdac0dfad5efb9be52c068",
+    checkSummary: "REAL_CHECK_EXIT=0",
+    filesTouched: [],
+  },
+  round: 1,
+  priorCriticism: [],
 };
 
 const OUTPUT: DispatchJSONValue = {
@@ -637,6 +656,160 @@ describe("prepare validates role, input and timeout, then allocates", () => {
     expect(RESPONSE_STORE_LEAD_MS).toBeLessThan(DISPATCH_TIMEOUT_MIN_MS);
   });
 
+  test("implement-reviewer timing is rejected or bound before allocation from one clock read [BA]", () => {
+    expect(IMPLEMENT_REVIEWER_SYNTHESIS_STORE_RESERVE_MS).toBe(60_000);
+    expect(IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS).toBe(150_000);
+    expect(IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS).toBe(
+      LAUNCH_DEADLINE_MS + RESPONSE_STORE_LEAD_MS + IMPLEMENT_REVIEWER_SYNTHESIS_STORE_RESERVE_MS,
+    );
+
+    for (const timeoutMs of [60_000, IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS - 1]) {
+      const store = new InMemoryAttestationStore(NAMESPACE);
+      let clockReads = 0;
+      const outcome = prepareDispatch(
+        prepareRequest({ roleId: "implement-reviewer", input: REVIEWER_INPUT, timeoutMs }),
+        {
+          store,
+          now: () => {
+            clockReads += 1;
+            return T0;
+          },
+          randomBytes: sequentialDispatchRandomBytes(timeoutMs),
+        },
+      );
+      const rejection = rejectionOf(outcome);
+      expect(rejection.reason).toBe("invalid-launch-envelope");
+      expect(rejection.path).toBe("timeoutMs");
+      expect(clockReads).toBe(0);
+      expect(store.rows()).toHaveLength(0);
+    }
+
+    for (const callerTiming of [
+      { responseStoreNow: T0 },
+      { gateCompleteBy: T0 },
+      { synthesisStoreReserveMs: 60_000 },
+    ]) {
+      const store = new InMemoryAttestationStore(NAMESPACE);
+      let clockReads = 0;
+      const outcome = prepareDispatch(
+        prepareRequest({
+          roleId: "implement-reviewer",
+          input: { ...(REVIEWER_INPUT as object), ...callerTiming },
+          timeoutMs: IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
+          idempotencyKey: `caller-timing-${Object.keys(callerTiming)[0]}`,
+        }),
+        {
+          store,
+          now: () => {
+            clockReads += 1;
+            return T0;
+          },
+          randomBytes: sequentialDispatchRandomBytes(0),
+        },
+      );
+      expect(outcome.accepted).toBe(false);
+      if (outcome.accepted) throw new Error("expected caller timing rejection");
+      expect(outcome.reason).toBe("invalid-role-input");
+      expect(clockReads).toBe(0);
+      expect(store.rows()).toHaveLength(0);
+    }
+
+    const store = new InMemoryAttestationStore(NAMESPACE);
+    let clockReads = 0;
+    const accepted = acceptedOf(
+      prepareDispatch(
+        prepareRequest({
+          roleId: "implement-reviewer",
+          input: REVIEWER_INPUT,
+          timeoutMs: IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
+          idempotencyKey: "reviewer-first-valid-timeout",
+        }),
+        {
+          store,
+          now: () => {
+            clockReads += 1;
+            return T0;
+          },
+          randomBytes: sequentialDispatchRandomBytes(0),
+        },
+      ),
+    );
+    expect(clockReads).toBe(1);
+    const row = store.read(accepted.handle);
+    if (row === undefined || isAttestationTombstone(row)) throw new Error("expected envelope");
+    const expectedInput = {
+      ...(REVIEWER_INPUT as object),
+      responseStoreNow: new Date(T0_MS + 120_000).toISOString(),
+      gateCompleteBy: new Date(T0_MS + 60_000).toISOString(),
+      synthesisStoreReserveMs: 60_000,
+    };
+    expect(row.input).toEqual(expectedInput);
+    expect(row.promptProvenance.inputDigest).toBe(
+      dispatchPayloadDigest(expectedInput as DispatchJSONValue),
+    );
+    expect(row.promptProvenance.inputDigest).not.toBe(dispatchPayloadDigest(REVIEWER_INPUT));
+    expect(row.prepareRequestDigest).toBe(
+      prepareDispatchRequestDigest(
+        prepareRequest({
+          roleId: "implement-reviewer",
+          input: expectedInput,
+          timeoutMs: IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
+          idempotencyKey: "reviewer-first-valid-timeout",
+        }),
+      ),
+    );
+  });
+
+  test("a legal implement-reviewer reprepare binds a fresh absolute window from one clock read [BA]", () => {
+    const store = new InMemoryAttestationStore(NAMESPACE);
+    let current = T0;
+    let clockReads = 0;
+    const now = () => {
+      clockReads += 1;
+      return current;
+    };
+    const prepareDeps = { store, now, randomBytes: sequentialDispatchRandomBytes(0) };
+    const first = acceptedOf(
+      prepareDispatch(
+        prepareRequest({
+          roleId: "implement-reviewer",
+          input: REVIEWER_INPUT,
+          timeoutMs: IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
+          idempotencyKey: "reviewer-generation-1",
+        }),
+        prepareDeps,
+      ),
+    );
+    abortDispatch(
+      { namespace: NAMESPACE, actor: "trusted-parent", ...first.handle, reason: "cancelled" },
+      { store, now },
+    );
+    current = new Date(T0_MS + 10_000).toISOString();
+    clockReads = 0;
+    const second = acceptedOf(
+      prepareDispatch(
+        prepareRequest({
+          roleId: "implement-reviewer",
+          input: REVIEWER_INPUT,
+          timeoutMs: IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
+          idempotencyKey: "reviewer-generation-2",
+          reprepareOf: first.handle,
+        }),
+        prepareDeps,
+      ),
+    );
+    expect(clockReads).toBe(1);
+    expect(second.handle).toEqual({ attestationId: first.handle.attestationId, generation: 2 });
+    expect(second.prepared.responseStoreNow).toBe(new Date(T0_MS + 130_000).toISOString());
+    const row = store.read(second.handle);
+    if (row === undefined || isAttestationTombstone(row)) throw new Error("expected envelope");
+    expect(row.input).toMatchObject({
+      responseStoreNow: second.prepared.responseStoreNow,
+      gateCompleteBy: new Date(T0_MS + 70_000).toISOString(),
+      synthesisStoreReserveMs: 60_000,
+    });
+  });
+
   test("prepare flows THROUGH T976's inside-prepare validation and allocates nothing on failure", () => {
     const h = harness();
     for (const [overrides, reason] of [
@@ -860,9 +1033,7 @@ describe("one-shot assembled-input retrieval", () => {
     expect(() => fetchDispatchInput(fetchInputRequest(p), h.deps)).toThrow(
       DispatchStateConflictError,
     );
-    expect(() => fetchDispatchInput(fetchInputRequest(p), h.deps)).toThrow(
-      /already materialized/,
-    );
+    expect(() => fetchDispatchInput(fetchInputRequest(p), h.deps)).toThrow(/already materialized/);
     expect(attestationRowDigest(envelopeOf(h, p))).toBe(before);
   });
 

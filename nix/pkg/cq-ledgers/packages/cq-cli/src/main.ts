@@ -43,11 +43,7 @@ import {
   type ResetSummary,
 } from "@cq/ledger";
 import { loadConfig } from "@cq/config";
-import {
-  type ConfirmIo,
-  defaultConfirmIo,
-  confirmDestructive,
-} from "./confirm.js";
+import { type ConfirmIo, defaultConfirmIo, confirmDestructive } from "./confirm.js";
 import { CQ_TOML_TEMPLATE } from "./cqTomlTemplate.js";
 import { runMigrate } from "./migrate.js";
 import { runAdvanceGate } from "./advanceGate.js";
@@ -70,13 +66,31 @@ import {
  */
 export const CQ_CONFIG_FILENAME = "cq.toml";
 
-export { type ConfirmIo, type ConfirmOutcome, defaultConfirmIo, confirmDestructive } from "./confirm.js";
+export {
+  type ConfirmIo,
+  type ConfirmOutcome,
+  defaultConfirmIo,
+  confirmDestructive,
+} from "./confirm.js";
 
 /** Exit code for an unknown/absent subcommand (usage error). */
 export const EXIT_USAGE = 2;
 
 /** The subcommands the dispatcher routes to. */
-export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "counts", "log", "backup", "restore", "migrate", "gate"] as const;
+export const SUBCOMMANDS = [
+  "init",
+  "reset",
+  "erase",
+  "move-ledger",
+  "advance-gate",
+  "predicates",
+  "counts",
+  "log",
+  "backup",
+  "restore",
+  "migrate",
+  "gate",
+] as const;
 export type Subcommand = (typeof SUBCOMMANDS)[number];
 
 function isSubcommand(s: string): s is Subcommand {
@@ -226,7 +240,7 @@ export const USAGE = [
   "                                                  backend to postgres; hard-refuses a",
   "                                                  non-empty tenant (no override). Either leg",
   "                                                  leaves its source untouched.",
-  "  gate run --worktree <path> --command-cwd <path> -- <command...>",
+  "  gate run --worktree <path> --command-cwd <path> [--deadline <ISO-8601>] -- <command...>",
   "                                                  run one bounded process group under the",
   "                                                  canonical Git-worktree exclusive gate.",
   "",
@@ -681,8 +695,7 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
   // postgres (T583): DELETE exactly this tenant's rows — items, groups,
   // ledgers, logs, AND the projects registry entry — never another tenant's.
   let postgresWipeSummary:
-    | { projectKey: string; items: Array<{ name: string; itemCount: number }> }
-    | undefined;
+    { projectKey: string; items: Array<{ name: string; itemCount: number }> } | undefined;
   if (postgresTenant !== undefined) {
     const items = await countTenantActiveItems(postgresTenant.pool, postgresTenant.projectKey);
     await wipeTenantRows(postgresTenant.pool, postgresTenant.projectKey, true);
@@ -740,10 +753,7 @@ export async function runAdvanceGateCmd(
   args: SubcommandArgs,
   io: DispatchIo,
 ): Promise<SubcommandOutcome> {
-  return runAdvanceGate(
-    { cwd: args.cwd, session: args.session },
-    { out: io.out, err: io.err },
-  );
+  return runAdvanceGate({ cwd: args.cwd, session: args.session }, { out: io.out, err: io.err });
 }
 
 /**
@@ -956,7 +966,9 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
         ? await readDumpInTree(args.cwd)
         : await readDumpOrphanBranch(args.cwd, branch);
   } catch (e) {
-    io.err(`cq restore: failed to read the ${target} dump: ${e instanceof Error ? e.message : String(e)}`);
+    io.err(
+      `cq restore: failed to read the ${target} dump: ${e instanceof Error ? e.message : String(e)}`,
+    );
     return { exitCode: EXIT_USAGE };
   }
 
@@ -1109,7 +1121,10 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
-const HANDLERS: Record<Subcommand, (args: SubcommandArgs, io: DispatchIo) => Promise<SubcommandOutcome>> = {
+const HANDLERS: Record<
+  Subcommand,
+  (args: SubcommandArgs, io: DispatchIo) => Promise<SubcommandOutcome>
+> = {
   init: runInit,
   reset: runReset,
   erase: runErase,

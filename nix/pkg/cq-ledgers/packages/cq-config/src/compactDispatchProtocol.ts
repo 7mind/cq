@@ -5,6 +5,7 @@ import {
   dispatchOverlayListSchema,
   type DispatchOverlayRegistry,
 } from "./dispatchOverlays.js";
+import { IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS } from "./schemas/implement-reviewer.js";
 
 /** The dispatched-role ids accepted by the compact launch boundary. */
 export type DispatchedRoleId = keyof typeof DISPATCHED_ROLE_SIDECARS;
@@ -305,6 +306,17 @@ function launchBranch(
   };
 }
 
+function callerInputSchema(roleId: string, inputSchema: JSONSchema): JSONSchema {
+  if (roleId !== "implement-reviewer") return inputSchema;
+
+  const properties = { ...(inputSchema.properties ?? {}) };
+  for (const field of IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS) delete properties[field];
+  const required = (inputSchema.required ?? []).filter(
+    (field) => !IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS.includes(field as never),
+  );
+  return { ...inputSchema, properties, required };
+}
+
 /**
  * Role-aware launch schema over an explicit overlay registry (T684). Each
  * branch embeds the authoritative input sidecar, so a valid role id with
@@ -318,7 +330,7 @@ export function compactDispatchLaunchSchemaFor(registry: DispatchOverlayRegistry
     $id: "cq:compact-dispatch/launch",
     title: "compact dispatched-subagent launch",
     oneOf: Object.entries(DISPATCHED_ROLE_SIDECARS).map(([roleId, sidecar]) =>
-      launchBranch(roleId, sidecar.inputSchema, registry),
+      launchBranch(roleId, callerInputSchema(roleId, sidecar.inputSchema), registry),
     ),
   };
 }
@@ -395,14 +407,7 @@ export const MATERIALIZED_DISPATCH_INPUT_SCHEMA: JSONSchema = {
     promptProvenance: promptProvenanceSchema,
     materializedAt: { type: "string", pattern: ISO_TIMESTAMP_PATTERN },
   },
-  required: [
-    "state",
-    "attestationId",
-    "generation",
-    "input",
-    "promptProvenance",
-    "materializedAt",
-  ],
+  required: ["state", "attestationId", "generation", "input", "promptProvenance", "materializedAt"],
   additionalProperties: false,
 };
 

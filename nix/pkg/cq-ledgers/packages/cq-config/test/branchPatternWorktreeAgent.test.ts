@@ -98,6 +98,9 @@ describe("D77 — implement-reviewer inputSchema.branch accepts both namings", (
     baseCommit: "deadbeef",
     workerResult: { resultCommit: "deadbeef", checkSummary: "ok", filesTouched: [] },
     round: 1,
+    responseStoreNow: "2026-07-25T09:31:00.000Z",
+    gateCompleteBy: "2026-07-25T09:30:00.000Z",
+    synthesisStoreReserveMs: 60_000,
   };
 
   test("accepts implement/T123", () => {

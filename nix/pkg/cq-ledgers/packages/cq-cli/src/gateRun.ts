@@ -17,8 +17,11 @@ export interface GateRunOutcome {
 interface ParsedGateRun {
   readonly worktree: string;
   readonly commandCwd: string;
+  readonly deadlineMs?: number;
   readonly command: readonly string[];
 }
+
+export const GATE_DEADLINE_EXIT_CODE = 124;
 
 const SIGNAL_EXIT_CODES: Readonly<Partial<Record<NodeJS.Signals, number>>> = {
   SIGHUP: 129,
@@ -37,20 +40,24 @@ function parseGateRun(argv: readonly string[]): ParsedGateRun {
 
   let worktree: string | undefined;
   let commandCwd: string | undefined;
+  let deadlineMs: number | undefined;
   for (let index = 1; index < separator; index += 1) {
     const argument = argv[index];
-    if (argument === "--worktree" || argument === "--command-cwd") {
+    if (argument === "--worktree" || argument === "--command-cwd" || argument === "--deadline") {
       const value = argv[index + 1];
       if (value === undefined || index + 1 >= separator) {
         throw new Error(`cq gate run: ${argument} requires a value`);
       }
       if (argument === "--worktree") worktree = value;
-      else commandCwd = value;
+      else if (argument === "--command-cwd") commandCwd = value;
+      else deadlineMs = parseDeadline(value);
       index += 1;
     } else if (argument !== undefined && argument.startsWith("--worktree=")) {
       worktree = argument.slice("--worktree=".length);
     } else if (argument !== undefined && argument.startsWith("--command-cwd=")) {
       commandCwd = argument.slice("--command-cwd=".length);
+    } else if (argument !== undefined && argument.startsWith("--deadline=")) {
+      deadlineMs = parseDeadline(argument.slice("--deadline=".length));
     } else {
       throw new Error(`cq gate run: unknown option ${String(argument)}`);
     }
@@ -61,7 +68,17 @@ function parseGateRun(argv: readonly string[]): ParsedGateRun {
   if (commandCwd === undefined || commandCwd === "") {
     throw new Error("cq gate run: --command-cwd is required");
   }
-  return { worktree, commandCwd, command };
+  return { worktree, commandCwd, ...(deadlineMs === undefined ? {} : { deadlineMs }), command };
+}
+
+function parseDeadline(value: string): number {
+  const deadlineMs = Date.parse(value);
+  if (!Number.isFinite(deadlineMs)) {
+    throw new Error(
+      `cq gate run: --deadline requires an ISO-8601 instant, got ${JSON.stringify(value)}`,
+    );
+  }
+  return deadlineMs;
 }
 
 export async function runGateRun(argv: readonly string[], _io: GateRunIo): Promise<GateRunOutcome> {
@@ -71,6 +88,11 @@ export async function runGateRun(argv: readonly string[], _io: GateRunIo): Promi
     commandCwd: parsed.commandCwd,
   });
   try {
+    if (parsed.deadlineMs !== undefined && Date.now() >= parsed.deadlineMs) {
+      await closeWorktreeGate(lease);
+      lease = null;
+      return { exitCode: GATE_DEADLINE_EXIT_CODE };
+    }
     const launched = await launchRegisteredGateCommand(lease, parsed.command);
     let interrupt: ((signal: NodeJS.Signals) => void) | null = null;
     const interrupted = new Promise<NodeJS.Signals>((resolve) => {
@@ -81,17 +103,31 @@ export async function runGateRun(argv: readonly string[], _io: GateRunIo): Promi
       process.once(signal, handler);
       return { signal, handler };
     });
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    const deadline =
+      parsed.deadlineMs === undefined
+        ? undefined
+        : new Promise<"deadline">((resolve) => {
+            deadlineTimer = setTimeout(
+              () => resolve("deadline"),
+              Math.max(0, parsed.deadlineMs! - Date.now()),
+            );
+          });
     try {
-      const outcome = await Promise.race([
+      const candidates = [
         launched.exited.then((exit) => ({ kind: "exit" as const, exit })),
         interrupted.then((signal) => ({ kind: "signal" as const, signal })),
-      ]);
+        ...(deadline === undefined ? [] : [deadline.then(() => ({ kind: "deadline" as const }))]),
+      ];
+      const outcome = await Promise.race(candidates);
       await closeWorktreeGate(lease);
       lease = null;
+      if (outcome.kind === "deadline") return { exitCode: GATE_DEADLINE_EXIT_CODE };
       if (outcome.kind === "signal") return { exitCode: SIGNAL_EXIT_CODES[outcome.signal] ?? 1 };
       if (outcome.exit.exitCode !== null) return { exitCode: outcome.exit.exitCode };
       return { exitCode: SIGNAL_EXIT_CODES[outcome.exit.signal ?? "SIGTERM"] ?? 1 };
     } finally {
+      if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
       for (const { signal, handler } of handlers) process.off(signal, handler);
     }
   } finally {

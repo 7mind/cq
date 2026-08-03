@@ -102,7 +102,14 @@ export {
   CQ_HARNESS_ENV,
   CLAUDE_CODE_SESSION_ID_ENV,
 } from "./activeHarness.js";
-export type { RawToml, RawWebui, RawLedger, RawProject, RawDispatch, RawHarnessOverride } from "./toml.js";
+export type {
+  RawToml,
+  RawWebui,
+  RawLedger,
+  RawProject,
+  RawDispatch,
+  RawHarnessOverride,
+} from "./toml.js";
 export { parseToml } from "./toml.js";
 export {
   CQ_LEDGER_REMOTE_TOKEN_ENV,
@@ -231,6 +238,7 @@ export {
 export {
   implementReviewerSidecar,
   IMPLEMENT_REVIEW_VERDICTS,
+  IMPLEMENT_REVIEWER_PHASE_EXHAUSTION_CRITICISM,
 } from "./schemas/implement-reviewer.js";
 export {
   implementConflictResolverSidecar,
@@ -444,6 +452,9 @@ export {
   DISPATCH_TIMEOUT_MAX_MS,
   RESPONSE_STORE_LEAD_MS,
   LAUNCH_DEADLINE_MS,
+  IMPLEMENT_REVIEWER_SYNTHESIS_STORE_RESERVE_MS,
+  IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
+  IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS,
   ATTESTATION_ID_ENTROPY_BYTES,
   RESULT_CAPABILITY_ENTROPY_BYTES,
   INPUT_CAPABILITY_ENTROPY_BYTES,

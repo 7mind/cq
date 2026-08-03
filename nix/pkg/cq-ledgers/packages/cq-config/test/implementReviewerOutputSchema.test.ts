@@ -13,7 +13,11 @@
  * would pass every other clause.
  */
 import { describe, expect, test } from "bun:test";
-import { implementReviewerSidecar, validateAgainstSchema } from "@cq/config";
+import {
+  IMPLEMENT_REVIEWER_PHASE_EXHAUSTION_CRITICISM,
+  implementReviewerSidecar,
+  validateAgainstSchema,
+} from "@cq/config";
 
 /** A minimal valid verdict payload with gateReRan=true (so gateDurationMs is required). */
 function baseVerdictPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -32,6 +36,41 @@ function baseVerdictPayload(overrides: Record<string, unknown> = {}): Record<str
 }
 
 describe("T895 implement-reviewer outputSchema", () => {
+  test("the final input schema requires all three server-bound phase values [BA]", () => {
+    const input = {
+      taskId: "T1696",
+      acceptance: "The reviewer consumes one absolute phase window.",
+      worktreePath: "/tmp/wt-T1696",
+      branch: "implement/T1696",
+      baseCommit: "e65ce042",
+      workerResult: { resultCommit: null, checkSummary: "failed", filesTouched: [] },
+      round: 1,
+      responseStoreNow: "2026-08-03T10:02:00.000Z",
+      gateCompleteBy: "2026-08-03T10:01:00.000Z",
+      synthesisStoreReserveMs: 60_000,
+    };
+    expect(validateAgainstSchema(implementReviewerSidecar.inputSchema, input).ok).toBe(true);
+    for (const field of [
+      "responseStoreNow",
+      "gateCompleteBy",
+      "synthesisStoreReserveMs",
+    ] as const) {
+      const missing = { ...input };
+      delete missing[field];
+      const result = validateAgainstSchema(implementReviewerSidecar.inputSchema, missing);
+      expect(result.ok, field).toBe(false);
+      if (!result.ok) {
+        expect(result.errors.some((error) => error.params.missingProperty === field)).toBe(true);
+      }
+    }
+    expect(
+      validateAgainstSchema(implementReviewerSidecar.inputSchema, {
+        ...input,
+        synthesisStoreReserveMs: 59_999,
+      }).ok,
+    ).toBe(false);
+  });
+
   // --- gateReRan / resultCommitVerified always required -----------------------
 
   test("missing gateReRan fails Ajv", () => {
@@ -50,14 +89,19 @@ describe("T895 implement-reviewer outputSchema", () => {
     const result = validateAgainstSchema(implementReviewerSidecar.outputSchema, payload);
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.errors.some((e) => e.params.missingProperty === "resultCommitVerified")).toBe(true);
+      expect(result.errors.some((e) => e.params.missingProperty === "resultCommitVerified")).toBe(
+        true,
+      );
     }
   });
 
   // --- a fully valid verdict passes --------------------------------------------
 
   test("a complete verdict with gateReRan=true, resultCommitVerified=true, and gateDurationMs passes", () => {
-    const result = validateAgainstSchema(implementReviewerSidecar.outputSchema, baseVerdictPayload());
+    const result = validateAgainstSchema(
+      implementReviewerSidecar.outputSchema,
+      baseVerdictPayload(),
+    );
     expect(result.ok).toBe(true);
   });
 
@@ -93,6 +137,59 @@ describe("T895 implement-reviewer outputSchema", () => {
     delete payload.gateDurationMs;
     const result = validateAgainstSchema(implementReviewerSidecar.outputSchema, payload);
     expect(result.ok).toBe(true);
+  });
+
+  test("a disapproval must carry criticism or questions [BA]", () => {
+    const empty = validateAgainstSchema(
+      implementReviewerSidecar.outputSchema,
+      baseVerdictPayload({ verdict: "disapprove" }),
+    );
+    expect(empty.ok).toBe(false);
+    expect(
+      validateAgainstSchema(
+        implementReviewerSidecar.outputSchema,
+        baseVerdictPayload({ verdict: "disapprove", criticism: ["actionable defect"] }),
+      ).ok,
+    ).toBe(true);
+    expect(
+      validateAgainstSchema(
+        implementReviewerSidecar.outputSchema,
+        baseVerdictPayload({ verdict: "disapprove", questions: ["Which contract applies?"] }),
+      ).ok,
+    ).toBe(true);
+  });
+
+  test("all three phase-exhaustion evidence tuples satisfy the sidecar [BA]", () => {
+    const common = {
+      verdict: "disapprove",
+      criticism: [IMPLEMENT_REVIEWER_PHASE_EXHAUSTION_CRITICISM],
+      rationale: IMPLEMENT_REVIEWER_PHASE_EXHAUSTION_CRITICISM,
+    };
+    const preVerification = baseVerdictPayload({
+      ...common,
+      gateReRan: false,
+      resultCommitVerified: false,
+      gateReRanReason: "phase-budget-exhausted-before-result-commit-verification",
+    });
+    delete preVerification.gateDurationMs;
+    const preGate = baseVerdictPayload({
+      ...common,
+      gateReRan: false,
+      resultCommitVerified: true,
+      gateReRanReason: "phase-budget-exhausted-before-gate-start",
+    });
+    delete preGate.gateDurationMs;
+    const inGate = baseVerdictPayload({
+      ...common,
+      gateReRan: true,
+      resultCommitVerified: true,
+      gateDurationMs: 2_345,
+    });
+    delete inGate.gateReRanReason;
+
+    for (const payload of [preVerification, preGate, inGate]) {
+      expect(validateAgainstSchema(implementReviewerSidecar.outputSchema, payload).ok).toBe(true);
+    }
   });
 
   // --- additionalProperties still false ----------------------------------------

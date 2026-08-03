@@ -67,6 +67,7 @@
 
 import { timingSafeEqual } from "node:crypto";
 import { DISPATCHED_ROLE_SIDECARS } from "./promptCatalogStore.js";
+import { IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS } from "./schemas/implement-reviewer.js";
 import { validateAgainstSchema, type ValidationError } from "./validation.js";
 import { LEDGER_BACKENDS, type LedgerBackend } from "./types.js";
 import { DispatchOverlayError, type DispatchOverlayRegistry } from "./dispatchOverlays.js";
@@ -364,6 +365,15 @@ export const RESPONSE_STORE_LEAD_MS = 30 * 1000;
 /** How long after prepare the parent has to launch the child. */
 export const LAUNCH_DEADLINE_MS = 60 * 1000;
 
+/** Reserved after review work ends so the reviewer can synthesize and store its verdict. */
+export const IMPLEMENT_REVIEWER_SYNTHESIS_STORE_RESERVE_MS = 60 * 1000;
+
+/** The first timeout that leaves an implement-reviewer a non-negative review phase. */
+export const IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS =
+  LAUNCH_DEADLINE_MS + RESPONSE_STORE_LEAD_MS + IMPLEMENT_REVIEWER_SYNTHESIS_STORE_RESERVE_MS;
+
+export { IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS };
+
 /** Entropy behind a minted attestation id. */
 export const ATTESTATION_ID_ENTROPY_BYTES = 24;
 
@@ -457,9 +467,7 @@ export function assertDispatchOperationAuthorization(
     .filter(([, scope]) => scope === "input-capability")
     .map(([operation]) => operation)
     .sort();
-  if (
-    inputCapabilityScoped.join(",") !== [...inputCapabilityOperations].sort().join(",")
-  ) {
+  if (inputCapabilityScoped.join(",") !== [...inputCapabilityOperations].sort().join(",")) {
     throw new AttestationContractError(
       "INPUT_CAPABILITY_OPERATIONS",
       `input-capability-scoped operations [${inputCapabilityScoped.join(", ")}] do not match the ` +
@@ -1076,23 +1084,69 @@ export function prepareDispatch(
     );
   }
   const timeoutMs: unknown = request.timeoutMs;
+  const timeoutMinMs =
+    request.roleId === "implement-reviewer"
+      ? IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS
+      : DISPATCH_TIMEOUT_MIN_MS;
   if (
     !Number.isInteger(timeoutMs) ||
-    (timeoutMs as number) < DISPATCH_TIMEOUT_MIN_MS ||
+    (timeoutMs as number) < timeoutMinMs ||
     (timeoutMs as number) > DISPATCH_TIMEOUT_MAX_MS
   ) {
     return dispatchPreLaunchRejection(
       "invalid-launch-envelope",
       "timeoutMs",
-      `expected an integer timeout within [${DISPATCH_TIMEOUT_MIN_MS}, ${DISPATCH_TIMEOUT_MAX_MS}] ms, ` +
+      `expected an integer timeout within [${timeoutMinMs}, ${DISPATCH_TIMEOUT_MAX_MS}] ms, ` +
         `got "${String(timeoutMs)}"`,
     );
+  }
+
+  let preparedInput = request.input;
+  let prepareInstant: { readonly at: string; readonly atMs: number } | undefined;
+  if (request.roleId === "implement-reviewer") {
+    if (
+      typeof request.input !== "object" ||
+      request.input === null ||
+      Array.isArray(request.input)
+    ) {
+      const invalid = validateDispatchInput({
+        roleId: request.roleId,
+        input: request.input,
+        surface: request.surface,
+        ...(request.overlays === undefined ? {} : { overlays: request.overlays }),
+        registry: request.registry,
+      });
+      if (invalid.accepted) {
+        throw new AttestationContractError(
+          "input",
+          "implement-reviewer schema accepted a non-object input",
+        );
+      }
+      return invalid;
+    }
+    for (const field of IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS) {
+      if (Object.hasOwn(request.input, field)) {
+        return dispatchPreLaunchRejection(
+          "invalid-role-input",
+          `input.${field}`,
+          `caller must omit server-bound implement-reviewer timing field "${field}"`,
+        );
+      }
+    }
+    prepareInstant = readNow(deps);
+    const responseStoreNowMs = prepareInstant.atMs + (timeoutMs as number) - RESPONSE_STORE_LEAD_MS;
+    preparedInput = Object.freeze({
+      ...request.input,
+      responseStoreNow: isoAt(responseStoreNowMs),
+      gateCompleteBy: isoAt(responseStoreNowMs - IMPLEMENT_REVIEWER_SYNTHESIS_STORE_RESERVE_MS),
+      synthesisStoreReserveMs: IMPLEMENT_REVIEWER_SYNTHESIS_STORE_RESERVE_MS,
+    }) as DispatchJSONValue;
   }
 
   executed.push("validate-role-input", "validate-declared-overlay-data");
   const validation = validateDispatchInput({
     roleId: request.roleId,
-    input: request.input,
+    input: preparedInput,
     surface: request.surface,
     ...(request.overlays === undefined ? {} : { overlays: request.overlays }),
     registry: request.registry,
@@ -1104,10 +1158,10 @@ export function prepareDispatch(
   const promptDigest = assertDigest(request.promptDigest, "promptDigest");
   const catalogHash = assertDigest(request.catalogHash, "catalogHash");
   const expectedChild = assertChildIdentity(request.expectedChild, "expectedChild");
-  const inputDigest = dispatchPayloadDigest(request.input);
+  const inputDigest = dispatchPayloadDigest(preparedInput);
 
   // --- allocation phase -------------------------------------------------
-  const { at, atMs } = readNow(deps);
+  const { at, atMs } = prepareInstant ?? readNow(deps);
   const generation = resolveGeneration(request.reprepareOf, deps);
   // Rows whose idempotency horizon has passed no longer HOLD the key, but they
   // are still physically present until a sweep runs. They are reclaimed here, in
@@ -1145,7 +1199,10 @@ export function prepareDispatch(
     catalogHash,
     inputDigest,
   });
-  const prepareRequestDigest = prepareDispatchRequestDigest(request);
+  const prepareRequestDigest = prepareDispatchRequestDigest({
+    ...request,
+    input: preparedInput,
+  });
   // Drop the reclaimed rows BEFORE the insert: a durable store enforces the
   // idempotency horizon's other half with a UNIQUE (namespace, idempotency_key)
   // constraint, so an expired row still occupying the key would refuse an insert
@@ -1163,7 +1220,7 @@ export function prepareDispatch(
       state: "prepared" as const,
       promptProvenance,
       prepareRequestDigest,
-      input: request.input,
+      input: preparedInput,
       deadlines,
       expectedChild,
       inputCapabilityHash: inputCapabilityHash(inputCapability.token),

@@ -99,4 +99,50 @@ describe("cq gate run [BG]", () => {
     expect(result).toEqual({ exitCode: 0, longRunning: false });
     expect(JSON.parse(await readFile(marker, "utf8"))).toEqual(["--cwd"]);
   });
+
+  test("an absolute deadline terminates and settles the registered gate command [BG]", async () => {
+    const root = await repositoryFixture();
+    const marker = join(root, "overrun-started.txt");
+    const deadline = new Date(Date.now() + 1_000).toISOString();
+    const startedAt = Date.now();
+    const exhausted = await dispatch(
+      [
+        "gate",
+        "run",
+        "--worktree",
+        root,
+        "--command-cwd",
+        root,
+        "--deadline",
+        deadline,
+        "--",
+        process.execPath,
+        "-e",
+        `await Bun.write(${JSON.stringify(marker)}, "started"); process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)`,
+      ],
+      io(),
+    );
+    const settledAt = Date.now();
+    expect(exhausted).toEqual({ exitCode: 124, longRunning: false });
+    expect(await readFile(marker, "utf8")).toBe("started");
+    expect(settledAt).toBeGreaterThanOrEqual(Date.parse(deadline));
+    expect(settledAt - startedAt).toBeGreaterThanOrEqual(900);
+
+    const afterSettlement = await dispatch(
+      [
+        "gate",
+        "run",
+        "--worktree",
+        root,
+        "--command-cwd",
+        root,
+        "--",
+        process.execPath,
+        "-e",
+        "process.exit(0)",
+      ],
+      io(),
+    );
+    expect(afterSettlement).toEqual({ exitCode: 0, longRunning: false });
+  }, 15_000);
 });

@@ -175,6 +175,15 @@ describe("compact dispatched-subagent launch contract", () => {
       ...valid,
       input: { goalId: "not-a-goal" },
     });
+    rejects(COMPACT_DISPATCH_LAUNCH_SCHEMA, {
+      roleId: "implement-reviewer",
+      input: {
+        ...ROLE_INPUTS["implement-reviewer"],
+        responseStoreNow: "2026-07-25T09:31:00.000Z",
+      },
+      idempotencyKey: "dispatch-implement-reviewer",
+      timeoutMs: 150_000,
+    });
   });
 });
 

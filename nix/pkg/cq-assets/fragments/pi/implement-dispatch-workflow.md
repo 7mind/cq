@@ -10,6 +10,9 @@
 >
 > **Implement-reviewer dispatch.** For each native
 > `implement-reviewer`, compose `{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism? }`,
+> Omit `responseStoreNow`, `gateCompleteBy`, and `synthesisStoreReserveMs` from
+> caller input because the authoritative dispatch lifecycle binds those
+> absolute values, then
 > dispatch through `CQ_SUBAGENT`, but treat the held adapter's raw verdict as an
 > abstention because it cannot satisfy the consumed-result gate. The `pi:*`
 > panel members remain external shellouts driving the shared

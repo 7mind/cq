@@ -31,6 +31,8 @@ import {
   ATTESTATION_EXCLUSION_REASONS,
   DISPATCH_ATTESTATION_DEFERRED,
   DISPATCH_ATTESTATION_MCP_DEFERRED_TO,
+  DISPATCH_OVERLAY_REGISTRY,
+  IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
   assertAttestationDeferralDischarge,
   ATTESTATION_IN_MEMORY_BACKEND,
   ATTESTATION_LOAD_SCOPE_KINDS,
@@ -60,9 +62,11 @@ import {
   journalEntryHandle,
   loadScopeFromStore,
   persistAttestationRow,
+  prepareDispatchOn,
   prepareLoadScope,
   rehydrateAttestationRow,
   runAttestationUnitOfWork,
+  sequentialDispatchRandomBytes,
   storeResultLoadScope,
   type AttestationEnvelope,
   type AttestationJournalEntry,
@@ -742,6 +746,57 @@ describe("the namespace advisory-lock key", () => {
 // ---------------------------------------------------------------------------
 
 describe("the unit-of-work runner", () => {
+  test("backend-bound prepare persists the exact server-timed reviewer input [BG]", async () => {
+    const store = new InMemoryAttestationStore(NAMESPACE);
+    const backend = new InMemoryAttestationBackend(store);
+    let clockReads = 0;
+    const outcome = await prepareDispatchOn(
+      backend,
+      {
+        namespace: NAMESPACE,
+        roleId: "implement-reviewer",
+        surface: "codex",
+        input: {
+          taskId: "T1696",
+          acceptance: "The backend persists the prepare-bound absolute phase window.",
+          worktreePath: "/tmp/wt-T1696",
+          branch: "implement/T1696",
+          baseCommit: "e65ce042",
+          workerResult: {
+            resultCommit: "e65ce042ab4093398372f886e471e57f8f3efdae",
+            checkSummary: "REAL_CHECK_EXIT=0",
+            filesTouched: [],
+          },
+          round: 1,
+        },
+        idempotencyKey: "reviewer-backend-window",
+        timeoutMs: IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
+        registry: DISPATCH_OVERLAY_REGISTRY,
+        promptDigest: "a".repeat(64),
+        catalogHash: "b".repeat(64),
+        expectedChild: { childId: "reviewer-child", runId: "reviewer-run" },
+      },
+      {
+        now: () => {
+          clockReads += 1;
+          return "2026-08-03T10:00:00.000Z";
+        },
+        randomBytes: sequentialDispatchRandomBytes(0),
+      },
+    );
+    expect(outcome.accepted).toBe(true);
+    if (!outcome.accepted) throw new Error(outcome.detail);
+    expect(clockReads).toBe(1);
+    const row = store.read(outcome.handle);
+    if (row === undefined || row.kind !== "envelope") throw new Error("expected envelope");
+    expect(row.input).toMatchObject({
+      responseStoreNow: "2026-08-03T10:02:00.000Z",
+      gateCompleteBy: "2026-08-03T10:01:00.000Z",
+      synthesisStoreReserveMs: 60_000,
+    });
+    expect(row.input).not.toHaveProperty("callerDeadline");
+  });
+
   test("applies nothing when the body journaled nothing", async () => {
     let applied = 0;
     const result = await runAttestationUnitOfWork(

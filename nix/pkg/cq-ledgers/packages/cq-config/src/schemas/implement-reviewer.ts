@@ -30,6 +30,17 @@ import type { RoleSchemaSidecar } from "../promptCatalog.js";
 /** The two implement-reviewer verdict tokens. */
 export const IMPLEMENT_REVIEW_VERDICTS = ["approve", "disapprove"] as const;
 
+/** The required criticism when the prepare-bound implementation-review phase expires. */
+export const IMPLEMENT_REVIEWER_PHASE_EXHAUSTION_CRITICISM =
+  "Implementation-review phase budget exhausted before a complete acceptance verdict could be established.";
+
+/** Server-owned fields callers omit and prepare binds into the final reviewer input. */
+export const IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS = [
+  "responseStoreNow",
+  "gateCompleteBy",
+  "synthesisStoreReserveMs",
+] as const;
+
 /** The `defects`-ledger severity vocabulary a reported defect carries. */
 const DEFECT_SEVERITIES = ["low", "medium", "high", "critical"] as const;
 
@@ -75,8 +86,34 @@ const inputSchema = {
     workerResult: workerResultSchema,
     round: { type: "integer", minimum: 1 },
     priorCriticism: { type: "array", items: { type: "string" } },
+    responseStoreNow: {
+      type: "string",
+      minLength: 1,
+      description: "Prepare-bound absolute deadline by which the reviewer must store its verdict.",
+    },
+    gateCompleteBy: {
+      type: "string",
+      minLength: 1,
+      description:
+        "Prepare-bound absolute deadline for inspection, verification, and gate settlement.",
+    },
+    synthesisStoreReserveMs: {
+      const: 60_000,
+      description: "Reserved interval between gateCompleteBy and responseStoreNow.",
+    },
   },
-  required: ["taskId", "acceptance", "worktreePath", "branch", "baseCommit", "workerResult", "round"],
+  required: [
+    "taskId",
+    "acceptance",
+    "worktreePath",
+    "branch",
+    "baseCommit",
+    "workerResult",
+    "round",
+    "responseStoreNow",
+    "gateCompleteBy",
+    "synthesisStoreReserveMs",
+  ],
   additionalProperties: false,
 } as const;
 
@@ -127,20 +164,24 @@ const outputSchema = {
     summary: { type: "string" },
     gateReRan: {
       type: "boolean",
-      description: "Whether the reviewer re-ran `bun run check` itself rather than trusting the worker's claim.",
+      description:
+        "Whether the reviewer re-ran `bun run check` itself rather than trusting the worker's claim.",
     },
     resultCommitVerified: {
       type: "boolean",
-      description: "Whether the reviewer verified the worker's resultCommit sha (e.g. via cat-file / tip equality) rather than accepting it unchecked.",
+      description:
+        "Whether the reviewer verified the worker's resultCommit sha (e.g. via cat-file / tip equality) rather than accepting it unchecked.",
     },
     gateDurationMs: {
       type: "integer",
       minimum: 0,
-      description: "Wall-clock milliseconds the reviewer's own re-run of `bun run check` took. Required when gateReRan is true.",
+      description:
+        "Wall-clock milliseconds the reviewer's own re-run of `bun run check` took. Required when gateReRan is true.",
     },
     gateReRanReason: {
       type: "string",
-      description: "Optional free-text explanation for why the gate was not re-run, when gateReRan is false.",
+      description:
+        "Optional free-text explanation for why the gate was not re-run, when gateReRan is false.",
     },
   },
   required: [
@@ -166,21 +207,39 @@ const outputSchema = {
         required: ["gateDurationMs"],
       },
     },
+    {
+      if: {
+        properties: {
+          verdict: { const: "disapprove" },
+        },
+        required: ["verdict"],
+      },
+      then: {
+        anyOf: [
+          {
+            properties: { criticism: { minItems: 1 } },
+            required: ["criticism"],
+          },
+          {
+            properties: { questions: { minItems: 1 } },
+            required: ["questions"],
+          },
+        ],
+      },
+    },
   ],
 } as const;
 
 /**
  * The implement-reviewer per-role schema sidecar (storage-format decision 3).
- * `version: 2` (bumped from 1, T895, decisions:D185's precedent): the output
- * contract's validation is now STRICTER in a way old data can violate —
- * `gateReRan`/`resultCommitVerified` became required and `gateDurationMs`
- * gained a conditional `required` — so a stale deployed root rendered against
- * the old (v1) contract must not be mistaken for this one;
+ * `version: 3` binds server-derived absolute phase timing into the input and
+ * makes an empty disapproval invalid, so a stale deployed root rendered against
+ * the old contract must not be mistaken for this one;
  * DISPATCHED_ROLE_VERSIONS derives this automatically, it is not hand-edited.
  */
 export const implementReviewerSidecar: RoleSchemaSidecar = {
   id: "implement-reviewer",
-  version: 2,
+  version: 3,
   inputSchema,
   outputSchema,
 };

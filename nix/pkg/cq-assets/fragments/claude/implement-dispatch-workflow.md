@@ -18,7 +18,9 @@
 >
 > **Implement-reviewer dispatch.** Apply the same sequence
 > to every native `claude:*` `implement-reviewer` with
-> `{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism? }`, using the reviewer's resolved model. A bridge failure makes
+> `{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism? }`, using the reviewer's resolved model.
+> Omit `responseStoreNow`, `gateCompleteBy`, and `synthesisStoreReserveMs` from
+> caller input because `prepare_dispatch` binds those absolute values. A bridge failure makes
 > that reviewer abstain under the returned-failure rule; only the fetched
 > consumed body is a usable verdict. The `pi:*` panel members remain external
 > shellouts driving the shared `CQ::implement-review` rubric.

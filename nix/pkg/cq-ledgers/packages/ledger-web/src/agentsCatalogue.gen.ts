@@ -1271,7 +1271,7 @@ export const AGENT_ROLES: AgentRole[] = [
     source: "agents/implement-reviewer.md",
     description: "Adversarial implementation reviewer that verifies one task and stores a structured approve/disapprove verdict without mutating the ledger.",
     inputs: [
-  "task specification, worktree/branch/base, worker result, round, and prior criticism"
+  "task specification, worktree/branch/base, worker result, round, prior criticism, and prepare-bound absolute phase timing"
 ],
     outputs: [
   "stored structured verdict and handle-only final reply"
@@ -1280,7 +1280,7 @@ export const AGENT_ROLES: AgentRole[] = [
   "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)",
   "approve requires empty criticism/questions, green gate, and verified commit"
 ],
-    promptTemplate: "> **CQ command notation (Claude).** `CQ::<path>` names the native slash command\n> `/cq:<path>`, with each `/` in `<path>` written as `:`. Preserve any following\n> arguments and treat `$ARGUMENTS` as the current command's user-supplied text.\n\n\n### Dispatch input delivery (Claude)\n\nThe launch prompt carries `attestationId`, `generation`, and `inputCapability`.\nBefore reading or changing the repository, call the ledger MCP\n`fetch_dispatch_input` tool exactly once and treat its typed input as the\ncomplete review assignment. A failed or second retrieval is a protocol failure.\n\n\n## Catalogue\n```yaml\ninputs:\n  - \"task specification, worktree/branch/base, worker result, round, and prior criticism\"\noutputs:\n  - \"stored structured verdict and handle-only final reply\"\nioSchema:\n  - \"typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)\"\n  - \"approve requires empty criticism/questions, green gate, and verified commit\"\n```\n\nReview one task against the actual diff and acceptance. Never edit the\nrepository, mutate the ledger, or spawn a child.\n\nRun `git -C <worktree> cat-file -t <resultCommit>` and require `commit`. Run\n`git -C <worktree> rev-parse --verify <branch>` and require its full SHA to\nequal `resultCommit`. When rerunning `bun run check`, use the foreground\nprocess's real exit status and measure its duration. Check acceptance,\ncorrectness, boundary handling, type safety, surgical scope, and defect\nreproduction.\n\nClassify each finding once:\n\n- `criticism`: objective defects the worker can fix;\n- `questions`: unresolved user-only requirements or product choices;\n- `defects`: out-of-scope or pre-existing faults for separate work.\n\nDiscoverable facts, cost, scope magnitude, and whether to fix a confirmed fault\nare not questions.\n\n```json\n{\n  \"taskId\": \"<task id>\",\n  \"verdict\": \"approve | disapprove\",\n  \"criticism\": [\"<worker-fixable defect>\"],\n  \"questions\": [\"<user-only ambiguity>\"],\n  \"defects\": [\n    {\n      \"headline\": \"<out-of-scope fault>\",\n      \"description\": \"<evidence and scope boundary>\",\n      \"severity\": \"low | medium | high | critical\",\n      \"suggestedFix\": \"<optional>\"\n    }\n  ],\n  \"rationale\": \"<decisive evidence>\",\n  \"gateReRan\": true,\n  \"resultCommitVerified\": true,\n  \"gateDurationMs\": 12345,\n  \"summary\": \"<optional one-line verdict>\"\n}\n```\n\nAlways state `gateReRan` and `resultCommitVerified`. Include\n`gateDurationMs` only when the gate ran; otherwise include an optional\n`gateReRanReason`. Approval requires empty criticism/questions, a green gate,\nand verified result commit. Disapproval requires criticism or questions.\nDefects do not control the verdict.\n\nStore the object exactly once through the dispatch-scoped `store_result` tool. Only a\n`result-stored` acknowledgement permits the final response. Then reply with the\nprepared dispatch handle only; never return the verdict body or a capability.",
+    promptTemplate: "> **CQ command notation (Claude).** `CQ::<path>` names the native slash command\n> `/cq:<path>`, with each `/` in `<path>` written as `:`. Preserve any following\n> arguments and treat `$ARGUMENTS` as the current command's user-supplied text.\n\n\n### Dispatch input delivery (Claude)\n\nThe launch prompt carries `attestationId`, `generation`, and `inputCapability`.\nBefore reading or changing the repository, call the ledger MCP\n`fetch_dispatch_input` tool exactly once and treat its typed input as the\ncomplete review assignment. A failed or second retrieval is a protocol failure.\n\n\n## Catalogue\n\n```yaml\ninputs:\n  - \"task specification, worktree/branch/base, worker result, round, prior criticism, and prepare-bound absolute phase timing\"\noutputs:\n  - \"stored structured verdict and handle-only final reply\"\nioSchema:\n  - \"typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)\"\n  - \"approve requires empty criticism/questions, green gate, and verified commit\"\n```\n\nReview one task against the actual diff and acceptance. Never edit the\nrepository, mutate the ledger, or spawn a child.\n\nThe fetched input carries `gateCompleteBy`, `responseStoreNow`, and\n`synthesisStoreReserveMs`. These are absolute prepare-bound values. Never\nderive a new phase window from launch, fetch, inspection, verification, or gate\nstart. Launch delay, inspection, result-commit verification, and the canonical\nregistered gate all consume the same window ending at `gateCompleteBy`. Compare\nthe current clock to that instant at each boundary; only `now >=\ngateCompleteBy` exhausts the phase. The interval through `responseStoreNow` is\nreserved exclusively for synthesizing and storing a verdict.\n\nRun `git -C <worktree> cat-file -t <resultCommit>` and require `commit`. Run\n`git -C <worktree> rev-parse --verify <branch>` and require its full SHA to\nequal `resultCommit`. When rerunning `bun run check`, use the foreground\nprocess's real exit status and measure its duration. Invoke that gate as\n`cq gate run --worktree <worktree> --command-cwd <worktree>/nix/pkg/cq-ledgers --deadline <gateCompleteBy> -- bun run check`.\nThe deadline path terminates and settles the registered command before it\nreturns; measure `gateDurationMs` through that termination and settlement.\nCheck acceptance, correctness, boundary handling, type safety, surgical scope,\nand defect reproduction.\n\nIf the phase expires before a complete acceptance verdict can be established,\nstore a disapproval before `responseStoreNow` whose sole criticism is exactly\n`Implementation-review phase budget exhausted before a complete acceptance verdict could be established.`\nUse exactly one of these evidence tuples:\n\n- before result-commit verification completes: `resultCommitVerified=false`,\n  `gateReRan=false`, omit `gateDurationMs`, and set `gateReRanReason` to\n  `phase-budget-exhausted-before-result-commit-verification`;\n- after result-commit verification but before gate start: set\n  `resultCommitVerified=true`, `gateReRan=false`, omit `gateDurationMs`, and set\n  `gateReRanReason` to `phase-budget-exhausted-before-gate-start`;\n- when the registered gate overruns `gateCompleteBy`: set\n  `resultCommitVerified=true`, `gateReRan=true`, set `gateDurationMs` to the\n  measured elapsed time through termination and settlement, and omit\n  `gateReRanReason`.\n\nFor every exhaustion fallback set `questions=[]`, `defects=[]`, and use the\nexact exhaustion sentence as `rationale` as well as the sole criticism. A\ndisapproval with both empty `criticism` and empty `questions` violates the\nsidecar and must never be stored.\n\nClassify each finding once:\n\n- `criticism`: objective defects the worker can fix;\n- `questions`: unresolved user-only requirements or product choices;\n- `defects`: out-of-scope or pre-existing faults for separate work.\n\nDiscoverable facts, cost, scope magnitude, and whether to fix a confirmed fault\nare not questions.\n\n```json\n{\n  \"taskId\": \"<task id>\",\n  \"verdict\": \"approve | disapprove\",\n  \"criticism\": [\"<worker-fixable defect>\"],\n  \"questions\": [\"<user-only ambiguity>\"],\n  \"defects\": [\n    {\n      \"headline\": \"<out-of-scope fault>\",\n      \"description\": \"<evidence and scope boundary>\",\n      \"severity\": \"low | medium | high | critical\",\n      \"suggestedFix\": \"<optional>\"\n    }\n  ],\n  \"rationale\": \"<decisive evidence>\",\n  \"gateReRan\": true,\n  \"resultCommitVerified\": true,\n  \"gateDurationMs\": 12345,\n  \"summary\": \"<optional one-line verdict>\"\n}\n```\n\nAlways state `gateReRan` and `resultCommitVerified`. Include\n`gateDurationMs` only when the gate ran; otherwise include an optional\n`gateReRanReason`. Approval requires empty criticism/questions, a green gate,\nand verified result commit. Disapproval requires criticism or questions.\nDefects do not control the verdict.\n\nStore the object exactly once through the dispatch-scoped `store_result` tool. Only a\n`result-stored` acknowledgement permits the final response. Then reply with the\nprepared dispatch handle only; never return the verdict body or a capability.",
     privilege: "RO",
     exposedTools: "Disallowed: Write, Edit, MultiEdit, NotebookEdit, Agent",
     inputSchema: {
@@ -1352,6 +1352,20 @@ export const AGENT_ROLES: AgentRole[] = [
           "items": {
             "type": "string"
           }
+        },
+        "responseStoreNow": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Prepare-bound absolute deadline by which the reviewer must store its verdict."
+        },
+        "gateCompleteBy": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Prepare-bound absolute deadline for inspection, verification, and gate settlement."
+        },
+        "synthesisStoreReserveMs": {
+          "const": 60000,
+          "description": "Reserved interval between gateCompleteBy and responseStoreNow."
         }
       },
       "required": [
@@ -1361,7 +1375,10 @@ export const AGENT_ROLES: AgentRole[] = [
         "branch",
         "baseCommit",
         "workerResult",
-        "round"
+        "round",
+        "responseStoreNow",
+        "gateCompleteBy",
+        "synthesisStoreReserveMs"
       ],
       "additionalProperties": false
     },
@@ -1478,6 +1495,42 @@ export const AGENT_ROLES: AgentRole[] = [
           "then": {
             "required": [
               "gateDurationMs"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "disapprove"
+              }
+            },
+            "required": [
+              "verdict"
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "properties": {
+                  "criticism": {
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "criticism"
+                ]
+              },
+              {
+                "properties": {
+                  "questions": {
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "questions"
+                ]
+              }
             ]
           }
         }

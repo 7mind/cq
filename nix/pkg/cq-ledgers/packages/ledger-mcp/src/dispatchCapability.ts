@@ -4,6 +4,9 @@ import {
   DISPATCH_REF_ASSEMBLY_DEFERRED,
   DISPATCH_TIMEOUT_MAX_MS,
   DISPATCH_TIMEOUT_MIN_MS,
+  IMPLEMENT_REVIEWER_SYNTHESIS_STORE_RESERVE_MS,
+  IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
+  IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS,
   IDEMPOTENCY_HORIZON_MS,
   AttestationKeyReuseError,
   AttestationBackendUnsupportedError,
@@ -28,6 +31,7 @@ import {
   type DispatchPrepareAccepted,
   type DispatchPreLaunchRejection,
   type PrepareDispatchOutcome,
+  type PrepareDispatchRequest,
 } from "@cq/config";
 import type { SQL } from "bun";
 import {
@@ -105,6 +109,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
   const namespace = options.backend.namespace;
   interface CachedPrepare {
     readonly fingerprint: string;
+    readonly request: PrepareDispatchRequest;
     readonly promise: Promise<DispatchPrepareAccepted>;
     reuseAfterMs?: number;
   }
@@ -124,66 +129,62 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
   ): void {
     const cached = preparesByHandle.get(cacheHandleKey(handle));
     if (cached !== undefined) {
-      cached.reuseAfterMs =
-        attestationInstantMs(terminalAt, "terminalAt") + IDEMPOTENCY_HORIZON_MS;
+      cached.reuseAfterMs = attestationInstantMs(terminalAt, "terminalAt") + IDEMPOTENCY_HORIZON_MS;
     }
   }
 
   async function cachedPrepareRemainsHeld(
     idempotencyKey: string,
-    cachedRequestDigest: string,
     accepted: DispatchPrepareAccepted,
     cached: CachedPrepare,
   ): Promise<boolean> {
-    const atMs = attestationInstantMs(now(), "now");
-    return await options.backend.transact(
-      { kind: "handle", handle: accepted.handle },
-      (store) => {
-        const row = store.read(accepted.handle);
-        if (row === undefined) {
-          if (cached.reuseAfterMs !== undefined && atMs >= cached.reuseAfterMs) {
-            return false;
-          }
-          throw new DispatchStateConflictError(
-            "prepare_dispatch",
-            "prepared",
-            `cached prepare replay for "${idempotencyKey}" lost its durable row before its reuse horizon`,
-          );
+    const readAtMs = () => attestationInstantMs(now(), "now");
+    return await options.backend.transact({ kind: "handle", handle: accepted.handle }, (store) => {
+      const row = store.read(accepted.handle);
+      if (row === undefined) {
+        if (cached.reuseAfterMs !== undefined && readAtMs() >= cached.reuseAfterMs) {
+          return false;
         }
-        if (isAttestationTombstone(row)) {
-          const reuseAfterMs = attestationInstantMs(row.reuseAfter, "reuseAfter");
-          cached.reuseAfterMs = reuseAfterMs;
-          if (atMs >= reuseAfterMs) {
-            return false;
-          }
-          throw new DispatchStateConflictError(
-            "prepare_dispatch",
-            "terminal-envelope-expired",
-            `cached prepare replay for "${idempotencyKey}" no longer matches its durable row`,
-          );
+        throw new DispatchStateConflictError(
+          "prepare_dispatch",
+          "prepared",
+          `cached prepare replay for "${idempotencyKey}" lost its durable row before its reuse horizon`,
+        );
+      }
+      if (isAttestationTombstone(row)) {
+        const reuseAfterMs = attestationInstantMs(row.reuseAfter, "reuseAfter");
+        cached.reuseAfterMs = reuseAfterMs;
+        if (readAtMs() >= reuseAfterMs) {
+          return false;
         }
-        if (row.terminalAt !== undefined) {
-          const reuseAfterMs =
-            attestationInstantMs(row.terminalAt, "terminalAt") + IDEMPOTENCY_HORIZON_MS;
-          cached.reuseAfterMs = reuseAfterMs;
-          if (atMs >= reuseAfterMs) {
-            return false;
-          }
+        throw new DispatchStateConflictError(
+          "prepare_dispatch",
+          "terminal-envelope-expired",
+          `cached prepare replay for "${idempotencyKey}" no longer matches its durable row`,
+        );
+      }
+      if (row.terminalAt !== undefined) {
+        const reuseAfterMs =
+          attestationInstantMs(row.terminalAt, "terminalAt") + IDEMPOTENCY_HORIZON_MS;
+        cached.reuseAfterMs = reuseAfterMs;
+        if (readAtMs() >= reuseAfterMs) {
+          return false;
         }
-        if (
-          row.idempotencyKey !== idempotencyKey ||
-          row.promptProvenance.inputDigest !== accepted.prepared.promptProvenance.inputDigest ||
-          row.prepareRequestDigest !== cachedRequestDigest
-        ) {
-          throw new DispatchStateConflictError(
-            "prepare_dispatch",
-            row.state,
-            `cached prepare replay for "${idempotencyKey}" no longer matches its durable row`,
-          );
-        }
-        return true;
-      },
-    );
+      }
+      if (
+        row.idempotencyKey !== idempotencyKey ||
+        row.promptProvenance.inputDigest !== accepted.prepared.promptProvenance.inputDigest ||
+        row.prepareRequestDigest !==
+          prepareDispatchRequestDigest({ ...cached.request, input: row.input })
+      ) {
+        throw new DispatchStateConflictError(
+          "prepare_dispatch",
+          row.state,
+          `cached prepare replay for "${idempotencyKey}" no longer matches its durable row`,
+        );
+      }
+      return true;
+    });
   }
 
   function rejectLaunch(path: string, detail: string): DispatchPreLaunchRejection {
@@ -251,6 +252,35 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         dispatchInput = input.input;
       }
 
+      if (roleId === "implement-reviewer") {
+        if (input.timeoutMs < IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS) {
+          return rejectLaunch(
+            "timeoutMs",
+            `expected an integer timeout within [${IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS}, ${DISPATCH_TIMEOUT_MAX_MS}] ms`,
+          );
+        }
+        if (
+          typeof dispatchInput !== "object" ||
+          dispatchInput === null ||
+          Array.isArray(dispatchInput)
+        ) {
+          return dispatchPreLaunchRejection(
+            "invalid-role-input",
+            "input",
+            "implement-reviewer input must be an object",
+          );
+        }
+        for (const field of IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS) {
+          if (Object.hasOwn(dispatchInput, field)) {
+            return dispatchPreLaunchRejection(
+              "invalid-role-input",
+              `input.${field}`,
+              `caller must omit server-bound implement-reviewer timing field "${field}"`,
+            );
+          }
+        }
+      }
+
       const manifest = options.promptArtifactStore.readManifest();
       const manifestSurface = manifest.promptSurface;
       if (manifestSurface === undefined) {
@@ -265,7 +295,15 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       if (input.refs === undefined) {
         const validation = validateDispatchInput({
           roleId,
-          input: dispatchInput,
+          input:
+            roleId === "implement-reviewer"
+              ? {
+                  ...(dispatchInput as object),
+                  responseStoreNow: "1970-01-01T00:02:00.000Z",
+                  gateCompleteBy: "1970-01-01T00:01:00.000Z",
+                  synthesisStoreReserveMs: IMPLEMENT_REVIEWER_SYNTHESIS_STORE_RESERVE_MS,
+                }
+              : dispatchInput,
           surface: manifestSurface,
           ...(input.overlays === undefined ? {} : { overlays: input.overlays }),
           registry: DISPATCH_OVERLAY_REGISTRY,
@@ -299,32 +337,25 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         );
       }
       const request = {
-          namespace,
-          roleId,
-          surface: manifestSurface,
-          input: dispatchInput,
-          idempotencyKey: input.idempotencyKey,
-          timeoutMs: input.timeoutMs,
-          ...(input.overlays === undefined ? {} : { overlays: input.overlays }),
-          registry: DISPATCH_OVERLAY_REGISTRY,
-          promptDigest,
-          catalogHash,
-          expectedChild: input.expectedChild,
-          ...(input.reprepareOf === undefined ? {} : { reprepareOf: input.reprepareOf }),
+        namespace,
+        roleId,
+        surface: manifestSurface,
+        input: dispatchInput,
+        idempotencyKey: input.idempotencyKey,
+        timeoutMs: input.timeoutMs,
+        ...(input.overlays === undefined ? {} : { overlays: input.overlays }),
+        registry: DISPATCH_OVERLAY_REGISTRY,
+        promptDigest,
+        catalogHash,
+        expectedChild: input.expectedChild,
+        ...(input.reprepareOf === undefined ? {} : { reprepareOf: input.reprepareOf }),
       } as const;
       const fingerprint = prepareDispatchRequestDigest(request);
       while (true) {
         const existing = prepares.get(input.idempotencyKey);
         if (existing !== undefined) {
           const accepted = await existing.promise;
-          if (
-            await cachedPrepareRemainsHeld(
-              input.idempotencyKey,
-              existing.fingerprint,
-              accepted,
-              existing,
-            )
-          ) {
+          if (await cachedPrepareRemainsHeld(input.idempotencyKey, accepted, existing)) {
             if (existing.fingerprint !== fingerprint) {
               throw new AttestationKeyReuseError(input.idempotencyKey, accepted.handle);
             }
@@ -345,7 +376,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           }
           return outcome;
         });
-        const entry: CachedPrepare = { fingerprint, promise: pending };
+        const entry: CachedPrepare = { fingerprint, request, promise: pending };
         prepares.set(input.idempotencyKey, entry);
         try {
           const accepted = await pending;
@@ -359,8 +390,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         }
       }
     },
-    fetchInput: (input) =>
-      fetchDispatchInputOn(options.backend, { namespace, ...input }, { now }),
+    fetchInput: (input) => fetchDispatchInputOn(options.backend, { namespace, ...input }, { now }),
     storeResult: async (input) => {
       const outcome = await storeDispatchResultOn(options.backend, input, { now });
       if (outcome.state === "aborted") {

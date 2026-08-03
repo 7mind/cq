@@ -14,6 +14,8 @@ import {
   DISPATCH_OVERLAY_REGISTRY,
   FakeDispatchClock,
   HARNESSES,
+  IMPLEMENT_REVIEWER_PHASE_EXHAUSTION_CRITICISM,
+  IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
   InMemoryAttestationStore,
   DispatchTransportAbort,
   DispatchTransportAdapterRegistry,
@@ -39,6 +41,7 @@ import {
   type DispatchJSONValue,
   type DispatchPrepared,
   type DispatchServiceDeps,
+  type DispatchTransportAdapter,
   type Harness,
   type NativeCompletionProof,
 } from "@cq/config";
@@ -74,6 +77,30 @@ const OUTPUT: DispatchJSONValue = {
   checkSummary: "focused router suite passed",
   summary: "shared transport router implemented",
   gateDurationMs: 1,
+};
+
+const REVIEWER_OUTPUT: DispatchJSONValue = {
+  taskId: "T1696",
+  verdict: "disapprove",
+  criticism: ["Recorded transport fixture disapproval."],
+  questions: [],
+  defects: [],
+  rationale: "The transport fixture intentionally stores a non-exhaustion disapproval.",
+  gateReRan: false,
+  resultCommitVerified: false,
+  gateReRanReason: "transport-fixture-does-not-run-gate",
+};
+
+const REVIEWER_EXHAUSTION_OUTPUT: DispatchJSONValue = {
+  taskId: "T1696",
+  verdict: "disapprove",
+  criticism: [IMPLEMENT_REVIEWER_PHASE_EXHAUSTION_CRITICISM],
+  questions: [],
+  defects: [],
+  rationale: IMPLEMENT_REVIEWER_PHASE_EXHAUSTION_CRITICISM,
+  gateReRan: false,
+  resultCommitVerified: false,
+  gateReRanReason: "phase-budget-exhausted-before-result-commit-verification",
 };
 
 interface CodexRecordingFixture {
@@ -178,6 +205,7 @@ interface PreparedFixture {
   readonly deps: DispatchServiceDeps;
   readonly expectedCompletion: NativeCompletionProof;
   readonly store: RecordingAttestationStore;
+  readonly clock: FakeDispatchClock;
 }
 
 interface RecordedReplacement {
@@ -252,12 +280,63 @@ function preparedFixture(
     prepared: outcome.prepared,
     deps: { store, now: clock.now },
     store,
+    clock,
     expectedCompletion: {
       kind: "native-completion",
       actor: "trusted-parent",
       childId: expectedChild.childId,
       runId: expectedChild.runId,
       completedAt: now,
+    },
+  };
+}
+
+function preparedReviewerFixture(targetHarness: Harness, sequence: number): PreparedFixture {
+  const clock = new FakeDispatchClock(T0);
+  const store = new RecordingAttestationStore(NAMESPACE);
+  const expectedChild = {
+    childId: `${targetHarness}-reviewer-child-${sequence}`,
+    runId: `${targetHarness}-reviewer-run-${sequence}`,
+  };
+  const outcome = prepareDispatch(
+    {
+      namespace: NAMESPACE,
+      roleId: "implement-reviewer",
+      surface: targetHarness,
+      input: {
+        taskId: "T1696",
+        acceptance: "Every transport delivers the original absolute review phase window.",
+        worktreePath: "/tmp/T1696",
+        branch: "implement/T1696",
+        baseCommit: "e65ce042ab4093398372f886e471e57f8f3efdae",
+        workerResult: {
+          resultCommit: "e65ce042ab4093398372f886e471e57f8f3efdae",
+          checkSummary: "REAL_CHECK_EXIT=0",
+          filesTouched: [],
+        },
+        round: 1,
+      },
+      idempotencyKey: `T1696-${targetHarness}-${sequence}`,
+      timeoutMs: IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
+      registry: DISPATCH_OVERLAY_REGISTRY,
+      promptDigest: "a".repeat(64),
+      catalogHash: "b".repeat(64),
+      expectedChild,
+    },
+    { store, now: clock.now, randomBytes: sequentialDispatchRandomBytes(sequence) },
+  );
+  if (!outcome.accepted) throw new Error(`prepare failed: ${outcome.reason}: ${outcome.detail}`);
+  return {
+    prepared: outcome.prepared,
+    deps: { store, now: clock.now },
+    store,
+    clock,
+    expectedCompletion: {
+      kind: "native-completion",
+      actor: "trusted-parent",
+      childId: expectedChild.childId,
+      runId: expectedChild.runId,
+      completedAt: T0,
     },
   };
 }
@@ -403,6 +482,117 @@ describe("T1631 shared three-harness transport router", () => {
       "pi->pi:false:native:pi:native",
       "pi->pi:true:process:pi:process",
     ]);
+  });
+
+  test("all native and process transports consume the fetched absolute reviewer deadlines [BG]", async () => {
+    const observed: Array<{ readonly adapterId: string; readonly input: DispatchJSONValue }> = [];
+    const adapters = HARNESSES.flatMap((targetHarness) =>
+      (["native", "process"] as const).map((transport): DispatchTransportAdapter => ({
+        id: `${targetHarness}:${transport}`,
+        targetHarness,
+        transport,
+        launch: (context) => {
+          const input = context.child.materializeInput().input;
+          observed.push({ adapterId: context.route.adapterId, input });
+          const stored = context.child.storeResult(REVIEWER_OUTPUT);
+          if (stored.state === "aborted") {
+            return { outcome: "aborted", reason: stored.result.reason };
+          }
+          return {
+            outcome: "completed",
+            handle: handleOf(context.prepared),
+            nativeCompletion: {
+              kind: "native-completion",
+              actor:
+                context.route.transport === "process" || context.route.targetHarness === "pi"
+                  ? "trusted-extension"
+                  : "trusted-parent",
+              childId: `${targetHarness}-reviewer-child-${HARNESSES.indexOf(targetHarness)}`,
+              runId: `${targetHarness}-reviewer-run-${HARNESSES.indexOf(targetHarness)}`,
+              completedAt: T0,
+            },
+            handleOnlyEnforcement:
+              context.route.transport === "process" ? "structural" : "prompt-best-effort",
+          };
+        },
+      })),
+    );
+    const registry = new DispatchTransportAdapterRegistry(adapters);
+
+    for (const [sequence, targetHarness] of HARNESSES.entries()) {
+      for (const transport of ["native", "process"] as const) {
+        const fixture = preparedReviewerFixture(targetHarness, sequence);
+        const result = await runPreparedDispatch(
+          {
+            namespace: NAMESPACE,
+            prepared: fixture.prepared,
+            activeHarness: targetHarness,
+            targetHarness,
+            forceShellout: transport === "process",
+          },
+          registry,
+          fixture.deps,
+        );
+        expect(result.outcome).toBe("consumed");
+      }
+    }
+
+    expect(observed.map(({ adapterId }) => adapterId).sort()).toEqual(
+      HARNESSES.flatMap((target) => [`${target}:native`, `${target}:process`]).sort(),
+    );
+    for (const { input } of observed) {
+      expect(input).toMatchObject({
+        responseStoreNow: "2026-08-02T18:47:00.000Z",
+        gateCompleteBy: "2026-08-02T18:46:00.000Z",
+        synthesisStoreReserveMs: 60_000,
+      });
+    }
+  });
+
+  test("a reviewer launched one millisecond before launch cutoff exhausts only at gateCompleteBy [BG]", async () => {
+    const fixture = preparedReviewerFixture("codex", 3);
+    fixture.clock.advance(59_999);
+    const exhaustionStates: boolean[] = [];
+    const registry = new DispatchTransportAdapterRegistry([
+      createNativeDispatchAdapter("codex", (context) => {
+        const materialized = context.child.materializeInput();
+        const input = materialized.input as Readonly<Record<string, DispatchJSONValue>>;
+        const gateCompleteBy = input["gateCompleteBy"];
+        if (typeof gateCompleteBy !== "string") throw new Error("missing gateCompleteBy");
+        exhaustionStates.push(Date.parse(fixture.clock.peek()) >= Date.parse(gateCompleteBy));
+        fixture.clock.advance(1);
+        exhaustionStates.push(Date.parse(fixture.clock.peek()) >= Date.parse(gateCompleteBy));
+        const stored = context.child.storeResult(REVIEWER_EXHAUSTION_OUTPUT);
+        if (stored.state === "aborted") {
+          return { outcome: "aborted", reason: stored.result.reason };
+        }
+        return {
+          outcome: "completed",
+          handle: handleOf(context.prepared),
+          nativeCompletion: {
+            kind: "native-completion",
+            actor: "trusted-parent",
+            childId: "codex-reviewer-child-3",
+            runId: "codex-reviewer-run-3",
+            completedAt: fixture.clock.peek(),
+          },
+          handleOnlyEnforcement: "prompt-best-effort",
+        };
+      }),
+    ]);
+    const result = await runPreparedDispatch(
+      {
+        namespace: NAMESPACE,
+        prepared: fixture.prepared,
+        activeHarness: "codex",
+        targetHarness: "codex",
+        forceShellout: false,
+      },
+      registry,
+      fixture.deps,
+    );
+    expect(result.outcome).toBe("consumed");
+    expect(exhaustionStates).toEqual([false, true]);
   });
 
   test("fails closed before launch when a selected native or process adapter is unavailable", () => {

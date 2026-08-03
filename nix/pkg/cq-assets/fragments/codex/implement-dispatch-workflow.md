@@ -22,6 +22,8 @@
 >
 > **Implement-reviewer dispatch.** For each process-boundary
 > `implement-reviewer`, compose `{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism? }`,
+> Omit `responseStoreNow`, `gateCompleteBy`, and `synthesisStoreReserveMs` from
+> caller input because `prepare_dispatch` binds those absolute values, then
 > dispatch through `CQ_SUBAGENT`, require its capability-scoped `store_result`
 > plus handle-only final response, confirm native completion, and fetch once
 > with the retained prepared handle. Only a consumed fetched body is a usable
