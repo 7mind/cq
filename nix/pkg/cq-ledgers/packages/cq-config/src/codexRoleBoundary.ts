@@ -78,7 +78,7 @@ export interface CodexRoleBoundaryExecutionResult {
     /** Parent-minted label carried on the registered subprocess launch, never read from child text. */
     readonly correlationId: string;
     /** Actual thread.started id intercepted from the child JSONL transport. */
-    readonly threadId: string;
+    readonly childThreadId: string;
     /** Actual terminal turn event intercepted from the child JSONL transport. */
     readonly outcome: "completed" | "transport-failed";
     /** Actual registered target exit status; corroborating evidence only. */
@@ -430,7 +430,7 @@ function observedCodexRoleBoundaryResult(
     observation: Object.freeze({
       agentType: plan.roleId,
       correlationId,
-      threadId: observation.threadIds[0],
+      childThreadId: observation.threadIds[0],
       outcome: observation.turnOutcomes[0],
       exitStatus,
     }),

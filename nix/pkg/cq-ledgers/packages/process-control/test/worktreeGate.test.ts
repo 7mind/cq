@@ -312,6 +312,24 @@ describe("canonical worktree gate [Effectual-GoodCommunication]", () => {
     }
   });
 
+  test("a registered command can settle sibling groups without terminating its own gate", async () => {
+    const { root, stateDir } = await repositoryFixture();
+    const lease = await acquireWorktreeGate({ worktree: root, commandCwd: root, stateDir });
+    try {
+      const processControl = fileURLToPath(new URL("../src/index.ts", import.meta.url));
+      const probe = [
+        `const { settleWorktreeGateCommands } = await import(${JSON.stringify(processControl)});`,
+        `const result = await settleWorktreeGateCommands(${JSON.stringify({ worktree: root, stateDir })});`,
+        `if (result.signaled.length !== 0 || result.survivors.length !== 0) process.exit(2);`,
+      ].join("\n");
+      const launched = await launchRegisteredGateCommand(lease, [process.execPath, "-e", probe]);
+
+      expect(await launched.exited).toEqual({ exitCode: 0, signal: null });
+    } finally {
+      await closeWorktreeGate(lease);
+    }
+  });
+
   test("returns idempotently when the canonical worktree has no active gate", async () => {
     const { root, stateDir } = await repositoryFixture();
     expect(await settleWorktreeGateCommands({ worktree: root, stateDir })).toEqual({

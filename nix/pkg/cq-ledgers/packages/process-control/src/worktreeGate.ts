@@ -270,7 +270,20 @@ async function settleRegisteredProcessGroups(
   options: SettleProcessGroupsOptions,
 ): Promise<SettleProcessGroupsResult> {
   await waitForPendingRegistrations(lease.gateDir);
-  const registrations = await readRegisteredProcessGroups(lease);
+  const callerGroup = spawnSync("ps", ["-o", "pgid=", "-p", String(process.pid)], {
+    encoding: "utf8",
+  });
+  const callerPgid = Number(callerGroup.stdout.trim());
+  if (
+    callerGroup.status !== 0 ||
+    !Number.isSafeInteger(callerPgid) ||
+    callerPgid <= 1
+  ) {
+    throw new Error("cq gate: could not resolve the caller process group");
+  }
+  const registrations = (await readRegisteredProcessGroups(lease)).filter(
+    ({ pgid }) => pgid !== callerPgid,
+  );
   const result = await settleProcessGroups(registrations, options);
   if (result.survivors.length > 0) {
     throw new Error(`cq gate: process groups did not settle: ${result.survivors.join(", ")}`);

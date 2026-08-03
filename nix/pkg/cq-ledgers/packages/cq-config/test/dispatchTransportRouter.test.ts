@@ -53,7 +53,7 @@ const CLAUDE_CORRELATION: ClaudeChildCorrelation = {
 const CODEX_CORRELATION: CodexChildCorrelation = {
   agentType: "implement-worker",
   correlationId: "T1631CodexCorrelation0123456789abcd",
-  threadId: "recorded-codex-thread",
+  threadId: "parent-controlled-codex-run",
 };
 const promptDigestOf = (prompt: string): string =>
   new Bun.CryptoHasher("sha256").update(prompt).digest("hex");
@@ -146,8 +146,7 @@ function createCodexRecordingFixture(
     | "malformed"
     | "success"
     | "unused-capabilities"
-    | "wait"
-    | "wrong-thread",
+    | "wait",
 ): CodexRecordingFixture {
   const endpoint = createRecordedCapabilityEndpoint();
   const root = mkdtempSync(join(tmpdir(), "cq-t1631-codex-"));
@@ -584,10 +583,7 @@ describe("T1631 shared three-harness transport router", () => {
     }
   });
 
-  for (const [mode, sequence] of [
-    ["wrong-thread", 27],
-    ["failed-outcome", 28],
-  ] as const) {
+  for (const [mode, sequence] of [["failed-outcome", 28]] as const) {
     test(`Codex process adapter rejects the recorded ${mode} observation`, async () => {
       const processFixture = createCodexRecordingFixture(mode);
       try {

@@ -13,7 +13,6 @@ if (
     "success",
     "unused-capabilities",
     "wait",
-    "wrong-thread",
   ].includes(mode ?? "") ||
   capturePath === undefined ||
   endpoint === undefined
@@ -112,7 +111,7 @@ const finalMessage =
     : mode === "echo"
       ? JSON.stringify({ ...handle, output: { leaked: true } })
       : JSON.stringify(acknowledgement);
-const threadId = mode === "wrong-thread" ? "unexpected-codex-thread" : "recorded-codex-thread";
+const threadId = "fresh-codex-thread-from-exec";
 const turnEvent =
   mode === "failed-outcome"
     ? { type: "turn.failed", error: { message: "recorded transport failure" } }

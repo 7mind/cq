@@ -279,7 +279,12 @@ export function createCodexProcessDispatchAdapter(
         observation: {
           source: "transport",
           mode: CODEX_FALLBACK_DELIVERY_MODE,
-          ...observed.observation,
+          agentType: observed.observation.agentType,
+          correlationId: observed.observation.correlationId,
+          // Fresh `codex exec` runs mint their own child thread; completion stays bound to this parent-minted run identity.
+          threadId: binding.correlation.threadId,
+          outcome: observed.observation.outcome,
+          exitStatus: observed.observation.exitStatus,
           finalMessage: JSON.stringify(observed.handle),
           observedAt,
         },
