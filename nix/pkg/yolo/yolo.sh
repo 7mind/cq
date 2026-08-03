@@ -29,6 +29,10 @@
 #                              hooks.pre-start.host) run before an agent session, dropping --disable'd tags
 #   YOLO_SANDBOX_HOOKS_JSON  - JSON array of { command, tags } sandbox hooks (hooks.pre-start.sandbox);
 #                              surviving commands are composed into a script the entrypoint sources
+#   YOLO_CLIPBOARD_PROXY     - host binary for the clipboard broker (defects:D262)
+#   YOLO_CLIPBOARD_SHIM_DIR  - directory containing a `tmux` symlink to the proxy (prepended to
+#                              sandbox PATH so agent load-buffer/save-buffer calls hit the shim)
+#   YOLO_TMUX                - absolute path to host tmux (broker invokes this with fixed argv)
 
 : "${YOLO_LLM_SANDBOX:?must be set}"
 : "${YOLO_SANDBOX_ENTRYPOINT:?must be set}"
@@ -237,15 +241,83 @@ if [[ -n "${YOLO_PODMAN_SOCKET_PATH:-}" && -n "${YOLO_PODMAN_SOCKET_URI:-}" ]]; 
   fi
 fi
 
-# If we're inside tmux, bind its socket directory into the sandbox. Without
-# this, tools like claude-code detect $TMUX and try `tmux load-buffer -` to
-# copy, which fails because /tmp is tmpfs'd inside the sandbox and tmux
-# can't reach its socket. The parent dir is typically /tmp/tmux-<uid>/.
+# Clipboard bridge (defects:D262). NEVER bind the host tmux socket directory
+# into the sandbox: tmux authenticates by socket access alone and exposes
+# run-shell / new-window / etc., which the host tmux daemon would execute
+# outside bubblewrap (confused deputy → sandbox escape).
+#
+# Instead, when $TMUX points at a live host socket, start a per-launch broker
+# on the HOST that speaks a fixed two-op protocol (set/get clipboard) and
+# translates those into fixed `tmux load-buffer` / `tmux save-buffer` argv.
+# Only the broker's dedicated socket directory is bound into the sandbox, and
+# a PATH-prepending `tmux` shim forwards load-buffer/save-buffer/show-buffer
+# while rejecting every other verb. The sandbox TMUX coordinate is rewritten
+# to the broker socket with fixed non-host fields, and the llm-sandbox layer
+# confines every bind that would otherwise expose the inherited socket
+# (YOLO_CONFINE_TMUX_SOCKET, tasks:T1793).
 TMUX_BIND_ARGS=()
+CLIP_PROXY_DIR=""
+CLIP_BROKER_PID=""
+CLIP_SHIM_DIR=""
 if [[ -n "${TMUX:-}" ]]; then
   _tmux_sock="${TMUX%%,*}"
   if [[ -S "$_tmux_sock" ]]; then
-    TMUX_BIND_ARGS+=(--rw "$(dirname "$_tmux_sock")")
+    # The inherited socket never crosses the boundary: llm-sandbox masks or
+    # omits every bind that would expose it, by path or by object identity
+    # (argv, not env — the YOLO_* env is scrubbed before the sandbox exec).
+    TMUX_BIND_ARGS+=(--confine-socket "$_tmux_sock")
+    if [[ -n "${YOLO_CLIPBOARD_PROXY:-}" ]]; then
+      _clip_root="${XDG_RUNTIME_DIR:-/tmp}"
+      CLIP_PROXY_DIR="$(mktemp -d "${_clip_root}/yolo-clip.XXXXXX")"
+      # Restrict the directory to the launching user before the socket appears.
+      chmod 700 "$CLIP_PROXY_DIR"
+      _clip_sock="${CLIP_PROXY_DIR}/sock"
+      _tmux_bin="${YOLO_TMUX:-tmux}"
+      "${YOLO_CLIPBOARD_PROXY}" broker \
+        --listen "$_clip_sock" \
+        --tmux-socket "$_tmux_sock" \
+        --tmux "$_tmux_bin" &
+      CLIP_BROKER_PID=$!
+      # Wait briefly for the listener; fail closed if it never appears.
+      _clip_wait=0
+      while [[ ! -S "$_clip_sock" && $_clip_wait -lt 50 ]]; do
+        # Bail early if the broker died.
+        if ! kill -0 "$CLIP_BROKER_PID" 2>/dev/null; then
+          echo "warning: yolo clipboard broker exited before binding; clipboard disabled" >&2
+          CLIP_BROKER_PID=""
+          rm -rf "$CLIP_PROXY_DIR"
+          CLIP_PROXY_DIR=""
+          break
+        fi
+        sleep 0.05
+        _clip_wait=$((_clip_wait + 1))
+      done
+      if [[ -n "$CLIP_BROKER_PID" && -S "$_clip_sock" ]]; then
+        CLIP_SHIM_DIR="${YOLO_CLIPBOARD_SHIM_DIR:-}"
+        TMUX_BIND_ARGS+=(--rw "$CLIP_PROXY_DIR")
+        TMUX_BIND_ARGS+=(--env "YOLO_CLIPBOARD_SOCK=$_clip_sock")
+        # The sandbox TMUX coordinate names ONLY the broker socket with fixed
+        # non-host fields: clipboard detection stays active while neither the
+        # raw host socket path nor the host server PID crosses the boundary.
+        TMUX_BIND_ARGS+=(--env "TMUX=$_clip_sock,0,0")
+      else
+        if [[ -n "$CLIP_BROKER_PID" ]]; then
+          kill "$CLIP_BROKER_PID" 2>/dev/null || true
+          wait "$CLIP_BROKER_PID" 2>/dev/null || true
+          CLIP_BROKER_PID=""
+        fi
+        rm -rf "$CLIP_PROXY_DIR"
+        CLIP_PROXY_DIR=""
+        echo "warning: yolo clipboard broker socket did not appear; clipboard disabled" >&2
+        # No broker coordinate: keep detection off rather than leak the host
+        # socket path or server PID into the sandbox.
+        TMUX_BIND_ARGS+=(--env "TMUX=")
+      fi
+    else
+      # No broker available: keep detection off rather than leak the host
+      # socket path or server PID into the sandbox.
+      TMUX_BIND_ARGS+=(--env "TMUX=")
+    fi
   fi
 fi
 
@@ -437,10 +509,19 @@ fi
 # -> YOLO_SANDBOX_BIN, a buildEnv bin dir in the already-bound /nix/store).
 # Prepend it to PATH so sandboxed tools resolve these without the packages being
 # installed in the host profile. The agent binaries (claude/pi/codex) still
-# resolve via the inherited host PATH appended after it.
+# resolve via the inherited host PATH appended after it. The clipboard tmux
+# shim dir (defects:D262), when active, is prepended first so `tmux` resolves
+# to the fixed-op proxy rather than the host binary.
 SANDBOX_PKG_ARGS=()
+_sandbox_path="$PATH"
 if [[ -n "${YOLO_SANDBOX_BIN:-}" ]]; then
-  SANDBOX_PKG_ARGS+=(--env "PATH=$YOLO_SANDBOX_BIN:$PATH")
+  _sandbox_path="${YOLO_SANDBOX_BIN}:$_sandbox_path"
+fi
+if [[ -n "${CLIP_SHIM_DIR:-}" ]]; then
+  _sandbox_path="${CLIP_SHIM_DIR}:$_sandbox_path"
+fi
+if [[ "$_sandbox_path" != "$PATH" ]]; then
+  SANDBOX_PKG_ARGS+=(--env "PATH=$_sandbox_path")
 fi
 
 # Declarative session env vars set inside the sandbox (smind.hm.dev.llm.yolo.
@@ -852,13 +933,25 @@ unset ${!YOLO_@}
 # exec's the command. Otherwise we exec the sandbox directly (no extra entrypoint
 # layer, no cleanup). The host-side composed files live in tmpfs and are removed
 # on exit.
-# Any host-side tmpfile (secrets, hooks, or the synthesized ssh_config) must
-# outlive the sandbox and be removed on exit, so we run in the foreground behind
-# an EXIT-trap rather than exec'ing (exec would replace this process and skip the
-# cleanup). The entrypoint layer is added only when secrets/hooks are in play —
-# the ssh_config bind is a plain --ro-bind that needs no in-sandbox loading.
-if [[ -n "$SECRET_TMPFILE" || -n "$SANDBOX_HOOKS_TMPFILE" || -n "$SSH_CONFIG_TMPFILE" ]]; then
-  trap 'rm -f "$SECRET_TMPFILE" "$SANDBOX_HOOKS_TMPFILE" "$SSH_CONFIG_TMPFILE"' EXIT
+# Any host-side resource that must outlive the sandbox (secrets/hooks tmpfiles,
+# synthesized ssh_config, clipboard broker) is cleaned on EXIT, so we run in
+# the foreground behind a trap rather than exec'ing when any of them is active.
+# The entrypoint layer is added only when secrets/hooks are in play — the
+# ssh_config bind and clipboard broker socket are plain binds.
+_yolo_cleanup() {
+  rm -f "$SECRET_TMPFILE" "$SANDBOX_HOOKS_TMPFILE" "$SSH_CONFIG_TMPFILE"
+  if [[ -n "${CLIP_BROKER_PID:-}" ]]; then
+    kill "$CLIP_BROKER_PID" 2>/dev/null || true
+    wait "$CLIP_BROKER_PID" 2>/dev/null || true
+    CLIP_BROKER_PID=""
+  fi
+  if [[ -n "${CLIP_PROXY_DIR:-}" ]]; then
+    rm -rf "$CLIP_PROXY_DIR"
+    CLIP_PROXY_DIR=""
+  fi
+}
+if [[ -n "$SECRET_TMPFILE" || -n "$SANDBOX_HOOKS_TMPFILE" || -n "$SSH_CONFIG_TMPFILE" || -n "$CLIP_BROKER_PID" ]]; then
+  trap '_yolo_cleanup' EXIT
   if [[ -n "$SECRET_TMPFILE" || -n "$SANDBOX_HOOKS_TMPFILE" ]]; then
     "$_yolo_sandbox" \
       "${BASE_ARGS[@]}" \

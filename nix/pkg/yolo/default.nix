@@ -20,6 +20,23 @@ let
   yoloScript = ./yolo.sh;
   customPromptScript = pkgs.writeText "yolo-custom-prompt.sh" (builtins.readFile ./custom-prompt.sh);
 
+  # Host↔sandbox clipboard bridge (defects:D262). std-only Rust binary that
+  # runs as a host broker (fixed tmux load-buffer/save-buffer) and as the
+  # in-sandbox `tmux` argv0 shim. Built with rustc directly — no crates.io.
+  clipboardProxy = pkgs.runCommandLocal "yolo-clipboard-proxy" {
+    nativeBuildInputs = [
+      pkgs.rustc
+      pkgs.gcc
+    ];
+  } ''
+    mkdir -p $out/bin $out/tmux-shim
+    rustc -C opt-level=2 -C debuginfo=0 -o $out/bin/yolo-clipboard-proxy \
+      ${./clipboard-proxy/main.rs}
+    # Sandbox PATH entry: only the shim name `tmux` is visible here so agent
+    # tools that shell out to `tmux load-buffer` hit the proxy, not host tmux.
+    ln -s $out/bin/yolo-clipboard-proxy $out/tmux-shim/tmux
+  '';
+
   # The bubblewrap path-whitelisting layer yolo execs internally (see
   # llm-sandbox.sh / `exec "$YOLO_LLM_SANDBOX"`). It has no use on its own, so
   # it is built here as a private helper rather than a standalone package — the
@@ -111,6 +128,9 @@ pkgs.writeShellScriptBin "yolo" ''
   export YOLO_NIX_LD="${nix-ld}/bin/nix-ld"
   export YOLO_JQ="${jq}/bin/jq"
   export YOLO_CUSTOM_PROMPT="${customPromptScript}"
+  export YOLO_CLIPBOARD_PROXY="${clipboardProxy}/bin/yolo-clipboard-proxy"
+  export YOLO_CLIPBOARD_SHIM_DIR="${clipboardProxy}/tmux-shim"
+  export YOLO_TMUX="${pkgs.tmux}/bin/tmux"
   ${podmanExports}
   ${extraRoExports}
   ${extraRwExports}
