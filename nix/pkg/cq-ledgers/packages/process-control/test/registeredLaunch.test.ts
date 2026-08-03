@@ -163,6 +163,136 @@ afterEach(async () => {
 });
 
 describe("registered process-group launch bootstrap [T1624]", () => {
+  // Regression origin: D260 left a live target and its bootstrap behind when
+  // the authenticated launcher disappeared before the target exited.
+  test.skipIf(process.platform !== "linux")(
+    "settles a running target when its authenticated launcher exits [Whitebox-GoodCommunication]",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-running-orphan-"));
+      roots.push(root);
+      const launcherStatePath = join(root, "launcher-state.json");
+      const targetPidPath = join(root, "target-pid");
+      const registeredLaunchUrl = new URL("../src/registeredLaunch.ts", import.meta.url).href;
+      const targetSource = [
+        "const { writeFileSync } = require('node:fs');",
+        `writeFileSync(${JSON.stringify(targetPidPath)}, String(process.pid));`,
+        "setInterval(() => {}, 1000);",
+      ].join("\n");
+      const launcherSource = [
+        "const { spawn } = require('node:child_process');",
+        "const { writeFileSync } = require('node:fs');",
+        `const { launchRegisteredProcessGroup } = await import(${JSON.stringify(registeredLaunchUrl)});`,
+        "let protocolDirectory;",
+        "const launched = await launchRegisteredProcessGroup({",
+        `  argv: [process.execPath, '-e', ${JSON.stringify(targetSource)}],`,
+        `  cwd: ${JSON.stringify(root)},`,
+        "  env: process.env,",
+        "  stdio: ['ignore', 'ignore', 'inherit'],",
+        "  register: async () => {},",
+        "  launchBootstrap: (specification) => {",
+        "    protocolDirectory = specification.argv[2];",
+        "    const child = spawn(specification.argv[0], specification.argv.slice(1), {",
+        "      cwd: specification.cwd,",
+        "      env: specification.env,",
+        "      detached: specification.detached,",
+        "      stdio: specification.stdio,",
+        "    });",
+        "    return {",
+        "      process: child,",
+        "      pid: child.pid,",
+        "      exited: new Promise((resolve, reject) => {",
+        "        child.once('error', reject);",
+        "        child.once('exit', (exitCode, signal) => resolve({ exitCode, signal }));",
+        "      }),",
+        "      outputDrained: Promise.resolve(),",
+        "      resultFromTargetOutcome: (outcome) => outcome,",
+        "      terminate: (signal) => child.kill(signal),",
+        "    };",
+        "  },",
+        "});",
+        `writeFileSync(${JSON.stringify(launcherStatePath)}, JSON.stringify({`,
+        "  protocolDirectory,",
+        "  registration: launched.registration,",
+        "}));",
+        "await launched.exited;",
+      ].join("\n");
+      const launcher = spawn(process.execPath, ["-e", launcherSource], {
+        cwd: root,
+        env: process.env,
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      const launcherPid = launcher.pid;
+      if (launcherPid === undefined) throw new Error("test launcher returned no PID");
+      if (launcher.stderr === null) throw new Error("test launcher returned no stderr pipe");
+      const launcherExited = exited(launcher);
+      const bootstrapStderr = streamText(launcher.stderr);
+      let protocolDirectory: string | undefined;
+      let registration: ProcessGroupRegistration | undefined;
+      let targetPid: number | undefined;
+
+      try {
+        await waitForFile(launcherStatePath);
+        const launcherState = JSON.parse(await readFile(launcherStatePath, "utf8")) as {
+          readonly protocolDirectory: string;
+          readonly registration: ProcessGroupRegistration;
+        };
+        protocolDirectory = launcherState.protocolDirectory;
+        registration = launcherState.registration;
+        await waitForFile(targetPidPath);
+        targetPid = Number(await readFile(targetPidPath, "utf8"));
+        expect(await readProcessIdentity(registration.leader.pid)).toEqual(registration.leader);
+        expect(await readProcessIdentity(targetPid)).not.toBeNull();
+        expect(isProcessGroupAlive(registration.pgid)).toBe(true);
+        expect(await pathExists(protocolDirectory)).toBe(true);
+        expect(await pathExists(join(protocolDirectory, "completion.json"))).toBe(false);
+
+        const settlementStarted = Date.now();
+        launcher.kill("SIGKILL");
+        expect(await launcherExited).toEqual({ exitCode: null, signal: "SIGKILL" });
+        const deadline = settlementStarted + REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS;
+        let settlementObservedAt: number | undefined;
+        for (;;) {
+          const observedIdentity = await readProcessIdentity(registration.leader.pid);
+          const identityAlive =
+            observedIdentity !== null &&
+            observedIdentity.startTime === registration.leader.startTime;
+          const groupAlive = isProcessGroupAlive(registration.pgid);
+          const directoryAlive = await pathExists(protocolDirectory);
+          if (!identityAlive && !groupAlive && !directoryAlive) {
+            settlementObservedAt = Date.now();
+            break;
+          }
+          if (Date.now() >= deadline) {
+            expect({ identityAlive, groupAlive, directoryAlive }).toEqual({
+              identityAlive: false,
+              groupAlive: false,
+              directoryAlive: false,
+            });
+          }
+          await Bun.sleep(2);
+        }
+        expect(settlementObservedAt).toBeDefined();
+        expect(settlementObservedAt! - settlementStarted).toBeLessThanOrEqual(
+          REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS,
+        );
+        expect(await readProcessIdentity(targetPid)).toBeNull();
+        expect(await bootstrapStderr).toContain("completion writer identity disappeared");
+      } finally {
+        if (launcher.exitCode === null && launcher.signalCode === null) {
+          launcher.kill("SIGKILL");
+          await launcherExited;
+        }
+        if (registration !== undefined) {
+          signalProcessGroup(registration.pgid, "SIGKILL");
+          await waitForIdentityToDisappear(registration.leader.pid);
+        }
+        if (protocolDirectory !== undefined) {
+          await rm(protocolDirectory, { recursive: true, force: true });
+        }
+      }
+    },
+  );
+
   // Regression origin: D260 exposed unauthenticated completion-writer cancellation.
   test.skipIf(process.platform !== "linux")(
     "settles an exited bootstrap while its killed completion writer remains unreaped [Whitebox-GoodCommunication]",

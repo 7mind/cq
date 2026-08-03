@@ -134,31 +134,62 @@ interface TargetOutcome {
   readonly signal: NodeJS.Signals | null;
 }
 
+type LauncherMonitorResult =
+  | { readonly state: "launcher-lost" }
+  | { readonly state: "cancelled" };
+
 function childExit(child: ChildProcess): Promise<TargetOutcome> {
   return new Promise((resolve) => {
     child.once("exit", (exitCode, signal) => resolve({ exitCode, signal }));
   });
 }
 
+async function monitorInitialLauncher(
+  expectedLauncher: ProcessIdentity,
+  launcherDarwinHelper: string | null,
+  signal: AbortSignal,
+): Promise<LauncherMonitorResult> {
+  while (!signal.aborted) {
+    if (!(await isInitialLauncherAlive(expectedLauncher, launcherDarwinHelper))) {
+      return { state: "launcher-lost" };
+    }
+    await new Promise((resolve) => setTimeout(resolve, COMPLETION_POLL_MS));
+  }
+  return { state: "cancelled" };
+}
+
+async function waitWhileLauncherLives<T>(
+  operation: Promise<T>,
+  launcherMonitor: Promise<LauncherMonitorResult>,
+  protocolDirectory: string,
+  launcherDarwinHelper: string | null,
+  launcherMonitorController: AbortController,
+  child: ChildProcess,
+): Promise<T> {
+  const result = await Promise.race([
+    operation.then((value) => ({ state: "completed" as const, value })),
+    launcherMonitor,
+  ]);
+  if (result.state === "completed") return result.value;
+  if (result.state === "launcher-lost") {
+    launcherMonitorController.abort();
+    child.unref();
+    await rejectOrphanedLauncher(protocolDirectory, launcherDarwinHelper, true);
+  }
+  throw new Error("cq registered-launch bootstrap: launcher monitor cancelled unexpectedly");
+}
+
 async function waitForCompletion(
   path: string,
   expectedNonce: string,
   expectedPgid: number,
-  expectedLauncher: ProcessIdentity,
-  launcherDarwinHelper: string | null,
-  protocolDirectory: string,
+  signal: AbortSignal,
 ): Promise<void> {
-  for (;;) {
-    if (!(await isInitialLauncherAlive(expectedLauncher, launcherDarwinHelper))) {
-      await rejectOrphanedLauncher(protocolDirectory, launcherDarwinHelper, true);
-    }
+  while (!signal.aborted) {
     try {
       const value = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
       if (value["nonce"] !== expectedNonce || value["pgid"] !== expectedPgid) {
         throw new Error("cq registered-launch bootstrap: completion identity mismatch");
-      }
-      if (!(await isInitialLauncherAlive(expectedLauncher, launcherDarwinHelper))) {
-        await rejectOrphanedLauncher(protocolDirectory, launcherDarwinHelper, true);
       }
       return;
     } catch (error) {
@@ -249,24 +280,63 @@ async function main(argv: readonly string[]): Promise<TargetOutcome> {
     throw error;
   }
 
-  await writeJsonAtomic(statusPath, { nonce, pgid: process.pid, state: "launched" });
-  const outcome = await exited;
-  await writeJsonAtomic(statusPath, {
-    nonce,
-    pgid: process.pid,
-    state: "exited",
-    ...outcome,
-  });
-  await waitForCompletion(
-    completionPath,
-    nonce,
-    process.pid,
+  const launcherMonitorController = new AbortController();
+  const launcherMonitor = monitorInitialLauncher(
     launcher,
     launcherDarwinHelper,
-    protocolDirectory,
+    launcherMonitorController.signal,
   );
-  await rm(completionPath, { force: true });
-  return outcome;
+  try {
+    await waitWhileLauncherLives(
+      writeJsonAtomic(statusPath, { nonce, pgid: process.pid, state: "launched" }),
+      launcherMonitor,
+      protocolDirectory,
+      launcherDarwinHelper,
+      launcherMonitorController,
+      child,
+    );
+    const outcome = await waitWhileLauncherLives(
+      exited,
+      launcherMonitor,
+      protocolDirectory,
+      launcherDarwinHelper,
+      launcherMonitorController,
+      child,
+    );
+    await waitWhileLauncherLives(
+      writeJsonAtomic(statusPath, {
+        nonce,
+        pgid: process.pid,
+        state: "exited",
+        ...outcome,
+      }),
+      launcherMonitor,
+      protocolDirectory,
+      launcherDarwinHelper,
+      launcherMonitorController,
+      child,
+    );
+    await waitWhileLauncherLives(
+      waitForCompletion(
+        completionPath,
+        nonce,
+        process.pid,
+        launcherMonitorController.signal,
+      ),
+      launcherMonitor,
+      protocolDirectory,
+      launcherDarwinHelper,
+      launcherMonitorController,
+      child,
+    );
+    if (!(await isInitialLauncherAlive(launcher, launcherDarwinHelper))) {
+      await rejectOrphanedLauncher(protocolDirectory, launcherDarwinHelper, true);
+    }
+    await rm(completionPath, { force: true });
+    return outcome;
+  } finally {
+    launcherMonitorController.abort();
+  }
 }
 
 void main(process.argv.slice(2)).then(
