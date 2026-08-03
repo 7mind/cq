@@ -11,9 +11,16 @@
 //! rejected, so a sandboxed process cannot confused-deputy the host tmux
 //! server into executing arbitrary commands.
 //!
-//! Wire protocol (length-prefixed, little-endian u32 lengths):
+//! Wire protocol (length-prefixed, little-endian u32 lengths, one request per
+//! connection; any byte after a complete request is rejected unread):
 //!   request:  tag:u8 (1=SET, 2=GET) [+ u32 len + bytes for SET]
 //!   response: tag:u8 (0=OK, 1=ERR, 2=DATA) [+ u32 len + bytes]
+//!
+//! Bounds (tasks:T1794): every payload, diagnostic, and adapter stream is
+//! bounded by the named constants below; the adapter runs under
+//! ADAPTER_DEADLINE with concurrent stdin/stdout/stderr pumping so pipe
+//! ordering cannot deadlock, and a deadline or overflow terminates and reaps
+//! the child while the broker stays available for the next request.
 
 use std::convert::TryFrom;
 use std::env;
@@ -23,9 +30,19 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
-const DEFAULT_MAX_BYTES: u32 = 1_048_576; // 1 MiB
+/// Clipboard payload bound (bytes), declared or streamed.
+const CLIPBOARD_MAX_BYTES: u32 = 1_048_576; // 1 MiB
+/// Bound on every returned diagnostic (bytes), adapter stderr included.
+const DIAGNOSTIC_MAX_BYTES: usize = 4096;
+/// Fixed deadline for one tmux adapter invocation; expiry terminates and
+/// reaps the child.
+const ADAPTER_DEADLINE: Duration = Duration::from_secs(10);
+/// Poll interval while waiting for the adapter.
+const ADAPTER_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
 const TAG_SET: u8 = 1;
 const TAG_GET: u8 = 2;
 const TAG_OK: u8 = 0;
@@ -164,7 +181,7 @@ fn parse_broker_args(args: &[String]) -> Result<BrokerConfig, String> {
     let mut listen: Option<PathBuf> = None;
     let mut tmux_socket: Option<PathBuf> = None;
     let mut tmux_bin = PathBuf::from("tmux");
-    let mut max_bytes = DEFAULT_MAX_BYTES;
+    let mut max_bytes = CLIPBOARD_MAX_BYTES;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -216,88 +233,242 @@ fn handle_client(mut stream: UnixStream, cfg: &BrokerConfig) -> Result<(), Strin
     let tag = read_u8(&mut stream)?;
     match tag {
         TAG_SET => {
-            let payload = read_payload(&mut stream, cfg.max_bytes)?;
+            let declared = read_u32_le(&mut stream)?;
+            if declared > cfg.max_bytes {
+                // Well-formed frame, policy violation: answer ERR without
+                // reading a single body byte; the adapter is never invoked.
+                return write_err(
+                    &mut stream,
+                    &format!("payload length {declared} exceeds max-bytes {}", cfg.max_bytes),
+                );
+            }
+            let mut payload = vec![0u8; declared as usize];
+            if declared > 0 {
+                stream
+                    .read_exact(&mut payload)
+                    .map_err(|e| format!("read payload: {e}"))?;
+            }
+            if let Err(e) = reject_trailing(&mut stream) {
+                return write_err(&mut stream, &e);
+            }
             match tmux_load_buffer(cfg, &payload) {
                 Ok(()) => write_ok(&mut stream),
                 Err(e) => write_err(&mut stream, &e),
             }
         }
-        TAG_GET => match tmux_save_buffer(cfg) {
-            Ok(data) => {
-                if data.len() > cfg.max_bytes as usize {
-                    write_err(
-                        &mut stream,
-                        &format!(
-                            "tmux buffer exceeds max-bytes ({} > {})",
-                            data.len(),
-                            cfg.max_bytes
-                        ),
-                    )
-                } else {
-                    write_data(&mut stream, &data)
-                }
+        TAG_GET => {
+            if let Err(e) = reject_trailing(&mut stream) {
+                return write_err(&mut stream, &e);
             }
-            Err(e) => write_err(&mut stream, &e),
-        },
-        other => write_err(&mut stream, &format!("unknown request tag {other}")),
+            match tmux_save_buffer(cfg) {
+                Ok(data) => {
+                    if data.len() > cfg.max_bytes as usize {
+                        write_err(
+                            &mut stream,
+                            &format!(
+                                "tmux buffer exceeds max-bytes ({} > {})",
+                                data.len(),
+                                cfg.max_bytes
+                            ),
+                        )
+                    } else {
+                        write_data(&mut stream, &data)
+                    }
+                }
+                Err(e) => write_err(&mut stream, &e),
+            }
+        }
+        other => write_ok(&mut stream),
     }
 }
 
-fn tmux_load_buffer(cfg: &BrokerConfig, payload: &[u8]) -> Result<(), String> {
-    // Fixed argv. Payload travels only on stdin — never in argv.
-    let mut child = Command::new(&cfg.tmux_bin)
-        .arg("-S")
-        .arg(&cfg.tmux_socket)
-        .arg("load-buffer")
-        .arg("-")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("spawn tmux load-buffer: {e}"))?;
-
-    {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "tmux stdin missing".to_string())?;
-        stdin
-            .write_all(payload)
-            .map_err(|e| format!("write tmux stdin: {e}"))?;
+/// One request per connection: any byte beyond a complete request frame is
+/// rejected and the adapter is never invoked. A peek error fails closed. The
+/// single peeked byte is consumed so the error response reaches the client
+/// before the connection closes (an unread peeked byte would RST the reply).
+fn reject_trailing(stream: &mut UnixStream) -> Result<(), String> {
+    use std::os::unix::io::AsRawFd;
+    // UnixStream::peek is unstable (unix_socket_peek); FFI recv with
+    // MSG_PEEK|MSG_DONTWAIT gives the same non-destructive, non-blocking probe.
+    extern "C" {
+        fn recv(fd: i32, buf: *mut u8, len: usize, flags: i32) -> isize;
     }
-
-    let output = child
-        .wait_with_output()
-        .map_err(|e| format!("wait tmux load-buffer: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "tmux load-buffer failed (status {}): {}",
-            output.status, stderr.trim()
-        ));
+    const MSG_PEEK: i32 = 0x2;
+    const MSG_DONTWAIT: i32 = 0x40;
+    let mut byte = 0u8;
+    let n = unsafe { recv(stream.as_raw_fd(), &mut byte, 1, MSG_PEEK | MSG_DONTWAIT) };
+    let trailing = match n {
+        1 => true,
+        0 => false,
+        _ => {
+            let err = io::Error::last_os_error();
+            err.kind() != ErrorKind::WouldBlock
+        }
+    };
+    if trailing {
+        let mut drain = [0u8; 1];
+        let _ = stream.read(&mut drain);
+        return Err("trailing frame data after a complete request".into());
     }
     Ok(())
 }
 
-fn tmux_save_buffer(cfg: &BrokerConfig) -> Result<Vec<u8>, String> {
-    let output = Command::new(&cfg.tmux_bin)
+// ---------------------------------------------------------------------------
+// Adapter (fixed tmux argv, concurrent bounded pumping, hard deadline)
+// ---------------------------------------------------------------------------
+
+struct AdapterOutput {
+    stdout: Vec<u8>,
+}
+
+/// Drains the stream to EOF (or child death) so the adapter never sees a
+/// closed pipe, but retains at most `cap` bytes. `overflow` is set when the
+/// stream held more than `cap - 1` bytes; the retained prefix stays bounded.
+fn read_capped<R: Read + Send + 'static>(reader: R, cap: usize) -> ReadCapped {
+    ReadCapped {
+        handle: thread::spawn(move || {
+            let mut reader = reader;
+            let mut retained = Vec::with_capacity(cap);
+            let mut chunk = [0u8; 65536];
+            loop {
+                match reader.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let room = cap.saturating_sub(retained.len());
+                        if room > 0 {
+                            retained.extend_from_slice(&chunk[..n.min(room)]);
+                        }
+                    }
+                    Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                    Err(_) => break,
+                }
+            }
+            let overflow = retained.len() >= cap;
+            (retained, overflow)
+        }),
+    }
+}
+
+struct ReadCapped {
+    handle: thread::JoinHandle<(Vec<u8>, bool)>,
+}
+
+fn run_adapter(
+    cfg: &BrokerConfig,
+    verb: &str,
+    input: Option<&[u8]>,
+) -> Result<AdapterOutput, String> {
+    // Fixed argv. Payload travels only on stdin — never in argv.
+    let mut child = Command::new(&cfg.tmux_bin)
         .arg("-S")
         .arg(&cfg.tmux_socket)
-        .arg("save-buffer")
+        .arg(verb)
         .arg("-")
-        .stdin(Stdio::null())
+        .stdin(match input {
+            Some(_) => Stdio::piped(),
+            None => Stdio::null(),
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| format!("spawn tmux save-buffer: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        .spawn()
+        .map_err(|e| format!("spawn tmux {verb}: {e}"))?;
+
+    // Concurrent bounded pumping: pipe ordering cannot deadlock even when the
+    // adapter fills stderr beyond pipe capacity before consuming stdin.
+    let stdin_writer = match (child.stdin.take(), input) {
+        (Some(mut w), Some(payload)) => {
+            let payload = payload.to_vec();
+            Some(thread::spawn(move || {
+                let _ = w.write_all(&payload);
+                // Drop w to signal EOF to the adapter.
+            }))
+        }
+        _ => None,
+    };
+    let stdout_pump = child
+        .stdout
+        .take()
+        .map(|r| read_capped(r, CLIPBOARD_MAX_BYTES as usize + 1));
+    let stderr_pump = child
+        .stderr
+        .take()
+        .map(|r| read_capped(r, DIAGNOSTIC_MAX_BYTES + 1));
+
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if start.elapsed() >= ADAPTER_DEADLINE {
+                    let _ = child.kill();
+                    // Reap within the same call; SIGKILL is not deferrable.
+                    let _ = child.wait();
+                    if let Some(w) = stdin_writer {
+                        let _ = w.join();
+                    }
+                    // Detach the output pumps: a leaked grandchild of the
+                    // adapter can hold the pipes open past the kill, and the
+                    // broker must answer within the deadline regardless. The
+                    // detached pumps finish when the pipes finally EOF.
+                    drop(stdout_pump);
+                    drop(stderr_pump);
+                    return Err(format!(
+                        "tmux {verb} exceeded the {}s adapter deadline; child terminated and reaped",
+                        ADAPTER_DEADLINE.as_secs()
+                    ));
+                }
+                thread::sleep(ADAPTER_POLL_INTERVAL);
+            }
+            Err(e) => return Err(format!("wait tmux {verb}: {e}")),
+        }
+    };
+    if let Some(w) = stdin_writer {
+        let _ = w.join();
+    }
+    let (stdout, stdout_overflow) = match stdout_pump {
+        Some(p) => p.handle.join().unwrap_or_default(),
+        None => (Vec::new(), false),
+    };
+    if stdout_overflow {
         return Err(format!(
-            "tmux save-buffer failed (status {}): {}",
-            output.status, stderr.trim()
+            "tmux {verb} stdout exceeds the {}-byte clipboard bound",
+            CLIPBOARD_MAX_BYTES
         ));
     }
-    Ok(output.stdout)
+    let (stderr_raw, _) = match stderr_pump {
+        Some(p) => p.handle.join().unwrap_or_default(),
+        None => (Vec::new(), false),
+    };
+    let stderr = String::from_utf8_lossy(&stderr_raw).trim().to_string();
+    if !status.success() {
+        return Err(bound_diagnostic(format!(
+            "tmux {verb} failed (status {status}): {stderr}"
+        )));
+    }
+    Ok(AdapterOutput { stdout })
+}
+
+/// Every diagnostic returned to a client stays within DIAGNOSTIC_MAX_BYTES,
+/// including the truncation marker.
+fn bound_diagnostic(message: String) -> String {
+    const MARKER: &str = "…[truncated]";
+    if message.len() <= DIAGNOSTIC_MAX_BYTES {
+        return message;
+    }
+    let mut end = DIAGNOSTIC_MAX_BYTES - MARKER.len();
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{MARKER}", &message[..end])
+}
+
+fn tmux_load_buffer(cfg: &BrokerConfig, payload: &[u8]) -> Result<(), String> {
+    run_adapter(cfg, "load-buffer", Some(payload))?;
+    Ok(())
+}
+
+fn tmux_save_buffer(cfg: &BrokerConfig) -> Result<Vec<u8>, String> {
+    Ok(run_adapter(cfg, "save-buffer", None)?.stdout)
 }
 
 // ---------------------------------------------------------------------------
@@ -317,10 +488,7 @@ fn run_client(args: &[String]) -> Result<(), String> {
         .ok_or("client: expected 'set' or 'get'")?;
     match op {
         "set" => {
-            let mut payload = Vec::new();
-            io::stdin()
-                .read_to_end(&mut payload)
-                .map_err(|e| format!("read stdin: {e}"))?;
+            let payload = read_stream_bounded(io::stdin(), CLIPBOARD_MAX_BYTES as usize + 1)?;
             client_set(&payload)?;
             Ok(())
         }
@@ -335,12 +503,35 @@ fn run_client(args: &[String]) -> Result<(), String> {
     }
 }
 
+/// Reads a stream to EOF but stops after at most `cap` bytes; reaching the cap
+/// means the stream exceeded the `cap - 1` bound and is an error.
+fn read_stream_bounded<R: Read>(mut reader: R, cap: usize) -> Result<Vec<u8>, String> {
+    let mut buf = vec![0u8; cap];
+    let mut filled = 0usize;
+    while filled < cap {
+        match reader.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+            Err(e) => return Err(format!("read stream: {e}")),
+        }
+    }
+    if filled >= cap {
+        return Err(format!(
+            "streamed input exceeds the {}-byte clipboard bound",
+            CLIPBOARD_MAX_BYTES
+        ));
+    }
+    buf.truncate(filled);
+    Ok(buf)
+}
+
 fn client_set(payload: &[u8]) -> Result<(), String> {
-    if payload.len() > DEFAULT_MAX_BYTES as usize {
+    if payload.len() > CLIPBOARD_MAX_BYTES as usize {
         return Err(format!(
             "payload exceeds max-bytes ({} > {})",
             payload.len(),
-            DEFAULT_MAX_BYTES
+            CLIPBOARD_MAX_BYTES
         ));
     }
     let mut stream = UnixStream::connect(clipboard_sock_path()?)
@@ -363,7 +554,7 @@ fn client_get() -> Result<Vec<u8>, String> {
     let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
     write_u8(&mut stream, TAG_GET)?;
     match read_u8(&mut stream)? {
-        TAG_DATA => read_payload(&mut stream, DEFAULT_MAX_BYTES),
+        TAG_DATA => read_payload(&mut stream, CLIPBOARD_MAX_BYTES),
         TAG_ERR => Err(read_err_message(&mut stream)?),
         other => Err(format!("unexpected response tag {other}")),
     }
@@ -469,14 +660,22 @@ fn parse_buffer_path(args: &[String], cmd: &str) -> Result<String, String> {
 }
 
 fn read_path_or_stdin(path: &str) -> Result<Vec<u8>, String> {
+    let cap = CLIPBOARD_MAX_BYTES as usize + 1;
     if path == "-" {
-        let mut buf = Vec::new();
-        io::stdin()
-            .read_to_end(&mut buf)
-            .map_err(|e| format!("read stdin: {e}"))?;
-        Ok(buf)
+        read_stream_bounded(io::stdin(), cap)
     } else {
-        fs::read(path).map_err(|e| format!("read {path}: {e}"))
+        // Declared size first: an oversized file is rejected before content.
+        let declared = fs::metadata(path)
+            .map_err(|e| format!("stat {path}: {e}"))?
+            .len();
+        if declared > CLIPBOARD_MAX_BYTES as u64 {
+            return Err(format!(
+                "file {path} exceeds the {}-byte clipboard bound ({declared} declared)",
+                CLIPBOARD_MAX_BYTES
+            ));
+        }
+        let file = fs::File::open(path).map_err(|e| format!("open {path}: {e}"))?;
+        read_stream_bounded(file, cap).map_err(|e| format!("read {path}: {e}"))
     }
 }
 
@@ -554,7 +753,7 @@ fn write_ok(w: &mut impl Write) -> Result<(), String> {
 
 fn write_err(w: &mut impl Write, msg: &str) -> Result<(), String> {
     write_u8(w, TAG_ERR)?;
-    write_payload(w, msg.as_bytes())
+    write_payload(w, bound_diagnostic(msg.to_string()).as_bytes())
 }
 
 fn write_data(w: &mut impl Write, data: &[u8]) -> Result<(), String> {
@@ -563,7 +762,7 @@ fn write_data(w: &mut impl Write, data: &[u8]) -> Result<(), String> {
 }
 
 fn read_err_message(r: &mut impl Read) -> Result<String, String> {
-    let bytes = read_payload(r, DEFAULT_MAX_BYTES)?;
+    let bytes = read_payload(r, DIAGNOSTIC_MAX_BYTES as u32)?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
