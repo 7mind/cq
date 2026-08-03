@@ -84,6 +84,16 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+async function waitForPathToDisappearBy(path: string, deadline: number): Promise<number> {
+  for (;;) {
+    if (!(await pathExists(path))) return Date.now();
+    if (Date.now() >= deadline) {
+      throw new Error(`test path ${path} still existed at its settlement deadline`);
+    }
+    await Bun.sleep(2);
+  }
+}
+
 async function readLinuxProcessState(pid: number): Promise<string | null> {
   try {
     const processStat = await readFile(`/proc/${String(pid)}/stat`, "utf8");
@@ -161,14 +171,25 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       roots.push(root);
       const launcherPidPath = join(root, "launcher-pid");
       const launcherStatePath = join(root, "launcher-state.json");
+      const descendantPidPath = join(root, "same-group-descendant-pid");
       const registeredLaunchUrl = new URL("../src/registeredLaunch.ts", import.meta.url).href;
+      const targetSource = [
+        "const { spawn } = require('node:child_process');",
+        "const { writeFileSync } = require('node:fs');",
+        "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {",
+        "  detached: false,",
+        "  stdio: 'ignore',",
+        "});",
+        "child.unref();",
+        `writeFileSync(${JSON.stringify(descendantPidPath)}, String(child.pid));`,
+      ].join("\n");
       const launcherSource = [
         "const { spawn } = require('node:child_process');",
         "const { writeFileSync } = require('node:fs');",
         `const { launchRegisteredProcessGroup } = await import(${JSON.stringify(registeredLaunchUrl)});`,
         "let protocolDirectory;",
         "const launched = await launchRegisteredProcessGroup({",
-        "  argv: [process.execPath, '-e', 'process.exit(0)'],",
+        `  argv: [process.execPath, '-e', ${JSON.stringify(targetSource)}],`,
         `  cwd: ${JSON.stringify(root)},`,
         "  env: process.env,",
         "  stdio: ['ignore', 'ignore', 'inherit'],",
@@ -226,6 +247,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       const launcherParentExited = exited(launcherParent);
       const bootstrapStderr = streamText(launcherParent.stderr);
       let launcherPid: number | undefined;
+      let descendantPid: number | undefined;
       let protocolDirectory: string | undefined;
       let registration: ProcessGroupRegistration | undefined;
 
@@ -239,6 +261,8 @@ describe("registered process-group launch bootstrap [T1624]", () => {
         };
         protocolDirectory = launcherState.protocolDirectory;
         registration = launcherState.registration;
+        await waitForFile(descendantPidPath);
+        descendantPid = Number(await readFile(descendantPidPath, "utf8"));
         const statusPath = join(protocolDirectory, "status.json");
         for (let attempt = 0; attempt < 1_000; attempt += 1) {
           if (await Bun.file(statusPath).exists()) {
@@ -284,6 +308,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
         expect(settlementObservedAt! - settlementStarted).toBeLessThanOrEqual(
           REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS,
         );
+        expect(await readProcessIdentity(descendantPid)).toBeNull();
         launcherParent.kill("SIGKILL");
         await launcherParentExited;
         expect(await bootstrapStderr).toContain("completion writer identity disappeared");
@@ -497,6 +522,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       const protocolDirectory = join(root, mutation.name.replaceAll(" ", "-"));
       const marker = join(protocolDirectory, "target-ran");
       await mkdir(protocolDirectory, { mode: 0o700 });
+      const cleanupStarted = Date.now();
       const child = spawn(
         process.execPath,
         [
@@ -531,6 +557,13 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       expect(await stderr, mutation.name).toContain(mutation.expectedError);
       expect(await pathExists(marker), mutation.name).toBe(false);
       expect(await pathExists(join(protocolDirectory, "status.json")), mutation.name).toBe(false);
+      const cleanupObserved = await waitForPathToDisappearBy(
+        protocolDirectory,
+        cleanupStarted + REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS,
+      );
+      expect(cleanupObserved - cleanupStarted, mutation.name).toBeLessThanOrEqual(
+        REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS,
+      );
     }
   });
 

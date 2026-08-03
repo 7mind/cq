@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { readProcessIdentityWithDarwinHelper, type ProcessIdentity } from "./processGroup.js";
 import { REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS } from "./registeredLaunchProtocol.js";
 
@@ -27,8 +28,47 @@ async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   }
 }
 
-async function rejectOrphanedLauncher(protocolDirectory: string): Promise<never> {
+async function launchOrphanProcessGroupReaper(
+  launcherDarwinHelper: string | null,
+  settlementDeadline: number,
+): Promise<void> {
+  const bootstrap = await readProcessIdentityWithDarwinHelper(process.pid, launcherDarwinHelper);
+  if (bootstrap === null) {
+    throw new Error("cq registered-launch bootstrap: bootstrap identity disappeared");
+  }
+  const reaperExecutable = fileURLToPath(
+    new URL("./orphanProcessGroupReaper.ts", import.meta.url),
+  );
+  const reaper = spawn(
+    process.execPath,
+    [
+      reaperExecutable,
+      String(bootstrap.pid),
+      bootstrap.startTime,
+      launcherDarwinHelper ?? "",
+      String(settlementDeadline),
+    ],
+    {
+      cwd: process.cwd(),
+      env: process.env,
+      detached: true,
+      stdio: "ignore",
+    },
+  );
+  await childSpawned(reaper);
+  reaper.unref();
+}
+
+async function rejectOrphanedLauncher(
+  protocolDirectory: string,
+  launcherDarwinHelper: string | null,
+  settleOwnedGroup: boolean,
+): Promise<never> {
+  const settlementDeadline = Date.now() + REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS;
   await rm(protocolDirectory, { recursive: true, force: true });
+  if (settleOwnedGroup) {
+    await launchOrphanProcessGroupReaper(launcherDarwinHelper, settlementDeadline);
+  }
   throw new Error("cq registered-launch bootstrap: completion writer identity disappeared");
 }
 
@@ -53,7 +93,7 @@ async function waitForRelease(
   const deadline = Date.now() + START_TIMEOUT_MS;
   for (;;) {
     if (!(await isInitialLauncherAlive(expectedLauncher, launcherDarwinHelper))) {
-      await rejectOrphanedLauncher(protocolDirectory);
+      await rejectOrphanedLauncher(protocolDirectory, launcherDarwinHelper, false);
     }
     try {
       const value = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
@@ -69,7 +109,7 @@ async function waitForRelease(
         throw new Error("cq registered-launch bootstrap: release identity mismatch");
       }
       if (!(await isInitialLauncherAlive(expectedLauncher, launcherDarwinHelper))) {
-        await rejectOrphanedLauncher(protocolDirectory);
+        await rejectOrphanedLauncher(protocolDirectory, launcherDarwinHelper, false);
       }
       return;
     } catch (error) {
@@ -110,7 +150,7 @@ async function waitForCompletion(
 ): Promise<void> {
   for (;;) {
     if (!(await isInitialLauncherAlive(expectedLauncher, launcherDarwinHelper))) {
-      await rejectOrphanedLauncher(protocolDirectory);
+      await rejectOrphanedLauncher(protocolDirectory, launcherDarwinHelper, true);
     }
     try {
       const value = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
@@ -118,7 +158,7 @@ async function waitForCompletion(
         throw new Error("cq registered-launch bootstrap: completion identity mismatch");
       }
       if (!(await isInitialLauncherAlive(expectedLauncher, launcherDarwinHelper))) {
-        await rejectOrphanedLauncher(protocolDirectory);
+        await rejectOrphanedLauncher(protocolDirectory, launcherDarwinHelper, true);
       }
       return;
     } catch (error) {
@@ -172,16 +212,21 @@ async function main(argv: readonly string[]): Promise<TargetOutcome> {
   const completionPath = join(protocolDirectory, "completion.json");
   const launcher = { pid: Number(launcherPidText), startTime: launcherStartTime };
   const launcherDarwinHelper = launcherDarwinHelperText === "" ? null : launcherDarwinHelperText;
-  await authenticateInitialLauncher(launcher, launcherDarwinHelper);
-  await waitForRelease(
-    releasePath,
-    nonce,
-    process.pid,
-    launcher,
-    launcherDarwinHelper,
-    protocolDirectory,
-  );
-  await rm(releasePath, { force: true });
+  try {
+    await authenticateInitialLauncher(launcher, launcherDarwinHelper);
+    await waitForRelease(
+      releasePath,
+      nonce,
+      process.pid,
+      launcher,
+      launcherDarwinHelper,
+      protocolDirectory,
+    );
+    await rm(releasePath, { force: true });
+  } catch (error) {
+    await rm(protocolDirectory, { recursive: true, force: true });
+    throw error;
+  }
 
   let child: ChildProcess;
   let exited: Promise<TargetOutcome>;
