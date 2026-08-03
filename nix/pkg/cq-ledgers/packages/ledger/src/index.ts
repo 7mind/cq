@@ -89,6 +89,25 @@ export {
   nodeGitRunner,
 } from "./store/git/GitPlumbing.js";
 export type { TreeEntry, GitResult, GitRunOpts, GitRunner } from "./store/git/GitPlumbing.js";
+export {
+  DispatchBaseGitCommandError,
+  nodeDispatchBaseGitRunner,
+  observeDispatchBase,
+  verifyDispatchBase,
+} from "./dispatchBase.js";
+export type {
+  DispatchBaseAncestryObservation,
+  DispatchBaseGitResult,
+  DispatchBaseGitRunner,
+  DispatchBaseObservations,
+  DispatchBaseUnresolvableReason,
+  DispatchBaseVerification,
+  DispatchCommitObservation,
+  ObserveDispatchBaseRequest,
+  RebaseRequiredDispatchBase,
+  UnresolvableDispatchBase,
+  VerifiedDispatchBase,
+} from "./dispatchBase.js";
 export { GitPersistence } from "./store/git/GitPersistence.js";
 export { GitObjectLedgerBackend } from "./store/git/GitObjectLedgerBackend.js";
 export type { GitObjectLedgerBackendOpts } from "./store/git/GitObjectLedgerBackend.js";

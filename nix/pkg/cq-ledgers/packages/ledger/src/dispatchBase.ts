@@ -1,0 +1,223 @@
+import { execFile } from "node:child_process";
+
+export interface DispatchBaseGitResult {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly code: number;
+}
+
+/** A Git process seam whose repository remains explicit for every invocation. */
+export type DispatchBaseGitRunner = (
+  cwd: string,
+  args: readonly string[],
+) => Promise<DispatchBaseGitResult>;
+
+export const nodeDispatchBaseGitRunner: DispatchBaseGitRunner = (cwd, args) =>
+  new Promise<DispatchBaseGitResult>((resolve, reject) => {
+    execFile(
+      "git",
+      [...args],
+      {
+        cwd,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GIT_TERMINAL_PROMPT: "0",
+          LANG: "C",
+          LC_ALL: "C",
+        },
+      },
+      (error, stdout, stderr) => {
+        if (error && typeof (error as { code?: unknown }).code !== "number") {
+          reject(error);
+          return;
+        }
+        resolve({
+          stdout: String(stdout),
+          stderr: String(stderr),
+          code: error ? Number((error as { code?: number }).code ?? 1) : 0,
+        });
+      },
+    );
+  });
+
+export type DispatchCommitObservation =
+  | { readonly status: "commit"; readonly commit: string }
+  | { readonly status: "missing" }
+  | { readonly status: "non-commit" };
+
+export type DispatchBaseAncestryObservation =
+  "equal" | "ancestor" | "diverged" | "unrelated" | "unobserved";
+
+export interface DispatchBaseObservations {
+  readonly base: DispatchCommitObservation;
+  readonly head: DispatchCommitObservation;
+  readonly ancestry: DispatchBaseAncestryObservation;
+}
+
+export interface VerifiedDispatchBase {
+  readonly status: "verified";
+  readonly relation: "equal" | "descendant";
+  readonly baseCommit: string;
+  readonly headCommit: string;
+}
+
+export interface RebaseRequiredDispatchBase {
+  readonly status: "rebase-required";
+  readonly relation: "diverged";
+  readonly baseCommit: string;
+  readonly headCommit: string;
+}
+
+export type UnresolvableDispatchBase =
+  | {
+      readonly status: "unresolvable";
+      readonly reason: "base-missing" | "base-not-commit";
+      readonly baseCommit: null;
+      readonly headCommit: string | null;
+    }
+  | {
+      readonly status: "unresolvable";
+      readonly reason: "head-missing" | "head-not-commit";
+      readonly baseCommit: string;
+      readonly headCommit: null;
+    }
+  | {
+      readonly status: "unresolvable";
+      readonly reason: "unrelated-histories" | "ancestry-unobserved";
+      readonly baseCommit: string;
+      readonly headCommit: string;
+    };
+
+export type DispatchBaseUnresolvableReason = UnresolvableDispatchBase["reason"];
+
+export type DispatchBaseVerification =
+  VerifiedDispatchBase | RebaseRequiredDispatchBase | UnresolvableDispatchBase;
+
+function observedCommit(observation: DispatchCommitObservation): string | null {
+  return observation.status === "commit" ? observation.commit : null;
+}
+
+export function verifyDispatchBase(
+  observations: DispatchBaseObservations,
+): DispatchBaseVerification {
+  if (observations.base.status === "missing") {
+    return {
+      status: "unresolvable",
+      reason: "base-missing",
+      baseCommit: null,
+      headCommit: observedCommit(observations.head),
+    };
+  }
+  if (observations.base.status === "non-commit") {
+    return {
+      status: "unresolvable",
+      reason: "base-not-commit",
+      baseCommit: null,
+      headCommit: observedCommit(observations.head),
+    };
+  }
+  if (observations.head.status === "missing") {
+    return {
+      status: "unresolvable",
+      reason: "head-missing",
+      baseCommit: observations.base.commit,
+      headCommit: null,
+    };
+  }
+  if (observations.head.status === "non-commit") {
+    return {
+      status: "unresolvable",
+      reason: "head-not-commit",
+      baseCommit: observations.base.commit,
+      headCommit: null,
+    };
+  }
+
+  const baseCommit = observations.base.commit;
+  const headCommit = observations.head.commit;
+  switch (observations.ancestry) {
+    case "equal":
+      return { status: "verified", relation: "equal", baseCommit, headCommit };
+    case "ancestor":
+      return { status: "verified", relation: "descendant", baseCommit, headCommit };
+    case "diverged":
+      return { status: "rebase-required", relation: "diverged", baseCommit, headCommit };
+    case "unrelated":
+      return {
+        status: "unresolvable",
+        reason: "unrelated-histories",
+        baseCommit,
+        headCommit,
+      };
+    case "unobserved":
+      return {
+        status: "unresolvable",
+        reason: "ancestry-unobserved",
+        baseCommit,
+        headCommit,
+      };
+  }
+}
+
+export interface ObserveDispatchBaseRequest {
+  readonly cwd: string;
+  readonly baseRevision: string;
+  readonly headRevision: string;
+}
+
+export class DispatchBaseGitCommandError extends Error {
+  constructor(
+    readonly cwd: string,
+    readonly args: readonly string[],
+    readonly result: DispatchBaseGitResult,
+  ) {
+    super(`git ${args.join(" ")} failed in ${cwd} (exit ${result.code}): ${result.stderr.trim()}`);
+    this.name = "DispatchBaseGitCommandError";
+  }
+}
+
+async function observeCommit(
+  cwd: string,
+  revision: string,
+  run: DispatchBaseGitRunner,
+): Promise<DispatchCommitObservation> {
+  const peelArgs = ["rev-parse", "--verify", "--quiet", `${revision}^{commit}`] as const;
+  const peeled = await run(cwd, peelArgs);
+  if (peeled.code === 0) {
+    return { status: "commit", commit: peeled.stdout.trim() };
+  }
+
+  const existenceArgs = ["cat-file", "-e", revision] as const;
+  const existence = await run(cwd, existenceArgs);
+  if (existence.code === 0) return { status: "non-commit" };
+  if (existence.code === 1 || existence.code === 128) return { status: "missing" };
+  throw new DispatchBaseGitCommandError(cwd, existenceArgs, existence);
+}
+
+export async function observeDispatchBase(
+  request: ObserveDispatchBaseRequest,
+  run: DispatchBaseGitRunner,
+): Promise<DispatchBaseObservations> {
+  const [base, head] = await Promise.all([
+    observeCommit(request.cwd, request.baseRevision, run),
+    observeCommit(request.cwd, request.headRevision, run),
+  ]);
+  if (base.status !== "commit" || head.status !== "commit") {
+    return { base, head, ancestry: "unobserved" };
+  }
+  if (base.commit === head.commit) return { base, head, ancestry: "equal" };
+
+  const ancestorArgs = ["merge-base", "--is-ancestor", base.commit, head.commit] as const;
+  const ancestor = await run(request.cwd, ancestorArgs);
+  if (ancestor.code === 0) return { base, head, ancestry: "ancestor" };
+  if (ancestor.code !== 1) {
+    throw new DispatchBaseGitCommandError(request.cwd, ancestorArgs, ancestor);
+  }
+
+  const commonBaseArgs = ["merge-base", base.commit, head.commit] as const;
+  const commonBase = await run(request.cwd, commonBaseArgs);
+  if (commonBase.code === 0) return { base, head, ancestry: "diverged" };
+  if (commonBase.code === 1) return { base, head, ancestry: "unrelated" };
+  throw new DispatchBaseGitCommandError(request.cwd, commonBaseArgs, commonBase);
+}
