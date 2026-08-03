@@ -94,17 +94,18 @@ assert_contains \
   "$OUT" \
   "$FAKE_HOME/.pi/agent/APPEND_SYSTEM.md,$FAKE_HOME/.pi/agent/APPEND_SYSTEM.md"
 
-# Tag gating: audio is on by default, Wayland display passthrough is off by
-# default, and --disable beats --enable for the same tag.
+# Tag gating: audio is on by default, display passthrough (Wayland + X11) is off
+# by default, and --disable beats --enable for the same tag.
 FAKE_XDG="$WORKDIR/xdg"
 mkdir -p "$FAKE_XDG"
 WAYLAND_SOCKET="$FAKE_XDG/wayland-9"
 _python_path="$(command -v python3)"
 if [[ -z "$_python_path" ]]; then
-  echo "FATAL: python3 is required to bind the Wayland socket fixture" >&2
+  echo "FATAL: python3 is required to bind the socket fixtures" >&2
   exit 1
 fi
-"$_python_path" - "$WAYLAND_SOCKET" <<'PY'
+bind_unix_socket() {
+  "$_python_path" - "$1" <<'PY'
 import socket
 import sys
 
@@ -112,8 +113,25 @@ sock = socket.socket(socket.AF_UNIX)
 sock.bind(sys.argv[1])
 sock.close()
 PY
+}
+bind_unix_socket "$WAYLAND_SOCKET"
+
+# The X11 socket directory is fixed by the protocol (/tmp/.X11-unix), so the
+# fixture has to live there. Display :99 is outside the range a real session
+# uses; create it only if absent and remove exactly what we created.
+X11_SOCKET="/tmp/.X11-unix/X99"
+X11_FIXTURE=0
+if mkdir -p /tmp/.X11-unix 2>/dev/null && [[ ! -e "$X11_SOCKET" ]] \
+   && bind_unix_socket "$X11_SOCKET" 2>/dev/null; then
+  X11_FIXTURE=1
+  trap 'rm -f "$X11_SOCKET"; rm -rf "$WORKDIR"' EXIT
+fi
+
+XAUTH_FILE="$FAKE_HOME/.Xauthority"
+printf 'fake-cookie\n' > "$XAUTH_FILE"
 
 TEST_WAYLAND_DISPLAY="wayland-9"
+TEST_DISPLAY=":99"
 
 run_yolo() {
   {
@@ -121,6 +139,8 @@ run_yolo() {
       HOME="$FAKE_HOME" \
       XDG_RUNTIME_DIR="$FAKE_XDG" \
       WAYLAND_DISPLAY="$TEST_WAYLAND_DISPLAY" \
+      DISPLAY="$TEST_DISPLAY" \
+      XAUTHORITY="$XAUTH_FILE" \
       YOLO_LLM_SANDBOX="$FAKE_BIN/record-sandbox" \
       YOLO_SANDBOX_ENTRYPOINT="$(command -v true)" \
       YOLO_NIX_LD="$(command -v true)" \
@@ -158,6 +178,38 @@ TEST_WAYLAND_DISPLAY="wayland-absent"
 OUT="$(run_yolo_cmd --enable=display)"
 assert_contains "missing wayland socket warns" "$OUT" "no Wayland socket at"
 TEST_WAYLAND_DISPLAY="wayland-9"
+
+# X11 / XWayland leg of the same tag. /tmp is a tmpfs inside the sandbox, so the
+# X socket and the auth file must be bound explicitly.
+if [[ $X11_FIXTURE -eq 1 ]]; then
+  OUT="$(run_yolo_cmd)"
+  assert_not_contains "x11 socket is not bound by default" "$OUT" "$X11_SOCKET"
+
+  OUT="$(run_yolo_cmd --enable=display)"
+  assert_contains "--enable=display binds the x11 socket" "$OUT" "$X11_SOCKET"
+  assert_contains "--enable=display sets DISPLAY" "$OUT" "DISPLAY=:99"
+  assert_contains "--enable=display binds the x11 auth file" "$OUT" "$XAUTH_FILE"
+  assert_contains "--enable=display sets XAUTHORITY" "$OUT" "XAUTHORITY=$XAUTH_FILE"
+
+  TEST_DISPLAY=":99.0"
+  OUT="$(run_yolo_cmd --enable=display)"
+  assert_contains "screen suffix resolves to the same x11 socket" "$OUT" "$X11_SOCKET"
+
+  TEST_DISPLAY=":99"
+  OUT="$(run_yolo_cmd --enable=display --disable=display)"
+  assert_not_contains "--disable drops the x11 socket too" "$OUT" "$X11_SOCKET"
+else
+  echo "SKIP: could not create the $X11_SOCKET fixture; x11 bind assertions skipped"
+fi
+
+TEST_DISPLAY=":98"
+OUT="$(run_yolo_cmd --enable=display)"
+assert_contains "missing x11 socket warns" "$OUT" "no X11 socket at /tmp/.X11-unix/X98"
+
+TEST_DISPLAY="remotehost:0"
+OUT="$(run_yolo_cmd --enable=display)"
+assert_not_contains "non-local DISPLAY is left to the shared network namespace" "$OUT" "no X11 socket at"
+TEST_DISPLAY=":99"
 
 OUT="$(run_yolo --help)"
 assert_contains "usage documents --enable" "$OUT" "--enable=TAG"

@@ -54,7 +54,7 @@ UNSAFE_SHARE_HOME=0
 # shellcheck disable=SC2034
 DISABLE_TAGS=()
 # Feature activation: --enable=TAG (same syntax) turns on a feature that is OFF
-# by default — currently only Wayland passthrough (tag "display"). Everything
+# by default — currently only display passthrough (tag "display"). Everything
 # else is on by default, so --enable is a no-op for it. --disable always wins
 # over --enable for the same tag (see tag_active).
 ENABLE_TAGS=()
@@ -83,8 +83,9 @@ Flags (must precede the subcommand):
                          Known tags: audio, gpu, codegraph.
       --enable=TAG       Turn on a feature that is off by default (repeatable,
                          comma-separated). Known tags: display (bind the
-                         Wayland compositor socket so sandboxed commands can
-                         open windows). --disable=TAG wins over --enable=TAG.
+                         Wayland compositor socket plus the X11/XWayland socket
+                         and auth file, so sandboxed commands can open
+                         windows). --disable=TAG wins over --enable=TAG.
       --ro PATH          Ad-hoc read-only bind of a host PATH into the sandbox
                          at the same location (repeatable; skipped if missing).
       --rw PATH          Ad-hoc read-write bind of a host PATH (repeatable;
@@ -435,15 +436,22 @@ if tag_active audio on; then
   AUDIO_ARGS+=(--env "PULSE_SERVER=unix:$_xrd/pulse/native")
 fi
 
-# Wayland display passthrough: bind the compositor socket read-write so
-# sandboxed commands can open windows on the host session. Tagged "display" and
-# OFF by default (`--enable=display` turns it on): the Wayland connection is a
+# Display passthrough: bind the compositor socket read-write so sandboxed
+# commands can open windows on the host session. Tagged "display" and OFF by
+# default (`--enable=display` turns it on): the display connection is a
 # capability the rest of the sandbox deliberately withholds — on a compositor
 # without security-context isolation a client can reach clipboard, screencopy
-# and virtual-input protocols. The socket is $WAYLAND_DISPLAY when absolute,
-# else relative to $XDG_RUNTIME_DIR (defaulting to "wayland-0"). Hardware
-# acceleration additionally needs the GPU device binds (tag "gpu"); a
-# software-rendered (wl_shm) client works with the socket alone.
+# and virtual-input protocols, and an X11 connection has no isolation at all.
+# Both display protocols are handled independently, so the tag also works on a
+# Wayland-only or X11-only session:
+#   * Wayland — $WAYLAND_DISPLAY when absolute, else relative to
+#     $XDG_RUNTIME_DIR (defaulting to "wayland-0").
+#   * X11/XWayland — the socket for the local $DISPLAY under /tmp/.X11-unix
+#     plus the auth file, since the sandbox tmpfs's /tmp hides both. Only local
+#     displays (":<n>") need a bind; a "host:<n>" display goes over the shared
+#     network namespace with the inherited $DISPLAY.
+# Hardware acceleration additionally needs the GPU device binds (tag "gpu"); a
+# software-rendered (wl_shm / X shm) client works with the sockets alone.
 DISPLAY_ARGS=()
 if tag_active display off; then
   _wl_xrd="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
@@ -458,7 +466,25 @@ if tag_active display off; then
     DISPLAY_ARGS+=(--env "WAYLAND_DISPLAY=$_wl_name")
     DISPLAY_ARGS+=(--env "XDG_RUNTIME_DIR=$_wl_xrd")
   else
-    echo "warning: no Wayland socket at $_wl_sock; --enable=display has no effect" >&2
+    echo "warning: no Wayland socket at $_wl_sock; --enable=display passes through X11 only" >&2
+  fi
+
+  if [[ "${DISPLAY:-}" == :* ]]; then
+    # ":<n>[.<screen>]" -> /tmp/.X11-unix/X<n>
+    _x_num="${DISPLAY#:}"
+    _x_num="${_x_num%%.*}"
+    _x_sock="/tmp/.X11-unix/X$_x_num"
+    if [[ -S "$_x_sock" ]]; then
+      DISPLAY_ARGS+=(--rw "$_x_sock")
+      DISPLAY_ARGS+=(--env "DISPLAY=$DISPLAY")
+      _x_auth="${XAUTHORITY:-${HOME}/.Xauthority}"
+      if [[ -r "$_x_auth" ]]; then
+        DISPLAY_ARGS+=(--ro "$_x_auth")
+        DISPLAY_ARGS+=(--env "XAUTHORITY=$_x_auth")
+      fi
+    else
+      echo "warning: no X11 socket at $_x_sock for DISPLAY=$DISPLAY; X11/XWayland clients will not connect" >&2
+    fi
   fi
 fi
 

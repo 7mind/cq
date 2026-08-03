@@ -18,8 +18,9 @@
 # Runtime tag gating (both wrappers): `--disable=<tag>` drops a default-on
 # feature and `--enable=<tag>` turns on a default-off one, with --disable
 # winning when a tag appears in both. The Linux wrapper's built-in features are
-# audio (on by default) and Wayland display passthrough (tag "display", off by
-# default — `yolo --enable=display` binds the compositor socket).
+# audio (on by default) and display passthrough (tag "display", off by default —
+# `yolo --enable=display` binds the Wayland compositor socket plus the
+# X11/XWayland socket and auth file).
 { inputs }:
 { config
 , lib
