@@ -70,6 +70,26 @@ describe("WIP artifacts (T1284)", () => {
     expect(parseWipArtifact(CANDIDATE_PATH, serializeWipArtifact(fixture))).toEqual(fixture);
   });
 
+  it("does not open a backtick fence with a backtick in its info string", () => {
+    const content = handwrittenHeader(
+      {
+        taskId: "T1284",
+        role: "worker",
+        baseCommit: "base",
+        startedAt: "now",
+        checkpoints: [
+          { name: "first", status: "done" },
+          { name: "second", status: "todo" },
+        ],
+      },
+      "first prose\n```md`\n## second <!-- cq:wip-checkpoint -->\nsecond body\n",
+    );
+    expect(parseWipArtifact(CANDIDATE_PATH, content).checkpoints).toEqual([
+      { name: "first", status: "done", body: "first prose\n```md`" },
+      { name: "second", status: "todo", body: "second body\n" },
+    ]);
+  });
+
   for (const [name, content] of [
     [
       "missing id",

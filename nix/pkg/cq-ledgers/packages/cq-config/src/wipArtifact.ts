@@ -241,6 +241,9 @@ function opensMarkdownFence(line: string): MarkdownFence | undefined {
     return undefined;
   }
   const marker = match[1]!;
+  if (marker[0] === "`" && line.slice(match[0].length).includes("`")) {
+    return undefined;
+  }
   return { marker: marker[0]! as "`" | "~", length: marker.length };
 }
 
