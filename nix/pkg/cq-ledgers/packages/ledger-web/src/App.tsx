@@ -46,8 +46,8 @@ import { parseRawLog, type ConversationModel, type ConversationTurn } from "./ra
 // Node-free, mirroring the `./relationships` leaf import above.
 import { eligibleColumnFields, defaultColumns } from "@cq/ledger/columns";
 // Leaf subpath (same rationale as ./columns above): the shared item-summary
-// helper (D222). summarize.ts transitively imports only type-only types.js
-// plus columns.js, so it is Node-free and safe for the browser bundle.
+// helper (D222). summarize.ts directly imports only type-only types.js plus
+// columns.js, so it is Node-free and safe for the browser bundle.
 import { summarize, fieldToString } from "@cq/ledger/summarize";
 // Leaf subpath: constants.ts is data-only (no Node.js builtins). Importing
 // MILESTONES_SCHEMA from here avoids the duplicated local copy (D6).
