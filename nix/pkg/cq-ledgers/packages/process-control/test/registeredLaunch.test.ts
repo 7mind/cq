@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -101,6 +101,24 @@ async function waitForStatusStateBy(
       );
     }
     await Bun.sleep(2);
+  }
+}
+
+// Mirror of the launcher's writeJsonAtomic (tmp + rename): the bootstrap
+// tolerates only ENOENT when reading the staged protocol files and dies on a
+// JSON parse error, so a partially written release.json/completion.json must
+// never be observable.
+async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
+  const temporary = `${path}.tmp-${process.pid}-${randomUUID()}`;
+  try {
+    await writeFile(temporary, `${JSON.stringify(value)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true });
   }
 }
 
@@ -536,17 +554,24 @@ describe("registered process-group launch bootstrap [T1624]", () => {
 
       try {
         const orchestrationDeadline = Date.now() + ORCHESTRATION_WAIT_MS;
-        await writeFile(
-          join(protocolDirectory, "release.json"),
-          JSON.stringify({ nonce, pgid: bootstrapPid, launcher }),
-        );
+        await writeJsonAtomic(join(protocolDirectory, "release.json"), {
+          nonce,
+          pgid: bootstrapPid,
+          launcher,
+        });
         const statusPath = join(protocolDirectory, "status.json");
-        await waitForStatusStateBy(statusPath, "launched", orchestrationDeadline);
+        // No "launched" wait: status.state is non-monotonic — the bootstrap
+        // overwrites "launched" with "exited" as soon as the short-lived
+        // target dies, a window that can collapse to ~1ms under gate load, so
+        // a stalled poll could miss "launched" forever. The production
+        // consumer (waitForBootstrapStatus) accepts any valid non-"failed"
+        // status for the same reason; wait only for "exited" before writing
+        // completion.json.
         await waitForStatusStateBy(statusPath, "exited", orchestrationDeadline);
-        await writeFile(
-          join(protocolDirectory, "completion.json"),
-          JSON.stringify({ nonce, pgid: bootstrapPid }),
-        );
+        await writeJsonAtomic(join(protocolDirectory, "completion.json"), {
+          nonce,
+          pgid: bootstrapPid,
+        });
 
         let exitDeadline: ReturnType<typeof setTimeout> | undefined;
         const outcome = await Promise.race([
@@ -570,7 +595,10 @@ describe("registered process-group launch bootstrap [T1624]", () => {
         await rm(protocolDirectory, { recursive: true, force: true });
       }
     },
-    ORCHESTRATION_WAIT_MS + 5_000,
+    // The exit-race wait gets a fresh ORCHESTRATION_WAIT_MS after the shared
+    // orchestration budget, so the test timeout must cover the worst-case
+    // sequencing rather than a single budget.
+    2 * ORCHESTRATION_WAIT_MS,
   );
 
   // Regression origin: a reused bootstrap PID must not authorize signaling its numeric PGID.
