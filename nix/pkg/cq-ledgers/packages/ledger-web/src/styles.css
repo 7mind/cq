@@ -562,6 +562,18 @@ body {
   flex-direction: column;
   gap: 18px;
 }
+/* Usage help tab (T1514, I20/G155): per-endpoint MCP usage stats table. The
+   rows are not clickable, so they don't take .lw-row; the cell rule mirrors
+   its padding/border, and the tfoot totals row reads as a summary. */
+.lw-help-usage .lw-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid #1c2029;
+}
+.lw-help-usage .lw-table tfoot td {
+  font-weight: 600;
+  border-bottom: none;
+  border-top: 1px solid var(--line);
+}
 .lw-agent-head {
   display: flex;
   align-items: center;

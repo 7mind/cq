@@ -318,6 +318,15 @@ export class FakeClient implements LedgerClient {
    */
   derivePredicatesResult: DerivedPredicates = emptyPredicates();
   /**
+   * Stubbable answer for `getUsageStats()` (I20/G155, T1514): defaults to the
+   * empty snapshot (no calls recorded yet); tests exercising the Usage help
+   * tab seed this directly before opening the tab.
+   */
+  usageStats: UsageStatsSnapshot = {
+    endpoints: [],
+    totals: { name: "totals", callCount: 0, bytesIn: 0, bytesOut: 0 },
+  };
+  /**
    * The `list_projects` answer (T589 / Q276/Q284). Defaults to the
    * single-entry embedded/xdg fallback (key === displayName, mirroring
    * `listProjectsOf`'s single-project synthesis); tests exercising a
@@ -691,7 +700,7 @@ export class FakeClient implements LedgerClient {
     return { path, content: `stub content for ${path}` };
   }
   async getUsageStats(): Promise<UsageStatsSnapshot> {
-    return { endpoints: [], totals: { name: "totals", callCount: 0, bytesIn: 0, bytesOut: 0 } };
+    return this.usageStats;
   }
 
   async close(): Promise<void> {

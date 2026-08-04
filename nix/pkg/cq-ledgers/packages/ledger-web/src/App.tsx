@@ -17,7 +17,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AgentModelEntry, ArchiveContent, FetchedLedger, FetchedMilestoneGroup, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema, LedgerSummary, MilestonePatch, PredicateVerdict, ProjectEntry } from "./types.js";
+import type { AgentModelEntry, ArchiveContent, FetchedLedger, FetchedMilestoneGroup, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema, LedgerSummary, MilestonePatch, PredicateVerdict, ProjectEntry, UsageStatsSnapshot } from "./types.js";
 import { DagView } from "./DagView.js";
 import { Markdown } from "./Markdown.js";
 import { loadDagData, type DagData } from "./dagData.js";
@@ -2522,7 +2522,7 @@ function HelpOverlay({
   /** True when the overlay fetch threw (any error) — Agents tab shows the fallback. */
   agentOverlayError: boolean;
 }): React.ReactElement {
-  const [tab, setTab] = useState<"shortcuts" | "item-states" | "flows" | "agents">("shortcuts");
+  const [tab, setTab] = useState<"shortcuts" | "item-states" | "flows" | "agents" | "usage">("shortcuts");
   const [schemas, setSchemas] = useState<NamedSchema[] | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   // FU-4b cross-nav (T329): the Agents-tab anchor a Flows-diagram node
@@ -2625,6 +2625,16 @@ function HelpOverlay({
             >
               Agents
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "usage"}
+              className={`lw-help-tab${tab === "usage" ? " lw-help-tab-active" : ""}`}
+              data-testid="help-tab-usage"
+              onClick={() => setTab("usage")}
+            >
+              Usage
+            </button>
           </div>
           <button type="button" className="lw-close" data-testid="help-close" onClick={onClose}>
             ✕
@@ -2697,7 +2707,7 @@ function HelpOverlay({
                 ))}
               </div>
             </HelpDocsLayout>
-          ) : (
+          ) : tab === "agents" ? (
             <HelpDocsLayout
               tabKey="agents"
               entries={AGENT_ROLES.map((role) => ({
@@ -2707,6 +2717,8 @@ function HelpOverlay({
             >
               <AgentsTab overlay={agentOverlay} overlayError={agentOverlayError} />
             </HelpDocsLayout>
+          ) : (
+            <UsageStatsTab client={client} />
           )}
         </div>
       </div>
@@ -2875,6 +2887,74 @@ function AgentsTab({
           </details>
         </section>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Usage help tab (T1514, I20/G155): per-endpoint MCP usage statistics from
+ * `client.getUsageStats()`. The tab body unmounts when another tab is active,
+ * so every activation re-fetches — "refresh on open". Renders one row per
+ * endpoint plus a totals row in `<tfoot>`; an empty state when no calls have
+ * been recorded yet.
+ */
+function UsageStatsTab({ client }: { client: LedgerClient | null }): React.ReactElement {
+  const [stats, setStats] = useState<UsageStatsSnapshot | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (client === null) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const snapshot = await client.getUsageStats();
+        if (!cancelled) setStats(snapshot);
+      } catch (e) {
+        if (!cancelled) setLoadErr(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
+
+  return (
+    <div className="lw-help-usage" data-testid="help-usage">
+      {loadErr !== null ? (
+        <p className="lw-empty">(could not load usage stats: {loadErr})</p>
+      ) : stats === null ? (
+        <p className="lw-empty">(loading…)</p>
+      ) : stats.endpoints.length === 0 ? (
+        <p className="lw-empty" data-testid="usage-stats-empty">(no calls recorded yet)</p>
+      ) : (
+        <table className="lw-table" data-testid="usage-stats-table">
+          <thead>
+            <tr>
+              <th>endpoint</th>
+              <th>calls</th>
+              <th>bytes in</th>
+              <th>bytes out</th>
+            </tr>
+          </thead>
+          <tbody>
+            {stats.endpoints.map((e) => (
+              <tr key={e.name} data-testid={`usage-stats-row-${e.name}`}>
+                <td>{e.name}</td>
+                <td data-testid={`usage-stats-calls-${e.name}`}>{e.callCount}</td>
+                <td data-testid={`usage-stats-bytes-in-${e.name}`}>{e.bytesIn}</td>
+                <td data-testid={`usage-stats-bytes-out-${e.name}`}>{e.bytesOut}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr data-testid="usage-stats-totals">
+              <td>{stats.totals.name}</td>
+              <td data-testid="usage-totals-calls">{stats.totals.callCount}</td>
+              <td data-testid="usage-totals-bytes-in">{stats.totals.bytesIn}</td>
+              <td data-testid="usage-totals-bytes-out">{stats.totals.bytesOut}</td>
+            </tr>
+          </tfoot>
+        </table>
+      )}
     </div>
   );
 }
