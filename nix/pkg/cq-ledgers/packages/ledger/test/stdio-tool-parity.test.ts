@@ -719,6 +719,7 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
     },
     { name: "read_log", args: { path: READ_LOG_RESULT.path } },
     { name: "get_config", args: { section: "all" } },
+    { name: "get_usage_stats", args: {} },
     {
       name: "prepare_dispatch",
       args: {
@@ -1130,7 +1131,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 29 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 30 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);

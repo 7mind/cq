@@ -777,6 +777,13 @@ export function createLedgerMcpToolSpecifications(
     },
   );
 
+  const getUsageStats = tool(
+    "get_usage_stats",
+    "Return the per-project MCP usage counters (I20/G155): per-endpoint { name, callCount, bytesIn, bytesOut } sorted by name, plus totals. Read-only telemetry.",
+    {} as Record<string, never>,
+    async () => jsonResult(await store.fetchMcpUsageStats()),
+  );
+
   const prepareDispatchTool = tool(
     "prepare_dispatch",
     "Validate and durably prepare one typed dispatch, returning its handle, deadlines, provenance, and distinct input/result capabilities.",
@@ -929,6 +936,7 @@ export function createLedgerMcpToolSpecifications(
     unarchiveItem,
     readLogTool,
     getConfig,
+    getUsageStats,
     ...dispatchTools,
     fetchPrompt,
     listProjectsTool,

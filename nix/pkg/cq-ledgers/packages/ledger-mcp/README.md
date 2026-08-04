@@ -222,6 +222,7 @@ measured savings without another batching schema.
 | `unarchive_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
 | `read_log` | `requested-full-content` | `{ path, content, truncated? }`. |
 | `get_config` | `requested-full-content` | The payload selected by `section`; no unrelated section is returned. |
+| `get_usage_stats` | `purpose-built-small` | `{ endpoints: [{ name, callCount, bytesIn, bytesOut }], totals: { callCount, bytesIn, bytesOut } }` |
 | `prepare_dispatch` | `purpose-built-small` | `{ accepted, prepared, handle, executedStepOrder }` or a typed pre-launch rejection. |
 | `fetch_dispatch_input` | `requested-full-content` | The prepare-bound typed input on its first capability-authorized retrieval. |
 | `store_result` | `purpose-built-small` | A handle-only stored-result acknowledgement or typed abort. |

@@ -104,7 +104,7 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     },
     measuredProfiles: 26,
     corpusTranscripts: 357,
-    maximumRemainingG93AttributableTokens: 780,
+    maximumRemainingG93AttributableTokens: 817,
     corpusMedianResponseSavingTokens: 1461,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,

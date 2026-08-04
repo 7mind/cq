@@ -288,7 +288,7 @@ describe("T1325 role tool capability matrix", () => {
       mechanism: "mcp-server-enabled-tools",
       nativePerAgentFiltering: false,
     });
-    expect(LEDGER_CAPABILITY_TOOL_NAMES).toHaveLength(29);
+    expect(LEDGER_CAPABILITY_TOOL_NAMES).toHaveLength(30);
   });
 
   test("ships an executable Codex child-boundary probe, not a configuration-only assertion", () => {

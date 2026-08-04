@@ -251,6 +251,9 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   get_config: requestedFullContent(
     "The payload selected by `section`; no unrelated section is returned.",
   ),
+  get_usage_stats: purposeBuiltSmall(
+    "`{ endpoints: [{ name, callCount, bytesIn, bytesOut }], totals: { callCount, bytesIn, bytesOut } }`",
+  ),
   prepare_dispatch: purposeBuiltSmall(
     "`{ accepted, prepared, handle, executedStepOrder }` or a typed pre-launch rejection.",
   ),

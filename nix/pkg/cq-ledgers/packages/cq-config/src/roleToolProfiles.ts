@@ -27,6 +27,7 @@ export const LEDGER_CAPABILITY_TOOL_NAMES = [
   "unarchive_item",
   "read_log",
   "get_config",
+  "get_usage_stats",
   "prepare_dispatch",
   "fetch_dispatch_input",
   "store_result",
@@ -51,6 +52,7 @@ export const DISPATCH_RESULT_PLUMBING_TOOL_NAMES = [
 const NON_DOMAIN_LEDGER_TOOL_NAMES = new Set<LedgerCapabilityToolName>([
   "read_log",
   "get_config",
+  "get_usage_stats",
   "prepare_dispatch",
   "fetch_dispatch_input",
   "store_result",

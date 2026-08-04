@@ -63,6 +63,21 @@ Reads require compact or full projection. Paginate fetch_ledger until nextOffset
 
 Use snapshot and derive_predicates for CQ flow state. Dispatch and plan-lifecycle tools retain their capability, generation, fence, recovery, and idempotency contracts; preserve exact identifiers returned by those tools.`;
 
+/**
+ * Public tools added after the frozen T1326 baseline was measured. The
+ * baseline keeps its historical 32-tool surface; these definitions extend the
+ * measured target so the inventory gate tracks legitimate additions
+ * (I20/G155, T1511: get_usage_stats).
+ */
+const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
+  {
+    name: "get_usage_stats",
+    description:
+      "Return the per-project MCP usage counters (I20/G155): per-endpoint { name, callCount, bytesIn, bytesOut } sorted by name, plus totals. Read-only telemetry.",
+    inputSchema: { type: "object", properties: {} },
+  },
+]);
+
 const COMPACT_PROJECTION =
   "compact returns identity, status, timestamps, provenance, summary fields, and references; full returns every item field";
 
@@ -603,9 +618,10 @@ export async function measureToolSurfaceTarget() {
   const descriptionTarget = withDescriptionTargets(currentTools);
   const schemaTarget = withSimplifiedSchemas(currentTools);
   const milestoneCrudTarget = withMilestoneCrudGenericized(currentTools);
-  const combinedTarget = withMilestoneCrudGenericized(
-    withSimplifiedSchemas(withDescriptionTargets(currentTools)),
-  );
+  const combinedTarget = [
+    ...withMilestoneCrudGenericized(withSimplifiedSchemas(withDescriptionTargets(currentTools))),
+    ...POST_TARGET_ADDITIONS,
+  ];
   const profiles = targetRoleProfiles(combinedTarget);
   const currentRoleSurface = currentDefaultRoleSurface(currentTools);
   const targetRoleSurface = filteredTargetRoleSurface(combinedTarget, profiles);
