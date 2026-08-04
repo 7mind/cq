@@ -89,7 +89,9 @@ import {
   STORE_RESULT_INPUT,
 } from "./dispatchToolSchemas.js";
 import {
+  FETCH_PROMPT_PROJECTIONS,
   PromptCatalogNotImplementedError,
+  projectFetchPromptResult,
   type PromptCatalogCapability,
 } from "./promptCatalogCapability.js";
 import { ListProjectsNotImplementedError, type ListProjectsCapability } from "./listProjects.js";
@@ -863,20 +865,36 @@ export function createLedgerMcpToolSpecifications(
 
   const fetchPrompt = tool(
     "fetch_prompt",
-    "Fetch a role's typed prompt-catalog entry: { roleId, kind, dispatched, " +
-      "promptTemplate, promptSurface?, renderer?, sourcePath?, workflowDependencies?, " +
-      "requiredCapabilities?, intentionalDifferences?, version?, inputSchema?, " +
-      "outputSchema? }. Built prompt roots return the additive surface-build metadata; " +
+    "Fetch a role's typed prompt-catalog entry. projection selects the response: " +
+      "\"full\" (the default, deliberate full-detail projection) returns { roleId, kind, " +
+      "dispatched, promptTemplate, promptSurface?, renderer?, sourcePath?, " +
+      "workflowDependencies?, requiredCapabilities?, intentionalDifferences?, version?, " +
+      "inputSchema?, outputSchema? }; \"schema\" returns exactly { roleId, version?, " +
+      "inputSchema?, outputSchema? } with no promptTemplate or other role metadata. " +
+      "Built prompt roots return the additive surface-build metadata; " +
       "requiredCapabilities is the ordered catalog renderer-fragment capability list. " +
       "A dispatched-subagent " +
       "role returns both JSON Schemas (draft 2020-12); an orchestrator-command role " +
-      "returns prompt + metadata with inputSchema/outputSchema ABSENT. Fails fast on an " +
+      "carries no schema: under \"full\" it returns prompt + metadata with " +
+      "inputSchema/outputSchema ABSENT, and under \"schema\" it returns { roleId } alone " +
+      "(the version/inputSchema/outputSchema keys are ABSENT, never null). Fails fast on an " +
       "unknown roleId. Only available when the server has an asset-capable catalog root; " +
       "otherwise returns a not-implemented error.",
-    { roleId: z.string() } as const,
+    {
+      roleId: z.string(),
+      projection: z
+        .enum(FETCH_PROMPT_PROJECTIONS)
+        .optional()
+        .describe(
+          "optional projection: \"full\" (default) returns the complete typed entry; " +
+            "\"schema\" returns exactly { roleId, version?, inputSchema?, outputSchema? }",
+        ),
+    } as const,
     async (args) => {
       if (promptCatalog === undefined) throw new PromptCatalogNotImplementedError();
-      return jsonResult(promptCatalog.fetchPrompt(args.roleId));
+      return jsonResult(
+        projectFetchPromptResult(promptCatalog.fetchPrompt(args.roleId), args.projection ?? "full"),
+      );
     },
   );
 

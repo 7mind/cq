@@ -144,6 +144,62 @@ export interface FetchPromptResult {
 }
 
 /**
+ * The explicit `fetch_prompt` projections (D269/T1993, under G93's Q312/Q313
+ * policy): `"full"` is the default and preserves the deliberate full-detail
+ * entry byte-identically (Q312); `"schema"` returns the schema-only entry for
+ * callers that need only the dispatch contract.
+ */
+export const FETCH_PROMPT_PROJECTIONS = ["full", "schema"] as const;
+
+export type FetchPromptProjection = (typeof FETCH_PROMPT_PROJECTIONS)[number];
+
+/**
+ * The `fetch_prompt` schema-projection payload: EXACTLY `roleId` plus, for a
+ * dispatched-subagent role, `version`, `inputSchema`, and `outputSchema` — no
+ * `promptTemplate` and no other role metadata. An orchestrator-command role
+ * returns `{ roleId }` alone: the `version`/`inputSchema`/`outputSchema` keys
+ * are ABSENT (never null), mirroring the full projection's absent-key
+ * convention.
+ */
+export interface FetchPromptSchemaResult {
+  /** The resolved role id (echoes the request). */
+  readonly roleId: string;
+  /** Contract version stamp; present only for a dispatched-subagent role. */
+  readonly version?: number;
+  /** The parent-supplied input contract; present only for a dispatched subagent. */
+  readonly inputSchema?: JSONSchemaDoc;
+  /** The validated output contract; present only for a dispatched subagent. */
+  readonly outputSchema?: JSONSchemaDoc;
+}
+
+/**
+ * Project a fetched prompt-catalog entry. `"full"` returns the entry
+ * unchanged (identity — the deliberate Q312 full projection); `"schema"`
+ * drops `promptTemplate` and every other role-metadata key, keeping only
+ * {@link FetchPromptSchemaResult}.
+ */
+export function projectFetchPromptResult(
+  result: FetchPromptResult,
+  projection: FetchPromptProjection,
+): FetchPromptResult | FetchPromptSchemaResult {
+  switch (projection) {
+    case "full":
+      return result;
+    case "schema":
+      return {
+        roleId: result.roleId,
+        ...(result.version === undefined ? {} : { version: result.version }),
+        ...(result.inputSchema === undefined ? {} : { inputSchema: result.inputSchema }),
+        ...(result.outputSchema === undefined ? {} : { outputSchema: result.outputSchema }),
+      };
+    default:
+      // The wire boundary does not zod-validate arguments on direct
+      // invocation; fail fast instead of silently guessing a projection.
+      throw new Error(`unknown fetch_prompt projection: ${JSON.stringify(projection)}`);
+  }
+}
+
+/**
  * One structured validation error: the failing JSON-Schema instance path (the
  * field path into the validated value, `""` for the root), a human-readable
  * message, the failed keyword + schema path, and the keyword's params. A flat

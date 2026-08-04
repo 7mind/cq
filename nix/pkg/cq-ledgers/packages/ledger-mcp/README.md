@@ -229,7 +229,7 @@ measured savings without another batching schema.
 | `confirm_dispatch_completion` | `purpose-built-small` | A handle-only consumed acknowledgement or typed abort. |
 | `abort_dispatch` | `purpose-built-small` | A typed aborted acknowledgement. |
 | `fetch_dispatch_result` | `requested-full-content` | One typed fetch state; only the first consumed fetch can carry `output`. |
-| `fetch_prompt` | `requested-full-content` | Full typed prompt entry, including prompt text and schemas when available. |
+| `fetch_prompt` | `requested-full-content` | Full typed prompt entry under the default `projection: "full"`, including prompt text and schemas when available; `projection: "schema"` returns exactly `{ roleId, version?, inputSchema?, outputSchema? }` — `{ roleId }` alone for an orchestrator-command role (schema keys ABSENT, never null). |
 | `list_projects` | `purpose-built-small` | `{ projects: [{ key, displayName, createdAt? }] }`. |
 | `claim_plan` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement }` — the ONLY response that echoes `ownerFenceToken`, and only back to the winning or exactly-retried claimant — or `{ ok: false, conflict }` carrying public claim metadata only. |
 | `publish_plan_draft` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { …operation key, manifest, replacedManifest, reviewDefects } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |

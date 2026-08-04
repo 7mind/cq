@@ -269,7 +269,7 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     "One typed fetch state; only the first consumed fetch can carry `output`.",
   ),
   fetch_prompt: requestedFullContent(
-    "Full typed prompt entry, including prompt text and schemas when available.",
+    "Full typed prompt entry under the default `projection: \"full\"`, including prompt text and schemas when available; `projection: \"schema\"` returns exactly `{ roleId, version?, inputSchema?, outputSchema? }` — `{ roleId }` alone for an orchestrator-command role (schema keys ABSENT, never null).",
   ),
   list_projects: purposeBuiltSmall("`{ projects: [{ key, displayName, createdAt? }] }`."),
   claim_plan: purposeBuiltSmall(

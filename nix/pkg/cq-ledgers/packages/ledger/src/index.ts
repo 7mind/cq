@@ -414,10 +414,14 @@ export {
   UnknownRoleError,
   NoSchemaForRoleError,
   PromptCatalogNotImplementedError,
+  FETCH_PROMPT_PROJECTIONS,
+  projectFetchPromptResult,
 } from "./mcp/promptCatalogCapability.js";
 export type {
   PromptCatalogCapability,
   FetchPromptResult,
+  FetchPromptProjection,
+  FetchPromptSchemaResult,
   PromptValidationResult,
   PromptValidationError,
   PromptRoleKind,

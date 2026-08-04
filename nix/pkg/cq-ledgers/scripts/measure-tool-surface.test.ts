@@ -104,7 +104,9 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     },
     measuredProfiles: 26,
     corpusTranscripts: 357,
-    maximumRemainingG93AttributableTokens: 817,
+    // 817 -> 886 under T1993: fetch_prompt gained the optional projection
+    // argument (D269 schema projection), growing its inputSchema tokens.
+    maximumRemainingG93AttributableTokens: 886,
     corpusMedianResponseSavingTokens: 1461,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,
