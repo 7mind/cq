@@ -54,6 +54,7 @@ import { LedgerError } from "../types.js";
 import { paginate } from "../projection.js";
 import { derivePredicates } from "../store/predicates.js";
 import { computeLedgerSummaries } from "../summaries.js";
+import { measureUtf8JsonBytes, measureUtf8TextBytes } from "../usageStats.js";
 import {
   appendLedgerResponseDescription,
   ITEM_MUTATION_ACK_DESCRIPTION,
@@ -936,18 +937,77 @@ export function createLedgerMcpToolSpecifications(
 
   const registeredToolNames =
     dispatchCapability === undefined ? NON_DISPATCH_LEDGER_TOOL_NAMES : LEDGER_TOOL_NAMES;
-  return tools.map((ledgerTool, index) => {
-    const toolName = registeredToolNames[index];
-    if (toolName === undefined || ledgerTool.name !== toolName) {
-      throw new Error(`Ledger tool response-description order drift at ${ledgerTool.name}`);
-    }
-    return {
-      ...ledgerTool,
-      description: COMPLETE_DESCRIPTION_TOOL_NAMES.has(toolName)
-        ? ledgerTool.description
-        : appendLedgerResponseDescription(toolName, ledgerTool.description),
-    } as LedgerToolSpecification;
-  });
+  return withUsageRecording(
+    store,
+    tools.map((ledgerTool, index) => {
+      const toolName = registeredToolNames[index];
+      if (toolName === undefined || ledgerTool.name !== toolName) {
+        throw new Error(`Ledger tool response-description order drift at ${ledgerTool.name}`);
+      }
+      return {
+        ...ledgerTool,
+        description: COMPLETE_DESCRIPTION_TOOL_NAMES.has(toolName)
+          ? ledgerTool.description
+          : appendLedgerResponseDescription(toolName, ledgerTool.description),
+      } as LedgerToolSpecification;
+    }),
+  );
+}
+
+/** Sum the UTF-8 sizes of a result's text content blocks (the wire payload). */
+function measureResultBytesOut(result: unknown): number {
+  const content = (result as { content?: Array<{ type?: string; text?: string }> } | null)
+    ?.content;
+  if (!Array.isArray(content)) return measureUtf8JsonBytes(result);
+  return content.reduce(
+    (sum, block) => sum + (typeof block.text === "string" ? measureUtf8TextBytes(block.text) : 0),
+    0,
+  );
+}
+
+/** Telemetry must never mask the tool outcome (T1510). */
+async function recordUsageBestEffort(
+  store: LedgerStore,
+  endpoint: string,
+  bytesIn: number,
+  bytesOut: number,
+): Promise<void> {
+  try {
+    await store.recordMcpUsage(endpoint, bytesIn, bytesOut);
+  } catch {
+    // Best-effort by contract: a recorder failure changes nothing.
+  }
+}
+
+/**
+ * I20/G155, T1510: wrap every specification's handler ONCE at pre-prefix
+ * specification build, so both stdio MCP and direct tools record usage under
+ * the canonical unprefixed endpoint name. Every call increments callCount and
+ * bytesIn (UTF-8 JSON size of the arguments); normal completion (success or
+ * isError result object) adds bytesOut (sum of text content block sizes);
+ * a throw records bytesOut=0 and rethrows the original error.
+ */
+function withUsageRecording(
+  store: LedgerStore,
+  specifications: LedgerToolSpecification[],
+): LedgerToolSpecification[] {
+  return specifications.map((specification) => ({
+    ...specification,
+    handler: (async (args: unknown, extra: unknown) => {
+      const bytesIn = measureUtf8JsonBytes(args);
+      let result: unknown;
+      try {
+        result = await (
+          specification.handler as (a: unknown, e: unknown) => Promise<unknown>
+        )(args, extra);
+      } catch (error) {
+        await recordUsageBestEffort(store, specification.name, bytesIn, 0);
+        throw error;
+      }
+      await recordUsageBestEffort(store, specification.name, bytesIn, measureResultBytesOut(result));
+      return result;
+    }) as LedgerToolSpecification["handler"],
+  }));
 }
 
 /** Resolve a fail-closed named profile through the T1325 role matrix. */
