@@ -74,6 +74,8 @@ import {
   searchItems,
   validateSchema,
 } from "./core.js";
+import { UsageTracker } from "../usageStats.js";
+import type { UsageStatsSnapshot } from "../usageStats.js";
 import type { RefValidationContext, StatusChangePrecondition } from "./core.js";
 import { buildPrefixRegistry } from "../refs.js";
 import { materialiseFetchedLedger } from "./InMemoryLedgerStore.js";
@@ -452,6 +454,21 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     for (const name of this.ledgers.keys()) {
       await this.indexLedgerFull(name);
     }
+  }
+
+  private readonly mcpUsage = new UsageTracker();
+
+  /** I20/G155, T1509: process-local per-project usage counters shared by the
+   * fs/git-object backends (not durable across process restart). */
+  async recordMcpUsage(endpoint: string, bytesIn: number, bytesOut: number): Promise<void> {
+    this.assertInit();
+    this.mcpUsage.record(endpoint, bytesIn, bytesOut);
+  }
+
+  /** I20/G155, T1509: accumulated usage snapshot (name-sorted + totals). */
+  async fetchMcpUsageStats(): Promise<UsageStatsSnapshot> {
+    this.assertInit();
+    return this.mcpUsage.snapshot();
   }
 
   async dispose(): Promise<void> {

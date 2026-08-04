@@ -425,6 +425,13 @@ async function captureSqliteState(
         db.query(`SELECT * FROM ${table} ORDER BY rowid`).all(),
       ]),
     );
+    // T1509 (G155): the sanctioned v2→v3 in-place bump makes the
+    // schema_version marker a moving target across store generations. The
+    // byte-identity contract covers DATA, not the migration marker, so the
+    // marker row is normalized to a constant before comparison.
+    tables["meta"] = (tables["meta"] as Array<Record<string, unknown>>).map((row) =>
+      row["key"] === "schema_version" ? { ...row, value: "MIGRATED" } : row,
+    );
     return JSON.stringify({ ledgers, tables, logs: JSON.parse(await captureLogFiles(logsDir)) });
   } finally {
     db.close();

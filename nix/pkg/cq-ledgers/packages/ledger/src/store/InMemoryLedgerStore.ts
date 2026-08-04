@@ -36,6 +36,8 @@ import {
   searchItems,
   validateSchema,
 } from "./core.js";
+import { UsageTracker } from "../usageStats.js";
+import type { UsageStatsSnapshot } from "../usageStats.js";
 import type { RefValidationContext, StatusChangePrecondition } from "./core.js";
 import { buildPrefixRegistry, normalizeStoredRefFields } from "../refs.js";
 import type {
@@ -259,6 +261,20 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
         }
       }
     }
+  }
+
+  private readonly mcpUsage = new UsageTracker();
+
+  /** I20/G155, T1509: process-local per-project usage counters. */
+  async recordMcpUsage(endpoint: string, bytesIn: number, bytesOut: number): Promise<void> {
+    this.assertInit();
+    this.mcpUsage.record(endpoint, bytesIn, bytesOut);
+  }
+
+  /** I20/G155, T1509: accumulated usage snapshot (name-sorted + totals). */
+  async fetchMcpUsageStats(): Promise<UsageStatsSnapshot> {
+    this.assertInit();
+    return this.mcpUsage.snapshot();
   }
 
   async dispose(): Promise<void> {

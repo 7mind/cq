@@ -57,6 +57,7 @@ import type {
   LedgerSchema,
   Milestone,
 } from "../../types.js";
+import type { UsageStatsSnapshot } from "../../usageStats.js";
 import type {
   PlanClaimInput,
   PlanClaimResult,
@@ -572,6 +573,14 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     const version = versionRow === null ? 1 : Number(versionRow.value);
     if (version >= SCHEMA_VERSION) return;
 
+    // v2→v3 (T1509/G155): the only change is the mcp_usage_stats DDL, which
+    // ensureSchema already applied idempotently at open — bump the marker
+    // WITHOUT the v1 snapshot/rewrite churn.
+    if (version >= 2) {
+      db.query("UPDATE meta SET value = ? WHERE key = 'schema_version'").run(SCHEMA_VERSION);
+      return;
+    }
+
     // (a) Snapshot BEFORE any write, OUTSIDE the transaction.
     const snapshotPath = this.vacuumIntoSibling(db, "pre-v2-migration");
     process.stderr.write(
@@ -643,6 +652,47 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       this.handle = null;
     }
     this.initialised = false;
+  }
+
+  /** I20/G155, T1509: atomically increment per-project usage counters. */
+  async recordMcpUsage(endpoint: string, bytesIn: number, bytesOut: number): Promise<void> {
+    this.assertInit();
+    this.db()
+      .query(
+        `INSERT INTO mcp_usage_stats (endpoint, call_count, bytes_in, bytes_out)
+         VALUES (?, 1, ?, ?)
+         ON CONFLICT(endpoint) DO UPDATE SET
+           call_count = call_count + 1,
+           bytes_in = bytes_in + excluded.bytes_in,
+           bytes_out = bytes_out + excluded.bytes_out`,
+      )
+      .run(endpoint, bytesIn, bytesOut);
+  }
+
+  /** I20/G155, T1509: accumulated usage snapshot (name-sorted + totals). */
+  async fetchMcpUsageStats(): Promise<UsageStatsSnapshot> {
+    this.assertInit();
+    const rows = this.db()
+      .query(
+        "SELECT endpoint, call_count, bytes_in, bytes_out FROM mcp_usage_stats ORDER BY endpoint",
+      )
+      .all() as Array<{ endpoint: string; call_count: number; bytes_in: number; bytes_out: number }>;
+    const endpoints = rows.map((row) => ({
+      name: row.endpoint,
+      callCount: row.call_count,
+      bytesIn: row.bytes_in,
+      bytesOut: row.bytes_out,
+    }));
+    const totals = endpoints.reduce(
+      (acc, endpoint) => ({
+        name: "totals",
+        callCount: acc.callCount + endpoint.callCount,
+        bytesIn: acc.bytesIn + endpoint.bytesIn,
+        bytesOut: acc.bytesOut + endpoint.bytesOut,
+      }),
+      { name: "totals", callCount: 0, bytesIn: 0, bytesOut: 0 },
+    );
+    return { endpoints, totals };
   }
 
   /**

@@ -18,6 +18,7 @@ const NORMALIZED_TABLES = [
   "items",
   "archive_pointers",
   "archived_items",
+  "mcp_usage_stats",
   "meta",
 ];
 
@@ -63,7 +64,7 @@ describe("sqlite connection + schema (T525)", () => {
       const meta = db
         .query("SELECT value FROM meta WHERE key = 'schema_version'")
         .get() as { value: number };
-      expect(meta.value).toBe(2);
+      expect(meta.value).toBe(3);
       expect(meta.value).toBe(SCHEMA_VERSION);
     } finally {
       db.close();
@@ -81,7 +82,7 @@ describe("sqlite connection + schema (T525)", () => {
         key: string;
         value: number;
       }>;
-      expect(metaRows).toEqual([{ key: "schema_version", value: 2 }]);
+      expect(metaRows).toEqual([{ key: "schema_version", value: 3 }]);
     } finally {
       db.close();
     }

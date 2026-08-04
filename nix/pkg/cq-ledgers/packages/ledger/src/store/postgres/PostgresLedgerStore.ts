@@ -60,6 +60,7 @@ import type {
   LedgerSchema,
   Milestone,
 } from "../../types.js";
+import type { UsageStatsSnapshot } from "../../usageStats.js";
 import {
   BootstrapViolationError,
   DuplicateIdError,
@@ -877,6 +878,48 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.itemArchives.clear();
     this.mutexes.clear();
     this.initialised = false;
+  }
+
+  /** I20/G155, T1509: atomically increment tenant-scoped usage counters. */
+  async recordMcpUsage(endpoint: string, bytesIn: number, bytesOut: number): Promise<void> {
+    this.assertInit();
+    await this.pool()`
+      INSERT INTO mcp_usage_stats (project_key, endpoint, call_count, bytes_in, bytes_out)
+      VALUES (${this.projectKey}, ${endpoint}, 1, ${bytesIn}, ${bytesOut})
+      ON CONFLICT (project_key, endpoint) DO UPDATE SET
+        call_count = mcp_usage_stats.call_count + 1,
+        bytes_in = mcp_usage_stats.bytes_in + EXCLUDED.bytes_in,
+        bytes_out = mcp_usage_stats.bytes_out + EXCLUDED.bytes_out
+    `;
+  }
+
+  /** I20/G155, T1509: accumulated usage snapshot for this tenant. */
+  async fetchMcpUsageStats(): Promise<UsageStatsSnapshot> {
+    this.assertInit();
+    const rows = await this.pool()<
+      Array<{ endpoint: string; call_count: number; bytes_in: number; bytes_out: number }>
+    >`
+      SELECT endpoint, call_count, bytes_in, bytes_out
+      FROM mcp_usage_stats
+      WHERE project_key = ${this.projectKey}
+      ORDER BY endpoint
+    `;
+    const endpoints = rows.map((row) => ({
+      name: row.endpoint,
+      callCount: Number(row.call_count),
+      bytesIn: Number(row.bytes_in),
+      bytesOut: Number(row.bytes_out),
+    }));
+    const totals = endpoints.reduce(
+      (acc, endpoint) => ({
+        name: "totals",
+        callCount: acc.callCount + endpoint.callCount,
+        bytesIn: acc.bytesIn + endpoint.bytesIn,
+        bytesOut: acc.bytesOut + endpoint.bytesOut,
+      }),
+      { name: "totals", callCount: 0, bytesIn: 0, bytesOut: 0 },
+    );
+    return { endpoints, totals };
   }
 
   // ---------------------------------------------------------------------------

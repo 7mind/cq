@@ -264,6 +264,7 @@ describe("XDG project identity storage shape", () => {
           "groups",
           "items",
           "ledgers",
+          "mcp_usage_stats",
           "meta",
           "plan_claims",
           "plan_operations",
@@ -273,7 +274,7 @@ describe("XDG project identity storage shape", () => {
           .all()
           .map((row) => row.name);
         expect(metaColumns).toEqual(["key", "value"]);
-        expect(SCHEMA_VERSION).toBe(2);
+        expect(SCHEMA_VERSION).toBe(3);
       } finally {
         db.close();
       }

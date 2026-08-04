@@ -46,6 +46,7 @@ import type {
 } from "../types.js";
 import type { FtsSearchHit, FtsSearchOpts } from "../search/LedgerSearchIndex.js";
 import type { LedgerSnapshot } from "../snapshot.js";
+import type { UsageStatsSnapshot } from "../usageStats.js";
 
 export type { FtsSearchHit, FtsSearchOpts } from "../search/LedgerSearchIndex.js";
 
@@ -317,6 +318,20 @@ export interface LedgerStore {
    *    method is a no-op there.
    */
   invalidate(ledgerId: string): Promise<void>;
+
+  /**
+   * Record one MCP call's usage counters (I20/G155, T1509): atomically
+   * increment the per-project counters for `endpoint` (the canonical
+   * unprefixed MCP tool name). Durable where the backend is durable
+   * (SQLite/Postgres), process-local otherwise (in-memory and the
+   * AbstractLedgerStore fs/git-object family). Primary-store local telemetry:
+   * outside the cq backup/restore dump surface.
+   */
+  recordMcpUsage(endpoint: string, bytesIn: number, bytesOut: number): Promise<void>;
+
+  /** Fetch the accumulated per-project usage snapshot (endpoints sorted by
+   * name plus the totals row), per {@link UsageStatsSnapshot}. */
+  fetchMcpUsageStats(): Promise<UsageStatsSnapshot>;
 
   dispose(): Promise<void>;
 }

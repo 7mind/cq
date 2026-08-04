@@ -27,7 +27,7 @@ import type { Database } from "bun:sqlite";
  *   (its bootstrap writes are already canonical, so there is nothing to
  *   normalize).
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /**
  * Apply the normalized-row DDL to `db`. Idempotent: every statement is
@@ -102,6 +102,13 @@ export function ensureSchema(db: Database): void {
     CREATE TABLE IF NOT EXISTS meta (
       key   TEXT PRIMARY KEY,
       value NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS mcp_usage_stats (
+      endpoint    TEXT PRIMARY KEY,
+      call_count  INTEGER NOT NULL,
+      bytes_in    INTEGER NOT NULL,
+      bytes_out   INTEGER NOT NULL
     );
   `);
   db.query("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)").run(

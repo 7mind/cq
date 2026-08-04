@@ -198,6 +198,17 @@ export async function ensureSchema(pool: SQL): Promise<void> {
     `;
 
     await locked`
+      CREATE TABLE IF NOT EXISTS mcp_usage_stats (
+        project_key TEXT NOT NULL REFERENCES projects(project_key),
+        endpoint    TEXT NOT NULL,
+        call_count  INTEGER NOT NULL,
+        bytes_in    INTEGER NOT NULL,
+        bytes_out   INTEGER NOT NULL,
+        PRIMARY KEY (project_key, endpoint)
+      )
+    `;
+
+    await locked`
       INSERT INTO meta (key, value) VALUES ('schema_version', ${String(PG_SCHEMA_VERSION)})
       ON CONFLICT (key) DO NOTHING
     `;
