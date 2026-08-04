@@ -336,7 +336,7 @@ async function main(argv: readonly string[]): Promise<TargetOutcome> {
     if (!(await isInitialLauncherAlive(launcher, launcherDarwinHelper))) {
       await rejectOrphanedLauncher(protocolDirectory, launcherDarwinHelper, true);
     }
-    await rm(completionPath, { force: true });
+    await rm(protocolDirectory, { recursive: true, force: true });
     return outcome;
   } finally {
     launcherMonitorController.abort();

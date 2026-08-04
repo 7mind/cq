@@ -461,6 +461,132 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     },
   );
 
+  // Regression origin: D265 left the nonce protocol directory stranded when the
+  // launcher died after the bootstrap's final liveness check but before the
+  // launcher's own cleanup finally ran.
+  test.skipIf(process.platform !== "linux")(
+    "removes the nonce protocol directory when the launcher hard-exits as completion is consumed [Whitebox-GoodCommunication]",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-completion-window-"));
+      roots.push(root);
+      const launcherPidPath = join(root, "launcher-pid");
+      const launcherStatePath = join(root, "launcher-state.json");
+      const hardExitMarkerPath = join(root, "hard-exit-observed");
+      const registeredLaunchUrl = new URL("../src/registeredLaunch.ts", import.meta.url).href;
+      const launcherSource = [
+        "const { spawn } = require('node:child_process');",
+        "const { existsSync, writeFileSync } = require('node:fs');",
+        "const { join } = require('node:path');",
+        `const { launchRegisteredProcessGroup } = await import(${JSON.stringify(registeredLaunchUrl)});`,
+        "let protocolDirectory;",
+        "const launched = await launchRegisteredProcessGroup({",
+        "  argv: [process.execPath, '-e', 'process.exit(0)'],",
+        `  cwd: ${JSON.stringify(root)},`,
+        "  env: process.env,",
+        "  stdio: ['ignore', 'ignore', 'inherit'],",
+        "  register: async () => {},",
+        "  launchBootstrap: (specification) => {",
+        "    protocolDirectory = specification.argv[2];",
+        "    const child = spawn(specification.argv[0], specification.argv.slice(1), {",
+        "      cwd: specification.cwd,",
+        "      env: specification.env,",
+        "      detached: specification.detached,",
+        "      stdio: specification.stdio,",
+        "    });",
+        "    return {",
+        "      process: child,",
+        "      pid: child.pid,",
+        "      exited: new Promise((resolve, reject) => {",
+        "        child.once('error', reject);",
+        "        child.once('exit', (exitCode, signal) => resolve({ exitCode, signal }));",
+        "      }),",
+        "      outputDrained: Promise.resolve(),",
+        "      resultFromTargetOutcome: (outcome) => outcome,",
+        "      terminate: (signal) => child.kill(signal),",
+        "    };",
+        "  },",
+        "});",
+        `writeFileSync(${JSON.stringify(launcherPidPath)}, String(process.pid));`,
+        `writeFileSync(${JSON.stringify(launcherStatePath)}, JSON.stringify({`,
+        "  protocolDirectory,",
+        "  registration: launched.registration,",
+        "}));",
+        // The completion file disappears only when the bootstrap consumes it,
+        // which happens strictly after the bootstrap's final launcher-liveness
+        // check (the D265 window); hard-exit there so the cleanup finally in
+        // registeredLaunch.ts never runs. Wait for its appearance first so the
+        // poll observes disappearance, not the pre-write phase.
+        "const completionPath = join(protocolDirectory, 'completion.json');",
+        "while (!existsSync(completionPath)) {",
+        "  await new Promise((resolve) => setTimeout(resolve, 2));",
+        "}",
+        "for (;;) {",
+        "  if (!existsSync(completionPath)) {",
+        `    writeFileSync(${JSON.stringify(hardExitMarkerPath)}, String(process.pid));`,
+        "    process.exit(0);",
+        "  }",
+        "  await new Promise((resolve) => setTimeout(resolve, 2));",
+        "}",
+      ].join("\n");
+      const launcher = spawn(process.execPath, ["-e", launcherSource], {
+        cwd: root,
+        env: process.env,
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      const launcherPid = launcher.pid;
+      if (launcherPid === undefined) throw new Error("test launcher returned no PID");
+      if (launcher.stderr === null) throw new Error("test launcher returned no stderr pipe");
+      const launcherExited = exited(launcher);
+      const bootstrapStderr = streamText(launcher.stderr);
+      let protocolDirectory: string | undefined;
+      let registration: ProcessGroupRegistration | undefined;
+
+      try {
+        await waitForFile(launcherStatePath);
+        const launcherState = JSON.parse(await readFile(launcherStatePath, "utf8")) as {
+          readonly protocolDirectory: string;
+          readonly registration: ProcessGroupRegistration;
+        };
+        protocolDirectory = launcherState.protocolDirectory;
+        registration = launcherState.registration;
+
+        await waitForFile(hardExitMarkerPath);
+        expect(await launcherExited).toEqual({ exitCode: 0, signal: null });
+        expect(await readProcessIdentity(launcherPid)).toBeNull();
+        expect(await bootstrapStderr).toBe("");
+
+        const deadline = Date.now() + REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS;
+        for (;;) {
+          const leaderIdentity = await readProcessIdentity(registration.leader.pid);
+          const directoryAlive = await pathExists(protocolDirectory);
+          if (leaderIdentity === null && !directoryAlive) break;
+          if (Date.now() >= deadline) {
+            expect({
+              leaderGone: leaderIdentity === null,
+              directoryAlive,
+              statusAlive: await pathExists(join(protocolDirectory, "status.json")),
+            }).toEqual({ leaderGone: true, directoryAlive: false, statusAlive: false });
+          }
+          await Bun.sleep(2);
+        }
+        expect(await readProcessIdentity(registration.leader.pid)).toBeNull();
+        expect(await pathExists(protocolDirectory)).toBe(false);
+      } finally {
+        if (launcher.exitCode === null && launcher.signalCode === null) {
+          launcher.kill("SIGKILL");
+          await launcherExited;
+        }
+        if (registration !== undefined) {
+          signalProcessGroup(registration.pgid, "SIGKILL");
+          await waitForIdentityToDisappear(registration.leader.pid);
+        }
+        if (protocolDirectory !== undefined) {
+          await rm(protocolDirectory, { recursive: true, force: true });
+        }
+      }
+    },
+  );
+
   // Regression origin: a reused bootstrap PID must not authorize signaling its numeric PGID.
   test("refuses to signal a process group after its bootstrap identity is reused [Whitebox-GoodCommunication]", async () => {
     const reaperExecutable = fileURLToPath(
