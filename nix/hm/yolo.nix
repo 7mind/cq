@@ -21,6 +21,22 @@
 # audio (on by default) and display passthrough (tag "display", off by default —
 # `yolo --enable=display` binds the Wayland compositor socket plus the
 # X11/XWayland socket and auth file).
+#
+# Clipboard boundary (defects:D262, Linux): when a launch inherits a live host
+# tmux session, the wrapper starts a per-launch host broker
+# (yolo-clipboard-proxy) that grants the sandbox exactly two fixed operations
+# — set the host clipboard (`tmux load-buffer -`) and read it back
+# (`tmux save-buffer -`) — over a dedicated 0600 socket inside a 0700
+# per-launch directory; a PATH-prepended `tmux` shim inside the sandbox
+# forwards only load-buffer/save-buffer/show-buffer and rejects every other
+# verb, so sandboxed processes hold bounded clipboard read/write authority but
+# no host tmux command authority. Payloads are bounded to 1 MiB, the sandbox
+# TMUX coordinate names only the broker socket, the inherited socket is masked
+# out of every covering bind (alias-resistant raw-socket confinement), and
+# every failure fails closed (clipboard disabled, never a raw host socket).
+# Accepted fixed invocations can still trigger host-configured tmux hooks —
+# after-load-buffer, after-save-buffer, and command-error — which belong to
+# the host server's own configuration and receive no client-supplied argv.
 { inputs }:
 { config
 , lib

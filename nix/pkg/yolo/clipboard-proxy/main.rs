@@ -118,6 +118,17 @@ Usage:
 
 Environment (client / tmux-shim):
   YOLO_CLIPBOARD_SOCK  Unix socket path of the host broker
+
+Boundary (defects:D262): the broker grants the sandbox exactly two fixed
+operations — set the host clipboard (fixed `tmux load-buffer -`) and read it
+back (fixed `tmux save-buffer -`) — over its dedicated 0600 socket inside a
+0700 per-launch directory. Payloads are bounded to 1 MiB and every failure
+fails closed (clipboard disabled, never a raw host socket). Every other tmux
+verb is rejected by the shim and never reaches the host server. Accepted
+fixed invocations can still trigger host-configured tmux hooks —
+after-load-buffer, after-save-buffer, and command-error — which belong to
+the host server's own configuration, receive no client-supplied argv, and
+are the only tmux side effects this bridge retains.
 "
     );
 }

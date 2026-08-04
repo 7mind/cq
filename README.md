@@ -230,6 +230,26 @@ A typical run:
    implement — autonomously, pausing only when it needs something from you
    (an unanswered question or a user action). Re-run it after you unblock it.
 
+## Clipboard inside the Linux sandbox
+
+Agent tools reach the host tmux clipboard through a per-launch host broker
+(`yolo-clipboard-proxy`, defects:D262) instead of a raw tmux socket bind. The
+broker grants exactly two fixed operations — set the host clipboard
+(`tmux load-buffer -`) and read it back (`tmux save-buffer -`) — over a
+dedicated 0600 socket inside a 0700 per-launch directory, while a
+PATH-prepended `tmux` shim inside the sandbox forwards only
+load-buffer/save-buffer/show-buffer and rejects every other tmux verb. The
+result is bounded clipboard read/write authority with no host tmux command
+authority: payloads are capped at 1 MiB, the sandbox `TMUX` coordinate names
+only the broker socket (never the host socket path or server PID), every
+bind that would expose the inherited socket is masked by the alias-resistant
+confinement pass, and every failure fails closed (clipboard disabled, never
+a raw host socket). Accepted fixed invocations can still trigger
+host-configured tmux hooks — `after-load-buffer`, `after-save-buffer`, and
+`command-error` — which belong to the host server's own configuration and
+receive no client-supplied argv; they are the only tmux side effects the
+bridge retains.
+
 ## Project dispatch configuration
 
 `cq init` writes `cq.toml`; [`cq.toml.example`](cq.toml.example) documents the
