@@ -34,6 +34,7 @@ import { MILESTONES_AMBIENT_ID } from "../src/constants.js";
 import type { LedgerMutationOp, LedgerStore } from "../src/store/LedgerStore.js";
 import { FsLedgerStore } from "../src/store/FsLedgerStore.js";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
+import { openLedgerDb } from "../src/store/sqlite/connection.js";
 
 const FIXED_NOW = "2026-01-01T00:00:00.000Z";
 const now = (): string => FIXED_NOW;
@@ -488,6 +489,153 @@ describe("onMutation", () => {
       expect(store.fetchItem("tasks", item.id).fields["headline"]).toBe("post-boom");
     } finally {
       await store.dispose();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D267/T1857 — two-store parent-liveness serialization over one database
+// ---------------------------------------------------------------------------
+
+describe("two SqliteLedgerStore instances — parent-liveness serialization (D267/T1857)", () => {
+  async function twoStores(): Promise<{ s1: SqliteLedgerStore; s2: SqliteLedgerStore; dbPath: string }> {
+    const dbPath = await freshDbPath();
+    const s1 = new SqliteLedgerStore({ dbPath, now });
+    const s2 = new SqliteLedgerStore({ dbPath, now });
+    await s1.init();
+    await s2.init();
+    return { s1, s2, dbPath };
+  }
+
+  test("close-versus-create serializes to exactly one winner via either API, in both winner orderings", async () => {
+    for (const api of ["canonical", "direct"] as const) {
+      const close = (s: SqliteLedgerStore, id: string): Promise<{ status: string }> =>
+        api === "canonical"
+          ? s.updateMilestone(id, { status: "done" })
+          : s.updateItem("milestones", id, { status: "done" });
+
+      // close first: create under the terminal parent refuses.
+      {
+        const { s1, s2 } = await twoStores();
+        try {
+          const m = await s1.createMilestone({ title: `cc-${api}-close-first` });
+          await close(s1, m.id);
+          await expect(
+            s2.createItem("tasks", m.id, { status: "planned", fields: { headline: "x" } }),
+          ).rejects.toThrow(/terminal/);
+          expect(s1.fetch("tasks")).toEqual(s2.fetch("tasks"));
+        } finally {
+          await s1.dispose();
+          await s2.dispose();
+        }
+      }
+      // create first: the close refuses the fresh non-terminal child; after
+      // the child is terminal it closes through the same API.
+      {
+        const { s1, s2 } = await twoStores();
+        try {
+          const m = await s1.createMilestone({ title: `cc-${api}-create-first` });
+          const t = await s2.createItem("tasks", m.id, {
+            status: "planned",
+            fields: { headline: "x" },
+          });
+          await expect(close(s1, m.id)).rejects.toThrow(/Cannot close milestone/);
+          await s2.updateItem("tasks", t.id, { status: "done" });
+          expect((await close(s1, m.id)).status).toBe("done");
+        } finally {
+          await s1.dispose();
+          await s2.dispose();
+        }
+      }
+    }
+
+    // Truly concurrent over two connections: exactly one winner.
+    for (let i = 0; i < 10; i++) {
+      const { s1, s2 } = await twoStores();
+      try {
+        const m = await s1.createMilestone({ title: `cc-par-${i}` });
+        const [closeResult, createResult] = await Promise.allSettled([
+          s1.updateMilestone(m.id, { status: "done" }),
+          s2.createItem("tasks", m.id, { status: "planned", fields: { headline: "x" } }),
+        ]);
+        expect(closeResult.status === "fulfilled" !== (createResult.status === "fulfilled")).toBe(
+          true,
+        );
+      } finally {
+        await s1.dispose();
+        await s2.dispose();
+      }
+    }
+  });
+
+  test("close-versus-reopen refuses resurrection under a closed parent in both winner orderings, counters untouched", async () => {
+    for (const winner of ["close", "reopen"] as const) {
+      const { s1, s2 } = await twoStores();
+      try {
+        const m = await s1.createMilestone({ title: `cr-${winner}` });
+        const t = await s1.createItem("tasks", m.id, {
+          status: "planned",
+          fields: { headline: "x" },
+        });
+        await s1.updateItem("tasks", t.id, { status: "done" });
+        const before = s2.fetch("tasks");
+        if (winner === "close") {
+          await s1.updateMilestone(m.id, { status: "done" });
+          await expect(s2.reopenItem("tasks", t.id, "wip")).rejects.toThrow(/terminal/);
+          expect(s2.fetchItem("tasks", t.id).status).toBe("done");
+        } else {
+          await s2.reopenItem("tasks", t.id, "wip");
+          await expect(s1.updateMilestone(m.id, { status: "done" })).rejects.toThrow(
+            /Cannot close milestone/,
+          );
+        }
+        expect(s2.fetch("tasks").counters).toEqual(before.counters);
+      } finally {
+        await s1.dispose();
+        await s2.dispose();
+      }
+    }
+  });
+
+  test("legacy nonterminal unarchive refuses under a closed parent; terminal archived item re-attaches with status retained", async () => {
+    const { s1, s2, dbPath } = await twoStores();
+    try {
+      const m = await s1.createMilestone({ title: "cu" });
+      const t = await s1.createItem("tasks", m.id, {
+        status: "planned",
+        fields: { headline: "x" },
+      });
+      await s1.updateItem("tasks", t.id, { status: "done" });
+      await s1.updateMilestone(m.id, { status: "done" });
+      await s1.archiveMilestone(m.id, "archived");
+      // Legacy-inconsistent: the archived row is flipped back to non-terminal.
+      const db = openLedgerDb(dbPath);
+      try {
+        db.query("UPDATE archived_items SET status = ? WHERE ledger = ? AND id = ?").run(
+          "wip",
+          "tasks",
+          t.id,
+        );
+      } finally {
+        db.close();
+      }
+      await expect(s2.unarchiveItem("tasks", m.id, t.id)).rejects.toThrow(/archived/);
+      // Restored to terminal: reattachment proceeds and retains the status.
+      const db2 = openLedgerDb(dbPath);
+      try {
+        db2.query("UPDATE archived_items SET status = ? WHERE ledger = ? AND id = ?").run(
+          "done",
+          "tasks",
+          t.id,
+        );
+      } finally {
+        db2.close();
+      }
+      const reattached = await s2.unarchiveItem("tasks", m.id, t.id);
+      expect(reattached.status).toBe("done");
+    } finally {
+      await s1.dispose();
+      await s2.dispose();
     }
   });
 });
