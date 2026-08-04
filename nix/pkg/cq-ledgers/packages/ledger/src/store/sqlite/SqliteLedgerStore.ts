@@ -100,6 +100,7 @@ import {
   applyReattachItem,
   applyReopenItem,
   applyUpdateItem,
+  validateMilestoneItemPatch,
   applyUpdateMilestoneItem,
   assertGoalPhasePreconditions,
   assertMilestoneActive,
@@ -872,6 +873,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         patch,
         this.now(),
         this.buildRefValidationContext(),
+        this.nonTerminalChildren(milestoneId),
       );
       this.persistItemRow(MILESTONES_LEDGER, x);
       return x;
@@ -882,7 +884,34 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     return item;
   }
 
+  /** D267/T1856: active children of `milestoneId` whose status is
+   * non-terminal in their own ledger, as sorted `<ledger>:<id>` refs. */
+  private nonTerminalChildren(milestoneId: string): string[] {
+    const blockers: string[] = [];
+    const schemas = this.db()
+      .query("SELECT name, schema_json FROM ledgers")
+      .all() as Array<{ name: string; schema_json: string }>;
+    const childQuery = this.db().query(
+      "SELECT id, status FROM items WHERE ledger = ? AND milestone_id = ?",
+    );
+    for (const row of schemas) {
+      if (row.name === MILESTONES_LEDGER) continue;
+      const terminal = new Set((JSON.parse(row.schema_json) as LedgerSchema).terminalStatuses);
+      for (const child of childQuery.all(row.name, milestoneId) as Array<{
+        id: string;
+        status: string;
+      }>) {
+        if (!terminal.has(child.status)) blockers.push(`${row.name}:${child.id}`);
+      }
+    }
+    return blockers.sort();
+  }
+
   async updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Promise<Item> {
+    if (ledgerId === MILESTONES_LEDGER) {
+      // Canonical disposition (D267/T1856): one delegated path.
+      return this.updateMilestone(itemId, validateMilestoneItemPatch(patch));
+    }
     const contender = rawTaskSerializationContender(ledgerId, patch.status);
     const item = immediateWriteTransaction(this.db(), () => {
       if (contender !== null) this.reachPlanSerializationBoundary(contender);
@@ -1001,6 +1030,8 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         );
       }
       const x = applyReopenItem(shim, itemId, toStatus, this.now());
+      // D267/T1856: resurrection respects parent liveness.
+      assertMilestoneActive(this.loadLedger(MILESTONES_LEDGER), source.milestoneId);
       this.persistItemRow(ledgerId, x);
       return x;
     });
@@ -1042,6 +1073,12 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
             ? `archived item file ${milestoneId} in ledger ${ledgerId} does not contain item ${itemId}`
             : `archived group ${milestoneId} in ledger ${ledgerId} has no item ${itemId}`,
         );
+      }
+      if (!new Set(ledger.schema.terminalStatuses).has(archivedRow.status)) {
+        // D267/T1856: reject BEFORE re-attachment — a non-terminal item must
+        // not reappear under an absent/archived/terminal parent (the archived
+        // status was read authoritatively in this transaction).
+        assertMilestoneActive(this.loadLedger(MILESTONES_LEDGER), archivedRow.milestone_id);
       }
       const groupsBefore = new Set(ledger.milestones.map((m) => m.id));
       const reattached = applyReattachItem(ledger, milestoneId, rowToItem(archivedRow), this.now());

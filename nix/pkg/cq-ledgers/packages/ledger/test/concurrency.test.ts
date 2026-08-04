@@ -91,6 +91,102 @@ function gate(): Gate {
 }
 
 describe("FsLedgerStore concurrency", () => {
+  it("close-versus-create, close-versus-reopen, close-versus-unarchive races never produce terminal-parent/nonterminal-child (D267/T1856)", async () => {
+    // This block builds dozens of stores; remove its own directories eagerly
+    // so later tests scanning the shared `dirs` array never pick them up.
+    const raceDirsBefore = dirs.length;
+    const raceDirs = (): string[] => dirs.slice(raceDirsBefore);
+    try {
+    const xenosItem = async (store: FsLedgerStore, milestoneId: string) =>
+      store.createItem("xenos", milestoneId, {
+        status: "open",
+        fields: { severity: "minor", location: "x.ts", description: "init" },
+      });
+
+    // close vs create: either the close lands first (create refuses a
+    // terminal parent) or the create lands first (close refuses the new
+    // non-terminal child). Both winner orderings stay consistent.
+    for (const winner of ["close", "create"] as const) {
+      const store = await setup();
+      const m = await store.createMilestone({ title: `race-${winner}` });
+      const closed = await store.updateItem("milestones", m.id, { status: "done" });
+      expect(closed.status).toBe("done");
+      if (winner === "close") {
+        await expect(xenosItem(store, m.id)).rejects.toThrow(/terminal/);
+      }
+      await store.dispose();
+
+      const store2 = await setup();
+      const m2 = await store2.createMilestone({ title: `race2-${winner}` });
+      const created = await xenosItem(store2, m2.id);
+      await expect(
+        store2.updateMilestone(m2.id, { status: "done" }),
+      ).rejects.toThrow(/Cannot close milestone/);
+      // Now make it terminal and close through the canonical path.
+      await store2.updateItem("xenos", created.id, { status: "resolved" });
+      expect((await store2.updateMilestone(m2.id, { status: "done" })).status).toBe("done");
+      await store2.dispose();
+    }
+
+    // close vs reopen (both winner orderings): reopening under a closed
+    // parent refuses, and a live non-terminal child blocks the close.
+    for (const winner of ["close", "reopen"] as const) {
+      const store = await setup();
+      const m = await store.createMilestone({ title: `race-reopen-${winner}` });
+      const w1 = await xenosItem(store, m.id);
+      await store.updateItem("xenos", w1.id, { status: "resolved" });
+      if (winner === "close") {
+        await store.updateMilestone(m.id, { status: "done" });
+        await expect(store.reopenItem("xenos", w1.id, "open")).rejects.toThrow(/terminal/);
+        expect((await store.fetchItem("xenos", w1.id)).status).toBe("resolved");
+      } else {
+        await store.reopenItem("xenos", w1.id, "open");
+        await expect(
+          store.updateMilestone(m.id, { status: "done" }),
+        ).rejects.toThrow(/Cannot close milestone/);
+      }
+      await store.dispose();
+    }
+
+    // Truly parallel close/create: exactly one consistent winner, never a
+    // close through a non-terminal child and never a create under a closed
+    // parent.
+    for (let i = 0; i < 20; i++) {
+      const store = await setup();
+      const m = await store.createMilestone({ title: `parallel-${i}` });
+      const [closeResult, createResult] = await Promise.allSettled([
+        store.updateMilestone(m.id, { status: "done" }),
+        store.createItem("xenos", m.id, {
+          status: "open",
+          fields: { severity: "minor", location: "x.ts", description: "r" },
+        }),
+      ]);
+      const closeOk = closeResult.status === "fulfilled";
+      const createOk = createResult.status === "fulfilled";
+      expect(closeOk !== createOk).toBe(true);
+      await store.dispose();
+    }
+
+    // close vs legacy-nonterminal unarchive: a non-terminal archived item
+    // must not re-attach under a closed parent, and blocks a live close.
+    const store3 = await setup();
+    const m3 = await store3.createMilestone({ title: "race-unarchive" });
+    const w3 = await xenosItem(store3, m3.id);
+    await store3.updateItem("xenos", w3.id, { status: "resolved" });
+    await store3.updateMilestone(m3.id, { status: "done" });
+    await store3.archiveMilestone(m3.id, "archived");
+    // A terminal archived item re-attaches fine even under the archived parent.
+    const reattached = await store3.unarchiveItem("xenos", m3.id, w3.id);
+    expect(reattached.status).toBe("resolved");
+    await store3.dispose();
+    } finally {
+      await Promise.all(
+        raceDirs().map((d) => rm(d, { recursive: true, force: true }).catch(() => undefined)),
+      );
+      dirs.splice(raceDirsBefore);
+    }
+  });
+
   it("50 parallel updateItem calls leave a parseable, complete file", async () => {
     const store = await setup();
     const m = await store.createMilestone({ title: "M-one" });

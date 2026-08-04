@@ -146,7 +146,13 @@ describe("McpLedgerClient over HTTP", () => {
   });
 
   it("updates a milestone's status", async () => {
-    const updated = await client.updateMilestone("M21", { status: "done" });
+    // D267/T1856: M21 has non-terminal children from the earlier tests, so a
+    // close must refuse; a childless milestone closes cleanly.
+    await expect(client.updateMilestone("M21", { status: "done" })).rejects.toThrow(
+      /Cannot close milestone M21/,
+    );
+    await client.createMilestone({ id: "M23", title: "close-target" });
+    const updated = await client.updateMilestone("M23", { status: "done" });
     expect(updated.status).toBe("done");
   });
 

@@ -24,6 +24,8 @@ import {
   applyReattachItem,
   applyReopenItem,
   applyUpdateItem,
+  collectNonTerminalChildren,
+  validateMilestoneItemPatch,
   applyUpdateMilestoneItem,
   assertGoalPhasePreconditions,
   assertMilestoneActive,
@@ -375,16 +377,21 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   async updateMilestone(milestoneId: string, patch: UpdateMilestoneItemPatch): Promise<Item> {
     const item = await this.withMilestonesLock(async () => {
-      const ledger = this.getLedger(MILESTONES_LEDGER);
-      return cloneItem(
-        applyUpdateMilestoneItem(
-          ledger,
-          milestoneId,
-          patch,
-          this.now(),
-          this.buildRefValidationContext(),
-        ),
-      );
+      const ledgerIds = [...this.ledgers.keys()].filter((id) => id !== MILESTONES_LEDGER).sort();
+      return this.withLocksInOrder(ledgerIds, async () => {
+        const ledger = this.getLedger(MILESTONES_LEDGER);
+        const blockers = collectNonTerminalChildren(this.ledgers, milestoneId);
+        return cloneItem(
+          applyUpdateMilestoneItem(
+            ledger,
+            milestoneId,
+            patch,
+            this.now(),
+            this.buildRefValidationContext(),
+            blockers,
+          ),
+        );
+      });
     });
     this.fireMutation(MILESTONES_LEDGER, "update");
     return item;
@@ -424,25 +431,34 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   async updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Promise<Item> {
-    const item = await this.withLock(ledgerId, async () => {
-      const contender = rawTaskSerializationContender(ledgerId, patch.status);
-      if (contender !== null && this.planSerializationBoundaryHook !== null) {
-        await this.planSerializationBoundaryHook(contender);
-      }
-      const ledger = this.getLedger(ledgerId);
-      assertRawPlanUpdateAllowed(this, (id) => this.getLedger(id), ledgerId, ledger, itemId, patch);
-      const precondition = this.statusChangePrecondition(ledgerId, ledger, itemId, patch);
-      return cloneItem(
-        applyUpdateItem(
-          ledger,
-          itemId,
-          patch,
-          this.now(),
-          precondition,
-          this.buildRefValidationContext(),
-        ),
-      );
-    });
+    if (ledgerId === MILESTONES_LEDGER) {
+      // Canonical disposition (D267/T1856): validate the generic patch as
+      // milestone fields and delegate to the same updateMilestone path, so
+      // status, dependency-DAG, blocker diagnostics, provenance, locking,
+      // hooks, and no-side-effect behavior cannot diverge.
+      return this.updateMilestone(itemId, validateMilestoneItemPatch(patch));
+    }
+    const item = await this.withMilestonesLock(async () =>
+      this.withLock(ledgerId, async () => {
+        const contender = rawTaskSerializationContender(ledgerId, patch.status);
+        if (contender !== null && this.planSerializationBoundaryHook !== null) {
+          await this.planSerializationBoundaryHook(contender);
+        }
+        const ledger = this.getLedger(ledgerId);
+        assertRawPlanUpdateAllowed(this, (id) => this.getLedger(id), ledgerId, ledger, itemId, patch);
+        const precondition = this.statusChangePrecondition(ledgerId, ledger, itemId, patch);
+        return cloneItem(
+          applyUpdateItem(
+            ledger,
+            itemId,
+            patch,
+            this.now(),
+            precondition,
+            this.buildRefValidationContext(),
+          ),
+        );
+      }),
+    );
     this.fireMutation(ledgerId, "update");
     return item;
   }
@@ -505,21 +521,27 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   async reopenItem(ledgerId: string, itemId: string, toStatus: string): Promise<Item> {
-    const item = await this.withLock(ledgerId, async () => {
-      const ledger = this.getLedger(ledgerId);
-      if (ledgerId === GOALS_LEDGER) {
-        assertManagedGoalTransitionAllowed(findItem(ledger, itemId).item, toStatus);
-      }
-      if (ledgerId === TASKS_LEDGER) {
-        assertManagedTaskTransitionAllowed(
-          this,
-          (id) => this.getLedger(id),
-          findItem(ledger, itemId).item,
-          toStatus,
-        );
-      }
-      return cloneItem(applyReopenItem(ledger, itemId, toStatus, this.now()));
-    });
+    const item = await this.withMilestonesLock(async () =>
+      this.withLock(ledgerId, async () => {
+        const ledger = this.getLedger(ledgerId);
+        const source = findItem(ledger, itemId).item;
+        if (ledgerId === GOALS_LEDGER) {
+          assertManagedGoalTransitionAllowed(source, toStatus);
+        }
+        if (ledgerId === TASKS_LEDGER) {
+          assertManagedTaskTransitionAllowed(
+            this,
+            (id) => this.getLedger(id),
+            source,
+            toStatus,
+          );
+        }
+        // D267/T1856: resurrection respects parent liveness — a non-terminal
+        // child must never reappear under an absent/archived/terminal parent.
+        assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), source.milestoneId);
+        return cloneItem(applyReopenItem(ledger, itemId, toStatus, this.now()));
+      }),
+    );
     this.fireMutation(ledgerId, "update");
     return item;
   }
@@ -530,7 +552,8 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     // group-keyed path covers non-milestones ledgers; the itemId path applies
     // for milestones (where milestoneId === itemId, the archive key).
     const isMilestones = ledgerId === MILESTONES_LEDGER;
-    const reattached = await this.withLock(ledgerId, async () => {
+    const reattached = await this.withMilestonesLock(async () =>
+      this.withLock(ledgerId, async () => {
       const ledger = this.getLedger(ledgerId);
       const key = `${ledgerId}/${milestoneId}`;
       if (isMilestones) {
@@ -539,6 +562,11 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
           throw new LedgerError(
             `no archived item ${itemId} under milestone ${milestoneId} in ledger ${ledgerId}`,
           );
+        }
+        if (!new Set(ledger.schema.terminalStatuses).has(archivedItem.status)) {
+          // D267/T1856: reject BEFORE re-attachment — a non-terminal item must
+          // not reappear under an absent/archived/terminal parent.
+          assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), archivedItem.milestoneId);
         }
         const out = applyReattachItem(ledger, archivedItem.milestoneId, archivedItem, this.now());
         this.itemArchives.delete(key);
@@ -557,6 +585,12 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
           `archived group ${milestoneId} in ledger ${ledgerId} has no item ${itemId}`,
         );
       }
+      if (!new Set(ledger.schema.terminalStatuses).has(group.items[idx]!.status)) {
+        // D267/T1856: reject BEFORE any mutation — a non-terminal item must
+        // not be re-attached under an absent/archived/terminal parent (its
+        // archived status is read authoritatively in this critical section).
+        assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), milestoneId);
+      }
       const [extracted] = group.items.splice(idx, 1);
       if (extracted === undefined) {
         throw new LedgerError(
@@ -572,7 +606,8 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
       // (else the rewritten group stays in `this.archives` with the
       // remaining items; the pointer is unchanged.)
       return out;
-    });
+      }),
+    );
     // An un-archive changes BOTH the active docs (new attached item) and the
     // archived docs (the group shrank or vanished). Refresh both.
     this.fireMutation(ledgerId, "update");

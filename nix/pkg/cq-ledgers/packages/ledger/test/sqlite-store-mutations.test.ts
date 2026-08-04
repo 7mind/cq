@@ -323,8 +323,15 @@ describe("SqliteLedgerStore mutation parity (shared scenario matrix)", () => {
         BootstrapViolationError,
       );
       expectError(await p((s) => s.updateMilestone("M404", { title: "x" })), ItemNotFoundError);
-      await p((s) => s.updateMilestone("M1", { status: "done" }));
-      expectError(await p((s) => s.updateMilestone("M1", { status: "open" })), InvalidTransitionError);
+      // D267/T1856: M1 cannot close here — goal G1 at "planned" is a
+      // non-terminal child, so the close is refused with the new invariant.
+      // Use a childless milestone for the close/reopen transition checks.
+      const mClose = value(await p((s) => s.createMilestone({ title: "close-target" })));
+      await p((s) => s.updateMilestone(mClose.id, { status: "done" }));
+      expectError(
+        await p((s) => s.updateMilestone(mClose.id, { status: "open" })),
+        InvalidTransitionError,
+      );
 
       expectStoreParity(stores);
     } finally {

@@ -406,4 +406,35 @@ describe("git invariant 5 — backup-tag before reinit", () => {
     },
     GIT_TIMEOUT_MS,
   );
+
+  it(
+    "updateMilestone close honors parent liveness under the git-object lock, with reload of peer commits (D267/T1856)",
+    async () => {
+      const dir = await seedRepo();
+      await seedRegistry(dir, [{ name: "widgets", schema: widgetsSchema }]);
+      const store = new GitObjectLedgerBackend({ repoRoot: dir });
+      await store.init();
+      try {
+        const m = await store.createMilestone({ title: "close-me" });
+        const w1 = await store.createItem("widgets", m.id, {
+          status: "open",
+          fields: { note: "live child" },
+        });
+        await expect(store.updateMilestone(m.id, { status: "done" })).rejects.toThrow(
+          `Cannot close milestone ${m.id}: children not in terminal status: widgets:${w1.id}`,
+        );
+        await expect(
+          store.updateItem("milestones", m.id, { status: "done" }),
+        ).rejects.toThrow(`Cannot close milestone ${m.id}`);
+        await store.updateItem("widgets", w1.id, { status: "done" });
+        expect((await store.updateItem("milestones", m.id, { status: "done" })).status).toBe(
+          "done",
+        );
+        await expect(store.reopenItem("widgets", w1.id, "open")).rejects.toThrow(/terminal/);
+      } finally {
+        await store.dispose();
+      }
+    },
+    GIT_TIMEOUT_MS,
+  );
 });

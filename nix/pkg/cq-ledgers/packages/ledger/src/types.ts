@@ -376,6 +376,18 @@ export class NonTerminalItemsError extends LedgerError {
   }
 }
 
+/** A milestone terminal transition attempted while an active child is
+ * non-terminal in its own ledger (D267/T1856). References are sorted
+ * `<ledger>:<id>` strings, deterministic across adapters and call paths. */
+export class MilestoneCloseBlockedError extends LedgerError {
+  constructor(milestoneId: string, blockerRefs: readonly string[]) {
+    super(
+      `Cannot close milestone ${milestoneId}: children not in terminal status: ${blockerRefs.join(", ")}`,
+    );
+    this.name = "MilestoneCloseBlockedError";
+  }
+}
+
 export class LedgerBusyError extends LedgerError {
   constructor(ledgerId: string, holder: { pid: number; hostname: string; startedAt?: number }) {
     super(

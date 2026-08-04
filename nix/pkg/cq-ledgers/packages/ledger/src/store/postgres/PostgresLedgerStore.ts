@@ -119,6 +119,7 @@ import {
   applyReattachItem,
   applyReopenItem,
   applyUpdateItem,
+  validateMilestoneItemPatch,
   applyUpdateMilestoneItem,
   assertGoalPhasePreconditions,
   assertMilestoneActive,
@@ -1090,6 +1091,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
           patch,
           this.now(),
           this.buildRefValidationContext(),
+          await this.nonTerminalChildren(tx, milestoneId),
         );
         await this.persistItemRow(tx, MILESTONES_LEDGER, x);
         out = cloneItem(x);
@@ -1102,7 +1104,38 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     return item;
   }
 
+  /** D267/T1856: active children of `milestoneId` whose status is
+   * non-terminal in their own ledger, as sorted `<ledger>:<id>` refs. */
+  private async nonTerminalChildren(tx: SQL, milestoneId: string): Promise<string[]> {
+    const blockers: string[] = [];
+    const schemas = await tx<{ name: string; schema_json: string }[]>`
+      SELECT name, schema_json FROM ledgers WHERE project_key = ${this.projectKey}
+    `;
+    const rows = await tx<{ ledger: string; id: string; status: string }[]>`
+      SELECT ledger, id, status FROM items
+      WHERE project_key = ${this.projectKey} AND milestone_id = ${milestoneId}
+    `;
+    const terminalByLedger = new Map(
+      schemas.map((row) => [
+        row.name,
+        new Set((JSON.parse(row.schema_json) as LedgerSchema).terminalStatuses),
+      ]),
+    );
+    for (const row of rows) {
+      if (row.ledger === MILESTONES_LEDGER) continue;
+      const terminal = terminalByLedger.get(row.ledger);
+      if (terminal !== undefined && !terminal.has(row.status)) {
+        blockers.push(`${row.ledger}:${row.id}`);
+      }
+    }
+    return blockers.sort();
+  }
+
   async updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Promise<Item> {
+    if (ledgerId === MILESTONES_LEDGER) {
+      // Canonical disposition (D267/T1856): one delegated path.
+      return this.updateMilestone(itemId, validateMilestoneItemPatch(patch));
+    }
     const item = await this.withLock(ledgerId, async () => {
       let out!: Item;
       let mutated!: Ledger;
@@ -1308,6 +1341,8 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
             );
           }
           const x = applyReopenItem(source, itemId, toStatus, this.now());
+          // D267/T1856: resurrection respects parent liveness.
+          assertMilestoneActive(requireLiveLedger(live, MILESTONES_LEDGER), current.milestoneId);
           await this.persistItemRow(tx, ledgerId, x);
           out = cloneItem(x);
           mutated = source;
@@ -1315,6 +1350,11 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
           return;
         }
         const clone = cloneLedger(this.getLedger(ledgerId));
+        // D267/T1856: resurrection respects parent liveness.
+        assertMilestoneActive(
+          this.getLedger(MILESTONES_LEDGER),
+          findItem(clone, itemId).item.milestoneId,
+        );
         const x = applyReopenItem(clone, itemId, toStatus, this.now());
         await this.persistItemRow(tx, ledgerId, x);
         out = cloneItem(x);
@@ -1372,6 +1412,12 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         }
         const groupsBefore = new Set(clone.milestones.map((m) => m.id));
         const attachId = isMilestones ? archivedItem.milestoneId : milestoneId;
+        if (!new Set(clone.schema.terminalStatuses).has(archivedItem.status)) {
+          // D267/T1856: reject BEFORE re-attachment — a non-terminal item
+          // must not reappear under an absent/archived/terminal parent (its
+          // archived status is read authoritatively in this transaction).
+          assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), attachId);
+        }
         const x = applyReattachItem(clone, attachId, archivedItem, this.now());
         if (!groupsBefore.has(x.milestoneId)) {
           await tx`

@@ -63,6 +63,8 @@ import {
   applyReopenItem,
   applyUpdateItem,
   applyUpdateMilestoneItem,
+  collectNonTerminalChildren,
+  validateMilestoneItemPatch,
   assertGoalPhasePreconditions,
   assertMilestoneActive,
   assertPrefixUnique,
@@ -620,19 +622,25 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
 
   async updateMilestone(milestoneId: string, patch: UpdateMilestoneItemPatch): Promise<Item> {
     const item = await this.withMilestonesLock(async () => {
-      // H41/D61: reload the milestones ledger from the ref tip under the lock so
-      // we mutate fresh in-memory state (counters + items), not a stale cache.
-      await this.reloadLedgerFromDisk(MILESTONES_LEDGER);
-      const ledger = this.getLedger(MILESTONES_LEDGER);
-      const it = applyUpdateMilestoneItem(
-        ledger,
-        milestoneId,
-        patch,
-        this.now(),
-        this.buildRefValidationContext(),
-      );
-      await this.writeLedgerFile(ledger);
-      return cloneItem(it);
+      const ledgerIds = this.lockableLedgerIds();
+      return this.withLocksInOrder(ledgerIds, async () => {
+        // H41/D61: reload from the ref tip under the locks so the mutation
+        // and the parent-liveness scan both see fresh state.
+        await this.reloadLedgerFromDisk(MILESTONES_LEDGER);
+        for (const ledgerId of ledgerIds) await this.reloadLedgerFromDisk(ledgerId);
+        const ledger = this.getLedger(MILESTONES_LEDGER);
+        const blockers = collectNonTerminalChildren(this.ledgers, milestoneId);
+        const it = applyUpdateMilestoneItem(
+          ledger,
+          milestoneId,
+          patch,
+          this.now(),
+          this.buildRefValidationContext(),
+          blockers,
+        );
+        await this.writeLedgerFile(ledger);
+        return cloneItem(it);
+      });
     });
     // Hook fires AFTER lockfile release per D-COHERENCE contract.
     this.fireMutation(MILESTONES_LEDGER, "update");
@@ -640,8 +648,15 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
   }
 
   async updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Promise<Item> {
-    const it = await this.withFreshGoalsForPlanGuard(ledgerId, () =>
-      this.withLock(ledgerId, async () => {
+    if (ledgerId === MILESTONES_LEDGER) {
+      // Canonical disposition (D267/T1856): validate as milestone fields and
+      // delegate to the same updateMilestone path — one behavior, one
+      // diagnostic, one lock order.
+      return this.updateMilestone(itemId, validateMilestoneItemPatch(patch));
+    }
+    const it = await this.withMilestonesLock(() =>
+      this.withFreshGoalsForPlanGuard(ledgerId, () =>
+        this.withLock(ledgerId, async () => {
         const contender = rawTaskSerializationContender(ledgerId, patch.status);
         if (contender !== null && this.planSerializationBoundaryHook !== null) {
           await this.planSerializationBoundaryHook(contender);
@@ -669,6 +684,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
         await this.writeLedgerFile(ledger);
         return cloneItem(x);
       }),
+      ),
     );
     this.fireMutation(ledgerId, "update");
     return it;
@@ -769,9 +785,11 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
   }
 
   async reopenItem(ledgerId: string, itemId: string, toStatus: string): Promise<Item> {
-    const it = await this.withFreshGoalsForPlanGuard(ledgerId, () =>
-      this.withLock(ledgerId, async () => {
+    const it = await this.withMilestonesLock(() =>
+      this.withFreshGoalsForPlanGuard(ledgerId, () =>
+        this.withLock(ledgerId, async () => {
         // H41/D61: reload from the ref tip under the lock before reading/mutating.
+        await this.reloadLedgerFromDisk(MILESTONES_LEDGER);
         await this.reloadLedgerFromDisk(ledgerId);
         const ledger = this.getLedger(ledgerId);
         // Raw reopen is a write path distinct from updateItem and carries the
@@ -790,10 +808,13 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
             toStatus,
           );
         }
+        // D267/T1856: resurrection respects parent liveness.
+        assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), source.milestoneId);
         const x = applyReopenItem(ledger, itemId, toStatus, this.now());
         await this.writeLedgerFile(ledger);
         return cloneItem(x);
       }),
+      ),
     );
     this.fireMutation(ledgerId, "update");
     return it;
@@ -801,9 +822,15 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
 
   async unarchiveItem(ledgerId: string, milestoneId: string, itemId: string): Promise<Item> {
     const isMilestones = ledgerId === MILESTONES_LEDGER;
-    const reattached = await this.withLock(ledgerId, async () => {
-      // H41/D61: reload from the ref tip under the lock before reading/mutating.
-      await this.reloadLedgerFromDisk(ledgerId);
+    const reattached = await this.withMilestonesLock(async () => {
+      // D267/T1856: milestones-first order; the archived status is read
+      // authoritatively here (from the freshly reloaded ledger pointers and
+      // the archive read under the same lock), and the milestone, ledger,
+      // pointer, and archive state are all refreshed from the ref tip.
+      await this.reloadLedgerFromDisk(MILESTONES_LEDGER);
+      return this.withLock(ledgerId, async () => {
+        // H41/D61: reload from the ref tip under the lock before reading/mutating.
+        await this.reloadLedgerFromDisk(ledgerId);
       const ledger = this.getLedger(ledgerId);
       const ptr = ledger.archivePointers.find((p) => p.id === milestoneId);
       if (ptr === undefined) {
@@ -823,6 +850,11 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
           throw new LedgerError(
             `archived item file ${milestoneId} in ledger ${ledgerId} does not contain item ${itemId}`,
           );
+        }
+        if (!new Set(ledger.schema.terminalStatuses).has(archivedItem.status)) {
+          // D267/T1856: reject BEFORE re-attachment under a closed parent;
+          // the archived status came from the archive file under this lock.
+          assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), archivedItem.milestoneId);
         }
         const out = applyReattachItem(ledger, archivedItem.milestoneId, archivedItem, this.now());
         // Per-item archive always becomes empty on extraction: remove the
@@ -849,6 +881,9 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
           `archived group ${milestoneId} in ledger ${ledgerId} has no item ${itemId}`,
         );
       }
+      if (!new Set(ledger.schema.terminalStatuses).has(extracted.status)) {
+        assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), milestoneId);
+      }
       const out = applyReattachItem(ledger, milestoneId, extracted, this.now());
       if (group.items.length === 0) {
         // Last item removed — drop the group archive file + its pointer.
@@ -861,6 +896,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
       }
       await this.writeLedgerFile(ledger);
       return cloneItem(out);
+      });
     });
     // The active docs gained an item and the archived docs shrank/vanished;
     // refresh both. fireMutation rebuilds active; refresh archived explicitly.

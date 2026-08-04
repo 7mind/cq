@@ -339,6 +339,99 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
       }
     }, TIMEOUT);
 
+    it("updateMilestone refuses a terminal close with non-terminal children, identical through direct updateItem (D267/T1856)", async () => {
+      const store = await factory.build([
+        { name: WIDGETS, schema: widgetsSchema },
+        { name: NOTES, schema: notesSchema },
+      ]);
+      try {
+        const m = await store.createMilestone({ title: "close-me" });
+        const w1 = await store.createItem(WIDGETS, m.id, {
+          status: "open",
+          fields: { severity: "minor", location: "a.ts", description: "x" },
+        });
+        const n1 = await store.createItem(NOTES, m.id, { status: "open", fields: {} });
+
+        const canonicalErr = await store
+          .updateMilestone(m.id, { status: "done" })
+          .catch((e: unknown) => e);
+        const directErr = await store
+          .updateItem("milestones", m.id, { status: "done" })
+          .catch((e: unknown) => e);
+        expect(String(canonicalErr)).toBe(String(directErr));
+        expect(String(canonicalErr)).toContain(`Cannot close milestone ${m.id}`);
+        expect(String(canonicalErr)).toContain(`notes:${n1.id}, widgets:${w1.id}`);
+        expect((await store.fetchMilestone(m.id)).milestone.status).toBe("open");
+
+        await store.updateItem(WIDGETS, w1.id, { status: "resolved" });
+        await store.updateItem(NOTES, n1.id, { status: "done" });
+        const closed = await store.updateItem("milestones", m.id, { status: "done" });
+        expect(closed.status).toBe("done");
+      } finally {
+        await factory.teardown?.(store);
+      }
+    }, TIMEOUT);
+
+    it("direct updateItem on the milestones ledger validates milestone fields and preserves updateMilestone semantics (D267/T1856)", async () => {
+      const store = await factory.build([]);
+      try {
+        const m = await store.createMilestone({ title: "fields", description: "d0" });
+        await expect(
+          store.updateItem("milestones", m.id, { fields: { headline: "not-a-milestone-field" } }),
+        ).rejects.toThrow(/milestone fields/);
+        const m2 = await store.createMilestone({ title: "blocker" });
+        const updated = await store.updateItem("milestones", m.id, {
+          fields: { title: "fields-2", description: "d2", blockedBy: [`milestones:${m2.id}`] },
+          author: "canonical-author",
+        });
+        expect(updated.fields["title"]).toBe("fields-2");
+        expect(updated.fields["description"]).toBe("d2");
+        expect(updated.fields["blockedBy"]).toEqual([`milestones:${m2.id}`]);
+        expect(updated.author).toBe("canonical-author");
+        await expect(
+          store.updateItem("milestones", "M-AMBIENT", { status: "done" }),
+        ).rejects.toThrow(/immortal/);
+      } finally {
+        await factory.teardown?.(store);
+      }
+    }, TIMEOUT);
+
+    it("reopenItem refuses resurrection under an absent, archived, or terminal parent (D267/T1856)", async () => {
+      const store = await factory.build([{ name: WIDGETS, schema: widgetsSchema }]);
+      try {
+        const m = await store.createMilestone({ title: "close-me" });
+        const w1 = await store.createItem(WIDGETS, m.id, {
+          status: "open",
+          fields: { severity: "minor", location: "a.ts", description: "x" },
+        });
+        await store.updateItem(WIDGETS, w1.id, { status: "resolved" });
+        await store.updateMilestone(m.id, { status: "done" });
+        await expect(store.reopenItem(WIDGETS, w1.id, "open")).rejects.toThrow(/terminal/);
+        expect((await store.fetchItem(WIDGETS, w1.id)).status).toBe("resolved");
+      } finally {
+        await factory.teardown?.(store);
+      }
+    }, TIMEOUT);
+
+    it("terminal archived-item reattachment is preserved under a closed parent (D267/T1856)", async () => {
+      const store = await factory.build([{ name: WIDGETS, schema: widgetsSchema }]);
+      try {
+        const m = await store.createMilestone({ title: "archive-me" });
+        const w1 = await store.createItem(WIDGETS, m.id, {
+          status: "open",
+          fields: { severity: "minor", location: "a.ts", description: "x" },
+        });
+        await store.updateItem(WIDGETS, w1.id, { status: "resolved" });
+        await store.updateMilestone(m.id, { status: "done" });
+        await store.archiveMilestone(m.id, "archived");
+        const reattached = await store.unarchiveItem(WIDGETS, m.id, w1.id);
+        expect(reattached.status).toBe("resolved");
+        expect((await store.fetchItem(WIDGETS, w1.id)).status).toBe("resolved");
+      } finally {
+        await factory.teardown?.(store);
+      }
+    }, TIMEOUT);
+
     // D10 — Phase-1b path: no partial mutation after rejection.
     //
     // Scenario pins the Phase-1b gate (NOT Phase-1): all non-milestones group

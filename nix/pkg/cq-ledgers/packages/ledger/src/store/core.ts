@@ -27,6 +27,7 @@ import {
   InvalidTransitionError,
   ItemNotFoundError,
   LedgerError,
+  MilestoneCloseBlockedError,
   MilestoneItemNotFoundError,
   MilestoneNotFoundError,
   MissingRequiredFieldError,
@@ -604,12 +605,72 @@ export function applyEnsureAmbientMilestone(ledger: Ledger, now: string): void {
 }
 
 /**
+ * D267/T1856: collect the active children of `milestoneId` whose status is
+ * non-terminal in their own ledger, as sorted `<ledger>:<id>` references.
+ * The caller holds every lock the map's mutation paths hold, so the view is
+ * authoritative for the enclosing critical section.
+ */
+export function collectNonTerminalChildren(
+  ledgers: ReadonlyMap<string, Ledger>,
+  milestoneId: string,
+): string[] {
+  const blockers: string[] = [];
+  for (const [ledgerId, ledger] of ledgers) {
+    if (ledgerId === MILESTONES_LEDGER) continue;
+    const terminal = new Set(ledger.schema.terminalStatuses);
+    for (const group of ledger.milestones) {
+      if (group.id !== milestoneId) continue;
+      for (const item of group.items) {
+        if (!terminal.has(item.status)) blockers.push(`${ledgerId}:${item.id}`);
+      }
+    }
+  }
+  return blockers.sort();
+}
+
+/** Canonical field names of a milestone-item patch; anything else is not a
+ * milestone field and must not take the delegated path (D267/T1856). */
+const MILESTONE_FIELD_NAMES = new Set(["title", "description", "blockedBy", "dependsOn"]);
+
+/**
+ * Validate a generic `updateItem` patch as milestone fields and translate it
+ * to the canonical `updateMilestone` patch shape, so the direct path and the
+ * canonical path delegate through exactly one implementation with identical
+ * diagnostics (D267/T1856).
+ */
+export function validateMilestoneItemPatch(patch: UpdateItemPatch): UpdateMilestoneItemPatch {
+  const out: UpdateMilestoneItemPatch = {};
+  if (patch.status !== undefined) out.status = patch.status;
+  if (patch.fields !== undefined) {
+    for (const key of Object.keys(patch.fields)) {
+      if (!MILESTONE_FIELD_NAMES.has(key)) {
+        throw new LedgerError(
+          `updateItem(${MILESTONES_LEDGER}) accepts only milestone fields (title, description, blockedBy, dependsOn); got ${key}`,
+        );
+      }
+    }
+    if (patch.fields["title"] !== undefined) out.title = patch.fields["title"] as string;
+    if (patch.fields["description"] !== undefined)
+      out.description = patch.fields["description"] as string;
+    if (patch.fields["blockedBy"] !== undefined)
+      out.blockedBy = patch.fields["blockedBy"] as string[];
+    if (patch.fields["dependsOn"] !== undefined)
+      out.dependsOn = patch.fields["dependsOn"] as string[];
+  }
+  if (patch.author !== undefined) out.author = patch.author;
+  if (patch.session !== undefined) out.session = patch.session;
+  return out;
+}
+
+/**
  * Apply an `updateMilestone` patch against a milestone-item in the
  * milestones ledger. Translates the four-key patch shape into the
  * generic item-patch shape and routes through `applyUpdateItem`.
  *
  * `M-AMBIENT` is immortal (§8b): moving it to any terminal status is
- * refused.
+ * refused. D267/T1856: a transition to a terminal status refuses before any
+ * mutation while `nonTerminalChildren` is non-empty (an active child whose
+ * status is outside its own ledger's terminalStatuses).
  */
 export function applyUpdateMilestoneItem(
   ledger: Ledger,
@@ -617,6 +678,7 @@ export function applyUpdateMilestoneItem(
   patch: UpdateMilestoneItemPatch,
   now: string,
   refCtx?: RefValidationContext,
+  nonTerminalChildren: readonly string[] = [],
 ): Item {
   if (ledger.id !== MILESTONES_LEDGER) {
     throw new BootstrapViolationError(
@@ -631,6 +693,13 @@ export function applyUpdateMilestoneItem(
     throw new BootstrapViolationError(
       `${MILESTONES_AMBIENT_ID} is immortal and cannot be moved to a terminal status`,
     );
+  }
+  if (
+    patch.status !== undefined &&
+    ledger.schema.terminalStatuses.includes(patch.status) &&
+    nonTerminalChildren.length > 0
+  ) {
+    throw new MilestoneCloseBlockedError(milestoneItemId, nonTerminalChildren);
   }
   const itemPatch: UpdateItemPatch = {};
   if (patch.status !== undefined) itemPatch.status = patch.status;
