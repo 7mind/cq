@@ -929,16 +929,57 @@ EOF
             yolo-profile =
               pkgs.runCommand "yolo-profile"
                 {
-                  nativeBuildInputs = [ pkgs.shellcheck pkgs.bash pkgs.jq pkgs.git pkgs.python3 self.packages.${system}.codegraph ];
+                  nativeBuildInputs = [
+                    pkgs.shellcheck
+                    pkgs.bash
+                    pkgs.jq
+                    pkgs.git
+                    pkgs.python3
+                    self.packages.${system}.codegraph
+                    # Confinement/lifecycle/hook suites: nested-bubblewrap probe,
+                    # mount-namespace fixtures, real tmux for the private server,
+                    # and the procps tools the lifecycle suite measures with.
+                    pkgs.bubblewrap
+                    pkgs.util-linux
+                    pkgs.coreutils
+                    pkgs.gnugrep
+                    pkgs.gawk
+                    pkgs.findutils
+                    pkgs.ripgrep
+                    pkgs.procps
+                    pkgs.tmux
+                  ];
                 }
                 ''
                   cp -r ${./nix/pkg/yolo} yolo
                   chmod -R u+w yolo
                   cd yolo
-                  shellcheck --severity=warning custom-prompt.sh yolo.sh profile-test.sh codegraph-bootstrap.sh codegraph-bootstrap-test.sh llm-sandbox.sh llm-sandbox-test.sh
+                  shellcheck --severity=warning custom-prompt.sh yolo.sh llm-sandbox.sh profile-test.sh codegraph-bootstrap.sh codegraph-bootstrap-test.sh llm-sandbox-test.sh clipboard-confinement-test.sh clipboard-proxy-test.sh clipboard-proxy-lifecycle-test.sh clipboard-proxy-hook-test.sh
                   bash profile-test.sh
                   bash codegraph-bootstrap-test.sh "$(command -v codegraph)" "$(command -v jq)" "$(command -v git)"
                   bash llm-sandbox-test.sh
+                  echo "yolo-profile: profile suites passed"
+
+                  PROXY=${self.packages.${system}.yolo.passthru.clipboardProxy}/bin/yolo-clipboard-proxy
+                  bash clipboard-proxy-test.sh "$PROXY"
+                  echo "yolo-profile: framing suite passed"
+                  bash clipboard-proxy-lifecycle-test.sh "$PROXY"
+                  echo "yolo-profile: lifecycle suite passed"
+                  # Only the hook suite may start a server: its test-owned,
+                  # isolated, no-session tmux server (exit-empty off).
+                  bash clipboard-proxy-hook-test.sh "$PROXY" "${pkgs.tmux}/bin/tmux"
+                  echo "yolo-profile: hook suite passed"
+
+                  # Corrected capability probe: execute the bound Nix-store
+                  # coreutils (a bare /bin/true does not exist in the build
+                  # sandbox and would prove nothing). Only when user and mount
+                  # namespaces work does the confinement matrix run.
+                  if bwrap --unshare-all --share-net --ro-bind /nix/store /nix/store -- "${pkgs.coreutils}/bin/true"; then
+                    bash clipboard-confinement-test.sh "$PROXY"
+                    echo "yolo-profile: confinement suite passed"
+                  else
+                    echo "yolo-profile: nested-bubblewrap unavailable (userns/mount-ns probe failed); skipping confinement suite"
+                  fi
                   touch $out
                 '';
             yolo-darwin-profile =

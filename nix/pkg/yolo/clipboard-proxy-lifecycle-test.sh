@@ -160,8 +160,8 @@ exec sleep 300
 EOF
 chmod +x "$BIN/bwrap-sleep"
 
-cat > "$BIN/jq" <<'EOF'
-#!/usr/bin/env bash
+cat > "$BIN/jq" <<EOF
+#!$_bash_path
 cat >/dev/null || true
 printf '{}\n'
 EOF
@@ -184,7 +184,9 @@ PIDS_TO_REAP+=("$DUMMY_PID")
 for _ in $(seq 1 50); do [[ -S "$DUMMY_SOCK" ]] && break; sleep 0.02; done
 
 SANDBOX_SCRIPT="$WORKDIR/llm-sandbox"
-cp "$SCRIPT_DIR/llm-sandbox.sh" "$SANDBOX_SCRIPT"
+# Pure Nix build sandboxes lack /usr/bin/env; rewrite the shebang to the
+# absolute bash path (same rule as the proxy test's fake tmux).
+sed "1s|^#!/usr/bin/env bash|#!$_bash_path|" "$SCRIPT_DIR/llm-sandbox.sh" > "$SANDBOX_SCRIPT"
 chmod +x "$SANDBOX_SCRIPT"
 
 run_yolo() { # $1 = bwrap flavor (bwrap-record|bwrap-sleep); rest = yolo args
@@ -195,7 +197,7 @@ run_yolo() { # $1 = bwrap flavor (bwrap-record|bwrap-sleep); rest = yolo args
   cp "$BIN/$flavor" "$BIN/bwrap"
   chmod +x "$BIN/bwrap"
   (
-    cd "$WORKDIR"
+    cd "$WORKDIR" || exit 1
     exec env -i \
       PATH="$BIN:$PATH" \
       HOME="$WORKDIR/home" \

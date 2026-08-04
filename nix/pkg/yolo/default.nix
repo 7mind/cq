@@ -143,3 +143,8 @@ pkgs.writeShellScriptBin "yolo" ''
   ${sandboxHooksJsonExports}
   exec bash ${yoloScript} "$@"
 ''
+  # The checks (yolo-profile) drive the proxy's suites with the exact binary
+  # the wrapper ships.
+  // {
+    passthru = { inherit clipboardProxy; };
+  }

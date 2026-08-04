@@ -17,7 +17,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+_bash_path="$(command -v bash)"
+_python_path="$(command -v python3)"
 TARGET_REV="HEAD"
 EXPECT_VULNERABLE=0
 PROXY_BIN=""
@@ -112,18 +113,37 @@ assert_source_contains() {
 assert_excluded_source() {
   local description="$1" path="$2"
   TESTS_RUN=$((TESTS_RUN + 1))
-  if [[ ! -e "$path" || -w "$path" ]]; then
-    fail "$description ($path is absent or writable)"
+  if [[ ! -e "$path" ]]; then
+    fail "$description ($path is absent)"
+    return
+  fi
+  # The precondition is environmental: this path must be outside the current
+  # identity's control.  Where the identity CAN write (e.g. root inside the
+  # Nix build sandbox, or a nixbld member), the exclusion is unevaluable here
+  # and the family is skipped with an explicit diagnostic rather than a false
+  # claim or a false failure.
+  if [[ -w "$path" ]]; then
+    echo "note: $description: $path is writable by this identity; exclusion precondition unevaluable, skipping" >&2
+    return
   fi
 }
 
 # The test takes the production scripts from the requested revision.  This
 # makes --expect-vulnerable a real fail-first check instead of a claim about a
-# hand-maintained copy of an older launcher.
+# hand-maintained copy of an older launcher.  HEAD in a store layout (no git
+# objects, e.g. the Nix check) reads the checked-out copies directly.
 mkdir -p "$TARGET_DIR"
-git show "$TARGET_REV:nix/pkg/yolo/yolo.sh" > "$TARGET_DIR/yolo.sh"
-git show "$TARGET_REV:nix/pkg/yolo/llm-sandbox.sh" > "$TARGET_DIR/llm-sandbox.sh"
-git show "$TARGET_REV:nix/pkg/yolo/custom-prompt.sh" > "$TARGET_DIR/custom-prompt.sh"
+if [[ "$TARGET_REV" == "HEAD" ]] && ! git show "HEAD:nix/pkg/yolo/yolo.sh" >/dev/null 2>&1; then
+  cp "$SCRIPT_DIR/yolo.sh" "$TARGET_DIR/yolo.sh"
+  cp "$SCRIPT_DIR/llm-sandbox.sh" "$TARGET_DIR/llm-sandbox.sh"
+  cp "$SCRIPT_DIR/custom-prompt.sh" "$TARGET_DIR/custom-prompt.sh"
+else
+  git show "$TARGET_REV:nix/pkg/yolo/yolo.sh" > "$TARGET_DIR/yolo.sh"
+  git show "$TARGET_REV:nix/pkg/yolo/llm-sandbox.sh" > "$TARGET_DIR/llm-sandbox.sh"
+  git show "$TARGET_REV:nix/pkg/yolo/custom-prompt.sh" > "$TARGET_DIR/custom-prompt.sh"
+fi
+# Pure Nix build sandboxes lack /usr/bin/env; rewrite the shebang yolo execs.
+sed -i "1s|^#!/usr/bin/env bash|#!$_bash_path|" "$TARGET_DIR/llm-sandbox.sh"
 chmod +x "$TARGET_DIR/yolo.sh" "$TARGET_DIR/llm-sandbox.sh"
 
 # Exclusions must have repository-backed preconditions.  Generated files have
@@ -152,8 +172,6 @@ mkdir -p "$FAKE_HOME" "$PROJECT_DIR" "$FAKE_BIN" "$RECORDER_DIR" "$TARGET_DIR" "
 # candidate as masked when a LATER --ro-bind /dev/null entry covers its
 # projected destination (masked.tsv), and captures the live YOLO_CLIPBOARD_SOCK
 # / TMUX coordinates plus broker socket/dir modes during the launch.
-_bash_path="$(command -v bash)"
-_python_path="$(command -v python3)"
 cat > "$FAKE_BIN/bwrap" <<EOF
 #!$_bash_path
 set -euo pipefail
@@ -296,12 +314,12 @@ chmod +x "$FAKE_BIN/clipboard-proxy"
 
 # Establish a bind-mounted alias of a directory inside a private user+mount
 # namespace, then exec the wrapped command.  Used by the mount-alias cases.
-cat > "$FAKE_BIN/bindmount-run" <<'EOF'
-#!/usr/bin/env bash
+cat > "$FAKE_BIN/bindmount-run" <<EOF
+#!$_bash_path
 set -euo pipefail
-mount --bind "$1" "$2"
+mount --bind "\$1" "\$2"
 shift 2
-exec "$@"
+exec "\$@"
 EOF
 chmod +x "$FAKE_BIN/bindmount-run"
 
