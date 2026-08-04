@@ -21,7 +21,7 @@
  * store's UPSERT on `init()` then simply re-affirms the same row.
  */
 
-import { afterAll, describe, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
 import type { LedgerSchema, LedgerStore } from "../src/index.js";
 import { openPgPool } from "../src/store/postgres/connection.js";
@@ -91,6 +91,193 @@ if (PG_URL === undefined || PG_URL.length === 0) {
     async teardown(store: LedgerStore): Promise<void> {
       await store.dispose();
     },
+  });
+
+  // -------------------------------------------------------------------------
+  // D267/T1858 — two independent pools over one tenant: parent-first races
+  // -------------------------------------------------------------------------
+
+  describe("PostgresLedgerStore parent-first protocol (D267/T1858)", () => {
+    const widgetsSchema: LedgerSchema = {
+      statusValues: ["open", "in-progress", "resolved", "abandoned"],
+      terminalStatuses: ["resolved", "abandoned"],
+      fields: {
+        severity: { type: "string", required: true },
+        location: { type: "string", required: true },
+        description: { type: "string", required: true },
+      },
+    };
+
+    const twoStores = async (): Promise<{
+      s1: PostgresLedgerStore;
+      s2: PostgresLedgerStore;
+      projectKey: string;
+    }> => {
+      const projectKey = await prepareTenant([{ name: "widgets", schema: widgetsSchema }]);
+      const s1 = new PostgresLedgerStore({
+        pool: openPgPool(PG_URL),
+        projectKey,
+        displayName: projectKey,
+      });
+      const s2 = new PostgresLedgerStore({
+        pool: openPgPool(PG_URL),
+        projectKey,
+        displayName: projectKey,
+      });
+      await s1.init();
+      await s2.init();
+      return { s1, s2, projectKey };
+    }
+
+    const disposePair = async (s1: PostgresLedgerStore, s2: PostgresLedgerStore): Promise<void> => {
+      await s1.dispose();
+      await s2.dispose();
+    };
+
+    it("close-versus-create serializes to exactly one winner via either API", async () => {
+      for (const api of ["canonical", "direct"] as const) {
+        const { s1, s2 } = await twoStores();
+        try {
+          const m = await s1.createMilestone({ title: `pg-cc-${api}` });
+          const close = (s: PostgresLedgerStore, id: string): Promise<unknown> =>
+            api === "canonical"
+              ? s.updateMilestone(id, { status: "done" })
+              : s.updateItem("milestones", id, { status: "done" });
+          // Truly concurrent over two independent pools: exactly one winner.
+          const [closeResult, createResult] = await Promise.allSettled([
+            close(s1, m.id),
+            s2.createItem("widgets", m.id, {
+              status: "open",
+              fields: { severity: "minor", location: "x.ts", description: "r" },
+            }),
+          ]);
+          expect(closeResult.status === "fulfilled" !== (createResult.status === "fulfilled")).toBe(
+            true,
+          );
+        } finally {
+          await disposePair(s1, s2);
+        }
+      }
+    });
+
+    it("close-versus-reopen refuses resurrection under a closed parent in both winner orderings", async () => {
+      for (const winner of ["close", "reopen"] as const) {
+        const { s1, s2 } = await twoStores();
+        try {
+          const m = await s1.createMilestone({ title: `pg-cr-${winner}` });
+          const w1 = await s1.createItem("widgets", m.id, {
+            status: "open",
+            fields: { severity: "minor", location: "x.ts", description: "x" },
+          });
+          await s1.updateItem("widgets", w1.id, { status: "resolved" });
+          if (winner === "close") {
+            await s1.updateMilestone(m.id, { status: "done" });
+            await expect(s2.reopenItem("widgets", w1.id, "open")).rejects.toThrow(/terminal/);
+            // A rejected operation performs no cache absorption on the peer,
+            // so assert the preserved state through the writer's own store.
+            expect((await s1.fetchItem("widgets", w1.id)).status).toBe("resolved");
+          } else {
+            await s2.reopenItem("widgets", w1.id, "open");
+            await expect(s1.updateMilestone(m.id, { status: "done" })).rejects.toThrow(
+              /Cannot close milestone/,
+            );
+          }
+        } finally {
+          await disposePair(s1, s2);
+        }
+      }
+    });
+
+    it("direct and canonical closure report identical sorted blockers", async () => {
+      const { s1, s2 } = await twoStores();
+      try {
+        const m = await s1.createMilestone({ title: "pg-blockers" });
+        await s1.createItem("widgets", m.id, {
+          status: "open",
+          fields: { severity: "minor", location: "x.ts", description: "x" },
+        });
+        const canonicalErr = await s1.updateMilestone(m.id, { status: "done" }).catch((e) => e);
+        const directErr = await s2.updateItem("milestones", m.id, { status: "done" }).catch((e) => e);
+        expect(String(canonicalErr)).toBe(String(directErr));
+        expect(String(canonicalErr)).toContain("Cannot close milestone");
+      } finally {
+        await disposePair(s1, s2);
+      }
+    });
+
+    it("archive-versus-create/reopen/legacy-nonterminal-unarchive serializes in both winner orderings", async () => {
+      // archive first: create under the archived parent refuses.
+      {
+        const { s1, s2 } = await twoStores();
+        try {
+          const m = await s1.createMilestone({ title: "pg-ac-archive-first" });
+          await s1.updateMilestone(m.id, { status: "done" });
+          await s1.archiveMilestone(m.id, "archived");
+          await expect(
+            s2.createItem("widgets", m.id, {
+              status: "open",
+              fields: { severity: "minor", location: "x.ts", description: "x" },
+            }),
+          ).rejects.toThrow(/archived/);
+        } finally {
+          await disposePair(s1, s2);
+        }
+      }
+      // create first: the archive refuses (non-terminal child), then succeeds
+      // once the child is terminal; a legacy nonterminal archived row refuses
+      // re-attachment under the archived parent; the terminal row re-attaches.
+      {
+        const { s1, s2, projectKey } = await twoStores();
+        try {
+          const m = await s1.createMilestone({ title: "pg-ac-create-first" });
+          const w1 = await s2.createItem("widgets", m.id, {
+            status: "open",
+            fields: { severity: "minor", location: "x.ts", description: "x" },
+          });
+          await expect(s1.archiveMilestone(m.id, "archived")).rejects.toThrow(
+            /not in terminal status/,
+          );
+          await s2.updateItem("widgets", w1.id, { status: "resolved" });
+          await s1.updateMilestone(m.id, { status: "done" });
+          await s1.archiveMilestone(m.id, "archived");
+          await setupPool`
+            UPDATE archived_items SET status = 'in-progress'
+            WHERE project_key = ${projectKey} AND ledger = 'widgets' AND id = ${w1.id}
+          `;
+          await expect(s2.unarchiveItem("widgets", m.id, w1.id)).rejects.toThrow(/archived/);
+          await setupPool`
+            UPDATE archived_items SET status = 'resolved'
+            WHERE project_key = ${projectKey} AND ledger = 'widgets' AND id = ${w1.id}
+          `;
+          const reattached = await s2.unarchiveItem("widgets", m.id, w1.id);
+          expect(reattached.status).toBe("resolved");
+        } finally {
+          await disposePair(s1, s2);
+        }
+      }
+      // archive vs reopen, concurrent: exactly one consistent outcome.
+      for (let i = 0; i < 5; i++) {
+        const { s1, s2 } = await twoStores();
+        try {
+          const m = await s1.createMilestone({ title: `pg-ar-par-${i}` });
+          const w1 = await s1.createItem("widgets", m.id, {
+            status: "open",
+            fields: { severity: "minor", location: "x.ts", description: "x" },
+          });
+          await s1.updateItem("widgets", w1.id, { status: "resolved" });
+          await s1.updateMilestone(m.id, { status: "done" });
+          const [archiveResult, reopenResult] = await Promise.allSettled([
+            s1.archiveMilestone(m.id, "archived"),
+            s2.reopenItem("widgets", w1.id, "open"),
+          ]);
+          expect(
+            archiveResult.status === "fulfilled" !== (reopenResult.status === "fulfilled"),
+          ).toBe(true);
+        } finally {
+          await disposePair(s1, s2);
+        }
+      }
+    });
   });
 
   afterAll(async () => {

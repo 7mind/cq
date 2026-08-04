@@ -63,6 +63,7 @@ import type {
 import {
   BootstrapViolationError,
   DuplicateIdError,
+  ItemNotFoundError,
   LedgerError,
   LedgerNotFoundError,
 } from "../../types.js";
@@ -1083,10 +1084,15 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     const item = await this.withMilestonesLock(async () => {
       let out!: Item;
       let mutated!: Ledger;
+      let refreshed: LiveTenantState | null = null;
       await writeTransaction(this.pool(), async (tx) => {
-        const clone = cloneLedger(this.getLedger(MILESTONES_LEDGER));
+        refreshed = null;
+        // D267/T1858: parent row lock FIRST, then the authoritative live read.
+        await this.lockParentMilestoneRow(tx, milestoneId);
+        const state = await this.readLiveTenant(tx);
+        const msLive = requireLiveLedger(state.ledgers, MILESTONES_LEDGER);
         const x = applyUpdateMilestoneItem(
-          clone,
+          msLive,
           milestoneId,
           patch,
           this.now(),
@@ -1095,13 +1101,31 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         );
         await this.persistItemRow(tx, MILESTONES_LEDGER, x);
         out = cloneItem(x);
-        mutated = clone;
+        mutated = msLive;
+        refreshed = state;
       });
+      this.absorbLiveLedgers(refreshed);
       this.ledgers.set(MILESTONES_LEDGER, mutated);
       return out;
     });
     await this.afterCommit(MILESTONES_LEDGER, "update", false);
     return item;
+  }
+
+  /**
+   * D267/T1858 parent-first protocol: lock the active milestone row
+   * FOR UPDATE inside the write transaction. Every close-or-archive-versus-
+   * child entry point takes this lock FIRST, so the race serializes at the
+   * database across independent store instances instead of at one instance's
+   * cached ledgers. A no-op when the row is absent — the authoritative read
+   * that follows reports the absence.
+   */
+  private async lockParentMilestoneRow(tx: SQL, milestoneId: string): Promise<void> {
+    await tx`
+      SELECT 1 FROM items
+      WHERE project_key = ${this.projectKey} AND ledger = ${MILESTONES_LEDGER} AND id = ${milestoneId}
+      FOR UPDATE
+    `;
   }
 
   /** D267/T1856: active children of `milestoneId` whose status is
@@ -1209,32 +1233,37 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         `use createMilestone to add an item to the ${MILESTONES_LEDGER} ledger`,
       );
     }
-    // Global milestones lock first (strict-existence check reads the milestones
-    // ledger), then the per-ledger lock — consistent __milestones__-first order
-    // with archiveMilestone, so no cyclic deadlock.
+    // Global milestones lock first, then the per-ledger lock — consistent
+    // __milestones__-first order with archiveMilestone, so no cyclic
+    // deadlock. The strict-existence check runs against LIVE tenant state
+    // inside the transaction below (D267/T1858): this instance's cached
+    // milestones ledger is not an authority for it.
     const item = await this.withMilestonesLock(async () => {
-      assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), milestoneId);
       return this.withLock(ledgerId, async () => {
         let out!: Item;
         let mutated!: Ledger;
         let refreshed: LiveTenantState | null = null;
         await writeTransaction(this.pool(), async (tx) => {
           refreshed = null;
+          // D267/T1858: parent row lock FIRST, then the authoritative
+          // liveness check against the LIVE milestones ledger.
+          await this.lockParentMilestoneRow(tx, milestoneId);
+          const state = await this.readLiveTenant(tx);
+          const live = state.ledgers;
+          assertMilestoneActive(requireLiveLedger(live, MILESTONES_LEDGER), milestoneId);
           // T851 plan fence. A raw create is forbidden from attaching to a
           // MANAGED goal at all (assertRawPlanCreateAllowed), so there is no
           // goal row to lock here — but deciding whether the referenced goal is
           // managed still has to read LIVE goal rows, not this instance's cache.
-          const state = this.isPlanFenced(ledgerId) ? await this.readLiveTenant(tx) : null;
-          const live = state === null ? null : state.ledgers;
-          if (live !== null) {
+          if (this.isPlanFenced(ledgerId)) {
             assertRawPlanCreateAllowed(
               (id) => requireLiveLedger(live, id),
               ledgerId,
               init.fields,
             );
           }
-          const base = live === null ? cloneLedger(this.getLedger(ledgerId)) : requireLiveLedger(live, ledgerId);
-          const refCtx = this.buildRefValidationContext(live ?? this.ledgers);
+          const base = requireLiveLedger(live, ledgerId);
+          const refCtx = this.buildRefValidationContext(live);
           const x = await this.insertItemViaCore(tx, base, init.id, (l) =>
             applyCreateItem(l, milestoneId, init, this.now(), refCtx),
           );
@@ -1315,21 +1344,34 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   async reopenItem(ledgerId: string, itemId: string, toStatus: string): Promise<Item> {
     const item = await this.withLock(ledgerId, async () => {
+      const pk = this.projectKey;
       let out!: Item;
       let mutated!: Ledger;
       let refreshed: LiveTenantState | null = null;
       await writeTransaction(this.pool(), async (tx) => {
         refreshed = null;
+        // D267/T1858: resolve the parent coordinate, take its row lock FIRST,
+        // then run the authoritative liveness check and the mutation against
+        // the post-lock live tenant — the resurrection guard serializes with
+        // any concurrent close across independent instances.
+        const parentRow = await tx<{ milestone_id: string }[]>`
+          SELECT milestone_id FROM items
+          WHERE project_key = ${pk} AND ledger = ${ledgerId} AND id = ${itemId}
+        `;
+        const parentId = parentRow[0]?.milestone_id;
+        if (parentId === undefined) throw new ItemNotFoundError(ledgerId, itemId);
+        await this.lockParentMilestoneRow(tx, parentId);
+        const state = await this.readLiveTenant(tx);
+        const live = state.ledgers;
+        assertMilestoneActive(requireLiveLedger(live, MILESTONES_LEDGER), parentId);
+        const source = requireLiveLedger(live, ledgerId);
+        const current = findItem(source, itemId).item;
         // T851 plan fence. `reopenItem` is a SEPARATE write path from
         // `updateItem`, so it needs its own transition guard — a backend that
         // fenced only `updateItem` would let a terminal managed task be
         // resurrected straight past the lifecycle.
         if (this.isPlanFenced(ledgerId)) {
           await this.lockGoalRows(tx, await this.fencedGoalIds(tx, ledgerId, itemId, undefined));
-          const state = await this.readLiveTenant(tx);
-          const live = state.ledgers;
-          const source = requireLiveLedger(live, ledgerId);
-          const current = findItem(source, itemId).item;
           if (ledgerId === GOALS_LEDGER) {
             assertManagedGoalTransitionAllowed(current, toStatus);
           } else {
@@ -1340,25 +1382,12 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
               toStatus,
             );
           }
-          const x = applyReopenItem(source, itemId, toStatus, this.now());
-          // D267/T1856: resurrection respects parent liveness.
-          assertMilestoneActive(requireLiveLedger(live, MILESTONES_LEDGER), current.milestoneId);
-          await this.persistItemRow(tx, ledgerId, x);
-          out = cloneItem(x);
-          mutated = source;
-          refreshed = state;
-          return;
         }
-        const clone = cloneLedger(this.getLedger(ledgerId));
-        // D267/T1856: resurrection respects parent liveness.
-        assertMilestoneActive(
-          this.getLedger(MILESTONES_LEDGER),
-          findItem(clone, itemId).item.milestoneId,
-        );
-        const x = applyReopenItem(clone, itemId, toStatus, this.now());
+        const x = applyReopenItem(source, itemId, toStatus, this.now());
         await this.persistItemRow(tx, ledgerId, x);
         out = cloneItem(x);
-        mutated = clone;
+        mutated = source;
+        refreshed = state;
       });
       this.absorbLiveLedgers(refreshed);
       this.ledgers.set(ledgerId, mutated);
@@ -1383,40 +1412,54 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       let dropGroupArchive = false;
       await writeTransaction(this.pool(), async (tx) => {
         dropGroupArchive = false;
-        const clone = cloneLedger(this.getLedger(ledgerId));
-        const key = `${ledgerId}/${milestoneId}`;
-        let archivedItem: Item;
-        if (isMilestones) {
-          const it = this.itemArchives.get(key);
-          if (it === undefined || it.id !== itemId) {
-            throw new LedgerError(
-              `no archived item ${itemId} under milestone ${milestoneId} in ledger ${ledgerId}`,
-            );
-          }
-          archivedItem = it;
-        } else {
-          const group = this.archives.get(key);
-          if (group === undefined) {
+        // D267/T1858: parent row lock FIRST, then the archived row read live
+        // and locked, then the liveness check against the LIVE milestones
+        // ledger — the reattachment guard serializes with any concurrent
+        // close across independent instances.
+        await this.lockParentMilestoneRow(tx, milestoneId);
+        if (!isMilestones) {
+          const groupCount = await tx<{ n: number }[]>`
+            SELECT COUNT(*) AS n FROM archived_items
+            WHERE project_key = ${pk} AND ledger = ${ledgerId} AND pointer_id = ${milestoneId}
+          `;
+          if (Number(groupCount[0]?.n ?? 0) === 0) {
             throw new LedgerError(
               `no archived group for milestone ${milestoneId} in ledger ${ledgerId}`,
             );
           }
-          const found = group.items.find((i) => i.id === itemId);
-          if (found === undefined) {
-            throw new LedgerError(
-              `archived group ${milestoneId} in ledger ${ledgerId} has no item ${itemId}`,
-            );
-          }
-          archivedItem = found;
-          dropGroupArchive = group.items.length === 1;
         }
+        const archivedRows = await tx<ItemRow[]>`
+          SELECT id, milestone_id, status, fields_json, created_at, updated_at, author, session
+          FROM archived_items
+          WHERE project_key = ${pk} AND ledger = ${ledgerId} AND pointer_id = ${milestoneId} AND id = ${itemId}
+          FOR UPDATE
+        `;
+        const archivedRow = archivedRows[0];
+        if (archivedRow === undefined) {
+          throw new LedgerError(
+            isMilestones
+              ? `no archived item ${itemId} under milestone ${milestoneId} in ledger ${ledgerId}`
+              : `archived group ${milestoneId} in ledger ${ledgerId} has no item ${itemId}`,
+          );
+        }
+        const archivedItem = rowToItem(archivedRow);
+        if (!isMilestones) {
+          const siblings = await tx<{ n: number }[]>`
+            SELECT COUNT(*) AS n FROM archived_items
+            WHERE project_key = ${pk} AND ledger = ${ledgerId} AND pointer_id = ${milestoneId}
+          `;
+          dropGroupArchive = Number(siblings[0]?.n ?? 0) === 1;
+        }
+        const state = await this.readLiveTenant(tx);
+        const live = state.ledgers;
+        const clone = requireLiveLedger(live, ledgerId);
         const groupsBefore = new Set(clone.milestones.map((m) => m.id));
         const attachId = isMilestones ? archivedItem.milestoneId : milestoneId;
         if (!new Set(clone.schema.terminalStatuses).has(archivedItem.status)) {
           // D267/T1856: reject BEFORE re-attachment — a non-terminal item
           // must not reappear under an absent/archived/terminal parent (its
-          // archived status is read authoritatively in this transaction).
-          assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), attachId);
+          // archived status was read live under the parent row lock).
+          assertMilestoneActive(requireLiveLedger(live, MILESTONES_LEDGER), attachId);
         }
         const x = applyReattachItem(clone, attachId, archivedItem, this.now());
         if (!groupsBefore.has(x.milestoneId)) {
@@ -1493,7 +1536,13 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         await writeTransaction(this.pool(), async (tx) => {
           localParticipating = [];
           detachedGroups = new Map();
-          msClone = cloneLedger(this.getLedger(MILESTONES_LEDGER));
+          // D267/T1858: parent row lock FIRST — a concurrent create/reopen/
+          // unarchive under this parent blocks on the same row, so the detach
+          // scan and the deletes below see one serializable state.
+          await this.lockParentMilestoneRow(tx, milestoneId);
+          const state = await this.readLiveTenant(tx);
+          const live = state.ledgers;
+          msClone = requireLiveLedger(live, MILESTONES_LEDGER);
 
           // D101: locate the milestone item in msClone's active group and
           // compute msTitle/msStatus BEFORE calling applyDetachMilestoneItem —
@@ -1528,7 +1577,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
           // throwaway until commit, so a throw here leaves the cache untouched
           // (D10 no-partial-archive).
           for (const name of otherIds) {
-            const clone = cloneLedger(this.getLedger(name));
+            const clone = requireLiveLedger(live, name);
             if (!clone.milestones.some((m) => m.id === milestoneId)) continue;
             localParticipating.push(name);
             const { milestone } = applyDetachMilestoneGroup(

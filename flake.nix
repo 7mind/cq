@@ -1348,6 +1348,29 @@ PY
                   exit 1
                 fi
 
+                storeLog="$NIX_BUILD_TOP/t1858-store.log"
+                if ! ${pkgs.bun}/bin/bun test packages/ledger/test/store-postgres.test.ts \
+                  --test-name-pattern 'PostgresLedgerStore' \
+                  > "$storeLog" 2>&1; then
+                  cat "$storeLog" >&2
+                  exit 1
+                fi
+                cat "$storeLog"
+                if grep -Fq '(skip)' "$storeLog"; then
+                  echo "T1858 store-postgres run skipped" >&2
+                  exit 1
+                fi
+                for expectedLeg in \
+                  'close-versus-create serializes to exactly one winner via either API' \
+                  'close-versus-reopen refuses resurrection under a closed parent in both winner orderings' \
+                  'direct and canonical closure report identical sorted blockers' \
+                  'archive-versus-create/reopen/legacy-nonterminal-unarchive serializes in both winner orderings'; do
+                  if ! grep -F "(pass)" "$storeLog" | grep -Fq "$expectedLeg"; then
+                    echo "T1858 store-postgres run did not execute: $expectedLeg" >&2
+                    exit 1
+                  fi
+                done
+
                 runHook postCheck
               '';
 
