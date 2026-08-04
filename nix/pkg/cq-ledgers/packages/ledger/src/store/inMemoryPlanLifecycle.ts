@@ -6,6 +6,7 @@ import {
   GOALS_LEDGER,
   MILESTONES_ACTIVE_GROUP_ID,
   MILESTONES_LEDGER,
+  MILESTONES_SCHEMA,
   PLAN_REVIEW_DRAFT_FIELD,
   QUESTIONS_LEDGER,
   RESEARCHES_LEDGER,
@@ -127,6 +128,33 @@ function findActiveItem(source: Ledger, id: string): Item | undefined {
 
 function goalItem(state: InMemoryPlanLifecycleState, goalId: string): Item | undefined {
   return findActiveItem(ledger(state, GOALS_LEDGER), goalId);
+}
+
+/**
+ * D267/T1855: the goal's coordination milestone must resolve as a live parent
+ * from the same authoritative state the mutation uses, BEFORE any state or id
+ * allocation. An absent (archived or dangling) or terminal parent rejects the
+ * operation with deterministic public conflict metadata.
+ */
+function coordinationMilestoneConflict(
+  state: InMemoryPlanLifecycleState,
+  goal: Item,
+): PlanConflict | null {
+  const milestoneId = goal.milestoneId;
+  const parent = findActiveItem(ledger(state, MILESTONES_LEDGER), milestoneId);
+  if (parent === undefined) {
+    return { code: "parent-milestone-absent", goalId: goal.id, milestoneId };
+  }
+  const terminal = new Set(MILESTONES_SCHEMA.terminalStatuses);
+  if (terminal.has(parent.status)) {
+    return {
+      code: "parent-milestone-terminal",
+      goalId: goal.id,
+      milestoneId,
+      status: parent.status,
+    };
+  }
+  return null;
 }
 
 function requireGoal(state: InMemoryPlanLifecycleState, goalId: string): Item {
@@ -786,6 +814,13 @@ export function claimInMemoryPlan(
       dirtyLedgers: [],
     };
   }
+  const parentConflict = coordinationMilestoneConflict(state, goal);
+  if (parentConflict !== null) {
+    return {
+      result: PlanClaimResultSchema.parse({ ok: false, conflict: parentConflict }),
+      dirtyLedgers: [],
+    };
+  }
   const currentClaim = activeClaim(state, goal);
   if (currentClaim !== null) {
     return {
@@ -959,6 +994,13 @@ export function publishInMemoryPlanDraft(
     };
   }
   const goal = requireGoal(state, input.goalId);
+  const parentConflict = coordinationMilestoneConflict(state, goal);
+  if (parentConflict !== null) {
+    return {
+      result: PlanPublishDraftResultSchema.parse({ ok: false, conflict: parentConflict }),
+      dirtyLedgers: [],
+    };
+  }
   if (goal.status !== "planning") {
     return {
       result: PlanPublishDraftResultSchema.parse({

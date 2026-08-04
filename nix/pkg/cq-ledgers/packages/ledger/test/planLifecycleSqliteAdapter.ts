@@ -15,7 +15,11 @@ import {
   type PlanReleaseResult,
 } from "../src/index.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
-import { LedgerStorePlanLifecycleFixture } from "./planLifecycleInMemoryAdapter.js";
+import {
+  LedgerStorePlanLifecycleFixture,
+  SEED_PROVENANCE,
+} from "./planLifecycleInMemoryAdapter.js";
+import { GOALS_LEDGER, MILESTONES_LEDGER } from "../src/index.js";
 import type {
   PlanLifecycleContractFactory,
   PlanLifecycleContractFixture,
@@ -217,6 +221,37 @@ class SqlitePlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<SqliteL
         item.session ?? null,
         ledgerId,
         itemId,
+      );
+    } finally {
+      db.close();
+    }
+  }
+
+  override async seedOrphanGoal(goalId: string, kind: "absent" | "terminal"): Promise<void> {
+    let milestoneId = "M-orphaned-parent";
+    if (kind === "terminal") {
+      const milestone = await this.store.createMilestone({
+        title: "orphaned parent",
+        ...SEED_PROVENANCE,
+      });
+      milestoneId = milestone.id;
+      await this.seedUpdate(MILESTONES_LEDGER, milestoneId, (mutableMilestone) => {
+        mutableMilestone.status = "done";
+      });
+    }
+    const db = openLedgerDb(this.dbPath);
+    try {
+      // A groups row keeps the store's referential load valid while the
+      // milestone ITEM itself stays absent — the dangling parent D267/T1855
+      // must observe.
+      db.query("INSERT OR IGNORE INTO groups (ledger, id, title, description) VALUES (?, ?, '', '')").run(
+        GOALS_LEDGER,
+        milestoneId,
+      );
+      db.query("UPDATE items SET milestone_id = ? WHERE ledger = ? AND id = ?").run(
+        milestoneId,
+        GOALS_LEDGER,
+        goalId,
       );
     } finally {
       db.close();

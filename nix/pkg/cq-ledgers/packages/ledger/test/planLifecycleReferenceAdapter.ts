@@ -183,6 +183,14 @@ export interface PlanLifecycleContractFixture {
     startPeer: () => Promise<Peer>,
   ): Promise<SerializationRaceResult<Holder, Peer>>;
   seedGoal(options: SeedGoalOptions): Promise<void>;
+  /**
+   * Corrupt a seeded goal's coordination milestone into a legacy-inconsistent
+   * state (D267/T1855): "absent" points the goal at a never-created parent;
+   * "terminal" creates a real parent milestone and marks it done. Persisted
+   * through each leg's authoritative path, so guarded lifecycle mutations must
+   * observe it.
+   */
+  seedOrphanGoal(goalId: string, kind: "absent" | "terminal"): Promise<void>;
   seedWork(goalId: string, options: SeedWorkOptions): Promise<void>;
   seedReview(options: SeedReviewOptions): Promise<void>;
   seedDecision(options: SeedDecisionOptions): Promise<void>;
@@ -321,6 +329,9 @@ interface MutableGoal {
   finalizedManifest: PlanPublishedManifest | null;
   milestoneIds: string[];
   waitingResearches: string[];
+  /** D267/T1855: coordination-milestone liveness seen by guarded mutations. */
+  parentStatus: "live" | "absent" | "terminal";
+  parentMilestoneId: string;
 }
 
 interface RecordedOperation {
@@ -590,7 +601,18 @@ export class ReferencePlanLifecycleAdapter
         finalizedManifest: null,
         milestoneIds: [],
         waitingResearches: [],
+        parentStatus: "live",
+        parentMilestoneId: "M-AMBIENT",
       });
+    });
+  }
+
+  async seedOrphanGoal(goalId: string, kind: "absent" | "terminal"): Promise<void> {
+    await this.backend.mutex.run(() => {
+      const goal = this.backend.goals.get(goalId);
+      if (goal === undefined) throw new Error(`goal not found: ${goalId}`);
+      goal.parentStatus = kind;
+      goal.parentMilestoneId = "M-orphaned-parent";
     });
   }
 
@@ -871,6 +893,24 @@ export class ReferencePlanLifecycleAdapter
           conflict: { code: "goal-not-found", goalId: input.goalId },
         });
       }
+      if (goal.parentStatus !== "live") {
+        return PlanClaimResultSchema.parse({
+          ok: false,
+          conflict:
+            goal.parentStatus === "absent"
+              ? {
+                  code: "parent-milestone-absent",
+                  goalId: goal.goalId,
+                  milestoneId: goal.parentMilestoneId,
+                }
+              : {
+                  code: "parent-milestone-terminal",
+                  goalId: goal.goalId,
+                  milestoneId: goal.parentMilestoneId,
+                  status: "done",
+                },
+        });
+      }
       if (goal.activeClaimId !== null) {
         const current = [...this.backend.claims.values()].find(
           (record) =>
@@ -1006,6 +1046,24 @@ export class ReferencePlanLifecycleAdapter
         return PlanPublishDraftResultSchema.parse({ ok: false, conflict });
       }
       const goal = this.requireGoal(input.goalId);
+      if (goal.parentStatus !== "live") {
+        return PlanPublishDraftResultSchema.parse({
+          ok: false,
+          conflict:
+            goal.parentStatus === "absent"
+              ? {
+                  code: "parent-milestone-absent",
+                  goalId: goal.goalId,
+                  milestoneId: goal.parentMilestoneId,
+                }
+              : {
+                  code: "parent-milestone-terminal",
+                  goalId: goal.goalId,
+                  milestoneId: goal.parentMilestoneId,
+                  status: "done",
+                },
+        });
+      }
       if (goal.phase !== "planning") {
         return PlanPublishDraftResultSchema.parse({
           ok: false,

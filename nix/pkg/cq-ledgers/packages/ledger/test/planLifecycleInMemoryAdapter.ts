@@ -19,6 +19,7 @@ import {
   type Item,
   type Ledger,
   type LedgerStore,
+  type Milestone,
   type PlanLifecycleStore,
   type PlanPrivateClaimRecord,
 } from "../src/index.js";
@@ -45,7 +46,7 @@ import {
   type SerializationRaceResult,
 } from "./planLifecycleSerializationBoundary.js";
 
-const SEED_PROVENANCE = { author: "seed", session: "seed-session" } as const;
+export const SEED_PROVENANCE = { author: "seed", session: "seed-session" } as const;
 
 interface InMemoryInternals {
   ledgers: Map<string, Ledger>;
@@ -164,6 +165,47 @@ export abstract class LedgerStorePlanLifecycleFixture<
       });
       await this.persistDirect?.([GOALS_LEDGER]);
     }
+  }
+
+  async seedOrphanGoal(goalId: string, kind: "absent" | "terminal"): Promise<void> {
+    let milestoneId = "M-orphaned-parent";
+    if (kind === "terminal") {
+      const milestone = await this.store.createMilestone({
+        title: "orphaned parent",
+        ...SEED_PROVENANCE,
+      });
+      milestoneId = milestone.id;
+      await this.seedUpdate(MILESTONES_LEDGER, milestoneId, (mutableMilestone) => {
+        mutableMilestone.status = "done";
+      });
+      await this.persistDirect?.([MILESTONES_LEDGER]);
+    }
+    // Move the goal between milestone GROUPS in the authoritative map: the
+    // persistent adapters serialize group placement, so a bare field mutation
+    // would not survive their reload-from-disk boundary (D267/T1855).
+    const state = internals(this.store);
+    const goalsLedger = state.ledgers.get(GOALS_LEDGER);
+    if (goalsLedger === undefined) throw new Error(`ledger not found: ${GOALS_LEDGER}`);
+    let moved: Item | undefined;
+    for (const milestone of goalsLedger.milestones) {
+      const index = milestone.items.findIndex((candidate) => candidate.id === goalId);
+      if (index >= 0) {
+        moved = milestone.items[index]!;
+        milestone.items.splice(index, 1);
+        break;
+      }
+    }
+    if (moved === undefined) throw new Error(`goal not found: ${goalId}`);
+    moved.milestoneId = milestoneId;
+    let target: Milestone | undefined = goalsLedger.milestones.find(
+      (candidate) => candidate.id === milestoneId,
+    );
+    if (target === undefined) {
+      target = { id: milestoneId, title: "orphaned parent group", description: "", items: [] };
+      goalsLedger.milestones.push(target);
+    }
+    target.items.push(moved);
+    await this.persistDirect?.([GOALS_LEDGER]);
   }
 
   async seedWork(goalId: string, options: SeedWorkOptions): Promise<void> {

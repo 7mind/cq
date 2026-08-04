@@ -572,6 +572,21 @@ const goalTerminalConflictSchema = z
     status: z.enum(["done", "abandoned"]),
   })
   .strict();
+const parentMilestoneAbsentConflictSchema = z
+  .object({
+    code: z.literal("parent-milestone-absent"),
+    goalId: goalIdSchema,
+    milestoneId: opaqueIdSchema,
+  })
+  .strict();
+const parentMilestoneTerminalConflictSchema = z
+  .object({
+    code: z.literal("parent-milestone-terminal"),
+    goalId: goalIdSchema,
+    milestoneId: opaqueIdSchema,
+    status: nonEmptyStringSchema,
+  })
+  .strict();
 const goalPhaseConflictSchema = z
   .object({
     code: z.literal("goal-phase-conflict"),
@@ -708,6 +723,8 @@ const reviewDraftMismatchConflictSchema = z
 const conflictSchemas = [
   goalNotFoundConflictSchema,
   goalTerminalConflictSchema,
+  parentMilestoneAbsentConflictSchema,
+  parentMilestoneTerminalConflictSchema,
   goalPhaseConflictSchema,
   claimActiveConflictSchema,
   claimNotActiveConflictSchema,
@@ -731,6 +748,8 @@ export type PlanConflict = z.infer<typeof PlanConflictSchema>;
 export const PlanClaimConflictSchema = z.discriminatedUnion("code", [
   goalNotFoundConflictSchema,
   goalTerminalConflictSchema,
+  parentMilestoneAbsentConflictSchema,
+  parentMilestoneTerminalConflictSchema,
   goalPhaseConflictSchema,
   claimActiveConflictSchema,
   staleGenerationConflictSchema,
@@ -743,6 +762,8 @@ export type PlanClaimConflict = z.infer<typeof PlanClaimConflictSchema>;
 
 export const PlanPublishDraftConflictSchema = z.discriminatedUnion("code", [
   goalNotFoundConflictSchema,
+  parentMilestoneAbsentConflictSchema,
+  parentMilestoneTerminalConflictSchema,
   claimNotActiveConflictSchema,
   staleClaimConflictSchema,
   staleGenerationConflictSchema,

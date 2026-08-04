@@ -43,7 +43,11 @@ import {
   type PlanReleaseResult,
 } from "../src/index.js";
 import type { PlanLifecycleSerializationContender } from "../src/store/planLifecycleSerialization.js";
-import { LedgerStorePlanLifecycleFixture } from "./planLifecycleInMemoryAdapter.js";
+import {
+  LedgerStorePlanLifecycleFixture,
+  SEED_PROVENANCE,
+} from "./planLifecycleInMemoryAdapter.js";
+import { GOALS_LEDGER, MILESTONES_LEDGER } from "../src/index.js";
 import type {
   PlanLifecycleContractFactory,
   PlanLifecycleContractFixture,
@@ -341,6 +345,31 @@ class PostgresPlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<Postg
       WHERE project_key = ${this.lease.projectKey} AND ledger = ${ledgerId} AND id = ${itemId}
     `;
     for (const store of this.lease.stores) await store.invalidate(ledgerId);
+  }
+
+  override async seedOrphanGoal(goalId: string, kind: "absent" | "terminal"): Promise<void> {
+    let milestoneId = "M-orphaned-parent";
+    if (kind === "terminal") {
+      const milestone = await this.store.createMilestone({
+        title: "orphaned parent",
+        ...SEED_PROVENANCE,
+      });
+      milestoneId = milestone.id;
+      await this.seedUpdate(MILESTONES_LEDGER, milestoneId, (mutableMilestone) => {
+        mutableMilestone.status = "done";
+      });
+    }
+    await this.admin`
+      INSERT INTO groups (project_key, ledger, id, title, description)
+      VALUES (${this.lease.projectKey}, ${GOALS_LEDGER}, ${milestoneId}, '', '')
+      ON CONFLICT (project_key, ledger, id) DO NOTHING
+    `;
+    await this.admin`
+      UPDATE items
+      SET milestone_id = ${milestoneId}
+      WHERE project_key = ${this.lease.projectKey} AND ledger = ${GOALS_LEDGER} AND id = ${goalId}
+    `;
+    for (const store of this.lease.stores) await store.invalidate(GOALS_LEDGER);
   }
 
   async restart(): Promise<PlanLifecycleContractFixture> {

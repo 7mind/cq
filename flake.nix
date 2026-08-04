@@ -1243,6 +1243,118 @@ EOF
             # T1587: the real-adapter leg for T586. Local Bun runs keep their
             # explicit PostgreSQL skip; this check provisions the dependency
             # and makes that skip a failure.
+            cq-ledger-parent-liveness-postgres = pkgs.stdenv.mkDerivation {
+              pname = "cq-ledger-parent-liveness-postgres-check";
+              version = "0.0.1";
+
+              src = ./nix/pkg/cq-ledgers;
+
+              nativeBuildInputs = [ pkgs.bun ];
+              nativeCheckInputs = [
+                pkgs.postgresql
+                pkgs.postgresqlTestHook
+                pkgs.python3
+              ];
+
+              dontConfigure = true;
+              dontBuild = true;
+              doCheck = true;
+              postgresqlEnableTCP = 1;
+
+              postPatch = ''
+                ln -s ${bunNodeModules}/node_modules node_modules
+                for package in cq-config ledger ledger-live ledger-mcp ledger-web; do
+                  cp -r "${bunNodeModules}/packages/$package/node_modules" \
+                    "packages/$package/node_modules"
+                done
+              '';
+
+              # runHook invokes this string before postgresqlTestHook's
+              # postgresqlStart pre-check hook.
+              preCheck = ''
+                export HOME="$NIX_BUILD_TOP/home"
+                mkdir -p "$HOME"
+
+                negativeLog="$NIX_BUILD_TOP/t1855-required-live-negative.log"
+                set +e
+                env -u CQ_TEST_PG_URL CQ_TEST_REQUIRE_PG=1 \
+                  ${pkgs.bun}/bin/bun test packages/ledger/test/plan-lifecycle-store-conformance.test.ts \
+                    --test-name-pattern 'PostgresLedgerStore' \
+                    > "$negativeLog" 2>&1
+                negativeCode=$?
+                set -e
+                if [ "$negativeCode" -eq 0 ]; then
+                  echo "T1855 required-live preflight passed without CQ_TEST_PG_URL" >&2
+                  cat "$negativeLog" >&2
+                  exit 1
+                fi
+                if ! grep -Fq \
+                  'CQ_TEST_REQUIRE_PG=1 requires CQ_TEST_PG_URL to contain a PostgreSQL DSN' \
+                  "$negativeLog"; then
+                  echo "T1855 required-live preflight failed for an unexpected reason" >&2
+                  cat "$negativeLog" >&2
+                  exit 1
+                fi
+
+                PGPORT="$(${pkgs.python3}/bin/python3 - <<'PY'
+import socket
+
+with socket.socket() as listener:
+    listener.bind(("127.0.0.1", 0))
+    print(listener.getsockname()[1])
+PY
+                )"
+                export PGPORT
+                postgresqlExtraSettings="
+                listen_addresses = '127.0.0.1'
+                port = $PGPORT
+                "
+                export postgresqlExtraSettings
+              '';
+
+              checkPhase = ''
+                runHook preCheck
+
+                ${pkgs.postgresql}/bin/pg_isready \
+                  --host 127.0.0.1 \
+                  --port "$PGPORT" \
+                  --username "$PGUSER" \
+                  --dbname "$PGDATABASE"
+                export CQ_TEST_PG_URL="postgresql://$PGUSER@127.0.0.1:$PGPORT/$PGDATABASE?sslmode=disable"
+                export CQ_TEST_REQUIRE_PG=1
+
+                positiveLog="$NIX_BUILD_TOP/t1855-live.log"
+                if ! ${pkgs.bun}/bin/bun test packages/ledger/test/plan-lifecycle-store-conformance.test.ts \
+                  --test-name-pattern 'PostgresLedgerStore' \
+                  > "$positiveLog" 2>&1; then
+                  cat "$positiveLog" >&2
+                  exit 1
+                fi
+                cat "$positiveLog"
+                if ! grep -Fq \
+                  '(pass) PlanLifecycleStore contract — PostgresLedgerStore (two connections)' \
+                  "$positiveLog"; then
+                  echo "T1855 live selector executed no named PostgreSQL conformance leg" >&2
+                  exit 1
+                fi
+                if grep -Fq '(skip)' "$positiveLog"; then
+                  echo "T1855 live selector skipped a PostgreSQL conformance leg" >&2
+                  exit 1
+                fi
+                if ! grep -Fq \
+                  'rejects claim and publish on an absent or terminal coordination milestone before any allocation' \
+                  "$positiveLog"; then
+                  echo "T1855 live selector did not execute the parent-liveness leg" >&2
+                  exit 1
+                fi
+
+                runHook postCheck
+              '';
+
+              installPhase = ''
+                touch "$out"
+              '';
+            };
             cq-serve-live-boot = pkgs.stdenv.mkDerivation {
               pname = "cq-serve-live-boot-check";
               version = "0.0.1";

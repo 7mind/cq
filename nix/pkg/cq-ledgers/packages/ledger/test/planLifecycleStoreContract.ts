@@ -2571,6 +2571,60 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
         },
         timeout,
       );
+
+      it(
+        "rejects claim and publish on an absent or terminal coordination milestone before any allocation",
+        async () => {
+        for (const kind of ["absent", "terminal"] as const) {
+          const expectedCode =
+            kind === "absent" ? "parent-milestone-absent" : "parent-milestone-terminal";
+
+          // Claim path: a seeded goal orphaned into a legacy-inconsistent
+          // parent must not produce generation, phase, claim, operation, or
+          // counter changes.
+          const claimFixture = await buildGoal(factory, "planning", null);
+          try {
+            const before = await claimFixture.observe(GOAL_ID);
+            await claimFixture.seedOrphanGoal(GOAL_ID, kind);
+            const rejected = await claimFixture.lifecycle.claimPlan(
+              claimInput("initial", `orphan-claim-${kind}`, OWNER_TOKEN_A, null, PROVENANCE_A),
+            );
+            expect(rejected.ok).toBe(false);
+            if (rejected.ok) throw new Error("orphaned claim unexpectedly succeeded");
+            expect(rejected.conflict.code).toBe(expectedCode);
+            expect(rejected.conflict.goalId).toBe(GOAL_ID);
+            expect(await claimFixture.observe(GOAL_ID)).toEqual(before);
+          } finally {
+            await claimFixture.dispose();
+          }
+
+          // Publish path: an established active claim whose parent is then
+          // orphaned must not produce a draft revision, an operation record,
+          // or any id allocation; the active claim survives untouched.
+          const publishFixture = await buildGoal(factory, "planning", null);
+          try {
+            const claim = requireClaimWinner(
+              await publishFixture.lifecycle.claimPlan(
+                claimInput("initial", `orphan-publish-claim-${kind}`, OWNER_TOKEN_A, null, PROVENANCE_A),
+              ),
+            );
+            const before = await publishFixture.observe(GOAL_ID);
+            await publishFixture.seedOrphanGoal(GOAL_ID, kind);
+            const rejected = await publishFixture.lifecycle.publishPlanDraft(
+              publishInput(claim, `orphan-publish-${kind}`),
+            );
+            expect(rejected.ok).toBe(false);
+            if (rejected.ok) throw new Error("orphaned publish unexpectedly succeeded");
+            expect(rejected.conflict.code).toBe(expectedCode);
+            expect(rejected.conflict.goalId).toBe(GOAL_ID);
+            expect(await publishFixture.observe(GOAL_ID)).toEqual(before);
+          } finally {
+            await publishFixture.dispose();
+          }
+        }
+        },
+        timeout,
+      );
     },
   );
 }
