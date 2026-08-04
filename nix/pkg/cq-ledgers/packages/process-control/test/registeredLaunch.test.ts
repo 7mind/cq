@@ -74,6 +74,24 @@ async function waitForFile(path: string): Promise<void> {
   throw new Error(`test file ${path} was not created`);
 }
 
+// Orchestration waits (a helper process reaching a point in the protocol
+// round-trip) get a generous wall-clock deadline in line with the protocol's
+// own 30 s identity/handshake budgets: under full-gate parallel load the
+// round-trip exceeds any tight fixed budget without anything being wrong.
+// The tight REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS bound stays reserved for
+// the settlement invariant under test.
+const ORCHESTRATION_WAIT_MS = 30_000;
+
+async function waitForFileBy(path: string, deadline: number): Promise<void> {
+  for (;;) {
+    if (await Bun.file(path).exists()) return;
+    if (Date.now() >= deadline) {
+      throw new Error(`test file ${path} was not created before its orchestration deadline`);
+    }
+    await Bun.sleep(2);
+  }
+}
+
 async function pathExists(path: string): Promise<boolean> {
   try {
     await stat(path);
@@ -469,7 +487,6 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     async () => {
       const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-completion-window-"));
       roots.push(root);
-      const launcherPidPath = join(root, "launcher-pid");
       const launcherStatePath = join(root, "launcher-state.json");
       const hardExitMarkerPath = join(root, "hard-exit-observed");
       const registeredLaunchUrl = new URL("../src/registeredLaunch.ts", import.meta.url).href;
@@ -506,7 +523,6 @@ describe("registered process-group launch bootstrap [T1624]", () => {
         "    };",
         "  },",
         "});",
-        `writeFileSync(${JSON.stringify(launcherPidPath)}, String(process.pid));`,
         `writeFileSync(${JSON.stringify(launcherStatePath)}, JSON.stringify({`,
         "  protocolDirectory,",
         "  registration: launched.registration,",
@@ -517,13 +533,22 @@ describe("registered process-group launch bootstrap [T1624]", () => {
         // registeredLaunch.ts never runs. Wait for its appearance first so the
         // poll observes disappearance, not the pre-write phase.
         "const completionPath = join(protocolDirectory, 'completion.json');",
+        `const orchestrationDeadline = Date.now() + ${String(ORCHESTRATION_WAIT_MS)};`,
         "while (!existsSync(completionPath)) {",
+        "  if (Date.now() >= orchestrationDeadline) {",
+        "    console.error('completion.json did not appear before the orchestration deadline');",
+        "    process.exit(1);",
+        "  }",
         "  await new Promise((resolve) => setTimeout(resolve, 2));",
         "}",
         "for (;;) {",
         "  if (!existsSync(completionPath)) {",
         `    writeFileSync(${JSON.stringify(hardExitMarkerPath)}, String(process.pid));`,
         "    process.exit(0);",
+        "  }",
+        "  if (Date.now() >= orchestrationDeadline) {",
+        "    console.error('completion.json was not consumed before the orchestration deadline');",
+        "    process.exit(1);",
         "  }",
         "  await new Promise((resolve) => setTimeout(resolve, 2));",
         "}",
@@ -542,7 +567,8 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       let registration: ProcessGroupRegistration | undefined;
 
       try {
-        await waitForFile(launcherStatePath);
+        const orchestrationDeadline = Date.now() + ORCHESTRATION_WAIT_MS;
+        await waitForFileBy(launcherStatePath, orchestrationDeadline);
         const launcherState = JSON.parse(await readFile(launcherStatePath, "utf8")) as {
           readonly protocolDirectory: string;
           readonly registration: ProcessGroupRegistration;
@@ -550,7 +576,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
         protocolDirectory = launcherState.protocolDirectory;
         registration = launcherState.registration;
 
-        await waitForFile(hardExitMarkerPath);
+        await waitForFileBy(hardExitMarkerPath, orchestrationDeadline);
         expect(await launcherExited).toEqual({ exitCode: 0, signal: null });
         expect(await readProcessIdentity(launcherPid)).toBeNull();
         expect(await bootstrapStderr).toBe("");
@@ -585,6 +611,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
         }
       }
     },
+    ORCHESTRATION_WAIT_MS + REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS + 5_000,
   );
 
   // Regression origin: a reused bootstrap PID must not authorize signaling its numeric PGID.
