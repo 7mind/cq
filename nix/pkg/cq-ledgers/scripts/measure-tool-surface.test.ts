@@ -105,7 +105,10 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     measuredProfiles: 26,
     corpusTranscripts: 357,
     // 817 -> 886 under T1993: fetch_prompt gained the optional projection
-    // argument (D269 schema projection), growing its inputSchema tokens.
+    // argument (D269 schema projection). Decomposition (after.json):
+    // +14 inputSchema tokens (the new projection property) and +55
+    // authoritative-response tokens (the longer Authoritative response:
+    // sentence in wireResponseContract.ts documenting both projections).
     maximumRemainingG93AttributableTokens: 886,
     corpusMedianResponseSavingTokens: 1461,
     transportTools: ["fetch_dispatch_input", "store_result"],
