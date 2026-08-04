@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -74,19 +75,30 @@ async function waitForFile(path: string): Promise<void> {
   throw new Error(`test file ${path} was not created`);
 }
 
-// Orchestration waits (a helper process reaching a point in the protocol
+// Orchestration waits (the bootstrap reaching a point in the protocol
 // round-trip) get a generous wall-clock deadline in line with the protocol's
-// own 30 s identity/handshake budgets: under full-gate parallel load the
-// round-trip exceeds any tight fixed budget without anything being wrong.
-// The tight REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS bound stays reserved for
-// the settlement invariant under test.
+// own 30 s identity/handshake budgets: under full-gate parallel load even
+// simple file polls can stall without anything being wrong. The tight
+// REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS bound stays reserved for the
+// settlement invariant under test.
 const ORCHESTRATION_WAIT_MS = 30_000;
 
-async function waitForFileBy(path: string, deadline: number): Promise<void> {
+async function waitForStatusStateBy(
+  statusPath: string,
+  expected: string,
+  deadline: number,
+): Promise<void> {
   for (;;) {
-    if (await Bun.file(path).exists()) return;
+    if (await Bun.file(statusPath).exists()) {
+      const status = JSON.parse(await readFile(statusPath, "utf8")) as {
+        readonly state?: string;
+      };
+      if (status.state === expected) return;
+    }
     if (Date.now() >= deadline) {
-      throw new Error(`test file ${path} was not created before its orchestration deadline`);
+      throw new Error(
+        `test status ${statusPath} did not reach state ${expected} before its orchestration deadline`,
+      );
     }
     await Bun.sleep(2);
   }
@@ -481,137 +493,84 @@ describe("registered process-group launch bootstrap [T1624]", () => {
 
   // Regression origin: D265 left the nonce protocol directory stranded when the
   // launcher died after the bootstrap's final liveness check but before the
-  // launcher's own cleanup finally ran.
+  // launcher's own cleanup finally ran. This staging is deterministic: the
+  // test process itself plays the launcher and stays alive for the whole
+  // protocol round-trip, so every bootstrap launcher-liveness check passes
+  // trivially and no helper-process or process-group timing is involved.
+  // Because the launcher never goes through launchRegisteredProcessGroup, its
+  // would-be cleanup finally never runs — that IS the D265 window, staged
+  // without killing anything — so the directory can only disappear when the
+  // bootstrap itself removes it on the successful completion path.
   test.skipIf(process.platform !== "linux")(
-    "removes the nonce protocol directory when the launcher hard-exits as completion is consumed [Whitebox-GoodCommunication]",
+    "removes the nonce protocol directory itself on the successful completion path [Whitebox-GoodCommunication]",
     async () => {
-      const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-completion-window-"));
+      const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-completion-cleanup-"));
       roots.push(root);
-      const launcherStatePath = join(root, "launcher-state.json");
-      const hardExitMarkerPath = join(root, "hard-exit-observed");
-      const registeredLaunchUrl = new URL("../src/registeredLaunch.ts", import.meta.url).href;
-      const launcherSource = [
-        "const { spawn } = require('node:child_process');",
-        "const { existsSync, writeFileSync } = require('node:fs');",
-        "const { join } = require('node:path');",
-        `const { launchRegisteredProcessGroup } = await import(${JSON.stringify(registeredLaunchUrl)});`,
-        "let protocolDirectory;",
-        "const launched = await launchRegisteredProcessGroup({",
-        "  argv: [process.execPath, '-e', 'process.exit(0)'],",
-        `  cwd: ${JSON.stringify(root)},`,
-        "  env: process.env,",
-        "  stdio: ['ignore', 'ignore', 'inherit'],",
-        "  register: async () => {},",
-        "  launchBootstrap: (specification) => {",
-        "    protocolDirectory = specification.argv[2];",
-        "    const child = spawn(specification.argv[0], specification.argv.slice(1), {",
-        "      cwd: specification.cwd,",
-        "      env: specification.env,",
-        "      detached: specification.detached,",
-        "      stdio: specification.stdio,",
-        "    });",
-        "    return {",
-        "      process: child,",
-        "      pid: child.pid,",
-        "      exited: new Promise((resolve, reject) => {",
-        "        child.once('error', reject);",
-        "        child.once('exit', (exitCode, signal) => resolve({ exitCode, signal }));",
-        "      }),",
-        "      outputDrained: Promise.resolve(),",
-        "      resultFromTargetOutcome: (outcome) => outcome,",
-        "      terminate: (signal) => child.kill(signal),",
-        "    };",
-        "  },",
-        "});",
-        `writeFileSync(${JSON.stringify(launcherStatePath)}, JSON.stringify({`,
-        "  protocolDirectory,",
-        "  registration: launched.registration,",
-        "}));",
-        // The completion file disappears only when the bootstrap consumes it,
-        // which happens strictly after the bootstrap's final launcher-liveness
-        // check (the D265 window); hard-exit there so the cleanup finally in
-        // registeredLaunch.ts never runs. Wait for its appearance first so the
-        // poll observes disappearance, not the pre-write phase.
-        "const completionPath = join(protocolDirectory, 'completion.json');",
-        `const orchestrationDeadline = Date.now() + ${String(ORCHESTRATION_WAIT_MS)};`,
-        "while (!existsSync(completionPath)) {",
-        "  if (Date.now() >= orchestrationDeadline) {",
-        "    console.error('completion.json did not appear before the orchestration deadline');",
-        "    process.exit(1);",
-        "  }",
-        "  await new Promise((resolve) => setTimeout(resolve, 2));",
-        "}",
-        "for (;;) {",
-        "  if (!existsSync(completionPath)) {",
-        `    writeFileSync(${JSON.stringify(hardExitMarkerPath)}, String(process.pid));`,
-        "    process.exit(0);",
-        "  }",
-        "  if (Date.now() >= orchestrationDeadline) {",
-        "    console.error('completion.json was not consumed before the orchestration deadline');",
-        "    process.exit(1);",
-        "  }",
-        "  await new Promise((resolve) => setTimeout(resolve, 2));",
-        "}",
-      ].join("\n");
-      const launcher = spawn(process.execPath, ["-e", launcherSource], {
-        cwd: root,
-        env: process.env,
-        stdio: ["ignore", "ignore", "pipe"],
-      });
-      const launcherPid = launcher.pid;
-      if (launcherPid === undefined) throw new Error("test launcher returned no PID");
-      if (launcher.stderr === null) throw new Error("test launcher returned no stderr pipe");
-      const launcherExited = exited(launcher);
-      const bootstrapStderr = streamText(launcher.stderr);
-      let protocolDirectory: string | undefined;
-      let registration: ProcessGroupRegistration | undefined;
+      const bootstrap = fileURLToPath(new URL("../src/commandBootstrap.ts", import.meta.url));
+      const launcher = await readProcessIdentity(process.pid);
+      if (launcher === null) throw new Error("test launcher identity disappeared");
+      const protocolDirectory = join(root, "protocol");
+      await mkdir(protocolDirectory, { mode: 0o700 });
+      const nonce = randomUUID();
+      const child = spawn(
+        process.execPath,
+        [
+          bootstrap,
+          protocolDirectory,
+          nonce,
+          String(launcher.pid),
+          launcher.startTime,
+          process.env["CQ_PROCESS_IDENTITY_HELPER"] ?? "",
+          root,
+          process.execPath,
+          "-e",
+          "process.exit(0)",
+        ],
+        { cwd: root, env: process.env, detached: true, stdio: ["ignore", "ignore", "pipe"] },
+      );
+      const bootstrapPid = child.pid;
+      if (bootstrapPid === undefined) throw new Error("test bootstrap returned no PID");
+      if (child.stderr === null) throw new Error("test bootstrap returned no stderr pipe");
+      const bootstrapExited = exited(child);
+      const bootstrapStderr = streamText(child.stderr);
 
       try {
         const orchestrationDeadline = Date.now() + ORCHESTRATION_WAIT_MS;
-        await waitForFileBy(launcherStatePath, orchestrationDeadline);
-        const launcherState = JSON.parse(await readFile(launcherStatePath, "utf8")) as {
-          readonly protocolDirectory: string;
-          readonly registration: ProcessGroupRegistration;
-        };
-        protocolDirectory = launcherState.protocolDirectory;
-        registration = launcherState.registration;
+        await writeFile(
+          join(protocolDirectory, "release.json"),
+          JSON.stringify({ nonce, pgid: bootstrapPid, launcher }),
+        );
+        const statusPath = join(protocolDirectory, "status.json");
+        await waitForStatusStateBy(statusPath, "launched", orchestrationDeadline);
+        await waitForStatusStateBy(statusPath, "exited", orchestrationDeadline);
+        await writeFile(
+          join(protocolDirectory, "completion.json"),
+          JSON.stringify({ nonce, pgid: bootstrapPid }),
+        );
 
-        await waitForFileBy(hardExitMarkerPath, orchestrationDeadline);
-        expect(await launcherExited).toEqual({ exitCode: 0, signal: null });
-        expect(await readProcessIdentity(launcherPid)).toBeNull();
+        let exitDeadline: ReturnType<typeof setTimeout> | undefined;
+        const outcome = await Promise.race([
+          bootstrapExited,
+          new Promise<never>((_resolve, reject) => {
+            exitDeadline = setTimeout(() => {
+              reject(new Error("test bootstrap did not exit before its orchestration deadline"));
+            }, ORCHESTRATION_WAIT_MS);
+          }),
+        ]).finally(() => {
+          clearTimeout(exitDeadline);
+        });
+        expect(outcome).toEqual({ exitCode: 0, signal: null });
         expect(await bootstrapStderr).toBe("");
-
-        const deadline = Date.now() + REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS;
-        for (;;) {
-          const leaderIdentity = await readProcessIdentity(registration.leader.pid);
-          const directoryAlive = await pathExists(protocolDirectory);
-          if (leaderIdentity === null && !directoryAlive) break;
-          if (Date.now() >= deadline) {
-            expect({
-              leaderGone: leaderIdentity === null,
-              directoryAlive,
-              statusAlive: await pathExists(join(protocolDirectory, "status.json")),
-            }).toEqual({ leaderGone: true, directoryAlive: false, statusAlive: false });
-          }
-          await Bun.sleep(2);
-        }
-        expect(await readProcessIdentity(registration.leader.pid)).toBeNull();
         expect(await pathExists(protocolDirectory)).toBe(false);
       } finally {
-        if (launcher.exitCode === null && launcher.signalCode === null) {
-          launcher.kill("SIGKILL");
-          await launcherExited;
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+          await bootstrapExited;
         }
-        if (registration !== undefined) {
-          signalProcessGroup(registration.pgid, "SIGKILL");
-          await waitForIdentityToDisappear(registration.leader.pid);
-        }
-        if (protocolDirectory !== undefined) {
-          await rm(protocolDirectory, { recursive: true, force: true });
-        }
+        await rm(protocolDirectory, { recursive: true, force: true });
       }
     },
-    ORCHESTRATION_WAIT_MS + REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS + 5_000,
+    ORCHESTRATION_WAIT_MS + 5_000,
   );
 
   // Regression origin: a reused bootstrap PID must not authorize signaling its numeric PGID.
