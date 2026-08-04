@@ -237,6 +237,25 @@ measured savings without another batching schema.
 | `finalize_plan` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { …operation key, reviewId, draft, decisionId, manifest, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
 <!-- ledger-response-contract:end -->
 
+### Usage statistics: three access paths
+
+Every MCP tool invocation records per-endpoint usage counters in the project
+store (`callCount` + UTF-8 `bytesIn` of the arguments; a successful call adds
+`bytesOut` — the sum of the response text-block sizes; a thrown error records
+`bytesOut = 0`). The accumulated `{ endpoints, totals }` snapshot is readable
+three equivalent ways, all served from the same store rows:
+
+1. the `get_usage_stats` MCP tool (payload above) — its own endpoint row
+   appears only from the second call onward, because recording happens after
+   the handler returns;
+2. the `cq stats` CLI subcommand (see `cq --help`), which prints the same
+   `{ endpoints, totals }` JSON to stdout;
+3. the typed client method `getUsageStats()` (e.g. `McpLedgerClient` in
+   `@cq/ledger-web` and `@cq/ledger-tui`).
+
+Only MCP tool invocations increment the counters; direct CLI reads (including
+`cq stats` itself) and direct store writes do not.
+
 ### Schema-checked request examples
 
 The package test suite executes every call in this block against the live MCP
