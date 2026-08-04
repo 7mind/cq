@@ -38,7 +38,7 @@ import {
   isQuestion,
   type StatusFilter,
 } from "./status.js";
-import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema, LedgerSummary, ProjectEntry } from "./types.js";
+import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema, LedgerSummary, ProjectEntry, UsageStatsSnapshot } from "./types.js";
 import {
   defectFixTaskIds,
   hypothesisRelationships,
@@ -385,6 +385,8 @@ type Overlay =
   | { t: "pickColumns"; ledger: string }
   /** Project picker (T590 / Q276 / Q284): switch the connected project. */
   | { t: "projects" }
+  /** Usage stats (T1515 / I20/G155): read-only getUsageStats table. */
+  | { t: "usageStats" }
   /**
    * Batch-answer (T64): a full-screen stepper over the open answerable items of
    * one ledger. `ledger` identifies the write target (which may differ from the
@@ -1022,6 +1024,12 @@ export function App({
         setOverlay({ t: "projects" });
         return;
       }
+      // Usage stats (T1515): keybound read-only overlay, available from
+      // anywhere (both frames, either focus) — mirrors p above.
+      if (input === "u") {
+        setOverlay({ t: "usageStats" });
+        return;
+      }
       if (top.kind === "ledgers") {
         if (key.upArrow || input === "k") patchTop({ cursor: Math.max(0, top.cursor - 1) });
         else if (key.downArrow || input === "j")
@@ -1170,7 +1178,7 @@ export function App({
 
   if (top.kind === "ledgers") {
     pathStr = "all ledgers";
-    hints = "↑↓ move · Enter open · / search · o/[ ] panes · p project · q quit";
+    hints = "↑↓ move · Enter open · / search · o/[ ] panes · p project · u usage · q quit";
     // Right-align the per-ledger item count: pad the name out to fill the row
     // (less the cursor prefix and a scrollbar column when one is shown).
     const showBar = ledgers.length > listInnerH;
@@ -1237,8 +1245,8 @@ export function App({
       top.ledger === MILESTONES || top.ledger === GOALS_LEDGER ? " · F finalize" : "";
     hints =
       top.focus === "content"
-        ? `↑↓/PgUp/Dn scroll · s status${answerHint} · e edit · o/[ ] panes · p project · Esc back to list${cursorInArchive ? " [read-only]" : ""}`
-        : `↑↓ move · PgUp/Dn page · Home/End first/last · Enter focus · s status${answerHint} · e edit · n new · b batch-answer · f filter · c columns${finalizeHint} · / search · o/[ ] panes · p project${archiveHint} · Esc back`;
+        ? `↑↓/PgUp/Dn scroll · s status${answerHint} · e edit · o/[ ] panes · p project · u usage · Esc back to list${cursorInArchive ? " [read-only]" : ""}`
+        : `↑↓ move · PgUp/Dn page · Home/End first/last · Enter focus · s status${answerHint} · e edit · n new · b batch-answer · f filter · c columns${finalizeHint} · / search · o/[ ] panes · p project · u usage${archiveHint} · Esc back`;
     // Column widths (T62) computed over all displayed rows, and the active
     // list entries — both from the memoized bundle (see ItemsDerived). The
     // archive section header + rows are appended cheaply below.
@@ -1414,6 +1422,7 @@ export function App({
               projects={projects}
               activeProjectKey={projectKey}
               onSelectProject={(p) => void selectProject(p)}
+              fetchUsageStats={() => client.getUsageStats()}
               onFinalizeMode={(m) => void finalizePreview(m)}
               onFinalizeExecute={(m, plan) => void finalizeExecute(m, plan)}
               onGoalsFinalizeExecute={(plan) => void finalizeGoalsExecute(plan)}
@@ -2083,6 +2092,79 @@ function ColumnPicker({
 }
 
 // ---------------------------------------------------------------------------
+// Usage stats overlay (T1515 / I20/G155): fetches getUsageStats once on mount
+// and renders a compact endpoint / calls / bytesIn / bytesOut table plus a
+// totals row. Esc closes.
+// ---------------------------------------------------------------------------
+
+function UsageStatsOverlay({
+  fetchStats,
+  onClose,
+}: {
+  fetchStats: () => Promise<UsageStatsSnapshot>;
+  onClose: () => void;
+}): React.ReactElement {
+  const [stats, setStats] = useState<UsageStatsSnapshot | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchStats().then(
+      (s) => {
+        if (!cancelled) setStats(s);
+      },
+      (e) => {
+        if (!cancelled) setError(errMsg(e));
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchStats]);
+
+  useInput((_input, key) => {
+    if (key.escape) onClose();
+  });
+
+  if (error.length > 0) {
+    return (
+      <Box flexDirection="column">
+        <Text bold>usage stats</Text>
+        <Text color="red">{error}</Text>
+        <Text dimColor>Esc close</Text>
+      </Box>
+    );
+  }
+  if (stats === null) return <Text dimColor>loading usage stats…</Text>;
+
+  const rows = [...stats.endpoints, stats.totals];
+  const nameW = Math.max("endpoint".length, ...rows.map((r) => r.name.length));
+  const callsW = Math.max("calls".length, ...rows.map((r) => String(r.callCount).length));
+  const inW = Math.max("bytesIn".length, ...rows.map((r) => String(r.bytesIn).length));
+  const outW = Math.max("bytesOut".length, ...rows.map((r) => String(r.bytesOut).length));
+  const line = (name: string, calls: string, bytesIn: string, bytesOut: string): string =>
+    `${name.padEnd(nameW)} ${calls.padStart(callsW)} ${bytesIn.padStart(inW)} ${bytesOut.padStart(outW)}`;
+
+  return (
+    <Box flexDirection="column">
+      <Text bold>usage stats</Text>
+      <Text dimColor>Esc close</Text>
+      {stats.endpoints.length === 0 ? (
+        <Text dimColor>(no recorded calls)</Text>
+      ) : (
+        <>
+          <Text dimColor>{line("endpoint", "calls", "bytesIn", "bytesOut")}</Text>
+          {stats.endpoints.map((e) => (
+            <Text key={e.name}>{line(e.name, String(e.callCount), String(e.bytesIn), String(e.bytesOut))}</Text>
+          ))}
+        </>
+      )}
+      <Text>{line(stats.totals.name, String(stats.totals.callCount), String(stats.totals.bytesIn), String(stats.totals.bytesOut))}</Text>
+    </Box>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Overlays (edit / create / search) — own input while mounted
 // ---------------------------------------------------------------------------
 
@@ -2103,6 +2185,7 @@ function Overlays({
   projects,
   activeProjectKey,
   onSelectProject,
+  fetchUsageStats,
   onFinalizeMode,
   onFinalizeExecute,
   onGoalsFinalizeExecute,
@@ -2126,6 +2209,8 @@ function Overlays({
   projects: readonly ProjectEntry[];
   activeProjectKey: string;
   onSelectProject: (p: ProjectEntry) => void;
+  /** Usage stats (T1515): one getUsageStats fetch per overlay mount. */
+  fetchUsageStats: () => Promise<UsageStatsSnapshot>;
   /** Finalize (T621): a pick-step selection → compute + preview the plan. */
   onFinalizeMode: (mode: FinalizeMode) => void;
   /** Finalize (T621): Enter on the preview → execute the previewed plan. */
@@ -2185,6 +2270,8 @@ function Overlays({
           emptyLabel="(no projects)"
         />
       );
+    case "usageStats":
+      return <UsageStatsOverlay fetchStats={fetchUsageStats} onClose={onCancel} />;
     case "status": {
       // Guard-aligned quick transitions: when the schema declares a
       // `transitions` map, offer ONLY the statuses legal from the item's

@@ -390,8 +390,14 @@ export class FakeClient implements LedgerClient {
     throw new Error("archiveMilestone not implemented in FakeClient");
   }
 
+  /** Seedable usage stats (T1515): tests assign before opening the overlay. */
+  usageStats: UsageStatsSnapshot = {
+    endpoints: [],
+    totals: { name: "totals", callCount: 0, bytesIn: 0, bytesOut: 0 },
+  };
+
   async getUsageStats(): Promise<UsageStatsSnapshot> {
-    return { endpoints: [], totals: { name: "totals", callCount: 0, bytesIn: 0, bytesOut: 0 } };
+    return this.usageStats;
   }
 
   async close(): Promise<void> {
