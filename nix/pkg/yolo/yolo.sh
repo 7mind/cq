@@ -968,15 +968,18 @@ if [[ -n "$SECRET_TMPFILE" || -n "$SANDBOX_HOOKS_TMPFILE" || -n "$SSH_CONFIG_TMP
   trap 'exit 130' INT
   trap 'exit 129' HUP
   if [[ -n "$SECRET_TMPFILE" || -n "$SANDBOX_HOOKS_TMPFILE" ]]; then
+    # `<&0`: an async command under a non-job-control shell gets stdin from
+    # /dev/null (POSIX); the explicit dup preserves the inherited terminal for
+    # the sandboxed TUI (regression: "stdin is not a terminal").
     "$_yolo_sandbox" \
       "${BASE_ARGS[@]}" \
       "${EXTRA_ARGS[@]}" \
-      -- "$_yolo_entrypoint" "${EXEC_CMD[@]}" &
+      -- "$_yolo_entrypoint" "${EXEC_CMD[@]}" <&0 &
   else
     "$_yolo_sandbox" \
       "${BASE_ARGS[@]}" \
       "${EXTRA_ARGS[@]}" \
-      -- "${EXEC_CMD[@]}" &
+      -- "${EXEC_CMD[@]}" <&0 &
   fi
   _yolo_sandbox_pid=$!
   wait "$_yolo_sandbox_pid"
