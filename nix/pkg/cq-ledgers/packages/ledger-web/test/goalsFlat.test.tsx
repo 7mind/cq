@@ -65,6 +65,9 @@ const tasksSchema: LedgerSchema = {
  * work-milestone ids). A separate tasks ledger keeps its subsection grouping.
  */
 class GoalsClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   displayName(): string {
     return "cq1";
   }

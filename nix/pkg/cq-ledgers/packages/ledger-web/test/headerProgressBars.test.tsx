@@ -121,6 +121,9 @@ class FakeWS {
 type SummaryOverride = Pick<LedgerSummary, "name" | "itemCount" | "completedCount">;
 
 class ProgressFakeClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   private readonly base: FakeClient;
   private readonly overrides: SummaryOverride[];
 

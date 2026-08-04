@@ -87,6 +87,9 @@ type UpdateMilestoneArgs = { milestoneId: string; patch: MilestonePatch };
  * are read-only regardless of the gate).
  */
 class MilestonesClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   updateMilestoneCalls: UpdateMilestoneArgs[] = [];
   updateItemCalls: Array<{ ledger: string; id: string; patch: ItemPatch }> = [];
 

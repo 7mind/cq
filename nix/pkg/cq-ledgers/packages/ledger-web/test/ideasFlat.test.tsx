@@ -92,6 +92,9 @@ const goalsSchema: LedgerSchema = {
 type UpdateItemArgs = { ledger: string; id: string; patch: ItemPatch };
 
 class IdeasClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   updateItemCalls: UpdateItemArgs[] = [];
 
   displayName(): string { return "cq1"; }

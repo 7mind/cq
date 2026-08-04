@@ -25,6 +25,7 @@ import type {
   MilestoneMutationAckDto,
   ProjectEntry,
   ReadLogResult,
+  UsageStatsSnapshot,
 } from "../src/types.js";
 
 /** Builds a fresh all-false DerivedPredicates verdict (default `derivePredicates()` answer). */
@@ -689,6 +690,10 @@ export class FakeClient implements LedgerClient {
     // Default stub: return synthetic content for any path not explicitly configured.
     return { path, content: `stub content for ${path}` };
   }
+  async getUsageStats(): Promise<UsageStatsSnapshot> {
+    return { endpoints: [], totals: { name: "totals", callCount: 0, bytesIn: 0, bytesOut: 0 } };
+  }
+
   async close(): Promise<void> {
     this.closed = true;
   }

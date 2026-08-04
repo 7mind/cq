@@ -197,6 +197,9 @@ function milestoneAcknowledgement(value: Item): MilestoneMutationAckDto {
  * sweeps it. Records every updateMilestone/archiveMilestone call.
  */
 class EligibleClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   milestoneUpdates: Array<[string, MilestonePatch]> = [];
   archives: Array<[string, string]> = [];
 
@@ -295,6 +298,9 @@ class EligibleClient implements LedgerClient {
  * recorded, success or not.
  */
 class PartialFailureClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   attempts: Array<[string, MilestonePatch]> = [];
 
   displayName(): string {
@@ -415,6 +421,9 @@ const goalsSchema: LedgerSchema = {
  * the assertion that fails if the TUI stops consuming `plan.skipped[]`.
  */
 class GoalsClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   displayName(): string {
     return "cq1";
   }
@@ -490,6 +499,9 @@ class GoalsClient implements LedgerClient {
 }
 
 class GoalsFinalizeClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   itemUpdates: Array<[string, string, ItemPatch]> = [];
   milestoneUpdates: Array<[string, MilestonePatch]> = [];
   archives: Array<[string, string]> = [];
@@ -659,6 +671,9 @@ class GoalsFinalizeClient implements LedgerClient {
 }
 
 class GoalsParityClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   readonly calls: string[] = [];
 
   displayName(): string {
@@ -823,6 +838,9 @@ async function openGoalsFinalize(h: Harness): Promise<void> {
  * ever reach `archiveMilestone`.
  */
 class ArchiveExactnessClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   archives: Array<[string, string]> = [];
 
   displayName(): string {

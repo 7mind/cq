@@ -199,6 +199,9 @@ type RecordedCall =
  * Q290 because the deselected G2 remains non-terminal.
  */
 class GoalsFlowClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   readonly calls: RecordedCall[] = [];
   failG1Building = false;
   deferNextArchive = false;
@@ -333,6 +336,9 @@ class EmptyGoalsFlowClient extends GoalsFlowClient {
 }
 
 class GoalsParityClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   readonly calls: RecordedCall[] = [];
 
   displayName(): string { return "cq1"; }
@@ -477,6 +483,9 @@ function recordedOperationIds(calls: RecordedCall[]): string[] {
  * reach archiveMilestone.
  */
 class ArchiveExactnessClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   readonly calls: RecordedCall[] = [];
   readonly fetchLedgerCalls: Array<{
     ledgerId: string;
@@ -554,6 +563,9 @@ class ArchiveExactnessClient implements LedgerClient {
  * after MA in the plan.
  */
 class ArchivePartialFailureClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   readonly calls: RecordedCall[] = [];
 
   displayName(): string { return "cq1"; }
@@ -621,6 +633,9 @@ class ArchivePartialFailureClient implements LedgerClient {
  * flow. `createMilestone` records calls and returns a fresh M2.
  */
 class MilestonesOnlyClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   readonly createMilestoneCalls: Array<{ title: string }> = [];
 
   displayName(): string { return "cq1"; }

@@ -95,6 +95,9 @@ function distinctLongMarkdown(i: number): string {
  * render/navigation path is exercised; the rest throw.
  */
 class DistinctDefectsClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   constructor(private readonly n: number) {}
   displayName(): string {
     return "bench";

@@ -135,6 +135,9 @@ type RecordedCall =
  * fixture where NO id is actionable under either plan (only skips remain).
  */
 class FinalizeClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   readonly calls: RecordedCall[] = [];
   /** goals item ids whose updateItem rejects (deliberate per-id failure). */
   readonly failUpdateItemIds = new Set<string>();

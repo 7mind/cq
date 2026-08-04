@@ -38,6 +38,7 @@ import type {
   MilestonePatch,
   MilestoneMutationAckDto,
   ProjectEntry,
+  UsageStatsSnapshot,
 } from "./types.js";
 
 export class LedgerToolError extends Error {
@@ -337,6 +338,10 @@ export class McpLedgerClient implements LedgerClient {
 
   async listProjects(): Promise<ProjectEntry[]> {
     return (await this.call<{ projects: ProjectEntry[] }>("list_projects", {})).projects;
+  }
+
+  async getUsageStats(): Promise<UsageStatsSnapshot> {
+    return await this.call<UsageStatsSnapshot>("get_usage_stats", {});
   }
 
   async close(): Promise<void> {

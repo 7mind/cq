@@ -923,6 +923,15 @@ export class InMemoryMcpService {
       list_milestone_items: listMilestoneItems,
       snapshot: snapshotTool,
       derive_predicates: derivePredicates,
+      // Fixed snapshot (the adapter mirrors wire SHAPES, not server-side
+      // usage tracking): totals stay consistent with the endpoints.
+      get_usage_stats: (_tenant) => ({
+        endpoints: [
+          { name: "enumerate_ledgers", callCount: 1, bytesIn: 2, bytesOut: 128 },
+          { name: "fetch_ledger", callCount: 2, bytesIn: 48, bytesOut: 640 },
+        ],
+        totals: { name: "totals", callCount: 3, bytesIn: 50, bytesOut: 768 },
+      }),
       list_projects: (_tenant) => ({
         projects: [...this.tenants.entries()]
           .map(([key, t]) => ({ key, displayName: t.displayName, createdAt: t.createdAt }))

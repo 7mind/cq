@@ -70,6 +70,9 @@ const tasksSchema: LedgerSchema = {
  * When viewing D1, the "Fix tasks" block must list both T2 (forward) and T1 (reverse).
  */
 class DefectsClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   private tasksRequested = false;
 
   displayName(): string { return "cq1"; }
@@ -186,6 +189,9 @@ const hypothesisSchema: LedgerSchema = {
  *   - Children: [H2]
  */
 class HypothesisClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   displayName(): string { return "cq1"; }
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [{ name: "hypothesis", itemCount: 3 }];

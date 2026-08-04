@@ -63,6 +63,7 @@ import type { ListProjectsResult, ProjectEntry } from "../../mcp/listProjects.js
 import type { DerivedPredicates } from "../predicates.js";
 import type { LedgerSnapshot } from "../../snapshot.js";
 import type { LedgerSummariesResult } from "../../summaries.js";
+import type { UsageStatsSnapshot } from "../../usageStats.js";
 
 /**
  * Authenticated MCP initialize metadata used to label the project registry
@@ -507,6 +508,10 @@ export class RemoteLedgerClient {
 
   async derivePredicates(): Promise<DerivedPredicates> {
     return await this.call<DerivedPredicates>("derive_predicates", {});
+  }
+
+  async getUsageStats(): Promise<UsageStatsSnapshot> {
+    return await this.call<UsageStatsSnapshot>("get_usage_stats", {});
   }
 
   async fetchMilestone(

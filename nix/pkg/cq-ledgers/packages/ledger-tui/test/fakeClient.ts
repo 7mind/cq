@@ -20,6 +20,7 @@ import type {
   LedgerSummary,
   MilestonePatch,
   MilestoneMutationAckDto,
+  UsageStatsSnapshot,
 } from "../src/types.js";
 
 const TS = "2026-01-01T00:00:00.000Z";
@@ -387,6 +388,10 @@ export class FakeClient implements LedgerClient {
 
   async archiveMilestone(_milestoneId: string, _summary: string): Promise<ArchivePointer> {
     throw new Error("archiveMilestone not implemented in FakeClient");
+  }
+
+  async getUsageStats(): Promise<UsageStatsSnapshot> {
+    return { endpoints: [], totals: { name: "totals", callCount: 0, bytesIn: 0, bytesOut: 0 } };
   }
 
   async close(): Promise<void> {

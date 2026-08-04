@@ -24,6 +24,7 @@ import type {
   DerivedPredicates,
   PredicateVerdict,
   FetchPromptResult,
+  UsageStatsSnapshot,
 } from "@cq/ledger";
 import type { ArchiveContent } from "@cq/ledger";
 
@@ -48,6 +49,7 @@ export type {
   DerivedPredicates,
   PredicateVerdict,
   FetchPromptResult,
+  UsageStatsSnapshot,
 };
 
 export interface FtsHit {
@@ -153,5 +155,11 @@ export interface LedgerClient {
    * `goalDrift` today (report-only phase-drift warning).
    */
   derivePredicates(): Promise<DerivedPredicates>;
+  /**
+   * Read the server's per-endpoint MCP usage counters (`get_usage_stats`
+   * tool, I20/G155): `{ endpoints, totals }` with each endpoint carrying
+   * `{ name, callCount, bytesIn, bytesOut }`.
+   */
+  getUsageStats(): Promise<UsageStatsSnapshot>;
   close(): Promise<void>;
 }

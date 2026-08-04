@@ -425,6 +425,21 @@ export function runRemoteLedgerClientContract(
                 expect(verdicts[key]).toEqual({ value: false, items: [] });
               }
 
+              // get_usage_stats (T1513): the snapshot parses into
+              // { endpoints, totals } — per-endpoint counters plus the
+              // "totals" aggregate row consistent with them.
+              const stats = await client.getUsageStats();
+              expect(stats.totals.name).toBe("totals");
+              expect(stats.endpoints.length).toBeGreaterThan(0);
+              for (const endpoint of stats.endpoints) {
+                expect(typeof endpoint.callCount).toBe("number");
+                expect(typeof endpoint.bytesIn).toBe("number");
+                expect(typeof endpoint.bytesOut).toBe("number");
+              }
+              expect(stats.totals.callCount).toBe(
+                stats.endpoints.reduce((sum, e) => sum + e.callCount, 0),
+              );
+
               // Paginated fetch_ledger follows nextOffset to the end.
               const second = await client.createItem("tasks", milestoneId, {
                 status: "planned",

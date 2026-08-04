@@ -248,3 +248,19 @@ describe("McpLedgerClient archive acknowledgement contract", () => {
     ]);
   });
 });
+
+describe("McpLedgerClient usage stats wire contract (T1513)", () => {
+  it("calls get_usage_stats and decodes the snapshot payload", async () => {
+    const snapshot = {
+      endpoints: [
+        { name: "fetch_item", callCount: 2, bytesIn: 30, bytesOut: 512 },
+        { name: "get_usage_stats", callCount: 1, bytesIn: 2, bytesOut: 96 },
+      ],
+      totals: { name: "totals", callCount: 3, bytesIn: 32, bytesOut: 608 },
+    };
+    const { client, calls } = stubClient({ get_usage_stats: snapshot });
+
+    expect(await client.getUsageStats()).toEqual(snapshot);
+    expect(calls).toEqual([{ name: "get_usage_stats", arguments: {} }]);
+  });
+});

@@ -57,6 +57,9 @@ function bug(id: string, milestoneId: string): Item {
 }
 
 export class DagFakeClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   updatedMilestones: Array<{ id: string; status: string | undefined }> = [];
   readonly fetchLedgerCalls: Array<{
     ledgerId: string;

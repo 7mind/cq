@@ -38,6 +38,9 @@ const TS = "2026-01-01T00:00:00.000Z";
 
 /** A client with a single ledger of N items, for the scroll test. */
 class ManyItemsClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   constructor(private readonly n: number) {}
   displayName(): string { return "cq1"; }
   async enumerateLedgers(): Promise<LedgerSummary[]> {
@@ -98,6 +101,9 @@ class ManyItemsClient implements LedgerClient {
 
 /** A single-ledger client whose schema declares NO `transitions` map. */
 class NoTransitionsClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   displayName(): string { return "cq1"; }
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [{ name: "work", itemCount: 1 }];
@@ -692,6 +698,9 @@ describe("ledger-tui live updates", () => {
  * and two milestone groups, so we can assert column alignment and subsections.
  */
 class MultiMilestoneClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   displayName(): string { return "cq1"; }
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [{ name: "tasks", itemCount: 3 }];
@@ -872,6 +881,9 @@ describe("ledger-tui summarize() legacy review fallback (Req5)", () => {
  * Pressing A shows the archived section; archived items are read-only.
  */
 class ArchiveClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   archiveFetched = false;
   statusApplied = false;
 
@@ -1108,6 +1120,9 @@ describe("ledger-tui archive view (T33)", () => {
  * so we can exercise all M6 follow-up features in a single scenario.
  */
 class MultiMilestoneArchiveClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   statusApplied = "";
 
   displayName(): string { return "cq1"; }
@@ -1583,6 +1598,9 @@ describe("ledger-tui milestone header colored status token (T81)", () => {
  * the work-milestone ids — not the single coordination-milestone line.
  */
 class GoalsClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   displayName(): string { return "cq1"; }
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [{ name: "goals", itemCount: 2 }, { name: "tasks", itemCount: 1 }];

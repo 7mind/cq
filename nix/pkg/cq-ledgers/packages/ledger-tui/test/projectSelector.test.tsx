@@ -63,6 +63,9 @@ const workSchema: LedgerSchema = {
  * own) — so both stub instances below share the SAME two-entry list.
  */
 class NamedProjectClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   public closed = false;
   constructor(
     private readonly name: string,

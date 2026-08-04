@@ -79,6 +79,9 @@ const tasksSchema: LedgerSchema = {
  * implemented; the rest throw (they are not reached during navigation).
  */
 class LargeClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   constructor(private readonly n: number) {}
   displayName(): string {
     return "big";

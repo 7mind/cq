@@ -20,6 +20,7 @@ import type {
   ItemMutationAckDto,
   ItemProjection,
   MilestoneMutationAckDto,
+  UsageStatsSnapshot,
 } from "@cq/ledger";
 import type { ArchiveContent, ArchivePointer } from "@cq/ledger";
 
@@ -38,6 +39,7 @@ export type {
   ItemMutationAckDto,
   ItemProjection,
   MilestoneMutationAckDto,
+  UsageStatsSnapshot,
 };
 
 /** A single `fts_search` hit. */
@@ -139,5 +141,11 @@ export interface LedgerClient {
    * project" — a single entry synthesized from {@link displayName}.
    */
   listProjects?(): Promise<ProjectEntry[]>;
+  /**
+   * Read the server's per-endpoint MCP usage counters (`get_usage_stats`
+   * tool, I20/G155): `{ endpoints, totals }` with each endpoint carrying
+   * `{ name, callCount, bytesIn, bytesOut }`.
+   */
+  getUsageStats(): Promise<UsageStatsSnapshot>;
   close(): Promise<void>;
 }

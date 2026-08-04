@@ -76,6 +76,9 @@ const hypothesisSchema: LedgerSchema = {
  *    (child of H1, same ledgerRefs) — both linked to RS1.
  */
 class ResearchClient implements LedgerClient {
+  async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
+    throw new Error("not used");
+  }
   private hypothesisRequested = false;
 
   displayName(): string { return "cq1"; }
