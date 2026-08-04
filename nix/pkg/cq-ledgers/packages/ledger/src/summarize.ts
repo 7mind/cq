@@ -8,10 +8,11 @@
  * those (e.g. reviews keyed only by a `criticism[]` list) and a last-resort
  * first-field stringification.
  *
- * The TUI (`ledger-tui/src/app.tsx`) and web (`ledger-web/src/App.tsx`)
- * frontends carry their own private copies of this logic for rendering the
- * summary cell; this module exposes the same algorithm at the library level
- * so store-level callers (e.g. `LedgerStore.snapshot`) reuse it rather than
+ * The TUI (`ledger-tui/src/app.tsx`) carries its own private copy of this
+ * logic for rendering the summary cell; the web (`ledger-web/src/App.tsx`)
+ * imports this module via the `@cq/ledger/summarize` leaf subpath (D222).
+ * This module exposes the same algorithm at the library level so
+ * store-level callers (e.g. `LedgerStore.snapshot`) reuse it rather than
  * reimplement the precedence.
  */
 
@@ -41,7 +42,7 @@ export function fieldToString(v: FieldValue | undefined): string {
 }
 
 /**
- * The one-line summary of `item`, matching the frontends' `summarize()`:
+ * The one-line summary of `item`, matching the TUI's private `summarize()`:
  *  1. the first defined field in `headline ?? title ?? question ?? summary`;
  *  2. else the first line of the first `criticism[]` entry (truncated);
  *  3. else the first field's stringified value (empty string if no fields).

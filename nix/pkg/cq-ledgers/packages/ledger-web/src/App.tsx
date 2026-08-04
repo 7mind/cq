@@ -45,6 +45,10 @@ import { parseRawLog, type ConversationModel, type ConversationTurn } from "./ra
 // which must not enter the browser bundle. `./columns` is side-effect-free and
 // Node-free, mirroring the `./relationships` leaf import above.
 import { eligibleColumnFields, defaultColumns } from "@cq/ledger/columns";
+// Leaf subpath (same rationale as ./columns above): the shared item-summary
+// helper (D222). summarize.ts transitively imports only type-only types.js
+// plus columns.js, so it is Node-free and safe for the browser bundle.
+import { summarize, fieldToString } from "@cq/ledger/summarize";
 // Leaf subpath: constants.ts is data-only (no Node.js builtins). Importing
 // MILESTONES_SCHEMA from here avoids the duplicated local copy (D6).
 import { MILESTONES_SCHEMA, IDEAS_LEDGER } from "@cq/ledger/constants";
@@ -270,10 +274,6 @@ export function wsTokenOf(wsUrl: string | null): string | null {
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
-function fieldToString(v: FieldValue | undefined): string {
-  if (v === undefined) return "";
-  return Array.isArray(v) ? v.join(", ") : v;
-}
 function renderListField(items: string[]): React.ReactElement {
   return (
     <ul className="lw-field-list">
@@ -305,19 +305,6 @@ function renderTypedSchema(schema: JSONSchema | undefined): React.ReactElement {
       <pre className="lw-agent-schema-json">{JSON.stringify(schema, null, 2)}</pre>
     </details>
   );
-}
-const SUMMARIZE_MAX = 80;
-function summarize(item: Item): string {
-  const f = item.fields;
-  const pick = f["headline"] ?? f["title"] ?? f["question"] ?? f["summary"];
-  if (pick !== undefined) return fieldToString(pick as FieldValue | undefined);
-  // Legacy fallback for reviews with no summary: truncate the first criticism line.
-  const crit = f["criticism"];
-  if (Array.isArray(crit) && crit.length > 0) {
-    const line = String(crit[0]).split("\n")[0] ?? "";
-    return line.length > SUMMARIZE_MAX ? line.slice(0, SUMMARIZE_MAX) + "…" : line;
-  }
-  return fieldToString(Object.values(f)[0] as FieldValue | undefined);
 }
 /** A field is "short" (fixed-size) when its value is single-line and compact. */
 const SHORT_FIELD_MAX = 48;

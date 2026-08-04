@@ -26,6 +26,10 @@
       "import": "./src/constants.ts",
       "types": "./src/constants.ts"
     },
+    "./summarize": {
+      "import": "./src/summarize.ts",
+      "types": "./src/summarize.ts"
+    },
     "./refs": {
       "import": "./src/refs.ts",
       "types": "./src/refs.ts"
