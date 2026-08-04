@@ -53,6 +53,7 @@ import { runMigrate } from "./migrate.js";
 import { runAdvanceGate } from "./advanceGate.js";
 import { runPredicates } from "./predicates.js";
 import { runCounts } from "./counts.js";
+import { runStats } from "./stats.js";
 import { runGateRun } from "./gateRun.js";
 import { parseLogPutArgs, runLogPut, EXIT_USAGE as LOG_PUT_EXIT_USAGE } from "./logPut.js";
 import {
@@ -76,7 +77,7 @@ export { type ConfirmIo, type ConfirmOutcome, defaultConfirmIo, confirmDestructi
 export const EXIT_USAGE = 2;
 
 /** The subcommands the dispatcher routes to. */
-export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "counts", "log", "backup", "restore", "migrate", "gate"] as const;
+export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "counts", "stats", "log", "backup", "restore", "migrate", "gate"] as const;
 export type Subcommand = (typeof SUBCOMMANDS)[number];
 
 function isSubcommand(s: string): s is Subcommand {
@@ -196,6 +197,15 @@ export const USAGE = [
   "                                                  ({ ledgers, counts, ledgerSummaries })",
   "                                                  to stdout UNCONDITIONALLY;",
   "                                                  no session/marker, always exit 0.",
+  "  stats       [--cwd <path>]                      emit the MCP usage-counters JSON",
+  "                                                  ({ endpoints, totals }) to stdout",
+  "                                                  UNCONDITIONALLY; no session/marker,",
+  "                                                  always exit 0. Counters accumulate",
+  "                                                  only from MCP tool invocations against",
+  "                                                  this project store (CLI direct reads",
+  "                                                  do not increment); stats are",
+  "                                                  primary-store-local telemetry, outside",
+  "                                                  cq backup/restore.",
   "  log put <src>|--stdin --dest logs/<rel> [--cwd <path>]",
   "                                                  write a log file into .cq/logs/<rel>;",
   "                                                  source is a local file path OR --stdin;",
@@ -775,6 +785,20 @@ export async function runCountsCmd(
 }
 
 /**
+ * `cq stats` (I20/G155, T1512): a NATIVE subcommand emitting the MCP
+ * usage-counters JSON to stdout UNCONDITIONALLY — no session resolution, no
+ * marker check, always exit 0. The derivation lives in ./stats.ts; this thin
+ * wrapper bridges {@link SubcommandArgs} to its {@link StatsArgs} and threads
+ * the dispatcher IO (out/err).
+ */
+export async function runStatsCmd(
+  args: SubcommandArgs,
+  io: DispatchIo,
+): Promise<SubcommandOutcome> {
+  return runStats({ cwd: args.cwd }, { out: io.out, err: io.err });
+}
+
+/**
  * `cq log` (T406 / G49): a NATIVE namespace subcommand whose first positional
  * token is a sub-subcommand (`put`). The only recognised sub-subcommand is
  * `put`; anything else prints a usage error and exits {@link EXIT_USAGE}.
@@ -1117,6 +1141,7 @@ const HANDLERS: Record<Subcommand, (args: SubcommandArgs, io: DispatchIo) => Pro
   "advance-gate": runAdvanceGateCmd,
   predicates: runPredicatesCmd,
   counts: runCountsCmd,
+  stats: runStatsCmd,
   // `log` is a namespace subcommand: the handler placeholder is never invoked
   // directly — the dispatch() function intercepts it and delegates to runLogCmd
   // with the raw post-"log" argv.  This entry must exist so isSubcommand() and
