@@ -13,6 +13,14 @@ import {
   type ProcessGroupRegistration,
 } from "../src/index.js";
 
+// Same self-extension rule as commandBootstrap (D273): the compiled copy of
+// this test under dist/test must reference the compiled .js helpers, but
+// tsc's rewriteRelativeImportExtensions does not rewrite URL strings
+// (D276 — package-local `bun test` discovers dist/test/*.test.js).
+const testModuleExtension = fileURLToPath(import.meta.url).endsWith(".js") ? ".js" : ".ts";
+const testModuleUrl = (relativeBase: string): URL =>
+  new URL(`${relativeBase}${testModuleExtension}`, import.meta.url);
+
 const REGISTRATION: ProcessGroupRegistration = {
   pgid: 41001,
   leader: { pid: 41001, startTime: "100" },
@@ -75,7 +83,7 @@ describe("process-group settlement [BA]", () => {
   test("settles a production group whose leader forks after SIGTERM", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-process-group-"));
     const marker = join(root, "forked");
-    const fixture = fileURLToPath(new URL("./processGroupFixture.ts", import.meta.url));
+    const fixture = fileURLToPath(testModuleUrl("./processGroupFixture"));
     const child = spawn(process.execPath, ["run", fixture, marker], {
       detached: true,
       stdio: "ignore",

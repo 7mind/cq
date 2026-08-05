@@ -18,6 +18,14 @@ import {
 
 const roots: string[] = [];
 
+// Same self-extension rule as commandBootstrap (D273): the compiled copy of
+// this test under dist/test must reference the compiled .js helpers, but
+// tsc's rewriteRelativeImportExtensions does not rewrite URL strings
+// (D276 — package-local `bun test` discovers dist/test/*.test.js).
+const testModuleExtension = fileURLToPath(import.meta.url).endsWith(".js") ? ".js" : ".ts";
+const testModuleUrl = (relativeBase: string): URL =>
+  new URL(`${relativeBase}${testModuleExtension}`, import.meta.url);
+
 function exited(
   child: ChildProcess,
 ): Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }> {
@@ -220,7 +228,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       roots.push(root);
       const launcherStatePath = join(root, "launcher-state.json");
       const targetPidPath = join(root, "target-pid");
-      const registeredLaunchUrl = new URL("../src/registeredLaunch.ts", import.meta.url).href;
+      const registeredLaunchUrl = testModuleUrl("../src/registeredLaunch").href;
       const targetSource = [
         "const { writeFileSync } = require('node:fs');",
         `writeFileSync(${JSON.stringify(targetPidPath)}, String(process.pid));`,
@@ -350,7 +358,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
       const launcherPidPath = join(root, "launcher-pid");
       const launcherStatePath = join(root, "launcher-state.json");
       const descendantPidPath = join(root, "same-group-descendant-pid");
-      const registeredLaunchUrl = new URL("../src/registeredLaunch.ts", import.meta.url).href;
+      const registeredLaunchUrl = testModuleUrl("../src/registeredLaunch").href;
       const targetSource = [
         "const { spawn } = require('node:child_process');",
         "const { writeFileSync } = require('node:fs');",
@@ -524,7 +532,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     async () => {
       const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-completion-cleanup-"));
       roots.push(root);
-      const bootstrap = fileURLToPath(new URL("../src/commandBootstrap.ts", import.meta.url));
+      const bootstrap = fileURLToPath(testModuleUrl("../src/commandBootstrap"));
       const launcher = await readProcessIdentity(process.pid);
       if (launcher === null) throw new Error("test launcher identity disappeared");
       const protocolDirectory = join(root, "protocol");
@@ -603,9 +611,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
 
   // Regression origin: a reused bootstrap PID must not authorize signaling its numeric PGID.
   test("refuses to signal a process group after its bootstrap identity is reused [Whitebox-GoodCommunication]", async () => {
-    const reaperExecutable = fileURLToPath(
-      new URL("../src/orphanProcessGroupReaper.ts", import.meta.url),
-    );
+    const reaperExecutable = fileURLToPath(testModuleUrl("../src/orphanProcessGroupReaper"));
     const reusedGroup = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
       detached: true,
       stdio: "ignore",
@@ -807,7 +813,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
   test("rejects a launcher identity that differs from its initial parent [Whitebox-GoodCommunication]", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-parent-mismatch-"));
     roots.push(root);
-    const bootstrap = fileURLToPath(new URL("../src/commandBootstrap.ts", import.meta.url));
+    const bootstrap = fileURLToPath(testModuleUrl("../src/commandBootstrap"));
     const launcher = await readProcessIdentity(process.pid);
     if (launcher === null) throw new Error("test launcher identity disappeared");
     const mutations = [
@@ -875,7 +881,7 @@ describe("registered process-group launch bootstrap [T1624]", () => {
   test("rejects nonce/launcher release mutations [Whitebox-GoodCommunication]", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-mismatch-"));
     roots.push(root);
-    const bootstrap = fileURLToPath(new URL("../src/commandBootstrap.ts", import.meta.url));
+    const bootstrap = fileURLToPath(testModuleUrl("../src/commandBootstrap"));
     const launcher = await readProcessIdentity(process.pid);
     if (launcher === null) throw new Error("test launcher identity disappeared");
     const mutations = [
@@ -999,8 +1005,8 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     process.env["CQ_PROCESS_IDENTITY_HELPER"] = identityHelper;
     try {
       let bootstrapStderr: Promise<string> | undefined;
-      const bootstrap = fileURLToPath(new URL("../src/commandBootstrap.ts", import.meta.url));
-      const bootstrapUrl = new URL("../src/commandBootstrap.ts", import.meta.url).href;
+      const bootstrap = fileURLToPath(testModuleUrl("../src/commandBootstrap"));
+      const bootstrapUrl = testModuleUrl("../src/commandBootstrap").href;
       const wrapper = [
         "Object.defineProperty(process, 'platform', { value: 'darwin' });",
         `process.argv = [process.argv[0], ${JSON.stringify(bootstrap)}, ...process.argv.slice(1)];`,

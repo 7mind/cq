@@ -163,6 +163,10 @@ const T0 = "2026-07-27T09:00:00.000Z";
 const PROMPT_DIGEST = "a".repeat(64);
 const CATALOG_HASH = "b".repeat(64);
 const TIMEOUT_MS = 600_000;
+// bun's 5 s default per-test timeout bound the 12-round sweep loop below its
+// needs under full-gate parallel load (D278 — observed 5683 ms). Only the
+// wall-clock budget is generous here; the boundedness assertions stay exact.
+const STORAGE_SWEEP_TEST_TIMEOUT_MS = 60_000;
 const CHILD = { childId: "child-t720", runId: "run-0001" } as const;
 const INPUT_MARKER = "input-marker-64bf13";
 
@@ -1009,24 +1013,28 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
         expect(reused.attestationId).not.toBe(p.attestationId);
       }));
 
-    test("storage stays bounded across many swept dispatches", () =>
-      withCase(async ({ fixture, driver, clock }) => {
-        const rounds = 12;
-        for (let round = 0; round < rounds; round += 1) {
-          const p = await driver.prepare({ idempotencyKey: `bounded-${String(round)}` });
-          await driver.store(p.resultCapability);
-          await driver.confirm(p);
-          // Each round advances a full horizon, so every prior round's tombstone
-          // is droppable by the time this one goes terminal.
+    test(
+      "storage stays bounded across many swept dispatches",
+      () =>
+        withCase(async ({ fixture, driver, clock }) => {
+          const rounds = 12;
+          for (let round = 0; round < rounds; round += 1) {
+            const p = await driver.prepare({ idempotencyKey: `bounded-${String(round)}` });
+            await driver.store(p.resultCapability);
+            await driver.confirm(p);
+            // Each round advances a full horizon, so every prior round's tombstone
+            // is droppable by the time this one goes terminal.
+            clock.advance(IDEMPOTENCY_HORIZON_MS);
+            await driver.sweep();
+            // At most: this round's own terminal envelope. Nothing accumulates.
+            expect((await fixture.rows()).length).toBeLessThanOrEqual(1);
+          }
           clock.advance(IDEMPOTENCY_HORIZON_MS);
           await driver.sweep();
-          // At most: this round's own terminal envelope. Nothing accumulates.
-          expect((await fixture.rows()).length).toBeLessThanOrEqual(1);
-        }
-        clock.advance(IDEMPOTENCY_HORIZON_MS);
-        await driver.sweep();
-        expect(await fixture.rows()).toHaveLength(0);
-      }));
+          expect(await fixture.rows()).toHaveLength(0);
+        }),
+      STORAGE_SWEEP_TEST_TIMEOUT_MS,
+    );
 
     // -- key reuse ---------------------------------------------------------
     test("an idempotency key is held by a live row and by its tombstone", () =>

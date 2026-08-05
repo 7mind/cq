@@ -32,6 +32,19 @@ const GATE_FIXTURE = fileURLToPath(new URL("./codexGateCommandFixture.ts", impor
 const ROLE_TIMEOUT_WINDOW_MS = 30_000;
 const CONTROLLED_DEADLINE_MS = 2_000;
 
+// Orchestration waits (the fake Codex publishing its group file, a gate
+// command its ready file, a registered process exiting) get a generous
+// wall-clock deadline in line with the role protocol's own 30 s window: under
+// full-gate parallel load even simple file polls can stall without anything
+// being wrong (D277 — the previous fixed 500x2 ms poll budgets collapsed
+// under load). No invariant under test is timed by these waits; the tight
+// CONTROLLED_DEADLINE_MS bound stays reserved for the timeout-path test.
+const ORCHESTRATION_WAIT_MS = 30_000;
+// Several orchestration waits sequence within one test (fixture launch, group
+// publication, settlement), so the per-test timeout must cover the worst-case
+// sequencing rather than a single budget.
+const LIFECYCLE_TEST_TIMEOUT_MS = 2 * ORCHESTRATION_WAIT_MS;
+
 interface ProcessGroupMemberObservation {
   readonly identity: ProcessIdentity;
   readonly pgid: number;
@@ -160,7 +173,8 @@ function launchDispatch(
 }
 
 async function waitForGateReady(path: string): Promise<GateReadyRecord> {
-  for (let attempt = 0; attempt < 500; attempt += 1) {
+  const deadline = Date.now() + ORCHESTRATION_WAIT_MS;
+  for (;;) {
     try {
       const record = JSON.parse(await readFile(path, "utf8")) as GateReadyRecord;
       if (
@@ -174,30 +188,40 @@ async function waitForGateReady(path: string): Promise<GateReadyRecord> {
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
+    if (Date.now() >= deadline) {
+      throw new Error(`gate command did not publish ${path} before its orchestration deadline`);
+    }
     await Bun.sleep(2);
   }
-  throw new Error(`gate command did not publish ${path}`);
 }
 
 async function waitForCodexGroup(path: string): Promise<CodexGroupObservation> {
-  for (let attempt = 0; attempt < 500; attempt += 1) {
+  const deadline = Date.now() + ORCHESTRATION_WAIT_MS;
+  for (;;) {
     try {
       return JSON.parse(await readFile(path, "utf8")) as CodexGroupObservation;
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
+    if (Date.now() >= deadline) {
+      throw new Error(`Codex group did not publish ${path} before its orchestration deadline`);
+    }
     await Bun.sleep(2);
   }
-  throw new Error(`Codex group did not publish ${path}`);
 }
 
 async function waitForIdentityDead(identity: ProcessIdentity): Promise<void> {
-  for (let attempt = 0; attempt < 500; attempt += 1) {
+  const deadline = Date.now() + ORCHESTRATION_WAIT_MS;
+  for (;;) {
     const observed = await readProcessIdentity(identity.pid);
     if (observed === null || observed.startTime !== identity.startTime) return;
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `process ${String(identity.pid)} remained alive past its orchestration deadline`,
+      );
+    }
     await Bun.sleep(2);
   }
-  throw new Error(`process ${String(identity.pid)} remained alive`);
 }
 
 async function readProcessGroup(pid: number): Promise<number> {
@@ -251,8 +275,8 @@ async function expectRegisteredGroupAlive(observation: RegisteredGroupObservatio
 }
 
 async function expectRegisteredGroupDead(observation: RegisteredGroupObservation): Promise<void> {
-  for (let attempt = 0; attempt < 500; attempt += 1) {
-    if (!isProcessGroupAlive(observation.registration.pgid)) break;
+  const deadline = Date.now() + ORCHESTRATION_WAIT_MS;
+  while (isProcessGroupAlive(observation.registration.pgid) && Date.now() < deadline) {
     await Bun.sleep(2);
   }
   expect(isProcessGroupAlive(observation.registration.pgid)).toBe(false);
@@ -330,140 +354,156 @@ async function settleDispatchFixture(dispatch: DispatchProcess | undefined): Pro
 }
 
 describe("T1625 Codex and canonical-worktree gate lifecycle [Effectual-GoodCommunication]", () => {
-  test("a stored-result handle with a live gate emits nothing and settles only owned groups", async () => {
-    const fixture = await createLifecycleFixture();
-    const unrelatedFixture = await createLifecycleFixture();
-    let gate: Awaited<ReturnType<typeof launchGate>> | undefined;
-    let unrelatedGate: Awaited<ReturnType<typeof launchGate>> | undefined;
-    try {
-      gate = await launchGate(fixture);
-      unrelatedGate = await launchGate(unrelatedFixture);
-      const dispatch = launchDispatch(fixture, "success", 30_000);
-      expect(await dispatch.child.exited).toBe(1);
-      expect(await dispatch.stdout).toBe("");
-      expect(await dispatch.stderr).toContain("live registered gate at child completion");
-      const codexGroup = await waitForCodexGroup(fixture.codexGroup);
-      expect(codexGroup.registration.leader.pid).toBe(codexGroup.registration.pgid);
-      expect(codexGroup.members).toHaveLength(1);
-      expect(codexGroup.members[0]?.pid).not.toBe(codexGroup.registration.pgid);
-      if (INSTALLED_DISPATCH !== undefined) {
-        expect(codexGroup.identityHelper).not.toBeNull();
+  test(
+    "a stored-result handle with a live gate emits nothing and settles only owned groups",
+    async () => {
+      const fixture = await createLifecycleFixture();
+      const unrelatedFixture = await createLifecycleFixture();
+      let gate: Awaited<ReturnType<typeof launchGate>> | undefined;
+      let unrelatedGate: Awaited<ReturnType<typeof launchGate>> | undefined;
+      try {
+        gate = await launchGate(fixture);
+        unrelatedGate = await launchGate(unrelatedFixture);
+        const dispatch = launchDispatch(fixture, "success", 30_000);
+        expect(await dispatch.child.exited).toBe(1);
+        expect(await dispatch.stdout).toBe("");
+        expect(await dispatch.stderr).toContain("live registered gate at child completion");
+        const codexGroup = await waitForCodexGroup(fixture.codexGroup);
+        expect(codexGroup.registration.leader.pid).toBe(codexGroup.registration.pgid);
+        expect(codexGroup.members).toHaveLength(1);
+        expect(codexGroup.members[0]?.pid).not.toBe(codexGroup.registration.pgid);
+        if (INSTALLED_DISPATCH !== undefined) {
+          expect(codexGroup.identityHelper).not.toBeNull();
+        }
+        if (INSTALLED_DISPATCH !== undefined && process.platform === "darwin") {
+          expect(codexGroup.registration.leader.startTime).toMatch(/^\d+\.\d+$/u);
+        }
+        expect(gate.commands).toHaveLength(2);
+        for (const group of gate.groups) {
+          await expectRegisteredGroupDead(group);
+        }
+        for (const group of unrelatedGate.groups) await expectRegisteredGroupAlive(group);
+      } finally {
+        if (unrelatedGate !== undefined) await closeWorktreeGate(unrelatedGate.lease);
+        if (gate !== undefined) await closeWorktreeGate(gate.lease);
+        await rm(unrelatedFixture.root, { recursive: true, force: true });
+        await rm(fixture.root, { recursive: true, force: true });
       }
-      if (INSTALLED_DISPATCH !== undefined && process.platform === "darwin") {
-        expect(codexGroup.registration.leader.startTime).toMatch(/^\d+\.\d+$/u);
+    },
+    LIFECYCLE_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "repeated wrapper termination signals settle Codex and gate groups once",
+    async () => {
+      const fixture = await createLifecycleFixture();
+      let gate: Awaited<ReturnType<typeof launchGate>> | undefined;
+      let codexGroup: CodexGroupObservation | undefined;
+      let dispatch: DispatchProcess | undefined;
+      try {
+        gate = await launchGate(fixture);
+        dispatch = launchDispatch(fixture, "wait", ROLE_TIMEOUT_WINDOW_MS);
+        codexGroup = await waitForCodexGroup(fixture.codexGroup);
+        expect(codexGroup.members).toHaveLength(2);
+        const observedCodexGroup = await observeRegisteredGroup(
+          codexGroup.registration,
+          codexGroup.members,
+        );
+        await expectRegisteredGroupAlive(observedCodexGroup);
+        for (const group of gate.groups) await expectRegisteredGroupAlive(group);
+
+        dispatch.child.kill("SIGINT");
+        await Bun.sleep(2);
+        dispatch.child.kill("SIGTERM");
+        await Bun.sleep(2);
+        dispatch.child.kill("SIGINT");
+        expect(await dispatch.child.exited).toBe(1);
+        expect(await dispatch.stdout).toBe("");
+        expect(await dispatch.stderr).toMatch(/wrapper received SIG(?:INT|TERM)/u);
+        await expectRegisteredGroupDead(observedCodexGroup);
+        for (const group of gate.groups) await expectRegisteredGroupDead(group);
+        expect(await readSignals(fixture.codexSignals)).toEqual(["SIGTERM"]);
+        for (const signals of fixture.gateSignals) {
+          expect(await readSignals(signals)).toEqual(["SIGTERM"]);
+        }
+      } finally {
+        await settleDispatchFixture(dispatch);
+        if (codexGroup !== undefined) await settleRegistration(codexGroup.registration);
+        if (gate !== undefined) await closeWorktreeGate(gate.lease);
+        await rm(fixture.root, { recursive: true, force: true });
       }
-      expect(gate.commands).toHaveLength(2);
-      for (const group of gate.groups) {
-        await expectRegisteredGroupDead(group);
+    },
+    LIFECYCLE_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "an installed early interception failure settles Codex and every gate group",
+    async () => {
+      const fixture = await createLifecycleFixture();
+      let gate: Awaited<ReturnType<typeof launchGate>> | undefined;
+      let codexGroup: CodexGroupObservation | undefined;
+      let dispatch: DispatchProcess | undefined;
+      try {
+        gate = await launchGate(fixture);
+        dispatch = launchDispatch(fixture, "invalid-result", ROLE_TIMEOUT_WINDOW_MS);
+        codexGroup = await waitForCodexGroup(fixture.codexGroup);
+        expect(codexGroup.members).toHaveLength(1);
+        const observedCodexGroup = await observeRegisteredGroup(
+          codexGroup.registration,
+          codexGroup.members,
+        );
+        await expectRegisteredGroupAlive(observedCodexGroup);
+        for (const group of gate.groups) await expectRegisteredGroupAlive(group);
+
+        await writeFile(fixture.codexRelease, "release\n");
+        expect(await dispatch.child.exited).toBe(1);
+        expect(await dispatch.stdout).toBe("");
+        expect(await dispatch.stderr).toContain("handle-only contract");
+        await expectRegisteredGroupDead(observedCodexGroup);
+        for (const group of gate.groups) await expectRegisteredGroupDead(group);
+      } finally {
+        await settleDispatchFixture(dispatch);
+        if (codexGroup !== undefined) await settleRegistration(codexGroup.registration);
+        if (gate !== undefined) await closeWorktreeGate(gate.lease);
+        await rm(fixture.root, { recursive: true, force: true });
       }
-      for (const group of unrelatedGate.groups) await expectRegisteredGroupAlive(group);
-    } finally {
-      if (unrelatedGate !== undefined) await closeWorktreeGate(unrelatedGate.lease);
-      if (gate !== undefined) await closeWorktreeGate(gate.lease);
-      await rm(unrelatedFixture.root, { recursive: true, force: true });
-      await rm(fixture.root, { recursive: true, force: true });
-    }
-  });
+    },
+    LIFECYCLE_TEST_TIMEOUT_MS,
+  );
 
-  test("repeated wrapper termination signals settle Codex and gate groups once", async () => {
-    const fixture = await createLifecycleFixture();
-    let gate: Awaited<ReturnType<typeof launchGate>> | undefined;
-    let codexGroup: CodexGroupObservation | undefined;
-    let dispatch: DispatchProcess | undefined;
-    try {
-      gate = await launchGate(fixture);
-      dispatch = launchDispatch(fixture, "wait", ROLE_TIMEOUT_WINDOW_MS);
-      codexGroup = await waitForCodexGroup(fixture.codexGroup);
-      expect(codexGroup.members).toHaveLength(2);
-      const observedCodexGroup = await observeRegisteredGroup(
-        codexGroup.registration,
-        codexGroup.members,
-      );
-      await expectRegisteredGroupAlive(observedCodexGroup);
-      for (const group of gate.groups) await expectRegisteredGroupAlive(group);
+  test(
+    "timeout removes the Codex root and every registered gate process group",
+    async () => {
+      const fixture = await createLifecycleFixture();
+      let gate: Awaited<ReturnType<typeof launchGate>> | undefined;
+      let codexGroup: CodexGroupObservation | undefined;
+      let dispatch: DispatchProcess | undefined;
+      try {
+        gate = await launchGate(fixture);
+        dispatch = launchDispatch(fixture, "wait", CONTROLLED_DEADLINE_MS);
+        codexGroup = await waitForCodexGroup(fixture.codexGroup);
+        expect(codexGroup.members).toHaveLength(2);
+        const observedCodexGroup = await observeRegisteredGroup(
+          codexGroup.registration,
+          codexGroup.members,
+        );
+        await expectRegisteredGroupAlive(observedCodexGroup);
+        for (const group of gate.groups) await expectRegisteredGroupAlive(group);
 
-      dispatch.child.kill("SIGINT");
-      await Bun.sleep(2);
-      dispatch.child.kill("SIGTERM");
-      await Bun.sleep(2);
-      dispatch.child.kill("SIGINT");
-      expect(await dispatch.child.exited).toBe(1);
-      expect(await dispatch.stdout).toBe("");
-      expect(await dispatch.stderr).toMatch(/wrapper received SIG(?:INT|TERM)/u);
-      await expectRegisteredGroupDead(observedCodexGroup);
-      for (const group of gate.groups) await expectRegisteredGroupDead(group);
-      expect(await readSignals(fixture.codexSignals)).toEqual(["SIGTERM"]);
-      for (const signals of fixture.gateSignals) {
-        expect(await readSignals(signals)).toEqual(["SIGTERM"]);
+        expect(await dispatch.child.exited).toBe(1);
+        expect(await dispatch.stdout).toBe("");
+        expect(await dispatch.stderr).toContain(
+          `child exceeded its ${String(CONTROLLED_DEADLINE_MS)} ms window`,
+        );
+        await expectRegisteredGroupDead(observedCodexGroup);
+        for (const group of gate.groups) await expectRegisteredGroupDead(group);
+      } finally {
+        await settleDispatchFixture(dispatch);
+        if (codexGroup !== undefined) await settleRegistration(codexGroup.registration);
+        if (gate !== undefined) await closeWorktreeGate(gate.lease);
+        await rm(fixture.root, { recursive: true, force: true });
       }
-    } finally {
-      await settleDispatchFixture(dispatch);
-      if (codexGroup !== undefined) await settleRegistration(codexGroup.registration);
-      if (gate !== undefined) await closeWorktreeGate(gate.lease);
-      await rm(fixture.root, { recursive: true, force: true });
-    }
-  });
-
-  test("an installed early interception failure settles Codex and every gate group", async () => {
-    const fixture = await createLifecycleFixture();
-    let gate: Awaited<ReturnType<typeof launchGate>> | undefined;
-    let codexGroup: CodexGroupObservation | undefined;
-    let dispatch: DispatchProcess | undefined;
-    try {
-      gate = await launchGate(fixture);
-      dispatch = launchDispatch(fixture, "invalid-result", ROLE_TIMEOUT_WINDOW_MS);
-      codexGroup = await waitForCodexGroup(fixture.codexGroup);
-      expect(codexGroup.members).toHaveLength(1);
-      const observedCodexGroup = await observeRegisteredGroup(
-        codexGroup.registration,
-        codexGroup.members,
-      );
-      await expectRegisteredGroupAlive(observedCodexGroup);
-      for (const group of gate.groups) await expectRegisteredGroupAlive(group);
-
-      await writeFile(fixture.codexRelease, "release\n");
-      expect(await dispatch.child.exited).toBe(1);
-      expect(await dispatch.stdout).toBe("");
-      expect(await dispatch.stderr).toContain("handle-only contract");
-      await expectRegisteredGroupDead(observedCodexGroup);
-      for (const group of gate.groups) await expectRegisteredGroupDead(group);
-    } finally {
-      await settleDispatchFixture(dispatch);
-      if (codexGroup !== undefined) await settleRegistration(codexGroup.registration);
-      if (gate !== undefined) await closeWorktreeGate(gate.lease);
-      await rm(fixture.root, { recursive: true, force: true });
-    }
-  });
-
-  test("timeout removes the Codex root and every registered gate process group", async () => {
-    const fixture = await createLifecycleFixture();
-    let gate: Awaited<ReturnType<typeof launchGate>> | undefined;
-    let codexGroup: CodexGroupObservation | undefined;
-    let dispatch: DispatchProcess | undefined;
-    try {
-      gate = await launchGate(fixture);
-      dispatch = launchDispatch(fixture, "wait", CONTROLLED_DEADLINE_MS);
-      codexGroup = await waitForCodexGroup(fixture.codexGroup);
-      expect(codexGroup.members).toHaveLength(2);
-      const observedCodexGroup = await observeRegisteredGroup(
-        codexGroup.registration,
-        codexGroup.members,
-      );
-      await expectRegisteredGroupAlive(observedCodexGroup);
-      for (const group of gate.groups) await expectRegisteredGroupAlive(group);
-
-      expect(await dispatch.child.exited).toBe(1);
-      expect(await dispatch.stdout).toBe("");
-      expect(await dispatch.stderr).toContain(
-        `child exceeded its ${String(CONTROLLED_DEADLINE_MS)} ms window`,
-      );
-      await expectRegisteredGroupDead(observedCodexGroup);
-      for (const group of gate.groups) await expectRegisteredGroupDead(group);
-    } finally {
-      await settleDispatchFixture(dispatch);
-      if (codexGroup !== undefined) await settleRegistration(codexGroup.registration);
-      if (gate !== undefined) await closeWorktreeGate(gate.lease);
-      await rm(fixture.root, { recursive: true, force: true });
-    }
-  });
+    },
+    LIFECYCLE_TEST_TIMEOUT_MS,
+  );
 });

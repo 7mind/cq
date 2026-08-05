@@ -30,6 +30,14 @@ import {
 
 const roots: string[] = [];
 
+// Same self-extension rule as commandBootstrap (D273): the compiled copy of
+// this test under dist/test must reference the compiled .js helpers, but
+// tsc's rewriteRelativeImportExtensions does not rewrite URL strings
+// (D276 — package-local `bun test` discovers dist/test/*.test.js).
+const testModuleExtension = fileURLToPath(import.meta.url).endsWith(".js") ? ".js" : ".ts";
+const testModuleUrl = (relativeBase: string): URL =>
+  new URL(`${relativeBase}${testModuleExtension}`, import.meta.url);
+
 async function repositoryFixture(): Promise<{ root: string; stateDir: string }> {
   const root = await mkdtemp(join(tmpdir(), "cq-gate-repo-"));
   roots.push(root);
@@ -173,7 +181,7 @@ describe("canonical worktree gate [Effectual-GoodCommunication]", () => {
     const marker = join(root, "mismatched-bootstrap-ran");
     const protocolDirectory = join(root, "bootstrap-protocol");
     await mkdir(protocolDirectory);
-    const bootstrap = fileURLToPath(new URL("../src/commandBootstrap.ts", import.meta.url));
+    const bootstrap = fileURLToPath(testModuleUrl("../src/commandBootstrap"));
     const launcher = await readProcessIdentity(process.pid);
     if (launcher === null) throw new Error("test launcher identity disappeared");
     const child = spawn(
@@ -321,7 +329,7 @@ describe("canonical worktree gate [Effectual-GoodCommunication]", () => {
     const { root, stateDir } = await repositoryFixture();
     const lease = await acquireWorktreeGate({ worktree: root, commandCwd: root, stateDir });
     try {
-      const processControl = fileURLToPath(new URL("../src/index.ts", import.meta.url));
+      const processControl = fileURLToPath(testModuleUrl("../src/index"));
       const probe = [
         `const { settleWorktreeGateCommands } = await import(${JSON.stringify(processControl)});`,
         `const result = await settleWorktreeGateCommands(${JSON.stringify({ worktree: root, stateDir })});`,
@@ -352,7 +360,7 @@ describe("canonical worktree gate [Effectual-GoodCommunication]", () => {
     await writeFile(holderPath, JSON.stringify({ ...holder, nonce: publicationNonce }));
     const lease = { ...acquired, nonce: publicationNonce };
     try {
-      const processControl = fileURLToPath(new URL("../src/index.ts", import.meta.url));
+      const processControl = fileURLToPath(testModuleUrl("../src/index"));
       const readyDirectory = join(root, "settlement-probes-ready");
       const startPath = join(root, "settlement-probes-start");
       await mkdir(readyDirectory);
