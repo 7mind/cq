@@ -466,6 +466,11 @@ export function App({
   // alone (mode + step) would let a stale resolve from a dismissed session
   // write into a re-opened same-mode session.
   const finalizeGenRef = useRef(0);
+  // Per-open generation token for openLedger (D220): incremented on every
+  // openLedger dispatch. After fetchLedger resolves, apply setLedger/setView
+  // only when the token still matches — a faster second click must not be
+  // painted over by a slower first fetch resolving out of order.
+  const openLedgerGenRef = useRef(0);
   const workareaRef = useRef<HTMLDivElement>(null);
   const [live, setLive] = useState<LiveStats | null>(null);
   // Archive: show/hide the archived subsections. Per-group expand + lazy-fetch
@@ -805,8 +810,10 @@ export function App({
   const openLedger = useCallback(
     async (name: string) => {
       if (client === null) return;
+      const gen = ++openLedgerGenRef.current;
       try {
         const v = await client.fetchLedger(name, "full");
+        if (openLedgerGenRef.current !== gen) return;
         setLedger(name);
         setView(v);
         setSelected(null);
@@ -819,8 +826,13 @@ export function App({
         setFinalizeMenuOpen(false);
         closeFinalizePreview();
         // In graph mode, re-graph the newly selected ledger (stay in graph).
-        if (mainView === "dag") setDag(await loadDagData(client, name));
+        if (mainView === "dag") {
+          const dag = await loadDagData(client, name);
+          if (openLedgerGenRef.current !== gen) return;
+          setDag(dag);
+        }
       } catch (e) {
+        if (openLedgerGenRef.current !== gen) return;
         setFlash(errMsg(e));
       }
     },
@@ -3939,13 +3951,17 @@ function DetailPanel({
     () => fieldToString(row.item.fields[ANSWER_FIELD]).trim().length > 0,
   );
 
-  // Reset to the initial mode + values whenever the row changes (a different
-  // item loads, or a fresh create session starts → blank draft row).
+  // Reset to the initial mode + values whenever the edited identity changes
+  // (a different item id, or a create-session draft). Key on row.item.id —
+  // NOT the row object — so a live reload that allocates a new
+  // {item, milestoneId} for the SAME id leaves editing=true alone (D219).
+  // Create sessions use a stable empty id; isDraft distinguishes them from
+  // a real item so opening create still resets.
   useEffect(() => {
     setEditing(isDraft);
     setStatus(row.item.status);
     setAnswerHasText(fieldToString(row.item.fields[ANSWER_FIELD]).trim().length > 0);
-  }, [row, isDraft]);
+  }, [row.item.id, isDraft]);
 
   // Default the milestone selection once the options arrive.
   useEffect(() => {

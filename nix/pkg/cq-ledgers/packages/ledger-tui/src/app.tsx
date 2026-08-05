@@ -454,7 +454,16 @@ export function App({
   const [projects, setProjects] = useState<ProjectEntry[]>([]);
   const [projectKey, setProjectKey] = useState<string>("");
   const [stack, setStack] = useState<Frame[]>([{ kind: "ledgers", cursor: 0 }]);
-  const [overlay, setOverlay] = useState<Overlay | null>(null);
+  // Overlay generation token (D120): every setOverlay bumps the counter so
+  // in-flight async openers/mutators can drop a stale post-await write when
+  // the user has already replaced the overlay (e.g. 'p' picker during an
+  // in-flight beginCreate fetch).
+  const [overlay, setOverlayState] = useState<Overlay | null>(null);
+  const overlayGenRef = useRef(0);
+  const setOverlay = useCallback((next: Overlay | null): void => {
+    overlayGenRef.current += 1;
+    setOverlayState(next);
+  }, []);
   const [flash, setFlash] = useState("");
   const [live, setLive] = useState<LiveStats | null>(null);
   const [filter, setFilter] = useState<StatusFilter>({ kind: "all" });
@@ -705,6 +714,7 @@ export function App({
   const applyStatus = useCallback(
     async (row: Row, status: string) => {
       if (top.kind !== "items") return;
+      const gen = overlayGenRef.current;
       try {
         if (isMilestonesLedger) await client.updateMilestone(row.item.id, { status });
         else await client.updateItem(top.ledger, row.item.id, { status, author: UI_AUTHOR });
@@ -712,9 +722,10 @@ export function App({
       } catch (e) {
         setFlash(errMsg(e));
       }
+      if (overlayGenRef.current !== gen) return;
       setOverlay(null);
     },
-    [client, top, isMilestonesLedger, reloadItems],
+    [client, top, isMilestonesLedger, reloadItems, setOverlay],
   );
 
   // Questions "answer & resolve": write the `answer` field AND transition to
@@ -722,6 +733,7 @@ export function App({
   const applyAnswer = useCallback(
     async (row: Row, answer: string) => {
       if (top.kind !== "items") return;
+      const gen = overlayGenRef.current;
       try {
         await client.updateItem(top.ledger, row.item.id, {
           status: ANSWERED_STATUS,
@@ -732,9 +744,10 @@ export function App({
       } catch (e) {
         setFlash(errMsg(e));
       }
+      if (overlayGenRef.current !== gen) return;
       setOverlay(null);
     },
-    [client, top, reloadItems],
+    [client, top, reloadItems, setOverlay],
   );
 
   // Batch-answer (T64): open the full-screen stepper. Use the current frame's
@@ -743,6 +756,7 @@ export function App({
   // the navigation stack — Esc leaves the user where they were.
   const beginBatchAnswer = useCallback(async () => {
     if (top.kind !== "items") return;
+    const gen = overlayGenRef.current;
     try {
       let ledger = top.ledger;
       let view = top.view;
@@ -750,6 +764,7 @@ export function App({
         ledger = QUESTIONS_LEDGER;
         view = await client.fetchLedger(ledger, "full");
       }
+      if (overlayGenRef.current !== gen) return;
       const rows = answerableRows(view);
       if (rows.length === 0) {
         setFlash("no open answerable items");
@@ -757,15 +772,17 @@ export function App({
       }
       setOverlay({ t: "batchAnswer", ledger, rows, idx: 0 });
     } catch (e) {
+      if (overlayGenRef.current !== gen) return;
       setFlash(errMsg(e));
     }
-  }, [client, top]);
+  }, [client, top, setOverlay]);
 
   // Save one batch answer, then re-derive the still-open set and advance. The
   // answered item drops out of `answerableRows`, so the next open item slides
   // into the same index; when none remain the overlay closes.
   const applyBatchAnswer = useCallback(
     async (overlay: Extract<Overlay, { t: "batchAnswer" }>, row: Row, answer: string) => {
+      const gen = overlayGenRef.current;
       try {
         await client.updateItem(overlay.ledger, row.item.id, {
           status: ANSWERED_STATUS,
@@ -775,6 +792,7 @@ export function App({
         // Refetch the batch ledger to recompute the open set. Keep the visible
         // frame in sync when it shows the same ledger.
         const view = await client.fetchLedger(overlay.ledger, "full");
+        if (overlayGenRef.current !== gen) return;
         if (top.kind === "items" && top.ledger === overlay.ledger) patchTop({ view });
         setFlash(`${row.item.id} answered`);
         const rows = answerableRows(view);
@@ -784,57 +802,74 @@ export function App({
         }
         setOverlay({ ...overlay, rows, idx: Math.min(overlay.idx, rows.length - 1) });
       } catch (e) {
+        if (overlayGenRef.current !== gen) return;
         setFlash(errMsg(e));
       }
     },
-    [client, top, patchTop],
+    [client, top, patchTop, setOverlay],
   );
 
+  // D121: re-enumerate ledgers fresh (mirror web openFinalizePreview) so a
+  // finalize plan never builds from a stale cached `ledgers` React state.
   const loadFinalizeSnapshot = useCallback(async (): Promise<FinalizeSnapshot> => {
-    const names = new Set<string>(ledgers.map((ledger) => ledger.name));
+    const names = new Set<string>((await client.enumerateLedgers()).map((l) => l.name));
     names.add(MILESTONES);
     const views = await Promise.all(
       [...names].map((name) => client.fetchLedger(name, "full")),
     );
     return buildFinalizeSnapshot(views);
-  }, [client, ledgers]);
+  }, [client]);
 
   // Finalize (G83/T621): after the milestones-frame mode picker, compute the
   // existing store-wide plan without changing its predicates or executor.
   const finalizePreview = useCallback(
     async (mode: FinalizeMode) => {
+      const gen = overlayGenRef.current;
       try {
         const snapshot = await loadFinalizeSnapshot();
+        if (overlayGenRef.current !== gen) return;
         const plan = mode === "apply-done" ? computeApplyDonePlan(snapshot) : computeArchivePlan(snapshot);
         setOverlay({ t: "finalize", step: { t: "preview", mode, plan } });
       } catch (e) {
+        if (overlayGenRef.current !== gen) return;
         setFlash(errMsg(e));
         setOverlay(null);
       }
     },
-    [loadFinalizeSnapshot],
+    [loadFinalizeSnapshot, setOverlay],
   );
 
   // Goals use the separate selector-aware operation graph. The snapshot stays
   // fixed for the overlay lifetime so each Space toggle recomputes one exact,
   // deterministic projection of the plan currently being confirmed.
   const finalizeGoalsPreview = useCallback(async () => {
+    const gen = overlayGenRef.current;
     try {
       const snapshot = await loadFinalizeSnapshot();
+      if (overlayGenRef.current !== gen) return;
       setOverlay({ t: "finalize", step: { t: "goals-preview", snapshot } });
     } catch (e) {
+      if (overlayGenRef.current !== gen) return;
       setFlash(errMsg(e));
       setOverlay(null);
     }
-  }, [loadFinalizeSnapshot]);
+  }, [loadFinalizeSnapshot, setOverlay]);
 
   const finalizeGoalsExecute = useCallback(
     async (plan: GoalsFinalizePlan) => {
-      const results = await runGoalsFinalize(client, plan);
-      setOverlay({ t: "finalize", step: { t: "goals-results", results } });
-      refreshRef.current();
+      const gen = overlayGenRef.current;
+      try {
+        const results = await runGoalsFinalize(client, plan);
+        // Writes landed — refresh unconditionally (web executeFinalize parity).
+        refreshRef.current();
+        if (overlayGenRef.current !== gen) return;
+        setOverlay({ t: "finalize", step: { t: "goals-results", results } });
+      } catch (e) {
+        if (overlayGenRef.current !== gen) return;
+        setFlash(errMsg(e));
+      }
     },
-    [client],
+    [client, setOverlay],
   );
 
   // Execute the previewed plan through the shared executor with ops backed by
@@ -842,17 +877,26 @@ export function App({
   // the per-id results step and refresh the visible data.
   const finalizeExecute = useCallback(
     async (mode: FinalizeMode, plan: FinalizePlan) => {
-      const results =
-        mode === "apply-done" ? await runApplyDone(client, plan) : await runArchive(client, plan);
-      setOverlay({ t: "finalize", step: { t: "results", results } });
-      refreshRef.current();
+      const gen = overlayGenRef.current;
+      try {
+        const results =
+          mode === "apply-done" ? await runApplyDone(client, plan) : await runArchive(client, plan);
+        // Writes landed — refresh unconditionally (web executeFinalize parity).
+        refreshRef.current();
+        if (overlayGenRef.current !== gen) return;
+        setOverlay({ t: "finalize", step: { t: "results", results } });
+      } catch (e) {
+        if (overlayGenRef.current !== gen) return;
+        setFlash(errMsg(e));
+      }
     },
-    [client],
+    [client, setOverlay],
   );
 
   const applyField = useCallback(
     async (row: Row, field: string, raw: string) => {
       if (top.kind !== "items") return;
+      const gen = overlayGenRef.current;
       try {
         const spec = top.view.schema.fields[field];
         await client.updateItem(top.ledger, row.item.id, {
@@ -863,22 +907,25 @@ export function App({
       } catch (e) {
         setFlash(errMsg(e));
       }
+      if (overlayGenRef.current !== gen) return;
       setOverlay(null);
     },
-    [client, top, reloadItems],
+    [client, top, reloadItems, setOverlay],
   );
 
   const applyTitle = useCallback(
     async (row: Row, title: string) => {
+      const gen = overlayGenRef.current;
       try {
         await client.updateMilestone(row.item.id, { title });
         if (await reloadItems()) setFlash(`${row.item.id} title updated`);
       } catch (e) {
         setFlash(errMsg(e));
       }
+      if (overlayGenRef.current !== gen) return;
       setOverlay(null);
     },
-    [client, reloadItems],
+    [client, reloadItems, setOverlay],
   );
 
   const beginCreate = useCallback(async () => {
@@ -887,13 +934,16 @@ export function App({
       setOverlay({ t: "createMilestone" });
       return;
     }
+    const gen = overlayGenRef.current;
     try {
       const ms = await client.fetchLedger(MILESTONES, "compact");
+      if (overlayGenRef.current !== gen) return;
       setOverlay({ t: "createItem", milestones: ms.milestones.flatMap((g) => g.items) });
     } catch (e) {
+      if (overlayGenRef.current !== gen) return;
       setFlash(errMsg(e));
     }
-  }, [client, top, isMilestonesLedger]);
+  }, [client, top, isMilestonesLedger, setOverlay]);
 
   /**
    * Toggle the archive section for the current ledger. On first activation,
@@ -949,8 +999,10 @@ export function App({
 
   const openHit = useCallback(
     async (hit: FtsHit) => {
+      const gen = overlayGenRef.current;
       try {
         const view = await client.fetchLedger(hit.ledgerId, "full");
+        if (overlayGenRef.current !== gen) return;
         const rs = ledgerRows(view);
         const idx = Math.max(0, rs.findIndex((r) => r.item.id === hit.item.id));
         // Replace the stack: a fresh ledgers root, then push the hit's ledger.
@@ -963,10 +1015,11 @@ export function App({
         setFilter({ kind: "all" });
         setOverlay(null);
       } catch (e) {
+        if (overlayGenRef.current !== gen) return;
         setFlash(errMsg(e));
       }
     },
-    [client, ledgers],
+    [client, ledgers, setOverlay],
   );
 
   // ---- memoized items-frame derivations (T85) ----------------------------

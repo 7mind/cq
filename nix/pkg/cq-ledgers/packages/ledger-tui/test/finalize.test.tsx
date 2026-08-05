@@ -1339,3 +1339,30 @@ describe("TUI finalize overlay (T621)", () => {
     h.unmount();
   });
 });
+
+// ---------------------------------------------------------------------------
+// D121 — finalizePreview must re-enumerate ledgers (not trust cached state).
+// ---------------------------------------------------------------------------
+
+describe("TUI finalize re-enumerates ledgers (D121)", () => {
+  it("finalizePreview calls enumerateLedgers after the initial mount enumeration", async () => {
+    class CountingClient extends FakeClient {
+      enumerateCalls = 0;
+      override async enumerateLedgers(): Promise<LedgerSummary[]> {
+        this.enumerateCalls += 1;
+        return super.enumerateLedgers();
+      }
+    }
+    const client = new CountingClient();
+    const h = await mount(client);
+    await openFakeMilestones(h);
+    const afterNav = client.enumerateCalls;
+    expect(afterNav).toBeGreaterThanOrEqual(1);
+    await h.key("F");
+    await waitFor(h, PICK_APPLY);
+    await advance(h, PICK_APPLY, "nothing eligible"); // pick apply-done → loadFinalizeSnapshot
+    // loadFinalizeSnapshot must have re-enumerated (D121).
+    expect(client.enumerateCalls).toBeGreaterThan(afterNav);
+    h.unmount();
+  });
+});

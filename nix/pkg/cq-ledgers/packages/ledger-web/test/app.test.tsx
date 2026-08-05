@@ -1488,3 +1488,165 @@ describe("ledger-web live updates", () => {
     expect(text()).toContain("pushed in");
   });
 });
+
+// ---------------------------------------------------------------------------
+// D219 — DetailPanel edit mode must survive a same-id live reload that
+// allocates a fresh {item, milestoneId} row object.
+// D220 — openLedger generation token: a superseded slower fetch must not
+// paint over a faster later navigation.
+// ---------------------------------------------------------------------------
+
+/**
+ * FakeClient whose fetchLedger can park per ledger-id until release(id).
+ * Snapshots are taken at CALL time (via super) only after release, matching
+ * the DeferredFinalizeClient pattern.
+ */
+class DeferredOpenClient extends FakeClient {
+  defer = false;
+  private waiting = new Map<string, Array<() => void>>();
+  pending(id: string): number {
+    return this.waiting.get(id)?.length ?? 0;
+  }
+  release(id: string): void {
+    const q = this.waiting.get(id);
+    const release = q?.shift();
+    if (release === undefined) throw new Error(`release: nothing pending for ${id}`);
+    release();
+  }
+  override async fetchLedger(ledgerId: string, projection: ItemProjection): Promise<import("../src/types.js").FetchedLedger> {
+    if (this.defer) {
+      await new Promise<void>((resolve) => {
+        const q = this.waiting.get(ledgerId) ?? [];
+        q.push(resolve);
+        this.waiting.set(ledgerId, q);
+      });
+    }
+    return super.fetchLedger(ledgerId, projection);
+  }
+}
+
+describe("ledger-web editor survives same-id live reload (D219)", () => {
+  it("keeps editing=true when a live refresh reallocates the selected row for the same id", async () => {
+    class LiveFakeWS {
+      static instances: LiveFakeWS[] = [];
+      onopen: ((ev: Event) => void) | null = null;
+      onmessage: ((ev: MessageEvent) => void) | null = null;
+      onclose: ((ev: CloseEvent) => void) | null = null;
+      onerror: ((ev: Event) => void) | null = null;
+      readyState = 0;
+      constructor(public url: string) {
+        LiveFakeWS.instances.push(this);
+      }
+      open(): void {
+        this.readyState = 1;
+        this.onopen?.(new Event("open"));
+      }
+      push(obj: unknown): void {
+        this.onmessage?.({ data: JSON.stringify(obj) } as MessageEvent);
+      }
+      close(): void {
+        this.readyState = 3;
+        this.onclose?.({ code: 1000 } as CloseEvent);
+      }
+      send(): void {
+        /* no-op */
+      }
+      addEventListener(): void {
+        /* no-op */
+      }
+      removeEventListener(): void {
+        /* no-op */
+      }
+      dispatchEvent(): boolean {
+        return false;
+      }
+    }
+
+    LiveFakeWS.instances = [];
+    holdClock = new FakeClock();
+    fake = new FakeClient();
+    await act(async () => {
+      root.render(
+        createElement(App, {
+          connect: async () => fake,
+          initialUrl: "http://x/mcp",
+          liveUrl: "ws://x/ws",
+          liveWsCtor: LiveFakeWS as unknown as { new (url: string): WebSocket },
+          holdClock,
+        }),
+      );
+    });
+    await flush();
+    const ws = LiveFakeWS.instances[0]!;
+    act(() => ws.open());
+    await flush();
+
+    click(testid("ledger-bugs"));
+    await flush();
+    click(testid("item-D1"));
+    await flush();
+    click(testid("edit"));
+    await flush();
+    expect(testid("edit-form")).not.toBeNull();
+    // Type into a field so a reset would visibly drop the draft.
+    setValue(testid("edit-field-headline"), "in-progress edit");
+    expect((testid("edit-field-headline") as HTMLInputElement | null)?.value).toBe("in-progress edit");
+
+    // External change + live push → reload reallocates selected row for D1.
+    await fake.updateItem("bugs", "D1", { fields: { note: "touched externally" } });
+    act(() => ws.push({ type: "changed", ledger: "bugs" }));
+    await flush();
+
+    // Editor must still be open with the in-progress draft intact.
+    expect(testid("edit-form")).not.toBeNull();
+    expect((testid("edit-field-headline") as HTMLInputElement | null)?.value).toBe("in-progress edit");
+  });
+});
+
+describe("ledger-web openLedger generation guard (D220)", () => {
+  it("a superseded slower openLedger fetch does not paint over the later ledger", async () => {
+    const client = new DeferredOpenClient();
+    client.defer = true;
+    holdClock = new FakeClock();
+    await act(async () => {
+      root.render(
+        createElement(App, {
+          connect: async () => client,
+          initialUrl: "http://x/mcp",
+          holdClock,
+        }),
+      );
+    });
+    // connect + enumerateLedgers do not park; only fetchLedger parks.
+    await flush();
+
+    // Start opening bugs, then immediately open milestones before bugs resolves.
+    click(testid("ledger-bugs"));
+    await flush();
+    const endBugs = Date.now() + 1500;
+    while (client.pending("bugs") === 0 && Date.now() < endBugs) await flush();
+    expect(client.pending("bugs")).toBeGreaterThanOrEqual(1);
+
+    click(testid("ledger-milestones"));
+    await flush();
+    const endMs = Date.now() + 1500;
+    while (client.pending("milestones") === 0 && Date.now() < endMs) await flush();
+    expect(client.pending("milestones")).toBeGreaterThanOrEqual(1);
+
+    // Later navigation resolves first → milestones should paint.
+    client.release("milestones");
+    await flush();
+    expect(testid("ledger-milestones")?.className).toContain("lw-ledger-active");
+    // milestones ledger shows M1 (FakeClient milestones item id).
+    expect(testid("item-M1")).not.toBeNull();
+
+    // Stale bugs resolve must not clobber milestones.
+    client.release("bugs");
+    await flush();
+    expect(testid("ledger-milestones")?.className).toContain("lw-ledger-active");
+    expect(testid("ledger-bugs")?.className ?? "").not.toContain("lw-ledger-active");
+    expect(testid("item-M1")).not.toBeNull();
+    // bugs-only item must not appear.
+    expect(testid("item-D1")).toBeNull();
+  });
+});

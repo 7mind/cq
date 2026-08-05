@@ -2327,3 +2327,75 @@ describe("ledger-tui CONTENT-focus Home/End + paging (T319 / D44 part 2)", () =>
     h.unmount();
   });
 });
+
+// ---------------------------------------------------------------------------
+// D120 — stale setOverlay guard: a deferred beginCreate must not clobber a
+// newer overlay the user opened while the milestones fetch was in flight.
+// ---------------------------------------------------------------------------
+
+/**
+ * FakeClient whose fetchLedger("milestones") parks until releaseMilestones().
+ * Other ledger fetches resolve immediately so navigation can proceed.
+ */
+class DeferredMilestonesClient extends FakeClient {
+  private waiting: Array<() => void> = [];
+  get pendingMilestones(): number {
+    return this.waiting.length;
+  }
+  releaseMilestones(): void {
+    const release = this.waiting.shift();
+    if (release === undefined) throw new Error("releaseMilestones: nothing pending");
+    release();
+  }
+  override async fetchLedger(
+    ledgerId: string,
+    projection: import("../src/types.js").ItemProjection,
+  ): Promise<FetchedLedger> {
+    if (ledgerId === "milestones") {
+      await new Promise<void>((resolve) => this.waiting.push(resolve));
+    }
+    return super.fetchLedger(ledgerId, projection);
+  }
+}
+
+describe("ledger-tui overlay generation guard (D120)", () => {
+  it("opening the 'p' project picker while beginCreate is in-flight survives the deferred resolve", async () => {
+    const client = new DeferredMilestonesClient("cq1");
+    const r = render(<App client={client} />);
+    await tick();
+    // Open the bugs ledger so 'n' dispatches beginCreate (items frame).
+    // bugs is first alphabetically among FakeClient ledgers? enumerate sorts:
+    // bugs, milestones, questions, reviews, tasks — bugs is cursor 0.
+    r.stdin.write(ENTER);
+    await waitForFrame(() => r.lastFrame() ?? "", "D1");
+
+    // Kick beginCreate — parks on fetchLedger("milestones").
+    r.stdin.write("n");
+    await tick(10);
+    const end = Date.now() + 1500;
+    while (client.pendingMilestones === 0 && Date.now() < end) await tick(10);
+    expect(client.pendingMilestones).toBeGreaterThanOrEqual(1);
+
+    // While the create fetch is still parked, open the project picker.
+    r.stdin.write("p");
+    await tick();
+    await waitForFrame(() => r.lastFrame() ?? "", "cq1");
+    const during = r.lastFrame() ?? "";
+    expect(during).toContain("cq1");
+    // Project picker marks the current entry; create form would list "M1 Bootstrap".
+    expect(during).toMatch(/\(current\)|●/);
+
+    // Resolve the stale beginCreate fetch — must NOT replace the picker.
+    client.releaseMilestones();
+    await tick(40);
+    const after = r.lastFrame() ?? "";
+    // Project picker still owns the overlay (SelectList cursor on current).
+    expect(after).toContain("● cq1 (current)");
+    // Create-item form's first step is a milestone SelectList; if it had
+    // stolen the overlay the project entry would be gone from the right pane.
+    // The left list may still show the bugs subsection header "M1 Bootstrap",
+    // so assert on the picker chrome rather than that string's absence.
+    expect(after).toMatch(/› ● cq1 \(current\)/);
+    r.unmount();
+  });
+});

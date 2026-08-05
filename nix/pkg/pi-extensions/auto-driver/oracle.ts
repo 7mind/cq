@@ -5,13 +5,13 @@
 // branching remains.
 //
 // EVIDENCE for the channel decision (STEP 1, verified against the ACTUAL
-// installed Pi v0.78.0 typings, not assumptions):
+// installed Pi v0.82.1 typings, not assumptions):
 //   The Pi ExtensionAPI CANNOT invoke an MCP tool from extension code. The
-//   `ExtensionAPI` interface (dist/core/extensions/types.d.ts L785-939 of
-//   @earendil-works/pi-coding-agent 0.78.0) exposes registerTool / getAllTools /
+//   `ExtensionAPI` interface (dist/core/extensions/types.d.ts L849-1010 of
+//   @earendil-works/pi-coding-agent 0.82.1) exposes registerTool / getAllTools /
 //   getActiveTools / setActiveTools / `exec(cmd,args)` / sendUserMessage / … but
 //   NO callTool / invokeTool / runTool / mcp() member; neither do
-//   ExtensionContext / ExtensionCommandContext (same file, L207-279). A grep of
+//   ExtensionContext / ExtensionCommandContext (same file, L208+). A grep of
 //   the whole `dist/index.d.ts` export surface finds NO `Mcp*` / `callTool` /
 //   `invokeTool` symbol. MCP tools (the ledger via pi-mcp-adapter, wired in
 //   nix/hm/pi.nix `enableMcpIntegration`) are surfaced ONLY to the LLM, never to
