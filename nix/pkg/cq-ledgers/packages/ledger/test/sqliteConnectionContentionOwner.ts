@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import {
-  CHILD_DEADLINE_MS,
+  ORCHESTRATION_WAIT_MS,
   RELEASE_ACK_POLL_INTERVAL_MS,
   type ChildEvent,
 } from "./sqliteConnectionContentionProtocol.js";
@@ -13,11 +13,11 @@ function send(event: ChildEvent): void {
 }
 
 function waitForRelease(releasePath: string): void {
-  const deadline = Date.now() + CHILD_DEADLINE_MS;
+  const deadline = Date.now() + ORCHESTRATION_WAIT_MS;
   while (!existsSync(releasePath)) {
     if (Date.now() >= deadline) {
       throw new Error(
-        `owner release acknowledgement was not written before the ${String(CHILD_DEADLINE_MS)}ms child deadline`,
+        `owner release acknowledgement was not written before the ${String(ORCHESTRATION_WAIT_MS)}ms orchestration deadline`,
       );
     }
     Atomics.wait(pollState, 0, 0, Math.min(RELEASE_ACK_POLL_INTERVAL_MS, deadline - Date.now()));

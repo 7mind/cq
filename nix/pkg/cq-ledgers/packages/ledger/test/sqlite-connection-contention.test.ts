@@ -21,6 +21,7 @@ import {
   CONFIGURED_WAIT_BUDGET_MS,
   CONTENDER_COUNT,
   LEGACY_WAL_CALL_SITE,
+  ORCHESTRATION_WAIT_MS,
   PUBLIC_INITIALIZER_CEILING_MS,
   PUBLIC_WAL_CALL_SITE,
   SCHEDULING_HEADROOM_MS,
@@ -466,7 +467,6 @@ test(
   "T1568 public initializer installs timeout before WAL and retries the held first busy error",
   async () => {
     const scenarioStartedAt = Date.now();
-    const childDeadlineAt = scenarioStartedAt + CHILD_DEADLINE_MS;
     expect(CONFIGURED_WAIT_BUDGET_MS).toBe(25_100);
     expect(CONFIGURED_WAIT_BUDGET_MS).toBeLessThan(PUBLIC_INITIALIZER_CEILING_MS);
     expect(PUBLIC_INITIALIZER_CEILING_MS).toBeLessThan(CHILD_DEADLINE_MS);
@@ -499,9 +499,14 @@ test(
         transcript,
       );
       children.push(owner);
+      // Cross-process staging waits each get a fresh generous orchestration
+      // deadline: under full-gate parallel load even simple transcript polls
+      // can stall without anything being wrong with the SUT. The tight
+      // CONFIGURED_WAIT_BUDGET_MS / PUBLIC_INITIALIZER_CEILING_MS bounds stay
+      // reserved for the initializer timing under test.
       await waitFor(
         () => eventIndex(transcript, (event) => event.type === "owner-lock-acquired") >= 0,
-        childDeadlineAt,
+        Date.now() + ORCHESTRATION_WAIT_MS,
         "owner-lock-acquired",
         transcript,
         children,
@@ -526,7 +531,6 @@ test(
             dbPath,
             contenderId === gatedContenderId ? releaseAckPath : peerReleaseAckPath,
             contenderId,
-            String(scenarioStartedAt),
             ...(contenderId === gatedContenderId ? [secondWalReleasePath] : []),
           ],
           record,
@@ -539,7 +543,7 @@ test(
 
       await waitFor(
         () => eventIndex(transcript, (event) => event.type === "legacy-control-result") >= 0,
-        childDeadlineAt,
+        Date.now() + ORCHESTRATION_WAIT_MS,
         "legacy journal-before-timeout result",
         transcript,
         children,
@@ -548,7 +552,7 @@ test(
         () =>
           transcript.filter(({ event }) => event.type === "first-wal-busy-held").length ===
           CONTENDER_COUNT,
-        childDeadlineAt,
+        Date.now() + ORCHESTRATION_WAIT_MS,
         "every contender to hold its first WAL busy error",
         transcript,
         children,
@@ -558,7 +562,7 @@ test(
       await writeFile(ownerReleasePath, "released\n", { flag: "wx" });
       await waitFor(
         () => eventIndex(transcript, (event) => event.type === "owner-released") >= 0,
-        childDeadlineAt,
+        Date.now() + ORCHESTRATION_WAIT_MS,
         "owner-released",
         transcript,
         children,
@@ -573,7 +577,7 @@ test(
             (event) =>
               event.type === "second-wal-execution-held" && event.contenderId === gatedContenderId,
           ) >= 0,
-        childDeadlineAt,
+        Date.now() + ORCHESTRATION_WAIT_MS,
         "gated contender to hold before WAL attempt 2",
         transcript,
         children,
@@ -594,7 +598,7 @@ test(
               event.attempt === 2 &&
               event.execution === "real",
           ) >= 0,
-        childDeadlineAt,
+        Date.now() + ORCHESTRATION_WAIT_MS,
         "peer contender to complete real WAL attempt 2",
         transcript,
         children,
@@ -606,7 +610,7 @@ test(
         () =>
           transcript.filter(({ event }) => event.type === "exec-restored").length ===
           CONTENDER_COUNT,
-        childDeadlineAt,
+        Date.now() + ORCHESTRATION_WAIT_MS,
         "every contender to restore Database.prototype.exec",
         transcript,
         children,

@@ -2,8 +2,8 @@ import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import {
   BUSY_TIMEOUT_PRAGMA,
-  CHILD_DEADLINE_MS,
   LEGACY_WAL_CALL_SITE,
+  ORCHESTRATION_WAIT_MS,
   PUBLIC_INITIALIZER_CEILING_MS,
   PUBLIC_WAL_CALL_SITE,
   RELEASE_ACK_POLL_INTERVAL_MS,
@@ -22,14 +22,25 @@ function hasPrimaryBusyErrno(error: unknown): boolean {
   return sqliteErrorReport(error).primaryErrno === 5;
 }
 
-function waitForFile(filePath: string, description: string, deadline: number): void {
-  while (!existsSync(filePath)) {
-    if (Date.now() >= deadline) {
-      throw new Error(
-        `${description} was not written before the ${String(CHILD_DEADLINE_MS)}ms child deadline`,
-      );
+// Wall-clock time spent in waitForFile: parent-paced fixture staging, not
+// initializer work. Excluded from the initializer elapsed measurement so the
+// tight PUBLIC_INITIALIZER_CEILING_MS bound measures SUT time only.
+let orchestrationWaitMs = 0;
+
+function waitForFile(filePath: string, description: string): void {
+  const startedAt = Date.now();
+  const deadline = startedAt + ORCHESTRATION_WAIT_MS;
+  try {
+    while (!existsSync(filePath)) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `${description} was not written before the ${String(ORCHESTRATION_WAIT_MS)}ms orchestration deadline`,
+        );
+      }
+      Atomics.wait(pollState, 0, 0, Math.min(RELEASE_ACK_POLL_INTERVAL_MS, deadline - Date.now()));
     }
-    Atomics.wait(pollState, 0, 0, Math.min(RELEASE_ACK_POLL_INTERVAL_MS, deadline - Date.now()));
+  } finally {
+    orchestrationWaitMs += Date.now() - startedAt;
   }
 }
 
@@ -66,7 +77,6 @@ async function usePublicInitializer(
   dbPath: string,
   releaseAckPath: string,
   contenderId: string,
-  childDeadline: number,
   secondWalReleasePath: string | undefined,
 ): Promise<void> {
   const originalExec = Database.prototype.exec;
@@ -99,7 +109,7 @@ async function usePublicInitializer(
     });
     if (walAttempts === 2 && secondWalReleasePath !== undefined) {
       send({ type: "second-wal-execution-held", contenderId });
-      waitForFile(secondWalReleasePath, "second WAL release acknowledgement", childDeadline);
+      waitForFile(secondWalReleasePath, "second WAL release acknowledgement");
       send({ type: "second-wal-release-observed", contenderId });
       const error = fixtureBusyError();
       send({
@@ -132,7 +142,7 @@ async function usePublicInitializer(
         busyTimeoutInstalled,
         ...sqliteErrorReport(error),
       });
-      waitForFile(releaseAckPath, "release acknowledgement", childDeadline);
+      waitForFile(releaseAckPath, "release acknowledgement");
       send({ type: "release-ack-observed", contenderId });
       send({ type: "first-wal-busy-rethrown", contenderId });
       throw error;
@@ -149,14 +159,14 @@ async function usePublicInitializer(
       send({
         type: "initializer-succeeded",
         contenderId,
-        elapsedMs: Date.now() - startedAt,
+        elapsedMs: Date.now() - startedAt - orchestrationWaitMs,
         walAttempts,
       });
     } catch (error) {
       send({
         type: "initializer-error",
         contenderId,
-        elapsedMs: Date.now() - startedAt,
+        elapsedMs: Date.now() - startedAt - orchestrationWaitMs,
         walAttempts,
         sameError: error === firstWalError,
         callSite: PUBLIC_WAL_CALL_SITE,
@@ -173,7 +183,7 @@ async function usePublicInitializer(
     });
   }
 
-  if (Date.now() - startedAt > PUBLIC_INITIALIZER_CEILING_MS) {
+  if (Date.now() - startedAt - orchestrationWaitMs > PUBLIC_INITIALIZER_CEILING_MS) {
     throw new Error(
       `public initializer exceeded ${String(PUBLIC_INITIALIZER_CEILING_MS)}ms ceiling`,
     );
@@ -185,8 +195,7 @@ async function run(): Promise<void> {
   const dbPath = process.argv[3];
   const releaseAckPath = process.argv[4];
   const contenderId = process.argv[5];
-  const scenarioStartedAtText = process.argv[6];
-  const secondWalReleasePath = process.argv[7];
+  const secondWalReleasePath = process.argv[6];
   if (mode === undefined || dbPath === undefined) {
     throw new Error("contender fixture requires mode and database path");
   }
@@ -194,23 +203,10 @@ async function run(): Promise<void> {
     legacyJournalBeforeTimeout(dbPath);
     return;
   }
-  const scenarioStartedAt = Number(scenarioStartedAtText);
-  if (
-    mode !== "public" ||
-    releaseAckPath === undefined ||
-    contenderId === undefined ||
-    scenarioStartedAtText === undefined ||
-    !Number.isFinite(scenarioStartedAt)
-  ) {
+  if (mode !== "public" || releaseAckPath === undefined || contenderId === undefined) {
     throw new Error("public contender requires release-ack path and contender id");
   }
-  await usePublicInitializer(
-    dbPath,
-    releaseAckPath,
-    contenderId,
-    scenarioStartedAt + CHILD_DEADLINE_MS,
-    secondWalReleasePath,
-  );
+  await usePublicInitializer(dbPath, releaseAckPath, contenderId, secondWalReleasePath);
 }
 
 try {

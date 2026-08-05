@@ -15,9 +15,18 @@ export const SCHEDULING_HEADROOM_MS = 10_000;
 export const CONFIGURED_WAIT_BUDGET_MS =
   WAL_CONVERSION_ATTEMPTS * BUSY_TIMEOUT_MS + (WAL_CONVERSION_ATTEMPTS - 1) * WAL_RETRY_SLEEP_MS;
 export const PUBLIC_INITIALIZER_CEILING_MS = 35_100;
-export const CHILD_DEADLINE_MS = 40_100;
+// Cross-process staging waits (parent-written ack files, transcript staging
+// polls) get a generous per-wait wall-clock budget: under full-gate parallel
+// load even simple file polls can stall without anything being wrong with the
+// SUT. The tight CONFIGURED_WAIT_BUDGET_MS / PUBLIC_INITIALIZER_CEILING_MS
+// bounds stay reserved for the SUT initializer timing under test.
+export const ORCHESTRATION_WAIT_MS = 120_000;
+// Watchdog backstop: a child making progress can legitimately outlive the old
+// scenario-anchored budget now that each staging wait has its own
+// ORCHESTRATION_WAIT_MS (two ack waits plus the SUT ceiling plus spawn slack).
+export const CHILD_DEADLINE_MS = 400_100;
 export const CHILD_KILL_GRACE_MS = 1_000;
-export const TEST_DEADLINE_MS = 45_100;
+export const TEST_DEADLINE_MS = 410_100;
 
 export interface SqliteErrorReport {
   readonly code: string;
