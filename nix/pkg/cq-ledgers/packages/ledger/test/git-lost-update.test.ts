@@ -1,5 +1,5 @@
 /**
- * D61 regression reproduction (H41 root cause) — lost update across two
+ * D61 regression test (H41 root cause) — lost update across two
  * independent git-object stores over ONE repo + orphan ref.
  *
  * Scenario: two separately-registered `cq mcp` processes back the SAME repo on
@@ -27,7 +27,7 @@
  * write, and the three assertions below PASS as a plain `test` (neither of
  * storeA's titles is dropped and no M<n> id is duplicated).
  *
- * Touches NO production code — reproduction only.
+ * Green regression test — touches NO production code.
  */
 
 import { describe, test, expect, afterAll } from "bun:test";
@@ -91,11 +91,12 @@ afterAll(async () => {
 });
 
 describe("D61 — two git-object stores over one repo+ref, no cross-invalidate", () => {
-  // EXPECTED to fail today: the lost-update reproduces (clobbered title +
-  // duplicate M<n>). Flip to `test` once H41's fix (reload from ref tip after
-  // lock) lands (T425).
+  // Regression guard: the T425 fix (reload from ref tip after lock) landed,
+  // so this interleave must NOT lose a write — the assertions require no
+  // clobbered title and no duplicate M<n>.
   test(
-    "sequential interleave across two un-invalidated stores loses a milestone write (lost update)",
+    "sequential interleave across two un-invalidated stores preserves every milestone write after the T425 reload fix",
+
     async () => {
       const dir = await seedRepo();
       await seedRegistry(dir, [{ name: MILESTONES_LEDGER, schema: MILESTONES_SCHEMA }]);
