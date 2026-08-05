@@ -56,6 +56,11 @@ import {
 } from "../planLifecycle.js";
 import type { FieldValue, Item, Ledger, Milestone } from "../types.js";
 import { LedgerError } from "../types.js";
+import { buildPrefixRegistry } from "../refs.js";
+import {
+  normalizeRefFields,
+  type RefValidationContext,
+} from "./core.js";
 import { activePlanResearchWaits } from "./predicates.js";
 
 interface StoredDraft {
@@ -308,13 +313,47 @@ function addItem(
   return item;
 }
 
+/**
+ * Rewrite a ledger-kind ref of the form `tasks:<draft-key>` /
+ * `milestones:<draft-key>` onto the id allocated for that draft key in the
+ * current publish (D204). Non-matching refs pass through for the subsequent
+ * G80 dangling gate.
+ */
+function rewriteDraftKeyLedgerRef(
+  ref: string,
+  milestoneAllocations: ReadonlyMap<string, string>,
+  taskAllocations: ReadonlyMap<string, string>,
+): string {
+  const colon = ref.indexOf(":");
+  if (colon <= 0) return ref;
+  const ledger = ref.slice(0, colon);
+  const key = ref.slice(colon + 1);
+  if (ledger === TASKS_LEDGER) {
+    const id = taskAllocations.get(key);
+    if (id !== undefined) return `${TASKS_LEDGER}:${id}`;
+  } else if (ledger === MILESTONES_LEDGER) {
+    const id = milestoneAllocations.get(key);
+    if (id !== undefined) return `${MILESTONES_LEDGER}:${id}`;
+  }
+  return ref;
+}
+
 function materializeReferences(
   references: readonly PlanDraftReference[] | undefined,
   milestoneAllocations: ReadonlyMap<string, string>,
   taskAllocations: ReadonlyMap<string, string>,
 ): string[] {
   return (references ?? []).map((reference) => {
-    if (reference.kind === "ledger") return reference.ref;
+    if (reference.kind === "ledger") {
+      // D204: a ledger-kind courier may carry a draft key (e.g. tasks:contract)
+      // instead of the typed draft-task/draft-milestone kind. Rewrite when the
+      // key is in the current allocation maps; leftovers face the G80 gate.
+      return rewriteDraftKeyLedgerRef(
+        reference.ref,
+        milestoneAllocations,
+        taskAllocations,
+      );
+    }
     const id =
       reference.kind === "draft-milestone"
         ? milestoneAllocations.get(reference.key)
@@ -324,6 +363,47 @@ function materializeReferences(
       ? `${MILESTONES_LEDGER}:${id}`
       : `${TASKS_LEDGER}:${id}`;
   });
+}
+
+/**
+ * G80 write-gate context for plan-draft materialization. Active items from the
+ * lifecycle state plus the ids allocated in THIS publish (not yet inserted when
+ * earlier siblings are validated). Same dangling rejection as applyCreateItem.
+ */
+function buildPlanPublishRefContext(
+  state: InMemoryPlanLifecycleState,
+  milestoneAllocations: ReadonlyMap<string, string>,
+  taskAllocations: ReadonlyMap<string, string>,
+): RefValidationContext {
+  const registry = buildPrefixRegistry(
+    [...state.ledgers].map(([name, l]) => ({ name, schema: l.schema })),
+  );
+  const pendingByLedger = new Map<string, Set<string>>([
+    [MILESTONES_LEDGER, new Set(milestoneAllocations.values())],
+    [TASKS_LEDGER, new Set(taskAllocations.values())],
+  ]);
+  return {
+    registry,
+    refExists: (ledger: string, id: string): boolean => {
+      if (pendingByLedger.get(ledger)?.has(id) === true) return true;
+      const source = state.ledgers.get(ledger);
+      if (source === undefined) return false;
+      for (const milestone of source.milestones) {
+        for (const item of milestone.items) {
+          if (item.id === id) return true;
+        }
+      }
+      return false;
+    },
+  };
+}
+
+/** Apply G80 canonicalize + dangling rejection to dependsOn/blockedBy fields. */
+function gateMaterializedRefFields(
+  fields: Record<string, FieldValue>,
+  refCtx: RefValidationContext,
+): void {
+  normalizeRefFields(fields, {}, refCtx);
 }
 
 function sameDraft(left: PlanDraftIdentity | null, right: PlanDraftIdentity): boolean {
@@ -483,6 +563,9 @@ function materializeManifest(
   for (const draft of input.manifest.tasks) {
     taskAllocations.set(draft.key, allocateId(taskSource));
   }
+  // D204: G80 dangling gate over the full allocation set so intra-manifest
+  // refs (and rewritten draft-key ledger refs) resolve before insertion.
+  const refCtx = buildPlanPublishRefContext(state, milestoneAllocations, taskAllocations);
   for (const draft of input.manifest.milestones) {
     const id = milestoneAllocations.get(draft.key);
     if (id === undefined) throw new LedgerError(`missing milestone allocation ${draft.key}`);
@@ -500,6 +583,7 @@ function materializeManifest(
     );
     if (dependsOn.length > 0) fields["dependsOn"] = dependsOn;
     if (blockedBy.length > 0) fields["blockedBy"] = blockedBy;
+    gateMaterializedRefFields(fields, refCtx);
     group(milestoneSource, MILESTONES_ACTIVE_GROUP_ID).items.push(
       makeItem(
         id,
@@ -538,6 +622,7 @@ function materializeManifest(
     );
     if (dependsOn.length > 0) fields["dependsOn"] = dependsOn;
     if (blockedBy.length > 0) fields["blockedBy"] = blockedBy;
+    gateMaterializedRefFields(fields, refCtx);
     group(taskSource, milestoneId).items.push(
       makeItem(id, milestoneId, "planned", fields, input, state.now()),
     );

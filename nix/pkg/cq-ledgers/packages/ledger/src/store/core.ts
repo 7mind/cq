@@ -366,7 +366,7 @@ function processRefEntry(raw: string, isNew: boolean, ctx: RefValidationContext)
  * A no-op when `ctx` is undefined — direct core-helper callers that supply no
  * context keep the legacy pass-through behavior; the stores always supply one.
  */
-function normalizeRefFields(
+export function normalizeRefFields(
   fields: Record<string, FieldValue>,
   previous: Record<string, FieldValue | undefined>,
   ctx: RefValidationContext | undefined,

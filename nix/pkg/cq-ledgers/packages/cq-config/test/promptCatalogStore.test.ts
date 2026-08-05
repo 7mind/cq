@@ -444,6 +444,18 @@ describe("typed prompt-catalog store — roster cross-check (T341)", () => {
     }
   });
 
+  // D169 / T684: bare index on a plain-prototype map exposes Object.prototype
+  // members ("constructor" → Object, "toString" → function, …). getRoleSidecar
+  // must treat every prototype name as absent while still resolving real roles.
+  test("prototype-exposed role names resolve to undefined (D169)", () => {
+    for (const name of ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"]) {
+      expect(getRoleSidecar(name), name).toBeUndefined();
+    }
+    const real = getRoleSidecar("implement-worker");
+    expect(real).toBeDefined();
+    expect(real!.id).toBe("implement-worker");
+  });
+
   test("each sidecar's id matches its store key", () => {
     for (const [key, sidecar] of Object.entries(DISPATCHED_ROLE_SIDECARS)) {
       expect(sidecar.id).toBe(key);

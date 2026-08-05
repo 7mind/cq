@@ -70,5 +70,8 @@ export const DISPATCHED_ROLE_VERSIONS: Readonly<Record<string, number>> = Object
  * orchestrator-command id (which has no parent-validated contract).
  */
 export function getRoleSidecar(roleId: string): RoleSchemaSidecar | undefined {
-  return (DISPATCHED_ROLE_SIDECARS as Readonly<Record<string, RoleSchemaSidecar>>)[roleId];
+  // Object.hasOwn: a bare index resolves Object.prototype names ("constructor",
+  // "toString", …) to inherited values — the D169 / T684 closed-set class.
+  if (!Object.hasOwn(DISPATCHED_ROLE_SIDECARS, roleId)) return undefined;
+  return DISPATCHED_ROLE_SIDECARS[roleId as keyof typeof DISPATCHED_ROLE_SIDECARS];
 }

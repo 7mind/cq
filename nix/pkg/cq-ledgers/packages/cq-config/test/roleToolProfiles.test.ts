@@ -98,6 +98,15 @@ describe("T1325 role tool capability matrix", () => {
     ).toHaveLength(9);
   });
 
+  // D169 sibling sweep: ROLE_TOOL_CAPABILITY_MATRIX is a plain-prototype map;
+  // bare index would resolve "constructor" etc. Object.hasOwn keeps them unknown.
+  test("prototype-exposed role names are unknown tool profiles (D169 sibling)", () => {
+    for (const name of ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"]) {
+      expect(() => exposedLedgerToolsForRole(name)).toThrow(/unknown role tool profile/);
+    }
+    expect(exposedLedgerToolsForRole("implement-worker").length).toBeGreaterThan(0);
+  });
+
   test("every contract-required tool is exposed and zero-domain roles expose no domain tool", () => {
     const domainTools = new Set<string>(DOMAIN_LEDGER_TOOL_NAMES);
     for (const profile of Object.values(ROLE_TOOL_CAPABILITY_MATRIX)) {

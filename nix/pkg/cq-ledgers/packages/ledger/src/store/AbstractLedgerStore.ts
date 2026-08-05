@@ -615,16 +615,33 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
   /**
    * Build the cross-ledger {@link RefValidationContext} for a create/update
    * write (G80/M245). The prefix registry + active lookup come from the
-   * in-memory `this.ledgers` (all registered ledgers, kept loaded); archived
-   * existence comes from the FTS index's archived bucket (the only synchronous
-   * in-memory item-level archive view — built from the immutable archive files
-   * at init/on-archive). Cross-process staleness is the same best-effort
-   * coherence documented for the F2 status-change preconditions.
+   * in-memory `this.ledgers` (all registered ledgers, kept loaded). Archived
+   * existence is read from the immutable archive files (authoritative), not
+   * solely from the fail-soft FTS archived bucket — an under-reported index
+   * must not reject a legitimate archived target as dangling (D99). Archive
+   * I/O failure escalates (unlike {@link refreshLedgerIndexArchived}) so a
+   * refresh fault surfaces as a non-dangling error rather than a false
+   * DanglingRefError. Cross-process staleness for ACTIVE items is the same
+   * best-effort coherence documented for the F2 status-change preconditions.
    */
-  private buildRefValidationContext(): RefValidationContext {
+  private async buildRefValidationContext(): Promise<RefValidationContext> {
     const registry = buildPrefixRegistry(
       [...this.ledgers].map(([name, l]) => ({ name, schema: l.schema })),
     );
+    // Authoritative archived id sets, keyed by ledger. Built from the
+    // immutable archive sources whenever the ledger holds archive pointers.
+    const archivedIds = new Map<string, Set<string>>();
+    for (const [ledgerId, ledger] of this.ledgers) {
+      if (ledger.archivePointers.length === 0) continue;
+      const items = await this.collectArchivedItems(ledgerId);
+      archivedIds.set(ledgerId, new Set(items.map((it) => it.id)));
+      // Heal the fail-soft FTS cache while we hold authoritative data.
+      try {
+        this.searchIndex.setLedgerArchived(ledgerId, items);
+      } catch {
+        // Index heal is best-effort; the write gate uses `archivedIds`.
+      }
+    }
     return {
       registry,
       refExists: (ledger: string, id: string): boolean => {
@@ -632,7 +649,8 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
         if (l !== undefined) {
           for (const m of l.milestones) for (const it of m.items) if (it.id === id) return true;
         }
-        return this.searchIndex.hasArchivedItem(ledger, id);
+        if (this.searchIndex.hasArchivedItem(ledger, id)) return true;
+        return archivedIds.get(ledger)?.has(id) === true;
       },
     };
   }
@@ -652,7 +670,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
           milestoneId,
           patch,
           this.now(),
-          this.buildRefValidationContext(),
+          await this.buildRefValidationContext(),
           blockers,
         );
         await this.writeLedgerFile(ledger);
@@ -696,7 +714,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
           patch,
           this.now(),
           precondition,
-          this.buildRefValidationContext(),
+          await this.buildRefValidationContext(),
         );
         await this.writeLedgerFile(ledger);
         return cloneItem(x);
@@ -730,7 +748,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
             milestoneId,
             init,
             this.now(),
-            this.buildRefValidationContext(),
+            await this.buildRefValidationContext(),
           );
           await this.writeLedgerFile(ledger);
           return cloneItem(x);
@@ -751,7 +769,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
         ledger,
         init,
         this.now(),
-        this.buildRefValidationContext(),
+        await this.buildRefValidationContext(),
       );
       await this.writeLedgerFile(ledger);
       return cloneItem(x);

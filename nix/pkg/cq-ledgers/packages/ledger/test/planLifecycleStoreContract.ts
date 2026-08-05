@@ -8,6 +8,7 @@ import type {
   PlanPublishDraftInput,
   PlanReleaseInput,
 } from "../src/index.js";
+import { DanglingRefError } from "../src/types.js";
 import type {
   PlanLifecycleContractFactory,
   PlanLifecycleContractFixture,
@@ -56,7 +57,8 @@ const RICH_MANIFEST = {
       key: "design",
       title: "Design guarded planning",
       description: "Preserve every milestone field",
-      dependsOn: [{ kind: "ledger", ref: "researches:RS8" }],
+      // Free-text advisory (not a known-ledger dangling target): G80 pass-through.
+      dependsOn: [{ kind: "ledger", ref: "awaiting-research-signoff" }],
       blockedBy: [{ kind: "draft-milestone", key: "delivery" }],
     },
     {
@@ -64,7 +66,7 @@ const RICH_MANIFEST = {
       title: "Deliver guarded planning",
       description: "Own the implementation tasks",
       dependsOn: [{ kind: "draft-milestone", key: "design" }],
-      blockedBy: [{ kind: "ledger", ref: "questions:Q1" }],
+      blockedBy: [{ kind: "ledger", ref: "awaiting-design-review" }],
     },
   ],
   tasks: [
@@ -80,7 +82,7 @@ const RICH_MANIFEST = {
       tags: ["contract", "guarded"],
       dependsOn: [
         { kind: "draft-milestone", key: "design" },
-        { kind: "ledger", ref: "researches:RS8" },
+        { kind: "ledger", ref: "awaiting-research-signoff" },
       ],
       blockedBy: [{ kind: "draft-task", key: "implementation" }],
     },
@@ -95,7 +97,7 @@ const RICH_MANIFEST = {
       sourceRefs: ["tasks:T846"],
       tags: ["implementation"],
       dependsOn: [{ kind: "draft-task", key: "contract" }],
-      blockedBy: [{ kind: "ledger", ref: "questions:Q2" }],
+      blockedBy: [{ kind: "ledger", ref: "awaiting-operator-answer" }],
     },
   ],
 } as const satisfies PlanDraftManifest;
@@ -1533,7 +1535,7 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
                 goalId: GOAL_ID,
                 title: "Design guarded planning",
                 description: "Preserve every milestone field",
-                dependsOn: ["researches:RS8"],
+                dependsOn: ["awaiting-research-signoff"],
                 blockedBy: [firstMilestones["delivery"]],
                 taskIds: [firstTasks["contract"]],
                 provenance: PROVENANCE_A,
@@ -1543,7 +1545,7 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
                 goalId: GOAL_ID,
                 description: "Own the implementation tasks",
                 dependsOn: [firstMilestones["design"]],
-                blockedBy: ["questions:Q1"],
+                blockedBy: ["awaiting-design-review"],
                 taskIds: [firstTasks["implementation"]],
                 provenance: PROVENANCE_A,
               }),
@@ -1561,7 +1563,7 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
                   ledgerRefs: ["goals:G1", "defects:D264"],
                   sourceRefs: ["nix/pkg/cq-ledgers/packages/ledger/src/planLifecycle.ts"],
                 tags: ["contract", "guarded"],
-                dependsOn: [firstMilestones["design"], "researches:RS8"],
+                dependsOn: [firstMilestones["design"], "awaiting-research-signoff"],
                 blockedBy: [firstTasks["implementation"]],
                 executable: false,
                 provenance: PROVENANCE_A,
@@ -1577,7 +1579,7 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
                 sourceRefs: ["tasks:T846"],
                 tags: ["implementation"],
                 dependsOn: [firstTasks["contract"]],
-                blockedBy: ["questions:Q2"],
+                blockedBy: ["awaiting-operator-answer"],
                 executable: false,
                 provenance: PROVENANCE_A,
               }),
@@ -1709,6 +1711,77 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
         } finally {
           await fixture.dispose();
         }
+        },
+        timeout,
+      );
+
+      /**
+       * D204 — publish_plan_draft must not persist draft-key ledger refs as
+       * dangling tasks:/milestones: targets. A ledger-kind courier carrying a
+       * draft key is rewritten onto the allocated id; a leftover that fails the
+       * G80 dangling gate is rejected (same gate as applyCreateItem).
+       */
+      it(
+        "rewrites draft-key ledger refs on publish and rejects dangling leftovers (D204)",
+        async () => {
+          const fixture = await buildGoal(factory, "clarifying", null);
+          try {
+            const claim = requireClaimWinner(
+              await fixture.lifecycle.claimPlan(
+                claimInput("initial", "d204-draft-key", OWNER_TOKEN_A, null, PROVENANCE_A),
+              ),
+            );
+            const rewriteManifest = {
+              milestones: [{ key: "delivery", title: "Delivery" }],
+              tasks: [
+                {
+                  key: "contract",
+                  milestoneKey: "delivery",
+                  headline: "Contract task",
+                },
+                {
+                  key: "implementation",
+                  milestoneKey: "delivery",
+                  headline: "Implementation task",
+                  // ledger-kind courier with the sibling draft key (not draft-task).
+                  dependsOn: [{ kind: "ledger" as const, ref: "tasks:contract" }],
+                },
+              ],
+            } satisfies PlanDraftManifest;
+            const published = await fixture.lifecycle.publishPlanDraft(
+              publishInput(claim, "d204-rewrite", rewriteManifest),
+            );
+            if (!published.ok) throw new Error("D204 rewrite publish unexpectedly conflicted");
+            const taskIds = Object.fromEntries(
+              published.acknowledgement.manifest.tasks.map(({ key, id }) => [key, id]),
+            );
+            const state = await fixture.observe(GOAL_ID);
+            const implementation = state.tasks.find((t) => t.id === taskIds["implementation"]);
+            expect(implementation).toBeDefined();
+            // Rewritten onto the allocated contract id — not the draft key.
+            expect(implementation!.dependsOn).toEqual([taskIds["contract"]!]);
+            expect(implementation!.dependsOn).not.toContain("contract");
+
+            // A leftover ledger-kind ref to a nonexistent task must reject.
+            const danglingManifest = {
+              milestones: [{ key: "other", title: "Other" }],
+              tasks: [
+                {
+                  key: "orphan",
+                  milestoneKey: "other",
+                  headline: "Orphan",
+                  dependsOn: [{ kind: "ledger" as const, ref: "tasks:T99999" }],
+                },
+              ],
+            } satisfies PlanDraftManifest;
+            await expect(
+              fixture.lifecycle.publishPlanDraft(
+                publishInput(claim, "d204-dangling", danglingManifest),
+              ),
+            ).rejects.toBeInstanceOf(DanglingRefError);
+          } finally {
+            await fixture.dispose();
+          }
         },
         timeout,
       );

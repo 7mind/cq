@@ -192,8 +192,11 @@ export const ROLE_TOOL_CAPABILITY_MATRIX: Readonly<Record<string, RoleToolCapabi
   );
 
 export function exposedLedgerToolsForRole(roleId: string): readonly LedgerCapabilityToolName[] {
-  const profile = ROLE_TOOL_CAPABILITY_MATRIX[roleId];
-  if (profile === undefined) throw new Error(`unknown role tool profile "${roleId}"`);
+  // Object.hasOwn: bare index admits Object.prototype names (D169 / T684 class).
+  if (!Object.hasOwn(ROLE_TOOL_CAPABILITY_MATRIX, roleId)) {
+    throw new Error(`unknown role tool profile "${roleId}"`);
+  }
+  const profile = ROLE_TOOL_CAPABILITY_MATRIX[roleId]!;
   const exposed = new Set<LedgerCapabilityToolName>();
   for (const capability of profile.capabilities) {
     for (const tool of ROLE_CAPABILITY_TOOLS[capability]) exposed.add(tool);

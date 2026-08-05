@@ -196,6 +196,39 @@ describe("T551 canonicalization of resolvable refs", () => {
       expect(dep.fields["dependsOn"]).toEqual(["tasks:T1"]);
     }),
   );
+
+  /**
+   * D99 — fs/git write gate must not depend on the fail-soft archived FTS
+   * bucket alone. Under-report the index after a successful archive; a ref to
+   * the still-on-disk archived target must succeed (or surface a non-dangling
+   * refresh fault), never a false DanglingRefError.
+   */
+  test("under-reported archived FTS still accepts a legitimate archived target (D99)", async () => {
+    // fs-only: AbstractLedgerStore is the backend that consulted FTS for
+    // archived existence. sqlite/in-memory keep their own archive maps.
+    const store = new FsLedgerStore({ root: await freshDir("t2003-d99-"), now });
+    await store.init();
+    try {
+      const m = await store.createMilestone({ title: "m" });
+      const t = await store.createItem("tasks", m.id, {
+        status: "planned",
+        fields: { headline: "target" },
+      });
+      await store.updateItem("tasks", t.id, { status: "done" });
+      await store.updateMilestone(m.id, { status: "done" });
+      await store.archiveMilestone(m.id, "done");
+      // Under-report: wipe the archived FTS bucket while the archive file remains.
+      const internals = store as unknown as {
+        searchIndex: { setLedgerArchived: (ledgerId: string, items: Item[]) => void };
+      };
+      internals.searchIndex.setLedgerArchived("tasks", []);
+      internals.searchIndex.setLedgerArchived("milestones", []);
+      const dep = await makeTask(store, { dependsOn: [`tasks:${t.id}`] });
+      expect(dep.fields["dependsOn"]).toEqual([`tasks:${t.id}`]);
+    } finally {
+      await store.dispose();
+    }
+  });
 });
 
 // --- free-text pass-through -------------------------------------------------

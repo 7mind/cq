@@ -32,6 +32,7 @@ import {
   type PlanReviewDefectBatch,
   type PlanWriteProvenance,
 } from "../src/index.js";
+import { DanglingRefError } from "../src/types.js";
 import type { PlanLifecycleSerializationContender } from "../src/store/planLifecycleSerialization.js";
 import {
   OneShotSerializationBoundary,
@@ -506,13 +507,43 @@ function operationScope(
   return [goalId, claimId, generation, operation, operationId].join("\u0000");
 }
 
+/**
+ * D204 parity with production inMemoryPlanLifecycle.materializeReferences:
+ * rewrite ledger-kind `tasks:<draft-key>` / `milestones:<draft-key>` onto the
+ * allocated id; leave other ledger refs for the dangling gate below.
+ */
+function rewriteDraftKeyLedgerRef(
+  ref: string,
+  milestoneAllocations: ReadonlyMap<string, string>,
+  taskAllocations: ReadonlyMap<string, string>,
+): string {
+  const colon = ref.indexOf(":");
+  if (colon <= 0) return ref;
+  const ledger = ref.slice(0, colon);
+  const key = ref.slice(colon + 1);
+  if (ledger === "tasks") {
+    const id = taskAllocations.get(key);
+    if (id !== undefined) return id; // reference adapter stores bare ids
+  } else if (ledger === "milestones") {
+    const id = milestoneAllocations.get(key);
+    if (id !== undefined) return id;
+  }
+  return ref;
+}
+
 function materializeReferences(
   references: readonly PlanDraftReference[] | undefined,
   milestoneAllocations: ReadonlyMap<string, string>,
   taskAllocations: ReadonlyMap<string, string>,
 ): string[] {
   return (references ?? []).map((reference) => {
-    if (reference.kind === "ledger") return reference.ref;
+    if (reference.kind === "ledger") {
+      return rewriteDraftKeyLedgerRef(
+        reference.ref,
+        milestoneAllocations,
+        taskAllocations,
+      );
+    }
     const allocation =
       reference.kind === "draft-milestone"
         ? milestoneAllocations.get(reference.key)
@@ -522,6 +553,61 @@ function materializeReferences(
     }
     return allocation;
   });
+}
+
+/**
+ * D204 / G80: reject a newly-materialized dependsOn/blockedBy entry that names
+ * a known ledger whose target is neither active nor allocated in this publish.
+ * Free-text / unknown-prefix entries pass through (same as processRefEntry).
+ */
+function assertNoDanglingMaterializedRefs(
+  refs: readonly string[],
+  backend: ReferencePlanLifecycleBackend,
+  milestoneAllocations: ReadonlyMap<string, string>,
+  taskAllocations: ReadonlyMap<string, string>,
+): void {
+  const pendingTasks = new Set(taskAllocations.values());
+  const pendingMilestones = new Set(milestoneAllocations.values());
+  for (const raw of refs) {
+    const colon = raw.indexOf(":");
+    // Bare id: treat as tasks/milestones only when it matches a known id shape.
+    if (colon <= 0) {
+      if (/^T\d+$/.test(raw)) {
+        if (!pendingTasks.has(raw) && !backend.tasks.has(raw)) {
+          throw new DanglingRefError(raw, "tasks", raw);
+        }
+      } else if (/^M\d+$/.test(raw) || raw === "M-AMBIENT") {
+        if (!pendingMilestones.has(raw) && !backend.milestones.has(raw)) {
+          throw new DanglingRefError(raw, "milestones", raw);
+        }
+      }
+      continue;
+    }
+    const ledger = raw.slice(0, colon);
+    const id = raw.slice(colon + 1);
+    if (ledger === "tasks") {
+      if (!pendingTasks.has(id) && !backend.tasks.has(id)) {
+        throw new DanglingRefError(raw, "tasks", id);
+      }
+    } else if (ledger === "milestones") {
+      if (!pendingMilestones.has(id) && !backend.milestones.has(id)) {
+        throw new DanglingRefError(raw, "milestones", id);
+      }
+    } else if (ledger === "questions") {
+      if (!backend.questions.has(id)) throw new DanglingRefError(raw, "questions", id);
+    } else if (ledger === "researches") {
+      if (!backend.researches.has(id)) throw new DanglingRefError(raw, "researches", id);
+    } else if (ledger === "defects") {
+      if (!backend.defects.has(id)) throw new DanglingRefError(raw, "defects", id);
+    } else if (ledger === "goals") {
+      if (!backend.goals.has(id)) throw new DanglingRefError(raw, "goals", id);
+    } else if (ledger === "decisions") {
+      if (!backend.decisions.has(id)) throw new DanglingRefError(raw, "decisions", id);
+    } else if (ledger === "reviews") {
+      if (!backend.reviews.has(id)) throw new DanglingRefError(raw, "reviews", id);
+    }
+    // Unknown ledger name → advisory free-text, pass through.
+  }
 }
 
 function publicClaim(record: PlanPrivateClaimRecord): ReferencePublicClaim {
@@ -1438,22 +1524,30 @@ export class ReferencePlanLifecycleAdapter
           if (taskId === undefined) throw new Error("task allocation missing");
           return taskId;
         });
+      const dependsOn = materializeReferences(
+        milestone.dependsOn,
+        milestoneAllocations,
+        taskAllocations,
+      );
+      const blockedBy = materializeReferences(
+        milestone.blockedBy,
+        milestoneAllocations,
+        taskAllocations,
+      );
+      assertNoDanglingMaterializedRefs(
+        [...dependsOn, ...blockedBy],
+        this.backend,
+        milestoneAllocations,
+        taskAllocations,
+      );
       this.backend.milestones.set(id, {
         id,
         goalId: input.goalId,
         status: "open",
         title: milestone.title,
         description: milestone.description ?? null,
-        dependsOn: materializeReferences(
-          milestone.dependsOn,
-          milestoneAllocations,
-          taskAllocations,
-        ),
-        blockedBy: materializeReferences(
-          milestone.blockedBy,
-          milestoneAllocations,
-          taskAllocations,
-        ),
+        dependsOn,
+        blockedBy,
         taskIds,
         provenance: { author: input.author, session: input.session },
       });
@@ -1464,6 +1558,22 @@ export class ReferencePlanLifecycleAdapter
       if (id === undefined || milestoneId === undefined) {
         throw new Error("task or milestone allocation missing");
       }
+      const dependsOn = materializeReferences(
+        task.dependsOn,
+        milestoneAllocations,
+        taskAllocations,
+      );
+      const blockedBy = materializeReferences(
+        task.blockedBy,
+        milestoneAllocations,
+        taskAllocations,
+      );
+      assertNoDanglingMaterializedRefs(
+        [...dependsOn, ...blockedBy],
+        this.backend,
+        milestoneAllocations,
+        taskAllocations,
+      );
       this.backend.tasks.set(id, {
         id,
         goalId: input.goalId,
@@ -1476,8 +1586,8 @@ export class ReferencePlanLifecycleAdapter
         ledgerRefs: [...new Set([`goals:${input.goalId}`, ...(task.ledgerRefs ?? [])])],
         sourceRefs: [...(task.sourceRefs ?? [])],
         tags: [...(task.tags ?? [])],
-        dependsOn: materializeReferences(task.dependsOn, milestoneAllocations, taskAllocations),
-        blockedBy: materializeReferences(task.blockedBy, milestoneAllocations, taskAllocations),
+        dependsOn,
+        blockedBy,
         executable: false,
         provenance: { author: input.author, session: input.session },
       });
