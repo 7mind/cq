@@ -23,12 +23,9 @@
  *     updateRef fast-forwards with no StaleRefError → storeB silently clobbers
  *     storeA's milestone and reuses its id.
  *
- * The three assertions below FAIL TODAY (D61 reproduces): the lost write drops
- * one of storeA's titles AND duplicates an M<n> id. To keep `bun run check`
- * GREEN while committing the reproduction, the body runs under bun's
- * `test.failing` — a failing body is reported as an EXPECTED failure (suite
- * green, exit 0); if the body ever unexpectedly PASSES (i.e. the fix lands) the
- * suite turns RED, prompting T425 to flip this to a regular `test`.
+ * The fix (T425) has LANDED: the post-lock stale cache no longer loses the
+ * write, and the three assertions below PASS as a plain `test` (neither of
+ * storeA's titles is dropped and no M<n> id is duplicated).
  *
  * Touches NO production code — reproduction only.
  */

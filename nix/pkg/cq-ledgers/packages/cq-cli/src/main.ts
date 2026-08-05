@@ -354,7 +354,8 @@ export async function runInit(args: SubcommandArgs, io: DispatchIo): Promise<Sub
   // Write cq.toml BEFORE constructing the store (T501): a FRESH init (no
   // pre-existing cq.toml, or --force) writes CQ_TOML_TEMPLATE here so the
   // backend-selecting factory below reads the template's default backend
-  // ('xdg') rather than the pre-write no-cq.toml fallback ('fs'). An existing,
+  // ('xdg') rather than the pre-write no-cq.toml fallback ('xdg' —
+  // resolveLedgerBackend returns 'xdg' when no cq.toml exists). An existing,
   // untouched cq.toml (no --force) is left exactly as before — its
   // already-configured backend is unaffected by this task.
   const configPath = path.join(args.cwd, CQ_CONFIG_FILENAME);

@@ -28,7 +28,7 @@ Two vocabularies recur and must not be confused:
 
 Each flow that can stop standalone emits exactly one terminal **handoff** record
 (the `handoffs` ledger) classifying *why it stopped*: `drained`,
-`answers-required`, `mixed`, or `illness-detected`. When a flow is chained under
+`answers-required`, `user-action-required`, `mixed`, or `illness-detected`. When a flow is chained under
 a wrapping command it SUPPRESSES its own handoff; the outermost wrapper writes
 the single authoritative handoff for the whole run.
 
@@ -171,12 +171,14 @@ Every standalone flow stop maps to one `handoffs` status:
 | `drained`          | the flow processed everything actionable to a terminal/locked state; nothing left. |
 | `answers-required` | progress stopped only because actionable items are parked on unanswered `open` questions. |
 | `mixed`            | some work landed AND some actionable items remain blocked on `open` questions (`handoffReasons` lists the component reasons, e.g. `[drained, answers-required]`). |
+| `user-action-required` | progress stopped because a specific manual user action outside question answering (missing credentials, unavailable infrastructure, deployment, or another external step only the user can perform) is needed before work can resume. |
 | `illness-detected` | a defect or invariant violation the flow could not get past (e.g. an ill-loop bailout, an unresolved merge conflict). |
 
-All four `handoffs` statuses are terminal (a handoff is an immutable record of
+All five `handoffs` statuses are terminal (a handoff is an immutable record of
 one session's exit state). `/cq:advance`'s end-of-run report classifies the run
 as DRAINED / BLOCKED-ON-QUESTIONS / MIXED, mapping to `drained` /
-`answers-required` / `mixed` (error/abort → `illness-detected`).
+`answers-required` / `mixed` (external manual action → `user-action-required`;
+error/abort → `illness-detected`).
 
 ---
 
@@ -371,8 +373,10 @@ One `/cq:research:advance` invocation = one round:
 ### Research-flow handoffs
 
 - The standalone stop maps to a handoff: `drained` (concluded, or nothing
-  actionable), `answers-required` (parked on a step-6 question), `mixed`, or
-  `illness-detected`. Suppressed when chained under `/cq:advance` (the wrapper
+  actionable), `answers-required` (parked on a step-6 question),
+  `user-action-required` (a named item needs a specific external action only
+  the user can perform), `mixed`, or `illness-detected`. Suppressed when
+  chained under `/cq:advance` (the wrapper
   writes the single run-level handoff).
 - A concluded research satisfies its dependent tasks; a dependent task blocked
   on an inconclusive research awaits either a research re-opening (answering the
@@ -473,8 +477,10 @@ One `/cq:investigate:advance` invocation = one round:
   filed question instructs the user to run `/cq:plan:advance G`. *Auto-launched
   inside plan*: the parent plan session resumes `G` automatically.
 - The standalone stop maps to a handoff: `drained` (root-caused or all leaves
-  resolved), `answers-required` (parked on a step-6 question), `mixed`, or
-  `illness-detected`. Suppressed when chained under a wrapping flow command.
+  resolved), `answers-required` (parked on a step-6 question),
+  `user-action-required` (a named item needs a specific external action only
+  the user can perform), `mixed`, or `illness-detected`. Suppressed when
+  chained under a wrapping flow command.
 
 ---
 
@@ -578,7 +584,9 @@ orchestrator reports a goal as ready-to-close and the user sets `building → do
   `/cq:investigate <D>`) triages them.
 - The standalone stop maps to a handoff: `drained` (ready-set drained, all
   reachable tasks merged), `answers-required` (tasks blocked on questions),
-  `mixed`, or `illness-detected` (ill-loop / merge-conflict / invariant
+  `user-action-required` (a named task needs a specific external action only
+  the user can perform), `mixed`, or `illness-detected` (ill-loop /
+  merge-conflict / invariant
   violation). Suppressed when chained under `/cq:advance` or
   `/cq:implement:start`.
 
@@ -599,7 +607,7 @@ For grounding, the canonical status lifecycles (from
 | `researches` | open → wip → {**concluded** \| inconclusive} → **abandoned** (inconclusive ↔ wip) | research |
 | `reviews` | **go-ahead** / **revise** (both terminal — immutable per-round record) | plan, implement |
 | `decisions` | proposed → **locked** / **superseded** | plan (the `locked` plan-approval decision gating `planned`) |
-| `handoffs` | **drained** / **answers-required** / **mixed** / **illness-detected** (all terminal) | every flow's stop record |
+| `handoffs` | **drained** / **answers-required** / **user-action-required** / **mixed** / **illness-detected** (all terminal) | every flow's stop record |
 | `milestones` | open → **done** (postponed/blocked ↔ open) | all (auto-close+archive sweep) |
 
 Each flow's stop is **progress-bounded, never effort-bounded**: it stops only

@@ -1082,8 +1082,10 @@ export type { ClaudeSettleContext };
 /**
  * A one-use body materializer. The capability lives in the object identity and
  * is consumed BEFORE the shared fetch runs, so even an unavailable backend
- * cannot turn a retry into a second materialization attempt. This bridge does
- * not rely on the shared fetch's current repeatability (defects:D188/T1142).
+ * cannot turn a retry into a second materialization attempt. The shared fetch
+ * itself is one-shot (defects:D188/T1142): fetchDispatchResult CAS-persists
+ * `outputMaterializedAt` on the first fetch and a repeat fetch returns
+ * `output-already-materialized` without the body.
  */
 export class ClaudeDispatchMaterializer {
   private materialized = false;

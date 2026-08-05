@@ -334,11 +334,12 @@ describe("attested version pairing (T683)", () => {
 /**
  * D60 regression: validateInput/validateOutput are called with a JSON STRING
  * when the Claude Code MCP client serializes a nested object arg on the wire.
- * The fix (T422) will add string-tolerance at the promptCatalogCapability
- * entrypoint. Cases (ii)–(iv) are `test.failing` until that fix lands.
+ * The fix (T422) added string-tolerance at the promptCatalogCapability
+ * entrypoint; all four cases below run as plain `test`s and PASS.
  *
  * Case (i) — genuine object — is a normal passing test that belongs here
- * alongside the failing cases so the full regression set is co-located.
+ * alongside the string-tolerance cases so the full regression set is
+ * co-located.
  */
 describe("D60 regression — validateInput string-tolerance at the capability boundary", () => {
   // (i) Genuine object input — already passes today; stays a normal test.
@@ -348,19 +349,16 @@ describe("D60 regression — validateInput string-tolerance at the capability bo
     expect(result.ok).toBe(true);
   });
 
-  // (ii) JSON-string encoding of a valid payload — FAILS today (returns
-  // {ok:false, errors:[{keyword:'type', message:'must be object'}]}).
-  // The MCP wire serialises the nested `input` arg as a JSON string;
-  // validateInput must parse it before validating.
+  // (ii) JSON-string encoding of a valid payload — validateInput parses the
+  // JSON string before validating. The MCP wire serialises the nested `input`
+  // arg as a JSON string; validateInput must parse it before validating.
   test("(ii) JSON-string JSON.stringify({goalId:'G1'}) → {ok:true} [D60]", () => {
     const cap = makeCapability();
     const result = cap.validateInput(DISPATCHED_ROLE, JSON.stringify({ goalId: "G1" }));
     expect(result.ok).toBe(true);
   });
 
-  // (iii) Unparseable JSON string — FAILS today (no 'parse' keyword exists
-  // yet; the code would either throw or return keyword:'type').
-  // After the fix, an unparseable string should return
+  // (iii) Unparseable JSON string — returns
   // {ok:false, errors:[{keyword:'parse', ...}]}.
   test("(iii) unparseable string '{not json' → {ok:false, errors[0].keyword==='parse'} [D60]", () => {
     const cap = makeCapability();
@@ -371,10 +369,8 @@ describe("D60 regression — validateInput string-tolerance at the capability bo
   });
 
   // (iv) Over-acceptance guard: a JSON-string of {} for a role requiring
-  // goalId — FAILS today (returns keyword:'type' from the must-be-object
-  // pre-check rather than keyword:'required' after parsing).
-  // After the fix, the string is parsed to {}, the schema's 'required'
-  // check fires, and errors[0].keyword === 'required'.
+  // goalId — the string is parsed to {}, the schema's 'required' check fires,
+  // and errors[0].keyword === 'required'.
   test("(iv) JSON.stringify({}) for plan-advance → {ok:false, errors[0].keyword==='required'} [D60]", () => {
     const cap = makeCapability();
     const result = cap.validateInput(DISPATCHED_ROLE, JSON.stringify({}));

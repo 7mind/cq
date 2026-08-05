@@ -49,8 +49,7 @@ import { launchPiChild } from "./cq-subagent-process-lifecycle.ts";
 //      agent's tier slot is unconfigured, or the token resolves to a `claude:`
 //      harness (a Claude provider cannot be driven by a child `pi -p` process).
 //
-// The cq.toml read strategy is PINNED in K46
-// (docs/drafts/20260607-2049-pi-runtime-config-access.md): $CQ_CONFIG (default
+// The cq.toml read strategy is PINNED in decisions:K46: $CQ_CONFIG (default
 // $CQ_PROJECT_ROOT/cq.toml, fallback <cwd>/cq.toml), parsed with an INLINED
 // flat-table TOML reader + INLINED resolver that MIRRORS @cq/config's
 // resolveAgentTier/resolveTierToken/resolveAgentModel (T223,

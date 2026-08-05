@@ -361,7 +361,7 @@ export const REVIEWS_SCHEMA: LedgerSchema = {
 
 /**
  * Handoffs ledger — records implement-flow / plan-flow session handoffs.
- * The item `status` IS the handoff outcome; all four statuses are terminal
+ * The item `status` IS the handoff outcome; all five statuses are terminal
  * (a handoff is an immutable record of one session's exit state).
  * idPrefix HO — distinct from the existing single-char prefixes M/D/T/H/Q/K/G/R.
  *

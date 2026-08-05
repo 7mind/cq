@@ -244,10 +244,13 @@ export interface TiersConfig {
 /**
  * The supported ledger storage backends (T349, T494, T570, T723).
  *
- * - `fs` / `git-object`: the LEGACY in-tree backends. They remain PARSEABLE
- *   (never removed from this union) so `cq migrate` can read a `cq.toml`
- *   that still names one to locate the source data — but after the T505
- *   cutover neither selects a runtime primary store.
+ * - `fs` / `git-object`: the LEGACY in-tree backends, DEPRECATED but still
+ *   SELECTABLE (K117 relaxed T505's hard refusal): an explicit selection
+ *   still opens the live legacy in-tree store with a deprecation warning
+ *   (createLedgerStore's warnLegacyBackendDeprecated), and they remain
+ *   PARSEABLE (never removed from this union) so `cq migrate` can read a
+ *   `cq.toml` that still names one to locate the source data. Neither is
+ *   ever the DEFAULT — the no-cq.toml fallback resolves to `xdg`.
  * - `xdg`: the out-of-tree bun:sqlite primary at the XDG location (K102) —
  *   the DEFAULT runtime primary.
  * - `postgres`: an OPT-IN external Postgres primary (G81), retained through
