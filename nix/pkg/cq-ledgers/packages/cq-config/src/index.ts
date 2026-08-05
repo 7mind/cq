@@ -583,6 +583,22 @@ export {
   interceptCodexRoleBoundaryResult,
   executeCodexRoleBoundary,
 } from "./codexRoleBoundary.js";
+export type {
+  CodexSandboxPipeProbeVerdict,
+  CodexSandboxPipeProbeRequest,
+  CodexSandboxPipeProbeReport,
+} from "./codexSandboxPreflight.js";
+export {
+  CODEX_SANDBOX_PIPE_PROBE_VERDICTS,
+  CODEX_REVIEWER_ROLE_SUFFIX,
+  CODEX_READ_ONLY_SANDBOX_TMPDIR,
+  CODEX_SANDBOX_PIPE_PROBE_TIMEOUT_MS,
+  SandboxPipeProbeError,
+  requiresCodexSandboxPreflight,
+  runCodexSandboxPipeProbe,
+  renderSandboxTmpdirOverride,
+  argvWithSandboxTmpdir,
+} from "./codexSandboxPreflight.js";
 
 export type {
   ClaudeDeliveryMode,

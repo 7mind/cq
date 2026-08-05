@@ -14,6 +14,13 @@ import type {
   ResultCapability,
 } from "./compactDispatchProtocol.js";
 import { classifyCodexFinalMessage } from "./codexDispatchProtocol.js";
+import {
+  CODEX_READ_ONLY_SANDBOX_TMPDIR,
+  CODEX_SANDBOX_PIPE_PROBE_TIMEOUT_MS,
+  argvWithSandboxTmpdir,
+  requiresCodexSandboxPreflight,
+  runCodexSandboxPipeProbe,
+} from "./codexSandboxPreflight.js";
 import { DISPATCHED_ROLE_IDS } from "./promptCatalogStore.js";
 import { exposedLedgerToolsForRole, type LedgerCapabilityToolName } from "./roleToolProfiles.js";
 
@@ -59,6 +66,7 @@ export interface CodexRoleLedgerMcpConfiguration {
 export interface CodexRoleBoundaryPlan {
   readonly roleId: string;
   readonly cwd: string;
+  readonly sandboxMode: CodexRoleSandboxMode;
   readonly argv: readonly string[];
   readonly stdin: string;
   readonly timeoutMs: number;
@@ -288,6 +296,7 @@ export function createCodexRoleBoundaryPlan(
   return Object.freeze({
     roleId: resolved.roleId,
     cwd: resolved.cwd,
+    sandboxMode: resolved.sandboxMode,
     argv,
     stdin: `${JSON.stringify(launch)}\n`,
     timeoutMs: resolved.timeoutMs,
@@ -640,6 +649,26 @@ export async function executeCodexRoleBoundary(
   };
 
   try {
+    // D266: a read-only reviewer dispatch first proves, inside the same codex
+    // sandbox, that node-child pipe captures survive (codex 0.146's seccomp
+    // silently empties them — openai/codex#18473) and that the injected
+    // TMPDIR is writable; only then does the boundary launch, with the
+    // TMPDIR override spliced into the exec argv. The sandbox tmpfs is
+    // per-instance, so there is nothing to clean up afterwards.
+    let argv = plan.argv;
+    if (requiresCodexSandboxPreflight(plan.roleId, plan.sandboxMode)) {
+      const codexExecutable = plan.argv[0];
+      if (codexExecutable === undefined) {
+        throw new CodexRoleBoundaryError("boundary argv has no codex executable");
+      }
+      await runCodexSandboxPipeProbe({
+        codexExecutable,
+        cwd: plan.cwd,
+        env: process.env,
+        timeoutMs: CODEX_SANDBOX_PIPE_PROBE_TIMEOUT_MS,
+      });
+      argv = argvWithSandboxTmpdir(plan.argv, CODEX_READ_ONLY_SANDBOX_TMPDIR);
+    }
     let launched;
     try {
       const childEnvironment: NodeJS.ProcessEnv =
@@ -647,7 +676,7 @@ export async function executeCodexRoleBoundary(
           ? process.env
           : { ...process.env, CQ_CODEX_ROLE_CORRELATION_ID: correlationId };
       launched = await launchRegisteredProcessGroup({
-        argv: plan.argv,
+        argv,
         cwd: plan.cwd,
         env: childEnvironment,
         stdio: { stdin: "pipe", stdout: "pipe", stderr: "pipe" } as const,
