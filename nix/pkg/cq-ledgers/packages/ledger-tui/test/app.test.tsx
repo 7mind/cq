@@ -2398,4 +2398,73 @@ describe("ledger-tui overlay generation guard (D120)", () => {
     expect(after).toMatch(/› ● cq1 \(current\)/);
     r.unmount();
   });
+
+  it("Esc + 'p' during an in-flight createMilestone submit leaves the picker up", async () => {
+    // D120 residual: onCreateMilestone/onCreateItem used to always
+    // setOverlay(null) after the mutation resolved, even when the user had
+    // already Esc-dismissed the create form and opened a newer overlay.
+    const client = new DeferredCreateMilestoneClient("cq1");
+    const r = render(<App client={client} />);
+    await tick();
+
+    // Open milestones ledger (cursor: bugs=0, milestones=1).
+    r.stdin.write(DOWN);
+    await tick();
+    r.stdin.write(ENTER);
+    await waitForFrame(() => r.lastFrame() ?? "", "M1");
+
+    // Open create-milestone TextPrompt and submit a title — parks on createMilestone.
+    r.stdin.write("n");
+    await tick();
+    await waitForFrame(() => r.lastFrame() ?? "", "new milestone title:");
+    for (const ch of "Phase Race") {
+      r.stdin.write(ch);
+      await tick(5);
+    }
+    r.stdin.write(ENTER);
+    await tick(10);
+    const end = Date.now() + 1500;
+    while (client.pendingCreates === 0 && Date.now() < end) await tick(10);
+    expect(client.pendingCreates).toBeGreaterThanOrEqual(1);
+
+    // While the mutation is still parked: Esc dismisses the create form,
+    // then 'p' opens the project picker (a newer overlay generation).
+    r.stdin.write(ESC);
+    await tick();
+    r.stdin.write("p");
+    await tick();
+    await waitForFrame(() => r.lastFrame() ?? "", "cq1");
+    const during = r.lastFrame() ?? "";
+    expect(during).toMatch(/\(current\)|●/);
+
+    // Resolve the stale create — must NOT setOverlay(null) over the picker.
+    client.releaseCreate();
+    await tick(40);
+    const after = r.lastFrame() ?? "";
+    expect(after).toContain("● cq1 (current)");
+    expect(after).toMatch(/› ● cq1 \(current\)/);
+    r.unmount();
+  });
 });
+
+/**
+ * FakeClient whose createMilestone parks until releaseCreate().
+ * Covers the D120 post-submit setOverlay(null) race on the create path.
+ */
+class DeferredCreateMilestoneClient extends FakeClient {
+  private waiting: Array<() => void> = [];
+  get pendingCreates(): number {
+    return this.waiting.length;
+  }
+  releaseCreate(): void {
+    const release = this.waiting.shift();
+    if (release === undefined) throw new Error("releaseCreate: nothing pending");
+    release();
+  }
+  override async createMilestone(
+    init: { title: string; description?: string; id?: string },
+  ): Promise<import("../src/types.js").MilestoneMutationAckDto> {
+    await new Promise<void>((resolve) => this.waiting.push(resolve));
+    return super.createMilestone(init);
+  }
+}

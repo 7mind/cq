@@ -1440,16 +1440,23 @@ export function App({
               search={search}
               onOpenHit={openHit}
               onCreateMilestone={async (title) => {
+                // D120: capture gen so a post-await setOverlay(null) cannot
+                // dismiss a newer overlay (Esc → 'p' picker) opened while the
+                // create mutation was still in flight.
+                const gen = overlayGenRef.current;
                 try {
                   const m = await client.createMilestone({ title });
                   if (await reloadItems(m.id)) setFlash(`created ${m.id}`);
                 } catch (e) {
                   setFlash(errMsg(e));
                 }
+                if (overlayGenRef.current !== gen) return;
                 setOverlay(null);
               }}
               onCreateItem={async (milestoneId, status, fields) => {
                 if (top.kind !== "items") return;
+                // D120: same stale-dismiss guard as onCreateMilestone.
+                const gen = overlayGenRef.current;
                 try {
                   const it = await client.createItem(top.ledger, milestoneId, {
                     status,
@@ -1460,6 +1467,7 @@ export function App({
                 } catch (e) {
                   setFlash(errMsg(e));
                 }
+                if (overlayGenRef.current !== gen) return;
                 setOverlay(null);
               }}
               onFilter={(f) => {
