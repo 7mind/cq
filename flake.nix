@@ -900,6 +900,11 @@ EOF
                 mkdir -p "$piExtensionsRoot/node_modules/@cq"
                 ln -s "$cqLedgersRoot/packages/process-control" \
                   "$piExtensionsRoot/node_modules/@cq/process-control"
+                # The [agent_efforts] equivalence test (D209) in
+                # cq-subagent-dispatch.test.ts imports @cq/config (test-time
+                # only — the extension itself stays copy-not-import).
+                ln -s "$cqLedgersRoot/packages/cq-config" \
+                  "$piExtensionsRoot/node_modules/@cq/config"
 
                 for project in \
                   nix/pkg/pi-extensions \
@@ -1215,6 +1220,19 @@ EOF
                 'await import(${builtins.toJSON "${piPromptRootTest.dispatchExtensionDir}/cq-subagent-process-lifecycle.ts"})'
               ${pkgs.ripgrep}/bin/rg -q 'from "@cq/process-control"' \
                 ${piPromptRootTest.dispatchExtensionDir}/cq-subagent-process-lifecycle.ts
+              # D180: the wrapper must DEFAULT CQ_AGENTS_DIR, not clobber it —
+              # a pre-set CQ_AGENTS_DIR survives; unset/empty falls back to
+              # ''${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/cq-agents. Extract the
+              # wrapper's real export line and evaluate it under both envs.
+              ${pkgs.gnugrep}/bin/grep -m1 -o 'export CQ_AGENTS_DIR=.*' \
+                ${piPromptRootTest.package}/bin/pi > cq-agents-dir-export.sh
+              test -s cq-agents-dir-export.sh
+              test "$(env -u CQ_AGENTS_DIR PI_CODING_AGENT_DIR=/preset/pi HOME=/home/test \
+                ${pkgs.bash}/bin/bash -c '. ./cq-agents-dir-export.sh; printf %s "$CQ_AGENTS_DIR"')" \
+                = "/preset/pi/cq-agents"
+              test "$(CQ_AGENTS_DIR=/custom/agents PI_CODING_AGENT_DIR=/preset/pi \
+                ${pkgs.bash}/bin/bash -c '. ./cq-agents-dir-export.sh; printf %s "$CQ_AGENTS_DIR"')" \
+                = "/custom/agents"
               ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
                 test -x ${piPromptRootTest.dispatchExtensionDir}/libexec/cq-process-identity
                 ${pkgs.ripgrep}/bin/rg -Fq \

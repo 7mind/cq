@@ -39,9 +39,11 @@ export interface PredicateVerdict {
  * stages (in flow order); `openQuestionGate` enumerates the open questions that
  * gate any of them; `belowFloor` is an INFORMATIONAL companion to `pSeed`
  * (root-caused, unowned, un-gated defects below the severity floor) that gates
- * NOTHING; `goalDrift` (G84/D113) is the REPORT-ONLY phase-drift signal
- * (goals still `planned` whose owned tasks are already wip/done) that
- * likewise gates NOTHING.
+ * NOTHING; `planBusy` (G99/D134, T853) is the REPORT-ONLY busy signal (goals
+ * carrying an ACTIVE plan claim — a planner already owns their planning round)
+ * that NEVER participates in any stop condition; `goalDrift` (G84/D113) is the
+ * REPORT-ONLY phase-drift signal (goals still `planned` whose owned tasks are
+ * already wip/done) that likewise gates NOTHING.
  */
 export interface DerivedPredicates {
   pInvestigate: PredicateVerdict;
@@ -51,8 +53,41 @@ export interface DerivedPredicates {
   pImplement: PredicateVerdict;
   openQuestionGate: PredicateVerdict;
   belowFloor: PredicateVerdict;
+  planBusy: PredicateVerdict;
   goalDrift: PredicateVerdict;
 }
+
+/**
+ * The `DerivedPredicates` member keys, in canonical interface order — the
+ * SINGLE shared list consumed by BOTH the oracle parser (./oracle.ts, which
+ * requires every key in the live `cq predicates` JSON) and the drift guard
+ * (oracle.test.ts, which compares this list against the CANONICAL
+ * @cq/ledger predicates.ts interface). Sharing one list is the point: a key
+ * added to the canonical interface turns the drift guard red, and a key added
+ * here without the interface fails the compile-time tie below.
+ */
+export const DERIVED_PREDICATE_KEYS = [
+  "pInvestigate",
+  "pSeed",
+  "pPlan",
+  "pResearch",
+  "pImplement",
+  "openQuestionGate",
+  "belowFloor",
+  "planBusy",
+  "goalDrift",
+] as const satisfies readonly (keyof DerivedPredicates)[];
+
+// Compile-time tie: DERIVED_PREDICATE_KEYS must name EVERY DerivedPredicates
+// member (the `satisfies` above already rejects a key the interface does not
+// carry). A member added to the interface without updating the list makes
+// this assignment fail tsc.
+type MissingDerivedPredicateKey = Exclude<
+  keyof DerivedPredicates,
+  (typeof DERIVED_PREDICATE_KEYS)[number]
+>;
+const _assertDerivedPredicateKeysExhaustive: MissingDerivedPredicateKey extends never ? true : never = true;
+void _assertDerivedPredicateKeysExhaustive;
 
 // ---------------------------------------------------------------------------
 // Decision-action vocabulary (Q233 + Q236).

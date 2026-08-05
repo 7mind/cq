@@ -88,13 +88,16 @@ let
     paths = [ piBase ];
     nativeBuildInputs = [ pkgs.makeWrapper ];
     postBuild = ''
+      # D180: respect a pre-set CQ_AGENTS_DIR (the cq-subagent-dispatch
+      # extension advertises env-first resolution) — only fall back to the
+      # projected default when the variable is unset or empty.
       wrapProgram $out/bin/pi \
         --prefix PATH : ${ddgsPython}/bin \
         --set CQ_HARNESS pi \
         --set CQ_PROMPT_SURFACE pi \
         --set CQ_PROMPT_ROOT ${piPromptRoot} \
         --set CQ_PROCESS_IDENTITY_HELPER "${lib.optionalString pkgs.stdenv.isDarwin "${piDispatchExtensionDir}/libexec/cq-process-identity"}" \
-        --run 'export CQ_AGENTS_DIR="''${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/cq-agents"'
+        --run 'export CQ_AGENTS_DIR=''${CQ_AGENTS_DIR:-"''${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/cq-agents"}'
     '';
   };
 
@@ -404,7 +407,8 @@ in
   config = lib.mkIf cfg.enable (lib.mkMerge [
     {
       programs.pi = sharedAgentWiring // {
-        # Vendored Pi (see pkg/pi-coding-agent/package.nix) wrapped to set CQ_HARNESS=pi, CQ_AGENTS_DIR, and the
+        # Vendored Pi (see pkg/pi-coding-agent/package.nix) wrapped to set CQ_HARNESS=pi, default CQ_AGENTS_DIR
+        # (a pre-set value wins — see piWrapped), and put the
         # ddgs python on PATH (see piWrapped). Provider/search API keys are supplied
         # by the yolo sandbox (smind.hm.dev.llm.yolo.secretSessionVariables), not here.
         package = piWrapped;
@@ -549,7 +553,7 @@ in
     {
       # Project individual cq agent markdowns to ~/.pi/agent/cq-agents/<name>.md
       # so the dispatch extension (T224) can discover them by reading the
-      # directory pointed to by $CQ_AGENTS_DIR (set on piWrapped above).
+      # directory pointed to by $CQ_AGENTS_DIR (defaulted on piWrapped above).
       # Separate mkMerge element because the block above sets static
       # `home.file."<path>"` entries that can't coexist with a dynamic
       # `home.file = <attrs>` in one attribute set.

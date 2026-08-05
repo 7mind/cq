@@ -42,6 +42,7 @@ function emptyPredicates(): DerivedPredicates {
     pImplement: { value: false, items: [] },
     openQuestionGate: { value: false, items: [] },
     belowFloor: { value: false, items: [] },
+    planBusy: { value: false, items: [] },
     goalDrift: { value: false, items: [] },
   };
 }
@@ -57,21 +58,23 @@ function allActivePredicates(items?: string[]): DerivedPredicates {
     pImplement: { value: true, items: it },
     openQuestionGate: { value: false, items: [] },
     belowFloor: { value: false, items: [] },
+    planBusy: { value: false, items: [] },
     goalDrift: { value: false, items: [] },
   };
 }
 
 /**
  * Fill the fields (pSeed + belowFloor, G77/M240; pResearch, G80/M246;
- * goalDrift, G84/D113) added after the many inline fixtures below were first
- * written, with all-false defaults, so those fixtures don't need touching for
- * fields they don't exercise. A test that DOES exercise one of these builds
- * its snapshot explicitly instead.
+ * goalDrift, G84/D113; planBusy, G99/D134/T853) added after the many inline
+ * fixtures below were first written, with all-false defaults, so those
+ * fixtures don't need touching for fields they don't exercise. A test that
+ * DOES exercise one of these builds its snapshot explicitly instead.
  */
 const SEED_DEFAULTS = {
   pSeed: { value: false, items: [] as string[] },
   pResearch: { value: false, items: [] as string[] },
   belowFloor: { value: false, items: [] as string[] },
+  planBusy: { value: false, items: [] as string[] },
   goalDrift: { value: false, items: [] as string[] },
 };
 
@@ -695,6 +698,18 @@ describe("predicatesEqual", () => {
     const different: DerivedPredicates = {
       ...base,
       goalDrift: { value: true, items: ["G84"] }, // base has goalDrift false (SEED_DEFAULTS)
+    };
+    expect(predicatesEqual(base, different)).toBe(true);
+  });
+
+  test("(G99/D134/T853) ONLY planBusy changes => still EQUAL (a busy-only delta is NOT forward progress)", () => {
+    // planBusy is report-only and EXCLUDED from PREDICATE_KEYS (like
+    // belowFloor/goalDrift): a snapshot pair differing ONLY in planBusy must
+    // still compare equal, so the stall detector does not read a busy-only
+    // delta as forward progress.
+    const different: DerivedPredicates = {
+      ...base,
+      planBusy: { value: true, items: ["G99"] }, // base has planBusy false (SEED_DEFAULTS)
     };
     expect(predicatesEqual(base, different)).toBe(true);
   });

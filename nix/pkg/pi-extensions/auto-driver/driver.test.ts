@@ -46,6 +46,8 @@ import { registerAllAutoCommands } from "./index";
 /** Records every injected prompt and the order of waitForIdle vs injection. */
 interface FakeApi extends DriverApi {
   prompts: string[];
+  /** The exact options object passed to each sendUserMessage call. */
+  promptOptions: Array<{ deliverAs?: "steer" | "followUp" } | undefined>;
   /** The subscriber registered via on("after_provider_response", ...). */
   providerResponseHandler: ((event: DriverAfterProviderResponseEvent) => void) | null;
   /** Simulate a provider response event (e.g. a 429). */
@@ -55,9 +57,11 @@ interface FakeApi extends DriverApi {
 function makeFakeApi(events: string[]): FakeApi {
   const api: FakeApi = {
     prompts: [],
+    promptOptions: [],
     providerResponseHandler: null,
-    sendUserMessage(content: string): void {
+    sendUserMessage(content: string, options?: { deliverAs?: "steer" | "followUp" }): void {
       api.prompts.push(content);
+      api.promptOptions.push(options);
       events.push(`send:${content}`);
     },
     on(
@@ -136,6 +140,7 @@ const ALL_FALSE: DerivedPredicates = {
   pImplement: { value: false, items: [] },
   openQuestionGate: { value: false, items: [] },
   belowFloor: { value: false, items: [] },
+  planBusy: { value: false, items: [] },
   goalDrift: { value: false, items: [] },
 };
 
@@ -174,6 +179,23 @@ describe("launchAndAwait", () => {
     expect(events).toEqual(["send:/plan", "await"]);
     expect(api.prompts).toEqual(["/plan"]);
   });
+
+  test("(D213) sends ONLY the deliverAs key — the pi 0.82.1 sendUserMessage typing accepts nothing else", async () => {
+    // The deployed pi 0.82.1 ExtensionAPI.sendUserMessage options carry ONLY
+    // `deliverAs` (verified against the 0.82.1 store-path types.d.ts and the
+    // agent-session.js runtime, which maps deliverAs onto the internal
+    // streamingBehavior). The vestigial `streamingBehavior` key the driver
+    // used to send alongside is gone: the options object must be exactly
+    // { deliverAs: "followUp" }.
+    const events: string[] = [];
+    const api = makeFakeApi(events);
+    const ctx = makeFakeCtx({ events });
+
+    await launchAndAwait(ctx, api, "/plan");
+
+    expect(api.promptOptions).toEqual([{ deliverAs: "followUp" }]);
+    expect(api.promptOptions[0]).not.toHaveProperty("streamingBehavior");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -182,7 +204,7 @@ describe("launchAndAwait", () => {
 
 describe("sampleSignals", () => {
   test("converts Pi 0..100 percent to 0..1 fraction and reads quotaHit from ref", () => {
-    // Pi v0.78.0 getContextUsage().percent is on a 0..100 scale; sampleSignals
+    // Pi v0.82.1 getContextUsage().percent is on a 0..100 scale; sampleSignals
     // must divide by 100 before feeding contextPercent to the decision core.
     const events: string[] = [];
     const ctx = makeFakeCtx({ events, contextPercent: 42 }); // Pi 0..100 scale
@@ -954,6 +976,7 @@ describe("T468: preset terminalPredicates (bound correctly to each flow)", () =>
     pImplement: { value: false, items: [] },
     openQuestionGate: { value: false, items: [] },
     belowFloor: { value: false, items: [] },
+    planBusy: { value: false, items: [] },
     goalDrift: { value: false, items: [] },
   };
 

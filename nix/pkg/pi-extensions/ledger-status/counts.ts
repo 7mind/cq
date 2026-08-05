@@ -18,6 +18,18 @@
 // per the researches schema's `terminalStatuses`, even though only `concluded`
 // satisfies a dependency per Q266) — same computeLedgerSummaries mechanism as
 // the other ledgers, nothing researches-specific here.
+//
+// SUBSET EXACTNESS (D216): this subset is DELIBERATE and exact-by-contract,
+// not drift. The status line renders only `<done>/<total>` per ledger, and
+// computeLedgerSummaries derives both from each ledger's schema-declared
+// terminalStatuses/progress sets — so any additive change to the `cq counts`
+// payload (new top-level members, new LedgerSummary fields, new ledgers)
+// cannot change the rendered output, and a RENAMED/REMOVED field fails fast
+// in parseLedgerCounts (which throws on a missing/mistyped completedCount /
+// progressTotal / name rather than defaulting). Unlike the predicates copy in
+// auto-driver (whose key set must enumerate the canonical interface), there
+// is nothing here to keep in sync: the two consumed field names ARE the
+// entire contract.
 
 /** One ledger's done/total counters, extracted from its ledgerSummaries entry. */
 export interface LedgerCounts {

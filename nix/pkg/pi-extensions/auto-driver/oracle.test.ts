@@ -17,12 +17,13 @@ import { advanceAutoPreset, type DerivedPredicates } from "./decision";
 
 // Representative `cq predicates` stdout (predicates shape identical to T463
 // verification, now carrying the G77/M240 pSeed + belowFloor keys, the
-// G80/M246 pResearch key, and the G84/D113 report-only goalDrift key).
+// G80/M246 pResearch key, the G99/D134/T853 report-only planBusy key, and the
+// G84/D113 report-only goalDrift key).
 const REAL_PREDICATES_STDOUT =
-  '{"predicates":{"pInvestigate":{"value":true,"items":["D72","D73"]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":true,"items":["T463"]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
+  '{"predicates":{"pInvestigate":{"value":true,"items":["D72","D73"]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":true,"items":["T463"]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"planBusy":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
 
 describe("parsePredicatesOutput", () => {
-  test("parses the real cq predicates verdict into all eight predicates", () => {
+  test("parses the real cq predicates verdict into all nine predicates", () => {
     const expected: DerivedPredicates = {
       pInvestigate: { value: true, items: ["D72", "D73"] },
       pSeed: { value: false, items: [] },
@@ -31,14 +32,28 @@ describe("parsePredicatesOutput", () => {
       pImplement: { value: true, items: ["T463"] },
       openQuestionGate: { value: false, items: [] },
       belowFloor: { value: false, items: [] },
+      planBusy: { value: false, items: [] },
       goalDrift: { value: false, items: [] },
     };
     expect(parsePredicatesOutput(REAL_PREDICATES_STDOUT)).toEqual(expected);
   });
 
+  test("(D217) parses a planBusy-bearing payload (G99/D134/T853)", () => {
+    // planBusy is the report-only busy signal the canonical predicates.ts has
+    // carried since T853: a goal carrying an ACTIVE plan claim. The parser
+    // must surface it verbatim from the live `cq predicates` JSON.
+    const stdout =
+      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"planBusy":{"value":true,"items":["G99"]},"goalDrift":{"value":false,"items":[]}}}';
+    const parsed = parsePredicatesOutput(stdout);
+    expect(parsed.planBusy).toEqual({ value: true, items: ["G99"] });
+    // Report-only: a busy-only snapshot remains TERMINAL for the advance
+    // preset — planBusy never participates in any stop condition.
+    expect(advanceAutoPreset.terminalPredicate(parsed)).toBe(true);
+  });
+
   test("parses an all-false drained verdict", () => {
     const stdout =
-      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
+      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"planBusy":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
     expect(parsePredicatesOutput(stdout)).toEqual({
       pInvestigate: { value: false, items: [] },
       pSeed: { value: false, items: [] },
@@ -47,6 +62,7 @@ describe("parsePredicatesOutput", () => {
       pImplement: { value: false, items: [] },
       openQuestionGate: { value: false, items: [] },
       belowFloor: { value: false, items: [] },
+      planBusy: { value: false, items: [] },
       goalDrift: { value: false, items: [] },
     });
   });
@@ -55,7 +71,7 @@ describe("parsePredicatesOutput", () => {
     // A root-caused defect owned by no goal → ONLY pSeed TRUE. The parser must
     // surface it and the advance preset must NOT read it as DRAINED.
     const stdout =
-      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":true,"items":["D94"]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
+      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":true,"items":["D94"]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"planBusy":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
     const parsed = parsePredicatesOutput(stdout);
     expect(parsed.pSeed).toEqual({ value: true, items: ["D94"] });
     expect(advanceAutoPreset.terminalPredicate(parsed)).toBe(false);
@@ -142,7 +158,7 @@ function oldAdvanceTerminalPredicate(p: Record<string, { value: boolean }>): boo
 // drained), but pResearch — a key the OLD auto-driver has never heard of — is
 // TRUE with outstanding research work.
 const NEW_PAYLOAD_RESEARCH_ONLY =
-  '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":true,"items":["RS1"]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
+  '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":true,"items":["RS1"]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"planBusy":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
 
 describe("T559 false-DRAINED characterization (corrected model, G80/M246)", () => {
   test("OLD key set fed the NEW payload => parses fine but SILENTLY DROPS pResearch, and the old advance preset terminates", () => {
@@ -173,5 +189,81 @@ describe("T559 false-DRAINED characterization (corrected model, G80/M246)", () =
     const staleStdout =
       '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]}}}';
     expect(() => parsePredicatesOutput(staleStdout)).toThrow(/pResearch/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Drift guard (T2001 / D212 + D216): the copied `DerivedPredicates` interface
+// (decision.ts) and the parser key list (oracle.ts consumes the SHARED
+// DERIVED_PREDICATE_KEYS from decision.ts) must match the CANONICAL interface
+// in @cq/ledger's predicates.ts. This guard reads the canonical SOURCE and
+// compares member key sets, so it fails the moment the canonical interface
+// gains, loses, or renames a member — the exact drift that let planBusy
+// (G99/D134, T853) ship in predicates.ts without reaching this copy.
+//
+// The compile-time tie in decision.ts (satisfies + the exhaustiveness
+// assertion) pins DERIVED_PREDICATE_KEYS <-> the copied interface; this test
+// pins DERIVED_PREDICATE_KEYS <-> the CANONICAL interface. Together they close
+// list, copy, and canonical into one equivalence class.
+// ---------------------------------------------------------------------------
+
+import { readFileSync } from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { DERIVED_PREDICATE_KEYS } from "./decision";
+
+// auto-driver/ -> pi-extensions/ -> pkg/ -> nix/ -> repoRoot (same resolution
+// discipline as false-drained-regression.test.ts).
+const REPO_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "..",
+  "..",
+);
+const CANONICAL_PREDICATES_TS = path.join(
+  REPO_ROOT,
+  "nix",
+  "pkg",
+  "cq-ledgers",
+  "packages",
+  "ledger",
+  "src",
+  "store",
+  "predicates.ts",
+);
+
+/**
+ * Extract the member keys of the canonical `export interface DerivedPredicates`
+ * block from predicates.ts source. Fails fast on an unrecognizable block —
+ * non-vacuity is part of the guard (an extractor that finds nothing must not
+ * be able to satisfy the comparison).
+ */
+function canonicalDerivedPredicateKeys(): string[] {
+  const source = readFileSync(CANONICAL_PREDICATES_TS, "utf8");
+  const open = source.match(/export interface DerivedPredicates \{/);
+  if (open === null || open.index === undefined) {
+    throw new Error("canonical predicates.ts: DerivedPredicates interface not found");
+  }
+  const rest = source.slice(open.index + open[0].length);
+  const close = rest.indexOf("\n}");
+  if (close < 0) {
+    throw new Error("canonical predicates.ts: DerivedPredicates interface is unterminated");
+  }
+  const body = rest.slice(0, close);
+  const keys = [...body.matchAll(/^ {2}(\w+): PredicateVerdict;$/gm)].map((m) => m[1]!);
+  if (keys.length === 0) {
+    throw new Error("canonical predicates.ts: DerivedPredicates member extraction found no keys");
+  }
+  return keys;
+}
+
+describe("DerivedPredicates drift guard (D212/D216)", () => {
+  test("the copied key list matches the canonical predicates.ts interface, member for member", () => {
+    const canonical = canonicalDerivedPredicateKeys();
+    // Same members, same canonical ORDER (the parser emits verdicts in this
+    // order, and the live `cq predicates` JSON preserves it).
+    expect([...DERIVED_PREDICATE_KEYS] as string[]).toEqual(canonical);
   });
 });

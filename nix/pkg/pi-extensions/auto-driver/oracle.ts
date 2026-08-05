@@ -20,7 +20,7 @@
 //
 // CHOSEN CHANNEL (STEP 2): the `cq predicates` CLI subcommand. It prints a
 //   JSON object `{ predicates: { pInvestigate, pSeed, pPlan, pResearch,
-//   pImplement, openQuestionGate, belowFloor, goalDrift } }` to stdout, where `predicates`
+//   pImplement, openQuestionGate, belowFloor, planBusy, goalDrift } }` to stdout, where `predicates`
 //   shares the SAME `derivePredicates` single source of truth as the ledger MCP
 //   `derive_predicates` tool. `cq predicates` is harness-agnostic — it ALWAYS
 //   derives from the fs store, uses NO session, requires NO marker, and ALWAYS
@@ -37,7 +37,7 @@
 // (itself a copy of @cq/ledger's predicates.ts shape).
 
 import { execFile } from "node:child_process";
-import type { DerivedPredicates, PredicateVerdict } from "./decision";
+import { DERIVED_PREDICATE_KEYS, type DerivedPredicates, type PredicateVerdict } from "./decision";
 
 /**
  * The minimal context this oracle needs: the working directory the `cq`
@@ -53,17 +53,14 @@ export interface OracleContext {
 const CQ_COMMAND = "cq";
 const PREDICATES_ARGS = ["predicates"];
 
-/** The predicate keys, in the canonical order of `DerivedPredicates`. */
-const PREDICATE_KEYS = [
-  "pInvestigate",
-  "pSeed",
-  "pPlan",
-  "pResearch",
-  "pImplement",
-  "openQuestionGate",
-  "belowFloor",
-  "goalDrift",
-] as const;
+/**
+ * The predicate keys, in the canonical order of `DerivedPredicates` — the
+ * SHARED list from ./decision.ts (DERIVED_PREDICATE_KEYS), so the parser's
+ * key set can never drift from the copied interface: the compile-time tie in
+ * decision.ts pins list<->interface, and the oracle.test.ts drift guard pins
+ * the list against the CANONICAL @cq/ledger predicates.ts.
+ */
+const PREDICATE_KEYS = DERIVED_PREDICATE_KEYS;
 type PredicateKey = (typeof PREDICATE_KEYS)[number];
 
 /** Cap on captured stdout/stderr — the verdict JSON is small (< 1 KiB). */

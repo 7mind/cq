@@ -185,10 +185,11 @@ function resolveCqConfigPath(cwd: string): string {
 //
 // MIRRORS @cq/config (T223, packages/cq-config/src/{config,toml}.ts). Copied,
 // NOT imported — this extension is a standalone store-path file outside the
-// cq-ledgers workspace. The only cq.toml tables this needs are the three FLAT
-// `key = "value"` tables `[aliases]`, `[tiers]`, `[agent_tiers]`; we do not need
-// a full TOML 1.0 parser (the smol-toml dep @cq/config uses), only a flat-table
-// reader. Anything outside these three tables is ignored.
+// cq-ledgers workspace. The only cq.toml tables this needs are the four FLAT
+// `key = "value"` tables `[aliases]`, `[tiers]`, `[agent_tiers]`, and
+// `[agent_efforts]`; we do not need a full TOML 1.0 parser (the smol-toml dep
+// @cq/config uses), only a flat-table reader. Anything outside these four
+// tables is ignored.
 
 // ── Effort vocabulary — mirror of @cq/config (T284/T286) ─────────────────────
 //
@@ -221,15 +222,18 @@ function legalEfforts(harness: string): string {
  * A `<harness>:<model>[:<effort>]` token: harness is "claude" or "pi", with an
  * OPTIONAL trailing effort suffix (mirror of @cq/config ReviewerToken — T284/
  * T286). `effort` is null when no valid suffix was present.
+ *
+ * Exported (with CqConfigSubset, parseFlatToml, and resolveAgentToken) for the
+ * [agent_efforts] equivalence test in cq-subagent-dispatch.test.ts.
  */
-interface CqToken {
+export interface CqToken {
   harness: string;
   model: string;
   effort: string | null;
 }
 
 /** The subset of cq.toml this extension reads. */
-interface CqConfigSubset {
+export interface CqConfigSubset {
   aliases: Record<string, string>;
   /**
    * The SHARED top-level `[tiers]` (tier name -> raw token/alias), or null if
@@ -245,15 +249,22 @@ interface CqConfigSubset {
   harnessTiers: Record<string, Record<string, string>>;
   /** agent name -> tier name. */
   agentTiers: Record<string, string> | null;
+  /**
+   * The `[agent_efforts]` per-agent effort override (Q254): agent name ->
+   * effort name; `{}` when absent (mirrors @cq/config). ORTHOGONAL to
+   * `[agent_tiers]`: the tier axis picks the MODEL; this axis overrides the
+   * resolved token's EFFORT (applyAgentEffort below).
+   */
+  agentEfforts: Record<string, string>;
 }
 
 const VALID_TIERS = new Set(["fast", "standard", "frontier"]);
 // MIRRORS @cq/config DEFAULT_TIER: an agent with no [agent_tiers] entry is
 // "standard".
 const DEFAULT_TIER = "standard";
-// The three flat tables this reader understands; any other `[section]` header
+// The four flat tables this reader understands; any other `[section]` header
 // switches the reader into an ignored section.
-const FLAT_TABLES = new Set(["aliases", "tiers", "agent_tiers"]);
+const FLAT_TABLES = new Set(["aliases", "tiers", "agent_tiers", "agent_efforts"]);
 
 /**
  * Strip a TOML inline `#` comment and surrounding whitespace from a line.
@@ -282,13 +293,14 @@ function unquoteTomlValue(raw: string): string {
 }
 
 /**
- * INLINED flat-table TOML reader. Parses ONLY `[aliases]`, `[tiers]`, and
- * `[agent_tiers]` as flat `key = "value"` string tables; every other section
- * (e.g. `[webui]`, top-level `reviewers = [...]` arrays) is ignored. Returns
- * `null` for a table that never appeared, `{}` for a table that appeared empty
- * (mirroring @cq/config's "absent => null" distinction for [tiers]/[agent_tiers]).
+ * INLINED flat-table TOML reader. Parses ONLY `[aliases]`, `[tiers]`,
+ * `[agent_tiers]`, and `[agent_efforts]` as flat `key = "value"` string tables;
+ * every other section (e.g. `[webui]`, top-level `reviewers = [...]` arrays) is
+ * ignored. Returns `null` for a table that never appeared, `{}` for a table
+ * that appeared empty (mirroring @cq/config's "absent => null" distinction for
+ * [tiers]/[agent_tiers] and its "absent => {}" default for [agent_efforts]).
  */
-function parseFlatToml(source: string): CqConfigSubset {
+export function parseFlatToml(source: string): CqConfigSubset {
   const tables: Record<string, Record<string, string>> = {};
   const harnessTiers: Record<string, Record<string, string>> = {};
   // The table body lines are written into, or null inside an ignored section.
@@ -322,6 +334,7 @@ function parseFlatToml(source: string): CqConfigSubset {
     tiers: tables.tiers ?? null,
     harnessTiers,
     agentTiers: tables.agent_tiers ?? null,
+    agentEfforts: tables.agent_efforts ?? {},
   };
 }
 
@@ -434,13 +447,45 @@ function resolveTierToken(config: CqConfigSubset, tier: string, activeHarness: s
 }
 
 /**
- * Resolve an agent end-to-end: agent name -> tier -> token (for the active
- * harness's tier map). MIRRORS @cq/config resolveAgentModel. Returns null when
- * no tiered model applies (caller then falls back to the parent session's
- * active model).
+ * Apply the `[agent_efforts]` per-agent effort override to a resolved token
+ * (Q254). MIRRORS @cq/config applyAgentEffort
+ * (packages/cq-config/src/config.ts), with the SAME semantics:
+ *  - `[agent_efforts]` has an entry for `agentName` -> the returned token's
+ *    `effort` IS that override (override wins over the tier token's
+ *    `:<effort>` suffix, including when the suffix is absent);
+ *  - no entry -> `token` is returned unchanged (tier token effort applies).
+ *
+ * The override is validated against the RESOLVED token's harness via isEffort,
+ * exactly like the canonical. The only divergence is the FAILURE MODE, per this
+ * file's pinned lenient policy (see parseCqToken): @cq/config FAILS FAST
+ * (throws CqConfigError) on an effort invalid for the resolved harness; this
+ * lenient mirror returns `null` instead, so the caller degrades to the parent
+ * session's model rather than dispatching a contaminated token.
  */
-function resolveAgentToken(config: CqConfigSubset, agentName: string, activeHarness: string): CqToken | null {
-  return resolveTierToken(config, resolveAgentTier(config, agentName), activeHarness);
+function applyAgentEffort(config: CqConfigSubset, agentName: string, token: CqToken): CqToken | null {
+  const override = config.agentEfforts[agentName];
+  if (override === undefined) {
+    return token;
+  }
+  if (!isEffort(token.harness, override)) {
+    return null; // lenient mirror of @cq/config's fail-fast throw
+  }
+  return { ...token, effort: override };
+}
+
+/**
+ * Resolve an agent end-to-end: agent name -> tier -> token (for the active
+ * harness's tier map), then the `[agent_efforts]` per-agent effort override
+ * (Q254) — MIRRORS @cq/config resolveAgentModel's pipeline
+ * (resolveAgentTier -> tierModel -> applyAgentEffort). Returns null when no
+ * tiered model applies, or when the agent's effort override is invalid for the
+ * resolved harness (lenient mirror of the canonical throw) — the caller then
+ * falls back to the parent session's active model.
+ */
+export function resolveAgentToken(config: CqConfigSubset, agentName: string, activeHarness: string): CqToken | null {
+  const token = resolveTierToken(config, resolveAgentTier(config, agentName), activeHarness);
+  if (token === null) return null;
+  return applyAgentEffort(config, agentName, token);
 }
 
 /**
