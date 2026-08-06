@@ -424,7 +424,7 @@ in
         ++ lib.optional codegraphSet {
           target = "*";
           tags = [ "codegraph" ];
-          prompt = ''When the codegraph MCP is available, prefer `codegraph_status`/`codegraph_context`/`codegraph_search` over grep/Read for symbol lookups and "where is X / what calls X / which sites set X" questions — it is a pre-built index and usually answers in 2–3 calls. But first confirm the current repo is actually indexed: check `codegraph_status` for the repo's language in the index and verify the index points at this working tree (e.g. a probe `codegraph_search`/`codegraph_files` returns hits). If the language isn't indexed yet, or the index targets a different tree, skip codegraph and use `rg`/Read — don't burn calls on an uncovered repo.'';
+          prompt = ''When the codegraph MCP is available, prefer `codegraph_explore` over grep/Read for symbol lookups and "where is X / what calls X / what breaks if I change X" questions: it returns verbatim line-numbered source plus callers and blast radius. Re-query with a refined question if the first answer is thin — a few explore calls still beat a grep/Read sweep. Zero hits means this tree isn't indexed for that language; fall back to `rg`/Read.'';
         }
       );
     }
