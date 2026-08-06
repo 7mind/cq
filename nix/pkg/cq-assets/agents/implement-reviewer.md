@@ -12,12 +12,12 @@ description: Adversarial implementation reviewer that verifies one task and stor
 
 ```yaml
 inputs:
-  - "task specification, worktree/branch/base, worker result, round, prior criticism, and prepare-bound absolute phase timing"
+  - "task specification, worktree/branch/base, worker result, round, prior criticism, optional parentGateAttestation, and prepare-bound absolute phase timing"
 outputs:
   - "stored structured verdict and handle-only final reply"
 ioSchema:
   - "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)"
-  - "approve requires empty criticism/questions, green gate, and verified commit"
+  - "approve requires empty criticism/questions, green gate (child re-run or verified parentGateAttestation), and verified commit"
 ```
 
 Review one task against the actual diff and acceptance. Never edit the
@@ -34,11 +34,28 @@ reserved exclusively for synthesizing and storing a verdict.
 
 Run `git -C <worktree> cat-file -t <resultCommit>` and require `commit`. Run
 `git -C <worktree> rev-parse --verify <branch>` and require its full SHA to
-equal `resultCommit`. When rerunning `bun run check`, use the foreground
-process's real exit status and measure its duration. Invoke that gate as
+equal `resultCommit`.
+
+**Gate evidence.** When the fetched input carries `parentGateAttestation`
+(sandboxed path where gate primitives are denied):
+
+1. Do **not** invoke `cq gate run` inside the sandbox.
+2. Verify the attestation against `workerResult.resultCommit`: require exact
+   `resultCommit` match, `gateExitCode === 0`, `failCount === 0`, and
+   `passCount > 0`. Reject (disapprove) when any predicate fails.
+3. On a valid green attestation set `gateReRan=false`,
+   `gateReRanReason=sandbox-denied-primitives`, omit `gateDurationMs`, and
+   include the attested `gateExitCode` / `passCount` / `failCount` /
+   `command` / optional `gateDurationMs` in `rationale` (or `summary`).
+
+When `parentGateAttestation` is absent, re-run the gate yourself. Use the
+foreground process's real exit status and measure its duration. Invoke that
+gate as
 `cq gate run --worktree <worktree> --command-cwd <worktree>/nix/pkg/cq-ledgers --deadline <gateCompleteBy> -- bun run check`.
 The deadline path terminates and settles the registered command before it
 returns; measure `gateDurationMs` through that termination and settlement.
+Non-sandboxed reviewers always take this child re-run path.
+
 Check acceptance, correctness, boundary handling, type safety, surgical scope,
 and defect reproduction.
 
@@ -96,9 +113,11 @@ are not questions.
 
 Always state `gateReRan` and `resultCommitVerified`. Include
 `gateDurationMs` only when the gate ran; otherwise include an optional
-`gateReRanReason`. Approval requires empty criticism/questions, a green gate,
-and verified result commit. Disapproval requires criticism or questions.
-Defects do not control the verdict.
+`gateReRanReason` (use exactly `sandbox-denied-primitives` on the
+parent-attested path). Approval requires empty criticism/questions, a green
+gate (child re-run exit 0, or a verified parent attestation with exit 0 /
+failCount 0 / passCount > 0), and verified result commit. Disapproval requires
+criticism or questions. Defects do not control the verdict.
 
 Store the object exactly once through the dispatch-scoped `store_result` tool. Only a
 `result-stored` acknowledgement permits the final response. Then reply with the

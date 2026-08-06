@@ -18,8 +18,12 @@ Review one implementation against the actual diff and task acceptance. Verify:
 
 - acceptance through its named command, output, or invariant;
 - `resultCommit` exists as a commit and equals the worker branch tip;
-- any rerun `bun run check` uses the foreground process's real status and
-  measured duration;
+- gate evidence: either re-run `bun run check` with the foreground process's
+  real status and measured duration, or — when the dispatch carries
+  `parentGateAttestation` on the sandbox-denied path — verify that attestation
+  (`resultCommit` match, `gateExitCode === 0`, `failCount === 0`,
+  `passCount > 0`) and set `gateReRan=false` with
+  `gateReRanReason=sandbox-denied-primitives` instead of invoking `cq gate`;
 - correctness, boundary handling, type safety, and surgical scope;
 - defect-fix reproduction and regression coverage.
 
@@ -56,8 +60,9 @@ not questions.
 
 Always state `gateReRan` and `resultCommitVerified`. Include
 `gateDurationMs` only when the gate ran; otherwise include an optional
-`gateReRanReason`. Approval requires empty criticism/questions, a green gate,
-and verified result commit. Disapproval requires criticism or questions.
-Defects do not control the verdict.
+`gateReRanReason` (exactly `sandbox-denied-primitives` on the parent-attested
+path). Approval requires empty criticism/questions, a green gate (child re-run
+or verified parent attestation), and verified result commit. Disapproval
+requires criticism or questions. Defects do not control the verdict.
 
 Write nothing. Give a brief session summary, then end with the fenced object.

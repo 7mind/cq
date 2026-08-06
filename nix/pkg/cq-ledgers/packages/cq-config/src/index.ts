@@ -239,7 +239,10 @@ export {
   implementReviewerSidecar,
   IMPLEMENT_REVIEW_VERDICTS,
   IMPLEMENT_REVIEWER_PHASE_EXHAUSTION_CRITICISM,
+  SANDBOX_DENIED_PRIMITIVES_GATE_REASON,
+  validateParentGateAttestation,
 } from "./schemas/implement-reviewer.js";
+export type { ParentGateAttestation } from "./schemas/implement-reviewer.js";
 export {
   implementConflictResolverSidecar,
   CONFLICT_RESOLVER_STATUSES,

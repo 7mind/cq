@@ -373,6 +373,22 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     }
   });
 
+  it("T2007 pins parent-attested sandbox-denied gate path while preserving child re-run prose", () => {
+    for (const surface of PROMPT_SURFACES) {
+      const reviewer = normalize(renderedOf(surface, "implement-reviewer"));
+      expect(reviewer).toContain("parentGateAttestation");
+      expect(reviewer).toContain("sandbox-denied-primitives");
+      expect(reviewer).toContain(
+        "`cq gate run --worktree <worktree> --command-cwd <worktree>/nix/pkg/cq-ledgers --deadline <gateCompleteBy> -- bun run check`",
+      );
+      expect(reviewer).toContain("Non-sandboxed reviewers always take this child re-run path");
+    }
+    const codexAdvance = normalize(renderedOf("codex", "implement/advance"));
+    expect(codexAdvance).toContain("parentGateAttestation");
+    expect(codexAdvance).toContain("danger-full-access");
+    expect(codexAdvance).toContain("gateReRan=true");
+  });
+
   it("T903 pins the implausible-duration classification and foreground-rerun response", () => {
     for (const surface of PROMPT_SURFACES) {
       const advance = normalize(renderedOf(surface, "implement/advance"));

@@ -8,8 +8,9 @@
  *
  * - **Input** — the task spec (id + headline + description + acceptance), the
  *   worktree path + branch + base commit, the worker's structured result
- *   (`{ resultCommit, checkSummary, filesTouched }`), the round number, and any
- *   prior criticism already addressed.
+ *   (`{ resultCommit, checkSummary, filesTouched }`), the round number, any
+ *   prior criticism already addressed, and optionally a parent-attested gate
+ *   (K235 / T2007) for Codex sandboxed reviewers that cannot re-run the gate.
  *
  * - **Output** — the verdict block
  *   `{ taskId, verdict, criticism[], questions[], defects[], rationale,
@@ -22,7 +23,9 @@
  *   verified the worker's `resultCommit`, rather than trusting the worker's
  *   claim silently. `gateDurationMs` is required IFF `gateReRan` is true.
  *   `gateReRanReason` is an optional free-text field for stating why the gate
- *   was not re-run when `gateReRan` is false.
+ *   was not re-run when `gateReRan` is false (including the K235 token
+ *   `sandbox-denied-primitives` when the reviewer accepted a parent-attested
+ *   green gate instead of re-running inside a denying sandbox).
  */
 
 import type { RoleSchemaSidecar } from "../promptCatalog.js";
@@ -33,6 +36,13 @@ export const IMPLEMENT_REVIEW_VERDICTS = ["approve", "disapprove"] as const;
 /** The required criticism when the prepare-bound implementation-review phase expires. */
 export const IMPLEMENT_REVIEWER_PHASE_EXHAUSTION_CRITICISM =
   "Implementation-review phase budget exhausted before a complete acceptance verdict could be established.";
+
+/**
+ * gateReRanReason token for the K235 parent-attested sandbox path: the reviewer
+ * verified a parent-supplied green gate attestation instead of re-running
+ * `cq gate` inside a sandbox that denies gate primitives.
+ */
+export const SANDBOX_DENIED_PRIMITIVES_GATE_REASON = "sandbox-denied-primitives" as const;
 
 /** Server-owned fields callers omit and prepare binds into the final reviewer input. */
 export const IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS = [
@@ -61,9 +71,98 @@ const workerResultSchema = {
 } as const;
 
 /**
+ * Parent-attested full-gate evidence (K235 / T2007). The parent attaches this
+ * when launching a Codex sandboxed implement-reviewer whose sandbox denies
+ * reliable gate primitives; the reviewer verifies it against `resultCommit`
+ * instead of re-running `cq gate` inside the sandbox.
+ */
+const parentGateAttestationSchema = {
+  type: "object",
+  properties: {
+    resultCommit: {
+      type: "string",
+      minLength: 1,
+      description: "The commit SHA the parent gate observed (must equal worker resultCommit).",
+    },
+    gateExitCode: {
+      type: "integer",
+      description: "Exit status of the parent-run full gate (0 = green).",
+    },
+    passCount: {
+      type: "integer",
+      minimum: 0,
+      description: "Number of passing checks observed by the parent gate.",
+    },
+    failCount: {
+      type: "integer",
+      minimum: 0,
+      description: "Number of failing checks observed by the parent gate.",
+    },
+    gateDurationMs: {
+      type: "integer",
+      minimum: 0,
+      description: "Optional wall-clock milliseconds the parent gate took.",
+    },
+    command: {
+      type: "string",
+      minLength: 1,
+      description: "The exact full-gate command the parent ran.",
+    },
+    capturedAt: {
+      type: "string",
+      minLength: 1,
+      description: "ISO-8601 instant when the parent captured the gate evidence.",
+    },
+  },
+  required: [
+    "resultCommit",
+    "gateExitCode",
+    "passCount",
+    "failCount",
+    "command",
+    "capturedAt",
+  ],
+  additionalProperties: false,
+} as const;
+
+/**
+ * Structured parent-attested gate evidence attached to an implement-reviewer
+ * dispatch when the Codex sandbox denies reliable gate primitives (K235).
+ */
+export interface ParentGateAttestation {
+  readonly resultCommit: string;
+  readonly gateExitCode: number;
+  readonly passCount: number;
+  readonly failCount: number;
+  readonly gateDurationMs?: number;
+  readonly command: string;
+  readonly capturedAt: string;
+}
+
+/**
+ * Semantic acceptance for a parent-attested gate (K235): exact commit match
+ * against the worker `resultCommit`, green exit, zero failures, and at least
+ * one passing check. Shape validation is the input schema's job; this helper
+ * only enforces the green-attestation predicates an approving reviewer must
+ * observe before setting `gateReRan=false` with
+ * `gateReRanReason=sandbox-denied-primitives`.
+ */
+export function validateParentGateAttestation(
+  attestation: ParentGateAttestation,
+  expectedCommit: string,
+): boolean {
+  if (attestation.resultCommit !== expectedCommit) return false;
+  if (attestation.gateExitCode !== 0) return false;
+  if (attestation.failCount !== 0) return false;
+  if (!(attestation.passCount > 0)) return false;
+  return true;
+}
+
+/**
  * The parent-supplied input contract for an implement-reviewer dispatch: the
  * task spec, worktree coordinates, the worker's result, the round number, and
- * prior criticism already addressed.
+ * prior criticism already addressed. Optional `parentGateAttestation` carries
+ * K235 parent-run full-gate evidence for the Codex sandbox-denied path.
  */
 const inputSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -86,6 +185,7 @@ const inputSchema = {
     workerResult: workerResultSchema,
     round: { type: "integer", minimum: 1 },
     priorCriticism: { type: "array", items: { type: "string" } },
+    parentGateAttestation: parentGateAttestationSchema,
     responseStoreNow: {
       type: "string",
       minLength: 1,
@@ -232,14 +332,16 @@ const outputSchema = {
 
 /**
  * The implement-reviewer per-role schema sidecar (storage-format decision 3).
- * `version: 3` binds server-derived absolute phase timing into the input and
- * makes an empty disapproval invalid, so a stale deployed root rendered against
- * the old contract must not be mistaken for this one;
+ * `version: 4` (bumped from 3, T2007, decisions:K235/D185): the input contract
+ * now optionally accepts `parentGateAttestation` so a Codex sandboxed reviewer
+ * can approve against parent-attested green gate evidence without re-running
+ * `cq gate` inside a sandbox that denies gate primitives. A stale deployed root
+ * rendered against the v3 contract must not be mistaken for this one;
  * DISPATCHED_ROLE_VERSIONS derives this automatically, it is not hand-edited.
  */
 export const implementReviewerSidecar: RoleSchemaSidecar = {
   id: "implement-reviewer",
-  version: 3,
+  version: 4,
   inputSchema,
   outputSchema,
 };

@@ -120,6 +120,16 @@ configured, dispatch the panel concurrently. Native reviewers use the
 surface-specific dispatch protocol. External reviewers run through their
 configured non-interactive adapter and the shared implement-review rubric.
 
+**Sandboxed reviewer parent-attested gate.** When a surface's dispatch workflow
+requires parent-attested gate evidence for a sandboxed `implement-reviewer`
+(gate primitives denied), the parent MUST attach `parentGateAttestation` built
+from a just-run or freshly run full gate on the worker tip:
+`{ resultCommit, gateExitCode, passCount, failCount, gateDurationMs?, command,
+capturedAt }` with exact tip match, `gateExitCode === 0`, `failCount === 0`, and
+`passCount > 0`. Do not escalate the child sandbox to gain gate primitives.
+Non-sandboxed reviewers omit the attestation and still re-run the gate
+themselves; their approve path still requires child `gateReRan=true`.
+
 **External reviewer usable-verdict rule.** Fence-strip and validate stdout
 first. A complete, parseable verdict counts as a vote despite a non-zero shell
 exit; log that exit anomaly. Require full-object validation before accepting the
