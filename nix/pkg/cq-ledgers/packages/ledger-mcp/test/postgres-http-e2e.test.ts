@@ -85,9 +85,18 @@ interface McpHttpProc {
 /** Spawn a real `cq mcp --cwd <dir> --http 127.0.0.1:<port>` subprocess and wait until ready. */
 async function spawnMcpHttp(dir: string): Promise<McpHttpProc> {
   const port = await freePort();
+  // Prompt-agnostic MCP HTTP e2e: clear ambient prompt selectors so a stale
+  // CQ_PROMPT_ROOT from the agent environment cannot fail boot (D285).
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    CQ_LEDGER_PG_URL: PG_URL,
+  };
+  delete env["CQ_PROMPT_ROOT"];
+  delete env["CQ_PROMPT_SURFACE"];
+  delete env["CQ_PROMPT_SURFACES_ROOT"];
   const proc = Bun.spawn({
     cmd: [process.execPath, "run", CQ_MAIN, "mcp", "--cwd", dir, "--http", `127.0.0.1:${port}`],
-    env: { ...process.env, CQ_LEDGER_PG_URL: PG_URL },
+    env,
     stdout: "ignore",
     stderr: "pipe",
   });

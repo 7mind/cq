@@ -65,6 +65,22 @@ const PG_URL = process.env["CQ_TEST_PG_URL"];
 const here = new URL(".", import.meta.url).pathname;
 const hubMain = path.resolve(here, "..", "src", "hubServe.ts");
 
+/**
+ * Routing/auth acceptance does not exercise fetch_prompt. Clear ambient prompt
+ * selectors so a stale CQ_PROMPT_ROOT from the agent environment cannot fail
+ * hub boot before the path under test runs (mirror hubServe ownerEnv / D285).
+ */
+function hubSpawnEnv(outdir: string): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    LEDGER_WEB_OUTDIR: outdir,
+  };
+  delete env["CQ_PROMPT_ROOT"];
+  delete env["CQ_PROMPT_SURFACE"];
+  delete env["CQ_PROMPT_SURFACES_ROOT"];
+  return env;
+}
+
 /** Unwrap a single-text-block MCP tool result to its parsed JSON payload. */
 function decode<T>(result: unknown): T {
   const content = (result as { content: Array<{ type: string; text: string }> }).content;
@@ -135,7 +151,7 @@ describe.skipIf(!PG_URL)("cq serve — per-project routing over live Postgres (T
     const p = bunSpawn({
       cmd: [process.execPath, "run", hubMain, "--pg-url", PG_URL!, "--host", "127.0.0.1", "--port", "0"],
       cwd: os.tmpdir(),
-      env: { ...process.env, LEDGER_WEB_OUTDIR: outdir },
+      env: hubSpawnEnv(outdir),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -386,7 +402,7 @@ describe.skipIf(!PG_URL)("cq serve — bearer-token auth over live Postgres (T58
         TOKEN,
       ],
       cwd: os.tmpdir(),
-      env: { ...process.env, LEDGER_WEB_OUTDIR: outdir },
+      env: hubSpawnEnv(outdir),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -524,7 +540,7 @@ describe.skipIf(!PG_URL)(
           TOKEN,
         ],
         cwd: os.tmpdir(),
-        env: { ...process.env, LEDGER_WEB_OUTDIR: outdir },
+        env: hubSpawnEnv(outdir),
         stdout: "pipe",
         stderr: "pipe",
       });

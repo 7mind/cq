@@ -26,6 +26,9 @@ const exec = promisify(execFile);
 const PG_URL = process.env.CQ_TEST_PG_URL;
 const dirs: string[] = [];
 let prevPgUrlEnv: string | undefined;
+let prevPromptRoot: string | undefined;
+let prevPromptSurface: string | undefined;
+let prevPromptSurfacesRoot: string | undefined;
 
 const tick = (ms = 25): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -41,11 +44,26 @@ async function waitForFrame(getFrame: () => string, substr: string, ms = 4000): 
 
 beforeAll(() => {
   prevPgUrlEnv = process.env["CQ_LEDGER_PG_URL"];
+  // Embedded postgres smoke is prompt-agnostic: clear ambient selectors so a
+  // stale CQ_PROMPT_ROOT from the agent environment cannot poison
+  // McpLedgerClient.embedded construction (D285 / ownerEnv pattern).
+  prevPromptRoot = process.env["CQ_PROMPT_ROOT"];
+  prevPromptSurface = process.env["CQ_PROMPT_SURFACE"];
+  prevPromptSurfacesRoot = process.env["CQ_PROMPT_SURFACES_ROOT"];
+  delete process.env["CQ_PROMPT_ROOT"];
+  delete process.env["CQ_PROMPT_SURFACE"];
+  delete process.env["CQ_PROMPT_SURFACES_ROOT"];
 });
 
 afterAll(async () => {
   if (prevPgUrlEnv === undefined) delete process.env["CQ_LEDGER_PG_URL"];
   else process.env["CQ_LEDGER_PG_URL"] = prevPgUrlEnv;
+  if (prevPromptRoot === undefined) delete process.env["CQ_PROMPT_ROOT"];
+  else process.env["CQ_PROMPT_ROOT"] = prevPromptRoot;
+  if (prevPromptSurface === undefined) delete process.env["CQ_PROMPT_SURFACE"];
+  else process.env["CQ_PROMPT_SURFACE"] = prevPromptSurface;
+  if (prevPromptSurfacesRoot === undefined) delete process.env["CQ_PROMPT_SURFACES_ROOT"];
+  else process.env["CQ_PROMPT_SURFACES_ROOT"] = prevPromptSurfacesRoot;
   await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }).catch(() => undefined)));
 });
 
