@@ -182,7 +182,7 @@ const releaseShape = {
   kind: z
     .enum(["pause", "abandon"])
     .describe(
-      "pause = owner-authorized release with a questions/researches effect; " +
+      "pause = owner-authorized release with a questions/researches/tasks effect; " +
         "abandon = tokenless exact recovery of a stranded claim",
     ),
   goalId: publishShape.goalId,
@@ -193,7 +193,7 @@ const releaseShape = {
     .optional()
     .describe("required for kind=pause; REJECTED for kind=abandon"),
   effect: PlanPauseEffectSchema.optional().describe(
-    "required for kind=pause: the questions or researches to create atomically",
+    "required for kind=pause: the questions, researches, or tasks to create or wait on atomically",
   ),
   reason: z
     .string()

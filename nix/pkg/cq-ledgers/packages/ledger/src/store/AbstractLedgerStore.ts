@@ -34,6 +34,7 @@
 import type {
   ArchivePointer,
   FetchedLedger,
+  FieldValue,
   Item,
   Ledger,
   LedgerSchema,
@@ -77,7 +78,7 @@ import {
 import { UsageTracker } from "../usageStats.js";
 import type { UsageStatsSnapshot } from "../usageStats.js";
 import type { RefValidationContext, StatusChangePrecondition } from "./core.js";
-import { buildPrefixRegistry } from "../refs.js";
+import { buildPrefixRegistry, canonicalizeRef, parseRef } from "../refs.js";
 import { materialiseFetchedLedger } from "./InMemoryLedgerStore.js";
 import type {
   ArchiveContent,
@@ -615,24 +616,32 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
   /**
    * Build the cross-ledger {@link RefValidationContext} for a create/update
    * write (G80/M245). The prefix registry + active lookup come from the
-   * in-memory `this.ledgers` (all registered ledgers, kept loaded). Archived
-   * existence is read from the immutable archive files (authoritative), not
-   * solely from the fail-soft FTS archived bucket — an under-reported index
-   * must not reject a legitimate archived target as dangling (D99). Archive
-   * I/O failure escalates (unlike {@link refreshLedgerIndexArchived}) so a
+   * in-memory `this.ledgers` (all registered ledgers, kept loaded).
+   *
+   * D284: do NOT eagerly load every archive on every write. Candidate
+   * dependsOn/blockedBy refs (when supplied) select the known ledgers whose
+   * archive pointers are loaded into `archivedIds`; after that load,
+   * `archivedIds` is the sole archived authority for those ledgers. Ledgers
+   * with no candidate refs fall back to the fail-soft FTS archived bucket.
+   * When a candidate ledger is loaded, D99 still holds: under-reported FTS
+   * cannot reject a legitimate archived target as dangling. Archive I/O
+   * failure escalates (unlike {@link refreshLedgerIndexArchived}) so a
    * refresh fault surfaces as a non-dangling error rather than a false
-   * DanglingRefError. Cross-process staleness for ACTIVE items is the same
-   * best-effort coherence documented for the F2 status-change preconditions.
+   * DanglingRefError.
    */
-  private async buildRefValidationContext(): Promise<RefValidationContext> {
+  private async buildRefValidationContext(
+    fields?: Record<string, FieldValue | undefined>,
+  ): Promise<RefValidationContext> {
     const registry = buildPrefixRegistry(
       [...this.ledgers].map(([name, l]) => ({ name, schema: l.schema })),
     );
-    // Authoritative archived id sets, keyed by ledger. Built from the
-    // immutable archive sources whenever the ledger holds archive pointers.
+    const candidateLedgers = candidateArchiveLedgers(fields, registry, this.ledgers);
+    // Authoritative archived id sets — loaded ONLY for candidate known ledgers
+    // that actually hold archive pointers (D284 lazy path).
     const archivedIds = new Map<string, Set<string>>();
-    for (const [ledgerId, ledger] of this.ledgers) {
-      if (ledger.archivePointers.length === 0) continue;
+    for (const ledgerId of candidateLedgers) {
+      const ledger = this.ledgers.get(ledgerId);
+      if (ledger === undefined || ledger.archivePointers.length === 0) continue;
       const items = await this.collectArchivedItems(ledgerId);
       archivedIds.set(ledgerId, new Set(items.map((it) => it.id)));
       // Heal the fail-soft FTS cache while we hold authoritative data.
@@ -649,8 +658,11 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
         if (l !== undefined) {
           for (const m of l.milestones) for (const it of m.items) if (it.id === id) return true;
         }
-        if (this.searchIndex.hasArchivedItem(ledger, id)) return true;
-        return archivedIds.get(ledger)?.has(id) === true;
+        // D284: after load, archivedIds is the sole archived authority for that
+        // ledger. Unloaded ledgers fall back to FTS only.
+        const loaded = archivedIds.get(ledger);
+        if (loaded !== undefined) return loaded.has(id);
+        return this.searchIndex.hasArchivedItem(ledger, id);
       },
     };
   }
@@ -670,7 +682,10 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
           milestoneId,
           patch,
           this.now(),
-          await this.buildRefValidationContext(),
+          await this.buildRefValidationContext({
+            dependsOn: patch.dependsOn,
+            blockedBy: patch.blockedBy,
+          }),
           blockers,
         );
         await this.writeLedgerFile(ledger);
@@ -714,7 +729,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
           patch,
           this.now(),
           precondition,
-          await this.buildRefValidationContext(),
+          await this.buildRefValidationContext(patch.fields),
         );
         await this.writeLedgerFile(ledger);
         return cloneItem(x);
@@ -748,7 +763,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
             milestoneId,
             init,
             this.now(),
-            await this.buildRefValidationContext(),
+            await this.buildRefValidationContext(init.fields),
           );
           await this.writeLedgerFile(ledger);
           return cloneItem(x);
@@ -769,7 +784,10 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
         ledger,
         init,
         this.now(),
-        await this.buildRefValidationContext(),
+        await this.buildRefValidationContext({
+          dependsOn: init.dependsOn,
+          blockedBy: init.blockedBy,
+        }),
       );
       await this.writeLedgerFile(ledger);
       return cloneItem(x);
@@ -1079,13 +1097,27 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     this.ledgers.set(entry.name, ledger);
   }
 
-  private planLifecycleState(): InMemoryPlanLifecycleState {
+  private planLifecycleState(
+    archivedIds: ReadonlyMap<string, ReadonlySet<string>>,
+  ): InMemoryPlanLifecycleState {
     return {
       ledgers: this.ledgers,
       claims: this.planClaims,
       operations: this.planOperations,
       now: this.now,
+      archivedIds,
     };
+  }
+
+  /** D283: authoritative archived id sets for plan-publish G80 parity. */
+  private async loadArchivedIdSets(): Promise<Map<string, Set<string>>> {
+    const archivedIds = new Map<string, Set<string>>();
+    for (const [ledgerId, ledger] of this.ledgers) {
+      if (ledger.archivePointers.length === 0) continue;
+      const items = await this.collectArchivedItems(ledgerId);
+      archivedIds.set(ledgerId, new Set(items.map((it) => it.id)));
+    }
+    return archivedIds;
   }
 
   /**
@@ -1244,7 +1276,8 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
         const beforeClaims = cloneMap(this.planClaims);
         const beforeOperations = cloneMap(this.planOperations);
         try {
-          const outcome = mutate(this.planLifecycleState());
+          const archivedIds = await this.loadArchivedIdSets();
+          const outcome = mutate(this.planLifecycleState(archivedIds));
           if (outcome.dirtyLedgers.length > 0) {
             const sources: Record<string, string> = {};
             const ordered = [...new Set(outcome.dirtyLedgers)].sort((left, right) => {
@@ -1485,6 +1518,40 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
 // ---------------------------------------------------------------------------
 // Helpers (shared, persistence-agnostic)
 // ---------------------------------------------------------------------------
+
+const REF_FIELD_NAMES = ["dependsOn", "blockedBy"] as const;
+
+/**
+ * D284: ledgers named by candidate dependsOn/blockedBy entries that are worth
+ * loading archived id sets for. Free-text and unknown-ledger refs are ignored.
+ */
+function candidateArchiveLedgers(
+  fields: Record<string, FieldValue | undefined> | undefined,
+  registry: ReadonlyMap<string, string>,
+  knownLedgers: ReadonlyMap<string, Ledger>,
+): string[] {
+  if (fields === undefined) return [];
+  const out = new Set<string>();
+  for (const field of REF_FIELD_NAMES) {
+    const value = fields[field];
+    if (!Array.isArray(value)) continue;
+    for (const raw of value) {
+      if (typeof raw !== "string") continue;
+      try {
+        const canonical = canonicalizeRef(raw, registry);
+        const parsed = parseRef(canonical);
+        if (parsed.kind !== "prefixed") continue;
+        const ledger = knownLedgers.get(parsed.ledger);
+        if (ledger === undefined) continue;
+        if (ledger.archivePointers.length === 0) continue;
+        out.add(parsed.ledger);
+      } catch {
+        // free-text / unknown prefix — not a known-ledger dangling candidate
+      }
+    }
+  }
+  return [...out];
+}
 
 export function freshLedger(name: string, schema: LedgerSchema): Ledger {
   return {

@@ -79,6 +79,12 @@ export interface InMemoryPlanLifecycleState {
   readonly claims: Map<string, PlanPrivateClaimRecord>;
   readonly operations: Map<string, InMemoryPlanOperationRecord>;
   readonly now: () => string;
+  /**
+   * D283: archived existence for G80 write-gate parity with applyCreateItem.
+   * When set, `buildPlanPublishRefContext` accepts dependsOn/blockedBy of
+   * archived tasks:/milestones: ids the same way post-D99 create does.
+   */
+  readonly archivedIds?: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
 export interface InMemoryPlanMutation<T> {
@@ -369,7 +375,9 @@ function materializeReferences(
 /**
  * G80 write-gate context for plan-draft materialization. Active items from the
  * lifecycle state plus the ids allocated in THIS publish (not yet inserted when
- * earlier siblings are validated). Same dangling rejection as applyCreateItem.
+ * earlier siblings are validated). Archived existence (D283) matches
+ * applyCreateItem post-D99: a dependsOn of an archived tasks:/milestones: id is
+ * legal. Same dangling rejection as applyCreateItem for truly missing targets.
  */
 function buildPlanPublishRefContext(
   state: InMemoryPlanLifecycleState,
@@ -388,12 +396,15 @@ function buildPlanPublishRefContext(
     refExists: (ledger: string, id: string): boolean => {
       if (pendingByLedger.get(ledger)?.has(id) === true) return true;
       const source = state.ledgers.get(ledger);
-      if (source === undefined) return false;
-      for (const milestone of source.milestones) {
-        for (const item of milestone.items) {
-          if (item.id === id) return true;
+      if (source !== undefined) {
+        for (const milestone of source.milestones) {
+          for (const item of milestone.items) {
+            if (item.id === id) return true;
+          }
         }
       }
+      // D283: archived existence is legal (parity with applyCreateItem / D99).
+      if (state.archivedIds?.get(ledger)?.has(id) === true) return true;
       return false;
     },
   };

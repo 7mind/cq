@@ -109,6 +109,12 @@ export type {
   UnresolvableDispatchBase,
   VerifiedDispatchBase,
 } from "./dispatchBase.js";
+export { decideWorktreeSweep } from "./worktreeSweep.js";
+export type {
+  WorktreeAssociatedTaskStatus,
+  WorktreeSweepDecision,
+  WorktreeSweepFacts,
+} from "./worktreeSweep.js";
 export {
   resolveDependencyResultCommits,
   resolveDependencyResultCommitsForDispatch,

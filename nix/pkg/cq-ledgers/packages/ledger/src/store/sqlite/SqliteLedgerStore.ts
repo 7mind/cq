@@ -1430,7 +1430,20 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       .all() as PlanRecordRow[]) {
       operations.set(row.scope, JSON.parse(row.record_json) as InMemoryPlanOperationRecord);
     }
-    return { ledgers, claims, operations, now: this.now };
+    // D283: archived existence for plan-publish G80 parity with applyCreateItem.
+    const archivedIds = new Map<string, Set<string>>();
+    const archivedRows = this.db()
+      .query("SELECT ledger, id FROM archived_items")
+      .all() as Array<{ ledger: string; id: string }>;
+    for (const row of archivedRows) {
+      let set = archivedIds.get(row.ledger);
+      if (set === undefined) {
+        set = new Set();
+        archivedIds.set(row.ledger, set);
+      }
+      set.add(row.id);
+    }
+    return { ledgers, claims, operations, now: this.now, archivedIds };
   }
 
   private persistPlanRecords<T>(

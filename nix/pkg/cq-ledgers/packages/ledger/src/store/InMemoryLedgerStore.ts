@@ -687,7 +687,35 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
       claims: this.planClaims,
       operations: this.planOperations,
       now: this.now,
+      archivedIds: this.collectArchivedIdSets(),
     };
+  }
+
+  /** D283: archived id sets for plan-publish G80 parity with applyCreateItem. */
+  private collectArchivedIdSets(): Map<string, Set<string>> {
+    const archivedIds = new Map<string, Set<string>>();
+    const add = (ledger: string, id: string): void => {
+      let set = archivedIds.get(ledger);
+      if (set === undefined) {
+        set = new Set();
+        archivedIds.set(ledger, set);
+      }
+      set.add(id);
+    };
+    if (this.itemArchives.size > 0) {
+      for (const [key, item] of this.itemArchives) {
+        const slash = key.indexOf("/");
+        if (slash < 0) continue;
+        add(key.slice(0, slash), item.id);
+      }
+    }
+    for (const [key, group] of this.archives) {
+      const slash = key.indexOf("/");
+      if (slash < 0) continue;
+      const ledger = key.slice(0, slash);
+      for (const item of group.items) add(ledger, item.id);
+    }
+    return archivedIds;
   }
 
   private async runPlanLifecycleMutation<T>(

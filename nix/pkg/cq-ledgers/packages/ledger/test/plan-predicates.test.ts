@@ -98,6 +98,10 @@ const PROVENANCE = { author: "planner", session: "planner-session" } as const;
 const SUPPRESSING_RESEARCH_STATUSES = ["open", "wip", "inconclusive"] as const;
 /** Research-wait dispositions that RE-ENABLE P-plan (terminal research). */
 const RESUMING_RESEARCH_STATUSES = ["concluded", "abandoned"] as const;
+/** Task-wait dispositions that SUPPRESS P-plan (T1268 / T1267). */
+const SUPPRESSING_TASK_STATUSES = ["planned", "wip", "blocked"] as const;
+/** Task-wait dispositions that RE-ENABLE P-plan (T1268 / T1267). */
+const RESUMING_TASK_STATUSES = ["done", "abandoned"] as const;
 
 // --- backend registry -------------------------------------------------------
 
@@ -117,6 +121,15 @@ interface Backend {
   removeResearchFromActiveView(
     store: LifecycleStore,
     researchId: string,
+    disposition: "missing" | "archived",
+  ): Promise<void>;
+  /**
+   * T1268: remove a waited task from the ACTIVE view (missing/archived
+   * equivalence class for task waits).
+   */
+  removeTaskFromActiveView(
+    store: LifecycleStore,
+    taskId: string,
     disposition: "missing" | "archived",
   ): Promise<void>;
   dispose(store: LifecycleStore): Promise<void>;
@@ -186,6 +199,26 @@ const inMemoryBackend: Backend = {
       });
     }
   },
+  async removeTaskFromActiveView(store, taskId, disposition) {
+    const removed = spliceFromLedgersMap(store, TASKS_LEDGER, taskId);
+    if (disposition === "archived") {
+      const state = store as unknown as {
+        archives: Map<
+          string,
+          { id: string; title: string; description: string; items: Item[] }
+        >;
+      };
+      state.archives.set(`${TASKS_LEDGER}/M-ARCH-T`, {
+        id: "M-ARCH-T",
+        title: "",
+        description: "",
+        items: [removed],
+      });
+      expect(await store.fetchArchive(TASKS_LEDGER, "M-ARCH-T")).toMatchObject({
+        kind: "group",
+      });
+    }
+  },
   async dispose(store) {
     await store.dispose();
   },
@@ -202,6 +235,10 @@ const fsBackend: Backend = {
   async removeResearchFromActiveView(store, researchId) {
     spliceFromLedgersMap(store, RESEARCHES_LEDGER, researchId);
     await persistDirectLedgers(store, [RESEARCHES_LEDGER]);
+  },
+  async removeTaskFromActiveView(store, taskId) {
+    spliceFromLedgersMap(store, TASKS_LEDGER, taskId);
+    await persistDirectLedgers(store, [TASKS_LEDGER]);
   },
   async dispose(store) {
     await store.dispose();
@@ -220,6 +257,10 @@ const gitBackend: Backend = {
   async removeResearchFromActiveView(store, researchId) {
     spliceFromLedgersMap(store, RESEARCHES_LEDGER, researchId);
     await persistDirectLedgers(store, [RESEARCHES_LEDGER]);
+  },
+  async removeTaskFromActiveView(store, taskId) {
+    spliceFromLedgersMap(store, TASKS_LEDGER, taskId);
+    await persistDirectLedgers(store, [TASKS_LEDGER]);
   },
   async dispose(store) {
     await store.dispose();
@@ -246,6 +287,16 @@ const sqliteBackend: Backend = {
         RESEARCHES_LEDGER,
         researchId,
       );
+    } finally {
+      db.close();
+    }
+  },
+  async removeTaskFromActiveView(store, taskId) {
+    const dbPath = sqliteDbPaths.get(store);
+    if (dbPath === undefined) throw new Error("sqlite fixture lost its dbPath");
+    const db = openLedgerDb(dbPath);
+    try {
+      db.query("DELETE FROM items WHERE ledger = ? AND id = ?").run(TASKS_LEDGER, taskId);
     } finally {
       db.close();
     }
@@ -277,6 +328,19 @@ const postgresBackend: Backend = {
       await admin.close();
     }
     await store.invalidate(RESEARCHES_LEDGER);
+  },
+  async removeTaskFromActiveView(store, taskId) {
+    const key = pgTenantKeys.get(store);
+    if (key === undefined) throw new Error("postgres fixture lost its tenant key");
+    const admin = openPgPool(postgresTestDsn());
+    try {
+      await admin`
+        DELETE FROM items WHERE project_key = ${key} AND ledger = ${TASKS_LEDGER} AND id = ${taskId}
+      `;
+    } finally {
+      await admin.close();
+    }
+    await store.invalidate(TASKS_LEDGER);
   },
   async dispose(store) {
     const key = pgTenantKeys.get(store);
@@ -374,6 +438,102 @@ async function setResearchStatus(
     if (status === "wip") return;
   }
   await store.updateItem(RESEARCHES_LEDGER, researchId, { status, ...PROVENANCE });
+}
+
+/** Publish one draft task and pause the claim on it (T1268 guarded path). */
+async function publishAndPauseForTask(
+  store: LifecycleStore,
+  claim: PlanClaimAcknowledgement,
+  publishOp: string,
+  pauseOp: string,
+): Promise<string> {
+  await publishManifest(store, claim, publishOp, {
+    milestones: [{ key: "delivery", title: "Delivery" }],
+    tasks: [{ key: "waited", milestoneKey: "delivery", headline: "Waited task" }],
+  });
+  const waited = goalLinkedTasks(store, claim.goalId).find(
+    ({ fields }) => fields["headline"] === "Waited task",
+  );
+  if (waited === undefined) throw new Error("published waited task missing");
+  const result = await store.releasePlanClaim({
+    kind: "pause",
+    goalId: claim.goalId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    operationId: pauseOp,
+    ownerFenceToken: claim.ownerFenceToken,
+    ...PROVENANCE,
+    effect: { kind: "tasks", tasks: [waited.id] },
+  });
+  if (!result.ok || result.acknowledgement.kind !== "tasks") {
+    throw new Error("tasks pause failed");
+  }
+  return waited.id;
+}
+
+/**
+ * Set a waited task's status for predicate observation. Bypasses the managed
+ * draft write-side fence so terminal transitions remain exercisable without
+ * the implement-flow finalize path — mirrors planLifecycleInMemoryAdapter.
+ */
+async function setTaskStatus(
+  store: LifecycleStore,
+  taskId: string,
+  status: "planned" | "wip" | "blocked" | "done" | "abandoned",
+): Promise<void> {
+  const name = (store as { constructor: { name: string } }).constructor.name;
+
+  if (name === "SqliteLedgerStore") {
+    const dbPath = sqliteDbPaths.get(store);
+    if (dbPath === undefined) throw new Error("sqlite fixture lost its dbPath");
+    const db = openLedgerDb(dbPath);
+    try {
+      db.query("UPDATE items SET status = ? WHERE ledger = ? AND id = ?").run(
+        status,
+        TASKS_LEDGER,
+        taskId,
+      );
+    } finally {
+      db.close();
+    }
+    return;
+  }
+
+  if (name === "PostgresLedgerStore") {
+    const key = pgTenantKeys.get(store);
+    if (key === undefined) throw new Error("postgres fixture lost its tenant key");
+    const admin = openPgPool(postgresTestDsn());
+    try {
+      await admin`
+        UPDATE items SET status = ${status}
+        WHERE project_key = ${key} AND ledger = ${TASKS_LEDGER} AND id = ${taskId}
+      `;
+    } finally {
+      await admin.close();
+    }
+    await store.invalidate(TASKS_LEDGER);
+    return;
+  }
+
+  // InMemory / Fs / Git: mutate the in-memory ledgers map directly.
+  const state = store as unknown as {
+    ledgers: Map<string, { milestones: Array<{ items: Item[] }> }>;
+  };
+  const ledger = state.ledgers.get(TASKS_LEDGER);
+  if (ledger === undefined) throw new Error("tasks ledger missing");
+  let found = false;
+  for (const milestone of ledger.milestones) {
+    for (const item of milestone.items) {
+      if (item.id === taskId) {
+        item.status = status;
+        found = true;
+      }
+    }
+  }
+  if (!found) throw new Error(`task not found: ${taskId}`);
+  if (name === "FsLedgerStore" || name === "GitObjectLedgerBackend") {
+    await persistDirectLedgers(store, [TASKS_LEDGER]);
+  }
 }
 
 async function publishManifest(
@@ -674,6 +834,77 @@ function runPlanPredicatesSuite(backend: Backend): void {
           // The whole path unblocks: the next claim is no longer wait-gated.
           const resumed = await claimInitial(store, GOAL_ID, `wait-${disposition}-resume`, 1);
           expect(resumed.goalId).toBe(GOAL_ID);
+        } finally {
+          await backend.dispose(store);
+        }
+      });
+    }
+
+    // --- T1268 task-wait dispositions (guarded pause → pPlan) ---------------
+
+    for (const status of SUPPRESSING_TASK_STATUSES) {
+      it(`(task-wait) a real guarded tasks pause at ${status} excludes the goal from pPlan.items`, async () => {
+        const store = await backend.build();
+        try {
+          await seedLegacyGoal(store, GOAL_ID, "clarifying");
+          const claim = await claimInitial(store, GOAL_ID, `task-wait-${status}-claim`, null);
+          const taskId = await publishAndPauseForTask(
+            store,
+            claim,
+            `task-wait-${status}-publish`,
+            `task-wait-${status}-pause`,
+          );
+          await setTaskStatus(store, taskId, status);
+          const predicates = derivePredicates(store);
+          expectIds(predicates.pPlan.items, []);
+          expectIds(predicates.planBusy.items, []); // pause released the claim
+        } finally {
+          await backend.dispose(store);
+        }
+      });
+    }
+
+    for (const status of RESUMING_TASK_STATUSES) {
+      it(`(task-wait) a wait ref at ${status} re-includes the goal in pPlan.items`, async () => {
+        const store = await backend.build();
+        try {
+          await seedLegacyGoal(store, GOAL_ID, "clarifying");
+          const claim = await claimInitial(store, GOAL_ID, `task-resume-${status}-claim`, null);
+          const taskId = await publishAndPauseForTask(
+            store,
+            claim,
+            `task-resume-${status}-publish`,
+            `task-resume-${status}-pause`,
+          );
+          expectIds(derivePredicates(store).pPlan.items, []); // planned suppresses first
+          await setTaskStatus(store, taskId, status);
+          expectIds(derivePredicates(store).pPlan.items, [GOAL_ID]);
+        } finally {
+          await backend.dispose(store);
+        }
+      });
+    }
+
+    for (const disposition of ["missing", "archived"] as const) {
+      it(`(task-wait) a wait ref whose task left the active view (${disposition}) re-includes the goal`, async () => {
+        const store = await backend.build();
+        try {
+          await seedLegacyGoal(store, GOAL_ID, "clarifying");
+          const claim = await claimInitial(
+            store,
+            GOAL_ID,
+            `task-${disposition}-claim`,
+            null,
+          );
+          const taskId = await publishAndPauseForTask(
+            store,
+            claim,
+            `task-${disposition}-publish`,
+            `task-${disposition}-pause`,
+          );
+          expectIds(derivePredicates(store).pPlan.items, []);
+          await backend.removeTaskFromActiveView(store, taskId, disposition);
+          expectIds(derivePredicates(store).pPlan.items, [GOAL_ID]);
         } finally {
           await backend.dispose(store);
         }
@@ -1112,6 +1343,39 @@ describe("T853 structural guard — the research-wait table stays single-owned (
     expect(waitTable).toEqual(["packages/ledger/src/store/predicates.ts"]);
     // ... and the only other source that even NAMES the owner is the T848
     // lifecycle core, which CONSUMES it for the claim-side fence.
+    expect(waitOwnerRefs.sort()).toEqual([
+      "packages/ledger/src/store/inMemoryPlanLifecycle.ts",
+      "packages/ledger/src/store/predicates.ts",
+    ]);
+  });
+});
+
+describe("T1268 structural guard — the task-wait table stays single-owned (T1267)", () => {
+  it("no package source outside store/predicates.ts interprets the task-wait statuses", async () => {
+    const packagesRoot = fileURLToPath(new URL("../../..", import.meta.url));
+    const waitTable: string[] = [];
+    const waitOwnerRefs: string[] = [];
+    for (const pkg of await readdir(path.join(packagesRoot, "packages"))) {
+      const srcRoot = path.join(packagesRoot, "packages", pkg, "src");
+      let files: string[];
+      try {
+        files = await readdir(srcRoot, { recursive: true });
+      } catch {
+        continue;
+      }
+      for (const file of files) {
+        if (!file.endsWith(".ts") && !file.endsWith(".tsx")) continue;
+        const rel = path.join("packages", pkg, "src", file);
+        const text = await readFile(path.join(srcRoot, file), "utf8");
+        if (/const activeStatuses = new Set\(\["planned", "wip", "blocked"\]\)/.test(text)) {
+          waitTable.push(rel);
+        }
+        if (text.includes("activePlanTaskWaits")) {
+          waitOwnerRefs.push(rel);
+        }
+      }
+    }
+    expect(waitTable).toEqual(["packages/ledger/src/store/predicates.ts"]);
     expect(waitOwnerRefs.sort()).toEqual([
       "packages/ledger/src/store/inMemoryPlanLifecycle.ts",
       "packages/ledger/src/store/predicates.ts",

@@ -1277,3 +1277,60 @@ describe("T848 InMemory plan lifecycle semantics", () => {
     );
   });
 });
+
+describe("D283 plan-publish archived dependsOn parity", () => {
+  it("accepts a draft task dependsOn of an archived task id without rewrite", async () => {
+    const fixture = await buildFixture();
+    try {
+      // Seed and archive a standalone task the draft will depend on.
+      const priorMilestone = await fixture.store.createMilestone({
+        title: "prior work",
+        ...PROVENANCE,
+      });
+      const prior = await fixture.store.createItem(TASKS_LEDGER, priorMilestone.id, {
+        status: "planned",
+        fields: { headline: "prior landed task" },
+        ...PROVENANCE,
+      });
+      await fixture.store.updateItem(TASKS_LEDGER, prior.id, {
+        status: "done",
+        ...PROVENANCE,
+      });
+      await fixture.store.updateMilestone(priorMilestone.id, {
+        status: "done",
+        ...PROVENANCE,
+      });
+      await fixture.store.archiveMilestone(priorMilestone.id, "done");
+
+      const claim = await claimInitial(fixture, "d283-claim", OWNER_A, null);
+      const published = await fixture.lifecycle.publishPlanDraft({
+        goalId: "G1",
+        claimId: claim.claimId,
+        generation: claim.generation,
+        operationId: "d283-publish",
+        ownerFenceToken: claim.ownerFenceToken,
+        ...PROVENANCE,
+        manifest: {
+          milestones: [{ key: "delivery", title: "Delivery" }],
+          tasks: [
+            {
+              key: "follow-on",
+              milestoneKey: "delivery",
+              headline: "Follow-on work",
+              dependsOn: [{ kind: "ledger", ref: `tasks:${prior.id}` }],
+            },
+          ],
+        },
+      });
+      expect(published.ok).toBe(true);
+      if (!published.ok) throw new Error(`publish failed: ${published.conflict.code}`);
+      const followOnId = published.acknowledgement.manifest.tasks[0]?.id;
+      if (followOnId === undefined) throw new Error("follow-on allocation missing");
+      const followOn = fixture.store.fetchItem(TASKS_LEDGER, followOnId);
+      // Archived target accepted + canonicalized; no rewrite needed.
+      expect(followOn.fields["dependsOn"]).toEqual([`tasks:${prior.id}`]);
+    } finally {
+      await fixture.dispose();
+    }
+  });
+});

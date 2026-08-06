@@ -1883,7 +1883,28 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         JSON.parse(row.record_json) as InMemoryPlanOperationRecord,
       );
     }
-    return { ledgers, claims, operations, now: this.now };
+    // D283: archived existence for plan-publish G80 parity with applyCreateItem.
+    const archivedIds = new Map<string, Set<string>>();
+    const add = (ledger: string, id: string): void => {
+      let set = archivedIds.get(ledger);
+      if (set === undefined) {
+        set = new Set();
+        archivedIds.set(ledger, set);
+      }
+      set.add(id);
+    };
+    for (const [key, item] of this.itemArchives) {
+      const slash = key.indexOf("/");
+      if (slash < 0) continue;
+      add(key.slice(0, slash), item.id);
+    }
+    for (const [key, group] of this.archives) {
+      const slash = key.indexOf("/");
+      if (slash < 0) continue;
+      const ledger = key.slice(0, slash);
+      for (const item of group.items) add(ledger, item.id);
+    }
+    return { ledgers, claims, operations, now: this.now, archivedIds };
   }
 
   /** UPSERT the fence's side records. Only ever called inside the fence's transaction. */
