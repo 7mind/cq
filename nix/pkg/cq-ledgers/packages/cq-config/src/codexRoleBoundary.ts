@@ -496,11 +496,136 @@ function resultStoredAcknowledgementHandle(
   return undefined;
 }
 
+interface RecognizedAbortedDispatchAcknowledgement {
+  readonly reason: string;
+  readonly details: unknown | undefined;
+}
+
+/**
+ * Exact typed-abort acknowledgement recognition (D241). Mirrors
+ * {@link resultStoredAcknowledgementHandle}: only the flat AbortedDispatchResult
+ * shape or the nested store_result outcome wrapper is accepted, and only when the
+ * handle matches. Recognized aborts fail closed at the boundary with a bounded
+ * diagnostic rather than falling through to echo misclassification.
+ */
+function abortedDispatchAcknowledgement(
+  message: string,
+  expected: DispatchHandle,
+): RecognizedAbortedDispatchAcknowledgement | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(message.trim()) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return undefined;
+  }
+  const record = parsed as Record<string, unknown>;
+  const hasExactKeys = (candidate: Record<string, unknown>, keys: readonly string[]): boolean =>
+    Object.keys(candidate).length === keys.length &&
+    keys.every((key) => Object.hasOwn(candidate, key));
+  const matchesHandle = (candidate: Record<string, unknown>): boolean =>
+    candidate.attestationId === expected.attestationId &&
+    candidate.generation === expected.generation;
+  const asAbortedBody = (
+    candidate: Record<string, unknown>,
+  ): RecognizedAbortedDispatchAcknowledgement | undefined => {
+    const withoutDetails = ["state", "attestationId", "generation", "abortedAt", "reason"] as const;
+    const withDetails = [...withoutDetails, "details"] as const;
+    if (!hasExactKeys(candidate, withoutDetails) && !hasExactKeys(candidate, withDetails)) {
+      return undefined;
+    }
+    if (candidate.state !== "aborted" || !matchesHandle(candidate)) {
+      return undefined;
+    }
+    if (typeof candidate.abortedAt !== "string" || candidate.abortedAt.trim() === "") {
+      return undefined;
+    }
+    if (typeof candidate.reason !== "string" || candidate.reason.trim() === "") {
+      return undefined;
+    }
+    return Object.freeze({
+      reason: candidate.reason,
+      details: Object.hasOwn(candidate, "details") ? candidate.details : undefined,
+    });
+  };
+  const flat = asAbortedBody(record);
+  if (flat !== undefined) {
+    return flat;
+  }
+  const result = record.result;
+  if (
+    hasExactKeys(record, ["state", "result"]) &&
+    record.state === "aborted" &&
+    result !== null &&
+    typeof result === "object" &&
+    !Array.isArray(result)
+  ) {
+    return asAbortedBody(result as Record<string, unknown>);
+  }
+  return undefined;
+}
+
+/**
+ * Bounded schema diagnostic fragment from invalid-output abort details
+ * (summary, else first errors[] path+message). Mirrors invalidOutputDetailsOf
+ * without re-entering the attestation service for a pure boundary parse.
+ */
+function boundedInvalidOutputAbortDiagnostic(
+  acknowledgement: RecognizedAbortedDispatchAcknowledgement,
+): string | undefined {
+  if (acknowledgement.reason !== "invalid-output" || acknowledgement.details === undefined) {
+    return undefined;
+  }
+  if (
+    acknowledgement.details === null ||
+    typeof acknowledgement.details !== "object" ||
+    Array.isArray(acknowledgement.details)
+  ) {
+    return undefined;
+  }
+  const record = acknowledgement.details as Record<string, unknown>;
+  if (typeof record.summary === "string" && record.summary.trim() !== "") {
+    return record.summary;
+  }
+  const errors = record.errors;
+  if (!Array.isArray(errors) || errors[0] === undefined) {
+    return undefined;
+  }
+  const first = errors[0];
+  if (first === null || typeof first !== "object" || Array.isArray(first)) {
+    return undefined;
+  }
+  const entry = first as Record<string, unknown>;
+  if (typeof entry.path !== "string" || typeof entry.message !== "string") {
+    return undefined;
+  }
+  return `${entry.path} ${entry.message}`;
+}
+
+function abortedDispatchAcknowledgementMessage(
+  acknowledgement: RecognizedAbortedDispatchAcknowledgement,
+): string {
+  const diagnostic = boundedInvalidOutputAbortDiagnostic(acknowledgement);
+  if (diagnostic !== undefined) {
+    return (
+      `child final message is a typed abort acknowledgement ` +
+      `(reason=${acknowledgement.reason}): ${diagnostic}`
+    );
+  }
+  return (
+    `child final message is a typed abort acknowledgement ` +
+    `(reason=${acknowledgement.reason})`
+  );
+}
+
 /**
  * Intercept the raw Codex JSONL stream and release only the expected dispatch
  * handle. The exact fixed `result-stored` acknowledgement is projected to that
  * handle; child prose, result bodies, and other echoed output never reach the
- * caller.
+ * caller. A typed abort acknowledgement fails closed with a bounded diagnostic
+ * (D241) rather than being misclassified as an echo.
  */
 export function interceptCodexRoleBoundaryResult(
   jsonl: string,
@@ -517,6 +642,12 @@ export function interceptCodexRoleBoundaryResult(
   const storedAcknowledgement = resultStoredAcknowledgementHandle(finalMessage, expectedHandle);
   if (storedAcknowledgement !== undefined) {
     return storedAcknowledgement;
+  }
+  const abortedAcknowledgement = abortedDispatchAcknowledgement(finalMessage, expectedHandle);
+  if (abortedAcknowledgement !== undefined) {
+    throw new CodexRoleBoundaryError(
+      abortedDispatchAcknowledgementMessage(abortedAcknowledgement),
+    );
   }
   const verdict = classifyCodexFinalMessage(finalMessage, expectedHandle);
   if (verdict.verdict !== "handle-only") {

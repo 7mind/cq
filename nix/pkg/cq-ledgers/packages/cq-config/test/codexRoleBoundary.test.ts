@@ -380,6 +380,69 @@ describe("T1330 Codex role process boundary", () => {
     }
   });
 
+  test("D241 fails closed on a typed invalid-output abort ack with schema diagnostic, not echo", () => {
+    const invalidOutputDetails = {
+      roleId: "implement-worker",
+      version: 1,
+      errors: [{ path: "/resultCommit", message: "expected string" }],
+      summary: "/resultCommit expected string",
+    } as const;
+    const nestedAbort = {
+      state: "aborted",
+      result: {
+        state: "aborted",
+        ...HANDLE,
+        abortedAt: "2026-08-02T19:00:00.000Z",
+        reason: "invalid-output",
+        details: invalidOutputDetails,
+      },
+    } as const;
+    const flatAbort = {
+      state: "aborted",
+      ...HANDLE,
+      abortedAt: "2026-08-02T19:00:00.000Z",
+      reason: "invalid-output",
+      details: invalidOutputDetails,
+    } as const;
+
+    for (const acknowledgement of [nestedAbort, flatAbort]) {
+      let thrown: unknown;
+      try {
+        interceptCodexRoleBoundaryResult(
+          JSON.stringify({
+            type: "item.completed",
+            item: { type: "agent_message", text: JSON.stringify(acknowledgement) },
+          }),
+          HANDLE,
+        );
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      const message = (thrown as Error).message;
+      expect(message).toMatch(/invalid-output/);
+      expect(message).toMatch(/\/resultCommit expected string/);
+      expect(message).not.toMatch(/handle-only contract \(echo\)/);
+    }
+
+    // Non-matching handle still falls through (not treated as our abort).
+    expect(() =>
+      interceptCodexRoleBoundaryResult(
+        JSON.stringify({
+          type: "item.completed",
+          item: {
+            type: "agent_message",
+            text: JSON.stringify({
+              ...flatAbort,
+              attestationId: "att_wrong",
+            }),
+          },
+        }),
+        HANDLE,
+      ),
+    ).toThrow(/handle-only contract/);
+  });
+
   test("T1536 projects only the exact bare prepared attestation id to its handle", () => {
     expect(
       interceptCodexRoleBoundaryResult(
