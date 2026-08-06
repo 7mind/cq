@@ -88,15 +88,14 @@ export function createStaticXdgHostCatalog(
 
 /**
  * Parse an XDG project route while rejecting unsafe keys before catalog or
- * filesystem access. A malformed path under `/p/` counts as an invalid project
- * route rather than falling through to the SPA.
+ * filesystem access. Only route-shaped `/p/<seg>/(mcp|ws)` paths that fail
+ * percent-decode or key safety are `invalid` (→ 400). True non-routes
+ * (`/p/abc`, `/p/abc/other`, …) are `none` and fall through to the SPA.
  */
 export function matchSafeXdgProjectRoute(pathname: string): SafeXdgProjectRoute {
   const rawMatch = /^\/p\/([^/]+)\/(mcp|ws)$/.exec(pathname);
   if (rawMatch === null) {
-    return pathname.startsWith("/p/")
-      ? { kind: "invalid" }
-      : { kind: "none" };
+    return { kind: "none" };
   }
   let decoded: string;
   try {

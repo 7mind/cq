@@ -34,6 +34,7 @@ import {
   matchProjectRoute,
   hubTopic,
   PROJECT_DISPLAY_NAME_HEADER,
+  serveHub,
 } from "../src/hubServe.js";
 
 describe("matchProjectRoute", () => {
@@ -703,16 +704,65 @@ describe("D138 matchProjectRoute malformed percent-encoding", () => {
 });
 
 
-describe("D138 hubServe rejects malformed /p/%ZZ/{mcp,ws} with 400", () => {
-  it("hub fetch path 400s invalid project routes before static fallback", async () => {
-    const source = await Bun.file(new URL("../src/hubServe.ts", import.meta.url)).text();
-    expect(source).toContain('invalid project route');
-    expect(source).toContain('status: 400');
-    expect(source).toContain("startsWith(\"/p/\")");
-    expect(source).toContain("isSafeProjectKeySegment");
-    // matchProjectRoute itself must swallow decodeURIComponent throws.
-    const routes = await Bun.file(new URL("../src/projectRoutes.ts", import.meta.url)).text();
-    expect(routes).toContain("decodeURIComponent");
-    expect(routes).toContain("catch");
+describe("D138 hubServe bounds 400 to route-shaped decode/safety failures", () => {
+  /**
+   * In-process serveHub with a pool that never answers project lookups.
+   * The D138 cases under test (malformed decode, SPA non-routes) never touch
+   * the pool; the unknown-key 404 path uses empty SELECT rows → null display.
+   */
+  async function withHub(
+    run: (base: string) => Promise<void>,
+  ): Promise<void> {
+    const outdir = await fs.mkdtemp(path.join(os.tmpdir(), "cq-d138-hub-"));
+    const indexPath = path.join(outdir, "index.html");
+    await fs.writeFile(indexPath, "<!doctype html><div id=\"root\">SPA</div>\n", "utf8");
+    // Bun SQL tagged-template pool: empty rows → fetchProjectDisplayName null → 404.
+    const pool = Object.assign(async () => [], {
+      close: async () => undefined,
+    }) as unknown as ReturnType<typeof openPgPool>;
+    const server = serveHub(
+      { host: "127.0.0.1", port: 0, token: null, outdir },
+      pool,
+      indexPath,
+    );
+    const base = `http://127.0.0.1:${String(server.port)}`;
+    try {
+      await run(base);
+    } finally {
+      await server.stop(true);
+      await fs.rm(outdir, { recursive: true, force: true });
+    }
+  }
+
+  it("GET /p/%ZZ/mcp and /p/%ZZ/ws → 400", async () => {
+    await withHub(async (base) => {
+      const mcp = await fetch(`${base}/p/%ZZ/mcp`);
+      expect(mcp.status).toBe(400);
+      expect(await mcp.text()).toBe("invalid project route");
+      const ws = await fetch(`${base}/p/%ZZ/ws`);
+      expect(ws.status).toBe(400);
+      expect(await ws.text()).toBe("invalid project route");
+    });
+  });
+
+  it("non-route /p/abc → SPA 200 (static fallback)", async () => {
+    await withHub(async (base) => {
+      for (const p of ["/p/abc", "/p/abc/", "/p/abc/other"]) {
+        const res = await fetch(`${base}${p}`);
+        expect(res.status, p).toBe(200);
+        expect(await res.text(), p).toContain("SPA");
+      }
+    });
+  });
+
+  it("unknown well-formed key → 404", async () => {
+    await withHub(async (base) => {
+      const mcp = await fetch(`${base}/p/no-such-tenant/mcp`, { method: "POST" });
+      expect(mcp.status).toBe(404);
+      expect(await mcp.text()).toBe("unknown project");
+      const ws = await fetch(`${base}/p/no-such-tenant/ws`);
+      expect(ws.status).toBe(404);
+      expect(await ws.text()).toBe("unknown project");
+    });
   });
 });

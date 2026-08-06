@@ -551,13 +551,13 @@ export function serveHub(
             headers: { "content-type": "application/json" },
           });
         }
-        // D138: any `/p/...` path is a project-route attempt. Malformed
-        // percent-encoding (`%ZZ`), a non-mcp/ws leaf, or an unsafe key must
-        // 400 before static fallback — never throw out of decodeURIComponent
-        // and never serve the SPA for a broken tenant URL.
-        if (url.pathname.startsWith("/p/")) {
-          const route = matchProjectRoute(url.pathname);
-          if (route === null || !isSafeProjectKeySegment(route.projectKey)) {
+        // D138: 400 ONLY route-shaped `/p/<seg>/(mcp|ws)` that fail percent-decode
+        // or key safety (`%ZZ`, `..`, separators). True non-routes under `/p/`
+        // (`/p/abc`, `/p/abc/`, `/p/abc/other`) fall through to SPA static 200.
+        // Unknown well-formed keys still 404 after auth (below).
+        const route = matchProjectRoute(url.pathname);
+        if (route !== null) {
+          if (!isSafeProjectKeySegment(route.projectKey)) {
             return new Response("invalid project route", { status: 400 });
           }
           // Auth gate (Q273) BEFORE any tenant lookup/construction: an
@@ -601,8 +601,14 @@ export function serveHub(
           if (srv.upgrade(req, { data: { projectKey: route.projectKey } })) return undefined;
           return new Response("expected a websocket upgrade", { status: 426 });
         }
+        // Route-shaped but matchProjectRoute returned null → decode failure
+        // (e.g. `/p/%ZZ/mcp`). Do not SPA-fallback a broken tenant URL.
+        if (/^\/p\/[^/]+\/(mcp|ws)$/.test(url.pathname)) {
+          return new Response("invalid project route", { status: 400 });
+        }
         // Static bundle + assets stay unauthenticated even when --token is set
         // (Q273) — the UI needs to load before it can surface the token input.
+        // Includes non-route `/p/...` SPA paths (`/p/abc`, `/p/abc/other`, …).
         return serveStatic(url, opts.outdir, indexPath);
       },
       websocket: {
