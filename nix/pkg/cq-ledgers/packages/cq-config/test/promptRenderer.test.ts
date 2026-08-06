@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { DISPATCHED_ROLE_VERSIONS } from "@cq/config";
+import { DISPATCHED_ROLE_SIDECARS, DISPATCHED_ROLE_VERSIONS } from "@cq/config";
 import {
   PROMPT_SURFACE_MANIFEST_CORE_FIELDS,
   PROMPT_SURFACE_MANIFEST_FIELDS,
@@ -12,9 +12,19 @@ import {
   renderPromptSurfaceTree,
   serializePromptSurfaceManifest,
   serializePromptSurfaceManifestCore,
+  serializeRoleSchemaArtifact,
   type PromptCatalogFileInput,
   type PromptFragmentFileInput,
 } from "@cq/config/prompt-renderer";
+
+const DISPATCHED_ROLE_SCHEMAS: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    Object.values(DISPATCHED_ROLE_SIDECARS).map((sidecar) => [
+      sidecar.id,
+      serializeRoleSchemaArtifact(sidecar),
+    ]),
+  ),
+);
 
 const SLOTS = [
   "cq-command-invocation",
@@ -121,6 +131,7 @@ interface SurfaceManifestRole {
   readonly roleId: string;
   readonly version: number | null;
   readonly sha256: string;
+  readonly schemaSha256: string | null;
 }
 
 interface SurfaceManifest {
@@ -267,6 +278,7 @@ function renderNixFixture(fixture: NixFixture) {
     sourcePaths: fixture.sourcePaths,
     fragmentPaths: fixture.fragmentPaths,
     roleVersions: DISPATCHED_ROLE_VERSIONS,
+    roleSchemas: DISPATCHED_ROLE_SCHEMAS,
   });
 }
 
@@ -313,6 +325,7 @@ describe("deterministic prompt renderer core", () => {
     expect(manifest.catalogMetadataHash).toBe(sha256Hex(fixture.catalogJson));
     expect(manifest.roles.map((entry) => entry.roleId)).toEqual(["first", "nested/second"]);
     expect(manifest.roles.every((entry) => entry.version === null)).toBe(true);
+    expect(manifest.roles.every((entry) => entry.schemaSha256 === null)).toBe(true);
     expect(manifest.roles[0]!.sha256).toBe(sha256Hex(tree.artifacts[2]!.content));
     expect(manifest.roles[1]!.sha256).toBe(sha256Hex(tree.artifacts[3]!.content));
     expect(manifest.surfaceDigest).toBe(
@@ -354,7 +367,17 @@ describe("deterministic prompt renderer core", () => {
       expect(fixture.sourcePaths.every((input) => path.isAbsolute(input.path))).toBe(true);
       expect(fixture.fragmentPaths.every((input) => path.isAbsolute(input.path))).toBe(true);
       expect(tree.surface).toBe(surface);
-      expect(tree.artifacts).toHaveLength(fixture.catalog.length + 2);
+      const schemaArtifacts = tree.artifacts.filter((artifact) =>
+        artifact.path.startsWith("schemas/"),
+      );
+      const roleArtifacts = tree.artifacts.filter((artifact) =>
+        artifact.path.startsWith("roles/"),
+      );
+      expect(schemaArtifacts).toHaveLength(Object.keys(DISPATCHED_ROLE_SCHEMAS).length);
+      expect(roleArtifacts).toHaveLength(fixture.catalog.length);
+      expect(tree.artifacts).toHaveLength(
+        fixture.catalog.length + 2 + Object.keys(DISPATCHED_ROLE_SCHEMAS).length,
+      );
       expect(tree.artifacts[0]).toEqual({
         path: "catalog.json",
         content: fixture.catalogJson,
@@ -364,10 +387,21 @@ describe("deterministic prompt renderer core", () => {
       expect(manifest.catalogMetadataHash).toBe(sha256Hex(fixture.catalogJson));
       expect(manifest.roles).toHaveLength(fixture.catalog.length);
       for (const [index, entry] of manifest.roles.entries()) {
-        expect(entry.sha256).toBe(sha256Hex(tree.artifacts[index + 2]!.content));
+        expect(entry.sha256).toBe(sha256Hex(roleArtifacts[index]!.content));
+        if (entry.schemaSha256 === null) {
+          expect(
+            schemaArtifacts.some((artifact) => artifact.path === `schemas/${entry.roleId}.json`),
+          ).toBe(false);
+        } else {
+          const schema = schemaArtifacts.find(
+            (artifact) => artifact.path === `schemas/${entry.roleId}.json`,
+          );
+          expect(schema).toBeDefined();
+          expect(entry.schemaSha256).toBe(sha256Hex(schema!.content));
+        }
       }
-      expect(tree.artifacts[2]!.content).toContain("$ARGUMENTS");
-      expect(tree.artifacts[2]!.content).toContain("{{runtime_value}}");
+      expect(roleArtifacts[0]!.content).toContain("$ARGUMENTS");
+      expect(roleArtifacts[0]!.content).toContain("{{runtime_value}}");
       expect(tree.artifacts.every((artifact) => !artifact.content.includes("{{cq:fragment:"))).toBe(
         true,
       );
@@ -470,7 +504,12 @@ describe("deterministic prompt renderer core", () => {
       {
         path: "surface.json",
         content: serializePromptSurfaceManifest("codex", sha256Hex(catalogJson), [
-          { roleId: "isolated", version: null, sha256: sha256Hex(expectedRoleContent) },
+          {
+            roleId: "isolated",
+            version: null,
+            sha256: sha256Hex(expectedRoleContent),
+            schemaSha256: null,
+          },
         ]),
       },
       {
@@ -483,22 +522,24 @@ describe("deterministic prompt renderer core", () => {
 
 describe("attested surface manifest (T683)", () => {
   // specified: the canonical public byte contract needs an implementation-independent oracle.
-  test("pins the pre-refactor surface.json bytes and digest", () => {
+  test("pins the D190 surface.json bytes and digest", () => {
     const core =
-      '{"surface":"codex","catalogMetadataHash":"0000000000000000000000000000000000000000000000000000000000000000","roles":[{"roleId":"plan-advance","version":7,"sha256":"1111111111111111111111111111111111111111111111111111111111111111"},{"roleId":"advance","version":null,"sha256":"2222222222222222222222222222222222222222222222222222222222222222"}]}';
-    const digest = "a3630b4c415b8aee1cdce7ee7fa07af9ccb25f107464561a0751a213a0a92c16";
+      '{"surface":"codex","catalogMetadataHash":"0000000000000000000000000000000000000000000000000000000000000000","roles":[{"roleId":"plan-advance","version":7,"sha256":"1111111111111111111111111111111111111111111111111111111111111111","schemaSha256":"0000000000000000000000000000000000000000000000000000000000000000"},{"roleId":"advance","version":null,"sha256":"2222222222222222222222222222222222222222222222222222222222222222","schemaSha256":null}]}';
+    const digest = "c577064a1a373a224f5d548bd93214b8360491dfb7512934b52efb58a18c60ae";
     const manifest =
-      '{"surface":"codex","catalogMetadataHash":"0000000000000000000000000000000000000000000000000000000000000000","roles":[{"roleId":"plan-advance","version":7,"sha256":"1111111111111111111111111111111111111111111111111111111111111111"},{"roleId":"advance","version":null,"sha256":"2222222222222222222222222222222222222222222222222222222222222222"}],"surfaceDigest":"a3630b4c415b8aee1cdce7ee7fa07af9ccb25f107464561a0751a213a0a92c16"}';
+      '{"surface":"codex","catalogMetadataHash":"0000000000000000000000000000000000000000000000000000000000000000","roles":[{"roleId":"plan-advance","version":7,"sha256":"1111111111111111111111111111111111111111111111111111111111111111","schemaSha256":"0000000000000000000000000000000000000000000000000000000000000000"},{"roleId":"advance","version":null,"sha256":"2222222222222222222222222222222222222222222222222222222222222222","schemaSha256":null}],"surfaceDigest":"c577064a1a373a224f5d548bd93214b8360491dfb7512934b52efb58a18c60ae"}';
     const roles = [
       {
         roleId: "plan-advance",
         version: 7,
         sha256: "1111111111111111111111111111111111111111111111111111111111111111",
+        schemaSha256: "0".repeat(64),
       },
       {
         roleId: "advance",
         version: null,
         sha256: "2222222222222222222222222222222222222222222222222222222222222222",
+        schemaSha256: null,
       },
     ] as const;
 
@@ -575,25 +616,43 @@ describe("attested surface manifest (T683)", () => {
       writeFileSync(fragmentPath, `codex ${roleId} adapter`);
       fragmentPaths.push({ roleId, fragment: "host-tool-vocabulary", path: fragmentPath });
     }
+    const planAdvanceSchema = serializeRoleSchemaArtifact({
+      id: "plan-advance",
+      version: 7,
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" },
+    });
     const input = {
       surface: "codex",
       catalogJson: JSON.stringify(catalog),
       sourcePaths,
       fragmentPaths,
     };
-    const manifest = parseSurfaceManifest(
-      renderPromptSurfaceTree({ ...input, roleVersions: { "plan-advance": 7 } }).artifacts[1]!,
-    );
+    const tree = renderPromptSurfaceTree({
+      ...input,
+      roleVersions: { "plan-advance": 7 },
+      roleSchemas: { "plan-advance": planAdvanceSchema },
+    });
+    const manifest = parseSurfaceManifest(tree.artifacts[1]!);
+    expect(tree.artifacts.map((artifact) => artifact.path)).toEqual([
+      "catalog.json",
+      "surface.json",
+      "schemas/plan-advance.json",
+      "roles/plan-advance.md",
+      "roles/advance.md",
+    ]);
     expect(manifest.roles).toEqual([
       {
         roleId: "plan-advance",
         version: 7,
         sha256: manifest.roles[0]!.sha256,
+        schemaSha256: sha256Hex(planAdvanceSchema),
       },
       {
         roleId: "advance",
         version: null,
         sha256: manifest.roles[1]!.sha256,
+        schemaSha256: null,
       },
     ]);
 
@@ -604,14 +663,85 @@ describe("attested surface manifest (T683)", () => {
       renderPromptSurfaceTree({
         ...input,
         roleVersions: { "plan-advance": 7, advance: 1 },
+        roleSchemas: { "plan-advance": planAdvanceSchema },
       }),
     ).toThrow("roleVersions.advance: version entry has no dispatched catalog role");
     expect(() =>
-      renderPromptSurfaceTree({ ...input, roleVersions: { "plan-advance": 1.5 } }),
+      renderPromptSurfaceTree({
+        ...input,
+        roleVersions: { "plan-advance": 1.5 },
+        roleSchemas: { "plan-advance": planAdvanceSchema },
+      }),
     ).toThrow("roleVersions.plan-advance: expected a positive integer schema-sidecar version");
     expect(() =>
-      renderPromptSurfaceTree({ ...input, roleVersions: { "plan-advance": 0 } }),
+      renderPromptSurfaceTree({
+        ...input,
+        roleVersions: { "plan-advance": 0 },
+        roleSchemas: { "plan-advance": planAdvanceSchema },
+      }),
     ).toThrow("roleVersions.plan-advance: expected a positive integer schema-sidecar version");
+    expect(() =>
+      renderPromptSurfaceTree({
+        ...input,
+        roleVersions: { "plan-advance": 7 },
+        roleSchemas: {},
+      }),
+    ).toThrow("roleSchemas.plan-advance: missing schema-sidecar bytes for a dispatched role");
+  });
+
+  test("D190: mutating one schema byte changes surfaceDigest", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "cq-prompt-renderer-schema-digest-"));
+    roots.push(root);
+    const catalog = [
+      dispatchedRole("plan-advance", ["host-tool-vocabulary"]),
+      role("advance", "commands/cq/advance.md", ["host-tool-vocabulary"]),
+    ];
+    const sourcePaths: PromptCatalogFileInput[] = [];
+    const fragmentPaths: PromptFragmentFileInput[] = [];
+    for (const entry of catalog) {
+      const roleId = entry.roleId as string;
+      const canonicalSource = entry.canonicalSource as string;
+      const sourcePath = path.join(root, canonicalSource);
+      mkdirSync(path.dirname(sourcePath), { recursive: true });
+      writeFileSync(sourcePath, "Shared prose.\n{{cq:fragment:host-tool-vocabulary}}\n");
+      sourcePaths.push({ canonicalSource, path: sourcePath });
+      const fragmentPath = path.join(root, "fragments", "codex", roleId, "host-tool-vocabulary.md");
+      mkdirSync(path.dirname(fragmentPath), { recursive: true });
+      writeFileSync(fragmentPath, `codex ${roleId} adapter`);
+      fragmentPaths.push({ roleId, fragment: "host-tool-vocabulary", path: fragmentPath });
+    }
+    const baseSchema = serializeRoleSchemaArtifact({
+      id: "plan-advance",
+      version: 7,
+      inputSchema: { type: "object", properties: { goalId: { type: "string" } } },
+      outputSchema: { type: "object" },
+    });
+    const mutatedSchema = baseSchema.replace('"goalId"', '"goalID"');
+    expect(mutatedSchema).not.toBe(baseSchema);
+    const input = {
+      surface: "codex" as const,
+      catalogJson: JSON.stringify(catalog),
+      sourcePaths,
+      fragmentPaths,
+      roleVersions: { "plan-advance": 7 },
+    };
+    const before = parseSurfaceManifest(
+      renderPromptSurfaceTree({ ...input, roleSchemas: { "plan-advance": baseSchema } }).artifacts[1]!,
+    );
+    const after = parseSurfaceManifest(
+      renderPromptSurfaceTree({ ...input, roleSchemas: { "plan-advance": mutatedSchema } }).artifacts[1]!,
+    );
+    expect(after.roles[0]!.sha256).toBe(before.roles[0]!.sha256);
+    expect(after.roles[0]!.schemaSha256).not.toBe(before.roles[0]!.schemaSha256);
+    expect(after.surfaceDigest).not.toBe(before.surfaceDigest);
+  });
+
+  test("D190: two renders from identical inputs are byte-identical including schemas", () => {
+    const fixture = makeFixture();
+    const first = render(fixture);
+    const second = render(fixture);
+    expect(first).toEqual(second);
+    expect(JSON.stringify(first.artifacts)).toBe(JSON.stringify(second.artifacts));
   });
 });
 

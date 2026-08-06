@@ -22,6 +22,7 @@ const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 const MANIFEST_FILENAME = "catalog.json";
 const SURFACE_METADATA_FILENAME = "surface.json";
 const ROLE_ARTIFACTS_DIRECTORY = "roles";
+const SCHEMA_ARTIFACTS_DIRECTORY = "schemas";
 const PROMPT_SURFACES = ["claude", "codex", "pi"] as const;
 const PROMPT_RENDERER_CAPABILITIES =
   PROMPT_FRAGMENT_SLOTS satisfies readonly PromptRendererCapability[];
@@ -68,6 +69,12 @@ export interface PromptArtifactRoleMetadata {
    * prompt root.
    */
   readonly schemaVersion?: number | null;
+  /**
+   * Lowercase hex SHA-256 of the shipped schema-sidecar artifact bytes
+   * (`null` for an orchestrator-command role); present only for an attested
+   * prompt root (D190).
+   */
+  readonly schemaDigest?: string | null;
 }
 
 export interface PromptArtifactManifest {
@@ -97,6 +104,11 @@ export interface InMemoryPromptRoleArtifact {
   readonly bytes: Uint8Array;
 }
 
+export interface InMemoryPromptSchemaArtifact {
+  readonly roleId: string;
+  readonly bytes: Uint8Array;
+}
+
 export class PromptArtifactStoreError extends Error {
   constructor(pathLabel: string, detail: string) {
     super(`prompt artifact store: ${pathLabel}: ${detail}`);
@@ -119,6 +131,7 @@ interface PromptArtifactSnapshot {
   readonly manifestBytes: Uint8Array;
   readonly roles: readonly PromptArtifactRoleMetadata[];
   readonly artifacts: ReadonlyMap<string, Uint8Array>;
+  readonly schemaArtifacts: ReadonlyMap<string, Uint8Array>;
   readonly catalogHash?: string;
 }
 
@@ -159,6 +172,7 @@ interface PromptSurfaceRoleAttestation {
   readonly roleId: string;
   readonly version: number | null;
   readonly digest: string;
+  readonly schemaDigest: string | null;
 }
 
 /**
@@ -167,7 +181,7 @@ interface PromptSurfaceRoleAttestation {
  * (`serializePromptSurfaceManifest` in @cq/config): exactly the keys
  * `surface`, `catalogMetadataHash`, `roles`, `surfaceDigest` in this order,
  * `roles` in canonical catalog order with exactly `roleId`, `version`,
- * `sha256` per entry, and `surfaceDigest` = lowercase hex SHA-256 of the
+ * `sha256`, `schemaSha256` per entry, and `surfaceDigest` = lowercase hex SHA-256 of the
  * UTF-8 `JSON.stringify` of the object without the `surfaceDigest` key.
  */
 interface PromptSurfaceAttestation {
@@ -286,7 +300,17 @@ function parseSurfaceAttestation(surfaceBytes: Uint8Array): PromptSurfaceAttesta
         "expected a lowercase hex SHA-256 digest",
       );
     }
-    return Object.freeze({ roleId, version, digest });
+    const schemaDigest = candidate.schemaSha256;
+    if (
+      schemaDigest !== null &&
+      (typeof schemaDigest !== "string" || !SHA256_HEX_PATTERN.test(schemaDigest))
+    ) {
+      throw new PromptArtifactStoreError(
+        `${entryPath}.schemaSha256`,
+        "expected null or a lowercase hex SHA-256 digest",
+      );
+    }
+    return Object.freeze({ roleId, version, digest, schemaDigest: schemaDigest as string | null });
   });
 
   const surfaceDigest = value.surfaceDigest;
@@ -303,6 +327,7 @@ function parseSurfaceAttestation(surfaceBytes: Uint8Array): PromptSurfaceAttesta
       roleId: role.roleId,
       version: role.version,
       sha256: role.digest,
+      schemaSha256: role.schemaDigest,
     })),
   );
   if (sha256Hex(canonicalCore) !== surfaceDigest) {
@@ -698,11 +723,16 @@ function parseManifest(
   return Object.freeze(roles);
 }
 
+function schemaArtifactPathFor(roleId: string): string {
+  return path.posix.join(SCHEMA_ARTIFACTS_DIRECTORY, `${roleId}.json`);
+}
+
 function buildSnapshot(
   promptSurface: PromptSurface | undefined,
   manifestBytes: Uint8Array,
   inputArtifacts: readonly InMemoryPromptRoleArtifact[],
   attestation: PromptSurfaceAttestation | undefined,
+  inputSchemaArtifacts: readonly InMemoryPromptSchemaArtifact[] = [],
 ): PromptArtifactSnapshot {
   const parsedRoles = parseManifest(manifestBytes, promptSurface);
   const artifacts = new Map<string, Uint8Array>();
@@ -720,6 +750,23 @@ function buildSnapshot(
       );
     }
     artifacts.set(artifact.roleId, copyBytes(artifact.bytes));
+  }
+
+  const schemaArtifacts = new Map<string, Uint8Array>();
+  for (const [index, artifact] of inputSchemaArtifacts.entries()) {
+    if (!SAFE_ROLE_ID_PATTERN.test(artifact.roleId)) {
+      throw new PromptArtifactStoreError(
+        `schemaArtifacts[${index}].roleId`,
+        "expected a safe role identifier",
+      );
+    }
+    if (schemaArtifacts.has(artifact.roleId)) {
+      throw new PromptArtifactStoreError(
+        `schemaArtifacts[${index}].roleId`,
+        `duplicate schema artifact "${artifact.roleId}"`,
+      );
+    }
+    schemaArtifacts.set(artifact.roleId, copyBytes(artifact.bytes));
   }
 
   const declaredRoleIds = new Set(parsedRoles.map((role) => role.roleId));
@@ -741,8 +788,19 @@ function buildSnapshot(
   let roles = parsedRoles;
   let catalogHash: string | undefined;
   if (attestation !== undefined) {
-    roles = verifySurfaceAttestation(attestation, manifestBytes, parsedRoles, artifacts);
+    roles = verifySurfaceAttestation(
+      attestation,
+      manifestBytes,
+      parsedRoles,
+      artifacts,
+      schemaArtifacts,
+    );
     catalogHash = attestation.catalogHash;
+  } else if (schemaArtifacts.size > 0) {
+    throw new PromptArtifactStoreError(
+      SCHEMA_ARTIFACTS_DIRECTORY,
+      "schema artifacts require an attested surface manifest",
+    );
   }
 
   return Object.freeze({
@@ -750,6 +808,7 @@ function buildSnapshot(
     manifestBytes: copyBytes(manifestBytes),
     roles,
     artifacts,
+    schemaArtifacts,
     ...(catalogHash !== undefined ? { catalogHash } : {}),
   });
 }
@@ -766,6 +825,7 @@ function verifySurfaceAttestation(
   manifestBytes: Uint8Array,
   roles: readonly PromptArtifactRoleMetadata[],
   artifacts: ReadonlyMap<string, Uint8Array>,
+  schemaArtifacts: ReadonlyMap<string, Uint8Array>,
 ): readonly PromptArtifactRoleMetadata[] {
   if (attestation.catalogHash !== sha256Bytes(manifestBytes)) {
     throw new PromptArtifactStoreError(
@@ -792,6 +852,27 @@ function verifySurfaceAttestation(
       `digest entry has no manifest role "${extraAttestation.roleId}"`,
     );
   }
+
+  const dispatchedRoleIds = new Set(
+    roles.filter((role) => role.roleKind === "dispatched-subagent").map((role) => role.roleId),
+  );
+  for (const roleId of dispatchedRoleIds) {
+    if (!schemaArtifacts.has(roleId)) {
+      throw new PromptArtifactStoreError(
+        schemaArtifactPathFor(roleId),
+        `missing schema artifact for dispatched role "${roleId}"`,
+      );
+    }
+  }
+  for (const roleId of [...schemaArtifacts.keys()].sort()) {
+    if (!dispatchedRoleIds.has(roleId)) {
+      throw new PromptArtifactStoreError(
+        schemaArtifactPathFor(roleId),
+        `schema artifact has no dispatched role "${roleId}"`,
+      );
+    }
+  }
+
   return Object.freeze(
     roles.map((role) => {
       const entry = attestationByRoleId.get(role.roleId)!;
@@ -809,16 +890,39 @@ function verifySurfaceAttestation(
             `dispatched role "${role.roleId}" has no attested schema-sidecar version`,
           );
         }
-      } else if (entry.version !== null) {
-        throw new PromptArtifactStoreError(
-          `${SURFACE_METADATA_FILENAME}.roles`,
-          `orchestrator-command role "${role.roleId}" must not carry a schema-sidecar version`,
-        );
+        if (entry.schemaDigest === null) {
+          throw new PromptArtifactStoreError(
+            `${SURFACE_METADATA_FILENAME}.roles`,
+            `dispatched role "${role.roleId}" has no attested schema digest`,
+          );
+        }
+        const schemaBytes = schemaArtifacts.get(role.roleId)!;
+        if (sha256Bytes(schemaBytes) !== entry.schemaDigest) {
+          const roleIndex = roles.findIndex((candidate) => candidate.roleId === role.roleId);
+          throw new PromptArtifactStoreError(
+            `${SURFACE_METADATA_FILENAME}.roles[${roleIndex}].schemaSha256`,
+            "does not match the installed schema artifact bytes",
+          );
+        }
+      } else {
+        if (entry.version !== null) {
+          throw new PromptArtifactStoreError(
+            `${SURFACE_METADATA_FILENAME}.roles`,
+            `orchestrator-command role "${role.roleId}" must not carry a schema-sidecar version`,
+          );
+        }
+        if (entry.schemaDigest !== null) {
+          throw new PromptArtifactStoreError(
+            `${SURFACE_METADATA_FILENAME}.roles`,
+            `orchestrator-command role "${role.roleId}" must not carry a schema digest`,
+          );
+        }
       }
       return Object.freeze({
         ...role,
         promptDigest: entry.digest,
         schemaVersion: entry.version,
+        schemaDigest: entry.schemaDigest,
       });
     }),
   );
@@ -873,12 +977,14 @@ export class InMemoryPromptArtifactStore extends SnapshotPromptArtifactStore {
     surfaceBytes: Uint8Array,
     manifestBytes: Uint8Array,
     artifacts: readonly InMemoryPromptRoleArtifact[],
+    schemaArtifacts?: readonly InMemoryPromptSchemaArtifact[],
   );
   constructor(
     promptSurfaceOrManifestBytes: PromptSurface | Uint8Array,
     surfaceBytesOrArtifacts: Uint8Array | readonly InMemoryPromptRoleArtifact[],
     maybeManifestBytes?: Uint8Array,
     maybeArtifacts?: readonly InMemoryPromptRoleArtifact[],
+    maybeSchemaArtifacts?: readonly InMemoryPromptSchemaArtifact[],
   ) {
     if (typeof promptSurfaceOrManifestBytes === "string") {
       const selectedSurface = parsePromptSurface(promptSurfaceOrManifestBytes, "promptSurface");
@@ -893,13 +999,23 @@ export class InMemoryPromptArtifactStore extends SnapshotPromptArtifactStore {
         );
       }
       const attestation = validateSelectedSurface(selectedSurface, surfaceBytesOrArtifacts);
-      super(buildSnapshot(attestation.surface, maybeManifestBytes, maybeArtifacts, attestation));
+      super(
+        buildSnapshot(
+          attestation.surface,
+          maybeManifestBytes,
+          maybeArtifacts,
+          attestation,
+          maybeSchemaArtifacts ?? [],
+        ),
+      );
       return;
     }
     if (!Array.isArray(surfaceBytesOrArtifacts)) {
       throw new PromptArtifactStoreError("constructor", "expected artifacts");
     }
-    super(buildSnapshot(undefined, promptSurfaceOrManifestBytes, surfaceBytesOrArtifacts, undefined));
+    super(
+      buildSnapshot(undefined, promptSurfaceOrManifestBytes, surfaceBytesOrArtifacts, undefined, []),
+    );
   }
 }
 
@@ -980,6 +1096,68 @@ function collectFilesystemArtifacts(root: string): readonly InMemoryPromptRoleAr
   return artifacts;
 }
 
+function collectFilesystemSchemaArtifacts(root: string): readonly InMemoryPromptSchemaArtifact[] {
+  const schemasRootPath = path.join(root, SCHEMA_ARTIFACTS_DIRECTORY);
+  if (!existsSyncSafe(schemasRootPath)) {
+    return [];
+  }
+  const schemasRoot = resolveContainedPath(
+    root,
+    SCHEMA_ARTIFACTS_DIRECTORY,
+    SCHEMA_ARTIFACTS_DIRECTORY,
+  );
+  if (!statSync(schemasRoot).isDirectory()) {
+    throw new PromptArtifactStoreError(SCHEMA_ARTIFACTS_DIRECTORY, "expected a directory");
+  }
+
+  const artifacts: InMemoryPromptSchemaArtifact[] = [];
+  const visit = (directory: string, relativeDirectory: string): void => {
+    const entries = readdirSync(directory, { withFileTypes: true }).sort((left, right) =>
+      left.name.localeCompare(right.name),
+    );
+    for (const entry of entries) {
+      const relativePath =
+        relativeDirectory === "" ? entry.name : path.posix.join(relativeDirectory, entry.name);
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isSymbolicLink() || lstatSync(absolutePath).isSymbolicLink()) {
+        throw new PromptArtifactStoreError(
+          path.posix.join(SCHEMA_ARTIFACTS_DIRECTORY, relativePath),
+          "symbolic links are not schema artifacts",
+        );
+      }
+      if (entry.isDirectory()) {
+        visit(absolutePath, relativePath);
+        continue;
+      }
+      if (!entry.isFile() || !relativePath.endsWith(".json")) {
+        throw new PromptArtifactStoreError(
+          path.posix.join(SCHEMA_ARTIFACTS_DIRECTORY, relativePath),
+          "expected a JSON schema artifact",
+        );
+      }
+      const roleId = relativePath.slice(0, -".json".length);
+      if (!SAFE_ROLE_ID_PATTERN.test(roleId)) {
+        throw new PromptArtifactStoreError(
+          path.posix.join(SCHEMA_ARTIFACTS_DIRECTORY, relativePath),
+          "artifact path does not encode a safe role identifier",
+        );
+      }
+      artifacts.push({ roleId, bytes: copyBytes(readFileSync(absolutePath)) });
+    }
+  };
+  visit(schemasRoot, "");
+  return artifacts;
+}
+
+function existsSyncSafe(candidate: string): boolean {
+  try {
+    statSync(candidate);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export class FileSystemPromptArtifactStore extends SnapshotPromptArtifactStore {
   readonly root: string;
 
@@ -1021,6 +1199,7 @@ export class FileSystemPromptArtifactStore extends SnapshotPromptArtifactStore {
         manifestBytes,
         collectFilesystemArtifacts(resolvedRoot),
         attestation,
+        collectFilesystemSchemaArtifacts(resolvedRoot),
       ),
     );
     this.root = resolvedRoot;

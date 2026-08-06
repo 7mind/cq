@@ -16,6 +16,7 @@ import {
   PromptArtifactNotFoundError,
   PromptArtifactStoreError,
   type InMemoryPromptRoleArtifact,
+  type InMemoryPromptSchemaArtifact,
   type PromptArtifactStore,
 } from "../src/promptArtifactStore.js";
 
@@ -51,6 +52,7 @@ interface StoreFixture {
   readonly surfaceBytes: Uint8Array;
   readonly manifestBytes: Uint8Array;
   readonly artifacts: readonly InMemoryPromptRoleArtifact[];
+  readonly schemaArtifacts: readonly InMemoryPromptSchemaArtifact[];
 }
 
 interface StoreHandle {
@@ -90,30 +92,53 @@ function sha256Bytes(bytes: Uint8Array): string {
 }
 
 /**
- * Serialize the attested surface manifest (T683 canonical byte shape) for a
- * fixture: per-role exact-byte digests in catalog order, the catalog metadata
- * hash, and the recomputed surface aggregate digest. The optional `mutate`
- * hook tampers with the manifest BEFORE the aggregate is restamped, so tests
- * can target exactly one verification layer.
+ * Serialize the attested surface manifest (T683 / D190 canonical byte shape) for a
+ * fixture: per-role exact-byte digests in catalog order, schema digests for
+ * dispatched roles, the catalog metadata hash, and the recomputed surface
+ * aggregate digest. The optional `mutate` hook tampers with the manifest BEFORE
+ * the aggregate is restamped, so tests can target exactly one verification layer.
  */
+function schemaJsonFor(roleId: string): string {
+  return JSON.stringify({
+    id: roleId,
+    version: 1,
+    inputSchema: { type: "object" },
+    outputSchema: { type: "object" },
+  });
+}
+
 function surfaceManifestBytes(
   surface: PromptSurface,
   manifestBytes: Uint8Array,
   roles: readonly Readonly<Record<string, unknown>>[],
   artifacts: readonly InMemoryPromptRoleArtifact[],
+  schemaArtifacts: readonly InMemoryPromptSchemaArtifact[],
   mutate?: (manifest: {
     catalogMetadataHash: string;
-    roles: { roleId: string; version: number | null; sha256: string }[];
+    roles: { roleId: string; version: number | null; sha256: string; schemaSha256: string | null }[];
     surfaceDigest: string;
   }) => void,
 ): Uint8Array {
   const entries = roles.map((candidate) => {
     const roleId = candidate.roleId as string;
     const bytes = artifacts.find((artifact) => artifact.roleId === roleId)?.bytes;
+    const hasSidecar = candidate.sidecar !== null;
+    if (!hasSidecar) {
+      return {
+        roleId,
+        version: null,
+        sha256: sha256Bytes(bytes ?? new Uint8Array()),
+        schemaSha256: null,
+      };
+    }
+    const schemaBytes =
+      schemaArtifacts.find((artifact) => artifact.roleId === roleId)?.bytes ??
+      encoder.encode(schemaJsonFor(roleId));
     return {
       roleId,
-      version: candidate.sidecar === null ? null : 1,
+      version: 1,
       sha256: sha256Bytes(bytes ?? new Uint8Array()),
+      schemaSha256: sha256Bytes(schemaBytes),
     };
   });
   const serialized = serializePromptSurfaceManifest(
@@ -123,7 +148,7 @@ function surfaceManifestBytes(
   );
   const manifest = JSON.parse(serialized) as {
     catalogMetadataHash: string;
-    roles: { roleId: string; version: number | null; sha256: string }[];
+    roles: { roleId: string; version: number | null; sha256: string; schemaSha256: string | null }[];
     surfaceDigest: string;
   };
   if (mutate !== undefined) {
@@ -142,19 +167,27 @@ function surfaceManifestBytes(
 function fixture(
   roles: readonly Readonly<Record<string, unknown>>[],
   artifacts: readonly InMemoryPromptRoleArtifact[],
-  mutateSurface?: Parameters<typeof surfaceManifestBytes>[4],
+  mutateSurface?: Parameters<typeof surfaceManifestBytes>[5],
 ): StoreFixture {
   const manifestBytes = encoder.encode(JSON.stringify(roles));
+  const schemaArtifacts: InMemoryPromptSchemaArtifact[] = roles
+    .filter((candidate) => candidate.sidecar !== null)
+    .map((candidate) => {
+      const roleId = candidate.roleId as string;
+      return { roleId, bytes: encoder.encode(schemaJsonFor(roleId)) };
+    });
   return {
     surfaceBytes: surfaceManifestBytes(
       PROMPT_SURFACE,
       manifestBytes,
       roles,
       artifacts,
+      schemaArtifacts,
       mutateSurface,
     ),
     manifestBytes,
     artifacts,
+    schemaArtifacts,
   };
 }
 
@@ -188,6 +221,7 @@ function memoryAdapter(): StoreAdapter {
         input.surfaceBytes,
         input.manifestBytes,
         input.artifacts,
+        input.schemaArtifacts,
       ),
       cleanup: () => undefined,
     }),
@@ -206,6 +240,14 @@ function filesystemAdapter(): StoreAdapter {
         const artifactPath = path.join(root, "roles", `${artifact.roleId}.md`);
         mkdirSync(path.dirname(artifactPath), { recursive: true });
         writeFileSync(artifactPath, artifact.bytes);
+      }
+      if (input.schemaArtifacts.length > 0) {
+        mkdirSync(path.join(root, "schemas"));
+        for (const artifact of input.schemaArtifacts) {
+          const artifactPath = path.join(root, "schemas", `${artifact.roleId}.json`);
+          mkdirSync(path.dirname(artifactPath), { recursive: true });
+          writeFileSync(artifactPath, artifact.bytes);
+        }
       }
       return {
         store: new FileSystemPromptArtifactStore(PROMPT_SURFACE, root),
@@ -257,6 +299,7 @@ function runPromptArtifactStoreContract(adapter: StoreAdapter): void {
           intentionalDifferences: [INTENTIONAL_DIFFERENCE],
           promptDigest: sha256Bytes(CONTRACT_FIXTURE.artifacts[0]!.bytes),
           schemaVersion: 1,
+          schemaDigest: sha256Bytes(CONTRACT_FIXTURE.schemaArtifacts[0]!.bytes),
         });
         expect(decoder.decode(artifact.bytes)).toBe(
           "---\ndescription: rendered\n---\n\nKeep {{cq:literal}}, $ARGUMENTS, and ${INPUT} unchanged.\n",
@@ -265,6 +308,7 @@ function runPromptArtifactStoreContract(adapter: StoreAdapter): void {
           Uint8Array.from([0x00, 0x7f, 0x80, 0xff]),
         );
         expect(handle.store.readRole("plan/advance").metadata.schemaVersion).toBeNull();
+        expect(handle.store.readRole("plan/advance").metadata.schemaDigest).toBeNull();
       } finally {
         handle.cleanup();
       }
@@ -381,6 +425,7 @@ function runPromptArtifactStoreContract(adapter: StoreAdapter): void {
             role("plan-advance", "dispatched-subagent"),
           ],
           CONTRACT_FIXTURE.artifacts,
+          CONTRACT_FIXTURE.schemaArtifacts,
         ),
       };
       expect(() => adapter.create(mismatched)).toThrow(
@@ -413,6 +458,7 @@ function runPromptArtifactStoreContract(adapter: StoreAdapter): void {
             role("plan-advance", "dispatched-subagent"),
           ],
           CONTRACT_FIXTURE.artifacts,
+          CONTRACT_FIXTURE.schemaArtifacts,
         ),
       };
       const parsed = JSON.parse(decoder.decode(tampered.surfaceBytes)) as {
@@ -482,6 +528,7 @@ function runPromptArtifactStoreContract(adapter: StoreAdapter): void {
             roleId: "ghost-role",
             version: 1,
             sha256: "0".repeat(64),
+      schemaSha256: "0".repeat(64),
           });
         },
       );

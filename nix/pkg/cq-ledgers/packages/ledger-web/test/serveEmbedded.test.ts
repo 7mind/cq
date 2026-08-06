@@ -112,16 +112,30 @@ beforeAll(async () => {
       sidecar: { schemaRoleId: "implement-worker" },
     },
   ]);
+  const planAdvanceSchema = JSON.stringify({
+    id: "plan-advance",
+    version: 2,
+    inputSchema: { type: "object" },
+    outputSchema: { type: "object" },
+  });
+  const implementWorkerSchema = JSON.stringify({
+    id: "implement-worker",
+    version: 1,
+    inputSchema: { type: "object" },
+    outputSchema: { type: "object" },
+  });
   const roles = [
     {
       roleId: "plan-advance",
       version: 2,
       sha256: createHash("sha256").update(PROMPT_BYTES, "utf8").digest("hex"),
+      schemaSha256: createHash("sha256").update(planAdvanceSchema, "utf8").digest("hex"),
     },
     {
       roleId: "implement-worker",
       version: 1,
       sha256: createHash("sha256").update(WORKER_PROMPT_BYTES, "utf8").digest("hex"),
+      schemaSha256: createHash("sha256").update(implementWorkerSchema, "utf8").digest("hex"),
     },
   ];
   await fs.writeFile(
@@ -133,6 +147,9 @@ beforeAll(async () => {
     ),
   );
   await fs.writeFile(path.join(promptRoot, "catalog.json"), catalogJson);
+  await fs.mkdir(path.join(promptRoot, "schemas"));
+  await fs.writeFile(path.join(promptRoot, "schemas", "plan-advance.json"), planAdvanceSchema);
+  await fs.writeFile(path.join(promptRoot, "schemas", "implement-worker.json"), implementWorkerSchema);
   await fs.writeFile(path.join(promptRoot, "roles", "plan-advance.md"), PROMPT_BYTES);
   await fs.writeFile(path.join(promptRoot, "roles", "implement-worker.md"), WORKER_PROMPT_BYTES);
   webPort = await freePort();

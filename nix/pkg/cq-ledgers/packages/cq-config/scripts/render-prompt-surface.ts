@@ -2,16 +2,17 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import {
   renderPromptSurfaceTree,
+  serializeRoleSchemaArtifact,
   type PromptCatalogFileInput,
   type PromptFragmentFileInput,
 } from "../src/promptRenderer.js";
 import { serializePiRoleToolProfileManifest } from "../src/roleToolProfiles.js";
-// The per-role schema sidecars supply the contract versions stamped into the
-// attested surface manifest. This list MIRRORS
-// `promptCatalogStore.DISPATCHED_ROLE_SIDECARS`: the Nix renderer derivation
-// must not import promptCatalogStore/agentRoster because those pull in the
-// generated promptCatalog.gen.ts mirror, which is never an input to a Nix
-// prompt renderer derivation. The renderer fails the build closed when this
+// The per-role schema sidecars supply the contract versions AND the canonical
+// schema bytes stamped into the attested surface (T683 / D190). This list
+// MIRRORS `promptCatalogStore.DISPATCHED_ROLE_SIDECARS`: the Nix renderer
+// derivation must not import promptCatalogStore/agentRoster because those pull
+// in the generated promptCatalog.gen.ts mirror, which is never an input to a
+// Nix prompt renderer derivation. The renderer fails the build closed when this
 // closure drifts from the catalog's dispatched roles.
 import { implementConflictResolverSidecar } from "../src/schemas/implement-conflict-resolver.js";
 import { implementReviewerSidecar } from "../src/schemas/implement-reviewer.js";
@@ -23,18 +24,24 @@ import { planReviewerSidecar } from "../src/schemas/plan-reviewer.js";
 import { researchExperimenterSidecar } from "../src/schemas/research-experimenter.js";
 import { researchExplorerSidecar } from "../src/schemas/research-explorer.js";
 
+const DISPATCHED_ROLE_SIDECARS = [
+  planAdvanceSidecar,
+  planReviewerSidecar,
+  implementWorkerSidecar,
+  implementReviewerSidecar,
+  implementConflictResolverSidecar,
+  investigateExplorerSidecar,
+  investigateProberSidecar,
+  researchExplorerSidecar,
+  researchExperimenterSidecar,
+] as const;
+
 const DISPATCHED_ROLE_VERSIONS: Readonly<Record<string, number>> = Object.fromEntries(
-  [
-    planAdvanceSidecar,
-    planReviewerSidecar,
-    implementWorkerSidecar,
-    implementReviewerSidecar,
-    implementConflictResolverSidecar,
-    investigateExplorerSidecar,
-    investigateProberSidecar,
-    researchExplorerSidecar,
-    researchExperimenterSidecar,
-  ].map((sidecar) => [sidecar.id, sidecar.version]),
+  DISPATCHED_ROLE_SIDECARS.map((sidecar) => [sidecar.id, sidecar.version]),
+);
+
+const DISPATCHED_ROLE_SCHEMAS: Readonly<Record<string, string>> = Object.fromEntries(
+  DISPATCHED_ROLE_SIDECARS.map((sidecar) => [sidecar.id, serializeRoleSchemaArtifact(sidecar)]),
 );
 
 const argumentsAfterScript = process.argv.slice(2);
@@ -79,6 +86,7 @@ const tree = renderPromptSurfaceTree({
     "fragment-paths-json",
   ),
   roleVersions: DISPATCHED_ROLE_VERSIONS,
+  roleSchemas: DISPATCHED_ROLE_SCHEMAS,
   ...(surface === "pi" ? { roleToolProfilesJson: serializePiRoleToolProfileManifest() } : {}),
 });
 const writtenPaths = new Set<string>();

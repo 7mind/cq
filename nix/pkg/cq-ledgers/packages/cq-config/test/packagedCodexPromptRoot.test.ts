@@ -1,12 +1,25 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import * as path from "node:path";
-import { DISPATCHED_ROLE_VERSIONS } from "@cq/config";
+import {
+  DISPATCHED_ROLE_SIDECARS,
+  DISPATCHED_ROLE_VERSIONS } from "@cq/config";
 import {
   renderPromptSurfaceTree,
   type PromptCatalogFileInput,
   type PromptFragmentFileInput,
+  serializeRoleSchemaArtifact,
 } from "@cq/config/prompt-renderer";
+
+
+const DISPATCHED_ROLE_SCHEMAS: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    Object.values(DISPATCHED_ROLE_SIDECARS).map((sidecar) => [
+      sidecar.id,
+      serializeRoleSchemaArtifact(sidecar),
+    ]),
+  ),
+);
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..", "..", "..");
 const ASSETS_ROOT = path.join(REPO_ROOT, "nix", "pkg", "cq-assets");
@@ -111,6 +124,7 @@ describe("packaged Codex prompt root and command skills", () => {
         sourcePaths,
         fragmentPaths,
         roleVersions: DISPATCHED_ROLE_VERSIONS,
+    roleSchemas: DISPATCHED_ROLE_SCHEMAS,
       });
       const commands = catalog.filter(
         ({ roleKind }) => roleKind === "orchestrator-command",

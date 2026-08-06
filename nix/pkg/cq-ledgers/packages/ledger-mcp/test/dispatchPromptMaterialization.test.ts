@@ -61,14 +61,31 @@ function sha256Bytes(bytes: Uint8Array): string {
 
 function attestedStore(): InMemoryPromptArtifactStore {
   const manifestBytes = encoder.encode(JSON.stringify([CATALOG_ROLE]));
+  const schemaBytes = encoder.encode(
+    JSON.stringify({
+      id: ROLE_ID,
+      version: 1,
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" },
+    }),
+  );
   const surfaceBytes = encoder.encode(
     serializePromptSurfaceManifest(PROMPT_SURFACE, sha256Bytes(manifestBytes), [
-      { roleId: ROLE_ID, version: 1, sha256: sha256Bytes(ARTIFACT_BYTES) },
+      {
+        roleId: ROLE_ID,
+        version: 1,
+        sha256: sha256Bytes(ARTIFACT_BYTES),
+        schemaSha256: sha256Bytes(schemaBytes),
+      },
     ]),
   );
-  return new InMemoryPromptArtifactStore(PROMPT_SURFACE, surfaceBytes, manifestBytes, [
-    { roleId: ROLE_ID, bytes: ARTIFACT_BYTES },
-  ]);
+  return new InMemoryPromptArtifactStore(
+    PROMPT_SURFACE,
+    surfaceBytes,
+    manifestBytes,
+    [{ roleId: ROLE_ID, bytes: ARTIFACT_BYTES }],
+    [{ roleId: ROLE_ID, bytes: schemaBytes }],
+  );
 }
 
 describe("dispatch prompt materialization over the attested artifact store", () => {

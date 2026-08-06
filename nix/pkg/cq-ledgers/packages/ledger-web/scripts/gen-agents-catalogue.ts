@@ -42,13 +42,11 @@ import {
   DISPATCHED_ROLE_IDS,
   DISPATCHED_ROLE_VERSIONS,
   PROMPT_ROLE_SOURCE_INVENTORY,
-  getRoleSidecar,
-} from "@cq/config";
+  getRoleSidecar, DISPATCHED_ROLE_SIDECARS } from "@cq/config";
 import {
   renderPromptSurfaceTree,
   type PromptCatalogFileInput,
-  type PromptFragmentFileInput,
-} from "@cq/config/prompt-renderer";
+  type PromptFragmentFileInput, serializeRoleSchemaArtifact} from "@cq/config/prompt-renderer";
 import {
   parseAgentMarkdown,
   deriveSubagentPrivilege,
@@ -57,6 +55,16 @@ import {
   type AgentRole,
   type AgentKind,
 } from "../src/agentsCatalogue.js";
+
+
+const DISPATCHED_ROLE_SCHEMAS: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    Object.values(DISPATCHED_ROLE_SIDECARS).map((sidecar) => [
+      sidecar.id,
+      serializeRoleSchemaArtifact(sidecar),
+    ]),
+  ),
+);
 
 // --- Paths -----------------------------------------------------------------
 
@@ -158,7 +166,7 @@ function renderClaudeAgentSources(): ReadonlyMap<string, string> {
     sourcePaths,
     fragmentPaths,
     roleVersions: DISPATCHED_ROLE_VERSIONS,
-  });
+    roleSchemas: DISPATCHED_ROLE_SCHEMAS });
   return new Map(
     catalog.map((role) => {
       const artifactPath = `roles/${role.roleId}.md`;

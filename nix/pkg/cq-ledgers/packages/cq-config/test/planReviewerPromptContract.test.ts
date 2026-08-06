@@ -3,13 +3,21 @@ import * as path from "node:path";
 import {
   DISPATCHED_ROLE_VERSIONS,
   planReviewerSidecar,
-  validateAgainstSchema,
-} from "@cq/config";
+  validateAgainstSchema, DISPATCHED_ROLE_SIDECARS } from "@cq/config";
 import {
   renderPromptSurfaceTree,
   type PromptCatalogFileInput,
-  type PromptFragmentFileInput,
-} from "@cq/config/prompt-renderer";
+  type PromptFragmentFileInput, serializeRoleSchemaArtifact} from "@cq/config/prompt-renderer";
+
+
+const DISPATCHED_ROLE_SCHEMAS: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    Object.values(DISPATCHED_ROLE_SIDECARS).map((sidecar) => [
+      sidecar.id,
+      serializeRoleSchemaArtifact(sidecar),
+    ]),
+  ),
+);
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..", "..", "..");
 const ASSETS_ROOT = path.join(REPO_ROOT, "nix", "pkg", "cq-assets");
@@ -71,7 +79,7 @@ function renderedPlanReviewer(surface: PromptSurface): string {
     sourcePaths,
     fragmentPaths,
     roleVersions: DISPATCHED_ROLE_VERSIONS,
-  });
+    roleSchemas: DISPATCHED_ROLE_SCHEMAS });
   const artifact = tree.artifacts.find(({ path: artifactPath }) =>
     artifactPath.endsWith("roles/plan-reviewer.md"),
   );

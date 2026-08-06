@@ -40,6 +40,7 @@ function writePromptRoot(root: string, surface: PromptSurface, body: string): vo
       roleId: ROLE_ID,
       version: 1,
       sha256: createHash("sha256").update(roleBytes).digest("hex"),
+      schemaSha256: createHash("sha256").update(JSON.stringify({ id: ROLE_ID, version: 1, inputSchema: { type: "object" }, outputSchema: { type: "object" } }), "utf8").digest("hex"),
     },
   ];
   const surfaceJson = serializePromptSurfaceManifest(
@@ -49,6 +50,16 @@ function writePromptRoot(root: string, surface: PromptSurface, body: string): vo
   );
   writeFileSync(path.join(root, "surface.json"), surfaceJson);
   writeFileSync(path.join(root, "catalog.json"), catalogBytes);
+  mkdirSync(path.join(root, "schemas"), { recursive: true });
+  writeFileSync(
+    path.join(root, "schemas", `${ROLE_ID}.json`),
+    JSON.stringify({
+      id: ROLE_ID,
+      version: 1,
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" },
+    }),
+  );
   writeFileSync(path.join(root, "roles", `${ROLE_ID}.md`), roleBytes);
 }
 

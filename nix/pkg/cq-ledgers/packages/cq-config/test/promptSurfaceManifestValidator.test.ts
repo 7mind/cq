@@ -30,6 +30,7 @@ interface Fixture {
   catalogJson: string;
   surfaceJson: string;
   roleArtifacts: PackagedPromptSurfaceRoleArtifact[];
+  schemaArtifacts: PackagedPromptSurfaceRoleArtifact[];
 }
 
 interface ValidatorAdapter {
@@ -50,16 +51,25 @@ function makeFixture(): Fixture {
     { path: "implement-worker.md", content: "worker prompt\n" },
     { path: "plan/advance.md", content: "advance prompt\n" },
   ];
+  const schemaJson = JSON.stringify({
+    id: "implement-worker",
+    version: 3,
+    inputSchema: { type: "object" },
+    outputSchema: { type: "object" },
+  });
+  const schemaArtifacts = [{ path: "implement-worker.json", content: schemaJson }];
   const roles: readonly PromptSurfaceRoleAttestation[] = [
     {
       roleId: "implement-worker",
       version: 3,
       sha256: sha256(roleArtifacts[0]!.content),
+      schemaSha256: sha256(schemaJson),
     },
     {
       roleId: "plan/advance",
       version: null,
       sha256: sha256(roleArtifacts[1]!.content),
+      schemaSha256: null,
     },
   ];
   return {
@@ -67,6 +77,7 @@ function makeFixture(): Fixture {
     catalogJson,
     surfaceJson: serializePromptSurfaceManifest("codex", sha256(catalogJson), roles),
     roleArtifacts,
+    schemaArtifacts,
   };
 }
 
@@ -80,6 +91,11 @@ function materialize(fixture: Fixture): string {
     mkdirSync(path.dirname(destination), { recursive: true });
     writeFileSync(destination, artifact.content);
   }
+  for (const artifact of fixture.schemaArtifacts) {
+    const destination = path.join(root, "schemas", artifact.path);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    writeFileSync(destination, artifact.content);
+  }
   return root;
 }
 
@@ -89,6 +105,7 @@ function asInput(fixture: Fixture): PackagedPromptSurfaceInput {
     catalogJson: fixture.catalogJson,
     surfaceJson: fixture.surfaceJson,
     roleArtifacts: fixture.roleArtifacts,
+    schemaArtifacts: fixture.schemaArtifacts,
   };
 }
 
@@ -191,7 +208,7 @@ for (const validator of validators) {
       expect(() => validator.validate(extendedRole)).toThrow(
         new PackagedPromptSurfaceError(
           "surface.json.roles[0]",
-          "expected exactly roleId, version, and sha256",
+          "expected exactly roleId, version, sha256, and schemaSha256",
         ),
       );
     });
@@ -225,7 +242,7 @@ for (const validator of validators) {
           expect(() => validator.validate(fixture)).toThrow(
             new PackagedPromptSurfaceError(
               "surface.json.roles[0]",
-              "expected exactly roleId, version, and sha256",
+              "expected exactly roleId, version, sha256, and schemaSha256",
             ),
           );
         }
@@ -310,6 +327,39 @@ for (const validator of validators) {
         new PackagedPromptSurfaceError(
           "surface.json.roles[0].sha256",
           "does not match the installed role artifact bytes",
+        ),
+      );
+
+      const schemaTamper = makeFixture();
+      schemaTamper.schemaArtifacts[0] = {
+        ...schemaTamper.schemaArtifacts[0]!,
+        content: `${schemaTamper.schemaArtifacts[0]!.content} `,
+      };
+      expect(() => validator.validate(schemaTamper)).toThrow(
+        new PackagedPromptSurfaceError(
+          "surface.json.roles[0].schemaSha256",
+          "does not match the installed schema artifact bytes",
+        ),
+      );
+
+      const missingSchema = makeFixture();
+      missingSchema.schemaArtifacts = [];
+      expect(() => validator.validate(missingSchema)).toThrow(
+        new PackagedPromptSurfaceError(
+          "schemas",
+          'missing schema artifact "implement-worker.json"',
+        ),
+      );
+
+      const orchestratorSchema = makeFixture();
+      orchestratorSchema.schemaArtifacts = [
+        ...orchestratorSchema.schemaArtifacts,
+        { path: "plan/advance.json", content: "{}" },
+      ];
+      expect(() => validator.validate(orchestratorSchema)).toThrow(
+        new PackagedPromptSurfaceError(
+          "schemas",
+          'undeclared schema artifact "plan/advance.json"',
         ),
       );
 

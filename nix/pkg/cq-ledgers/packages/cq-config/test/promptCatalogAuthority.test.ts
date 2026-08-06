@@ -12,6 +12,7 @@ import {
   type PromptSurface,
   type PromptVerificationRoot,
 } from "@cq/config";
+import { serializeRoleSchemaArtifact } from "@cq/config/prompt-renderer";
 import { PROMPT_CATALOG_PROJECTION } from "../src/promptCatalog.gen.js";
 
 interface CatalogEntry {
@@ -216,13 +217,38 @@ function independentlyRenderRoot(
       fragmentSources,
     ),
   }));
+  const schemaArtifacts = roles.flatMap((role) => {
+    if (role.roleKind !== "dispatched-subagent") {
+      return [];
+    }
+    const sidecar = getRoleSidecar(role.roleId);
+    if (sidecar === undefined) {
+      throw new Error(`missing sidecar for dispatched role ${role.roleId}`);
+    }
+    return [
+      {
+        path: `schemas/${role.roleId}.json`,
+        content: serializeRoleSchemaArtifact(sidecar),
+      },
+    ];
+  });
   const manifestRoles = roles.map((role, index) => {
     const sidecar =
       role.roleKind === "dispatched-subagent" ? getRoleSidecar(role.roleId) : undefined;
+    if (sidecar === undefined) {
+      return {
+        roleId: role.roleId,
+        version: null,
+        sha256: createHash("sha256").update(roleArtifacts[index]!.content, "utf8").digest("hex"),
+        schemaSha256: null,
+      };
+    }
+    const schemaJson = serializeRoleSchemaArtifact(sidecar);
     return {
       roleId: role.roleId,
-      version: sidecar === undefined ? null : sidecar.version,
+      version: sidecar.version,
       sha256: createHash("sha256").update(roleArtifacts[index]!.content, "utf8").digest("hex"),
+      schemaSha256: createHash("sha256").update(schemaJson, "utf8").digest("hex"),
     };
   });
   return rootFromArtifacts(surface, [
@@ -243,6 +269,7 @@ function independentlyRenderRoot(
           },
         ]
       : []),
+    ...schemaArtifacts,
     ...roleArtifacts,
   ]);
 }

@@ -21,6 +21,7 @@
 
 import { AGENT_ROLE_TIERS } from "./agentRoster.js";
 import type { RoleSchemaSidecar } from "./promptCatalog.js";
+import { serializeRoleSchemaArtifact } from "./promptRenderer.js";
 import { planAdvanceSidecar } from "./schemas/plan-advance.js";
 import { planReviewerSidecar } from "./schemas/plan-reviewer.js";
 import { implementWorkerSidecar } from "./schemas/implement-worker.js";
@@ -62,6 +63,20 @@ export const DISPATCHED_ROLE_IDS: readonly string[] = AGENT_ROLE_TIERS.filter(
 export const DISPATCHED_ROLE_VERSIONS: Readonly<Record<string, number>> = Object.freeze(
   Object.fromEntries(
     Object.values(DISPATCHED_ROLE_SIDECARS).map((sidecar) => [sidecar.id, sidecar.version]),
+  ),
+);
+
+/**
+ * Canonical schema-sidecar JSON bytes for every dispatched role, keyed by
+ * role id (D190). The deterministic surface renderer ships these as
+ * `schemas/<roleId>.json` and folds their digests into `surfaceDigest`.
+ */
+export const DISPATCHED_ROLE_SCHEMAS: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    Object.values(DISPATCHED_ROLE_SIDECARS).map((sidecar) => [
+      sidecar.id,
+      serializeRoleSchemaArtifact(sidecar),
+    ]),
   ),
 );
 

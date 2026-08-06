@@ -6,6 +6,7 @@ import {
 import {
   PROMPT_SURFACE_MANIFEST_FIELDS,
   PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS,
+  schemaArtifactPath,
   serializePromptSurfaceManifestCore,
   type PromptSurfaceRoleAttestation,
 } from "./promptRenderer.js";
@@ -657,7 +658,7 @@ function assertSurfaceManifest(
     }
     const entryFields = Object.keys(entry).sort();
     if (!sameOrderedValues(entryFields, [...PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS].sort())) {
-      fail(entryPath, "expected exactly roleId, version, and sha256");
+      fail(entryPath, "expected exactly roleId, version, sha256, and schemaSha256");
     }
     if (entry.roleId !== role.roleId) {
       fail(`${entryPath}.roleId`, `expected "${role.roleId}" in canonical catalog order`);
@@ -670,6 +671,7 @@ function assertSurfaceManifest(
       fail(`${entryPath}.sha256`, "does not match the installed role artifact bytes");
     }
     const version = entry.version;
+    const schemaDigest = entry.schemaSha256;
     if (role.roleKind === "dispatched-subagent") {
       if (
         typeof version !== "number" ||
@@ -678,10 +680,33 @@ function assertSurfaceManifest(
       ) {
         fail(`${entryPath}.version`, "expected a positive integer schema-sidecar version");
       }
-    } else if (version !== null) {
-      fail(`${entryPath}.version`, "orchestrator-command roles must carry null");
+      if (typeof schemaDigest !== "string" || !/^[0-9a-f]{64}$/.test(schemaDigest)) {
+        fail(`${entryPath}.schemaSha256`, "expected a lowercase hex SHA-256 digest");
+      }
+      const schemaPath = schemaArtifactPath(role.roleId);
+      const schemaBytes = root.artifacts[schemaPath];
+      if (schemaBytes === undefined) {
+        fail(schemaPath, "missing shipped schema artifact");
+      } else if (schemaDigest !== sha256(schemaBytes)) {
+        fail(
+          `${entryPath}.schemaSha256`,
+          "does not match the installed schema artifact bytes",
+        );
+      }
+    } else {
+      if (version !== null) {
+        fail(`${entryPath}.version`, "orchestrator-command roles must carry null");
+      }
+      if (schemaDigest !== null) {
+        fail(`${entryPath}.schemaSha256`, "orchestrator-command roles must carry null");
+      }
     }
-    validatedEntries.push({ roleId: role.roleId, version, sha256: digest });
+    validatedEntries.push({
+      roleId: role.roleId,
+      version,
+      sha256: digest,
+      schemaSha256: schemaDigest as string | null,
+    });
   }
   const canonicalCore = serializePromptSurfaceManifestCore(
     root.surface,
@@ -710,6 +735,9 @@ function assertRoot(
     "catalog.json",
     "surface.json",
     ...roles.map((role) => `roles/${role.roleId}.md`),
+    ...roles
+      .filter((role) => role.roleKind === "dispatched-subagent")
+      .map((role) => schemaArtifactPath(role.roleId)),
   ];
   const additionalArtifactPaths = Object.keys(expected.artifacts).filter(
     (artifactPath) => !requiredArtifactPaths.includes(artifactPath),

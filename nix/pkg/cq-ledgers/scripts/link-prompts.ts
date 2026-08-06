@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import {
   PROMPT_SURFACE_MANIFEST_FIELDS,
   PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS,
+  schemaArtifactPath,
   serializePromptSurfaceManifestCore,
   type PromptSurfaceRoleAttestation,
 } from "../packages/cq-config/src/promptRenderer.js";
@@ -51,6 +52,8 @@ export interface PromptFile {
 export interface ClaudePromptRole {
   readonly roleId: string;
   readonly canonicalSource: string;
+  /** True when the catalog entry references a schema sidecar (dispatched role). */
+  readonly hasSidecar: boolean;
 }
 
 /** One Claude link and the rendered source it resolves through. */
@@ -179,7 +182,21 @@ function parseCatalog(content: string): readonly ClaudePromptRole[] {
     }
     roleIds.add(roleId);
     sources.add(canonicalSource);
-    return { roleId, canonicalSource };
+    const sidecar = Reflect.get(entry, "sidecar");
+    const hasSidecar = sidecar !== null && sidecar !== undefined;
+    if (hasSidecar) {
+      if (
+        typeof sidecar !== "object" ||
+        sidecar === null ||
+        Array.isArray(sidecar) ||
+        Reflect.get(sidecar, "schemaRoleId") !== roleId
+      ) {
+        throw new Error(
+          `rendered prompt catalog.json[${index}].sidecar must be exactly { schemaRoleId: "${roleId}" }`,
+        );
+      }
+    }
+    return { roleId, canonicalSource, hasSidecar };
   });
 }
 
@@ -243,7 +260,7 @@ function validateClaudeSurface(
     }
     if (!hasExactFields(entry, PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS)) {
       throw new Error(
-        `rendered prompt surface.json.roles[${index}] must contain exactly "roleId", "version", and "sha256"`,
+        `rendered prompt surface.json.roles[${index}] must contain exactly "roleId", "version", "sha256", and "schemaSha256"`,
       );
     }
     const roleId = Reflect.get(entry, "roleId");
@@ -273,7 +290,43 @@ function validateClaudeSurface(
         `rendered prompt surface.json.roles[${index}].sha256 does not match the installed role bytes`,
       );
     }
-    return { roleId: catalog[index]!.roleId, version, sha256: digest };
+    const schemaDigest = Reflect.get(entry, "schemaSha256");
+    const catalogRole = catalog[index]!;
+    if (catalogRole.hasSidecar) {
+      if (typeof schemaDigest !== "string" || !/^[0-9a-f]{64}$/.test(schemaDigest)) {
+        throw new Error(
+          `rendered prompt surface.json.roles[${index}].schemaSha256 must be a SHA-256 hex digest`,
+        );
+      }
+      const schemaFile = tree.find((file) => file.path === schemaArtifactPath(String(roleId)));
+      if (schemaFile === undefined || sha256Hex(schemaFile.content) !== schemaDigest) {
+        throw new Error(
+          `rendered prompt surface.json.roles[${index}].schemaSha256 does not match the installed schema bytes`,
+        );
+      }
+      if (version === null) {
+        throw new Error(
+          `rendered prompt surface.json.roles[${index}].version must be a positive integer for a dispatched role`,
+        );
+      }
+    } else {
+      if (schemaDigest !== null) {
+        throw new Error(
+          `rendered prompt surface.json.roles[${index}].schemaSha256 must be null for an orchestrator-command role`,
+        );
+      }
+      if (version !== null) {
+        throw new Error(
+          `rendered prompt surface.json.roles[${index}].version must be null for an orchestrator-command role`,
+        );
+      }
+    }
+    return {
+      roleId: catalogRole.roleId,
+      version,
+      sha256: digest,
+      schemaSha256: schemaDigest as string | null,
+    };
   });
   const canonicalCore = serializePromptSurfaceManifestCore(
     "claude",
@@ -314,6 +367,7 @@ export function validateRenderedClaudeRoot(
     "catalog.json",
     "surface.json",
     ...catalog.map((role) => `roles/${role.roleId}.md`),
+    ...catalog.filter((role) => role.hasSidecar).map((role) => schemaArtifactPath(role.roleId)),
   ]);
   for (const expectedPath of expectedPaths) {
     if (!tree.some((file) => file.path === expectedPath)) {
@@ -323,6 +377,17 @@ export function validateRenderedClaudeRoot(
   for (const file of tree) {
     if (!expectedPaths.has(file.path)) {
       throw new Error(`rendered prompt root contains undeclared file "${file.path}"`);
+    }
+  }
+  for (const role of catalog) {
+    if (role.hasSidecar) {
+      continue;
+    }
+    const forbidden = schemaArtifactPath(role.roleId);
+    if (tree.some((file) => file.path === forbidden)) {
+      throw new Error(
+        `rendered prompt root contains orchestrator schema path "${forbidden}"`,
+      );
     }
   }
   validateClaudeSurface(surfaceFile.content, tree, catalog);

@@ -35,6 +35,14 @@ export interface RenderPromptSurfaceTreeInput {
    */
   readonly roleVersions: Readonly<Record<string, number>>;
   /**
+   * Canonical schema-sidecar JSON bytes keyed by dispatched-subagent role id
+   * (D190). Every dispatched catalog role requires exactly one entry;
+   * orchestrator-command roles carry none and extra keys fail. Defaults to
+   * `{}` so orchestrator-only fixtures omit it; a dispatched catalog still
+   * fails closed when the map is incomplete.
+   */
+  readonly roleSchemas?: Readonly<Record<string, string>>;
+  /**
    * Pi-only, authoritative role/tool decision manifest. Production rendering
    * supplies it; generic renderer fixtures may omit it.
    */
@@ -52,12 +60,15 @@ export interface RenderedPromptArtifact {
  * One role entry of the attested surface manifest: the schema-sidecar contract
  * version (`null` for an orchestrator-command role, which carries no contract)
  * paired with the lowercase hex SHA-256 of the exact installed role bytes
- * (the rendered `roles/<roleId>.md` UTF-8 content, frontmatter included).
+ * (the rendered `roles/<roleId>.md` UTF-8 content, frontmatter included) and
+ * the lowercase hex SHA-256 of the shipped schema-sidecar artifact bytes
+ * (`null` when the role carries no schema — D190).
  */
 export interface PromptSurfaceRoleAttestation {
   readonly roleId: string;
   readonly version: number | null;
   readonly sha256: string;
+  readonly schemaSha256: string | null;
 }
 
 export const PROMPT_SURFACE_MANIFEST_CORE_FIELDS = [
@@ -74,9 +85,37 @@ export const PROMPT_SURFACE_MANIFEST_FIELDS = [
 ] as const;
 export type PromptSurfaceManifestField = (typeof PROMPT_SURFACE_MANIFEST_FIELDS)[number];
 
-export const PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS = ["roleId", "version", "sha256"] as const;
+export const PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS = [
+  "roleId",
+  "version",
+  "sha256",
+  "schemaSha256",
+] as const;
 export type PromptSurfaceRoleAttestationField =
   (typeof PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS)[number];
+
+/** Relative path of one shipped schema-sidecar artifact below a surface root. */
+export function schemaArtifactPath(roleId: string): string {
+  return nodePath.posix.join("schemas", `${roleId}.json`);
+}
+
+/**
+ * Canonical UTF-8 JSON bytes of one shipped schema-sidecar artifact (D190).
+ * Key order is fixed: id, version, inputSchema, outputSchema.
+ */
+export function serializeRoleSchemaArtifact(sidecar: {
+  readonly id: string;
+  readonly version: number;
+  readonly inputSchema: unknown;
+  readonly outputSchema: unknown;
+}): string {
+  return JSON.stringify({
+    id: sidecar.id,
+    version: sidecar.version,
+    inputSchema: sidecar.inputSchema,
+    outputSchema: sidecar.outputSchema,
+  });
+}
 
 export interface PromptSurfaceManifestCore {
   readonly surface: PromptSurface;
@@ -97,7 +136,12 @@ export function serializePromptSurfaceManifestCore(
   const core: PromptSurfaceManifestCore = {
     surface,
     catalogMetadataHash,
-    roles: roles.map(({ roleId, version, sha256 }) => ({ roleId, version, sha256 })),
+    roles: roles.map(({ roleId, version, sha256, schemaSha256 }) => ({
+      roleId,
+      version,
+      sha256,
+      schemaSha256,
+    })),
   };
   return JSON.stringify(core);
 }
@@ -114,10 +158,12 @@ export function serializePromptSurfaceManifestCore(
  * ```
  *
  * with exactly these keys in exactly this order, `roles` in canonical catalog
- * order, and every role entry carrying exactly `roleId`, `version`, `sha256`
- * in this order. `surfaceDigest` is the lowercase hex SHA-256 of the UTF-8
- * `JSON.stringify` of the object WITHOUT the `surfaceDigest` key (i.e.
- * `{ surface, catalogMetadataHash, roles }` in this key order).
+ * order, and every role entry carrying exactly `roleId`, `version`, `sha256`,
+ * `schemaSha256` in this order. `surfaceDigest` is the lowercase hex SHA-256 of
+ * the UTF-8 `JSON.stringify` of the object WITHOUT the `surfaceDigest` key
+ * (i.e. `{ surface, catalogMetadataHash, roles }` in this key order). The
+ * per-role `schemaSha256` folds the shipped schema-sidecar bytes into the
+ * aggregate (D190 / D185 class), so a one-byte schema change moves the digest.
  */
 export function serializePromptSurfaceManifest(
   surface: PromptSurface,
@@ -334,11 +380,10 @@ function parseCatalog(catalogJson: string): readonly CatalogRole[] {
 }
 
 /**
- * Validate the schema-sidecar version map against the parsed catalog and
- * return the attestation version for one role: the stamped positive-integer
- * sidecar version for a dispatched subagent, `null` for an orchestrator
- * command. The map must cover every dispatched role exactly (a missing,
- * extra, or non-positive-integer entry fails the build closed).
+ * Validate the schema-sidecar version map and schema-byte map against the
+ * parsed catalog. Both maps must cover every dispatched role exactly (a
+ * missing, extra, non-positive-integer version, or non-string schema entry
+ * fails the build closed). Orchestrator-command roles carry neither.
  */
 function validateRoleVersions(
   roleVersions: Readonly<Record<string, number>>,
@@ -369,6 +414,40 @@ function validateRoleVersions(
       throw new PromptRendererError(
         `roleVersions.${roleId}`,
         "missing schema-sidecar version for a dispatched role",
+      );
+    }
+  }
+}
+
+function validateRoleSchemas(
+  roleSchemas: Readonly<Record<string, string>>,
+  roles: readonly CatalogRole[],
+): void {
+  if (!isRecord(roleSchemas)) {
+    throw new PromptRendererError("roleSchemas", "expected an object keyed by role id");
+  }
+  const dispatched = new Set(
+    roles.filter((role) => role.roleKind === "dispatched-subagent").map((role) => role.roleId),
+  );
+  for (const [roleId, schemaJson] of Object.entries(roleSchemas)) {
+    if (!dispatched.has(roleId)) {
+      throw new PromptRendererError(
+        `roleSchemas.${roleId}`,
+        "schema entry has no dispatched catalog role",
+      );
+    }
+    if (typeof schemaJson !== "string") {
+      throw new PromptRendererError(
+        `roleSchemas.${roleId}`,
+        "expected canonical schema-sidecar JSON bytes as a string",
+      );
+    }
+  }
+  for (const roleId of dispatched) {
+    if (!(roleId in roleSchemas)) {
+      throw new PromptRendererError(
+        `roleSchemas.${roleId}`,
+        "missing schema-sidecar bytes for a dispatched role",
       );
     }
   }
@@ -593,14 +672,17 @@ function renderRole(
  * determines artifact order.
  *
  * The rendered `surface.json` is the ATTESTED packaged-surface manifest
- * (T683): it binds every rendered role to the lowercase hex SHA-256 of its
- * exact installed bytes (frontmatter included — no stripping happens here),
- * pairs each dispatched role with its schema-sidecar contract version from
- * `roleVersions`, and records the catalog metadata hash plus a surface
- * aggregate digest (see {@link serializePromptSurfaceManifest} for the
- * canonical byte shape). Two runs over byte-identical inputs therefore emit
- * byte-identical manifests, and changing one rendered byte changes only that
- * role's `sha256` and the `surfaceDigest` aggregate.
+ * (T683 / D190): it binds every rendered role to the lowercase hex SHA-256 of
+ * its exact installed bytes (frontmatter included — no stripping happens
+ * here), pairs each dispatched role with its schema-sidecar contract version
+ * from `roleVersions` and the SHA-256 of the shipped schema artifact from
+ * `roleSchemas`, emits `schemas/<roleId>.json` for every dispatched role (and
+ * none for orchestrator-command roles), and records the catalog metadata hash
+ * plus a surface aggregate digest (see {@link serializePromptSurfaceManifest}
+ * for the canonical byte shape). Two runs over byte-identical inputs
+ * therefore emit byte-identical manifests, and changing one rendered role
+ * byte or one schema byte changes that role's digest field and the
+ * `surfaceDigest` aggregate.
  */
 export function renderPromptSurfaceTree(
   input: RenderPromptSurfaceTreeInput,
@@ -608,6 +690,8 @@ export function renderPromptSurfaceTree(
   const surface = parseSurface(input.surface);
   const roles = parseCatalog(input.catalogJson);
   validateRoleVersions(input.roleVersions, roles);
+  const roleSchemas = input.roleSchemas ?? {};
+  validateRoleSchemas(roleSchemas, roles);
   const sourcePaths = indexSourcePaths(input.sourcePaths, roles);
   const fragmentPaths = indexFragmentPaths(input.fragmentPaths, roles, surface);
   const renderedRoles: { readonly role: CatalogRole; readonly content: string }[] = [];
@@ -619,12 +703,23 @@ export function renderPromptSurfaceTree(
     renderedRoles.push({ role, content: renderRole(role, surface, sourcePath, fragmentPaths) });
   }
   const attestation: readonly PromptSurfaceRoleAttestation[] = renderedRoles.map(
-    ({ role, content }) => ({
-      roleId: role.roleId,
-      version:
-        role.roleKind === "dispatched-subagent" ? input.roleVersions[role.roleId]! : null,
-      sha256: sha256Hex(content),
-    }),
+    ({ role, content }) => {
+      if (role.roleKind === "dispatched-subagent") {
+        const schemaJson = roleSchemas[role.roleId]!;
+        return {
+          roleId: role.roleId,
+          version: input.roleVersions[role.roleId]!,
+          sha256: sha256Hex(content),
+          schemaSha256: sha256Hex(schemaJson),
+        };
+      }
+      return {
+        roleId: role.roleId,
+        version: null,
+        sha256: sha256Hex(content),
+        schemaSha256: null,
+      };
+    },
   );
   const artifacts: RenderedPromptArtifact[] = [
     { path: "catalog.json", content: input.catalogJson },
@@ -648,6 +743,15 @@ export function renderPromptSurfaceTree(
     artifacts.push({
       path: "role-tool-profiles.json",
       content: input.roleToolProfilesJson,
+    });
+  }
+  for (const role of roles) {
+    if (role.roleKind !== "dispatched-subagent") {
+      continue;
+    }
+    artifacts.push({
+      path: schemaArtifactPath(role.roleId),
+      content: roleSchemas[role.roleId]!,
     });
   }
   for (const { role, content } of renderedRoles) {

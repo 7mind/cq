@@ -2,13 +2,22 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { DISPATCHED_ROLE_IDS, DISPATCHED_ROLE_VERSIONS, getRoleSidecar } from "@cq/config";
+import { DISPATCHED_ROLE_IDS, DISPATCHED_ROLE_VERSIONS, getRoleSidecar, DISPATCHED_ROLE_SIDECARS } from "@cq/config";
 import {
   PromptRendererError,
   renderPromptSurfaceTree,
   type PromptCatalogFileInput,
-  type PromptFragmentFileInput,
-} from "@cq/config/prompt-renderer";
+  type PromptFragmentFileInput, serializeRoleSchemaArtifact} from "@cq/config/prompt-renderer";
+
+
+const DISPATCHED_ROLE_SCHEMAS: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    Object.values(DISPATCHED_ROLE_SIDECARS).map((sidecar) => [
+      sidecar.id,
+      serializeRoleSchemaArtifact(sidecar),
+    ]),
+  ),
+);
 
 const PROMPT_SURFACES = ["claude", "codex", "pi"] as const;
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..", "..", "..");
@@ -125,6 +134,7 @@ describe("dispatched-role prompt sources", () => {
         sourcePaths,
         fragmentPaths,
         roleVersions: DISPATCHED_ROLE_VERSIONS,
+        roleSchemas: DISPATCHED_ROLE_SCHEMAS,
       });
       expect(
         renderPromptSurfaceTree({
@@ -133,9 +143,9 @@ describe("dispatched-role prompt sources", () => {
           sourcePaths,
           fragmentPaths,
           roleVersions: DISPATCHED_ROLE_VERSIONS,
-        }),
+    roleSchemas: DISPATCHED_ROLE_SCHEMAS }),
       ).toEqual(tree);
-      expect(tree.artifacts).toHaveLength(catalog.length + 2);
+      expect(tree.artifacts).toHaveLength(catalog.length + 2 + Object.keys(DISPATCHED_ROLE_SCHEMAS).length);
       const manifest = JSON.parse(tree.artifacts[1]!.content) as {
         readonly surface: string;
         readonly roles: readonly { readonly version: number | null }[];
@@ -150,9 +160,18 @@ describe("dispatched-role prompt sources", () => {
         ),
       ).toBe(true);
 
+      const roleArtifacts = tree.artifacts.filter((artifact) =>
+        artifact.path.startsWith("roles/"),
+      );
+      const schemaArtifacts = tree.artifacts.filter((artifact) =>
+        artifact.path.startsWith("schemas/"),
+      );
+      expect(schemaArtifacts).toHaveLength(catalog.length);
+      expect(roleArtifacts).toHaveLength(catalog.length);
       for (const [index, role] of catalog.entries()) {
-        const content = tree.artifacts[index + 2]!.content;
-        expect(tree.artifacts[index + 2]!.path).toBe(`roles/${role.roleId}.md`);
+        const content = roleArtifacts[index]!.content;
+        expect(roleArtifacts[index]!.path).toBe(`roles/${role.roleId}.md`);
+        expect(schemaArtifacts[index]!.path).toBe(`schemas/${role.roleId}.json`);
         expect(content).toStartWith("---\n");
         expect(content).toContain(`name: ${role.roleId}`);
         expect(content).not.toContain("{{cq:fragment:");
@@ -201,7 +220,7 @@ describe("dispatched-role prompt sources", () => {
         sourcePaths,
         fragmentPaths: fragmentPaths.slice(1),
         roleVersions: DISPATCHED_ROLE_VERSIONS,
-      }),
+    roleSchemas: DISPATCHED_ROLE_SCHEMAS }),
     );
     expect(missing.message).toBe(
       `fragments.${first.roleId}.${first.fragment}: missing slot input for surface "codex"`,
@@ -230,7 +249,7 @@ describe("dispatched-role prompt sources", () => {
           sourcePaths: copiedPaths,
           fragmentPaths,
           roleVersions: DISPATCHED_ROLE_VERSIONS,
-        }),
+    roleSchemas: DISPATCHED_ROLE_SCHEMAS }),
       );
       expect(unconsumed.message).toBe(
         `fragments.${first.roleId}.${first.fragment}: unconsumed slot input`,

@@ -43,14 +43,30 @@ function sha256(bytes: Uint8Array): string {
 
 function codexArtifactStore(): InMemoryPromptArtifactStore {
   const catalogBytes = encoder.encode(JSON.stringify([CATALOG_ROLE]));
+  const schemaJson = JSON.stringify({
+    id: ROLE_ID,
+    version: 2,
+    inputSchema: { type: "object" },
+    outputSchema: { type: "object" },
+  });
+  const schemaBytes = encoder.encode(schemaJson);
   const surfaceBytes = encoder.encode(
     serializePromptSurfaceManifest(SURFACE, sha256(catalogBytes), [
-      { roleId: ROLE_ID, version: 2, sha256: sha256(CODEX_INJECTED_ROLE_BYTES) },
+      {
+        roleId: ROLE_ID,
+        version: 2,
+        sha256: sha256(CODEX_INJECTED_ROLE_BYTES),
+        schemaSha256: sha256(schemaBytes),
+      },
     ]),
   );
-  return new InMemoryPromptArtifactStore(SURFACE, surfaceBytes, catalogBytes, [
-    { roleId: ROLE_ID, bytes: CODEX_INJECTED_ROLE_BYTES },
-  ]);
+  return new InMemoryPromptArtifactStore(
+    SURFACE,
+    surfaceBytes,
+    catalogBytes,
+    [{ roleId: ROLE_ID, bytes: CODEX_INJECTED_ROLE_BYTES }],
+    [{ roleId: ROLE_ID, bytes: schemaBytes }],
+  );
 }
 
 describe("Codex prepared prompt provenance", () => {

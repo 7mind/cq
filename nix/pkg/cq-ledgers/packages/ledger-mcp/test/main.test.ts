@@ -98,15 +98,24 @@ beforeAll(async () => {
       sidecar: { schemaRoleId: roleId },
     },
   ]);
+  const schemaJson = JSON.stringify({
+    id: roleId,
+    version: 2,
+    inputSchema: { type: "object" },
+    outputSchema: { type: "object" },
+  });
   const roles = [
     {
       roleId,
       version: 2,
       sha256: createHash("sha256").update(roleBytes, "utf8").digest("hex"),
+      schemaSha256: createHash("sha256").update(schemaJson, "utf8").digest("hex"),
     },
   ];
   await fs.mkdir(path.join(dispatchPromptRoot, "roles"), { recursive: true });
+  await fs.mkdir(path.join(dispatchPromptRoot, "schemas"), { recursive: true });
   await fs.writeFile(path.join(dispatchPromptRoot, "catalog.json"), catalogJson);
+  await fs.writeFile(path.join(dispatchPromptRoot, "schemas", `${roleId}.json`), schemaJson);
   await fs.writeFile(
     path.join(dispatchPromptRoot, "surface.json"),
     serializePromptSurfaceManifest(

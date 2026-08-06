@@ -20,22 +20,51 @@ import {
   type PromptPublicationStore,
 } from "./link-prompts.ts";
 
-/** Serialize the attested surface manifest (T683) for a fixture tree. */
+/** Fixture schema bytes for the dispatched plan-advance role (D190). */
+const PLAN_ADVANCE_SCHEMA_JSON = JSON.stringify({
+  id: "plan-advance",
+  version: 1,
+  inputSchema: { type: "object" },
+  outputSchema: { type: "object" },
+});
+
+/** Serialize the attested surface manifest (T683 / D190) for a fixture tree. */
 function surfaceManifestJson(tree: readonly PromptFile[], surface = "claude"): string {
   const catalogFile = tree.find((file) => file.path === "catalog.json");
   if (catalogFile === undefined) {
     throw new Error("fixture tree has no catalog.json");
   }
-  const catalog = JSON.parse(catalogFile.content) as readonly { roleId: string }[];
-  const roles = catalog.map(({ roleId }) => {
+  const catalog = JSON.parse(catalogFile.content) as readonly {
+    roleId: string;
+    sidecar?: unknown;
+  }[];
+  const roles = catalog.map((entry) => {
+    const roleId = entry.roleId;
     const roleFile = tree.find((file) => file.path === `roles/${roleId}.md`);
     if (roleFile === undefined) {
       throw new Error(`fixture tree has no roles/${roleId}.md`);
     }
+    const hasSidecar =
+      entry.sidecar !== null && entry.sidecar !== undefined
+        ? true
+        : roleId === "plan-advance";
+    if (hasSidecar) {
+      const schemaFile = tree.find((file) => file.path === `schemas/${roleId}.json`);
+      if (schemaFile === undefined) {
+        throw new Error(`fixture tree has no schemas/${roleId}.json`);
+      }
+      return {
+        roleId,
+        version: 1,
+        sha256: createHash("sha256").update(roleFile.content, "utf8").digest("hex"),
+        schemaSha256: createHash("sha256").update(schemaFile.content, "utf8").digest("hex"),
+      };
+    }
     return {
       roleId,
-      version: roleId === "plan-advance" ? 1 : null,
+      version: null,
       sha256: createHash("sha256").update(roleFile.content, "utf8").digest("hex"),
+      schemaSha256: null,
     };
   });
   return serializePromptSurfaceManifest(
@@ -59,10 +88,12 @@ const OLD_TREE_BASE: readonly PromptFile[] = [
       {
         roleId: "begin",
         canonicalSource: "commands/cq/begin.md",
+        sidecar: null,
       },
       {
         roleId: "plan-advance",
         canonicalSource: "agents/plan-advance.md",
+        sidecar: { schemaRoleId: "plan-advance" },
       },
     ]),
   },
@@ -73,6 +104,10 @@ const OLD_TREE_BASE: readonly PromptFile[] = [
   {
     path: "roles/plan-advance.md",
     content: "---\nname: plan-advance\n---\n\nOld planner\n",
+  },
+  {
+    path: "schemas/plan-advance.json",
+    content: PLAN_ADVANCE_SCHEMA_JSON,
   },
   {
     path: "surface.json",

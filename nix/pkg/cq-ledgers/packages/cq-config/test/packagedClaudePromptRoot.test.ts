@@ -1,12 +1,25 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import * as path from "node:path";
-import { DISPATCHED_ROLE_VERSIONS } from "@cq/config";
+import {
+  DISPATCHED_ROLE_SIDECARS,
+  DISPATCHED_ROLE_VERSIONS } from "@cq/config";
 import {
   renderPromptSurfaceTree,
   type PromptCatalogFileInput,
   type PromptFragmentFileInput,
+  serializeRoleSchemaArtifact,
 } from "@cq/config/prompt-renderer";
+
+
+const DISPATCHED_ROLE_SCHEMAS: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    Object.values(DISPATCHED_ROLE_SIDECARS).map((sidecar) => [
+      sidecar.id,
+      serializeRoleSchemaArtifact(sidecar),
+    ]),
+  ),
+);
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..", "..", "..");
 const ASSETS_ROOT = path.join(REPO_ROOT, "nix", "pkg", "cq-assets");
@@ -76,11 +89,12 @@ describe("packaged Claude prompt root", () => {
         sourcePaths,
         fragmentPaths,
         roleVersions: DISPATCHED_ROLE_VERSIONS,
+    roleSchemas: DISPATCHED_ROLE_SCHEMAS,
       });
 
       expect(catalog).toHaveLength(24);
       expect(catalog.some(({ roleId }) => roleId === "begin")).toBe(true);
-      expect(readdirSync(output).sort()).toEqual(["catalog.json", "roles", "surface.json"]);
+      expect(readdirSync(output).sort()).toEqual(["catalog.json", "roles", "schemas", "surface.json"]);
       expect(readFileSync(path.join(output, "catalog.json"), "utf8")).toBe(catalogJson);
       const manifest = JSON.parse(
         readFileSync(path.join(output, "surface.json"), "utf8"),

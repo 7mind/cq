@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { homedir, tmpdir } from "node:os";
 import * as path from "node:path";
 import {
+  DISPATCHED_ROLE_SIDECARS,
   DISPATCHED_ROLE_VERSIONS,
   DISPATCH_RESULT_PLUMBING_TOOL_NAMES,
   LEDGER_CAPABILITY_TOOL_NAMES,
@@ -15,7 +16,18 @@ import {
   renderPromptSurfaceTree,
   type PromptCatalogFileInput,
   type PromptFragmentFileInput,
+  serializeRoleSchemaArtifact,
 } from "@cq/config/prompt-renderer";
+
+
+const DISPATCHED_ROLE_SCHEMAS: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    Object.values(DISPATCHED_ROLE_SIDECARS).map((sidecar) => [
+      sidecar.id,
+      serializeRoleSchemaArtifact(sidecar),
+    ]),
+  ),
+);
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..", "..", "..");
 const ASSETS_ROOT = path.join(REPO_ROOT, "nix", "pkg", "cq-assets");
@@ -122,6 +134,7 @@ function directPiTree(catalogJson: string): ReturnType<typeof renderPromptSurfac
     sourcePaths,
     fragmentPaths,
     roleVersions: DISPATCHED_ROLE_VERSIONS,
+    roleSchemas: DISPATCHED_ROLE_SCHEMAS,
     roleToolProfilesJson: serializePiRoleToolProfileManifest(),
   });
 }
@@ -165,6 +178,7 @@ describe("packaged Pi prompt root", () => {
       "catalog.json",
       PI_ROLE_TOOL_PROFILE_MANIFEST_PATH,
       "roles",
+      "schemas",
       "surface.json",
     ]);
     expect(readFileSync(path.join(output, "catalog.json"), "utf8")).toBe(catalogJson);
@@ -347,7 +361,12 @@ describe("packaged Pi prompt root", () => {
               "--cwd",
               directory,
             ],
-            env: { XDG_STATE_HOME: path.join(directory, "state") },
+            env: {
+              XDG_STATE_HOME: path.join(directory, "state"),
+              // Isolate from the ambient host CQ_PROMPT_ROOT (D190 surface shape).
+              CQ_PROMPT_ROOT: output,
+              CQ_PROMPT_SURFACE: "pi",
+            },
             lifecycle: "keep-alive",
             directTools: true,
           },

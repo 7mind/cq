@@ -293,6 +293,7 @@ describe("orchestrator command prompt sources", () => {
         sourcePaths,
         fragmentPaths,
         roleVersions: {},
+        roleSchemas: {},
       });
 
       const manifest = JSON.parse(tree.artifacts[1]!.content) as {
@@ -355,7 +356,8 @@ describe("orchestrator command prompt sources", () => {
           fragment: entry.fragment,
           path: path.join(ASSETS_ROOT, entry.source),
         }));
-      const input = { surface, catalogJson, sourcePaths, fragmentPaths, roleVersions: {} };
+      const input = { surface, catalogJson, sourcePaths, fragmentPaths, roleVersions: {},
+        roleSchemas: {} };
       const first = renderPromptSurfaceTree(input);
       const second = renderPromptSurfaceTree(input);
 
@@ -448,6 +450,7 @@ describe("orchestrator command prompt sources", () => {
         sourcePaths,
         fragmentPaths: missing,
         roleVersions: {},
+        roleSchemas: {},
       }),
     ).toThrow('fragments.begin.cq-command-invocation: missing slot input for surface "codex"');
 
@@ -473,6 +476,7 @@ describe("orchestrator command prompt sources", () => {
           sourcePaths: copiedPaths,
           fragmentPaths,
           roleVersions: {},
+        roleSchemas: {},
         }),
       ).toThrow("fragments.begin.inline-command-recursion: unconsumed slot input");
     } finally {

@@ -100,6 +100,15 @@ const ROLE_ARTIFACTS = [
   { roleId: COMMAND_ROLE, bytes: new TextEncoder().encode(COMMAND_PROMPT) },
 ] as const;
 
+function fixtureSchemaJson(roleId: string, version: number): string {
+  return JSON.stringify({
+    id: roleId,
+    version,
+    inputSchema: { type: "object" },
+    outputSchema: { type: "object" },
+  });
+}
+
 /** Lowercase hex SHA-256 of raw bytes. */
 function sha256Bytes(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
@@ -110,17 +119,20 @@ const CATALOG_DIGEST = sha256Bytes(MANIFEST_BYTES);
 
 /** The attested surface manifest (T683) binding the fixture's exact role bytes. */
 function surfaceManifestBytes(dispatchedVersion: number): Uint8Array {
+  const schemaJson = fixtureSchemaJson(DISPATCHED_ROLE, dispatchedVersion);
   return new TextEncoder().encode(
     serializePromptSurfaceManifest(PROMPT_SURFACE, CATALOG_DIGEST, [
       {
         roleId: DISPATCHED_ROLE,
         version: dispatchedVersion,
         sha256: DISPATCHED_PROMPT_DIGEST,
+        schemaSha256: sha256Bytes(new TextEncoder().encode(schemaJson)),
       },
       {
         roleId: COMMAND_ROLE,
         version: null,
         sha256: sha256Bytes(ROLE_ARTIFACTS[1].bytes),
+        schemaSha256: null,
       },
     ]),
   );
@@ -128,6 +140,10 @@ function surfaceManifestBytes(dispatchedVersion: number): Uint8Array {
 
 const SIDECAR_VERSION = getRoleSidecar(DISPATCHED_ROLE)!.version;
 const SURFACE_BYTES = surfaceManifestBytes(SIDECAR_VERSION);
+const DISPATCHED_SCHEMA_JSON = fixtureSchemaJson(DISPATCHED_ROLE, SIDECAR_VERSION);
+const SCHEMA_ARTIFACTS = [
+  { roleId: DISPATCHED_ROLE, bytes: new TextEncoder().encode(DISPATCHED_SCHEMA_JSON) },
+] as const;
 
 function inMemoryStore(): PromptArtifactStore {
   return new InMemoryPromptArtifactStore(
@@ -135,6 +151,7 @@ function inMemoryStore(): PromptArtifactStore {
     SURFACE_BYTES,
     MANIFEST_BYTES,
     ROLE_ARTIFACTS,
+    SCHEMA_ARTIFACTS,
   );
 }
 
@@ -147,6 +164,10 @@ function filesystemStore(): PromptArtifactStore {
       const artifactPath = path.join(root, "roles", `${artifact.roleId}.md`);
       mkdirSync(path.dirname(artifactPath), { recursive: true });
       writeFileSync(artifactPath, artifact.bytes);
+    }
+    mkdirSync(path.join(root, "schemas"));
+    for (const artifact of SCHEMA_ARTIFACTS) {
+      writeFileSync(path.join(root, "schemas", `${artifact.roleId}.json`), artifact.bytes);
     }
     return new FileSystemPromptArtifactStore(PROMPT_SURFACE, root);
   } finally {
@@ -288,7 +309,14 @@ runPromptCatalogSuite("strict in-memory artifact store", () =>
 );
 
 describe("attested version pairing (T683)", () => {
-  const mismatchedSurfaceBytes = surfaceManifestBytes(SIDECAR_VERSION + 1);
+  const mismatchedVersion = SIDECAR_VERSION + 1;
+  const mismatchedSurfaceBytes = surfaceManifestBytes(mismatchedVersion);
+  const mismatchedSchemaArtifacts = [
+    {
+      roleId: DISPATCHED_ROLE,
+      bytes: new TextEncoder().encode(fixtureSchemaJson(DISPATCHED_ROLE, mismatchedVersion)),
+    },
+  ] as const;
 
   function mismatchedInMemoryStore(): PromptArtifactStore {
     return new InMemoryPromptArtifactStore(
@@ -296,6 +324,7 @@ describe("attested version pairing (T683)", () => {
       mismatchedSurfaceBytes,
       MANIFEST_BYTES,
       ROLE_ARTIFACTS,
+      mismatchedSchemaArtifacts,
     );
   }
 
@@ -308,6 +337,10 @@ describe("attested version pairing (T683)", () => {
         const artifactPath = path.join(root, "roles", `${artifact.roleId}.md`);
         mkdirSync(path.dirname(artifactPath), { recursive: true });
         writeFileSync(artifactPath, artifact.bytes);
+      }
+      mkdirSync(path.join(root, "schemas"));
+      for (const artifact of mismatchedSchemaArtifacts) {
+        writeFileSync(path.join(root, "schemas", `${artifact.roleId}.json`), artifact.bytes);
       }
       return new FileSystemPromptArtifactStore(PROMPT_SURFACE, root);
     } finally {

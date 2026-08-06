@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import * as path from "node:path";
 import { isPromptSurface, type PromptSurface } from "./promptCatalog.js";
 import {
@@ -20,6 +20,13 @@ export interface PackagedPromptSurfaceRoleArtifact {
   readonly content: string | Uint8Array;
 }
 
+export interface PackagedPromptSurfaceSchemaArtifact {
+  /** POSIX path relative to the root's `schemas/` directory. */
+  readonly path: string;
+  /** Exact artifact bytes. Strings denote their UTF-8 encoding. */
+  readonly content: string | Uint8Array;
+}
+
 export interface PackagedPromptSurfaceInput {
   /** Kept as a string so boundary callers receive a deterministic validation error. */
   readonly expectedSurface: string;
@@ -29,6 +36,8 @@ export interface PackagedPromptSurfaceInput {
   readonly surfaceJson: string;
   /** Complete file closure below the installed `roles/` directory. */
   readonly roleArtifacts: readonly PackagedPromptSurfaceRoleArtifact[];
+  /** Complete file closure below the installed `schemas/` directory (D190). */
+  readonly schemaArtifacts: readonly PackagedPromptSurfaceSchemaArtifact[];
 }
 
 interface CatalogRoleAttestation {
@@ -108,8 +117,9 @@ function parseCatalog(catalogJson: string): readonly CatalogRoleAttestation[] {
   return roles;
 }
 
-function indexRoleArtifacts(
-  artifacts: readonly PackagedPromptSurfaceRoleArtifact[],
+function indexRelativeArtifacts(
+  artifacts: readonly { readonly path: string; readonly content: string | Uint8Array }[],
+  label: string,
 ): ReadonlyMap<string, string | Uint8Array> {
   const indexed = new Map<string, string | Uint8Array>();
   for (const [index, artifact] of artifacts.entries()) {
@@ -122,10 +132,10 @@ function indexRoleArtifacts(
         .split("/")
         .some((segment) => segment.length === 0 || segment === "." || segment === "..")
     ) {
-      fail(`roleArtifacts[${index}].path`, "expected a safe relative POSIX path");
+      fail(`${label}[${index}].path`, "expected a safe relative POSIX path");
     }
     if (indexed.has(artifactPath)) {
-      fail(`roleArtifacts[${index}].path`, `duplicate role artifact "${artifactPath}"`);
+      fail(`${label}[${index}].path`, `duplicate artifact "${artifactPath}"`);
     }
     indexed.set(artifactPath, artifact.content);
   }
@@ -146,6 +156,33 @@ function assertExactRoleClosure(
     .find((artifactPath) => !expectedPaths.includes(artifactPath));
   if (extraPath !== undefined) {
     fail("roles", `undeclared role artifact "${extraPath}"`);
+  }
+}
+
+function assertExactSchemaClosure(
+  catalogRoles: readonly CatalogRoleAttestation[],
+  artifacts: ReadonlyMap<string, string | Uint8Array>,
+): void {
+  const expectedPaths = catalogRoles
+    .filter((role) => role.hasSidecar)
+    .map(({ roleId }) => `${roleId}.json`);
+  const missingPath = expectedPaths.find((artifactPath) => !artifacts.has(artifactPath));
+  if (missingPath !== undefined) {
+    fail("schemas", `missing schema artifact "${missingPath}"`);
+  }
+  const extraPath = [...artifacts.keys()]
+    .sort()
+    .find((artifactPath) => !expectedPaths.includes(artifactPath));
+  if (extraPath !== undefined) {
+    fail("schemas", `undeclared schema artifact "${extraPath}"`);
+  }
+  for (const role of catalogRoles) {
+    if (role.hasSidecar) {
+      continue;
+    }
+    if (artifacts.has(`${role.roleId}.json`)) {
+      fail("schemas", `orchestrator-command role must not ship schema artifact "${role.roleId}.json"`);
+    }
   }
 }
 
@@ -171,8 +208,9 @@ function parseManifest(surfaceJson: string): Readonly<Record<string, unknown>> {
 /**
  * Validate one packaged prompt surface against its own installed bytes.
  *
- * The exact closure applies below `roles/`. Surface-specific siblings such as
- * Pi's `role-tool-profiles.json` remain outside this attestation contract.
+ * The exact closure applies below `roles/` and `schemas/`. Surface-specific
+ * siblings such as Pi's `role-tool-profiles.json` remain outside this
+ * attestation contract.
  */
 export function validatePackagedPromptSurface(input: PackagedPromptSurfaceInput): void {
   if (!isPromptSurface(input.expectedSurface)) {
@@ -180,8 +218,10 @@ export function validatePackagedPromptSurface(input: PackagedPromptSurfaceInput)
   }
   const expectedSurface: PromptSurface = input.expectedSurface;
   const catalogRoles = parseCatalog(input.catalogJson);
-  const artifacts = indexRoleArtifacts(input.roleArtifacts);
+  const artifacts = indexRelativeArtifacts(input.roleArtifacts, "roleArtifacts");
   assertExactRoleClosure(catalogRoles, artifacts);
+  const schemaArtifacts = indexRelativeArtifacts(input.schemaArtifacts, "schemaArtifacts");
+  assertExactSchemaClosure(catalogRoles, schemaArtifacts);
   const manifest = parseManifest(input.surfaceJson);
 
   if (manifest.surface !== expectedSurface) {
@@ -212,7 +252,7 @@ export function validatePackagedPromptSurface(input: PackagedPromptSurfaceInput)
       fail(rolePath, "expected an object");
     }
     if (!sameFields(Object.keys(candidate), PROMPT_SURFACE_ROLE_ATTESTATION_FIELDS)) {
-      fail(rolePath, "expected exactly roleId, version, and sha256");
+      fail(rolePath, "expected exactly roleId, version, sha256, and schemaSha256");
     }
     if (candidate.roleId !== catalogRole.roleId) {
       fail(
@@ -228,14 +268,34 @@ export function validatePackagedPromptSurface(input: PackagedPromptSurfaceInput)
       fail(`${rolePath}.sha256`, "does not match the installed role artifact bytes");
     }
     const version = candidate.version;
+    const schemaDigest = candidate.schemaSha256;
     if (catalogRole.hasSidecar) {
       if (typeof version !== "number" || !Number.isSafeInteger(version) || version < 1) {
         fail(`${rolePath}.version`, "expected a positive integer schema-sidecar version");
       }
-    } else if (version !== null) {
-      fail(`${rolePath}.version`, "roles without schema sidecars must carry null");
+      if (typeof schemaDigest !== "string" || !SHA256_PATTERN.test(schemaDigest)) {
+        fail(`${rolePath}.schemaSha256`, "expected a lowercase hex SHA-256 digest");
+      }
+      if (schemaDigest !== sha256(schemaArtifacts.get(`${catalogRole.roleId}.json`)!)) {
+        fail(
+          `${rolePath}.schemaSha256`,
+          "does not match the installed schema artifact bytes",
+        );
+      }
+    } else {
+      if (version !== null) {
+        fail(`${rolePath}.version`, "roles without schema sidecars must carry null");
+      }
+      if (schemaDigest !== null) {
+        fail(`${rolePath}.schemaSha256`, "roles without schema sidecars must carry null");
+      }
     }
-    validatedRoles.push({ roleId: catalogRole.roleId, version, sha256: digest });
+    validatedRoles.push({
+      roleId: catalogRole.roleId,
+      version,
+      sha256: digest,
+      schemaSha256: schemaDigest as string | null,
+    });
   }
 
   const surfaceDigest = manifest.surfaceDigest;
@@ -258,26 +318,27 @@ export function validatePackagedPromptSurface(input: PackagedPromptSurfaceInput)
   }
 }
 
-function readRoleArtifacts(
+function readTreeArtifacts(
   directory: string,
   relativeDirectory: string,
-): readonly PackagedPromptSurfaceRoleArtifact[] {
+  rootLabel: string,
+): readonly { readonly path: string; readonly content: Uint8Array }[] {
   let entries;
   try {
     entries = readdirSync(directory, { withFileTypes: true });
   } catch {
-    fail("roles", "expected a readable roles directory");
+    fail(rootLabel, `expected a readable ${rootLabel} directory`);
   }
-  const artifacts: PackagedPromptSurfaceRoleArtifact[] = [];
+  const artifacts: { readonly path: string; readonly content: Uint8Array }[] = [];
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
     const relativePath = path.posix.join(relativeDirectory, entry.name);
     const absolutePath = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      artifacts.push(...readRoleArtifacts(absolutePath, relativePath));
+      artifacts.push(...readTreeArtifacts(absolutePath, relativePath, rootLabel));
     } else if (entry.isFile()) {
       artifacts.push({ path: relativePath, content: readFileSync(absolutePath) });
     } else {
-      fail(`roles/${relativePath}`, "expected a regular file or directory");
+      fail(`${rootLabel}/${relativePath}`, "expected a regular file or directory");
     }
   }
   return artifacts;
@@ -303,10 +364,15 @@ export function validatePackagedPromptSurfaceRoot(
   } catch {
     fail("surface.json", "expected a readable UTF-8 file");
   }
+  const schemasDir = path.join(root, "schemas");
+  const schemaArtifacts = existsSync(schemasDir)
+    ? readTreeArtifacts(schemasDir, "", "schemas")
+    : [];
   validatePackagedPromptSurface({
     expectedSurface,
     catalogJson,
     surfaceJson,
-    roleArtifacts: readRoleArtifacts(path.join(root, "roles"), ""),
+    roleArtifacts: readTreeArtifacts(path.join(root, "roles"), "", "roles"),
+    schemaArtifacts,
   });
 }

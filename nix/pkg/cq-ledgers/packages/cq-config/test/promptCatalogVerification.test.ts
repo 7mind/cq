@@ -45,10 +45,23 @@ function stampSurfaceManifest(
     if (content === undefined) {
       throw new Error(`fixture root has no rendered bytes for role "${roleId}"`);
     }
+    if (sidecar === null) {
+      return {
+        roleId,
+        version: null,
+        sha256: sha256Hex(content),
+        schemaSha256: null,
+      };
+    }
+    const schemaContent = artifacts[`schemas/${roleId}.json`];
+    if (schemaContent === undefined) {
+      throw new Error(`fixture root has no schema bytes for role "${roleId}"`);
+    }
     return {
       roleId,
-      version: sidecar === null ? null : FIXTURE_ROLE_VERSIONS[roleId] ?? 1,
+      version: FIXTURE_ROLE_VERSIONS[roleId] ?? 1,
       sha256: sha256Hex(content),
+      schemaSha256: sha256Hex(schemaContent),
     };
   });
   if (roles.length !== roleIds.length) {
@@ -155,6 +168,12 @@ function fixture(): PromptCatalogVerificationInput {
     SURFACES.map((surface) => {
       const artifacts: Record<string, string> = {
         "catalog.json": authoritativeCatalogJson,
+        "schemas/worker.json": JSON.stringify({
+          id: "worker",
+          version: 1,
+          inputSchema: { type: "object" },
+          outputSchema: { type: "object" },
+        }),
         "roles/worker.md": roleBodies[surface].worker!,
         "roles/start.md": roleBodies[surface].start!,
       };
@@ -455,7 +474,7 @@ describe("prompt-catalog centralized verification mutation fixtures", () => {
     const tamper = (
       mutate: (manifest: {
         catalogMetadataHash: string;
-        roles: { roleId: string; version: number | null; sha256: string }[];
+        roles: { roleId: string; version: number | null; sha256: string; schemaSha256: string | null}[];
         surfaceDigest: string;
       }) => void,
     ): PromptCatalogVerificationInput => {
@@ -463,7 +482,7 @@ describe("prompt-catalog centralized verification mutation fixtures", () => {
       const artifacts = input.packagedRoots.pi.artifacts as Record<string, string>;
       const manifest = JSON.parse(artifacts["surface.json"]!) as {
         catalogMetadataHash: string;
-        roles: { roleId: string; version: number | null; sha256: string }[];
+        roles: { roleId: string; version: number | null; sha256: string; schemaSha256: string | null}[];
         surfaceDigest: string;
       };
       mutate(manifest);

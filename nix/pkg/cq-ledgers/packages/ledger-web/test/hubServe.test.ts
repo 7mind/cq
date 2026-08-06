@@ -321,6 +321,7 @@ const HUB_PROMPT_BYTES = "hub claude {{cq:literal}} and $ARGUMENTS\n";
 
 async function writeHubPromptFixture(promptRoot: string): Promise<void> {
   await fs.mkdir(path.join(promptRoot, "roles"));
+  await fs.mkdir(path.join(promptRoot, "schemas"));
   const catalogJson = JSON.stringify([
     {
       roleId: HUB_PROMPT_ROLE_ID,
@@ -328,7 +329,17 @@ async function writeHubPromptFixture(promptRoot: string): Promise<void> {
       sidecar: { schemaRoleId: HUB_PROMPT_ROLE_ID },
     },
   ]);
+  const schemaJson = JSON.stringify({
+    id: HUB_PROMPT_ROLE_ID,
+    version: 1,
+    inputSchema: { type: "object" },
+    outputSchema: { type: "object" },
+  });
   await fs.writeFile(path.join(promptRoot, "catalog.json"), catalogJson);
+  await fs.writeFile(
+    path.join(promptRoot, "schemas", `${HUB_PROMPT_ROLE_ID}.json`),
+    schemaJson,
+  );
   await fs.writeFile(
     path.join(promptRoot, "surface.json"),
     serializePromptSurfaceManifest(
@@ -339,6 +350,7 @@ async function writeHubPromptFixture(promptRoot: string): Promise<void> {
           roleId: HUB_PROMPT_ROLE_ID,
           version: 1,
           sha256: createHash("sha256").update(HUB_PROMPT_BYTES, "utf8").digest("hex"),
+          schemaSha256: createHash("sha256").update(schemaJson, "utf8").digest("hex"),
         },
       ],
     ),

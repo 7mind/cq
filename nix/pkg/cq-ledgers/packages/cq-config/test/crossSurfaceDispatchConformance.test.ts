@@ -46,12 +46,21 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
-import { DISPATCHED_ROLE_VERSIONS } from "@cq/config";
+import { DISPATCHED_ROLE_VERSIONS, DISPATCHED_ROLE_SIDECARS } from "@cq/config";
 import {
   renderPromptSurfaceTree,
   type PromptCatalogFileInput,
-  type PromptFragmentFileInput,
-} from "@cq/config/prompt-renderer";
+  type PromptFragmentFileInput, serializeRoleSchemaArtifact} from "@cq/config/prompt-renderer";
+
+
+const DISPATCHED_ROLE_SCHEMAS: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    Object.values(DISPATCHED_ROLE_SIDECARS).map((sidecar) => [
+      sidecar.id,
+      serializeRoleSchemaArtifact(sidecar),
+    ]),
+  ),
+);
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..", "..", "..");
 const ASSETS_ROOT = path.join(REPO_ROOT, "nix", "pkg", "cq-assets");
@@ -123,7 +132,7 @@ function renderSurface(surface: PromptSurface): ReadonlyMap<string, string> {
     sourcePaths,
     fragmentPaths,
     roleVersions: DISPATCHED_ROLE_VERSIONS,
-  });
+    roleSchemas: DISPATCHED_ROLE_SCHEMAS });
   const rendered = new Map<string, string>();
   for (const artifact of tree.artifacts) {
     if (!artifact.path.startsWith("roles/")) continue;

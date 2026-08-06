@@ -251,16 +251,30 @@ beforeAll(async () => {
     await fs.writeFile(path.join(surfaceRoot, "catalog.json"), catalogJson);
     const dispatchedBytes = PROMPT_BYTES[surface];
     const orchestratorBytes = `orchestrator ${surface}\n`;
+    const dispatchedSchema = JSON.stringify({
+      id: DISPATCHED_ROLE_ID,
+      version: 2,
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" },
+    });
+    const workerSchema = JSON.stringify({
+      id: WORKER_ROLE_ID,
+      version: 1,
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" },
+    });
     const roles = [
       {
         roleId: DISPATCHED_ROLE_ID,
         version: 2,
         sha256: createHash("sha256").update(dispatchedBytes, "utf8").digest("hex"),
+        schemaSha256: createHash("sha256").update(dispatchedSchema, "utf8").digest("hex"),
       },
       {
         roleId: ORCHESTRATOR_ROLE_ID,
         version: null,
         sha256: createHash("sha256").update(orchestratorBytes, "utf8").digest("hex"),
+        schemaSha256: null,
       },
       {
         roleId: WORKER_ROLE_ID,
@@ -268,6 +282,7 @@ beforeAll(async () => {
         sha256: createHash("sha256")
           .update(WORKER_PROMPT_BYTES[surface], "utf8")
           .digest("hex"),
+        schemaSha256: createHash("sha256").update(workerSchema, "utf8").digest("hex"),
       },
     ];
     await fs.writeFile(
@@ -277,6 +292,15 @@ beforeAll(async () => {
         createHash("sha256").update(catalogJson, "utf8").digest("hex"),
         roles,
       ),
+    );
+    await fs.mkdir(path.join(surfaceRoot, "schemas"), { recursive: true });
+    await fs.writeFile(
+      path.join(surfaceRoot, "schemas", `${DISPATCHED_ROLE_ID}.json`),
+      dispatchedSchema,
+    );
+    await fs.writeFile(
+      path.join(surfaceRoot, "schemas", `${WORKER_ROLE_ID}.json`),
+      workerSchema,
     );
     await fs.writeFile(
       path.join(surfaceRoot, "roles", `${DISPATCHED_ROLE_ID}.md`),
