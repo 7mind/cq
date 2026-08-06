@@ -278,11 +278,17 @@ function interleavingPool(dsn: string, marker: string, hook: () => Promise<void>
     return Array.isArray(strings) ? (strings as readonly string[]).join(" ") : "";
   };
 
-  const interleaving = (handle: SQL): SQL =>
-    new Proxy(handle as unknown as (...args: unknown[]) => unknown, {
+  const interleaving = (handle: SQL): SQL => {
+    // D149: loadCache/reloadLedger run inside read-only REPEATABLE READ
+    // transactions. Skip those so the hook still lands on the WRITE-path
+    // fence read (the case under test), not on init's cold load.
+    let readOnly = false;
+    return new Proxy(handle as unknown as (...args: unknown[]) => unknown, {
       apply(target, thisArg, args: unknown[]): unknown {
+        const text = sqlTextOf(args);
+        if (/READ\s+ONLY/i.test(text)) readOnly = true;
         const result = Reflect.apply(target, thisArg, args);
-        if (fired || !sqlTextOf(args).includes(marker)) return result;
+        if (readOnly || fired || !text.includes(marker)) return result;
         fired = true;
         return (async (): Promise<unknown> => {
           const rows: unknown = await result;
@@ -291,10 +297,19 @@ function interleavingPool(dsn: string, marker: string, hook: () => Promise<void>
         })();
       },
       get(target, prop, receiver): unknown {
+        if (prop === "unsafe") {
+          const unsafe = Reflect.get(target, prop, receiver) as (...a: unknown[]) => unknown;
+          return (...uargs: unknown[]): unknown => {
+            const sql = typeof uargs[0] === "string" ? uargs[0] : "";
+            if (/READ\s+ONLY/i.test(sql)) readOnly = true;
+            return unsafe.apply(target, uargs);
+          };
+        }
         const value = Reflect.get(target, prop, receiver) as unknown;
         return typeof value === "function" ? value.bind(target) : value;
       },
     }) as unknown as SQL;
+  };
 
   return new Proxy(real as unknown as (...args: unknown[]) => unknown, {
     get(target, prop, receiver): unknown {

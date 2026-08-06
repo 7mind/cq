@@ -229,3 +229,63 @@ describe.skipIf(!PG_URL)("cq reset / cq erase — postgres tenant scoping (T583)
     expect(rows).toHaveLength(0);
   });
 });
+
+describe("cq erase — D102 postgres connection failure fails loud", () => {
+  it("closed-port DSN: non-zero exit + NOT erased line; cq.toml survives", async () => {
+    // Closed port: backend=postgres resolved, pool I/O throws.
+    // Must NOT fold into the silent fs-only degrade (D102).
+    const root = await postgresRepo();
+    const io = recordingIo(false);
+    const prev = process.env["CQ_LEDGER_PG_URL"];
+    const prevDb = process.env["DATABASE_URL"];
+    process.env["CQ_LEDGER_PG_URL"] = "postgres://cq:cq@127.0.0.1:1/cq_test";
+    delete process.env["DATABASE_URL"];
+    try {
+      const outcome = await dispatch(["erase", "--cwd", root, "--yes"], io);
+      expect(outcome.exitCode).toBe(2);
+      const err = io.errs.join("\n");
+      expect(err).toContain("postgres tenant NOT erased");
+      expect(err).toMatch(/could not reach the database/i);
+      // cq.toml must still be present — erase aborted before the fs wipe.
+      const { readFile } = await import("node:fs/promises");
+      await expect(readFile(path.join(root, "cq.toml"), "utf8")).resolves.toContain("postgres");
+    } finally {
+      if (prev === undefined) delete process.env["CQ_LEDGER_PG_URL"];
+      else process.env["CQ_LEDGER_PG_URL"] = prev;
+      if (prevDb === undefined) delete process.env["DATABASE_URL"];
+      else process.env["DATABASE_URL"] = prevDb;
+    }
+  });
+
+  it("missing DSN on backend=postgres still degrades (PostgresDsnResolutionError path)", async () => {
+    const root = await postgresRepo();
+    const io = recordingIo(false);
+    const prev = process.env["CQ_LEDGER_PG_URL"];
+    const prevDb = process.env["DATABASE_URL"];
+    // Ensure no ambient DSN can satisfy resolvePostgresDsn.
+    delete process.env["CQ_LEDGER_PG_URL"];
+    delete process.env["DATABASE_URL"];
+    // Also clear libpq vars that the driver might pick up.
+    const cleared: Array<[string, string | undefined]> = [];
+    for (const k of ["PGHOST", "PGDATABASE", "PGUSER", "PGPASSWORD", "PGSERVICE"]) {
+      cleared.push([k, process.env[k]]);
+      delete process.env[k];
+    }
+    try {
+      const outcome = await dispatch(["erase", "--cwd", root, "--yes"], io);
+      // Missing DSN degrades: erase still removes cq.toml (fs-only path) and exits 0.
+      expect(outcome.exitCode).toBe(0);
+      expect(io.errs.join("\n")).not.toContain("postgres tenant NOT erased");
+    } finally {
+      if (prev === undefined) delete process.env["CQ_LEDGER_PG_URL"];
+      else process.env["CQ_LEDGER_PG_URL"] = prev;
+      if (prevDb === undefined) delete process.env["DATABASE_URL"];
+      else process.env["DATABASE_URL"] = prevDb;
+      for (const [k, v] of cleared) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+});
+

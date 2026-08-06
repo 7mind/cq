@@ -36,6 +36,13 @@
  * was down is covered by the post-reconnect full re-read (a bump carries no
  * per-ledger scope anyway, so a whole-store invalidate is the correct
  * granularity — same as the xdg watcher).
+ *
+ * D148: the invalidate pass is a DETACHED async IIFE. `close()` flips a
+ * closed flag so trailing/pending passes become no-ops, and every rejection
+ * is caught so a dispose race can never surface as an unhandled rejection.
+ * PostgresLedgerStore.dispose() drains per-ledger mutexes before closing the
+ * pool so an in-flight pass that already entered `invalidate` finishes against
+ * a still-open pool (or no-ops if dispose won the race).
  */
 
 import postgres from "postgres";
@@ -53,7 +60,7 @@ export interface PostgresCoherenceWatcher {
    * (parity with {@link import("../createLedgerStore.js").XdgCoherenceWatcher}
    * and `LedgerWatcher` `close(): void`) — the underlying `unlisten()` /
    * `end()` are fire-and-forget so the host wires shutdown identically across
-   * backends.
+   * backends. D148: also suppresses any trailing invalidate pass.
    */
   close(): void;
 }
@@ -85,9 +92,13 @@ export function startPostgresCoherenceWatcher(
   // notification (or reconnect) arrived mid-pass, so the last event is never
   // dropped. `store.invalidate` is cheap + idempotent for an unchanged ledger
   // (abstract-suite contract), so an extra pass is harmless.
+  // D148: `closed` suppresses new/trailing work; every rejection is caught so a
+  // dispose race never escapes as an unhandled rejection.
+  let closed = false;
   let invalidating = false;
   let pending = false;
   const invalidateAll = (): void => {
+    if (closed) return;
     if (invalidating) {
       pending = true;
       return;
@@ -97,11 +108,15 @@ export function startPostgresCoherenceWatcher(
       try {
         do {
           pending = false;
+          if (closed) break;
           for (const ledgerId of store.enumerate()) {
+            if (closed) break;
             await store.invalidate(ledgerId);
           }
-          onChange?.(null);
-        } while (pending);
+          if (!closed) onChange?.(null);
+        } while (pending && !closed);
+      } catch {
+        // D148: never let a reload/dispose race escape the detached IIFE.
       } finally {
         invalidating = false;
       }
@@ -129,6 +144,8 @@ export function startPostgresCoherenceWatcher(
 
   return {
     close(): void {
+      closed = true;
+      pending = false;
       void subscription.then((meta) => meta.unlisten()).catch(() => undefined);
       void listenSql.end({ timeout: CLOSE_TIMEOUT_S }).catch(() => undefined);
     },
@@ -183,18 +200,22 @@ export function startPostgresHubCoherenceWatcher(
   callbacks: PostgresHubWatcherCallbacks,
 ): PostgresCoherenceWatcher {
   const listenSql = dsn === "" ? postgres() : postgres(dsn);
+  let closed = false;
   const subscription = listenSql.listen(
     LEDGER_CHANGE_CHANNEL,
     (payload: string): void => {
+      if (closed) return;
       callbacks.onProjectChange(payload);
     },
     (): void => {
+      if (closed) return;
       callbacks.onListen();
     },
   );
   void subscription.catch(() => undefined);
   return {
     close(): void {
+      closed = true;
       void subscription.then((meta) => meta.unlisten()).catch(() => undefined);
       void listenSql.end({ timeout: CLOSE_TIMEOUT_S }).catch(() => undefined);
     },

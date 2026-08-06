@@ -329,9 +329,11 @@ async function writeHubPromptFixture(promptRoot: string): Promise<void> {
       sidecar: { schemaRoleId: HUB_PROMPT_ROLE_ID },
     },
   ]);
+  // Must match @cq/config planAdvanceSidecar.version (currently 2) — fetch_prompt
+  // fail-closes when the attested schemaVersion drifts from the live sidecar.
   const schemaJson = JSON.stringify({
     id: HUB_PROMPT_ROLE_ID,
-    version: 1,
+    version: 2,
     inputSchema: { type: "object" },
     outputSchema: { type: "object" },
   });
@@ -348,7 +350,7 @@ async function writeHubPromptFixture(promptRoot: string): Promise<void> {
       [
         {
           roleId: HUB_PROMPT_ROLE_ID,
-          version: 1,
+          version: 2,
           sha256: createHash("sha256").update(HUB_PROMPT_BYTES, "utf8").digest("hex"),
           schemaSha256: createHash("sha256").update(schemaJson, "utf8").digest("hex"),
         },
@@ -467,7 +469,17 @@ describe.skipIf(t586PostgresDisposition.kind === "skip")("cq serve — live boot
         (async (): Promise<string> => {
           while (!buf.includes("\n")) {
             const { done, value } = await reader.read();
-            if (done) throw new Error("stdout closed without a URL line");
+            if (done) {
+              // D146: surface the child's stderr — without it the failure is
+              // "stdout closed without a URL line" with no diagnosis.
+              const stderrText = await new Response(proc.stderr).text();
+              const detail = stderrText.trim();
+              throw new Error(
+                detail.length > 0
+                  ? `stdout closed without a URL line; stderr:\n${detail}`
+                  : "stdout closed without a URL line",
+              );
+            }
             buf += decoder.decode(value, { stream: true });
           }
           return buf.slice(0, buf.indexOf("\n")).trim();
@@ -523,6 +535,19 @@ describe.skipIf(!process.env["CQ_TEST_PG_URL"])(
     let outdir: string;
     const children: Array<{ kill(): void; exited: Promise<number> }> = [];
     let control: ReturnType<typeof openPgPool> | null = null;
+    // Ownership tests do not exercise fetch_prompt. Clear ambient prompt
+    // selectors so a stale CQ_PROMPT_ROOT from the agent environment cannot
+    // fail boot before the advisory-lock path under test runs.
+    const ownerEnv = (): Record<string, string | undefined> => {
+      const env: Record<string, string | undefined> = {
+        ...process.env,
+        LEDGER_WEB_OUTDIR: outdir,
+      };
+      delete env["CQ_PROMPT_ROOT"];
+      delete env["CQ_PROMPT_SURFACE"];
+      delete env["CQ_PROMPT_SURFACES_ROOT"];
+      return env;
+    };
 
     beforeAll(async () => {
       outdir = await fs.mkdtemp(path.join(os.tmpdir(), "cq-serve-owner-out-"));
@@ -557,7 +582,7 @@ describe.skipIf(!process.env["CQ_TEST_PG_URL"])(
           "--port",
           "0",
         ],
-        env: { ...process.env, LEDGER_WEB_OUTDIR: outdir },
+        env: ownerEnv(),
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -604,7 +629,7 @@ describe.skipIf(!process.env["CQ_TEST_PG_URL"])(
             "--port",
             ownerAPort,
           ],
-          env: { ...process.env, LEDGER_WEB_OUTDIR: outdir },
+          env: ownerEnv(),
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -651,7 +676,7 @@ describe.skipIf(!process.env["CQ_TEST_PG_URL"])(
           "--port",
           "0",
         ],
-        env: { ...process.env, LEDGER_WEB_OUTDIR: outdir },
+        env: ownerEnv(),
         stdout: "pipe",
         stderr: "pipe",
       });

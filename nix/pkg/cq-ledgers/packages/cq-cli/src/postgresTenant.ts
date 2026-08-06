@@ -70,20 +70,27 @@ export async function resolvePostgresTenant(root: string): Promise<PostgresTenan
   const resolution = resolvePostgresDsn(ledgerConfig, process.env);
   const dsn = resolution.kind === "dsn" ? resolution.dsn : "";
   const pool = openPgPool(dsn);
-  await ensureSchema(pool);
+  // D102: any failure AFTER openPgPool must close the pool so a connection
+  // failure cannot leak an open handle into the caller's catch path.
+  try {
+    await ensureSchema(pool);
 
-  const rows = await pool<Array<{ display_name: string }>>`
-    SELECT display_name FROM projects WHERE project_key = ${projectKey}
-  `;
-  const registeredDisplayName = rows[0]?.display_name ?? null;
-  const candidateDisplayName = resolveDisplayName({
-    projectName: config?.project?.name,
-    projectId: ledgerConfig.projectId,
-    repoBasename: path.basename(root),
-    projectKey,
-  });
+    const rows = await pool<Array<{ display_name: string }>>`
+      SELECT display_name FROM projects WHERE project_key = ${projectKey}
+    `;
+    const registeredDisplayName = rows[0]?.display_name ?? null;
+    const candidateDisplayName = resolveDisplayName({
+      projectName: config?.project?.name,
+      projectId: ledgerConfig.projectId,
+      repoBasename: path.basename(root),
+      projectKey,
+    });
 
-  return { pool, projectKey, registeredDisplayName, candidateDisplayName, backup: ledgerConfig.backup };
+    return { pool, projectKey, registeredDisplayName, candidateDisplayName, backup: ledgerConfig.backup };
+  } catch (err) {
+    await pool.close().catch(() => undefined);
+    throw err;
+  }
 }
 
 /** Active row counts per ledger for `projectKey`, BEFORE any wipe (for the operator summary). */

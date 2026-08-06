@@ -203,5 +203,31 @@ export function writeTransaction<T>(
   fn: SQL.TransactionContextCallback<T>,
   maxAttempts: number = WRITE_TXN_MAX_ATTEMPTS,
 ): Promise<SQL.ContextCallbackResult<T>> {
+  // Stay at the driver default (READ COMMITTED). D149's REPEATABLE READ fix
+  // applies to pure multi-statement tenant READS via {@link readTransaction}
+  // (loadCache / reloadLedger). Raising write isolation to RR breaks the
+  // parent-first protocol (D267/T1858): after FOR UPDATE wait, a close's
+  // nonTerminalChildren SELECT still sees the pre-wait snapshot and misses a
+  // just-committed child insert, so close-versus-create can both succeed.
   return withSerializationRetry(() => pool.begin(fn), maxAttempts);
+}
+
+/**
+ * Run `fn` inside a read-only REPEATABLE READ transaction so a multi-statement
+ * tenant read (loadCache / reloadLedger) is atomic against concurrent writers
+ * (D149). Retries on serialization failure, matching {@link writeTransaction}.
+ */
+export function readTransaction<T>(
+  pool: SQL,
+  fn: SQL.TransactionContextCallback<T>,
+  maxAttempts: number = WRITE_TXN_MAX_ATTEMPTS,
+): Promise<SQL.ContextCallbackResult<T>> {
+  return withSerializationRetry(
+    () =>
+      pool.begin(async (tx) => {
+        await tx.unsafe("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+        return fn(tx);
+      }),
+    maxAttempts,
+  );
 }

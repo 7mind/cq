@@ -179,4 +179,70 @@ if (PG_URL === undefined || PG_URL.length === 0) {
     // Generous ceiling for the reconnect leg under load.
     30_000,
   );
+
+  it(
+    "D148: dispose during pending invalidate never surfaces unhandled rejection (~30 runs)",
+    async () => {
+      // Stress the dispose/reload race the intermittent ~2/15 teardown failure hit.
+      // With the D148 drain + closed-flag + invalidate no-op, every run must settle
+      // cleanly (no unhandledRejection, no throw from dispose).
+      const RUNS = 30;
+      const rejections: unknown[] = [];
+      const onUnhandled = (err: unknown): void => {
+        rejections.push(err);
+      };
+      process.on("unhandledRejection", onUnhandled);
+      try {
+        for (let i = 0; i < RUNS; i++) {
+          const projectKey = await prepareTenant();
+          const poolA = openPgPool(dsn);
+          const poolB = openPgPool(dsn);
+          const storeA = new PostgresLedgerStore({
+            pool: poolA,
+            projectKey,
+            displayName: projectKey,
+          });
+          const storeB = new PostgresLedgerStore({
+            pool: poolB,
+            projectKey,
+            displayName: projectKey,
+          });
+          await storeA.init();
+          await storeB.init();
+          const pgHandleB: ResolvedPostgresHandle = { pool: poolB, dsn, projectKey };
+          let bumps = 0;
+          const watcher = startPostgresCoherenceWatcher(storeB, pgHandleB, () => {
+            bumps += 1;
+          });
+          try {
+            await waitFor(() => bumps >= 1, CONVERGE_TIMEOUT_MS);
+            const milestone = await storeA.createMilestone({ title: `d148-${i}` });
+            // Fire several writes quickly so a trailing invalidate is likely in flight
+            // when we dispose without an explicit quiesce (the D148 trigger condition).
+            await Promise.all([
+              storeA.createItem(WIDGETS, milestone.id, {
+                status: "open",
+                fields: { severity: "low", location: "a", description: `d148-a-${i}` },
+              }),
+              storeA.createItem(WIDGETS, milestone.id, {
+                status: "open",
+                fields: { severity: "low", location: "b", description: `d148-b-${i}` },
+              }),
+            ]);
+            // Tiny yield so the watcher IIFE can enter invalidate, then tear down
+            // immediately — no waitFor convergence (that was the old race window).
+            await new Promise((r) => setTimeout(r, 5));
+          } finally {
+            watcher.close();
+            await storeA.dispose();
+            await storeB.dispose();
+          }
+        }
+      } finally {
+        process.off("unhandledRejection", onUnhandled);
+      }
+      expect(rejections).toEqual([]);
+    },
+    120_000,
+  );
 }

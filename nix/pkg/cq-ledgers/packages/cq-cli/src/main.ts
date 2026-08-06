@@ -39,6 +39,7 @@ import {
   isPostgresTenantEmpty,
   RemoteLedgerClientNotWiredError,
   PostgresBackupNotWiredError,
+  PostgresDsnResolutionError,
   type LedgerStore,
   type ResetSummary,
 } from "@cq/ledger";
@@ -592,15 +593,17 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
 
   // Best-effort resolve the xdg out-of-tree project dir (T501), OR the
   // postgres tenant this cq.toml names (T583). Only attempted when a cq.toml
-  // exists to read; any failure (malformed toml, no git identity/shallow
-  // clone, backend isn't 'xdg'/'postgres', an unreachable postgres, …) leaves
-  // both undefined and erase falls back to the bounded fs+config delete only,
-  // exactly as before.
+  // exists to read; most failures (malformed toml, no git identity/shallow
+  // clone, missing DSN, …) leave both undefined and erase falls back to the
+  // bounded fs+config delete only. D102: a postgres CONNECTION failure is
+  // NOT folded into that degrade — the operator asked to erase a live tenant
+  // and must learn the rows were NOT erased.
   let xdgProjectDir: string | undefined;
   let postgresTenant: PostgresTenantHandle | undefined;
   if (configExists) {
+    let backend: string | undefined;
     try {
-      const { backend } = resolveLedgerBackend(args.cwd);
+      backend = resolveLedgerBackend(args.cwd).backend;
       if (backend === "remote") {
         io.err(new RemoteLedgerClientNotWiredError("cq erase", args.cwd).message);
         return { exitCode: EXIT_USAGE };
@@ -613,7 +616,14 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
       } else if (backend === "postgres") {
         postgresTenant = await resolvePostgresTenant(args.cwd);
       }
-    } catch {
+    } catch (err) {
+      if (backend === "postgres" && !(err instanceof PostgresDsnResolutionError)) {
+        const detail = err instanceof Error ? err.message : String(err);
+        io.err(
+          `cq erase: postgres tenant NOT erased — could not reach the database: ${detail}`,
+        );
+        return { exitCode: EXIT_USAGE };
+      }
       xdgProjectDir = undefined;
       postgresTenant = undefined;
     }
