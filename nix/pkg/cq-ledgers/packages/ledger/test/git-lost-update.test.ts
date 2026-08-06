@@ -90,6 +90,12 @@ afterAll(async () => {
   for (const d of repos) await fs.rm(d, { recursive: true, force: true });
 });
 
+// Full-gate parallel load: fixture staging (three independent git-object
+// inits + four createMilestone commits) needs a generous wall-clock bound
+// (T1995/T1998 ORCHESTRATION_WAIT_MS pattern, D281). The lost-update
+// assertions themselves are pure correctness checks, not timed.
+const ORCHESTRATION_WAIT_MS = 120_000;
+
 describe("D61 — two git-object stores over one repo+ref, no cross-invalidate", () => {
   // Regression guard: the T425 fix (reload from ref tip after lock) landed,
   // so this interleave must NOT lose a write — the assertions require no
@@ -163,6 +169,6 @@ describe("D61 — two git-object stores over one repo+ref, no cross-invalidate",
         await storeB.dispose();
       }
     },
-    30_000,
+    ORCHESTRATION_WAIT_MS,
   );
 });

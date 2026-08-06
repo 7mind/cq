@@ -127,11 +127,16 @@ afterAll(async () => {
 // Shared abstract suite (dual-tests parity with FsLedgerStore)
 // ---------------------------------------------------------------------------
 
+// D281: generous wall-clock bound for git fixture staging under full-gate load.
+const ORCHESTRATION_WAIT_MS = 120000;
+
 runStoreAbstractSuite({
   name: "GitObjectLedgerBackend",
-  // Each store op shells out to git; under full-suite parallel load individual
-  // tests can exceed bun's 5s default. 30s keeps them deterministic.
-  timeoutMs: 30_000,
+  // Each store op shells out to git. Under full-gate parallel load fixture
+  // staging (seedRepo + seedRegistry + multi-op sequences) needs a generous
+  // wall-clock bound (T1995/T1998 ORCHESTRATION_WAIT_MS pattern, D281); the
+  // abstract suite has no tight SUT stopwatch on staging itself.
+  timeoutMs: 120_000,
   async build(seed): Promise<LedgerStore> {
     const dir = await seedRepo();
     if (seed.length > 0) await seedRegistry(dir, seed);
@@ -220,7 +225,7 @@ describe("GitObjectLedgerBackend — orphan-ref invariants", () => {
     expect(await git(dir, "status", "--porcelain")).toBe("");
 
     await store.dispose();
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("never commits lockfiles into the orphan tree", async () => {
     const dir = await seedRepo();
@@ -250,7 +255,7 @@ describe("GitObjectLedgerBackend — orphan-ref invariants", () => {
     }
 
     await store.dispose();
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("tags refs/tags/cq-ledger-backup-<ts> before reinit on schema divergence", async () => {
     const dir = await seedRepo();
@@ -287,7 +292,7 @@ describe("GitObjectLedgerBackend — orphan-ref invariants", () => {
     expect(fetched.schema.statusValues).not.toEqual(["weird", "states"]);
 
     await store.dispose();
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("'abort' divergence policy throws rather than reinitialising", async () => {
     const dir = await seedRepo();
@@ -307,7 +312,7 @@ describe("GitObjectLedgerBackend — orphan-ref invariants", () => {
     });
     await expect(store.init()).rejects.toThrow();
     await store.dispose();
-  });
+  }, ORCHESTRATION_WAIT_MS);
 });
 
 // ---------------------------------------------------------------------------
@@ -333,7 +338,7 @@ describe("GitObjectLedgerBackend — read_log capability (T408)", () => {
 
     await reader.dispose();
     await store.dispose();
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("accepts a repo-relative .cq/logs/ path without doubling the prefix", async () => {
     const dir = await seedRepo();
@@ -344,7 +349,7 @@ describe("GitObjectLedgerBackend — read_log capability (T408)", () => {
     const res = await store.readLog(".cq/logs/session.md");
     expect(res.content).toBe("hello log\n");
     await store.dispose();
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("rejects a path escaping logs/ (../tasks.md)", async () => {
     const dir = await seedRepo();
@@ -352,7 +357,7 @@ describe("GitObjectLedgerBackend — read_log capability (T408)", () => {
     await store.init();
     await expect(store.readLog("../tasks.md")).rejects.toThrow(/escapes \.cq\/logs/);
     await store.dispose();
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("rejects an absolute path (/etc/passwd)", async () => {
     const dir = await seedRepo();
@@ -362,7 +367,7 @@ describe("GitObjectLedgerBackend — read_log capability (T408)", () => {
       /absolute paths are not allowed/,
     );
     await store.dispose();
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("truncates a file > 4 MiB and sets truncated:true", async () => {
     const dir = await seedRepo();
@@ -375,7 +380,7 @@ describe("GitObjectLedgerBackend — read_log capability (T408)", () => {
     expect(res.truncated).toBe(true);
     expect(res.content.length).toBe(MAX_READ_LOG_BYTES);
     await store.dispose();
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("returns a clean not-found for a missing path (mirrors FS ENOENT)", async () => {
     const dir = await seedRepo();
@@ -393,7 +398,7 @@ describe("GitObjectLedgerBackend — read_log capability (T408)", () => {
     }
     expect(threw).toBe(true);
     await store.dispose();
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   // D69 fix: readLog falls back to the working-tree logs dir when a log file is
   // present there but ABSENT from the orphan ref. Before the fix this threw the
@@ -458,7 +463,7 @@ describe("GitObjectLedgerBackend — read_log capability (T408)", () => {
       /escapes \.cq\/logs/,
     );
     await store.dispose();
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("rejects a working-tree-fallback symlink that escapes the logs root (D26/D28)", async () => {
     const dir = await seedRepo();
@@ -476,7 +481,7 @@ describe("GitObjectLedgerBackend — read_log capability (T408)", () => {
 
     await expect(store.readLog("link.log")).rejects.toThrow(/escapes \.cq\/logs/);
     await store.dispose();
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("truncates an oversize working-tree-fallback log and sets truncated:true", async () => {
     const dir = await seedRepo();
@@ -494,7 +499,7 @@ describe("GitObjectLedgerBackend — read_log capability (T408)", () => {
     expect(res.truncated).toBe(true);
     expect(res.content.length).toBe(MAX_READ_LOG_BYTES);
     await store.dispose();
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   // T453 REGRESSION TEST: a log committed to the orphan ref is still served via
   // the ref path. Guards against the working-tree fallback silently shadowing or
@@ -592,7 +597,7 @@ describe("GitObjectLedgerBackend — .cq/logs prefix (T444/G58)", () => {
     expect(res.content).toBe("session body\n");
     expect(res.path).toBe(".cq/logs/20260101-1200-session.md");
     await store.dispose();
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("does NOT silently strip/accept a legacy docs/logs/<file> path", async () => {
     const dir = await seedRepo();
@@ -606,5 +611,5 @@ describe("GitObjectLedgerBackend — .cq/logs prefix (T444/G58)", () => {
 
     await expect(store.readLog("docs/logs/session.md")).rejects.toThrow();
     await store.dispose();
-  });
+  }, ORCHESTRATION_WAIT_MS);
 });

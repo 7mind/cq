@@ -3,6 +3,14 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+
+// Full-gate parallel load: git-object (and contended fs lock) fixture staging
+// needs a generous per-test wall-clock bound (T1995/T1998 ORCHESTRATION_WAIT_MS
+// pattern, D281). Tight SUT invariants below are not timed by this budget.
+const ORCHESTRATION_WAIT_MS = 120_000;
+// How long to observe that init remains blocked on a held lock before we
+// release it. Not a SUT ceiling — only a lower-bound "still waiting" sample.
+const LOCK_HELD_OBSERVE_MS = 250;
 import {
   DECISIONS_LEDGER,
   DEFECTS_LEDGER,
@@ -137,7 +145,7 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     ).rejects.toThrow();
     await recovered.dispose();
     await fs.rm(root, { recursive: true, force: true });
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("recovers one research pause and review-defect batch after partial multi-ledger apply", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-fs-pause-recovery-"));
@@ -281,7 +289,7 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     ).rejects.toThrow();
     await recovered.dispose();
     await fs.rm(root, { recursive: true, force: true });
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("recovers one finalize decision and defect batch before the marker after partial apply", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-fs-finalize-recovery-"));
@@ -449,7 +457,7 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     ).rejects.toThrow();
     await recovered.dispose();
     await fs.rm(root, { recursive: true, force: true });
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("adopts an old filesystem store with no private lifecycle state", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-fs-old-store-"));
@@ -468,7 +476,7 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     );
     await adopted.dispose();
     await fs.rm(root, { recursive: true, force: true });
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("restores verifier-only lifecycle state with exact replay authority", async () => {
     const source = await fs.mkdtemp(path.join(os.tmpdir(), "plan-fs-source-"));
@@ -511,7 +519,7 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     await restored.dispose();
     await fs.rm(source, { recursive: true, force: true });
     await fs.rm(restoredRoot, { recursive: true, force: true });
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("erases durable and pending filesystem lifecycle state as ledger-owned artifacts", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-fs-erase-"));
@@ -539,7 +547,7 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     expect(erased.docsDirRemoved).toBe(true);
     await expect(fs.stat(docs)).rejects.toThrow();
     await fs.rm(root, { recursive: true, force: true });
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("publishes Git lifecycle state and goal marker in one CAS ref advance", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-git-cas-"));
@@ -577,7 +585,7 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     expect(privateState).not.toContain(input.ownerFenceToken);
     await store.dispose();
     await fs.rm(root, { recursive: true, force: true });
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("replays an interrupted commit at init inside the ordered lock set", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-fs-locked-recovery-"));
@@ -618,7 +626,7 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     const initialising = recovered.init().then(() => {
       settled = true;
     });
-    await Bun.sleep(250);
+    await Bun.sleep(LOCK_HELD_OBSERVE_MS);
     expect(settled).toBe(false);
     expect(await fs.readFile(pendingPath, "utf8")).toContain(GOALS_LEDGER);
     expect(await fs.readFile(goalsPath, "utf8")).toBe(beforeGoals);
@@ -634,7 +642,7 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     expect(replay.replayed).toBe(true);
     await recovered.dispose();
     await fs.rm(root, { recursive: true, force: true });
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("surfaces malformed durable and pending lifecycle state as a LedgerError", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-fs-malformed-"));
@@ -662,7 +670,7 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
       /invalid pending plan lifecycle commit/,
     );
     await fs.rm(root, { recursive: true, force: true });
-  });
+  }, ORCHESTRATION_WAIT_MS);
 });
 
 describe("T849 raw plan fence across peers on one persistent location", () => {
@@ -712,7 +720,7 @@ describe("T849 raw plan fence across peers on one persistent location", () => {
         await second.dispose();
         await location.cleanup();
       }
-    });
+    }, ORCHESTRATION_WAIT_MS);
   }
 });
 

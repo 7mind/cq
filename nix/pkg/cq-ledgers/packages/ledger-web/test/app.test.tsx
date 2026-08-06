@@ -1603,6 +1603,100 @@ describe("ledger-web editor survives same-id live reload (D219)", () => {
   });
 });
 
+// D282 — dirty-only full-form save: an uncontrolled field the user never
+// touched must not clobber a concurrent external edit that landed while the
+// editor was open (D219 keeps editing=true across same-id live reload).
+describe("ledger-web dirty-only save preserves concurrent external fields (D282)", () => {
+  it("saves the dirty field and does not clobber a live-updated untouched field", async () => {
+    class LiveFakeWS {
+      static instances: LiveFakeWS[] = [];
+      onopen: ((ev: Event) => void) | null = null;
+      onmessage: ((ev: MessageEvent) => void) | null = null;
+      onclose: ((ev: CloseEvent) => void) | null = null;
+      onerror: ((ev: Event) => void) | null = null;
+      readyState = 0;
+      constructor(public url: string) {
+        LiveFakeWS.instances.push(this);
+      }
+      open(): void {
+        this.readyState = 1;
+        this.onopen?.(new Event("open"));
+      }
+      push(obj: unknown): void {
+        this.onmessage?.({ data: JSON.stringify(obj) } as MessageEvent);
+      }
+      close(): void {
+        this.readyState = 3;
+        this.onclose?.({ code: 1000 } as CloseEvent);
+      }
+      send(): void {
+        /* no-op */
+      }
+      addEventListener(): void {
+        /* no-op */
+      }
+      removeEventListener(): void {
+        /* no-op */
+      }
+      dispatchEvent(): boolean {
+        return false;
+      }
+    }
+
+    LiveFakeWS.instances = [];
+    holdClock = new FakeClock();
+    fake = new FakeClient();
+    await act(async () => {
+      root.render(
+        createElement(App, {
+          connect: async () => fake,
+          initialUrl: "http://x/mcp",
+          liveUrl: "ws://x/ws",
+          liveWsCtor: LiveFakeWS as unknown as { new (url: string): WebSocket },
+          holdClock,
+        }),
+      );
+    });
+    await flush();
+    const ws = LiveFakeWS.instances[0]!;
+    act(() => ws.open());
+    await flush();
+
+    click(testid("ledger-bugs"));
+    await flush();
+    click(testid("item-D1"));
+    await flush();
+    click(testid("edit"));
+    await flush();
+    expect(testid("edit-form")).not.toBeNull();
+
+    // User dirties headline only; note stays at the open-edit baseline in the
+    // uncontrolled input (defaultValue is not re-applied on live reload).
+    setValue(testid("edit-field-headline"), "headline from editor");
+    const noteAtOpen = (testid("edit-field-note") as HTMLTextAreaElement | null)?.value ?? "";
+
+    // External writer updates note while the editor is open; live push reloads
+    // the row but D219 keeps editing=true and the uncontrolled inputs.
+    await fake.updateItem("bugs", "D1", { fields: { note: "live external note" } });
+    act(() => ws.push({ type: "changed", ledger: "bugs" }));
+    await flush();
+    expect(testid("edit-form")).not.toBeNull();
+    expect((testid("edit-field-headline") as HTMLInputElement | null)?.value).toBe(
+      "headline from editor",
+    );
+    // Uncontrolled note input still shows the open-edit baseline, NOT the live value.
+    expect((testid("edit-field-note") as HTMLTextAreaElement | null)?.value).toBe(noteAtOpen);
+
+    await holdFull(testid("save"));
+
+    const item = await fake.fetchItem("bugs", "D1", "full");
+    // Dirty field saved.
+    expect(item.fields["headline"]).toBe("headline from editor");
+    // Untouched field keeps the live server value — not the stale form baseline.
+    expect(item.fields["note"]).toBe("live external note");
+  });
+});
+
 describe("ledger-web openLedger generation guard (D220)", () => {
   it("a superseded slower openLedger fetch does not paint over the later ledger", async () => {
     const client = new DeferredOpenClient();

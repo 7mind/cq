@@ -791,13 +791,19 @@ export {
   storeResultLoadScope,
   sweepAttestationsOn,
 } from "./dispatchAttestationBackend.js";
-export type { SqliteAttestationBackendOptions } from "./dispatchAttestationSqlite.js";
+export type {
+  SqliteAttestationBackendOptions,
+  SqliteAttestationConnection,
+} from "./dispatchAttestationSqlite.js";
 export {
   ATTESTATION_BUSY_TIMEOUT_MS,
   ATTESTATION_DB_FILENAME,
   SqliteAttestationBackend,
+  SqliteAttestationConnectionRegistry,
   asSqliteBackendError,
+  defaultSqliteAttestationConnectionRegistry,
   ensureAttestationSchema,
+  resolveAttestationDbKey,
   xdgAttestationDbPath,
   xdgAttestationStateBase,
 } from "./dispatchAttestationSqlite.js";

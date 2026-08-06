@@ -15,18 +15,22 @@ import { chmodSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  ATTESTATION_BUSY_TIMEOUT_MS,
   ATTESTATION_DB_FILENAME,
   ATTESTATION_TABLE,
   AttestationStorageError,
   AttestationTransportError,
+  FakeDispatchClock,
   PERSISTED_ATTESTATION_COLUMNS,
   SqliteAttestationBackend,
+  SqliteAttestationConnectionRegistry,
   ensureAttestationSchema,
   xdgAttestationDbPath,
   xdgAttestationStateBase,
   type AttestationNamespace,
 } from "@cq/config";
 import {
+  AttestationDriver,
   runAttestationStoreContract,
   type AttestationContractFixture,
 } from "./attestationStoreContract.js";
@@ -250,6 +254,48 @@ describe("bun:sqlite attestation backend specifics", () => {
     );
     // close() is idempotent.
     await backend.close();
+  });
+
+  // D177 — two in-process handles over ONE db file must share the interned
+  // Database + AsyncMutex. Without that, concurrent BEGIN IMMEDIATE hits the
+  // synchronous busy_timeout and stalls the event loop for the full
+  // ATTESTATION_BUSY_TIMEOUT_MS. Assert DURATION, not just eventual success.
+  test("two handles on one file, different namespaces, concurrent prepare finishes well under busy_timeout (D177)", async () => {
+    const dbPath = join(freshRoot(), ATTESTATION_DB_FILENAME);
+    const registry = new SqliteAttestationConnectionRegistry();
+    const clock = new FakeDispatchClock("2026-07-28T09:00:00.000Z");
+    const a = new SqliteAttestationBackend({
+      namespace: { backend: NAMESPACE_BACKEND, projectKey: "ns-a" },
+      dbPath,
+      registry,
+    });
+    const b = new SqliteAttestationBackend({
+      namespace: { backend: NAMESPACE_BACKEND, projectKey: "ns-b" },
+      dbPath,
+      registry,
+    });
+    expect(registry.holderCount(dbPath)).toBe(2);
+    const driverA = new AttestationDriver(a, clock);
+    const driverB = new AttestationDriver(b, clock);
+    try {
+      const started = performance.now();
+      const [preparedA, preparedB] = await Promise.all([
+        driverA.prepare({ idempotencyKey: "d177-a" }),
+        driverB.prepare({ idempotencyKey: "d177-b" }),
+      ]);
+      const elapsedMs = performance.now() - started;
+      // Shared mutex serializes before BEGIN IMMEDIATE; both prepares are
+      // sub-second work. A per-instance mutex regresses to ~busy_timeout (5s).
+      expect(elapsedMs).toBeLessThan(500);
+      expect(elapsedMs).toBeLessThan(ATTESTATION_BUSY_TIMEOUT_MS / 10);
+      expect(preparedA.attestationId.length).toBeGreaterThan(0);
+      expect(preparedB.attestationId.length).toBeGreaterThan(0);
+      expect(preparedA.attestationId).not.toBe(preparedB.attestationId);
+    } finally {
+      await a.close();
+      await b.close();
+    }
+    expect(registry.holderCount(dbPath)).toBe(0);
   });
 
   test("the xdg location is derived from an explicit environment, never the real one", () => {

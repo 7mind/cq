@@ -32,8 +32,9 @@
  */
 
 import { Database, SQLiteError } from "bun:sqlite";
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve as resolvePath } from "node:path";
 import {
   AttestationStorageError,
   AttestationTransportError,
@@ -97,34 +98,144 @@ export function ensureAttestationSchema(db: Database): void {
   `);
 }
 
+/**
+ * One interned bun:sqlite connection + in-process mutex for a resolved db path
+ * (D177). Two {@link SqliteAttestationBackend} handles over the SAME file must
+ * share both: a per-instance mutex leaves concurrent `BEGIN IMMEDIATE` to the
+ * synchronous `busy_timeout`, which stalls the event loop for the full
+ * {@link ATTESTATION_BUSY_TIMEOUT_MS}.
+ */
+export interface SqliteAttestationConnection {
+  readonly db: Database;
+  readonly mutex: AsyncMutex;
+  /** Canonical absolute path the registry keys on. */
+  readonly resolvedPath: string;
+}
+
+interface RegistryEntry {
+  readonly connection: SqliteAttestationConnection;
+  refCount: number;
+}
+
+/**
+ * Interns ONE {@link Database} + ONE {@link AsyncMutex} per resolved db path.
+ * Constructor-injectable so tests own an isolated registry; production callers
+ * that omit it share {@link defaultSqliteAttestationConnectionRegistry}.
+ */
+export class SqliteAttestationConnectionRegistry {
+  private readonly entries = new Map<string, RegistryEntry>();
+
+  /** Acquire (or create) the shared connection for `dbPath`. */
+  acquire(dbPath: string): SqliteAttestationConnection {
+    const preOpenKey = resolveAttestationDbKey(dbPath);
+    const existing = this.entries.get(preOpenKey);
+    if (existing !== undefined) {
+      existing.refCount += 1;
+      return existing.connection;
+    }
+    const db = openAttestationDb(dbPath);
+    // Open creates the file; re-resolve so subsequent acquires on equivalent
+    // path spellings (relative vs absolute, pre- vs post-create) intern.
+    const resolvedPath = resolveAttestationDbKey(dbPath);
+    const raced = this.entries.get(resolvedPath);
+    if (raced !== undefined) {
+      // Same-tick double-open lost the intern race: drop the spare handle.
+      db.close();
+      raced.refCount += 1;
+      return raced.connection;
+    }
+    const connection: SqliteAttestationConnection = {
+      db,
+      mutex: new AsyncMutex(),
+      resolvedPath,
+    };
+    const entry: RegistryEntry = { connection, refCount: 1 };
+    this.entries.set(resolvedPath, entry);
+    if (preOpenKey !== resolvedPath) {
+      this.entries.set(preOpenKey, entry);
+    }
+    return connection;
+  }
+
+  /** Drop one holder; close the Database when the last holder releases. */
+  release(connection: SqliteAttestationConnection): void {
+    const entry = this.entries.get(connection.resolvedPath);
+    if (entry === undefined || entry.connection !== connection) {
+      throw new Error(
+        `sqlite attestation registry release of unknown connection "${connection.resolvedPath}"`,
+      );
+    }
+    entry.refCount -= 1;
+    if (entry.refCount > 0) return;
+    for (const [key, value] of this.entries) {
+      if (value === entry) this.entries.delete(key);
+    }
+    connection.db.close();
+  }
+
+  /** Test seam: how many live holders the registry currently tracks. */
+  holderCount(dbPath: string): number {
+    return this.entries.get(resolveAttestationDbKey(dbPath))?.refCount ?? 0;
+  }
+}
+
+/** Process-wide default registry used when a constructor omits `registry`. */
+export const defaultSqliteAttestationConnectionRegistry =
+  new SqliteAttestationConnectionRegistry();
+
+/** Canonical absolute key for interning a db path (realpath when the file exists). */
+export function resolveAttestationDbKey(dbPath: string): string {
+  const absolute = resolvePath(dbPath);
+  try {
+    return realpathSync(absolute);
+  } catch {
+    return absolute;
+  }
+}
+
 export interface SqliteAttestationBackendOptions {
   readonly namespace: AttestationNamespace;
   /** A concrete db file path. XDG resolution is {@link xdgAttestationDbPath}'s. */
   readonly dbPath: string;
+  /**
+   * Connection internment scope (D177). Prefer injecting an explicit registry
+   * (tests, multi-tenant hosts that want isolation); omit to share the process
+   * default so independent constructions over one file still serialize.
+   */
+  readonly registry?: SqliteAttestationConnectionRegistry;
 }
 
 /**
  * The bun:sqlite attestation backend. Bound to ONE namespace; rows of another
  * namespace in the same file are invisible to it and unreachable through it.
+ *
+ * Connections are interned per resolved db path (D177): two handles over ONE
+ * file share ONE Database and ONE AsyncMutex so concurrent units of work never
+ * contend on synchronous `BEGIN IMMEDIATE` / `busy_timeout`.
  */
 export class SqliteAttestationBackend implements AttestationBackend {
   readonly namespace: AttestationNamespace;
   readonly dbPath: string;
 
-  private readonly db: Database;
-  private readonly mutex = new AsyncMutex();
+  private readonly registry: SqliteAttestationConnectionRegistry;
+  private readonly connection: SqliteAttestationConnection;
   private closed = false;
 
   constructor(options: SqliteAttestationBackendOptions) {
     this.namespace = assertSqliteNamespace(options.namespace);
     this.dbPath = options.dbPath;
-    this.db = openAttestationDb(options.dbPath);
+    this.registry = options.registry ?? defaultSqliteAttestationConnectionRegistry;
+    this.connection = this.registry.acquire(options.dbPath);
     try {
-      ensureAttestationSchema(this.db);
+      ensureAttestationSchema(this.connection.db);
     } catch (error) {
-      this.db.close();
+      this.registry.release(this.connection);
       throw asSqliteBackendError(error);
     }
+  }
+
+  private get db(): Database {
+    return this.connection.db;
   }
 
   /** The rows of THIS namespace, for a caller inspecting durable state. */
@@ -153,7 +264,7 @@ export class SqliteAttestationBackend implements AttestationBackend {
   }
 
   transact<T>(scope: AttestationLoadScope, body: (store: AttestationStore) => T): Promise<T> {
-    return this.mutex.run(async () => {
+    return this.connection.mutex.run(async () => {
       if (this.closed) {
         throw new AttestationTransportError(`attestation store "${this.dbPath}" is closed`);
       }
@@ -188,7 +299,7 @@ export class SqliteAttestationBackend implements AttestationBackend {
   close(): Promise<void> {
     if (!this.closed) {
       this.closed = true;
-      this.db.close();
+      this.registry.release(this.connection);
     }
     return Promise.resolve();
   }

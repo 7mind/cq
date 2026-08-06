@@ -17,7 +17,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AgentModelEntry, ArchiveContent, FetchedLedger, FetchedMilestoneGroup, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema, LedgerSummary, MilestonePatch, PredicateVerdict, ProjectEntry, UsageStatsSnapshot } from "./types.js";
+import type { AgentModelEntry, ArchiveContent, FetchedLedger, FetchedMilestoneGroup, FieldValue, FtsHit, Item, ItemPatch, LedgerClient, LedgerSchema, LedgerSummary, MilestonePatch, PredicateVerdict, ProjectEntry, UsageStatsSnapshot } from "./types.js";
 import { DagView } from "./DagView.js";
 import { Markdown } from "./Markdown.js";
 import { loadDagData, type DagData } from "./dagData.js";
@@ -963,23 +963,28 @@ export function App({
   );
 
   /**
-   * Persist an edited item: status + all fields in one call. Milestones route
-   * through the generic item update (mapping title/description/blockedBy/dependsOn);
-   * every other ledger through update_item.
+   * Persist an edited item. `status` is optional so a dirty-only field patch
+   * (D282) does not clobber a concurrent external status change the user never
+   * touched. Milestones route through the generic item update (mapping
+   * title/description/blockedBy/dependsOn); every other ledger through
+   * update_item.
    */
   const saveEdit = useCallback(
-    async (row: Row, status: string, fields: Record<string, FieldValue>) => {
+    async (row: Row, status: string | undefined, fields: Record<string, FieldValue>) => {
       if (client === null) return;
       try {
         if (isMilestones) {
-          const patch: MilestonePatch = { status };
+          const patch: MilestonePatch = {};
+          if (status !== undefined) patch.status = status;
           if (typeof fields["title"] === "string") patch.title = fields["title"];
           if (typeof fields["description"] === "string") patch.description = fields["description"];
           if (Array.isArray(fields["blockedBy"])) patch.blockedBy = fields["blockedBy"];
           if (Array.isArray(fields["dependsOn"])) patch.dependsOn = fields["dependsOn"];
           await client.updateMilestone(row.item.id, patch);
         } else {
-          await client.updateItem(ledger!, row.item.id, { status, fields, author: UI_AUTHOR });
+          const patch: ItemPatch = { fields, author: UI_AUTHOR };
+          if (status !== undefined) patch.status = status;
+          await client.updateItem(ledger!, row.item.id, patch);
         }
         setFlash(`saved ${row.item.id}`);
         await reload();
@@ -3917,7 +3922,12 @@ function DetailPanel({
   isMilestones: boolean;
   orientation: PanelOrientation;
   onToggleOrientation: () => void;
-  onSave?: (status: string, fields: Record<string, FieldValue>) => void;
+  /**
+   * Save callback. `status` is undefined when the user did not dirty it (D282
+   * dirty-only patch); callers that force a status (answer, quick-transition)
+   * pass it explicitly.
+   */
+  onSave?: (status: string | undefined, fields: Record<string, FieldValue>) => void;
   // Create mode: present `draftMilestones` (the milestone options) + `onCreate`.
   onCreate?: (milestoneId: string, status: string, fields: Record<string, FieldValue>) => void;
   draftMilestones?: Item[];
@@ -3941,6 +3951,11 @@ function DetailPanel({
   const [status, setStatus] = useState(row.item.status);
   const [milestoneId, setMilestoneId] = useState(draftMilestones?.[0]?.id ?? "");
   const fieldRefs = useRef<Record<string, HTMLInputElement | HTMLTextAreaElement | null>>({});
+  // Snapshot of status + field string values at the moment edit mode opened.
+  // Save compares the form against this baseline and ships ONLY dirty keys
+  // (D282): untouched uncontrolled defaultValue fields keep the live server
+  // values instead of clobbering concurrent external edits.
+  const editBaselineRef = useRef<{ status: string; fields: Record<string, string> } | null>(null);
   // Uncontrolled answer box for the questions "answer & resolve" affordance.
   const answerRef = useRef<HTMLTextAreaElement>(null);
   // True once the user has typed at least one non-whitespace character into the
@@ -3950,6 +3965,14 @@ function DetailPanel({
   const [answerHasText, setAnswerHasText] = useState(
     () => fieldToString(row.item.fields[ANSWER_FIELD]).trim().length > 0,
   );
+
+  const captureEditBaseline = (source: Row): void => {
+    const fields: Record<string, string> = {};
+    for (const name of fieldNames) {
+      fields[name] = fieldToString(source.item.fields[name]);
+    }
+    editBaselineRef.current = { status: source.item.status, fields };
+  };
 
   // Reset to the initial mode + values whenever the edited identity changes
   // (a different item id, or a create-session draft). Key on row.item.id —
@@ -3961,6 +3984,12 @@ function DetailPanel({
     setEditing(isDraft);
     setStatus(row.item.status);
     setAnswerHasText(fieldToString(row.item.fields[ANSWER_FIELD]).trim().length > 0);
+    if (isDraft) {
+      captureEditBaseline(row);
+    } else {
+      editBaselineRef.current = null;
+    }
+    // Identity-only reset (D219): fieldNames/schema are stable per ledger.
   }, [row.item.id, isDraft]);
 
   // Default the milestone selection once the options arrive.
@@ -3970,27 +3999,50 @@ function DetailPanel({
     }
   }, [isDraft, draftMilestones, milestoneId]);
 
+  const beginEdit = (): void => {
+    captureEditBaseline(row);
+    setStatus(row.item.status);
+    setEditing(true);
+  };
+
   const save = (): void => {
-    const built: Record<string, FieldValue> = {};
-    for (const name of fieldNames) {
-      const raw = fieldRefs.current[name]?.value ?? "";
-      // Keep an existing field even if cleared (lets you blank it); skip
-      // brand-new empty fields so we don't add empties.
-      if (raw.length > 0 || row.item.fields[name] !== undefined) {
-        built[name] = parseFieldValue(raw, schema.fields[name]!.type);
-      }
-    }
     if (isDraft) {
+      const built: Record<string, FieldValue> = {};
+      for (const name of fieldNames) {
+        const raw = fieldRefs.current[name]?.value ?? "";
+        // Keep an existing field even if cleared (lets you blank it); skip
+        // brand-new empty fields so we don't add empties.
+        if (raw.length > 0 || row.item.fields[name] !== undefined) {
+          built[name] = parseFieldValue(raw, schema.fields[name]!.type);
+        }
+      }
       if (milestoneId.length === 0) return; // need a milestone to attach to
       onCreate?.(milestoneId, status, built);
-    } else {
-      onSave?.(status, built);
-      setEditing(false);
+      return;
     }
+    // D282 dirty-only patch: compare form values to the open-edit baseline so
+    // an uncontrolled field the user never touched is omitted — its live
+    // server value (possibly updated while the editor was open) is preserved.
+    const baseline = editBaselineRef.current;
+    if (baseline === null) return;
+    const dirty: Record<string, FieldValue> = {};
+    for (const name of fieldNames) {
+      const raw = fieldRefs.current[name]?.value ?? "";
+      if (raw === baseline.fields[name]) continue;
+      if (raw.length > 0 || row.item.fields[name] !== undefined || baseline.fields[name] !== "") {
+        dirty[name] = parseFieldValue(raw, schema.fields[name]!.type);
+      }
+    }
+    const statusPatch = status !== baseline.status ? status : undefined;
+    onSave?.(statusPatch, dirty);
+    setEditing(false);
   };
   const cancel = (): void => {
     if (isDraft) onClose();
-    else setEditing(false);
+    else {
+      editBaselineRef.current = null;
+      setEditing(false);
+    }
   };
 
   // The header carries the action cluster (right-aligned). In edit mode it is
@@ -4023,7 +4075,7 @@ function DetailPanel({
               {orientation === "right" ? "▭" : "▯"}
             </button>
             {!isArchived && (
-              <button type="button" className="lw-edit-btn" data-testid="edit" onClick={() => setEditing(true)}>
+              <button type="button" className="lw-edit-btn" data-testid="edit" onClick={beginEdit}>
                 edit
               </button>
             )}

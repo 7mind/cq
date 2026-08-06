@@ -71,6 +71,9 @@ afterAll(async () => {
   for (const d of repos) await fs.rm(d, { recursive: true, force: true });
 });
 
+// D281: generous wall-clock bound for git fixture staging under full-gate load.
+const ORCHESTRATION_WAIT_MS = 120000;
+
 describe("GitPlumbing", () => {
   let dir: string;
   let plumbing: GitPlumbing;
@@ -117,7 +120,7 @@ describe("GitPlumbing", () => {
     expect(await git(dir, "status", "--porcelain")).toBe(statusBefore);
     expect(await git(dir, "status", "--porcelain")).toBe("");
     expect(await indexDigest(dir)).toBe(indexBefore);
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("reads back content with NO checkout via catFile and lsTree", async () => {
     // ref already at round-2 from the previous test
@@ -126,11 +129,11 @@ describe("GitPlumbing", () => {
     // and reading the parent (round-1) commit directly still works without checkout
     const head = await plumbing.readRef(LEDGER_BRANCH);
     expect(head).not.toBeNull();
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("returns null from readRef for a non-existent ref", async () => {
     expect(await plumbing.readRef("refs/heads/does-not-exist")).toBeNull();
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("throws StaleRefError when CAS updateRef sees a stale expectedOld", async () => {
     const current = await plumbing.readRef(LEDGER_BRANCH);
@@ -146,7 +149,7 @@ describe("GitPlumbing", () => {
     );
     // the ref did NOT move under the failed CAS
     expect(await plumbing.readRef(LEDGER_BRANCH)).toBe(current);
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("throws StaleRefError when CAS expects absence but the ref exists", async () => {
     const current = await plumbing.readRef(LEDGER_BRANCH);
@@ -158,7 +161,7 @@ describe("GitPlumbing", () => {
     await expect(plumbing.updateRef(LEDGER_BRANCH, commit, null)).rejects.toBeInstanceOf(
       StaleRefError,
     );
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   // D49: updateRef must distinguish CAS mismatch from other git failures.
 
@@ -182,7 +185,7 @@ describe("GitPlumbing", () => {
     expect(err).not.toBeInstanceOf(GitCommandError);
     // The ref must not have moved.
     expect(await plumbing.readRef(LEDGER_BRANCH)).toBe(current);
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("D49: updateRef with a nonexistent newSha throws GitCommandError (not StaleRefError)", async () => {
     // A well-formed but nonexistent SHA as newSha triggers "nonexistent object"
@@ -201,7 +204,7 @@ describe("GitPlumbing", () => {
     expect(err).not.toBeInstanceOf(StaleRefError);
     // The ref must not have moved.
     expect(await plumbing.readRef(LEDGER_BRANCH)).toBe(current);
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("builds nested-path subtrees automatically (multi-file tree)", async () => {
     const blobA = await plumbing.hashObject("alpha\n");
@@ -217,12 +220,12 @@ describe("GitPlumbing", () => {
       "docs/sub/b.md",
     ]);
     expect(await plumbing.catFile("refs/heads/multi-test", "docs/sub/b.md")).toBe("beta\n");
-  });
+  }, ORCHESTRATION_WAIT_MS);
 
   it("tags a commit via tagRef and resolves it through readRef", async () => {
     const head = await plumbing.readRef(LEDGER_BRANCH);
     expect(head).not.toBeNull();
     await plumbing.tagRef("cq-ledger-snapshot", head as string);
     expect(await plumbing.readRef("refs/tags/cq-ledger-snapshot")).toBe(head);
-  });
+  }, ORCHESTRATION_WAIT_MS);
 });

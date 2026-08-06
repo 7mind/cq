@@ -46,9 +46,13 @@ const exec = promisify(execFile);
 const BRANCH = "cq-ledger";
 const REF = `refs/heads/${BRANCH}`;
 
-// Git plumbing is slower than the in-memory FS backend; give git-heavy tests
-// headroom over Bun's default per-test timeout.
-const GIT_TIMEOUT_MS = 20_000;
+// Git plumbing is slower than the in-memory FS backend. Under full-gate
+// parallel load fixture staging (seedRepo / seedRegistry / multi-op sequences)
+// needs a generous wall-clock bound (T1995/T1998 ORCHESTRATION_WAIT_MS
+// pattern, D281); tight SUT invariants are asserted separately without a
+// stopwatch on the staging itself.
+const ORCHESTRATION_WAIT_MS = 120_000;
+const GIT_TIMEOUT_MS = ORCHESTRATION_WAIT_MS;
 
 const repos: string[] = [];
 
