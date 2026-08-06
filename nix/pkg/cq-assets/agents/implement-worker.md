@@ -10,12 +10,12 @@ description: Implement exactly one task in an isolated worktree, prove its guard
 
 ```yaml
 inputs:
-  - "task specification, isolated worktree/branch, verified base, round, authoritative starting commit, optional prior criticism"
+  - "task specification, optional advisory worktreePath, branch, verified base, round, authoritative starting commit, optional prior criticism"
 outputs:
-  - "one verified task commit, stored structured result, and handle-only final reply"
+  - "one verified task commit, actualWorktreePath, stored structured result, and handle-only final reply"
 ioSchema:
   - "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)"
-  - "pass requires a green full gate, verified commit/clean tree/ancestry, and required mutation evidence"
+  - "pass requires a green full gate, verified commit/clean tree/ancestry, required actualWorktreePath, and required mutation evidence"
 ```
 
 Implement exactly one task. Never mutate the ledger, merge, push, rebase, or
@@ -31,7 +31,21 @@ specification. Address every supplied prior criticism.
 ## Procedure
 
 1. **Verify the base before other work.**
-   Require `git rev-parse HEAD` to equal `startingCommit`, then require
+   Resolve `actualWorktreePath` with `git rev-parse --show-toplevel` (absolute)
+   first. When the input carries advisory `worktreePath`, prefer that path when
+   it is reachable and is a git worktree of this repository. On a surface with
+   native worktree confinement the only enterable placement is under
+   `.claude/worktrees/` of the session repository. If the supplied path is
+   outside that root, or every attempt to enter it is refused, STOP and return
+   `fail` with a precise `blockedReason` containing the literal diagnosis
+   `worktreePath unreachable from my confined worktree (expected under .claude/worktrees/)`
+   plus the supplied path and the resolved toplevel — do not rediscover the
+   confinement by trial-and-error across sibling checkouts. When the surface
+   adapter already pinned a harness-minted worktree and the advisory path is
+   absent or unusable for that reason, continue in the pinned tree and still
+   report its absolute toplevel as `actualWorktreePath`. Always include
+   `actualWorktreePath` in the stored result.
+   Then require `git rev-parse HEAD` to equal `startingCommit`, then require
    `git merge-base --is-ancestor <baseCommit> HEAD` to exit zero. These checks
    apply to every initial and criticism round. Report `fail` if either check
    cannot be satisfied; never reset away prior task commits.
@@ -40,8 +54,24 @@ specification. Address every supplied prior criticism.
    `node_modules`; run the workspace install. Never reuse another checkout via
    symlink. Force a proper install when the existing layout is incomplete.
 
-3. **Implement surgically.** Reproduce a defect before correcting it. Match
-   project conventions and do not repair unrelated faults.
+3. **Implement surgically.**
+   **Early skeleton write (load-bearing durability).** The first substantive
+   action after grounding and base verification MUST be to create a durable
+   partial artifact and commit it, even when nearly empty. Prefer
+   `WIP-<taskId>.md` in the worktree root using the existing WIP partial format
+   (fenced JSON header with `taskId`, `role`, `baseCommit`, `startedAt`, and a
+   non-empty `checkpoints[]` of `{name,status}` where status is
+   `done | todo | unmeasured`, followed by
+   `## <name> <!-- cq:wip-checkpoint -->` body sections). Mark unfinished work
+   `todo` or `unmeasured` rather than omitting it so a harvested partial is
+   self-describing. A committed partial is worth more than an uncommitted
+   complete deliverable. Do not defer the first write until the end of the turn.
+   **Incremental persistence.** Reproduce a defect before correcting it. Match
+   project conventions and do not repair unrelated faults. At natural
+   checkpoints — after each measurement, probe, acceptance clause, or
+   non-trivial edit batch — update the WIP artifact (or the real deliverable)
+   and commit. Keep checkpoint statuses honest (`done` / `todo` / `unmeasured`).
+   Never couple durability to completion of the whole task.
 
 4. **Prove changed guards.** For every test, assertion, guard, or invariant you
    add or change, deliberately make it fail, capture the expected failure,
@@ -77,6 +107,8 @@ specification. Address every supplied prior criticism.
      `git rev-parse --verify HEAD` and copy its stdout verbatim into
      `resultCommit`, then require
      `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.
+     Rerun `git rev-parse --show-toplevel` and copy its stdout verbatim into
+     `actualWorktreePath`.
 
 ## Result
 
@@ -86,6 +118,7 @@ specification. Address every supplied prior criticism.
   "status": "pass | fail",
   "resultCommit": "<verified head, or null on fail>",
   "branch": "implement/<taskId>",
+  "actualWorktreePath": "<absolute git rev-parse --show-toplevel>",
   "filesTouched": ["<path>"],
   "checkSummary": "<REAL_CHECK_EXIT plus verbatim result tail or failure>",
   "gateDurationMs": 0,
@@ -96,8 +129,8 @@ specification. Address every supplied prior criticism.
 
 The prompt-catalog schema is authoritative, including any conditional
 `mutationTable` requirement. `pass` requires observed gate success, mutation
-evidence where required, a verified commit object, a clean tree, and base
-ancestry.
+evidence where required, a verified commit object, a clean tree, base
+ancestry, and a reported `actualWorktreePath`.
 
 Store the object exactly once through the dispatch-scoped `store_result` tool. Only a
 `result-stored` acknowledgement permits the final response. Then reply with the

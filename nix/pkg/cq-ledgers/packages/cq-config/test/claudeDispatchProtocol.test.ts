@@ -170,6 +170,7 @@ const OUTPUT: DispatchJSONValue = {
   status: "pass",
   resultCommit: "936bfa146d99b9dc42da116d94420c1d23921bae",
   branch: "implement/T687",
+  actualWorktreePath: "/tmp/wt-actual",
   filesTouched: ["packages/cq-config/src/claudeDispatchProtocol.ts"],
   gateDurationMs: 512_300,
   checkSummary: "matrix green",
@@ -1885,26 +1886,19 @@ describe("T687 §6 — the K170 x Q363 worktree reconciliation", () => {
     }
   });
 
-  test("THE DERIVATION: the chosen composition is the only PREPARABLE one", () => {
-    // This is why the answer is forced rather than preferred. `worktreePath` is a
-    // REQUIRED property of the implement-worker input contract, and
-    // `prepare_dispatch` validates the input BEFORE it allocates. So an
-    // orchestrator that has not yet prepared a tree cannot prepare a DISPATCH
-    // either — which rules out "the child prepares its own worktree first".
+  test("D143: worktreePath is OPTIONAL advisory; prepare succeeds without it", () => {
+    // After D143 the input path is advisory. A dispatch without worktreePath is
+    // still preparable — the worker reports actualWorktreePath on output. The
+    // composition remains "orchestrator prepares and passes path when it can".
     expect(CLAUDE_WORKTREE_INPUT_PROPERTY).toBe("worktreePath");
     const h = harness({ seed: 301 });
     const { worktreePath: _omitted, ...withoutPath } = INPUT as Record<string, unknown>;
-    const rejected = prepareDispatch(
+    const accepted = prepareDispatch(
       prepareRequest({ input: withoutPath as DispatchJSONValue }),
       h.prepareDeps,
     );
-    expect(rejected.accepted).toBe(false);
-    if (rejected.accepted) throw new Error("unreachable");
-    expect(rejected.reason).toBe("invalid-role-input");
-    expect(rejected.detail).toContain("worktreePath");
-    // Validate-then-allocate: the refusal allocated nothing to fall back on.
-    expect(rejected.allocated).toBe(false);
-    expect(h.store.snapshot()).toHaveLength(0);
+    expect(accepted.accepted).toBe(true);
+    expect(h.store.snapshot()).toHaveLength(1);
   });
 
   test("the derivation is DISCRIMINATING: the SAME prepare succeeds WITH the path", () => {

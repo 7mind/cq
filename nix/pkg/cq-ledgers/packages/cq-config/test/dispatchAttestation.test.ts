@@ -163,6 +163,7 @@ const OUTPUT: DispatchJSONValue = {
   status: "pass",
   resultCommit: "0be2cc034dd490d484bdac0dfad5efb9be52c068",
   branch: "implement/T685",
+  actualWorktreePath: "/tmp/wt-actual",
   filesTouched: ["packages/cq-config/src/dispatchAttestation.ts"],
   checkSummary: "3621 pass / 142 skip / 0 fail",
   summary: "Contract, port and strict dummy landed.",

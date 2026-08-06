@@ -73,6 +73,7 @@ const OUTPUT: DispatchJSONValue = {
   status: "pass",
   resultCommit: "a".repeat(40),
   branch: "implement/T1631",
+  actualWorktreePath: "/tmp/wt-actual",
   filesTouched: [],
   checkSummary: "focused router suite passed",
   summary: "shared transport router implemented",

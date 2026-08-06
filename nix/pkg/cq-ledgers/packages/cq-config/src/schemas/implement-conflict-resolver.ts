@@ -35,7 +35,12 @@ const inputSchema = {
     taskId: { type: "string", pattern: "^T[0-9]+$" },
     headline: { type: "string", minLength: 1 },
     description: { type: "string" },
-    worktreePath: { type: "string", minLength: 1 },
+    worktreePath: {
+      type: "string",
+      minLength: 1,
+      description:
+        "Optional advisory path. When a surface adapter supplies its own isolated worktree, that one wins (D143).",
+    },
     branch: {
       type: "string",
       description:
@@ -54,7 +59,7 @@ const inputSchema = {
       description: "Optional one-line note on what the base-side change did.",
     },
   },
-  required: ["taskId", "worktreePath", "branch", "baseCommit", "conflictingFiles"],
+  required: ["taskId", "branch", "baseCommit", "conflictingFiles"],
   additionalProperties: false,
 } as const;
 
@@ -75,15 +80,25 @@ const outputSchema = {
     checkSummary: { type: "string" },
     summary: { type: "string" },
     blockedReason: { type: "string" },
+    actualWorktreePath: {
+      type: "string",
+      minLength: 1,
+      description:
+        "Optional absolute path of the worktree the resolver actually operated in (D143).",
+    },
   },
   required: ["taskId", "status", "resultCommit", "filesResolved", "checkSummary", "summary"],
   additionalProperties: false,
 } as const;
 
-/** The conflict-resolver per-role schema sidecar (storage-format decision 3). */
+/**
+ * The conflict-resolver per-role schema sidecar (storage-format decision 3).
+ * `version: 2` (bumped from 1, T2010, defects:D143/D185): `worktreePath` is now
+ * OPTIONAL on input; optional `actualWorktreePath` may be reported on output.
+ */
 export const implementConflictResolverSidecar: RoleSchemaSidecar = {
   id: "implement-conflict-resolver",
-  version: 1,
+  version: 2,
   inputSchema,
   outputSchema,
 };

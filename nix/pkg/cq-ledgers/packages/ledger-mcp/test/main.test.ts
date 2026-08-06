@@ -257,6 +257,7 @@ describe("ledger-mcp stdio binary", () => {
               status: "pass",
               resultCommit: "a".repeat(40),
               branch: "implement/T695",
+              actualWorktreePath: "/tmp/wt-actual",
               filesTouched: ["packages/ledger-mcp/src/main.ts"],
               checkSummary: "production stdio lifecycle passed",
               summary: "Wired the durable production dispatch backend.",

@@ -17,7 +17,7 @@ outputs:
   - "task transitions, one terminal review per task, verified fast-forward merges, defect closure, and milestone archival"
   - "standalone handoff"
 ioSchema:
-  - "worker: {taskId,status,resultCommit,branch,filesTouched,checkSummary,gateDurationMs,summary,blockedReason?}"
+  - "worker: {taskId,status,resultCommit,branch,actualWorktreePath,filesTouched,checkSummary,gateDurationMs,summary,blockedReason?}"
   - "reviewer: {taskId,verdict,criticism[],questions[],defects[],rationale,summary?}"
   - "resolver: {taskId,status,resultCommit?,summary,blockedReason?}"
 ```
@@ -38,6 +38,17 @@ ledger, or merge; stop after two consecutive read-only passes.
   absent, inherit the current model and report the missing configuration.
 - Run at most eight workers concurrently. Each task uses an isolated worktree
   and branch `implement/<taskId>`.
+- **Worktree placement.** `worktreePath` on child input is OPTIONAL advisory.
+  Under a surface with native worktree confinement, the orchestrator MUST
+  pre-create a REAL git worktree at `.claude/worktrees/<taskId>` via
+  `git worktree add .claude/worktrees/<taskId> -b implement/<taskId> <baseCommit>`
+  and pass THAT absolute path as advisory `worktreePath` — it is the only
+  under-root placement a pinned agent can enter unattended. Do not place the
+  tree outside the project directory or under a non-`.claude/worktrees/` path
+  on a confined surface. On surfaces without confinement any in-project path is
+  acceptable. Consume the worker's required `actualWorktreePath` on output as
+  the authoritative location; merge by `resultCommit` SHA when the harness
+  minted the tree.
 - Persist every child summary and available raw transcript with `cq log put`,
   attach their logical paths to the affected ledger item, and never expose
   capabilities or secrets. Before piping a transcript, require `test -s
@@ -96,17 +107,29 @@ worktree `HEAD` to equal that retained `startingCommit`. Retain the exact
 `baseCommit`, `round`, and `startingCommit`; never reconstruct them from a child
 report.
 
+**Harvest then prefer RESUME.** Before every (re)dispatch, inspect the task
+worktree for a partial artifact — a `WIP-<taskId>.md` (or equivalent
+deliverable) in the existing WIP partial format with open checkpoints, plus any
+uncommitted or committed-but-incomplete work. When a self-describing partial
+exists, RESUME the same worker in the same worktree onto that partial rather
+than re-dispatching a fresh empty tree. Re-running an expensive probe to recover
+work already done is the expensive failure mode; resumption is preferred when
+there is durable state to resume onto. When the prior return is a LOST REPORT or
+an incomplete turn, harvest first, then resume.
+
 For each selected task:
 
 1. If its linked owning goal is `planned`, move it once to `building`. Never
    move a goal to a terminal status.
 2. Set the task `wip`.
-3. Prepare its worktree and dispatch `implement-worker` with the exact task
-   specification, worktree coordinates, verified base, required `round`,
+3. Prepare its worktree (confined surfaces: under `.claude/worktrees/<taskId>`)
+   and dispatch `implement-worker` with the exact task specification, optional
+   advisory `worktreePath`, branch, verified base, required `round`,
    authoritative `startingCommit`, and any prior criticism.
 4. Materialize only a consumed, schema-valid result through the dispatch
    protocol. Before accepting a passing result, require its `resultCommit` to be
-   a commit, the worker branch tip to equal it, and
+   a commit, the worker branch tip to equal it,
+   `actualWorktreePath` to be a non-empty absolute path, and
    `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.
 
 Do not symlink another checkout's `node_modules`; the worker installs its own

@@ -193,6 +193,7 @@ const OUTPUT: DispatchJSONValue = {
   status: "pass",
   resultCommit: "8a8f94424a3eda1c2cb3aa1b0ccd47d5eca4ea2e",
   branch: "implement/T720",
+  actualWorktreePath: "/tmp/wt-actual",
   filesTouched: ["packages/cq-config/src/dispatchAttestationBackend.ts"],
   checkSummary: "adapters green",
   summary: `Adapters landed (${OUTPUT_MARKER}).`,

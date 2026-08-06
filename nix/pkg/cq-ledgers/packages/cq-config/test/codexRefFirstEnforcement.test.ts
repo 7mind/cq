@@ -145,6 +145,7 @@ const OUTPUT: DispatchJSONValue = {
   status: "pass",
   resultCommit: "ae216ede790ff72842c5ff10c54fbdb8438b9449",
   branch: "implement/T692",
+  actualWorktreePath: "/tmp/wt-actual",
   // Deliberately NOT a test path: TEST_GUARD_GLOBS would then require a
   // `mutationTable`, and this fixture must be valid for reasons unrelated to it.
   filesTouched: ["packages/cq-config/src/codexDispatchProtocol.ts"],

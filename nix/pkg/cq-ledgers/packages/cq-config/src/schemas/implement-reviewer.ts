@@ -174,7 +174,12 @@ const inputSchema = {
     headline: { type: "string", minLength: 1 },
     description: { type: "string" },
     acceptance: { type: "string", minLength: 1 },
-    worktreePath: { type: "string", minLength: 1 },
+    worktreePath: {
+      type: "string",
+      minLength: 1,
+      description:
+        "Optional advisory path. When a surface adapter supplies its own isolated worktree, that one wins (D143).",
+    },
     branch: {
       type: "string",
       description:
@@ -205,7 +210,6 @@ const inputSchema = {
   required: [
     "taskId",
     "acceptance",
-    "worktreePath",
     "branch",
     "baseCommit",
     "workerResult",
@@ -283,6 +287,12 @@ const outputSchema = {
       description:
         "Optional free-text explanation for why the gate was not re-run, when gateReRan is false.",
     },
+    actualWorktreePath: {
+      type: "string",
+      minLength: 1,
+      description:
+        "Optional absolute path of the worktree the reviewer actually inspected (D143).",
+    },
   },
   required: [
     "taskId",
@@ -332,16 +342,15 @@ const outputSchema = {
 
 /**
  * The implement-reviewer per-role schema sidecar (storage-format decision 3).
- * `version: 4` (bumped from 3, T2007, decisions:K235/D185): the input contract
- * now optionally accepts `parentGateAttestation` so a Codex sandboxed reviewer
- * can approve against parent-attested green gate evidence without re-running
- * `cq gate` inside a sandbox that denies gate primitives. A stale deployed root
- * rendered against the v3 contract must not be mistaken for this one;
- * DISPATCHED_ROLE_VERSIONS derives this automatically, it is not hand-edited.
+ * `version: 5` (bumped from 4, T2010, defects:D143/D185): `worktreePath` is now
+ * OPTIONAL on input (advisory); optional `actualWorktreePath` may be reported
+ * on output. A stale deployed root rendered against the v4 contract must not
+ * be mistaken for this one; DISPATCHED_ROLE_VERSIONS derives this
+ * automatically, it is not hand-edited.
  */
 export const implementReviewerSidecar: RoleSchemaSidecar = {
   id: "implement-reviewer",
-  version: 4,
+  version: 5,
   inputSchema,
   outputSchema,
 };

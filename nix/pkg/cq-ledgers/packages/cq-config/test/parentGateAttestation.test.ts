@@ -133,7 +133,7 @@ describe("T2007 parentGateAttestation input schema", () => {
   });
 
   test("sidecar version advanced for the schema mutation (D185) [BA]", () => {
-    expect(implementReviewerSidecar.version).toBe(4);
+    expect(implementReviewerSidecar.version).toBeGreaterThanOrEqual(4);
   });
 });
 

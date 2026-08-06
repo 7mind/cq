@@ -1230,13 +1230,13 @@ export function claudeExitCorroboration(exitStatus: number | undefined): ClaudeE
  * ## The resolution, and why it is DERIVED rather than preferred
  *
  * {@link CLAUDE_WORKTREE_RECONCILIATION} records the chosen composition and the
- * cost of each rejected one. The choice is forced, not aesthetic: the
- * implement-worker input contract already makes `worktreePath` a REQUIRED
- * property, and `prepare_dispatch` validates `input` against that contract
- * BEFORE it allocates anything. So any composition in which the orchestrator
- * does not hold a path at prepare time cannot be prepared at all — it is
- * rejected as an invalid launch envelope. That is a machine-checkable
- * derivation, and this module's suite checks it.
+ * cost of each rejected one. After D143/`worktreePath` became OPTIONAL on the
+ * implement-worker input contract, the composition is preferred rather than
+ * forced by schema: the orchestrator still prepares a tree under
+ * `.claude/worktrees/<taskId>` and passes it as advisory input; the worker
+ * reports the authoritative path back via required `actualWorktreePath`.
+ * Native same-harness dispatch still cannot be handed a path parameter on the
+ * `Agent` tool — only data — so the input channel remains the only transport.
  */
 export const CLAUDE_WORKTREE_PLACEMENTS = ["wrapper-cwd", "input-path-absolute"] as const;
 
@@ -1274,11 +1274,14 @@ export function claudeWorktreePlacement(mode: string): ClaudeWorktreePlacement {
 }
 
 /**
- * The input property through which a prepared worktree reaches a child. Already
- * REQUIRED by the implement-worker input contract, which is what makes the
- * chosen composition the only preparable one.
+ * The input property through which a prepared worktree reaches a child.
+ * OPTIONAL (advisory) on the implement-worker input contract after D143; the
+ * worker reports the path it actually used via required `actualWorktreePath`.
  */
 export const CLAUDE_WORKTREE_INPUT_PROPERTY = "worktreePath" as const;
+
+/** The worker-output property that carries the path the child actually used (D143). */
+export const CLAUDE_WORKTREE_OUTPUT_PROPERTY = "actualWorktreePath" as const;
 
 /**
  * The `isolation` argument a NATIVE ref-first dispatch must pass.
@@ -1339,19 +1342,20 @@ export const CLAUDE_WORKTREE_RECONCILIATION = Object.freeze({
     "`resultCommitVerified` and `gateReRan` REQUIRED on an implement-reviewer result, and " +
     "merge-back verifies the worker's `resultCommit`, so a stray write is caught at review rather " +
     "than prevented at dispatch. Additionally the child must address the tree by ABSOLUTE PATH " +
-    "(see CLAUDE_WORKTREE_ADDRESSING) — a `cd` does not survive a tool call.",
+    "(see CLAUDE_WORKTREE_ADDRESSING) — a `cd` does not survive a tool call. D143 makes " +
+    "`worktreePath` OPTIONAL (advisory) on input and requires `actualWorktreePath` on worker " +
+    "output so a harness-minted path still flows back; the preferred Claude placement remains " +
+    "`.claude/worktrees/<taskId>`.",
   rejected: Object.freeze([
     Object.freeze({
       option: "child-calls-worktree_manage(prepare)-as-its-first-act",
       cost:
-        "NOT PREPARABLE, so this is refused on a structural ground rather than a preference. " +
-        "`worktreePath` is a REQUIRED property of the implement-worker input contract and " +
-        "`prepare_dispatch` validates the input against that contract BEFORE allocating, so an " +
-        "orchestrator with no path yet cannot prepare the dispatch at all — it gets an " +
-        "invalid-launch-envelope rejection. Making it work would require editing tasks:T894's " +
-        "just-landed sidecar. It also inverts ownership: the CHILD would choose its own base, " +
-        "which is precisely the pre-dispatch base guarantee questions:Q363 exists to provide, and " +
-        "it would hand a MUTATING tool to a child whose capability set is otherwise minimal.",
+        "Inverts ownership even though D143 made `worktreePath` optional: the CHILD would choose " +
+        "its own base, which is precisely the pre-dispatch base guarantee questions:Q363 exists " +
+        "to provide, and it would hand a MUTATING tool to a child whose capability set is " +
+        "otherwise minimal. The orchestrator still prepares the tree and passes the path as " +
+        "advisory input; optionality only accommodates harness-minted paths, it does not move " +
+        "prepare into the child.",
     }),
     Object.freeze({
       option: "restrict-native-dispatch-to-roles-needing-no-worktree",
@@ -1368,7 +1372,9 @@ export const CLAUDE_WORKTREE_RECONCILIATION = Object.freeze({
         "Reinstates defects:D119. Without a prepared tree the harness allocates-or-REUSES one at " +
         "whatever commit it was left, which is the stale-base failure questions:Q363 eliminated " +
         "by construction and the class behind the 2026-07-28 incident. Trading a locked defect " +
-        "fix for convenience is strictly worse than accepting a best-effort confinement.",
+        "fix for convenience is strictly worse than accepting a best-effort confinement. D143's " +
+        "optional input path is NOT this option: the orchestrator still prepares under " +
+        "`.claude/worktrees/<taskId>`; optionality only reports harness-minted actuals.",
     }),
   ]),
   /**

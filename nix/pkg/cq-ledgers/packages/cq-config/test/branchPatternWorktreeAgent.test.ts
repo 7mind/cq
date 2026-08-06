@@ -66,6 +66,7 @@ describe("D77 — implement-worker outputSchema.branch accepts both namings", ()
     taskId: "T123",
     status: "pass",
     resultCommit: "a".repeat(40),
+    actualWorktreePath: "/tmp/wt-actual",
     filesTouched: [],
     checkSummary: "ok",
     summary: "s",

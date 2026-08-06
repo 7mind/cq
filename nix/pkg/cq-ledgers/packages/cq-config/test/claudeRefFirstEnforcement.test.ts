@@ -80,6 +80,7 @@ const OUTPUT: DispatchJSONValue = {
   status: "pass",
   resultCommit: "f91fc407e4aa357c563b432c0d2750ff8dfb584c",
   branch: "implement/T689",
+  actualWorktreePath: "/tmp/wt-actual",
   filesTouched: ["packages/cq-config/src/claudeDispatchBridge.ts"],
   gateDurationMs: 1_000,
   checkSummary: "focused tests green",

@@ -1252,7 +1252,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "implement-worker": {
-    version: 3,
+    version: 4,
     input: [
       {
         required: [
@@ -1262,7 +1262,6 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
           "round",
           "startingCommit",
           "taskId",
-          "worktreePath",
         ],
         kinds: {
           acceptance: ["string"],
@@ -1283,6 +1282,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     output: [
       {
         required: [
+          "actualWorktreePath",
           "branch",
           "checkSummary",
           "filesTouched",
@@ -1292,6 +1292,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
           "taskId",
         ],
         kinds: {
+          actualWorktreePath: ["string"],
           blockedReason: ["string"],
           branch: ["string"],
           checkSummary: ["string"],
@@ -1308,7 +1309,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "implement-reviewer": {
-    version: 4,
+    version: 5,
     input: [
       {
         required: [
@@ -1321,7 +1322,6 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
           "synthesisStoreReserveMs",
           "taskId",
           "workerResult",
-          "worktreePath",
         ],
         kinds: {
           acceptance: ["string"],
@@ -1355,6 +1355,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
           "verdict",
         ],
         kinds: {
+          actualWorktreePath: ["string"],
           criticism: ["array"],
           defects: ["array"],
           gateDurationMs: ["integer"],
@@ -1372,10 +1373,10 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "implement-conflict-resolver": {
-    version: 1,
+    version: 2,
     input: [
       {
-        required: ["baseCommit", "branch", "conflictingFiles", "taskId", "worktreePath"],
+        required: ["baseCommit", "branch", "conflictingFiles", "taskId"],
         kinds: {
           baseCommit: ["string"],
           baseSideNote: ["string"],
@@ -1400,6 +1401,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
           "taskId",
         ],
         kinds: {
+          actualWorktreePath: ["string"],
           blockedReason: ["string"],
           checkSummary: ["string"],
           filesResolved: ["array"],
@@ -2099,6 +2101,7 @@ export const T694_ENUM_PATTERN_EXHIBIT: Readonly<Record<string, unknown>> = {
   status: "probably",
   resultCommit: null,
   branch: "some-random-branch",
+  actualWorktreePath: "/tmp/wt-exhibit",
   filesTouched: [],
   checkSummary: "",
   summary: "",

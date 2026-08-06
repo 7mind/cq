@@ -7,21 +7,26 @@
  * `## Catalogue` block:
  *
  * - **Input** — the task spec the orchestrator passes verbatim (task id +
- *   headline + description + acceptance), the worktree path + branch
- *   (`implement/<taskId>`, OR a Claude native-isolation `worktree-agent-<hex>`
- *   name — D77), the base commit, and an optional prior-round `criticism[]` on
- *   a re-dispatch after review. The resolved model class is informational; it
- *   is not load-bearing for the dispatch contract.
+ *   headline + description + acceptance), optional advisory `worktreePath`
+ *   (D143 — when a surface adapter supplies its own isolated worktree that one
+ *   wins), branch (`implement/<taskId>`, OR a Claude native-isolation
+ *   `worktree-agent-<hex>` name — D77), the base commit, and an optional
+ *   prior-round `criticism[]` on a re-dispatch after review. The resolved
+ *   model class is informational; it is not load-bearing for the dispatch
+ *   contract.
  *
  * - **Output** — the worker result block
- *   `{ taskId, status, resultCommit, branch, filesTouched, checkSummary,
- *   summary, blockedReason?, gateDurationMs?, mutationTable? }`. `status` is
- *   `pass | fail`; `resultCommit` is a full-sha string (`^[0-9a-f]{40}$`) on
- *   pass and `null` on fail. `gateDurationMs` is required on a pass (T894).
- *   `mutationTable` — an array of `{mutation, observed, restored}` — is
- *   required IFF `filesTouched` intersects {@link TEST_GUARD_GLOBS} (T894,
- *   closing the D156/H135 self-report-evidence gap): a worker that only
- *   touched non-test/guard files may omit it.
+ *   `{ taskId, status, resultCommit, branch, actualWorktreePath, filesTouched,
+ *   checkSummary, summary, blockedReason?, gateDurationMs?, mutationTable? }`.
+ *   `status` is `pass | fail`; `resultCommit` is a full-sha string
+ *   (`^[0-9a-f]{40}$`) on pass and `null` on fail. `actualWorktreePath` is the
+ *   absolute path the worker actually operated in (`git rev-parse
+ *   --show-toplevel`) and is ALWAYS required (D143). `gateDurationMs` is
+ *   required on a pass (T894). `mutationTable` — an array of
+ *   `{mutation, observed, restored}` — is required IFF `filesTouched`
+ *   intersects {@link TEST_GUARD_GLOBS} (T894, closing the D156/H135
+ *   self-report-evidence gap): a worker that only touched non-test/guard
+ *   files may omit it.
  */
 
 import type { RoleSchemaSidecar } from "../promptCatalog.js";
@@ -71,7 +76,12 @@ const inputSchema = {
     headline: { type: "string", minLength: 1 },
     description: { type: "string" },
     acceptance: { type: "string", minLength: 1 },
-    worktreePath: { type: "string", minLength: 1 },
+    worktreePath: {
+      type: "string",
+      minLength: 1,
+      description:
+        "Optional advisory path. When a surface adapter supplies its own isolated worktree, that one wins (D143). Preferred Claude placement is .claude/worktrees/<taskId>.",
+    },
     branch: {
       type: "string",
       description:
@@ -106,7 +116,6 @@ const inputSchema = {
   required: [
     "taskId",
     "acceptance",
-    "worktreePath",
     "branch",
     "baseCommit",
     "round",
@@ -116,11 +125,13 @@ const inputSchema = {
 } as const;
 
 /**
- * The worker result-block output contract (T894 evidence-carrying revision).
- * `resultCommit` is `string | null` — on pass it must be a FULL sha
- * (`^[0-9a-f]{40}$`; an abbreviated or non-hex value like `"deadbeef"` fails),
- * and `null` on fail. `gateDurationMs` is required on a pass (T894 clause (b)).
- * `mutationTable` is required IFF `filesTouched` contains an entry matching
+ * The worker result-block output contract (T894 evidence-carrying revision +
+ * D143 actualWorktreePath). `resultCommit` is `string | null` — on pass it
+ * must be a FULL sha (`^[0-9a-f]{40}$`; an abbreviated or non-hex value like
+ * `"deadbeef"` fails), and `null` on fail. `actualWorktreePath` is ALWAYS
+ * required (D143): the absolute path the worker actually operated in.
+ * `gateDurationMs` is required on a pass (T894 clause (b)). `mutationTable` is
+ * required IFF `filesTouched` contains an entry matching
  * {@link TEST_GUARD_GLOBS} — a test/guard/invariant path — via the `if`/`then`
  * below; a worker that touched none of those may omit it entirely (T894
  * clause (d), the negative-direction check: this must stay a real
@@ -146,6 +157,12 @@ const outputSchema = {
       description:
         "The task branch name: implement/<taskId>, or a Claude native-isolation worktree-agent-<hex> name (D77).",
       pattern: "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$",
+    },
+    actualWorktreePath: {
+      type: "string",
+      minLength: 1,
+      description:
+        "Absolute path of the worktree the worker actually operated in (git rev-parse --show-toplevel). Required so the orchestrator learns harness-minted paths (D143).",
     },
     filesTouched: { type: "array", items: { type: "string" } },
     checkSummary: { type: "string" },
@@ -176,7 +193,16 @@ const outputSchema = {
       },
     },
   },
-  required: ["taskId", "status", "resultCommit", "branch", "filesTouched", "checkSummary", "summary"],
+  required: [
+    "taskId",
+    "status",
+    "resultCommit",
+    "branch",
+    "actualWorktreePath",
+    "filesTouched",
+    "checkSummary",
+    "summary",
+  ],
   additionalProperties: false,
   allOf: [
     {
@@ -212,14 +238,15 @@ const outputSchema = {
 
 /**
  * The implement-worker per-role schema sidecar (storage-format decision 3).
- * `version: 3` (bumped from 2, T1629, decisions:D185): the input contract now
- * requires `round` and the full authoritative `startingCommit`, so a stale
- * deployed root rendered against the v2 contract must not be mistaken for this
- * one. DISPATCHED_ROLE_VERSIONS derives this automatically; it is not hand-edited.
+ * `version: 4` (bumped from 3, T2010, defects:D143/D185): `worktreePath` is now
+ * OPTIONAL on input (advisory), and `actualWorktreePath` is REQUIRED on output
+ * so a harness-minted path flows back to the orchestrator. A stale deployed
+ * root rendered against the v3 contract must not be mistaken for this one.
+ * DISPATCHED_ROLE_VERSIONS derives this automatically; it is not hand-edited.
  */
 export const implementWorkerSidecar: RoleSchemaSidecar = {
   id: "implement-worker",
-  version: 3,
+  version: 4,
   inputSchema,
   outputSchema,
 };

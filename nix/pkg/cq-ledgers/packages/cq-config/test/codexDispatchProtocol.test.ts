@@ -141,6 +141,7 @@ const OUTPUT: DispatchJSONValue = {
   status: "pass",
   resultCommit: "695c9f89d5bba3f11681534ab9ecddc70d36f571",
   branch: "implement/T690",
+  actualWorktreePath: "/tmp/wt-actual",
   filesTouched: ["packages/cq-config/src/codexDispatchProtocol.ts"],
   // T894 made `gateDurationMs` REQUIRED on a `status: "pass"` implement-worker
   // result. Without it the store rejects this payload as `invalid-output` and

@@ -123,6 +123,7 @@ describe("D250 invalid Codex final after result storage", () => {
           status: "pass",
           resultCommit: RESULT_COMMIT,
           branch: "implement/T1629",
+          actualWorktreePath: "/tmp/wt-actual",
           filesTouched: ["packages/cq-config/src/dispatchRefAssembly.ts"],
           checkSummary: `REAL_CHECK_EXIT=0 ${RESULT_BODY_SENTINEL}`,
           gateDurationMs: 90_000,

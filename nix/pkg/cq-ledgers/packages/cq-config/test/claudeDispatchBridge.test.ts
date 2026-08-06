@@ -579,6 +579,7 @@ const OUTPUT: DispatchJSONValue = {
   status: "pass",
   resultCommit: "7e3bfd579800a3e0db18dac15d5939ba08edbdb4",
   branch: "implement/T688",
+  actualWorktreePath: "/tmp/wt-actual",
   filesTouched: ["packages/cq-config/src/claudeDispatchBridge.ts"],
   gateDurationMs: 611_400,
   checkSummary: "3 files, 0 fail",
@@ -866,11 +867,11 @@ describe("T688 §2b — every failure is routed to a TYPED terminal state", () =
 
   test("invalid ROLE INPUT is rejected and allocates NOTHING", () => {
     const b = bridge();
-    // T687 §6's derivation: `worktreePath` is REQUIRED, so a dispatch without it
-    // is UNPREPARABLE — the composition where the child prepares its own tree
-    // cannot even be launched.
-    const { worktreePath: _dropped, ...withoutPath } = INPUT as Record<string, unknown>;
-    const result = run(b, {}, { input: withoutPath as DispatchJSONValue });
+    // Drop a still-required field (taskId) so prepare refuses before allocate.
+    // D143 made worktreePath optional, so omitting that alone is no longer a
+    // rejection signal.
+    const { taskId: _dropped, ...withoutTaskId } = INPUT as Record<string, unknown>;
+    const result = run(b, {}, { input: withoutTaskId as DispatchJSONValue });
     if (result.outcome !== "rejected") {
       throw new Error(`expected rejected, got ${result.outcome}`);
     }
