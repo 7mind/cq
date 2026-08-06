@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -1081,3 +1082,1024 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
     },
   });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// D190 / T1266 — attested role-contract validation on the packaged Pi surface.
+//
+// MEASUREMENT (T1266 acceptance §1): the packaged pi-extension runtime cannot
+// resolve Ajv (or any other full JSON-Schema implementation). Verified by:
+//   cd nix/pkg/pi-extensions && bun -e "try{console.log(import.meta.resolve('ajv'))}catch(e){console.log(String(e))}"
+// which reports "Cannot find package 'ajv'". The extension is packaged outside
+// the cq-ledgers workspace and cannot import `@cq/config` either (K46
+// copy-not-import). typebox is present transitively via pi-coding-agent, but it
+// validates typebox schemas — not the draft-2020-12 sidecar documents.
+//
+// PATH TAKEN: a recursive checker over the ATTESTED schema bytes that enforces
+// the structural baseline (type / properties / required / additionalProperties /
+// items / oneOf) PLUS exactly the seven keywords D190 named as previously
+// unenforceable: enum, pattern, minLength, minItems, allOf, if, not. `const`,
+// `then`, and `else` are evaluated only as support for `if` (without them `if`
+// is inert).
+//
+// DISCLOSED RESIDUAL (keywords present in shipped sidecars but NOT enforced
+// here — D160 class, not a silent gap): anyOf, minimum. `contains` is enforced
+// because the implement-worker `if`/`then` mutationTable rule is gated on it;
+// leaving it inert would false-match empty filesTouched and reject valid
+// results. Full draft 2020-12 fidelity remains a packaging-of-Ajv (or
+// equivalent) follow-up; this module does NOT silently fall back to the
+// structural projection when the attested artifact is present.
+//
+// FALLBACK: when the attested schema artifact is ABSENT the structural
+// projection is used, and the fallback is LOUD (returns `warning` + emits via
+// the injected `warn` callback). A silent fallback would recreate D190 (K166).
+// The prior fidelity-precondition marker is retired: the precondition it named
+// is the attested artifact path above.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Where the packaged prompt surface root is pinned (nix/hm/pi.nix piWrapped). */
+export const PROMPT_ROOT_ENV = "CQ_PROMPT_ROOT";
+
+/** The seven D190 keywords this checker adds on top of the structural baseline. */
+export const D190_ENFORCED_KEYWORDS = [
+  "enum",
+  "pattern",
+  "minLength",
+  "minItems",
+  "allOf",
+  "if",
+  "not",
+] as const;
+
+/**
+ * Keywords that appear in the shipped sidecars and are intentionally NOT
+ * enforced by {@link validateAgainstAttestedSchema}. Named so the gap is a
+ * disclosed residual (D160), never an inventory silence (K166).
+ */
+export const D190_DISCLOSED_RESIDUAL_KEYWORDS = ["anyOf", "minimum"] as const;
+
+/** Capability measurement recorded for T1266 acceptance §1. */
+export const PI_EXTENSION_JSON_SCHEMA_CAPABILITY = {
+  fullValidatorAvailable: false,
+  pathTaken: "seven-keyword-checker" as const,
+  enforcedKeywords: D190_ENFORCED_KEYWORDS,
+  disclosedResidualKeywords: D190_DISCLOSED_RESIDUAL_KEYWORDS,
+  measurement:
+    "bun -e resolve('ajv') inside nix/pkg/pi-extensions → Cannot find package 'ajv'; no other draft-2020-12 engine is a runtime dependency",
+} as const;
+
+/** Sorted JSON type names a projected property may declare. */
+export const CONTRACT_KINDS = [
+  "null",
+  "boolean",
+  "integer",
+  "number",
+  "string",
+  "array",
+  "object",
+] as const;
+
+export type ContractKind = (typeof CONTRACT_KINDS)[number];
+
+/** One projected schema branch (a `oneOf` member, or the whole schema). */
+export interface ContractBranch {
+  readonly required: readonly string[];
+  readonly kinds: Readonly<Record<string, readonly string[]>>;
+  readonly closed: boolean;
+}
+
+/** The projection of one dispatched role's two contracts. */
+export interface RoleContractProjection {
+  readonly version: number;
+  readonly input: readonly ContractBranch[];
+  readonly output: readonly ContractBranch[];
+}
+
+/** One structured contract violation. */
+export interface ContractViolation {
+  readonly path: string;
+  readonly message: string;
+  /** JSON-Schema keyword that failed, when known. */
+  readonly keyword?: string;
+}
+
+export type RoleContractSide = "input" | "output";
+
+/**
+ * Mirrored structural projections, keyed by role id. Re-derived from
+ * `DISPATCHED_ROLE_SIDECARS` by the gate test in
+ * `packages/cq-config/test/piRefFirstDispatch.test.ts` so a sidecar gaining a
+ * role, required key, property, type, or version fails there rather than
+ * silently diverging here. Used ONLY as the LOUD absent-artifact fallback.
+ */
+export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProjection>> = {
+  "plan-advance": {
+    version: 2,
+    input: [
+      {
+        required: ["goalId"],
+        kinds: { candidateMode: ["boolean"], goalId: ["string"] },
+        closed: true,
+      },
+    ],
+    output: [
+      {
+        required: ["action", "mode"],
+        kinds: {
+          action: ["string"],
+          defectsToFile: ["object"],
+          finalize: ["object"],
+          grounding: ["string"],
+          manifest: ["object"],
+          mode: ["string"],
+          questions: ["array"],
+          researches: ["array"],
+        },
+        closed: true,
+      },
+      {
+        required: ["milestones", "mode", "rationale", "tasks"],
+        kinds: {
+          milestones: ["array"],
+          mode: ["string"],
+          rationale: ["string"],
+          tasks: ["array"],
+        },
+        closed: true,
+      },
+    ],
+  },
+  "plan-reviewer": {
+    version: 1,
+    input: [
+      {
+        required: ["goalId"],
+        kinds: { goalId: ["string"] },
+        closed: true,
+      },
+    ],
+    output: [
+      {
+        required: ["criticism", "defects", "new_questions", "summary", "verdict"],
+        kinds: {
+          criticism: ["array"],
+          defects: ["array"],
+          new_questions: ["array"],
+          summary: ["string"],
+          verdict: ["string"],
+        },
+        closed: true,
+      },
+    ],
+  },
+  "implement-worker": {
+    version: 3,
+    input: [
+      {
+        required: [
+          "acceptance",
+          "baseCommit",
+          "branch",
+          "round",
+          "startingCommit",
+          "taskId",
+          "worktreePath",
+        ],
+        kinds: {
+          acceptance: ["string"],
+          baseCommit: ["string"],
+          branch: ["string"],
+          description: ["string"],
+          headline: ["string"],
+          priorCriticism: ["array"],
+          resolvedModel: ["string"],
+          round: ["integer"],
+          startingCommit: ["string"],
+          taskId: ["string"],
+          worktreePath: ["string"],
+        },
+        closed: true,
+      },
+    ],
+    output: [
+      {
+        required: [
+          "branch",
+          "checkSummary",
+          "filesTouched",
+          "resultCommit",
+          "status",
+          "summary",
+          "taskId",
+        ],
+        kinds: {
+          blockedReason: ["string"],
+          branch: ["string"],
+          checkSummary: ["string"],
+          filesTouched: ["array"],
+          gateDurationMs: ["integer"],
+          mutationTable: ["array"],
+          resultCommit: ["null", "string"],
+          status: ["string"],
+          summary: ["string"],
+          taskId: ["string"],
+        },
+        closed: true,
+      },
+    ],
+  },
+  "implement-reviewer": {
+    version: 4,
+    input: [
+      {
+        required: [
+          "acceptance",
+          "baseCommit",
+          "branch",
+          "gateCompleteBy",
+          "responseStoreNow",
+          "round",
+          "synthesisStoreReserveMs",
+          "taskId",
+          "workerResult",
+          "worktreePath",
+        ],
+        kinds: {
+          acceptance: ["string"],
+          baseCommit: ["string"],
+          branch: ["string"],
+          description: ["string"],
+          gateCompleteBy: ["string"],
+          headline: ["string"],
+          parentGateAttestation: ["object"],
+          priorCriticism: ["array"],
+          responseStoreNow: ["string"],
+          round: ["integer"],
+          synthesisStoreReserveMs: [],
+          taskId: ["string"],
+          workerResult: ["object"],
+          worktreePath: ["string"],
+        },
+        closed: true,
+      },
+    ],
+    output: [
+      {
+        required: [
+          "criticism",
+          "defects",
+          "gateReRan",
+          "questions",
+          "rationale",
+          "resultCommitVerified",
+          "taskId",
+          "verdict",
+        ],
+        kinds: {
+          criticism: ["array"],
+          defects: ["array"],
+          gateDurationMs: ["integer"],
+          gateReRan: ["boolean"],
+          gateReRanReason: ["string"],
+          questions: ["array"],
+          rationale: ["string"],
+          resultCommitVerified: ["boolean"],
+          summary: ["string"],
+          taskId: ["string"],
+          verdict: ["string"],
+        },
+        closed: true,
+      },
+    ],
+  },
+  "implement-conflict-resolver": {
+    version: 1,
+    input: [
+      {
+        required: ["baseCommit", "branch", "conflictingFiles", "taskId", "worktreePath"],
+        kinds: {
+          baseCommit: ["string"],
+          baseSideNote: ["string"],
+          branch: ["string"],
+          conflictingFiles: ["array"],
+          description: ["string"],
+          headline: ["string"],
+          taskId: ["string"],
+          worktreePath: ["string"],
+        },
+        closed: true,
+      },
+    ],
+    output: [
+      {
+        required: [
+          "checkSummary",
+          "filesResolved",
+          "resultCommit",
+          "status",
+          "summary",
+          "taskId",
+        ],
+        kinds: {
+          blockedReason: ["string"],
+          checkSummary: ["string"],
+          filesResolved: ["array"],
+          resultCommit: ["null", "string"],
+          status: ["string"],
+          summary: ["string"],
+          taskId: ["string"],
+        },
+        closed: true,
+      },
+    ],
+  },
+  "investigate-explorer": {
+    version: 1,
+    input: [
+      {
+        required: ["branchContext", "hypothesisId", "statement"],
+        kinds: {
+          branchContext: ["string"],
+          hypothesisId: ["string"],
+          leads: ["array"],
+          statement: ["string"],
+        },
+        closed: true,
+      },
+    ],
+    output: [
+      {
+        required: ["evidence", "hypothesisId", "lean"],
+        kinds: {
+          evidence: ["array"],
+          hypothesisId: ["string"],
+          lean: ["string"],
+          notes: ["string"],
+          probeRequest: ["object"],
+        },
+        closed: true,
+      },
+    ],
+  },
+  "investigate-prober": {
+    version: 1,
+    input: [
+      {
+        required: ["branchContext", "hypothesisId", "probeRequest", "statement"],
+        kinds: {
+          branchContext: ["string"],
+          hypothesisId: ["string"],
+          leads: ["array"],
+          probeRequest: ["object"],
+          statement: ["string"],
+        },
+        closed: true,
+      },
+    ],
+    output: [
+      {
+        required: ["evidence", "hypothesisId", "lean"],
+        kinds: {
+          evidence: ["array"],
+          hypothesisId: ["string"],
+          lean: ["string"],
+          notes: ["string"],
+        },
+        closed: true,
+      },
+    ],
+  },
+  "research-explorer": {
+    version: 1,
+    input: [
+      {
+        required: ["branchContext", "hypothesisId", "statement"],
+        kinds: {
+          branchContext: ["string"],
+          hypothesisId: ["string"],
+          leads: ["array"],
+          statement: ["string"],
+        },
+        closed: true,
+      },
+    ],
+    output: [
+      {
+        required: ["evidence", "hypothesisId", "lean"],
+        kinds: {
+          evidence: ["array"],
+          hypothesisId: ["string"],
+          lean: ["string"],
+          notes: ["string"],
+          probeRequest: ["object"],
+        },
+        closed: true,
+      },
+    ],
+  },
+  "research-experimenter": {
+    version: 1,
+    input: [
+      {
+        required: ["branchContext", "hypothesisId", "probeRequest", "statement"],
+        kinds: {
+          branchContext: ["string"],
+          hypothesisId: ["string"],
+          leads: ["array"],
+          probeRequest: ["object"],
+          statement: ["string"],
+        },
+        closed: true,
+      },
+    ],
+    output: [
+      {
+        required: ["evidence", "hypothesisId", "lean"],
+        kinds: {
+          evidence: ["array"],
+          hypothesisId: ["string"],
+          lean: ["string"],
+          notes: ["string"],
+        },
+        closed: true,
+      },
+    ],
+  },
+};
+
+export const DISPATCHED_ROLE_IDS: readonly string[] = Object.freeze(
+  Object.keys(DISPATCHED_ROLE_CONTRACTS),
+);
+
+const ROLE_ID_SET: ReadonlySet<string> = new Set(DISPATCHED_ROLE_IDS);
+
+export function isDispatchedRoleId(roleId: unknown): roleId is string {
+  return typeof roleId === "string" && ROLE_ID_SET.has(roleId);
+}
+
+export function roleContractFor(roleId: unknown): RoleContractProjection | undefined {
+  return isDispatchedRoleId(roleId) ? DISPATCHED_ROLE_CONTRACTS[roleId] : undefined;
+}
+
+export function contractKindOf(value: unknown): ContractKind {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  switch (typeof value) {
+    case "boolean":
+      return "boolean";
+    case "string":
+      return "string";
+    case "number":
+      return Number.isInteger(value) ? "integer" : "number";
+    default:
+      return "object";
+  }
+}
+
+function kindMatches(declared: readonly string[], value: unknown): boolean {
+  if (declared.length === 0) return true;
+  const kind = contractKindOf(value);
+  if (declared.includes(kind)) return true;
+  return kind === "integer" && declared.includes("number");
+}
+
+function isPlainObject(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validateBranch(
+  branch: ContractBranch,
+  value: Readonly<Record<string, unknown>>,
+  path: string,
+): readonly ContractViolation[] {
+  const violations: ContractViolation[] = [];
+  for (const key of branch.required) {
+    if (!Object.hasOwn(value, key) || value[key] === undefined) {
+      violations.push({
+        path: `${path}/${key}`,
+        message: "required property is missing",
+        keyword: "required",
+      });
+    }
+  }
+  for (const key of Object.keys(value)) {
+    if (value[key] === undefined) continue;
+    if (!Object.hasOwn(branch.kinds, key)) {
+      if (branch.closed) {
+        violations.push({
+          path: `${path}/${key}`,
+          message: "undeclared property",
+          keyword: "additionalProperties",
+        });
+      }
+      continue;
+    }
+    const declared = branch.kinds[key] ?? [];
+    if (!kindMatches(declared, value[key])) {
+      violations.push({
+        path: `${path}/${key}`,
+        message: `expected ${declared.join(" | ")}, got ${contractKindOf(value[key])}`,
+        keyword: "type",
+      });
+    }
+  }
+  return violations;
+}
+
+/**
+ * Structural-projection validator (T693/T694 mirror). Accepts when AT LEAST ONE
+ * branch matches. Used only as the LOUD absent-artifact fallback.
+ */
+export function validateAgainstContract(
+  branches: readonly ContractBranch[],
+  value: unknown,
+  path = "",
+): readonly ContractViolation[] {
+  if (!isPlainObject(value)) {
+    return [
+      {
+        path: path === "" ? "/" : path,
+        message: `expected object, got ${contractKindOf(value)}`,
+        keyword: "type",
+      },
+    ];
+  }
+  let closest: readonly ContractViolation[] | undefined;
+  for (const branch of branches) {
+    const violations = validateBranch(branch, value, path);
+    if (violations.length === 0) return [];
+    if (closest === undefined || violations.length < closest.length) closest = violations;
+  }
+  return closest ?? [];
+}
+
+export function describeViolations(violations: readonly ContractViolation[]): string {
+  return violations
+    .map((violation) => `${violation.path === "" ? "/" : violation.path} ${violation.message}`)
+    .join("; ");
+}
+
+/** Canonical shipped schema-sidecar artifact shape (D190 / serializeRoleSchemaArtifact). */
+export interface RoleSchemaArtifact {
+  readonly id: string;
+  readonly version: number;
+  readonly inputSchema: unknown;
+  readonly outputSchema: unknown;
+}
+
+export type AttestedSchemaLoadResult =
+  | {
+      readonly status: "loaded";
+      readonly artifact: RoleSchemaArtifact;
+      readonly schemaPath: string;
+      readonly schemaSha256: string;
+    }
+  | {
+      readonly status: "absent";
+      readonly warning: string;
+      readonly schemaPath: string;
+    }
+  | {
+      readonly status: "error";
+      readonly detail: string;
+      readonly schemaPath: string;
+    };
+
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+function sha256Utf8(value: string): string {
+  return crypto.createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== typeof b) return false;
+  if (a === null || b === null) return a === b;
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((entry, index) => deepEqual(entry, b[index]));
+  }
+  if (typeof a === "object") {
+    if (typeof b !== "object" || b === null || Array.isArray(b)) return false;
+    const aKeys = Object.keys(a as object);
+    const bKeys = Object.keys(b as object);
+    if (aKeys.length !== bKeys.length) return false;
+    const bRecord = b as Record<string, unknown>;
+    return aKeys.every(
+      (key) => Object.hasOwn(bRecord, key) && deepEqual((a as Record<string, unknown>)[key], bRecord[key]),
+    );
+  }
+  return false;
+}
+
+function instancePath(path: string): string {
+  return path === "" ? "/" : path;
+}
+
+/**
+ * Recursive draft-2020-12 subset checker: structural baseline + D190's seven
+ * keywords (+ const/then/else solely as `if` support). See file-header residual.
+ */
+export function validateAgainstAttestedSchema(
+  schema: unknown,
+  value: unknown,
+  path = "",
+): readonly ContractViolation[] {
+  if (typeof schema === "boolean") {
+    return schema
+      ? []
+      : [{ path: instancePath(path), message: "schema is false", keyword: "false" }];
+  }
+  if (!isPlainObject(schema)) {
+    return [
+      {
+        path: instancePath(path),
+        message: "schema is not an object",
+        keyword: "schema",
+      },
+    ];
+  }
+
+  const violations: ContractViolation[] = [];
+  const push = (keyword: string, message: string, at: string = path): void => {
+    violations.push({ path: instancePath(at), message, keyword });
+  };
+
+  if (Object.hasOwn(schema, "const") && !deepEqual(value, schema.const)) {
+    push("const", "must be equal to constant");
+  }
+
+  if (Object.hasOwn(schema, "enum")) {
+    const options = schema.enum;
+    if (!Array.isArray(options) || !options.some((option) => deepEqual(option, value))) {
+      push("enum", "must be equal to one of the allowed values");
+    }
+  }
+
+  if (Object.hasOwn(schema, "type")) {
+    const declared = schema.type;
+    const types = typeof declared === "string" ? [declared] : Array.isArray(declared) ? declared : [];
+    if (types.length > 0 && !kindMatches(types as string[], value)) {
+      push("type", `expected ${(types as string[]).join(" | ")}, got ${contractKindOf(value)}`);
+    }
+  }
+
+  if (typeof value === "string") {
+    if (typeof schema.pattern === "string") {
+      let matched = false;
+      try {
+        matched = new RegExp(schema.pattern, "u").test(value);
+      } catch {
+        matched = false;
+      }
+      if (!matched) push("pattern", `must match pattern "${schema.pattern}"`);
+    }
+    if (typeof schema.minLength === "number" && value.length < schema.minLength) {
+      push("minLength", `must NOT have fewer than ${schema.minLength} characters`);
+    }
+  }
+
+  if (Array.isArray(value)) {
+    if (typeof schema.minItems === "number" && value.length < schema.minItems) {
+      push("minItems", `must NOT have fewer than ${schema.minItems} items`);
+    }
+    if (Object.hasOwn(schema, "items") && isPlainObject(schema.items)) {
+      for (let index = 0; index < value.length; index += 1) {
+        violations.push(
+          ...validateAgainstAttestedSchema(schema.items, value[index], `${path}/${index}`),
+        );
+      }
+    }
+    // `contains` is required for correct evaluation of implement-worker's
+    // if/then mutationTable gate (empty arrays must NOT match).
+    if (Object.hasOwn(schema, "contains")) {
+      const matched = value.some(
+        (entry) => validateAgainstAttestedSchema(schema.contains, entry, path).length === 0,
+      );
+      if (!matched) {
+        push("contains", "must contain at least one item matching the schema");
+      }
+    }
+  }
+
+  if (isPlainObject(value)) {
+    const required = schema.required;
+    if (Array.isArray(required)) {
+      for (const key of required) {
+        if (typeof key !== "string") continue;
+        if (!Object.hasOwn(value, key) || value[key] === undefined) {
+          push("required", `must have required property '${key}'`, `${path}/${key}`);
+        }
+      }
+    }
+    const properties = isPlainObject(schema.properties) ? schema.properties : null;
+    if (properties) {
+      for (const [key, subschema] of Object.entries(properties)) {
+        if (!Object.hasOwn(value, key) || value[key] === undefined) continue;
+        violations.push(...validateAgainstAttestedSchema(subschema, value[key], `${path}/${key}`));
+      }
+    }
+    if (schema.additionalProperties === false && properties) {
+      for (const key of Object.keys(value)) {
+        if (value[key] === undefined) continue;
+        if (!Object.hasOwn(properties, key)) {
+          push("additionalProperties", "must NOT have additional properties", `${path}/${key}`);
+        }
+      }
+    } else if (isPlainObject(schema.additionalProperties) && properties) {
+      for (const key of Object.keys(value)) {
+        if (value[key] === undefined || Object.hasOwn(properties, key)) continue;
+        violations.push(
+          ...validateAgainstAttestedSchema(
+            schema.additionalProperties,
+            value[key],
+            `${path}/${key}`,
+          ),
+        );
+      }
+    }
+  }
+
+  if (Array.isArray(schema.allOf)) {
+    for (const sub of schema.allOf) {
+      violations.push(...validateAgainstAttestedSchema(sub, value, path));
+    }
+  }
+
+  if (Array.isArray(schema.oneOf)) {
+    const matched = schema.oneOf.filter(
+      (sub) => validateAgainstAttestedSchema(sub, value, path).length === 0,
+    );
+    if (matched.length !== 1) {
+      push(
+        "oneOf",
+        matched.length === 0
+          ? "must match exactly one schema in oneOf (matched 0)"
+          : `must match exactly one schema in oneOf (matched ${matched.length})`,
+      );
+    }
+  }
+
+  if (Object.hasOwn(schema, "not")) {
+    if (validateAgainstAttestedSchema(schema.not, value, path).length === 0) {
+      push("not", "must NOT be valid against the given schema");
+    }
+  }
+
+  if (Object.hasOwn(schema, "if")) {
+    const ifOk = validateAgainstAttestedSchema(schema.if, value, path).length === 0;
+    if (ifOk && Object.hasOwn(schema, "then")) {
+      violations.push(...validateAgainstAttestedSchema(schema.then, value, path));
+    } else if (!ifOk && Object.hasOwn(schema, "else")) {
+      violations.push(...validateAgainstAttestedSchema(schema.else, value, path));
+    }
+  }
+
+  return violations;
+}
+
+/**
+ * Load `schemas/<roleId>.json` from a packaged surface root and bind it to the
+ * `schemaSha256` recorded in `surface.json`. Absence is a soft signal (fallback);
+ * a digest mismatch or malformed artifact is a hard error (no silent degrade).
+ */
+export function loadAttestedRoleSchema(
+  promptRoot: string,
+  roleId: string,
+): AttestedSchemaLoadResult {
+  const schemaPath = path.join(promptRoot, "schemas", `${roleId}.json`);
+  const manifestPath = path.join(promptRoot, "surface.json");
+
+  let manifestRaw: string;
+  try {
+    manifestRaw = fs.readFileSync(manifestPath, "utf8");
+  } catch {
+    return {
+      status: "absent",
+      schemaPath,
+      warning:
+        `attested schema artifact missing for role "${roleId}" at ${schemaPath}: ` +
+        `surface manifest unreadable (${manifestPath}); falling back to structural projection ` +
+        `(degraded guarantee: ${D190_ENFORCED_KEYWORDS.join("/")} unenforced)`,
+    };
+  }
+
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(manifestRaw);
+  } catch {
+    return {
+      status: "error",
+      schemaPath,
+      detail: `${manifestPath}: surface manifest is not JSON`,
+    };
+  }
+  if (!isPlainObject(manifest) || !Array.isArray(manifest.roles)) {
+    return {
+      status: "error",
+      schemaPath,
+      detail: `${manifestPath}: surface manifest lacks a roles list`,
+    };
+  }
+
+  const roleEntry = (manifest.roles as unknown[]).find(
+    (entry) => isPlainObject(entry) && entry.roleId === roleId,
+  );
+  if (!isPlainObject(roleEntry)) {
+    return {
+      status: "absent",
+      schemaPath,
+      warning:
+        `attested schema artifact missing for role "${roleId}" at ${schemaPath}: ` +
+        `role is not listed in ${manifestPath}; falling back to structural projection ` +
+        `(degraded guarantee: ${D190_ENFORCED_KEYWORDS.join("/")} unenforced)`,
+    };
+  }
+
+  const attestedDigest = roleEntry.schemaSha256;
+  if (attestedDigest === null || attestedDigest === undefined) {
+    return {
+      status: "absent",
+      schemaPath,
+      warning:
+        `attested schema artifact missing for role "${roleId}" at ${schemaPath}: ` +
+        `surface.json records schemaSha256=null; falling back to structural projection ` +
+        `(degraded guarantee: ${D190_ENFORCED_KEYWORDS.join("/")} unenforced)`,
+    };
+  }
+  if (typeof attestedDigest !== "string" || !SHA256_HEX.test(attestedDigest)) {
+    return {
+      status: "error",
+      schemaPath,
+      detail: `${manifestPath}: role "${roleId}" schemaSha256 is not a lowercase hex SHA-256 digest`,
+    };
+  }
+
+  let schemaRaw: string;
+  try {
+    schemaRaw = fs.readFileSync(schemaPath, "utf8");
+  } catch {
+    return {
+      status: "absent",
+      schemaPath,
+      warning:
+        `attested schema artifact missing for role "${roleId}" at ${schemaPath}: ` +
+        `file not found while surface.json attests schemaSha256=${attestedDigest}; ` +
+        `falling back to structural projection ` +
+        `(degraded guarantee: ${D190_ENFORCED_KEYWORDS.join("/")} unenforced)`,
+    };
+  }
+
+  const actualDigest = sha256Utf8(schemaRaw);
+  if (actualDigest !== attestedDigest) {
+    return {
+      status: "error",
+      schemaPath,
+      detail:
+        `${schemaPath}: schema digest mismatch (surface.json schemaSha256=${attestedDigest}, ` +
+        `actual=${actualDigest})`,
+    };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(schemaRaw);
+  } catch {
+    return {
+      status: "error",
+      schemaPath,
+      detail: `${schemaPath}: schema artifact is not JSON`,
+    };
+  }
+  if (
+    !isPlainObject(parsed) ||
+    typeof parsed.id !== "string" ||
+    typeof parsed.version !== "number" ||
+    !Object.hasOwn(parsed, "inputSchema") ||
+    !Object.hasOwn(parsed, "outputSchema")
+  ) {
+    return {
+      status: "error",
+      schemaPath,
+      detail: `${schemaPath}: expected {id, version, inputSchema, outputSchema}`,
+    };
+  }
+
+  return {
+    status: "loaded",
+    schemaPath,
+    schemaSha256: actualDigest,
+    artifact: {
+      id: parsed.id,
+      version: parsed.version,
+      inputSchema: parsed.inputSchema,
+      outputSchema: parsed.outputSchema,
+    },
+  };
+}
+
+export interface ValidateRoleValueResult {
+  readonly ok: boolean;
+  readonly errors: readonly ContractViolation[];
+  readonly mode: "attested-schema" | "structural-projection-fallback";
+  /** Present iff the LOUD absent-artifact fallback fired. */
+  readonly warning?: string;
+  readonly schemaPath?: string;
+}
+
+export interface ValidateRoleValueOptions {
+  readonly roleId: string;
+  readonly side: RoleContractSide;
+  readonly value: unknown;
+  /** Packaged surface root; defaults to `$CQ_PROMPT_ROOT`. */
+  readonly promptRoot?: string;
+  /** Warning sink for the LOUD fallback (defaults to `console.warn`). */
+  readonly warn?: (message: string) => void;
+}
+
+/**
+ * Validate a role input/output value. Prefers the attested schema artifact;
+ * falls back LOUDLY to the structural projection when the artifact is absent.
+ */
+export function validateRoleValue(options: ValidateRoleValueOptions): ValidateRoleValueResult {
+  const warn = options.warn ?? ((message: string) => console.warn(message));
+  const contract = roleContractFor(options.roleId);
+  if (contract === undefined) {
+    return {
+      ok: false,
+      mode: "attested-schema",
+      errors: [
+        {
+          path: "/",
+          message: `unknown dispatched role "${options.roleId}"`,
+          keyword: "role",
+        },
+      ],
+    };
+  }
+
+  const promptRoot =
+    options.promptRoot ??
+    (typeof process.env[PROMPT_ROOT_ENV] === "string" ? process.env[PROMPT_ROOT_ENV] : "");
+  if (promptRoot.trim() === "") {
+    const warning =
+      `attested schema artifact missing for role "${options.roleId}" at schemas/${options.roleId}.json: ` +
+      `${PROMPT_ROOT_ENV} is unset; falling back to structural projection ` +
+      `(degraded guarantee: ${D190_ENFORCED_KEYWORDS.join("/")} unenforced)`;
+    warn(warning);
+    const errors = validateAgainstContract(contract[options.side], options.value);
+    return {
+      ok: errors.length === 0,
+      errors,
+      mode: "structural-projection-fallback",
+      warning,
+      schemaPath: `schemas/${options.roleId}.json`,
+    };
+  }
+
+  const loaded = loadAttestedRoleSchema(promptRoot, options.roleId);
+  if (loaded.status === "error") {
+    return {
+      ok: false,
+      mode: "attested-schema",
+      schemaPath: loaded.schemaPath,
+      errors: [{ path: "/", message: loaded.detail, keyword: "schema" }],
+    };
+  }
+  if (loaded.status === "absent") {
+    warn(loaded.warning);
+    const errors = validateAgainstContract(contract[options.side], options.value);
+    return {
+      ok: errors.length === 0,
+      errors,
+      mode: "structural-projection-fallback",
+      warning: loaded.warning,
+      schemaPath: loaded.schemaPath,
+    };
+  }
+
+  const schema =
+    options.side === "input" ? loaded.artifact.inputSchema : loaded.artifact.outputSchema;
+  const errors = validateAgainstAttestedSchema(schema, options.value);
+  return {
+    ok: errors.length === 0,
+    errors,
+    mode: "attested-schema",
+    schemaPath: loaded.schemaPath,
+  };
+}
+
+/**
+ * The T694 residual-gap exhibit: every projected required key at a declared
+ * type, closed object — and yet `taskId` violates `pattern`, `status` violates
+ * `enum`, and `branch` violates `pattern`. Structural projection ACCEPTS this;
+ * the attested-schema path MUST reject it (T1266 / D190).
+ */
+export const T694_ENUM_PATTERN_EXHIBIT: Readonly<Record<string, unknown>> = {
+  taskId: "not-a-task-id",
+  status: "probably",
+  resultCommit: null,
+  branch: "some-random-branch",
+  filesTouched: [],
+  checkSummary: "",
+  summary: "",
+};
