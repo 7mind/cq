@@ -40,7 +40,9 @@ ledger, or merge; stop after two consecutive read-only passes.
   and branch `implement/<taskId>`.
 - Persist every child summary and available raw transcript with `cq log put`,
   attach their logical paths to the affected ledger item, and never expose
-  capabilities or secrets.
+  capabilities or secrets. Before piping a transcript, require `test -s
+  <transcript>` so empty or whitespace-only captures are skipped rather than
+  written.
 - The surface-specific fragment defines dispatch input delivery and result
   materialization. Retain the parent-prepared handle. Interpret a native
   result only after the exact retained handle yields `state: "consumed"`.

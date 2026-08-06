@@ -144,6 +144,7 @@ import {
   type PlanLifecycleSerializationBoundaryHook,
   type PlanLifecycleSerializationContender,
 } from "./planLifecycleSerialization.js";
+import { serializePlanLifecycleDump } from "./planLifecycleDump.js";
 
 // Moved to schemaCompat.ts (T527) so the sqlite backend's module graph stays
 // free of this file's parser/serialize funnel; re-exported for compatibility.
@@ -715,7 +716,6 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
         await this.reloadLedgerFromDisk(ledgerId);
         const ledger = this.getLedger(ledgerId);
         assertRawPlanUpdateAllowed(
-          this,
           (id) => this.planGuardLedger(id),
           ledgerId,
           ledger,
@@ -855,7 +855,6 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
         }
         if (ledgerId === TASKS_LEDGER) {
           assertManagedTaskTransitionAllowed(
-            this,
             (id) => this.planGuardLedger(id),
             source,
             toStatus,
@@ -1253,11 +1252,22 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
   }
 
   private serializePlanLifecycleState(): string {
-    return JSON.stringify({
-      version: 1,
-      claims: [...this.planClaims.values()],
-      operations: [...this.planOperations.values()],
+    return serializePlanLifecycleDump({
+      claims: this.planClaims,
+      operations: this.planOperations,
     });
+  }
+
+  /**
+   * Duck-typed BackupDump source (D139): emit the durable plan-lifecycle.json
+   * body when private claim/operation state is non-empty. `buildBackupDump`
+   * prefers this over a filesystem walk so every backend round-trips the same
+   * first-class artifact.
+   */
+  exportPlanLifecycleState(): string | null {
+    this.assertInit();
+    if (this.planClaims.size === 0 && this.planOperations.size === 0) return null;
+    return this.serializePlanLifecycleState();
   }
 
   private async runPlanLifecycleMutation<T>(

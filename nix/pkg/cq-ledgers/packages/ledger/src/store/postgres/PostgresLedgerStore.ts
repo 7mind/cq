@@ -114,6 +114,11 @@ import {
   assertRawPlanUpdateAllowed,
 } from "../planLifecycleGuards.js";
 import {
+  decodePostgresPlanScope,
+  encodePostgresPlanScope,
+  serializePlanLifecycleDump,
+} from "../planLifecycleDump.js";
+import {
   applyCreateItem,
   applyCreateMilestoneItem,
   applyDetachMilestoneGroup,
@@ -318,56 +323,6 @@ function requireLiveLedger(live: ReadonlyMap<string, Ledger>, ledgerId: string):
   const ledger = live.get(ledgerId);
   if (ledger === undefined) throw new LedgerNotFoundError(ledgerId);
   return ledger;
-}
-
-/**
- * The `Pick<LedgerStore, "enumerate" | "fetch">` seam
- * `planLifecycleGuards.assertManagedTaskTransitionAllowed` reads its
- * dependency-readiness inputs through, bound to a transaction-local LIVE
- * ledger map. Parameterising the SHARED guard this way is the whole point of
- * the seam: the policy itself is never restated here.
- */
-function planGuardStoreOf(
-  live: ReadonlyMap<string, Ledger>,
-): Pick<LedgerStore, "enumerate" | "fetch"> {
-  return {
-    enumerate: () => [...live.keys()].sort(),
-    fetch: (ledgerId) =>
-      materialiseFetchedLedger(
-        requireLiveLedger(live, ledgerId),
-        requireLiveLedger(live, MILESTONES_LEDGER),
-      ),
-  };
-}
-
-/**
- * The field separator the shared lifecycle logic joins a scope key's parts
- * with. Legal in sqlite, rejected outright by Postgres.
- */
-const PLAN_SCOPE_SEPARATOR = "\u0000";
-
-/**
- * Escape a plan-fence scope key for storage in a Postgres `TEXT` column.
- *
- * The shared lifecycle logic joins a scope's fields with `U+0000`, which sqlite
- * stores verbatim but Postgres rejects outright (SQLSTATE 22021, "invalid byte
- * sequence for encoding UTF8: 0x00"). Escaping the separator — and the escape
- * character itself, so the mapping stays injective and two distinct scopes can
- * never collide onto one primary key — keeps the stored key both legal and
- * readable. {@link decodePlanScope} is its exact inverse.
- */
-function encodePlanScope(scope: string): string {
-  // String literals rather than regexes: a NUL inside a regex literal trips
-  // eslint's `no-control-regex`. The backslash is escaped FIRST, so the escapes
-  // this step introduces are never themselves re-escaped.
-  return scope.replaceAll("\\", "\\\\").replaceAll(PLAN_SCOPE_SEPARATOR, "\\0");
-}
-
-/** Inverse of {@link encodePlanScope}. */
-function decodePlanScope(stored: string): string {
-  return stored.replace(/\\(\\|0)/g, (_match, escaped: string) =>
-    escaped === "0" ? PLAN_SCOPE_SEPARATOR : "\\",
-  );
 }
 
 /** The bare ids of every `goals:<id>` entry in a `ledgerRefs` field value. */
@@ -1019,6 +974,34 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   /**
+   * Duck-typed BackupDump source (D139): emit plan-lifecycle.json from LIVE
+   * plan_claims/plan_operations rows (not the materialized item cache).
+   */
+  async exportPlanLifecycleState(): Promise<string | null> {
+    this.assertInit();
+    const claims = new Map<string, PlanPrivateClaimRecord>();
+    for (const row of await this.pool()<PlanRecordRow[]>`
+      SELECT scope, record_json FROM plan_claims WHERE project_key = ${this.projectKey}
+    `) {
+      claims.set(
+        decodePostgresPlanScope(row.scope),
+        PlanPrivateClaimRecordSchema.parse(JSON.parse(row.record_json)),
+      );
+    }
+    const operations = new Map<string, InMemoryPlanOperationRecord>();
+    for (const row of await this.pool()<PlanRecordRow[]>`
+      SELECT scope, record_json FROM plan_operations WHERE project_key = ${this.projectKey}
+    `) {
+      operations.set(
+        decodePostgresPlanScope(row.scope),
+        JSON.parse(row.record_json) as InMemoryPlanOperationRecord,
+      );
+    }
+    if (claims.size === 0 && operations.size === 0) return null;
+    return serializePlanLifecycleDump({ claims, operations });
+  }
+
+  /**
    * Normalize + confine a log path exactly like
    * {@link SqliteLedgerStore.readLog} (absolute rejected, a leading
    * `.cq/logs/` prefix stripped, a `..` escape rejected) — there is no
@@ -1223,7 +1206,6 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
           const live = state.ledgers;
           const source = requireLiveLedger(live, ledgerId);
           assertRawPlanUpdateAllowed(
-            planGuardStoreOf(live),
             (id) => requireLiveLedger(live, id),
             ledgerId,
             source,
@@ -1419,7 +1401,6 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
             assertManagedGoalTransitionAllowed(current, toStatus);
           } else {
             assertManagedTaskTransitionAllowed(
-              planGuardStoreOf(live),
               (id) => requireLiveLedger(live, id),
               current,
               toStatus,
@@ -1745,13 +1726,13 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   // Internals — plan-lifecycle fence (T851)
   //
   // SqliteLedgerStore runs the whole fence inside ONE immediate write
-  // transaction whose reads are, by construction, LIVE rows — which is what
-  // keeps it clear of the staleness defect (D141) recorded against the
-  // snapshot-based fs/git path. This backend reproduces that property with a
-  // per-goal ROW LOCK plus transaction-local reads, NOT with its materialized
-  // cache: `this.ledgers` is a read model that a peer instance's committed
-  // write can already have invalidated, so no fence decision is ever taken
-  // from it.
+  // transaction whose reads are, by construction, LIVE rows. This backend
+  // reproduces that property with a per-goal ROW LOCK plus transaction-local
+  // reads, NOT with its materialized cache: `this.ledgers` is a read model
+  // that a peer instance's committed write can already have invalidated, so no
+  // fence decision is ever taken from it. D141 option B further narrowed the
+  // raw managed-task fence to authority-only (manifest ownership); dependency
+  // readiness is orchestrator-side and is not decided on the raw path.
   //
   // Locks, always acquired in this order so no two fenced transactions can
   // invert them:
@@ -1870,7 +1851,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       SELECT scope, record_json FROM plan_claims WHERE project_key = ${this.projectKey}
     `) {
       claims.set(
-        decodePlanScope(row.scope),
+        decodePostgresPlanScope(row.scope),
         PlanPrivateClaimRecordSchema.parse(JSON.parse(row.record_json)),
       );
     }
@@ -1879,7 +1860,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       SELECT scope, record_json FROM plan_operations WHERE project_key = ${this.projectKey}
     `) {
       operations.set(
-        decodePlanScope(row.scope),
+        decodePostgresPlanScope(row.scope),
         JSON.parse(row.record_json) as InMemoryPlanOperationRecord,
       );
     }
@@ -1914,7 +1895,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     records: ReadonlyMap<string, T>,
   ): Promise<void> {
     for (const [scope, record] of records) {
-      const key = encodePlanScope(scope);
+      const key = encodePostgresPlanScope(scope);
       const json = JSON.stringify(record);
       if (table === "plan_claims") {
         await tx`

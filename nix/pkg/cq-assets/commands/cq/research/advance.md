@@ -46,8 +46,9 @@ Children only gather evidence; they never adjudicate or mutate the ledger.
   If unavailable, inherit the current model; never invent one.
 - Persist each child summary and available raw transcript through `cq log put`,
   attach their logical paths in the same item update as the evidence, and never
-  expose capabilities or secrets. Do not write research artifacts into the
-  working tree.
+  expose capabilities or secrets. Before piping a transcript, require `test -s
+  <transcript>` so empty or whitespace-only captures are skipped rather than
+  written. Do not write research artifacts into the working tree.
 
 ## Round
 

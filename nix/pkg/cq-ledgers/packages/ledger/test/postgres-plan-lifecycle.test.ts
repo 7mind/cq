@@ -5,9 +5,9 @@
  *
  *  1. The fence reads LIVE rows, never the instance's materialized cache. This
  *     backend is the only one whose reads are served from a cache a peer's
- *     committed write can silently invalidate, so it is the only one where the
- *     staleness defect recorded against the fs/git path (D141) has a genuine
- *     analogue.
+ *     committed write can silently invalidate. D141 option B narrowed the raw
+ *     managed-task fence to authority-only (manifest ownership); dependency
+ *     readiness is no longer decided from any cache on the raw path.
  *  2. Whatever the fence reads live, it publishes to all THREE cache-backed
  *     read surfaces — the active cache, the archive maps behind `fetchArchive`,
  *     and both search-index buckets — for every ledger it absorbed, so no two
@@ -519,21 +519,24 @@ describe.skipIf(!PG_URL)("postgres plan-lifecycle fence (T851)", () => {
     // premise of this test rather than assuming it.
     expect(() => stale.fetchItem(TASKS_LEDGER, first)).toThrow();
 
-    // A cache-based fence would fail this with "item not found"; a live-read
-    // fence starts the ready task and rejects the dependency-blocked one for
-    // the RIGHT reason.
+    // A cache-based fence would fail this with "item not found". A live-read
+    // authority-only fence (D141 option B) starts BOTH managed tasks from the
+    // finalized manifest — dependency readiness is orchestrator-side, not the
+    // raw updateItem fence, so a stale cross-ledger cache cannot decide it.
     const started = await stale.updateItem(TASKS_LEDGER, first, {
       status: "wip",
       ...PROVENANCE,
     });
     expect(started.status).toBe("wip");
-    await expect(
-      stale.updateItem(TASKS_LEDGER, second, { status: "wip", ...PROVENANCE }),
-    ).rejects.toThrow(/dependencies/);
+    const startedSecond = await stale.updateItem(TASKS_LEDGER, second, {
+      status: "wip",
+      ...PROVENANCE,
+    });
+    expect(startedSecond.status).toBe("wip");
 
     const reader = await h.open();
     expect(reader.fetchItem(TASKS_LEDGER, first).status).toBe("wip");
-    expect(reader.fetchItem(TASKS_LEDGER, second).status).toBe("planned");
+    expect(reader.fetchItem(TASKS_LEDGER, second).status).toBe("wip");
   }, 30_000);
 
   test("a guarded raw write publishes EVERY absorbed ledger to the search index, not just the mutated one", async () => {

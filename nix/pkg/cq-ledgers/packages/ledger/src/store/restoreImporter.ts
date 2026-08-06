@@ -42,6 +42,11 @@ import type { BackupDumpFile } from "./backupExporter.js";
 import { openLedgerDb, immediateWriteTransaction } from "./sqlite/connection.js";
 import { ensureSchema } from "./sqlite/schema.js";
 import { buildPrefixRegistry, normalizeStoredRefFields } from "../refs.js";
+import {
+  PLAN_LIFECYCLE_DUMP_PATH,
+  parsePlanLifecycleDump,
+  type PlanLifecycleDumpState,
+} from "./planLifecycleDump.js";
 
 /** Result of {@link restoreDumpToXdg}: counts for CLI reporting. */
 export interface RestoreSummary {
@@ -113,6 +118,12 @@ export interface ParsedDump {
   archives: Map<string, Map<string, ArchiveContent>>;
   /** Dump-relative log files (`logs/<rel>`), byte-identical to the export. */
   logs: BackupDumpFile[];
+  /**
+   * First-class plan-lifecycle verifier/replay state (D139), when the dump
+   * carried `plan-lifecycle.json`. Absent when the source had no claims or
+   * operations.
+   */
+  planLifecycle: PlanLifecycleDumpState | null;
 }
 
 /**
@@ -169,7 +180,11 @@ export function parseBackupDump(dump: readonly BackupDumpFile[]): ParsedDump {
   const logsPrefix = `${LEDGER_LOGS_DIRNAME}/`;
   const logs = dump.filter((f) => f.path.startsWith(logsPrefix));
 
-  return { registry, ledgers, archives, logs };
+  const planLifecycleSrc = byPath.get(PLAN_LIFECYCLE_DUMP_PATH);
+  const planLifecycle =
+    planLifecycleSrc === undefined ? null : parsePlanLifecycleDump(planLifecycleSrc);
+
+  return { registry, ledgers, archives, logs, planLifecycle };
 }
 
 /**
@@ -281,6 +296,24 @@ export async function restoreDumpToXdg(opts: {
               item.session ?? null,
             );
           }
+        }
+      }
+
+      // D139: rewrite private plan-lifecycle verifier/replay rows from the dump
+      // (already wiped above). Scopes are reconstructed from record fields so
+      // the dump stays backend-agnostic.
+      if (parsed.planLifecycle !== null) {
+        const insertClaim = db.query(
+          "INSERT INTO plan_claims (scope, record_json) VALUES (?, ?)",
+        );
+        const insertOperation = db.query(
+          "INSERT INTO plan_operations (scope, record_json) VALUES (?, ?)",
+        );
+        for (const [scope, record] of parsed.planLifecycle.claims) {
+          insertClaim.run(scope, JSON.stringify(record));
+        }
+        for (const [scope, record] of parsed.planLifecycle.operations) {
+          insertOperation.run(scope, JSON.stringify(record));
         }
       }
     });

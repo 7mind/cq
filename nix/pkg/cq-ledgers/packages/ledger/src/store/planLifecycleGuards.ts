@@ -9,10 +9,9 @@ import {
 } from "../planLifecycle.js";
 import type { FieldValue, Item, Ledger } from "../types.js";
 import { LedgerError } from "../types.js";
-import type { LedgerStore, UpdateItemPatch } from "./LedgerStore.js";
+import type { UpdateItemPatch } from "./LedgerStore.js";
 import { findItem } from "./core.js";
 import { readInMemoryPlanState } from "./inMemoryPlanLifecycle.js";
-import { taskDependenciesSatisfied } from "./predicates.js";
 
 export type LoadPlanGuardLedger = (ledgerId: string) => Ledger;
 
@@ -105,11 +104,18 @@ export function assertManagedGoalTransitionAllowed(
   }
 }
 
+/**
+ * Raw managed-task fence (D141 option B): authority-only. Confirms the task
+ * still belongs to the owning goal's finalized manifest; dependency readiness
+ * is NOT decided here. Cross-ledger readiness is an orchestrator / lifecycle
+ * concern (`taskDependenciesSatisfied` / ready-set derivation) — consulting a
+ * potentially stale cache of peer ledgers from a raw `updateItem(tasks→wip)`
+ * was the D141 defect on the snapshot-based backends.
+ */
 export function assertManagedTaskTransitionAllowed(
-  store: Pick<LedgerStore, "enumerate" | "fetch">,
   loadLedger: LoadPlanGuardLedger,
   task: Item,
-  targetStatus: string,
+  _targetStatus: string,
 ): void {
   const goalRefs = fieldArray(task, "ledgerRefs").filter((ref) =>
     ref.startsWith(`${GOALS_LEDGER}:`),
@@ -126,10 +132,6 @@ export function assertManagedTaskTransitionAllowed(
       !manifest.tasks.some(({ id }) => id === task.id)
     ) {
       throw new LedgerError("task belongs to a draft or superseded manifest");
-    }
-    if (targetStatus !== "wip") continue;
-    if (!taskDependenciesSatisfied(store, task)) {
-      throw new LedgerError("task dependencies are not satisfied");
     }
   }
 }
@@ -153,7 +155,6 @@ export function assertRawPlanCreateAllowed(
 }
 
 export function assertRawPlanUpdateAllowed(
-  store: Pick<LedgerStore, "enumerate" | "fetch">,
   loadLedger: LoadPlanGuardLedger,
   ledgerId: string,
   source: Ledger,
@@ -188,12 +189,7 @@ export function assertRawPlanUpdateAllowed(
       );
     }
     if (patch.status !== undefined && patch.status !== task.status) {
-      assertManagedTaskTransitionAllowed(
-        store,
-        loadLedger,
-        task,
-        patch.status,
-      );
+      assertManagedTaskTransitionAllowed(loadLedger, task, patch.status);
     }
   }
 }

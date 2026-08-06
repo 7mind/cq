@@ -27,6 +27,7 @@ import {
 import type { InMemoryPlanOperationRecord } from "../src/store/inMemoryPlanLifecycle.js";
 import { readInMemoryPlanState } from "../src/store/inMemoryPlanLifecycle.js";
 import type { PlanLifecycleSerializationContender } from "../src/store/planLifecycleSerialization.js";
+import { taskDependenciesSatisfied } from "../src/store/predicates.js";
 import type {
   PlanLifecycleContractFactory,
   PlanLifecycleContractFixture,
@@ -488,6 +489,14 @@ export abstract class LedgerStorePlanLifecycleFixture<
     taskId: string,
     provenanceValue: { author: string; session?: string },
   ): Promise<void> {
+    // D141 option B: dependency readiness lives outside the raw managed-task
+    // fence. The fence is authority-only (manifest ownership); readiness is
+    // decided here at the lifecycle/orchestrator boundary against a fresh
+    // store read, not from a stale cross-ledger cache inside updateItem.
+    const task = this.store.fetchItem(TASKS_LEDGER, taskId);
+    if (!taskDependenciesSatisfied(this.store, task)) {
+      throw new Error("task dependencies are not satisfied");
+    }
     await this.store.updateItem(TASKS_LEDGER, taskId, {
       status: "wip",
       ...provenanceValue,

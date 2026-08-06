@@ -79,8 +79,9 @@ local-only: no network, no persistent main-checkout edits. Harvest its evidence,
 then remove the worktree. Never execute a probe in the main checkout.
 
 After every child returns, persist its summary through `cq log put` and its raw
-transcript when available. Attach the paths to the hypothesis. Never write log
-files directly.
+transcript when available. Before piping a transcript, require `test -s
+<transcript>` so empty or whitespace-only captures are skipped rather than
+written. Attach the paths to the hypothesis. Never write log files directly.
 
 ### 3. Validate before writing
 

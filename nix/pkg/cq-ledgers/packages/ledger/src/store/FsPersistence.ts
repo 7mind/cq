@@ -213,6 +213,10 @@ export class FsPersistence implements LedgerPersistence {
       this.registryPath,
       ...CANONICAL_LEDGERS.map((c) => this.ledgerPath(c.name)),
       ...nonCanonicalNames.map((n) => this.ledgerPath(n)),
+      // D142: durable plan-lifecycle verifier/replay state, plus any pending
+      // recovery marker so a divergence snapshot preserves the full fence.
+      this.planStatePath,
+      this.planPendingPath,
     ];
     for (const src of filesToBackup) {
       const dest = path.join(backupDir, path.basename(src));

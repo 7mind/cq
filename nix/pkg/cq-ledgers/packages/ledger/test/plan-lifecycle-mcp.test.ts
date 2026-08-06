@@ -718,8 +718,12 @@ describe("T852 guarded plan lifecycle over MCP", () => {
 
       const dump = await buildBackupDump(single.fixture.store, logsDir);
       const dumped = JSON.stringify(dump);
+      // D139: plan-lifecycle.json is first-class in the dump and carries the
+      // durable verifier (never the plaintext fence token). The secret must
+      // stay out of every dump artifact; the verifier field name is expected.
+      expect(dump.map(({ path: rel }) => rel)).toContain("plan-lifecycle.json");
       expect(dumped).not.toContain(OWNER_A);
-      expect(dumped).not.toContain("ownerFenceTokenVerifier");
+      expect(dumped).toContain("ownerFenceTokenVerifier");
       expect(dump.map(({ path: rel }) => rel)).toContain("logs/raw/session.jsonl");
       // …and the log really is IN that dump, so the assertion above is about
       // redaction rather than about an absent file.

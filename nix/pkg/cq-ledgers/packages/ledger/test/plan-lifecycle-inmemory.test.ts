@@ -580,7 +580,7 @@ describe("T848 InMemory plan lifecycle semantics", () => {
     }
   });
 
-  it("rejects starting a managed task while an active research dependency gates it", async () => {
+  it("D141: raw updateItem does not gate managed task start on research deps (authority-only fence)", async () => {
     const fixture = await buildFixture("planned", 1);
     try {
       await fixture.seedWork("G1", {
@@ -602,16 +602,19 @@ describe("T848 InMemory plan lifecycle semantics", () => {
         fields: { dependsOn: [`${RESEARCHES_LEDGER}:${research.id}`] },
       });
 
-      await expect(
-        fixture.store.updateItem(TASKS_LEDGER, task.id, { status: "wip" }),
-      ).rejects.toThrow(/dependencies/);
-      expect(fixture.store.fetchItem(TASKS_LEDGER, task.id).status).toBe("planned");
+      // Orchestrator-side readiness still sees the gate.
+      await expect(fixture.startTask(task.id, PROVENANCE)).rejects.toThrow(/dependencies/);
+      // Raw fence is authority-only and must not decide from cross-ledger deps.
+      const started = await fixture.store.updateItem(TASKS_LEDGER, task.id, {
+        status: "wip",
+      });
+      expect(started.status).toBe("wip");
     } finally {
       await fixture.dispose();
     }
   });
 
-  it("rejects reopening a managed task while its milestone dependencies gate it", async () => {
+  it("D141: raw reopenItem does not gate managed task reopen on milestone deps", async () => {
     const fixture = await buildFixture("planned", 1);
     try {
       await fixture.seedWork("G1", {
@@ -632,18 +635,14 @@ describe("T848 InMemory plan lifecycle semantics", () => {
         dependsOn: [`${MILESTONES_LEDGER}:${dependencyMilestone.id}`],
       });
 
-      await expect(
-        fixture.store.reopenItem(TASKS_LEDGER, task.id, "wip"),
-      ).rejects.toThrow(/dependencies/);
-      expect(fixture.store.fetchItem(TASKS_LEDGER, task.id).status).toBe(
-        "abandoned",
-      );
+      const reopened = await fixture.store.reopenItem(TASKS_LEDGER, task.id, "wip");
+      expect(reopened.status).toBe("wip");
     } finally {
       await fixture.dispose();
     }
   });
 
-  it("rejects reopening a finalized managed task to wip with unfinished dependencies", async () => {
+  it("D141: raw reopenItem does not gate finalized managed task reopen on unfinished deps", async () => {
     const fixture = await buildFixture("planned", 1);
     try {
       await fixture.seedWork("G1", {
@@ -656,12 +655,12 @@ describe("T848 InMemory plan lifecycle semantics", () => {
       if (dependent === undefined) throw new Error("dependent task missing");
       expect(dependent.status).toBe("abandoned");
 
-      await expect(
-        fixture.store.reopenItem(TASKS_LEDGER, dependent.id, "wip"),
-      ).rejects.toThrow(/dependencies/);
-      expect(fixture.store.fetchItem(TASKS_LEDGER, dependent.id).status).toBe(
-        "abandoned",
+      const reopened = await fixture.store.reopenItem(
+        TASKS_LEDGER,
+        dependent.id,
+        "wip",
       );
+      expect(reopened.status).toBe("wip");
     } finally {
       await fixture.dispose();
     }

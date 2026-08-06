@@ -60,6 +60,7 @@ import {
 } from "../constants.js";
 import { atomicWrite } from "./fsAtomic.js";
 import { GitPlumbing, StaleRefError, type TreeEntry } from "./git/GitPlumbing.js";
+import { PLAN_LIFECYCLE_DUMP_PATH } from "./planLifecycleDump.js";
 
 /** The backup targets this exporter can write (the non-`none` modes of Q244). */
 export type BackupTarget = "in-tree" | "orphan-branch";
@@ -89,6 +90,19 @@ function listLogsOf(
   if (typeof candidate !== "function") return undefined;
   const fn = candidate as () => AsyncIterable<{ path: string; content: string }>;
   return () => fn.call(store);
+}
+
+/**
+ * Duck-typed plan-lifecycle dump source (D139). Every production backend that
+ * implements PlanLifecycleStore exposes `exportPlanLifecycleState()` returning
+ * the durable `plan-lifecycle.json` body (or null when empty). Async backends
+ * (postgres) may return a Promise; callers await the result.
+ */
+async function exportPlanLifecycleOf(store: LedgerStore): Promise<string | null> {
+  const candidate = (store as { exportPlanLifecycleState?: unknown }).exportPlanLifecycleState;
+  if (typeof candidate !== "function") return null;
+  const fn = candidate as () => string | null | Promise<string | null>;
+  return await fn.call(store);
 }
 
 /**
@@ -153,6 +167,12 @@ export async function buildBackupDump(
       // strip the leading `./` to get the dump-relative path.
       files.push({ path: pointer.path.replace(/^\.\//, ""), content });
     }
+  }
+
+  // D139: plan-lifecycle is a first-class BackupDump artifact across backends.
+  const planLifecycle = await exportPlanLifecycleOf(store);
+  if (planLifecycle !== null) {
+    files.push({ path: PLAN_LIFECYCLE_DUMP_PATH, content: planLifecycle });
   }
 
   const listLogs = listLogsOf(store);

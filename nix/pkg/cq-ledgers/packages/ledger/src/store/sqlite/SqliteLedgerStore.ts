@@ -155,6 +155,7 @@ import {
   type PlanLifecycleSerializationBoundaryHook,
   type PlanLifecycleSerializationContender,
 } from "../planLifecycleSerialization.js";
+import { serializePlanLifecycleDump } from "../planLifecycleDump.js";
 import {
   MAX_READ_LOG_BYTES,
   ReadLogNotImplementedError,
@@ -967,7 +968,6 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       if (contender !== null) this.reachPlanSerializationBoundary(contender);
       const shim = this.singleItemShim(ledgerId, itemId);
       assertRawPlanUpdateAllowed(
-        this.planGuardStore(),
         (id) => this.loadLedger(id),
         ledgerId,
         shim,
@@ -1073,7 +1073,6 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       }
       if (ledgerId === TASKS_LEDGER) {
         assertManagedTaskTransitionAllowed(
-          this.planGuardStore(),
           (id) => this.loadLedger(id),
           source,
           toStatus,
@@ -1369,11 +1368,15 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     }
   }
 
-  private planGuardStore(): Pick<LedgerStore, "enumerate" | "fetch"> {
-    return {
-      enumerate: () => this.enumerate(),
-      fetch: (ledgerId) => this.fetchView(ledgerId),
-    };
+  /**
+   * Duck-typed BackupDump source (D139): emit plan-lifecycle.json from the
+   * durable plan_claims/plan_operations rows.
+   */
+  exportPlanLifecycleState(): string | null {
+    this.assertInit();
+    const state = this.loadPlanLifecycleState();
+    if (state.claims.size === 0 && state.operations.size === 0) return null;
+    return serializePlanLifecycleDump(state);
   }
 
   private runPlanLifecycleMutation<T>(

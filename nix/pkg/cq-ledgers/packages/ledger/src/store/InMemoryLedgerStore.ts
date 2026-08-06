@@ -83,6 +83,7 @@ import {
   type PlanLifecycleSerializationBoundaryHook,
   type PlanLifecycleSerializationContender,
 } from "./planLifecycleSerialization.js";
+import { serializePlanLifecycleDump } from "./planLifecycleDump.js";
 import type { LedgerSnapshot } from "../snapshot.js";
 import { buildSnapshot } from "../snapshot.js";
 import { LedgerSearchIndex } from "../search/LedgerSearchIndex.js";
@@ -461,7 +462,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
           await this.planSerializationBoundaryHook(contender);
         }
         const ledger = this.getLedger(ledgerId);
-        assertRawPlanUpdateAllowed(this, (id) => this.getLedger(id), ledgerId, ledger, itemId, patch);
+        assertRawPlanUpdateAllowed((id) => this.getLedger(id), ledgerId, ledger, itemId, patch);
         const precondition = this.statusChangePrecondition(ledgerId, ledger, itemId, patch);
         return cloneItem(
           applyUpdateItem(
@@ -546,7 +547,6 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
         }
         if (ledgerId === TASKS_LEDGER) {
           assertManagedTaskTransitionAllowed(
-            this,
             (id) => this.getLedger(id),
             source,
             toStatus,
@@ -678,6 +678,18 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
    * can assert the no-op contract.
    */
   async invalidate(_ledgerId: string): Promise<void> {}
+
+  /**
+   * Duck-typed BackupDump source (D139): see AbstractLedgerStore.
+   */
+  exportPlanLifecycleState(): string | null {
+    this.assertInit();
+    if (this.planClaims.size === 0 && this.planOperations.size === 0) return null;
+    return serializePlanLifecycleDump({
+      claims: this.planClaims,
+      operations: this.planOperations,
+    });
+  }
 
   // --- internals ---
 

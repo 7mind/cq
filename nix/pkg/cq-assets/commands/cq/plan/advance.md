@@ -219,7 +219,8 @@ This command records the wait and stops; it does not run research inline.
 
 Persist every child summary and available raw transcript through `cq log put`,
 attach logical paths to the affected item, and never log fence or capability
-secrets.
+secrets. Before piping a transcript, require `test -s <transcript>` so empty or
+whitespace-only captures are skipped rather than written.
 
 Report each goal's current phase and next action, waited research ids, finalized
 work, and each investigated defect's outcome. Never auto-close a goal.

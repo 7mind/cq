@@ -51,6 +51,7 @@ import {
 } from "../../constants.js";
 import { ensureSchema } from "./schema.js";
 import { writeTransaction } from "./connection.js";
+import { encodePostgresPlanScope } from "../planLifecycleDump.js";
 
 /**
  * True iff `pool`'s tenant `projectKey` currently holds nothing but the
@@ -156,6 +157,8 @@ export async function restoreDumpToPostgres(opts: {
     // Wipe any pre-existing rows for THIS tenant only (children first, FK
     // order) — defense in depth even though isPostgresTenantEmpty already
     // gated above; mirrors restoreDumpToXdg's unconditional wipe-then-insert.
+    await tx`DELETE FROM plan_operations WHERE project_key = ${pk}`;
+    await tx`DELETE FROM plan_claims WHERE project_key = ${pk}`;
     await tx`DELETE FROM archived_items WHERE project_key = ${pk}`;
     await tx`DELETE FROM archive_pointers WHERE project_key = ${pk}`;
     await tx`DELETE FROM items WHERE project_key = ${pk}`;
@@ -205,6 +208,27 @@ export async function restoreDumpToPostgres(opts: {
       await tx`
         INSERT INTO logs (project_key, path, content) VALUES (${pk}, ${rel}, ${f.content})
       `;
+    }
+
+    // D139: rewrite private plan-lifecycle verifier/replay rows. Scopes are
+    // encoded for Postgres TEXT (NUL-free) exactly as PostgresLedgerStore does.
+    if (parsed.planLifecycle !== null) {
+      for (const [scope, record] of parsed.planLifecycle.claims) {
+        const key = encodePostgresPlanScope(scope);
+        const json = JSON.stringify(record);
+        await tx`
+          INSERT INTO plan_claims (project_key, scope, record_json)
+          VALUES (${pk}, ${key}, ${json})
+        `;
+      }
+      for (const [scope, record] of parsed.planLifecycle.operations) {
+        const key = encodePostgresPlanScope(scope);
+        const json = JSON.stringify(record);
+        await tx`
+          INSERT INTO plan_operations (project_key, scope, record_json)
+          VALUES (${pk}, ${key}, ${json})
+        `;
+      }
     }
   });
 
