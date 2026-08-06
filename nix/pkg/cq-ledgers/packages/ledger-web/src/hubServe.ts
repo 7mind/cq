@@ -71,7 +71,7 @@ import {
   type PromptArtifactStore,
   type DispatchRuntime,
 } from "@cq/ledger-mcp";
-import { hubTopic, matchProjectRoute } from "./projectRoutes.js";
+import { hubTopic, isSafeProjectKeySegment, matchProjectRoute } from "./projectRoutes.js";
 import { prepare, serveStatic, scanForPort, DEFAULT_OUTDIR } from "./serve.js";
 
 export { hubTopic, matchProjectRoute } from "./projectRoutes.js";
@@ -551,8 +551,15 @@ export function serveHub(
             headers: { "content-type": "application/json" },
           });
         }
-        const route = matchProjectRoute(url.pathname);
-        if (route !== null) {
+        // D138: any `/p/...` path is a project-route attempt. Malformed
+        // percent-encoding (`%ZZ`), a non-mcp/ws leaf, or an unsafe key must
+        // 400 before static fallback — never throw out of decodeURIComponent
+        // and never serve the SPA for a broken tenant URL.
+        if (url.pathname.startsWith("/p/")) {
+          const route = matchProjectRoute(url.pathname);
+          if (route === null || !isSafeProjectKeySegment(route.projectKey)) {
+            return new Response("invalid project route", { status: 400 });
+          }
           // Auth gate (Q273) BEFORE any tenant lookup/construction: an
           // unauthenticated caller gets a uniform 401 regardless of whether the
           // projectKey is even registered.

@@ -9,9 +9,15 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import {
+  DEFAULT_REVIEWERS,
+  DEFAULT_PLANNERS,
+  formatReviewerToken,
+  parseReviewerToken,
+} from "@cq/config";
 import {
   computeReviewers,
   computePlanners,
@@ -111,9 +117,17 @@ describe("T695: sectioned get_config parity and independent fallbacks", () => {
         "",
       ].join("\n"),
     );
-    expect(computeSection(dir, "reviewers")).toEqual({
-      configured: false,
-      reviewers: [],
+    const reviewers = computeSection(dir, "reviewers") as ReturnType<
+      typeof computeReviewers
+    >;
+    // D153: unconfigured panel still serves DEFAULT_REVIEWERS with honest
+    // configured:false (list-keyed), while tiers remain independently active.
+    expect(reviewers.configured).toBe(false);
+    expect(reviewers.reviewers).toHaveLength(1);
+    expect(reviewers.reviewers[0]).toMatchObject({
+      harness: "claude",
+      model: "opus-4.8[1m]",
+      provider: null,
     });
     expect(computeSection(dir, "tiers")).toEqual({
       configured: true,
@@ -1255,5 +1269,119 @@ describe("T862: the full shared alias table projects through every configuration
     expect(() => computeReviewers(dir)).toThrow(/claude/);
     expect(() => computeConfig(dir)).toThrow(/claude/);
     expect(() => computeAgentModels(dir)).toThrow(/claude/);
+  });
+});
+
+
+// ---- D153/D144: DEFAULT_REVIEWERS/DEFAULT_PLANNERS + LIST-KEYED configured ----
+//
+// Three cases for panel configured semantics:
+//   1. no cq.toml → configured:false + DEFAULT_* tokens
+//   2. empty reviewers/planners list → configured:false + DEFAULT_* tokens
+//   3. non-empty list → configured:true + those resolved tokens
+// Panel docs (reviewers.md/planners.md) are list-keyed; D81 presence-only
+// wording must not appear there (grep guard below).
+
+describe("D153: DEFAULT_REVIEWERS / DEFAULT_PLANNERS are grammar-valid and dispatchable", () => {
+  it("DEFAULT_REVIEWERS parses round-trip through the token grammar", () => {
+    expect(DEFAULT_REVIEWERS.length).toBeGreaterThan(0);
+    for (const token of DEFAULT_REVIEWERS) {
+      const rendered = formatReviewerToken(token);
+      expect(parseReviewerToken(rendered)).toEqual(token);
+      expect(token.harness).toBe("claude");
+    }
+  });
+
+  it("DEFAULT_PLANNERS parses round-trip through the token grammar", () => {
+    expect(DEFAULT_PLANNERS.length).toBeGreaterThan(0);
+    for (const token of DEFAULT_PLANNERS) {
+      const rendered = formatReviewerToken(token);
+      expect(parseReviewerToken(rendered)).toEqual(token);
+      expect(token.harness).toBe("claude");
+    }
+  });
+});
+
+describe("D144/D153: get_reviewers/get_planners LIST-KEYED configured + DEFAULT fallback", () => {
+  it("case 1: no cq.toml → configured:false with DEFAULT_REVIEWERS/DEFAULT_PLANNERS", () => {
+    const reviewers = computeReviewers(dir);
+    expect(reviewers.configured).toBe(false);
+    expect(reviewers.reviewers).toEqual(
+      DEFAULT_REVIEWERS.map((token) => ({
+        harness: token.harness,
+        model: token.model,
+        provider: token.provider,
+        alias: formatReviewerToken(token),
+        effort: token.effort ?? null,
+      })),
+    );
+    const planners = computePlanners(dir);
+    expect(planners.configured).toBe(false);
+    expect(planners.planners).toEqual(
+      DEFAULT_PLANNERS.map((token) => ({
+        harness: token.harness,
+        model: token.model,
+        provider: token.provider,
+        alias: formatReviewerToken(token),
+        effort: token.effort ?? null,
+      })),
+    );
+  });
+
+  it("case 2: empty reviewers/planners lists → configured:false with DEFAULT_*", () => {
+    writeCqToml(["reviewers = []", "planners = []", ""].join("\n"));
+    const reviewers = computeReviewers(dir);
+    expect(reviewers.configured).toBe(false);
+    expect(reviewers.reviewers[0]?.model).toBe("opus-4.8[1m]");
+    const planners = computePlanners(dir);
+    expect(planners.configured).toBe(false);
+    expect(planners.planners[0]?.model).toBe("opus-4.8[1m]");
+  });
+
+  it("case 3: non-empty list → configured:true with those resolved tokens", () => {
+    writeCqToml(
+      [
+        'reviewers = ["haiku"]',
+        'planners  = ["haiku"]',
+        "",
+        "[aliases]",
+        '  haiku = "claude:haiku-4.5"',
+        "",
+      ].join("\n"),
+    );
+    const reviewers = computeReviewers(dir);
+    expect(reviewers.configured).toBe(true);
+    expect(reviewers.reviewers).toEqual([
+      {
+        harness: "claude",
+        model: "haiku-4.5",
+        provider: null,
+        alias: "haiku",
+        effort: null,
+      },
+    ]);
+    const planners = computePlanners(dir);
+    expect(planners.configured).toBe(true);
+    expect(planners.planners[0]?.alias).toBe("haiku");
+  });
+
+  it("panel docs are list-keyed and do not carry D81 presence-only wording", () => {
+    // cq-assets lives at nix/pkg/cq-assets relative to the monorepo root; from
+    // this test file walk up to packages/ → cq-ledgers/ → pkg/ → nix/ → root.
+    const assetsRoot = path.resolve(
+      path.dirname(new URL(import.meta.url).pathname),
+      "../../../../cq-assets/commands/cq",
+    );
+    for (const name of ["reviewers.md", "planners.md"] as const) {
+      const body = readFileSync(path.join(assetsRoot, name), "utf8");
+      expect(body).toContain("LIST-KEYED");
+      expect(body).toContain("configured: true");
+      expect(body).toContain("configured: false");
+      // D81 presence-only sentence must not appear in panel docs.
+      expect(body).not.toMatch(/configured.*means.*parseable cq\.toml is present/i);
+      expect(body).not.toMatch(/presence-only \(a parseable cq\.toml exists\)/i);
+      // No hardcoded frontier/opus tables.
+      expect(body).not.toMatch(/frontier\s*[→=].*opus/i);
+    }
   });
 });

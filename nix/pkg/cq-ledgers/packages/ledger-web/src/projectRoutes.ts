@@ -10,8 +10,16 @@ export function matchProjectRoute(
 ): { projectKey: string; leaf: "mcp" | "ws" } | null {
   const match = /^\/p\/([^/]+)\/(mcp|ws)$/.exec(pathname);
   if (match === null) return null;
+  // D138: malformed percent-encoding (e.g. `%ZZ`) must not throw into the
+  // hub fetch handler — treat it as a non-match so the caller can 400.
+  let projectKey: string;
+  try {
+    projectKey = decodeURIComponent(match[1]!);
+  } catch {
+    return null;
+  }
   return {
-    projectKey: decodeURIComponent(match[1]!),
+    projectKey,
     leaf: match[2] as "mcp" | "ws",
   };
 }

@@ -10,6 +10,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   decideWorktreeSweep,
+  patchEquivalentFromGitCherry,
   type WorktreeSweepFacts,
 } from "../src/worktreeSweep.js";
 
@@ -117,5 +118,20 @@ describe("D164 decideWorktreeSweep", () => {
     const facts: WorktreeSweepFacts = { ...BASE };
     expect("branchName" in facts).toBe(false);
     expect(decideWorktreeSweep(facts)).toBe("preserve");
+  });
+});
+
+describe("D158 patchEquivalentFromGitCherry", () => {
+  test("all '-' lines → equivalent", () => {
+    expect(patchEquivalentFromGitCherry("- abc\n- def\n")).toBe(true);
+  });
+
+  test("any '+' line → not equivalent", () => {
+    expect(patchEquivalentFromGitCherry("- abc\n+ def\n")).toBe(false);
+  });
+
+  test("empty stdout → equivalent", () => {
+    expect(patchEquivalentFromGitCherry("")).toBe(true);
+    expect(patchEquivalentFromGitCherry("\n\n")).toBe(true);
   });
 });

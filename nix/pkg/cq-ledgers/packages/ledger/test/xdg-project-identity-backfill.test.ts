@@ -626,3 +626,25 @@ function requiredIdentity(
   }
   return identity;
 }
+
+
+describe("D140 validateProjectKeySegment rejects backslash and NUL via isSafeProjectKey", () => {
+  test("filesystem upsert rejects backslash and NUL project keys", async () => {
+    const projectsRoot = await mkdtemp(path.join(tmpdir(), "d140-backfill-"));
+    tempRoots.push(projectsRoot);
+    const access = new FilesystemXdgProjectIdentityBackfillAccess({
+      record() {
+        /* unused — validation fails before I/O */
+      },
+    });
+    const identity = {
+      repositoryPath: "/repo",
+      displayName: "x",
+    };
+    for (const key of ["a\\b", "a\0b", "..", "", "a/b"]) {
+      await expect(
+        access.upsertProjectIdentity(projectsRoot, key, identity),
+      ).rejects.toBeInstanceOf(XdgProjectIdentityBackfillBoundaryError);
+    }
+  });
+});

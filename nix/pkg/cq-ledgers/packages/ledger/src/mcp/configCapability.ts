@@ -31,9 +31,11 @@ export interface ResolvedReviewer {
 }
 
 /**
- * The `reviewers` section payload. `configured` is true only when a `cq.toml`
- * exists AND declares a non-empty `reviewers` list; otherwise the caller falls
- * back to a single native Claude reviewer.
+ * The `reviewers` section payload. LIST-KEYED (D144/D153): `configured` is true
+ * only when a `cq.toml` exists AND declares a non-empty `reviewers` list.
+ * When unconfigured the payload still carries the built-in DEFAULT_REVIEWERS
+ * fallback tokens with `configured: false` — orchestrators must not invent a
+ * model, and must not treat this flag as get_config's presence-only D81 sense.
  */
 export interface GetReviewersResult {
   readonly configured: boolean;
@@ -60,9 +62,10 @@ export interface ResolvedPlanner {
 }
 
 /**
- * The `planners` section payload. `configured` is true only when a `cq.toml`
- * exists AND declares a non-empty `planners` list; otherwise the caller falls
- * back to a single native Claude planner. Mirrors {@link GetReviewersResult}.
+ * The `planners` section payload. LIST-KEYED (D144/D153): `configured` is true
+ * only when a `cq.toml` exists AND declares a non-empty `planners` list. When
+ * unconfigured the payload still carries DEFAULT_PLANNERS with
+ * `configured: false`. Mirrors {@link GetReviewersResult}.
  */
 export interface GetPlannersResult {
   readonly configured: boolean;

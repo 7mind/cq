@@ -109,7 +109,7 @@ export type {
   UnresolvableDispatchBase,
   VerifiedDispatchBase,
 } from "./dispatchBase.js";
-export { decideWorktreeSweep } from "./worktreeSweep.js";
+export { decideWorktreeSweep, patchEquivalentFromGitCherry } from "./worktreeSweep.js";
 export type {
   WorktreeAssociatedTaskStatus,
   WorktreeSweepDecision,

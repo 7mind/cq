@@ -1124,9 +1124,17 @@ EOF
               assert codexCommandSkillsTest.passed;
               pkgs.runCommand "codex-cq-skills" { } ''
                 set -eu
-                ${pkgs.ripgrep}/bin/rg -q 'CQ_PROMPT_SURFACE.*codex' ${codexCommandSkillsTest.package}/bin/codex
+                # D150: anchor to the exact makeWrapper export form so CQ_PROMPT_SURFACE='codexx'
+                # cannot satisfy the check (the prior CQ_PROMPT_SURFACE.*codex infix did).
+                ${pkgs.ripgrep}/bin/rg -q "CQ_PROMPT_SURFACE='codex'" ${codexCommandSkillsTest.package}/bin/codex
                 ${pkgs.ripgrep}/bin/rg -q "CQ_HARNESS='codex'" ${codexCommandSkillsTest.package}/bin/codex
                 ${pkgs.ripgrep}/bin/rg -q ${pkgs.lib.escapeShellArg (toString codexPromptRoot)} ${codexCommandSkillsTest.package}/bin/codex
+                # D150 negative probe: the anchored pattern must reject the codexx impostor.
+                printf '%s\n' "export CQ_PROMPT_SURFACE='codexx'" > d150-codexx-probe.sh
+                if ${pkgs.ripgrep}/bin/rg -q "CQ_PROMPT_SURFACE='codex'" d150-codexx-probe.sh; then
+                  echo "D150: anchored CQ_PROMPT_SURFACE='codex' incorrectly matched codexx" >&2
+                  exit 1
+                fi
                 mkdir -p "$out"
                 ${pkgs.lib.concatMapStringsSep "\n"
                   (name: ''
@@ -1147,17 +1155,42 @@ EOF
                 )" -eq "${toString (builtins.length (builtins.attrNames codexCqSkillSpecs))}"
                 test "$(find ${codexPromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 24
                 ${verifySurfaceAttestation "codex" codexPromptRoot}
-                if ${pkgs.ripgrep}/bin/rg -n \
-                  'Agent\\(|Task\\(|dispatch_agent\\(|/cq:|\\{\\{cq:fragment:' \
-                  ${codexPromptRoot}/roles; then
+                # D151: single-backslash Rust-regex escapes; rg exit 2 is a hard error
+                # (a missing path used to slip through the `if rg; then fail; fi` form).
+                # Forbidden vocabulary pattern shared by roles + generated skills.
+                codex_forbid_pat='Agent\(|Task\(|dispatch_agent\(|/cq:|\{\{cq:fragment:'
+                set +e
+                ${pkgs.ripgrep}/bin/rg -n "$codex_forbid_pat" ${codexPromptRoot}/roles
+                rc=$?
+                set -e
+                if [ "$rc" -eq 0 ]; then
                   echo "Codex prompt roles contain foreign or unresolved vocabulary" >&2
+                  exit 1
+                elif [ "$rc" -ge 2 ]; then
+                  echo "rg failed (exit $rc) scanning Codex prompt roles" >&2
                   exit 1
                 fi
                 cmp ${builtins.toFile "cq-expected-codex-catalog.json" llmAssets.catalogJson} \
                   ${codexProjection.catalog}
-                if ${pkgs.ripgrep}/bin/rg -n \
-                  'Agent\\(|Task\\(|dispatch_agent\\(|/cq:|\\{\\{cq:fragment:' "$out"; then
+                set +e
+                ${pkgs.ripgrep}/bin/rg -n "$codex_forbid_pat" "$out"
+                rc=$?
+                set -e
+                if [ "$rc" -eq 0 ]; then
                   echo "generated Codex skills contain foreign or unresolved vocabulary" >&2
+                  exit 1
+                elif [ "$rc" -ge 2 ]; then
+                  echo "rg failed (exit $rc) scanning generated Codex skills" >&2
+                  exit 1
+                fi
+                # D151 negative probe: the forbid pattern must match a real forbidden token.
+                printf '%s\n' 'Agent(foreign)' > d151-forbid-probe.md
+                set +e
+                ${pkgs.ripgrep}/bin/rg -n "$codex_forbid_pat" d151-forbid-probe.md
+                rc=$?
+                set -e
+                if [ "$rc" -ne 0 ]; then
+                  echo "D151: forbid pattern failed to match Agent( on the negative probe (exit $rc)" >&2
                   exit 1
                 fi
 
@@ -1199,16 +1232,29 @@ EOF
               cmp ${builtins.toFile "cq-expected-prompt-catalog.json" llmAssets.catalogJson} \
                 ${claudePromptRoot}/catalog.json
               ${verifySurfaceAttestation "claude" claudePromptRoot}
-              if ${pkgs.ripgrep}/bin/rg -n '\{\{cq:fragment:|CQ_HARNESS' ${claudePromptRoot}; then
+              set +e
+              ${pkgs.ripgrep}/bin/rg -n '\{\{cq:fragment:|CQ_HARNESS' ${claudePromptRoot}
+              rc=$?
+              set -e
+              if [ "$rc" -eq 0 ]; then
                 echo "packaged Claude prompt root contains an unresolved renderer token" >&2
+                exit 1
+              elif [ "$rc" -ge 2 ]; then
+                echo "rg failed (exit $rc) scanning Claude prompt root" >&2
                 exit 1
               fi
               touch "$out"
             '';
             pi-prompt-root = pkgs.runCommand "pi-prompt-root-check" { } ''
               : ${if piPromptRootTest.passed then "pi-home-manager-projection-ok" else "pi-home-manager-projection-failed"}
-              ${pkgs.ripgrep}/bin/rg -q 'CQ_PROMPT_SURFACE.*pi' ${piPromptRootTest.package}/bin/pi
+              # D150: exact makeWrapper export; pinocchio must not match.
+              ${pkgs.ripgrep}/bin/rg -q "CQ_PROMPT_SURFACE='pi'" ${piPromptRootTest.package}/bin/pi
               ${pkgs.ripgrep}/bin/rg -q ${pkgs.lib.escapeShellArg (toString piPromptRoot)} ${piPromptRootTest.package}/bin/pi
+              printf '%s\n' "export CQ_PROMPT_SURFACE='pinocchio'" > d150-pinocchio-probe.sh
+              if ${pkgs.ripgrep}/bin/rg -q "CQ_PROMPT_SURFACE='pi'" d150-pinocchio-probe.sh; then
+                echo "D150: anchored CQ_PROMPT_SURFACE='pi' incorrectly matched pinocchio" >&2
+                exit 1
+              fi
               test "$(find ${piPromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 24
               test -f ${piPromptRoot}/roles/begin.md
               cmp ${builtins.toFile "cq-expected-prompt-catalog.json" llmAssets.catalogJson} \
@@ -1249,8 +1295,15 @@ EOF
                 and (.mcpServers.ledger | has("headers") | not)
                 and ([.mcpServers.ledger[] | select(. == null)] | length == 0)
               ' ${piPromptRootTest.mcpJson} >/dev/null
-              if ${pkgs.ripgrep}/bin/rg -n '\{\{cq:fragment:|CQ_HARNESS|\$cq-|mcp__ledger__|Agent\(' ${piPromptRoot}/roles; then
+              set +e
+              ${pkgs.ripgrep}/bin/rg -n '\{\{cq:fragment:|CQ_HARNESS|\$cq-|mcp__ledger__|Agent\(' ${piPromptRoot}/roles
+              rc=$?
+              set -e
+              if [ "$rc" -eq 0 ]; then
                 echo "packaged Pi prompt root contains a foreign or unresolved renderer token" >&2
+                exit 1
+              elif [ "$rc" -ge 2 ]; then
+                echo "rg failed (exit $rc) scanning Pi prompt roles" >&2
                 exit 1
               fi
               touch "$out"

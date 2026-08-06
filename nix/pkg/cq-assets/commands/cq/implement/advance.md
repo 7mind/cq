@@ -58,8 +58,11 @@ dependencies, and referenced dependency items.
 Before dispatch, prune stale worktree metadata and inspect all implementation
 and runtime-created worktrees. Never touch the main checkout, the ledger backup
 branch, a worktree for a `wip`/`blocked` task, or an unmerged worktree without a
-terminal task association. Remove a worktree and branch only when its branch
-has merged into the base or its associated task is `done`/`abandoned`.
+terminal task association. Remove a worktree and branch only when
+`decideWorktreeSweep` returns `remove`: the tip is an ancestor of the
+integration base, `git cherry <base> <tip>` reports every commit as
+patch-equivalent (all `-` lines → `patchEquivalentToLanded`), or the associated
+task is `done`/`abandoned`. Never infer safety from a branch name alone.
 
 Change a `blocked` task back to `planned` after all linked questions become
 `answered`; include the answers in its next dispatch.

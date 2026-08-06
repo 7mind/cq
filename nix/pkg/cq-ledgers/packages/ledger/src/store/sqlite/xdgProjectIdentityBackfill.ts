@@ -2,6 +2,7 @@ import { lstat, realpath } from "node:fs/promises";
 import * as path from "node:path";
 import { CQ_CONFIG_FILENAME, loadConfig } from "@cq/config";
 import { ProjectKeyResolutionError, resolveProjectKey } from "../../projectKey.js";
+import { isSafeProjectKey } from "../../projectKeySafety.js";
 import { resolveDisplayName } from "../postgres/displayName.js";
 import { openExistingLedgerDb } from "./connection.js";
 import {
@@ -397,12 +398,9 @@ function validateRequest(request: XdgProjectIdentityBackfillRequest): void {
 }
 
 function validateProjectKeySegment(projectKey: string): void {
-  if (
-    projectKey.trim() === "" ||
-    projectKey === "." ||
-    projectKey === ".." ||
-    path.basename(projectKey) !== projectKey
-  ) {
+  // D140: one source of truth with every other project-key gate — reject
+  // backslash and NUL in addition to blank/dot-segment/slash forms.
+  if (!isSafeProjectKey(projectKey)) {
     throw new XdgProjectIdentityBackfillBoundaryError(
       `XDG project key must be one non-blank path segment: ${projectKey}`,
     );

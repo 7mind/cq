@@ -104,9 +104,12 @@ let
   externalAgent = files.".pi/agent/cq-agents/external-agent.md";
   roleToolProfiles = files.".pi/agent/role-tool-profiles.json";
   appendSystem = files."/home/test/.pi/agent/APPEND_SYSTEM.md";
+  # D157: expose the mcp.json path for BUILD-TIME jq only. Do NOT
+  # `builtins.readFile` + `builtins.fromJSON` here — that is IFD against a
+  # store path and forces a darwin builder when evaluating
+  # `checks.<system>.pi-prompt-root.drvPath` on a non-darwin host. Ledger MCP
+  # field asserts live in flake.nix's pi-prompt-root runCommand via jq.
   mcpJson = files.".pi/agent/mcp.json".source;
-  mcpParsed = builtins.fromJSON (builtins.readFile mcpJson);
-  ledgerServer = mcpParsed.mcpServers.ledger;
 in
 {
   inherit mcpJson dispatchExtension dispatchExtensionDir;
@@ -122,14 +125,5 @@ in
     assert lib.hasInfix ''fetch_prompt("investigate/advance")'' appendSystem.text;
     assert dispatchExtension != null;
     assert lib.all (entry: entry.assertion) evaluatedPiModule.config.assertions;
-    # Pi MCP override: Pi-only fields present, optional null/empty fields absent.
-    assert ledgerServer.lifecycle == "keep-alive";
-    assert ledgerServer.directTools == true;
-    assert ledgerServer.type == "stdio";
-    assert ledgerServer.command == "/nix/store/test-cq/bin/cq";
-    assert !(ledgerServer ? url);
-    assert !(ledgerServer ? enabled);
-    assert !(ledgerServer ? env);
-    assert !(ledgerServer ? headers);
     true;
 }

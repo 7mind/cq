@@ -48,6 +48,8 @@ export {
 } from "./types.js";
 export {
   CQ_CONFIG_FILENAME,
+  DEFAULT_REVIEWERS,
+  DEFAULT_PLANNERS,
   CqConfigError,
   parseReviewerToken,
   formatReviewerToken,

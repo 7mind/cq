@@ -59,6 +59,26 @@ export interface WorktreeSweepFacts {
 export type WorktreeSweepDecision = "remove" | "preserve";
 
 /**
+ * D158: reduce `git cherry <base> <tip>` stdout to the
+ * {@link WorktreeSweepFacts.patchEquivalentToLanded} boolean.
+ *
+ * `git cherry` prints one `+ <sha>` / `- <sha>` line per commit on tip-not-in
+ * base. Every line starting with `-` means the patch is already present on
+ * base (cherry-pick / rebase equivalent). A single `+` line means the tip
+ * carries a novel patch. Empty stdout (no commits to compare) is equivalent.
+ *
+ * Pure over the captured stdout — callers run `git cherry` themselves.
+ */
+export function patchEquivalentFromGitCherry(stdout: string): boolean {
+  const lines = stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (lines.length === 0) return true;
+  return lines.every((line) => line.startsWith("-"));
+}
+
+/**
  * Decide whether a candidate implementation worktree may be removed.
  *
  * Pure over {@link WorktreeSweepFacts}. The sole owner of the sweep-merged

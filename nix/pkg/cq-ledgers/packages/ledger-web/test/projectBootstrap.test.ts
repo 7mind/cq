@@ -499,3 +499,31 @@ function click(el: Element | null): void {
     (el as HTMLElement).click();
   });
 }
+
+import {
+  chooseActiveProjectKey,
+  projectKeyFromMcpUrl,
+} from "../src/App.js";
+
+describe("D145 projectKeyFromMcpUrl / chooseActiveProjectKey", () => {
+  it("extracts /p/<key>/mcp from the connected URL", () => {
+    expect(projectKeyFromMcpUrl("http://x/p/p2/mcp")).toBe("p2");
+    expect(projectKeyFromMcpUrl("http://x/mcp")).toBeNull();
+    expect(projectKeyFromMcpUrl("not a url")).toBeNull();
+  });
+
+  it("stranding case: connected /p/p2/ wins over ?project=p1", () => {
+    expect(
+      chooseActiveProjectKey("http://x/p/p2/mcp", "?project=p1", ["p1", "p2"]),
+    ).toBe("p2");
+  });
+
+  it("?project= applies only when the connected URL has no project segment", () => {
+    expect(
+      chooseActiveProjectKey("http://x/mcp", "?project=p1", ["p1", "p2"]),
+    ).toBe("p1");
+    expect(
+      chooseActiveProjectKey("http://x/mcp", "", ["p1", "p2"]),
+    ).toBe("p1");
+  });
+});

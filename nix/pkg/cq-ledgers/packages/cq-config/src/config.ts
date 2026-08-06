@@ -62,6 +62,25 @@ import {
 /** The cq.toml filename, resolved relative to a repo root. */
 export const CQ_CONFIG_FILENAME = "cq.toml";
 
+/**
+ * D153: built-in single-reviewer fallback panel. Grammar-valid and dispatchable
+ * (`claude` harness, bare model, no effort). Served by `get_reviewers` when
+ * unconfigured (`configured: false`) so orchestrators still receive a usable
+ * token without inventing one.
+ */
+export const DEFAULT_REVIEWERS: readonly ReviewerToken[] = Object.freeze([
+  parseReviewerToken("claude:opus-4.8[1m]"),
+]);
+
+/**
+ * D153: built-in single-planner fallback panel. Mirrors
+ * {@link DEFAULT_REVIEWERS} — same grammar/dispatch validity, served by
+ * `get_planners` when unconfigured with honest `configured: false`.
+ */
+export const DEFAULT_PLANNERS: readonly ReviewerToken[] = Object.freeze([
+  parseReviewerToken("claude:opus-4.8[1m]"),
+]);
+
 /** The lowest / highest valid TCP port number. */
 const MIN_PORT = 1;
 const MAX_PORT = 65535;

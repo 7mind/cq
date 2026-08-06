@@ -20,6 +20,9 @@ import {
   resolveAgentTier,
   tierModel,
   applyAgentEffort,
+  formatReviewerToken,
+  DEFAULT_REVIEWERS,
+  DEFAULT_PLANNERS,
   HARNESSES,
   AGENT_ROLE_TIERS,
   type CqConfig,
@@ -40,19 +43,38 @@ import type {
 } from "@cq/ledger";
 
 /**
+ * Project a built-in DEFAULT_* panel token into the MCP wire shape. Alias is
+ * the canonical token string (no cq.toml alias name exists for the fallback).
+ */
+function resolveDefaultPanel(
+  tokens: readonly ReviewerToken[],
+): readonly ResolvedReviewer[] {
+  return tokens.map((token) => ({
+    harness: token.harness,
+    model: token.model,
+    provider: token.provider,
+    alias: formatReviewerToken(token),
+    effort: token.effort ?? null,
+  }));
+}
+
+/**
  * Compute the `reviewers` section payload for `repoRoot`.
  *
- * Loads `cq.toml` (null when absent → `configured:false`), then resolves each
- * `reviewers` alias through `[aliases]` into a `{ harness, model, alias }`.
- * An empty resolved set also yields `configured:false` — the orchestrators
- * then use the single native Claude reviewer.
+ * LIST-KEYED `configured` (D144/D153): true only when a cq.toml exists AND the
+ * resolved reviewers list is non-empty. When unconfigured (absent cq.toml or
+ * empty list), returns {@link DEFAULT_REVIEWERS} with honest `configured:
+ * false` so orchestrators still receive a grammar-valid dispatchable token.
  */
 export function computeReviewers(repoRoot: string): GetReviewersResult {
   const config = loadConfig(repoRoot);
   if (config === null) {
-    return { configured: false, reviewers: [] };
+    return { configured: false, reviewers: resolveDefaultPanel(DEFAULT_REVIEWERS) };
   }
   const tokens = resolveReviewers(config);
+  if (tokens.length === 0) {
+    return { configured: false, reviewers: resolveDefaultPanel(DEFAULT_REVIEWERS) };
+  }
   const reviewers: ResolvedReviewer[] = tokens.map((token, i) => ({
     harness: token.harness,
     model: token.model,
@@ -61,23 +83,26 @@ export function computeReviewers(repoRoot: string): GetReviewersResult {
     alias: config.reviewers[i] as string,
     effort: token.effort ?? null,
   }));
-  return { configured: reviewers.length > 0, reviewers };
+  return { configured: true, reviewers };
 }
 
 /**
  * Compute the `planners` section payload for `repoRoot`.
  *
- * Loads `cq.toml` (null when absent → `configured:false`), then resolves each
- * `planners` alias through `[aliases]` into a `{ harness, model, alias }`.
- * An empty resolved set also yields `configured:false` — the orchestrators
- * then use the single native Claude planner. Mirrors {@link computeReviewers}.
+ * LIST-KEYED `configured` (D144/D153): true only when a cq.toml exists AND the
+ * resolved planners list is non-empty. When unconfigured, returns
+ * {@link DEFAULT_PLANNERS} with honest `configured: false`. Mirrors
+ * {@link computeReviewers}.
  */
 export function computePlanners(repoRoot: string): GetPlannersResult {
   const config = loadConfig(repoRoot);
   if (config === null) {
-    return { configured: false, planners: [] };
+    return { configured: false, planners: resolveDefaultPanel(DEFAULT_PLANNERS) };
   }
   const tokens = resolvePlanners(config);
+  if (tokens.length === 0) {
+    return { configured: false, planners: resolveDefaultPanel(DEFAULT_PLANNERS) };
+  }
   const planners: ResolvedPlanner[] = tokens.map((token, i) => ({
     harness: token.harness,
     model: token.model,
@@ -86,7 +111,7 @@ export function computePlanners(repoRoot: string): GetPlannersResult {
     alias: config.planners[i] as string,
     effort: token.effort ?? null,
   }));
-  return { configured: planners.length > 0, planners };
+  return { configured: true, planners };
 }
 
 /**

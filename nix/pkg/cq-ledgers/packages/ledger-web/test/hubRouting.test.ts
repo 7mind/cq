@@ -689,3 +689,30 @@ describe.skipIf(!PG_URL)(
     }, 30_000);
   },
 );
+
+
+describe("D138 matchProjectRoute malformed percent-encoding", () => {
+  it("returns null for %ZZ instead of throwing", () => {
+    expect(matchProjectRoute("/p/%ZZ/mcp")).toBeNull();
+    expect(matchProjectRoute("/p/%ZZ/ws")).toBeNull();
+    expect(matchProjectRoute("/p/ok%2Fno/mcp")).toEqual({
+      projectKey: "ok/no",
+      leaf: "mcp",
+    });
+  });
+});
+
+
+describe("D138 hubServe rejects malformed /p/%ZZ/{mcp,ws} with 400", () => {
+  it("hub fetch path 400s invalid project routes before static fallback", async () => {
+    const source = await Bun.file(new URL("../src/hubServe.ts", import.meta.url)).text();
+    expect(source).toContain('invalid project route');
+    expect(source).toContain('status: 400');
+    expect(source).toContain("startsWith(\"/p/\")");
+    expect(source).toContain("isSafeProjectKeySegment");
+    // matchProjectRoute itself must swallow decodeURIComponent throws.
+    const routes = await Bun.file(new URL("../src/projectRoutes.ts", import.meta.url)).text();
+    expect(routes).toContain("decodeURIComponent");
+    expect(routes).toContain("catch");
+  });
+});

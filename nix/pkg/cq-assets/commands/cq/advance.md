@@ -126,11 +126,13 @@ After quiescence:
 
 1. For each active non-goal milestone whose referenced items are all terminal,
    mark it `done` and archive it. Never auto-close goals.
-2. Inspect implementation worktrees. Remove only a task worktree whose commit is
-   already an ancestor of the integration branch or whose patch is equivalent to
-   the landed change. Preserve any worktree carrying novel commits, report it,
-   then prune stale worktree metadata. Never infer safety from a branch name
-   alone.
+2. Inspect implementation worktrees. Remove only a task worktree when
+   `decideWorktreeSweep` returns `remove`: the tip is an ancestor of the
+   integration base, `git cherry <base> <tip>` reports every commit as
+   patch-equivalent (all `-` lines → `patchEquivalentToLanded`), or the
+   associated task is `done`/`abandoned`. Preserve any worktree carrying novel
+   commits (`git cherry` `+` lines), report it, then prune stale worktree
+   metadata. Never infer safety from a branch name alone.
 3. Make no git commit or push for ledger mutations; the configured ledger
    backend owns persistence.
 

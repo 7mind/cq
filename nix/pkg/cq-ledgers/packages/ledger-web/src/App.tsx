@@ -37,6 +37,7 @@ import {
 } from "@cq/ledger/relationships";
 import { HoldButton, type HoldClock } from "./HoldButton.js";
 import { useBackdropDismiss } from "./useBackdropDismiss.js";
+import { isSafeProjectKeySegment } from "./projectRoutes.js";
 // Browser-safe JSONL transcript parser (T412): turns the raw `.jsonl` content
 // returned by `onReadLog` into the structured conversation model the
 // RawLogViewer renders (T414). Node-free leaf module.
@@ -240,6 +241,52 @@ export function deriveProjectWsUrl(mcpUrl: string): string {
   u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
   u.pathname = u.pathname.replace(/\/mcp$/, "/ws");
   return u.toString();
+}
+
+/**
+ * D145: extract the active project key from a connected MCP URL's
+ * `/p/<key>/mcp` path segment. Returns `null` when the URL is the alias
+ * `/mcp` (or otherwise has no project segment), or when the segment fails
+ * {@link isSafeProjectKeySegment}. Callers prefer this over `?project=` so a
+ * stranded selector cannot disagree with the socket's tenant.
+ */
+export function projectKeyFromMcpUrl(mcpUrl: string): string | null {
+  let pathname: string;
+  try {
+    pathname = new URL(mcpUrl).pathname;
+  } catch {
+    return null;
+  }
+  const match = /^\/p\/([^/]+)\/mcp\/?$/.exec(pathname);
+  if (match === null) return null;
+  let key: string;
+  try {
+    key = decodeURIComponent(match[1]!);
+  } catch {
+    return null;
+  }
+  return isSafeProjectKeySegment(key) ? key : null;
+}
+
+/**
+ * D145: choose the selector's active project key. The connected MCP URL's
+ * `/p/<key>/` segment wins; `?project=` is consulted only when the URL has no
+ * project segment. Falls back to the first listed key when the preferred key
+ * is unknown.
+ */
+export function chooseActiveProjectKey(
+  connectedMcpUrl: string,
+  search: string,
+  projectKeys: readonly string[],
+): string | null {
+  const fromConnectedUrl = projectKeyFromMcpUrl(connectedMcpUrl);
+  const fromQuery =
+    fromConnectedUrl === null
+      ? new URLSearchParams(search).get(PROJECT_QUERY_KEY)
+      : null;
+  const preferred = fromConnectedUrl ?? fromQuery;
+  if (preferred !== null && projectKeys.includes(preferred)) return preferred;
+  return projectKeys[0] ?? null;
 }
 
 /**
@@ -660,14 +707,14 @@ export function App({
             return;
           }
           setProjects(pr.projects);
-          // `?project=<key>` wins when it names a known project (deep-link /
-          // reload persistence); otherwise default to the first listed entry.
-          const fromQuery = new URLSearchParams(window.location.search).get(PROJECT_QUERY_KEY);
-          const chosen =
-            fromQuery !== null && pr.projects.some((p) => p.key === fromQuery)
-              ? fromQuery
-              : (pr.projects[0]?.key ?? null);
-          setActiveProjectKey(chosen);
+          // D145: connected `/p/<key>/` wins over a stranded `?project=`.
+          setActiveProjectKey(
+            chooseActiveProjectKey(
+              url,
+              window.location.search,
+              pr.projects.map((p) => p.key),
+            ),
+          );
         } catch {
           if (alive) {
             setProjects([]);
