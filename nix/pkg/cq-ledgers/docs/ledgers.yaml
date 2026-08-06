@@ -398,6 +398,9 @@ ledgers:
         waitingResearches:
           type: id[]
           required: false
+        waitingTasks:
+          type: id[]
+          required: false
         grounding:
           type: string
           required: false

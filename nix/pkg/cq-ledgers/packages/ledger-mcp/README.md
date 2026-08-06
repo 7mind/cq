@@ -233,7 +233,7 @@ measured savings without another batching schema.
 | `list_projects` | `purpose-built-small` | `{ projects: [{ key, displayName, createdAt? }] }`. |
 | `claim_plan` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement }` — the ONLY response that echoes `ownerFenceToken`, and only back to the winning or exactly-retried claimant — or `{ ok: false, conflict }` carrying public claim metadata only. |
 | `publish_plan_draft` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { …operation key, manifest, replacedManifest, reviewDefects } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
-| `release_plan_claim` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { kind, …operation key, questions, researches, waitingResearches, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
+| `release_plan_claim` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { kind, …operation key, questions, researches, waitingResearches, tasks, waitingTasks, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
 | `finalize_plan` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { …operation key, reviewId, draft, decisionId, manifest, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
 <!-- ledger-response-contract:end -->
 

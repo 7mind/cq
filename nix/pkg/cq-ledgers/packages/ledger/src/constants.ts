@@ -308,6 +308,7 @@ export const GOALS_SCHEMA: LedgerSchema = {
     planFinalizedDraft: { type: "string", required: false },
     planFinalizedManifest: { type: "string", required: false },
     waitingResearches: { type: "id[]", required: false },
+    waitingTasks: { type: "id[]", required: false },
     // Project-grounding summary the producer captures after exploring the repo
     // ONCE (PLAN-EXPLORE-01). Persisted here so it survives a restart and every
     // later phase re-reads it from the durable goal instead of re-exploring.

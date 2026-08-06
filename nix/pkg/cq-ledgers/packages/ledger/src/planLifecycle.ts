@@ -27,6 +27,10 @@ const milestoneIdSchema = z.string().regex(MILESTONE_ID_RE);
 const taskIdSchema = z.string().regex(TASK_ID_RE);
 const questionIdSchema = z.string().regex(QUESTION_ID_RE);
 const researchIdSchema = z.string().regex(RESEARCH_ID_RE);
+/** Bare `T<n>` or canonical `tasks:T<n>` only — no other ledger, no free text. */
+export const taskRefSchema = z
+  .string()
+  .regex(/^(?:tasks:)?T\d+$/);
 const defectIdSchema = z.string().regex(DEFECT_ID_RE);
 const reviewIdSchema = z.string().regex(REVIEW_ID_RE);
 const decisionIdSchema = z.string().regex(DECISION_ID_RE);
@@ -200,6 +204,7 @@ export const PlanPrivateClaimRecordSchema = PlanPublicClaimSchema.extend({
   legacyAdopted: z.boolean(),
   adoptedManifest: PlanAdoptedManifestSchema,
   waitingResearches: z.array(researchIdSchema).length(0),
+  waitingTasks: z.array(taskIdSchema).length(0),
   ...provenanceShape,
   state: z.enum(["active", "released", "finalized"]),
 })
@@ -230,6 +235,7 @@ export const PLAN_CURRENT_DRAFT_FIELD = "planCurrentDraft" as const;
 export const PLAN_FINALIZED_DRAFT_FIELD = "planFinalizedDraft" as const;
 export const PLAN_FINALIZED_MANIFEST_FIELD = "planFinalizedManifest" as const;
 export const PLAN_WAITING_RESEARCHES_FIELD = "waitingResearches" as const;
+export const PLAN_WAITING_TASKS_FIELD = "waitingTasks" as const;
 
 export const PLAN_MANAGED_GOAL_FIELD_NAMES = [
   PLAN_GENERATION_FIELD,
@@ -238,6 +244,7 @@ export const PLAN_MANAGED_GOAL_FIELD_NAMES = [
   PLAN_FINALIZED_DRAFT_FIELD,
   PLAN_FINALIZED_MANIFEST_FIELD,
   PLAN_WAITING_RESEARCHES_FIELD,
+  PLAN_WAITING_TASKS_FIELD,
 ] as const;
 
 export const PlanOperationKeySchema = z
@@ -474,6 +481,11 @@ export const PlanResearchDraftSchema = z
   .strict();
 export type PlanResearchDraft = z.infer<typeof PlanResearchDraftSchema>;
 
+/** Normalize a schema-valid task ref to its bare task id identity. */
+export function normalizeTaskRef(ref: string): string {
+  return ref.startsWith("tasks:") ? ref.slice("tasks:".length) : ref;
+}
+
 export const PlanPauseEffectSchema = z
   .discriminatedUnion("kind", [
     z
@@ -488,8 +500,25 @@ export const PlanPauseEffectSchema = z
         researches: z.array(PlanResearchDraftSchema).min(1),
       })
       .strict(),
+    z
+      .object({
+        kind: z.literal("tasks"),
+        tasks: z.array(taskRefSchema).min(1),
+      })
+      .strict(),
   ])
   .superRefine((effect, context) => {
+    if (effect.kind === "tasks") {
+      // Identity is the bare task id: `T1` and `tasks:T1` collide.
+      for (const duplicate of duplicateValues(effect.tasks.map(normalizeTaskRef))) {
+        context.addIssue({
+          code: "custom",
+          message: `duplicate tasks ref "${duplicate}"`,
+          path: ["tasks"],
+        });
+      }
+      return;
+    }
     const entries = effect.kind === "questions" ? effect.questions : effect.researches;
     for (const duplicate of duplicateValues(entries.map(({ key }) => key))) {
       context.addIssue({
@@ -680,6 +709,13 @@ const researchWaitActiveConflictSchema = z
     researchIds: z.array(researchIdSchema).min(1),
   })
   .strict();
+const taskWaitActiveConflictSchema = z
+  .object({
+    code: z.literal("task-wait-active"),
+    goalId: goalIdSchema,
+    taskIds: z.array(taskIdSchema).min(1),
+  })
+  .strict();
 const draftNotFoundConflictSchema = z
   .object({
     code: z.literal("draft-not-found"),
@@ -735,6 +771,7 @@ const conflictSchemas = [
   idempotencyKeyReusedConflictSchema,
   implementationActiveConflictSchema,
   researchWaitActiveConflictSchema,
+  taskWaitActiveConflictSchema,
   draftNotFoundConflictSchema,
   reviewNotFoundConflictSchema,
   reviewNotApprovedConflictSchema,
@@ -756,6 +793,7 @@ export const PlanClaimConflictSchema = z.discriminatedUnion("code", [
   ownerFenceMismatchConflictSchema,
   implementationActiveConflictSchema,
   researchWaitActiveConflictSchema,
+  taskWaitActiveConflictSchema,
   claimRequestReusedConflictSchema,
 ]);
 export type PlanClaimConflict = z.infer<typeof PlanClaimConflictSchema>;
@@ -938,6 +976,7 @@ export const PlanClaimAcknowledgementSchema = z
     legacyAdopted: z.boolean(),
     adoptedManifest: PlanAdoptedManifestSchema,
     waitingResearches: z.array(researchIdSchema).length(0),
+    waitingTasks: z.array(taskIdSchema).length(0),
   })
   .strict()
   .superRefine(validateClaimPhaseTransition);
@@ -1018,6 +1057,7 @@ export function replayPlanClaim(
       legacyAdopted: record.legacyAdopted,
       adoptedManifest: record.adoptedManifest,
       waitingResearches: record.waitingResearches,
+      waitingTasks: record.waitingTasks,
     },
   });
 }
@@ -1053,6 +1093,8 @@ export const PlanReleaseAcknowledgementSchema = z.discriminatedUnion("kind", [
         .array(PlanIdAllocationSchema.extend({ id: researchIdSchema }).strict())
         .length(0),
       waitingResearches: z.array(researchIdSchema).length(0),
+      tasks: z.array(taskIdSchema).length(0),
+      waitingTasks: z.array(taskIdSchema).length(0),
       goalPhase: z.literal("clarifying"),
     })
     .strict(),
@@ -1065,6 +1107,8 @@ export const PlanReleaseAcknowledgementSchema = z.discriminatedUnion("kind", [
         .length(0),
       researches: z.array(PlanIdAllocationSchema.extend({ id: researchIdSchema }).strict()).min(1),
       waitingResearches: z.array(researchIdSchema).min(1),
+      tasks: z.array(taskIdSchema).length(0),
+      waitingTasks: z.array(taskIdSchema).length(0),
       goalPhase: z.literal("planning"),
     })
     .strict()
@@ -1084,6 +1128,34 @@ export const PlanReleaseAcknowledgementSchema = z.discriminatedUnion("kind", [
     }),
   z
     .object({
+      kind: z.literal("tasks"),
+      ...releaseAcknowledgementBase,
+      questions: z
+        .array(PlanIdAllocationSchema.extend({ id: questionIdSchema }).strict())
+        .length(0),
+      researches: z
+        .array(PlanIdAllocationSchema.extend({ id: researchIdSchema }).strict())
+        .length(0),
+      waitingResearches: z.array(researchIdSchema).length(0),
+      tasks: z.array(taskIdSchema).min(1),
+      waitingTasks: z.array(taskIdSchema).min(1),
+      goalPhase: z.literal("planning"),
+    })
+    .strict()
+    .superRefine((acknowledgement, context) => {
+      if (
+        acknowledgement.tasks.length !== acknowledgement.waitingTasks.length ||
+        acknowledgement.tasks.some((id, index) => acknowledgement.waitingTasks[index] !== id)
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "waitingTasks must exactly equal tasks",
+          path: ["waitingTasks"],
+        });
+      }
+    }),
+  z
+    .object({
       kind: z.literal("abandon"),
       ...releaseAcknowledgementBase,
       questions: z
@@ -1093,6 +1165,8 @@ export const PlanReleaseAcknowledgementSchema = z.discriminatedUnion("kind", [
         .array(PlanIdAllocationSchema.extend({ id: researchIdSchema }).strict())
         .length(0),
       waitingResearches: z.array(researchIdSchema).length(0),
+      tasks: z.array(taskIdSchema).length(0),
+      waitingTasks: z.array(taskIdSchema).length(0),
       goalPhase: z.literal("planning"),
     })
     .strict(),
@@ -1276,6 +1350,7 @@ export const PLAN_MANAGED_MUTATION_OWNERS = {
   generation: ["claim"],
   draft: ["publish-draft"],
   waitingResearches: ["claim", "release"],
+  waitingTasks: ["claim", "release"],
   goalPhase: ["claim", "release", "finalize"],
   finalizedManifest: ["finalize"],
   followUpCleanup: ["claim"],
@@ -1314,6 +1389,7 @@ export const PLAN_OPERATION_CONTRACTS = {
       "expected-generation-matches",
       "no-different-active-claim",
       "no-active-research-wait",
+      "no-active-task-wait",
       "follow-up-has-no-wip-or-blocked-manifest-task",
     ],
     postconditions: [
@@ -1323,6 +1399,7 @@ export const PLAN_OPERATION_CONTRACTS = {
       "claim-transitions-goal-to-planning-and-acknowledges-prior-and-resulting-phase",
       "follow-up-replacement-cleanup-is-atomic",
       "waiting-researches-cleared",
+      "waiting-tasks-cleared",
       "legacy-manifest-adopted-from-declared-milestones-only",
     ],
     conflicts: [
@@ -1334,6 +1411,7 @@ export const PLAN_OPERATION_CONTRACTS = {
       "owner-fence-mismatch",
       "implementation-active",
       "research-wait-active",
+      "task-wait-active",
       "claim-request-reused",
     ],
   },
@@ -1369,6 +1447,7 @@ export const PLAN_OPERATION_CONTRACTS = {
     postconditions: [
       "questions-create-exact-items-and-transition-planning-to-clarifying",
       "researches-create-exact-items-and-replace-waiting-researches",
+      "tasks-replace-waiting-tasks-with-resolved-existing-ids",
       "abandon-releases-only-the-exact-claim",
       "effect-defects-release-and-acknowledgement-commit-atomically",
     ],

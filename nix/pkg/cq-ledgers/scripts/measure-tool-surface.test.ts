@@ -109,7 +109,9 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // +14 inputSchema tokens (the new projection property) and +55
     // authoritative-response tokens (the longer Authoritative response:
     // sentence in wireResponseContract.ts documenting both projections).
-    maximumRemainingG93AttributableTokens: 886,
+    // 886 -> 891 under T1267: release_plan_claim acknowledgement docs gained
+    // tasks/waitingTasks fields (+5 G93-attributable response tokens).
+    maximumRemainingG93AttributableTokens: 891,
     corpusMedianResponseSavingTokens: 1461,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,

@@ -2103,6 +2103,70 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
       );
 
       it(
+        "persists task waits and suppresses claims until every wait is terminal",
+        async () => {
+        const fixture = await buildGoal(factory, "clarifying", null);
+        try {
+          const claim = requireClaimWinner(
+            await fixture.lifecycle.claimPlan(
+              claimInput("initial", "task-wait", OWNER_TOKEN_A, null, PROVENANCE_A),
+            ),
+          );
+          const published = await fixture.lifecycle.publishPlanDraft(
+            publishInput(claim, "task-wait-draft"),
+          );
+          if (!published.ok) throw new Error("draft publication unexpectedly conflicted");
+          const taskId = published.acknowledgement.manifest.tasks[0]?.id;
+          if (taskId === undefined) throw new Error("task allocation missing");
+          const release = await fixture.lifecycle.releasePlanClaim({
+            kind: "pause",
+            goalId: GOAL_ID,
+            claimId: claim.claimId,
+            generation: claim.generation,
+            operationId: "task-pause",
+            ownerFenceToken: claim.ownerFenceToken,
+            ...PROVENANCE_A,
+            effect: {
+              kind: "tasks",
+              tasks: [`tasks:${taskId}`],
+            },
+          });
+          if (!release.ok || release.acknowledgement.kind !== "tasks") {
+            throw new Error("task pause unexpectedly conflicted");
+          }
+          expect(release.acknowledgement.tasks).toEqual([taskId]);
+          expect(release.acknowledgement.waitingTasks).toEqual([taskId]);
+          expect(release.acknowledgement.waitingResearches).toEqual([]);
+          const waiting = await fixture.observe(GOAL_ID);
+          expect(waiting.waitingTasks).toEqual([taskId]);
+          expect(waiting.waitingResearches).toEqual([]);
+          const suppressed = await fixture.lifecycle.claimPlan(
+            claimInput("initial", "task-resume", OWNER_TOKEN_B, 1, PROVENANCE_B),
+          );
+          expect(suppressed).toEqual({
+            ok: false,
+            conflict: {
+              code: "task-wait-active",
+              goalId: GOAL_ID,
+              taskIds: [taskId],
+            },
+          });
+          await fixture.setTaskStatus(taskId, "done");
+          const resumed = await fixture.lifecycle.claimPlan(
+            claimInput("initial", "task-resume", OWNER_TOKEN_B, 1, PROVENANCE_B),
+          );
+          expect(resumed.ok).toBe(true);
+          if (!resumed.ok) throw new Error("expected successful resume");
+          expect(resumed.acknowledgement.waitingTasks).toEqual([]);
+          expect((await fixture.observe(GOAL_ID)).waitingTasks).toEqual([]);
+        } finally {
+          await fixture.dispose();
+        }
+        },
+        timeout,
+      );
+
+      it(
         "reacquisition preserves the current draft and clears satisfied wait metadata",
         async () => {
         const fixture = await buildGoal(factory, "clarifying", null);

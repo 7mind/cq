@@ -284,8 +284,8 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   ),
   release_plan_claim: purposeBuiltSmall(
     "`{ ok: true, replayed, acknowledgement: { kind, …operation key, questions, " +
-      "researches, waitingResearches, reviewDefects, goalPhase } }` or " +
-      "`{ ok: false, conflict }`; never carries `ownerFenceToken`.",
+      "researches, waitingResearches, tasks, waitingTasks, reviewDefects, " +
+      "goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`.",
   ),
   finalize_plan: purposeBuiltSmall(
     "`{ ok: true, replayed, acknowledgement: { …operation key, reviewId, draft, " +

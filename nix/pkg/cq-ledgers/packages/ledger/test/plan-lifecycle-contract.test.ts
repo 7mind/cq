@@ -304,6 +304,56 @@ describe("guarded plan lifecycle inputs", () => {
     ).toBe(false);
     expect(
       PlanReleaseInputSchema.safeParse({
+        kind: "pause",
+        ...ownerOperation,
+        effect: {
+          kind: "tasks",
+          tasks: ["T1"],
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      PlanReleaseInputSchema.safeParse({
+        kind: "pause",
+        ...ownerOperation,
+        effect: {
+          kind: "tasks",
+          tasks: ["tasks:T1"],
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      PlanReleaseInputSchema.safeParse({
+        kind: "pause",
+        ...ownerOperation,
+        effect: {
+          kind: "tasks",
+          tasks: ["T1", "tasks:T1"],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      PlanReleaseInputSchema.safeParse({
+        kind: "pause",
+        ...ownerOperation,
+        effect: {
+          kind: "tasks",
+          tasks: ["researches:RS1"],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      PlanReleaseInputSchema.safeParse({
+        kind: "pause",
+        ...ownerOperation,
+        effect: {
+          kind: "tasks",
+          tasks: [],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      PlanReleaseInputSchema.safeParse({
         ...abandon,
         reviewDefects,
       }).success,
@@ -400,6 +450,7 @@ describe("T846 r1 contract reproductions", () => {
         taskIds: [],
       },
       waitingResearches: [],
+      waitingTasks: [],
     } as const;
     expect(
       PlanClaimResultSchema.safeParse({
@@ -526,6 +577,7 @@ describe("T846 r1 contract reproductions", () => {
         taskIds: ["T846"],
       },
       waitingResearches: [],
+      waitingTasks: [],
       ...provenance,
       state: "active",
     } as const;
@@ -558,6 +610,7 @@ describe("T846 r1 contract reproductions", () => {
           taskIds: ["T846"],
         },
         waitingResearches: [],
+        waitingTasks: [],
       },
     });
     expect(
@@ -614,6 +667,8 @@ describe("T846 r1 contract reproductions", () => {
       questions: [],
       researches: [],
       waitingResearches: [],
+      tasks: [],
+      waitingTasks: [],
       goalPhase: "planning",
     } as const;
     expect(PlanReleaseAcknowledgementSchema.safeParse(acknowledgement).success).toBe(true);
@@ -833,6 +888,7 @@ describe("authority persistence and observer redaction", () => {
         taskIds: [],
       },
       waitingResearches: [],
+      waitingTasks: [],
       ...provenance,
       state: "active",
     } as const;
@@ -902,6 +958,7 @@ describe("authority persistence and observer redaction", () => {
           taskIds: [],
         },
         waitingResearches: [],
+        waitingTasks: [],
       },
     } as const;
 
@@ -965,6 +1022,8 @@ describe("atomic acknowledgements and exact replay", () => {
       ],
       researches: [],
       waitingResearches: [],
+      tasks: [],
+      waitingTasks: [],
       goalPhase: "clarifying",
     } as const;
 
@@ -984,6 +1043,8 @@ describe("atomic acknowledgements and exact replay", () => {
         { key: "recovery", id: "RS9" },
       ],
       waitingResearches: ["RS8", "RS9"],
+      tasks: [],
+      waitingTasks: [],
       goalPhase: "planning",
     } as const;
 
@@ -1003,6 +1064,38 @@ describe("atomic acknowledgements and exact replay", () => {
       acknowledgement,
     } as const;
     expect(JSON.stringify(PlanReleaseResultSchema.parse(result))).toBe(JSON.stringify(result));
+  });
+
+  it("requires tasks pause acknowledgement ids to exactly equal the wait set", () => {
+    const acknowledgement = {
+      kind: "tasks",
+      ...operationKey,
+      reviewDefects: reviewDefectAllocations,
+      questions: [],
+      researches: [],
+      waitingResearches: [],
+      tasks: ["T8", "T9"],
+      waitingTasks: ["T8", "T9"],
+      goalPhase: "planning",
+    } as const;
+
+    expect(JSON.stringify(PlanReleaseAcknowledgementSchema.parse(acknowledgement))).toBe(
+      JSON.stringify(acknowledgement),
+    );
+    expect(
+      PlanReleaseAcknowledgementSchema.safeParse({
+        ...acknowledgement,
+        waitingTasks: ["T8"],
+      }).success,
+    ).toBe(false);
+    expect(
+      PlanReleaseAcknowledgementSchema.safeParse({
+        ...acknowledgement,
+        kind: "abandon",
+        tasks: [],
+        waitingTasks: [],
+      }).success,
+    ).toBe(true);
   });
 
   it("records the exact approved review, decision, manifest, and defect batch", () => {
@@ -1149,6 +1242,7 @@ describe("executable lifecycle semantics", () => {
       generation: ["claim"],
       draft: ["publish-draft"],
       waitingResearches: ["claim", "release"],
+      waitingTasks: ["claim", "release"],
       goalPhase: ["claim", "release", "finalize"],
       finalizedManifest: ["finalize"],
       followUpCleanup: ["claim"],
@@ -1193,6 +1287,7 @@ describe("executable lifecycle semantics", () => {
         "implementation-active",
         "owner-fence-mismatch",
         "research-wait-active",
+        "task-wait-active",
         "review-generation-mismatch",
         "review-draft-mismatch",
         "review-not-approved",

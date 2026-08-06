@@ -131,6 +131,7 @@ export interface ReferencePublicGoalState {
   readonly finalizedManifest: PlanPublishedManifest | null;
   readonly milestoneIds: readonly string[];
   readonly waitingResearches: readonly string[];
+  readonly waitingTasks: readonly string[];
   readonly milestones: readonly ReferencePublicMilestone[];
   readonly tasks: readonly ReferencePublicTask[];
   readonly questions: readonly ReferencePublicQuestion[];
@@ -198,6 +199,10 @@ export interface PlanLifecycleContractFixture {
   setResearchStatus(
     researchId: string,
     status: "open" | "wip" | "inconclusive" | "concluded" | "abandoned",
+  ): Promise<void>;
+  setTaskStatus(
+    taskId: string,
+    status: ReferencePublicTask["status"],
   ): Promise<void>;
   observe(goalId: string): Promise<ReferencePublicGoalState>;
   restart(): Promise<PlanLifecycleContractFixture>;
@@ -330,6 +335,7 @@ interface MutableGoal {
   finalizedManifest: PlanPublishedManifest | null;
   milestoneIds: string[];
   waitingResearches: string[];
+  waitingTasks: string[];
   /** D267/T1855: coordination-milestone liveness seen by guarded mutations. */
   parentStatus: "live" | "absent" | "terminal";
   parentMilestoneId: string;
@@ -687,6 +693,7 @@ export class ReferencePlanLifecycleAdapter
         finalizedManifest: null,
         milestoneIds: [],
         waitingResearches: [],
+        waitingTasks: [],
         parentStatus: "live",
         parentMilestoneId: "M-AMBIENT",
       });
@@ -819,6 +826,17 @@ export class ReferencePlanLifecycleAdapter
     });
   }
 
+  async setTaskStatus(
+    taskId: string,
+    status: ReferencePublicTask["status"],
+  ): Promise<void> {
+    await this.backend.mutex.run(() => {
+      const task = this.backend.tasks.get(taskId);
+      if (task === undefined) throw new Error(`task not found: ${taskId}`);
+      task.status = status;
+    });
+  }
+
   async observe(goalId: string): Promise<ReferencePublicGoalState> {
     return this.backend.mutex.run(() => {
       const goal = this.requireGoal(goalId);
@@ -853,6 +871,7 @@ export class ReferencePlanLifecycleAdapter
         finalizedManifest: goal.finalizedManifest,
         milestoneIds: goal.milestoneIds,
         waitingResearches: goal.waitingResearches,
+        waitingTasks: goal.waitingTasks,
         milestones: [...this.backend.milestones.values()]
           .filter((milestone) => milestone.goalId === goalId)
           .sort((left, right) => left.id.localeCompare(right.id)),
@@ -1044,6 +1063,20 @@ export class ReferencePlanLifecycleAdapter
           },
         });
       }
+      const activeTaskIds = goal.waitingTasks.filter((id) => {
+        const status = this.backend.tasks.get(id)?.status;
+        return status === "planned" || status === "wip" || status === "blocked";
+      });
+      if (activeTaskIds.length > 0) {
+        return PlanClaimResultSchema.parse({
+          ok: false,
+          conflict: {
+            code: "task-wait-active",
+            goalId: input.goalId,
+            taskIds: activeTaskIds,
+          },
+        });
+      }
 
       if (input.purpose === "follow-up") {
         const activeTasks = this.declaredTasks(goal).filter(
@@ -1080,6 +1113,7 @@ export class ReferencePlanLifecycleAdapter
       goal.activeClaimId = claimId;
       goal.phase = phase.goalPhase;
       goal.waitingResearches = [];
+      goal.waitingTasks = [];
 
       const record = PlanPrivateClaimRecordSchema.parse({
         goalId: input.goalId,
@@ -1095,6 +1129,7 @@ export class ReferencePlanLifecycleAdapter
         legacyAdopted: adoptedManifest.milestoneIds.length > 0,
         adoptedManifest,
         waitingResearches: [],
+        waitingTasks: [],
         author: input.author,
         session: input.session,
         state: "active",
@@ -1115,6 +1150,7 @@ export class ReferencePlanLifecycleAdapter
           legacyAdopted: adoptedManifest.milestoneIds.length > 0,
           adoptedManifest,
           waitingResearches: [],
+          waitingTasks: [],
         },
       });
       },
@@ -1239,6 +1275,7 @@ export class ReferencePlanLifecycleAdapter
           });
           goal.phase = "clarifying";
           goal.waitingResearches = [];
+          goal.waitingTasks = [];
           acknowledgement = {
             kind: "questions",
             goalId: input.goalId,
@@ -1249,9 +1286,11 @@ export class ReferencePlanLifecycleAdapter
             questions,
             researches: [],
             waitingResearches: [],
+            tasks: [],
+            waitingTasks: [],
             goalPhase: "clarifying",
           } as const;
-        } else {
+        } else if (input.effect.kind === "researches") {
           const researches = input.effect.researches.map((research) => {
             const id = `RS${++this.backend.researchCounter}`;
             this.backend.researches.set(id, {
@@ -1266,6 +1305,7 @@ export class ReferencePlanLifecycleAdapter
           });
           goal.phase = "planning";
           goal.waitingResearches = researches.map(({ id }) => id);
+          goal.waitingTasks = [];
           acknowledgement = {
             kind: "researches",
             goalId: input.goalId,
@@ -1276,12 +1316,65 @@ export class ReferencePlanLifecycleAdapter
             questions: [],
             researches,
             waitingResearches: [...goal.waitingResearches],
+            tasks: [],
+            waitingTasks: [],
             goalPhase: "planning",
           } as const;
+        } else if (input.effect.kind === "tasks") {
+          const resolved: string[] = [];
+          for (const ref of input.effect.tasks) {
+            const bareId = ref.startsWith("tasks:") ? ref.slice("tasks:".length) : ref;
+            if (!/^T\d+$/.test(bareId)) {
+              throw new Error(`invalid task wait ref "${ref}": id must match T<n>`);
+            }
+            if (ref.includes(":") && !ref.startsWith("tasks:")) {
+              throw new Error(
+                `invalid task wait ref "${ref}": must name the tasks ledger`,
+              );
+            }
+            const task = this.backend.tasks.get(bareId);
+            if (task === undefined) {
+              throw new Error(
+                `invalid task wait ref "${ref}": task ${bareId} is absent`,
+              );
+            }
+            resolved.push(bareId);
+          }
+          const allTerminal = resolved.every((id) => {
+            const status = this.backend.tasks.get(id)?.status;
+            return status === "done" || status === "abandoned";
+          });
+          if (allTerminal) {
+            throw new Error(
+              "invalid task wait: every supplied task is already terminal (done/abandoned)",
+            );
+          }
+          goal.phase = "planning";
+          goal.waitingResearches = [];
+          goal.waitingTasks = resolved;
+          acknowledgement = {
+            kind: "tasks",
+            goalId: input.goalId,
+            claimId: input.claimId,
+            generation: input.generation,
+            operationId: input.operationId,
+            reviewDefects: reviewDefectAllocations,
+            questions: [],
+            researches: [],
+            waitingResearches: [],
+            tasks: resolved,
+            waitingTasks: [...resolved],
+            goalPhase: "planning",
+          } as const;
+        } else {
+          throw new Error(
+            `unsupported plan pause effect kind: ${(input.effect as { kind?: string }).kind ?? "unknown"}`,
+          );
         }
       } else {
         goal.phase = "planning";
         goal.waitingResearches = [];
+        goal.waitingTasks = [];
         acknowledgement = {
           kind: "abandon",
           goalId: input.goalId,
@@ -1292,6 +1385,8 @@ export class ReferencePlanLifecycleAdapter
           questions: [],
           researches: [],
           waitingResearches: [],
+          tasks: [],
+          waitingTasks: [],
           goalPhase: "planning",
         } as const;
       }
@@ -1382,6 +1477,8 @@ export class ReferencePlanLifecycleAdapter
       goal.finalizedDraft = clone(goal.currentDraft.identity);
       goal.finalizedManifest = clone(goal.currentDraft.manifest);
       goal.milestoneIds = goal.currentDraft.manifest.milestones.map(({ id }) => id);
+      goal.waitingResearches = [];
+      goal.waitingTasks = [];
       for (const { id } of goal.currentDraft.manifest.tasks) {
         const task = this.requireTask(id);
         task.executable = true;

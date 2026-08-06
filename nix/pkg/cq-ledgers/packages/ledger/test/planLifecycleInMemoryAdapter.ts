@@ -12,6 +12,7 @@ import {
   PLAN_GENERATION_FIELD,
   PLAN_REVIEW_DRAFT_FIELD,
   PLAN_WAITING_RESEARCHES_FIELD,
+  PLAN_WAITING_TASKS_FIELD,
   QUESTIONS_LEDGER,
   RESEARCHES_LEDGER,
   REVIEWS_LEDGER,
@@ -162,6 +163,7 @@ export abstract class LedgerStorePlanLifecycleFixture<
       await this.seedUpdate(GOALS_LEDGER, options.goalId, (goal) => {
         goal.fields[PLAN_GENERATION_FIELD] = String(options.generation);
         goal.fields[PLAN_WAITING_RESEARCHES_FIELD] = [];
+        goal.fields[PLAN_WAITING_TASKS_FIELD] = [];
       });
       await this.persistDirect?.([GOALS_LEDGER]);
     }
@@ -256,11 +258,13 @@ export abstract class LedgerStorePlanLifecycleFixture<
         delete goal.fields[PLAN_FINALIZED_DRAFT_FIELD];
         delete goal.fields[PLAN_FINALIZED_MANIFEST_FIELD];
         delete goal.fields[PLAN_WAITING_RESEARCHES_FIELD];
+        delete goal.fields[PLAN_WAITING_TASKS_FIELD];
       } else {
         goal.fields[PLAN_CURRENT_DRAFT_FIELD] = JSON.stringify({ identity, manifest });
         goal.fields[PLAN_FINALIZED_DRAFT_FIELD] = JSON.stringify(identity);
         goal.fields[PLAN_FINALIZED_MANIFEST_FIELD] = JSON.stringify(manifest);
         goal.fields[PLAN_WAITING_RESEARCHES_FIELD] = [];
+        goal.fields[PLAN_WAITING_TASKS_FIELD] = [];
       }
     });
     for (let index = 0; index < options.openQuestionCount; index += 1) {
@@ -319,6 +323,18 @@ export abstract class LedgerStorePlanLifecycleFixture<
       if (status === "wip") return;
     }
     await this.store.updateItem(RESEARCHES_LEDGER, researchId, { status });
+  }
+
+  async setTaskStatus(
+    taskId: string,
+    status: ReferencePublicTask["status"],
+  ): Promise<void> {
+    // Test fixture: write status directly so terminal transitions on managed
+    // draft tasks remain exercisable without going through implement-flow.
+    await this.seedUpdate(TASKS_LEDGER, taskId, (task) => {
+      task.status = status;
+    });
+    await this.persistDirect?.([TASKS_LEDGER]);
   }
 
   async observe(goalId: string): Promise<ReferencePublicGoalState> {
@@ -448,6 +464,7 @@ export abstract class LedgerStorePlanLifecycleFixture<
       finalizedManifest: plan.finalizedManifest,
       milestoneIds: refValues(goal, "milestones"),
       waitingResearches: plan.waitingResearches,
+      waitingTasks: plan.waitingTasks,
       milestones,
       tasks: publicTasks,
       questions,

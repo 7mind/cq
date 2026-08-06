@@ -20,6 +20,7 @@ import {
   PLAN_FINALIZED_MANIFEST_FIELD,
   PLAN_GENERATION_FIELD,
   PLAN_WAITING_RESEARCHES_FIELD,
+  PLAN_WAITING_TASKS_FIELD,
   PlanClaimInputSchema,
   PlanClaimResultSchema,
   PlanDraftIdentitySchema,
@@ -56,12 +57,12 @@ import {
 } from "../planLifecycle.js";
 import type { FieldValue, Item, Ledger, Milestone } from "../types.js";
 import { LedgerError } from "../types.js";
-import { buildPrefixRegistry } from "../refs.js";
+import { buildPrefixRegistry, canonicalizeRef, parseRef, RefParseError } from "../refs.js";
 import {
   normalizeRefFields,
   type RefValidationContext,
 } from "./core.js";
-import { activePlanResearchWaits } from "./predicates.js";
+import { activePlanResearchWaits, activePlanTaskWaits } from "./predicates.js";
 
 interface StoredDraft {
   readonly identity: PlanDraftIdentity;
@@ -960,6 +961,23 @@ export function claimInMemoryPlan(
       dirtyLedgers: [],
     };
   }
+  const taskWaits = activePlanTaskWaits(
+    goal,
+    ledger(state, TASKS_LEDGER).milestones.flatMap(({ items }) => items),
+  );
+  if (taskWaits.length > 0) {
+    return {
+      result: PlanClaimResultSchema.parse({
+        ok: false,
+        conflict: {
+          code: "task-wait-active",
+          goalId: input.goalId,
+          taskIds: taskWaits,
+        },
+      }),
+      dirtyLedgers: [],
+    };
+  }
   if (input.purpose === "follow-up") {
     const activeTasks = declaredManifestTasks(state, goal).filter(
       ({ status }) => status === "wip" || status === "blocked",
@@ -1011,6 +1029,7 @@ export function claimInMemoryPlan(
     purpose: input.purpose,
   });
   setField(goal, PLAN_WAITING_RESEARCHES_FIELD, []);
+  setField(goal, PLAN_WAITING_TASKS_FIELD, []);
   touch(goal, input, state.now());
 
   const record = PlanPrivateClaimRecordSchema.parse({
@@ -1027,6 +1046,7 @@ export function claimInMemoryPlan(
     legacyAdopted: adopted.milestoneIds.length > 0,
     adoptedManifest: adopted,
     waitingResearches: [],
+    waitingTasks: [],
     author: input.author,
     session: input.session,
     state: "active",
@@ -1048,6 +1068,7 @@ export function claimInMemoryPlan(
         legacyAdopted: adopted.milestoneIds.length > 0,
         adoptedManifest: adopted,
         waitingResearches: [],
+        waitingTasks: [],
       },
     }),
     dirtyLedgers: [
@@ -1141,6 +1162,63 @@ export function publishInMemoryPlanDraft(
   };
 }
 
+/**
+ * Resolve a tasks-pause effect against live state. Fail-closed BEFORE any
+ * mutation: every ref must canonicalize to the tasks ledger with a bare
+ * task id that exists as an active item, and the supplied set must not be
+ * entirely terminal (done/abandoned). Returns bare task ids in input order.
+ */
+function resolveTaskWaitIds(
+  state: InMemoryPlanLifecycleState,
+  refs: readonly string[],
+): string[] {
+  const registry = buildPrefixRegistry(
+    [...state.ledgers].map(([name, l]) => ({ name, schema: l.schema })),
+  );
+  const tasksLedger = ledger(state, TASKS_LEDGER);
+  const resolved: string[] = [];
+  for (const ref of refs) {
+    let canonical: string;
+    try {
+      canonical = canonicalizeRef(ref, registry);
+    } catch (error) {
+      if (error instanceof RefParseError) {
+        throw new LedgerError(`invalid task wait ref "${ref}": ${error.message}`);
+      }
+      throw error;
+    }
+    const parsed = parseRef(canonical);
+    if (parsed.kind !== "prefixed" || parsed.ledger !== TASKS_LEDGER) {
+      throw new LedgerError(
+        `invalid task wait ref "${ref}": must name the tasks ledger`,
+      );
+    }
+    const bareId = parsed.id;
+    if (!/^T\d+$/.test(bareId)) {
+      throw new LedgerError(
+        `invalid task wait ref "${ref}": id must match T<n>`,
+      );
+    }
+    const item = findActiveItem(tasksLedger, bareId);
+    if (item === undefined) {
+      throw new LedgerError(
+        `invalid task wait ref "${ref}": task ${bareId} is absent`,
+      );
+    }
+    resolved.push(bareId);
+  }
+  const allTerminal = resolved.every((id) => {
+    const item = findActiveItem(tasksLedger, id);
+    return item !== undefined && (item.status === "done" || item.status === "abandoned");
+  });
+  if (allTerminal) {
+    throw new LedgerError(
+      "invalid task wait: every supplied task is already terminal (done/abandoned)",
+    );
+  }
+  return resolved;
+}
+
 export function releaseInMemoryPlanClaim(
   state: InMemoryPlanLifecycleState,
   rawInput: PlanReleaseInput,
@@ -1175,6 +1253,12 @@ export function releaseInMemoryPlanClaim(
       dirtyLedgers: [],
     };
   }
+  // Resolve tasks-pause refs before any mutation so a bad set never releases
+  // the claim or falls through to researches/abandon.
+  const resolvedTaskWaits =
+    input.kind === "pause" && input.effect.kind === "tasks"
+      ? resolveTaskWaitIds(state, input.effect.tasks)
+      : null;
   const defects = addReviewDefects(state, input.goalId, input.reviewDefects, input);
   let acknowledgement;
   const dirty = new Set<string>([GOALS_LEDGER]);
@@ -1205,6 +1289,7 @@ export function releaseInMemoryPlanClaim(
     });
     goal.status = "clarifying";
     setField(goal, PLAN_WAITING_RESEARCHES_FIELD, []);
+    setField(goal, PLAN_WAITING_TASKS_FIELD, []);
     dirty.add(QUESTIONS_LEDGER);
     acknowledgement = {
       kind: "questions",
@@ -1216,6 +1301,8 @@ export function releaseInMemoryPlanClaim(
       questions,
       researches: [],
       waitingResearches: [],
+      tasks: [],
+      waitingTasks: [],
       goalPhase: "clarifying",
     } as const;
   } else if (input.kind === "pause" && input.effect.kind === "researches") {
@@ -1238,6 +1325,7 @@ export function releaseInMemoryPlanClaim(
     goal.status = "planning";
     const waiting = researches.map(({ id }) => id);
     setField(goal, PLAN_WAITING_RESEARCHES_FIELD, waiting);
+    setField(goal, PLAN_WAITING_TASKS_FIELD, []);
     dirty.add(RESEARCHES_LEDGER);
     acknowledgement = {
       kind: "researches",
@@ -1249,11 +1337,36 @@ export function releaseInMemoryPlanClaim(
       questions: [],
       researches,
       waitingResearches: waiting,
+      tasks: [],
+      waitingTasks: [],
       goalPhase: "planning",
     } as const;
-  } else {
+  } else if (input.kind === "pause" && input.effect.kind === "tasks") {
+    if (resolvedTaskWaits === null) {
+      throw new LedgerError("tasks pause missing resolved wait set");
+    }
+    // Reference existing tasks only — never allocate, never route to research.
     goal.status = "planning";
     setField(goal, PLAN_WAITING_RESEARCHES_FIELD, []);
+    setField(goal, PLAN_WAITING_TASKS_FIELD, resolvedTaskWaits);
+    acknowledgement = {
+      kind: "tasks",
+      goalId: input.goalId,
+      claimId: input.claimId,
+      generation: input.generation,
+      operationId: input.operationId,
+      reviewDefects: defects,
+      questions: [],
+      researches: [],
+      waitingResearches: [],
+      tasks: resolvedTaskWaits,
+      waitingTasks: resolvedTaskWaits,
+      goalPhase: "planning",
+    } as const;
+  } else if (input.kind === "abandon") {
+    goal.status = "planning";
+    setField(goal, PLAN_WAITING_RESEARCHES_FIELD, []);
+    setField(goal, PLAN_WAITING_TASKS_FIELD, []);
     acknowledgement = {
       kind: "abandon",
       goalId: input.goalId,
@@ -1264,8 +1377,15 @@ export function releaseInMemoryPlanClaim(
       questions: [],
       researches: [],
       waitingResearches: [],
+      tasks: [],
+      waitingTasks: [],
       goalPhase: "planning",
     } as const;
+  } else {
+    // Fail closed: an unknown pause kind must never fall through to abandon.
+    throw new LedgerError(
+      `unsupported plan pause effect kind: ${(input as { effect?: { kind?: string } }).effect?.kind ?? "unknown"}`,
+    );
   }
   touch(goal, input, state.now());
   releaseClaim(state, goal, input.claimId, "released");
@@ -1384,6 +1504,7 @@ export function finalizeInMemoryPlan(
   setJsonField(goal, PLAN_FINALIZED_DRAFT_FIELD, draft.identity);
   setJsonField(goal, PLAN_FINALIZED_MANIFEST_FIELD, draft.manifest);
   setField(goal, PLAN_WAITING_RESEARCHES_FIELD, []);
+  setField(goal, PLAN_WAITING_TASKS_FIELD, []);
   touch(goal, input, state.now());
   const acknowledgement = {
     goalId: input.goalId,
@@ -1421,6 +1542,7 @@ export function readInMemoryPlanState(goal: Item): {
   finalizedDraft: PlanDraftIdentity | null;
   finalizedManifest: PlanPublishedManifest | null;
   waitingResearches: string[];
+  waitingTasks: string[];
 } {
   return {
     generation: generation(goal),
@@ -1429,5 +1551,6 @@ export function readInMemoryPlanState(goal: Item): {
     finalizedDraft: finalizedDraft(goal),
     finalizedManifest: finalizedManifest(goal),
     waitingResearches: fieldStrings(goal, PLAN_WAITING_RESEARCHES_FIELD),
+    waitingTasks: fieldStrings(goal, PLAN_WAITING_TASKS_FIELD),
   };
 }

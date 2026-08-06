@@ -104,6 +104,58 @@ async function pauseForResearches(
   return result.acknowledgement.waitingResearches;
 }
 
+async function publishOneTask(
+  fixture: PlanLifecycleContractFixture,
+  claim: PlanClaimAcknowledgement,
+  operationId: string,
+): Promise<string> {
+  const published = await fixture.lifecycle.publishPlanDraft({
+    goalId: "G1",
+    claimId: claim.claimId,
+    generation: claim.generation,
+    operationId,
+    ownerFenceToken: claim.ownerFenceToken,
+    ...PROVENANCE,
+    manifest: {
+      milestones: [{ key: "delivery", title: "Delivery" }],
+      tasks: [
+        {
+          key: "implementation",
+          milestoneKey: "delivery",
+          headline: "Implementation",
+        },
+      ],
+    },
+  });
+  if (!published.ok) throw new Error("draft publication failed");
+  const taskId = published.acknowledgement.manifest.tasks[0]?.id;
+  if (taskId === undefined) throw new Error("task allocation missing");
+  return taskId;
+}
+
+async function pauseForTasks(
+  fixture: PlanLifecycleContractFixture,
+  claim: PlanClaimAcknowledgement,
+  operationId: string,
+  tasks: string[],
+): Promise<Extract<
+  Awaited<ReturnType<PlanLifecycleStore["releasePlanClaim"]>>,
+  { ok: true }
+>["acknowledgement"]> {
+  const result = await fixture.lifecycle.releasePlanClaim({
+    kind: "pause",
+    goalId: "G1",
+    claimId: claim.claimId,
+    generation: claim.generation,
+    operationId,
+    ownerFenceToken: claim.ownerFenceToken,
+    ...PROVENANCE,
+    effect: { kind: "tasks", tasks },
+  });
+  if (!result.ok) throw new Error(`task pause failed: ${result.conflict.code}`);
+  return result.acknowledgement;
+}
+
 describe("T848 InMemory plan lifecycle semantics", () => {
   for (const [status, suppressed] of [
     ["open", true],
@@ -768,6 +820,7 @@ describe("T848 InMemory plan lifecycle semantics", () => {
       "planFinalizedDraft",
       "planFinalizedManifest",
       "waitingResearches",
+      "waitingTasks",
     ];
     const oldSchema = {
       ...GOALS_SCHEMA,
@@ -826,6 +879,7 @@ describe("T848 InMemory plan lifecycle semantics", () => {
       // So is every raw rewrite of the goal's MANAGED plan fields.
       for (const fields of [
         { waitingResearches: ["RS1"] },
+        { waitingTasks: ["T1"] },
         { planCurrentDraft: "null" },
         { planFinalizedManifest: "{}" },
         { planActiveClaim: "{}" },
@@ -873,5 +927,353 @@ describe("T848 InMemory plan lifecycle semantics", () => {
     expect(lifecycleSource).toContain("activePlanResearchWaits");
     expect(lifecycleSource).not.toMatch(/status === "inconclusive"/);
     expect(lifecycleSource).not.toMatch(/status === "concluded"/);
+  });
+
+  it("normalizes bare and canonical task refs to the same tasks pause acknowledgement", async () => {
+    const fixture = await buildFixture();
+    try {
+      const bareClaim = await claimInitial(fixture, "task-ref-bare", OWNER_A, null);
+      const bareTaskId = await publishOneTask(fixture, bareClaim, "task-ref-bare-publish");
+      const bareAck = await pauseForTasks(fixture, bareClaim, "task-ref-bare-pause", [
+        bareTaskId,
+      ]);
+      expect(bareAck).toMatchObject({
+        kind: "tasks",
+        tasks: [bareTaskId],
+        waitingTasks: [bareTaskId],
+        researches: [],
+        waitingResearches: [],
+        goalPhase: "planning",
+      });
+      expect((await fixture.observe("G1")).waitingTasks).toEqual([bareTaskId]);
+      expect((await fixture.observe("G1")).waitingResearches).toEqual([]);
+
+      await fixture.setTaskStatus(bareTaskId, "done");
+      const canonicalClaim = await claimInitial(fixture, "task-ref-canonical", OWNER_B, 1);
+      expect(canonicalClaim.waitingTasks).toEqual([]);
+      expect((await fixture.observe("G1")).waitingTasks).toEqual([]);
+      const canonicalTaskId = await publishOneTask(
+        fixture,
+        canonicalClaim,
+        "task-ref-canonical-publish",
+      );
+      const canonicalAck = await pauseForTasks(
+        fixture,
+        canonicalClaim,
+        "task-ref-canonical-pause",
+        [`tasks:${canonicalTaskId}`],
+      );
+      expect(canonicalAck).toMatchObject({
+        kind: "tasks",
+        tasks: [canonicalTaskId],
+        waitingTasks: [canonicalTaskId],
+      });
+      expect((await fixture.observe("G1")).waitingTasks).toEqual([canonicalTaskId]);
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it("rejects duplicate, malformed, wrong-ledger, absent, and all-terminal task pauses without releasing the claim", async () => {
+    const fixture = await buildFixture();
+    try {
+      const claim = await claimInitial(fixture, "task-reject", OWNER_A, null);
+      const taskId = await publishOneTask(fixture, claim, "task-reject-publish");
+
+      const stillClaimed = async (): Promise<void> => {
+        const observed = await fixture.observe("G1");
+        expect(observed.activeClaim?.claimId).toBe(claim.claimId);
+        expect(observed.waitingTasks).toEqual([]);
+      };
+
+      await expect(
+        fixture.lifecycle.releasePlanClaim({
+          kind: "pause",
+          goalId: "G1",
+          claimId: claim.claimId,
+          generation: claim.generation,
+          operationId: "dup-task-pause",
+          ownerFenceToken: claim.ownerFenceToken,
+          ...PROVENANCE,
+          effect: { kind: "tasks", tasks: [taskId, `tasks:${taskId}`] },
+        }),
+      ).rejects.toThrow();
+      await stillClaimed();
+
+      await expect(
+        fixture.lifecycle.releasePlanClaim({
+          kind: "pause",
+          goalId: "G1",
+          claimId: claim.claimId,
+          generation: claim.generation,
+          operationId: "malformed-task-pause",
+          ownerFenceToken: claim.ownerFenceToken,
+          ...PROVENANCE,
+          effect: { kind: "tasks", tasks: ["not-a-task"] },
+        }),
+      ).rejects.toThrow();
+      await stillClaimed();
+
+      await expect(
+        fixture.lifecycle.releasePlanClaim({
+          kind: "pause",
+          goalId: "G1",
+          claimId: claim.claimId,
+          generation: claim.generation,
+          operationId: "wrong-ledger-task-pause",
+          ownerFenceToken: claim.ownerFenceToken,
+          ...PROVENANCE,
+          effect: { kind: "tasks", tasks: ["researches:RS1"] as unknown as string[] },
+        }),
+      ).rejects.toThrow();
+      await stillClaimed();
+
+      await expect(
+        fixture.lifecycle.releasePlanClaim({
+          kind: "pause",
+          goalId: "G1",
+          claimId: claim.claimId,
+          generation: claim.generation,
+          operationId: "absent-task-pause",
+          ownerFenceToken: claim.ownerFenceToken,
+          ...PROVENANCE,
+          effect: { kind: "tasks", tasks: ["T99999"] },
+        }),
+      ).rejects.toThrow(/absent/);
+      await stillClaimed();
+
+      await fixture.setTaskStatus(taskId, "done");
+      await expect(
+        fixture.lifecycle.releasePlanClaim({
+          kind: "pause",
+          goalId: "G1",
+          claimId: claim.claimId,
+          generation: claim.generation,
+          operationId: "all-terminal-task-pause",
+          ownerFenceToken: claim.ownerFenceToken,
+          ...PROVENANCE,
+          effect: { kind: "tasks", tasks: [taskId] },
+        }),
+      ).rejects.toThrow(/terminal/);
+      await stillClaimed();
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it("does not route a tasks pause to abandonment or the research branch", async () => {
+    const fixture = await buildFixture();
+    try {
+      const claim = await claimInitial(fixture, "task-discriminate", OWNER_A, null);
+      const taskId = await publishOneTask(fixture, claim, "task-discriminate-publish");
+      const ack = await pauseForTasks(fixture, claim, "task-discriminate-pause", [taskId]);
+      expect(ack.kind).toBe("tasks");
+      expect(ack.kind).not.toBe("abandon");
+      expect(ack.kind).not.toBe("researches");
+      if (ack.kind !== "tasks") throw new Error("expected tasks acknowledgement");
+      expect(ack.researches).toEqual([]);
+      expect(ack.waitingResearches).toEqual([]);
+      expect(ack.tasks).toEqual([taskId]);
+      expect(ack.waitingTasks).toEqual([taskId]);
+      const observed = await fixture.observe("G1");
+      expect(observed.waitingResearches).toEqual([]);
+      expect(observed.waitingTasks).toEqual([taskId]);
+      expect(observed.researches).toEqual([]);
+      expect(observed.phase).toBe("planning");
+      expect(observed.activeClaim).toBeNull();
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  for (const [status, suppressed] of [
+    ["planned", true],
+    ["wip", true],
+    ["blocked", true],
+    ["done", false],
+    ["abandoned", false],
+  ] as const) {
+    it(`owns ${status} task-wait disposition in derivePredicates and claim`, async () => {
+      const fixture = await buildFixture();
+      try {
+        const claim = await claimInitial(fixture, `task-wait-${status}`, OWNER_A, null);
+        const taskId = await publishOneTask(
+          fixture,
+          claim,
+          `task-wait-${status}-publish`,
+        );
+        await pauseForTasks(fixture, claim, `task-wait-${status}-pause`, [taskId]);
+        await fixture.setTaskStatus(taskId, status);
+        const predicates = derivePredicates(fixture.store);
+        expect(predicates.pPlan.items.includes("G1")).toBe(!suppressed);
+        const resumed = await fixture.lifecycle.claimPlan({
+          goalId: "G1",
+          purpose: "initial",
+          claimRequestId: `task-resume-${status}`,
+          ownerFenceToken: OWNER_B,
+          expectedGeneration: 1,
+          ...PROVENANCE,
+        });
+        if (suppressed) {
+          expect(resumed).toEqual({
+            ok: false,
+            conflict: {
+              code: "task-wait-active",
+              goalId: "G1",
+              taskIds: [taskId],
+            },
+          });
+        } else {
+          expect(resumed.ok).toBe(true);
+          if (!resumed.ok) throw new Error("expected successful claim");
+          expect(resumed.acknowledgement.waitingTasks).toEqual([]);
+          expect((await fixture.observe("G1")).waitingTasks).toEqual([]);
+        }
+      } finally {
+        await fixture.dispose();
+      }
+    });
+  }
+
+  for (const disposition of ["missing", "archived"] as const) {
+    it(`re-enables planning for a ${disposition} waited task`, async () => {
+      const fixture = await buildFixture();
+      try {
+        const claim = await claimInitial(
+          fixture,
+          `task-${disposition}-claim`,
+          OWNER_A,
+          null,
+        );
+        const taskId = await publishOneTask(
+          fixture,
+          claim,
+          `task-${disposition}-publish`,
+        );
+        await pauseForTasks(fixture, claim, `task-${disposition}-pause`, [taskId]);
+        const state = internals(fixture.store);
+        const tasks = state.ledgers.get(TASKS_LEDGER);
+        if (tasks === undefined) throw new Error("tasks ledger missing");
+        let removed: Item | undefined;
+        for (const milestone of tasks.milestones) {
+          const index = milestone.items.findIndex(({ id }) => id === taskId);
+          if (index >= 0) [removed] = milestone.items.splice(index, 1);
+        }
+        if (removed === undefined) throw new Error("task removal failed");
+        if (disposition === "archived") {
+          state.archives.set(`${TASKS_LEDGER}/M999`, {
+            id: "M999",
+            title: "",
+            description: "",
+            items: [removed],
+          });
+          expect(
+            await fixture.store.fetchArchive(TASKS_LEDGER, "M999"),
+          ).toMatchObject({ kind: "group" });
+        }
+        expect(derivePredicates(fixture.store).pPlan.items).toContain("G1");
+        expect(
+          (
+            await fixture.lifecycle.claimPlan({
+              goalId: "G1",
+              purpose: "initial",
+              claimRequestId: `task-${disposition}-resume`,
+              ownerFenceToken: OWNER_B,
+              expectedGeneration: 1,
+              ...PROVENANCE,
+            })
+          ).ok,
+        ).toBe(true);
+      } finally {
+        await fixture.dispose();
+      }
+    });
+  }
+
+  it("clears waitingTasks on questions/researches/abandon releases and pins empty on claim", async () => {
+    const fixture = await buildFixture();
+    try {
+      const first = await claimInitial(fixture, "clear-tasks-1", OWNER_A, null);
+      const taskId = await publishOneTask(fixture, first, "clear-tasks-publish");
+      await pauseForTasks(fixture, first, "clear-tasks-pause", [taskId]);
+      expect((await fixture.observe("G1")).waitingTasks).toEqual([taskId]);
+
+      await fixture.setTaskStatus(taskId, "done");
+      const second = await claimInitial(fixture, "clear-tasks-2", OWNER_B, 1);
+      expect(second.waitingTasks).toEqual([]);
+      expect((await fixture.observe("G1")).waitingTasks).toEqual([]);
+
+      const thirdTask = await publishOneTask(fixture, second, "clear-tasks-publish-2");
+      await pauseForTasks(fixture, second, "clear-tasks-pause-2", [thirdTask]);
+      await fixture.setTaskStatus(thirdTask, "done");
+      const third = await claimInitial(fixture, "clear-tasks-3", OWNER_A, 2);
+      const researchPause = await fixture.lifecycle.releasePlanClaim({
+        kind: "pause",
+        goalId: "G1",
+        claimId: third.claimId,
+        generation: third.generation,
+        operationId: "clear-via-research",
+        ownerFenceToken: third.ownerFenceToken,
+        ...PROVENANCE,
+        effect: {
+          kind: "researches",
+          researches: [{ key: "probe", question: "still research?" }],
+        },
+      });
+      if (!researchPause.ok || researchPause.acknowledgement.kind !== "researches") {
+        throw new Error("research pause failed");
+      }
+      expect(researchPause.acknowledgement.tasks).toEqual([]);
+      expect(researchPause.acknowledgement.waitingTasks).toEqual([]);
+      expect((await fixture.observe("G1")).waitingTasks).toEqual([]);
+
+      const researchId = researchPause.acknowledgement.waitingResearches[0]!;
+      await fixture.setResearchStatus(researchId, "concluded");
+      const fourth = await claimInitial(fixture, "clear-tasks-4", OWNER_B, 3);
+      const fourthTask = await publishOneTask(fixture, fourth, "clear-tasks-publish-3");
+      await pauseForTasks(fixture, fourth, "clear-tasks-pause-3", [fourthTask]);
+      await fixture.setTaskStatus(fourthTask, "done");
+      const fifth = await claimInitial(fixture, "clear-tasks-5", OWNER_A, 4);
+      const abandoned = await fixture.lifecycle.releasePlanClaim({
+        kind: "abandon",
+        goalId: "G1",
+        claimId: fifth.claimId,
+        generation: fifth.generation,
+        operationId: "clear-via-abandon",
+        reason: "clear waits",
+        ...PROVENANCE,
+      });
+      if (!abandoned.ok || abandoned.acknowledgement.kind !== "abandon") {
+        throw new Error("abandon failed");
+      }
+      expect(abandoned.acknowledgement.tasks).toEqual([]);
+      expect(abandoned.acknowledgement.waitingTasks).toEqual([]);
+      expect((await fixture.observe("G1")).waitingTasks).toEqual([]);
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it("keeps task-wait status interpretation structurally single-owned", async () => {
+    const [predicateSource, lifecycleSource] = await Promise.all([
+      readFile(new URL("../src/store/predicates.ts", import.meta.url), "utf8"),
+      readFile(
+        new URL("../src/store/inMemoryPlanLifecycle.ts", import.meta.url),
+        "utf8",
+      ),
+    ]);
+    expect(
+      predicateSource.match(
+        /const activeStatuses = new Set\(\["planned", "wip", "blocked"\]\)/g,
+      ),
+    ).toHaveLength(1);
+    expect(lifecycleSource).toContain("activePlanTaskWaits");
+    // Claim must not re-implement the wait table inline; only the helper owns it.
+    expect(lifecycleSource).not.toMatch(
+      /waitingTasks.*status === "planned"|status === "planned".*waitingTasks/,
+    );
+    expect(lifecycleSource).not.toMatch(
+      /PLAN_WAITING_TASKS_FIELD[\s\S]{0,200}status === "wip"/,
+    );
   });
 });

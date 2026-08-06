@@ -31,7 +31,8 @@
  *    `planning`; in BOTH cases the goal must carry NO active plan claim (G99 /
  *    D134: an active claim means a planner already owns the goal's planning
  *    round — the goal is reported on the informational `planBusy` companion
- *    instead) AND NO active research wait (T848's `activePlanResearchWaits`).
+ *    instead) AND NO active research wait (T848's `activePlanResearchWaits`)
+ *    AND NO active task wait (T1267's `activePlanTaskWaits`).
  *  - P-research (G80/M246, Q265/Q261) — a `researches` item in an ACTIONABLE
  *    status (open/wip/inconclusive, mirroring DEFECT_ACTIONABLE_STATUSES: an
  *    answered question can revive an inconclusive research) that is NOT gated
@@ -113,6 +114,7 @@ import {
   PLAN_GENERATION_FIELD,
   PlanPublishedManifestSchema,
   PLAN_WAITING_RESEARCHES_FIELD,
+  PLAN_WAITING_TASKS_FIELD,
 } from "../planLifecycle.js";
 import { buildPrefixRegistry, canonicalizeRef, parseRef } from "../refs.js";
 import type { LedgerStore } from "./LedgerStore.js";
@@ -262,6 +264,32 @@ export function activePlanResearchWaits(
     .filter((id) => {
       const research = byId.get(id);
       return research !== undefined && activeStatuses.has(research.status);
+    });
+}
+
+/**
+ * The single owner of task-wait status interpretation (T1267 / D192).
+ * planned/wip/blocked keep the wait active; done/abandoned satisfy it;
+ * missing and archived tasks are absent from `activeTasks`, so they resume
+ * planning the same way a deleted research wait does.
+ */
+export function activePlanTaskWaits(
+  goal: Item,
+  activeTasks: readonly Item[],
+): string[] {
+  const raw = goal.fields[PLAN_WAITING_TASKS_FIELD];
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  const byId = new Map(activeTasks.map((task) => [task.id, task]));
+  const activeStatuses = new Set(["planned", "wip", "blocked"]);
+  return raw
+    .map((ref) =>
+      ref.startsWith(`${TASKS_LEDGER}:`)
+        ? ref.slice(TASKS_LEDGER.length + 1)
+        : ref,
+    )
+    .filter((id) => {
+      const task = byId.get(id);
+      return task !== undefined && activeStatuses.has(task.status);
     });
 }
 
@@ -530,6 +558,7 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
       continue;
     }
     if (activePlanResearchWaits(g, researches).length > 0) continue;
+    if (activePlanTaskWaits(g, tasks).length > 0) continue;
     if (g.status === GOAL_PLANNING_STATUS) {
       planItems.push(g.id);
       continue;

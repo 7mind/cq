@@ -276,9 +276,12 @@ const RELEASE_DESCRIPTION =
   "Release the claim, either as an owner pause or as a tokenless exact " +
   "recovery abandonment. kind=pause requires the private ownerFenceToken and " +
   "carries the effect that motivates the pause: questions (goal returns to " +
-  "clarifying) or researches (goal stays in planning and its waitingResearches " +
+  "clarifying), researches (goal stays in planning and its waitingResearches " +
   "set is REPLACED by exactly the created ids, suppressing planning until each " +
-  "concludes/is abandoned). kind=abandon takes NO token — the exact public " +
+  "concludes/is abandoned), or tasks (goal stays in planning and its waitingTasks " +
+  "set is REPLACED by the resolved bare task ids of existing active tasks, " +
+  "suppressing planning until each is done/abandoned/missing/archived). " +
+  "kind=abandon takes NO token — the exact public " +
   "claimId + generation fence a stranded-owner recovery without any clock or " +
   "lease expiry — and therefore loses as soon as ownership moves on. Same " +
   "operationId idempotency scoping as publish; optional reviewDefects are " +
