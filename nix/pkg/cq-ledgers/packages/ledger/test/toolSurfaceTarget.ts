@@ -76,6 +76,60 @@ const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
       "Return the per-project MCP usage counters (I20/G155): per-endpoint { name, callCount, bytesIn, bytesOut } sorted by name, plus totals. Read-only telemetry.",
     inputSchema: { type: "object", properties: {} },
   },
+  {
+    name: "worktree_manage",
+    description:
+      "Prepare or release ONE managed implement-flow worktree. operation=prepare mints or resumes a UUIDv7-named tree; dependency closure is derived from taskId and the ledger. operation=release performs guarded teardown. Returns a typed acknowledgement.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        operation: { type: "string", enum: ["prepare", "release"] },
+        taskId: { type: "string", pattern: "^T\\d+$" },
+        baseCommit: { type: "string", pattern: "^[0-9a-f]{40}$" },
+        handle: {
+          type: "object",
+          properties: {
+            kind: { type: "string", const: "cq-managed-worktree-handle" },
+            version: { type: "number", const: 1 },
+            token: { type: "string", minLength: 1 },
+            worktreeId: { type: "string", minLength: 1 },
+            taskId: { type: "string", pattern: "^T\\d+$" },
+            branch: { type: "string", minLength: 1 },
+            repositoryRoot: { type: "string", minLength: 1 },
+            absolutePath: { type: "string", minLength: 1 },
+            baseCommit: { type: "string", pattern: "^[0-9a-f]{40}$" },
+            createdAt: { type: "string", minLength: 1 },
+            nonce: { type: "string", minLength: 1 },
+          },
+          required: [
+            "kind",
+            "version",
+            "token",
+            "worktreeId",
+            "taskId",
+            "branch",
+            "repositoryRoot",
+            "absolutePath",
+            "baseCommit",
+            "createdAt",
+            "nonce",
+          ],
+          additionalProperties: false,
+        },
+        allowResumeRequired: { type: "boolean" },
+        branch: { type: "string", minLength: 1 },
+        priorResultCommit: {
+          anyOf: [{ type: "string", pattern: "^[0-9a-f]{40}$" }, { type: "null" }],
+        },
+        integrationHead: { type: "string", pattern: "^[0-9a-f]{40}$" },
+        terminalDisposition: { type: "string", enum: ["done", "abandoned"] },
+        resultCommit: { anyOf: [{ type: "string", pattern: "^[0-9a-f]{40}$" }, { type: "null" }] },
+        deleteBranch: { type: "boolean" },
+      },
+      required: ["operation"],
+      additionalProperties: false,
+    },
+  },
 ]);
 
 const COMPACT_PROJECTION =
@@ -540,15 +594,11 @@ function evidenceRuleFor(
 }
 
 function repositoryMigrationCandidatePaths(): string[] {
-  return execFileSync(
-    "git",
-    ["ls-files", "--cached", "-z"],
-    {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-      maxBuffer: 16 * 1024 * 1024,
-    },
-  )
+  return execFileSync("git", ["ls-files", "--cached", "-z"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+  })
     .split("\0")
     .filter((path) => path.length > 0)
     .sort();
@@ -587,8 +637,7 @@ async function migrationMentions(toolName: string) {
     categorized[migrationCategory(path)].push(path);
   }
   return {
-    scanScope:
-      "Every git-tracked regular repository file, including root and hidden guidance.",
+    scanScope: "Every git-tracked regular repository file, including root and hidden guidance.",
     matchedPaths: matches,
     historicalEvidence,
     targetEvidence,

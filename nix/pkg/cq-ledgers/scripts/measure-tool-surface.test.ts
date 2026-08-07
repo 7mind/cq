@@ -111,7 +111,9 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // sentence in wireResponseContract.ts documenting both projections).
     // 886 -> 891 under T1267: release_plan_claim acknowledgement docs gained
     // tasks/waitingTasks fields (+5 G93-attributable response tokens).
-    maximumRemainingG93AttributableTokens: 891,
+    // 891 -> 946 under T1306: worktree_manage added (+55 G93-attributable
+    // response/description tokens on full-parent profiles).
+    maximumRemainingG93AttributableTokens: 946,
     corpusMedianResponseSavingTokens: 1461,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,

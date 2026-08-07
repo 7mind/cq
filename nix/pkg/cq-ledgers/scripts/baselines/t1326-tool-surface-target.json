@@ -1114,6 +1114,7 @@
       "finalize_plan",
       "fts_search",
       "get_config",
+      "get_usage_stats",
       "list_milestone_items",
       "list_projects",
       "prepare_dispatch",
@@ -1126,9 +1127,9 @@
       "store_result",
       "unarchive_item",
       "update_item",
-      "get_usage_stats"
+      "worktree_manage"
     ],
-    "publicToolCount": 30,
+    "publicToolCount": 31,
     "removedPublicTools": [
       "create_milestone",
       "update_milestone",
@@ -1232,7 +1233,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1264,7 +1266,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ]
       },
       "begin": {
@@ -1298,7 +1301,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1330,7 +1334,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ]
       },
       "implement-conflict-resolver": {
@@ -1398,7 +1403,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1430,7 +1436,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ]
       },
       "implement/start": {
@@ -1464,7 +1471,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1496,7 +1504,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ]
       },
       "investigate": {
@@ -1530,7 +1539,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1562,7 +1572,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ]
       },
       "investigate-explorer": {
@@ -1616,7 +1627,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1648,7 +1660,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ]
       },
       "plan": {
@@ -1682,7 +1695,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1714,7 +1728,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ]
       },
       "plan-advance": {
@@ -1786,7 +1801,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1818,7 +1834,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ]
       },
       "plan/follow-up": {
@@ -1852,7 +1869,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1884,7 +1902,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ]
       },
       "planners": {
@@ -1926,7 +1945,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1958,7 +1978,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ]
       },
       "research-experimenter": {
@@ -2012,7 +2033,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2044,7 +2066,8 @@
           "claim_plan",
           "publish_plan_draft",
           "release_plan_claim",
-          "finalize_plan"
+          "finalize_plan",
+          "worktree_manage"
         ]
       },
       "reviewers": {
