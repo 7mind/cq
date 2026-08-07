@@ -262,6 +262,8 @@ let
       "$out/cq-subagent-dispatch.ts"
     cp ${../pkg/pi-extensions/cq-subagent-process-lifecycle.ts} \
       "$out/cq-subagent-process-lifecycle.ts"
+    cp ${../pkg/pi-extensions/cq-subagent-native-session.ts} \
+      "$out/cq-subagent-native-session.ts"
     ln -s ${../pkg/cq-ledgers/packages/process-control} \
       "$out/node_modules/@cq/process-control"
     ${lib.optionalString pkgs.stdenv.isDarwin ''

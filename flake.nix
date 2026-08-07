@@ -1261,7 +1261,10 @@ EOF
                 ${piPromptRoot}/catalog.json
               ${verifySurfaceAttestation "pi" piPromptRoot}
               test -f ${piPromptRootTest.dispatchExtension}
+              test -f ${piPromptRootTest.dispatchExtensionDir}/cq-subagent-native-session.ts
               test -e ${piPromptRootTest.dispatchExtensionDir}/node_modules/@cq/process-control/src/index.ts
+              ${pkgs.bun}/bin/bun -e \
+                'await import(${builtins.toJSON "${piPromptRootTest.dispatchExtensionDir}/cq-subagent-native-session.ts"})'
               ${pkgs.bun}/bin/bun -e \
                 'await import(${builtins.toJSON "${piPromptRootTest.dispatchExtensionDir}/cq-subagent-process-lifecycle.ts"})'
               ${pkgs.ripgrep}/bin/rg -q 'from "@cq/process-control"' \
