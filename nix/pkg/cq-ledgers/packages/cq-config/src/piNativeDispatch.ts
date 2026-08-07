@@ -25,12 +25,20 @@ import {
   type NativeAdapterQualification,
   type PiNativeQualificationInput,
 } from "./nativeDispatchQualification.js";
+import {
+  assertPiNativeWorktreeBindingIntact,
+  preflightPiNativeWorktree,
+  type PiNativeManagedWorktreeHandle,
+  type PiNativeWorktreeBinding,
+} from "./piNativeWorktree.js";
 
 export interface PiNativeSessionLaunchRequest {
   readonly cwd: string;
   readonly prompt: string;
   readonly systemPrompt?: string;
   readonly model?: string;
+  readonly provider?: string;
+  readonly effort?: string;
   readonly signal?: AbortSignal;
 }
 
@@ -58,6 +66,8 @@ export interface PiNativeAdapterBinding {
   readonly prompt: string;
   readonly systemPrompt?: string;
   readonly model?: string;
+  readonly effort?: string;
+  readonly provider?: string;
   readonly correlation: {
     readonly childId: string;
     readonly runId: string;
@@ -65,6 +75,19 @@ export interface PiNativeAdapterBinding {
   readonly now: () => string;
   readonly escapeCanary?: EscapeCanaryObservation;
   readonly signal?: AbortSignal;
+  /**
+   * Optional worktree_manage bind evidence. When any of path/handle/base/HEAD
+   * is supplied, the launch path preflights integrity (mirror of
+   * claudeNativeWorktree) and fails closed on mutation.
+   */
+  readonly worktree?: {
+    readonly absolutePath?: string;
+    readonly baseCommit?: string;
+    readonly headCommit?: string;
+    readonly handle?: PiNativeManagedWorktreeHandle;
+    /** Prior bound snapshot used to detect post-bind mutation. */
+    readonly expectedBinding?: PiNativeWorktreeBinding;
+  };
 }
 
 export type PiNativeAdapterBindingResolver = (
@@ -98,6 +121,83 @@ export function createPiNativeDispatchAdapter(
 ): DispatchTransportAdapter {
   const launch: DispatchAdapterLauncher = async (context) => {
     const binding = await options.resolve(context);
+
+    // worktree_manage bind preflight (mirror claudeNativeWorktree): when the
+    // caller supplies path/handle/base/HEAD, fail closed on any integrity miss
+    // or post-bind mutation before opening the native session.
+    if (binding.worktree !== undefined) {
+      const wt = binding.worktree;
+      const hasPreflightInput =
+        wt.absolutePath !== undefined ||
+        wt.baseCommit !== undefined ||
+        wt.headCommit !== undefined ||
+        wt.handle !== undefined;
+      if (hasPreflightInput) {
+        if (
+          wt.absolutePath === undefined ||
+          wt.baseCommit === undefined ||
+          wt.headCommit === undefined
+        ) {
+          return {
+            outcome: "aborted",
+            reason: "protocol-violation",
+            details: {
+              violation: "pi-native-worktree-preflight-incomplete",
+              detail:
+                "Pi native worktree bind requires absolutePath + baseCommit + headCommit together",
+            },
+          };
+        }
+        const preflight = preflightPiNativeWorktree({
+          absolutePath: wt.absolutePath,
+          baseCommit: wt.baseCommit,
+          headCommit: wt.headCommit,
+          ...(wt.handle === undefined ? {} : { handle: wt.handle }),
+        });
+        if (preflight.status === "refused") {
+          return {
+            outcome: "aborted",
+            reason: "protocol-violation",
+            details: {
+              violation: "pi-native-worktree-preflight-refused",
+              reason: preflight.reason,
+              detail: preflight.detail,
+            },
+          };
+        }
+        if (preflight.absolutePath !== binding.cwd) {
+          return {
+            outcome: "aborted",
+            reason: "protocol-violation",
+            details: {
+              violation: "pi-native-worktree-cwd-mismatch",
+              cwd: binding.cwd,
+              absolutePath: preflight.absolutePath,
+            },
+          };
+        }
+      }
+      if (wt.expectedBinding !== undefined) {
+        try {
+          assertPiNativeWorktreeBindingIntact(wt.expectedBinding, {
+            ...(wt.absolutePath === undefined ? {} : { absolutePath: wt.absolutePath }),
+            ...(wt.baseCommit === undefined ? {} : { baseCommit: wt.baseCommit }),
+            ...(wt.headCommit === undefined ? {} : { headCommit: wt.headCommit }),
+            ...(wt.handle === undefined ? {} : { handle: wt.handle }),
+          });
+        } catch (error) {
+          return {
+            outcome: "aborted",
+            reason: "protocol-violation",
+            details: {
+              violation: "pi-native-worktree-binding-mutated",
+              detail: error instanceof Error ? error.message : String(error),
+            },
+          };
+        }
+      }
+    }
+
     const qualification =
       options.qualification ??
       qualifyPiNativeAdapter({
@@ -111,6 +211,8 @@ export function createPiNativeDispatchAdapter(
       prompt: binding.prompt,
       ...(binding.systemPrompt === undefined ? {} : { systemPrompt: binding.systemPrompt }),
       ...(binding.model === undefined ? {} : { model: binding.model }),
+      ...(binding.effort === undefined ? {} : { effort: binding.effort }),
+      ...(binding.provider === undefined ? {} : { provider: binding.provider }),
       ...(binding.signal === undefined ? {} : { signal: binding.signal }),
     });
 

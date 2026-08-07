@@ -957,3 +957,118 @@ describe("releaseManagedWorktree", () => {
   });
 });
 
+/**
+ * T1310 — end-to-end local gates for the managed worktree prepare→dispatch→release
+ * state machine. Orchestrator invariants:
+ *   1. prepare precedes wip/dispatch (no live tree ⇒ no dispatch authority);
+ *   2. release is guarded (dirty / open-WIP / non-terminal refuse; clean terminal ok).
+ */
+describe("T1310 managed worktree prepare→dispatch→release state machine [BA]", () => {
+  type OrchestratorPhase = "idle" | "prepared" | "wip" | "terminal" | "released";
+
+  function advance(phase: OrchestratorPhase, event: "prepare" | "wip" | "terminal" | "release"): OrchestratorPhase | "refused" {
+    // Local gate table — mirrors implement/advance ordering.
+    if (event === "prepare") {
+      return phase === "idle" || phase === "prepared" ? "prepared" : "refused";
+    }
+    if (event === "wip") {
+      return phase === "prepared" || phase === "wip" ? "wip" : "refused";
+    }
+    if (event === "terminal") {
+      return phase === "wip" || phase === "terminal" ? "terminal" : "refused";
+    }
+    // release
+    return phase === "terminal" ? "released" : "refused";
+  }
+
+  it("prepare precedes wip; release only after terminal", () => {
+    expect(advance("idle", "wip")).toBe("refused");
+    expect(advance("idle", "release")).toBe("refused");
+    expect(advance("idle", "prepare")).toBe("prepared");
+    expect(advance("prepared", "wip")).toBe("wip");
+    expect(advance("wip", "release")).toBe("refused"); // guarded: not terminal
+    expect(advance("wip", "terminal")).toBe("terminal");
+    expect(advance("terminal", "release")).toBe("released");
+    expect(advance("released", "prepare")).toBe("refused");
+  });
+
+  it("e2e: prepare → wip marker → guarded release refuse → clean terminal release", async () => {
+    const repo = await seedRepository();
+    const install = recordingInstall();
+    const deps = {
+      stateDir: repo.stateDir,
+      cacheRoot: repo.cacheRoot,
+      install: install.runner,
+      bunWorkspaceRoot: repo.workspace,
+    };
+
+    // No live tree before prepare — dispatch authority absent.
+    expect(await listManagedLiveWorktrees(repo.cwd, "T1310", repo.stateDir)).toHaveLength(0);
+
+    const prepared = await prepareManagedWorktree(
+      { repositoryRoot: repo.cwd, taskId: "T1310", baseCommit: repo.base },
+      deps,
+    );
+    expect(prepared.status).toBe("prepared");
+    if (prepared.status !== "prepared") return;
+    expect(await listManagedLiveWorktrees(repo.cwd, "T1310", repo.stateDir)).toHaveLength(1);
+
+    // Simulate orchestrator wip/dispatch: write a WIP partial with open checkpoint.
+    const wipBody = serializeWipArtifact({
+      id: "T1310",
+      role: "implement-worker",
+      baseCommit: repo.base,
+      startedAt: "2026-08-07T00:00:00.000Z",
+      checkpoints: [{ name: "implementation", status: "todo", body: "in flight\n" }],
+      complete: false,
+      openCheckpoints: ["implementation"],
+    });
+    await fs.writeFile(path.join(prepared.evidence.absolutePath, "WIP-T1310.md"), wipBody);
+    await git(prepared.evidence.absolutePath, ["add", "WIP-T1310.md"]);
+    await git(prepared.evidence.absolutePath, ["commit", "-q", "-m", "wip partial"]);
+
+    // Release while wip is open MUST refuse (guarded).
+    const earlyRelease = await releaseManagedWorktree(
+      {
+        handle: prepared.handle,
+        terminalDisposition: "done",
+        resultCommit: await git(prepared.evidence.absolutePath, ["rev-parse", "HEAD"]),
+      },
+      deps,
+    );
+    expect(earlyRelease.status).toBe("refused");
+    if (earlyRelease.status === "refused") {
+      expect(earlyRelease.reason).toBe("wip-open");
+    }
+    expect(await listManagedLiveWorktrees(repo.cwd, "T1310", repo.stateDir)).toHaveLength(1);
+
+    // Complete the WIP (close checkpoints) and add a final commit — terminal.
+    const doneBody = serializeWipArtifact({
+      id: "T1310",
+      role: "implement-worker",
+      baseCommit: repo.base,
+      startedAt: "2026-08-07T00:00:00.000Z",
+      checkpoints: [{ name: "implementation", status: "done", body: "done\n" }],
+      complete: true,
+      openCheckpoints: [],
+    });
+    await fs.writeFile(path.join(prepared.evidence.absolutePath, "WIP-T1310.md"), doneBody);
+    await fs.writeFile(path.join(prepared.evidence.absolutePath, "done.txt"), "ok\n");
+    await git(prepared.evidence.absolutePath, ["add", "."]);
+    await git(prepared.evidence.absolutePath, ["commit", "-q", "-m", "complete"]);
+    const tip = await git(prepared.evidence.absolutePath, ["rev-parse", "HEAD"]);
+
+    const released = await releaseManagedWorktree(
+      {
+        handle: prepared.handle,
+        terminalDisposition: "done",
+        resultCommit: tip,
+        deleteBranch: true,
+      },
+      deps,
+    );
+    expect(released.status).toBe("released");
+    expect(await listManagedLiveWorktrees(repo.cwd, "T1310", repo.stateDir)).toHaveLength(0);
+  });
+});
+

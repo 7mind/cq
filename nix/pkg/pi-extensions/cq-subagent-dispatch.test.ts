@@ -47,9 +47,10 @@ describe("Pi subagent JSON output [BA]", () => {
       "utf8",
     );
     // Process seam remains for forceShellout / cross-harness (T1699).
-    expect(source).toContain("await launchPiChild(");
+    expect(source).toContain("launchPiChildSeam(");
     // Same-harness forceShellout=false uses createAgentSession via native session.
-    expect(source).toContain("runPiNativeSession");
+    expect(source).toContain("runPiNativeDelivery");
+    expect(source).toContain("executePiChildDeliveryBranch");
     expect(source).toContain("PI_NATIVE_SESSION_SEAM");
     expect(source).not.toContain("proc.killed");
     expect(source).not.toContain("proc.kill(");

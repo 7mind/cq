@@ -24,6 +24,7 @@ export const NATIVE_ADAPTER_IDS = [
 export type NativeQualificationRefusalReason =
   | "path-scoped-confinement-unproven"
   | "escape-canary-failed"
+  | "escape-canary-required"
   | "missing-cwd-binding"
   | "cwd-not-absolute"
   | "provider-probe-unavailable";
@@ -86,10 +87,10 @@ export interface PiNativeQualificationInput {
   /** Manager-returned absolute worktree path bound as createAgentSession cwd. */
   readonly cwd: string;
   /**
-   * Optional escape-canary observation. When omitted, qualification still
-   * requires an absolute cwd and records structural placement evidence from
-   * createAgentSession({cwd}) tool binding. When present and `escaped`,
-   * qualification fails closed.
+   * Required escape-canary observation for any isolation claim. Omission fails
+   * closed (`escape-canary-required`); `escaped: true` fails closed
+   * (`escape-canary-failed`). Qualification does NOT close D160 — residual
+   * risk and open questions remain until a separate cutover decision.
    */
   readonly escapeCanary?: EscapeCanaryObservation;
   /**
@@ -135,8 +136,11 @@ export function qualifyClaudeNativeAdapter(): NativeAdapterQualification {
 
 /**
  * Pi same-harness native via createAgentSession({ cwd }) (or equivalent) bound
- * to the manager-returned worktree path. Qualifies only when cwd is absolute
- * and no escape canary observes an outside write (D160).
+ * to the manager-returned worktree path. Qualifies only when cwd is absolute,
+ * an escape canary is supplied and does not observe an outside write.
+ *
+ * IMPORTANT: a qualified result does NOT close D160 (`defectClosed` stays
+ * null). Structural placement evidence is necessary but not a cutover claim.
  */
 export function qualifyPiNativeAdapter(
   input: PiNativeQualificationInput,
@@ -182,7 +186,22 @@ export function qualifyPiNativeAdapter(
     });
   }
 
-  if (input.escapeCanary?.escaped === true) {
+  if (input.escapeCanary === undefined) {
+    return Object.freeze({
+      status: "incompatible" as const,
+      adapterId: "pi:native" as const,
+      targetHarness: "pi" as const,
+      transport: "native" as const,
+      reason: "escape-canary-required" as const,
+      confinement: "unproven" as const,
+      defect: "D160" as const,
+      detail:
+        "Pi native isolation claims require an escape-canary observation; " +
+        "cwd-binding alone is insufficient and does not close D160.",
+    });
+  }
+
+  if (input.escapeCanary.escaped === true) {
     return Object.freeze({
       status: "incompatible" as const,
       adapterId: "pi:native" as const,
@@ -201,15 +220,13 @@ export function qualifyPiNativeAdapter(
     targetHarness: "pi" as const,
     transport: "native" as const,
     confinement: "structural" as const,
-    defectClosed: "D160" as const,
+    // D160 stays OPEN: qualification is placement evidence, not cutover/closure.
+    defectClosed: null,
     evidence:
       "createAgentSession({cwd}) (or equivalent) binds built-in tools to the manager-returned " +
       `absolute path ${JSON.stringify(input.cwd)}; same-harness forceShellout=false must not ` +
-      "use launchPiChild. Escape canary " +
-      (input.escapeCanary === undefined
-        ? "not supplied — placement confinement accepted on cwd-binding evidence alone"
-        : `passed (${input.escapeCanary.evidence})`) +
-      ".",
+      "use launchPiChild. Escape canary passed " +
+      `(${input.escapeCanary.evidence}). D160 remains open — not a cutover-ready claim.`,
   });
 }
 

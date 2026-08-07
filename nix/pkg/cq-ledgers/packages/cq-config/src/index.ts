@@ -140,6 +140,26 @@ export {
   CLAUDE_NATIVE_WORKTREE_PREPARE_SEAM,
 } from "./claudeNativeWorktree.js";
 export type {
+  PiNativeManagedWorktreeHandle,
+  PiNativePreparedEvidence,
+  PiNativeWorktreePrepareResult,
+  PiNativeWorktreeReleaseResult,
+  PiNativeWorktreePreflightRequest,
+  PiNativeWorktreePreflightResult,
+  PiNativeWorktreeBinding,
+  PiNativeWorktreeBindResult,
+  PiNativeWorktreeManagePort,
+} from "./piNativeWorktree.js";
+export {
+  PiNativeWorktreeBindingError,
+  preflightPiNativeWorktree,
+  bindPiNativeWorktree,
+  releasePiNativeWorktree,
+  assertPiNativeWorktreeBindingIntact,
+  PI_NATIVE_WORKTREE_RELEASE_SEAM,
+  PI_NATIVE_WORKTREE_PREPARE_SEAM,
+} from "./piNativeWorktree.js";
+export type {
   PiNativeSessionLaunchRequest,
   PiNativeSessionLaunchResult,
   PiNativeSessionLauncher,

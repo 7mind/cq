@@ -5,13 +5,17 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { launchPiChild } from "./cq-subagent-process-lifecycle.ts";
+import {
+  launchPiChild,
+  type LaunchedPiChild,
+} from "./cq-subagent-process-lifecycle.ts";
 import {
   PI_NATIVE_SESSION_SEAM,
   PI_PROCESS_SESSION_SEAM,
   createProductionPiNativeSessionDependencies,
   runPiNativeSession,
   type PiNativeSessionDependencies,
+  type PiNativeSessionResult,
 } from "./cq-subagent-native-session.ts";
 
 // cq subagent-dispatch extension (T224).
@@ -80,6 +84,31 @@ export function setPiNativeSessionDependenciesForTests(
   piNativeSessionDependenciesOverride = dependencies;
 }
 
+/** Production launchPiChild; tests may override to spy / refuse. */
+type LaunchPiChildFn = (
+  argv: readonly string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  signal: AbortSignal | undefined,
+) => Promise<LaunchedPiChild>;
+
+let launchPiChildOverride: LaunchPiChildFn | null = null;
+
+/** Test-only: spy or stub the process-seam launcher. */
+export function setLaunchPiChildForTests(fn: LaunchPiChildFn | null): void {
+  launchPiChildOverride = fn;
+}
+
+function launchPiChildSeam(
+  argv: readonly string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  signal: AbortSignal | undefined,
+): Promise<LaunchedPiChild> {
+  const impl = launchPiChildOverride ?? launchPiChild;
+  return impl(argv, cwd, env, signal);
+}
+
 /**
  * T1699: forceShellout from CQ_DISPATCH_FORCE_SHELLOUT env ("true"/"1"),
  * default false — mirrors @cq/config [dispatch].forceShellout.
@@ -101,6 +130,71 @@ export function selectPiChildDeliverySeam(input: {
     return PI_NATIVE_SESSION_SEAM;
   }
   return PI_PROCESS_SESSION_SEAM;
+}
+
+/**
+ * Runtime delivery branch used by dispatch_agent execute. Extracted so tests
+ * can drive the REAL branch (not only pure select) and spy launchPiChild.
+ */
+export async function executePiChildDeliveryBranch<TNative, TProcess>(input: {
+  readonly activeHarness: string;
+  readonly forceShellout: boolean;
+  readonly native: () => Promise<TNative>;
+  readonly process: () => Promise<TProcess>;
+}): Promise<
+  | { readonly seam: typeof PI_NATIVE_SESSION_SEAM; readonly result: TNative }
+  | { readonly seam: typeof PI_PROCESS_SESSION_SEAM; readonly result: TProcess }
+> {
+  const seam = selectPiChildDeliverySeam({
+    activeHarness: input.activeHarness,
+    forceShellout: input.forceShellout,
+  });
+  if (seam === PI_NATIVE_SESSION_SEAM) {
+    return { seam, result: await input.native() };
+  }
+  return { seam, result: await input.process() };
+}
+
+export interface PiNativeDeliveryRequest {
+  readonly cwd: string;
+  readonly prompt: string;
+  readonly systemPrompt?: string;
+  readonly model?: string | null;
+  readonly provider?: string | null;
+  readonly effort?: string | null;
+  readonly excludeTools?: readonly string[];
+  readonly signal?: AbortSignal;
+}
+
+/**
+ * Same-harness native delivery body (createAgentSession path). Shared by
+ * dispatch execute and topology-spy tests so the spy covers the real branch.
+ */
+export async function runPiNativeDelivery(
+  request: PiNativeDeliveryRequest,
+): Promise<PiNativeSessionResult> {
+  const nativeDeps =
+    piNativeSessionDependenciesOverride ??
+    (await createProductionPiNativeSessionDependencies());
+  const nativeResult = await runPiNativeSession(
+    {
+      cwd: request.cwd,
+      prompt: request.prompt,
+      ...(request.systemPrompt === undefined ? {} : { systemPrompt: request.systemPrompt }),
+      ...(request.model === undefined || request.model === null ? {} : { model: request.model }),
+      ...(request.provider === undefined || request.provider === null
+        ? {}
+        : { provider: request.provider }),
+      ...(request.effort === undefined || request.effort === null ? {} : { effort: request.effort }),
+      ...(request.excludeTools === undefined ? {} : { excludeTools: request.excludeTools }),
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+    },
+    nativeDeps,
+  );
+  if (nativeResult.usedLaunchPiChild !== false) {
+    throw new Error("Pi native session path must not call launchPiChild");
+  }
+  return nativeResult;
 }
 const LEDGER_DIRECT_TOOL_PREFIX = "ledger_";
 
@@ -1056,58 +1150,63 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
 
       try {
         // T1699 / D160: same-harness forceShellout=false uses createAgentSession
-        // ({cwd}) with the manager-returned path (ctx.cwd). Forced shellout and
-        // cross-harness remain on the registered process seam (launchPiChild).
+        // ({cwd, model, thinkingLevel}) with the manager-returned path (ctx.cwd).
+        // Forced shellout and cross-harness remain on the registered process seam
+        // (launchPiChild). Delivery goes through executePiChildDeliveryBranch so
+        // topology spies cover the real branch.
         const forceShellout = resolveForceShellout();
         const activeHarness = resolveActiveHarness();
-        const useNativeSession = activeHarness === "pi" && forceShellout === false;
 
-        if (useNativeSession) {
-          details.deliverySeam = PI_NATIVE_SESSION_SEAM;
-          details.nativeSessionCwd = ctx.cwd;
-          const nativeDeps =
-            piNativeSessionDependenciesOverride ??
-            (await createProductionPiNativeSessionDependencies());
-          const nativeResult = await runPiNativeSession(
-            {
+        const delivery = await executePiChildDeliveryBranch({
+          activeHarness,
+          forceShellout,
+          native: async () => {
+            details.deliverySeam = PI_NATIVE_SESSION_SEAM;
+            details.nativeSessionCwd = ctx.cwd;
+            return runPiNativeDelivery({
               cwd: ctx.cwd,
               prompt: args.task,
               systemPrompt: agent.systemPrompt,
-              ...(model === null ? {} : { model }),
+              model,
+              provider,
+              effort: emittedEffort,
               excludeTools,
               ...(signal === undefined ? {} : { signal }),
-            },
-            nativeDeps,
-          );
-          if (nativeResult.usedLaunchPiChild !== false) {
-            throw new Error("Pi native session path must not call launchPiChild");
-          }
+            });
+          },
+          process: async () => {
+            details.deliverySeam = PI_PROCESS_SESSION_SEAM;
+            details.nativeSessionCwd = null;
+            const invocation = getPiInvocation(childArgs);
+            // Strip the codex-inline companion env before spawning the child pi.
+            // When this extension runs under a codex orchestrator (openai-codex
+            // provider), the process carries CODEX_COMPANION_SESSION_ID /
+            // CLAUDE_PLUGIN_DATA; a child pi that inherits them BLOCKS INDEFINITELY
+            // on the companion handshake whenever the companion is down or busy —
+            // an output-less hang that makes the auto-driver's waitForIdle stall
+            // for the whole dispatch. This is the SAME hazard the pi:* shellout
+            // mitigates with `env -u … pi -p … </dev/null`; detaching stdin
+            // (stdio[0]="ignore", below) is the other half of that mitigation.
+            const childEnv = { ...process.env };
+            delete childEnv.CODEX_COMPANION_SESSION_ID;
+            delete childEnv.CLAUDE_PLUGIN_DATA;
+            return launchPiChildSeam(
+              [invocation.command, ...invocation.args],
+              ctx.cwd,
+              childEnv,
+              signal,
+            );
+          },
+        });
+
+        if (delivery.seam === PI_NATIVE_SESSION_SEAM) {
+          const nativeResult = delivery.result;
           details.exitCode = 0;
           details.stderr = "";
           return textResult(capOutput(nativeResult.finalText || "(no output)"), details);
         }
 
-        details.deliverySeam = PI_PROCESS_SESSION_SEAM;
-        details.nativeSessionCwd = null;
-        const invocation = getPiInvocation(childArgs);
-        // Strip the codex-inline companion env before spawning the child pi.
-        // When this extension runs under a codex orchestrator (openai-codex
-        // provider), the process carries CODEX_COMPANION_SESSION_ID /
-        // CLAUDE_PLUGIN_DATA; a child pi that inherits them BLOCKS INDEFINITELY
-        // on the companion handshake whenever the companion is down or busy —
-        // an output-less hang that makes the auto-driver's waitForIdle stall
-        // for the whole dispatch. This is the SAME hazard the pi:* shellout
-        // mitigates with `env -u … pi -p … </dev/null`; detaching stdin
-        // (stdio[0]="ignore", below) is the other half of that mitigation.
-        const childEnv = { ...process.env };
-        delete childEnv.CODEX_COMPANION_SESSION_ID;
-        delete childEnv.CLAUDE_PLUGIN_DATA;
-        const launched = await launchPiChild(
-          [invocation.command, ...invocation.args],
-          ctx.cwd,
-          childEnv,
-          signal,
-        );
+        const launched = delivery.result;
         const proc = launched.process;
         if (proc.stdout === null || proc.stderr === null) {
           throw new Error("registered Pi child launch returned no output pipes");

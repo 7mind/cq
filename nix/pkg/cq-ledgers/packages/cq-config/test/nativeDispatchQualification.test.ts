@@ -94,7 +94,7 @@ describe("T1699/D160 — Pi native qualification and delivery selection", () => 
     expect(PI_PROCESS_SESSION_SEAM).toBe("launchPiChild");
   });
 
-  test("pi:native qualifies with absolute manager cwd and closed D160", () => {
+  test("pi:native qualifies with absolute cwd + escape canary; D160 stays OPEN", () => {
     const cwd = "/tmp/project/.claude/worktrees/018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08";
     const q = qualifyPiNativeAdapter({
       cwd,
@@ -108,10 +108,23 @@ describe("T1699/D160 — Pi native qualification and delivery selection", () => 
     if (q.status !== "qualified") throw new Error("expected qualified");
     expect(q.adapterId).toBe("pi:native");
     expect(q.confinement).toBe("structural");
-    expect(q.defectClosed).toBe("D160");
+    // Placement evidence only — NOT a D160 closure / cutover-ready claim.
+    expect(q.defectClosed).toBeNull();
+    expect(q.evidence).toMatch(/D160 remains open/);
     expect(selectQualifiedNativeAdapterIds([q, qualifyClaudeNativeAdapter()])).toEqual([
       "pi:native",
     ]);
+  });
+
+  test("pi:native refuses qualification without escape canary (no overclaim)", () => {
+    const q = qualifyPiNativeAdapter({
+      cwd: "/tmp/project/.claude/worktrees/pi-native",
+    });
+    expect(q.status).toBe("incompatible");
+    if (q.status !== "incompatible") throw new Error("expected incompatible");
+    expect(q.reason).toBe("escape-canary-required");
+    expect(q.defect).toBe("D160");
+    expect(q.detail).toMatch(/does not close D160/);
   });
 
   test("escape canary failure refuses pi:native", () => {
@@ -138,13 +151,21 @@ describe("T1699/D160 — Pi native qualification and delivery selection", () => 
 
   test("createPiNativeDispatchAdapter refuses launchPiChild and requires createAgentSession", async () => {
     const cwd = "/tmp/project/.claude/worktrees/pi-native-t1699";
+    const canary = {
+      escaped: false as const,
+      insideWriteOk: true,
+      evidence: "canary ok",
+    };
+    const qualification = qualifyPiNativeAdapter({ cwd, escapeCanary: canary });
+    expect(qualification.status).toBe("qualified");
     const adapter = createPiNativeDispatchAdapter({
-      qualification: qualifyPiNativeAdapter({ cwd }),
+      qualification,
       resolve: () => ({
         cwd,
         prompt: "do the task",
         correlation: { childId: "pi-child", runId: "pi-run" },
         now: () => "2026-08-07T00:00:00.000Z",
+        escapeCanary: canary,
       }),
       launchSession: async (request) => {
         expect(request.cwd).toBe(cwd);
@@ -164,12 +185,13 @@ describe("T1699/D160 — Pi native qualification and delivery selection", () => 
 
     // Process-seam regression: launcher claiming launchPiChild aborts.
     const bad = createPiNativeDispatchAdapter({
-      qualification: qualifyPiNativeAdapter({ cwd }),
+      qualification,
       resolve: () => ({
         cwd,
         prompt: "x",
         correlation: { childId: "c", runId: "r" },
         now: () => "2026-08-07T00:00:00.000Z",
+        escapeCanary: canary,
       }),
       launchSession: async () =>
         ({
@@ -216,5 +238,123 @@ describe("T1699/D160 — Pi native qualification and delivery selection", () => 
     expect(qualifyClaudeNativeAdapter().status).toBe("incompatible");
     const after = sha256(readFileSync(SRC, "utf8"));
     expect(after).toBe(before);
+  });
+});
+
+describe("T1699 Pi native worktree bind on adapter launch", () => {
+  const cwd = "/tmp/project/.claude/worktrees/018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08";
+  const base = "a".repeat(40);
+  const head = "b".repeat(40);
+  const canary = {
+    escaped: false as const,
+    insideWriteOk: true,
+    evidence: "canary ok",
+  };
+
+  function fakeContext() {
+    return {
+      route: {
+        adapterId: "pi:native" as const,
+        targetHarness: "pi" as const,
+        transport: "native" as const,
+        activeHarness: "pi" as const,
+        forceShellout: false,
+      },
+      prepared: {
+        attestationId: "att-pi-native",
+        generation: 1,
+        namespace: "test",
+        roleId: "implement-worker",
+        targetHarness: "pi" as const,
+        preparedAt: "2026-08-07T00:00:00.000Z",
+      },
+      child: {
+        materializeInput: () => ({}),
+        storeResult: () => ({ state: "stored" as const }),
+      },
+    } as never;
+  }
+
+  test("cwd/path mismatch fails closed before session launch", async () => {
+    let launches = 0;
+    const adapter = createPiNativeDispatchAdapter({
+      qualification: qualifyPiNativeAdapter({ cwd, escapeCanary: canary }),
+      resolve: () => ({
+        cwd,
+        prompt: "x",
+        correlation: { childId: "c", runId: "r" },
+        now: () => "2026-08-07T00:00:00.000Z",
+        escapeCanary: canary,
+        worktree: {
+          // absolute but NOT equal to binding.cwd → cwd-mismatch abort
+          absolutePath: "/tmp/escaped-path",
+          baseCommit: base,
+          headCommit: head,
+        },
+      }),
+      launchSession: async () => {
+        launches += 1;
+        return {
+          finalText: "nope",
+          cwd,
+          usedCreateAgentSession: true,
+          usedLaunchPiChild: false,
+          childId: "c",
+          runId: "r",
+          completedAt: "2026-08-07T00:00:00.000Z",
+        };
+      },
+    });
+    const result = await adapter.launch(fakeContext());
+    expect(result.outcome).toBe("aborted");
+    if (result.outcome !== "aborted") throw new Error("expected abort");
+    expect(result.details).toMatchObject({
+      violation: "pi-native-worktree-cwd-mismatch",
+    });
+    expect(launches).toBe(0);
+  });
+
+  test("handle path mutation fails closed before session launch", async () => {
+    let launches = 0;
+    const adapter = createPiNativeDispatchAdapter({
+      qualification: qualifyPiNativeAdapter({ cwd, escapeCanary: canary }),
+      resolve: () => ({
+        cwd,
+        prompt: "x",
+        correlation: { childId: "c", runId: "r" },
+        now: () => "2026-08-07T00:00:00.000Z",
+        escapeCanary: canary,
+        worktree: {
+          absolutePath: cwd,
+          baseCommit: base,
+          headCommit: head,
+          handle: {
+            kind: "cq.managed-worktree",
+            version: 1,
+            token: "tok",
+            worktreeId: "018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08",
+            taskId: "T1699",
+            branch: "implement/T1699",
+            repositoryRoot: "/tmp/project",
+            absolutePath: "/tmp/mutated-handle-path",
+            baseCommit: base,
+            createdAt: "2026-08-07T00:00:00.000Z",
+            nonce: "n1",
+          },
+        },
+      }),
+      launchSession: async () => {
+        launches += 1;
+        throw new Error("must not launch");
+      },
+    });
+    const result = await adapter.launch(fakeContext());
+    expect(result.outcome).toBe("aborted");
+    if (result.outcome !== "aborted") throw new Error("expected abort");
+    expect(result.details).toMatchObject({
+      violation: "pi-native-worktree-preflight-refused",
+      reason: "handle-path-mismatch",
+    });
+    expect(launches).toBe(0);
   });
 });
