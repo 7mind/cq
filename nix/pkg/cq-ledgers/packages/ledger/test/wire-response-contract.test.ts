@@ -307,6 +307,86 @@ describe("item wire projections", () => {
     });
   });
 
+  it("T1423: complement projector matches hand-built DTO with mixed allowlist + narrative fields", () => {
+    const source = item({
+      author: "planner",
+      session: "sess-t1423",
+      fields: {
+        headline: "allowlisted",
+        title: "also allowlisted",
+        tags: ["a", "b"],
+        dependsOn: ["tasks:T9"],
+        description: "narrative description",
+        acceptance: "narrative acceptance",
+        customField: "custom",
+        note: "operator note",
+      },
+    });
+    const expectedComplement = {
+      id: "T1",
+      fields: {
+        description: "narrative description",
+        acceptance: "narrative acceptance",
+        customField: "custom",
+        note: "operator note",
+      },
+    };
+    const complement = projectComplementItemDto(source);
+    const viaSwitch = projectItemDto(source, "complement");
+    expect(complement as object).toEqual(expectedComplement);
+    expect(viaSwitch as object).toEqual(expectedComplement);
+    // author/session present on source but must be absent from complement DTO.
+    expect(source.author).toBe("planner");
+    expect(source.session).toBe("sess-t1423");
+    expect("author" in complement).toBe(false);
+    expect("session" in complement).toBe(false);
+    expect("status" in complement).toBe(false);
+    expect("milestoneId" in complement).toBe(false);
+    expect("createdAt" in complement).toBe(false);
+    expect("updatedAt" in complement).toBe(false);
+    // Produced-wire marker survives serializeWireDto path.
+    expect(isProducedWireDto(complement)).toBe(true);
+    const serialized = serializeWireDto(complement);
+    expect(serialized).not.toContain("PRODUCED_WIRE_DTO");
+    expect(JSON.parse(serialized)).toEqual(expectedComplement);
+  });
+
+  it("T1423: merge and disjoint invariants named when broken", () => {
+    const source = item({
+      fields: {
+        headline: "h",
+        severity: "low",
+        description: "d",
+        acceptance: "a",
+        note: "n",
+      },
+    });
+    const compact = projectCompactItemDto(source);
+    const complement = projectComplementItemDto(source);
+    const full = projectFullItemDto(source);
+
+    const merged = { ...compact.fields, ...complement.fields };
+    // Merge invariant: fields(full) = fields(compact) ∪ fields(complement).
+    expect(
+      merged,
+      "merge invariant broken: fields(full) must equal fields(compact) ∪ fields(complement)",
+    ).toEqual(full.fields);
+
+    const compactKeys = new Set(Object.keys(compact.fields));
+    const complementKeys = new Set(Object.keys(complement.fields));
+    const overlap = [...compactKeys].filter((k) => complementKeys.has(k));
+    expect(
+      overlap,
+      `disjoint invariant broken: compact and complement share field keys: ${overlap.join(",")}`,
+    ).toEqual([]);
+
+    // Negative control: injecting a compact key into complement would violate disjoint.
+    const poisoned = { ...complement.fields, headline: "leak" };
+    const poisonedOverlap = Object.keys(poisoned).filter((k) => compactKeys.has(k));
+    expect(poisonedOverlap.length).toBeGreaterThan(0);
+    expect(poisonedOverlap).toContain("headline");
+  });
+
   it("preserves provenance absence across JSON reload", () => {
     const projected = projectCompactItemDto(item());
     const reloaded = JSON.parse(serializeWireDto(projected)) as CompactItemDto;
