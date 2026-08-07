@@ -7,25 +7,24 @@
  * `## Catalogue` block:
  *
  * - **Input** — the task spec (id + headline + description + acceptance), the
- *   worktree path + branch + base commit, the worker's structured result
- *   (`{ resultCommit, checkSummary, filesTouched }`), the round number, any
- *   prior criticism already addressed, and optionally a parent-attested gate
+ *   worktree path + branch + base commit (full SHA), the worker's structured
+ *   result (`{ resultCommit, checkSummary, filesTouched }`), the round number,
+ *   any prior criticism already addressed, and optionally a parent-attested gate
  *   (K235 / T2007) for Codex sandboxed reviewers that cannot re-run the gate.
  *
  * - **Output** — the verdict block
  *   `{ taskId, verdict, criticism[], questions[], defects[], rationale,
- *   gateReRan, resultCommitVerified, summary?, gateDurationMs?,
- *   gateReRanReason? }`. `verdict` is `approve | disapprove`; each `defects`
- *   item is `{ headline, description, severity, suggestedFix? }`.
- *   `gateReRan`/`resultCommitVerified` are REQUIRED (T895, closing the
- *   reviewer-side half of the D156/H135 self-report-evidence gap): a verdict
- *   must state whether the reviewer re-ran the gate itself and whether it
- *   verified the worker's `resultCommit`, rather than trusting the worker's
- *   claim silently. `gateDurationMs` is required IFF `gateReRan` is true.
- *   `gateReRanReason` is an optional free-text field for stating why the gate
- *   was not re-run when `gateReRan` is false (including the K235 token
- *   `sandbox-denied-primitives` when the reviewer accepted a parent-attested
- *   green gate instead of re-running inside a denying sandbox).
+ *   gateReRan, resultCommitVerified, resultCommitEvidence, baseAncestry,
+ *   summary?, gateDurationMs?, gateReRanReason? }`. `verdict` is
+ *   `approve | disapprove`; each `defects` item is
+ *   `{ headline, description, severity, suggestedFix? }`.
+ *   `gateReRan`/`resultCommitVerified` remain REQUIRED (T895). T1308/G121 adds
+ *   required structured `resultCommitEvidence` and `baseAncestry` as closed
+ *   verified-or-unresolvable unions with full object SHAs only on the verified
+ *   arm. Approval requires both verified; disapproval may record unresolvable
+ *   evidence with nullable observed values and a closed reason. `gateDurationMs`
+ *   is required IFF `gateReRan` is true. `gateReRanReason` is optional free-text
+ *   (including K235 `sandbox-denied-primitives`).
  */
 
 import type { RoleSchemaSidecar } from "../promptCatalog.js";
@@ -44,6 +43,36 @@ export const IMPLEMENT_REVIEWER_PHASE_EXHAUSTION_CRITICISM =
  */
 export const SANDBOX_DENIED_PRIMITIVES_GATE_REASON = "sandbox-denied-primitives" as const;
 
+/** Full lowercase object SHA used on every commit field of this contract. */
+export const IMPLEMENT_REVIEWER_FULL_SHA_PATTERN = "^[0-9a-f]{40}$";
+
+/** Closed reasons when result-commit evidence cannot be established. */
+export const IMPLEMENT_REVIEWER_RESULT_COMMIT_UNRESOLVABLE_REASONS = [
+  "result-commit-missing",
+  "result-commit-not-commit",
+  "result-commit-malformed",
+  "branch-tip-mismatch",
+  "branch-unresolvable",
+  "worktree-unresolvable",
+] as const;
+
+export type ImplementReviewerResultCommitUnresolvableReason =
+  (typeof IMPLEMENT_REVIEWER_RESULT_COMMIT_UNRESOLVABLE_REASONS)[number];
+
+/** Closed reasons when base ancestry cannot be established. */
+export const IMPLEMENT_REVIEWER_BASE_ANCESTRY_UNRESOLVABLE_REASONS = [
+  "base-missing",
+  "base-not-commit",
+  "result-commit-missing",
+  "result-commit-not-commit",
+  "merge-base-unobserved",
+  "not-ancestor",
+  "unrelated-histories",
+] as const;
+
+export type ImplementReviewerBaseAncestryUnresolvableReason =
+  (typeof IMPLEMENT_REVIEWER_BASE_ANCESTRY_UNRESOLVABLE_REASONS)[number];
+
 /** Server-owned fields callers omit and prepare binds into the final reviewer input. */
 export const IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS = [
   "responseStoreNow",
@@ -54,6 +83,95 @@ export const IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS = [
 /** The `defects`-ledger severity vocabulary a reported defect carries. */
 const DEFECT_SEVERITIES = ["low", "medium", "high", "critical"] as const;
 
+const fullShaString = {
+  type: "string",
+  pattern: IMPLEMENT_REVIEWER_FULL_SHA_PATTERN,
+} as const;
+
+const fullShaOrNull = {
+  type: ["string", "null"],
+  pattern: IMPLEMENT_REVIEWER_FULL_SHA_PATTERN,
+} as const;
+
+/**
+ * Verified result-commit evidence: object type commit, equals branch tip, full
+ * SHAs only (T1308).
+ */
+export const implementReviewerVerifiedResultCommitEvidenceSchema = {
+  type: "object",
+  properties: {
+    status: { type: "string", const: "verified" },
+    resultCommit: fullShaString,
+    branchTip: fullShaString,
+  },
+  required: ["status", "resultCommit", "branchTip"],
+  additionalProperties: false,
+} as const;
+
+/** Unresolvable result-commit evidence with closed reason and nullable SHAs. */
+export const implementReviewerUnresolvableResultCommitEvidenceSchema = {
+  type: "object",
+  properties: {
+    status: { type: "string", const: "unresolvable" },
+    reason: {
+      type: "string",
+      enum: [...IMPLEMENT_REVIEWER_RESULT_COMMIT_UNRESOLVABLE_REASONS],
+    },
+    resultCommit: fullShaOrNull,
+    branchTip: fullShaOrNull,
+  },
+  required: ["status", "reason", "resultCommit", "branchTip"],
+  additionalProperties: false,
+} as const;
+
+export const implementReviewerResultCommitEvidenceSchema = {
+  oneOf: [
+    implementReviewerVerifiedResultCommitEvidenceSchema,
+    implementReviewerUnresolvableResultCommitEvidenceSchema,
+  ],
+} as const;
+
+/**
+ * Verified base ancestry: dispatch base is an ancestor of resultCommit; exact
+ * full SHAs including observed merge-base (T1308).
+ */
+export const implementReviewerVerifiedBaseAncestrySchema = {
+  type: "object",
+  properties: {
+    status: { type: "string", const: "verified" },
+    relation: { type: "string", enum: ["equal", "descendant"] },
+    baseCommit: fullShaString,
+    resultCommit: fullShaString,
+    mergeBase: fullShaString,
+  },
+  required: ["status", "relation", "baseCommit", "resultCommit", "mergeBase"],
+  additionalProperties: false,
+} as const;
+
+/** Unresolvable base ancestry with closed reason and nullable observed SHAs. */
+export const implementReviewerUnresolvableBaseAncestrySchema = {
+  type: "object",
+  properties: {
+    status: { type: "string", const: "unresolvable" },
+    reason: {
+      type: "string",
+      enum: [...IMPLEMENT_REVIEWER_BASE_ANCESTRY_UNRESOLVABLE_REASONS],
+    },
+    baseCommit: fullShaOrNull,
+    resultCommit: fullShaOrNull,
+    mergeBase: fullShaOrNull,
+  },
+  required: ["status", "reason", "baseCommit", "resultCommit", "mergeBase"],
+  additionalProperties: false,
+} as const;
+
+export const implementReviewerBaseAncestrySchema = {
+  oneOf: [
+    implementReviewerVerifiedBaseAncestrySchema,
+    implementReviewerUnresolvableBaseAncestrySchema,
+  ],
+} as const;
+
 /**
  * The worker's structured result the reviewer is handed (a subset of the worker
  * output: the fields the reviewer judges against). Kept open beyond these three
@@ -62,7 +180,7 @@ const DEFECT_SEVERITIES = ["low", "medium", "high", "critical"] as const;
 const workerResultSchema = {
   type: "object",
   properties: {
-    resultCommit: { type: ["string", "null"] },
+    resultCommit: { type: ["string", "null"], pattern: IMPLEMENT_REVIEWER_FULL_SHA_PATTERN },
     checkSummary: { type: "string" },
     filesTouched: { type: "array", items: { type: "string" } },
   },
@@ -81,7 +199,7 @@ const parentGateAttestationSchema = {
   properties: {
     resultCommit: {
       type: "string",
-      minLength: 1,
+      pattern: IMPLEMENT_REVIEWER_FULL_SHA_PATTERN,
       description: "The commit SHA the parent gate observed (must equal worker resultCommit).",
     },
     gateExitCode: {
@@ -186,7 +304,11 @@ const inputSchema = {
         "The task branch name: implement/<taskId>, or a Claude native-isolation worktree-agent-<hex> name (D77).",
       pattern: "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$",
     },
-    baseCommit: { type: "string", minLength: 1 },
+    baseCommit: {
+      type: "string",
+      pattern: IMPLEMENT_REVIEWER_FULL_SHA_PATTERN,
+      description: "Dispatch base commit (full 40-hex object SHA) used for ancestry verification.",
+    },
     workerResult: workerResultSchema,
     round: { type: "integer", minimum: 1 },
     priorCriticism: { type: "array", items: { type: "string" } },
@@ -240,18 +362,13 @@ const defectSchema = {
 } as const;
 
 /**
- * The verdict-block output contract (T895 evidence-carrying revision).
- * `criticism`/`questions` are string lists; `defects` is orthogonal to the
- * verdict (out-of-scope faults to file-and-defer); `summary` is optional.
- * `gateReRan` and `resultCommitVerified` are ALWAYS required — a verdict must
- * state whether the reviewer re-ran `bun run check` itself and whether it
- * verified the worker's `resultCommit` sha, rather than accepting the
- * self-report silently. `gateDurationMs` is required IFF `gateReRan` is
- * `true` via the `if`/`then` below (a real conditional, not an
- * unconditionally-required field — the negative-direction check is
- * `gateReRan: false` with no `gateDurationMs`, which must stay ACCEPTED).
- * `gateReRanReason` is an optional string for documenting why the gate was
- * not re-run when `gateReRan` is `false`.
+ * The verdict-block output contract (T895 evidence-carrying revision + T1308
+ * structured resultCommit/baseAncestry). `criticism`/`questions` are string
+ * lists; `defects` is orthogonal to the verdict; `summary` is optional.
+ * `gateReRan` and `resultCommitVerified` are ALWAYS required. Structured
+ * `resultCommitEvidence` and `baseAncestry` are ALWAYS required. Approval
+ * requires both verified arms (via `allOf` below). `gateDurationMs` is required
+ * IFF `gateReRan` is `true`.
  */
 const outputSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -274,7 +391,17 @@ const outputSchema = {
     resultCommitVerified: {
       type: "boolean",
       description:
-        "Whether the reviewer verified the worker's resultCommit sha (e.g. via cat-file / tip equality) rather than accepting it unchecked.",
+        "Whether the reviewer verified the worker's resultCommit sha (cat-file + tip equality) rather than accepting it unchecked.",
+    },
+    resultCommitEvidence: {
+      ...implementReviewerResultCommitEvidenceSchema,
+      description:
+        "T1308 structured result-commit evidence. Approval requires the verified arm (commit object + branch tip equality, full SHAs).",
+    },
+    baseAncestry: {
+      ...implementReviewerBaseAncestrySchema,
+      description:
+        "T1308 structured base-ancestry evidence. Approval requires the verified arm (dispatch base ancestor of resultCommit, exact merge-base full SHA).",
     },
     gateDurationMs: {
       type: "integer",
@@ -303,6 +430,8 @@ const outputSchema = {
     "rationale",
     "gateReRan",
     "resultCommitVerified",
+    "resultCommitEvidence",
+    "baseAncestry",
   ],
   additionalProperties: false,
   allOf: [
@@ -337,20 +466,37 @@ const outputSchema = {
         ],
       },
     },
+    {
+      if: {
+        properties: {
+          verdict: { const: "approve" },
+        },
+        required: ["verdict"],
+      },
+      then: {
+        properties: {
+          resultCommitVerified: { const: true },
+          resultCommitEvidence: implementReviewerVerifiedResultCommitEvidenceSchema,
+          baseAncestry: implementReviewerVerifiedBaseAncestrySchema,
+        },
+        required: ["resultCommitVerified", "resultCommitEvidence", "baseAncestry"],
+      },
+    },
   ],
 } as const;
 
 /**
  * The implement-reviewer per-role schema sidecar (storage-format decision 3).
- * `version: 5` (bumped from 4, T2010, defects:D143/D185): `worktreePath` is now
- * OPTIONAL on input (advisory); optional `actualWorktreePath` may be reported
- * on output. A stale deployed root rendered against the v4 contract must not
- * be mistaken for this one; DISPATCHED_ROLE_VERSIONS derives this
- * automatically, it is not hand-edited.
+ * `version: 6` (bumped from 5, T1308/G121): required structured
+ * `resultCommitEvidence` and `baseAncestry` verified-or-unresolvable unions;
+ * `baseCommit` full-SHA on input; approval requires both verified arms. A stale
+ * deployed root rendered against the v5 contract must not be mistaken for this
+ * one; DISPATCHED_ROLE_VERSIONS derives this automatically, it is not
+ * hand-edited.
  */
 export const implementReviewerSidecar: RoleSchemaSidecar = {
   id: "implement-reviewer",
-  version: 5,
+  version: 6,
   inputSchema,
   outputSchema,
 };

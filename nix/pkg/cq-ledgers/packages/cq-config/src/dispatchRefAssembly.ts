@@ -168,6 +168,7 @@ export const REFS_SUPPLIED_INPUT_FIELDS = [
   "baseCommit",
   "round",
   "startingCommit",
+  "priorResultCommit",
   "resolvedModel",
 ] as const;
 
@@ -275,6 +276,8 @@ export interface DispatchInputRefs {
   readonly round: number;
   /** The authoritative worktree tip immediately before this round launches. */
   readonly startingCommit: string;
+  /** Prior-round worker resultCommit for round>0 resume evidence (full SHA or null). */
+  readonly priorResultCommit?: string | null;
   /** The prior round's review, whose `criticism[]` prepare reads server-side. */
   readonly priorReviewId?: string;
   /** Typed bounded parent guidance. */
@@ -292,6 +295,7 @@ export const DISPATCH_INPUT_REFS_FIELDS = [
   "coordinates",
   "round",
   "startingCommit",
+  "priorResultCommit",
   "priorReviewId",
   "guidance",
   "resolvedModel",
@@ -364,6 +368,10 @@ function refsSchemaProperties(roleIds: readonly string[]): Readonly<Record<strin
     },
     round: { type: "integer", minimum: 0 },
     startingCommit: { type: "string", pattern: "^[0-9a-f]{40}$" },
+    priorResultCommit: {
+      type: ["string", "null"],
+      pattern: "^[0-9a-f]{40}$",
+    },
     priorReviewId: { type: "string", pattern: REVIEW_ID_PATTERN },
     guidance: guidanceSchema,
     resolvedModel: { type: "string", minLength: 1, pattern: "\\S" },
@@ -577,6 +585,7 @@ interface NormalizedRefs {
   readonly coordinates: DispatchWorktreeCoordinates;
   readonly round: number;
   readonly startingCommit: string;
+  readonly priorResultCommit?: string | null;
   readonly priorReviewId?: string;
   readonly guidance: readonly ParentGuidance[];
   readonly resolvedModel?: string;
@@ -766,6 +775,18 @@ function normalizeRefs(
       `expected a full lowercase commit id, got "${String(startingCommit)}"`,
     );
   }
+  const priorResultCommit: unknown = raw.priorResultCommit;
+  if (
+    priorResultCommit !== undefined &&
+    priorResultCommit !== null &&
+    (typeof priorResultCommit !== "string" || !COMMIT_ID_RE.test(priorResultCommit))
+  ) {
+    return dispatchPreLaunchRejection(
+      "invalid-refs-form",
+      "refs.priorResultCommit",
+      `expected a full lowercase commit id or null, got "${String(priorResultCommit)}"`,
+    );
+  }
   const priorReviewId: unknown = raw.priorReviewId;
   if (
     priorReviewId !== undefined &&
@@ -804,6 +825,9 @@ function normalizeRefs(
     },
     round: round as number,
     startingCommit,
+    ...(priorResultCommit === undefined
+      ? {}
+      : { priorResultCommit: priorResultCommit as string | null }),
     ...(priorReviewId === undefined ? {} : { priorReviewId: priorReviewId as string }),
     guidance,
     ...(resolvedModel === undefined ? {} : { resolvedModel: resolvedModel as string }),
@@ -922,6 +946,9 @@ function assembleImplementWorkerInput(
     baseCommit: refs.coordinates.baseCommit,
     round: refs.round,
     startingCommit: refs.startingCommit,
+    ...(refs.priorResultCommit === undefined
+      ? {}
+      : { priorResultCommit: refs.priorResultCommit }),
     ...(priorCriticism.length === 0 ? {} : { priorCriticism }),
     ...(refs.resolvedModel === undefined ? {} : { resolvedModel: refs.resolvedModel }),
   };

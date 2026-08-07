@@ -168,6 +168,12 @@ const OUTPUT: DispatchJSONValue = {
   checkSummary: "3621 pass / 142 skip / 0 fail",
   summary: "Contract, port and strict dummy landed.",
   gateDurationMs: 1,
+  baseVerification: {
+    status: "verified",
+    relation: "descendant",
+    baseCommit: "a".repeat(40),
+    headCommit: "b".repeat(40),
+  },
 };
 
 const OTHER_OUTPUT: DispatchJSONValue = {

@@ -316,14 +316,16 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     );
   });
 
-  it("T1629 binds every worker round to its authoritative starting commit", () => {
+  it("T1629/T1307 binds every worker round to its authoritative starting commit", () => {
     for (const surface of PROMPT_SURFACES) {
       const worker = normalize(renderedOf(surface, "implement-worker"));
-      expect(worker).toContain("Verify the base before other work");
+      expect(worker).toContain("Step 0 — verify prepared evidence only");
       expect(worker).toContain("`git rev-parse HEAD`");
-      expect(worker).toContain("equal `startingCommit`");
+      expect(worker).toContain("equals `startingCommit`");
       expect(worker).not.toContain("`git reset --hard <baseCommit>`");
       expect(worker).toContain("`git merge-base --is-ancestor <baseCommit> HEAD`");
+      expect(worker).toContain("baseVerification");
+      expect(worker).not.toMatch(/\brun `bun install`/);
       expect(worker).toContain(
         '`cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check`',
       );
@@ -342,6 +344,8 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       expect(advance).toContain("`git cat-file -t`");
       expect(advance).toContain("startingCommit");
       expect(advance).toContain("worktree `HEAD` to equal that retained `startingCommit`");
+      expect(advance).toContain("worktree_manage");
+      expect(advance).toContain('operation: "prepare"');
       expect(advance).toContain(
         "`git merge-base --is-ancestor <verifiedBaseCommit> <startingCommit>`",
       );
@@ -350,8 +354,12 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       );
       expect(
         countOccurrences(advance, "`git merge-base --is-ancestor <startingCommit> <resultCommit>`"),
-      ).toBe(3);
-      expect(advance).toContain("Any failure is a contract breach and forbids merge-back");
+      ).toBeGreaterThanOrEqual(2);
+      expect(advance).toContain("forbids merge-back");
+      expect(advance).not.toContain("git worktree add ");
+      expect(advance).not.toContain("git worktree remove");
+      expect(advance).not.toContain("git worktree prune");
+      expect(advance).toContain("worktree_manage");
     }
   });
 
@@ -369,15 +377,20 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     expect(invalidOutputContract).not.toContain("result body");
   });
 
-  it("T903 pins reviewer evidence as blocking and independently verifies commit object plus tip", () => {
+  it("T903/T1308 pins reviewer evidence as blocking and independently verifies commit object plus tip and ancestry", () => {
     for (const surface of PROMPT_SURFACES) {
       const reviewer = normalize(renderedOf(surface, "implement-reviewer"));
-      expect(reviewer).toContain("Always state `gateReRan` and `resultCommitVerified`");
       expect(reviewer).toContain(
-        "`git -C <worktree> cat-file -t <resultCommit>` and require `commit`",
+        "Always state `gateReRan`, `resultCommitVerified`, `resultCommitEvidence`, and",
+      );
+      expect(reviewer).toContain("resultCommitEvidence");
+      expect(reviewer).toContain("baseAncestry");
+      expect(reviewer).toContain("cat-file -t");
+      expect(reviewer).toContain(
+        "`git -C <worktree> rev-parse --verify <branch>` and require its full SHA",
       );
       expect(reviewer).toContain(
-        "`git -C <worktree> rev-parse --verify <branch>` and require its full SHA to equal `resultCommit`",
+        "`git merge-base --is-ancestor <baseCommit> <resultCommit>`",
       );
     }
   });

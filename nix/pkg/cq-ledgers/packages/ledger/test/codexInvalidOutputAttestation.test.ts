@@ -128,6 +128,12 @@ describe("D250 invalid Codex final after result storage", () => {
           checkSummary: `REAL_CHECK_EXIT=0 ${RESULT_BODY_SENTINEL}`,
           gateDurationMs: 90_000,
           summary: RESULT_BODY_SENTINEL,
+          baseVerification: {
+            status: "verified",
+            relation: "equal",
+            baseCommit: STARTING_COMMIT,
+            headCommit: RESULT_COMMIT,
+          },
         },
       },
       deps,

@@ -198,6 +198,12 @@ const OUTPUT: DispatchJSONValue = {
   checkSummary: "adapters green",
   summary: `Adapters landed (${OUTPUT_MARKER}).`,
   gateDurationMs: 1,
+  baseVerification: {
+    status: "verified",
+    relation: "descendant",
+    baseCommit: "a".repeat(40),
+    headCommit: "b".repeat(40),
+  },
 };
 
 const OTHER_OUTPUT: DispatchJSONValue = {

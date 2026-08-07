@@ -1056,16 +1056,17 @@ export const AGENT_ROLES: AgentRole[] = [
     source: "agents/implement-worker.md",
     description: "Implement exactly one task in an isolated worktree, prove its guards and full gate, commit it, and store a structured result.",
     inputs: [
-  "task specification, optional advisory worktreePath, branch, verified base, round, authoritative starting commit, optional prior criticism"
+  "task specification, optional advisory worktreePath, branch, verified full-SHA base, required round, authoritative starting commit, optional priorResultCommit, optional prior criticism"
 ],
     outputs: [
-  "one verified task commit, actualWorktreePath, stored structured result, and handle-only final reply"
+  "one verified task commit, actualWorktreePath, required baseVerification evidence, stored structured result, and handle-only final reply"
 ],
     ioSchema: [
   "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)",
-  "pass requires a green full gate, verified commit/clean tree/ancestry, required actualWorktreePath, and required mutation evidence"
+  "pass requires a green full gate, verified commit/clean tree/ancestry, required actualWorktreePath, verified baseVerification (full SHAs only), and required mutation evidence",
+  "fail may carry verified or unresolvable baseVerification with a closed reason and null SHAs where unobserved"
 ],
-    promptTemplate: "> **CQ command notation (Claude).** `CQ::<path>` names the native slash command\n> `/cq:<path>`, with each `/` in `<path>` written as `:`. Preserve any following\n> arguments and treat `$ARGUMENTS` as the current command's user-supplied text.\n\n\n## Catalogue\n\n```yaml\ninputs:\n  - \"task specification, optional advisory worktreePath, branch, verified base, round, authoritative starting commit, optional prior criticism\"\noutputs:\n  - \"one verified task commit, actualWorktreePath, stored structured result, and handle-only final reply\"\nioSchema:\n  - \"typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)\"\n  - \"pass requires a green full gate, verified commit/clean tree/ancestry, required actualWorktreePath, and required mutation evidence\"\n```\n\nImplement exactly one task. Never mutate the ledger, merge, push, rebase, or\nspawn a child. Work only inside the supplied worktree and task branch. Do not\noperate on another checkout or alter its refs. Report a stale or unusable base\ninstead of improvising cross-checkout repair.\n\n### Dispatch input delivery (Claude)\n\nThe launch prompt carries only\n`{ attestationId, generation, inputCapability }`. Before reading or changing\nthe repository, call the ledger MCP `fetch_dispatch_input` tool exactly once\nwith those three fields. Treat its returned `input` as the task specification\ndescribed below. A missing capability, failed retrieval, or second retrieval is\na protocol failure: stop and return `status: \"fail\"` rather than reading task\nnarrative from the ledger or improvising it from the compact launch reference.\n\n\nTreat the resolved task headline, description, and acceptance as the\nspecification. Address every supplied prior criticism.\n\n## Procedure\n\n1. **Verify the base before other work.**\n   Resolve `actualWorktreePath` with `git rev-parse --show-toplevel` (absolute)\n   first. When the input carries advisory `worktreePath`, prefer that path when\n   it is reachable and is a git worktree of this repository. On a surface with\n   native worktree confinement the only enterable placement is under\n   `.claude/worktrees/` of the session repository. If the supplied path is\n   outside that root, or every attempt to enter it is refused, STOP and return\n   `fail` with a precise `blockedReason` containing the literal diagnosis\n   `worktreePath unreachable from my confined worktree (expected under .claude/worktrees/)`\n   plus the supplied path and the resolved toplevel — do not rediscover the\n   confinement by trial-and-error across sibling checkouts. When the surface\n   adapter already pinned a harness-minted worktree and the advisory path is\n   absent or unusable for that reason, continue in the pinned tree and still\n   report its absolute toplevel as `actualWorktreePath`. Always include\n   `actualWorktreePath` in the stored result.\n   Then require `git rev-parse HEAD` to equal `startingCommit`, then require\n   `git merge-base --is-ancestor <baseCommit> HEAD` to exit zero. These checks\n   apply to every initial and criticism round. Report `fail` if either check\n   cannot be satisfied; never reset away prior task commits.\n\n2. **Install dependencies when needed.** A fresh worktree has no\n   `node_modules`; run the workspace install. Never reuse another checkout via\n   symlink. Force a proper install when the existing layout is incomplete.\n\n3. **Implement surgically.**\n   **Early skeleton write (load-bearing durability).** The first substantive\n   action after grounding and base verification MUST be to create a durable\n   partial artifact and commit it, even when nearly empty. Prefer\n   `WIP-<taskId>.md` in the worktree root using the existing WIP partial format\n   (fenced JSON header with `taskId`, `role`, `baseCommit`, `startedAt`, and a\n   non-empty `checkpoints[]` of `{name,status}` where status is\n   `done | todo | unmeasured`, followed by\n   `## <name> <!-- cq:wip-checkpoint -->` body sections). Mark unfinished work\n   `todo` or `unmeasured` rather than omitting it so a harvested partial is\n   self-describing. A committed partial is worth more than an uncommitted\n   complete deliverable. Do not defer the first write until the end of the turn.\n   **Incremental persistence.** Reproduce a defect before correcting it. Match\n   project conventions and do not repair unrelated faults. At natural\n   checkpoints — after each measurement, probe, acceptance clause, or\n   non-trivial edit batch — update the WIP artifact (or the real deliverable)\n   and commit. Keep checkpoint statuses honest (`done` / `todo` / `unmeasured`).\n   Never couple durability to completion of the whole task.\n\n4. **Prove changed guards.** For every test, assertion, guard, or invariant you\n   add or change, deliberately make it fail, capture the expected failure,\n   restore the intended bytes, and capture the pass. Hash affected files before\n   mutation and after restoration. Report only observations from this run in\n   `mutationTable`; if evidence is unavailable, report the gap rather than\n   claiming success.\n\n5. **Run targeted checks.** Use exact test paths when discovery matters and\n   record nonzero test counts. Check wrapped prose with a multiline-aware\n   operation.\n\n6. **Run the full gate in the foreground.** From the worktree root, run exactly\n   `cq gate run --worktree \"$PWD\" --command-cwd \"$PWD/nix/pkg/cq-ledgers\" -- bun run check`.\n   A yielded command-session handle remains the sole full-gate attempt. Continue\n   to poll that exact session or explicitly terminate it; after termination,\n   continue polling and require terminal settlement before retrying the gate,\n   calling `store_result`, or returning. Never launch a replacement full-gate\n   attempt while the prior session remains live.\n   Capture start/end time and assign its exit status\n   immediately after the command, independent of any pipe or wrapper. Preserve\n   `REAL_CHECK_EXIT=<n>`, the verbatim result tail, and `gateDurationMs`.\n   Iterate until zero. An unrelated-failure claim requires an A/B reproduction\n   of the same selector and signature on this tree and the recorded base; if\n   confinement prevents that proof, return `fail`.\n\n7. **Commit and verify.** Commit all task changes, then require:\n   - `git rev-parse --verify HEAD` succeeds;\n   - `git cat-file -t <head>` returns `commit`;\n   - `git status --porcelain --untracked-files=all` is empty;\n   - `git merge-base --is-ancestor <baseCommit> HEAD` exits zero.\n     Immediately before constructing the result, rerun\n     `git rev-parse --verify HEAD` and copy its stdout verbatim into\n     `resultCommit`, then require\n     `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.\n     Rerun `git rev-parse --show-toplevel` and copy its stdout verbatim into\n     `actualWorktreePath`.\n\n## Result\n\n```json\n{\n  \"taskId\": \"<task id>\",\n  \"status\": \"pass | fail\",\n  \"resultCommit\": \"<verified head, or null on fail>\",\n  \"branch\": \"implement/<taskId>\",\n  \"actualWorktreePath\": \"<absolute git rev-parse --show-toplevel>\",\n  \"filesTouched\": [\"<path>\"],\n  \"checkSummary\": \"<REAL_CHECK_EXIT plus verbatim result tail or failure>\",\n  \"gateDurationMs\": 0,\n  \"summary\": \"<what changed, how acceptance was met, and residual risk>\",\n  \"blockedReason\": \"<fail only>\"\n}\n```\n\nThe prompt-catalog schema is authoritative, including any conditional\n`mutationTable` requirement. `pass` requires observed gate success, mutation\nevidence where required, a verified commit object, a clean tree, base\nancestry, and a reported `actualWorktreePath`.\n\nStore the object exactly once through the dispatch-scoped `store_result` tool. Only a\n`result-stored` acknowledgement permits the final response. Then reply with the\nprepared dispatch handle only as the exact one-line JSON\n`{\"attestationId\":\"<prepared attestation id>\",\"generation\":<prepared generation>}`\nand nothing else; never return the result body or a capability.",
+    promptTemplate: "> **CQ command notation (Claude).** `CQ::<path>` names the native slash command\n> `/cq:<path>`, with each `/` in `<path>` written as `:`. Preserve any following\n> arguments and treat `$ARGUMENTS` as the current command's user-supplied text.\n\n\n## Catalogue\n\n```yaml\ninputs:\n  - \"task specification, optional advisory worktreePath, branch, verified full-SHA base, required round, authoritative starting commit, optional priorResultCommit, optional prior criticism\"\noutputs:\n  - \"one verified task commit, actualWorktreePath, required baseVerification evidence, stored structured result, and handle-only final reply\"\nioSchema:\n  - \"typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)\"\n  - \"pass requires a green full gate, verified commit/clean tree/ancestry, required actualWorktreePath, verified baseVerification (full SHAs only), and required mutation evidence\"\n  - \"fail may carry verified or unresolvable baseVerification with a closed reason and null SHAs where unobserved\"\n```\n\nImplement exactly one task. Never mutate the ledger, merge, push, rebase, or\nspawn a child. Work only inside the supplied worktree and task branch. Do not\noperate on another checkout or alter its refs. Report a stale or unusable base\ninstead of improvising cross-checkout repair.\n\nThe orchestrator owns install, worktree create/remove, reset, rebase, symlink,\nand cleanup through its managed prepare/release path. Do not install workspace\ndependencies, create or remove worktrees, symlink `node_modules`, hard-reset,\nrebase, or run worktree lifecycle commands yourself.\n\n### Dispatch input delivery (Claude)\n\nThe launch prompt carries only\n`{ attestationId, generation, inputCapability }`. Before reading or changing\nthe repository, call the ledger MCP `fetch_dispatch_input` tool exactly once\nwith those three fields. Treat its returned `input` as the task specification\ndescribed below. A missing capability, failed retrieval, or second retrieval is\na protocol failure: stop and return `status: \"fail\"` rather than reading task\nnarrative from the ledger or improvising it from the compact launch reference.\n\n\nTreat the resolved task headline, description, and acceptance as the\nspecification. Address every supplied prior criticism. `round` is required on\nevery dispatch (zero-based). Never invent a round; never reset or rebase away\nprior-round commits when `round > 0`.\n\n## Procedure\n\n1. **Step 0 — verify prepared evidence only (no install, no lifecycle).**\n   Resolve `actualWorktreePath` with `git rev-parse --show-toplevel` (absolute)\n   first. When the input carries advisory `worktreePath`, prefer that path when\n   it is reachable and is a git worktree of this repository. On a surface with\n   native worktree confinement the only enterable placement is under\n   `.claude/worktrees/` of the session repository. If the supplied path is\n   outside that root, or every attempt to enter it is refused, STOP and return\n   `fail` with a precise `blockedReason` containing the literal diagnosis\n   `worktreePath unreachable from my confined worktree (expected under .claude/worktrees/)`\n   plus the supplied path and the resolved toplevel — do not rediscover the\n   confinement by trial-and-error across sibling checkouts. When the surface\n   adapter already pinned a harness-minted worktree and the advisory path is\n   absent or unusable for that reason, continue in the pinned tree and still\n   report its absolute toplevel as `actualWorktreePath`. Always include\n   `actualWorktreePath` in the stored result.\n\n   Verify placement evidence:\n   - current branch matches the dispatched `branch` (`git rev-parse --abbrev-ref HEAD`);\n   - `git rev-parse HEAD` equals `startingCommit` (full SHA);\n   - `git cat-file -t <baseCommit>` returns `commit` and `baseCommit` is a full\n     40-hex SHA;\n   - `git merge-base --is-ancestor <baseCommit> HEAD` exits zero.\n\n   When `round > 0`, also verify `priorResultCommit` when supplied (non-null):\n   require it to be a full SHA commit object equal to or an ancestor of `HEAD`.\n   Never hard-reset or rebase away from prior criticism commits.\n\n   On any mismatch STOP immediately with `status: \"fail\"`, a precise\n   `blockedReason`, and `baseVerification` set to the matching unresolvable arm\n   (`path-mismatch` | `branch-mismatch` | `starting-commit-mismatch` |\n   `prior-result-commit-mismatch` | `base-missing` | `base-not-commit` |\n   `head-missing` | `head-not-commit` | `unrelated-histories` |\n   `ancestry-unobserved`) with full SHAs or `null` — never a fabricated SHA.\n   On success record\n   `baseVerification: { status: \"verified\", relation: \"equal\"|\"descendant\",\n   baseCommit, headCommit }` using full object SHAs only. These checks apply to\n   every initial and criticism round. Never reset away prior task commits.\n\n2. **Implement surgically.**\n   **Early skeleton write (load-bearing durability).** The first substantive\n   action after grounding and base verification MUST be to create a durable\n   partial artifact and commit it, even when nearly empty. Prefer\n   `WIP-<taskId>.md` in the worktree root using the existing WIP partial format\n   (fenced JSON header with `taskId`, `role`, `baseCommit`, `startedAt`, and a\n   non-empty `checkpoints[]` of `{name,status}` where status is\n   `done | todo | unmeasured`, followed by\n   `## <name> <!-- cq:wip-checkpoint -->` body sections). Mark unfinished work\n   `todo` or `unmeasured` rather than omitting it so a harvested partial is\n   self-describing. A committed partial is worth more than an uncommitted\n   complete deliverable. Do not defer the first write until the end of the turn.\n   **Incremental persistence.** Reproduce a defect before correcting it. Match\n   project conventions and do not repair unrelated faults. At natural\n   checkpoints — after each measurement, probe, acceptance clause, or\n   non-trivial edit batch — update the WIP artifact (or the real deliverable)\n   and commit. Keep checkpoint statuses honest (`done` / `todo` / `unmeasured`).\n   Never couple durability to completion of the whole task.\n\n3. **Prove changed guards.** For every test, assertion, guard, or invariant you\n   add or change, deliberately make it fail, capture the expected failure,\n   restore the intended bytes, and capture the pass. Hash affected files before\n   mutation and after restoration. Report only observations from this run in\n   `mutationTable`; if evidence is unavailable, report the gap rather than\n   claiming success.\n\n4. **Run targeted checks.** Use exact test paths when discovery matters and\n   record nonzero test counts. Check wrapped prose with a multiline-aware\n   operation.\n\n5. **Run the full gate in the foreground.** From the worktree root, run exactly\n   `cq gate run --worktree \"$PWD\" --command-cwd \"$PWD/nix/pkg/cq-ledgers\" -- bun run check`.\n   A yielded command-session handle remains the sole full-gate attempt. Continue\n   to poll that exact session or explicitly terminate it; after termination,\n   continue polling and require terminal settlement before retrying the gate,\n   calling `store_result`, or returning. Never launch a replacement full-gate\n   attempt while the prior session remains live.\n   Capture start/end time and assign its exit status\n   immediately after the command, independent of any pipe or wrapper. Preserve\n   `REAL_CHECK_EXIT=<n>`, the verbatim result tail, and `gateDurationMs`.\n   Iterate until zero. An unrelated-failure claim requires an A/B reproduction\n   of the same selector and signature on this tree and the recorded base; if\n   confinement prevents that proof, return `fail`.\n\n6. **Commit and verify.** Commit all task changes, then require:\n   - `git rev-parse --verify HEAD` succeeds;\n   - `git cat-file -t <head>` returns `commit`;\n   - `git status --porcelain --untracked-files=all` is empty;\n   - `git merge-base --is-ancestor <baseCommit> HEAD` exits zero.\n     Immediately before constructing the result, rerun\n     `git rev-parse --verify HEAD` and copy its stdout verbatim into\n     `resultCommit`, then require\n     `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.\n     Rerun `git rev-parse --show-toplevel` and copy its stdout verbatim into\n     `actualWorktreePath`.\n     Keep the Step-0 `baseVerification` verified arm on pass (update\n     `headCommit` to the final tip when it advanced under the same base).\n\n## Result\n\n```json\n{\n  \"taskId\": \"<task id>\",\n  \"status\": \"pass | fail\",\n  \"resultCommit\": \"<verified head, or null on fail>\",\n  \"branch\": \"implement/<taskId>\",\n  \"actualWorktreePath\": \"<absolute git rev-parse --show-toplevel>\",\n  \"filesTouched\": [\"<path>\"],\n  \"checkSummary\": \"<REAL_CHECK_EXIT plus verbatim result tail or failure>\",\n  \"gateDurationMs\": 0,\n  \"baseVerification\": {\n    \"status\": \"verified\",\n    \"relation\": \"equal | descendant\",\n    \"baseCommit\": \"<40-hex>\",\n    \"headCommit\": \"<40-hex>\"\n  },\n  \"summary\": \"<what changed, how acceptance was met, and residual risk>\",\n  \"blockedReason\": \"<fail only>\"\n}\n```\n\nOn fail with unresolvable base evidence use:\n`baseVerification: { status: \"unresolvable\", reason: \"<closed reason>\",\nbaseCommit: <40-hex|null>, headCommit: <40-hex|null> }` — never invent a SHA.\n\nThe prompt-catalog schema is authoritative, including any conditional\n`mutationTable` requirement. `pass` requires observed gate success, mutation\nevidence where required, a verified commit object, a clean tree, base\nancestry, a reported `actualWorktreePath`, and verified `baseVerification`.\n\nStore the object exactly once through the dispatch-scoped `store_result` tool. Only a\n`result-stored` acknowledgement permits the final response. Then reply with the\nprepared dispatch handle only as the exact one-line JSON\n`{\"attestationId\":\"<prepared attestation id>\",\"generation\":<prepared generation>}`\nand nothing else; never return the result body or a capability.",
     privilege: "RW",
     exposedTools: "Disallowed: Agent; isolation: worktree",
     inputSchema: {
@@ -1093,7 +1094,7 @@ export const AGENT_ROLES: AgentRole[] = [
         "worktreePath": {
           "type": "string",
           "minLength": 1,
-          "description": "Optional advisory path. When a surface adapter supplies its own isolated worktree, that one wins (D143). Preferred Claude placement is .claude/worktrees/<taskId>."
+          "description": "Optional advisory path from worktree_manage prepare. When a surface adapter supplies its own isolated worktree, that one wins (D143). Preferred Claude placement is .claude/worktrees/<taskId>."
         },
         "branch": {
           "type": "string",
@@ -1102,17 +1103,25 @@ export const AGENT_ROLES: AgentRole[] = [
         },
         "baseCommit": {
           "type": "string",
-          "description": "The commit the worktree was cut from (full or abbreviated sha).",
-          "minLength": 1
+          "description": "The commit the worktree was prepared from (full 40-hex object SHA).",
+          "pattern": "^[0-9a-f]{40}$"
         },
         "round": {
           "type": "integer",
-          "description": "The zero-based implementation or correction round.",
+          "description": "The zero-based implementation or correction round. Required end-to-end; a default of 0 is allowed only during refs-form normalization, never by omitting the field from the final worker input.",
           "minimum": 0
         },
         "startingCommit": {
           "type": "string",
           "description": "The authoritative worktree tip immediately before this round launches.",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "priorResultCommit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Prior-round worker resultCommit to revalidate when round > 0 (full SHA or null). Must be equal to or an ancestor of HEAD; the worker must not reset or rebase away from it.",
           "pattern": "^[0-9a-f]{40}$"
         },
         "priorCriticism": {
@@ -1184,6 +1193,87 @@ export const AGENT_ROLES: AgentRole[] = [
         "summary": {
           "type": "string"
         },
+        "baseVerification": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "const": "verified"
+                },
+                "relation": {
+                  "type": "string",
+                  "enum": [
+                    "equal",
+                    "descendant"
+                  ]
+                },
+                "baseCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "headCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                }
+              },
+              "required": [
+                "status",
+                "relation",
+                "baseCommit",
+                "headCommit"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "const": "unresolvable"
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "base-missing",
+                    "base-not-commit",
+                    "head-missing",
+                    "head-not-commit",
+                    "unrelated-histories",
+                    "ancestry-unobserved",
+                    "path-mismatch",
+                    "branch-mismatch",
+                    "starting-commit-mismatch",
+                    "prior-result-commit-mismatch"
+                  ]
+                },
+                "baseCommit": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "headCommit": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^[0-9a-f]{40}$"
+                }
+              },
+              "required": [
+                "status",
+                "reason",
+                "baseCommit",
+                "headCommit"
+              ],
+              "additionalProperties": false
+            }
+          ],
+          "description": "T1307/G121 Step-0 base evidence. Pass requires the verified full-SHA arm; fail accepts verified or unresolvable with a closed reason and null SHAs where unobserved."
+        },
         "blockedReason": {
           "type": "string"
         },
@@ -1225,7 +1315,8 @@ export const AGENT_ROLES: AgentRole[] = [
         "actualWorktreePath",
         "filesTouched",
         "checkSummary",
-        "summary"
+        "summary",
+        "baseVerification"
       ],
       "additionalProperties": false,
       "allOf": [
@@ -1243,7 +1334,40 @@ export const AGENT_ROLES: AgentRole[] = [
           "then": {
             "required": [
               "gateDurationMs"
-            ]
+            ],
+            "properties": {
+              "baseVerification": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "const": "verified"
+                  },
+                  "relation": {
+                    "type": "string",
+                    "enum": [
+                      "equal",
+                      "descendant"
+                    ]
+                  },
+                  "baseCommit": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  "headCommit": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  }
+                },
+                "required": [
+                  "status",
+                  "relation",
+                  "baseCommit",
+                  "headCommit"
+                ],
+                "additionalProperties": false
+              }
+            }
           }
         },
         {
@@ -1277,16 +1401,17 @@ export const AGENT_ROLES: AgentRole[] = [
     source: "agents/implement-reviewer.md",
     description: "Adversarial implementation reviewer that verifies one task and stores a structured approve/disapprove verdict without mutating the ledger.",
     inputs: [
-  "task specification, worktree/branch/base, worker result, round, prior criticism, optional parentGateAttestation, and prepare-bound absolute phase timing"
+  "task specification, worktree/branch/full-SHA base, worker result, round, prior criticism, optional parentGateAttestation, and prepare-bound absolute phase timing"
 ],
     outputs: [
-  "stored structured verdict and handle-only final reply"
+  "stored structured verdict with resultCommitEvidence + baseAncestry, and handle-only final reply"
 ],
     ioSchema: [
   "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)",
-  "approve requires empty criticism/questions, green gate (child re-run or verified parentGateAttestation), and verified commit"
+  "approve requires empty criticism/questions, green gate (child re-run or verified parentGateAttestation), resultCommitVerified=true, and verified resultCommitEvidence + baseAncestry (full SHAs)",
+  "disapprove may carry unresolvable evidence with closed reasons and nullable observed SHAs"
 ],
-    promptTemplate: "> **CQ command notation (Claude).** `CQ::<path>` names the native slash command\n> `/cq:<path>`, with each `/` in `<path>` written as `:`. Preserve any following\n> arguments and treat `$ARGUMENTS` as the current command's user-supplied text.\n\n\n### Dispatch input delivery (Claude)\n\nThe launch prompt carries `attestationId`, `generation`, and `inputCapability`.\nBefore reading or changing the repository, call the ledger MCP\n`fetch_dispatch_input` tool exactly once and treat its typed input as the\ncomplete review assignment. A failed or second retrieval is a protocol failure.\n\n\n## Catalogue\n\n```yaml\ninputs:\n  - \"task specification, worktree/branch/base, worker result, round, prior criticism, optional parentGateAttestation, and prepare-bound absolute phase timing\"\noutputs:\n  - \"stored structured verdict and handle-only final reply\"\nioSchema:\n  - \"typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)\"\n  - \"approve requires empty criticism/questions, green gate (child re-run or verified parentGateAttestation), and verified commit\"\n```\n\nReview one task against the actual diff and acceptance. Never edit the\nrepository, mutate the ledger, or spawn a child.\n\nThe fetched input carries `gateCompleteBy`, `responseStoreNow`, and\n`synthesisStoreReserveMs`. These are absolute prepare-bound values. Never\nderive a new phase window from launch, fetch, inspection, verification, or gate\nstart. Launch delay, inspection, result-commit verification, and the canonical\nregistered gate all consume the same window ending at `gateCompleteBy`. Compare\nthe current clock to that instant at each boundary; only `now >=\ngateCompleteBy` exhausts the phase. The interval through `responseStoreNow` is\nreserved exclusively for synthesizing and storing a verdict.\n\nRun `git -C <worktree> cat-file -t <resultCommit>` and require `commit`. Run\n`git -C <worktree> rev-parse --verify <branch>` and require its full SHA to\nequal `resultCommit`.\n\n**Gate evidence.** When the fetched input carries `parentGateAttestation`\n(sandboxed path where gate primitives are denied):\n\n1. Do **not** invoke `cq gate run` inside the sandbox.\n2. Verify the attestation against `workerResult.resultCommit`: require exact\n   `resultCommit` match, `gateExitCode === 0`, `failCount === 0`, and\n   `passCount > 0`. Reject (disapprove) when any predicate fails.\n3. On a valid green attestation set `gateReRan=false`,\n   `gateReRanReason=sandbox-denied-primitives`, omit `gateDurationMs`, and\n   include the attested `gateExitCode` / `passCount` / `failCount` /\n   `command` / optional `gateDurationMs` in `rationale` (or `summary`).\n\nWhen `parentGateAttestation` is absent, re-run the gate yourself. Use the\nforeground process's real exit status and measure its duration. Invoke that\ngate as\n`cq gate run --worktree <worktree> --command-cwd <worktree>/nix/pkg/cq-ledgers --deadline <gateCompleteBy> -- bun run check`.\nThe deadline path terminates and settles the registered command before it\nreturns; measure `gateDurationMs` through that termination and settlement.\nNon-sandboxed reviewers always take this child re-run path.\n\nCheck acceptance, correctness, boundary handling, type safety, surgical scope,\nand defect reproduction.\n\nIf the phase expires before a complete acceptance verdict can be established,\nstore a disapproval before `responseStoreNow` whose sole criticism is exactly\n`Implementation-review phase budget exhausted before a complete acceptance verdict could be established.`\nUse exactly one of these evidence tuples:\n\n- before result-commit verification completes: `resultCommitVerified=false`,\n  `gateReRan=false`, omit `gateDurationMs`, and set `gateReRanReason` to\n  `phase-budget-exhausted-before-result-commit-verification`;\n- after result-commit verification but before gate start: set\n  `resultCommitVerified=true`, `gateReRan=false`, omit `gateDurationMs`, and set\n  `gateReRanReason` to `phase-budget-exhausted-before-gate-start`;\n- when the registered gate overruns `gateCompleteBy`: set\n  `resultCommitVerified=true`, `gateReRan=true`, set `gateDurationMs` to the\n  measured elapsed time through termination and settlement, and omit\n  `gateReRanReason`.\n\nFor every exhaustion fallback set `questions=[]`, `defects=[]`, and use the\nexact exhaustion sentence as `rationale` as well as the sole criticism. A\ndisapproval with both empty `criticism` and empty `questions` violates the\nsidecar and must never be stored.\n\nClassify each finding once:\n\n- `criticism`: objective defects the worker can fix;\n- `questions`: unresolved user-only requirements or product choices;\n- `defects`: out-of-scope or pre-existing faults for separate work.\n\nDiscoverable facts, cost, scope magnitude, and whether to fix a confirmed fault\nare not questions.\n\n```json\n{\n  \"taskId\": \"<task id>\",\n  \"verdict\": \"approve | disapprove\",\n  \"criticism\": [\"<worker-fixable defect>\"],\n  \"questions\": [\"<user-only ambiguity>\"],\n  \"defects\": [\n    {\n      \"headline\": \"<out-of-scope fault>\",\n      \"description\": \"<evidence and scope boundary>\",\n      \"severity\": \"low | medium | high | critical\",\n      \"suggestedFix\": \"<optional>\"\n    }\n  ],\n  \"rationale\": \"<decisive evidence>\",\n  \"gateReRan\": true,\n  \"resultCommitVerified\": true,\n  \"gateDurationMs\": 12345,\n  \"summary\": \"<optional one-line verdict>\"\n}\n```\n\nAlways state `gateReRan` and `resultCommitVerified`. Include\n`gateDurationMs` only when the gate ran; otherwise include an optional\n`gateReRanReason` (use exactly `sandbox-denied-primitives` on the\nparent-attested path). Approval requires empty criticism/questions, a green\ngate (child re-run exit 0, or a verified parent attestation with exit 0 /\nfailCount 0 / passCount > 0), and verified result commit. Disapproval requires\ncriticism or questions. Defects do not control the verdict.\n\nStore the object exactly once through the dispatch-scoped `store_result` tool. Only a\n`result-stored` acknowledgement permits the final response. Then reply with the\nprepared dispatch handle only; never return the verdict body or a capability.",
+    promptTemplate: "> **CQ command notation (Claude).** `CQ::<path>` names the native slash command\n> `/cq:<path>`, with each `/` in `<path>` written as `:`. Preserve any following\n> arguments and treat `$ARGUMENTS` as the current command's user-supplied text.\n\n\n### Dispatch input delivery (Claude)\n\nThe launch prompt carries `attestationId`, `generation`, and `inputCapability`.\nBefore reading or changing the repository, call the ledger MCP\n`fetch_dispatch_input` tool exactly once and treat its typed input as the\ncomplete review assignment. A failed or second retrieval is a protocol failure.\n\n\n## Catalogue\n\n```yaml\ninputs:\n  - \"task specification, worktree/branch/full-SHA base, worker result, round, prior criticism, optional parentGateAttestation, and prepare-bound absolute phase timing\"\noutputs:\n  - \"stored structured verdict with resultCommitEvidence + baseAncestry, and handle-only final reply\"\nioSchema:\n  - \"typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)\"\n  - \"approve requires empty criticism/questions, green gate (child re-run or verified parentGateAttestation), resultCommitVerified=true, and verified resultCommitEvidence + baseAncestry (full SHAs)\"\n  - \"disapprove may carry unresolvable evidence with closed reasons and nullable observed SHAs\"\n```\n\nReview one task against the actual diff and acceptance. Never edit the\nrepository, mutate the ledger, or spawn a child.\n\nThe fetched input carries `gateCompleteBy`, `responseStoreNow`, and\n`synthesisStoreReserveMs`. These are absolute prepare-bound values. Never\nderive a new phase window from launch, fetch, inspection, verification, or gate\nstart. Launch delay, inspection, result-commit verification, and the canonical\nregistered gate all consume the same window ending at `gateCompleteBy`. Compare\nthe current clock to that instant at each boundary; only `now >=\ngateCompleteBy` exhausts the phase. The interval through `responseStoreNow` is\nreserved exclusively for synthesizing and storing a verdict.\n\n**Result-commit evidence (required).** Independently:\n\n1. Run `git -C <worktree> rev-parse --verify <resultCommit>^{commit}` (or\n   `cat-file -t`) and require object type `commit` with a full 40-hex SHA.\n2. Run `git -C <worktree> rev-parse --verify <branch>` and require its full SHA\n   to equal `resultCommit`.\n3. On success set\n   `resultCommitEvidence: { status: \"verified\", resultCommit, branchTip }` with\n   full SHAs and `resultCommitVerified: true`.\n4. On failure set `resultCommitVerified: false` and\n   `resultCommitEvidence: { status: \"unresolvable\", reason, resultCommit,\n   branchTip }` using a closed reason\n   (`result-commit-missing` | `result-commit-not-commit` |\n   `result-commit-malformed` | `branch-tip-mismatch` | `branch-unresolvable` |\n   `worktree-unresolvable`) and full SHAs or `null` — never invent a SHA.\n\n**Base-ancestry evidence (required).** Independently:\n\n1. Resolve the dispatch `baseCommit` to a full SHA commit object.\n2. Compute `git -C <worktree> merge-base <baseCommit> <resultCommit>`.\n3. Require `git merge-base --is-ancestor <baseCommit> <resultCommit>` to exit\n   zero (base equal to or ancestor of the result).\n4. On success set\n   `baseAncestry: { status: \"verified\", relation: \"equal\"|\"descendant\",\n   baseCommit, resultCommit, mergeBase }` with full SHAs only.\n5. On failure set\n   `baseAncestry: { status: \"unresolvable\", reason, baseCommit, resultCommit,\n   mergeBase }` with a closed reason\n   (`base-missing` | `base-not-commit` | `result-commit-missing` |\n   `result-commit-not-commit` | `merge-base-unobserved` | `not-ancestor` |\n   `unrelated-histories`) and nullable observed values.\n\nDistinguish stale ancestry (`not-ancestor` with both objects present) from\nunresolvable objects (`base-missing`, `*-not-commit`, `merge-base-unobserved`).\nApproval requires both evidence arms verified; never approve with unresolvable\nor missing ancestry.\n\nAlso verify the worktree diff against the claimed `filesTouched` set where\npractical, and re-run or accept parent-attested gates as below.\n\n**Gate evidence.** When the fetched input carries `parentGateAttestation`\n(sandboxed path where gate primitives are denied):\n\n1. Do **not** invoke `cq gate run` inside the sandbox.\n2. Verify the attestation against `workerResult.resultCommit`: require exact\n   `resultCommit` match, `gateExitCode === 0`, `failCount === 0`, and\n   `passCount > 0`. Reject (disapprove) when any predicate fails.\n3. On a valid green attestation set `gateReRan=false`,\n   `gateReRanReason=sandbox-denied-primitives`, omit `gateDurationMs`, and\n   include the attested `gateExitCode` / `passCount` / `failCount` /\n   `command` / optional `gateDurationMs` in `rationale` (or `summary`).\n\nWhen `parentGateAttestation` is absent, re-run the gate yourself. Use the\nforeground process's real exit status and measure its duration. Invoke that\ngate as\n`cq gate run --worktree <worktree> --command-cwd <worktree>/nix/pkg/cq-ledgers --deadline <gateCompleteBy> -- bun run check`.\nThe deadline path terminates and settles the registered command before it\nreturns; measure `gateDurationMs` through that termination and settlement.\nNon-sandboxed reviewers always take this child re-run path.\n\nCheck acceptance, correctness, boundary handling, type safety, surgical scope,\nand defect reproduction.\n\nIf the phase expires before a complete acceptance verdict can be established,\nstore a disapproval before `responseStoreNow` whose sole criticism is exactly\n`Implementation-review phase budget exhausted before a complete acceptance verdict could be established.`\nUse exactly one of these evidence tuples:\n\n- before result-commit verification completes: `resultCommitVerified=false`,\n  `gateReRan=false`, omit `gateDurationMs`, and set `gateReRanReason` to\n  `phase-budget-exhausted-before-result-commit-verification`; carry\n  unresolvable `resultCommitEvidence` / `baseAncestry` with the best observed\n  values;\n- after result-commit verification but before gate start: set\n  `resultCommitVerified=true`, `gateReRan=false`, omit `gateDurationMs`, and set\n  `gateReRanReason` to `phase-budget-exhausted-before-gate-start`;\n- when the registered gate overruns `gateCompleteBy`: set\n  `resultCommitVerified=true`, `gateReRan=true`, set `gateDurationMs` to the\n  measured elapsed time through termination and settlement, and omit\n  `gateReRanReason`.\n\nFor every exhaustion fallback set `questions=[]`, `defects=[]`, and use the\nexact exhaustion sentence as `rationale` as well as the sole criticism. A\ndisapproval with both empty `criticism` and empty `questions` violates the\nsidecar and must never be stored.\n\nClassify each finding once:\n\n- `criticism`: objective defects the worker can fix;\n- `questions`: unresolved user-only requirements or product choices;\n- `defects`: out-of-scope or pre-existing faults for separate work.\n\nDiscoverable facts, cost, scope magnitude, and whether to fix a confirmed fault\nare not questions.\n\n```json\n{\n  \"taskId\": \"<task id>\",\n  \"verdict\": \"approve | disapprove\",\n  \"criticism\": [\"<worker-fixable defect>\"],\n  \"questions\": [\"<user-only ambiguity>\"],\n  \"defects\": [\n    {\n      \"headline\": \"<out-of-scope fault>\",\n      \"description\": \"<evidence and scope boundary>\",\n      \"severity\": \"low | medium | high | critical\",\n      \"suggestedFix\": \"<optional>\"\n    }\n  ],\n  \"rationale\": \"<decisive evidence>\",\n  \"gateReRan\": true,\n  \"resultCommitVerified\": true,\n  \"resultCommitEvidence\": {\n    \"status\": \"verified\",\n    \"resultCommit\": \"<40-hex>\",\n    \"branchTip\": \"<40-hex>\"\n  },\n  \"baseAncestry\": {\n    \"status\": \"verified\",\n    \"relation\": \"equal | descendant\",\n    \"baseCommit\": \"<40-hex>\",\n    \"resultCommit\": \"<40-hex>\",\n    \"mergeBase\": \"<40-hex>\"\n  },\n  \"gateDurationMs\": 12345,\n  \"summary\": \"<optional one-line verdict>\"\n}\n```\n\nAlways state `gateReRan`, `resultCommitVerified`, `resultCommitEvidence`, and\n`baseAncestry`. Include `gateDurationMs` only when the gate ran; otherwise\ninclude an optional `gateReRanReason` (use exactly `sandbox-denied-primitives`\non the parent-attested path). Approval requires empty criticism/questions, a\ngreen gate (child re-run exit 0, or a verified parent attestation with exit 0 /\nfailCount 0 / passCount > 0), `resultCommitVerified=true`, and both evidence\narms verified with full SHAs. Disapproval requires criticism or questions and\nmay carry unresolvable evidence. Defects do not control the verdict.\n\nStore the object exactly once through the dispatch-scoped `store_result` tool. Only a\n`result-stored` acknowledgement permits the final response. Then reply with the\nprepared dispatch handle only; never return the verdict body or a capability.",
     privilege: "RO",
     exposedTools: "Disallowed: Write, Edit, MultiEdit, NotebookEdit, Agent",
     inputSchema: {
@@ -1322,7 +1447,8 @@ export const AGENT_ROLES: AgentRole[] = [
         },
         "baseCommit": {
           "type": "string",
-          "minLength": 1
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "Dispatch base commit (full 40-hex object SHA) used for ancestry verification."
         },
         "workerResult": {
           "type": "object",
@@ -1331,7 +1457,8 @@ export const AGENT_ROLES: AgentRole[] = [
               "type": [
                 "string",
                 "null"
-              ]
+              ],
+              "pattern": "^[0-9a-f]{40}$"
             },
             "checkSummary": {
               "type": "string"
@@ -1365,7 +1492,7 @@ export const AGENT_ROLES: AgentRole[] = [
           "properties": {
             "resultCommit": {
               "type": "string",
-              "minLength": 1,
+              "pattern": "^[0-9a-f]{40}$",
               "description": "The commit SHA the parent gate observed (must equal worker resultCommit)."
             },
             "gateExitCode": {
@@ -1511,7 +1638,167 @@ export const AGENT_ROLES: AgentRole[] = [
         },
         "resultCommitVerified": {
           "type": "boolean",
-          "description": "Whether the reviewer verified the worker's resultCommit sha (e.g. via cat-file / tip equality) rather than accepting it unchecked."
+          "description": "Whether the reviewer verified the worker's resultCommit sha (cat-file + tip equality) rather than accepting it unchecked."
+        },
+        "resultCommitEvidence": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "const": "verified"
+                },
+                "resultCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "branchTip": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                }
+              },
+              "required": [
+                "status",
+                "resultCommit",
+                "branchTip"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "const": "unresolvable"
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "result-commit-missing",
+                    "result-commit-not-commit",
+                    "result-commit-malformed",
+                    "branch-tip-mismatch",
+                    "branch-unresolvable",
+                    "worktree-unresolvable"
+                  ]
+                },
+                "resultCommit": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "branchTip": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^[0-9a-f]{40}$"
+                }
+              },
+              "required": [
+                "status",
+                "reason",
+                "resultCommit",
+                "branchTip"
+              ],
+              "additionalProperties": false
+            }
+          ],
+          "description": "T1308 structured result-commit evidence. Approval requires the verified arm (commit object + branch tip equality, full SHAs)."
+        },
+        "baseAncestry": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "const": "verified"
+                },
+                "relation": {
+                  "type": "string",
+                  "enum": [
+                    "equal",
+                    "descendant"
+                  ]
+                },
+                "baseCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "resultCommit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "mergeBase": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                }
+              },
+              "required": [
+                "status",
+                "relation",
+                "baseCommit",
+                "resultCommit",
+                "mergeBase"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "const": "unresolvable"
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "base-missing",
+                    "base-not-commit",
+                    "result-commit-missing",
+                    "result-commit-not-commit",
+                    "merge-base-unobserved",
+                    "not-ancestor",
+                    "unrelated-histories"
+                  ]
+                },
+                "baseCommit": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "resultCommit": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "mergeBase": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^[0-9a-f]{40}$"
+                }
+              },
+              "required": [
+                "status",
+                "reason",
+                "baseCommit",
+                "resultCommit",
+                "mergeBase"
+              ],
+              "additionalProperties": false
+            }
+          ],
+          "description": "T1308 structured base-ancestry evidence. Approval requires the verified arm (dispatch base ancestor of resultCommit, exact merge-base full SHA)."
         },
         "gateDurationMs": {
           "type": "integer",
@@ -1536,7 +1823,9 @@ export const AGENT_ROLES: AgentRole[] = [
         "defects",
         "rationale",
         "gateReRan",
-        "resultCommitVerified"
+        "resultCommitVerified",
+        "resultCommitEvidence",
+        "baseAncestry"
       ],
       "additionalProperties": false,
       "allOf": [
@@ -1590,6 +1879,89 @@ export const AGENT_ROLES: AgentRole[] = [
                   "questions"
                 ]
               }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "approve"
+              }
+            },
+            "required": [
+              "verdict"
+            ]
+          },
+          "then": {
+            "properties": {
+              "resultCommitVerified": {
+                "const": true
+              },
+              "resultCommitEvidence": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "const": "verified"
+                  },
+                  "resultCommit": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  "branchTip": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  }
+                },
+                "required": [
+                  "status",
+                  "resultCommit",
+                  "branchTip"
+                ],
+                "additionalProperties": false
+              },
+              "baseAncestry": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "const": "verified"
+                  },
+                  "relation": {
+                    "type": "string",
+                    "enum": [
+                      "equal",
+                      "descendant"
+                    ]
+                  },
+                  "baseCommit": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  "resultCommit": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  "mergeBase": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  }
+                },
+                "required": [
+                  "status",
+                  "relation",
+                  "baseCommit",
+                  "resultCommit",
+                  "mergeBase"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "resultCommitVerified",
+              "resultCommitEvidence",
+              "baseAncestry"
             ]
           }
         }
@@ -2506,11 +2878,11 @@ export const AGENT_ROLES: AgentRole[] = [
   "standalone handoff"
 ],
     ioSchema: [
-  "worker: {taskId,status,resultCommit,branch,actualWorktreePath,filesTouched,checkSummary,gateDurationMs,summary,blockedReason?}",
-  "reviewer: {taskId,verdict,criticism[],questions[],defects[],rationale,summary?}",
+  "worker: {taskId,status,resultCommit,branch,actualWorktreePath,baseVerification,filesTouched,checkSummary,gateDurationMs,summary,blockedReason?}",
+  "reviewer: {taskId,verdict,criticism[],questions[],defects[],rationale,resultCommitEvidence,baseAncestry,summary?}",
   "resolver: {taskId,status,resultCommit?,summary,blockedReason?}"
 ],
-    promptTemplate: "{{cq:fragment:cq-command-invocation}}\n{{cq:fragment:operational-tool-vocabulary}}\n\n## Catalogue\n\n```yaml\ninputs:\n  - \"optional milestone ids; empty resumes all active milestones with non-terminal tasks\"\n  - \"full task state, dependencies, linked questions, worktrees, and reviewer configuration\"\noutputs:\n  - \"task transitions, one terminal review per task, verified fast-forward merges, defect closure, and milestone archival\"\n  - \"standalone handoff\"\nioSchema:\n  - \"worker: {taskId,status,resultCommit,branch,actualWorktreePath,filesTouched,checkSummary,gateDurationMs,summary,blockedReason?}\"\n  - \"reviewer: {taskId,verdict,criticism[],questions[],defects[],rationale,summary?}\"\n  - \"resolver: {taskId,status,resultCommit?,summary,blockedReason?}\"\n```\n\nYou orchestrate implementation. Children never mutate the ledger or merge.\nRe-derive state on every invocation. A pass must dispatch a child, mutate the\nledger, or merge; stop after two consecutive read-only passes.\n\n{{cq:fragment:subagent-dispatch}}\n{{cq:fragment:implement-dispatch-workflow}}\n\n## Shared rules\n\n- Resolve `tiers` and `reviewers` once per pass with\n  `ledger::get_config(\"tiers\")` and `ledger::get_config(\"reviewers\")`.\n  Workers use their task's `suggestedModel`; reviewers and conflict resolvers\n  use `tiers.frontier`. Pass configured model aliases verbatim. If a tier is\n  absent, inherit the current model and report the missing configuration.\n- Run at most eight workers concurrently. Each task uses an isolated worktree\n  and branch `implement/<taskId>`.\n- **Worktree placement.** `worktreePath` on child input is OPTIONAL advisory.\n  Under a surface with native worktree confinement, the orchestrator MUST\n  pre-create a REAL git worktree at `.claude/worktrees/<taskId>` via\n  `git worktree add .claude/worktrees/<taskId> -b implement/<taskId> <baseCommit>`\n  and pass THAT absolute path as advisory `worktreePath` — it is the only\n  under-root placement a pinned agent can enter unattended. Do not place the\n  tree outside the project directory or under a non-`.claude/worktrees/` path\n  on a confined surface. On surfaces without confinement any in-project path is\n  acceptable. Consume the worker's required `actualWorktreePath` on output as\n  the authoritative location; merge by `resultCommit` SHA when the harness\n  minted the tree.\n- Persist every child summary and available raw transcript with `cq log put`,\n  attach their logical paths to the affected ledger item, and never expose\n  capabilities or secrets. Before piping a transcript, require `test -s\n  <transcript>` so empty or whitespace-only captures are skipped rather than\n  written.\n- The surface-specific fragment defines dispatch input delivery and result\n  materialization. Retain the parent-prepared handle. Interpret a native\n  result only after the exact retained handle yields `state: \"consumed\"`.\n  Never inspect a body-returning completion or trust a child-reported handle.\n- A missing or non-consumed native result is a LOST REPORT. Log it and retry\n  the same role once with a fresh prepared dispatch. A second loss fails that\n  task path closed, leaves the task non-terminal and its worktree intact, and\n  cannot become a worker failure, reviewer abstention, or resolver verdict.\n\n## 1. Derive the ready set\n\nRead each target milestone and its full task items, linked questions, milestone\ndependencies, and referenced dependency items.\n\nBefore dispatch, prune stale worktree metadata and inspect all implementation\nand runtime-created worktrees. Never touch the main checkout, the ledger backup\nbranch, a worktree for a `wip`/`blocked` task, or an unmerged worktree without a\nterminal task association. Remove a worktree and branch only when\n`decideWorktreeSweep` returns `remove`: the tip is an ancestor of the\nintegration base, `git cherry <base> <tip>` reports every commit as\npatch-equivalent (all `-` lines → `patchEquivalentToLanded`), or the associated\ntask is `done`/`abandoned`. Never infer safety from a branch name alone.\n\nChange a `blocked` task back to `planned` after all linked questions become\n`answered`; include the answers in its next dispatch.\n\nA task is ready when:\n\n- its status is `planned`;\n- it has no open linked question;\n- every resolvable `dependsOn` item has a satisfying status declared by its\n  ledger (`tasks:done`, `defects:resolved`, `questions:answered`, and analogous\n  configured sets);\n- every prerequisite milestone has all tasks terminal.\n\nTerminal-but-unsatisfying statuses such as `abandoned` and `wontfix` do not\nsatisfy dependencies. Advisory or unresolvable free-text references do.\n\nIf no task is ready and no task awaits review or merge, report and stop.\n\n## 2. Dispatch workers\n\nBefore each initial or criticism-round dispatch, resolve the intended base with\n`git rev-parse --verify` and require `git cat-file -t` to return `commit`.\nAfter preparing or reusing the worktree, resolve its authoritative tip with\n`git -C <worktree> rev-parse --verify HEAD`, retain it as `startingCommit`, and\nrequire `git -C <worktree> cat-file -t <startingCommit>` to return `commit` plus\n`git merge-base --is-ancestor <verifiedBaseCommit> <startingCommit>` to exit\nzero. Immediately before prepare and again before launch, require the current\nworktree `HEAD` to equal that retained `startingCommit`. Retain the exact\n`baseCommit`, `round`, and `startingCommit`; never reconstruct them from a child\nreport.\n\n**Harvest then prefer RESUME.** Before every (re)dispatch, inspect the task\nworktree for a partial artifact — a `WIP-<taskId>.md` (or equivalent\ndeliverable) in the existing WIP partial format with open checkpoints, plus any\nuncommitted or committed-but-incomplete work. When a self-describing partial\nexists, RESUME the same worker in the same worktree onto that partial rather\nthan re-dispatching a fresh empty tree. Re-running an expensive probe to recover\nwork already done is the expensive failure mode; resumption is preferred when\nthere is durable state to resume onto. When the prior return is a LOST REPORT or\nan incomplete turn, harvest first, then resume.\n\nFor each selected task:\n\n1. If its linked owning goal is `planned`, move it once to `building`. Never\n   move a goal to a terminal status.\n2. Set the task `wip`.\n3. Prepare its worktree (confined surfaces: under `.claude/worktrees/<taskId>`)\n   and dispatch `implement-worker` with the exact task specification, optional\n   advisory `worktreePath`, branch, verified base, required `round`,\n   authoritative `startingCommit`, and any prior criticism.\n4. Materialize only a consumed, schema-valid result through the dispatch\n   protocol. Before accepting a passing result, require its `resultCommit` to be\n   a commit, the worker branch tip to equal it,\n   `actualWorktreePath` to be a non-empty absolute path, and\n   `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.\n\nDo not symlink another checkout's `node_modules`; the worker installs its own\nworkspace dependencies.\n\n## 3. Review\n\nBefore any review dispatch, require\n`git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.\nReview each passing worker result against the actual `baseCommit..resultCommit`\ndiff, acceptance criteria, and gate evidence. A worker failure enters the\ncriticism loop using `blockedReason`.\n\nIf reviewers are unconfigured, dispatch one native `implement-reviewer`. If\nconfigured, dispatch the panel concurrently. Native reviewers use the\nsurface-specific dispatch protocol. External reviewers run through their\nconfigured non-interactive adapter and the shared implement-review rubric.\n\n**Sandboxed reviewer parent-attested gate.** When a surface's dispatch workflow\nrequires parent-attested gate evidence for a sandboxed `implement-reviewer`\n(gate primitives denied), the parent MUST attach `parentGateAttestation` built\nfrom a just-run or freshly run full gate on the worker tip:\n`{ resultCommit, gateExitCode, passCount, failCount, gateDurationMs?, command,\ncapturedAt }` with exact tip match, `gateExitCode === 0`, `failCount === 0`, and\n`passCount > 0`. Do not escalate the child sandbox to gain gate primitives.\nNon-sandboxed reviewers omit the attestation and still re-run the gate\nthemselves; their approve path still requires child `gateReRan=true`.\n\n**External reviewer usable-verdict rule.** Fence-strip and validate stdout\nfirst. A complete, parseable verdict counts as a vote despite a non-zero shell\nexit; log that exit anomaly. Require full-object validation before accepting the\nverdict. Only a returned external failure without such a verdict, empty output,\nmalformed result, or off-enum verdict abstains and must be logged.\n\n**External reviewer no-timeout rule.** Do not impose a silent timeout.\nFence-strip and validate stdout first. A complete, parseable verdict counts as a\nvote despite a non-zero shell exit; log that exit anomaly. A non-zero exit\ncauses abstention only when no complete, parseable, fully validated verdict\nexists; a genuinely stalled adapter remains an operational failure. If every\nconfigured reviewer abstains, use one native reviewer; zero successful\nreviewers can never approve a task.\n\nReconcile surviving reviews in configured order:\n\n- any `disapprove` wins; all must approve and the gate must be green for\n  `approve`;\n- union and source-tag `criticism`, `questions`, and `defects`, deduplicating\n  equivalent entries;\n- `approve` requires empty criticism/questions;\n- `disapprove` requires at least one criticism or question.\n\nFile each out-of-scope or pre-existing `defects[]` entry once as an open defect\nlinked to the task and owning goal. Such defects do not block the current task\nand never become user disposition questions.\n\n## 4. Correct or park\n\nWhen the reconciled verdict disapproves with criticism and no questions,\nredispatch the same worker in the same worktree, then review again. There is no\nfixed round cap while evidence shows convergence.\n\nPark the task when:\n\n- the review asks a genuine user-only requirements question;\n- a correction round makes no file change;\n- the same criticism repeats without shrinking across consecutive rounds;\n- the same gate failure signature repeats.\n\nCreate linked open questions with the round history, set the task `blocked`,\nand preserve its worktree. Do not ask the user to decide whether a confirmed\nfault deserves a fix.\n\n## 5. Success authority\n\nA task may merge only when all of these hold:\n\n- its latest worker and required native-reviewer results were consumed through\n  parent-retained handles;\n- the worker reported `REAL_CHECK_EXIT=0`;\n- all surviving reviewers approved with empty criticism/questions;\n- the orchestrator independently verified the exact commit and ancestry.\n\nTreat `gateDurationMs` below `50`, absent/zero, or below one quarter of the\nmedian for earlier rounds of this same task as implausible. Re-run\n`bun run check` in the foreground and use its real exit status. If that cannot\nbe done, fail closed.\n\nBefore rebase and immediately before merge:\n\n1. require `git cat-file -t <resultCommit>` to return `commit`;\n2. require the worker branch tip to equal `resultCommit`;\n3. require `git merge-base --is-ancestor <verifiedBaseCommit> <resultCommit>`\n   to exit zero;\n4. require `git merge-base --is-ancestor <startingCommit> <resultCommit>` to\n   exit zero.\n\nAny failure is a contract breach and forbids merge-back.\n\n## 6. Merge in DAG order\n\nProcess successful tasks sequentially after their dependencies have landed.\nRebase each branch onto the current base. If the tip changes, the old worker\nresult loses authority: redispatch the worker on the rebased tree, rerun its\ngate and review, and repeat the success checks.\n\nOn conflict, dispatch `implement-conflict-resolver`. Continue only from a\nconsumed `pass` result. On `fail`, create a linked question, set the task\n`blocked`, keep the worktree, and skip its dependants.\n\nAfter the final checks, merge the exact object:\n\n```sh\ngit merge --ff-only <resultCommit>\n```\n\nThen mark the task `done` with `resultCommit`, completion summary, and all\nworker/reviewer log paths in the same update. Remove its worktree, delete its\nderived branch, and prune worktree metadata.\n\nFor each linked defect, collect all fix tasks from the defect's task\ndependencies and reverse task links. When all are `done`, set the defect\n`resolved` with a concise fix summary. A discovered task in `planned`, `wip`,\nor `blocked` prevents resolution; never treat task discovery as task completion.\n\nRecord exactly one terminal `reviews` item per task from the reconciled result:\n`go-ahead` for approval, otherwise `revise`, with source-tagged findings and\nall reviewer log paths.\n\nRe-derive the ready set after every merge and continue until drained.\n\n## 7. Milestones and goals\n\nFor each touched milestone, close and archive it only when every contained item\nis terminal and, for a coordination milestone, its goal is also terminal.\nPerform `update_item(ledger_id: \"milestones\", ..., status: \"done\")` before\n`archive_milestone(...)`.\n\nNever auto-close a goal. When all of a goal's work milestones are archived,\nreport that the user may set the goal to `done`; a later sweep may then archive\nits coordination milestone.\n\n## Report and handoff\n\nReport merged tasks and commits, blocked tasks and question ids, failed paths,\narchived milestones, and goals ready for user closure.\n\nWhen invoked standalone, write exactly one append-only `handoffs` item:\n\n- `drained`: no reachable task remains;\n- `answers-required`: tasks are blocked on open questions;\n- `user-action-required`: a named task needs a specific external action only\n  the user can perform;\n- `mixed`: several stop causes coexist;\n- `illness-detected`: a protocol, merge, or invariant failure prevents\n  progress.\n\nSet `flow: \"implement\"`, relevant `ledgerRefs`, required\n`blockingQuestions`/`handoffReasons`, and pass log paths. Do not write a\nhandoff for an ordinary context-window interruption. Never stop because of\nelapsed effort, task count, or remaining work size.\n\nWhen invoked inline by another flow, suppress this handoff; the outermost\ncommand owns it.",
+    promptTemplate: "{{cq:fragment:cq-command-invocation}}\n{{cq:fragment:operational-tool-vocabulary}}\n\n## Catalogue\n\n```yaml\ninputs:\n  - \"optional milestone ids; empty resumes all active milestones with non-terminal tasks\"\n  - \"full task state, dependencies, linked questions, worktrees, and reviewer configuration\"\noutputs:\n  - \"task transitions, one terminal review per task, verified fast-forward merges, defect closure, and milestone archival\"\n  - \"standalone handoff\"\nioSchema:\n  - \"worker: {taskId,status,resultCommit,branch,actualWorktreePath,baseVerification,filesTouched,checkSummary,gateDurationMs,summary,blockedReason?}\"\n  - \"reviewer: {taskId,verdict,criticism[],questions[],defects[],rationale,resultCommitEvidence,baseAncestry,summary?}\"\n  - \"resolver: {taskId,status,resultCommit?,summary,blockedReason?}\"\n```\n\nYou orchestrate implementation. Children never mutate the ledger or merge.\nRe-derive state on every invocation. A pass must dispatch a child, mutate the\nledger, or merge; stop after two consecutive read-only passes.\n\n{{cq:fragment:subagent-dispatch}}\n{{cq:fragment:implement-dispatch-workflow}}\n\n## Shared rules\n\n- Resolve `tiers` and `reviewers` once per pass with\n  `ledger::get_config(\"tiers\")` and `ledger::get_config(\"reviewers\")`.\n  Workers use their task's `suggestedModel`; reviewers and conflict resolvers\n  use `tiers.frontier`. Pass configured model aliases verbatim. If a tier is\n  absent, inherit the current model and report the missing configuration.\n- Run at most eight workers concurrently. Each task uses an isolated worktree\n  and branch `implement/<taskId>`.\n- **Managed worktrees.** ALL worktree lifecycle goes through\n  `ledger::worktree_manage` — never raw git worktree lifecycle commands\n  (add/remove/prune) on any active implement/advance surface. Before changing a\n  task to `wip` or launching a worker, call\n  `worktree_manage({ operation: \"prepare\", taskId, baseCommit: <full main tip> })`\n  (or resume-by-handle with the retained opaque handle). Accept only a prepare\n  result whose dependency-base evidence is verified. Pass the returned absolute\n  path as advisory `worktreePath` on the child input. Retain the opaque handle\n  across criticism rounds; on orchestrator restart, recover via prepare's\n  resume-required response for that taskId and resume the same tree. Never\n  discard worker partial/WIP state. Consume the worker's required\n  `actualWorktreePath` on output as the authoritative location; merge by\n  `resultCommit` SHA.\n- Persist every child summary and available raw transcript with `cq log put`,\n  attach their logical paths to the affected ledger item, and never expose\n  capabilities or secrets. Before piping a transcript, require `test -s\n  <transcript>` so empty or whitespace-only captures are skipped rather than\n  written.\n- The surface-specific fragment defines dispatch input delivery and result\n  materialization. Retain the parent-prepared handle. Interpret a native\n  result only after the exact retained handle yields `state: \"consumed\"`.\n  Never inspect a body-returning completion or trust a child-reported handle.\n- A missing or non-consumed native result is a LOST REPORT. Log it and retry\n  the same role once with a fresh prepared dispatch. A second loss fails that\n  task path closed, leaves the task non-terminal and its worktree intact, and\n  cannot become a worker failure, reviewer abstention, or resolver verdict.\n\n## 1. Derive the ready set\n\nRead each target milestone and its full task items, linked questions, milestone\ndependencies, and referenced dependency items.\n\nBefore dispatch, prune stale worktree metadata and inspect all implementation\nand runtime-created worktrees via prepare/resume semantics. Never touch the\nmain checkout, the ledger backup branch, a worktree for a `wip`/`blocked` task,\nor an unmerged worktree without a terminal task association. Release a worktree\nonly through guarded\n`worktree_manage({ operation: \"release\", handle, terminalDisposition, … })`\nwhen the associated task is terminal (`done`/`abandoned`) and release guards\npass. Never infer safety from a branch name alone. Never raw-remove or prune.\n\nChange a `blocked` task back to `planned` after all linked questions become\n`answered`; include the answers in its next dispatch.\n\nA task is ready when:\n\n- its status is `planned`;\n- it has no open linked question;\n- every resolvable `dependsOn` item has a satisfying status declared by its\n  ledger (`tasks:done`, `defects:resolved`, `questions:answered`, and analogous\n  configured sets);\n- every prerequisite milestone has all tasks terminal.\n\nTerminal-but-unsatisfying statuses such as `abandoned` and `wontfix` do not\nsatisfy dependencies. Advisory or unresolvable free-text references do.\n\nIf no task is ready and no task awaits review or merge, report and stop.\n\n## 2. Dispatch workers\n\n**Prepare BEFORE wip and BEFORE launch.** For each selected task:\n\n1. Resolve the intended base as the current full main tip with\n   `git rev-parse --verify` and require `git cat-file -t` to return `commit`.\n2. Call `worktree_manage({ operation: \"prepare\", taskId, baseCommit })` (or\n   resume-by-handle with the retained handle / allowResumeRequired recovery).\n   On resume-required, retain the returned handle and path and continue on that\n   tree — do not mint a second tree for the same task.\n3. Accept only verified dependency-base evidence from prepare. Missing or\n   unresolvable dependency `resultCommit` evidence blocks dispatch without a\n   `wip` write; it becomes actionable after the ledger object is corrected.\n4. Resolve the authoritative tip with\n   `git -C <worktree> rev-parse --verify HEAD`, retain it as `startingCommit`,\n   and require `git -C <worktree> cat-file -t <startingCommit>` to return\n   `commit` plus\n   `git merge-base --is-ancestor <verifiedBaseCommit> <startingCommit>` to exit\n   zero. Immediately before launch, require the current worktree `HEAD` to equal\n   that retained `startingCommit`. Retain the exact `baseCommit`, `round`,\n   `startingCommit`, and opaque worktree handle; never reconstruct them from a\n   child report.\n5. Only after prepare succeeds: if the linked owning goal is `planned`, move it\n   once to `building` (never terminal). Set the task `wip`.\n6. Dispatch `implement-worker` with the exact task specification, advisory\n   `worktreePath` from prepare, branch, verified full-SHA base, required\n   `round` (0 on first dispatch; increment on each criticism re-dispatch),\n   authoritative `startingCommit`, optional `priorResultCommit` on round>0, and\n   any prior criticism.\n7. Materialize only a consumed, schema-valid result through the dispatch\n   protocol. Before accepting a passing result, require its `resultCommit` to be\n   a commit, the worker branch tip to equal it,\n   `actualWorktreePath` to be a non-empty absolute path,\n   `baseVerification.status === \"verified\"` with full SHAs, and\n   `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.\n\n**Harvest then prefer RESUME.** Before every (re)dispatch, inspect the task\nworktree for a partial artifact — a `WIP-<taskId>.md` (or equivalent\ndeliverable) in the existing WIP partial format with open checkpoints, plus any\nuncommitted or committed-but-incomplete work. When a self-describing partial\nexists, RESUME the same worker in the same managed worktree (same handle) onto\nthat partial rather than preparing a fresh empty tree. Re-running an expensive\nprobe to recover work already done is the expensive failure mode; resumption is\npreferred when there is durable state to resume onto. When the prior return is a\nLOST REPORT or an incomplete turn, harvest first, then resume.\n\nA base-only repair / reprepare / rebase maintenance round does **not** count as\ncriticism, no-files output, or an ill-loop counter increment.\n\n## 3. Review\n\nBefore any review dispatch, require\n`git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.\nReview each passing worker result against the actual `baseCommit..resultCommit`\ndiff, acceptance criteria, and gate evidence. A worker failure enters the\ncriticism loop using `blockedReason`.\n\nIf reviewers are unconfigured, dispatch one native `implement-reviewer`. If\nconfigured, dispatch the panel concurrently. Native reviewers use the\nsurface-specific dispatch protocol. External reviewers run through their\nconfigured non-interactive adapter and the shared implement-review rubric.\n\n**Sandboxed reviewer parent-attested gate.** When a surface's dispatch workflow\nrequires parent-attested gate evidence for a sandboxed `implement-reviewer`\n(gate primitives denied), the parent MUST attach `parentGateAttestation` built\nfrom a just-run or freshly run full gate on the worker tip:\n`{ resultCommit, gateExitCode, passCount, failCount, gateDurationMs?, command,\ncapturedAt }` with exact tip match, `gateExitCode === 0`, `failCount === 0`, and\n`passCount > 0`. Do not escalate the child sandbox to gain gate primitives.\nNon-sandboxed reviewers omit the attestation and still re-run the gate\nthemselves; their approve path still requires child `gateReRan=true`.\n\n**External reviewer usable-verdict rule.** Fence-strip and validate stdout\nfirst. A complete, parseable verdict counts as a vote despite a non-zero shell\nexit; log that exit anomaly. Require full-object validation before accepting the\nverdict. Only a returned external failure without such a verdict, empty output,\nmalformed result, or off-enum verdict abstains and must be logged.\n\n**External reviewer no-timeout rule.** Do not impose a silent timeout.\nFence-strip and validate stdout first. A complete, parseable verdict counts as a\nvote despite a non-zero shell exit; log that exit anomaly. A non-zero exit\ncauses abstention only when no complete, parseable, fully validated verdict\nexists; a genuinely stalled adapter remains an operational failure. If every\nconfigured reviewer abstains, use one native reviewer; zero successful\nreviewers can never approve a task.\n\nReconcile surviving reviews in configured order:\n\n- any `disapprove` wins; all must approve and the gate must be green for\n  `approve`;\n- union and source-tag `criticism`, `questions`, and `defects`, deduplicating\n  equivalent entries;\n- `approve` requires empty criticism/questions and verified\n  `resultCommitEvidence` + `baseAncestry` on every surviving native reviewer;\n- `disapprove` requires at least one criticism or question.\n\nFile each out-of-scope or pre-existing `defects[]` entry once as an open defect\nlinked to the task and owning goal. Such defects do not block the current task\nand never become user disposition questions.\n\n## 4. Correct or park\n\nWhen the reconciled verdict disapproves with criticism and no questions,\nredispatch the same worker in the **same managed worktree** (retained handle;\n`round` incremented; `priorResultCommit` = prior pass tip when present), then\nreview again. Round N+1 must retain round N commits. There is no fixed round cap\nwhile evidence shows convergence.\n\nPark the task when:\n\n- the review asks a genuine user-only requirements question;\n- a correction round makes no file change;\n- the same criticism repeats without shrinking across consecutive rounds;\n- the same gate failure signature repeats.\n\nCreate linked open questions with the round history, set the task `blocked`,\nand preserve its worktree + handle. Do not ask the user to decide whether a\nconfirmed fault deserves a fix.\n\n## 5. Success authority\n\nA task may merge only when all of these hold:\n\n- its latest worker and required native-reviewer results were consumed through\n  parent-retained handles;\n- the worker reported `REAL_CHECK_EXIT=0`;\n- all surviving reviewers approved with empty criticism/questions and verified\n  commit/ancestry evidence;\n- the orchestrator independently verified the exact commit and ancestry.\n\nTreat `gateDurationMs` below `50`, absent/zero, or below one quarter of the\nmedian for earlier rounds of this same task as implausible. Re-run\n`bun run check` in the foreground and use its real exit status. If that cannot\nbe done, fail closed.\n\nBefore rebase and immediately before merge, the orchestrator independently:\n\n1. require `git cat-file -t <resultCommit>` to return `commit` (full SHA);\n2. require the worker branch tip to equal `resultCommit`;\n3. require a clean claimed file set vs `filesTouched` / the actual diff;\n4. require `git merge-base --is-ancestor <verifiedBaseCommit> <resultCommit>`\n   to exit zero;\n5. require `git merge-base --is-ancestor <startingCommit> <resultCommit>` to\n   exit zero;\n6. require every dependency task `resultCommit` to be an ancestor of the tip\n   (or equal) when resolvable — missing/unresolvable dependency evidence forbids\n   merge.\n\nFabricated, missing, non-tip, stale-base, or non-ancestor result commits never\nmerge. Any failure is a contract breach and forbids merge-back.\n\n## 6. Merge in DAG order\n\nProcess successful tasks sequentially after their dependencies have landed.\nIf main has advanced past the dispatch base, rebase onto current main and rerun\ngates + review before ff-only merge; that ancestry-only maintenance does not\nincrement criticism/no-files counters. If the tip changes under rebase, the old\nworker result loses authority: redispatch the worker on the rebased tree (same\nhandle), rerun its gate and review, and repeat the success checks.\n\nOn conflict, dispatch `implement-conflict-resolver`. Continue only from a\nconsumed `pass` result. On `fail`, create a linked question, set the task\n`blocked`, keep the worktree/handle, and skip its dependants.\n\nAfter the final checks, merge the exact object:\n\n```sh\ngit merge --ff-only <resultCommit>\n```\n\nThen mark the task `done` with `resultCommit`, completion summary, and all\nworker/reviewer log paths in the same update. Cleanup uses guarded release only:\n\n```\nworktree_manage({\n  operation: \"release\",\n  handle: <retained opaque handle>,\n  terminalDisposition: \"done\",\n  resultCommit: <merged tip>,\n  deleteBranch: true\n})\n```\n\nA failed harvest or release guard preserves the tree and any side recovery ref.\nNever raw-remove or prune outside guarded release. Successful terminal flow\nreleases once: Remove its worktree, delete its\nderived branch, and prune worktree metadata through that single guarded release.\n\nFor each linked defect, collect all fix tasks from the defect's task\ndependencies and reverse task links. When all are `done`, set the defect\n`resolved` with a concise fix summary. A discovered task in `planned`, `wip`,\nor `blocked` prevents resolution; never treat task discovery as task completion.\n\nRecord exactly one terminal `reviews` item per task from the reconciled result:\n`go-ahead` for approval, otherwise `revise`, with source-tagged findings and\nall reviewer log paths.\n\nRe-derive the ready set after every merge and continue until drained.\n\n## 7. Milestones and goals\n\nFor each touched milestone, close and archive it only when every contained item\nis terminal and, for a coordination milestone, its goal is also terminal.\nPerform `update_item(ledger_id: \"milestones\", ..., status: \"done\")` before\n`archive_milestone(...)`.\n\nNever auto-close a goal. When all of a goal's work milestones are archived,\nreport that the user may set the goal to `done`; a later sweep may then archive\nits coordination milestone.\n\n## Report and handoff\n\nReport merged tasks and commits, blocked tasks and question ids, failed paths,\narchived milestones, and goals ready for user closure.\n\nWhen invoked standalone, write exactly one append-only `handoffs` item:\n\n- `drained`: no reachable task remains;\n- `answers-required`: tasks are blocked on open questions;\n- `user-action-required`: a named task needs a specific external action only\n  the user can perform;\n- `mixed`: several stop causes coexist;\n- `illness-detected`: a protocol, merge, or invariant failure prevents\n  progress.\n\nSet `flow: \"implement\"`, relevant `ledgerRefs`, required\n`blockingQuestions`/`handoffReasons`, and pass log paths. Do not write a\nhandoff for an ordinary context-window interruption. Never stop because of\nelapsed effort, task count, or remaining work size.\n\nWhen invoked inline by another flow, suppress this handoff; the outermost\ncommand owns it.",
     privilege: "RO",
     exposedTools: "none declared",
   },
@@ -2540,15 +2912,15 @@ export const AGENT_ROLES: AgentRole[] = [
     source: "commands/cq/implement-review.md",
     description: "Portable adversarial implementation-review rubric and structured verdict contract.",
     inputs: [
-  "task specification, worktree/branch/base, worker result, round, and prior criticism"
+  "task specification, worktree/branch/full-SHA base, worker result, round, and prior criticism"
 ],
     outputs: [
   "one fenced structured verdict"
 ],
     ioSchema: [
-  "{taskId,verdict,criticism[],questions[],defects[],rationale,gateReRan,resultCommitVerified,gateDurationMs?,gateReRanReason?,summary?}"
+  "{taskId,verdict,criticism[],questions[],defects[],rationale,gateReRan,resultCommitVerified,resultCommitEvidence,baseAncestry,gateDurationMs?,gateReRanReason?,summary?}"
 ],
-    promptTemplate: "{{cq:fragment:cq-command-invocation}}\n\n## Catalogue\n```yaml\ninputs:\n  - \"task specification, worktree/branch/base, worker result, round, and prior criticism\"\noutputs:\n  - \"one fenced structured verdict\"\nioSchema:\n  - \"{taskId,verdict,criticism[],questions[],defects[],rationale,gateReRan,resultCommitVerified,gateDurationMs?,gateReRanReason?,summary?}\"\n```\n\nReview one implementation against the actual diff and task acceptance. Verify:\n\n- acceptance through its named command, output, or invariant;\n- `resultCommit` exists as a commit and equals the worker branch tip;\n- gate evidence: either re-run `bun run check` with the foreground process's\n  real status and measured duration, or — when the dispatch carries\n  `parentGateAttestation` on the sandbox-denied path — verify that attestation\n  (`resultCommit` match, `gateExitCode === 0`, `failCount === 0`,\n  `passCount > 0`) and set `gateReRan=false` with\n  `gateReRanReason=sandbox-denied-primitives` instead of invoking `cq gate`;\n- correctness, boundary handling, type safety, and surgical scope;\n- defect-fix reproduction and regression coverage.\n\nClassify each finding once:\n\n- `criticism`: objective defects the worker can fix;\n- `questions`: unresolved user-only requirements or product choices;\n- `defects`: out-of-scope or pre-existing faults for separate work.\n\nDiscoverable facts, scope magnitude, and whether to fix a confirmed fault are\nnot questions.\n\n```json\n{\n  \"taskId\": \"<task id>\",\n  \"verdict\": \"approve | disapprove\",\n  \"criticism\": [\"<worker-fixable defect>\"],\n  \"questions\": [\"<user-only ambiguity>\"],\n  \"defects\": [\n    {\n      \"headline\": \"<out-of-scope fault>\",\n      \"description\": \"<evidence and scope boundary>\",\n      \"severity\": \"low | medium | high | critical\",\n      \"suggestedFix\": \"<optional>\"\n    }\n  ],\n  \"rationale\": \"<decisive evidence>\",\n  \"gateReRan\": true,\n  \"resultCommitVerified\": true,\n  \"gateDurationMs\": 12345,\n  \"summary\": \"<optional one-line verdict>\"\n}\n```\n\nAlways state `gateReRan` and `resultCommitVerified`. Include\n`gateDurationMs` only when the gate ran; otherwise include an optional\n`gateReRanReason` (exactly `sandbox-denied-primitives` on the parent-attested\npath). Approval requires empty criticism/questions, a green gate (child re-run\nor verified parent attestation), and verified result commit. Disapproval\nrequires criticism or questions. Defects do not control the verdict.\n\nWrite nothing. Give a brief session summary, then end with the fenced object.",
+    promptTemplate: "{{cq:fragment:cq-command-invocation}}\n\n## Catalogue\n```yaml\ninputs:\n  - \"task specification, worktree/branch/full-SHA base, worker result, round, and prior criticism\"\noutputs:\n  - \"one fenced structured verdict\"\nioSchema:\n  - \"{taskId,verdict,criticism[],questions[],defects[],rationale,gateReRan,resultCommitVerified,resultCommitEvidence,baseAncestry,gateDurationMs?,gateReRanReason?,summary?}\"\n```\n\nReview one implementation against the actual diff and task acceptance. Verify:\n\n- acceptance through its named command, output, or invariant;\n- **result-commit evidence:** `git cat-file -t <resultCommit>` is\n  `commit`, and `git rev-parse --verify <branch>` full SHA equals\n  `resultCommit`. On success\n  `resultCommitEvidence: { status: \"verified\", resultCommit, branchTip }` with\n  full SHAs and `resultCommitVerified: true`. On failure\n  `resultCommitVerified: false` and unresolvable evidence with a closed reason\n  and nullable observed SHAs — never invent a SHA;\n- **base-ancestry evidence:** resolve dispatch `baseCommit`, compute\n  `merge-base`, and require\n  `git merge-base --is-ancestor <baseCommit> <resultCommit>`. On success\n  `baseAncestry: { status: \"verified\", relation, baseCommit, resultCommit,\n  mergeBase }` with full SHAs. On failure unresolvable evidence with a closed\n  reason (`not-ancestor` vs missing/non-commit objects). Approval requires both\n  verified arms;\n- gate evidence: either re-run `bun run check` with the foreground process's\n  real status and measured duration, or — when the dispatch carries\n  `parentGateAttestation` on the sandbox-denied path — verify that attestation\n  (`resultCommit` match, `gateExitCode === 0`, `failCount === 0`,\n  `passCount > 0`) and set `gateReRan=false` with\n  `gateReRanReason=sandbox-denied-primitives` instead of invoking `cq gate`;\n- correctness, boundary handling, type safety, and surgical scope;\n- defect-fix reproduction and regression coverage.\n\nClassify each finding once:\n\n- `criticism`: objective defects the worker can fix;\n- `questions`: unresolved user-only requirements or product choices;\n- `defects`: out-of-scope or pre-existing faults for separate work.\n\nDiscoverable facts, scope magnitude, and whether to fix a confirmed fault are\nnot questions.\n\n```json\n{\n  \"taskId\": \"<task id>\",\n  \"verdict\": \"approve | disapprove\",\n  \"criticism\": [\"<worker-fixable defect>\"],\n  \"questions\": [\"<user-only ambiguity>\"],\n  \"defects\": [\n    {\n      \"headline\": \"<out-of-scope fault>\",\n      \"description\": \"<evidence and scope boundary>\",\n      \"severity\": \"low | medium | high | critical\",\n      \"suggestedFix\": \"<optional>\"\n    }\n  ],\n  \"rationale\": \"<decisive evidence>\",\n  \"gateReRan\": true,\n  \"resultCommitVerified\": true,\n  \"resultCommitEvidence\": {\n    \"status\": \"verified\",\n    \"resultCommit\": \"<40-hex>\",\n    \"branchTip\": \"<40-hex>\"\n  },\n  \"baseAncestry\": {\n    \"status\": \"verified\",\n    \"relation\": \"equal | descendant\",\n    \"baseCommit\": \"<40-hex>\",\n    \"resultCommit\": \"<40-hex>\",\n    \"mergeBase\": \"<40-hex>\"\n  },\n  \"gateDurationMs\": 12345,\n  \"summary\": \"<optional one-line verdict>\"\n}\n```\n\nAlways state `gateReRan`, `resultCommitVerified`, `resultCommitEvidence`, and\n`baseAncestry`. Include `gateDurationMs` only when the gate ran; otherwise\ninclude an optional `gateReRanReason` (exactly `sandbox-denied-primitives` on\nthe parent-attested path). Approval requires empty criticism/questions, a green\ngate (child re-run or verified parent attestation), verified result commit, and\nverified base ancestry with full SHAs. Disapproval requires criticism or\nquestions and may carry unresolvable evidence. Defects do not control the\nverdict.\n\nWrite nothing. Give a brief session summary, then end with the fenced object.",
     privilege: "RO",
     exposedTools: "none declared",
   },

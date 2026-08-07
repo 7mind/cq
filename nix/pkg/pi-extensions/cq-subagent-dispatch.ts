@@ -1252,7 +1252,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "implement-worker": {
-    version: 4,
+    version: 5,
     input: [
       {
         required: [
@@ -1270,6 +1270,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
           description: ["string"],
           headline: ["string"],
           priorCriticism: ["array"],
+          priorResultCommit: ["null", "string"],
           resolvedModel: ["string"],
           round: ["integer"],
           startingCommit: ["string"],
@@ -1283,6 +1284,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
       {
         required: [
           "actualWorktreePath",
+          "baseVerification",
           "branch",
           "checkSummary",
           "filesTouched",
@@ -1293,6 +1295,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
         ],
         kinds: {
           actualWorktreePath: ["string"],
+          baseVerification: [],
           blockedReason: ["string"],
           branch: ["string"],
           checkSummary: ["string"],
@@ -1309,7 +1312,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "implement-reviewer": {
-    version: 5,
+    version: 6,
     input: [
       {
         required: [
@@ -1345,17 +1348,20 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     output: [
       {
         required: [
+          "baseAncestry",
           "criticism",
           "defects",
           "gateReRan",
           "questions",
           "rationale",
+          "resultCommitEvidence",
           "resultCommitVerified",
           "taskId",
           "verdict",
         ],
         kinds: {
           actualWorktreePath: ["string"],
+          baseAncestry: [],
           criticism: ["array"],
           defects: ["array"],
           gateDurationMs: ["integer"],
@@ -1363,6 +1369,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
           gateReRanReason: ["string"],
           questions: ["array"],
           rationale: ["string"],
+          resultCommitEvidence: [],
           resultCommitVerified: ["boolean"],
           summary: ["string"],
           taskId: ["string"],
@@ -2105,4 +2112,10 @@ export const T694_ENUM_PATTERN_EXHIBIT: Readonly<Record<string, unknown>> = {
   filesTouched: [],
   checkSummary: "",
   summary: "",
+  baseVerification: {
+    status: "unresolvable",
+    reason: "base-missing",
+    baseCommit: null,
+    headCommit: null,
+  },
 };

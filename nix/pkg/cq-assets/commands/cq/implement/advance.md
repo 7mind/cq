@@ -17,8 +17,8 @@ outputs:
   - "task transitions, one terminal review per task, verified fast-forward merges, defect closure, and milestone archival"
   - "standalone handoff"
 ioSchema:
-  - "worker: {taskId,status,resultCommit,branch,actualWorktreePath,filesTouched,checkSummary,gateDurationMs,summary,blockedReason?}"
-  - "reviewer: {taskId,verdict,criticism[],questions[],defects[],rationale,summary?}"
+  - "worker: {taskId,status,resultCommit,branch,actualWorktreePath,baseVerification,filesTouched,checkSummary,gateDurationMs,summary,blockedReason?}"
+  - "reviewer: {taskId,verdict,criticism[],questions[],defects[],rationale,resultCommitEvidence,baseAncestry,summary?}"
   - "resolver: {taskId,status,resultCommit?,summary,blockedReason?}"
 ```
 
@@ -38,17 +38,19 @@ ledger, or merge; stop after two consecutive read-only passes.
   absent, inherit the current model and report the missing configuration.
 - Run at most eight workers concurrently. Each task uses an isolated worktree
   and branch `implement/<taskId>`.
-- **Worktree placement.** `worktreePath` on child input is OPTIONAL advisory.
-  Under a surface with native worktree confinement, the orchestrator MUST
-  pre-create a REAL git worktree at `.claude/worktrees/<taskId>` via
-  `git worktree add .claude/worktrees/<taskId> -b implement/<taskId> <baseCommit>`
-  and pass THAT absolute path as advisory `worktreePath` — it is the only
-  under-root placement a pinned agent can enter unattended. Do not place the
-  tree outside the project directory or under a non-`.claude/worktrees/` path
-  on a confined surface. On surfaces without confinement any in-project path is
-  acceptable. Consume the worker's required `actualWorktreePath` on output as
-  the authoritative location; merge by `resultCommit` SHA when the harness
-  minted the tree.
+- **Managed worktrees.** ALL worktree lifecycle goes through
+  `ledger::worktree_manage` — never raw git worktree lifecycle commands
+  (add/remove/prune) on any active implement/advance surface. Before changing a
+  task to `wip` or launching a worker, call
+  `worktree_manage({ operation: "prepare", taskId, baseCommit: <full main tip> })`
+  (or resume-by-handle with the retained opaque handle). Accept only a prepare
+  result whose dependency-base evidence is verified. Pass the returned absolute
+  path as advisory `worktreePath` on the child input. Retain the opaque handle
+  across criticism rounds; on orchestrator restart, recover via prepare's
+  resume-required response for that taskId and resume the same tree. Never
+  discard worker partial/WIP state. Consume the worker's required
+  `actualWorktreePath` on output as the authoritative location; merge by
+  `resultCommit` SHA.
 - Persist every child summary and available raw transcript with `cq log put`,
   attach their logical paths to the affected ledger item, and never expose
   capabilities or secrets. Before piping a transcript, require `test -s
@@ -69,13 +71,13 @@ Read each target milestone and its full task items, linked questions, milestone
 dependencies, and referenced dependency items.
 
 Before dispatch, prune stale worktree metadata and inspect all implementation
-and runtime-created worktrees. Never touch the main checkout, the ledger backup
-branch, a worktree for a `wip`/`blocked` task, or an unmerged worktree without a
-terminal task association. Remove a worktree and branch only when
-`decideWorktreeSweep` returns `remove`: the tip is an ancestor of the
-integration base, `git cherry <base> <tip>` reports every commit as
-patch-equivalent (all `-` lines → `patchEquivalentToLanded`), or the associated
-task is `done`/`abandoned`. Never infer safety from a branch name alone.
+and runtime-created worktrees via prepare/resume semantics. Never touch the
+main checkout, the ledger backup branch, a worktree for a `wip`/`blocked` task,
+or an unmerged worktree without a terminal task association. Release a worktree
+only through guarded
+`worktree_manage({ operation: "release", handle, terminalDisposition, … })`
+when the associated task is terminal (`done`/`abandoned`) and release guards
+pass. Never infer safety from a branch name alone. Never raw-remove or prune.
 
 Change a `blocked` task back to `planned` after all linked questions become
 `answered`; include the answers in its next dispatch.
@@ -96,44 +98,52 @@ If no task is ready and no task awaits review or merge, report and stop.
 
 ## 2. Dispatch workers
 
-Before each initial or criticism-round dispatch, resolve the intended base with
-`git rev-parse --verify` and require `git cat-file -t` to return `commit`.
-After preparing or reusing the worktree, resolve its authoritative tip with
-`git -C <worktree> rev-parse --verify HEAD`, retain it as `startingCommit`, and
-require `git -C <worktree> cat-file -t <startingCommit>` to return `commit` plus
-`git merge-base --is-ancestor <verifiedBaseCommit> <startingCommit>` to exit
-zero. Immediately before prepare and again before launch, require the current
-worktree `HEAD` to equal that retained `startingCommit`. Retain the exact
-`baseCommit`, `round`, and `startingCommit`; never reconstruct them from a child
-report.
+**Prepare BEFORE wip and BEFORE launch.** For each selected task:
+
+1. Resolve the intended base as the current full main tip with
+   `git rev-parse --verify` and require `git cat-file -t` to return `commit`.
+2. Call `worktree_manage({ operation: "prepare", taskId, baseCommit })` (or
+   resume-by-handle with the retained handle / allowResumeRequired recovery).
+   On resume-required, retain the returned handle and path and continue on that
+   tree — do not mint a second tree for the same task.
+3. Accept only verified dependency-base evidence from prepare. Missing or
+   unresolvable dependency `resultCommit` evidence blocks dispatch without a
+   `wip` write; it becomes actionable after the ledger object is corrected.
+4. Resolve the authoritative tip with
+   `git -C <worktree> rev-parse --verify HEAD`, retain it as `startingCommit`,
+   and require `git -C <worktree> cat-file -t <startingCommit>` to return
+   `commit` plus
+   `git merge-base --is-ancestor <verifiedBaseCommit> <startingCommit>` to exit
+   zero. Immediately before launch, require the current worktree `HEAD` to equal
+   that retained `startingCommit`. Retain the exact `baseCommit`, `round`,
+   `startingCommit`, and opaque worktree handle; never reconstruct them from a
+   child report.
+5. Only after prepare succeeds: if the linked owning goal is `planned`, move it
+   once to `building` (never terminal). Set the task `wip`.
+6. Dispatch `implement-worker` with the exact task specification, advisory
+   `worktreePath` from prepare, branch, verified full-SHA base, required
+   `round` (0 on first dispatch; increment on each criticism re-dispatch),
+   authoritative `startingCommit`, optional `priorResultCommit` on round>0, and
+   any prior criticism.
+7. Materialize only a consumed, schema-valid result through the dispatch
+   protocol. Before accepting a passing result, require its `resultCommit` to be
+   a commit, the worker branch tip to equal it,
+   `actualWorktreePath` to be a non-empty absolute path,
+   `baseVerification.status === "verified"` with full SHAs, and
+   `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.
 
 **Harvest then prefer RESUME.** Before every (re)dispatch, inspect the task
 worktree for a partial artifact — a `WIP-<taskId>.md` (or equivalent
 deliverable) in the existing WIP partial format with open checkpoints, plus any
 uncommitted or committed-but-incomplete work. When a self-describing partial
-exists, RESUME the same worker in the same worktree onto that partial rather
-than re-dispatching a fresh empty tree. Re-running an expensive probe to recover
-work already done is the expensive failure mode; resumption is preferred when
-there is durable state to resume onto. When the prior return is a LOST REPORT or
-an incomplete turn, harvest first, then resume.
+exists, RESUME the same worker in the same managed worktree (same handle) onto
+that partial rather than preparing a fresh empty tree. Re-running an expensive
+probe to recover work already done is the expensive failure mode; resumption is
+preferred when there is durable state to resume onto. When the prior return is a
+LOST REPORT or an incomplete turn, harvest first, then resume.
 
-For each selected task:
-
-1. If its linked owning goal is `planned`, move it once to `building`. Never
-   move a goal to a terminal status.
-2. Set the task `wip`.
-3. Prepare its worktree (confined surfaces: under `.claude/worktrees/<taskId>`)
-   and dispatch `implement-worker` with the exact task specification, optional
-   advisory `worktreePath`, branch, verified base, required `round`,
-   authoritative `startingCommit`, and any prior criticism.
-4. Materialize only a consumed, schema-valid result through the dispatch
-   protocol. Before accepting a passing result, require its `resultCommit` to be
-   a commit, the worker branch tip to equal it,
-   `actualWorktreePath` to be a non-empty absolute path, and
-   `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.
-
-Do not symlink another checkout's `node_modules`; the worker installs its own
-workspace dependencies.
+A base-only repair / reprepare / rebase maintenance round does **not** count as
+criticism, no-files output, or an ill-loop counter increment.
 
 ## 3. Review
 
@@ -178,7 +188,8 @@ Reconcile surviving reviews in configured order:
   `approve`;
 - union and source-tag `criticism`, `questions`, and `defects`, deduplicating
   equivalent entries;
-- `approve` requires empty criticism/questions;
+- `approve` requires empty criticism/questions and verified
+  `resultCommitEvidence` + `baseAncestry` on every surviving native reviewer;
 - `disapprove` requires at least one criticism or question.
 
 File each out-of-scope or pre-existing `defects[]` entry once as an open defect
@@ -188,8 +199,10 @@ and never become user disposition questions.
 ## 4. Correct or park
 
 When the reconciled verdict disapproves with criticism and no questions,
-redispatch the same worker in the same worktree, then review again. There is no
-fixed round cap while evidence shows convergence.
+redispatch the same worker in the **same managed worktree** (retained handle;
+`round` incremented; `priorResultCommit` = prior pass tip when present), then
+review again. Round N+1 must retain round N commits. There is no fixed round cap
+while evidence shows convergence.
 
 Park the task when:
 
@@ -199,8 +212,8 @@ Park the task when:
 - the same gate failure signature repeats.
 
 Create linked open questions with the round history, set the task `blocked`,
-and preserve its worktree. Do not ask the user to decide whether a confirmed
-fault deserves a fix.
+and preserve its worktree + handle. Do not ask the user to decide whether a
+confirmed fault deserves a fix.
 
 ## 5. Success authority
 
@@ -209,7 +222,8 @@ A task may merge only when all of these hold:
 - its latest worker and required native-reviewer results were consumed through
   parent-retained handles;
 - the worker reported `REAL_CHECK_EXIT=0`;
-- all surviving reviewers approved with empty criticism/questions;
+- all surviving reviewers approved with empty criticism/questions and verified
+  commit/ancestry evidence;
 - the orchestrator independently verified the exact commit and ancestry.
 
 Treat `gateDurationMs` below `50`, absent/zero, or below one quarter of the
@@ -217,27 +231,34 @@ median for earlier rounds of this same task as implausible. Re-run
 `bun run check` in the foreground and use its real exit status. If that cannot
 be done, fail closed.
 
-Before rebase and immediately before merge:
+Before rebase and immediately before merge, the orchestrator independently:
 
-1. require `git cat-file -t <resultCommit>` to return `commit`;
+1. require `git cat-file -t <resultCommit>` to return `commit` (full SHA);
 2. require the worker branch tip to equal `resultCommit`;
-3. require `git merge-base --is-ancestor <verifiedBaseCommit> <resultCommit>`
+3. require a clean claimed file set vs `filesTouched` / the actual diff;
+4. require `git merge-base --is-ancestor <verifiedBaseCommit> <resultCommit>`
    to exit zero;
-4. require `git merge-base --is-ancestor <startingCommit> <resultCommit>` to
-   exit zero.
+5. require `git merge-base --is-ancestor <startingCommit> <resultCommit>` to
+   exit zero;
+6. require every dependency task `resultCommit` to be an ancestor of the tip
+   (or equal) when resolvable — missing/unresolvable dependency evidence forbids
+   merge.
 
-Any failure is a contract breach and forbids merge-back.
+Fabricated, missing, non-tip, stale-base, or non-ancestor result commits never
+merge. Any failure is a contract breach and forbids merge-back.
 
 ## 6. Merge in DAG order
 
 Process successful tasks sequentially after their dependencies have landed.
-Rebase each branch onto the current base. If the tip changes, the old worker
-result loses authority: redispatch the worker on the rebased tree, rerun its
-gate and review, and repeat the success checks.
+If main has advanced past the dispatch base, rebase onto current main and rerun
+gates + review before ff-only merge; that ancestry-only maintenance does not
+increment criticism/no-files counters. If the tip changes under rebase, the old
+worker result loses authority: redispatch the worker on the rebased tree (same
+handle), rerun its gate and review, and repeat the success checks.
 
 On conflict, dispatch `implement-conflict-resolver`. Continue only from a
 consumed `pass` result. On `fail`, create a linked question, set the task
-`blocked`, keep the worktree, and skip its dependants.
+`blocked`, keep the worktree/handle, and skip its dependants.
 
 After the final checks, merge the exact object:
 
@@ -246,8 +267,22 @@ git merge --ff-only <resultCommit>
 ```
 
 Then mark the task `done` with `resultCommit`, completion summary, and all
-worker/reviewer log paths in the same update. Remove its worktree, delete its
-derived branch, and prune worktree metadata.
+worker/reviewer log paths in the same update. Cleanup uses guarded release only:
+
+```
+worktree_manage({
+  operation: "release",
+  handle: <retained opaque handle>,
+  terminalDisposition: "done",
+  resultCommit: <merged tip>,
+  deleteBranch: true
+})
+```
+
+A failed harvest or release guard preserves the tree and any side recovery ref.
+Never raw-remove or prune outside guarded release. Successful terminal flow
+releases once: Remove its worktree, delete its
+derived branch, and prune worktree metadata through that single guarded release.
 
 For each linked defect, collect all fix tasks from the defect's task
 dependencies and reverse task links. When all are `done`, set the defect

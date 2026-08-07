@@ -14,6 +14,17 @@ import { describe, expect, test } from "bun:test";
 import { implementWorkerSidecar, TEST_GUARD_GLOBS, validateAgainstSchema } from "@cq/config";
 
 const SHA = "a".repeat(40);
+const HEAD = "b".repeat(40);
+
+function verifiedBase(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    status: "verified",
+    relation: "descendant",
+    baseCommit: SHA,
+    headCommit: HEAD,
+    ...overrides,
+  };
+}
 
 /** A minimal valid pass payload with a non-test/guard filesTouched entry. */
 function basePassPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -27,6 +38,7 @@ function basePassPayload(overrides: Record<string, unknown> = {}): Record<string
     checkSummary: "tsc: ok, eslint: ok, bun test: 42 pass",
     summary: "Added sha pattern + gateDurationMs + conditional mutationTable.",
     gateDurationMs: 12345,
+    baseVerification: verifiedBase(),
     ...overrides,
   };
 }
@@ -71,6 +83,12 @@ describe("T894 implement-worker outputSchema", () => {
       checkSummary: "tsc: error",
       summary: "Blocked on ambiguous acceptance.",
       blockedReason: "acceptance contradicts existing behaviour",
+      baseVerification: {
+        status: "unresolvable",
+        reason: "base-missing",
+        baseCommit: null,
+        headCommit: null,
+      },
     });
     expect(result.ok).toBe(true);
   });

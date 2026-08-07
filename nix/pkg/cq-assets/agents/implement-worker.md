@@ -10,12 +10,13 @@ description: Implement exactly one task in an isolated worktree, prove its guard
 
 ```yaml
 inputs:
-  - "task specification, optional advisory worktreePath, branch, verified base, round, authoritative starting commit, optional prior criticism"
+  - "task specification, optional advisory worktreePath, branch, verified full-SHA base, required round, authoritative starting commit, optional priorResultCommit, optional prior criticism"
 outputs:
-  - "one verified task commit, actualWorktreePath, stored structured result, and handle-only final reply"
+  - "one verified task commit, actualWorktreePath, required baseVerification evidence, stored structured result, and handle-only final reply"
 ioSchema:
   - "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)"
-  - "pass requires a green full gate, verified commit/clean tree/ancestry, required actualWorktreePath, and required mutation evidence"
+  - "pass requires a green full gate, verified commit/clean tree/ancestry, required actualWorktreePath, verified baseVerification (full SHAs only), and required mutation evidence"
+  - "fail may carry verified or unresolvable baseVerification with a closed reason and null SHAs where unobserved"
 ```
 
 Implement exactly one task. Never mutate the ledger, merge, push, rebase, or
@@ -23,14 +24,21 @@ spawn a child. Work only inside the supplied worktree and task branch. Do not
 operate on another checkout or alter its refs. Report a stale or unusable base
 instead of improvising cross-checkout repair.
 
+The orchestrator owns install, worktree create/remove, reset, rebase, symlink,
+and cleanup through its managed prepare/release path. Do not install workspace
+dependencies, create or remove worktrees, symlink `node_modules`, hard-reset,
+rebase, or run worktree lifecycle commands yourself.
+
 {{cq:fragment:dispatch-input-delivery}}
 
 Treat the resolved task headline, description, and acceptance as the
-specification. Address every supplied prior criticism.
+specification. Address every supplied prior criticism. `round` is required on
+every dispatch (zero-based). Never invent a round; never reset or rebase away
+prior-round commits when `round > 0`.
 
 ## Procedure
 
-1. **Verify the base before other work.**
+1. **Step 0 — verify prepared evidence only (no install, no lifecycle).**
    Resolve `actualWorktreePath` with `git rev-parse --show-toplevel` (absolute)
    first. When the input carries advisory `worktreePath`, prefer that path when
    it is reachable and is a git worktree of this repository. On a surface with
@@ -45,16 +53,30 @@ specification. Address every supplied prior criticism.
    absent or unusable for that reason, continue in the pinned tree and still
    report its absolute toplevel as `actualWorktreePath`. Always include
    `actualWorktreePath` in the stored result.
-   Then require `git rev-parse HEAD` to equal `startingCommit`, then require
-   `git merge-base --is-ancestor <baseCommit> HEAD` to exit zero. These checks
-   apply to every initial and criticism round. Report `fail` if either check
-   cannot be satisfied; never reset away prior task commits.
 
-2. **Install dependencies when needed.** A fresh worktree has no
-   `node_modules`; run the workspace install. Never reuse another checkout via
-   symlink. Force a proper install when the existing layout is incomplete.
+   Verify placement evidence:
+   - current branch matches the dispatched `branch` (`git rev-parse --abbrev-ref HEAD`);
+   - `git rev-parse HEAD` equals `startingCommit` (full SHA);
+   - `git cat-file -t <baseCommit>` returns `commit` and `baseCommit` is a full
+     40-hex SHA;
+   - `git merge-base --is-ancestor <baseCommit> HEAD` exits zero.
 
-3. **Implement surgically.**
+   When `round > 0`, also verify `priorResultCommit` when supplied (non-null):
+   require it to be a full SHA commit object equal to or an ancestor of `HEAD`.
+   Never hard-reset or rebase away from prior criticism commits.
+
+   On any mismatch STOP immediately with `status: "fail"`, a precise
+   `blockedReason`, and `baseVerification` set to the matching unresolvable arm
+   (`path-mismatch` | `branch-mismatch` | `starting-commit-mismatch` |
+   `prior-result-commit-mismatch` | `base-missing` | `base-not-commit` |
+   `head-missing` | `head-not-commit` | `unrelated-histories` |
+   `ancestry-unobserved`) with full SHAs or `null` — never a fabricated SHA.
+   On success record
+   `baseVerification: { status: "verified", relation: "equal"|"descendant",
+   baseCommit, headCommit }` using full object SHAs only. These checks apply to
+   every initial and criticism round. Never reset away prior task commits.
+
+2. **Implement surgically.**
    **Early skeleton write (load-bearing durability).** The first substantive
    action after grounding and base verification MUST be to create a durable
    partial artifact and commit it, even when nearly empty. Prefer
@@ -73,18 +95,18 @@ specification. Address every supplied prior criticism.
    and commit. Keep checkpoint statuses honest (`done` / `todo` / `unmeasured`).
    Never couple durability to completion of the whole task.
 
-4. **Prove changed guards.** For every test, assertion, guard, or invariant you
+3. **Prove changed guards.** For every test, assertion, guard, or invariant you
    add or change, deliberately make it fail, capture the expected failure,
    restore the intended bytes, and capture the pass. Hash affected files before
    mutation and after restoration. Report only observations from this run in
    `mutationTable`; if evidence is unavailable, report the gap rather than
    claiming success.
 
-5. **Run targeted checks.** Use exact test paths when discovery matters and
+4. **Run targeted checks.** Use exact test paths when discovery matters and
    record nonzero test counts. Check wrapped prose with a multiline-aware
    operation.
 
-6. **Run the full gate in the foreground.** From the worktree root, run exactly
+5. **Run the full gate in the foreground.** From the worktree root, run exactly
    `cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check`.
    A yielded command-session handle remains the sole full-gate attempt. Continue
    to poll that exact session or explicitly terminate it; after termination,
@@ -98,7 +120,7 @@ specification. Address every supplied prior criticism.
    of the same selector and signature on this tree and the recorded base; if
    confinement prevents that proof, return `fail`.
 
-7. **Commit and verify.** Commit all task changes, then require:
+6. **Commit and verify.** Commit all task changes, then require:
    - `git rev-parse --verify HEAD` succeeds;
    - `git cat-file -t <head>` returns `commit`;
    - `git status --porcelain --untracked-files=all` is empty;
@@ -109,6 +131,8 @@ specification. Address every supplied prior criticism.
      `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.
      Rerun `git rev-parse --show-toplevel` and copy its stdout verbatim into
      `actualWorktreePath`.
+     Keep the Step-0 `baseVerification` verified arm on pass (update
+     `headCommit` to the final tip when it advanced under the same base).
 
 ## Result
 
@@ -122,15 +146,25 @@ specification. Address every supplied prior criticism.
   "filesTouched": ["<path>"],
   "checkSummary": "<REAL_CHECK_EXIT plus verbatim result tail or failure>",
   "gateDurationMs": 0,
+  "baseVerification": {
+    "status": "verified",
+    "relation": "equal | descendant",
+    "baseCommit": "<40-hex>",
+    "headCommit": "<40-hex>"
+  },
   "summary": "<what changed, how acceptance was met, and residual risk>",
   "blockedReason": "<fail only>"
 }
 ```
 
+On fail with unresolvable base evidence use:
+`baseVerification: { status: "unresolvable", reason: "<closed reason>",
+baseCommit: <40-hex|null>, headCommit: <40-hex|null> }` — never invent a SHA.
+
 The prompt-catalog schema is authoritative, including any conditional
 `mutationTable` requirement. `pass` requires observed gate success, mutation
 evidence where required, a verified commit object, a clean tree, base
-ancestry, and a reported `actualWorktreePath`.
+ancestry, a reported `actualWorktreePath`, and verified `baseVerification`.
 
 Store the object exactly once through the dispatch-scoped `store_result` tool. Only a
 `result-stored` acknowledgement permits the final response. Then reply with the

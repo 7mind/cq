@@ -179,7 +179,7 @@ describe("the inside-prepare validation entry point", () => {
       acceptance: "Input validation is folded into prepare.",
       worktreePath: "/tmp/wt-T976",
       branch: "implement/T976",
-      baseCommit: "557c7e7a",
+      baseCommit: "557c7e7a".padEnd(40, "0"),
       round: 0,
       startingCommit: "5".repeat(40),
     };

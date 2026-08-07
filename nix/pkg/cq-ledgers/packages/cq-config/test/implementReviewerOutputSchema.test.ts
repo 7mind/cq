@@ -19,6 +19,31 @@ import {
   validateAgainstSchema,
 } from "@cq/config";
 
+const SHA = "c".repeat(40);
+const BASE = "d".repeat(40);
+
+function verifiedResultCommitEvidence(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    status: "verified",
+    resultCommit: SHA,
+    branchTip: SHA,
+    ...overrides,
+  };
+}
+
+function verifiedBaseAncestry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    status: "verified",
+    relation: "descendant",
+    baseCommit: BASE,
+    resultCommit: SHA,
+    mergeBase: BASE,
+    ...overrides,
+  };
+}
+
 /** A minimal valid verdict payload with gateReRan=true (so gateDurationMs is required). */
 function baseVerdictPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -30,6 +55,8 @@ function baseVerdictPayload(overrides: Record<string, unknown> = {}): Record<str
     rationale: "The conditional gateDurationMs requirement matches T894's precedent.",
     gateReRan: true,
     resultCommitVerified: true,
+    resultCommitEvidence: verifiedResultCommitEvidence(),
+    baseAncestry: verifiedBaseAncestry(),
     gateDurationMs: 4567,
     ...overrides,
   };
@@ -42,7 +69,7 @@ describe("T895 implement-reviewer outputSchema", () => {
       acceptance: "The reviewer consumes one absolute phase window.",
       worktreePath: "/tmp/wt-T1696",
       branch: "implement/T1696",
-      baseCommit: "e65ce042",
+      baseCommit: "e".repeat(40),
       workerResult: { resultCommit: null, checkSummary: "failed", filesTouched: [] },
       round: 1,
       responseStoreNow: "2026-08-03T10:02:00.000Z",
@@ -121,7 +148,25 @@ describe("T895 implement-reviewer outputSchema", () => {
   // --- NEGATIVE DIRECTION: gateReRan=false, no gateDurationMs => ACCEPTED ------
 
   test("gateReRan=false with NO gateDurationMs is ACCEPTED", () => {
-    const payload = baseVerdictPayload({ gateReRan: false, resultCommitVerified: false });
+    const payload = baseVerdictPayload({
+      verdict: "disapprove",
+      criticism: ["gate not re-run; evidence incomplete"],
+      gateReRan: false,
+      resultCommitVerified: false,
+      resultCommitEvidence: {
+        status: "unresolvable",
+        reason: "worktree-unresolvable",
+        resultCommit: null,
+        branchTip: null,
+      },
+      baseAncestry: {
+        status: "unresolvable",
+        reason: "result-commit-missing",
+        baseCommit: null,
+        resultCommit: null,
+        mergeBase: null,
+      },
+    });
     delete payload.gateDurationMs;
     expect("gateDurationMs" in payload).toBe(false);
     const result = validateAgainstSchema(implementReviewerSidecar.outputSchema, payload);
@@ -130,9 +175,24 @@ describe("T895 implement-reviewer outputSchema", () => {
 
   test("gateReRan=false may still carry an optional gateReRanReason", () => {
     const payload = baseVerdictPayload({
+      verdict: "disapprove",
+      criticism: ["worktree gone before review"],
       gateReRan: false,
       resultCommitVerified: false,
       gateReRanReason: "The worktree was already discarded by the time review started.",
+      resultCommitEvidence: {
+        status: "unresolvable",
+        reason: "worktree-unresolvable",
+        resultCommit: null,
+        branchTip: null,
+      },
+      baseAncestry: {
+        status: "unresolvable",
+        reason: "result-commit-missing",
+        baseCommit: null,
+        resultCommit: null,
+        mergeBase: null,
+      },
     });
     delete payload.gateDurationMs;
     const result = validateAgainstSchema(implementReviewerSidecar.outputSchema, payload);

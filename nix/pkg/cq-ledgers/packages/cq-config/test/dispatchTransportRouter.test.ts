@@ -78,6 +78,12 @@ const OUTPUT: DispatchJSONValue = {
   checkSummary: "focused router suite passed",
   summary: "shared transport router implemented",
   gateDurationMs: 1,
+  baseVerification: {
+    status: "verified",
+    relation: "descendant",
+    baseCommit: "a".repeat(40),
+    headCommit: "b".repeat(40),
+  },
 };
 
 const REVIEWER_OUTPUT: DispatchJSONValue = {
@@ -90,6 +96,19 @@ const REVIEWER_OUTPUT: DispatchJSONValue = {
   gateReRan: false,
   resultCommitVerified: false,
   gateReRanReason: "transport-fixture-does-not-run-gate",
+  resultCommitEvidence: {
+    status: "unresolvable",
+    reason: "worktree-unresolvable",
+    resultCommit: null,
+    branchTip: null,
+  },
+  baseAncestry: {
+    status: "unresolvable",
+    reason: "result-commit-missing",
+    baseCommit: null,
+    resultCommit: null,
+    mergeBase: null,
+  },
 };
 
 const REVIEWER_EXHAUSTION_OUTPUT: DispatchJSONValue = {
@@ -102,6 +121,19 @@ const REVIEWER_EXHAUSTION_OUTPUT: DispatchJSONValue = {
   gateReRan: false,
   resultCommitVerified: false,
   gateReRanReason: "phase-budget-exhausted-before-result-commit-verification",
+  resultCommitEvidence: {
+    status: "unresolvable",
+    reason: "worktree-unresolvable",
+    resultCommit: null,
+    branchTip: null,
+  },
+  baseAncestry: {
+    status: "unresolvable",
+    reason: "result-commit-missing",
+    baseCommit: null,
+    resultCommit: null,
+    mergeBase: null,
+  },
 };
 
 interface CodexRecordingFixture {
@@ -263,7 +295,7 @@ function preparedFixture(
         acceptance: "All 18 routing cells select the declared adapter.",
         worktreePath: "/tmp/T1631",
         branch: "implement/T1631",
-        baseCommit: "2fe2c7d5",
+        baseCommit: "2fe2c7d5".padEnd(40, "0"),
         round: 0,
         startingCommit: "2".repeat(40),
       },

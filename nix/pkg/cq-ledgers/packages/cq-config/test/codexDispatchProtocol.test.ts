@@ -150,6 +150,12 @@ const OUTPUT: DispatchJSONValue = {
   gateDurationMs: 438920,
   checkSummary: "matrix green",
   summary: `CODEX-BODY-SENTINEL ${"payload ".repeat(600)}`.trim(),
+  baseVerification: {
+    status: "verified",
+    relation: "descendant",
+    baseCommit: "a".repeat(40),
+    headCommit: "b".repeat(40),
+  },
 };
 
 const INVALID_OUTPUT: DispatchJSONValue = { taskId: "T690", status: "not-a-status" };

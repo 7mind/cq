@@ -308,7 +308,7 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
     expect(dispatchGate).toContain("`git rev-parse --verify`");
     expect(dispatchGate).toContain("`git cat-file -t`");
     expect(dispatchGate).toContain(
-      "Retain the exact `baseCommit`, `round`, and `startingCommit`",
+      "Retain the exact `baseCommit`, `round`, `startingCommit`, and opaque worktree handle",
     );
     expect(dispatchGate).toContain(
       "worktree `HEAD` to equal that retained `startingCommit`",
@@ -335,14 +335,14 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
 
   it("T1629 rejects a stale worker entry without resetting prior commits", () => {
     const body = normalize(implementWorker);
-    const stepStart = body.indexOf("1. **Verify the base before other work.**");
-    const implementStart = body.indexOf("3. **Implement surgically.**");
+    const stepStart = body.indexOf("1. **Step 0 — verify prepared evidence only");
+    const implementStart = body.indexOf("2. **Implement surgically.**");
     expect(stepStart).toBeGreaterThanOrEqual(0);
     expect(implementStart).toBeGreaterThan(stepStart);
     const step = body.slice(stepStart, implementStart);
 
     expect(step).toContain("`git rev-parse HEAD`");
-    expect(step).toContain("equal `startingCommit`");
+    expect(step).toContain("equals `startingCommit`");
     expect(step).not.toContain("git reset --hard");
     expect(step).toContain("`git merge-base --is-ancestor <baseCommit> HEAD`");
     expect(step).toContain("every initial and criticism round");

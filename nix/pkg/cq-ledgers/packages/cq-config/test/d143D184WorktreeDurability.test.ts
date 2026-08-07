@@ -44,6 +44,12 @@ function workerOutput(overrides: Record<string, unknown> = {}): Record<string, u
     checkSummary: "ok",
     summary: "durability + worktreePath contract",
     gateDurationMs: 1000,
+    baseVerification: {
+      status: "verified",
+      relation: "descendant",
+      baseCommit: "a".repeat(40),
+      headCommit: "c".repeat(40),
+    },
     ...overrides,
   };
 }
@@ -117,9 +123,9 @@ describe("D143 implement-role worktreePath contract [BA]", () => {
     expect(validateAgainstSchema(implementWorkerSidecar.outputSchema, failPayload).ok).toBe(true);
   });
 
-  test("sidecar versions advanced for the schema mutation (D185)", () => {
-    expect(implementWorkerSidecar.version).toBeGreaterThanOrEqual(4);
-    expect(implementReviewerSidecar.version).toBeGreaterThanOrEqual(5);
+  test("sidecar versions advanced for the schema mutation (D185/T1307/T1308)", () => {
+    expect(implementWorkerSidecar.version).toBeGreaterThanOrEqual(5);
+    expect(implementReviewerSidecar.version).toBeGreaterThanOrEqual(6);
     expect(implementConflictResolverSidecar.version).toBeGreaterThanOrEqual(2);
   });
 
@@ -147,16 +153,23 @@ describe("D143/D184 prompt and placement guards [BG]", () => {
     );
     expect(body).toContain("actualWorktreePath");
     expect(body).toContain("git rev-parse --show-toplevel");
-    expect(body).toContain("3. **Implement surgically.**");
+    expect(body).toContain("2. **Implement surgically.**");
+    expect(body).toContain("Step 0 — verify prepared evidence only");
+    expect(body).not.toMatch(/\brun `bun install`/);
+    expect(body).not.toContain("git worktree add ");
+    expect(body).not.toContain("git worktree remove");
   });
 
-  test("implement/advance pins under-root placement and harvest/resume preference", () => {
+  test("implement/advance uses worktree_manage prepare/release and harvest/resume", () => {
     const body = readFileSync(ADVANCE_CMD, "utf8");
-    expect(body).toContain(".claude/worktrees/<taskId>");
-    expect(body).toContain("git worktree add .claude/worktrees/<taskId>");
+    expect(body).toContain("worktree_manage");
+    expect(body).toContain('operation: "prepare"');
+    expect(body).toContain('operation: "release"');
     expect(body).toContain("Harvest then prefer RESUME");
     expect(body).toContain("WIP-<taskId>.md");
     expect(body).toContain("actualWorktreePath");
-    expect(body).toContain("OPTIONAL");
+    expect(body).not.toContain("git worktree add ");
+    expect(body).not.toContain("git worktree remove");
+    expect(body).not.toContain("git worktree prune");
   });
 });

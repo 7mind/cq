@@ -1,6 +1,11 @@
 > **Implement-worker dispatch.** In Claude's ref-first
 > procedure, for each
-> `implement-worker`, compose refs only:
+> `implement-worker`, first ensure a managed worktree via
+> `worktree_manage({ operation: "prepare", taskId, baseCommit: <full main tip> })`
+> (or resume-by-handle with the retained opaque handle). Use the returned
+> absolute path as advisory `worktreePath` / coordinates. Retain the handle
+> across criticism rounds; on restart recover via prepare's resume-required
+> response. Then compose refs only:
 > `{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, priorReviewId?, guidance?, resolvedModel? }`.
 > Call `prepare_dispatch`; the server reads the task/review narrative, assembles
 > it against the generated role's `inputSchema`, and returns a handle plus a
@@ -14,7 +19,9 @@
 > native-completion confirmation with actual child/run/model provenance, then
 > call `fetch_dispatch_result` with the retained prepared handle exactly once.
 > Apply the blocking consumed-only rule before interpreting the
-> already-validated worker result.
+> already-validated worker result. After terminal status, cleanup uses guarded
+> `worktree_manage({ operation: "release", handle, terminalDisposition, … })`
+> only — never raw git worktree lifecycle commands.
 >
 > **Implement-reviewer dispatch.** Apply the same sequence
 > to every native `claude:*` `implement-reviewer` with

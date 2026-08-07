@@ -38,7 +38,7 @@ describe("D77 — implement-worker inputSchema.branch accepts both namings", () 
     taskId: "T123",
     acceptance: "a",
     worktreePath: "/tmp/wt",
-    baseCommit: "deadbeef",
+    baseCommit: "a".repeat(40),
     round: 0,
     startingCommit: "d".repeat(40),
   };
@@ -71,6 +71,12 @@ describe("D77 — implement-worker outputSchema.branch accepts both namings", ()
     checkSummary: "ok",
     summary: "s",
     gateDurationMs: 1,
+    baseVerification: {
+      status: "verified",
+      relation: "equal",
+      baseCommit: "a".repeat(40),
+      headCommit: "a".repeat(40),
+    },
   };
 
   test("accepts implement/T123", () => {
@@ -96,8 +102,8 @@ describe("D77 — implement-reviewer inputSchema.branch accepts both namings", (
     taskId: "T123",
     acceptance: "a",
     worktreePath: "/tmp/wt",
-    baseCommit: "deadbeef",
-    workerResult: { resultCommit: "deadbeef", checkSummary: "ok", filesTouched: [] },
+    baseCommit: "b".repeat(40),
+    workerResult: { resultCommit: "c".repeat(40), checkSummary: "ok", filesTouched: [] },
     round: 1,
     responseStoreNow: "2026-07-25T09:31:00.000Z",
     gateCompleteBy: "2026-07-25T09:30:00.000Z",

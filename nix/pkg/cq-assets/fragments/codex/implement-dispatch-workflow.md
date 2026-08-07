@@ -1,12 +1,16 @@
 > **Implement-worker dispatch.** In Codex, for each
-> `implement-worker`,
-> compose refs only:
+> `implement-worker`, first ensure a managed worktree via
+> `worktree_manage({ operation: "prepare", taskId, baseCommit: <full main tip> })`
+> (or resume-by-handle with the retained opaque handle). Use the returned
+> absolute path as advisory `worktreePath` / coordinates and as the child `cwd`.
+> Retain the handle across criticism rounds; on restart recover via prepare's
+> resume-required response. Then compose refs only:
 > `{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, priorReviewId?, guidance?, resolvedModel? }`,
 > then call `prepare_dispatch`. The server reads the task/review narrative and
 > validates the assembled input against the role's typed `inputSchema`. Dispatch
 > `CQ_SUBAGENT` by writing the complete private request described above to the
 > adapter's stdin. Retain the prepared handle, `inputCapability`, and
-> `resultCapability`; set `cwd` to the child execution worktree and `ledgerCwd` to the
+> `resultCapability`; set `cwd` to the managed worktree path and `ledgerCwd` to the
 > parent project. The child calls `fetch_dispatch_input` exactly once before
 > work, so no parent-rendered task narrative enters the launch. Await its
 > handle-only final response after its capability-scoped `store_result`, confirm
@@ -19,6 +23,9 @@
 > lifecycle state and the adapter's bounded diagnostic through `cq log put`,
 > then calls `abort_dispatch` with reason `protocol-violation`. Do not expose
 > the stored payload or use either materialization operation on this path.
+> After terminal status, cleanup uses guarded
+> `worktree_manage({ operation: "release", handle, terminalDisposition, … })`
+> only — never raw git worktree lifecycle commands.
 >
 > **Implement-reviewer dispatch.** For each process-boundary
 > `implement-reviewer`, compose `{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism?, parentGateAttestation? }`.

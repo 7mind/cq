@@ -10,19 +10,23 @@
  *   headline + description + acceptance), optional advisory `worktreePath`
  *   (D143 — when a surface adapter supplies its own isolated worktree that one
  *   wins), branch (`implement/<taskId>`, OR a Claude native-isolation
- *   `worktree-agent-<hex>` name — D77), the base commit, and an optional
- *   prior-round `criticism[]` on a re-dispatch after review. The resolved
- *   model class is informational; it is not load-bearing for the dispatch
- *   contract.
+ *   `worktree-agent-<hex>` name — D77), the verified base commit (full SHA),
+ *   required `round` (T1307), authoritative `startingCommit`, optional
+ *   `priorResultCommit` (round>0 resume evidence), and optional prior-round
+ *   `criticism[]` on a re-dispatch after review. The resolved model class is
+ *   informational; it is not load-bearing for the dispatch contract.
  *
  * - **Output** — the worker result block
  *   `{ taskId, status, resultCommit, branch, actualWorktreePath, filesTouched,
- *   checkSummary, summary, blockedReason?, gateDurationMs?, mutationTable? }`.
+ *   checkSummary, summary, baseVerification, blockedReason?, gateDurationMs?,
+ *   mutationTable? }`.
  *   `status` is `pass | fail`; `resultCommit` is a full-sha string
  *   (`^[0-9a-f]{40}$`) on pass and `null` on fail. `actualWorktreePath` is the
  *   absolute path the worker actually operated in (`git rev-parse
- *   --show-toplevel`) and is ALWAYS required (D143). `gateDurationMs` is
- *   required on a pass (T894). `mutationTable` — an array of
+ *   --show-toplevel`) and is ALWAYS required (D143). `baseVerification` is the
+ *   T1307/G121 discriminated union: pass requires the verified full-SHA arm;
+ *   fail accepts verified or unresolvable (closed reason, no fabricated SHA).
+ *   `gateDurationMs` is required on a pass (T894). `mutationTable` — an array of
  *   `{mutation, observed, restored}` — is required IFF `filesTouched`
  *   intersects {@link TEST_GUARD_GLOBS} (T894, closing the D156/H135
  *   self-report-evidence gap): a worker that only touched non-test/guard
@@ -33,6 +37,30 @@ import type { RoleSchemaSidecar } from "../promptCatalog.js";
 
 /** The two worker terminal-status tokens. */
 export const IMPLEMENT_WORKER_STATUSES = ["pass", "fail"] as const;
+
+/** Full lowercase object SHA — every commit field on this contract uses it. */
+export const IMPLEMENT_WORKER_FULL_SHA_PATTERN = "^[0-9a-f]{40}$";
+
+/**
+ * Closed unresolvable reasons a worker may report on `baseVerification` without
+ * inventing a SHA (T1307 / G121 / Q364 fail-closed). Mirrors
+ * `DispatchBaseUnresolvableReason` plus the Step-0 placement mismatch arms.
+ */
+export const IMPLEMENT_WORKER_BASE_UNRESOLVABLE_REASONS = [
+  "base-missing",
+  "base-not-commit",
+  "head-missing",
+  "head-not-commit",
+  "unrelated-histories",
+  "ancestry-unobserved",
+  "path-mismatch",
+  "branch-mismatch",
+  "starting-commit-mismatch",
+  "prior-result-commit-mismatch",
+] as const;
+
+export type ImplementWorkerBaseUnresolvableReason =
+  (typeof IMPLEMENT_WORKER_BASE_UNRESOLVABLE_REASONS)[number];
 
 /**
  * The glob classification rule (T894) pinning when a worker result MUST carry
@@ -58,9 +86,67 @@ const TEST_GUARD_PATTERN =
   "|(?:^(.*/)?[^/]*guard[^/]*$)" +
   "|(?:^(.*/)?[^/]*invariant[^/]*$)";
 
+const fullShaString = {
+  type: "string",
+  pattern: IMPLEMENT_WORKER_FULL_SHA_PATTERN,
+} as const;
+
+/** Nullable full SHA: pattern applies only to string instances so null validates. */
+const fullShaOrNull = {
+  type: ["string", "null"],
+  pattern: IMPLEMENT_WORKER_FULL_SHA_PATTERN,
+} as const;
+
+/**
+ * Verified arm of `baseVerification` — only full object SHAs, never abbreviated
+ * or fabricated placeholders (T1307).
+ */
+export const implementWorkerVerifiedBaseVerificationSchema = {
+  type: "object",
+  properties: {
+    status: { type: "string", const: "verified" },
+    relation: { type: "string", enum: ["equal", "descendant"] },
+    baseCommit: fullShaString,
+    headCommit: fullShaString,
+  },
+  required: ["status", "relation", "baseCommit", "headCommit"],
+  additionalProperties: false,
+} as const;
+
+/**
+ * Unresolvable arm — closed reason vocabulary; commit fields are full SHA or
+ * null (never a fabricated non-SHA string).
+ */
+export const implementWorkerUnresolvableBaseVerificationSchema = {
+  type: "object",
+  properties: {
+    status: { type: "string", const: "unresolvable" },
+    reason: {
+      type: "string",
+      enum: [...IMPLEMENT_WORKER_BASE_UNRESOLVABLE_REASONS],
+    },
+    baseCommit: fullShaOrNull,
+    headCommit: fullShaOrNull,
+  },
+  required: ["status", "reason", "baseCommit", "headCommit"],
+  additionalProperties: false,
+} as const;
+
+/**
+ * Discriminated `baseVerification` union. Pass results may only carry the
+ * verified arm (enforced via `allOf` below); fail may carry either arm.
+ */
+export const implementWorkerBaseVerificationSchema = {
+  oneOf: [
+    implementWorkerVerifiedBaseVerificationSchema,
+    implementWorkerUnresolvableBaseVerificationSchema,
+  ],
+} as const;
+
 /**
  * The parent-supplied input contract for an implement-worker dispatch: the task
- * spec, worktree coordinates, base commit, and optional prior-round criticism.
+ * spec, worktree coordinates, base commit, required round, and optional
+ * prior-round criticism / prior result commit.
  */
 const inputSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -80,7 +166,7 @@ const inputSchema = {
       type: "string",
       minLength: 1,
       description:
-        "Optional advisory path. When a surface adapter supplies its own isolated worktree, that one wins (D143). Preferred Claude placement is .claude/worktrees/<taskId>.",
+        "Optional advisory path from worktree_manage prepare. When a surface adapter supplies its own isolated worktree, that one wins (D143). Preferred Claude placement is .claude/worktrees/<taskId>.",
     },
     branch: {
       type: "string",
@@ -90,18 +176,25 @@ const inputSchema = {
     },
     baseCommit: {
       type: "string",
-      description: "The commit the worktree was cut from (full or abbreviated sha).",
-      minLength: 1,
+      description: "The commit the worktree was prepared from (full 40-hex object SHA).",
+      pattern: IMPLEMENT_WORKER_FULL_SHA_PATTERN,
     },
     round: {
       type: "integer",
-      description: "The zero-based implementation or correction round.",
+      description:
+        "The zero-based implementation or correction round. Required end-to-end; a default of 0 is allowed only during refs-form normalization, never by omitting the field from the final worker input.",
       minimum: 0,
     },
     startingCommit: {
       type: "string",
       description: "The authoritative worktree tip immediately before this round launches.",
-      pattern: "^[0-9a-f]{40}$",
+      pattern: IMPLEMENT_WORKER_FULL_SHA_PATTERN,
+    },
+    priorResultCommit: {
+      type: ["string", "null"],
+      description:
+        "Prior-round worker resultCommit to revalidate when round > 0 (full SHA or null). Must be equal to or an ancestor of HEAD; the worker must not reset or rebase away from it.",
+      pattern: IMPLEMENT_WORKER_FULL_SHA_PATTERN,
     },
     priorCriticism: {
       type: "array",
@@ -126,10 +219,11 @@ const inputSchema = {
 
 /**
  * The worker result-block output contract (T894 evidence-carrying revision +
- * D143 actualWorktreePath). `resultCommit` is `string | null` — on pass it
- * must be a FULL sha (`^[0-9a-f]{40}$`; an abbreviated or non-hex value like
- * `"deadbeef"` fails), and `null` on fail. `actualWorktreePath` is ALWAYS
- * required (D143): the absolute path the worker actually operated in.
+ * D143 actualWorktreePath + T1307 baseVerification). `resultCommit` is
+ * `string | null` — on pass it must be a FULL sha (`^[0-9a-f]{40}$`; an
+ * abbreviated or non-hex value like `"deadbeef"` fails), and `null` on fail.
+ * `actualWorktreePath` is ALWAYS required (D143). `baseVerification` is ALWAYS
+ * required; on `status: "pass"` only the verified full-SHA arm is accepted.
  * `gateDurationMs` is required on a pass (T894 clause (b)). `mutationTable` is
  * required IFF `filesTouched` contains an entry matching
  * {@link TEST_GUARD_GLOBS} — a test/guard/invariant path — via the `if`/`then`
@@ -150,7 +244,7 @@ const outputSchema = {
       type: ["string", "null"],
       description:
         "Full 40-hex commit sha on pass (^[0-9a-f]{40}$); null on fail. The pattern applies only to a string instance, so null still validates.",
-      pattern: "^[0-9a-f]{40}$",
+      pattern: IMPLEMENT_WORKER_FULL_SHA_PATTERN,
     },
     branch: {
       type: "string",
@@ -167,6 +261,11 @@ const outputSchema = {
     filesTouched: { type: "array", items: { type: "string" } },
     checkSummary: { type: "string" },
     summary: { type: "string" },
+    baseVerification: {
+      ...implementWorkerBaseVerificationSchema,
+      description:
+        "T1307/G121 Step-0 base evidence. Pass requires the verified full-SHA arm; fail accepts verified or unresolvable with a closed reason and null SHAs where unobserved.",
+    },
     blockedReason: { type: "string" },
     gateDurationMs: {
       type: "integer",
@@ -202,6 +301,7 @@ const outputSchema = {
     "filesTouched",
     "checkSummary",
     "summary",
+    "baseVerification",
   ],
   additionalProperties: false,
   allOf: [
@@ -214,6 +314,9 @@ const outputSchema = {
       },
       then: {
         required: ["gateDurationMs"],
+        properties: {
+          baseVerification: implementWorkerVerifiedBaseVerificationSchema,
+        },
       },
     },
     {
@@ -238,15 +341,16 @@ const outputSchema = {
 
 /**
  * The implement-worker per-role schema sidecar (storage-format decision 3).
- * `version: 4` (bumped from 3, T2010, defects:D143/D185): `worktreePath` is now
- * OPTIONAL on input (advisory), and `actualWorktreePath` is REQUIRED on output
- * so a harness-minted path flows back to the orchestrator. A stale deployed
- * root rendered against the v3 contract must not be mistaken for this one.
- * DISPATCHED_ROLE_VERSIONS derives this automatically; it is not hand-edited.
+ * `version: 5` (bumped from 4, T1307/G121): required `baseVerification`
+ * discriminated union on output; `baseCommit`/`startingCommit` full-SHA only;
+ * optional `priorResultCommit` on input for round>0 resume evidence. A stale
+ * deployed root rendered against the v4 contract must not be mistaken for this
+ * one. DISPATCHED_ROLE_VERSIONS derives this automatically; it is not
+ * hand-edited.
  */
 export const implementWorkerSidecar: RoleSchemaSidecar = {
   id: "implement-worker",
-  version: 4,
+  version: 5,
   inputSchema,
   outputSchema,
 };

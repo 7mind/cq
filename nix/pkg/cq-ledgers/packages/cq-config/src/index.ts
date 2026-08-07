@@ -235,16 +235,33 @@ export { planReviewerSidecar, PLAN_REVIEW_VERDICTS } from "./schemas/plan-review
 export {
   implementWorkerSidecar,
   IMPLEMENT_WORKER_STATUSES,
+  IMPLEMENT_WORKER_FULL_SHA_PATTERN,
+  IMPLEMENT_WORKER_BASE_UNRESOLVABLE_REASONS,
   TEST_GUARD_GLOBS,
+  implementWorkerBaseVerificationSchema,
+  implementWorkerVerifiedBaseVerificationSchema,
+  implementWorkerUnresolvableBaseVerificationSchema,
 } from "./schemas/implement-worker.js";
+export type { ImplementWorkerBaseUnresolvableReason } from "./schemas/implement-worker.js";
 export {
   implementReviewerSidecar,
   IMPLEMENT_REVIEW_VERDICTS,
   IMPLEMENT_REVIEWER_PHASE_EXHAUSTION_CRITICISM,
+  IMPLEMENT_REVIEWER_FULL_SHA_PATTERN,
+  IMPLEMENT_REVIEWER_RESULT_COMMIT_UNRESOLVABLE_REASONS,
+  IMPLEMENT_REVIEWER_BASE_ANCESTRY_UNRESOLVABLE_REASONS,
   SANDBOX_DENIED_PRIMITIVES_GATE_REASON,
   validateParentGateAttestation,
+  implementReviewerResultCommitEvidenceSchema,
+  implementReviewerBaseAncestrySchema,
+  implementReviewerVerifiedResultCommitEvidenceSchema,
+  implementReviewerVerifiedBaseAncestrySchema,
 } from "./schemas/implement-reviewer.js";
-export type { ParentGateAttestation } from "./schemas/implement-reviewer.js";
+export type {
+  ParentGateAttestation,
+  ImplementReviewerResultCommitUnresolvableReason,
+  ImplementReviewerBaseAncestryUnresolvableReason,
+} from "./schemas/implement-reviewer.js";
 export {
   implementConflictResolverSidecar,
   CONFLICT_RESOLVER_STATUSES,

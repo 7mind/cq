@@ -7,17 +7,30 @@ description: Portable adversarial implementation-review rubric and structured ve
 ## Catalogue
 ```yaml
 inputs:
-  - "task specification, worktree/branch/base, worker result, round, and prior criticism"
+  - "task specification, worktree/branch/full-SHA base, worker result, round, and prior criticism"
 outputs:
   - "one fenced structured verdict"
 ioSchema:
-  - "{taskId,verdict,criticism[],questions[],defects[],rationale,gateReRan,resultCommitVerified,gateDurationMs?,gateReRanReason?,summary?}"
+  - "{taskId,verdict,criticism[],questions[],defects[],rationale,gateReRan,resultCommitVerified,resultCommitEvidence,baseAncestry,gateDurationMs?,gateReRanReason?,summary?}"
 ```
 
 Review one implementation against the actual diff and task acceptance. Verify:
 
 - acceptance through its named command, output, or invariant;
-- `resultCommit` exists as a commit and equals the worker branch tip;
+- **result-commit evidence:** `git cat-file -t <resultCommit>` is
+  `commit`, and `git rev-parse --verify <branch>` full SHA equals
+  `resultCommit`. On success
+  `resultCommitEvidence: { status: "verified", resultCommit, branchTip }` with
+  full SHAs and `resultCommitVerified: true`. On failure
+  `resultCommitVerified: false` and unresolvable evidence with a closed reason
+  and nullable observed SHAs — never invent a SHA;
+- **base-ancestry evidence:** resolve dispatch `baseCommit`, compute
+  `merge-base`, and require
+  `git merge-base --is-ancestor <baseCommit> <resultCommit>`. On success
+  `baseAncestry: { status: "verified", relation, baseCommit, resultCommit,
+  mergeBase }` with full SHAs. On failure unresolvable evidence with a closed
+  reason (`not-ancestor` vs missing/non-commit objects). Approval requires both
+  verified arms;
 - gate evidence: either re-run `bun run check` with the foreground process's
   real status and measured duration, or — when the dispatch carries
   `parentGateAttestation` on the sandbox-denied path — verify that attestation
@@ -53,16 +66,30 @@ not questions.
   "rationale": "<decisive evidence>",
   "gateReRan": true,
   "resultCommitVerified": true,
+  "resultCommitEvidence": {
+    "status": "verified",
+    "resultCommit": "<40-hex>",
+    "branchTip": "<40-hex>"
+  },
+  "baseAncestry": {
+    "status": "verified",
+    "relation": "equal | descendant",
+    "baseCommit": "<40-hex>",
+    "resultCommit": "<40-hex>",
+    "mergeBase": "<40-hex>"
+  },
   "gateDurationMs": 12345,
   "summary": "<optional one-line verdict>"
 }
 ```
 
-Always state `gateReRan` and `resultCommitVerified`. Include
-`gateDurationMs` only when the gate ran; otherwise include an optional
-`gateReRanReason` (exactly `sandbox-denied-primitives` on the parent-attested
-path). Approval requires empty criticism/questions, a green gate (child re-run
-or verified parent attestation), and verified result commit. Disapproval
-requires criticism or questions. Defects do not control the verdict.
+Always state `gateReRan`, `resultCommitVerified`, `resultCommitEvidence`, and
+`baseAncestry`. Include `gateDurationMs` only when the gate ran; otherwise
+include an optional `gateReRanReason` (exactly `sandbox-denied-primitives` on
+the parent-attested path). Approval requires empty criticism/questions, a green
+gate (child re-run or verified parent attestation), verified result commit, and
+verified base ancestry with full SHAs. Disapproval requires criticism or
+questions and may carry unresolvable evidence. Defects do not control the
+verdict.
 
 Write nothing. Give a brief session summary, then end with the fenced object.

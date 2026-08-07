@@ -761,7 +761,7 @@ describe("the unit-of-work runner", () => {
           acceptance: "The backend persists the prepare-bound absolute phase window.",
           worktreePath: "/tmp/wt-T1696",
           branch: "implement/T1696",
-          baseCommit: "e65ce042",
+          baseCommit: "e65ce042".padEnd(40, "0"),
           workerResult: {
             resultCommit: "e65ce042ab4093398372f886e471e57f8f3efdae",
             checkSummary: "REAL_CHECK_EXIT=0",

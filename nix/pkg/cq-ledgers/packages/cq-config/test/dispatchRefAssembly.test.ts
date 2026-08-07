@@ -247,6 +247,7 @@ describe("the refs-only launch form is schema-pinned and narrative-free", () => 
       "coordinates",
       "round",
       "startingCommit",
+      "priorResultCommit",
       "priorReviewId",
       "guidance",
       "resolvedModel",
@@ -362,6 +363,7 @@ describe("the assembled-narrative field set is DERIVED from the role sidecars", 
       "baseCommit",
       "round",
       "startingCommit",
+      "priorResultCommit",
       "resolvedModel",
     ]);
   });

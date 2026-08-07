@@ -85,6 +85,12 @@ const OUTPUT: DispatchJSONValue = {
   gateDurationMs: 1_000,
   checkSummary: "focused tests green",
   summary: "T689-BODY-SENTINEL",
+  baseVerification: {
+    status: "verified",
+    relation: "descendant",
+    baseCommit: "a".repeat(40),
+    headCommit: "b".repeat(40),
+  },
 };
 
 interface Harness {

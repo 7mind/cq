@@ -12,12 +12,13 @@ description: Adversarial implementation reviewer that verifies one task and stor
 
 ```yaml
 inputs:
-  - "task specification, worktree/branch/base, worker result, round, prior criticism, optional parentGateAttestation, and prepare-bound absolute phase timing"
+  - "task specification, worktree/branch/full-SHA base, worker result, round, prior criticism, optional parentGateAttestation, and prepare-bound absolute phase timing"
 outputs:
-  - "stored structured verdict and handle-only final reply"
+  - "stored structured verdict with resultCommitEvidence + baseAncestry, and handle-only final reply"
 ioSchema:
   - "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)"
-  - "approve requires empty criticism/questions, green gate (child re-run or verified parentGateAttestation), and verified commit"
+  - "approve requires empty criticism/questions, green gate (child re-run or verified parentGateAttestation), resultCommitVerified=true, and verified resultCommitEvidence + baseAncestry (full SHAs)"
+  - "disapprove may carry unresolvable evidence with closed reasons and nullable observed SHAs"
 ```
 
 Review one task against the actual diff and acceptance. Never edit the
@@ -32,9 +33,45 @@ the current clock to that instant at each boundary; only `now >=
 gateCompleteBy` exhausts the phase. The interval through `responseStoreNow` is
 reserved exclusively for synthesizing and storing a verdict.
 
-Run `git -C <worktree> cat-file -t <resultCommit>` and require `commit`. Run
-`git -C <worktree> rev-parse --verify <branch>` and require its full SHA to
-equal `resultCommit`.
+**Result-commit evidence (required).** Independently:
+
+1. Run `git -C <worktree> rev-parse --verify <resultCommit>^{commit}` (or
+   `cat-file -t`) and require object type `commit` with a full 40-hex SHA.
+2. Run `git -C <worktree> rev-parse --verify <branch>` and require its full SHA
+   to equal `resultCommit`.
+3. On success set
+   `resultCommitEvidence: { status: "verified", resultCommit, branchTip }` with
+   full SHAs and `resultCommitVerified: true`.
+4. On failure set `resultCommitVerified: false` and
+   `resultCommitEvidence: { status: "unresolvable", reason, resultCommit,
+   branchTip }` using a closed reason
+   (`result-commit-missing` | `result-commit-not-commit` |
+   `result-commit-malformed` | `branch-tip-mismatch` | `branch-unresolvable` |
+   `worktree-unresolvable`) and full SHAs or `null` — never invent a SHA.
+
+**Base-ancestry evidence (required).** Independently:
+
+1. Resolve the dispatch `baseCommit` to a full SHA commit object.
+2. Compute `git -C <worktree> merge-base <baseCommit> <resultCommit>`.
+3. Require `git merge-base --is-ancestor <baseCommit> <resultCommit>` to exit
+   zero (base equal to or ancestor of the result).
+4. On success set
+   `baseAncestry: { status: "verified", relation: "equal"|"descendant",
+   baseCommit, resultCommit, mergeBase }` with full SHAs only.
+5. On failure set
+   `baseAncestry: { status: "unresolvable", reason, baseCommit, resultCommit,
+   mergeBase }` with a closed reason
+   (`base-missing` | `base-not-commit` | `result-commit-missing` |
+   `result-commit-not-commit` | `merge-base-unobserved` | `not-ancestor` |
+   `unrelated-histories`) and nullable observed values.
+
+Distinguish stale ancestry (`not-ancestor` with both objects present) from
+unresolvable objects (`base-missing`, `*-not-commit`, `merge-base-unobserved`).
+Approval requires both evidence arms verified; never approve with unresolvable
+or missing ancestry.
+
+Also verify the worktree diff against the claimed `filesTouched` set where
+practical, and re-run or accept parent-attested gates as below.
 
 **Gate evidence.** When the fetched input carries `parentGateAttestation`
 (sandboxed path where gate primitives are denied):
@@ -66,7 +103,9 @@ Use exactly one of these evidence tuples:
 
 - before result-commit verification completes: `resultCommitVerified=false`,
   `gateReRan=false`, omit `gateDurationMs`, and set `gateReRanReason` to
-  `phase-budget-exhausted-before-result-commit-verification`;
+  `phase-budget-exhausted-before-result-commit-verification`; carry
+  unresolvable `resultCommitEvidence` / `baseAncestry` with the best observed
+  values;
 - after result-commit verification but before gate start: set
   `resultCommitVerified=true`, `gateReRan=false`, omit `gateDurationMs`, and set
   `gateReRanReason` to `phase-budget-exhausted-before-gate-start`;
@@ -106,18 +145,31 @@ are not questions.
   "rationale": "<decisive evidence>",
   "gateReRan": true,
   "resultCommitVerified": true,
+  "resultCommitEvidence": {
+    "status": "verified",
+    "resultCommit": "<40-hex>",
+    "branchTip": "<40-hex>"
+  },
+  "baseAncestry": {
+    "status": "verified",
+    "relation": "equal | descendant",
+    "baseCommit": "<40-hex>",
+    "resultCommit": "<40-hex>",
+    "mergeBase": "<40-hex>"
+  },
   "gateDurationMs": 12345,
   "summary": "<optional one-line verdict>"
 }
 ```
 
-Always state `gateReRan` and `resultCommitVerified`. Include
-`gateDurationMs` only when the gate ran; otherwise include an optional
-`gateReRanReason` (use exactly `sandbox-denied-primitives` on the
-parent-attested path). Approval requires empty criticism/questions, a green
-gate (child re-run exit 0, or a verified parent attestation with exit 0 /
-failCount 0 / passCount > 0), and verified result commit. Disapproval requires
-criticism or questions. Defects do not control the verdict.
+Always state `gateReRan`, `resultCommitVerified`, `resultCommitEvidence`, and
+`baseAncestry`. Include `gateDurationMs` only when the gate ran; otherwise
+include an optional `gateReRanReason` (use exactly `sandbox-denied-primitives`
+on the parent-attested path). Approval requires empty criticism/questions, a
+green gate (child re-run exit 0, or a verified parent attestation with exit 0 /
+failCount 0 / passCount > 0), `resultCommitVerified=true`, and both evidence
+arms verified with full SHAs. Disapproval requires criticism or questions and
+may carry unresolvable evidence. Defects do not control the verdict.
 
 Store the object exactly once through the dispatch-scoped `store_result` tool. Only a
 `result-stored` acknowledgement permits the final response. Then reply with the
