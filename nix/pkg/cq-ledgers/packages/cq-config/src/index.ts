@@ -108,6 +108,7 @@ export type {
   EscapeCanaryObservation,
   PiNativeQualificationInput,
   ClaudeNativeQualificationInput,
+  ClaudeNativeQualificationHandle,
 } from "./nativeDispatchQualification.js";
 export {
   NATIVE_ADAPTER_IDS,
@@ -175,6 +176,18 @@ export {
   PI_NATIVE_SESSION_SEAM,
   PI_PROCESS_SESSION_SEAM,
 } from "./piNativeDispatch.js";
+export type {
+  ClaudeNativeSessionLaunchRequest,
+  ClaudeNativeSessionLaunchResult,
+  ClaudeNativeSessionLauncher,
+  ClaudeNativeAdapterBinding,
+  ClaudeNativeAdapterBindingResolver,
+  CreateClaudeNativeDispatchAdapterOptions,
+} from "./claudeNativeDispatch.js";
+export {
+  createClaudeNativeDispatchAdapter,
+  CLAUDE_NATIVE_SESSION_SEAM,
+} from "./claudeNativeDispatch.js";
 export {
   resolveActiveHarness,
   resolveActiveHarnessFromProcess,

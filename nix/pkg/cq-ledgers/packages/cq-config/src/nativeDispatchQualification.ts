@@ -33,6 +33,8 @@ export type NativeQualificationRefusalReason =
   | "escape-canary-required"
   | "missing-cwd-binding"
   | "cwd-not-absolute"
+  | "handle-invalid"
+  | "handle-path-mismatch"
   | "provider-probe-unavailable";
 
 export type NativePathConfinementStrength = "structural" | "harness-owned" | "unproven";
@@ -112,6 +114,25 @@ export function isAbsoluteFilesystemPath(value: string): boolean {
   return typeof value === "string" && value.length > 0 && ABSOLUTE_PATH_RE.test(value);
 }
 
+/**
+ * Wire-shaped worktree_manage handle (D287). Mirrors @cq/ledger
+ * ManagedWorktreeHandle / ClaudeNativeManagedWorktreeHandle without importing
+ * claudeNativeWorktree (avoids a cycle through isAbsoluteFilesystemPath).
+ */
+export interface ClaudeNativeQualificationHandle {
+  readonly kind: "cq-managed-worktree-handle";
+  readonly version: number;
+  readonly token: string;
+  readonly worktreeId: string;
+  readonly taskId: string;
+  readonly branch: string;
+  readonly repositoryRoot: string;
+  readonly absolutePath: string;
+  readonly baseCommit: string;
+  readonly createdAt: string;
+  readonly nonce: string;
+}
+
 export interface ClaudeNativeQualificationInput {
   /**
    * Manager-returned absolute worktree path (worktree_manage prepare evidence).
@@ -119,10 +140,36 @@ export interface ClaudeNativeQualificationInput {
    */
   readonly cwd: string;
   /**
-   * When true, cwd was obtained from worktree_manage prepare/resume (not a
-   * free-form path). Required for K238 qualification.
+   * Opaque handle from worktree_manage prepare/resume (D287). Required — a free
+   * boolean handoff is refused. basename(cwd) must equal handle.worktreeId and
+   * handle.absolutePath must equal cwd after normalize.
    */
-  readonly worktreeManageBound: boolean;
+  readonly handle: ClaudeNativeQualificationHandle;
+}
+
+function isClaudeQualificationHandle(
+  value: unknown,
+): value is ClaudeNativeQualificationHandle {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Readonly<Record<string, unknown>>;
+  return (
+    record["kind"] === "cq-managed-worktree-handle" &&
+    typeof record["version"] === "number" &&
+    typeof record["token"] === "string" &&
+    record["token"].length > 0 &&
+    typeof record["worktreeId"] === "string" &&
+    typeof record["taskId"] === "string" &&
+    typeof record["branch"] === "string" &&
+    typeof record["repositoryRoot"] === "string" &&
+    typeof record["absolutePath"] === "string" &&
+    typeof record["baseCommit"] === "string" &&
+    typeof record["createdAt"] === "string" &&
+    typeof record["nonce"] === "string"
+  );
+}
+
+function normalizeAbsPath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
 /** Managed implement worktrees live under `<repo>/.claude/worktrees/<id>`. */
@@ -170,10 +217,10 @@ export function qualifyClaudeNativeAdapter(
       confinement: "unproven" as const,
       defect: "D263" as const,
       detail:
-        "claude:native requires worktree_manage path handoff (decisions:K238 / Q383(b)). " +
-        "Call qualifyClaudeNativeAdapter({ cwd, worktreeManageBound: true }) with the " +
-        "manager-returned absolute path. Structural path-scoped write confinement remains " +
-        "unproven; K170 did NOT accept write-confinement residual.",
+        "claude:native requires worktree_manage handle + path handoff (decisions:K238 / Q383(b) / D287). " +
+        "Call qualifyClaudeNativeAdapter({ cwd, handle }) with the manager-returned absolute path " +
+        "and opaque handle. Structural path-scoped write confinement remains unproven; K170 did " +
+        "NOT accept write-confinement residual.",
     });
   }
 
@@ -204,19 +251,19 @@ export function qualifyClaudeNativeAdapter(
     });
   }
 
-  if (input.worktreeManageBound !== true) {
+  if (!isClaudeQualificationHandle(input.handle)) {
     return Object.freeze({
       status: "incompatible" as const,
       adapterId: "claude:native" as const,
       targetHarness: "claude" as const,
       transport: "native" as const,
-      reason: "path-scoped-confinement-unproven" as const,
+      reason: "handle-invalid" as const,
       confinement: "unproven" as const,
       defect: "D263" as const,
       detail:
-        "claude:native K238 qualification requires worktreeManageBound=true (path from " +
-        "worktree_manage prepare/resume). Free-form cwd is refused. K170 did NOT accept " +
-        "write-confinement residual; harness-owned isolation only applies after managed handoff.",
+        "claude:native K238 qualification requires a cq-managed-worktree-handle shaped handle " +
+        "from worktree_manage (D287). Free-form boolean handoffs are refused. K170 did NOT " +
+        "accept write-confinement residual.",
     });
   }
 
@@ -230,8 +277,28 @@ export function qualifyClaudeNativeAdapter(
       confinement: "unproven" as const,
       defect: "D263" as const,
       detail:
-        "claude:native managed path must lie under .claude/worktrees/; got " +
+        "claude:native managed path must lie under .claude/worktrees/<uuid>; got " +
         `${JSON.stringify(input.cwd)}. K170 did NOT accept write-confinement residual.`,
+    });
+  }
+
+  const cwdNorm = normalizeAbsPath(input.cwd);
+  const handlePathNorm = normalizeAbsPath(input.handle.absolutePath);
+  const basename = cwdNorm.slice(cwdNorm.lastIndexOf("/") + 1);
+  if (basename !== input.handle.worktreeId || cwdNorm !== handlePathNorm) {
+    return Object.freeze({
+      status: "incompatible" as const,
+      adapterId: "claude:native" as const,
+      targetHarness: "claude" as const,
+      transport: "native" as const,
+      reason: "handle-path-mismatch" as const,
+      confinement: "unproven" as const,
+      defect: "D263" as const,
+      detail:
+        "claude:native K238: cwd basename must equal handle.worktreeId and cwd must equal " +
+        `handle.absolutePath (D287). cwd=${JSON.stringify(input.cwd)} handle.worktreeId=` +
+        `${JSON.stringify(input.handle.worktreeId)} handle.absolutePath=` +
+        `${JSON.stringify(input.handle.absolutePath)}`,
     });
   }
 
@@ -243,8 +310,9 @@ export function qualifyClaudeNativeAdapter(
     confinement: "harness-owned" as const,
     defectClosed: "D263" as const,
     evidence:
-      "decisions:K238 / Q383(b): harness-owned Claude native isolation accepted after " +
-      `worktree_manage path handoff to ${JSON.stringify(input.cwd)}. ` +
+      "decisions:K238 / Q383(b) / D287: harness-owned Claude native isolation accepted after " +
+      `worktree_manage handle+path handoff to ${JSON.stringify(input.cwd)} ` +
+      `(worktreeId=${JSON.stringify(input.handle.worktreeId)}). ` +
       "Agent tool still has no path parameter — this is NOT structural path-scoped " +
       "write confinement. decisions:K170 did NOT accept write-confinement residual; " +
       "handleOnlyOutput remains the only K170 residual. D263 closed under harness-owned model.",

@@ -32,9 +32,34 @@ function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
-describe("T1698/D263/K238 — Claude native positive-only qualification", () => {
-  const managedCwd =
-    "/tmp/project/.claude/worktrees/018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08";
+describe("T1698/D263/K238/D287 — Claude native positive-only qualification", () => {
+  const worktreeId = "018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08";
+  const managedCwd = `/tmp/project/.claude/worktrees/${worktreeId}`;
+
+  function managedHandle(
+    overrides: Partial<{
+      cwd: string;
+      worktreeId: string;
+      kind: string;
+      token: string;
+    }> = {},
+  ) {
+    const id = overrides.worktreeId ?? worktreeId;
+    const cwd = overrides.cwd ?? `/tmp/project/.claude/worktrees/${id}`;
+    return {
+      kind: (overrides.kind ?? "cq-managed-worktree-handle") as "cq-managed-worktree-handle",
+      version: 1,
+      token: overrides.token ?? "tok-valid-handle-evidence",
+      worktreeId: id,
+      taskId: "T1698",
+      branch: "implement/T1698",
+      repositoryRoot: "/tmp/project",
+      absolutePath: cwd,
+      baseCommit: "a".repeat(40),
+      createdAt: "2026-08-07T00:00:00.000Z",
+      nonce: "nonce-1",
+    };
+  }
 
   test("without managed binding: claude:native stays incompatible", () => {
     const q = qualifyClaudeNativeAdapter();
@@ -48,56 +73,74 @@ describe("T1698/D263/K238 — Claude native positive-only qualification", () => 
     expect(() => assertNativeAdapterQualified(q)).toThrow(NativeAdapterIncompatibilityError);
   });
 
-  test("K238: managed worktree_manage path qualifies under harness-owned confinement", () => {
+  test("K238/D287: handle+path qualifies under harness-owned confinement", () => {
     const q = qualifyClaudeNativeAdapter({
       cwd: managedCwd,
-      worktreeManageBound: true,
+      handle: managedHandle(),
     });
     expect(q.status).toBe("qualified");
     if (q.status !== "qualified") throw new Error("expected qualified");
     expect(q.adapterId).toBe("claude:native");
     expect(q.confinement).toBe("harness-owned");
     expect(q.defectClosed).toBe("D263");
-    expect(q.evidence).toMatch(/K238|Q383\(b\)/);
+    expect(q.evidence).toMatch(/K238|Q383\(b\)|D287/);
     expect(q.evidence).toMatch(/did NOT accept write-confinement residual/i);
     expect(q.evidence).not.toMatch(/structural path-scoped write confinement is proven/i);
   });
 
-  test("free-form or unbound cwd refuses even when absolute", () => {
-    const unbound = qualifyClaudeNativeAdapter({
+  test("D287: missing/invalid handle or path mismatch refuses", () => {
+    const noHandle = qualifyClaudeNativeAdapter({
       cwd: managedCwd,
-      worktreeManageBound: false,
+      handle: { kind: "wrong" } as never,
     });
-    expect(unbound.status).toBe("incompatible");
-    if (unbound.status !== "incompatible") throw new Error("expected incompatible");
-    expect(unbound.reason).toBe("path-scoped-confinement-unproven");
+    expect(noHandle.status).toBe("incompatible");
+    if (noHandle.status !== "incompatible") throw new Error("expected incompatible");
+    expect(noHandle.reason).toBe("handle-invalid");
+
+    const mismatch = qualifyClaudeNativeAdapter({
+      cwd: managedCwd,
+      handle: managedHandle({
+        cwd: `/tmp/evil/.claude/worktrees/${worktreeId}`,
+      }),
+    });
+    expect(mismatch.status).toBe("incompatible");
+    if (mismatch.status !== "incompatible") throw new Error("expected incompatible");
+    expect(mismatch.reason).toBe("handle-path-mismatch");
+
+    const idMismatch = qualifyClaudeNativeAdapter({
+      cwd: managedCwd,
+      handle: managedHandle({ worktreeId: "11111111-1111-1111-1111-111111111111" }),
+    });
+    expect(idMismatch.status).toBe("incompatible");
+    if (idMismatch.status !== "incompatible") throw new Error("expected incompatible");
+    expect(idMismatch.reason).toBe("handle-path-mismatch");
 
     const outside = qualifyClaudeNativeAdapter({
       cwd: "/tmp/not-managed",
-      worktreeManageBound: true,
+      handle: managedHandle({ cwd: "/tmp/not-managed", worktreeId: "not-a-uuid" }),
     });
     expect(outside.status).toBe("incompatible");
-    if (outside.status !== "incompatible") throw new Error("expected incompatible");
-    expect(outside.reason).toBe("path-scoped-confinement-unproven");
 
     const relative = qualifyClaudeNativeAdapter({
       cwd: "relative/path",
-      worktreeManageBound: true,
+      handle: managedHandle(),
     });
     expect(relative.status).toBe("incompatible");
     if (relative.status !== "incompatible") throw new Error("expected incompatible");
     expect(relative.reason).toBe("cwd-not-absolute");
 
-    // Traversal / non-UUID worktree id must not qualify (path-weak handoff).
     const traversal = qualifyClaudeNativeAdapter({
       cwd: "/tmp/x/.claude/worktrees/../../../etc",
-      worktreeManageBound: true,
+      handle: managedHandle({ cwd: "/tmp/x/.claude/worktrees/../../../etc" }),
     });
     expect(traversal.status).toBe("incompatible");
 
     const nonUuid = qualifyClaudeNativeAdapter({
       cwd: "/tmp/project/.claude/worktrees/not-a-uuid",
-      worktreeManageBound: true,
+      handle: managedHandle({
+        cwd: "/tmp/project/.claude/worktrees/not-a-uuid",
+        worktreeId: "not-a-uuid",
+      }),
     });
     expect(nonUuid.status).toBe("incompatible");
   });
@@ -136,7 +179,7 @@ describe("T1698/D263/K238 — Claude native positive-only qualification", () => 
 
     const qualified = qualifyClaudeNativeAdapter({
       cwd: managedCwd,
-      worktreeManageBound: true,
+      handle: managedHandle(),
     });
     const registered = buildPositiveOnlyDispatchRegistry({
       adapters: [createNativeDispatchAdapter("claude", dummyLaunch)],
@@ -183,9 +226,23 @@ describe("T1699/D160 — Pi native qualification and delivery selection", () => 
     expect(selectQualifiedNativeAdapterIds([q, qualifyClaudeNativeAdapter()])).toEqual([
       "pi:native",
     ]);
+    const claudeCwd =
+      "/tmp/project/.claude/worktrees/018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08";
     const claudeQ = qualifyClaudeNativeAdapter({
-      cwd: "/tmp/project/.claude/worktrees/018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08",
-      worktreeManageBound: true,
+      cwd: claudeCwd,
+      handle: {
+        kind: "cq-managed-worktree-handle",
+        version: 1,
+        token: "tok-pi-suite",
+        worktreeId: "018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08",
+        taskId: "T1698",
+        branch: "implement/T1698",
+        repositoryRoot: "/tmp/project",
+        absolutePath: claudeCwd,
+        baseCommit: "a".repeat(40),
+        createdAt: "2026-08-07T00:00:00.000Z",
+        nonce: "n1",
+      },
     });
     expect([...selectQualifiedNativeAdapterIds([q, claudeQ])].sort()).toEqual([
       "claude:native",
@@ -291,9 +348,23 @@ describe("T1699/D160 — Pi native qualification and delivery selection", () => 
     const before = sha256(readFileSync(SRC, "utf8"));
     const unbound = qualifyClaudeNativeAdapter();
     expect(unbound.status).toBe("incompatible");
+    const realCwd =
+      "/tmp/project/.claude/worktrees/018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08";
     const real = qualifyClaudeNativeAdapter({
-      cwd: "/tmp/project/.claude/worktrees/018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08",
-      worktreeManageBound: true,
+      cwd: realCwd,
+      handle: {
+        kind: "cq-managed-worktree-handle",
+        version: 1,
+        token: "tok-mutation",
+        worktreeId: "018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08",
+        taskId: "T1698",
+        branch: "implement/T1698",
+        repositoryRoot: "/tmp/project",
+        absolutePath: realCwd,
+        baseCommit: "a".repeat(40),
+        createdAt: "2026-08-07T00:00:00.000Z",
+        nonce: "n2",
+      },
     });
     expect(real.status).toBe("qualified");
     if (real.status !== "qualified") throw new Error("expected qualified");

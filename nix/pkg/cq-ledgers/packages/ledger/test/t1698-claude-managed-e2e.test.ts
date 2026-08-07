@@ -220,10 +220,10 @@ describe("T1698 Claude-native managed worktree e2e [BA]", () => {
       throw new Error(`bind refused: ${JSON.stringify(bound)}`);
     }
 
-    // K238: manager-returned path qualifies harness-owned and closes D263.
+    // K238/D287: manager-returned handle+path qualifies harness-owned.
     const q = qualifyClaudeNativeAdapter({
       cwd: bound.binding.absolutePath,
-      worktreeManageBound: true,
+      handle: bound.binding.handle,
     });
     expect(q.status).toBe("qualified");
     if (q.status !== "qualified") throw new Error("expected qualified");
@@ -260,7 +260,7 @@ describe("T1698 Claude-native managed worktree e2e [BA]", () => {
     // Re-qualify after resume still harness-owned.
     const q2 = qualifyClaudeNativeAdapter({
       cwd: resumed.binding.absolutePath,
-      worktreeManageBound: true,
+      handle: resumed.binding.handle,
     });
     expect(q2.status).toBe("qualified");
 
