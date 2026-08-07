@@ -47,6 +47,7 @@ import {
   verifyDispatchBase,
 } from "./dispatchBase.js";
 import { AGENT_WORKTREE_SEGMENT } from "./projectKey.js";
+import { Lockfile } from "./store/lockfile.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -58,6 +59,8 @@ const DEFAULT_BRANCH_PREFIX = "implement/";
 const REGISTRY_DIRNAME = ".cq-managed-registry";
 const TASK_INDEX_DIRNAME = "by-task";
 const HANDLES_DIRNAME = "handles";
+const PREPARE_LOCKS_DIRNAME = "locks";
+const RECOVERY_REF_PREFIX = "refs/cq-managed-recovery";
 const UUIDV7_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TASK_ID_RE = /^T\d+$/;
@@ -117,7 +120,8 @@ export type PrepareManagedWorktreeRefusalReason =
   | "bun-workspace-missing"
   | "bun-install-plan-invalid"
   | "bun-install-failed"
-  | "registry-conflict";
+  | "registry-conflict"
+  | "prepare-lock-busy";
 
 export type PrepareManagedWorktreeResult =
   | {
@@ -261,6 +265,10 @@ export interface ManagedWorktreeDeps {
   readonly faultInjector?: ManagedWorktreeFaultInjector;
   /** Skip real install (tests that only cover git/registry). Default false. */
   readonly skipInstall?: boolean;
+  /** Override prepare-lock acquisition (tests). */
+  readonly lockfile?: Lockfile;
+  /** Override prepare-lock timeout (ms). */
+  readonly prepareLockTimeoutMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -744,6 +752,83 @@ async function assertNoNodeModulesSymlink(workspaceRoot: string): Promise<string
   return null;
 }
 
+/**
+ * Map a seed-side Bun workspace root onto the workspace path inside a managed
+ * worktree. Discovery runs against the seed repository; install must target the
+ * copy under `absolutePath`, never the main checkout.
+ */
+export function rebaseBunWorkspaceIntoWorktree(
+  repositoryRoot: string,
+  seedBunWorkspaceRoot: string,
+  absolutePath: string,
+): string | null {
+  const repo = resolve(repositoryRoot);
+  const seed = resolve(seedBunWorkspaceRoot);
+  const managed = resolve(absolutePath);
+  if (!containedPath(repo, seed) && seed !== repo) {
+    // Allow an override already pointing inside the managed tree.
+    if (containedPath(managed, seed) || seed === managed) return seed;
+    return null;
+  }
+  const rel = relative(repo, seed);
+  if (rel === "") return managed;
+  if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) return null;
+  return join(managed, rel);
+}
+
+async function rollbackFreshWorktree(
+  git: ManagedWorktreeGitRunner,
+  repositoryRoot: string,
+  absolutePath: string,
+  branch: string,
+  createdBranch: boolean,
+): Promise<{ readonly ok: boolean; readonly detail: string }> {
+  const remove = await git(repositoryRoot, ["worktree", "remove", "--force", absolutePath]);
+  // Best-effort residual directory cleanup if git left anything behind.
+  try {
+    await fs.rm(absolutePath, { recursive: true, force: true });
+  } catch {
+    // ignore
+  }
+  if (createdBranch) {
+    await git(repositoryRoot, ["branch", "-D", branch]);
+  }
+  // Confirm the path is gone and the branch is no longer checked out here.
+  let pathGone = false;
+  try {
+    await fs.stat(absolutePath);
+  } catch {
+    pathGone = true;
+  }
+  if (!pathGone) {
+    return {
+      ok: false,
+      detail: `rollback failed to remove worktree path ${absolutePath}: ${remove.stderr.trim() || remove.stdout.trim()}`,
+    };
+  }
+  return { ok: true, detail: "" };
+}
+
+async function emergencyRegisterLiveHandle(
+  regRoot: string,
+  handle: ManagedWorktreeHandle,
+  headCommit: string,
+  bunWorkspaceRoot: string,
+): Promise<boolean> {
+  try {
+    await writeStoredHandleExclusive(regRoot, {
+      handle,
+      fingerprint: fingerprintHandle(handle),
+      status: "live",
+      headAtPrepare: headCommit,
+      bunWorkspaceRoot,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // WIP / dirty inspection (G122)
 // ---------------------------------------------------------------------------
@@ -1049,7 +1134,70 @@ export async function prepareManagedWorktree(
     return resumeFromStored(request, deps, stored, repositoryRoot);
   }
 
-  // Handle-free: inspect live trees for this task.
+  // Handle-free prepare is serialized per task so two concurrent callers cannot
+  // both observe live=0 and mint distinct trees for the same taskId.
+  const lockfile =
+    deps.lockfile ??
+    new Lockfile({
+      ...(deps.prepareLockTimeoutMs !== undefined
+        ? { acquireTimeoutMs: deps.prepareLockTimeoutMs }
+        : {}),
+    });
+  const locksDir = join(regRoot, PREPARE_LOCKS_DIRNAME);
+  let releasePrepareLock: (() => Promise<void>) | undefined;
+  try {
+    releasePrepareLock = await lockfile.acquire(locksDir, `prepare-${request.taskId}`);
+  } catch (error) {
+    return refusedPrepare(
+      "prepare-lock-busy",
+      `could not acquire prepare lock for ${request.taskId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  try {
+    return await prepareManagedWorktreeHandleFreeUnderLock(
+      request,
+      deps,
+      {
+        git,
+        dispatchGit,
+        install,
+        idFactory,
+        now,
+        allowResumeRequired,
+        fault,
+        repositoryRoot,
+        regRoot,
+      },
+    );
+  } finally {
+    if (releasePrepareLock !== undefined) {
+      await releasePrepareLock();
+    }
+  }
+}
+
+interface PrepareUnderLockContext {
+  readonly git: ManagedWorktreeGitRunner;
+  readonly dispatchGit: DispatchBaseGitRunner;
+  readonly install: ManagedWorktreeInstallRunner;
+  readonly idFactory: ManagedWorktreeIdFactory;
+  readonly now: () => Date;
+  readonly allowResumeRequired: boolean;
+  readonly fault: ManagedWorktreeFaultInjector;
+  readonly repositoryRoot: string;
+  readonly regRoot: string;
+}
+
+async function prepareManagedWorktreeHandleFreeUnderLock(
+  request: PrepareManagedWorktreeRequest,
+  deps: ManagedWorktreeDeps,
+  ctx: PrepareUnderLockContext,
+): Promise<PrepareManagedWorktreeResult> {
+  const { git, dispatchGit, install, idFactory, now, allowResumeRequired, fault, repositoryRoot, regRoot } =
+    ctx;
+
+  // Handle-free: inspect live trees for this task (under exclusive lock).
   const live = await listLiveHandlesForTask(regRoot, request.taskId);
   if (live.length > 1) {
     return refusedPrepare(
@@ -1137,21 +1285,25 @@ export async function prepareManagedWorktree(
     );
   }
 
-  const bunWorkspaceRoot =
+  // Discover the seed-side workspace BEFORE mutation; install cwd is rebased
+  // into the managed worktree after `git worktree add`.
+  const seedBunWorkspaceRoot =
     deps.bunWorkspaceRoot ?? (await discoverBunWorkspaceRoot(repositoryRoot));
-  if (bunWorkspaceRoot === null) {
+  if (seedBunWorkspaceRoot === null) {
     return refusedPrepare(
       "bun-workspace-missing",
       `no Bun workspace (bun.lock) discovered under ${repositoryRoot}`,
     );
   }
 
-  const installPlan = buildManagedWorktreeInstallPlan({
-    bunWorkspaceRoot,
+  // Validate install plan shape against a placeholder cwd; the real managed
+  // cwd is substituted after worktree add.
+  const seedInstallPlan = buildManagedWorktreeInstallPlan({
+    bunWorkspaceRoot: seedBunWorkspaceRoot,
     ...(deps.cacheRoot !== undefined ? { cacheRoot: deps.cacheRoot } : {}),
   });
   const planValidation = validateManagedWorktreeInstallPlan(
-    installPlan,
+    seedInstallPlan,
     deps.cacheRoot !== undefined ? { cacheRoot: deps.cacheRoot } : {},
   );
   if (planValidation.status === "invalid") {
@@ -1181,6 +1333,7 @@ export async function prepareManagedWorktree(
   const absolutePath = join(parent, worktreeId);
 
   const branchExists = await localBranchExists(git, repositoryRoot, branch);
+  const createdBranch = !branchExists;
   const addArgs = branchExists
     ? (["worktree", "add", "--quiet", absolutePath, branch] as const)
     : (["worktree", "add", "--quiet", "-b", branch, absolutePath, baseCommit] as const);
@@ -1198,39 +1351,139 @@ export async function prepareManagedWorktree(
     );
   }
 
+  // From here on, any failure MUST roll back the worktree (and the branch we
+  // created) OR leave a live registry handle. Never leave a checked-out branch
+  // with live=0.
+  const refuseAfterAdd = async (
+    reason: PrepareManagedWorktreeRefusalReason,
+    detail: string,
+    extra: Partial<Extract<PrepareManagedWorktreeResult, { status: "refused" }>> = {},
+  ): Promise<PrepareManagedWorktreeResult> => {
+    const rolled = await rollbackFreshWorktree(
+      git,
+      repositoryRoot,
+      absolutePath,
+      branch,
+      createdBranch,
+    );
+    if (rolled.ok) {
+      return refusedPrepare(reason, detail, extra);
+    }
+    // Rollback failed — try to commit a live handle so release can recover.
+    const headForRecovery =
+      (await revParse(git, absolutePath, "HEAD")) ??
+      (await revParse(git, repositoryRoot, branch)) ??
+      baseCommit;
+    const managedWorkspace =
+      rebaseBunWorkspaceIntoWorktree(repositoryRoot, seedBunWorkspaceRoot, absolutePath) ??
+      absolutePath;
+    const createdAt = now().toISOString();
+    const token = randomBytes(16).toString("hex");
+    const nonce = randomBytes(8).toString("hex");
+    const recoveryHandle: ManagedWorktreeHandle = {
+      kind: HANDLE_KIND,
+      version: HANDLE_VERSION,
+      token,
+      worktreeId,
+      taskId: request.taskId,
+      branch,
+      repositoryRoot,
+      absolutePath,
+      baseCommit,
+      createdAt,
+      nonce,
+    };
+    const registered = await emergencyRegisterLiveHandle(
+      regRoot,
+      recoveryHandle,
+      headForRecovery,
+      managedWorkspace,
+    );
+    if (registered) {
+      return refusedPrepare(
+        reason,
+        `${detail}; rollback failed (${rolled.detail}); left live handle ${token} for recovery`,
+        extra,
+      );
+    }
+    return refusedPrepare(
+      reason,
+      `${detail}; rollback failed (${rolled.detail}); emergency registry commit also failed — manual recovery required at ${absolutePath}`,
+      extra,
+    );
+  };
+
   // If we attached to an existing branch, require base ancestry (no reset).
   if (branchExists) {
     const head = await revParse(git, absolutePath, "HEAD");
     if (head === null) {
-      return refusedPrepare("worktree-missing", "worktree HEAD missing after add");
+      return refuseAfterAdd("worktree-missing", "worktree HEAD missing after add");
     }
     const ancestor = await git(absolutePath, ["merge-base", "--is-ancestor", baseCommit, head]);
     if (ancestor.code !== 0) {
-      return refusedPrepare(
+      return refuseAfterAdd(
         "base-unresolvable",
         `existing branch ${branch} at ${head} does not contain base ${baseCommit}; refusing reset`,
       );
     }
   }
 
+  const bunWorkspaceRoot = rebaseBunWorkspaceIntoWorktree(
+    repositoryRoot,
+    seedBunWorkspaceRoot,
+    absolutePath,
+  );
+  if (bunWorkspaceRoot === null) {
+    return refuseAfterAdd(
+      "bun-workspace-missing",
+      `seed workspace ${seedBunWorkspaceRoot} could not be rebased into managed worktree ${absolutePath}`,
+    );
+  }
+
+  // Confirm the workspace exists inside the managed tree (git worktree copies the files).
+  try {
+    await fs.access(bunWorkspaceRoot);
+  } catch {
+    return refuseAfterAdd(
+      "bun-workspace-missing",
+      `managed worktree workspace missing at ${bunWorkspaceRoot}`,
+    );
+  }
+
+  const installPlan = buildManagedWorktreeInstallPlan({
+    bunWorkspaceRoot,
+    ...(deps.cacheRoot !== undefined ? { cacheRoot: deps.cacheRoot } : {}),
+  });
+  // Re-validate with the managed cwd (cwd non-empty + cache contract).
+  const managedPlanValidation = validateManagedWorktreeInstallPlan(
+    installPlan,
+    deps.cacheRoot !== undefined ? { cacheRoot: deps.cacheRoot } : {},
+  );
+  if (managedPlanValidation.status === "invalid") {
+    return refuseAfterAdd(
+      "bun-install-plan-invalid",
+      `${managedPlanValidation.reason}: ${managedPlanValidation.detail}`,
+    );
+  }
+
   if (!deps.skipInstall) {
     await fs.mkdir(installPlan.bunInstallCacheDir, { recursive: true });
     const installResult = await install(installPlan);
     if (installResult.code !== 0) {
-      return refusedPrepare(
+      return refuseAfterAdd(
         "bun-install-failed",
         `bun install failed (exit ${installResult.code}): ${installResult.stderr.trim()}`,
       );
     }
     const symlinkProblem = await assertNoNodeModulesSymlink(bunWorkspaceRoot);
     if (symlinkProblem !== null) {
-      return refusedPrepare("bun-install-plan-invalid", symlinkProblem);
+      return refuseAfterAdd("bun-install-plan-invalid", symlinkProblem);
     }
   }
 
   const headCommit = await revParse(git, absolutePath, "HEAD");
   if (headCommit === null) {
-    return refusedPrepare("worktree-missing", "HEAD missing after prepare");
+    return refuseAfterAdd("worktree-missing", "HEAD missing after prepare");
   }
 
   const createdAt = now().toISOString();
@@ -1250,11 +1503,18 @@ export async function prepareManagedWorktree(
     nonce,
   };
 
-  await fault("before-registry-commit", {
-    token,
-    absolutePath,
-    taskId: request.taskId,
-  });
+  try {
+    await fault("before-registry-commit", {
+      token,
+      absolutePath,
+      taskId: request.taskId,
+    });
+  } catch (error) {
+    return refuseAfterAdd(
+      "registry-conflict",
+      `fault before registry commit: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 
   const stored: StoredHandleRecord = {
     handle,
@@ -1266,7 +1526,7 @@ export async function prepareManagedWorktree(
   try {
     await writeStoredHandleExclusive(regRoot, stored);
   } catch (error) {
-    return refusedPrepare(
+    return refuseAfterAdd(
       "registry-conflict",
       `failed to commit handle registry: ${error instanceof Error ? error.message : String(error)}`,
     );
@@ -1360,10 +1620,59 @@ export async function releaseManagedWorktree(
   } catch {
     pathExists = false;
   }
+
+  // Ambiguity: more than one live handle for the same path.
+  const live = await listLiveHandlesForTask(regRoot, stored.handle.taskId);
+  const samePath = live.filter(
+    (entry) => resolve(entry.handle.absolutePath) === resolve(absolutePath),
+  );
+  if (samePath.length !== 1) {
+    return refusedRelease(
+      "ambiguous",
+      `expected exactly one live handle for path, found ${samePath.length}`,
+      { absolutePath },
+    );
+  }
+
+  // worktree-missing + live registry is completable: the path may already be
+  // gone (crash mid-release, manual removal) while the handle is still live.
+  // Durable registry release happens first; branch cleanup follows.
   if (!pathExists) {
-    return refusedRelease("worktree-missing", `worktree path missing: ${absolutePath}`, {
+    if (request.resultCommit !== undefined && request.resultCommit !== null) {
+      const branchTip = await revParse(git, repositoryRoot, stored.handle.branch);
+      if (branchTip !== null && branchTip !== request.resultCommit) {
+        return refusedRelease(
+          "commit-mismatch",
+          `branch ${stored.handle.branch} tip ${branchTip} does not equal resultCommit ${request.resultCommit}`,
+          { absolutePath },
+        );
+      }
+    }
+
+    await fault("before-registry-release", {
+      token: stored.handle.token,
+      taskId: stored.handle.taskId,
       absolutePath,
+      mode: "worktree-missing",
     });
+
+    const releasedMissing: StoredHandleRecord = {
+      ...stored,
+      status: "released",
+      releasedAt: now().toISOString(),
+    };
+    await updateStoredHandle(regRoot, releasedMissing);
+
+    if (deleteBranch) {
+      await deleteBranchAfterRegistryRelease(git, repositoryRoot, stored.handle.branch);
+    }
+
+    return {
+      status: "released",
+      handle: stored.handle,
+      idempotent: false,
+      absolutePath,
+    };
   }
 
   const porcelain = await gitPorcelain(git, absolutePath);
@@ -1402,19 +1711,6 @@ export async function releaseManagedWorktree(
     }
   }
 
-  // Ambiguity: more than one live handle for the same path.
-  const live = await listLiveHandlesForTask(regRoot, stored.handle.taskId);
-  const samePath = live.filter(
-    (entry) => resolve(entry.handle.absolutePath) === resolve(absolutePath),
-  );
-  if (samePath.length !== 1) {
-    return refusedRelease(
-      "ambiguous",
-      `expected exactly one live handle for path, found ${samePath.length}`,
-      { absolutePath },
-    );
-  }
-
   await fault("before-worktree-remove", {
     absolutePath,
     token: stored.handle.token,
@@ -1431,14 +1727,13 @@ export async function releaseManagedWorktree(
     );
   }
 
-  if (deleteBranch) {
-    // Best-effort branch delete; failure does not revive the worktree.
-    await git(repositoryRoot, ["branch", "-D", stored.handle.branch]);
-  }
-
+  // Durable registry release BEFORE branch -D. A fault at this boundary must
+  // leave the precious commit reachable via the still-live branch tip.
   await fault("before-registry-release", {
     token: stored.handle.token,
     taskId: stored.handle.taskId,
+    absolutePath,
+    head,
   });
 
   const released: StoredHandleRecord = {
@@ -1447,6 +1742,10 @@ export async function releaseManagedWorktree(
     releasedAt: now().toISOString(),
   };
   await updateStoredHandle(regRoot, released);
+
+  if (deleteBranch) {
+    await deleteBranchAfterRegistryRelease(git, repositoryRoot, stored.handle.branch);
+  }
 
   await fault("before-directory-delete", { absolutePath });
   // git worktree remove already deleted the directory; residual cleanup only.
@@ -1462,6 +1761,28 @@ export async function releaseManagedWorktree(
     idempotent: false,
     absolutePath,
   };
+}
+
+/**
+ * Delete the task branch only after the registry row is durably released.
+ * If `-D` would lose the tip before recovery is possible, first park it under
+ * a recovery ref (best-effort).
+ */
+async function deleteBranchAfterRegistryRelease(
+  git: ManagedWorktreeGitRunner,
+  repositoryRoot: string,
+  branch: string,
+): Promise<void> {
+  const tip = await revParse(git, repositoryRoot, branch);
+  if (tip !== null) {
+    // Park the tip so a subsequent failure still has a recoverable ref.
+    await git(repositoryRoot, [
+      "update-ref",
+      `${RECOVERY_REF_PREFIX}/${branch}`,
+      tip,
+    ]);
+  }
+  await git(repositoryRoot, ["branch", "-D", branch]);
 }
 
 /** Test helper: read registry live count for a task. */

@@ -140,6 +140,7 @@ export {
   nodeManagedWorktreeGitRunner,
   normalizeManagedPath,
   prepareManagedWorktree,
+  rebaseBunWorkspaceIntoWorktree,
   releaseManagedWorktree,
   resolveBunInstallCacheDir,
   resolveCqCacheRoot,

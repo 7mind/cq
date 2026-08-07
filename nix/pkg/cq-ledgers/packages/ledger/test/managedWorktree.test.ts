@@ -18,6 +18,7 @@ import {
   isUuidV7,
   listManagedLiveWorktrees,
   prepareManagedWorktree,
+  rebaseBunWorkspaceIntoWorktree,
   releaseManagedWorktree,
   validateManagedWorktreeInstallPlan,
   type DependencyTaskSnapshot,
@@ -62,7 +63,8 @@ async function seedRepository(): Promise<{
   await git(cwd, ["config", "user.name", "T1305"]);
   await git(cwd, ["config", "commit.gpgsign", "false"]);
 
-  // Minimal bun workspace so discovery succeeds.
+  // Minimal bun workspace so discovery succeeds. node_modules must be
+  // gitignored — install runs inside the managed worktree and must not dirty it.
   const workspace = path.join(cwd, "nix", "pkg", "cq-ledgers");
   await fs.mkdir(workspace, { recursive: true });
   await fs.writeFile(
@@ -70,6 +72,7 @@ async function seedRepository(): Promise<{
     `${JSON.stringify({ name: "t1305-workspace", private: true, workspaces: [] }, null, 2)}\n`,
   );
   await fs.writeFile(path.join(workspace, "bun.lock"), "{}\n");
+  await fs.writeFile(path.join(cwd, ".gitignore"), "node_modules/\n.test-cache/\n.test-managed-state/\n");
   await fs.writeFile(path.join(cwd, "README.md"), "t1305 seed\n");
   await git(cwd, ["add", "."]);
   await git(cwd, ["commit", "-q", "-m", "seed"]);
@@ -350,7 +353,7 @@ describe("prepareManagedWorktree", () => {
     expect(worktreeAddCount).toBe(0);
   });
 
-  it("install receives BUN_INSTALL_CACHE_DIR and exact frozen-lockfile args; no node_modules symlink", async () => {
+  it("install receives BUN_INSTALL_CACHE_DIR and exact frozen-lockfile args; cwd is under managed worktree", async () => {
     const repo = await seedRepository();
     const install = recordingInstall();
     const prepared = await prepareManagedWorktree(
@@ -367,15 +370,143 @@ describe("prepareManagedWorktree", () => {
     const plan = install.plans[0]!;
     expect(plan.args).toEqual(["install", "--frozen-lockfile"]);
     expect(plan.env["BUN_INSTALL_CACHE_DIR"]).toBe(path.join(repo.cacheRoot, "bun-install"));
-    expect(plan.cwd).toBe(repo.workspace);
-    if (prepared.status === "prepared") {
-      expect(prepared.evidence.bunInstallArgs).toEqual(["install", "--frozen-lockfile"]);
-      expect(prepared.evidence.bunInstallCacheDir).toBe(path.join(repo.cacheRoot, "bun-install"));
-    }
-    const nm = path.join(repo.workspace, "node_modules");
+    if (prepared.status !== "prepared") return;
+    // Install MUST target the workspace inside the managed worktree, never the seed.
+    expect(plan.cwd.startsWith(prepared.evidence.absolutePath + path.sep)).toBe(true);
+    expect(plan.cwd).not.toBe(repo.workspace);
+    expect(plan.cwd).toBe(
+      rebaseBunWorkspaceIntoWorktree(repo.cwd, repo.workspace, prepared.evidence.absolutePath),
+    );
+    expect(prepared.evidence.bunWorkspaceRoot).toBe(plan.cwd);
+    expect(prepared.evidence.bunInstallArgs).toEqual(["install", "--frozen-lockfile"]);
+    expect(prepared.evidence.bunInstallCacheDir).toBe(path.join(repo.cacheRoot, "bun-install"));
+    const nm = path.join(plan.cwd, "node_modules");
     const stat = await fs.lstat(nm);
     expect(stat.isSymbolicLink()).toBe(false);
     expect(stat.isDirectory()).toBe(true);
+    // Seed checkout must not have received the install.
+    await expect(fs.stat(path.join(repo.workspace, "node_modules"))).rejects.toBeDefined();
+  });
+
+  it("post-add bun-install failure rolls back worktree and created branch (no live orphan)", async () => {
+    const repo = await seedRepository();
+    const failingInstall: ManagedWorktreeInstallRunner = async (plan) => {
+      // Observe that cwd is already under a managed path before failing.
+      expect(plan.cwd.includes(`${path.sep}.claude${path.sep}worktrees${path.sep}`)).toBe(true);
+      return { code: 17, stdout: "", stderr: "injected install failure\n" };
+    };
+    const result = await prepareManagedWorktree(
+      { repositoryRoot: repo.cwd, taskId: "T1701", baseCommit: repo.base },
+      {
+        stateDir: repo.stateDir,
+        cacheRoot: repo.cacheRoot,
+        install: failingInstall,
+        bunWorkspaceRoot: repo.workspace,
+      },
+    );
+    expect(result.status).toBe("refused");
+    if (result.status === "refused") {
+      expect(result.reason).toBe("bun-install-failed");
+    }
+    const live = await listManagedLiveWorktrees(repo.cwd, "T1701", repo.stateDir);
+    expect(live).toHaveLength(0);
+    // Branch created by prepare must be gone after rollback.
+    const branchCheck = await exec("git", ["show-ref", "--verify", "--quiet", "refs/heads/implement/T1701"], {
+      cwd: repo.cwd,
+      encoding: "utf8",
+    }).then(
+      () => 0,
+      (error: { code?: number }) => (typeof error.code === "number" ? error.code : 1),
+    );
+    expect(branchCheck).not.toBe(0);
+    // No residual worktrees under .claude/worktrees.
+    const parent = path.join(repo.cwd, ".claude", "worktrees");
+    let entries: string[] = [];
+    try {
+      entries = (await fs.readdir(parent)).filter((name) => name !== ".cq-managed-registry");
+    } catch {
+      entries = [];
+    }
+    // stateDir is outside parent in tests; only UUIDv7 dirs would be orphans.
+    for (const entry of entries) {
+      if (entry === path.basename(repo.stateDir)) continue;
+      // Registry dir name may live elsewhere; leftover UUIDv7 dirs are the defect.
+      expect(isUuidV7(entry)).toBe(false);
+    }
+  });
+
+  it("post-add registry-commit fault rolls back rather than orphaning a live=0 checkout", async () => {
+    const repo = await seedRepository();
+    const install = recordingInstall();
+    const result = await prepareManagedWorktree(
+      { repositoryRoot: repo.cwd, taskId: "T1702", baseCommit: repo.base },
+      {
+        stateDir: repo.stateDir,
+        cacheRoot: repo.cacheRoot,
+        install: install.runner,
+        bunWorkspaceRoot: repo.workspace,
+        faultInjector: (boundary) => {
+          if (boundary === "before-registry-commit") {
+            throw new Error("injected fault at before-registry-commit");
+          }
+        },
+      },
+    );
+    expect(result.status).toBe("refused");
+    if (result.status === "refused") {
+      expect(result.reason).toBe("registry-conflict");
+    }
+    expect(await listManagedLiveWorktrees(repo.cwd, "T1702", repo.stateDir)).toHaveLength(0);
+    const branchCheck = await exec("git", ["show-ref", "--verify", "--quiet", "refs/heads/implement/T1702"], {
+      cwd: repo.cwd,
+      encoding: "utf8",
+    }).then(
+      () => 0,
+      (error: { code?: number }) => (typeof error.code === "number" ? error.code : 1),
+    );
+    expect(branchCheck).not.toBe(0);
+  });
+
+  it("concurrent same-task handle-free prepares serialize to a single live tree", async () => {
+    const repo = await seedRepository();
+    const installA = recordingInstall();
+    const installB = recordingInstall();
+    const depsA = {
+      stateDir: repo.stateDir,
+      cacheRoot: repo.cacheRoot,
+      install: installA.runner,
+      bunWorkspaceRoot: repo.workspace,
+    };
+    const depsB = {
+      stateDir: repo.stateDir,
+      cacheRoot: repo.cacheRoot,
+      install: installB.runner,
+      bunWorkspaceRoot: repo.workspace,
+    };
+    const [a, b] = await Promise.all([
+      prepareManagedWorktree(
+        { repositoryRoot: repo.cwd, taskId: "T1800", baseCommit: repo.base },
+        depsA,
+      ),
+      prepareManagedWorktree(
+        { repositoryRoot: repo.cwd, taskId: "T1800", baseCommit: repo.base },
+        depsB,
+      ),
+    ]);
+    const statuses = [a.status, b.status].sort();
+    // One prepared, the other resume-required (or refused registry-conflict).
+    expect(statuses).toContain("prepared");
+    expect(statuses.some((s) => s === "resume-required" || s === "refused")).toBe(true);
+    const live = await listManagedLiveWorktrees(repo.cwd, "T1800", repo.stateDir);
+    expect(live).toHaveLength(1);
+    const prepared = a.status === "prepared" ? a : b.status === "prepared" ? b : null;
+    expect(prepared).not.toBeNull();
+    if (prepared === null) return;
+    // Both install runners may have been invoked only by the winner; at most one tree path.
+    const worktreeParent = path.join(repo.cwd, ".claude", "worktrees");
+    const dirs = (await fs.readdir(worktreeParent)).filter((name) => isUuidV7(name));
+    expect(dirs).toHaveLength(1);
+    expect(dirs[0]).toBe(prepared.evidence.worktreeId);
   });
 
   it("resume reuses the same path/branch and preserves a prior criticism commit", async () => {
@@ -691,6 +822,118 @@ describe("releaseManagedWorktree", () => {
     expect(await git(prepared.evidence.absolutePath, ["rev-parse", "HEAD"])).toBe(head);
     const live = await listManagedLiveWorktrees(repo.cwd, "T1600", repo.stateDir);
     expect(live).toHaveLength(1);
+  });
+
+  it("fault before-registry-release preserves precious commit on branch (registry still live)", async () => {
+    const repo = await seedRepository();
+    const install = recordingInstall();
+    const depsBase = {
+      stateDir: repo.stateDir,
+      cacheRoot: repo.cacheRoot,
+      install: install.runner,
+      bunWorkspaceRoot: repo.workspace,
+    };
+    const prepared = await prepareManagedWorktree(
+      { repositoryRoot: repo.cwd, taskId: "T1601", baseCommit: repo.base },
+      depsBase,
+    );
+    expect(prepared.status).toBe("prepared");
+    if (prepared.status !== "prepared") return;
+    await fs.writeFile(path.join(prepared.evidence.absolutePath, "precious.txt"), "keep-me\n");
+    await git(prepared.evidence.absolutePath, ["add", "precious.txt"]);
+    await git(prepared.evidence.absolutePath, ["commit", "-q", "-m", "precious commit"]);
+    const head = await git(prepared.evidence.absolutePath, ["rev-parse", "HEAD"]);
+    const branch = prepared.evidence.branch;
+
+    await expect(
+      releaseManagedWorktree(
+        {
+          handle: prepared.handle,
+          terminalDisposition: "done",
+          resultCommit: head,
+        },
+        {
+          ...depsBase,
+          faultInjector: (boundary) => {
+            if (boundary === "before-registry-release") {
+              throw new Error("injected fault at before-registry-release");
+            }
+          },
+        },
+      ),
+    ).rejects.toThrow("injected fault at before-registry-release");
+
+    // Worktree directory may be gone, but branch tip must still hold the precious commit.
+    // Registry must remain live so a later release can complete.
+    expect(await listManagedLiveWorktrees(repo.cwd, "T1601", repo.stateDir)).toHaveLength(1);
+    const branchTip = await git(repo.cwd, ["rev-parse", branch]);
+    expect(branchTip).toBe(head);
+    // Blob content reachable via the branch tip.
+    const blob = await git(repo.cwd, ["show", `${head}:precious.txt`]);
+    expect(blob).toBe("keep-me");
+
+    // worktree-missing + live registry is completable after the fault.
+    const recovered = await releaseManagedWorktree(
+      {
+        handle: prepared.handle,
+        terminalDisposition: "done",
+        resultCommit: head,
+      },
+      depsBase,
+    );
+    expect(recovered.status).toBe("released");
+    if (recovered.status === "released") expect(recovered.idempotent).toBe(false);
+    expect(await listManagedLiveWorktrees(repo.cwd, "T1601", repo.stateDir)).toHaveLength(0);
+    // Branch deleted only after durable registry release.
+    const branchGone = await exec("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
+      cwd: repo.cwd,
+      encoding: "utf8",
+    }).then(
+      () => false,
+      () => true,
+    );
+    expect(branchGone).toBe(true);
+    // Recovery ref still holds the tip for archaeology.
+    const recoveryTip = await git(repo.cwd, [
+      "rev-parse",
+      `refs/cq-managed-recovery/${branch}`,
+    ]);
+    expect(recoveryTip).toBe(head);
+  });
+
+  it("worktree-missing + live registry release is completable", async () => {
+    const repo = await seedRepository();
+    const install = recordingInstall();
+    const deps = {
+      stateDir: repo.stateDir,
+      cacheRoot: repo.cacheRoot,
+      install: install.runner,
+      bunWorkspaceRoot: repo.workspace,
+    };
+    const prepared = await prepareManagedWorktree(
+      { repositoryRoot: repo.cwd, taskId: "T1602", baseCommit: repo.base },
+      deps,
+    );
+    expect(prepared.status).toBe("prepared");
+    if (prepared.status !== "prepared") return;
+    const head = prepared.evidence.headCommit;
+    // Simulate external removal of the worktree path while registry stays live.
+    await exec("git", ["worktree", "remove", "--force", prepared.evidence.absolutePath], {
+      cwd: repo.cwd,
+      encoding: "utf8",
+    });
+    expect(await listManagedLiveWorktrees(repo.cwd, "T1602", repo.stateDir)).toHaveLength(1);
+
+    const released = await releaseManagedWorktree(
+      {
+        handle: prepared.handle,
+        terminalDisposition: "abandoned",
+        resultCommit: head,
+      },
+      deps,
+    );
+    expect(released.status).toBe("released");
+    expect(await listManagedLiveWorktrees(repo.cwd, "T1602", repo.stateDir)).toHaveLength(0);
   });
 });
 
