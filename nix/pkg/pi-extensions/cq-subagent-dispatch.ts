@@ -6,6 +6,13 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { launchPiChild } from "./cq-subagent-process-lifecycle.ts";
+import {
+  PI_NATIVE_SESSION_SEAM,
+  PI_PROCESS_SESSION_SEAM,
+  createProductionPiNativeSessionDependencies,
+  runPiNativeSession,
+  type PiNativeSessionDependencies,
+} from "./cq-subagent-native-session.ts";
 
 // cq subagent-dispatch extension (T224).
 //
@@ -59,6 +66,42 @@ import { launchPiChild } from "./cq-subagent-process-lifecycle.ts";
 // cannot import @cq/config.
 
 const DISPATCH_TOOL_NAME = "dispatch_agent";
+
+/**
+ * Test seam: when set, the native session path uses this dependency bundle
+ * instead of the production createAgentSession wiring.
+ */
+let piNativeSessionDependenciesOverride: PiNativeSessionDependencies | null = null;
+
+/** Test-only: inject createAgentSession dependencies for the native path. */
+export function setPiNativeSessionDependenciesForTests(
+  dependencies: PiNativeSessionDependencies | null,
+): void {
+  piNativeSessionDependenciesOverride = dependencies;
+}
+
+/**
+ * T1699: forceShellout from CQ_DISPATCH_FORCE_SHELLOUT env ("true"/"1"),
+ * default false — mirrors @cq/config [dispatch].forceShellout.
+ */
+export function resolveForceShellout(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const raw = env.CQ_DISPATCH_FORCE_SHELLOUT;
+  if (raw === undefined || raw === "") return false;
+  return raw === "1" || raw.toLowerCase() === "true";
+}
+
+/** T1699 delivery matrix (pure). */
+export function selectPiChildDeliverySeam(input: {
+  readonly activeHarness: string;
+  readonly forceShellout: boolean;
+}): typeof PI_NATIVE_SESSION_SEAM | typeof PI_PROCESS_SESSION_SEAM {
+  if (input.activeHarness === "pi" && input.forceShellout === false) {
+    return PI_NATIVE_SESSION_SEAM;
+  }
+  return PI_PROCESS_SESSION_SEAM;
+}
 const LEDGER_DIRECT_TOOL_PREFIX = "ledger_";
 
 // T222: the directory the cq agent markdowns are projected to. Pinned on
@@ -138,6 +181,10 @@ interface DispatchDetails {
   transportTools: string[];
   cqConfigPath: string;
   stderr: string;
+  /** T1699: which child-delivery seam was used. */
+  deliverySeam: typeof PI_NATIVE_SESSION_SEAM | typeof PI_PROCESS_SESSION_SEAM | null;
+  /** T1699: manager-bound cwd for native session (null on process seam). */
+  nativeSessionCwd: string | null;
 }
 
 const DispatchParams = Type.Object({
@@ -878,6 +925,8 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
         transportTools: [],
         cqConfigPath,
         stderr: "",
+        deliverySeam: null,
+        nativeSessionCwd: null,
       };
 
       const agent = loadAgent(agentsDir, args.agent);
@@ -1006,6 +1055,40 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
       let stderr = "";
 
       try {
+        // T1699 / D160: same-harness forceShellout=false uses createAgentSession
+        // ({cwd}) with the manager-returned path (ctx.cwd). Forced shellout and
+        // cross-harness remain on the registered process seam (launchPiChild).
+        const forceShellout = resolveForceShellout();
+        const activeHarness = resolveActiveHarness();
+        const useNativeSession = activeHarness === "pi" && forceShellout === false;
+
+        if (useNativeSession) {
+          details.deliverySeam = PI_NATIVE_SESSION_SEAM;
+          details.nativeSessionCwd = ctx.cwd;
+          const nativeDeps =
+            piNativeSessionDependenciesOverride ??
+            (await createProductionPiNativeSessionDependencies());
+          const nativeResult = await runPiNativeSession(
+            {
+              cwd: ctx.cwd,
+              prompt: args.task,
+              systemPrompt: agent.systemPrompt,
+              ...(model === null ? {} : { model }),
+              excludeTools,
+              ...(signal === undefined ? {} : { signal }),
+            },
+            nativeDeps,
+          );
+          if (nativeResult.usedLaunchPiChild !== false) {
+            throw new Error("Pi native session path must not call launchPiChild");
+          }
+          details.exitCode = 0;
+          details.stderr = "";
+          return textResult(capOutput(nativeResult.finalText || "(no output)"), details);
+        }
+
+        details.deliverySeam = PI_PROCESS_SESSION_SEAM;
+        details.nativeSessionCwd = null;
         const invocation = getPiInvocation(childArgs);
         // Strip the codex-inline companion env before spawning the child pi.
         // When this extension runs under a codex orchestrator (openai-codex

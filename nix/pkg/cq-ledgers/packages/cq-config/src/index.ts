@@ -95,8 +95,64 @@ export {
   createClaudeProcessDispatchAdapter,
   createCodexProcessDispatchAdapter,
   createPiProcessDispatchAdapter,
+  buildPositiveOnlyDispatchRegistry,
   runPreparedDispatch,
 } from "./dispatchTransportRouter.js";
+export type {
+  NativeAdapterId,
+  NativeQualificationRefusalReason,
+  NativePathConfinementStrength,
+  NativeAdapterQualified,
+  NativeAdapterIncompatible,
+  NativeAdapterQualification,
+  EscapeCanaryObservation,
+  PiNativeQualificationInput,
+} from "./nativeDispatchQualification.js";
+export {
+  NATIVE_ADAPTER_IDS,
+  NativeAdapterIncompatibilityError,
+  isAbsoluteFilesystemPath,
+  qualifyClaudeNativeAdapter,
+  qualifyPiNativeAdapter,
+  assertNativeAdapterQualified,
+  selectQualifiedNativeAdapterIds,
+  isNativeAdapterId,
+  nativeAdapterIdFor,
+} from "./nativeDispatchQualification.js";
+export type {
+  ClaudeNativeManagedWorktreeHandle,
+  ClaudeNativePreparedEvidence,
+  ClaudeNativeWorktreePrepareResult,
+  ClaudeNativeWorktreeReleaseResult,
+  ClaudeNativeWorktreePreflightRequest,
+  ClaudeNativeWorktreePreflightResult,
+  ClaudeNativeWorktreeBinding,
+  ClaudeNativeWorktreeBindResult,
+  ClaudeNativeWorktreeManagePort,
+} from "./claudeNativeWorktree.js";
+export {
+  ClaudeNativeWorktreeBindingError,
+  preflightClaudeNativeWorktree,
+  bindClaudeNativeWorktree,
+  releaseClaudeNativeWorktree,
+  assertClaudeNativeWorktreeBindingIntact,
+  CLAUDE_NATIVE_WORKTREE_RELEASE_SEAM,
+  CLAUDE_NATIVE_WORKTREE_PREPARE_SEAM,
+} from "./claudeNativeWorktree.js";
+export type {
+  PiNativeSessionLaunchRequest,
+  PiNativeSessionLaunchResult,
+  PiNativeSessionLauncher,
+  PiNativeAdapterBinding,
+  PiNativeAdapterBindingResolver,
+  CreatePiNativeDispatchAdapterOptions,
+} from "./piNativeDispatch.js";
+export {
+  createPiNativeDispatchAdapter,
+  selectPiChildDelivery,
+  PI_NATIVE_SESSION_SEAM,
+  PI_PROCESS_SESSION_SEAM,
+} from "./piNativeDispatch.js";
 export {
   resolveActiveHarness,
   resolveActiveHarnessFromProcess,
@@ -664,8 +720,10 @@ export {
   CLAUDE_CONTAINMENT_PROFILES,
   claudeContainmentProfile,
   CLAUDE_ACCEPTED_RESIDUALS,
+  CLAUDE_D263_WORKTREE_CONFINEMENT_INCOMPATIBILITY,
   CLAUDE_RESIDUAL_ACCEPTANCE_QUOTE,
   CLAUDE_NATIVE_ENFORCEMENT_GAP,
+  CLAUDE_NATIVE_REGISTRATION_POLICY,
   CLAUDE_CORRELATION_ENTROPY_BYTES,
   CLAUDE_CORRELATION_SEPARATOR,
   CLAUDE_CORRELATION_PROVENANCES,

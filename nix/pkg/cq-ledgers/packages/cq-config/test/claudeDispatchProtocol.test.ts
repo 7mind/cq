@@ -28,6 +28,8 @@ import {
   AttestationStorageError,
   AttestationTransportError,
   CLAUDE_ACCEPTED_RESIDUALS,
+  CLAUDE_D263_WORKTREE_CONFINEMENT_INCOMPATIBILITY,
+  CLAUDE_NATIVE_REGISTRATION_POLICY,
   CLAUDE_CHILD_OUTCOMES,
   CLAUDE_COMPLETED_TERMINAL_REASON,
   CLAUDE_CONTAINMENT_PROFILES,
@@ -470,20 +472,40 @@ describe("T687 §1b — containment strength is per-mode, and the residual is na
     expect(profile.worktreeConfinement).toBe("structural");
   });
 
-  test("the NATIVE path is best-effort on both, and that is decisions:K170's accepted residual", () => {
+  test("the NATIVE path is best-effort on both; K170 accepted ONLY handleOnlyOutput", () => {
     const profile = claudeContainmentProfile(CLAUDE_NATIVE_DELIVERY_MODE);
     expect(profile.handleOnlyOutput).toBe("prompt-best-effort");
     expect(profile.worktreeConfinement).toBe("prompt-best-effort");
-    // The user's affirmation is quoted, not paraphrased.
+    // K170 acceptance quote covers handle-only output, NOT write confinement.
     expect(CLAUDE_RESIDUAL_ACCEPTANCE_QUOTE).toBe("on Q366, the tradeoff is acceptable");
+    expect([...CLAUDE_ACCEPTED_RESIDUALS]).toEqual(["native-subagent.handleOnlyOutput"]);
+    expect([...CLAUDE_ACCEPTED_RESIDUALS]).not.toContain("native-subagent.worktreeConfinement");
+    // D263 tracks write confinement as an OPEN incompatibility, not a K170 residual.
+    expect(CLAUDE_D263_WORKTREE_CONFINEMENT_INCOMPATIBILITY.k170AcceptedWriteConfinement).toBe(
+      false,
+    );
+    expect(CLAUDE_D263_WORKTREE_CONFINEMENT_INCOMPATIBILITY.coordinate).toBe(
+      "native-subagent.worktreeConfinement",
+    );
+    expect(CLAUDE_D263_WORKTREE_CONFINEMENT_INCOMPATIBILITY.defect).toBe("D263");
+    expect(CLAUDE_NATIVE_REGISTRATION_POLICY).toBe("positive-only-structural-path-scoped");
   });
 
-  test("THE GUARD: the accepted-residual set is exactly the best-effort coordinates", () => {
-    // Derived from the profiles rather than restated, so a NEW best-effort
-    // property cannot be introduced without either accepting it here or turning
-    // this red.
+  test("THE GUARD: K170 accepted residuals are a STRICT SUBSET of best-effort coordinates", () => {
+    // K170 does NOT accept every best-effort coordinate. Write confinement is
+    // best-effort as a measured fact but is D263's open incompatibility.
     const derived = derivedResiduals(CLAUDE_CONTAINMENT_PROFILES);
-    expect(derived).toEqual([...CLAUDE_ACCEPTED_RESIDUALS].sort());
+    expect(derived).toEqual([
+      "native-subagent.handleOnlyOutput",
+      "native-subagent.worktreeConfinement",
+    ]);
+    expect([...CLAUDE_ACCEPTED_RESIDUALS].sort()).toEqual(["native-subagent.handleOnlyOutput"]);
+    for (const accepted of CLAUDE_ACCEPTED_RESIDUALS) {
+      expect(derived).toContain(accepted);
+    }
+    // No test may claim K170 accepted write-confinement residual.
+    expect(JSON.stringify(CLAUDE_ACCEPTED_RESIDUALS)).not.toMatch(/worktreeConfinement/i);
+    expect(JSON.stringify(CLAUDE_ACCEPTED_RESIDUALS)).not.toMatch(/write.?confinement/i);
   });
 
   test("the guard is not a no-op: the DERIVATION reads the profiles it is given", () => {
@@ -505,7 +527,9 @@ describe("T687 §1b — containment strength is per-mode, and the residual is na
       "native-subagent.worktreeConfinement",
       "wrapper-shellout.handleOnlyOutput",
     ]);
+    // Weakened wrapper still differs from the K170-accepted set (handleOnly only).
     expect(derivedResiduals(weakenedWrapper)).not.toEqual([...CLAUDE_ACCEPTED_RESIDUALS].sort());
+    expect([...CLAUDE_ACCEPTED_RESIDUALS]).not.toContain("wrapper-shellout.handleOnlyOutput");
 
     const strengthenedNative = new Map<ClaudeDeliveryMode, ClaudeContainmentProfile>([
       [
@@ -1948,7 +1972,7 @@ describe("T687 §6 — the K170 x Q363 worktree reconciliation", () => {
     expect(reconciliation).toContain("decisions:K170");
     expect(reconciliation).toContain("defects:D119");
     expect(CLAUDE_WORKTREE_RECONCILIATION.chosen).toBe(
-      "orchestrator-prepares-and-passes-path-as-input",
+      "orchestrator-prepares-via-worktree_manage-and-binds-path",
     );
   });
 
@@ -1956,9 +1980,15 @@ describe("T687 §6 — the K170 x Q363 worktree reconciliation", () => {
     // The instruction this section answers: "whichever you propose, name what it
     // costs". A rejected option with no stated cost is an unexamined option.
     expect(CLAUDE_WORKTREE_RECONCILIATION.chosenCost.length).toBeGreaterThan(200);
-    // The chosen cost must name the residual it accepts AND the compensator, so
-    // it cannot read as a free win.
+    // Chosen cost names the MEASURED best-effort fact, refuses to attribute it to
+    // K170, and names D263 + positive-only registration + compensators.
     expect(CLAUDE_WORKTREE_RECONCILIATION.chosenCost).toContain("PROMPT-BEST-EFFORT");
+    expect(CLAUDE_WORKTREE_RECONCILIATION.chosenCost).toContain("D263");
+    expect(CLAUDE_WORKTREE_RECONCILIATION.chosenCost).toContain("NOT an authorized");
+    expect(CLAUDE_WORKTREE_RECONCILIATION.chosenCost).toContain("worktree_manage");
+    expect(CLAUDE_WORKTREE_RECONCILIATION.chosenCost).not.toMatch(
+      /K170 already accepted.*write/i,
+    );
     expect(CLAUDE_WORKTREE_RECONCILIATION.chosenCost).toContain("resultCommitVerified");
     expect(CLAUDE_WORKTREE_RECONCILIATION.rejected).toHaveLength(3);
     const options = CLAUDE_WORKTREE_RECONCILIATION.rejected.map((entry) => entry.option);
@@ -2024,7 +2054,9 @@ describe("T687 §7 — what this DEFINITION task deliberately does not do", () =
     expect(CLAUDE_DISPATCH_PROVEN_BY).toBe("T689");
     expect(CLAUDE_DISPATCH_DEFERRED.length).toBeGreaterThan(4);
     // The two that matter most for not being silently assumed done.
-    expect(CLAUDE_DISPATCH_DEFERRED).toContain("implement-worktree_manage-prepare-and-release");
+    expect(CLAUDE_DISPATCH_DEFERRED).toContain(
+      "prove-structural-path-scoped-confinement-for-claude-native-registration",
+    );
     expect(CLAUDE_DISPATCH_DEFERRED).toContain(
       "consolidate-the-duplicated-launch-gate-into-the-shared-module",
     );

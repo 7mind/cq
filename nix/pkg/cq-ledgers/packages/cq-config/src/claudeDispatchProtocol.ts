@@ -42,7 +42,7 @@
  * `exec-intercepted` pair, and for the same reason: same-harness dispatch is
  * native by decision, cross-harness dispatch needs a process boundary anyway.
  *
- * ## The residual decisions:K170 ACCEPTED, stated plainly because it is policy
+ * ## The residual decisions:K170 ACCEPTED (handle-only output ONLY)
  *
  * tasks:T722 recommendation #1 said, in terms, *do not build the Claude bridge
  * on the native `Agent` tool* — because a native subagent's final message can be
@@ -54,21 +54,22 @@
  * the visible completion was 215 B and marker-free, and with it dropped the SAME
  * prompt produced **2,689 B containing the body**.
  *
- * decisions:K170 OVERRODE that recommendation, and the user affirmed the
- * tradeoff in terms ("on Q366, the tradeoff is acceptable"). This module
- * therefore does NOT pretend the native path is contained. It types the
- * difference instead — see {@link CLAUDE_CONTAINMENT_PROFILES} and
- * {@link CLAUDE_ACCEPTED_RESIDUALS} — so that "best-effort" is a value a caller
- * can read and a test can pin, not an omission. Per K170 there is deliberately
- * NO shellout fallback for the same-harness path: falling back would silently
- * reverse a user decision.
+ * decisions:K170 OVERRODE that recommendation on the **harness axis** (same-harness
+ * → native transport, no shellout fallback) and the user affirmed the
+ * **handle-only output** tradeoff ("on Q366, the tradeoff is acceptable"). K170
+ * did NOT accept prompt-best-effort WRITE / worktree confinement for D263 — that
+ * residual is a separate open incompatibility, not an authorized K170 residual.
+ * See {@link CLAUDE_ACCEPTED_RESIDUALS} (handleOnlyOutput only) and
+ * {@link CLAUDE_D263_WORKTREE_CONFINEMENT_INCOMPATIBILITY}. Per K170 there is
+ * deliberately NO shellout fallback for the same-harness path: falling back
+ * would silently reverse a user decision on the harness axis.
  *
  * The distinction that makes this honest rather than merely documented:
- * on a `prompt-best-effort` property the check here is a **DETECTOR, not a
- * PREVENTER**. {@link classifyClaudeFinalMessage} still aborts an echo, so the
- * LIFECYCLE stays sound; but the abort cannot un-read a body that already
- * reached the parent's context. T722's own formulation: *context, unlike a store
- * record, has no abort.*
+ * on a `prompt-best-effort` handleOnlyOutput property the check here is a
+ * **DETECTOR, not a PREVENTER**. {@link classifyClaudeFinalMessage} still aborts
+ * an echo, so the LIFECYCLE stays sound; but the abort cannot un-read a body
+ * that already reached the parent's context. T722's own formulation: *context,
+ * unlike a store record, has no abort.*
  *
  * ## Scope boundary, stated explicitly (defects:D186's lesson)
  *
@@ -239,8 +240,12 @@ const MODE_VERDICTS: readonly ClaudeDeliveryModeVerdict[] = Object.freeze([
       '`init` reported `mcp=[]`, `tools=["Task"]`, `hasStoreTool=false`; `--strict-mcp-config` ' +
       "did NOT filter it out, and the child stored a 2,513-byte payload verified by an " +
       "independent read. What it CANNOT do is constrain or intercept the child's final message " +
-      "(§5.3), which is why handleOnlyOutput is prompt-best-effort — a residual decisions:K170 " +
-      "accepts explicitly.",
+      "(§5.3), which is why handleOnlyOutput is prompt-best-effort — the ONLY residual " +
+      "decisions:K170 accepts explicitly. worktreeConfinement remains prompt-best-effort as a " +
+      "MEASURED FACT about the Agent tool (no path parameter; shared parent process), but that " +
+      "fact is D263's open incompatibility — NOT an authorized K170 write-confinement residual. " +
+      "Positive-only registration leaves claude:native unregistered until structural " +
+      "path-scoped confinement is proven.",
   }),
   Object.freeze({
     mode: "wrapper-shellout" as const,
@@ -420,25 +425,41 @@ export function claudeContainmentProfile(mode: string): ClaudeContainmentProfile
 }
 
 /**
- * The residuals decisions:K170 accepted, named so that "best-effort" is a
- * readable value rather than an omission, and so a later reversal has something
- * concrete to delete.
+ * The residuals decisions:K170 accepted. K170 is the harness-axis decision
+ * (native vs shellout) plus the handle-only output tradeoff on the native path.
+ * It does NOT authorize prompt-best-effort WRITE / worktree confinement (D263).
  *
  * Each entry is a `<mode>.<property>` coordinate into
- * {@link CLAUDE_CONTAINMENT_PROFILES} whose strength is `prompt-best-effort`.
- * The set is EXACTLY the best-effort coordinates — checked, not asserted — so a
- * new best-effort property cannot be introduced without either accepting it here
- * or failing the guard.
+ * {@link CLAUDE_CONTAINMENT_PROFILES} whose strength is `prompt-best-effort` AND
+ * which K170 explicitly accepted. worktreeConfinement best-effort is tracked
+ * separately under {@link CLAUDE_D263_WORKTREE_CONFINEMENT_INCOMPATIBILITY}.
  */
 export const CLAUDE_ACCEPTED_RESIDUALS = Object.freeze([
   "native-subagent.handleOnlyOutput",
-  "native-subagent.worktreeConfinement",
 ] as const);
 
 /**
- * The user's affirmation of those residuals, quoted rather than paraphrased so
- * that a reader can see this is a decision and not an oversight.
- * decisions:K170, 2026-07-28.
+ * D263 — native worktree / write confinement is measured prompt-best-effort and
+ * is NOT covered by K170's acceptance quote. Positive-only registration refuses
+ * `claude:native` while this incompatibility stands (see
+ * {@link qualifyClaudeNativeAdapter} in nativeDispatchQualification.ts).
+ */
+export const CLAUDE_D263_WORKTREE_CONFINEMENT_INCOMPATIBILITY = Object.freeze({
+  coordinate: "native-subagent.worktreeConfinement" as const,
+  strength: "prompt-best-effort" as const,
+  defect: "D263" as const,
+  k170AcceptedWriteConfinement: false,
+  registrationPolicy: "positive-only-structural-path-scoped" as const,
+  detail:
+    "Native Agent children share the parent process and have no path parameter. " +
+    "Path-scoped write confinement is therefore unproven. K170 accepted native " +
+    "transport + handle-only output residual only — not write confinement.",
+});
+
+/**
+ * The user's affirmation of the K170 handle-only residual, quoted rather than
+ * paraphrased so that a reader can see this is a decision and not an oversight.
+ * decisions:K170, 2026-07-28. Does NOT authorize D263 write confinement.
  */
 export const CLAUDE_RESIDUAL_ACCEPTANCE_QUOTE = "on Q366, the tradeoff is acceptable" as const;
 
@@ -803,7 +824,8 @@ const DISPATCH_TAG_RE = /^<dispatch>([\s\S]*?)<\/dispatch>$/;
  *   function can classify the message, that message has already reached the
  *   parent's context. The abort it triggers keeps the LIFECYCLE sound — no echoed
  *   body is ever promoted to `consumed` — but it does not achieve containment.
- *   That is {@link CLAUDE_ACCEPTED_RESIDUALS}, and decisions:K170 accepted it.
+ *   That is {@link CLAUDE_ACCEPTED_RESIDUALS} (handleOnlyOutput only), and
+ *   decisions:K170 accepted it. Write/worktree confinement is D263, not K170.
  *
  * Three envelopes are unwrapped before parsing, because all three were OBSERVED
  * carrying a conformant handle in tasks:T722: bare JSON, a ```json fence, and
@@ -1332,20 +1354,19 @@ export const CLAUDE_WORKTREE_ADDRESSING = "absolute-paths" as const;
  * argue with.
  */
 export const CLAUDE_WORKTREE_RECONCILIATION = Object.freeze({
-  chosen: "orchestrator-prepares-and-passes-path-as-input",
+  chosen: "orchestrator-prepares-via-worktree_manage-and-binds-path",
   chosenCost:
-    "Native confinement becomes PROMPT-BEST-EFFORT: nothing stops a native child writing outside " +
-    "the prepared tree, because it runs in the parent's process with no path-scoped sandbox. This " +
-    "is the SAME residual class decisions:K170 already accepted for handle-only output, on the " +
-    "same axis (native dispatch has no harness enforcement point) — it introduces no NEW kind of " +
-    "exposure. The compensator is detection after the fact, which already exists: T894/T895 made " +
-    "`resultCommitVerified` and `gateReRan` REQUIRED on an implement-reviewer result, and " +
-    "merge-back verifies the worker's `resultCommit`, so a stray write is caught at review rather " +
-    "than prevented at dispatch. Additionally the child must address the tree by ABSOLUTE PATH " +
-    "(see CLAUDE_WORKTREE_ADDRESSING) — a `cd` does not survive a tool call. D143 makes " +
-    "`worktreePath` OPTIONAL (advisory) on input and requires `actualWorktreePath` on worker " +
-    "output so a harness-minted path still flows back; the preferred Claude placement remains " +
-    "`.claude/worktrees/<taskId>`.",
+    "Native write/worktree confinement is MEASURED PROMPT-BEST-EFFORT: nothing stops a native " +
+    "child writing outside the prepared tree, because it runs in the parent's process with no " +
+    "path-scoped sandbox and the Agent tool has no path parameter. This is NOT an authorized " +
+    "decisions:K170 residual — K170 accepted harness-axis native transport and handle-only " +
+    "output only. D263 tracks write confinement as an open incompatibility; positive-only " +
+    "registration leaves claude:native unregistered until structural path-scoped confinement " +
+    "is proven. The lifecycle still consumes worktree_manage prepare path/handle, preflights " +
+    "base/HEAD, resumes by handle, and releases ONLY via worktree_manage. Compensators that " +
+    "remain while unregistered: T894/T895 `resultCommitVerified`/`gateReRan`, merge-back " +
+    "`resultCommit` verification, ABSOLUTE PATH addressing (CLAUDE_WORKTREE_ADDRESSING), and " +
+    "D143 advisory worktreePath + required actualWorktreePath.",
   rejected: Object.freeze([
     Object.freeze({
       option: "child-calls-worktree_manage(prepare)-as-its-first-act",
@@ -1425,7 +1446,13 @@ export const CLAUDE_DISPATCH_PROVEN_BY = "T689" as const;
 export const CLAUDE_DISPATCH_DEFERRED = Object.freeze([
   "launch-a-real-native-subagent-with-an-inline-per-subagent-store-endpoint",
   "spawn-and-intercept-a-real-wrapper-shellout-child",
-  "implement-worktree_manage-prepare-and-release",
+  // worktree_manage prepare/release core landed in G121 (T1305/T1306); Claude
+  // native consumption + positive-only registration is T1698/D263.
+  "prove-structural-path-scoped-confinement-for-claude-native-registration",
   "consolidate-the-duplicated-launch-gate-into-the-shared-module",
   "migrate-the-claude-dispatch-fragment-to-the-new-call-shape",
 ] as const);
+
+/** Positive-only registration policy pin for claude:native (T1698/D263). */
+export const CLAUDE_NATIVE_REGISTRATION_POLICY =
+  "positive-only-structural-path-scoped" as const;

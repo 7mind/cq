@@ -46,7 +46,11 @@ describe("Pi subagent JSON output [BA]", () => {
       fileURLToPath(new URL("./cq-subagent-dispatch.ts", import.meta.url)),
       "utf8",
     );
+    // Process seam remains for forceShellout / cross-harness (T1699).
     expect(source).toContain("await launchPiChild(");
+    // Same-harness forceShellout=false uses createAgentSession via native session.
+    expect(source).toContain("runPiNativeSession");
+    expect(source).toContain("PI_NATIVE_SESSION_SEAM");
     expect(source).not.toContain("proc.killed");
     expect(source).not.toContain("proc.kill(");
     expect(source).not.toContain("setTimeout(");

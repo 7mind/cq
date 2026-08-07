@@ -47,6 +47,11 @@ import {
   type CodexChildCorrelation,
 } from "./codexDispatchProtocol.js";
 import type { ActiveHarness, Harness } from "./types.js";
+import {
+  NativeAdapterIncompatibilityError,
+  isNativeAdapterId,
+  type NativeAdapterQualification,
+} from "./nativeDispatchQualification.js";
 
 export const DISPATCH_TRANSPORTS = ["native", "process"] as const;
 
@@ -360,8 +365,12 @@ export function createPiProcessDispatchAdapter(
 
 export class DispatchTransportAdapterRegistry {
   private readonly adapters: ReadonlyMap<string, DispatchTransportAdapter>;
+  private readonly nativeIncompatibilities: ReadonlyMap<string, NativeAdapterQualification>;
 
-  constructor(adapters: readonly DispatchTransportAdapter[]) {
+  constructor(
+    adapters: readonly DispatchTransportAdapter[],
+    nativeIncompatibilities: readonly NativeAdapterQualification[] = [],
+  ) {
     const indexed = new Map<string, DispatchTransportAdapter>();
     for (const adapter of adapters) {
       if (adapter.id !== `${adapter.targetHarness}:${adapter.transport}`) {
@@ -376,18 +385,90 @@ export class DispatchTransportAdapterRegistry {
       }
       indexed.set(adapter.id, adapter);
     }
+    const incompat = new Map<string, NativeAdapterQualification>();
+    for (const qualification of nativeIncompatibilities) {
+      if (qualification.status === "incompatible") {
+        incompat.set(qualification.adapterId, qualification);
+      }
+    }
     this.adapters = indexed;
+    this.nativeIncompatibilities = incompat;
   }
 
   resolve(route: DispatchTransportRoute): DispatchTransportAdapter {
     const adapter = this.adapters.get(route.adapterId);
     if (adapter === undefined) {
+      const incompatibility = this.nativeIncompatibilities.get(route.adapterId);
+      if (incompatibility !== undefined && incompatibility.status === "incompatible") {
+        throw new NativeAdapterIncompatibilityError(incompatibility);
+      }
       throw new DispatchTransportRoutingError(
         `required ${route.transport} adapter for target ${JSON.stringify(route.targetHarness)} is unavailable`,
       );
     }
     return adapter;
   }
+
+  /** Test seam: whether a native adapter id is currently registered. */
+  has(adapterId: string): boolean {
+    return this.adapters.has(adapterId);
+  }
+}
+
+/**
+ * Positive-only registry builder (T1698/D263, T1699/D160).
+ *
+ * Native adapters are kept ONLY when a matching qualification has
+ * `status: "qualified"`. Unqualified native adapters are dropped and recorded
+ * as typed incompatibilities so resolve fails closed with
+ * {@link NativeAdapterIncompatibilityError} rather than a generic missing-adapter
+ * error. Process adapters always pass through.
+ */
+export function buildPositiveOnlyDispatchRegistry(input: {
+  readonly adapters: readonly DispatchTransportAdapter[];
+  readonly nativeQualifications: readonly NativeAdapterQualification[];
+}): DispatchTransportAdapterRegistry {
+  const qualifiedNativeIds = new Set(
+    input.nativeQualifications
+      .filter((entry) => entry.status === "qualified")
+      .map((entry) => entry.adapterId),
+  );
+  const incompatibilities: NativeAdapterQualification[] = input.nativeQualifications.filter(
+    (entry) => entry.status === "incompatible",
+  );
+  const kept: DispatchTransportAdapter[] = [];
+  for (const adapter of input.adapters) {
+    if (adapter.transport !== "native") {
+      kept.push(adapter);
+      continue;
+    }
+    if (!isNativeAdapterId(adapter.id)) {
+      throw new DispatchTransportRoutingError(
+        `native adapter id ${JSON.stringify(adapter.id)} is not a known native adapter id`,
+      );
+    }
+    if (!qualifiedNativeIds.has(adapter.id)) {
+      // Drop — do not register. If no explicit incompatibility was supplied,
+      // synthesize one so resolve still fails with a typed error.
+      if (!incompatibilities.some((entry) => entry.adapterId === adapter.id)) {
+        incompatibilities.push({
+          status: "incompatible",
+          adapterId: adapter.id,
+          targetHarness: adapter.targetHarness,
+          transport: "native",
+          reason: "path-scoped-confinement-unproven",
+          confinement: "unproven",
+          defect: adapter.targetHarness === "pi" ? "D160" : "D263",
+          detail:
+            `native adapter ${JSON.stringify(adapter.id)} was not positively qualified ` +
+            "for structural path-scoped confinement and was left unregistered",
+        });
+      }
+      continue;
+    }
+    kept.push(adapter);
+  }
+  return new DispatchTransportAdapterRegistry(kept, incompatibilities);
 }
 
 export class DispatchTransportAbort extends Error {
