@@ -380,6 +380,7 @@ describe("prepareManagedWorktree", () => {
       prepared.evidence.absolutePath,
     );
     expect(rebased).not.toBeNull();
+    if (rebased === null) return;
     expect(plan.cwd).toBe(rebased);
     expect(prepared.evidence.bunWorkspaceRoot).toBe(plan.cwd);
     expect(prepared.evidence.bunInstallArgs).toEqual(["install", "--frozen-lockfile"]);
