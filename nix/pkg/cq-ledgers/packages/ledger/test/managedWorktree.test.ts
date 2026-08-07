@@ -374,9 +374,13 @@ describe("prepareManagedWorktree", () => {
     // Install MUST target the workspace inside the managed worktree, never the seed.
     expect(plan.cwd.startsWith(prepared.evidence.absolutePath + path.sep)).toBe(true);
     expect(plan.cwd).not.toBe(repo.workspace);
-    expect(plan.cwd).toBe(
-      rebaseBunWorkspaceIntoWorktree(repo.cwd, repo.workspace, prepared.evidence.absolutePath),
+    const rebased = rebaseBunWorkspaceIntoWorktree(
+      repo.cwd,
+      repo.workspace,
+      prepared.evidence.absolutePath,
     );
+    expect(rebased).not.toBeNull();
+    expect(plan.cwd).toBe(rebased);
     expect(prepared.evidence.bunWorkspaceRoot).toBe(plan.cwd);
     expect(prepared.evidence.bunInstallArgs).toEqual(["install", "--frozen-lockfile"]);
     expect(prepared.evidence.bunInstallCacheDir).toBe(path.join(repo.cacheRoot, "bun-install"));
