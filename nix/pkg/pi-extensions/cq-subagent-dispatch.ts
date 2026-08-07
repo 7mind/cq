@@ -247,8 +247,15 @@ interface RoleToolProfileManifest {
 interface DispatchDetails {
   agent: string;
   agentFile: string | null;
-  /** Echoes the requested isolation mode (stubbed seam, deferred per Q128). */
+  /**
+   * Echoes the requested isolation mode. Under G121/G163, confinement is
+   * orchestrator-owned via worktree_manage + parent cwd (not a Q128-allocated
+   * tree inside this tool). When `worktree` is requested, `isolationNote`
+   * records that disclosure so callers cannot mistake the flag for allocation.
+   */
   isolation: "worktree" | null;
+  /** Present when isolation was requested; documents the real confinement owner. */
+  isolationNote: string | null;
   model: string | null;
   provider: string | null;
   /**
@@ -292,7 +299,8 @@ const DispatchParams = Type.Object({
   ),
   isolation: Type.Optional(
     Type.Literal("worktree", {
-      description: 'Optional isolation mode. Only "worktree" is recognized; it is a stubbed seam (deferred per Q128) and does not yet change behavior.',
+      description:
+        'Optional isolation mode. Only "worktree" is recognized. It does NOT allocate a worktree inside this tool (G121/G163): the orchestrator must prepare via worktree_manage and dispatch with cwd already bound to the manager-returned path. The flag is recorded for observability and matched against parent-cwd confinement.',
     }),
   ),
 });
@@ -1001,11 +1009,14 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
       const baseDetails: DispatchDetails = {
         agent: args.agent,
         agentFile: null,
-        // Echo the requested isolation mode. Worktree isolation is a deferred
-        // seam (Q128 — explorer/reviewer dispatches need no worktree); recording
-        // it keeps the {agent,task,isolation?} convention shape observable for
-        // the follow-up that implements it, rather than silently ignoring it.
+        // Isolation is advisory under G121/G163: confinement is parent-cwd +
+        // worktree_manage, not allocated here. Always disclose when requested
+        // so the flag cannot be mistaken for Q128-style throwaway allocation.
         isolation: args.isolation ?? null,
+        isolationNote:
+          args.isolation === "worktree"
+            ? "isolation:worktree does not allocate a tree; confinement is orchestrator worktree_manage + parent cwd (G121/G163). Child runs at ctx.cwd."
+            : null,
         model: null,
         provider: null,
         modelSource: "parent",

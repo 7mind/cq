@@ -13,7 +13,8 @@
 import { isAbsoluteFilesystemPath } from "./nativeDispatchQualification.js";
 
 const FULL_COMMIT_SHA = /^[0-9a-f]{40}$/;
-const HANDLE_KIND = "cq.managed-worktree" as const;
+/** Must match @cq/ledger ManagedWorktreeHandle.kind (worktree_manage wire). */
+const HANDLE_KIND = "cq-managed-worktree-handle" as const;
 
 /** Structural handle shape returned by worktree_manage prepare (opaque to callers). */
 export interface ClaudeNativeManagedWorktreeHandle {
@@ -240,8 +241,15 @@ export async function bindClaudeNativeWorktree(input: {
   /** Observed HEAD after prepare; required for preflight. */
   readonly observeHead: (absolutePath: string) => Promise<string> | string;
 }): Promise<ClaudeNativeWorktreeBindResult> {
+  // worktree_manage requires taskId even on resume-by-handle; prefer explicit,
+  // else take it from the opaque handle when present.
+  const taskId =
+    input.taskId ??
+    (input.handle !== undefined && typeof input.handle.taskId === "string"
+      ? input.handle.taskId
+      : undefined);
   const prepared = await input.port.prepare({
-    ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
+    ...(taskId === undefined ? {} : { taskId }),
     ...(input.baseCommit === undefined ? {} : { baseCommit: input.baseCommit }),
     ...(input.handle === undefined ? {} : { handle: input.handle }),
     ...(input.allowResumeRequired === undefined

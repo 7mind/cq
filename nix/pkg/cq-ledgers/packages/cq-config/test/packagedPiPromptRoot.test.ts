@@ -447,6 +447,8 @@ describe("packaged Pi prompt root", () => {
       expect(result.details.exitCode).toBe(1);
       expect(result.details.stderr).toContain("CQ_CAPTURE_COMPLETE");
       expect(result.details.isolation).toBe("worktree");
+      expect(result.details.isolationNote).toContain("does not allocate a tree");
+      expect(result.details.isolationNote).toContain("worktree_manage");
       expect(capture.sessionStart.reason).toBe("startup");
       const expectedRegisteredLedgerTools = exposedLedgerToolsForRole(agent)
         .map((tool) => `ledger_${tool}`)

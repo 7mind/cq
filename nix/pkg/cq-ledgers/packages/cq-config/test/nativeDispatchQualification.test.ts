@@ -329,7 +329,7 @@ describe("T1699 Pi native worktree bind on adapter launch", () => {
           baseCommit: base,
           headCommit: head,
           handle: {
-            kind: "cq.managed-worktree",
+            kind: "cq-managed-worktree-handle",
             version: 1,
             token: "tok",
             worktreeId: "018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08",

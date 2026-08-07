@@ -30,7 +30,7 @@ function sha256(text: string): string {
 
 function handle(overrides: Partial<PiNativeManagedWorktreeHandle> = {}): PiNativeManagedWorktreeHandle {
   return {
-    kind: "cq.managed-worktree",
+    kind: "cq-managed-worktree-handle",
     version: 1,
     token: "tok-1",
     worktreeId: "018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08",
