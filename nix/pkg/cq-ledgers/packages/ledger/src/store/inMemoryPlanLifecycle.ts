@@ -321,28 +321,21 @@ function addItem(
 }
 
 /**
- * Rewrite a ledger-kind ref of the form `tasks:<draft-key>` /
- * `milestones:<draft-key>` onto the id allocated for that draft key in the
- * current publish (D204). Non-matching refs pass through for the subsequent
- * G80 dangling gate.
+ * Peek the next `count` ids the ledger would allocate without advancing
+ * counters (T1724 preflight). Mirrors {@link allocateId}'s skip-occupied loop.
  */
-function rewriteDraftKeyLedgerRef(
-  ref: string,
-  milestoneAllocations: ReadonlyMap<string, string>,
-  taskAllocations: ReadonlyMap<string, string>,
-): string {
-  const colon = ref.indexOf(":");
-  if (colon <= 0) return ref;
-  const ledger = ref.slice(0, colon);
-  const key = ref.slice(colon + 1);
-  if (ledger === TASKS_LEDGER) {
-    const id = taskAllocations.get(key);
-    if (id !== undefined) return `${TASKS_LEDGER}:${id}`;
-  } else if (ledger === MILESTONES_LEDGER) {
-    const id = milestoneAllocations.get(key);
-    if (id !== undefined) return `${MILESTONES_LEDGER}:${id}`;
+function peekAllocatedIds(source: Ledger, count: number): string[] {
+  const prefix = effectivePrefix(source);
+  const ids: string[] = [];
+  let counter = source.counters.item;
+  while (ids.length < count) {
+    counter += 1;
+    const id = `${prefix}${counter}`;
+    if (findActiveItem(source, id) === undefined && !ids.includes(id)) {
+      ids.push(id);
+    }
   }
-  return ref;
+  return ids;
 }
 
 function materializeReferences(
@@ -352,14 +345,10 @@ function materializeReferences(
 ): string[] {
   return (references ?? []).map((reference) => {
     if (reference.kind === "ledger") {
-      // D204: a ledger-kind courier may carry a draft key (e.g. tasks:contract)
-      // instead of the typed draft-task/draft-milestone kind. Rewrite when the
-      // key is in the current allocation maps; leftovers face the G80 gate.
-      return rewriteDraftKeyLedgerRef(
-        reference.ref,
-        milestoneAllocations,
-        taskAllocations,
-      );
+      // T1724: ledger-kind refs are never rewritten onto draft keys. Typed
+      // draft-task/draft-milestone kinds remain the only intra-manifest links;
+      // a tasks:<draft-key> courier fails the G80 dangling gate below.
+      return reference.ref;
     }
     const id =
       reference.kind === "draft-milestone"
@@ -370,6 +359,60 @@ function materializeReferences(
       ? `${MILESTONES_LEDGER}:${id}`
       : `${TASKS_LEDGER}:${id}`;
   });
+}
+
+/**
+ * Validate every dependsOn/blockedBy entry against the prospective allocation
+ * set WITHOUT mutating counters or inserting items (T1724). Callers must run
+ * this before superseding prior work or recording an operation.
+ */
+function preflightManifestReferences(
+  state: InMemoryPlanLifecycleState,
+  input: PlanPublishDraftInput,
+): void {
+  const milestoneSource = ledger(state, MILESTONES_LEDGER);
+  const taskSource = ledger(state, TASKS_LEDGER);
+  const milestoneIds = peekAllocatedIds(milestoneSource, input.manifest.milestones.length);
+  const taskIds = peekAllocatedIds(taskSource, input.manifest.tasks.length);
+  const milestoneAllocations = new Map(
+    input.manifest.milestones.map((draft, index) => [draft.key, milestoneIds[index]!] as const),
+  );
+  const taskAllocations = new Map(
+    input.manifest.tasks.map((draft, index) => [draft.key, taskIds[index]!] as const),
+  );
+  const refCtx = buildPlanPublishRefContext(state, milestoneAllocations, taskAllocations);
+  for (const draft of input.manifest.milestones) {
+    const fields: Record<string, FieldValue> = {};
+    const dependsOn = materializeReferences(
+      draft.dependsOn,
+      milestoneAllocations,
+      taskAllocations,
+    );
+    const blockedBy = materializeReferences(
+      draft.blockedBy,
+      milestoneAllocations,
+      taskAllocations,
+    );
+    if (dependsOn.length > 0) fields["dependsOn"] = dependsOn;
+    if (blockedBy.length > 0) fields["blockedBy"] = blockedBy;
+    gateMaterializedRefFields(fields, refCtx);
+  }
+  for (const draft of input.manifest.tasks) {
+    const fields: Record<string, FieldValue> = {};
+    const dependsOn = materializeReferences(
+      draft.dependsOn,
+      milestoneAllocations,
+      taskAllocations,
+    );
+    const blockedBy = materializeReferences(
+      draft.blockedBy,
+      milestoneAllocations,
+      taskAllocations,
+    );
+    if (dependsOn.length > 0) fields["dependsOn"] = dependsOn;
+    if (blockedBy.length > 0) fields["blockedBy"] = blockedBy;
+    gateMaterializedRefFields(fields, refCtx);
+  }
 }
 
 /**
@@ -575,8 +618,8 @@ function materializeManifest(
   for (const draft of input.manifest.tasks) {
     taskAllocations.set(draft.key, allocateId(taskSource));
   }
-  // D204: G80 dangling gate over the full allocation set so intra-manifest
-  // refs (and rewritten draft-key ledger refs) resolve before insertion.
+  // G80 dangling gate over the full pending allocation set so typed
+  // draft-milestone/draft-task links resolve before insertion (T1724).
   const refCtx = buildPlanPublishRefContext(state, milestoneAllocations, taskAllocations);
   for (const draft of input.manifest.milestones) {
     const id = milestoneAllocations.get(draft.key);
@@ -1132,6 +1175,9 @@ export function publishInMemoryPlanDraft(
       dirtyLedgers: [],
     };
   }
+  // T1724: preflight the full manifest against prospective allocations BEFORE
+  // superseding prior work, advancing counters, or recording an operation.
+  preflightManifestReferences(state, input);
   const prior = currentDraft(goal);
   const replacedManifest = prior?.manifest ?? null;
   if (prior !== null && !sameDraft(finalizedDraft(goal), prior.identity)) {

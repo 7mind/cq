@@ -1749,13 +1749,13 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
       );
 
       /**
-       * D204 — publish_plan_draft must not persist draft-key ledger refs as
-       * dangling tasks:/milestones: targets. A ledger-kind courier carrying a
-       * draft key is rewritten onto the allocated id; a leftover that fails the
-       * G80 dangling gate is rejected (same gate as applyCreateItem).
+       * T1724 / D204 — ledger-kind `tasks:<draft-key>` is REJECTED (never
+       * rewritten). Typed draft-task links remain valid. Truly missing targets
+       * still reject. Rejection leaves prior public state byte-equivalent and
+       * does not consume the operation id (valid retry under the same id works).
        */
       it(
-        "rewrites draft-key ledger refs on publish and rejects dangling leftovers (D204)",
+        "rejects draft-key ledger refs and dangling leftovers without state leakage (T1724/D204)",
         async () => {
           const fixture = await buildGoal(factory, "clarifying", null);
           try {
@@ -1764,7 +1764,10 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
                 claimInput("initial", "d204-draft-key", OWNER_TOKEN_A, null, PROVENANCE_A),
               ),
             );
-            const rewriteManifest = {
+            const before = await fixture.observe(GOAL_ID);
+
+            // ledger-kind courier with a sibling draft key — reject, do not rewrite.
+            const draftKeyManifest = {
               milestones: [{ key: "delivery", title: "Delivery" }],
               tasks: [
                 {
@@ -1776,24 +1779,45 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
                   key: "implementation",
                   milestoneKey: "delivery",
                   headline: "Implementation task",
-                  // ledger-kind courier with the sibling draft key (not draft-task).
                   dependsOn: [{ kind: "ledger" as const, ref: "tasks:contract" }],
                 },
               ],
             } satisfies PlanDraftManifest;
+            await expect(
+              fixture.lifecycle.publishPlanDraft(
+                publishInput(claim, "d204-draft-key-op", draftKeyManifest),
+              ),
+            ).rejects.toBeInstanceOf(DanglingRefError);
+            expect(await fixture.observe(GOAL_ID)).toEqual(before);
+
+            // Same operation id must remain usable for a valid payload (no replay leak).
+            const validManifest = {
+              milestones: [{ key: "delivery", title: "Delivery" }],
+              tasks: [
+                {
+                  key: "contract",
+                  milestoneKey: "delivery",
+                  headline: "Contract task",
+                },
+                {
+                  key: "implementation",
+                  milestoneKey: "delivery",
+                  headline: "Implementation task",
+                  dependsOn: [{ kind: "draft-task" as const, key: "contract" }],
+                },
+              ],
+            } satisfies PlanDraftManifest;
             const published = await fixture.lifecycle.publishPlanDraft(
-              publishInput(claim, "d204-rewrite", rewriteManifest),
+              publishInput(claim, "d204-draft-key-op", validManifest),
             );
-            if (!published.ok) throw new Error("D204 rewrite publish unexpectedly conflicted");
+            if (!published.ok) throw new Error("T1724 valid retry unexpectedly conflicted");
             const taskIds = Object.fromEntries(
               published.acknowledgement.manifest.tasks.map(({ key, id }) => [key, id]),
             );
             const state = await fixture.observe(GOAL_ID);
             const implementation = state.tasks.find((t) => t.id === taskIds["implementation"]);
             expect(implementation).toBeDefined();
-            // Rewritten onto the allocated contract id — not the draft key.
             expect(implementation!.dependsOn).toEqual([taskIds["contract"]!]);
-            expect(implementation!.dependsOn).not.toContain("contract");
 
             // A leftover ledger-kind ref to a nonexistent task must reject.
             const danglingManifest = {
@@ -1807,11 +1831,113 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
                 },
               ],
             } satisfies PlanDraftManifest;
+            const afterValid = await fixture.observe(GOAL_ID);
             await expect(
               fixture.lifecycle.publishPlanDraft(
                 publishInput(claim, "d204-dangling", danglingManifest),
               ),
             ).rejects.toBeInstanceOf(DanglingRefError);
+            expect(await fixture.observe(GOAL_ID)).toEqual(afterValid);
+          } finally {
+            await fixture.dispose();
+          }
+        },
+        timeout,
+      );
+
+      it(
+        "rejects dangling known-ledger refs on milestone/task × dependsOn/blockedBy without leakage (T1724)",
+        async () => {
+          const fixture = await buildGoal(factory, "clarifying", null);
+          try {
+            const claim = requireClaimWinner(
+              await fixture.lifecycle.claimPlan(
+                claimInput("initial", "t1724-matrix", OWNER_TOKEN_A, null, PROVENANCE_A),
+              ),
+            );
+            const baseline = await fixture.lifecycle.publishPlanDraft(
+              publishInput(claim, "t1724-baseline", COMPLETE_MANIFEST),
+            );
+            if (!baseline.ok) throw new Error("T1724 baseline publish unexpectedly conflicted");
+
+            const cells: readonly {
+              readonly label: string;
+              readonly manifest: PlanDraftManifest;
+            }[] = [
+              {
+                label: "task-dependsOn",
+                manifest: {
+                  milestones: [{ key: "m", title: "M" }],
+                  tasks: [
+                    {
+                      key: "t",
+                      milestoneKey: "m",
+                      headline: "T",
+                      dependsOn: [{ kind: "ledger", ref: "tasks:T99999" }],
+                    },
+                  ],
+                },
+              },
+              {
+                label: "task-blockedBy",
+                manifest: {
+                  milestones: [{ key: "m", title: "M" }],
+                  tasks: [
+                    {
+                      key: "t",
+                      milestoneKey: "m",
+                      headline: "T",
+                      blockedBy: [{ kind: "ledger", ref: "tasks:T99999" }],
+                    },
+                  ],
+                },
+              },
+              {
+                label: "milestone-dependsOn",
+                manifest: {
+                  milestones: [
+                    {
+                      key: "m",
+                      title: "M",
+                      dependsOn: [{ kind: "ledger", ref: "milestones:M99999" }],
+                    },
+                  ],
+                  tasks: [{ key: "t", milestoneKey: "m", headline: "T" }],
+                },
+              },
+              {
+                label: "milestone-blockedBy",
+                manifest: {
+                  milestones: [
+                    {
+                      key: "m",
+                      title: "M",
+                      blockedBy: [{ kind: "ledger", ref: "milestones:M99999" }],
+                    },
+                  ],
+                  tasks: [{ key: "t", milestoneKey: "m", headline: "T" }],
+                },
+              },
+            ];
+
+            for (const cell of cells) {
+              const before = await fixture.observe(GOAL_ID);
+              await expect(
+                fixture.lifecycle.publishPlanDraft(
+                  publishInput(claim, `t1724-reject-${cell.label}`, cell.manifest),
+                ),
+              ).rejects.toBeInstanceOf(DanglingRefError);
+              // Prior draft/work unchanged; no supersede / counter leakage.
+              expect(await fixture.observe(GOAL_ID)).toEqual(before);
+              // Rejected operation id remains usable for a valid payload.
+              const recovered = await fixture.lifecycle.publishPlanDraft(
+                publishInput(claim, `t1724-reject-${cell.label}`, COMPLETE_MANIFEST),
+              );
+              if (!recovered.ok) {
+                throw new Error(`T1724 recover after ${cell.label} unexpectedly conflicted`);
+              }
+              expect(recovered.replayed).toBe(false);
+            }
           } finally {
             await fixture.dispose();
           }

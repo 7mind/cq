@@ -543,29 +543,10 @@ function operationScope(
 }
 
 /**
- * D204 parity with production inMemoryPlanLifecycle.materializeReferences:
- * rewrite ledger-kind `tasks:<draft-key>` / `milestones:<draft-key>` onto the
- * allocated id; leave other ledger refs for the dangling gate below.
+ * T1724 parity with production: ledger-kind refs are never rewritten onto draft
+ * keys. Typed draft-task/draft-milestone kinds remain the only intra-manifest
+ * links; a tasks:<draft-key> courier fails the dangling gate below.
  */
-function rewriteDraftKeyLedgerRef(
-  ref: string,
-  milestoneAllocations: ReadonlyMap<string, string>,
-  taskAllocations: ReadonlyMap<string, string>,
-): string {
-  const colon = ref.indexOf(":");
-  if (colon <= 0) return ref;
-  const ledger = ref.slice(0, colon);
-  const key = ref.slice(colon + 1);
-  if (ledger === "tasks") {
-    const id = taskAllocations.get(key);
-    if (id !== undefined) return id; // reference adapter stores bare ids
-  } else if (ledger === "milestones") {
-    const id = milestoneAllocations.get(key);
-    if (id !== undefined) return id;
-  }
-  return ref;
-}
-
 function materializeReferences(
   references: readonly PlanDraftReference[] | undefined,
   milestoneAllocations: ReadonlyMap<string, string>,
@@ -573,11 +554,7 @@ function materializeReferences(
 ): string[] {
   return (references ?? []).map((reference) => {
     if (reference.kind === "ledger") {
-      return rewriteDraftKeyLedgerRef(
-        reference.ref,
-        milestoneAllocations,
-        taskAllocations,
-      );
+      return reference.ref;
     }
     const allocation =
       reference.kind === "draft-milestone"
@@ -588,6 +565,46 @@ function materializeReferences(
     }
     return allocation;
   });
+}
+
+function preflightManifestReferences(
+  input: PlanPublishDraftInput,
+  backend: ReferencePlanLifecycleBackend,
+): void {
+  // Prospective allocations mirror materializeManifest counter advancement
+  // without mutating counters (T1724).
+  let milestoneCounter = backend.milestoneCounter;
+  let taskCounter = backend.taskCounter;
+  const milestoneAllocations = new Map<string, string>();
+  const taskAllocations = new Map<string, string>();
+  for (const milestone of input.manifest.milestones) {
+    milestoneAllocations.set(milestone.key, `M${++milestoneCounter}`);
+  }
+  for (const task of input.manifest.tasks) {
+    taskAllocations.set(task.key, `T${++taskCounter}`);
+  }
+  for (const milestone of input.manifest.milestones) {
+    assertNoDanglingMaterializedRefs(
+      [
+        ...materializeReferences(milestone.dependsOn, milestoneAllocations, taskAllocations),
+        ...materializeReferences(milestone.blockedBy, milestoneAllocations, taskAllocations),
+      ],
+      backend,
+      milestoneAllocations,
+      taskAllocations,
+    );
+  }
+  for (const task of input.manifest.tasks) {
+    assertNoDanglingMaterializedRefs(
+      [
+        ...materializeReferences(task.dependsOn, milestoneAllocations, taskAllocations),
+        ...materializeReferences(task.blockedBy, milestoneAllocations, taskAllocations),
+      ],
+      backend,
+      milestoneAllocations,
+      taskAllocations,
+    );
+  }
 }
 
 /**
@@ -1410,6 +1427,8 @@ export class ReferencePlanLifecycleAdapter
         });
       }
 
+      // T1724: preflight before supersede / counter advance / operation record.
+      preflightManifestReferences(input, this.backend);
       const replacedManifest = goal.currentDraft?.manifest ?? null;
       if (
         goal.currentDraft !== null &&
