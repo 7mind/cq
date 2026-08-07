@@ -113,7 +113,9 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // tasks/waitingTasks fields (+5 G93-attributable response tokens).
     // 891 -> 946 under T1306: worktree_manage added (+55 G93-attributable
     // response/description tokens on full-parent profiles).
-    maximumRemainingG93AttributableTokens: 946,
+    // 946 -> 961 under T1422: ITEM_PROJECTION_DESCRIPTION documents complement
+    // + merge invariant (+15 G93-attributable description tokens).
+    maximumRemainingG93AttributableTokens: 961,
     corpusMedianResponseSavingTokens: 1461,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,

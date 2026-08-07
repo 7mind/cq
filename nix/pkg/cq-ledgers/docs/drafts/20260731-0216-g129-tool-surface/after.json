@@ -62,23 +62,23 @@
         "sha256": "b03f085cf0fa36b2dc273e3d1e4497e44c4eab265bed38dc3f1feb7833784862"
       },
       "toolsList": {
-        "utf8Bytes": 36152,
-        "tokens": 8505,
-        "sha256": "12e983009b8edf2904a85adb039e5bf0367b58a7781274db2d76ce5237062b93"
+        "utf8Bytes": 36217,
+        "tokens": 8520,
+        "sha256": "043c4f7729b066333d0819100ffa16ea79ec890ed89af1a43421741a65e88780"
       },
-      "surfaceTokens": 8652,
+      "surfaceTokens": 8667,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3130,
+      "deltaTokens": -3115,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4043,
+      "domainInputSchemaTokens": 4058,
       "responseContractCounterfactual": {
-        "projectionTokens": 92,
+        "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 749,
-        "allTokens": 946,
+        "allTokens": 961,
         "deltasAreAdditive": false
       }
     },
@@ -119,23 +119,23 @@
         "sha256": "b03f085cf0fa36b2dc273e3d1e4497e44c4eab265bed38dc3f1feb7833784862"
       },
       "toolsList": {
-        "utf8Bytes": 30313,
-        "tokens": 7190,
-        "sha256": "7d8b0282483344c31ab72cca4467acd1038b75b048c7216112046aa402ffdb2e"
+        "utf8Bytes": 30378,
+        "tokens": 7205,
+        "sha256": "430ee20ea1f3554afb3b065114df9d0b121b9c0c2979dbcebe56db4259dad8cb"
       },
-      "surfaceTokens": 7337,
+      "surfaceTokens": 7352,
       "baselineSurfaceTokens": 10386,
-      "deltaTokens": -3049,
+      "deltaTokens": -3034,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4043,
+      "domainInputSchemaTokens": 4058,
       "responseContractCounterfactual": {
-        "projectionTokens": 92,
+        "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 641,
-        "allTokens": 838,
+        "allTokens": 853,
         "deltasAreAdditive": false
       }
     },
@@ -182,23 +182,23 @@
         "sha256": "b748d921f5c745901f56d6dc5549857bdf7a2a6473a5660dbe7e0ee6e65f29fe"
       },
       "toolsList": {
-        "utf8Bytes": 36152,
-        "tokens": 8505,
-        "sha256": "12e983009b8edf2904a85adb039e5bf0367b58a7781274db2d76ce5237062b93"
+        "utf8Bytes": 36217,
+        "tokens": 8520,
+        "sha256": "043c4f7729b066333d0819100ffa16ea79ec890ed89af1a43421741a65e88780"
       },
-      "surfaceTokens": 8669,
+      "surfaceTokens": 8684,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3113,
+      "deltaTokens": -3098,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4043,
+      "domainInputSchemaTokens": 4058,
       "responseContractCounterfactual": {
-        "projectionTokens": 92,
+        "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 749,
-        "allTokens": 946,
+        "allTokens": 961,
         "deltasAreAdditive": false
       }
     },
@@ -245,23 +245,23 @@
         "sha256": "16f8a54b99700b3da348b1564f0f84df8ffb647037ba3c9840d16cf2ac4c2b15"
       },
       "toolsList": {
-        "utf8Bytes": 36152,
-        "tokens": 8505,
-        "sha256": "12e983009b8edf2904a85adb039e5bf0367b58a7781274db2d76ce5237062b93"
+        "utf8Bytes": 36217,
+        "tokens": 8520,
+        "sha256": "043c4f7729b066333d0819100ffa16ea79ec890ed89af1a43421741a65e88780"
       },
-      "surfaceTokens": 8669,
+      "surfaceTokens": 8684,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3113,
+      "deltaTokens": -3098,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4043,
+      "domainInputSchemaTokens": 4058,
       "responseContractCounterfactual": {
-        "projectionTokens": 92,
+        "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 749,
-        "allTokens": 946,
+        "allTokens": 961,
         "deltasAreAdditive": false
       }
     },
@@ -450,23 +450,23 @@
         "sha256": "189d7d7fc6963902a80ba29f8ed5d46e88bbca73146353aa5e9d8ad43a3dac7d"
       },
       "toolsList": {
-        "utf8Bytes": 36152,
-        "tokens": 8505,
-        "sha256": "12e983009b8edf2904a85adb039e5bf0367b58a7781274db2d76ce5237062b93"
+        "utf8Bytes": 36217,
+        "tokens": 8520,
+        "sha256": "043c4f7729b066333d0819100ffa16ea79ec890ed89af1a43421741a65e88780"
       },
-      "surfaceTokens": 8671,
+      "surfaceTokens": 8686,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3111,
+      "deltaTokens": -3096,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4043,
+      "domainInputSchemaTokens": 4058,
       "responseContractCounterfactual": {
-        "projectionTokens": 92,
+        "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 749,
-        "allTokens": 946,
+        "allTokens": 961,
         "deltasAreAdditive": false
       }
     },
@@ -513,23 +513,23 @@
         "sha256": "cb7adc755984042a62f53ecd082d46d314d945d421f945fa82faad28871d7f6f"
       },
       "toolsList": {
-        "utf8Bytes": 36152,
-        "tokens": 8505,
-        "sha256": "12e983009b8edf2904a85adb039e5bf0367b58a7781274db2d76ce5237062b93"
+        "utf8Bytes": 36217,
+        "tokens": 8520,
+        "sha256": "043c4f7729b066333d0819100ffa16ea79ec890ed89af1a43421741a65e88780"
       },
-      "surfaceTokens": 8670,
+      "surfaceTokens": 8685,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3112,
+      "deltaTokens": -3097,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4043,
+      "domainInputSchemaTokens": 4058,
       "responseContractCounterfactual": {
-        "projectionTokens": 92,
+        "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 749,
-        "allTokens": 946,
+        "allTokens": 961,
         "deltasAreAdditive": false
       }
     },
@@ -576,23 +576,23 @@
         "sha256": "59a6195f5aecbc752c16aeca4654ba49e14789616f24f31ffe218d756e98fec9"
       },
       "toolsList": {
-        "utf8Bytes": 36152,
-        "tokens": 8505,
-        "sha256": "12e983009b8edf2904a85adb039e5bf0367b58a7781274db2d76ce5237062b93"
+        "utf8Bytes": 36217,
+        "tokens": 8520,
+        "sha256": "043c4f7729b066333d0819100ffa16ea79ec890ed89af1a43421741a65e88780"
       },
-      "surfaceTokens": 8670,
+      "surfaceTokens": 8685,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3112,
+      "deltaTokens": -3097,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4043,
+      "domainInputSchemaTokens": 4058,
       "responseContractCounterfactual": {
-        "projectionTokens": 92,
+        "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 749,
-        "allTokens": 946,
+        "allTokens": 961,
         "deltasAreAdditive": false
       }
     },
@@ -713,23 +713,23 @@
         "sha256": "c561a2fa0c4328539f80a8d1f5add23d01e0c9e0eaeb7b2ee7f4fb1e254dc589"
       },
       "toolsList": {
-        "utf8Bytes": 36152,
-        "tokens": 8505,
-        "sha256": "12e983009b8edf2904a85adb039e5bf0367b58a7781274db2d76ce5237062b93"
+        "utf8Bytes": 36217,
+        "tokens": 8520,
+        "sha256": "043c4f7729b066333d0819100ffa16ea79ec890ed89af1a43421741a65e88780"
       },
-      "surfaceTokens": 8672,
+      "surfaceTokens": 8687,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3110,
+      "deltaTokens": -3095,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4043,
+      "domainInputSchemaTokens": 4058,
       "responseContractCounterfactual": {
-        "projectionTokens": 92,
+        "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 749,
-        "allTokens": 946,
+        "allTokens": 961,
         "deltasAreAdditive": false
       }
     },
@@ -776,23 +776,23 @@
         "sha256": "e7ac9d1b8547d1e2647e2e8efdbd31abbf44b36ba1f2b94c1665c092304db8ff"
       },
       "toolsList": {
-        "utf8Bytes": 36152,
-        "tokens": 8505,
-        "sha256": "12e983009b8edf2904a85adb039e5bf0367b58a7781274db2d76ce5237062b93"
+        "utf8Bytes": 36217,
+        "tokens": 8520,
+        "sha256": "043c4f7729b066333d0819100ffa16ea79ec890ed89af1a43421741a65e88780"
       },
-      "surfaceTokens": 8669,
+      "surfaceTokens": 8684,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3113,
+      "deltaTokens": -3098,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4043,
+      "domainInputSchemaTokens": 4058,
       "responseContractCounterfactual": {
-        "projectionTokens": 92,
+        "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 749,
-        "allTokens": 946,
+        "allTokens": 961,
         "deltasAreAdditive": false
       }
     },
@@ -813,13 +813,13 @@
         "sha256": "14da64cb2f35ae50a2b39775480defcccd39d731ec9d78360f757db03b899ab3"
       },
       "toolsList": {
-        "utf8Bytes": 3692,
-        "tokens": 790,
-        "sha256": "27aea763239ed3c7a8a89751ed054ab17056ec8b23d68c63fb9f9e0e554d1959"
+        "utf8Bytes": 3731,
+        "tokens": 799,
+        "sha256": "b2d5bea27bed95d9d01e6ae628d3123b61964f160082426b09876cc51ec99ff3"
       },
-      "surfaceTokens": 837,
+      "surfaceTokens": 846,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -10945,
+      "deltaTokens": -10936,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_item",
@@ -829,12 +829,12 @@
       ],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 207,
+      "domainInputSchemaTokens": 216,
       "responseContractCounterfactual": {
-        "projectionTokens": 47,
+        "projectionTokens": 56,
         "acknowledgementSentenceTokens": 0,
         "authoritativeResponseTokens": 35,
-        "allTokens": 82,
+        "allTokens": 91,
         "deltasAreAdditive": false
       }
     },
@@ -887,13 +887,13 @@
         "sha256": "68145eb0176b564b5a0493a6bd4ce7c3f7b93672f5bde9633eb92b8a266d485a"
       },
       "toolsList": {
-        "utf8Bytes": 4923,
-        "tokens": 1074,
-        "sha256": "16b69f508c75f96e3b278e757334e3102a492eb02e823ce93f315fe7fd47be37"
+        "utf8Bytes": 4962,
+        "tokens": 1083,
+        "sha256": "bd12c0b16c5017b3890dda3e31b31b2f88407972be24d78361b3f86868d59247"
       },
-      "surfaceTokens": 1125,
+      "surfaceTokens": 1134,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -10657,
+      "deltaTokens": -10648,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "create_item",
@@ -902,12 +902,12 @@
       ],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 399,
+      "domainInputSchemaTokens": 408,
       "responseContractCounterfactual": {
-        "projectionTokens": 47,
+        "projectionTokens": 56,
         "acknowledgementSentenceTokens": 0,
         "authoritativeResponseTokens": 35,
-        "allTokens": 82,
+        "allTokens": 91,
         "deltasAreAdditive": false
       }
     },
@@ -954,23 +954,23 @@
         "sha256": "bc657d8d0cf60510950fdcf16601b5f1df5816795a2e5f671fd522f422798031"
       },
       "toolsList": {
-        "utf8Bytes": 36152,
-        "tokens": 8505,
-        "sha256": "12e983009b8edf2904a85adb039e5bf0367b58a7781274db2d76ce5237062b93"
+        "utf8Bytes": 36217,
+        "tokens": 8520,
+        "sha256": "043c4f7729b066333d0819100ffa16ea79ec890ed89af1a43421741a65e88780"
       },
-      "surfaceTokens": 8671,
+      "surfaceTokens": 8686,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3111,
+      "deltaTokens": -3096,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4043,
+      "domainInputSchemaTokens": 4058,
       "responseContractCounterfactual": {
-        "projectionTokens": 92,
+        "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 749,
-        "allTokens": 946,
+        "allTokens": 961,
         "deltasAreAdditive": false
       }
     },
@@ -1017,23 +1017,23 @@
         "sha256": "fd90184e333e9cb34e48ba5feecfb342f094c9677e44de6edc2b4efcb48f826d"
       },
       "toolsList": {
-        "utf8Bytes": 36152,
-        "tokens": 8505,
-        "sha256": "12e983009b8edf2904a85adb039e5bf0367b58a7781274db2d76ce5237062b93"
+        "utf8Bytes": 36217,
+        "tokens": 8520,
+        "sha256": "043c4f7729b066333d0819100ffa16ea79ec890ed89af1a43421741a65e88780"
       },
-      "surfaceTokens": 8672,
+      "surfaceTokens": 8687,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3110,
+      "deltaTokens": -3095,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4043,
+      "domainInputSchemaTokens": 4058,
       "responseContractCounterfactual": {
-        "projectionTokens": 92,
+        "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 749,
-        "allTokens": 946,
+        "allTokens": 961,
         "deltasAreAdditive": false
       }
     },
@@ -1115,23 +1115,23 @@
         "sha256": "50cc89637c64ca1ccaf9bf12aeec86d7572cd55e430e5278e60ca64036cfb023"
       },
       "toolsList": {
-        "utf8Bytes": 36152,
-        "tokens": 8505,
-        "sha256": "12e983009b8edf2904a85adb039e5bf0367b58a7781274db2d76ce5237062b93"
+        "utf8Bytes": 36217,
+        "tokens": 8520,
+        "sha256": "043c4f7729b066333d0819100ffa16ea79ec890ed89af1a43421741a65e88780"
       },
-      "surfaceTokens": 8669,
+      "surfaceTokens": 8684,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3113,
+      "deltaTokens": -3098,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4043,
+      "domainInputSchemaTokens": 4058,
       "responseContractCounterfactual": {
-        "projectionTokens": 92,
+        "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 749,
-        "allTokens": 946,
+        "allTokens": 961,
         "deltasAreAdditive": false
       }
     },
@@ -1252,23 +1252,23 @@
         "sha256": "62704ffd29334a84271b81cac6d3952fdf47a792bb7cf0a64254a4c4fc408709"
       },
       "toolsList": {
-        "utf8Bytes": 36152,
-        "tokens": 8505,
-        "sha256": "12e983009b8edf2904a85adb039e5bf0367b58a7781274db2d76ce5237062b93"
+        "utf8Bytes": 36217,
+        "tokens": 8520,
+        "sha256": "043c4f7729b066333d0819100ffa16ea79ec890ed89af1a43421741a65e88780"
       },
-      "surfaceTokens": 8671,
+      "surfaceTokens": 8686,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3111,
+      "deltaTokens": -3096,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4043,
+      "domainInputSchemaTokens": 4058,
       "responseContractCounterfactual": {
-        "projectionTokens": 92,
+        "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 749,
-        "allTokens": 946,
+        "allTokens": 961,
         "deltasAreAdditive": false
       }
     },
@@ -1885,8 +1885,8 @@
       "name": "fetch_item",
       "whole": {
         "baselineTokens": 281,
-        "afterTokens": 136,
-        "deltaTokens": -145
+        "afterTokens": 139,
+        "deltaTokens": -142
       },
       "fields": {
         "name": {
@@ -1923,12 +1923,12 @@
             "marginalTokens": 124
           },
           "after": {
-            "serializedTokens": 53,
-            "marginalTokens": 54
+            "serializedTokens": 56,
+            "marginalTokens": 57
           },
           "delta": {
-            "serializedTokens": -68,
-            "marginalTokens": -70
+            "serializedTokens": -65,
+            "marginalTokens": -67
           }
         }
       }
@@ -1937,8 +1937,8 @@
       "name": "fetch_ledger",
       "whole": {
         "baselineTokens": 520,
-        "afterTokens": 166,
-        "deltaTokens": -354
+        "afterTokens": 169,
+        "deltaTokens": -351
       },
       "fields": {
         "name": {
@@ -1975,12 +1975,12 @@
             "marginalTokens": 171
           },
           "after": {
-            "serializedTokens": 81,
-            "marginalTokens": 82
+            "serializedTokens": 84,
+            "marginalTokens": 85
           },
           "delta": {
-            "serializedTokens": -87,
-            "marginalTokens": -89
+            "serializedTokens": -84,
+            "marginalTokens": -86
           }
         }
       }
@@ -2197,8 +2197,8 @@
       "name": "fts_search",
       "whole": {
         "baselineTokens": 1011,
-        "afterTokens": 224,
-        "deltaTokens": -787
+        "afterTokens": 227,
+        "deltaTokens": -784
       },
       "fields": {
         "name": {
@@ -2235,12 +2235,12 @@
             "marginalTokens": 223
           },
           "after": {
-            "serializedTokens": 97,
-            "marginalTokens": 98
+            "serializedTokens": 100,
+            "marginalTokens": 101
           },
           "delta": {
-            "serializedTokens": -123,
-            "marginalTokens": -125
+            "serializedTokens": -120,
+            "marginalTokens": -122
           }
         }
       }
@@ -2353,8 +2353,8 @@
       "name": "list_milestone_items",
       "whole": {
         "baselineTokens": 299,
-        "afterTokens": 107,
-        "deltaTokens": -192
+        "afterTokens": 110,
+        "deltaTokens": -189
       },
       "fields": {
         "name": {
@@ -2391,12 +2391,12 @@
             "marginalTokens": 128
           },
           "after": {
-            "serializedTokens": 57,
-            "marginalTokens": 58
+            "serializedTokens": 60,
+            "marginalTokens": 61
           },
           "delta": {
-            "serializedTokens": -68,
-            "marginalTokens": -70
+            "serializedTokens": -65,
+            "marginalTokens": -67
           }
         }
       }
@@ -2717,8 +2717,8 @@
       "name": "search_items",
       "whole": {
         "baselineTokens": 280,
-        "afterTokens": 101,
-        "deltaTokens": -179
+        "afterTokens": 104,
+        "deltaTokens": -176
       },
       "fields": {
         "name": {
@@ -2755,12 +2755,12 @@
             "marginalTokens": 122
           },
           "after": {
-            "serializedTokens": 51,
-            "marginalTokens": 52
+            "serializedTokens": 54,
+            "marginalTokens": 55
           },
           "delta": {
-            "serializedTokens": -68,
-            "marginalTokens": -70
+            "serializedTokens": -65,
+            "marginalTokens": -67
           }
         }
       }
@@ -3085,19 +3085,19 @@
       {
         "roleId": "plan-advance",
         "transcripts": 51,
-        "currentTokensPerTranscript": 837,
+        "currentTokensPerTranscript": 846,
         "baselineTokensPerTranscript": 11782,
-        "savingTokensPerTranscript": 10945,
-        "currentWeightedTokens": 42687,
+        "savingTokensPerTranscript": 10936,
+        "currentWeightedTokens": 43146,
         "baselineWeightedTokens": 600882
       },
       {
         "roleId": "plan-reviewer",
         "transcripts": 42,
-        "currentTokensPerTranscript": 1125,
+        "currentTokensPerTranscript": 1134,
         "baselineTokensPerTranscript": 11782,
-        "savingTokensPerTranscript": 10657,
-        "currentWeightedTokens": 47250,
+        "savingTokensPerTranscript": 10648,
+        "currentWeightedTokens": 47628,
         "baselineWeightedTokens": 494844
       },
       {
@@ -3137,10 +3137,10 @@
         "baselineWeightedTokens": 23564
       }
     ],
-    "currentWeightedTokens": 183321,
+    "currentWeightedTokens": 184158,
     "baselineWeightedTokens": 4206174,
-    "savingWeightedTokens": 4022853,
-    "currentMeanTokensPerTranscript": 513.5042016806723,
+    "savingWeightedTokens": 4022016,
+    "currentMeanTokensPerTranscript": 515.8487394957983,
     "baselineMeanTokensPerTranscript": 11782
   },
   "transportOnlyOverhead": {
@@ -3345,19 +3345,19 @@
     "ledgerCallingProfiles": [
       {
         "profileName": "full",
-        "remainingG93AttributableTokens": 946
+        "remainingG93AttributableTokens": 961
       },
       {
         "profileName": "non-dispatch",
-        "remainingG93AttributableTokens": 838
+        "remainingG93AttributableTokens": 853
       },
       {
         "profileName": "advance",
-        "remainingG93AttributableTokens": 946
+        "remainingG93AttributableTokens": 961
       },
       {
         "profileName": "begin",
-        "remainingG93AttributableTokens": 946
+        "remainingG93AttributableTokens": 961
       },
       {
         "profileName": "implement-conflict-resolver",
@@ -3373,15 +3373,15 @@
       },
       {
         "profileName": "implement/advance",
-        "remainingG93AttributableTokens": 946
+        "remainingG93AttributableTokens": 961
       },
       {
         "profileName": "implement/start",
-        "remainingG93AttributableTokens": 946
+        "remainingG93AttributableTokens": 961
       },
       {
         "profileName": "investigate",
-        "remainingG93AttributableTokens": 946
+        "remainingG93AttributableTokens": 961
       },
       {
         "profileName": "investigate-explorer",
@@ -3393,27 +3393,27 @@
       },
       {
         "profileName": "investigate/advance",
-        "remainingG93AttributableTokens": 946
+        "remainingG93AttributableTokens": 961
       },
       {
         "profileName": "plan",
-        "remainingG93AttributableTokens": 946
+        "remainingG93AttributableTokens": 961
       },
       {
         "profileName": "plan-advance",
-        "remainingG93AttributableTokens": 82
+        "remainingG93AttributableTokens": 91
       },
       {
         "profileName": "plan-reviewer",
-        "remainingG93AttributableTokens": 82
+        "remainingG93AttributableTokens": 91
       },
       {
         "profileName": "plan/advance",
-        "remainingG93AttributableTokens": 946
+        "remainingG93AttributableTokens": 961
       },
       {
         "profileName": "plan/follow-up",
-        "remainingG93AttributableTokens": 946
+        "remainingG93AttributableTokens": 961
       },
       {
         "profileName": "planners",
@@ -3421,7 +3421,7 @@
       },
       {
         "profileName": "research",
-        "remainingG93AttributableTokens": 946
+        "remainingG93AttributableTokens": 961
       },
       {
         "profileName": "research-experimenter",
@@ -3433,14 +3433,14 @@
       },
       {
         "profileName": "research/advance",
-        "remainingG93AttributableTokens": 946
+        "remainingG93AttributableTokens": 961
       },
       {
         "profileName": "reviewers",
         "remainingG93AttributableTokens": 19
       }
     ],
-    "maximumRemainingG93AttributableTokens": 946
+    "maximumRemainingG93AttributableTokens": 961
   },
   "budgets": {
     "tokenizerMatches": true,
