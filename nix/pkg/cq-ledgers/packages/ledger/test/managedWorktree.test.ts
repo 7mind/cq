@@ -1070,5 +1070,156 @@ describe("T1310 managed worktree prepare→dispatch→release state machine [BA]
     expect(released.status).toBe("released");
     expect(await listManagedLiveWorktrees(repo.cwd, "T1310", repo.stateDir)).toHaveLength(0);
   });
+
+  it("category-(iii): dependency resultCommit absent from base refuses before worktree add", async () => {
+    const repo = await seedRepository();
+    const install = recordingInstall();
+    let worktreeAddCount = 0;
+    const gitRunner = async (cwd: string, args: readonly string[]) => {
+      if (args[0] === "worktree" && args[1] === "add") worktreeAddCount += 1;
+      return exec("git", [...args], {
+        cwd,
+        encoding: "utf8",
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      }).then(
+        (ok) => ({ code: 0, stdout: ok.stdout, stderr: ok.stderr }),
+        (error: { code?: number; stdout?: string; stderr?: string }) => ({
+          code: typeof error.code === "number" ? error.code : 1,
+          stdout: String(error.stdout ?? ""),
+          stderr: String(error.stderr ?? ""),
+        }),
+      );
+    };
+
+    // Unrelated commit object that is NOT an ancestor of (or equal to) base.
+    const orphanTree = await git(repo.cwd, ["write-tree"]);
+    const unrelated = await git(repo.cwd, [
+      "commit-tree",
+      orphanTree,
+      "-m",
+      "unrelated-dep-result",
+    ]);
+
+    const refused = await prepareManagedWorktree(
+      {
+        repositoryRoot: repo.cwd,
+        taskId: "T13101",
+        baseCommit: repo.base,
+        dependencyReader: readerOf([
+          task("T13101", "planned", ["T1"], null),
+          task("T1", "done", [], unrelated),
+        ]),
+      },
+      {
+        stateDir: repo.stateDir,
+        cacheRoot: repo.cacheRoot,
+        install: install.runner,
+        bunWorkspaceRoot: repo.workspace,
+        git: gitRunner,
+      },
+    );
+    expect(refused.status).toBe("refused");
+    if (refused.status === "refused") {
+      expect(refused.reason).toBe("dependency-unresolvable");
+      expect(refused.dependency?.reason).toBe("result-commit-not-contained");
+    }
+    expect(worktreeAddCount).toBe(0);
+    expect(install.plans).toHaveLength(0);
+    expect(await listManagedLiveWorktrees(repo.cwd, "T13101", repo.stateDir)).toHaveLength(0);
+  });
+
+  it("forged resultCommit cannot release; stale reused tree resumes criticism tip", async () => {
+    const repo = await seedRepository();
+    const install = recordingInstall();
+    const deps = {
+      stateDir: repo.stateDir,
+      cacheRoot: repo.cacheRoot,
+      install: install.runner,
+      bunWorkspaceRoot: repo.workspace,
+    };
+
+    const prepared = await prepareManagedWorktree(
+      { repositoryRoot: repo.cwd, taskId: "T13102", baseCommit: repo.base },
+      deps,
+    );
+    expect(prepared.status).toBe("prepared");
+    if (prepared.status !== "prepared") return;
+
+    await fs.writeFile(path.join(prepared.evidence.absolutePath, "fix.txt"), "r1\n");
+    await git(prepared.evidence.absolutePath, ["add", "fix.txt"]);
+    await git(prepared.evidence.absolutePath, ["commit", "-q", "-m", "criticism round"]);
+    const criticismHead = await git(prepared.evidence.absolutePath, ["rev-parse", "HEAD"]);
+
+    // Forged SHA (valid hex, wrong tip) must refuse release and leave the tree.
+    const forged = await releaseManagedWorktree(
+      {
+        handle: prepared.handle,
+        terminalDisposition: "done",
+        resultCommit: "a".repeat(40),
+      },
+      deps,
+    );
+    expect(forged.status).toBe("refused");
+    if (forged.status === "refused") expect(forged.reason).toBe("commit-mismatch");
+    expect(await listManagedLiveWorktrees(repo.cwd, "T13102", repo.stateDir)).toHaveLength(1);
+    expect(await git(prepared.evidence.absolutePath, ["rev-parse", "HEAD"])).toBe(criticismHead);
+
+    // Resume reuses the same path and preserves the criticism tip (stale-reuse repair).
+    const resumed = await prepareManagedWorktree(
+      {
+        repositoryRoot: repo.cwd,
+        taskId: "T13102",
+        baseCommit: repo.base,
+        handle: prepared.handle,
+        priorResultCommit: criticismHead,
+      },
+      deps,
+    );
+    expect(resumed.status).toBe("prepared");
+    if (resumed.status !== "prepared") return;
+    expect(resumed.handle.token).toBe(prepared.handle.token);
+    expect(resumed.evidence.absolutePath).toBe(prepared.evidence.absolutePath);
+    expect(resumed.evidence.headCommit).toBe(criticismHead);
+    expect(await git(resumed.evidence.absolutePath, ["rev-parse", "HEAD"])).toBe(criticismHead);
+  });
+
+  it("shared Bun cache root is under CQ cache; concurrent same-task prepares serialize", async () => {
+    const repo = await seedRepository();
+    const install = recordingInstall();
+    const deps = {
+      stateDir: repo.stateDir,
+      cacheRoot: repo.cacheRoot,
+      install: install.runner,
+      bunWorkspaceRoot: repo.workspace,
+    };
+
+    const [a, b] = await Promise.all([
+      prepareManagedWorktree(
+        { repositoryRoot: repo.cwd, taskId: "T13103", baseCommit: repo.base },
+        deps,
+      ),
+      prepareManagedWorktree(
+        { repositoryRoot: repo.cwd, taskId: "T13103", baseCommit: repo.base },
+        deps,
+      ),
+    ]);
+    const outcomes = [a, b];
+    const prepared = outcomes.filter((o) => o.status === "prepared");
+    const resumeRequired = outcomes.filter((o) => o.status === "resume-required");
+    // Exactly one live prepare wins; the other is resume-required or also prepared with same path.
+    expect(prepared.length + resumeRequired.length).toBe(2);
+    expect(prepared.length).toBeGreaterThanOrEqual(1);
+    const live = await listManagedLiveWorktrees(repo.cwd, "T13103", repo.stateDir);
+    expect(live).toHaveLength(1);
+
+    for (const plan of install.plans) {
+      expect(
+        plan.bunInstallCacheDir.startsWith(repo.cacheRoot + path.sep) ||
+          plan.bunInstallCacheDir === repo.cacheRoot,
+      ).toBe(true);
+      expect(plan.args).toEqual(["install", "--frozen-lockfile"]);
+      expect(plan.env["BUN_INSTALL_CACHE_DIR"]).toBe(plan.bunInstallCacheDir);
+    }
+  });
 });
 

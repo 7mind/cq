@@ -372,6 +372,20 @@ describe("T1309 orchestrator managed prepare/release [BG]", () => {
     expect(body).toContain("never raw git worktree lifecycle");
   });
 
+  test("T1310: main-advance requires rebase+re-gate; forged/stale results never merge", () => {
+    const body = readFileSync(ADVANCE_CMD, "utf8");
+    expect(body).toMatch(
+      /If main has advanced past the dispatch base, rebase onto current main and rerun\s+gates \+ review before ff-only merge/,
+    );
+    expect(body).toContain(
+      "Fabricated, missing, non-tip, stale-base, or non-ancestor result commits never",
+    );
+    expect(body).toContain("git merge --ff-only <resultCommit>");
+    // Dependency-absent evidence blocks both dispatch and merge.
+    expect(body).toMatch(/Missing or\s+unresolvable dependency/);
+    expect(body).toContain("missing/unresolvable dependency evidence forbids");
+  });
+
   test("all three harness fragments route through worktree_manage prepare/release", () => {
     for (const fragmentPath of FRAGMENTS) {
       const body = readFileSync(fragmentPath, "utf8");
