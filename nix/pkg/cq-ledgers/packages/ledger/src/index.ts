@@ -129,6 +129,43 @@ export type {
   ResolveDependencyResultCommitsRequest,
   UnresolvableDependencyResultCommits,
 } from "./dependencyResultCommits.js";
+export {
+  buildManagedWorktreeInstallPlan,
+  discoverBunWorkspaceRoot,
+  findOpenWipCheckpoints,
+  generateUuidV7,
+  isUuidV7,
+  listManagedLiveWorktrees,
+  managedWorktreeHandleSegment,
+  nodeManagedWorktreeGitRunner,
+  normalizeManagedPath,
+  prepareManagedWorktree,
+  releaseManagedWorktree,
+  resolveBunInstallCacheDir,
+  resolveCqCacheRoot,
+  validateManagedWorktreeInstallPlan,
+} from "./managedWorktree.js";
+export type {
+  ManagedWorktreeDeps,
+  ManagedWorktreeFaultBoundary,
+  ManagedWorktreeFaultInjector,
+  ManagedWorktreeGitResult,
+  ManagedWorktreeGitRunner,
+  ManagedWorktreeHandle,
+  ManagedWorktreeIdFactory,
+  ManagedWorktreeInstallPlan,
+  ManagedWorktreeInstallPlanValidation,
+  ManagedWorktreeInstallRunner,
+  ManagedWorktreeTerminalDisposition,
+  PrepareManagedWorktreeRefusalReason,
+  PrepareManagedWorktreeRequest,
+  PrepareManagedWorktreeResult,
+  PreparedWorktreeEvidence,
+  ReleaseManagedWorktreeRefusalReason,
+  ReleaseManagedWorktreeRequest,
+  ReleaseManagedWorktreeResult,
+  WipOpenCheckpointFinding,
+} from "./managedWorktree.js";
 export { GitPersistence } from "./store/git/GitPersistence.js";
 export { GitObjectLedgerBackend } from "./store/git/GitObjectLedgerBackend.js";
 export type { GitObjectLedgerBackendOpts } from "./store/git/GitObjectLedgerBackend.js";
