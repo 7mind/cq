@@ -558,10 +558,15 @@ function isHandleShape(value: unknown): value is ManagedWorktreeHandle {
   );
 }
 
+type HandleIntegrityFailure =
+  | "handle-invalid"
+  | "handle-foreign"
+  | "handle-path-traversal";
+
 function assertHandleIntegrity(
   handle: ManagedWorktreeHandle,
   repositoryRoot: string,
-): PrepareManagedWorktreeRefusalReason | ReleaseManagedWorktreeRefusalReason | null {
+): HandleIntegrityFailure | null {
   if (!isHandleShape(handle)) return "handle-invalid";
   if (handle.kind !== HANDLE_KIND || handle.version !== HANDLE_VERSION) return "handle-invalid";
   if (!isUuidV7(handle.worktreeId)) return "handle-invalid";
@@ -1143,11 +1148,12 @@ export async function prepareManagedWorktree(
 
   const installPlan = buildManagedWorktreeInstallPlan({
     bunWorkspaceRoot,
-    cacheRoot: deps.cacheRoot,
+    ...(deps.cacheRoot !== undefined ? { cacheRoot: deps.cacheRoot } : {}),
   });
-  const planValidation = validateManagedWorktreeInstallPlan(installPlan, {
-    cacheRoot: deps.cacheRoot,
-  });
+  const planValidation = validateManagedWorktreeInstallPlan(
+    installPlan,
+    deps.cacheRoot !== undefined ? { cacheRoot: deps.cacheRoot } : {},
+  );
   if (planValidation.status === "invalid") {
     return refusedPrepare(
       "bun-install-plan-invalid",

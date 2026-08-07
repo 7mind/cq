@@ -662,7 +662,9 @@ describe("releaseManagedWorktree", () => {
     // Better: clean + terminal, fault at before-worktree-remove throws.
     const head = await git(prepared.evidence.absolutePath, ["rev-parse", "HEAD"]);
 
-    let hit: ManagedWorktreeFaultBoundary | null = null;
+    const hit: { boundary: ManagedWorktreeFaultBoundary | undefined } = {
+      boundary: undefined,
+    };
     await expect(
       releaseManagedWorktree(
         {
@@ -674,14 +676,14 @@ describe("releaseManagedWorktree", () => {
           ...depsBase,
           faultInjector: (boundary) => {
             if (boundary === "before-worktree-remove") {
-              hit = boundary;
+              hit.boundary = boundary;
               throw new Error("injected fault at before-worktree-remove");
             }
           },
         },
       ),
     ).rejects.toThrow("injected fault at before-worktree-remove");
-    expect(hit).toBe("before-worktree-remove");
+    expect(hit.boundary).toBe("before-worktree-remove");
     // Recoverable work still present.
     expect(
       await fs.readFile(path.join(prepared.evidence.absolutePath, "recover-me.txt"), "utf8"),
