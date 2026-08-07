@@ -343,7 +343,9 @@ const fieldValueSchema = z.union([z.string(), z.array(z.string())]);
 
 const fieldsSchema = z.record(z.string(), fieldValueSchema);
 
-const projectionSchema = z.enum(["compact", "full"]).describe(ITEM_PROJECTION_DESCRIPTION);
+const projectionSchema = z
+  .enum(["compact", "full", "complement"])
+  .describe(ITEM_PROJECTION_DESCRIPTION);
 
 /**
  * D-LED-01: caller-supplied milestone/item ids cannot contain `/`, `.`, or

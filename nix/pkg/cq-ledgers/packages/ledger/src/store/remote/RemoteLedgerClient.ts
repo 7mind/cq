@@ -48,9 +48,12 @@ import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { ArchivePointer, FieldValue } from "../../types.js";
 import type { ArchiveContent } from "../LedgerStore.js";
 import type {
+  CompactItemDto,
+  ComplementItemDto,
   FetchedLedgerDto,
   FetchedMilestoneDto,
   FtsSearchResultDto,
+  FullItemDto,
   ItemDto,
   ItemMutationAckDto,
   ItemProjection,
@@ -455,6 +458,26 @@ export class RemoteLedgerClient {
     ).archive;
   }
 
+  async fetchItem(
+    ledgerId: string,
+    itemId: string,
+    projection: "compact",
+  ): Promise<CompactItemDto>;
+  async fetchItem(
+    ledgerId: string,
+    itemId: string,
+    projection: "full",
+  ): Promise<FullItemDto>;
+  async fetchItem(
+    ledgerId: string,
+    itemId: string,
+    projection: "complement",
+  ): Promise<ComplementItemDto>;
+  async fetchItem(
+    ledgerId: string,
+    itemId: string,
+    projection: ItemProjection,
+  ): Promise<ItemDto>;
   async fetchItem(
     ledgerId: string,
     itemId: string,

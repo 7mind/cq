@@ -9,7 +9,7 @@ export type ProducedWireDto<T extends object> = T & {
   readonly [PRODUCED_WIRE_DTO]: true;
 };
 
-export type ItemProjection = "compact" | "full";
+export type ItemProjection = "compact" | "full" | "complement";
 
 export const COMPACT_ITEM_FIELD_NAMES = [
   "headline",
@@ -27,7 +27,7 @@ export const COMPACT_ITEM_FIELD_NAMES = [
 ] as const;
 
 export const ITEM_PROJECTION_DESCRIPTION =
-  "required projection: compact retains id, milestoneId, status, createdAt, updatedAt, optional author/session, and only headline/title/question/answer/summary/severity/suggestedModel/tags/sourceRefs/dependsOn/blockedBy/ledgerRefs in fields; full retains every item field";
+  "required projection: compact retains id, milestoneId, status, createdAt, updatedAt, optional author/session, and only headline/title/question/answer/summary/severity/suggestedModel/tags/sourceRefs/dependsOn/blockedBy/ledgerRefs in fields; complement retains id plus fields containing ONLY keys outside the compact allowlist (no status/timestamps/provenance); full retains every item field; merge invariant: fields(full) = fields(compact) ∪ fields(complement) with disjoint field sets";
 
 export const ITEM_MUTATION_ACK_DESCRIPTION =
   "Returns fixed acknowledgement { item: { id, milestoneId, status, fields: { dependsOn?, blockedBy?, ledgerRefs? }, createdAt, updatedAt, author?, session? } }; narrative fields are not returned.";
@@ -46,6 +46,8 @@ export const GET_PLANNERS_SECTION_RESPONSE_DESCRIPTION =
 
 export type CompactItemFieldName = (typeof COMPACT_ITEM_FIELD_NAMES)[number];
 
+const COMPACT_ITEM_FIELD_NAME_SET: ReadonlySet<string> = new Set(COMPACT_ITEM_FIELD_NAMES);
+
 export type CompactItemFieldsDto = Partial<Record<CompactItemFieldName, FieldValue>>;
 
 export interface CompactItemDto {
@@ -59,9 +61,15 @@ export interface CompactItemDto {
   session?: string;
 }
 
+/** Join identity + non-compact field keys only (T1422 / G139). */
+export interface ComplementItemDto {
+  id: string;
+  fields: Record<string, FieldValue>;
+}
+
 export type FullItemDto = Item;
 
-export type ItemDto = CompactItemDto | FullItemDto;
+export type ItemDto = CompactItemDto | FullItemDto | ComplementItemDto;
 
 export type FetchedLedgerDto = Omit<FetchedLedger, "milestones"> & {
   milestones: Array<
@@ -128,7 +136,7 @@ export interface MilestoneMutationAckDto {
 
 export interface MandatoryItemProjectionContract {
   readonly kind: "mandatory-item-projection";
-  readonly projections: readonly ["compact", "full"];
+  readonly projections: readonly ["compact", "full", "complement"];
   readonly responseDescription: string;
   readonly responseCell: string;
 }
@@ -161,7 +169,7 @@ export type LedgerResponseContract =
 function mandatoryItemProjection(responseCell: string): MandatoryItemProjectionContract {
   return {
     kind: "mandatory-item-projection",
-    projections: ["compact", "full"],
+    projections: ["compact", "full", "complement"],
     responseDescription: `${responseCell} ${ITEM_PROJECTION_DESCRIPTION}.`,
     responseCell,
   };
@@ -358,6 +366,16 @@ export function projectCompactItemDto(item: Item): ProducedWireDto<CompactItemDt
   return projectIntrinsicItem(item, fields);
 }
 
+export function projectComplementItemDto(item: Item): ProducedWireDto<ComplementItemDto> {
+  const fields: Record<string, FieldValue> = {};
+  for (const [key, value] of Object.entries(item.fields)) {
+    if (!COMPACT_ITEM_FIELD_NAME_SET.has(key) && value !== undefined) {
+      fields[key] = value;
+    }
+  }
+  return markProduced({ id: item.id, fields });
+}
+
 export function projectFullItemDto(item: Item): ProducedWireDto<FullItemDto> {
   return markProduced({
     ...item,
@@ -368,12 +386,17 @@ export function projectFullItemDto(item: Item): ProducedWireDto<FullItemDto> {
 export function projectItemDto(
   item: Item,
   projection: ItemProjection,
-): ProducedWireDto<CompactItemDto> | ProducedWireDto<FullItemDto> {
+):
+  | ProducedWireDto<CompactItemDto>
+  | ProducedWireDto<FullItemDto>
+  | ProducedWireDto<ComplementItemDto> {
   switch (projection) {
     case "compact":
       return projectCompactItemDto(item);
     case "full":
       return projectFullItemDto(item);
+    case "complement":
+      return projectComplementItemDto(item);
   }
 }
 

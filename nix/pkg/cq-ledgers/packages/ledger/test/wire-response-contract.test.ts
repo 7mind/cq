@@ -13,7 +13,9 @@ import {
   isProducedWireDto,
   produceWireDto,
   projectCompactItemDto,
+  projectComplementItemDto,
   projectFullItemDto,
+  projectItemDto,
   projectFetchedLedgerDto,
   projectPaginatedLedgerDto,
   projectFtsSearchResultsDto,
@@ -112,12 +114,12 @@ describe("ledger response contract matrix", () => {
       enumerate_ledgers: { kind: "purpose-built-small" },
       fetch_ledger: {
         kind: "mandatory-item-projection",
-        projections: ["compact", "full"],
+        projections: ["compact", "full", "complement"],
       },
       fetch_ledger_archive: { kind: "requested-full-content" },
       fetch_item: {
         kind: "mandatory-item-projection",
-        projections: ["compact", "full"],
+        projections: ["compact", "full", "complement"],
         responseCell:
           "Ordinary ledgers return `{ item }`; the `milestones` ledger returns `{ item, resolved, references }`. `item` uses the requested projection.",
       },
@@ -135,16 +137,16 @@ describe("ledger response contract matrix", () => {
       },
       search_items: {
         kind: "mandatory-item-projection",
-        projections: ["compact", "full"],
+        projections: ["compact", "full", "complement"],
       },
       fts_search: {
         kind: "mandatory-item-projection",
-        projections: ["compact", "full"],
+        projections: ["compact", "full", "complement"],
       },
       archive_milestone: { kind: "purpose-built-small" },
       list_milestone_items: {
         kind: "mandatory-item-projection",
-        projections: ["compact", "full"],
+        projections: ["compact", "full", "complement"],
       },
       snapshot: { kind: "purpose-built-small" },
       derive_predicates: { kind: "purpose-built-small" },
@@ -243,6 +245,66 @@ describe("item wire projections", () => {
     expect(body.item.fields.answer).toBe("yes");
     expect(body.item.fields).not.toHaveProperty("context");
     expect(body.item.fields).not.toHaveProperty("recommendation");
+  });
+
+  it("T1422: complement keeps only non-compact fields and omits identity extras", () => {
+    const source = item({
+      fields: {
+        headline: "Define the wire response contract",
+        severity: "major",
+        description: "long narrative",
+        context: "more narrative",
+        dependsOn: ["tasks:T2"],
+      },
+    });
+    const complement = projectComplementItemDto(source);
+    expect(complement as object).toEqual({
+      id: "T1",
+      fields: {
+        description: "long narrative",
+        context: "more narrative",
+      },
+    });
+    for (const name of COMPACT_ITEM_FIELD_NAMES) {
+      expect(complement.fields).not.toHaveProperty(name);
+    }
+    expect(complement).not.toHaveProperty("status");
+    expect(complement).not.toHaveProperty("milestoneId");
+    expect(complement).not.toHaveProperty("createdAt");
+    expect(complement).not.toHaveProperty("author");
+  });
+
+  it("T1422: merging compact.fields with complement.fields equals full.fields", () => {
+    const source = item({
+      fields: {
+        headline: "h",
+        description: "d",
+        acceptance: "a",
+        tags: ["t"],
+      },
+    });
+    const compact = projectCompactItemDto(source);
+    const complement = projectComplementItemDto(source);
+    const full = projectFullItemDto(source);
+    const merged = { ...compact.fields, ...complement.fields };
+    expect(merged).toEqual(full.fields);
+    for (const key of Object.keys(compact.fields)) {
+      expect(complement.fields).not.toHaveProperty(key);
+    }
+  });
+
+  it("T1422: empty non-compact item yields empty complement fields", () => {
+    const source = item({
+      fields: {
+        headline: "only compact",
+        tags: ["x"],
+      },
+    });
+    expect(projectComplementItemDto(source) as object).toEqual({ id: "T1", fields: {} });
+    expect(projectItemDto(source, "complement") as object).toEqual({
+      id: "T1",
+      fields: {},
+    });
   });
 
   it("preserves provenance absence across JSON reload", () => {
