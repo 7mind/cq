@@ -471,28 +471,44 @@ describe("prepareManagedWorktree", () => {
     const repo = await seedRepository();
     const installA = recordingInstall();
     const installB = recordingInstall();
-    const depsA = {
+    // Barrier: without the per-task lock both callers reach before-worktree-add
+    // while live=0 and would mint two trees. With the lock only one enters.
+    let arrived = 0;
+    let releaseBarrier: (() => void) | undefined;
+    const bothArrived = new Promise<void>((resolvePromise) => {
+      releaseBarrier = () => resolvePromise();
+    });
+    const makeDeps = (install: ManagedWorktreeInstallRunner) => ({
       stateDir: repo.stateDir,
       cacheRoot: repo.cacheRoot,
-      install: installA.runner,
+      install,
       bunWorkspaceRoot: repo.workspace,
-    };
-    const depsB = {
-      stateDir: repo.stateDir,
-      cacheRoot: repo.cacheRoot,
-      install: installB.runner,
-      bunWorkspaceRoot: repo.workspace,
-    };
+      // Bound lock wait so a stuck peer surfaces rather than hanging the suite.
+      prepareLockTimeoutMs: 10_000,
+      faultInjector: async (boundary: ManagedWorktreeFaultBoundary) => {
+        if (boundary !== "before-worktree-add") return;
+        arrived += 1;
+        if (arrived >= 2) releaseBarrier?.();
+        // Wait briefly for a peer; under the lock the peer cannot arrive until
+        // we finish, so the timeout expires and we proceed alone.
+        await Promise.race([
+          bothArrived,
+          new Promise<void>((r) => setTimeout(r, 150)),
+        ]);
+      },
+    });
     const [a, b] = await Promise.all([
       prepareManagedWorktree(
         { repositoryRoot: repo.cwd, taskId: "T1800", baseCommit: repo.base },
-        depsA,
+        makeDeps(installA.runner),
       ),
       prepareManagedWorktree(
         { repositoryRoot: repo.cwd, taskId: "T1800", baseCommit: repo.base },
-        depsB,
+        makeDeps(installB.runner),
       ),
     ]);
+    // Under exclusive lock the barrier never sees arrived>=2.
+    expect(arrived).toBe(1);
     const statuses = [a.status, b.status].sort();
     // One prepared, the other resume-required (or refused registry-conflict).
     expect(statuses).toContain("prepared");
@@ -502,7 +518,6 @@ describe("prepareManagedWorktree", () => {
     const prepared = a.status === "prepared" ? a : b.status === "prepared" ? b : null;
     expect(prepared).not.toBeNull();
     if (prepared === null) return;
-    // Both install runners may have been invoked only by the winner; at most one tree path.
     const worktreeParent = path.join(repo.cwd, ".claude", "worktrees");
     const dirs = (await fs.readdir(worktreeParent)).filter((name) => isUuidV7(name));
     expect(dirs).toHaveLength(1);
