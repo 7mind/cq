@@ -21,9 +21,11 @@
 import { createHash, randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import {
   basename,
+  delimiter as pathDelimiter,
   dirname,
   isAbsolute,
   join,
@@ -32,6 +34,7 @@ import {
   resolve,
   sep,
 } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseWipArtifact, WipArtifactParseError } from "@cq/config";
 import {
   type DependencyResultCommit,
@@ -293,6 +296,24 @@ export function resolveBunInstallCacheDir(cacheRoot?: string): string {
 }
 
 /**
+ * Directory containing a `node-gyp` executable resolvable from this package
+ * graph (D292). Managed `bun install` runs native postinstall scripts (e.g.
+ * node-pty) under a minimal MCP PATH that does not include workspace
+ * `node_modules/.bin`; without this prefix, prepare fails with exit 127.
+ */
+export function resolveNodeGypBinDir(
+  resolveFrom: string = fileURLToPath(import.meta.url),
+): string | null {
+  try {
+    const require = createRequire(resolveFrom);
+    const nodeGypPkgJson = require.resolve("node-gyp/package.json");
+    return resolve(dirname(nodeGypPkgJson), "..", ".bin");
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Build the exact install plan prepare will execute. Negative-control tests
  * mutate the plan and feed it to {@link validateManagedWorktreeInstallPlan}.
  */
@@ -308,6 +329,13 @@ export function buildManagedWorktreeInstallPlan(input: {
     if (value !== undefined) env[key] = value;
   }
   env["BUN_INSTALL_CACHE_DIR"] = bunInstallCacheDir;
+  // D292: ensure node-gyp is on PATH for native module postinstall scripts.
+  const nodeGypBin = resolveNodeGypBinDir();
+  if (nodeGypBin !== null) {
+    const priorPath = env["PATH"] ?? "";
+    env["PATH"] =
+      priorPath.length === 0 ? nodeGypBin : `${nodeGypBin}${pathDelimiter}${priorPath}`;
+  }
   return {
     cwd: input.bunWorkspaceRoot,
     args: [...FROZEN_INSTALL_ARGS],

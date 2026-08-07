@@ -7,7 +7,7 @@
  */
 import { afterAll, describe, expect, it } from "bun:test";
 import { execFile } from "node:child_process";
-import { promises as fs } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
@@ -145,6 +145,12 @@ describe("install plan validation (negative controls)", () => {
     expect(validated).toEqual({ status: "valid", plan });
     expect(plan.args).toEqual(["install", "--frozen-lockfile"]);
     expect(plan.env["BUN_INSTALL_CACHE_DIR"]).toBe("/tmp/cq-cache/bun-install");
+    // D292: node-gyp must be on PATH for native postinstall scripts under MCP.
+    const pathEnv = plan.env["PATH"] ?? "";
+    expect(pathEnv.split(path.delimiter).some((dir) => dir.endsWith(`${path.sep}.bin`) || dir.includes(`${path.sep}.bin`))).toBe(true);
+    expect(pathEnv.includes("node-gyp") || pathEnv.split(path.delimiter).length > 0).toBe(true);
+    const nodeGypDir = pathEnv.split(path.delimiter)[0]!;
+    expect(existsSync(path.join(nodeGypDir, "node-gyp"))).toBe(true);
   });
 
   it("fails for a named reason when BUN_INSTALL_CACHE_DIR is omitted", () => {
