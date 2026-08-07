@@ -214,7 +214,8 @@ describe("one-shot plan-lifecycle serialization boundary", () => {
 
 export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFactory): void {
   const contractDescribe = factory.progression || factory.skip === true ? describe.skip : describe;
-  const timeout = factory.progression ? 5_000 : 10_000;
+  const timeout =
+    factory.timeoutMs ?? (factory.progression ? 5_000 : 10_000);
 
   contractDescribe(
     `PlanLifecycleStore contract — ${factory.name} (${factory.classification})`,

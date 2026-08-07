@@ -264,6 +264,12 @@ export interface PlanLifecycleContractFactory {
    * implemented the contract yet.
    */
   readonly skip?: boolean;
+  /**
+   * Per-leg wall-clock bound for contract cases (D291). Load-sensitive backends
+   * (GitObject under full-suite contention) may raise this; SUT invariants stay
+   * unchanged. Default remains 10s for non-progression legs.
+   */
+  readonly timeoutMs?: number;
   build(): Promise<PlanLifecycleContractFixture>;
 }
 

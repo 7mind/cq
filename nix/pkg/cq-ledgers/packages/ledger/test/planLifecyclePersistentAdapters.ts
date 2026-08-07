@@ -110,6 +110,8 @@ export const gitPlanLifecycleFactory: PlanLifecycleContractFactory = {
   name: "GitObjectLedgerBackend",
   classification: "Behavioral-Active Blackbox-GoodCommunication",
   progression: false,
+  // D291: git cat-file under full-suite load can exceed the 10s default.
+  timeoutMs: 30_000,
   async build() {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-lifecycle-git-"));
     execFileSync("git", ["init", "--quiet"], { cwd: root });
