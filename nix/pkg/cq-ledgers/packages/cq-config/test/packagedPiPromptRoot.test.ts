@@ -379,6 +379,11 @@ describe("packaged Pi prompt root", () => {
     process.env.PI_CODING_AGENT_DIR = piAgentDir;
     process.env.MCP_DIRECT_TOOLS = "ledger";
     process.env.PI_OFFLINE = "1";
+    // This test proves the PROCESS child's exclude-tools denylist via a capture
+    // extension loaded by `pi -p`. T1699 same-harness native uses
+    // createAgentSession({cwd}) instead; force the process seam here so the
+    // deny-list capture remains the measured surface.
+    process.env.CQ_DISPATCH_FORCE_SHELLOUT = "true";
     let parentActiveLedgerTools = LEDGER_CAPABILITY_TOOL_NAMES.map((tool) => `ledger_${tool}`);
     let registered: RegisteredTool | undefined;
     const cqSubagentDispatch = await loadDispatchExtension();
