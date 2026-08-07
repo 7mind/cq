@@ -87,6 +87,19 @@ describe("T1698/D263/K238 — Claude native positive-only qualification", () => 
     expect(relative.status).toBe("incompatible");
     if (relative.status !== "incompatible") throw new Error("expected incompatible");
     expect(relative.reason).toBe("cwd-not-absolute");
+
+    // Traversal / non-UUID worktree id must not qualify (path-weak handoff).
+    const traversal = qualifyClaudeNativeAdapter({
+      cwd: "/tmp/x/.claude/worktrees/../../../etc",
+      worktreeManageBound: true,
+    });
+    expect(traversal.status).toBe("incompatible");
+
+    const nonUuid = qualifyClaudeNativeAdapter({
+      cwd: "/tmp/project/.claude/worktrees/not-a-uuid",
+      worktreeManageBound: true,
+    });
+    expect(nonUuid.status).toBe("incompatible");
   });
 
   test("no assertion path claims K170 accepted write-confinement residual", () => {
@@ -171,7 +184,7 @@ describe("T1699/D160 — Pi native qualification and delivery selection", () => 
       "pi:native",
     ]);
     const claudeQ = qualifyClaudeNativeAdapter({
-      cwd: "/tmp/project/.claude/worktrees/claude-native",
+      cwd: "/tmp/project/.claude/worktrees/018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08",
       worktreeManageBound: true,
     });
     expect([...selectQualifiedNativeAdapterIds([q, claudeQ])].sort()).toEqual([
@@ -279,7 +292,7 @@ describe("T1699/D160 — Pi native qualification and delivery selection", () => 
     const unbound = qualifyClaudeNativeAdapter();
     expect(unbound.status).toBe("incompatible");
     const real = qualifyClaudeNativeAdapter({
-      cwd: "/tmp/project/.claude/worktrees/ok",
+      cwd: "/tmp/project/.claude/worktrees/018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08",
       worktreeManageBound: true,
     });
     expect(real.status).toBe("qualified");

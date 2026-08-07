@@ -242,10 +242,12 @@ const MODE_VERDICTS: readonly ClaudeDeliveryModeVerdict[] = Object.freeze([
       "independent read. What it CANNOT do is constrain or intercept the child's final message " +
       "(§5.3), which is why handleOnlyOutput is prompt-best-effort — the ONLY residual " +
       "decisions:K170 accepts explicitly. worktreeConfinement remains prompt-best-effort as a " +
-      "MEASURED FACT about the Agent tool (no path parameter; shared parent process), but that " +
-      "fact is D263's open incompatibility — NOT an authorized K170 write-confinement residual. " +
-      "Positive-only registration leaves claude:native unregistered until structural " +
-      "path-scoped confinement is proven.",
+      "MEASURED FACT about the Agent tool (no path parameter; shared parent process) — NOT an " +
+      "authorized K170 write-confinement residual (k170AcceptedWriteConfinement stays false). " +
+      "decisions:K238 / Q383(b) closes D263 under harness-owned isolation + worktree_manage " +
+      "path handoff: claude:native registers when qualifyClaudeNativeAdapter receives a " +
+      "manager-bound absolute managed path. Structural path-scoped write confinement remains " +
+      "unproven and is not claimed.",
   }),
   Object.freeze({
     mode: "wrapper-shellout" as const,
@@ -1365,13 +1367,15 @@ export const CLAUDE_WORKTREE_RECONCILIATION = Object.freeze({
     "child writing outside the prepared tree, because it runs in the parent's process with no " +
     "path-scoped sandbox and the Agent tool has no path parameter. This is NOT an authorized " +
     "decisions:K170 residual — K170 accepted harness-axis native transport and handle-only " +
-    "output only. D263 tracks write confinement as an open incompatibility; positive-only " +
-    "registration leaves claude:native unregistered until structural path-scoped confinement " +
-    "is proven. The lifecycle still consumes worktree_manage prepare path/handle, preflights " +
+    "output only (k170AcceptedWriteConfinement=false forever). decisions:K238 / Q383(b) " +
+    "accepts harness-owned isolation after worktree_manage path handoff and closes D263 under " +
+    "that model: claude:native registers when the orchestrator binds a manager-returned " +
+    "absolute managed path. Structural path-scoped write confinement remains unproven and is " +
+    "not claimed. Lifecycle consumes worktree_manage prepare path/handle, preflights " +
     "base/HEAD, resumes by handle, and releases ONLY via worktree_manage. Compensators that " +
-    "remain while unregistered: T894/T895 `resultCommitVerified`/`gateReRan`, merge-back " +
-    "`resultCommit` verification, ABSOLUTE PATH addressing (CLAUDE_WORKTREE_ADDRESSING), and " +
-    "D143 advisory worktreePath + required actualWorktreePath.",
+    "remain: T894/T895 `resultCommitVerified`/`gateReRan`, merge-back `resultCommit` " +
+    "verification, ABSOLUTE PATH addressing (CLAUDE_WORKTREE_ADDRESSING), and D143 advisory " +
+    "worktreePath + required actualWorktreePath.",
   rejected: Object.freeze([
     Object.freeze({
       option: "child-calls-worktree_manage(prepare)-as-its-first-act",

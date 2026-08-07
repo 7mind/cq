@@ -1988,6 +1988,11 @@ describe("T687 §6 — the K170 x Q363 worktree reconciliation", () => {
     expect(CLAUDE_WORKTREE_RECONCILIATION.chosenCost).toContain("D263");
     expect(CLAUDE_WORKTREE_RECONCILIATION.chosenCost).toContain("NOT an authorized");
     expect(CLAUDE_WORKTREE_RECONCILIATION.chosenCost).toContain("worktree_manage");
+    expect(CLAUDE_WORKTREE_RECONCILIATION.chosenCost).toMatch(/K238|Q383\(b\)/);
+    expect(CLAUDE_WORKTREE_RECONCILIATION.chosenCost).toContain("harness-owned");
+    expect(CLAUDE_WORKTREE_RECONCILIATION.chosenCost).not.toMatch(
+      /unregistered until structural/i,
+    );
     expect(CLAUDE_WORKTREE_RECONCILIATION.chosenCost).not.toMatch(
       /K170 already accepted.*write/i,
     );

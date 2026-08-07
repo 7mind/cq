@@ -127,11 +127,22 @@ export interface ClaudeNativeQualificationInput {
 
 /** Managed implement worktrees live under `<repo>/.claude/worktrees/<id>`. */
 const MANAGED_WORKTREE_MARKER = "/.claude/worktrees/";
+/** UUIDv7 (and compatible) worktree id segment. */
+const MANAGED_WORKTREE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function isManagedWorktreePath(cwd: string): boolean {
   if (!isAbsoluteFilesystemPath(cwd)) return false;
-  const normalized = cwd.replace(/\\/g, "/");
-  return normalized.includes(MANAGED_WORKTREE_MARKER);
+  const normalized = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
+  // Reject traversal and empty segments before accepting the managed marker.
+  if (normalized.includes("/../") || normalized.endsWith("/..") || normalized.includes("//")) {
+    return false;
+  }
+  const idx = normalized.lastIndexOf(MANAGED_WORKTREE_MARKER);
+  if (idx < 0) return false;
+  const after = normalized.slice(idx + MANAGED_WORKTREE_MARKER.length);
+  // Exactly one path segment (the worktree id); no nested escapes.
+  if (after.length === 0 || after.includes("/")) return false;
+  return MANAGED_WORKTREE_ID.test(after);
 }
 
 /**
