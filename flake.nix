@@ -1551,6 +1551,30 @@ PY
                   exit 1
                 fi
 
+                # T1725: separate lifecycle log for G147 dangling/active/archived
+                # PostgresLedgerStore cases (distinct from the ordinary Bun skip).
+                lifecycleLog="$NIX_BUILD_TOP/t1725-lifecycle.log"
+                if ! ${pkgs.bun}/bin/bun test packages/ledger/test/plan-lifecycle-store-conformance.test.ts \
+                  --test-name-pattern 'PostgresLedgerStore.*(rejects draft-key|rejects dangling known-ledger|accepts active and archived)' \
+                  > "$lifecycleLog" 2>&1; then
+                  cat "$lifecycleLog" >&2
+                  exit 1
+                fi
+                cat "$lifecycleLog"
+                for expectedLeg in \
+                  'rejects draft-key ledger refs and dangling leftovers without state leakage (T1724/D204)' \
+                  'rejects dangling known-ledger refs on milestone/task × dependsOn/blockedBy without leakage (T1724)' \
+                  'accepts active and archived materialized dependencies'; do
+                  if ! grep -F "(pass)" "$lifecycleLog" | grep -Fq "$expectedLeg"; then
+                    echo "T1725 lifecycle log missing pass: $expectedLeg" >&2
+                    exit 1
+                  fi
+                done
+                if grep -Fq '(skip)' "$lifecycleLog"; then
+                  echo "T1725 lifecycle log skipped a PostgreSQL selector" >&2
+                  exit 1
+                fi
+
                 runHook postCheck
               '';
 
