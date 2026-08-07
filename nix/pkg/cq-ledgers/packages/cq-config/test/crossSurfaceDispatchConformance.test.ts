@@ -309,7 +309,11 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     }
 
     const heldPiAdvance = normalize(renderedOf("pi", "implement/advance").replace(/^>\s?/gm, ""));
-    expect(heldPiAdvance).toContain(
+    // Pi held freeform is parent-verified authoritative; no unconditional bailout.
+    expect(heldPiAdvance).toContain(normalize("held freeform"));
+    expect(heldPiAdvance).toContain(normalize("parent verification"));
+    expect(heldPiAdvance).toContain(normalize("Do not bail out solely"));
+    expect(heldPiAdvance).not.toContain(
       normalize(
         "never interpret the held adapter's raw completion. Enter the bailout until the extension-local lifecycle can return a consumed fetched body.",
       ),

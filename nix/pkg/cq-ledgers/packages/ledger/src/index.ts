@@ -510,12 +510,7 @@ export {
   ALWAYS_SHOWN_COLUMNS,
   SUMMARY_SOURCE_FIELDS,
 } from "./columns.js";
-export {
-  projectCompact,
-  paginate,
-  COMPACT_PROJECTION_DENYLIST,
-  PROJECTION_EXTRA_DENYLIST,
-} from "./projection.js";
+export { paginate } from "./projection.js";
 export type { PaginateResult } from "./projection.js";
 export { summarize, fieldToString } from "./summarize.js";
 export { buildSnapshot } from "./snapshot.js";

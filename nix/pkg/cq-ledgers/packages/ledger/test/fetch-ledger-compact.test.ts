@@ -16,10 +16,10 @@ import { describe, it, expect, beforeEach } from "bun:test";
 import {
   InMemoryLedgerStore,
   createLedgerMcpTools,
+  COMPACT_ITEM_FIELD_NAMES,
   type FetchedLedger,
   type Item,
 } from "../src/index.js";
-import { COMPACT_PROJECTION_DENYLIST } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -109,13 +109,14 @@ beforeEach(async () => {
     },
   });
 
-  // Seed questions with a large context blob (schema requires question).
+  // Seed questions with a large context blob + answer (G150: answer in compact).
   await callTool(tools, "create_item", {
     ledger_id: "questions",
     milestone_id: "M1",
-    status: "open",
+    status: "answered",
     fields: {
       question: "Which fields should compact strip?",
+      answer: "long narrative fields; keep answer",
       context: LARGE_CONTEXT,
       recommendation: "All long narrative fields",
     },
@@ -175,15 +176,18 @@ describe("fetch_ledger — projection:compact", () => {
     }
   });
 
-  it("strips all COMPACT_PROJECTION_DENYLIST fields", async () => {
+  it("wire compact allowlist: only COMPACT_ITEM_FIELD_NAMES appear in fields", async () => {
     const result = decode<{ ledger: FetchedLedger }>(
       await callTool(tools, "fetch_ledger", { ledger_id: "goals", projection: "compact" }),
     );
     const allItems = result.ledger.milestones.flatMap((g) => g.items);
+    const allow = new Set<string>(COMPACT_ITEM_FIELD_NAMES);
     for (const item of allItems) {
-      for (const deniedField of COMPACT_PROJECTION_DENYLIST) {
-        expect(item.fields).not.toHaveProperty(deniedField);
+      for (const key of Object.keys(item.fields)) {
+        expect(allow.has(key)).toBe(true);
       }
+      expect(item.fields).not.toHaveProperty("grounding");
+      expect(item.fields).not.toHaveProperty("description");
     }
   });
 
@@ -230,7 +234,7 @@ describe("fetch_ledger — projection:compact", () => {
     expect(responseBytes).toBeLessThan(TOOL_OUTPUT_LIMIT_BYTES);
   });
 
-  it("compact questions response strips context and recommendation, fits under limit", async () => {
+  it("compact questions retains answer (G150) and strips context/recommendation", async () => {
     const result = await callTool(tools, "fetch_ledger", {
       ledger_id: "questions",
       projection: "compact",
@@ -244,6 +248,7 @@ describe("fetch_ledger — projection:compact", () => {
     expect(q.fields).not.toHaveProperty("context");
     expect(q.fields).not.toHaveProperty("recommendation");
     expect(q.fields["question"]).toBe("Which fields should compact strip?");
+    expect(q.fields["answer"]).toBe("long narrative fields; keep answer");
   });
 
   it("non-compact goals response overflows (control: confirms the problem compact solves)", async () => {
