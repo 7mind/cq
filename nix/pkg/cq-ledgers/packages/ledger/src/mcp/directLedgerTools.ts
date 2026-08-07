@@ -19,6 +19,7 @@ import {
 import type { ListProjectsCapability } from "./listProjects.js";
 import type { PromptCatalogCapability } from "./promptCatalogCapability.js";
 import type { ReadLogCapability } from "./readLog.js";
+import type { WorktreeManageCapability } from "./worktreeManageTools.js";
 
 export interface CreateLedgerSdkMcpServerOptions {
   readonly name: string;
@@ -33,6 +34,7 @@ export interface CreateLedgerSdkMcpServerOptions {
   readonly listProjects?: ListProjectsCapability;
   readonly dispatchCapability?: DispatchCapability;
   readonly profileName?: LedgerToolProfileName;
+  readonly worktreeManage?: WorktreeManageCapability;
 }
 
 /**
@@ -54,6 +56,7 @@ export function createLedgerSdkMcpServer(
       options.promptCatalog,
       options.listProjects,
       options.dispatchCapability,
+      options.worktreeManage,
     ),
     profileName,
   );

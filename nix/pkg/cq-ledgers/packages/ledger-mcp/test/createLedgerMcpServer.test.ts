@@ -8,7 +8,7 @@
  * assert:
  *  - a non-empty `toolPrefix` registers exactly `prefixedToolNames(prefix)`;
  *  - an omitted `toolPrefix` registers exactly the unprefixed `LEDGER_TOOL_NAMES`
- *    (the 29-tool surface), matching the legacy `buildServer` default.
+ *    (the full LEDGER_TOOL_NAMES surface), matching the legacy `buildServer` default.
  */
 
 import { describe, it, expect } from "bun:test";
@@ -85,7 +85,7 @@ describe("createLedgerMcpServer — public builder", () => {
     expect(names.every((n) => n.startsWith("myproj_"))).toBe(true);
   });
 
-  it("registers the unprefixed LEDGER_TOOL_NAMES (29) when toolPrefix is omitted", async () => {
+  it("registers the unprefixed LEDGER_TOOL_NAMES (31) when toolPrefix is omitted", async () => {
     const names = await registeredNames();
     expect(names).toEqual([...LEDGER_TOOL_NAMES].sort());
     expect(names.length).toBe(LEDGER_TOOL_NAMES.length);

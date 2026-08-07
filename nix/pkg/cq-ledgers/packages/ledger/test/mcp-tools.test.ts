@@ -143,11 +143,11 @@ function expectedItemAcknowledgement(item: Item): Record<string, unknown> {
 }
 
 describe("ledger MCP tools", () => {
-  it("exports 30 canonical names, hides both validators, and omits unwired dispatch handlers", async () => {
+  it("exports 31 canonical names, hides both validators, and omits unwired dispatch handlers", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
     expect(tools.map((t) => t.name).sort()).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
-    expect(LEDGER_TOOL_NAMES.length).toBe(30);
+    expect(LEDGER_TOOL_NAMES.length).toBe(31);
     expect(LEDGER_TOOL_NAMES).toContain("fts_search");
     expect(LEDGER_TOOL_NAMES).toContain("snapshot");
     expect(LEDGER_TOOL_NAMES).toContain("derive_predicates");
@@ -172,6 +172,7 @@ describe("ledger MCP tools", () => {
     expect(LEDGER_TOOL_NAMES).toContain("publish_plan_draft");
     expect(LEDGER_TOOL_NAMES).toContain("release_plan_claim");
     expect(LEDGER_TOOL_NAMES).toContain("finalize_plan");
+    expect(LEDGER_TOOL_NAMES).toContain("worktree_manage");
   });
 
   it("prefixes every registered non-dispatch tool", async () => {

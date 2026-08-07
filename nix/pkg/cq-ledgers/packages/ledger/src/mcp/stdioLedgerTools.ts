@@ -21,6 +21,7 @@ import {
 import type { ListProjectsCapability } from "./listProjects.js";
 import type { PromptCatalogCapability } from "./promptCatalogCapability.js";
 import type { ReadLogCapability } from "./readLog.js";
+import type { WorktreeManageCapability } from "./worktreeManageTools.js";
 
 /**
  * Register an already-resolved specification set. Callers must profile and
@@ -74,6 +75,7 @@ export function registerLedgerStdioTools(
   listProjects?: ListProjectsCapability,
   dispatchCapability?: DispatchCapability,
   profileName: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
+  worktreeManage?: WorktreeManageCapability,
 ): void {
   const specifications = selectLedgerMcpToolSpecifications(
     createLedgerMcpToolSpecifications(
@@ -83,6 +85,7 @@ export function registerLedgerStdioTools(
       promptCatalog,
       listProjects,
       dispatchCapability,
+      worktreeManage,
     ),
     profileName,
   );

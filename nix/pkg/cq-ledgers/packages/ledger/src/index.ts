@@ -418,6 +418,21 @@ export {
   isPlanLifecycleStore,
 } from "./mcp/planLifecycleTools.js";
 export type { PlanLifecycleToolName, PlanLifecycleToolSpec } from "./mcp/planLifecycleTools.js";
+export {
+  WORKTREE_MANAGE_INPUT_SHAPE,
+  WORKTREE_MANAGE_TOOL_NAME,
+  WORKTREE_MANAGE_TOOL_SPEC,
+  WorktreeManageNotImplementedError,
+  createWorktreeManageCapability,
+  dependencyTaskSnapshotReaderFromStore,
+  parseWorktreeManageInput,
+} from "./mcp/worktreeManageTools.js";
+export type {
+  WorktreeManageCapability,
+  WorktreeManageFlatInput,
+  WorktreeManageToolName,
+  WorktreeManageToolSpec,
+} from "./mcp/worktreeManageTools.js";
 export { MAX_READ_LOG_BYTES, ReadLogNotImplementedError } from "./mcp/readLog.js";
 export type { ReadLogCapability, ReadLogResult } from "./mcp/readLog.js";
 export { DispatchNotImplementedError } from "./mcp/dispatchCapability.js";

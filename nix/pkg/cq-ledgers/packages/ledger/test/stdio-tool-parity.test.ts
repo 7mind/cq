@@ -22,6 +22,7 @@ import {
   type ListProjectsCapability,
   type PromptCatalogCapability,
   type ReadLogCapability,
+  type WorktreeManageCapability,
 } from "../src/index.js";
 
 const FIXED_NOW = "2026-07-24T12:00:00.000Z";
@@ -171,6 +172,22 @@ const dispatchCapability: DispatchCapability = {
   fetch: async () => ({ operation: "fetch_dispatch_result" }) as never,
 };
 
+const WORKTREE_MANAGE_PARITY_ACK = {
+  status: "refused",
+  reason: "task-id-invalid",
+  detail: "parity-stub",
+} as const;
+
+const worktreeManageCapability: WorktreeManageCapability = {
+  repositoryRoot: "/tmp/parity-worktree-root",
+  prepare: async () => WORKTREE_MANAGE_PARITY_ACK,
+  release: async () => ({
+    status: "refused",
+    reason: "handle-invalid",
+    detail: "parity-stub",
+  }),
+};
+
 type DirectTools = ReturnType<typeof createLedgerMcpTools>;
 
 interface ToolCapabilities {
@@ -179,6 +196,7 @@ interface ToolCapabilities {
   promptCatalog: PromptCatalogCapability | undefined;
   listProjects: ListProjectsCapability | undefined;
   dispatch: DispatchCapability | undefined;
+  worktreeManage: WorktreeManageCapability | undefined;
 }
 
 const AVAILABLE_CAPABILITIES: ToolCapabilities = {
@@ -187,6 +205,7 @@ const AVAILABLE_CAPABILITIES: ToolCapabilities = {
   promptCatalog,
   listProjects,
   dispatch: dispatchCapability,
+  worktreeManage: worktreeManageCapability,
 };
 
 const UNAVAILABLE_CAPABILITIES: ToolCapabilities = {
@@ -195,6 +214,7 @@ const UNAVAILABLE_CAPABILITIES: ToolCapabilities = {
   promptCatalog: undefined,
   listProjects: undefined,
   dispatch: undefined,
+  worktreeManage: undefined,
 };
 
 interface TextToolResult {
@@ -329,6 +349,7 @@ function directTools(
     capabilities.listProjects,
     capabilities.dispatch,
     profileName,
+    capabilities.worktreeManage,
   );
 }
 
@@ -448,6 +469,7 @@ async function connectStdio(
     capabilities.listProjects,
     capabilities.dispatch,
     profileName,
+    capabilities.worktreeManage,
   );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -494,6 +516,9 @@ async function connectAnthropicDirect(
     ...(capabilities.dispatch === undefined
       ? {}
       : { dispatchCapability: capabilities.dispatch }),
+    ...(capabilities.worktreeManage === undefined
+      ? {}
+      : { worktreeManage: capabilities.worktreeManage }),
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.instance.connect(serverTransport);
@@ -848,6 +873,14 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
         ...PARITY_PROVENANCE,
       },
     },
+    {
+      name: "worktree_manage",
+      args: {
+        operation: "prepare",
+        taskId: "T1",
+        baseCommit: "a".repeat(40),
+      },
+    },
   ];
 }
 
@@ -979,6 +1012,7 @@ function assertRepresentativeContracts(
   expect(responses.get("get_config")).toEqual(CONFIG_RESULT);
   expect(responses.get("fetch_prompt")).toEqual(PROMPT_RESULT);
   expect(responses.get("list_projects")).toEqual(PROJECTS_RESULT);
+  expect(responses.get("worktree_manage")).toEqual(WORKTREE_MANAGE_PARITY_ACK);
 }
 
 // BG, specified-origin: both registrations expose one canonical contract per profile.
@@ -1131,7 +1165,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 30 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 31 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);
@@ -1229,6 +1263,10 @@ describe("stdio/direct ledger tool differential contract", () => {
         { name: "get_config", args: { section: "all" } },
         { name: "fetch_prompt", args: { roleId: PROMPT_RESULT.roleId } },
         { name: "list_projects", args: {} },
+        {
+          name: "worktree_manage",
+          args: { operation: "prepare", taskId: "T1", baseCommit: "a".repeat(40) },
+        },
       ];
 
       try {

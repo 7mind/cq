@@ -67,6 +67,8 @@ import {
   prefixToolName,
   type LedgerToolName,
   type LedgerToolProfileName,
+  type WorktreeManageCapability,
+  createWorktreeManageCapability,
 } from "@cq/ledger";
 import { createConfigCapability } from "./configCapability.js";
 import {
@@ -548,6 +550,18 @@ export interface CreateLedgerMcpServerOptions {
   listProjects?: ListProjectsCapability;
   /** Durable, server-scoped dispatch lifecycle capability. */
   dispatchCapability?: DispatchCapability;
+  /**
+   * Managed-worktree lifecycle capability (T1306). When omitted, the server
+   * synthesises one from `repositoryRoot` when that is set; otherwise
+   * `worktree_manage` throws WorktreeManageNotImplementedError on invoke.
+   */
+  worktreeManage?: WorktreeManageCapability;
+  /**
+   * Git repository root used to wire the default `worktree_manage` capability
+   * when `worktreeManage` is omitted. Production hosts pass the same cwd used
+   * to open the ledger store.
+   */
+  repositoryRoot?: string;
 }
 
 /**
@@ -603,6 +617,11 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
       key: opts.projectKey ?? displayName,
       displayName,
     });
+  const worktreeManage: WorktreeManageCapability | undefined =
+    opts.worktreeManage ??
+    (opts.repositoryRoot !== undefined
+      ? createWorktreeManageCapability(opts.repositoryRoot)
+      : undefined);
   const specifications = selectLedgerMcpToolSpecifications(
     createLedgerMcpToolSpecifications(
       store,
@@ -611,6 +630,7 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
       promptCatalog,
       listProjects,
       opts.dispatchCapability,
+      worktreeManage,
     ),
     toolProfile,
   );
@@ -640,6 +660,7 @@ export function buildServer(
   projectKey?: string,
   promptArtifactStore?: PromptArtifactStore,
   dispatchCapability?: DispatchCapability,
+  repositoryRoot?: string,
 ): McpServer {
   return createLedgerMcpServer({
     store,
@@ -648,6 +669,7 @@ export function buildServer(
     ...(projectKey !== undefined ? { projectKey } : {}),
     ...(promptArtifactStore !== undefined ? { promptArtifactStore } : {}),
     ...(dispatchCapability !== undefined ? { dispatchCapability } : {}),
+    ...(repositoryRoot !== undefined ? { repositoryRoot } : {}),
   });
 }
 
@@ -696,6 +718,7 @@ export function attachMcpHttp(
   listProjects?: ListProjectsCapability,
   dispatchCapability?: DispatchCapability,
   toolProfile: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
+  repositoryRoot?: string,
 ): McpHttpHandlers {
   const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
 
@@ -743,6 +766,7 @@ export function attachMcpHttp(
       ...(promptArtifactStore !== undefined ? { promptArtifactStore } : {}),
       ...(listProjects !== undefined ? { listProjects } : {}),
       ...(dispatchCapability !== undefined ? { dispatchCapability } : {}),
+      ...(repositoryRoot !== undefined ? { repositoryRoot } : {}),
       toolProfile,
     });
     await server.connect(transport);
@@ -807,6 +831,7 @@ export function serveHttp(
   promptArtifactStore?: PromptArtifactStore,
   dispatchCapability?: DispatchCapability,
   toolProfile: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
+  repositoryRoot?: string,
 ): ReturnType<typeof Bun.serve> {
   const { handle, onWsOpen, onWsMessage } = attachMcpHttp(
     store,
@@ -818,6 +843,7 @@ export function serveHttp(
     undefined,
     dispatchCapability,
     toolProfile,
+    repositoryRoot,
   );
 
   return Bun.serve({
@@ -898,6 +924,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       resolvedPromptSurface?.store,
       dispatchCapability,
       toolProfile,
+      cwd,
     );
     // Watch the ledger for out-of-process advances; push a `changed` frame to
     // subscribed UIs on any change. The watcher is selected by backend (file
@@ -931,6 +958,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       ? { promptArtifactStore: resolvedPromptSurface.store }
       : {}),
     ...(dispatchCapability === undefined ? {} : { dispatchCapability }),
+    repositoryRoot: cwd,
     toolProfile,
   });
   // Even on stdio, watch the ledger so this server's cache stays fresh when

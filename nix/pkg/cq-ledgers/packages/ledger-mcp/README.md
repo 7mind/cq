@@ -1,6 +1,6 @@
 # @cq/ledger-mcp
 
-Standalone MCP server exposing the 29 ledger tools backed by an xdg/sqlite,
+Standalone MCP server exposing the 31 ledger tools backed by an xdg/sqlite,
 filesystem, or PostgreSQL ledger store. Speaks stdio (default) and Streamable
 HTTP (`--http`). The six dispatch-lifecycle tools use a separate durable,
 namespaced attestation backend and appear only when the server has both a
@@ -18,7 +18,7 @@ cq mcp --cwd /path/to/project
 # Streamable HTTP on 127.0.0.1:7777
 cq mcp --cwd /path/to/project --http 7777
 
-# Prefix all 29 tool names with "myproj_"
+# Prefix all 31 tool names with "myproj_"
 cq mcp --cwd /path/to/project --tool-prefix myproj
 ```
 
@@ -96,7 +96,7 @@ process.once("SIGTERM", () => void shutdown());
 process.once("SIGINT", () => void shutdown());
 ```
 
-With a supported backend and attested prompt surface, this registers all 29
+With a supported backend and attested prompt surface, this registers all 31
 tools. Without a durable dispatch runtime, `createLedgerMcpServer` omits the
 six dispatch-lifecycle tools before registration and exposes the remaining
 23. The prefix applies to every tool that the server registers and to matching
@@ -235,6 +235,7 @@ measured savings without another batching schema.
 | `publish_plan_draft` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { …operation key, manifest, replacedManifest, reviewDefects } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
 | `release_plan_claim` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { kind, …operation key, questions, researches, waitingResearches, tasks, waitingTasks, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
 | `finalize_plan` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { …operation key, reviewId, draft, decisionId, manifest, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
+| `worktree_manage` | `purpose-built-small` | Prepare: `{ status: "prepared"|"resume-required"|"refused", … }`. Release: `{ status: "released"|"refused", … }`. Typed acknowledgements only; never exposes filesystem mutation primitives individually. |
 <!-- ledger-response-contract:end -->
 
 ### Usage statistics: three access paths
@@ -352,7 +353,7 @@ not sent as a tool argument.
 
 ## Client development and migration
 
-Treat response decoding as a closed 29-tool matrix, not as a generic
+Treat response decoding as a closed 31-tool matrix, not as a generic
 full-entity decoder. Require callers to choose a projection for the five
 item-bearing read tools, model the acknowledgement DTOs independently
 from full items, and retain pagination metadata until `nextOffset` becomes

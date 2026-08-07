@@ -96,6 +96,10 @@ import {
 } from "./promptCatalogCapability.js";
 import { ListProjectsNotImplementedError, type ListProjectsCapability } from "./listProjects.js";
 import { PLAN_LIFECYCLE_TOOL_SPECS } from "./planLifecycleTools.js";
+import {
+  WORKTREE_MANAGE_TOOL_SPEC,
+  type WorktreeManageCapability,
+} from "./worktreeManageTools.js";
 
 /** The compatibility profile: every capability-gated tool specification. */
 export const FULL_LEDGER_TOOL_PROFILE = "full";
@@ -403,6 +407,7 @@ export function createLedgerMcpToolSpecifications(
   promptCatalog?: PromptCatalogCapability,
   listProjects?: ListProjectsCapability,
   dispatchCapability?: DispatchCapability,
+  worktreeManage?: WorktreeManageCapability,
 ): LedgerToolSpecification[] {
   // ---- Item / ledger surface (9) -----------------------------------------
 
@@ -925,6 +930,16 @@ export function createLedgerMcpToolSpecifications(
     ),
   );
 
+  // T1306: single prepare|release chokepoint. Spec shared with stdio so both
+  // transports cannot drift on schema or acknowledgement shape.
+  const worktreeManageTool = tool(
+    WORKTREE_MANAGE_TOOL_SPEC.name,
+    WORKTREE_MANAGE_TOOL_SPEC.description,
+    WORKTREE_MANAGE_TOOL_SPEC.inputSchema,
+    async (args: unknown) =>
+      wireResult(await WORKTREE_MANAGE_TOOL_SPEC.run(store, worktreeManage, args)),
+  );
+
   const dispatchTools =
     dispatchCapability === undefined
       ? []
@@ -959,6 +974,7 @@ export function createLedgerMcpToolSpecifications(
     fetchPrompt,
     listProjectsTool,
     ...planLifecycleTools,
+    worktreeManageTool,
   ] as unknown as AnyTool[];
 
   const registeredToolNames =
@@ -1066,6 +1082,7 @@ export function createLedgerMcpTools(
   listProjects?: ListProjectsCapability,
   dispatchCapability?: DispatchCapability,
   profileName: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
+  worktreeManage?: WorktreeManageCapability,
 ): AnyTool[] {
   assertToolPrefix(toolPrefix);
   const specifications = selectLedgerMcpToolSpecifications(
@@ -1076,6 +1093,7 @@ export function createLedgerMcpTools(
       promptCatalog,
       listProjects,
       dispatchCapability,
+      worktreeManage,
     ),
     profileName,
   );

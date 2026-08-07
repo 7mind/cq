@@ -292,6 +292,11 @@ export const LEDGER_RESPONSE_CONTRACTS = {
       "decisionId, manifest, reviewDefects, goalPhase } }` or " +
       "`{ ok: false, conflict }`; never carries `ownerFenceToken`.",
   ),
+  worktree_manage: purposeBuiltSmall(
+    "Prepare: `{ status: \"prepared\"|\"resume-required\"|\"refused\", … }`. " +
+      "Release: `{ status: \"released\"|\"refused\", … }`. Typed acknowledgements only; " +
+      "never exposes filesystem mutation primitives individually.",
+  ),
 } as const satisfies Record<LedgerToolName, LedgerResponseContract>;
 
 export function appendLedgerResponseDescription(

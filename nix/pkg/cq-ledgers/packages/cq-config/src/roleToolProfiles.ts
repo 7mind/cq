@@ -6,7 +6,7 @@ import { PROMPT_CATALOG_PROJECTION } from "./promptCatalog.gen.js";
  *
  * `@cq/config` cannot import `@cq/ledger` because the dependency runs in the
  * other direction. `roleToolProfiles.test.ts` therefore guards this inventory
- * against the prompt catalogue and the maintained 29-tool surface. T1327 owns
+ * against the prompt catalogue and the maintained 31-tool surface. T1327 owns
  * moving tool specifications behind one canonical filtered registry.
  */
 export const LEDGER_CAPABILITY_TOOL_NAMES = [
@@ -40,6 +40,7 @@ export const LEDGER_CAPABILITY_TOOL_NAMES = [
   "publish_plan_draft",
   "release_plan_claim",
   "finalize_plan",
+  "worktree_manage",
 ] as const;
 
 export type LedgerCapabilityToolName = (typeof LEDGER_CAPABILITY_TOOL_NAMES)[number];
