@@ -246,7 +246,8 @@ const MODE_VERDICTS: readonly ClaudeDeliveryModeVerdict[] = Object.freeze([
       "authorized K170 write-confinement residual (k170AcceptedWriteConfinement stays false). " +
       "decisions:K238 / Q383(b) closes D263 under harness-owned isolation + worktree_manage " +
       "path handoff: claude:native registers when qualifyClaudeNativeAdapter receives a " +
-      "manager-bound absolute managed path. Structural path-scoped write confinement remains " +
+      "manager-bound absolute managed path plus cq-managed-worktree-handle (D287). Structural " +
+      "path-scoped write confinement remains " +
       "unproven and is not claimed.",
   }),
   Object.freeze({
@@ -1368,9 +1369,10 @@ export const CLAUDE_WORKTREE_RECONCILIATION = Object.freeze({
     "path-scoped sandbox and the Agent tool has no path parameter. This is NOT an authorized " +
     "decisions:K170 residual — K170 accepted harness-axis native transport and handle-only " +
     "output only (k170AcceptedWriteConfinement=false forever). decisions:K238 / Q383(b) " +
-    "accepts harness-owned isolation after worktree_manage path handoff and closes D263 under " +
-    "that model: claude:native registers when the orchestrator binds a manager-returned " +
-    "absolute managed path. Structural path-scoped write confinement remains unproven and is " +
+    "accepts harness-owned isolation after worktree_manage handle+path handoff (D287) and " +
+    "closes D263 under that model: claude:native registers when the orchestrator binds a " +
+    "manager-returned absolute managed path with matching cq-managed-worktree-handle. " +
+    "Structural path-scoped write confinement remains unproven and is " +
     "not claimed. Lifecycle consumes worktree_manage prepare path/handle, preflights " +
     "base/HEAD, resumes by handle, and releases ONLY via worktree_manage. Compensators that " +
     "remain: T894/T895 `resultCommitVerified`/`gateReRan`, merge-back `resultCommit` " +
