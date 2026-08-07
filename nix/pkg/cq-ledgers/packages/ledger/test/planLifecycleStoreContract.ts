@@ -57,8 +57,8 @@ const RICH_MANIFEST = {
       key: "design",
       title: "Design guarded planning",
       description: "Preserve every milestone field",
-      // Free-text advisory (not a known-ledger dangling target): G80 pass-through.
-      dependsOn: [{ kind: "ledger", ref: "awaiting-research-signoff" }],
+      // T1723: known-ledger targets seeded via seedDependencyTarget (not free-text).
+      dependsOn: [{ kind: "ledger", ref: "researches:RS8" }],
       blockedBy: [{ kind: "draft-milestone", key: "delivery" }],
     },
     {
@@ -66,7 +66,7 @@ const RICH_MANIFEST = {
       title: "Deliver guarded planning",
       description: "Own the implementation tasks",
       dependsOn: [{ kind: "draft-milestone", key: "design" }],
-      blockedBy: [{ kind: "ledger", ref: "awaiting-design-review" }],
+      blockedBy: [{ kind: "ledger", ref: "questions:Q1" }],
     },
   ],
   tasks: [
@@ -82,7 +82,7 @@ const RICH_MANIFEST = {
       tags: ["contract", "guarded"],
       dependsOn: [
         { kind: "draft-milestone", key: "design" },
-        { kind: "ledger", ref: "awaiting-research-signoff" },
+        { kind: "ledger", ref: "researches:RS8" },
       ],
       blockedBy: [{ kind: "draft-task", key: "implementation" }],
     },
@@ -97,10 +97,19 @@ const RICH_MANIFEST = {
       sourceRefs: ["tasks:T846"],
       tags: ["implementation"],
       dependsOn: [{ kind: "draft-task", key: "contract" }],
-      blockedBy: [{ kind: "ledger", ref: "awaiting-operator-answer" }],
+      blockedBy: [{ kind: "ledger", ref: "questions:Q2" }],
     },
   ],
 } as const satisfies PlanDraftManifest;
+
+/** Dual-run observe helper: production strips tasks:/milestones:; reference may keep prefixes. */
+function observedHasRef(
+  refs: readonly string[],
+  ledger: string,
+  id: string,
+): boolean {
+  return refs.includes(id) || refs.includes(`${ledger}:${id}`);
+}
 
 function claimInput(
   purpose: "initial" | "follow-up",
@@ -1506,6 +1515,29 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
         async () => {
         const fixture = await buildGoal(factory, "clarifying", null);
         try {
+          // T1723: authoritative known-ledger targets for RICH_MANIFEST refs.
+          // Seed as active existence first; then mark researches/questions
+          // satisfying so later startTask on a superseded task fails the
+          // draft/superseded fence (not an unsatisfied-dep short-circuit).
+          await fixture.seedDependencyTarget({
+            ledgerId: "researches",
+            id: "RS8",
+            disposition: "active",
+            goalId: GOAL_ID,
+          });
+          await fixture.seedDependencyTarget({
+            ledgerId: "questions",
+            id: "Q1",
+            disposition: "active",
+            goalId: GOAL_ID,
+          });
+          await fixture.seedDependencyTarget({
+            ledgerId: "questions",
+            id: "Q2",
+            disposition: "active",
+            goalId: GOAL_ID,
+          });
+          await fixture.setResearchStatus("RS8", "concluded");
           const claim = requireClaimWinner(
             await fixture.lifecycle.claimPlan(
               claimInput("initial", "rich-replacement", OWNER_TOKEN_A, null, PROVENANCE_A),
@@ -1528,63 +1560,64 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
           );
           const firstState = await fixture.observe(GOAL_ID);
           expect(firstState.currentDraft?.revision).toBe(1);
-          expect(firstState.milestones).toEqual(
-            expect.arrayContaining([
-              expect.objectContaining({
-                id: firstMilestones["design"],
-                goalId: GOAL_ID,
-                title: "Design guarded planning",
-                description: "Preserve every milestone field",
-                dependsOn: ["awaiting-research-signoff"],
-                blockedBy: [firstMilestones["delivery"]],
-                taskIds: [firstTasks["contract"]],
-                provenance: PROVENANCE_A,
-              }),
-              expect.objectContaining({
-                id: firstMilestones["delivery"],
-                goalId: GOAL_ID,
-                description: "Own the implementation tasks",
-                dependsOn: [firstMilestones["design"]],
-                blockedBy: ["awaiting-design-review"],
-                taskIds: [firstTasks["implementation"]],
-                provenance: PROVENANCE_A,
-              }),
-            ]),
+          const designMs = firstState.milestones.find((m) => m.id === firstMilestones["design"]);
+          const deliveryMs = firstState.milestones.find(
+            (m) => m.id === firstMilestones["delivery"],
           );
-          expect(firstState.tasks).toEqual(
-            expect.arrayContaining([
-              expect.objectContaining({
-                id: firstTasks["contract"],
-                goalId: GOAL_ID,
-                milestoneId: firstMilestones["design"],
-                description: "Retain the task description",
-                acceptance: "The contract remains unchanged across adapters",
-                suggestedModel: "frontier",
-                  ledgerRefs: ["goals:G1", "defects:D264"],
-                  sourceRefs: ["nix/pkg/cq-ledgers/packages/ledger/src/planLifecycle.ts"],
-                tags: ["contract", "guarded"],
-                dependsOn: [firstMilestones["design"], "awaiting-research-signoff"],
-                blockedBy: [firstTasks["implementation"]],
-                executable: false,
-                provenance: PROVENANCE_A,
-              }),
-              expect.objectContaining({
-                id: firstTasks["implementation"],
-                goalId: GOAL_ID,
-                milestoneId: firstMilestones["delivery"],
-                description: "Retain implementation metadata",
-                acceptance: "Only the finalized current draft becomes executable",
-                suggestedModel: "frontier",
-                  ledgerRefs: ["goals:G1", "defects:D264"],
-                sourceRefs: ["tasks:T846"],
-                tags: ["implementation"],
-                dependsOn: [firstTasks["contract"]],
-                blockedBy: ["awaiting-operator-answer"],
-                executable: false,
-                provenance: PROVENANCE_A,
-              }),
-            ]),
+          expect(designMs).toMatchObject({
+            id: firstMilestones["design"],
+            goalId: GOAL_ID,
+            title: "Design guarded planning",
+            description: "Preserve every milestone field",
+            blockedBy: [firstMilestones["delivery"]],
+            taskIds: [firstTasks["contract"]],
+            provenance: PROVENANCE_A,
+          });
+          expect(observedHasRef(designMs!.dependsOn, "researches", "RS8")).toBe(true);
+          expect(deliveryMs).toMatchObject({
+            id: firstMilestones["delivery"],
+            goalId: GOAL_ID,
+            description: "Own the implementation tasks",
+            dependsOn: [firstMilestones["design"]],
+            taskIds: [firstTasks["implementation"]],
+            provenance: PROVENANCE_A,
+          });
+          expect(observedHasRef(deliveryMs!.blockedBy, "questions", "Q1")).toBe(true);
+          const contractTask = firstState.tasks.find((t) => t.id === firstTasks["contract"]);
+          const implementationTask = firstState.tasks.find(
+            (t) => t.id === firstTasks["implementation"],
           );
+          expect(contractTask).toMatchObject({
+            id: firstTasks["contract"],
+            goalId: GOAL_ID,
+            milestoneId: firstMilestones["design"],
+            description: "Retain the task description",
+            acceptance: "The contract remains unchanged across adapters",
+            suggestedModel: "frontier",
+            ledgerRefs: ["goals:G1", "defects:D264"],
+            sourceRefs: ["nix/pkg/cq-ledgers/packages/ledger/src/planLifecycle.ts"],
+            tags: ["contract", "guarded"],
+            blockedBy: [firstTasks["implementation"]],
+            executable: false,
+            provenance: PROVENANCE_A,
+          });
+          expect(contractTask!.dependsOn).toContain(firstMilestones["design"]!);
+          expect(observedHasRef(contractTask!.dependsOn, "researches", "RS8")).toBe(true);
+          expect(implementationTask).toMatchObject({
+            id: firstTasks["implementation"],
+            goalId: GOAL_ID,
+            milestoneId: firstMilestones["delivery"],
+            description: "Retain implementation metadata",
+            acceptance: "Only the finalized current draft becomes executable",
+            suggestedModel: "frontier",
+            ledgerRefs: ["goals:G1", "defects:D264"],
+            sourceRefs: ["tasks:T846"],
+            tags: ["implementation"],
+            dependsOn: [firstTasks["contract"]],
+            executable: false,
+            provenance: PROVENANCE_A,
+          });
+          expect(observedHasRef(implementationTask!.blockedBy, "questions", "Q2")).toBe(true);
           const replacement = await fixture.lifecycle.publishPlanDraft(
             publishInput(claim, "replacement-draft", COMPLETE_MANIFEST),
           );
@@ -1781,6 +1814,89 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
             ).rejects.toBeInstanceOf(DanglingRefError);
           } finally {
             await fixture.dispose();
+          }
+        },
+        timeout,
+      );
+
+      it(
+        "accepts active and archived materialized dependencies",
+        async () => {
+          const fixture = await buildGoal(factory, "clarifying", null);
+          let restarted: PlanLifecycleContractFixture | null = null;
+          try {
+            await fixture.seedDependencyTarget({
+              ledgerId: "tasks",
+              id: "T9001",
+              disposition: "active",
+              goalId: GOAL_ID,
+            });
+            await fixture.seedDependencyTarget({
+              ledgerId: "tasks",
+              id: "T9002",
+              disposition: "archived",
+              goalId: GOAL_ID,
+            });
+            await fixture.seedDependencyTarget({
+              ledgerId: "researches",
+              id: "RS8",
+              disposition: "active",
+              goalId: GOAL_ID,
+            });
+            await fixture.seedDependencyTarget({
+              ledgerId: "questions",
+              id: "Q1",
+              disposition: "archived",
+              goalId: GOAL_ID,
+            });
+
+            const claim = requireClaimWinner(
+              await fixture.lifecycle.claimPlan(
+                claimInput("initial", "dep-targets", OWNER_TOKEN_A, null, PROVENANCE_A),
+              ),
+            );
+            const manifest = {
+              milestones: [{ key: "delivery", title: "Delivery" }],
+              tasks: [
+                {
+                  key: "work",
+                  milestoneKey: "delivery",
+                  headline: "Work with mixed dependency targets",
+                  dependsOn: [
+                    { kind: "ledger" as const, ref: "tasks:T9001" },
+                    { kind: "ledger" as const, ref: "tasks:T9002" },
+                    { kind: "ledger" as const, ref: "researches:RS8" },
+                  ],
+                  blockedBy: [{ kind: "ledger" as const, ref: "questions:Q1" }],
+                },
+              ],
+            } satisfies PlanDraftManifest;
+
+            const published = await fixture.lifecycle.publishPlanDraft(
+              publishInput(claim, "dep-targets-publish", manifest),
+            );
+            if (!published.ok) {
+              throw new Error("active/archived dependency publish unexpectedly conflicted");
+            }
+            const workId = published.acknowledgement.manifest.tasks[0]!.id;
+            const before = await fixture.observe(GOAL_ID);
+            const work = before.tasks.find((t) => t.id === workId);
+            expect(work).toBeDefined();
+            expect(observedHasRef(work!.dependsOn, "tasks", "T9001")).toBe(true);
+            expect(observedHasRef(work!.dependsOn, "tasks", "T9002")).toBe(true);
+            expect(observedHasRef(work!.dependsOn, "researches", "RS8")).toBe(true);
+            expect(observedHasRef(work!.blockedBy, "questions", "Q1")).toBe(true);
+
+            restarted = await fixture.restart();
+            const after = await restarted.observe(GOAL_ID);
+            const workAfter = after.tasks.find((t) => t.id === workId);
+            expect(workAfter).toBeDefined();
+            expect(observedHasRef(workAfter!.dependsOn, "tasks", "T9001")).toBe(true);
+            expect(observedHasRef(workAfter!.dependsOn, "tasks", "T9002")).toBe(true);
+            expect(observedHasRef(workAfter!.dependsOn, "researches", "RS8")).toBe(true);
+            expect(observedHasRef(workAfter!.blockedBy, "questions", "Q1")).toBe(true);
+          } finally {
+            await (restarted ?? fixture).dispose();
           }
         },
         timeout,

@@ -39,6 +39,7 @@ import type {
   ReferencePublicReview,
   ReferencePublicTask,
   SeedDecisionOptions,
+  SeedDependencyTargetOptions,
   SeedGoalOptions,
   SeedReviewOptions,
   SeedWorkOptions,
@@ -523,6 +524,98 @@ export abstract class LedgerStorePlanLifecycleFixture<
       ...SEED_PROVENANCE,
     });
     return { id: item.id };
+  }
+
+  async seedDependencyTarget(
+    options: SeedDependencyTargetOptions,
+  ): Promise<{ ref: string }> {
+    const ledgerId = options.ledgerId;
+    const id = options.id;
+    const ref = `${ledgerId}:${id}`;
+
+    if (ledgerId === "milestones") {
+      await this.store.createMilestone({
+        id,
+        title: `seeded dependency milestone ${id}`,
+        ...SEED_PROVENANCE,
+      });
+      if (options.disposition === "archived") {
+        await this.store.updateMilestone(id, { status: "done", ...SEED_PROVENANCE });
+        await this.store.archiveMilestone(id, `seed archive ${id}`);
+      }
+      return { ref };
+    }
+
+    // Dedicated milestone so archived disposition can sweep the item.
+    const host = await this.store.createMilestone({
+      title: `dep-host-${ledgerId}-${id}`,
+      ...SEED_PROVENANCE,
+    });
+
+    const fields: Record<string, string | string[]> = (() => {
+      switch (ledgerId) {
+        case TASKS_LEDGER:
+          return { headline: `seeded dependency task ${id}` };
+        case QUESTIONS_LEDGER:
+          return { question: `seeded dependency question ${id}` };
+        case RESEARCHES_LEDGER:
+          return { question: `seeded dependency research ${id}` };
+        case DEFECTS_LEDGER:
+          return {
+            headline: `seeded dependency defect ${id}`,
+            severity: "low",
+          };
+        default:
+          throw new Error(`seedDependencyTarget: unsupported ledger ${ledgerId}`);
+      }
+    })();
+
+    const initialStatus =
+      ledgerId === TASKS_LEDGER
+        ? "planned"
+        : ledgerId === DEFECTS_LEDGER
+          ? "open"
+          : "open";
+
+    await this.store.createItem(ledgerId, host.id, {
+      id,
+      status: initialStatus,
+      fields,
+      ...SEED_PROVENANCE,
+    });
+
+    if (options.disposition === "archived") {
+      const terminalStatus =
+        ledgerId === TASKS_LEDGER
+          ? "done"
+          : ledgerId === QUESTIONS_LEDGER
+            ? "answered"
+            : ledgerId === RESEARCHES_LEDGER
+              ? "concluded"
+              : ledgerId === DEFECTS_LEDGER
+                ? "resolved"
+                : "done";
+      // Researches require open → wip → concluded.
+      if (ledgerId === RESEARCHES_LEDGER) {
+        await this.store.updateItem(ledgerId, id, { status: "wip", ...SEED_PROVENANCE });
+      }
+      if (ledgerId === QUESTIONS_LEDGER) {
+        await this.store.updateItem(ledgerId, id, {
+          status: "answered",
+          fields: { answer: "seeded" },
+          ...SEED_PROVENANCE,
+        });
+      } else {
+        await this.store.updateItem(ledgerId, id, {
+          status: terminalStatus,
+          ...SEED_PROVENANCE,
+        });
+      }
+      await this.store.updateMilestone(host.id, { status: "done", ...SEED_PROVENANCE });
+      await this.store.archiveMilestone(host.id, `seed archive host for ${ref}`);
+    }
+
+    return { ref };
   }
 
   async rawReopenTask(taskId: string, toStatus: string): Promise<void> {

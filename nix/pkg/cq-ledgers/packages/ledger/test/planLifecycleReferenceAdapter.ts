@@ -177,6 +177,19 @@ export interface SeedDecisionOptions {
   readonly provenance: PlanWriteProvenance;
 }
 
+/**
+ * T1723: seed a known-ledger dependency target that publish_plan_draft may
+ * legally materialize in dependsOn/blockedBy. `archived` places the id only in
+ * the archive existence set (parity with applyCreateItem / D283).
+ */
+export interface SeedDependencyTargetOptions {
+  readonly ledgerId: string;
+  readonly id: string;
+  readonly disposition: "active" | "archived";
+  /** Owner goal for goal-scoped ledgers; defaults to a synthetic seed owner. */
+  readonly goalId?: string;
+}
+
 export interface PlanLifecycleContractFixture {
   readonly lifecycle: PlanLifecycleStore;
   raceAtSerializationBoundary<Holder, Peer>(
@@ -221,6 +234,13 @@ export interface PlanLifecycleContractFixture {
    * through it.
    */
   seedQuestion(goalId: string, refs: readonly string[]): Promise<{ id: string }>;
+  /**
+   * Seed an active or archived known-ledger target for dependsOn/blockedBy
+   * materialization (T1723). Returns the fully prefixed ref (`ledger:id`).
+   */
+  seedDependencyTarget(
+    options: SeedDependencyTargetOptions,
+  ): Promise<{ ref: string }>;
   /**
    * Raw reopen of a TERMINAL managed task, bypassing the lifecycle API. A
    * separate hook from {@link startTask} because `reopenItem` is a distinct
@@ -386,6 +406,8 @@ class ReferencePlanLifecycleBackend {
   readonly defects = new Map<string, MutableDefect>();
   readonly reviews = new Map<string, MutableReview>();
   readonly decisions = new Map<string, MutableDecision>();
+  /** ledgerId → archived item ids (T1723 / D283 existence parity). */
+  readonly archivedIds = new Map<string, Set<string>>();
   claimCounter = 0;
   milestoneCounter = 0;
   taskCounter = 0;
@@ -410,6 +432,7 @@ interface SerializedReferencePlanLifecycleBackend {
   readonly defects: readonly (readonly [string, MutableDefect])[];
   readonly reviews: readonly (readonly [string, MutableReview])[];
   readonly decisions: readonly (readonly [string, MutableDecision])[];
+  readonly archivedIds: readonly (readonly [string, readonly string[]])[];
   readonly counters: {
     readonly claim: number;
     readonly milestone: number;
@@ -433,6 +456,9 @@ function serializeBackend(backend: ReferencePlanLifecycleBackend): string {
     defects: [...backend.defects.entries()],
     reviews: [...backend.reviews.entries()],
     decisions: [...backend.decisions.entries()],
+    archivedIds: [...backend.archivedIds.entries()].map(
+      ([ledger, ids]) => [ledger, [...ids]] as const,
+    ),
     counters: {
       claim: backend.claimCounter,
       milestone: backend.milestoneCounter,
@@ -462,6 +488,9 @@ function deserializeBackend(
   for (const [key, value] of state.defects) backend.defects.set(key, value);
   for (const [key, value] of state.reviews) backend.reviews.set(key, value);
   for (const [key, value] of state.decisions) backend.decisions.set(key, value);
+  for (const [ledger, ids] of state.archivedIds ?? []) {
+    backend.archivedIds.set(ledger, new Set(ids));
+  }
   backend.claimCounter = state.counters.claim;
   backend.milestoneCounter = state.counters.milestone;
   backend.taskCounter = state.counters.task;
@@ -566,6 +595,14 @@ function materializeReferences(
  * a known ledger whose target is neither active nor allocated in this publish.
  * Free-text / unknown-prefix entries pass through (same as processRefEntry).
  */
+function isArchived(
+  backend: ReferencePlanLifecycleBackend,
+  ledger: string,
+  id: string,
+): boolean {
+  return backend.archivedIds.get(ledger)?.has(id) === true;
+}
+
 function assertNoDanglingMaterializedRefs(
   refs: readonly string[],
   backend: ReferencePlanLifecycleBackend,
@@ -579,11 +616,19 @@ function assertNoDanglingMaterializedRefs(
     // Bare id: treat as tasks/milestones only when it matches a known id shape.
     if (colon <= 0) {
       if (/^T\d+$/.test(raw)) {
-        if (!pendingTasks.has(raw) && !backend.tasks.has(raw)) {
+        if (
+          !pendingTasks.has(raw) &&
+          !backend.tasks.has(raw) &&
+          !isArchived(backend, "tasks", raw)
+        ) {
           throw new DanglingRefError(raw, "tasks", raw);
         }
       } else if (/^M\d+$/.test(raw) || raw === "M-AMBIENT") {
-        if (!pendingMilestones.has(raw) && !backend.milestones.has(raw)) {
+        if (
+          !pendingMilestones.has(raw) &&
+          !backend.milestones.has(raw) &&
+          !isArchived(backend, "milestones", raw)
+        ) {
           throw new DanglingRefError(raw, "milestones", raw);
         }
       }
@@ -592,25 +637,45 @@ function assertNoDanglingMaterializedRefs(
     const ledger = raw.slice(0, colon);
     const id = raw.slice(colon + 1);
     if (ledger === "tasks") {
-      if (!pendingTasks.has(id) && !backend.tasks.has(id)) {
+      if (
+        !pendingTasks.has(id) &&
+        !backend.tasks.has(id) &&
+        !isArchived(backend, "tasks", id)
+      ) {
         throw new DanglingRefError(raw, "tasks", id);
       }
     } else if (ledger === "milestones") {
-      if (!pendingMilestones.has(id) && !backend.milestones.has(id)) {
+      if (
+        !pendingMilestones.has(id) &&
+        !backend.milestones.has(id) &&
+        !isArchived(backend, "milestones", id)
+      ) {
         throw new DanglingRefError(raw, "milestones", id);
       }
     } else if (ledger === "questions") {
-      if (!backend.questions.has(id)) throw new DanglingRefError(raw, "questions", id);
+      if (!backend.questions.has(id) && !isArchived(backend, "questions", id)) {
+        throw new DanglingRefError(raw, "questions", id);
+      }
     } else if (ledger === "researches") {
-      if (!backend.researches.has(id)) throw new DanglingRefError(raw, "researches", id);
+      if (!backend.researches.has(id) && !isArchived(backend, "researches", id)) {
+        throw new DanglingRefError(raw, "researches", id);
+      }
     } else if (ledger === "defects") {
-      if (!backend.defects.has(id)) throw new DanglingRefError(raw, "defects", id);
+      if (!backend.defects.has(id) && !isArchived(backend, "defects", id)) {
+        throw new DanglingRefError(raw, "defects", id);
+      }
     } else if (ledger === "goals") {
-      if (!backend.goals.has(id)) throw new DanglingRefError(raw, "goals", id);
+      if (!backend.goals.has(id) && !isArchived(backend, "goals", id)) {
+        throw new DanglingRefError(raw, "goals", id);
+      }
     } else if (ledger === "decisions") {
-      if (!backend.decisions.has(id)) throw new DanglingRefError(raw, "decisions", id);
+      if (!backend.decisions.has(id) && !isArchived(backend, "decisions", id)) {
+        throw new DanglingRefError(raw, "decisions", id);
+      }
     } else if (ledger === "reviews") {
-      if (!backend.reviews.has(id)) throw new DanglingRefError(raw, "reviews", id);
+      if (!backend.reviews.has(id) && !isArchived(backend, "reviews", id)) {
+        throw new DanglingRefError(raw, "reviews", id);
+      }
     }
     // Unknown ledger name → advisory free-text, pass through.
   }
@@ -965,6 +1030,153 @@ export class ReferencePlanLifecycleAdapter
         provenance: SEED_PROVENANCE,
       });
       return { id };
+    });
+  }
+
+  async seedDependencyTarget(
+    options: SeedDependencyTargetOptions,
+  ): Promise<{ ref: string }> {
+    return this.backend.mutex.run(() => {
+      const ledgerId = options.ledgerId;
+      const id = options.id;
+      const goalId = options.goalId ?? "G-seed";
+      const ref = `${ledgerId}:${id}`;
+
+      const markArchived = (): void => {
+        let set = this.backend.archivedIds.get(ledgerId);
+        if (set === undefined) {
+          set = new Set();
+          this.backend.archivedIds.set(ledgerId, set);
+        }
+        set.add(id);
+      };
+
+      if (ledgerId === "tasks") {
+        if (options.disposition === "active") {
+          this.backend.tasks.set(id, {
+            id,
+            goalId,
+            milestoneId: "M-seed",
+            status: "planned",
+            headline: `seeded dependency target ${id}`,
+            description: null,
+            acceptance: null,
+            suggestedModel: null,
+            ledgerRefs: [],
+            sourceRefs: [],
+            tags: [],
+            dependsOn: [],
+            blockedBy: [],
+            executable: false,
+            provenance: SEED_PROVENANCE,
+          });
+        } else {
+          markArchived();
+        }
+        return { ref };
+      }
+
+      if (ledgerId === "milestones") {
+        if (options.disposition === "active") {
+          this.backend.milestones.set(id, {
+            id,
+            goalId,
+            status: "open",
+            title: `seeded dependency milestone ${id}`,
+            description: null,
+            dependsOn: [],
+            blockedBy: [],
+            taskIds: [],
+            provenance: SEED_PROVENANCE,
+          });
+        } else {
+          markArchived();
+        }
+        return { ref };
+      }
+
+      if (ledgerId === "questions") {
+        if (options.disposition === "active") {
+          this.backend.questions.set(id, {
+            id,
+            goalId,
+            status: "open",
+            text: `seeded dependency question ${id}`,
+            context: null,
+            suggestions: [],
+            recommendation: null,
+            ledgerRefs: [],
+            provenance: SEED_PROVENANCE,
+          });
+        } else {
+          markArchived();
+        }
+        return { ref };
+      }
+
+      if (ledgerId === "researches") {
+        if (options.disposition === "active") {
+          this.backend.researches.set(id, {
+            id,
+            goalId,
+            status: "open",
+            text: `seeded dependency research ${id}`,
+            scope: null,
+            provenance: SEED_PROVENANCE,
+          });
+        } else {
+          markArchived();
+        }
+        return { ref };
+      }
+
+      if (ledgerId === "defects") {
+        if (options.disposition === "active") {
+          this.backend.defects.set(id, {
+            id,
+            goalId,
+            status: "open",
+            text: `seeded dependency defect ${id}`,
+            reviewId: "R-seed",
+            severity: "low",
+            description: null,
+            rootCause: null,
+            suggestedFix: null,
+            sourceRefs: [],
+            tags: [],
+            provenance: SEED_PROVENANCE,
+          });
+        } else {
+          markArchived();
+        }
+        return { ref };
+      }
+
+      if (ledgerId === "goals") {
+        if (options.disposition === "active") {
+          if (!this.backend.goals.has(id)) {
+            this.backend.goals.set(id, {
+              goalId: id,
+              phase: "clarifying",
+              generation: null,
+              activeClaimId: null,
+              currentDraft: null,
+              finalizedDraft: null,
+              finalizedManifest: null,
+              milestoneIds: [],
+              waitingResearches: [],
+              waitingTasks: [],
+              parentStatus: "live",
+              parentMilestoneId: "M-AMBIENT",
+            });
+          }
+        } else {
+          markArchived();
+        }
+        return { ref };
+      }
+
+      throw new Error(`seedDependencyTarget: unsupported ledger ${ledgerId}`);
     });
   }
 
