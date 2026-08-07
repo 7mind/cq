@@ -32,17 +32,61 @@ function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
-describe("T1698/D263 — Claude native positive-only qualification", () => {
-  test("claude:native is incompatible: path-scoped confinement unproven", () => {
+describe("T1698/D263/K238 — Claude native positive-only qualification", () => {
+  const managedCwd =
+    "/tmp/project/.claude/worktrees/018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08";
+
+  test("without managed binding: claude:native stays incompatible", () => {
     const q = qualifyClaudeNativeAdapter();
     expect(q.status).toBe("incompatible");
     if (q.status !== "incompatible") throw new Error("expected incompatible");
     expect(q.adapterId).toBe("claude:native");
     expect(q.defect).toBe("D263");
-    expect(q.reason).toBe("path-scoped-confinement-unproven");
+    expect(q.reason).toBe("missing-cwd-binding");
     expect(q.detail).toContain("K170");
     expect(q.detail).toMatch(/did NOT accept write-confinement/i);
     expect(() => assertNativeAdapterQualified(q)).toThrow(NativeAdapterIncompatibilityError);
+  });
+
+  test("K238: managed worktree_manage path qualifies under harness-owned confinement", () => {
+    const q = qualifyClaudeNativeAdapter({
+      cwd: managedCwd,
+      worktreeManageBound: true,
+    });
+    expect(q.status).toBe("qualified");
+    if (q.status !== "qualified") throw new Error("expected qualified");
+    expect(q.adapterId).toBe("claude:native");
+    expect(q.confinement).toBe("harness-owned");
+    expect(q.defectClosed).toBe("D263");
+    expect(q.evidence).toMatch(/K238|Q383\(b\)/);
+    expect(q.evidence).toMatch(/did NOT accept write-confinement residual/i);
+    expect(q.evidence).not.toMatch(/structural path-scoped write confinement is proven/i);
+  });
+
+  test("free-form or unbound cwd refuses even when absolute", () => {
+    const unbound = qualifyClaudeNativeAdapter({
+      cwd: managedCwd,
+      worktreeManageBound: false,
+    });
+    expect(unbound.status).toBe("incompatible");
+    if (unbound.status !== "incompatible") throw new Error("expected incompatible");
+    expect(unbound.reason).toBe("path-scoped-confinement-unproven");
+
+    const outside = qualifyClaudeNativeAdapter({
+      cwd: "/tmp/not-managed",
+      worktreeManageBound: true,
+    });
+    expect(outside.status).toBe("incompatible");
+    if (outside.status !== "incompatible") throw new Error("expected incompatible");
+    expect(outside.reason).toBe("path-scoped-confinement-unproven");
+
+    const relative = qualifyClaudeNativeAdapter({
+      cwd: "relative/path",
+      worktreeManageBound: true,
+    });
+    expect(relative.status).toBe("incompatible");
+    if (relative.status !== "incompatible") throw new Error("expected incompatible");
+    expect(relative.reason).toBe("cwd-not-absolute");
   });
 
   test("no assertion path claims K170 accepted write-confinement residual", () => {
@@ -50,31 +94,43 @@ describe("T1698/D263 — Claude native positive-only qualification", () => {
     expect(CLAUDE_D263_WORKTREE_CONFINEMENT_INCOMPATIBILITY.k170AcceptedWriteConfinement).toBe(
       false,
     );
+    expect(CLAUDE_D263_WORKTREE_CONFINEMENT_INCOMPATIBILITY.k238HarnessOwnedAccepted).toBe(true);
     const source = readFileSync(SRC, "utf8");
     expect(source).not.toMatch(/K170.*accepted.*write.?confinement/i);
     expect(source).toContain("did NOT accept write-confinement residual");
   });
 
-  test("positive-only registry leaves claude:native unregistered with typed incompatibility", () => {
+  test("positive-only registry registers claude:native only when K238-qualified", () => {
     const dummyLaunch = () => {
       throw new Error("must not launch unqualified claude:native");
     };
-    const registry = buildPositiveOnlyDispatchRegistry({
+    const unqualified = buildPositiveOnlyDispatchRegistry({
       adapters: [
         createNativeDispatchAdapter("claude", dummyLaunch),
         createPiProcessDispatchAdapter(dummyLaunch),
       ],
       nativeQualifications: [qualifyClaudeNativeAdapter()],
     });
-    expect(registry.has("claude:native")).toBe(false);
-    expect(registry.has("pi:process")).toBe(true);
+    expect(unqualified.has("claude:native")).toBe(false);
+    expect(unqualified.has("pi:process")).toBe(true);
     const route = routeDispatchTransport({
       activeHarness: "claude",
       targetHarness: "claude",
       forceShellout: false,
     });
     expect(route.adapterId).toBe("claude:native");
-    expect(() => registry.resolve(route)).toThrow(NativeAdapterIncompatibilityError);
+    expect(() => unqualified.resolve(route)).toThrow(NativeAdapterIncompatibilityError);
+
+    const qualified = qualifyClaudeNativeAdapter({
+      cwd: managedCwd,
+      worktreeManageBound: true,
+    });
+    const registered = buildPositiveOnlyDispatchRegistry({
+      adapters: [createNativeDispatchAdapter("claude", dummyLaunch)],
+      nativeQualifications: [qualified],
+    });
+    expect(registered.has("claude:native")).toBe(true);
+    expect(registered.resolve(route).id).toBe("claude:native");
   });
 });
 
@@ -112,6 +168,14 @@ describe("T1699/D160 — Pi native qualification and delivery selection", () => 
     expect(q.defectClosed).toBeNull();
     expect(q.evidence).toMatch(/D160 remains open/);
     expect(selectQualifiedNativeAdapterIds([q, qualifyClaudeNativeAdapter()])).toEqual([
+      "pi:native",
+    ]);
+    const claudeQ = qualifyClaudeNativeAdapter({
+      cwd: "/tmp/project/.claude/worktrees/claude-native",
+      worktreeManageBound: true,
+    });
+    expect([...selectQualifiedNativeAdapterIds([q, claudeQ])].sort()).toEqual([
+      "claude:native",
       "pi:native",
     ]);
   });
@@ -210,11 +274,20 @@ describe("T1699/D160 — Pi native qualification and delivery selection", () => 
     expect(bad.id).toBe("pi:native");
   });
 
-  test("MUTATION: weakening Claude qualification to qualified is rejected by positive-only builder intent", () => {
+  test("MUTATION: unbound Claude qualification still refuses; false structural claim is not produced by qualifier", () => {
     const before = sha256(readFileSync(SRC, "utf8"));
-    const real = qualifyClaudeNativeAdapter();
-    expect(real.status).toBe("incompatible");
-    // Simulate a mutant that falsely marks Claude native qualified without proof.
+    const unbound = qualifyClaudeNativeAdapter();
+    expect(unbound.status).toBe("incompatible");
+    const real = qualifyClaudeNativeAdapter({
+      cwd: "/tmp/project/.claude/worktrees/ok",
+      worktreeManageBound: true,
+    });
+    expect(real.status).toBe("qualified");
+    if (real.status !== "qualified") throw new Error("expected qualified");
+    // K238 qualifies as harness-owned — never structural write confinement.
+    expect(real.confinement).toBe("harness-owned");
+    expect(real.confinement).not.toBe("structural");
+    // Simulate a mutant that falsely marks Claude native structural without proof.
     const mutantQualified = {
       status: "qualified" as const,
       adapterId: "claude:native" as const,
@@ -234,8 +307,9 @@ describe("T1699/D160 — Pi native qualification and delivery selection", () => 
     });
     // The builder trusts supplied qualifications — the guard is qualifyClaudeNativeAdapter itself.
     expect(registry.has("claude:native")).toBe(true);
-    // Restore observation: the REAL qualifier still refuses.
+    // REAL unbound qualifier still refuses; bound qualifies harness-owned only.
     expect(qualifyClaudeNativeAdapter().status).toBe("incompatible");
+    expect(real.confinement).toBe("harness-owned");
     const after = sha256(readFileSync(SRC, "utf8"));
     expect(after).toBe(before);
   });

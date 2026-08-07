@@ -107,11 +107,13 @@ export type {
   NativeAdapterQualification,
   EscapeCanaryObservation,
   PiNativeQualificationInput,
+  ClaudeNativeQualificationInput,
 } from "./nativeDispatchQualification.js";
 export {
   NATIVE_ADAPTER_IDS,
   NativeAdapterIncompatibilityError,
   isAbsoluteFilesystemPath,
+  isManagedWorktreePath,
   qualifyClaudeNativeAdapter,
   qualifyPiNativeAdapter,
   assertNativeAdapterQualified,

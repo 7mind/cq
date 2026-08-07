@@ -461,7 +461,7 @@ export function buildPositiveOnlyDispatchRegistry(input: {
           defect: adapter.targetHarness === "pi" ? "D160" : "D263",
           detail:
             `native adapter ${JSON.stringify(adapter.id)} was not positively qualified ` +
-            "for structural path-scoped confinement and was left unregistered",
+            "(structural path-scoped or K238 harness-owned worktree_manage handoff) and was left unregistered",
         });
       }
       continue;

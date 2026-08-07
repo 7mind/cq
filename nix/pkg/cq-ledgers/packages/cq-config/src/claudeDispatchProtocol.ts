@@ -439,21 +439,26 @@ export const CLAUDE_ACCEPTED_RESIDUALS = Object.freeze([
 ] as const);
 
 /**
- * D263 — native worktree / write confinement is measured prompt-best-effort and
- * is NOT covered by K170's acceptance quote. Positive-only registration refuses
- * `claude:native` while this incompatibility stands (see
- * {@link qualifyClaudeNativeAdapter} in nativeDispatchQualification.ts).
+ * D263 / K238 — structural path-scoped write confinement remains unproven
+ * (Agent tool has no path parameter; K170 did NOT accept write confinement).
+ * Registration is allowed under harness-owned isolation + worktree_manage
+ * handoff per decisions:K238 / Q383(b) — see {@link qualifyClaudeNativeAdapter}.
+ *
+ * `k170AcceptedWriteConfinement` stays false forever; do not conflate K238's
+ * harness-owned acceptance with a K170 write-confinement residual.
  */
 export const CLAUDE_D263_WORKTREE_CONFINEMENT_INCOMPATIBILITY = Object.freeze({
   coordinate: "native-subagent.worktreeConfinement" as const,
   strength: "prompt-best-effort" as const,
   defect: "D263" as const,
   k170AcceptedWriteConfinement: false,
-  registrationPolicy: "positive-only-structural-path-scoped" as const,
+  k238HarnessOwnedAccepted: true,
+  registrationPolicy: "positive-only-harness-owned-worktree-manage" as const,
   detail:
     "Native Agent children share the parent process and have no path parameter. " +
-    "Path-scoped write confinement is therefore unproven. K170 accepted native " +
-    "transport + handle-only output residual only — not write confinement.",
+    "Path-scoped write confinement remains unproven. K170 accepted native " +
+    "transport + handle-only output residual only — not write confinement. " +
+    "K238/Q383(b) accepts harness-owned isolation after worktree_manage path handoff.",
 });
 
 /**
@@ -1446,13 +1451,13 @@ export const CLAUDE_DISPATCH_PROVEN_BY = "T689" as const;
 export const CLAUDE_DISPATCH_DEFERRED = Object.freeze([
   "launch-a-real-native-subagent-with-an-inline-per-subagent-store-endpoint",
   "spawn-and-intercept-a-real-wrapper-shellout-child",
-  // worktree_manage prepare/release core landed in G121 (T1305/T1306); Claude
-  // native consumption + positive-only registration is T1698/D263.
-  "prove-structural-path-scoped-confinement-for-claude-native-registration",
+  // Q383(b)/K238: structural path-scoped write confinement is NOT required;
+  // harness-owned + worktree_manage handoff qualifies claude:native (T1698).
+  // Structural write confinement remains permanently unproven on Agent tool.
   "consolidate-the-duplicated-launch-gate-into-the-shared-module",
   "migrate-the-claude-dispatch-fragment-to-the-new-call-shape",
 ] as const);
 
-/** Positive-only registration policy pin for claude:native (T1698/D263). */
+/** Positive-only registration policy pin for claude:native (T1698/D263/K238). */
 export const CLAUDE_NATIVE_REGISTRATION_POLICY =
-  "positive-only-structural-path-scoped" as const;
+  "positive-only-harness-owned-worktree-manage" as const;

@@ -1,14 +1,20 @@
 /**
  * Positive-only native adapter qualification (T1698/D263, T1699/D160).
  *
- * A `*:native` transport adapter is registered ONLY when structural
- * path-scoped confinement can be proven for that surface. Unproven surfaces
- * stay unregistered and resolve through a typed incompatibility — never a
- * silent prompt-best-effort write confinement claim.
+ * A `*:native` transport adapter is registered ONLY under an explicit
+ * confinement model:
+ *  - `structural` — path-scoped write confinement proven for the surface
+ *  - `harness-owned` — decisions:K238: worktree_manage path handoff +
+ *    harness-owned native isolation accepted for Claude (NOT structural
+ *    path-scoped write confinement; K170 still did not accept that residual)
+ *
+ * Unproven surfaces stay unregistered and resolve through a typed
+ * incompatibility — never a silent prompt-best-effort write confinement claim.
  *
  * decisions:K170 chose the harness axis (same-harness → native transport,
- * cross-harness → process). It did NOT accept write/worktree confinement risk
- * for Claude native (D263). Handle-only output residual is a separate axis.
+ * cross-harness → process) and accepted handleOnlyOutput residual only.
+ * decisions:K238 (Q383(b)) additionally accepts harness-owned isolation +
+ * worktree_manage handoff for claude:native registration.
  */
 
 import type { Harness } from "./types.js";
@@ -29,14 +35,14 @@ export type NativeQualificationRefusalReason =
   | "cwd-not-absolute"
   | "provider-probe-unavailable";
 
-export type NativePathConfinementStrength = "structural" | "unproven";
+export type NativePathConfinementStrength = "structural" | "harness-owned" | "unproven";
 
 export interface NativeAdapterQualified {
   readonly status: "qualified";
   readonly adapterId: NativeAdapterId;
   readonly targetHarness: Harness;
   readonly transport: "native";
-  readonly confinement: "structural";
+  readonly confinement: "structural" | "harness-owned";
   readonly evidence: string;
   readonly defectClosed: "D263" | "D160" | null;
 }
@@ -106,31 +112,131 @@ export function isAbsoluteFilesystemPath(value: string): boolean {
   return typeof value === "string" && value.length > 0 && ABSOLUTE_PATH_RE.test(value);
 }
 
+export interface ClaudeNativeQualificationInput {
+  /**
+   * Manager-returned absolute worktree path (worktree_manage prepare evidence).
+   * Required for K238 harness-owned qualification.
+   */
+  readonly cwd: string;
+  /**
+   * When true, cwd was obtained from worktree_manage prepare/resume (not a
+   * free-form path). Required for K238 qualification.
+   */
+  readonly worktreeManageBound: boolean;
+}
+
+/** Managed implement worktrees live under `<repo>/.claude/worktrees/<id>`. */
+const MANAGED_WORKTREE_MARKER = "/.claude/worktrees/";
+
+export function isManagedWorktreePath(cwd: string): boolean {
+  if (!isAbsoluteFilesystemPath(cwd)) return false;
+  const normalized = cwd.replace(/\\/g, "/");
+  return normalized.includes(MANAGED_WORKTREE_MARKER);
+}
+
 /**
- * Claude same-harness native (`Agent` tool): no path parameter, child shares
- * the parent process and cwd. Structural path-scoped write confinement cannot
- * be proven on this surface — leave `claude:native` unregistered (D263).
+ * Claude same-harness native (`Agent` tool): no path parameter; child shares
+ * the parent process and cwd. Structural path-scoped write confinement remains
+ * unproven (K170 did NOT accept that residual).
  *
- * Provider-backed Claude probes are not required for this negative proof: the
- * Agent tool field table (tasks:T722 §8.1b) has no path parameter, which is a
- * structural absence independent of authentication.
+ * decisions:K238 / Q383(b): qualify `claude:native` under **harness-owned**
+ * confinement when the orchestrator bound an absolute managed worktree path via
+ * worktree_manage. That is NOT a write-confinement claim — it is an explicit
+ * acceptance of harness-owned isolation + path handoff.
+ *
+ * Without managed binding evidence the adapter stays incompatible.
  */
-export function qualifyClaudeNativeAdapter(): NativeAdapterQualification {
+export function qualifyClaudeNativeAdapter(
+  input?: ClaudeNativeQualificationInput,
+): NativeAdapterQualification {
+  if (input === undefined) {
+    return Object.freeze({
+      status: "incompatible" as const,
+      adapterId: "claude:native" as const,
+      targetHarness: "claude" as const,
+      transport: "native" as const,
+      reason: "missing-cwd-binding" as const,
+      confinement: "unproven" as const,
+      defect: "D263" as const,
+      detail:
+        "claude:native requires worktree_manage path handoff (decisions:K238 / Q383(b)). " +
+        "Call qualifyClaudeNativeAdapter({ cwd, worktreeManageBound: true }) with the " +
+        "manager-returned absolute path. Structural path-scoped write confinement remains " +
+        "unproven; K170 did NOT accept write-confinement residual.",
+    });
+  }
+
+  if (typeof input.cwd !== "string" || input.cwd.trim() === "") {
+    return Object.freeze({
+      status: "incompatible" as const,
+      adapterId: "claude:native" as const,
+      targetHarness: "claude" as const,
+      transport: "native" as const,
+      reason: "missing-cwd-binding" as const,
+      confinement: "unproven" as const,
+      defect: "D263" as const,
+      detail:
+        "claude:native K238 qualification requires a non-empty manager-returned cwd.",
+    });
+  }
+
+  if (!isAbsoluteFilesystemPath(input.cwd)) {
+    return Object.freeze({
+      status: "incompatible" as const,
+      adapterId: "claude:native" as const,
+      targetHarness: "claude" as const,
+      transport: "native" as const,
+      reason: "cwd-not-absolute" as const,
+      confinement: "unproven" as const,
+      defect: "D263" as const,
+      detail: `claude:native cwd must be absolute; got ${JSON.stringify(input.cwd)}`,
+    });
+  }
+
+  if (input.worktreeManageBound !== true) {
+    return Object.freeze({
+      status: "incompatible" as const,
+      adapterId: "claude:native" as const,
+      targetHarness: "claude" as const,
+      transport: "native" as const,
+      reason: "path-scoped-confinement-unproven" as const,
+      confinement: "unproven" as const,
+      defect: "D263" as const,
+      detail:
+        "claude:native K238 qualification requires worktreeManageBound=true (path from " +
+        "worktree_manage prepare/resume). Free-form cwd is refused. K170 did NOT accept " +
+        "write-confinement residual; harness-owned isolation only applies after managed handoff.",
+    });
+  }
+
+  if (!isManagedWorktreePath(input.cwd)) {
+    return Object.freeze({
+      status: "incompatible" as const,
+      adapterId: "claude:native" as const,
+      targetHarness: "claude" as const,
+      transport: "native" as const,
+      reason: "path-scoped-confinement-unproven" as const,
+      confinement: "unproven" as const,
+      defect: "D263" as const,
+      detail:
+        "claude:native managed path must lie under .claude/worktrees/; got " +
+        `${JSON.stringify(input.cwd)}. K170 did NOT accept write-confinement residual.`,
+    });
+  }
+
   return Object.freeze({
-    status: "incompatible" as const,
+    status: "qualified" as const,
     adapterId: "claude:native" as const,
     targetHarness: "claude" as const,
     transport: "native" as const,
-    reason: "path-scoped-confinement-unproven" as const,
-    confinement: "unproven" as const,
-    defect: "D263" as const,
-    detail:
-      "Claude Code Agent tool accepts subagent_type/prompt/model/isolation/run_in_background " +
-      "and has no path parameter (tasks:T722 §8.1b). A native child shares the parent process " +
-      "and cwd, so path-scoped write confinement is unproven. decisions:K170 selected native " +
-      "transport on the harness axis only — it did NOT accept write-confinement residual for " +
-      "D263. Positive-only policy leaves claude:native unregistered until structural " +
-      "confinement can be proven.",
+    confinement: "harness-owned" as const,
+    defectClosed: "D263" as const,
+    evidence:
+      "decisions:K238 / Q383(b): harness-owned Claude native isolation accepted after " +
+      `worktree_manage path handoff to ${JSON.stringify(input.cwd)}. ` +
+      "Agent tool still has no path parameter — this is NOT structural path-scoped " +
+      "write confinement. decisions:K170 did NOT accept write-confinement residual; " +
+      "handleOnlyOutput remains the only K170 residual. D263 closed under harness-owned model.",
   });
 }
 

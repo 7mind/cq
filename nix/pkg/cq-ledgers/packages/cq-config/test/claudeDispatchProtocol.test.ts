@@ -488,7 +488,9 @@ describe("T687 §1b — containment strength is per-mode, and the residual is na
       "native-subagent.worktreeConfinement",
     );
     expect(CLAUDE_D263_WORKTREE_CONFINEMENT_INCOMPATIBILITY.defect).toBe("D263");
-    expect(CLAUDE_NATIVE_REGISTRATION_POLICY).toBe("positive-only-structural-path-scoped");
+    expect(CLAUDE_NATIVE_REGISTRATION_POLICY).toBe(
+      "positive-only-harness-owned-worktree-manage",
+    );
   });
 
   test("THE GUARD: K170 accepted residuals are a STRICT SUBSET of best-effort coordinates", () => {
@@ -2052,9 +2054,10 @@ describe("T687 §7 — what this DEFINITION task deliberately does not do", () =
   test("the deferred work names its owners", () => {
     expect(CLAUDE_DISPATCH_DEFERRED_TO).toBe("T688");
     expect(CLAUDE_DISPATCH_PROVEN_BY).toBe("T689");
-    expect(CLAUDE_DISPATCH_DEFERRED.length).toBeGreaterThan(4);
+    expect(CLAUDE_DISPATCH_DEFERRED.length).toBeGreaterThanOrEqual(3);
     // The two that matter most for not being silently assumed done.
-    expect(CLAUDE_DISPATCH_DEFERRED).toContain(
+    // Q383(b)/K238 removed structural path-scoped registration requirement.
+    expect(CLAUDE_DISPATCH_DEFERRED).not.toContain(
       "prove-structural-path-scoped-confinement-for-claude-native-registration",
     );
     expect(CLAUDE_DISPATCH_DEFERRED).toContain(
