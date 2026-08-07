@@ -107,6 +107,7 @@ function recordingInstall(): {
 function asPort(
   repo: Awaited<ReturnType<typeof seedRepository>>,
   install: ManagedWorktreeInstallRunner,
+  prepareCalls: Array<{ taskId?: string; hasHandle: boolean }>,
 ): PiNativeWorktreeManagePort {
   const deps = {
     stateDir: repo.stateDir,
@@ -116,14 +117,17 @@ function asPort(
   };
   return {
     async prepare(input) {
-      const taskId =
-        input.taskId ??
-        (input.handle !== undefined ? input.handle.taskId : undefined);
+      prepareCalls.push({
+        ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
+        hasHandle: input.handle !== undefined,
+      });
+      // Do NOT inherit handle.taskId here — that is the binder's job under test.
+      const taskId = input.taskId;
       if (taskId === undefined) {
         return {
           status: "refused" as const,
           reason: "task-id-invalid",
-          detail: "taskId required (or handle.taskId on resume)",
+          detail: "taskId required from binder (handle.taskId inherit must happen in bind)",
         };
       }
       const result = await prepareManagedWorktree(
@@ -200,10 +204,23 @@ describe("T1699 Pi-native managed worktree e2e [BA]", () => {
   it("prepare → marker/commit only in managed tree → resume preserves tip → release; main untouched", async () => {
     const repo = await seedRepository();
     const install = recordingInstall();
-    const port = asPort(repo, install.runner);
+    const prepareCalls: Array<{ taskId?: string; hasHandle: boolean }> = [];
+    const port = asPort(repo, install.runner, prepareCalls);
     const mainHeadBefore = await git(repo.cwd, ["rev-parse", "HEAD"]);
     const mainReadmeBefore = await fs.readFile(path.join(repo.cwd, "README.md"), "utf8");
     const mainStatusBefore = await git(repo.cwd, ["status", "--porcelain", "--untracked-files=all"]);
+
+    // Unrelated sibling worktree (not managed) must also stay byte/Git-identical.
+    const siblingPath = path.join(repo.cwd, ".claude", "worktrees", "unrelated-sibling");
+    await fs.mkdir(path.dirname(siblingPath), { recursive: true });
+    await git(repo.cwd, ["worktree", "add", "-q", siblingPath, "HEAD"]);
+    const siblingHeadBefore = await git(siblingPath, ["rev-parse", "HEAD"]);
+    const siblingReadmeBefore = await fs.readFile(path.join(siblingPath, "README.md"), "utf8");
+    const siblingStatusBefore = await git(siblingPath, [
+      "status",
+      "--porcelain",
+      "--untracked-files=all",
+    ]);
 
     const bound = await bindPiNativeWorktree({
       port,
@@ -234,9 +251,9 @@ describe("T1699 Pi-native managed worktree e2e [BA]", () => {
     await expect(fs.stat(path.join(repo.cwd, "MARKER-T16991.txt"))).rejects.toBeDefined();
 
     // Resume same handle; criticism tip preserved.
+    // Omit taskId so bind must inherit handle.taskId (change #2 under test).
     const resumed = await bindPiNativeWorktree({
       port,
-      taskId: "T16991",
       handle: bound.binding.handle,
       priorResultCommit: criticismHead,
       observeHead: async (absolutePath) => git(absolutePath, ["rev-parse", "HEAD"]),
@@ -244,6 +261,8 @@ describe("T1699 Pi-native managed worktree e2e [BA]", () => {
     if (resumed.status !== "bound") {
       throw new Error(`resume bind refused: ${JSON.stringify(resumed)}`);
     }
+    const resumeCall = prepareCalls.find((c) => c.hasHandle);
+    expect(resumeCall?.taskId).toBe("T16991");
     expect(resumed.binding.handle.token).toBe(bound.binding.handle.token);
     expect(resumed.binding.absolutePath).toBe(bound.binding.absolutePath);
     expect(await git(resumed.binding.absolutePath, ["rev-parse", "HEAD"])).toBe(criticismHead);
@@ -269,6 +288,14 @@ describe("T1699 Pi-native managed worktree e2e [BA]", () => {
     expect(await fs.readFile(path.join(repo.cwd, "README.md"), "utf8")).toBe(repo.mainReadme);
     expect(await git(repo.cwd, ["status", "--porcelain", "--untracked-files=all"])).toBe(
       mainStatusBefore,
+    );
+    // Unrelated sibling worktree unchanged.
+    expect(await git(siblingPath, ["rev-parse", "HEAD"])).toBe(siblingHeadBefore);
+    expect(await fs.readFile(path.join(siblingPath, "README.md"), "utf8")).toBe(
+      siblingReadmeBefore,
+    );
+    expect(await git(siblingPath, ["status", "--porcelain", "--untracked-files=all"])).toBe(
+      siblingStatusBefore,
     );
   });
 });
