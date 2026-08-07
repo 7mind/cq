@@ -163,7 +163,7 @@ Item-bearing reads require `projection: "compact"` or `projection: "full"`:
   allowlist:
 
 <!-- compact-item-fields:start -->
-`headline`, `title`, `question`, `summary`, `severity`, `suggestedModel`,
+`headline`, `title`, `question`, `answer`, `summary`, `severity`, `suggestedModel`,
 `tags`, `sourceRefs`, `dependsOn`, `blockedBy`, `ledgerRefs`
 <!-- compact-item-fields:end -->
 

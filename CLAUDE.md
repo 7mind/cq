@@ -88,8 +88,8 @@ work, instead of inline TODOs or scratch files.
   operation needs narrative or another field outside the compact allowlist.
 - Compact items retain `id`, `milestoneId`, `status`, `createdAt`, `updatedAt`,
   optional `author`/`session`, and only `headline`, `title`, `question`,
-  `summary`, `severity`, `suggestedModel`, `tags`, `sourceRefs`, `dependsOn`,
-  `blockedBy`, and `ledgerRefs` from `fields`.
+  `answer`, `summary`, `severity`, `suggestedModel`, `tags`, `sourceRefs`,
+  `dependsOn`, `blockedBy`, and `ledgerRefs` from `fields`.
 - Every eligible mutation returns a fixed mutation acknowledgement, not the
   full entity. Consume its allocated id, current status, canonicalized
   reference fields, timestamps, and provenance. Issue an explicit full read

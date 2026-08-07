@@ -15,6 +15,7 @@ export const COMPACT_ITEM_FIELD_NAMES = [
   "headline",
   "title",
   "question",
+  "answer",
   "summary",
   "severity",
   "suggestedModel",
@@ -26,7 +27,7 @@ export const COMPACT_ITEM_FIELD_NAMES = [
 ] as const;
 
 export const ITEM_PROJECTION_DESCRIPTION =
-  "required projection: compact retains id, milestoneId, status, createdAt, updatedAt, optional author/session, and only headline/title/question/summary/severity/suggestedModel/tags/sourceRefs/dependsOn/blockedBy/ledgerRefs in fields; full retains every item field";
+  "required projection: compact retains id, milestoneId, status, createdAt, updatedAt, optional author/session, and only headline/title/question/answer/summary/severity/suggestedModel/tags/sourceRefs/dependsOn/blockedBy/ledgerRefs in fields; full retains every item field";
 
 export const ITEM_MUTATION_ACK_DESCRIPTION =
   "Returns fixed acknowledgement { item: { id, milestoneId, status, fields: { dependsOn?, blockedBy?, ledgerRefs? }, createdAt, updatedAt, author?, session? } }; narrative fields are not returned.";

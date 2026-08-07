@@ -6,8 +6,9 @@ import type { GetConfigResult } from "../src/mcp/configCapability.js";
 import type { FetchPromptResult } from "../src/mcp/promptCatalogCapability.js";
 import type { FetchDispatchResult, MaterializedDispatchInput } from "@cq/config";
 import { InMemoryLedgerStore } from "../src/store/InMemoryLedgerStore.js";
-import { LEDGER_TOOL_NAMES } from "../src/mcp/ledgerTools.js";
+import { createLedgerMcpTools, LEDGER_TOOL_NAMES } from "../src/mcp/ledgerTools.js";
 import {
+  COMPACT_ITEM_FIELD_NAMES,
   LEDGER_RESPONSE_CONTRACTS,
   isProducedWireDto,
   produceWireDto,
@@ -189,6 +190,59 @@ describe("item wire projections", () => {
       author: "gpt-5.6",
       session: "session-1",
     });
+  });
+
+  it("G150: compact retains questions answer and still strips narrative", () => {
+    const source = item({
+      id: "Q9",
+      fields: {
+        question: "Ship Friday?",
+        answer: "yes — train is green",
+        recommendation: "long advisory must not appear in compact",
+        context: "long context must not appear in compact",
+        dependsOn: ["goals:G150"],
+      },
+    });
+    const projected = projectCompactItemDto(source);
+    expect(projected.fields.question).toBe("Ship Friday?");
+    expect(projected.fields.answer).toBe("yes — train is green");
+    expect(projected.fields).not.toHaveProperty("recommendation");
+    expect(projected.fields).not.toHaveProperty("context");
+    expect(COMPACT_ITEM_FIELD_NAMES).toContain("answer");
+  });
+
+  it("G150: fetch_item compact MCP path retains answer", async () => {
+    const store = new InMemoryLedgerStore();
+    await store.init();
+    const created = await store.createItem("questions", "M-AMBIENT", {
+      status: "answered",
+      fields: {
+        question: "Include answer in compact?",
+        answer: "yes",
+        context: "must stay full-only",
+        recommendation: "also full-only",
+      },
+    });
+    const tools = createLedgerMcpTools(store);
+    const tool = tools.find((entry) => entry.name === "fetch_item");
+    if (tool === undefined) throw new Error("fetch_item missing");
+    const raw = (await tool.handler(
+      {
+        ledger_id: "questions",
+        item_id: created.id,
+        projection: "compact",
+      } as never,
+      null,
+    )) as { content: Array<{ type: string; text?: string }> };
+    const text = raw.content.find((part) => part.type === "text");
+    if (text === undefined || text.text === undefined) throw new Error("no text");
+    const body = JSON.parse(text.text) as {
+      item: { fields: Record<string, unknown> };
+    };
+    expect(body.item.fields.question).toBe("Include answer in compact?");
+    expect(body.item.fields.answer).toBe("yes");
+    expect(body.item.fields).not.toHaveProperty("context");
+    expect(body.item.fields).not.toHaveProperty("recommendation");
   });
 
   it("preserves provenance absence across JSON reload", () => {
