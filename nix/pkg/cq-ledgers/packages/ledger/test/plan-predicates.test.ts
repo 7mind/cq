@@ -766,7 +766,13 @@ function runPlanPredicatesSuite(backend: Backend): void {
     fn: () => Promise<void>,
     explicitTimeoutMs?: number,
   ): void => {
-    const timeoutMs = explicitTimeoutMs ?? caseTimeoutMs;
+    // Floor is the backend load bound; never let a smaller explicit override it.
+    const timeoutMs =
+      explicitTimeoutMs === undefined
+        ? caseTimeoutMs
+        : caseTimeoutMs === undefined
+          ? explicitTimeoutMs
+          : Math.max(explicitTimeoutMs, caseTimeoutMs);
     if (timeoutMs === undefined) it(name, fn);
     else it(name, fn, timeoutMs);
   };
