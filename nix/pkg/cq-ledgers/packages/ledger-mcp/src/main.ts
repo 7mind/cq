@@ -43,6 +43,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import {
+  acquireStdioSingletonLock,
+  startParentDeathWatcher,
+} from "./stdioProcessGuards.js";
+import {
   type LedgerStore,
   type ReadLogCapability,
   type ConfigCapability,
@@ -966,11 +970,27 @@ export async function main(argv: readonly string[]): Promise<void> {
   // for git-object).
   const watcher = startLedgerCoherenceWatcher(resolved, cwd);
 
-  // Graceful shutdown on SIGTERM / SIGINT.
+  // D293/T2018: one stdio MCP per project state dir (or cwd fallback).
+  const lockDir =
+    resolved.dbPath !== undefined
+      ? path.dirname(resolved.dbPath)
+      : path.join(cwd, ".cq");
+  const singleton = acquireStdioSingletonLock(lockDir);
+
+  // Graceful shutdown on SIGTERM / SIGINT / parent death (T2019).
+  let stopParentWatch: () => void = () => {};
   const shutdown = (): void => {
+    stopParentWatch();
     watcher.close();
+    singleton.release();
     void dispatchRuntime.close().finally(() => process.exit(0));
   };
+  stopParentWatch = startParentDeathWatcher(() => {
+    process.stderr.write(
+      "ledger-mcp: parent process gone — exiting (D293/T2019 orphan reaper)\n",
+    );
+    shutdown();
+  });
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
 
@@ -978,7 +998,9 @@ export async function main(argv: readonly string[]): Promise<void> {
   await server.connect(transport);
   // McpServer holds the process open by virtue of the stdio listener;
   // exiting here would close stdin and tear the channel down immediately.
-  process.stderr.write(`ledger-mcp: serving stdio MCP on cwd=${cwd}\n`);
+  process.stderr.write(
+    `ledger-mcp: serving stdio MCP on cwd=${cwd} (stdio lock ${singleton.lockPath})\n`,
+  );
 }
 
 // Only run main() when executed directly (not when imported by the test
