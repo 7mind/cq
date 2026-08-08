@@ -32,15 +32,18 @@ function readHolderPid(lockPath: string): number | null {
 }
 
 function pidAlive(pid: number): boolean {
-  // Prefer /proc so zombies (killed but not yet reaped) count as dead — otherwise
-  // takeover waits forever on kill(0) succeeding for a Z state task.
+  // Linux: /proc lets us treat zombies as dead (kill(0) still succeeds until reaped).
+  // Non-/proc hosts (Darwin): fall through to kill(0)/ESRCH — never treat missing
+  // /proc as "dead" or takeover would skip signals and stack MCP instances.
   try {
     const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
     const afterComm = stat.slice(stat.lastIndexOf(")") + 1).trimStart();
     const state = afterComm.charAt(0);
     if (state === "Z") return false;
-  } catch {
-    return false;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    // Specific pid entry gone → dead. Missing /proc entirely → use kill(0).
+    if (code === "ENOENT" && fs.existsSync("/proc")) return false;
   }
   try {
     process.kill(pid, 0);
