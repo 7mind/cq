@@ -146,6 +146,15 @@ export type {
   CreateInMemoryWorksetAdmissionCoordinatorOptions,
   WorksetAdmissionCoordinator,
 } from "./worksetEffectAdmission.js";
+export {
+  createInMemoryWorksetStore,
+  readWorksetRootsEpoch,
+  worksetStoreFromCoordinator,
+} from "./worksetStore.js";
+export type {
+  WorksetStore,
+  CreateInMemoryWorksetStoreOptions,
+} from "./worksetStore.js";
 export * from "./parser/parse.js";
 export * from "./parser/serialize.js";
 export { parseFrontmatter, serializeFrontmatter } from "./parser/frontmatter.js";
