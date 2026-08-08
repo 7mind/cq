@@ -85,6 +85,28 @@ export type {
   OwnerEdgeRelation,
   OwnerEdgeFixture,
 } from "./worksetOwnerEdges.js";
+export {
+  defaultWorksetPrefixRegistry,
+  buildWorksetActiveState,
+  canonicalizeWorksetRoots,
+  parseGoalCurrentDraftManifest,
+  parseGoalFinalizedManifest,
+  closeWorkset,
+  projectWorkset,
+  isRestrictiveInactiveWorkset,
+  WorksetRootError,
+} from "./worksetGraph.js";
+export type {
+  WorksetProjection,
+  WorksetEdgeKind,
+  WorksetEdge,
+  WorksetNode,
+  WorksetGraph,
+  WorksetActiveState,
+  CloseWorksetOptions,
+  WorksetProjectedNode,
+  WorksetProjectedGraph,
+} from "./worksetGraph.js";
 export * from "./parser/parse.js";
 export * from "./parser/serialize.js";
 export { parseFrontmatter, serializeFrontmatter } from "./parser/frontmatter.js";
