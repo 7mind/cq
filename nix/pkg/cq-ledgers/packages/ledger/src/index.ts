@@ -41,7 +41,50 @@ export {
   LEDGER_LOGS_STRIP_RE,
   ISO_TIMESTAMP_RE,
   isIsoTimestamp,
+  WORKSET_OWNER_REF_FIELD,
+  WORKSET_OWNER_EDGE_KIND_FIELD,
+  WORKSET_OWNED_FIELD_NAMES,
+  WORKSET_OWNERSHIP_SCHEMA_FIELDS,
 } from "./constants.js";
+export type { WorksetOwnedFieldName } from "./constants.js";
+export {
+  PLANNING_LIFECYCLE_CREATION_KINDS,
+  IMPLEMENTATION_LIFECYCLE_CREATION_KINDS,
+  WORKSET_OWNER_EDGE_KINDS,
+  LIFECYCLE_CREATION_KIND_SET,
+  OWNER_EDGE_EXCLUSIONS,
+  ALLOWED_OWNER_EDGE_ROWS,
+  DENIED_OWNER_EDGE_ROWS,
+  resolveOwnerEdgePolicy,
+  ownerEdgeCoverageCells,
+  deriveCanonicalOwnership,
+  ownershipFieldsFrom,
+  readCanonicalOwnership,
+  ownershipFromLedgerRefs,
+  inferLegacyOwnership,
+  isAmbiguousLegacyOwnership,
+  assertWorksetOwnershipFieldsAbsent,
+  WorksetOwnershipFieldError,
+  fixturesForAllowedRow,
+  fixtureIncludedInOwnerClosure,
+  PREREQUISITE_EDGE,
+} from "./worksetOwnerEdges.js";
+export type {
+  PlanningLifecycleCreationKind,
+  ImplementationLifecycleCreationKind,
+  LifecycleCreationKind,
+  WorksetOwnerEdgeKind,
+  OwnerEdgeExclusion,
+  OwnerEdgeDirection,
+  AllowedOwnerEdgeRow,
+  DeniedOwnerEdgeRow,
+  OwnerEdgePolicyRow,
+  OwnerEdgeResolution,
+  OwnerEdgeCoverageCell,
+  CanonicalOwnership,
+  OwnerEdgeRelation,
+  OwnerEdgeFixture,
+} from "./worksetOwnerEdges.js";
 export * from "./parser/parse.js";
 export * from "./parser/serialize.js";
 export { parseFrontmatter, serializeFrontmatter } from "./parser/frontmatter.js";

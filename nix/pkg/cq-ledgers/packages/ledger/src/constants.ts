@@ -24,6 +24,31 @@
 
 import type { LedgerSchema } from "./types.js";
 
+// ---------------------------------------------------------------------------
+// Workset canonical ownership metadata (T1951). Optional on every item schema;
+// generic mutations refuse to set or change these fields — only typed lifecycle
+// capabilities may seal them (see worksetOwnerEdges.ts).
+// ---------------------------------------------------------------------------
+
+/** Canonical `<ledger>:<id>` ref of the owner that created this child. */
+export const WORKSET_OWNER_REF_FIELD = "worksetOwnerRef" as const;
+
+/** Edge kind that established the sealed owner→child relation. */
+export const WORKSET_OWNER_EDGE_KIND_FIELD = "worksetOwnerEdgeKind" as const;
+
+export const WORKSET_OWNED_FIELD_NAMES = [
+  WORKSET_OWNER_REF_FIELD,
+  WORKSET_OWNER_EDGE_KIND_FIELD,
+] as const;
+
+export type WorksetOwnedFieldName = (typeof WORKSET_OWNED_FIELD_NAMES)[number];
+
+/** Optional schema entries shared by every canonical item schema. */
+export const WORKSET_OWNERSHIP_SCHEMA_FIELDS = {
+  [WORKSET_OWNER_REF_FIELD]: { type: "string", required: false },
+  [WORKSET_OWNER_EDGE_KIND_FIELD]: { type: "string", required: false },
+} as const satisfies LedgerSchema["fields"];
+
 export const MILESTONES_LEDGER = "milestones" as const;
 
 /**
@@ -67,6 +92,7 @@ export const MILESTONES_SCHEMA: LedgerSchema = {
     description: { type: "string", required: false },
     blockedBy: { type: "id[]", required: false },
     dependsOn: { type: "id[]", required: false },
+    ...WORKSET_OWNERSHIP_SCHEMA_FIELDS,
   },
 };
 
@@ -104,6 +130,7 @@ const COMMON_REF_FIELDS = {
   ledgerRefs: { type: "id[]", required: false },
   tags: { type: "string[]", required: false },
   suggestedModel: { type: "string", required: false },
+  ...WORKSET_OWNERSHIP_SCHEMA_FIELDS,
 } as const satisfies LedgerSchema["fields"];
 
 /**
@@ -319,6 +346,7 @@ export const GOALS_SCHEMA: LedgerSchema = {
     sessionLogs: { type: "string[]", required: false },
     /** Repo-relative paths to raw transcript files (.cq/logs/raw/<ts>-<agent-id>.jsonl). */
     rawLogs: { type: "string[]", required: false },
+    ...WORKSET_OWNERSHIP_SCHEMA_FIELDS,
   },
 };
 
@@ -357,6 +385,7 @@ export const REVIEWS_SCHEMA: LedgerSchema = {
     sessionLogs: { type: "string[]", required: false },
     /** Repo-relative paths to raw transcript files (.cq/logs/raw/<ts>-<agent-id>.jsonl). */
     rawLogs: { type: "string[]", required: false },
+    ...WORKSET_OWNERSHIP_SCHEMA_FIELDS,
   },
 };
 
@@ -413,6 +442,7 @@ export const HANDOFFS_SCHEMA: LedgerSchema = {
     rawLogs: { type: "string[]", required: false },
     tags: { type: "string[]", required: false },
     sourceRefs: { type: "string[]", required: false },
+    ...WORKSET_OWNERSHIP_SCHEMA_FIELDS,
   },
 };
 
@@ -469,6 +499,7 @@ export const IDEAS_SCHEMA: LedgerSchema = {
     title: { type: "string", required: true },
     description: { type: "string", required: false },
     ledgerRefs: { type: "id[]", required: false },
+    ...WORKSET_OWNERSHIP_SCHEMA_FIELDS,
   },
 };
 

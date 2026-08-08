@@ -43,6 +43,7 @@ import {
   MILESTONES_AMBIENT_ID,
   MILESTONES_LEDGER,
 } from "../constants.js";
+import { assertWorksetOwnershipFieldsAbsent } from "../worksetOwnerEdges.js";
 import type { LedgerSchema } from "../types.js";
 import type {
   CreateItemInit,
@@ -410,6 +411,8 @@ export function applyUpdateItem(
   }
   if (patch.fields !== undefined) {
     validateFields(ledger, patch.fields, /*creating*/ false);
+    // T1951: sealed workset ownership is library-managed — generic update cannot set/change it.
+    assertWorksetOwnershipFieldsAbsent(patch.fields, item);
   }
   // D39: re-check the handoffs conditional invariant on the EFFECTIVE status +
   // fields BEFORE any mutation (so a thrown SchemaValidationError leaves the
@@ -492,6 +495,8 @@ export function applyCreateItem(
   }
   assertStatusAllowed(ledger, init.status);
   validateFields(ledger, init.fields, /*creating*/ true);
+  // T1951: sealed workset ownership is library-managed — generic create cannot set it.
+  assertWorksetOwnershipFieldsAbsent(init.fields);
   // D39: handoffs-specific conditional invariant (status-dependent required
   // fields the status-blind schema cannot express). The concrete id is not
   // allocated yet, so label by the supplied id when present, else "<new>".
