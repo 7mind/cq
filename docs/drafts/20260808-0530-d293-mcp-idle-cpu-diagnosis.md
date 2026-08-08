@@ -41,3 +41,20 @@ Kill stale keep-alive `cq … -- mcp` children until one remains per active sess
 - T2018 single-instance keep-alive (P0)
 - T2019 parent-death reaper (P0)
 - T2020 verify CPU + gate
+
+## T2017 follow-up measurement (2026-08-08 post-redeploy)
+
+Standalone idle probe (no pi tool traffic):
+
+```text
+cwd=/tmp/exchange/idle-mcp-proj  projectId=idle-mcp-probe-d293
+mean_pcpu over 10s ≈ 1.09%
+RSS ≈ 2.7 MiB
+```
+
+Session MCP (pid of live agent) remains high %CPU because the parent is actively
+calling tools — not because stdio MCP spins when idle.
+
+**Conclusion:** There is no idle hot-loop to fix in ledger-mcp under quiet stdin.
+Thrash root cause was **multiplicity** (T2018/T2019). T2017 acceptance is met by
+measurement without further code change on the idle path.
