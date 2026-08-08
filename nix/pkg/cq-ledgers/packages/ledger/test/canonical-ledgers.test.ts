@@ -152,6 +152,8 @@ const UPSTREAM_SCHEMA_SPEC: LedgerSchema = {
     ledgerRefs: { type: "id[]", required: false },
     tags: { type: "string[]", required: false },
     suggestedModel: { type: "string", required: false },
+    worksetOwnerRef: { type: "string", required: false },
+    worksetOwnerEdgeKind: { type: "string", required: false },
   },
 };
 
@@ -821,10 +823,10 @@ describe("HANDOFFS_SCHEMA shape", () => {
     }
   });
 
-  it("has exactly 9 fields: summary, flow, ledgerRefs, blockingQuestions, handoffReasons, sessionLogs, rawLogs, tags, sourceRefs", () => {
+  it("has exactly 11 fields: summary, flow, ledgerRefs, blockingQuestions, handoffReasons, sessionLogs, rawLogs, tags, sourceRefs, workset ownership", () => {
     const fieldNames = Object.keys(HANDOFFS_SCHEMA.fields).sort();
     expect(fieldNames).toEqual(
-      ["blockingQuestions", "flow", "handoffReasons", "ledgerRefs", "rawLogs", "sessionLogs", "sourceRefs", "summary", "tags"],
+      ["blockingQuestions", "flow", "handoffReasons", "ledgerRefs", "rawLogs", "sessionLogs", "sourceRefs", "summary", "tags", "worksetOwnerEdgeKind", "worksetOwnerRef"],
     );
   });
 
@@ -1295,11 +1297,19 @@ describe("T335: IDEAS_SCHEMA shape", () => {
     expect(IDEAS_SCHEMA.idPrefix).toBe("I");
   });
 
-  it("declares title, description, and advisory ledgerRefs fields", () => {
-    expect(Object.keys(IDEAS_SCHEMA.fields).sort()).toEqual(["description", "ledgerRefs", "title"]);
+  it("declares title, description, advisory ledgerRefs, and sealed ownership fields", () => {
+    expect(Object.keys(IDEAS_SCHEMA.fields).sort()).toEqual([
+      "description",
+      "ledgerRefs",
+      "title",
+      "worksetOwnerEdgeKind",
+      "worksetOwnerRef",
+    ]);
     expect(IDEAS_SCHEMA.fields["title"]).toEqual({ type: "string", required: true });
     expect(IDEAS_SCHEMA.fields["description"]).toEqual({ type: "string", required: false });
     expect(IDEAS_SCHEMA.fields["ledgerRefs"]).toEqual({ type: "id[]", required: false });
+    expect(IDEAS_SCHEMA.fields["worksetOwnerRef"]).toEqual({ type: "string", required: false });
+    expect(IDEAS_SCHEMA.fields["worksetOwnerEdgeKind"]).toEqual({ type: "string", required: false });
   });
 
   it("declares NO required milestone field beyond the ambient attachment", () => {

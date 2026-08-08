@@ -30,6 +30,7 @@ import {
   parseRegistry,
   PLAN_MANAGED_GOAL_FIELD_NAMES,
   PLAN_REVIEW_DRAFT_FIELD,
+  WORKSET_OWNED_FIELD_NAMES,
   PostgresLedgerStore,
   removeLedgerArtifacts,
   restoreDumpToXdg,
@@ -110,6 +111,9 @@ function publicSnapshot(store: LedgerStore, names: readonly string[]): PublicSna
 
 function withoutPlanLifecycleSchemaFields(snapshot: PublicSnapshot): PublicSnapshot {
   const compatible = structuredClone(snapshot);
+  for (const ledger of Object.values(compatible)) {
+    for (const field of WORKSET_OWNED_FIELD_NAMES) delete ledger.schema.fields[field];
+  }
   const goals = compatible[GOALS_LEDGER];
   if (goals !== undefined) {
     for (const field of PLAN_MANAGED_GOAL_FIELD_NAMES) delete goals.schema.fields[field];
@@ -126,6 +130,7 @@ function withoutPlanLifecycleFields(
   schema: LedgerSchema,
 ): LedgerSchema {
   const compatible = structuredClone(schema);
+  for (const field of WORKSET_OWNED_FIELD_NAMES) delete compatible.fields[field];
   if (ledgerName === GOALS_LEDGER) {
     for (const field of PLAN_MANAGED_GOAL_FIELD_NAMES) delete compatible.fields[field];
   }

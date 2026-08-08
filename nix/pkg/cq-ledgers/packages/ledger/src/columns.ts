@@ -18,6 +18,7 @@ import {
   TASKS_LEDGER,
   UPSTREAM_LEDGER,
   UPSTREAM_SCHEMA,
+  WORKSET_OWNED_FIELD_NAMES,
 } from "./constants.js";
 import { PLAN_MANAGED_GOAL_FIELD_NAMES } from "./planLifecycle.js";
 
@@ -53,6 +54,7 @@ const UPSTREAM_LONG_FIELD_DENYLIST: ReadonlySet<string> = new Set([
 const INTERNAL_FIELD_DENYLIST: ReadonlySet<string> = new Set([
   ...PLAN_MANAGED_GOAL_FIELD_NAMES,
   PLAN_REVIEW_DRAFT_FIELD,
+  ...WORKSET_OWNED_FIELD_NAMES,
 ]);
 
 /**

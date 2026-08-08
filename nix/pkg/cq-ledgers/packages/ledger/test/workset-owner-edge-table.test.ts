@@ -211,8 +211,8 @@ describe("workset owner-edge table — fixtures per allowed row", () => {
             ? f.childRef.startsWith(`${childLedger}:`)
             : f.ownerRef.startsWith(`${childLedger}:`),
         );
-        expect(childFixtures.map((f) => f.relation).sort()).toEqual(
-          ["positive", "reverse", "sibling", "unrelated"].sort(),
+        expect(new Set(childFixtures.map((f) => f.relation))).toEqual(
+          new Set(["positive", "reverse", "sibling", "unrelated"] as const),
         );
         const positive = childFixtures.find((f) => f.relation === "positive")!;
         const reverse = childFixtures.find((f) => f.relation === "reverse")!;

@@ -22,6 +22,12 @@ ledgers:
         dependsOn:
           type: id[]
           required: false
+        worksetOwnerRef:
+          type: string
+          required: false
+        worksetOwnerEdgeKind:
+          type: string
+          required: false
       idPrefix: M
       transitions:
         open:
@@ -90,6 +96,12 @@ ledgers:
           type: string[]
           required: false
         suggestedModel:
+          type: string
+          required: false
+        worksetOwnerRef:
+          type: string
+          required: false
+        worksetOwnerEdgeKind:
           type: string
           required: false
       idPrefix: D
@@ -171,6 +183,12 @@ ledgers:
         suggestedModel:
           type: string
           required: false
+        worksetOwnerRef:
+          type: string
+          required: false
+        worksetOwnerEdgeKind:
+          type: string
+          required: false
       idPrefix: T
       transitions:
         planned:
@@ -241,6 +259,12 @@ ledgers:
         suggestedModel:
           type: string
           required: false
+        worksetOwnerRef:
+          type: string
+          required: false
+        worksetOwnerEdgeKind:
+          type: string
+          required: false
       idPrefix: H
       transitions:
         open:
@@ -297,6 +321,12 @@ ledgers:
         suggestedModel:
           type: string
           required: false
+        worksetOwnerRef:
+          type: string
+          required: false
+        worksetOwnerEdgeKind:
+          type: string
+          required: false
       idPrefix: Q
       transitions:
         open:
@@ -347,6 +377,12 @@ ledgers:
           type: string[]
           required: false
         suggestedModel:
+          type: string
+          required: false
+        worksetOwnerRef:
+          type: string
+          required: false
+        worksetOwnerEdgeKind:
           type: string
           required: false
       idPrefix: K
@@ -416,6 +452,12 @@ ledgers:
         rawLogs:
           type: string[]
           required: false
+        worksetOwnerRef:
+          type: string
+          required: false
+        worksetOwnerEdgeKind:
+          type: string
+          required: false
       idPrefix: G
       transitions:
         clarifying:
@@ -476,6 +518,12 @@ ledgers:
         rawLogs:
           type: string[]
           required: false
+        worksetOwnerRef:
+          type: string
+          required: false
+        worksetOwnerEdgeKind:
+          type: string
+          required: false
       idPrefix: R
       transitions:
         go-ahead: []
@@ -522,6 +570,12 @@ ledgers:
         sourceRefs:
           type: string[]
           required: false
+        worksetOwnerRef:
+          type: string
+          required: false
+        worksetOwnerEdgeKind:
+          type: string
+          required: false
       idPrefix: HO
       transitions:
         drained: []
@@ -548,6 +602,12 @@ ledgers:
           required: false
         ledgerRefs:
           type: id[]
+          required: false
+        worksetOwnerRef:
+          type: string
+          required: false
+        worksetOwnerEdgeKind:
+          type: string
           required: false
       idPrefix: I
       transitions:
@@ -612,6 +672,12 @@ ledgers:
           type: string[]
           required: false
         suggestedModel:
+          type: string
+          required: false
+        worksetOwnerRef:
+          type: string
+          required: false
+        worksetOwnerEdgeKind:
           type: string
           required: false
       idPrefix: RS
@@ -728,6 +794,12 @@ ledgers:
           type: string[]
           required: false
         suggestedModel:
+          type: string
+          required: false
+        worksetOwnerRef:
+          type: string
+          required: false
+        worksetOwnerEdgeKind:
           type: string
           required: false
       idPrefix: U

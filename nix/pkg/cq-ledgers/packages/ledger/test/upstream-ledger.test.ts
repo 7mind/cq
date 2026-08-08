@@ -16,6 +16,7 @@ import {
   TASKS_LEDGER,
   UPSTREAM_LEDGER,
   UPSTREAM_SCHEMA,
+  WORKSET_OWNED_FIELD_NAMES,
   type FieldValue,
   type LedgerSchema,
   type LedgerStore,
@@ -170,6 +171,7 @@ function schemaSha256(schema: LedgerSchema): string {
 
 function prePlanLifecycleSchema(ledgerName: string, schema: LedgerSchema): LedgerSchema {
   const compatible = structuredClone(schema);
+  for (const field of WORKSET_OWNED_FIELD_NAMES) delete compatible.fields[field];
   if (ledgerName === GOALS_LEDGER) {
     for (const field of PLAN_MANAGED_GOAL_FIELD_NAMES) delete compatible.fields[field];
   }
@@ -241,9 +243,11 @@ describe("frozen pre-upstream MCP client compatibility", () => {
       name: UPSTREAM_LEDGER,
       schema: UPSTREAM_SCHEMA,
     });
+    // Sealed workset ownership fields are schema-optional but not generic-write optional.
+    const owned = new Set<string>(WORKSET_OWNED_FIELD_NAMES);
     expect(Object.keys(OPTIONAL_FIELDS).sort()).toEqual(
       Object.entries(UPSTREAM_SCHEMA.fields)
-        .filter(([, field]) => !field.required)
+        .filter(([name, field]) => !field.required && !owned.has(name))
         .map(([name]) => name)
         .sort(),
     );
