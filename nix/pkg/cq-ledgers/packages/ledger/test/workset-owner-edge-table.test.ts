@@ -226,9 +226,12 @@ describe("workset owner-edge table — fixtures per allowed row", () => {
 
         expect(fixtureIncludedInOwnerClosure(reverse)).toBe(false);
         expect(reverse.included).toBe(false);
-        // Reverse swaps endpoints.
+        // Reverse swaps endpoints — must be a real swap (distinct refs even for
+        // same-ledger allow rows such as hypothesis→hypothesis).
+        expect(positive.ownerRef).not.toBe(positive.childRef);
         expect(reverse.ownerRef).toBe(positive.childRef);
         expect(reverse.childRef).toBe(positive.ownerRef);
+        expect(reverse.ownerRef).not.toBe(reverse.childRef);
 
         expect(fixtureIncludedInOwnerClosure(sibling)).toBe(false);
         expect(sibling.otherRef).toBeDefined();

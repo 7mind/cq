@@ -729,8 +729,12 @@ export function fixturesForAllowedRow(row: AllowedOwnerEdgeRow): readonly OwnerE
   const ownerRef = sampleRef(row.ownerLedger, 1);
   const fixtures: OwnerEdgeFixture[] = [];
   for (const childLedger of row.childLedgers) {
-    const childRef = sampleRef(childLedger, 1);
-    const siblingChildRef = sampleRef(childLedger, 2);
+    // Same-ledger edges (e.g. hypothesis→hypothesis) must use distinct ids so
+    // reverse is not vacuous (ownerRef === childRef).
+    const childN = childLedger === row.ownerLedger ? 2 : 1;
+    const siblingN = childLedger === row.ownerLedger ? 3 : 2;
+    const childRef = sampleRef(childLedger, childN);
+    const siblingChildRef = sampleRef(childLedger, siblingN);
     const unrelatedRef = sampleRef(
       childLedger === UPSTREAM_LEDGER ? TASKS_LEDGER : UPSTREAM_LEDGER,
       9,
