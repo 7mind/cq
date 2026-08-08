@@ -115,16 +115,15 @@ export async function readWorksetRootsEpoch(
 export function createInMemoryWorksetStore(
   options: CreateInMemoryWorksetStoreOptions = {},
 ): WorksetStore {
-  const coordinatorOptions: CreateInMemoryWorksetAdmissionCoordinatorOptions = {};
-  if (options.hooks !== undefined) {
-    coordinatorOptions.hooks = options.hooks;
-  }
-  if (options.validateReplacement !== undefined) {
-    coordinatorOptions.validateReplacement = options.validateReplacement;
-  }
-  if (options.isTargetAdmitted !== undefined) {
-    coordinatorOptions.isTargetAdmitted = options.isTargetAdmitted;
-  }
+  const coordinatorOptions: CreateInMemoryWorksetAdmissionCoordinatorOptions = {
+    ...(options.hooks !== undefined ? { hooks: options.hooks } : {}),
+    ...(options.validateReplacement !== undefined
+      ? { validateReplacement: options.validateReplacement }
+      : {}),
+    ...(options.isTargetAdmitted !== undefined
+      ? { isTargetAdmitted: options.isTargetAdmitted }
+      : {}),
+  };
   const coordinator: WorksetAdmissionCoordinator =
     createInMemoryWorksetAdmissionCoordinator(coordinatorOptions);
   // Structural: coordinator is a WorksetStore (sync snapshot ⊆ union).
