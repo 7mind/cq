@@ -17,7 +17,8 @@ const EVIDENCE_DIR = resolve(
 const BASELINE_PATH = resolve(EVIDENCE_DIR, "baseline.json");
 const AFTER_PATH = resolve(EVIDENCE_DIR, "after.json");
 const TARGET_PATH = resolve(import.meta.dir, "baselines/t1326-tool-surface-target.json");
-const T1331_COUNTERFACTUAL_TIMEOUT_MS = 10_000;
+// D293: full-suite contention can exceed 10s for multi-profile measurement.
+const T1331_COUNTERFACTUAL_TIMEOUT_MS = 30_000;
 type HistoricalMeasurement = Parameters<typeof buildNormalizedAfterArtifact>[1];
 
 function historicalMeasurement(): HistoricalMeasurement {

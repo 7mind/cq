@@ -277,7 +277,9 @@ describe("cq migrate (T504)", () => {
     expect(second.exitCode).toBe(EXIT_USAGE);
   });
 
-  it("git-object backend: migrates state + logs, leaves the orphan ref byte-identical, second run refuses", async () => {
+  it(
+    "git-object backend: migrates state + logs, leaves the orphan ref byte-identical, second run refuses",
+    async () => {
     const root = await gitRepo("cq-migrate-git-");
     await fs.writeFile(
       path.join(root, "cq.toml"),
@@ -310,7 +312,9 @@ describe("cq migrate (T504)", () => {
     // A second run without --yes refuses (the backend is already xdg).
     const second = await dispatch(["migrate", "--cwd", root], recordingIo());
     expect(second.exitCode).toBe(EXIT_USAGE);
-  });
+  },
+    30_000,
+  );
 
   it("refuses to clobber a non-empty xdg target without --yes, writing nothing; --yes proceeds", async () => {
     const root = await gitRepo("cq-migrate-nonempty-");

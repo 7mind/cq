@@ -757,8 +757,21 @@ function expectIds(actual: readonly string[], expected: readonly string[]): void
 
 function runPlanPredicatesSuite(backend: Backend): void {
   const suiteDescribe = backend.skip === true ? describe.skip : describe;
+  // Load-sensitive: GitObject under full-suite + many linked worktrees exceeds
+  // the default 5s wall-clock (D293). SUT invariants unchanged.
+  const caseTimeoutMs =
+    backend.name === "GitObjectLedgerBackend" ? 30_000 : undefined;
+  const itCase = (
+    name: string,
+    fn: () => Promise<void>,
+    explicitTimeoutMs?: number,
+  ): void => {
+    const timeoutMs = explicitTimeoutMs ?? caseTimeoutMs;
+    if (timeoutMs === undefined) it(name, fn);
+    else it(name, fn, timeoutMs);
+  };
   suiteDescribe(`T853 plan-gated predicates (${backend.name})`, () => {
-    it("(busy) an active claim suppresses P-plan and surfaces in planBusy; abandon re-enables", async () => {
+    itCase("(busy) an active claim suppresses P-plan and surfaces in planBusy; abandon re-enables", async () => {
       const store = await backend.build();
       try {
         await seedLegacyGoal(store, GOAL_ID, "clarifying");
@@ -783,7 +796,7 @@ function runPlanPredicatesSuite(backend: Backend): void {
     });
 
     for (const status of SUPPRESSING_RESEARCH_STATUSES) {
-      it(`(wait) a wait ref at ${status} suppresses P-plan`, async () => {
+      itCase(`(wait) a wait ref at ${status} suppresses P-plan`, async () => {
         const store = await backend.build();
         try {
           await seedLegacyGoal(store, GOAL_ID, "clarifying");
@@ -803,7 +816,7 @@ function runPlanPredicatesSuite(backend: Backend): void {
     }
 
     for (const status of RESUMING_RESEARCH_STATUSES) {
-      it(`(wait) a wait ref at ${status} re-enables P-plan`, async () => {
+      itCase(`(wait) a wait ref at ${status} re-enables P-plan`, async () => {
         const store = await backend.build();
         try {
           await seedLegacyGoal(store, GOAL_ID, "clarifying");
@@ -820,7 +833,7 @@ function runPlanPredicatesSuite(backend: Backend): void {
     }
 
     for (const disposition of ["missing", "archived"] as const) {
-      it(`(wait) a wait ref whose research left the active view (${disposition}) re-enables P-plan and the next claim`, async () => {
+      itCase(`(wait) a wait ref whose research left the active view (${disposition}) re-enables P-plan and the next claim`, async () => {
         const store = await backend.build();
         try {
           await seedLegacyGoal(store, GOAL_ID, "clarifying");
@@ -843,7 +856,7 @@ function runPlanPredicatesSuite(backend: Backend): void {
     // --- T1268 task-wait dispositions (guarded pause → pPlan) ---------------
 
     for (const status of SUPPRESSING_TASK_STATUSES) {
-      it(`(task-wait) a real guarded tasks pause at ${status} excludes the goal from pPlan.items`, async () => {
+      itCase(`(task-wait) a real guarded tasks pause at ${status} excludes the goal from pPlan.items`, async () => {
         const store = await backend.build();
         try {
           await seedLegacyGoal(store, GOAL_ID, "clarifying");
@@ -865,7 +878,7 @@ function runPlanPredicatesSuite(backend: Backend): void {
     }
 
     for (const status of RESUMING_TASK_STATUSES) {
-      it(`(task-wait) a wait ref at ${status} re-includes the goal in pPlan.items`, async () => {
+      itCase(`(task-wait) a wait ref at ${status} re-includes the goal in pPlan.items`, async () => {
         const store = await backend.build();
         try {
           await seedLegacyGoal(store, GOAL_ID, "clarifying");
@@ -886,7 +899,7 @@ function runPlanPredicatesSuite(backend: Backend): void {
     }
 
     for (const disposition of ["missing", "archived"] as const) {
-      it(`(task-wait) a wait ref whose task left the active view (${disposition}) re-includes the goal`, async () => {
+      itCase(`(task-wait) a wait ref whose task left the active view (${disposition}) re-includes the goal`, async () => {
         const store = await backend.build();
         try {
           await seedLegacyGoal(store, GOAL_ID, "clarifying");
@@ -911,7 +924,7 @@ function runPlanPredicatesSuite(backend: Backend): void {
       });
     }
 
-    it("(clearing) the next claim clears the wait set; a re-pause replaces it and the verdicts track", async () => {
+    itCase("(clearing) the next claim clears the wait set; a re-pause replaces it and the verdicts track", async () => {
       const store = await backend.build();
       try {
         await seedLegacyGoal(store, GOAL_ID, "clarifying");
@@ -948,7 +961,7 @@ function runPlanPredicatesSuite(backend: Backend): void {
       }
     });
 
-    it("(defects:revise) publish-filed defects are P-investigate-excluded under the planning round and discovered exactly once", async () => {
+    itCase("(defects:revise) publish-filed defects are P-investigate-excluded under the planning round and discovered exactly once", async () => {
       const store = await backend.build();
       try {
         await seedLegacyGoal(store, GOAL_ID, "clarifying");
@@ -986,7 +999,7 @@ function runPlanPredicatesSuite(backend: Backend): void {
       }
     });
 
-    it("(defects:question) question-pause-filed defects stay P-investigate-excluded in clarifying; the goal waits for answers", async () => {
+    itCase("(defects:question) question-pause-filed defects stay P-investigate-excluded in clarifying; the goal waits for answers", async () => {
       const store = await backend.build();
       try {
         await seedLegacyGoal(store, GOAL_ID, "clarifying");
@@ -1032,7 +1045,7 @@ function runPlanPredicatesSuite(backend: Backend): void {
       }
     });
 
-    it("(defects:finalize) finalize-filed defects are discovered exactly once and the exclusion lifts at planned", async () => {
+    itCase("(defects:finalize) finalize-filed defects are discovered exactly once and the exclusion lifts at planned", async () => {
       const store = await backend.build();
       try {
         await seedLegacyGoal(store, GOAL_ID, "clarifying");
@@ -1069,7 +1082,7 @@ function runPlanPredicatesSuite(backend: Backend): void {
       }
     });
 
-    it("(defects:noop) abandon-filed defects stay P-investigate-excluded in planning and are discovered exactly once", async () => {
+    itCase("(defects:noop) abandon-filed defects stay P-investigate-excluded in planning and are discovered exactly once", async () => {
       const store = await backend.build();
       try {
         await seedLegacyGoal(store, GOAL_ID, "clarifying");
@@ -1100,7 +1113,7 @@ function runPlanPredicatesSuite(backend: Backend): void {
       }
     });
 
-    it("(manifest) draft and superseded tasks are excluded; the finalized current manifest executes; transitions and legacy ready sets remain", async () => {
+    itCase("(manifest) draft and superseded tasks are excluded; the finalized current manifest executes; transitions and legacy ready sets remain", async () => {
       const store = await backend.build();
       try {
         // A LEGACY goal with a ready task — preserved verbatim across the run.
@@ -1207,7 +1220,7 @@ function runPlanPredicatesSuite(backend: Backend): void {
       }
     }, 15_000);
 
-    it("(off-manifest) a goal-linked task outside the finalized manifest — planned OR wip — is excluded (Q337 leak)", async () => {
+    itCase("(off-manifest) a goal-linked task outside the finalized manifest — planned OR wip — is excluded (Q337 leak)", async () => {
       const store = await backend.build();
       try {
         await seedLegacyGoal(store, GOAL_ID, "clarifying");
@@ -1256,7 +1269,7 @@ function runPlanPredicatesSuite(backend: Backend): void {
       }
     }, 15_000);
 
-    it("(legacy-manifest) a declared legacy goals.milestones fences readiness to the selected DAG (D166)", async () => {
+    itCase("(legacy-manifest) a declared legacy goals.milestones fences readiness to the selected DAG (D166)", async () => {
       const store = await backend.build();
       try {
         // Two racing LEGACY planning sessions both publish a goal-linked DAG;
