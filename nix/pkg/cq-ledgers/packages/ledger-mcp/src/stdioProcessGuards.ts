@@ -158,8 +158,13 @@ export function acquireStdioSingletonLock(lockDir: string): StdioProcessGuards {
 }
 
 /**
- * When the parent process disappears (ppid becomes 1), exit. Unref'd so it
- * does not alone keep the event loop alive.
+ * When the *launch parent* dies, exit. Unref'd so it does not alone keep the
+ * event loop alive.
+ *
+ * Important: do NOT treat `ppid !== initialParent` as death. Under Pi keep-alive
+ * and some supervisors the MCP is reparented (often to pid 1/2) while the
+ * client socket is still live; exiting on reparent caused "Failed to reconnect:
+ * Connection closed (ledger-mcp: serving …)" right after startup.
  */
 export function startParentDeathWatcher(onParentGone: () => void): () => void {
   const initialParent = process.ppid;
@@ -167,7 +172,8 @@ export function startParentDeathWatcher(onParentGone: () => void): () => void {
     return () => {};
   }
   const timer = setInterval(() => {
-    if (process.ppid === 1 || process.ppid !== initialParent) {
+    // True orphan: init/reaper adopted us AND the original parent is gone.
+    if (!pidAlive(initialParent)) {
       onParentGone();
     }
   }, PARENT_POLL_MS);
@@ -176,8 +182,13 @@ export function startParentDeathWatcher(onParentGone: () => void): () => void {
 }
 
 /**
- * Exit when the stdio client channel ends so a keep-alive orphan does not hold
- * the singleton lock forever after Pi drops the socket.
+ * Exit when the stdio client channel reaches EOF so a keep-alive orphan does
+ * not hold the singleton lock forever after Pi drops the pipe.
+ *
+ * Only `end` (EOF). Do not listen for `error`/`close` — those fire on transient
+ * socket hiccups and on some runtimes during connect, which killed a freshly
+ * started server and surfaced as reconnect failures with the "serving…" banner
+ * still on stderr.
  */
 export function startStdinEndWatcher(onEnd: () => void): () => void {
   const stdin = process.stdin;
@@ -188,13 +199,8 @@ export function startStdinEndWatcher(onEnd: () => void): () => void {
     onEnd();
   };
   stdin.on("end", fire);
-  stdin.on("close", fire);
-  // Half-open sockets may not emit end promptly; also treat explicit destroy.
-  stdin.on("error", fire);
   return () => {
     done = true;
     stdin.off("end", fire);
-    stdin.off("close", fire);
-    stdin.off("error", fire);
   };
 }
