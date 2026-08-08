@@ -45,6 +45,7 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import {
   acquireStdioSingletonLock,
   startParentDeathWatcher,
+  startStdinEndWatcher,
 } from "./stdioProcessGuards.js";
 import {
   type LedgerStore,
@@ -977,10 +978,15 @@ export async function main(argv: readonly string[]): Promise<void> {
       : path.join(cwd, ".cq");
   const singleton = acquireStdioSingletonLock(lockDir);
 
-  // Graceful shutdown on SIGTERM / SIGINT / parent death (T2019).
+  // Graceful shutdown on SIGTERM / SIGINT / parent death / stdin end (T2019).
   let stopParentWatch: () => void = () => {};
+  let stopStdinWatch: () => void = () => {};
+  let shuttingDown = false;
   const shutdown = (): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     stopParentWatch();
+    stopStdinWatch();
     watcher.close();
     singleton.release();
     void dispatchRuntime.close().finally(() => process.exit(0));
@@ -988,6 +994,12 @@ export async function main(argv: readonly string[]): Promise<void> {
   stopParentWatch = startParentDeathWatcher(() => {
     process.stderr.write(
       "ledger-mcp: parent process gone — exiting (D293/T2019 orphan reaper)\n",
+    );
+    shutdown();
+  });
+  stopStdinWatch = startStdinEndWatcher(() => {
+    process.stderr.write(
+      "ledger-mcp: stdin closed — exiting (release stdio lock for reconnect)\n",
     );
     shutdown();
   });
