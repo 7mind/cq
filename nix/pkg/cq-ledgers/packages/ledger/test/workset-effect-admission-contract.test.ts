@@ -325,4 +325,40 @@ describe("workset effect admission contract [T1953]", () => {
     expect(next.epoch).toBe(1);
     await next.acknowledge();
   });
+
+  it("concurrent set∥admit never leaves a live pre-commit epoch admission", async () => {
+    // Non-latched stress: the pre-fix coordinator lost the race when grant
+    // returned before active.set, letting setRoots commit with active.size===0.
+    // Release admit as soon as it fulfills so set is not deadlocked on active.
+    for (let i = 0; i < 200; i++) {
+      const c = createInMemoryWorksetAdmissionCoordinator();
+      await c.setRoots(["goals:G0"]);
+      const admitP = c.admitExternalEffect({ kind: "merge", targetRef: "goals:G0" });
+      const setP = c.setRoots(["goals:G1"]);
+      void admitP.then(async (adm) => {
+        adm.registerProcessGroup({ pgid: 1, leaderPid: 1 });
+        adm.markSettled();
+        await adm.releaseAfterSettlement();
+      }).catch(() => {
+        // revoked / target-excluded — set proceeds alone
+      });
+      const setSnap = await setP;
+      expect(setSnap).toEqual({ roots: ["goals:G1"], epoch: 2 });
+      const admitOutcome = await Promise.allSettled([admitP]).then((r) => r[0]!);
+      if (admitOutcome.status === "fulfilled") {
+        const adm = admitOutcome.value;
+        // Fulfilled admit was for G0 (pre-set) or G1 (post-set). Never a live
+        // handle whose epoch is behind snapshot while active is already 0 with
+        // set completed — release already ran above.
+        expect(adm.epoch === 1 || adm.epoch === 2).toBe(true);
+        if (adm.epoch === 1) expect(adm.roots).toEqual(["goals:G0"]);
+        if (adm.epoch === 2) expect(adm.roots).toEqual(["goals:G1"]);
+      } else {
+        const reason = admitOutcome.reason as { code?: string };
+        expect(reason.code === "revoked" || reason.code === "target-excluded").toBe(true);
+      }
+      expect(c.activeAdmissionCount()).toBe(0);
+      expect(c.snapshot()).toEqual({ roots: ["goals:G1"], epoch: 2 });
+    }
+  });
 });

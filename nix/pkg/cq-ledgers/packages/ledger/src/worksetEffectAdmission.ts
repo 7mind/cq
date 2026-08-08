@@ -484,30 +484,71 @@ export function createInMemoryWorksetAdmissionCoordinator(
     }
   }
 
-  async function beginNonExclusiveAdmit(): Promise<{ generation: number; epoch: number; roots: readonly string[] }> {
-    // Wait for any exclusive holder (set / admin) to finish. Effects that lose
-    // the race to a commit observe a generation bump and are revoked.
+  /**
+   * Grant a non-exclusive admission and **synchronously** reserve a slot in
+   * `active` before returning. The post-grant / pre-`active.set` window is the
+   * linearizability hole that let `setRoots` commit while an admit was still
+   * outside `active` (exclusive waits on `active.size === 0`). No `await` is
+   * allowed between the final exclusive/generation checks and the insert.
+   */
+  async function beginNonExclusiveAdmit(form: ActiveRecord["form"]): Promise<{
+    id: string;
+    record: ActiveRecord;
+    generation: number;
+    epoch: number;
+    roots: readonly string[];
+  }> {
+    // Capture once: any exclusive commit that advances generation while we wait
+    // revokes this attempt (do not re-sample generation on retry loops).
     const generationAtEntry = admitGeneration;
-    await waitUntil(() => !exclusiveHeldFlag);
-    if (hooks.beforeAdmissionGrant !== undefined) {
-      await hooks.beforeAdmissionGrant();
+    for (;;) {
+      await waitUntil(() => !exclusiveHeldFlag);
+      if (hooks.beforeAdmissionGrant !== undefined) {
+        await hooks.beforeAdmissionGrant();
+      }
+      // Atomic grant: re-check then insert with zero awaits in between.
+      if (admitGeneration !== generationAtEntry) {
+        throw new WorksetAdmissionError(
+          "revoked",
+          "workset admission revoked by exclusive commit before grant",
+        );
+      }
+      if (exclusiveHeldFlag) {
+        // Exclusive took the lock after the latch; retry (generation still current).
+        continue;
+      }
+      const id =
+        form === "ledger-mutation"
+          ? `lm-${++nextAdmissionId}`
+          : `ee-${++nextAdmissionId}`;
+      const closed = deferred();
+      const record: ActiveRecord = {
+        id,
+        form,
+        closed,
+        processGroup: null,
+        settled: form === "ledger-mutation",
+      };
+      active.set(id, record);
+      notify();
+      // Exclusive cannot pass active.size===0 while we hold the slot. A
+      // generation bump here would mean we lost a race that should be
+      // impossible under that invariant — still fail closed.
+      if (admitGeneration !== generationAtEntry) {
+        closeActive(id);
+        throw new WorksetAdmissionError(
+          "revoked",
+          "workset admission revoked by exclusive commit before grant",
+        );
+      }
+      return {
+        id,
+        record,
+        generation: admitGeneration,
+        epoch,
+        roots: roots.slice(),
+      };
     }
-    // Re-check after the latch: a set/admin may have committed (revoking us)
-    // or may now hold exclusive.
-    if (admitGeneration !== generationAtEntry) {
-      throw new WorksetAdmissionError(
-        "revoked",
-        "workset admission revoked by exclusive commit before grant",
-      );
-    }
-    await waitUntil(() => !exclusiveHeldFlag);
-    if (admitGeneration !== generationAtEntry) {
-      throw new WorksetAdmissionError(
-        "revoked",
-        "workset admission revoked by exclusive commit before grant",
-      );
-    }
-    return { generation: admitGeneration, epoch, roots: roots.slice() };
   }
 
   function closeActive(id: string): void {
@@ -528,26 +569,21 @@ export function createInMemoryWorksetAdmissionCoordinator(
         `unknown ledger mutation kind: ${String(input.kind)}`,
       );
     }
-    const granted = await beginNonExclusiveAdmit();
-    for (const target of input.targets) {
-      if (!isTargetAdmitted(target, granted.roots)) {
-        throw new WorksetAdmissionError(
-          "target-excluded",
-          `ledger mutation target "${target}" is outside the admitted workset`,
-        );
+    const granted = await beginNonExclusiveAdmit("ledger-mutation");
+    try {
+      for (const target of input.targets) {
+        if (!isTargetAdmitted(target, granted.roots)) {
+          throw new WorksetAdmissionError(
+            "target-excluded",
+            `ledger mutation target "${target}" is outside the admitted workset`,
+          );
+        }
       }
+    } catch (err) {
+      closeActive(granted.id);
+      throw err;
     }
-    const id = `lm-${++nextAdmissionId}`;
-    const closed = deferred();
-    const record: ActiveRecord = {
-      id,
-      form: "ledger-mutation",
-      closed,
-      processGroup: null,
-      settled: true,
-    };
-    active.set(id, record);
-    notify();
+    const { id } = granted;
 
     let open = true;
     const handle: WorksetLedgerMutationAdmission = {
@@ -584,24 +620,15 @@ export function createInMemoryWorksetAdmissionCoordinator(
         `unknown external effect kind: ${String(input.kind)}`,
       );
     }
-    const granted = await beginNonExclusiveAdmit();
+    const granted = await beginNonExclusiveAdmit("external-effect");
     if (!isTargetAdmitted(input.targetRef, granted.roots)) {
+      closeActive(granted.id);
       throw new WorksetAdmissionError(
         "target-excluded",
         `external effect target "${input.targetRef}" is outside the admitted workset`,
       );
     }
-    const id = `ee-${++nextAdmissionId}`;
-    const closed = deferred();
-    const record: ActiveRecord = {
-      id,
-      form: "external-effect",
-      closed,
-      processGroup: null,
-      settled: false,
-    };
-    active.set(id, record);
-    notify();
+    const { id, record } = granted;
 
     let open = true;
     const handle: WorksetExternalEffectAdmission = {
