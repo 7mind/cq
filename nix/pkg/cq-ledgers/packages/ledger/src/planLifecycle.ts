@@ -203,8 +203,16 @@ export const PlanPrivateClaimRecordSchema = PlanPublicClaimSchema.extend({
   goalPhase: z.literal("planning"),
   legacyAdopted: z.boolean(),
   adoptedManifest: PlanAdoptedManifestSchema,
-  waitingResearches: z.array(researchIdSchema).length(0),
-  waitingTasks: z.array(taskIdSchema).length(0),
+  // D295: pre-waitingTasks durable rows omit these keys; default empty so load
+  // and claim_plan do not fail Zod on historical claim records.
+  waitingResearches: z.preprocess(
+    (value) => (value === undefined ? [] : value),
+    z.array(researchIdSchema).length(0),
+  ),
+  waitingTasks: z.preprocess(
+    (value) => (value === undefined ? [] : value),
+    z.array(taskIdSchema).length(0),
+  ),
   ...provenanceShape,
   state: z.enum(["active", "released", "finalized"]),
 })
