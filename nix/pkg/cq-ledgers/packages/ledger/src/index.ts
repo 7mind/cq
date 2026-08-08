@@ -107,6 +107,45 @@ export type {
   WorksetProjectedNode,
   WorksetProjectedGraph,
 } from "./worksetGraph.js";
+export {
+  WORKSET_PLAN_LIFECYCLE_MUTATION_KINDS,
+  WORKSET_LEDGER_WRITE_MUTATION_KINDS,
+  WORKSET_LEDGER_MUTATION_KINDS,
+  WORKSET_EXTERNAL_EFFECT_KINDS,
+  WORKSET_ADMINISTRATIVE_EFFECT_KINDS,
+  WORKSET_EFFECT_KINDS,
+  WORKSET_ADMISSION_FORMS,
+  WORKSET_FORBIDDEN_ADMISSION_PATTERNS,
+  WORKSET_EFFECT_TERMINATION_REASONS,
+  admissionFormForEffectKind,
+  mintWorksetManagementAuthority,
+  isTrustedWorksetManagementAuthority,
+  WorksetAdmissionError,
+  canonicalizeWorksetRootReplacement,
+  createInMemoryWorksetAdmissionCoordinator,
+  isLiveWorksetAdmission,
+  assertCallerCannotMintAdmission,
+} from "./worksetEffectAdmission.js";
+export type {
+  WorksetPlanLifecycleMutationKind,
+  WorksetLedgerWriteMutationKind,
+  WorksetLedgerMutationKind,
+  WorksetExternalEffectKind,
+  WorksetAdministrativeEffectKind,
+  WorksetEffectKind,
+  WorksetAdmissionForm,
+  WorksetForbiddenAdmissionPattern,
+  WorksetEffectTerminationReason,
+  WorksetManagementAuthority,
+  WorksetAdmissionErrorCode,
+  WorksetRootsEpoch,
+  WorksetProcessGroupRegistration,
+  WorksetLedgerMutationAdmission,
+  WorksetExternalEffectAdmission,
+  WorksetAdmissionCoordinatorHooks,
+  CreateInMemoryWorksetAdmissionCoordinatorOptions,
+  WorksetAdmissionCoordinator,
+} from "./worksetEffectAdmission.js";
 export * from "./parser/parse.js";
 export * from "./parser/serialize.js";
 export { parseFrontmatter, serializeFrontmatter } from "./parser/frontmatter.js";
