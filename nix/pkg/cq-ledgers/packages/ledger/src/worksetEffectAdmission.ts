@@ -141,43 +141,48 @@ export type WorksetEffectTerminationReason =
 // Kind → form mapping
 // ---------------------------------------------------------------------------
 
+const LEDGER_MUTATION_KIND_SET: ReadonlySet<string> = new Set(
+  WORKSET_LEDGER_MUTATION_KINDS,
+);
+const EXTERNAL_EFFECT_KIND_SET: ReadonlySet<string> = new Set(
+  WORKSET_EXTERNAL_EFFECT_KINDS,
+);
+const ADMINISTRATIVE_EFFECT_KIND_SET: ReadonlySet<string> = new Set(
+  WORKSET_ADMINISTRATIVE_EFFECT_KINDS,
+);
+
 export function admissionFormForEffectKind(
   kind: WorksetEffectKind,
 ): WorksetAdmissionForm {
-  if ((WORKSET_LEDGER_MUTATION_KINDS as readonly string[]).includes(kind)) {
-    return "ledger-mutation";
-  }
-  if ((WORKSET_EXTERNAL_EFFECT_KINDS as readonly string[]).includes(kind)) {
-    return "external-effect";
-  }
-  if ((WORKSET_ADMINISTRATIVE_EFFECT_KINDS as readonly string[]).includes(kind)) {
-    return "exclusive-administrative";
-  }
-  const _exhaustive: never = kind;
-  return _exhaustive;
+  if (LEDGER_MUTATION_KIND_SET.has(kind)) return "ledger-mutation";
+  if (EXTERNAL_EFFECT_KIND_SET.has(kind)) return "external-effect";
+  if (ADMINISTRATIVE_EFFECT_KIND_SET.has(kind)) return "exclusive-administrative";
+  throw new WorksetAdmissionError(
+    "invalid-replacement",
+    `unknown workset effect kind: ${String(kind)}`,
+  );
 }
 
 // ---------------------------------------------------------------------------
 // Management authority (opaque; full credential model is t18 / T1978)
 // ---------------------------------------------------------------------------
 
-const worksetManagementAuthorityBrand: unique symbol = Symbol(
-  "cq.workset.managementAuthority",
-) as unique symbol;
-
 /**
  * Opaque trusted management authority. Only {@link mintWorksetManagementAuthority}
- * produces a value the coordinator accepts; structural lookalikes fail.
+ * produces a value the coordinator accepts; structural lookalikes fail. Trust is
+ * membership in an unexported WeakSet — a forged plain object never qualifies.
  */
 export type WorksetManagementAuthority = {
-  readonly [worksetManagementAuthorityBrand]: true;
+  readonly __worksetManagementAuthority: true;
 };
 
 const trustedManagementAuthorities = new WeakSet<object>();
 
 /** Trusted host / test mint. Callers cannot forge a trusted token. */
 export function mintWorksetManagementAuthority(): WorksetManagementAuthority {
-  const token = { [worksetManagementAuthorityBrand]: true as const };
+  const token: WorksetManagementAuthority = {
+    __worksetManagementAuthority: true,
+  };
   trustedManagementAuthorities.add(token);
   return token;
 }

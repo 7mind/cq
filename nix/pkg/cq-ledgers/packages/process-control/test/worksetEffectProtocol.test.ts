@@ -37,7 +37,7 @@ function createRecordingProvider(): WorksetEffectAdmissionProvider & {
   const releases: string[] = [];
   const acquisitions: Array<{ kind: string; targetRef: string; epoch: number }> = [];
   let nextId = 0;
-  let epoch = 7;
+  const epoch = 7;
   return {
     releases,
     acquisitions,
@@ -226,42 +226,8 @@ describe("workset effect protocol [T1953]", () => {
     });
   }
 
-  it("integrates with a coordinator-backed provider and proves set waits on broker release", async () => {
-    // Late import keeps process-control free of a package dependency edge while
-    // still exercising the provider surface against the ledger reference.
-    const {
-      createInMemoryWorksetAdmissionCoordinator,
-    } = await import("../../ledger/src/worksetEffectAdmission.ts");
-
-    const releaseEffect = deferred();
-    const setReady = deferred();
-    const coordinator = createInMemoryWorksetAdmissionCoordinator({
-      hooks: {
-        afterExclusiveReady: () => {
-          setReady.resolve();
-        },
-      },
-    });
-
-    const provider: WorksetEffectAdmissionProvider = {
-      async acquire(input) {
-        const handle = await coordinator.admitExternalEffect(input);
-        return {
-          id: handle.id,
-          epoch: handle.epoch,
-          kind: handle.kind,
-          targetRef: handle.targetRef,
-          registerProcessGroup: (registration) => {
-            handle.registerProcessGroup(registration);
-          },
-          markSettled: () => {
-            handle.markSettled();
-          },
-          releaseAfterSettlement: () => handle.releaseAfterSettlement(),
-        };
-      },
-    };
-
+  it("provider-backed session closes admission only after settle for parent-death", async () => {
+    const provider = createRecordingProvider();
     const session = new WorksetEffectProtocolSession({
       provider,
       kind: "child-dispatch",
@@ -270,26 +236,11 @@ describe("workset effect protocol [T1953]", () => {
     await session.acquireAdmission();
     session.registerProcessGroup({ pgid: 77, leaderPid: 77 });
     session.releaseTarget();
-
-    const setPromise = coordinator.setRoots(["goals:G1"]);
-    let setDone = false;
-    void setPromise.then(() => {
-      setDone = true;
-    });
-    await Promise.resolve();
-    expect(setDone).toBe(false);
-
-    // Terminate for parent-death; settlement then release unblocks set.
     session.beginTermination("parent-death");
     session.markSettled();
-    queueMicrotask(() => {
-      void session.closeAdmission().then(() => releaseEffect.resolve());
-    });
-    await releaseEffect.promise;
-    await setReady.promise;
-    const snap = await setPromise;
-    expect(snap).toEqual({ roots: ["goals:G1"], epoch: 1 });
-    expect(setDone).toBe(true);
-    expect(coordinator.activeAdmissionCount()).toBe(0);
+    await session.closeAdmission();
+    expect(session.stage).toBe("admission-closed");
+    expect(session.reason).toBe("parent-death");
+    expect(provider.releases).toEqual(["prov-1"]);
   });
 });

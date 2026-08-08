@@ -16,6 +16,7 @@ import {
   mintWorksetManagementAuthority,
   isTrustedWorksetManagementAuthority,
   type WorksetAdministrativeEffectKind,
+  type WorksetAdmissionErrorCode,
 } from "../src/index.js";
 
 function deferred(): {
@@ -31,7 +32,7 @@ function deferred(): {
 
 async function expectCode(
   promise: Promise<unknown>,
-  code: string,
+  code: WorksetAdmissionErrorCode,
 ): Promise<void> {
   try {
     await promise;

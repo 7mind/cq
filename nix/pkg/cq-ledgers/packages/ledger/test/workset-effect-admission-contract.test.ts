@@ -19,6 +19,7 @@ import {
   assertCallerCannotMintAdmission,
   WORKSET_EFFECT_TERMINATION_REASONS,
   type WorksetAdmissionCoordinator,
+  type WorksetAdmissionErrorCode,
   type WorksetExternalEffectAdmission,
 } from "../src/index.js";
 
@@ -35,7 +36,7 @@ function deferred(): {
 
 async function expectRejection(
   promise: Promise<unknown>,
-  code: string,
+  code: WorksetAdmissionErrorCode,
 ): Promise<WorksetAdmissionError> {
   try {
     await promise;

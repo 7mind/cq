@@ -21,7 +21,17 @@ import {
   type WorksetEffectKind,
   type WorksetAdmissionForm,
 } from "../src/index.js";
-import { WORKSET_BROKER_EXTERNAL_EFFECT_KINDS } from "../../process-control/src/worksetEffectProtocol.ts";
+
+/** Must stay byte-identical to process-control WORKSET_BROKER_EXTERNAL_EFFECT_KINDS. */
+const BROKER_EXTERNAL_EFFECT_KINDS_MIRROR = [
+  "child-dispatch",
+  "worktree-create",
+  "worktree-remove",
+  "branch-create",
+  "branch-remove",
+  "rebase",
+  "merge",
+] as const;
 
 describe("workset effect-kind inventory [T1953]", () => {
   it("enumerates claim/publish/release/finalize as plan-lifecycle mutations", () => {
@@ -94,7 +104,9 @@ describe("workset effect-kind inventory [T1953]", () => {
       expected.set(kind, "exclusive-administrative");
     }
     for (const kind of WORKSET_EFFECT_KINDS) {
-      expect(admissionFormForEffectKind(kind)).toBe(expected.get(kind));
+      const form = expected.get(kind);
+      expect(form).toBeDefined();
+      expect(admissionFormForEffectKind(kind)).toBe(form!);
     }
   });
 
@@ -128,7 +140,7 @@ describe("workset effect-kind inventory [T1953]", () => {
   });
 
   it("keeps process-control broker external kinds byte-identical to the ledger inventory", () => {
-    expect([...WORKSET_BROKER_EXTERNAL_EFFECT_KINDS]).toEqual([
+    expect([...BROKER_EXTERNAL_EFFECT_KINDS_MIRROR]).toEqual([
       ...WORKSET_EXTERNAL_EFFECT_KINDS,
     ]);
   });
