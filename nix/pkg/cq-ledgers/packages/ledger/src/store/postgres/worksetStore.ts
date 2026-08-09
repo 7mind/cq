@@ -295,8 +295,40 @@ export function createPostgresWorksetStore(
 
   function trackDurable(id: string, work: Promise<void>): void {
     const prior = durableSideEffects.get(id) ?? Promise.resolve();
-    const next = prior.then(() => work).catch(() => undefined);
+    const next = prior.then(() => work);
     durableSideEffects.set(id, next);
+  }
+
+  /**
+   * Run durable work chained after prior side-effects for `id`, and block the
+   * sync API until it commits (or throws). Fire-and-forget queueing would let
+   * peers reclaim before process_group_registered is visible (cleanup hole).
+   */
+  function awaitDurable(id: string, work: Promise<void>): void {
+    const prior = durableSideEffects.get(id) ?? Promise.resolve();
+    let settled = false;
+    let failure: unknown;
+    const next = prior
+      .then(() => work)
+      .then(() => {
+        settled = true;
+      })
+      .catch((err: unknown) => {
+        failure = err;
+        settled = true;
+      });
+    durableSideEffects.set(id, next.then(() => undefined, () => undefined));
+    const sleepSync = (
+      globalThis as { Bun?: { sleepSync?: (ms: number) => void } }
+    ).Bun?.sleepSync;
+    while (!settled) {
+      if (typeof sleepSync === "function") sleepSync(1);
+      else {
+        const sab = new SharedArrayBuffer(4);
+        Atomics.wait(new Int32Array(sab), 0, 0, 1);
+      }
+    }
+    if (failure !== undefined) throw failure;
   }
 
   async function flushDurable(id: string): Promise<void> {
@@ -915,8 +947,8 @@ export function createPostgresWorksetStore(
             pgid: registration.pgid,
             leaderPid: registration.leaderPid,
           };
-          // Sync API surface: queue durable publish; release flushes it.
-          trackDurable(granted.id, publishProcessGroup(granted.id, registration));
+          // Sync API surface: durable before return (FS/SQLite parity).
+          awaitDurable(granted.id, publishProcessGroup(granted.id, registration));
         },
         markSettled(): void {
           if (!open) {
@@ -932,7 +964,7 @@ export function createPostgresWorksetStore(
             );
           }
           settled = true;
-          trackDurable(
+          awaitDurable(
             granted.id,
             pool`
               UPDATE workset_admissions
