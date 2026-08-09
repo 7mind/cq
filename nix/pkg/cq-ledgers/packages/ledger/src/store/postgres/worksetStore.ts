@@ -435,8 +435,6 @@ export function createPostgresWorksetStore(
     if (holderAlive && heartbeatFresh) return "live";
 
     // Stale: settle any registered process group before delete.
-    // leader_start_time may be null when the leader was unobservable at
-    // publish — still settle by pgid (T1958 cleanup-before-release).
     if (
       row.form === "external-effect" &&
       row.processGroupRegistered &&
@@ -444,16 +442,28 @@ export function createPostgresWorksetStore(
       row.leaderPid !== null &&
       !row.settled
     ) {
-      const registration: ProcessGroupRegistration = {
-        pgid: row.pgid,
-        leader: {
-          pid: row.leaderPid,
-          startTime: row.leaderStartTime ?? "",
-        },
-      };
-      const settled = await settleRegisteredGroup(registration);
-      if (settled.survivors.length > 0) {
-        return "stuck";
+      const startTime = row.leaderStartTime;
+      if (startTime !== null && startTime !== "") {
+        const registration: ProcessGroupRegistration = {
+          pgid: row.pgid,
+          leader: { pid: row.leaderPid, startTime },
+        };
+        const settled = await settleRegisteredGroup(registration);
+        if (settled.survivors.length > 0) {
+          return "stuck";
+        }
+      } else {
+        // publishProcessGroup may store null startTime when the leader was
+        // unobservable. settleProcessGroups requires a start time — probe the
+        // process group directly (POSIX kill(-pgid, 0)).
+        try {
+          process.kill(-row.pgid, 0);
+          return "stuck";
+        } catch (e) {
+          const code = (e as NodeJS.ErrnoException).code;
+          if (code === "EPERM") return "stuck";
+          // ESRCH / other → group gone; reclaim below.
+        }
       }
     }
 
