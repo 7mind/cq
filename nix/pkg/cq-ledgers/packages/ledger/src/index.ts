@@ -124,6 +124,8 @@ export {
   canonicalizeWorksetRootReplacement,
   createInMemoryWorksetAdmissionCoordinator,
   isLiveWorksetAdmission,
+  registerLiveWorksetAdmission,
+  unregisterLiveWorksetAdmission,
   assertCallerCannotMintAdmission,
 } from "./worksetEffectAdmission.js";
 export type {
@@ -178,6 +180,8 @@ export { FsPersistence } from "./store/FsPersistence.js";
 export type { FsPersistenceLayout } from "./store/FsPersistence.js";
 export { FsLedgerStore } from "./store/FsLedgerStore.js";
 export type { FsLedgerStoreOpts, ResetSummary } from "./store/FsLedgerStore.js";
+export { createFsWorksetStore } from "./store/fsWorksetStore.js";
+export type { CreateFsWorksetStoreOptions } from "./store/fsWorksetStore.js";
 export {
   buildBackupDump,
   exportBackupInTree,

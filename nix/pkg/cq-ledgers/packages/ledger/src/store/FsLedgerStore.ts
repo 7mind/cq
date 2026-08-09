@@ -43,6 +43,11 @@ import {
 import { AbstractLedgerStore, activeItemsOf } from "./AbstractLedgerStore.js";
 import { FsPersistence } from "./FsPersistence.js";
 import type { PlanLifecycleSerializationBoundaryHook } from "./planLifecycleSerialization.js";
+import {
+  createFsWorksetStore,
+  type CreateFsWorksetStoreOptions,
+} from "./fsWorksetStore.js";
+import type { WorksetStore } from "../worksetStore.js";
 
 /**
  * Result of {@link FsLedgerStore.reset}: the absolute path the prior on-disk
@@ -97,6 +102,7 @@ export class FsLedgerStore extends AbstractLedgerStore<FsPersistence> implements
   private readonly root: string;
   private readonly logsDir: string;
   private readonly locksDir: string;
+  private readonly lockfileOpts: LockfileOpts;
 
   constructor(opts: FsLedgerStoreOpts) {
     const root = opts.root;
@@ -123,6 +129,21 @@ export class FsLedgerStore extends AbstractLedgerStore<FsPersistence> implements
     this.root = root;
     this.logsDir = path.join(docsDir, "logs");
     this.locksDir = path.join(docsDir, ".locks");
+    this.lockfileOpts = opts.lockfile ?? {};
+  }
+
+  /**
+   * T1955 — filesystem {@link WorksetStore} bound to this store's project root
+   * and lockfile options. Roots/admissions live under `<root>/.cq/workset/`.
+   */
+  createWorksetStore(
+    options: Omit<CreateFsWorksetStoreOptions, "root" | "lockfile"> = {},
+  ): WorksetStore {
+    return createFsWorksetStore({
+      ...options,
+      root: this.root,
+      lockfile: this.lockfileOpts,
+    });
   }
 
   /**

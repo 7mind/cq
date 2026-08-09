@@ -410,6 +410,16 @@ export function isLiveWorksetAdmission(value: unknown): boolean {
   return typeof value === "object" && value !== null && liveAdmissions.has(value);
 }
 
+/** Register a coordinator-granted handle so {@link isLiveWorksetAdmission} accepts it. */
+export function registerLiveWorksetAdmission(handle: object): void {
+  liveAdmissions.add(handle);
+}
+
+/** Drop a handle from the live set after close/release. */
+export function unregisterLiveWorksetAdmission(handle: object): void {
+  liveAdmissions.delete(handle);
+}
+
 export function createInMemoryWorksetAdmissionCoordinator(
   options: CreateInMemoryWorksetAdmissionCoordinatorOptions = {},
 ): WorksetAdmissionCoordinator {
