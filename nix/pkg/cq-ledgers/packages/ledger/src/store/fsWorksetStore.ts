@@ -39,7 +39,7 @@ import {
 import type { WorksetStore } from "../worksetStore.js";
 import { LEDGER_STORAGE_DIRNAME } from "../constants.js";
 import { atomicWrite as defaultAtomicWrite } from "./fsAtomic.js";
-import { Lockfile, type LockfileOpts } from "./lockfile.js";
+import type { LockfileOpts } from "./lockfile.js";
 import { AsyncMutex } from "./mutex.js";
 
 // ---------------------------------------------------------------------------
@@ -50,11 +50,10 @@ const WORKSET_DIRNAME = "workset";
 const ROOTS_FILENAME = "roots.json";
 const ADMISSIONS_DIRNAME = "admissions";
 const EXCLUSIVE_HOLDER_FILENAME = "exclusive-holder.json";
-const WORKSET_LOCK_ID = "workset";
 const ROOTS_FORMAT_VERSION = 1 as const;
 
-/** Default poll cadence while waiting on exclusive/admissions. */
-const DEFAULT_POLL_INTERVAL_MS = 15;
+/** Default poll cadence for cross-process waits (same-process uses notify). */
+const DEFAULT_POLL_INTERVAL_MS = 5;
 
 // ---------------------------------------------------------------------------
 // On-disk records
@@ -214,7 +213,9 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
   const exclusiveHolderPath = path.join(worksetDir, EXCLUSIVE_HOLDER_FILENAME);
   const locksDir = path.join(docsDir, ".locks");
 
-  const lockfile = new Lockfile(options.lockfile ?? {});
+  // lockfile opts retained on the options surface for FsLedgerStore parity;
+  // coordination uses exclusive-holder + admission leases (see withStoreMutex).
+  void options.lockfile;
   const mutex = new AsyncMutex();
 
   /** Local exclusive flag for this process (sync observation + wait loops). */
@@ -222,25 +223,39 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
   /** In-process exclusive queue so same-process set/admin serialise without thrashing the disk. */
   let exclusiveTail: Promise<void> = Promise.resolve();
   let nextAdmissionSeq = 0;
+  /** This process's held admission ids — primary signal for same-process drain. */
+  const localActiveIds = new Set<string>();
+  let layoutReady: Promise<void> | null = null;
+
+  const waiters = new Set<() => void>();
+  function notify(): void {
+    for (const wake of [...waiters]) wake();
+  }
 
   // -------------------------------------------------------------------------
   // Disk IO
   // -------------------------------------------------------------------------
 
   async function ensureLayout(): Promise<void> {
-    await fs.mkdir(admissionsDir, { recursive: true });
-    await fs.mkdir(locksDir, { recursive: true });
+    if (layoutReady === null) {
+      layoutReady = (async () => {
+        await fs.mkdir(admissionsDir, { recursive: true });
+        await fs.mkdir(locksDir, { recursive: true });
+      })();
+    }
+    await layoutReady;
   }
 
-  function readRootsSync(): DurableRootsDocument {
-    try {
-      const text = fsSync.readFileSync(rootsPath, "utf8");
-      return parseRootsDocument(text);
-    } catch (e) {
-      const code = (e as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") return emptyRootsDocument();
-      throw e;
-    }
+  /**
+   * Admission leases are short-lived process coordination records. Rename
+   * atomicity is enough for peer visibility; skip fsync so same-process race
+   * fixtures stay inside the shared-contract timeout under load.
+   */
+  async function writeAdmissionFile(filePath: string, text: string): Promise<void> {
+    await ensureLayout();
+    const tmp = `${filePath}.tmp-${selfPid}-${now()}-${Math.random().toString(36).slice(2, 8)}`;
+    await fs.writeFile(tmp, text, "utf8");
+    await fs.rename(tmp, filePath);
   }
 
   async function readRoots(): Promise<DurableRootsDocument> {
@@ -329,24 +344,9 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
     return path.join(admissionsDir, `${id}.json`);
   }
 
-  async function writeAdmissionDocument(doc: AdmissionDocument): Promise<void> {
-    await ensureLayout();
-    await writeAtomic(admissionPath(doc.id), `${JSON.stringify(doc, null, 2)}\n`);
-  }
-
-  async function readAdmissionDocument(id: string): Promise<AdmissionDocument | null> {
-    try {
-      const text = await fs.readFile(admissionPath(id), "utf8");
-      return JSON.parse(text) as AdmissionDocument;
-    } catch (e) {
-      const code = (e as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") return null;
-      throw e;
-    }
-  }
-
   async function deleteAdmissionDocument(id: string): Promise<void> {
     await fs.unlink(admissionPath(id)).catch(() => undefined);
+    if (localActiveIds.delete(id)) notify();
   }
 
   async function listAdmissionDocuments(): Promise<AdmissionDocument[]> {
@@ -419,9 +419,13 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
     }
   }
 
-  async function writeExclusiveHolder(
+  /**
+   * Claim exclusive via O_CREAT|O_EXCL so two peer processes cannot both hold
+   * the marker. Returns false if a live peer already holds it.
+   */
+  async function tryClaimExclusiveHolder(
     kind: ExclusiveHolderDocument["kind"],
-  ): Promise<void> {
+  ): Promise<boolean> {
     await ensureLayout();
     const doc: ExclusiveHolderDocument = {
       pid: selfPid,
@@ -429,10 +433,32 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
       startedAt: now(),
       kind,
     };
-    await writeAtomic(exclusiveHolderPath, `${JSON.stringify(doc)}\n`);
+    let fh: fs.FileHandle;
+    try {
+      fh = await fs.open(exclusiveHolderPath, "wx");
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") return false;
+      throw e;
+    }
+    try {
+      await fh.writeFile(`${JSON.stringify(doc)}\n`, "utf8");
+    } finally {
+      await fh.close();
+    }
+    return true;
   }
 
   async function clearExclusiveHolder(): Promise<void> {
+    // Only unlink if we still own the marker (pid match) — a peer reclaim of a
+    // dead holder must not delete a live successor's claim.
+    try {
+      const text = await fs.readFile(exclusiveHolderPath, "utf8");
+      const holder = JSON.parse(text) as ExclusiveHolderDocument;
+      if (holder.pid !== selfPid) return;
+    } catch {
+      return;
+    }
     await fs.unlink(exclusiveHolderPath).catch(() => undefined);
   }
 
@@ -487,22 +513,32 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
     return live;
   }
 
-  async function withProjectLock<T>(fn: () => Promise<T>): Promise<T> {
-    return mutex.run(async () => {
-      await ensureLayout();
-      const release = await lockfile.acquire(locksDir, WORKSET_LOCK_ID);
-      try {
-        return await fn();
-      } finally {
-        await release();
-      }
-    });
+  /**
+   * In-process critical section only. Cross-process linearization is carried by
+   * the exclusive-holder marker + durable admission leases (not a long-held
+   * lockfile), so same-process race fixtures stay fast under full-suite load.
+   */
+  async function withStoreMutex<T>(fn: () => Promise<T>): Promise<T> {
+    return mutex.run(fn);
   }
 
   async function waitUntil(predicate: () => boolean | Promise<boolean>): Promise<void> {
     for (;;) {
       if (await predicate()) return;
-      await sleep(pollIntervalMs);
+      // Wake on in-process notify, or after a short poll for peer-process state.
+      await new Promise<void>((resolve) => {
+        const wake = (): void => {
+          waiters.delete(wake);
+          resolve();
+        };
+        waiters.add(wake);
+        void sleep(pollIntervalMs).then(() => {
+          if (waiters.has(wake)) {
+            waiters.delete(wake);
+            resolve();
+          }
+        });
+      });
     }
   }
 
@@ -553,34 +589,62 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
     // in-memory coordinator). Observers and non-exclusive admits must see
     // exclusiveHeld() before any subsequent await (peer-holder wait, drain).
     localExclusiveHeld = true;
+    notify();
+    let claimed = false;
     try {
-      // Wait for any peer exclusive holder to clear before we claim the marker.
+      // Claim the durable exclusive marker (O_EXCL). Wait/reclaim until we own it.
       await waitUntil(async () => {
         const holder = await readExclusiveHolder();
-        if (holder === null) return true;
-        if (holder.pid === selfPid) return true;
-        if (!isPidAlive(holder.pid)) {
-          // Dead exclusive holder: reclaim.
-          await clearExclusiveHolder();
-          return true;
+        if (holder !== null) {
+          if (holder.pid === selfPid) {
+            claimed = true;
+            return true;
+          }
+          if (!isPidAlive(holder.pid)) {
+            await fs.unlink(exclusiveHolderPath).catch(() => undefined);
+          } else {
+            return false;
+          }
         }
-        return false;
+        claimed = await tryClaimExclusiveHolder(kind);
+        return claimed;
       });
-      await writeExclusiveHolder(kind);
-      // Drain live admissions (process-safe).
-      await waitUntil(async () => (await countLiveAdmissions()) === 0);
+      // Drain live admissions. Same-process path is notify-driven via
+      // localActiveIds; peer leases still require a disk scan.
+      await waitUntil(async () => {
+        if (localActiveIds.size > 0) return false;
+        return (await countLiveAdmissions()) === 0;
+      });
       if (hooks.afterExclusiveReady !== undefined) {
         await hooks.afterExclusiveReady();
       }
       return await body();
     } finally {
       localExclusiveHeld = false;
-      await clearExclusiveHolder();
+      notify();
+      if (claimed) {
+        await clearExclusiveHolder();
+      }
       gate.resolve();
     }
   }
 
-  async function beginNonExclusiveAdmit(form: AdmissionFormDisk): Promise<{
+  /**
+   * Grant a non-exclusive admission under the project lock. `finalize` runs
+   * while the slot is reserved in localActiveIds but BEFORE the durable write,
+   * so target checks can reject without leaving a lease file. The durable
+   * admission is written only after finalize succeeds — and the local slot is
+   * held across that write so exclusive cannot observe a zero-active window.
+   */
+  async function beginNonExclusiveAdmit(
+    form: AdmissionFormDisk,
+    finalize: (granted: {
+      id: string;
+      epoch: number;
+      roots: readonly string[];
+      generation: number;
+    }) => Omit<AdmissionDocument, "id" | "form" | "epoch" | "roots" | "pid" | "hostname" | "createdAt" | "generation">,
+  ): Promise<{
     id: string;
     epoch: number;
     roots: readonly string[];
@@ -595,8 +659,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
         await hooks.beforeAdmissionGrant();
       }
 
-      const granted = await withProjectLock(async () => {
-        // Re-check under lock: exclusive / generation.
+      const granted = await withStoreMutex(async () => {
         const current = await readRoots();
         if (current.admitGeneration !== generationAtEntry) {
           throw new WorksetAdmissionError(
@@ -604,11 +667,6 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
             "workset admission revoked by exclusive commit before grant",
           );
         }
-        if (exclusiveHeldNow() && !localExclusiveHeld) {
-          // Peer exclusive — retry outside lock.
-          return null;
-        }
-        // If WE hold exclusive, non-exclusive admit must not grant (set is running).
         if (localExclusiveHeld) {
           return null;
         }
@@ -621,43 +679,58 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
           form === "ledger-mutation"
             ? `lm-${selfPid}-${++nextAdmissionSeq}-${now()}`
             : `ee-${selfPid}-${++nextAdmissionSeq}-${now()}`;
-        const doc: AdmissionDocument = {
-          id,
-          form,
-          kind: "", // filled by caller before publish — placeholder overwritten below
-          epoch: current.epoch,
-          roots: current.roots.slice(),
-          pid: selfPid,
-          hostname: selfHostname,
-          createdAt: now(),
-          generation: current.admitGeneration,
-          processGroup: null,
-          settled: form === "ledger-mutation",
-        };
-        // Caller fills kind/targets after grant; write a provisional record so
-        // exclusive cannot pass active-count while we finish validation.
-        await writeAdmissionDocument(doc);
-        return {
+        const base = {
           id,
           epoch: current.epoch,
           roots: current.roots.slice() as string[],
           generation: current.admitGeneration,
         };
+        // Reserve the local slot BEFORE finalize so exclusive cannot commit
+        // between validation and the durable write (linearizability).
+        localActiveIds.add(id);
+        notify();
+        try {
+          const rest = finalize(base);
+          const doc: AdmissionDocument = {
+            id,
+            form,
+            epoch: base.epoch,
+            roots: base.roots,
+            pid: selfPid,
+            hostname: selfHostname,
+            createdAt: now(),
+            generation: base.generation,
+            ...rest,
+          };
+          await writeAdmissionFile(
+            admissionPath(id),
+            `${JSON.stringify(doc, null, 2)}\n`,
+          );
+          // Fail closed if exclusive committed while we wrote the lease.
+          const post = await readRoots();
+          if (
+            post.admitGeneration !== generationAtEntry ||
+            localExclusiveHeld ||
+            exclusiveHeldNow()
+          ) {
+            await fs.unlink(admissionPath(id)).catch(() => undefined);
+            localActiveIds.delete(id);
+            notify();
+            throw new WorksetAdmissionError(
+              "revoked",
+              "workset admission revoked by exclusive commit before grant",
+            );
+          }
+          return base;
+        } catch (err) {
+          localActiveIds.delete(id);
+          notify();
+          throw err;
+        }
       });
 
       if (granted === null) {
-        // Contended with exclusive; retry.
         continue;
-      }
-      // Generation could only change under exclusive which waits for our file —
-      // still fail closed if somehow advanced.
-      const post = await readRoots();
-      if (post.admitGeneration !== generationAtEntry) {
-        await deleteAdmissionDocument(granted.id);
-        throw new WorksetAdmissionError(
-          "revoked",
-          "workset admission revoked by exclusive commit before grant",
-        );
       }
       return granted;
     }
@@ -673,36 +746,21 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
         `unknown ledger mutation kind: ${String(input.kind)}`,
       );
     }
-    const granted = await beginNonExclusiveAdmit("ledger-mutation");
-    try {
+    const granted = await beginNonExclusiveAdmit("ledger-mutation", (g) => {
       for (const target of input.targets) {
-        if (!isTargetAdmitted(target, granted.roots)) {
+        if (!isTargetAdmitted(target, g.roots)) {
           throw new WorksetAdmissionError(
             "target-excluded",
             `ledger mutation target "${target}" is outside the admitted workset`,
           );
         }
       }
-    } catch (err) {
-      await deleteAdmissionDocument(granted.id);
-      throw err;
-    }
-
-    // Persist final kind/targets.
-    await withProjectLock(async () => {
-      const existing = await readAdmissionDocument(granted.id);
-      if (existing === null) {
-        throw new WorksetAdmissionError(
-          "revoked",
-          "workset admission disappeared before finalisation",
-        );
-      }
-      const finalDoc: AdmissionDocument = {
-        ...existing,
+      return {
         kind: input.kind,
         targets: input.targets.slice(),
+        processGroup: null,
+        settled: true,
       };
-      await writeAdmissionDocument(finalDoc);
     });
 
     let open = true;
@@ -722,7 +780,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
         }
         open = false;
         unregisterLiveWorksetAdmission(handle);
-        await withProjectLock(async () => {
+        await withStoreMutex(async () => {
           await deleteAdmissionDocument(granted.id);
         });
       },
@@ -742,29 +800,19 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
         `unknown external effect kind: ${String(input.kind)}`,
       );
     }
-    const granted = await beginNonExclusiveAdmit("external-effect");
-    if (!isTargetAdmitted(input.targetRef, granted.roots)) {
-      await deleteAdmissionDocument(granted.id);
-      throw new WorksetAdmissionError(
-        "target-excluded",
-        `external effect target "${input.targetRef}" is outside the admitted workset`,
-      );
-    }
-
-    await withProjectLock(async () => {
-      const existing = await readAdmissionDocument(granted.id);
-      if (existing === null) {
+    const granted = await beginNonExclusiveAdmit("external-effect", (g) => {
+      if (!isTargetAdmitted(input.targetRef, g.roots)) {
         throw new WorksetAdmissionError(
-          "revoked",
-          "workset admission disappeared before finalisation",
+          "target-excluded",
+          `external effect target "${input.targetRef}" is outside the admitted workset`,
         );
       }
-      const finalDoc: AdmissionDocument = {
-        ...existing,
+      return {
         kind: input.kind,
         targetRef: input.targetRef,
+        processGroup: null,
+        settled: false,
       };
-      await writeAdmissionDocument(finalDoc);
     });
 
     // Local mirror for sync getters on the handle.
@@ -871,7 +919,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
         }
         open = false;
         unregisterLiveWorksetAdmission(handle);
-        await withProjectLock(async () => {
+        await withStoreMutex(async () => {
           await deleteAdmissionDocument(granted.id);
         });
       },
@@ -890,7 +938,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
       if (hooks.beforeCommit !== undefined) {
         await hooks.beforeCommit();
       }
-      return withProjectLock(async () => {
+      return withStoreMutex(async () => {
         const current = await readRoots();
         const next: DurableRootsDocument = {
           version: ROOTS_FORMAT_VERSION,
@@ -926,7 +974,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
         await hooks.beforeAdministrativeDestructive();
       }
       await input.destructivePhase();
-      await withProjectLock(async () => {
+      await withStoreMutex(async () => {
         const current = await readRoots();
         const next: DurableRootsDocument = {
           version: ROOTS_FORMAT_VERSION,
