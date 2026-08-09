@@ -33,7 +33,17 @@ let
     paths = [ codexPkg ];
     nativeBuildInputs = [ pkgs.makeWrapper ];
     postBuild = ''
+      # Codex 0.147+ resolves `codex-code-mode-host` as a sibling of the real
+      # binary (and via PATH). Keep the host on PATH and assert it is present
+      # in the joined output so a stale bare-codex package cannot slip through.
+      if [ ! -e "$out/bin/codex-code-mode-host" ]; then
+        echo "codex-with-prompt-root: missing codex-code-mode-host in $out/bin" >&2
+        echo "codexPkg must install the host next to codex (see nix/pkg/codex/package.nix)" >&2
+        ls -la "$out/bin" >&2 || true
+        exit 1
+      fi
       wrapProgram $out/bin/codex \
+        --prefix PATH : "$out/bin" \
         --set CQ_PROMPT_SURFACE codex \
         --set CQ_HARNESS codex \
         --set CQ_PROMPT_ROOT ${codexPromptRoot}
@@ -150,6 +160,9 @@ in
           features.fast_mode = false;
           features.plugins = false;
           features.steer = true;
+          # 0.147+ tool/code-mode path spawns the sibling host binary; without
+          # this flag Codex fail-closes code mode even when the binary exists.
+          features.code_mode_host = true;
           mcp_servers.ledger = lib.mkDefault (codexHarnessMcpRegistration (
             lib.hm.mcp.transformMcpServer {
               server = config.programs.mcp.servers.ledger;
