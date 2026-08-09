@@ -288,6 +288,17 @@ export interface WorksetAdmissionCoordinatorHooks {
   readonly beforeAdministrativeDestructive?: () => Promise<void> | void;
 }
 
+/** Process-visible admission lease published by durable backends (T1955+). */
+export interface WorksetPublishedAdmissionLease {
+  readonly id: string;
+  readonly form: "ledger-mutation" | "external-effect";
+  readonly kind: string;
+  readonly epoch: number;
+  readonly roots: readonly string[];
+  readonly targets: readonly string[];
+  readonly targetRef?: string;
+}
+
 export interface CreateInMemoryWorksetAdmissionCoordinatorOptions {
   readonly hooks?: WorksetAdmissionCoordinatorHooks;
   /**
@@ -304,6 +315,68 @@ export interface CreateInMemoryWorksetAdmissionCoordinatorOptions {
     target: string,
     roots: readonly string[],
   ) => boolean;
+  /**
+   * Seed roots/epoch (default empty roots at epoch 0). Durable backends pass
+   * the snapshot loaded from storage so the first in-process view matches disk.
+   */
+  readonly initial?: WorksetRootsEpoch;
+  /**
+   * Persist the prospective next complete roots/epoch pair inside the exclusive
+   * section after validation and before the in-memory commit. Throwing aborts
+   * without mutating memory or admitGeneration (prior state stays authoritative).
+   */
+  readonly persistCommit?: (next: WorksetRootsEpoch) => Promise<void> | void;
+  /**
+   * Reload the authoritative roots/epoch before computing the next epoch inside
+   * exclusive admission. Used by durable backends so a peer's CAS advance is
+   * observed before local epoch+1. Must not run while local admissions are live
+   * (exclusive already drained them).
+   */
+  readonly reloadBeforeCommit?: () =>
+    | WorksetRootsEpoch
+    | Promise<WorksetRootsEpoch>;
+  /**
+   * Reload authoritative roots/epoch immediately before a non-exclusive grant
+   * when this process holds no live admissions. Durable backends use this so a
+   * peer's committed tip is visible to the next admit.
+   */
+  readonly reloadBeforeAdmit?: () =>
+    | WorksetRootsEpoch
+    | Promise<WorksetRootsEpoch>;
+  /**
+   * After local active admissions drain and exclusive is held — wait for peer
+   * (cross-process) admissions before running the exclusive body. Durable
+   * backends block set/admin on process-visible leases here. Must NOT hold a
+   * mutual exclusion lock that admission publish also needs across this wait
+   * (acquire that lock only once leases are observed empty, inside this hook).
+   */
+  readonly waitForPeerAdmissions?: () => Promise<void> | void;
+  /**
+   * Publish a process-visible admission lease after the in-process slot is
+   * reserved. Throwing rolls back the local slot.
+   */
+  readonly publishAdmission?: (
+    lease: WorksetPublishedAdmissionLease,
+  ) => Promise<void> | void;
+  /**
+   * After publish, confirm the lease still matches authoritative storage (peer
+   * tip unchanged). Throw {@link WorksetAdmissionError}(`revoked`) to roll back.
+   */
+  readonly confirmAdmission?: (
+    lease: WorksetPublishedAdmissionLease,
+  ) => Promise<void> | void;
+  /** Retract a previously published admission lease (best-effort on close). */
+  readonly retractAdmission?: (id: string) => Promise<void> | void;
+  /**
+   * Durable backends record process-group registration on the published lease
+   * so crash reclaim can observe the group identity.
+   */
+  readonly noteAdmissionProcessGroup?: (
+    id: string,
+    registration: WorksetProcessGroupRegistration,
+  ) => void;
+  /** Durable backends mark the published lease settled for crash reclaim. */
+  readonly noteAdmissionSettled?: (id: string) => void;
 }
 
 export interface WorksetAdmissionCoordinator {
@@ -426,9 +499,28 @@ export function createInMemoryWorksetAdmissionCoordinator(
   const hooks = options.hooks ?? {};
   const isTargetAdmitted = options.isTargetAdmitted ?? defaultIsTargetAdmitted;
   const validateReplacement = options.validateReplacement;
+  const persistCommit = options.persistCommit;
+  const reloadBeforeCommit = options.reloadBeforeCommit;
+  const reloadBeforeAdmit = options.reloadBeforeAdmit;
+  const waitForPeerAdmissions = options.waitForPeerAdmissions;
+  const publishAdmission = options.publishAdmission;
+  const confirmAdmission = options.confirmAdmission;
+  const retractAdmission = options.retractAdmission;
+  const noteAdmissionProcessGroup = options.noteAdmissionProcessGroup;
+  const noteAdmissionSettled = options.noteAdmissionSettled;
 
-  let roots: string[] = [];
-  let epoch = 0;
+  const initial = options.initial;
+  if (initial !== undefined) {
+    if (!Number.isInteger(initial.epoch) || initial.epoch < 0) {
+      throw new WorksetAdmissionError(
+        "invalid-replacement",
+        `workset initial epoch must be a non-negative integer, got ${String(initial.epoch)}`,
+      );
+    }
+  }
+  let roots: string[] =
+    initial !== undefined ? canonicalizeWorksetRootReplacement(initial.roots) : [];
+  let epoch: number = initial !== undefined ? initial.epoch : 0;
   /** Bumped on every successful exclusive commit; revokes in-flight admits. */
   let admitGeneration = 0;
 
@@ -483,6 +575,9 @@ export function createInMemoryWorksetAdmissionCoordinator(
     notify();
     try {
       await waitUntil(() => active.size === 0);
+      if (waitForPeerAdmissions !== undefined) {
+        await waitForPeerAdmissions();
+      }
       if (hooks.afterExclusiveReady !== undefined) {
         await hooks.afterExclusiveReady();
       }
@@ -515,6 +610,29 @@ export function createInMemoryWorksetAdmissionCoordinator(
       await waitUntil(() => !exclusiveHeldFlag);
       if (hooks.beforeAdmissionGrant !== undefined) {
         await hooks.beforeAdmissionGrant();
+      }
+      // Adopt authoritative storage before grant when this process is idle so a
+      // peer tip is visible. Skip when local admissions already pin an epoch.
+      if (reloadBeforeAdmit !== undefined && active.size === 0 && !exclusiveHeldFlag) {
+        const loaded = await reloadBeforeAdmit();
+        if (!Number.isInteger(loaded.epoch) || loaded.epoch < 0) {
+          throw new WorksetAdmissionError(
+            "invalid-replacement",
+            `workset reload epoch must be a non-negative integer, got ${String(loaded.epoch)}`,
+          );
+        }
+        // Re-check after the await: exclusive may have started.
+        if (exclusiveHeldFlag) continue;
+        if (admitGeneration !== generationAtEntry) {
+          throw new WorksetAdmissionError(
+            "revoked",
+            "workset admission revoked by exclusive commit before grant",
+          );
+        }
+        if (active.size === 0) {
+          roots = canonicalizeWorksetRootReplacement(loaded.roots);
+          epoch = loaded.epoch;
+        }
       }
       // Atomic grant: re-check then insert with zero awaits in between.
       if (admitGeneration !== generationAtEntry) {
@@ -567,6 +685,30 @@ export function createInMemoryWorksetAdmissionCoordinator(
     active.delete(id);
     record.closed.resolve();
     notify();
+    if (retractAdmission !== undefined) {
+      // Best-effort retract; durable backends must not fail closed on release
+      // after the in-process slot is already gone — surface async errors via
+      // the returned promise of acknowledge/release paths that await it.
+      void Promise.resolve(retractAdmission(id)).catch(() => {
+        /* ignore retract races with crash reclaim */
+      });
+    }
+  }
+
+  async function closeActiveAndRetract(id: string): Promise<void> {
+    const record = active.get(id);
+    if (record === undefined) {
+      if (retractAdmission !== undefined) {
+        await retractAdmission(id);
+      }
+      return;
+    }
+    active.delete(id);
+    record.closed.resolve();
+    notify();
+    if (retractAdmission !== undefined) {
+      await retractAdmission(id);
+    }
   }
 
   async function admitLedgerMutation(input: {
@@ -589,8 +731,22 @@ export function createInMemoryWorksetAdmissionCoordinator(
           );
         }
       }
+      if (publishAdmission !== undefined) {
+        const lease: WorksetPublishedAdmissionLease = {
+          id: granted.id,
+          form: "ledger-mutation",
+          kind: input.kind,
+          epoch: granted.epoch,
+          roots: granted.roots,
+          targets: input.targets.slice(),
+        };
+        await publishAdmission(lease);
+        if (confirmAdmission !== undefined) {
+          await confirmAdmission(lease);
+        }
+      }
     } catch (err) {
-      closeActive(granted.id);
+      await closeActiveAndRetract(granted.id);
       throw err;
     }
     const { id } = granted;
@@ -612,7 +768,7 @@ export function createInMemoryWorksetAdmissionCoordinator(
         }
         open = false;
         liveAdmissions.delete(handle);
-        closeActive(id);
+        await closeActiveAndRetract(id);
       },
     };
     liveAdmissions.add(handle);
@@ -631,12 +787,31 @@ export function createInMemoryWorksetAdmissionCoordinator(
       );
     }
     const granted = await beginNonExclusiveAdmit("external-effect");
-    if (!isTargetAdmitted(input.targetRef, granted.roots)) {
-      closeActive(granted.id);
-      throw new WorksetAdmissionError(
-        "target-excluded",
-        `external effect target "${input.targetRef}" is outside the admitted workset`,
-      );
+    try {
+      if (!isTargetAdmitted(input.targetRef, granted.roots)) {
+        throw new WorksetAdmissionError(
+          "target-excluded",
+          `external effect target "${input.targetRef}" is outside the admitted workset`,
+        );
+      }
+      if (publishAdmission !== undefined) {
+        const lease: WorksetPublishedAdmissionLease = {
+          id: granted.id,
+          form: "external-effect",
+          kind: input.kind,
+          epoch: granted.epoch,
+          roots: granted.roots,
+          targets: [input.targetRef],
+          targetRef: input.targetRef,
+        };
+        await publishAdmission(lease);
+        if (confirmAdmission !== undefined) {
+          await confirmAdmission(lease);
+        }
+      }
+    } catch (err) {
+      await closeActiveAndRetract(granted.id);
+      throw err;
     }
     const { id, record } = granted;
 
@@ -677,6 +852,9 @@ export function createInMemoryWorksetAdmissionCoordinator(
           pgid: registration.pgid,
           leaderPid: registration.leaderPid,
         };
+        if (noteAdmissionProcessGroup !== undefined) {
+          noteAdmissionProcessGroup(id, record.processGroup);
+        }
       },
       markSettled(): void {
         if (!open) {
@@ -692,6 +870,9 @@ export function createInMemoryWorksetAdmissionCoordinator(
           );
         }
         record.settled = true;
+        if (noteAdmissionSettled !== undefined) {
+          noteAdmissionSettled(id);
+        }
       },
       async releaseAfterSettlement(): Promise<void> {
         if (!open) {
@@ -714,7 +895,7 @@ export function createInMemoryWorksetAdmissionCoordinator(
         }
         open = false;
         liveAdmissions.delete(handle);
-        closeActive(id);
+        await closeActiveAndRetract(id);
       },
     };
     liveAdmissions.add(handle);
@@ -724,6 +905,17 @@ export function createInMemoryWorksetAdmissionCoordinator(
 
   async function setRoots(nextRoots: readonly string[]): Promise<WorksetRootsEpoch> {
     return runExclusive(async () => {
+      if (reloadBeforeCommit !== undefined) {
+        const loaded = await reloadBeforeCommit();
+        if (!Number.isInteger(loaded.epoch) || loaded.epoch < 0) {
+          throw new WorksetAdmissionError(
+            "invalid-replacement",
+            `workset reload epoch must be a non-negative integer, got ${String(loaded.epoch)}`,
+          );
+        }
+        roots = canonicalizeWorksetRootReplacement(loaded.roots);
+        epoch = loaded.epoch;
+      }
       const canonical = canonicalizeWorksetRootReplacement(nextRoots);
       if (validateReplacement !== undefined) {
         validateReplacement(canonical);
@@ -731,9 +923,15 @@ export function createInMemoryWorksetAdmissionCoordinator(
       if (hooks.beforeCommit !== undefined) {
         await hooks.beforeCommit();
       }
+      const next: WorksetRootsEpoch = { roots: canonical, epoch: epoch + 1 };
+      if (persistCommit !== undefined) {
+        // Durable write BEFORE memory commit. Throw leaves memory + generation
+        // unchanged so the prior authoritative state survives.
+        await persistCommit(next);
+      }
       // Atomic commit: roots + epoch together; revoke in-flight admits.
-      roots = canonical;
-      epoch += 1;
+      roots = canonical.slice();
+      epoch = next.epoch;
       admitGeneration += 1;
       notify();
       return snapshot();

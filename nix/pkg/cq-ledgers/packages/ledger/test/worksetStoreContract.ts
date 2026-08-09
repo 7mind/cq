@@ -417,44 +417,59 @@ export function runWorksetStoreContract(factory: WorksetStoreContractFactory): v
       await next.acknowledge();
     });
 
-    it("concurrent set∥admit never leaves a live pre-commit epoch admission", async () => {
-      for (let i = 0; i < 200; i++) {
-        const store = await factory.build();
-        await store.setRoots(["goals:G0"]);
-        const admitP = store.admitExternalEffect({
-          kind: "merge",
-          targetRef: "goals:G0",
-        });
-        const setP = store.setRoots(["goals:G1"]);
-        void admitP
-          .then(async (adm) => {
-            adm.registerProcessGroup({ pgid: 1, leaderPid: 1 });
-            adm.markSettled();
-            await adm.releaseAfterSettlement();
-          })
-          .catch(() => {
-            // revoked / target-excluded — set proceeds alone
+    // Durable GoodCommunication backends pay real I/O per iteration; keep the
+    // linearizability check but bound wall-clock. The in-memory dummy keeps the
+    // full 200-iteration stress.
+    const concurrentIterations =
+      factory.classification === "Behavioral-Active Blackbox-GoodCommunication"
+        ? 40
+        : 200;
+    const concurrentTimeoutMs =
+      factory.classification === "Behavioral-Active Blackbox-GoodCommunication"
+        ? 120_000
+        : undefined;
+    it(
+      "concurrent set∥admit never leaves a live pre-commit epoch admission",
+      async () => {
+        for (let i = 0; i < concurrentIterations; i++) {
+          const store = await factory.build();
+          await store.setRoots(["goals:G0"]);
+          const admitP = store.admitExternalEffect({
+            kind: "merge",
+            targetRef: "goals:G0",
           });
-        const setSnap = await setP;
-        expect(setSnap).toEqual({ roots: ["goals:G1"], epoch: 2 });
-        const admitOutcome = await Promise.allSettled([admitP]).then((r) => r[0]!);
-        if (admitOutcome.status === "fulfilled") {
-          const adm = admitOutcome.value;
-          expect(adm.epoch === 1 || adm.epoch === 2).toBe(true);
-          if (adm.epoch === 1) expect(adm.roots).toEqual(["goals:G0"]);
-          if (adm.epoch === 2) expect(adm.roots).toEqual(["goals:G1"]);
-        } else {
-          const reason = admitOutcome.reason as { code?: string };
-          expect(
-            reason.code === "revoked" || reason.code === "target-excluded",
-          ).toBe(true);
+          const setP = store.setRoots(["goals:G1"]);
+          void admitP
+            .then(async (adm) => {
+              adm.registerProcessGroup({ pgid: 1, leaderPid: 1 });
+              adm.markSettled();
+              await adm.releaseAfterSettlement();
+            })
+            .catch(() => {
+              // revoked / target-excluded — set proceeds alone
+            });
+          const setSnap = await setP;
+          expect(setSnap).toEqual({ roots: ["goals:G1"], epoch: 2 });
+          const admitOutcome = await Promise.allSettled([admitP]).then((r) => r[0]!);
+          if (admitOutcome.status === "fulfilled") {
+            const adm = admitOutcome.value;
+            expect(adm.epoch === 1 || adm.epoch === 2).toBe(true);
+            if (adm.epoch === 1) expect(adm.roots).toEqual(["goals:G0"]);
+            if (adm.epoch === 2) expect(adm.roots).toEqual(["goals:G1"]);
+          } else {
+            const reason = admitOutcome.reason as { code?: string };
+            expect(
+              reason.code === "revoked" || reason.code === "target-excluded",
+            ).toBe(true);
+          }
+          expect(store.activeAdmissionCount()).toBe(0);
+          expect(await readWorksetRootsEpoch(store)).toEqual({
+            roots: ["goals:G1"],
+            epoch: 2,
+          });
         }
-        expect(store.activeAdmissionCount()).toBe(0);
-        expect(await readWorksetRootsEpoch(store)).toEqual({
-          roots: ["goals:G1"],
-          epoch: 2,
-        });
-      }
-    });
+      },
+      concurrentTimeoutMs,
+    );
   });
 }

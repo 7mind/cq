@@ -147,6 +147,7 @@ export type {
   WorksetAdmissionCoordinatorHooks,
   CreateInMemoryWorksetAdmissionCoordinatorOptions,
   WorksetAdmissionCoordinator,
+  WorksetPublishedAdmissionLease,
 } from "./worksetEffectAdmission.js";
 export {
   createInMemoryWorksetStore,
@@ -157,6 +158,15 @@ export type {
   WorksetStore,
   CreateInMemoryWorksetStoreOptions,
 } from "./worksetStore.js";
+export {
+  createGitObjectWorksetStore,
+  parseWorksetRootsDocument,
+  serializeWorksetRootsDocument,
+} from "./worksetStoreGit.js";
+export type {
+  CreateGitObjectWorksetStoreOptions,
+  WorksetRootsDocument,
+} from "./worksetStoreGit.js";
 export * from "./parser/parse.js";
 export * from "./parser/serialize.js";
 export { parseFrontmatter, serializeFrontmatter } from "./parser/frontmatter.js";
@@ -451,6 +461,7 @@ export {
   LEDGER_RUNTIME_DIRNAMES,
   LEDGER_PORTABLE_RUNTIME_DIRNAMES,
   LEDGER_EPHEMERAL_RUNTIME_DIRNAMES,
+  WORKSET_ROOTS_FILENAME,
 } from "./store/ledgerArtifacts.js";
 export type { LedgerArtifacts, RemoveLedgerArtifactsResult } from "./store/ledgerArtifacts.js";
 export {

@@ -34,6 +34,11 @@ export const PLAN_LIFECYCLE_STATE_FILENAME = "plan-lifecycle.json";
 /** Recoverable filesystem commit decision; never part of a portable tree. */
 export const PLAN_LIFECYCLE_PENDING_FILENAME = "plan-lifecycle.pending.json";
 /**
+ * Durable workset roots/epoch pair (T1956). One complete batch per visible
+ * tip — stored on the orphan ref for git-object and under `.cq/` for fs.
+ */
+export const WORKSET_ROOTS_FILENAME = "workset-roots.json";
+/**
  * Portable runtime directory under `.cq/` — session logs that travel with the
  * ledger tree (included in `ledgerTreePaths`).
  */
@@ -127,6 +132,7 @@ export async function enumerateLedgerArtifacts(docsDir: string): Promise<LedgerA
   for (const filename of [
     PLAN_LIFECYCLE_STATE_FILENAME,
     PLAN_LIFECYCLE_PENDING_FILENAME,
+    WORKSET_ROOTS_FILENAME,
   ]) {
     const p = path.join(docsDir, filename);
     if (await exists(p)) lifecycleFiles.push(p);
@@ -161,6 +167,13 @@ export async function ledgerTreePaths(docsDir: string): Promise<string[]> {
     )
   ) {
     rel.push(PLAN_LIFECYCLE_STATE_FILENAME);
+  }
+  if (
+    art.lifecycleFiles.some(
+      (file) => path.basename(file) === WORKSET_ROOTS_FILENAME,
+    )
+  ) {
+    rel.push(WORKSET_ROOTS_FILENAME);
   }
   if (art.archiveDir !== null) await collectFilesRel(art.archiveDir, LEDGER_ARCHIVE_DIRNAME, rel);
   for (const dirName of LEDGER_PORTABLE_RUNTIME_DIRNAMES) {
