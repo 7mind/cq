@@ -148,7 +148,9 @@ describe("workset effect admission git-object [T1956]", () => {
 
     const store = await createGitObjectWorksetStore({
       repoRoot: dir,
-      isPidAlive: (pid) => pid === livePgid,
+      isPidAlive: (pid) => pid !== deadHolderPid,
+      // Group liveness is kill(-pgid,0) — mock that separately (D296).
+      isProcessGroupAlive: (pgid) => pgid === livePgid,
       // Bound the wait: use a short race then settle by flipping settled via file.
       sleep: async () => {
         /* spin without real delay in the poll body; test unblocks via file */

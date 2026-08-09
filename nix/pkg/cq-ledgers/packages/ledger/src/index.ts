@@ -124,8 +124,6 @@ export {
   canonicalizeWorksetRootReplacement,
   createInMemoryWorksetAdmissionCoordinator,
   isLiveWorksetAdmission,
-  registerLiveWorksetAdmission,
-  unregisterLiveWorksetAdmission,
   assertCallerCannotMintAdmission,
 } from "./worksetEffectAdmission.js";
 export type {

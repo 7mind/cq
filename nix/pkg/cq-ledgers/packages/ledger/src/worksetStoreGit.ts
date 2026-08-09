@@ -93,6 +93,8 @@ export interface CreateGitObjectWorksetStoreOptions {
   readonly sleep?: (ms: number) => Promise<void>;
   /** Override pid-alive probe used when reclaiming crash leases. */
   readonly isPidAlive?: (pid: number) => boolean;
+  /** Override process-group-alive probe (POSIX kill(-pgid, 0)). */
+  readonly isProcessGroupAlive?: (pgid: number) => boolean;
   /** Override self pid recorded on published leases. */
   readonly selfPid?: number;
   /** Override self hostname recorded on published leases. */
@@ -189,7 +191,21 @@ function defaultIsPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    // EPERM means the process exists but we cannot signal it — treat as alive.
+    if (code === "EPERM") return true;
+    return false;
+  }
+}
+
+function defaultIsProcessGroupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "EPERM") return true;
     return false;
   }
 }
@@ -212,6 +228,8 @@ export async function createGitObjectWorksetStore(
   const lockfile = new Lockfile(options.lockfile ?? {});
   const sleep = options.sleep ?? defaultSleep;
   const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
+  const isProcessGroupAlive =
+    options.isProcessGroupAlive ?? defaultIsProcessGroupAlive;
   const selfPid = options.selfPid ?? process.pid;
   const selfHostname = options.selfHostname ?? os.hostname();
 
@@ -453,7 +471,7 @@ export async function createGitObjectWorksetStore(
           continue;
         }
         if (typeof lease.pgid === "number") {
-          if (isPidAlive(lease.pgid)) {
+          if (isProcessGroupAlive(lease.pgid)) {
             // Group still live without settlement — keep blocking exclusive.
             continue;
           }
