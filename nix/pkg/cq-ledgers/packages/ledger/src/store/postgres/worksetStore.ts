@@ -434,8 +434,20 @@ export function createPostgresWorksetStore(
     const heartbeatFresh = now() - row.heartbeatAtMs <= heartbeatTtlMs;
     if (holderAlive && heartbeatFresh) return "live";
 
-    // Stale: settle any registered process group before delete.
-    if (
+    // Foreign host: we cannot observe or signal a remote process group. An
+    // unsettled registered external-effect must fail closed (stuck) rather than
+    // reclaiming on local ESRCH after heartbeat expiry.
+    if (row.hostId !== hostId) {
+      if (
+        row.form === "external-effect" &&
+        row.processGroupRegistered &&
+        !row.settled
+      ) {
+        return "stuck";
+      }
+      // No remote PG obligation — reclaim the durable exclusion row.
+    } else if (
+      // Same-host stale: settle any registered process group before delete.
       row.form === "external-effect" &&
       row.processGroupRegistered &&
       row.pgid !== null &&
