@@ -293,12 +293,6 @@ export function createPostgresWorksetStore(
   let admissionSeq = 0;
   let holderIdentityPromise: Promise<ProcessIdentity> | null = null;
 
-  function trackDurable(id: string, work: Promise<void>): void {
-    const prior = durableSideEffects.get(id) ?? Promise.resolve();
-    const next = prior.then(() => work);
-    durableSideEffects.set(id, next);
-  }
-
   /**
    * Run durable work chained after prior side-effects for `id`, and block the
    * sync API until it commits (or throws). Fire-and-forget queueing would let
