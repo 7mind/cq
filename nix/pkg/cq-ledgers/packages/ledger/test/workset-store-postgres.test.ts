@@ -125,8 +125,8 @@ if (PG_URL === undefined || PG_URL.length === 0) {
       await Bun.sleep(30);
       expect(done).toBe(false);
 
-      admission.registerProcessGroup({ pgid: 9001, leaderPid: 9001 });
-      admission.markSettled();
+      await Promise.resolve(admission.registerProcessGroup({ pgid: 9001, leaderPid: 9001 }));
+      await Promise.resolve(admission.markSettled());
       await admission.releaseAfterSettlement();
       const snap = await setPromise;
       expect(snap).toEqual({ roots: ["goals:G1"], epoch: 1 });

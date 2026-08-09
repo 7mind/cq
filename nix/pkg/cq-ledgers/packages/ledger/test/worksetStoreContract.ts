@@ -92,8 +92,8 @@ async function settleExternal(
     targetRef,
   });
   void reason;
-  admission.registerProcessGroup({ pgid: 4242, leaderPid: 4242 });
-  admission.markSettled();
+  await Promise.resolve(admission.registerProcessGroup({ pgid: 4242, leaderPid: 4242 }));
+  await Promise.resolve(admission.markSettled());
   await admission.releaseAfterSettlement();
   return admission;
 }
@@ -230,8 +230,8 @@ export function runWorksetStoreContract(factory: WorksetStoreContractFactory): v
       });
       expect(again.epoch).toBe(2);
       expect(again.roots).toEqual([]);
-      again.registerProcessGroup({ pgid: 1, leaderPid: 1 });
-      again.markSettled();
+      await Promise.resolve(again.registerProcessGroup({ pgid: 1, leaderPid: 1 }));
+      await Promise.resolve(again.markSettled());
       await again.releaseAfterSettlement();
     });
 
@@ -261,8 +261,8 @@ export function runWorksetStoreContract(factory: WorksetStoreContractFactory): v
       expect(setDone).toBe(false);
       expect(store.exclusiveHeld()).toBe(true);
 
-      effect.registerProcessGroup({ pgid: 100, leaderPid: 100 });
-      effect.markSettled();
+      await Promise.resolve(effect.registerProcessGroup({ pgid: 100, leaderPid: 100 }));
+      await Promise.resolve(effect.markSettled());
       queueMicrotask(() => {
         void effect.releaseAfterSettlement().then(() => effectAck.resolve());
       });
@@ -327,10 +327,10 @@ export function runWorksetStoreContract(factory: WorksetStoreContractFactory): v
       expect(a.epoch).toBe(b.epoch);
       expect(store.activeAdmissionCount()).toBe(2);
 
-      a.registerProcessGroup({ pgid: 11, leaderPid: 11 });
+      await Promise.resolve(a.registerProcessGroup({ pgid: 11, leaderPid: 11 }));
       // Second registration on the same lease is rejected (no multi-effect).
       try {
-        a.registerProcessGroup({ pgid: 12, leaderPid: 12 });
+        await Promise.resolve(a.registerProcessGroup({ pgid: 12, leaderPid: 12 }));
         throw new Error("expected process-group-already-registered");
       } catch (error) {
         expect(error).toBeInstanceOf(WorksetAdmissionError);
@@ -338,12 +338,12 @@ export function runWorksetStoreContract(factory: WorksetStoreContractFactory): v
           "process-group-already-registered",
         );
       }
-      a.markSettled();
+      await Promise.resolve(a.markSettled());
       await a.releaseAfterSettlement();
       await expectRejection(a.releaseAfterSettlement(), "admission-closed");
 
-      b.registerProcessGroup({ pgid: 13, leaderPid: 13 });
-      b.markSettled();
+      await Promise.resolve(b.registerProcessGroup({ pgid: 13, leaderPid: 13 }));
+      await Promise.resolve(b.markSettled());
       await b.releaseAfterSettlement();
       expect(store.activeAdmissionCount()).toBe(0);
 
@@ -367,7 +367,7 @@ export function runWorksetStoreContract(factory: WorksetStoreContractFactory): v
         "admission-not-registered",
       );
       try {
-        admission.markSettled();
+        await Promise.resolve(admission.markSettled());
         throw new Error("expected markSettled to require registration");
       } catch (error) {
         expect(error).toBeInstanceOf(WorksetAdmissionError);
@@ -375,12 +375,12 @@ export function runWorksetStoreContract(factory: WorksetStoreContractFactory): v
           "admission-not-registered",
         );
       }
-      admission.registerProcessGroup({ pgid: 7, leaderPid: 7 });
+      await Promise.resolve(admission.registerProcessGroup({ pgid: 7, leaderPid: 7 }));
       await expectRejection(
         admission.releaseAfterSettlement(),
         "process-group-not-settled",
       );
-      admission.markSettled();
+      await Promise.resolve(admission.markSettled());
       await admission.releaseAfterSettlement();
       expect(store.activeAdmissionCount()).toBe(0);
     });
@@ -441,8 +441,8 @@ export function runWorksetStoreContract(factory: WorksetStoreContractFactory): v
           const setP = store.setRoots(["goals:G1"]);
           void admitP
             .then(async (adm) => {
-              adm.registerProcessGroup({ pgid: 1, leaderPid: 1 });
-              adm.markSettled();
+              await Promise.resolve(adm.registerProcessGroup({ pgid: 1, leaderPid: 1 }));
+              await Promise.resolve(adm.markSettled());
               await adm.releaseAfterSettlement();
             })
             .catch(() => {

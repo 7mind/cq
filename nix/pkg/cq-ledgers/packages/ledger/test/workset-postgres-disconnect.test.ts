@@ -54,7 +54,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
           kind: "worktree-create",
           targetRef: "tasks:T-hold",
         });
-        admission.registerProcessGroup({ pgid: 7001, leaderPid: 7001 });
+        await Promise.resolve(admission.registerProcessGroup({ pgid: 7001, leaderPid: 7001 }));
         // Flush durable register.
         await Bun.sleep(30);
 

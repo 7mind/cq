@@ -262,11 +262,22 @@ export interface WorksetExternalEffectAdmission {
    * Publish the exact target process-group registration while admission is
    * held and before the target is released to run.
    */
-  registerProcessGroup(registration: WorksetProcessGroupRegistration): void;
+  /**
+   * Publish the process-group registration. Durable backends may return a
+   * Promise that resolves only after the registration is committed; sync
+   * backends return void. Callers must
+   * `await Promise.resolve(adm.registerProcessGroup(...))`.
+   */
+  registerProcessGroup(
+    registration: WorksetProcessGroupRegistration,
+  ): void | Promise<void>;
   /** True once {@link registerProcessGroup} has succeeded. */
   readonly processGroupRegistered: boolean;
-  /** Mark the registered group (and descendants) settled. */
-  markSettled(): void;
+  /**
+   * Mark the registered group settled. Same async contract as
+   * {@link registerProcessGroup}.
+   */
+  markSettled(): void | Promise<void>;
   readonly settled: boolean;
   /**
    * Close admission only after registration + settlement. Enforces
