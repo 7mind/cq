@@ -211,7 +211,9 @@ export type WorksetAdmissionErrorCode =
   | "multiple-observable-effects"
   | "transfer-forbidden"
   | "target-excluded"
-  | "exclusive-busy";
+  | "exclusive-busy"
+  /** Durable backend: replacement blocked by an indefinitely-stuck admission row. */
+  | "stuck-admission";
 
 export class WorksetAdmissionError extends Error {
   readonly code: WorksetAdmissionErrorCode;
@@ -481,6 +483,16 @@ const liveAdmissions = new WeakSet<object>();
 
 export function isLiveWorksetAdmission(value: unknown): boolean {
   return typeof value === "object" && value !== null && liveAdmissions.has(value);
+}
+
+/** Register a coordinator- or backend-granted live admission handle. */
+export function registerLiveWorksetAdmission(handle: object): void {
+  liveAdmissions.add(handle);
+}
+
+/** Drop live membership when an admission closes. */
+export function unregisterLiveWorksetAdmission(handle: object): void {
+  liveAdmissions.delete(handle);
 }
 
 /** Register a coordinator-granted handle so {@link isLiveWorksetAdmission} accepts it. */

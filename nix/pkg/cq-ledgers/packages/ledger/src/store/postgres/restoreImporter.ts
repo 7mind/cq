@@ -159,6 +159,9 @@ export async function restoreDumpToPostgres(opts: {
     // gated above; mirrors restoreDumpToXdg's unconditional wipe-then-insert.
     await tx`DELETE FROM plan_operations WHERE project_key = ${pk}`;
     await tx`DELETE FROM plan_claims WHERE project_key = ${pk}`;
+    // T1958: clear durable workset state on restore (T1959 carries roots through dumps).
+    await tx`DELETE FROM workset_admissions WHERE project_key = ${pk}`;
+    await tx`DELETE FROM workset_roots WHERE project_key = ${pk}`;
     await tx`DELETE FROM archived_items WHERE project_key = ${pk}`;
     await tx`DELETE FROM archive_pointers WHERE project_key = ${pk}`;
     await tx`DELETE FROM items WHERE project_key = ${pk}`;

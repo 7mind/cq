@@ -7,9 +7,10 @@
     "outDir": "./dist",
     "types": ["bun-types"],
     "paths": {
-      "@cq/config": ["../cq-config/src/index.ts"]
+      "@cq/config": ["../cq-config/src/index.ts"],
+      "@cq/process-control": ["../process-control/src/index.ts"]
     }
   },
-  "references": [{ "path": "../cq-config" }],
+  "references": [{ "path": "../cq-config" }, { "path": "../process-control" }],
   "include": ["src", "test", "bench"]
 }

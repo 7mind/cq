@@ -365,6 +365,12 @@ export type { PostgresLedgerStoreOpts } from "./store/postgres/PostgresLedgerSto
 export { openPgPool, tryAcquireDedicatedAdvisoryLock } from "./store/postgres/connection.js";
 export type { PgAdvisoryLockLease } from "./store/postgres/connection.js";
 export { ensureSchema } from "./store/postgres/schema.js";
+export { createPostgresWorksetStore } from "./store/postgres/worksetStore.js";
+export type {
+  CreatePostgresWorksetStoreOptions,
+  DurableWorksetAdmissionRow,
+  PostgresWorksetStore,
+} from "./store/postgres/worksetStore.js";
 export { resolvePostgresDsn, PostgresDsnResolutionError } from "./store/postgres/dsn.js";
 export { resolveDisplayName } from "./store/postgres/displayName.js";
 export type { DisplayNameCandidates } from "./store/postgres/displayName.js";

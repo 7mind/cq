@@ -53,6 +53,10 @@ import { withAdvisoryLock } from "./connection.js";
  *   database provisioned by an earlier build simply gains them on the next
  *   `ensureSchema` — there is no row to migrate, because no prior build wrote
  *   plan-lifecycle state to Postgres at all.
+ *
+ *   Amended again in T1958 (STILL v1): tenant-scoped `workset_roots` and
+ *   durable `workset_admissions` tables. Admissions are durable rows (host +
+ *   process identity + heartbeat), never connection-lifetime advisory locks.
  */
 export const PG_SCHEMA_VERSION = 1;
 
@@ -206,6 +210,54 @@ export async function ensureSchema(pool: SQL): Promise<void> {
         bytes_out   INTEGER NOT NULL,
         PRIMARY KEY (project_key, endpoint)
       )
+    `;
+
+    // T1958 — tenant workset roots/epoch + durable admissions. Roots are one
+    // complete ordered batch per tenant; admissions survive disconnect so
+    // cleanup-before-release remains observable across server instances.
+    await locked`
+      CREATE TABLE IF NOT EXISTS workset_roots (
+        project_key      TEXT PRIMARY KEY REFERENCES projects(project_key),
+        roots_json       TEXT NOT NULL,
+        epoch            BIGINT NOT NULL,
+        admit_generation BIGINT NOT NULL,
+        updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `;
+
+    await locked`
+      CREATE TABLE IF NOT EXISTS workset_admissions (
+        project_key              TEXT NOT NULL REFERENCES projects(project_key),
+        admission_id             TEXT NOT NULL,
+        form                     TEXT NOT NULL,
+        kind                     TEXT NOT NULL,
+        target_key               TEXT NOT NULL,
+        targets_json             TEXT NOT NULL,
+        epoch                    BIGINT NOT NULL,
+        host_id                  TEXT NOT NULL,
+        holder_pid               INTEGER NOT NULL,
+        holder_start_time        TEXT NOT NULL,
+        heartbeat_at_ms          BIGINT NOT NULL,
+        process_group_registered BOOLEAN NOT NULL DEFAULT FALSE,
+        pgid                     INTEGER,
+        leader_pid               INTEGER,
+        leader_start_time        TEXT,
+        settled                  BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at_ms            BIGINT NOT NULL,
+        PRIMARY KEY (project_key, admission_id)
+      )
+    `;
+
+    await locked`
+      CREATE INDEX IF NOT EXISTS workset_admissions_tenant_idx
+        ON workset_admissions (project_key)
+    `;
+
+    // At most one exclusive (set / administrative) admission per tenant.
+    await locked`
+      CREATE UNIQUE INDEX IF NOT EXISTS workset_admissions_exclusive_uidx
+        ON workset_admissions (project_key)
+        WHERE form IN ('exclusive-set', 'exclusive-administrative')
     `;
 
     await locked`

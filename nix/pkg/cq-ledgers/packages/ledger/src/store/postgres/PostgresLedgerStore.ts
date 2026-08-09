@@ -166,6 +166,10 @@ import {
 import type { ListProjectsResult } from "../../mcp/listProjects.js";
 import { notifyProjectChanged, readTransaction, writeTransaction } from "./connection.js";
 import { classifyCanonicalLedgers } from "./divergence.js";
+import {
+  createPostgresWorksetStore,
+  type PostgresWorksetStore,
+} from "./worksetStore.js";
 
 export interface PostgresLedgerStoreOpts {
   /**
@@ -352,6 +356,8 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly mutexes = new Map<string, AsyncMutex>();
   private readonly searchIndex = new LedgerSearchIndex();
   private initialised = false;
+  /** Lazy T1958 workset roots/admission store for this tenant. */
+  private workset: PostgresWorksetStore | null = null;
 
   constructor(opts: PostgresLedgerStoreOpts) {
     this.handle = opts.pool;
@@ -591,10 +597,32 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         SELECT ${shadowKey}, scope, record_json
         FROM plan_operations WHERE project_key = ${pk}
       `;
+      // T1958: durable workset roots + admissions are tenant state.
+      await tx`
+        INSERT INTO workset_roots (project_key, roots_json, epoch, admit_generation, updated_at)
+        SELECT ${shadowKey}, roots_json, epoch, admit_generation, updated_at
+        FROM workset_roots WHERE project_key = ${pk}
+      `;
+      await tx`
+        INSERT INTO workset_admissions (
+          project_key, admission_id, form, kind, target_key, targets_json, epoch,
+          host_id, holder_pid, holder_start_time, heartbeat_at_ms,
+          process_group_registered, pgid, leader_pid, leader_start_time,
+          settled, created_at_ms
+        )
+        SELECT
+          ${shadowKey}, admission_id, form, kind, target_key, targets_json, epoch,
+          host_id, holder_pid, holder_start_time, heartbeat_at_ms,
+          process_group_registered, pgid, leader_pid, leader_start_time,
+          settled, created_at_ms
+        FROM workset_admissions WHERE project_key = ${pk}
+      `;
 
       // Wipe the ORIGINAL tenant's rows (children first, FK order), then
       // reseed the full canonical set fresh — same write shape as
       // runBootstrapWrites's Pass 2, sharing THIS transaction.
+      await tx`DELETE FROM workset_admissions WHERE project_key = ${pk}`;
+      await tx`DELETE FROM workset_roots WHERE project_key = ${pk}`;
       await tx`DELETE FROM archived_items WHERE project_key = ${pk}`;
       await tx`DELETE FROM archive_pointers WHERE project_key = ${pk}`;
       await tx`DELETE FROM items WHERE project_key = ${pk}`;
@@ -827,12 +855,31 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     group.items.push(rowToItem(ar));
   }
 
+  /**
+   * T1958 — tenant-scoped durable {@link PostgresWorksetStore}. Lazy; one
+   * instance per store. Closed automatically from {@link dispose}.
+   */
+  worksetStore(): PostgresWorksetStore {
+    this.assertInit();
+    if (this.workset === null) {
+      this.workset = createPostgresWorksetStore({
+        pool: this.pool(),
+        projectKey: this.projectKey,
+      });
+    }
+    return this.workset;
+  }
+
   async dispose(): Promise<void> {
     // D148: drain per-ledger mutexes BEFORE closing the pool so an in-flight
     // coherence invalidate/reloadLedger (parked on `await prior` or mid-query)
     // finishes against a still-open pool — matching AbstractLedgerStore.dispose.
     const drains = Array.from(this.mutexes.values()).map((m) => m.run(async () => undefined));
     await Promise.all(drains);
+    if (this.workset !== null) {
+      this.workset.close();
+      this.workset = null;
+    }
     if (this.handle !== null) {
       await this.handle.close();
       this.handle = null;
