@@ -193,7 +193,7 @@ export function runWorksetGenericMutationContract(
       await expectGatewayRejection(
         ledger.mutations.createLedger("xenos-denied", {
           idPrefix: "X",
-          statuses: ["open", "closed"],
+          statusValues: ["open", "closed"],
           terminalStatuses: ["closed"],
           fields: { title: { type: "string", required: true } },
         }),

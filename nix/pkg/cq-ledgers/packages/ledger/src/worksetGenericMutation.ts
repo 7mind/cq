@@ -75,9 +75,9 @@ import type {
   FieldValue,
   Item,
   LedgerSchema,
-  LedgerSnapshot,
 } from "./types.js";
 import { LedgerError } from "./types.js";
+import type { LedgerSnapshot } from "./snapshot.js";
 import type { UsageStatsSnapshot } from "./usageStats.js";
 import { CANONICAL_LEDGERS } from "./constants.js";
 
