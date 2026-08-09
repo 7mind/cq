@@ -286,18 +286,12 @@ export function createPostgresWorksetStore(
   // Local observation (sync WorksetStore surface).
   const localActive = new Map<string, { form: "ledger-mutation" | "external-effect" }>();
   /** In-flight durable side-effects for a local admission (register/settle). */
-  const durableSideEffects = new Map<string, Promise<void>>();
+  const durableSideEffects = new Map<string, Promise<void>>(); // release may flush prior chains
   let exclusiveHeldFlag = false;
   let exclusiveTail: Promise<void> = Promise.resolve();
   let closed = false;
   let admissionSeq = 0;
   let holderIdentityPromise: Promise<ProcessIdentity> | null = null;
-
-  function trackDurable(id: string, work: Promise<void>): void {
-    const prior = durableSideEffects.get(id) ?? Promise.resolve();
-    const next = prior.then(() => work);
-    durableSideEffects.set(id, next.then(() => undefined, () => undefined));
-  }
 
   async function flushDurable(id: string): Promise<void> {
     const pending = durableSideEffects.get(id);
