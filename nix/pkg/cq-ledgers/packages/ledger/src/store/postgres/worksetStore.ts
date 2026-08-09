@@ -435,18 +435,21 @@ export function createPostgresWorksetStore(
     if (holderAlive && heartbeatFresh) return "live";
 
     // Stale: settle any registered process group before delete.
+    // leader_start_time may be null when the leader was unobservable at
+    // publish — still settle by pgid (T1958 cleanup-before-release).
     if (
       row.form === "external-effect" &&
       row.processGroupRegistered &&
       row.pgid !== null &&
       row.leaderPid !== null &&
-      row.leaderStartTime !== null &&
-      row.leaderStartTime !== "" &&
       !row.settled
     ) {
       const registration: ProcessGroupRegistration = {
         pgid: row.pgid,
-        leader: { pid: row.leaderPid, startTime: row.leaderStartTime },
+        leader: {
+          pid: row.leaderPid,
+          startTime: row.leaderStartTime ?? "",
+        },
       };
       const settled = await settleRegisteredGroup(registration);
       if (settled.survivors.length > 0) {
