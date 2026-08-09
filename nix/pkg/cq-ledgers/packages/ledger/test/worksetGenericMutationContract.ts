@@ -329,38 +329,43 @@ export function runWorksetGenericMutationContract(
     });
 
     it("set waits behind an in-flight generic mutation admission", async () => {
-      const ledger = await factory.build();
+      // Hold only the post-seed mutation critical section so setRoots observes
+      // activeAdmissionCount > 0 and cannot finish until release.
+      const admitted = deferred();
+      const releaseHold = deferred();
+      let holdEnabled = false;
+      const ledger = await factory.build({
+        afterGenericAdmit: async () => {
+          if (!holdEnabled) return;
+          admitted.resolve();
+          await releaseHold.promise;
+        },
+      });
       const { taskIn } = await seedMinimalGraph(ledger);
       await ledger.setRoots([`${TASKS_LEDGER}:${taskIn}`]);
 
-      // Hold admission by starting updateItem and blocking acknowledge via a
-      // concurrent setRoots observation: start set while a mutation is mid-flight.
-      // We simulate by admitting through a long update that we interleave with set
-      // using the activeAdmissionCount observation around a microtask barrier.
-      const mutationStarted = deferred();
-      const releaseMutation = deferred();
+      holdEnabled = true;
+      const mutPromise = ledger.mutations.updateItem(TASKS_LEDGER, taskIn, {
+        fields: { headline: "held-update" },
+      });
+      await admitted.promise;
+      expect(ledger.activeAdmissionCount()).toBeGreaterThan(0);
 
-      // Monkey-patch is not available; instead run mutation and set concurrently.
-      // The mutation is fast; prove set∥mutation by holding via a second mutation
-      // that we delay only if the store exposes hooks. Fallback: prove post-set
-      // epoch visibility and that a mutation after set sees the new epoch.
-      const mutPromise = (async () => {
-        mutationStarted.resolve();
-        await releaseMutation.promise;
-        return ledger.mutations.updateItem(TASKS_LEDGER, taskIn, {
-          fields: { headline: "after-hold" },
-        });
-      })();
+      let setDone = false;
+      const setPromise = ledger.setRoots([]).then((snap) => {
+        setDone = true;
+        return snap;
+      });
+      // Allow set to reach exclusive wait without completing.
+      await new Promise((r) => setTimeout(r, 20));
+      expect(setDone).toBe(false);
 
-      await mutationStarted.promise;
-      // Without an external latch inside the gateway, we cannot hold the
-      // admission across an await boundary from the outside. Prove the dual:
-      // mutation then set sees advanced epoch; set then mutation sees new roots.
-      releaseMutation.resolve();
+      releaseHold.resolve();
       await mutPromise;
-
-      const setSnap = await ledger.setRoots([]);
-      expect(setSnap.epoch).toBeGreaterThanOrEqual(2);
+      const setSnap = await setPromise;
+      expect(setDone).toBe(true);
+      expect(setSnap.roots).toEqual([]);
+      expect(ledger.activeAdmissionCount()).toBe(0);
       // Unrestricted after clear: create works again.
       await ledger.mutations.createMilestone({ title: "post-clear" });
     });

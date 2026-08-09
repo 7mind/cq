@@ -53,6 +53,7 @@ import {
 import {
   WorksetAdmissionError,
   isLiveWorksetAdmission,
+  type WorksetAdmissionCoordinatorHooks,
   type WorksetLedgerMutationAdmission,
   type WorksetRootsEpoch,
 } from "./worksetEffectAdmission.js";
@@ -576,6 +577,12 @@ export interface WorksetGenericMutationGatewayHost {
   readonly rawStore: LedgerStore;
   /** Workset roots + t3 admission coordinator. */
   readonly worksetStore: WorksetStore;
+  /**
+   * Test/instrumentation latch: runs after admit and before validation/write,
+   * while the ledger-mutation admission is still held. Used to prove setRoots
+   * waits on live generic admissions.
+   */
+  readonly afterGenericAdmit?: () => Promise<void> | void;
 }
 
 /**
@@ -585,7 +592,7 @@ export interface WorksetGenericMutationGatewayHost {
 export function createWorksetGenericMutationGateway(
   host: WorksetGenericMutationGatewayHost,
 ): WorksetGenericMutationGateway {
-  const { rawStore, worksetStore } = host;
+  const { rawStore, worksetStore, afterGenericAdmit } = host;
 
   async function withGenericAdmission<T>(
     targets: readonly string[],
@@ -622,6 +629,9 @@ export function createWorksetGenericMutationGateway(
       );
     }
     try {
+      if (afterGenericAdmit !== undefined) {
+        await afterGenericAdmit();
+      }
       const snap = await readWorksetRootsEpoch(worksetStore);
       if (snap.epoch !== admission.epoch) {
         throw new WorksetAdmissionError(
@@ -723,46 +733,47 @@ export function createWorksetGenericMutationGateway(
     },
 
     async createItem(ledgerId, milestoneId, init) {
-      const roots = await readWorksetRootsEpoch(worksetStore);
-      if (roots.roots.length > 0) {
-        throw new WorksetGenericMutationError(
-          "creation-denied",
-          "generic createItem is denied under non-empty workset roots; use owner-scoped lifecycle writes",
-        );
-      }
-      assertSealedOwnershipAbsent(init.fields);
-      return withGenericAdmission([], async () => {
+      // Restrictive denial uses admission.roots inside the held t3 section
+      // (not a pre-admit read) so concurrent setRoots cannot TOCTOU create.
+      // Sealed-ownership is checked after creation-denied so the deny code is
+      // stable under restrictive roots.
+      return withGenericAdmission([], async (adm) => {
+        if (adm.roots.length > 0) {
+          throw new WorksetGenericMutationError(
+            "creation-denied",
+            "generic createItem is denied under non-empty workset roots; use owner-scoped lifecycle writes",
+          );
+        }
+        assertSealedOwnershipAbsent(init.fields);
         return rawStore.createItem(ledgerId, milestoneId, init);
       });
     },
 
     async createMilestone(init) {
-      const roots = await readWorksetRootsEpoch(worksetStore);
-      if (roots.roots.length > 0) {
-        throw new WorksetGenericMutationError(
-          "creation-denied",
-          "generic createMilestone is denied under non-empty workset roots; use owner-scoped lifecycle writes",
-        );
-      }
       const fields: Record<string, FieldValue> = { title: init.title };
       if (init.description !== undefined) fields.description = init.description;
       if (init.blockedBy !== undefined) fields.blockedBy = init.blockedBy;
       if (init.dependsOn !== undefined) fields.dependsOn = init.dependsOn;
-      assertSealedOwnershipAbsent(fields);
-      return withGenericAdmission([], async () => {
+      return withGenericAdmission([], async (adm) => {
+        if (adm.roots.length > 0) {
+          throw new WorksetGenericMutationError(
+            "creation-denied",
+            "generic createMilestone is denied under non-empty workset roots; use owner-scoped lifecycle writes",
+          );
+        }
+        assertSealedOwnershipAbsent(fields);
         return rawStore.createMilestone(init);
       });
     },
 
     async createLedger(name, schema) {
-      const roots = await readWorksetRootsEpoch(worksetStore);
-      if (roots.roots.length > 0) {
-        throw new WorksetGenericMutationError(
-          "create-ledger-denied",
-          "createLedger is denied under non-empty workset roots",
-        );
-      }
-      return withGenericAdmission([], async () => {
+      return withGenericAdmission([], async (adm) => {
+        if (adm.roots.length > 0) {
+          throw new WorksetGenericMutationError(
+            "create-ledger-denied",
+            "createLedger is denied under non-empty workset roots",
+          );
+        }
         return rawStore.createLedger(name, schema);
       });
     },
@@ -884,6 +895,8 @@ export function createWorksetGuardedLedger(
 export interface CreateInMemoryWorksetGuardedLedgerOptions {
   readonly now?: () => string;
   readonly seed?: Array<{ name: string; schema: LedgerSchema }>;
+  readonly hooks?: WorksetAdmissionCoordinatorHooks;
+  readonly afterGenericAdmit?: () => Promise<void> | void;
 }
 
 /**
@@ -906,6 +919,7 @@ export function createInMemoryWorksetGuardedLedger(
   // same call stack as admit+validate; concurrent admits each rebuild from
   // the live store so membership stays coherent with the admitted epoch.
   const worksetStore = createInMemoryWorksetStore({
+    ...(options.hooks !== undefined ? { hooks: options.hooks } : {}),
     isTargetAdmitted: (target, roots) => {
       if (roots.length === 0) return true;
       // Build membership from the live raw store against the admitted roots.
@@ -922,7 +936,13 @@ export function createInMemoryWorksetGuardedLedger(
     },
   });
 
-  return createWorksetGuardedLedger({ rawStore, worksetStore });
+  return createWorksetGuardedLedger({
+    rawStore,
+    worksetStore,
+    ...(options.afterGenericAdmit !== undefined
+      ? { afterGenericAdmit: options.afterGenericAdmit }
+      : {}),
+  });
 }
 
 /**
