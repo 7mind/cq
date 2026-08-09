@@ -12,6 +12,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 const PARENT_POLL_MS = 2_000;
+/** Wait for the prior holder to exit on stdin EOF before sending signals. */
+const LOCK_GRACE_WAIT_MS = 2_000;
 /** Soft-wait after SIGTERM before escalating to SIGKILL. */
 const LOCK_TAKEOVER_WAIT_MS = 1_500;
 const LOCK_TAKEOVER_POLL_MS = 50;
@@ -91,18 +93,27 @@ export function acquireStdioSingletonLock(lockDir: string): StdioProcessGuards {
         );
       }
       if (holderPid !== null && pidAlive(holderPid)) {
-        // Takeover path for keep-alive reconnect / detached orphan (D293 fix).
-        // Soft stop first, then SIGKILL — orphans often ignore polite signals once
-        // stdin is already gone and the event loop is thrashing.
-        try {
-          process.kill(holderPid, "SIGTERM");
-        } catch (killErr) {
-          if ((killErr as NodeJS.ErrnoException).code !== "ESRCH") throw killErr;
-        }
-        const softDeadline = Date.now() + LOCK_TAKEOVER_WAIT_MS;
-        while (Date.now() < softDeadline) {
+        // Pi reconnect often spawns a second process while the first is still
+        // shutting down on stdin EOF. Wait for a natural release BEFORE any
+        // signal — immediate SIGTERM was killing the live session MCP and
+        // thrashing reconnect ("Connection closed (ledger-mcp: serving…)").
+        const graceDeadline = Date.now() + LOCK_GRACE_WAIT_MS;
+        while (Date.now() < graceDeadline) {
           if (!pidAlive(holderPid)) break;
           sleepMs(LOCK_TAKEOVER_POLL_MS);
+        }
+        if (pidAlive(holderPid)) {
+          // Still alive after grace → orphan / stuck. Escalate.
+          try {
+            process.kill(holderPid, "SIGTERM");
+          } catch (killErr) {
+            if ((killErr as NodeJS.ErrnoException).code !== "ESRCH") throw killErr;
+          }
+          const softDeadline = Date.now() + LOCK_TAKEOVER_WAIT_MS;
+          while (Date.now() < softDeadline) {
+            if (!pidAlive(holderPid)) break;
+            sleepMs(LOCK_TAKEOVER_POLL_MS);
+          }
         }
         if (pidAlive(holderPid)) {
           try {
@@ -119,7 +130,7 @@ export function acquireStdioSingletonLock(lockDir: string): StdioProcessGuards {
         if (pidAlive(holderPid)) {
           throw new Error(
             `ledger-mcp: another stdio MCP still holds ${lockPath} (pid ${holderPid}) ` +
-              `after SIGTERM+SIGKILL. Stop it manually or remove a stuck lock.`,
+              `after grace+SIGTERM+SIGKILL. Stop it manually or remove a stuck lock.`,
           );
         }
       }

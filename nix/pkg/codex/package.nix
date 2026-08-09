@@ -46,18 +46,26 @@ let
     aarch64-darwin = {
       asset = "codex-aarch64-apple-darwin.tar.gz";
       hash = "sha256-dZhLgfkqcbDA9LO1ytgOXFcXfk2Mi0seE9twOyDcQ1g=";
+      codeModeHostAsset = "codex-code-mode-host-aarch64-apple-darwin.tar.gz";
+      codeModeHostHash = "sha256-Vs2/YYe/kUEI07f+7qWjT/uhXlwWK+3OaeBi7pLd+14=";
     };
     aarch64-linux = {
       asset = "codex-aarch64-unknown-linux-musl.tar.gz";
       hash = "sha256-62d8gPZmsauLSx0IO2bo1hSxKB2WC7b5/Yypj1izi5A=";
+      codeModeHostAsset = "codex-code-mode-host-aarch64-unknown-linux-musl.tar.gz";
+      codeModeHostHash = "sha256-39T/mOpNsw7QeK+cMbb4bj2kg20Fc6qH4iXlpbVNPHw=";
     };
     x86_64-darwin = {
       asset = "codex-x86_64-apple-darwin.tar.gz";
       hash = "sha256-NueC9x2BZMw3wricZJSPIYDpovhFayfmYNp1vGtVdOI=";
+      codeModeHostAsset = "codex-code-mode-host-x86_64-apple-darwin.tar.gz";
+      codeModeHostHash = "sha256-cTGgUI3k3qYPecgWGIsLBrF/btQX2bOhhlsKSSf7xIo=";
     };
     x86_64-linux = {
       asset = "codex-x86_64-unknown-linux-musl.tar.gz";
       hash = "sha256-Akbi53ODTgfw+1JJ7W660S5FkeYI+Me7l91qlpBUTDY=";
+      codeModeHostAsset = "codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz";
+      codeModeHostHash = "sha256-AUat+qyDY+yfzbWJX3Yk21suhheig4h5OLf7l6HdQ1Y=";
     };
   };
   system = stdenv.hostPlatform.system;
@@ -70,24 +78,55 @@ if lib.hasAttr system binaryAssets then
     pname = "codex";
     inherit version;
 
-    src = fetchurl {
-      url = "https://github.com/openai/codex/releases/download/rust-v${version}/${binaryAsset.asset}";
-      hash = binaryAsset.hash;
-    };
+    # Main CLI + sibling code-mode host (0.147+ spawns `codex-code-mode-host`
+    # from PATH next to `codex`; omitting it breaks every tool call with
+    # "failed to spawn .../codex-code-mode-host: No such file or directory").
+    srcs = [
+      (fetchurl {
+        url = "https://github.com/openai/codex/releases/download/rust-v${version}/${binaryAsset.asset}";
+        hash = binaryAsset.hash;
+      })
+      (fetchurl {
+        url = "https://github.com/openai/codex/releases/download/rust-v${version}/${binaryAsset.codeModeHostAsset}";
+        hash = binaryAsset.codeModeHostHash;
+      })
+    ];
+    sourceRoot = ".";
 
     nativeBuildInputs = [
       installShellFiles
       makeBinaryWrapper
     ];
 
-    dontUnpack = true;
     dontConfigure = true;
     dontBuild = true;
 
+    # fetchurl multi-src lands as $NIX_BUILD_TOP/<hash>-name; unpack both.
+    unpackPhase = ''
+      runHook preUnpack
+      for src in $srcs; do
+        tar -xzf "$src"
+      done
+      runHook postUnpack
+    '';
+
     installPhase = ''
       runHook preInstall
-      tar -xzf "$src"
-      install -Dm755 codex-* "$out/bin/codex"
+      # Both release tarballs expand to a single platform-suffixed binary.
+      # `codex-*` would also match `codex-code-mode-host-*`, so pick explicitly.
+      shopt -s nullglob
+      main=(codex-aarch64-* codex-x86_64-*)
+      host=(codex-code-mode-host-*)
+      if [ "''${#main[@]}" -ne 1 ]; then
+        echo "expected exactly one main codex binary, found: ''${main[*]:-none}" >&2
+        exit 1
+      fi
+      if [ "''${#host[@]}" -ne 1 ]; then
+        echo "expected exactly one codex-code-mode-host binary, found: ''${host[*]:-none}" >&2
+        exit 1
+      fi
+      install -Dm755 "''${main[0]}" "$out/bin/codex"
+      install -Dm755 "''${host[0]}" "$out/bin/codex-code-mode-host"
       runHook postInstall
     '';
 
@@ -99,9 +138,11 @@ if lib.hasAttr system binaryAssets then
     '';
 
     postFixup = ''
+      # Keep code-mode-host on the same PATH as the wrapped codex so relative
+      # sibling discovery and PATH lookup both succeed.
       wrapProgram "$out/bin/codex" --prefix PATH : ${
         lib.makeBinPath ([ ripgrep ] ++ lib.optionals stdenv.hostPlatform.isLinux [ bubblewrap ])
-      }
+      }:$out/bin
     '';
 
     doInstallCheck = stdenv.buildPlatform.canExecute stdenv.hostPlatform;
