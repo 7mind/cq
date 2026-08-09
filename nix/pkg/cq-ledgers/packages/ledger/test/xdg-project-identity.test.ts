@@ -243,7 +243,7 @@ runProjectIdentityContract(inMemoryFactory);
 runProjectIdentityContract(sqliteFactory);
 
 describe("XDG project identity storage shape", () => {
-  test("uses the existing meta(key,value) shape alongside lifecycle tables without a schema-version change", async () => {
+  test("uses the existing meta(key,value) shape alongside lifecycle and workset tables", async () => {
     const fixture = await sqliteFactory.build();
     try {
       fixture.access.upsertProjectIdentity({
@@ -268,6 +268,9 @@ describe("XDG project identity storage shape", () => {
           "meta",
           "plan_claims",
           "plan_operations",
+          "workset_admissions",
+          "workset_exclusive",
+          "workset_state",
         ]);
         const metaColumns = db
           .query<{ name: string }, []>("PRAGMA table_info(meta)")
