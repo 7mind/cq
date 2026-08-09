@@ -167,6 +167,41 @@ export type {
   CreateGitObjectWorksetStoreOptions,
   WorksetRootsDocument,
 } from "./worksetStoreGit.js";
+export {
+  WORKSET_GENERIC_MUTATION_OPERATION_KINDS,
+  WORKSET_GENERIC_MUTATION_OPERATION_CLAUSES,
+  WORKSET_GENERIC_MUTATION_FIELD_CLAUSES,
+  WORKSET_GENERIC_MUTATION_CLOSURE_FIELDS,
+  WORKSET_GENERIC_MUTATION_RAW_WRITE_METHODS,
+  clauseForGenericMutationOperation,
+  clauseForGenericMutationField,
+  WorksetGenericMutationError,
+  assertNoPublicRawWriteEscape,
+  buildActiveStateFromLedgerStore,
+  worksetMemberRefSet,
+  introducedClosureRefs,
+  createWorksetGenericMutationGateway,
+  createWorksetGuardedLedger,
+  createInMemoryWorksetGuardedLedger,
+  assertGenericMutationAdmissionNotCallerMinted,
+  inventoriedLedgerStoreMutationMethods,
+  inventoriedSealedOwnershipFields,
+  canonicalLedgerCount,
+} from "./worksetGenericMutation.js";
+export type {
+  WorksetGenericMutationOperationKind,
+  WorksetGenericMutationRestrictivePolicy,
+  WorksetGenericMutationOperationClause,
+  WorksetGenericMutationFieldKind,
+  WorksetGenericMutationFieldRestrictivePolicy,
+  WorksetGenericMutationFieldClause,
+  WorksetGenericMutationErrorCode,
+  WorksetLedgerReadSurface,
+  WorksetGenericMutationGateway,
+  WorksetGuardedLedger,
+  WorksetGenericMutationGatewayHost,
+  CreateInMemoryWorksetGuardedLedgerOptions,
+} from "./worksetGenericMutation.js";
 export * from "./parser/parse.js";
 export * from "./parser/serialize.js";
 export { parseFrontmatter, serializeFrontmatter } from "./parser/frontmatter.js";
@@ -668,7 +703,13 @@ export {
 } from "./stateDir.js";
 export { resolveProjectKey, ProjectKeyResolutionError } from "./projectKey.js";
 export type { ResolveProjectKeyOpts } from "./projectKey.js";
-export { parseRef, buildPrefixRegistry, canonicalizeRef, RefParseError } from "./refs.js";
+export {
+  parseRef,
+  buildPrefixRegistry,
+  canonicalizeRef,
+  DEPENDENCY_REF_FIELDS,
+  RefParseError,
+} from "./refs.js";
 export type { ParsedRef } from "./refs.js";
 export { FINALIZE_PRESENTATION, describeFinalizeEmptyPlan } from "./finalizePresentation.js";
 export type { FinalizePresentation, FinalizeScope } from "./finalizePresentation.js";
