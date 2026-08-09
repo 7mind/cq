@@ -26,8 +26,12 @@ import type { Database } from "bun:sqlite";
  *   in place by {@link SqliteLedgerStore.init}; a store born here starts at v2
  *   (its bootstrap writes are already canonical, so there is nothing to
  *   normalize).
+ * - v3 (T1509/G155): `mcp_usage_stats` per-endpoint counters.
+ * - v4 (T1957/G158): project workset roots/epoch plus durable admission rows
+ *   and an exclusive-claim row so broker admissions survive across processes
+ *   without a long-lived write transaction.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /**
  * Apply the normalized-row DDL to `db`. Idempotent: every statement is
@@ -110,8 +114,46 @@ export function ensureSchema(db: Database): void {
       bytes_in    INTEGER NOT NULL,
       bytes_out   INTEGER NOT NULL
     );
+
+    -- T1957: singleton roots/epoch + admit generation (revokes pre-grant admits).
+    CREATE TABLE IF NOT EXISTS workset_state (
+      id                INTEGER PRIMARY KEY CHECK (id = 1),
+      epoch             INTEGER NOT NULL,
+      roots_json        TEXT NOT NULL,
+      admit_generation  INTEGER NOT NULL
+    );
+
+    -- Durable admissions: short write txns only; effective across processes.
+    CREATE TABLE IF NOT EXISTS workset_admissions (
+      id                         TEXT PRIMARY KEY,
+      form                       TEXT NOT NULL,
+      kind                       TEXT NOT NULL,
+      epoch                      INTEGER NOT NULL,
+      roots_json                 TEXT NOT NULL,
+      targets_json               TEXT NOT NULL,
+      target_ref                 TEXT,
+      host                       TEXT NOT NULL,
+      pid                        INTEGER NOT NULL,
+      started_at                 INTEGER NOT NULL,
+      pgid                       INTEGER,
+      leader_pid                 INTEGER,
+      settled                    INTEGER NOT NULL DEFAULT 0,
+      process_group_registered   INTEGER NOT NULL DEFAULT 0
+    );
+
+    -- Exclusive set/admin claim held without a long-lived write transaction.
+    CREATE TABLE IF NOT EXISTS workset_exclusive (
+      id          INTEGER PRIMARY KEY CHECK (id = 1),
+      holder_id   TEXT NOT NULL,
+      host        TEXT NOT NULL,
+      pid         INTEGER NOT NULL,
+      started_at  INTEGER NOT NULL
+    );
   `);
   db.query("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)").run(
     SCHEMA_VERSION,
   );
+  db.query(
+    "INSERT OR IGNORE INTO workset_state (id, epoch, roots_json, admit_generation) VALUES (1, 0, '[]', 0)",
+  ).run();
 }

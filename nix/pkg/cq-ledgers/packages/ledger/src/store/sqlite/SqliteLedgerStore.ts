@@ -135,6 +135,8 @@ import {
 } from "../../constants.js";
 import { immediateWriteTransaction, openLedgerDb } from "./connection.js";
 import { ensureSchema, SCHEMA_VERSION } from "./schema.js";
+import { createSqliteWorksetStore } from "./sqliteWorksetStore.js";
+import type { CreateInMemoryWorksetStoreOptions, WorksetStore } from "../../worksetStore.js";
 import {
   claimInMemoryPlan,
   finalizeInMemoryPlan,
@@ -218,6 +220,14 @@ export interface SqliteLedgerStoreOpts {
    * must say so explicitly, in the clear.
    */
   allowDestructiveReinitOfPopulatedStore?: boolean;
+  /**
+   * T1957 — options for the project {@link WorksetStore} mounted on this
+   * database after init (hooks / validators for contract fixtures).
+   * WorksetStore is a separate capability from LedgerStore (both expose a
+   * `snapshot` method with different return types), obtained via
+   * {@link SqliteLedgerStore.worksetStore}.
+   */
+  workset?: CreateInMemoryWorksetStoreOptions;
 }
 
 // --- row shapes (mirror schema.ts DDL) --------------------------------------
@@ -288,8 +298,11 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly onSchemaDivergence: "backup-reinit" | "abort";
   /** D170 destructive-intent gate — see {@link SqliteLedgerStoreOpts}. */
   private readonly allowDestructiveReinitOfPopulatedStore: boolean;
+  private readonly worksetOptions: CreateInMemoryWorksetStoreOptions;
   private handle: Database | null = null;
   private initialised = false;
+  /** T1957 project workset capability; created in {@link init}, cleared on dispose. */
+  private worksetHandle: WorksetStore | null = null;
   /**
    * Derived full-text index over the committed item rows (T528) — the SAME
    * `LedgerSearchIndex` the fs/in-memory stores use, so ftsSearch semantics
@@ -309,6 +322,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.onSchemaDivergence = opts.onSchemaDivergence ?? DEFAULT_ON_SCHEMA_DIVERGENCE;
     this.allowDestructiveReinitOfPopulatedStore =
       opts.allowDestructiveReinitOfPopulatedStore ?? false;
+    this.worksetOptions = opts.workset ?? {};
   }
 
   // ---------------------------------------------------------------------------
@@ -419,6 +433,13 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
 
     this.handle = db;
     this.initialised = true;
+    // T1957: mount the project WorksetStore over the same connection. Roots
+    // and admissions share the ledger.db WAL; snapshot always re-reads rows so
+    // peer commits are visible without a separate invalidate path.
+    this.worksetHandle = createSqliteWorksetStore({
+      db,
+      ...this.worksetOptions,
+    });
 
     // Cold-build the derived search index from the committed rows — one
     // ACTIVE + one ARCHIVED bucket per ledger. Guarded per ledger inside the
@@ -427,6 +448,19 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       this.rebuildLedgerIndexActive(name);
       this.refreshLedgerIndexArchived(name);
     }
+  }
+
+  /**
+   * T1957 — project {@link WorksetStore} over this database. Separate from
+   * {@link LedgerStore} because both surfaces define `snapshot` with different
+   * return types. Requires {@link init}.
+   */
+  worksetStore(): WorksetStore {
+    this.assertInit();
+    if (this.worksetHandle === null) {
+      throw new LedgerError("SqliteLedgerStore workset capability is not mounted");
+    }
+    return this.worksetHandle;
   }
 
   /**
@@ -574,7 +608,8 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     const version = versionRow === null ? 1 : Number(versionRow.value);
     if (version >= SCHEMA_VERSION) return;
 
-    // v2→v3 (T1509/G155): the only change is the mcp_usage_stats DDL, which
+    // v2→v3 (T1509/G155) and v3→v4 (T1957/G158): additive DDL only
+    // (mcp_usage_stats; workset_state/admissions/exclusive), which
     // ensureSchema already applied idempotently at open — bump the marker
     // WITHOUT the v1 snapshot/rewrite churn.
     if (version >= 2) {
@@ -647,6 +682,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
    * rely on this releasing the file). A fresh store can reopen the same path.
    */
   async dispose(): Promise<void> {
+    this.worksetHandle = null;
     if (this.handle !== null) {
       this.handle.exec("PRAGMA wal_checkpoint(TRUNCATE)");
       this.handle.close();

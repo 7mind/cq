@@ -112,7 +112,7 @@ describe("MCP usage counters on LedgerStore (T1509)", () => {
       const row = meta.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
         value: number;
       };
-      expect(Number(row.value)).toBe(3);
+      expect(Number(row.value)).toBe(4);
     } finally {
       meta.close();
     }

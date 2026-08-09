@@ -124,6 +124,8 @@ export {
   canonicalizeWorksetRootReplacement,
   createInMemoryWorksetAdmissionCoordinator,
   isLiveWorksetAdmission,
+  registerLiveWorksetAdmission,
+  unregisterLiveWorksetAdmission,
   assertCallerCannotMintAdmission,
 } from "./worksetEffectAdmission.js";
 export type {
@@ -297,6 +299,8 @@ export { GitObjectLedgerBackend } from "./store/git/GitObjectLedgerBackend.js";
 export type { GitObjectLedgerBackendOpts } from "./store/git/GitObjectLedgerBackend.js";
 export { SqliteLedgerStore } from "./store/sqlite/SqliteLedgerStore.js";
 export type { SqliteLedgerStoreOpts } from "./store/sqlite/SqliteLedgerStore.js";
+export { createSqliteWorksetStore } from "./store/sqlite/sqliteWorksetStore.js";
+export type { CreateSqliteWorksetStoreOptions } from "./store/sqlite/sqliteWorksetStore.js";
 export {
   openXdgProjectRuntime,
   isSafeProjectKey,

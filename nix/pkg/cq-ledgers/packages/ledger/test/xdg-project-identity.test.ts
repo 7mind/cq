@@ -274,7 +274,7 @@ describe("XDG project identity storage shape", () => {
           .all()
           .map((row) => row.name);
         expect(metaColumns).toEqual(["key", "value"]);
-        expect(SCHEMA_VERSION).toBe(3);
+        expect(SCHEMA_VERSION).toBe(4);
       } finally {
         db.close();
       }
