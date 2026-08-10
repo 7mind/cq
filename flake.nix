@@ -812,7 +812,8 @@ EOF
               ${pkgs.lib.optionalString pkgs.stdenv.isLinux "${pkgs.util-linux}/bin/setsid"} \
               ${pkgs.bun}/bin/bun test \
                 "$WORKSPACE/packages/cq-config/test/codexGateIntegration.test.ts" \
-                "$WORKSPACE/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts"
+                "$WORKSPACE/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts" \
+                "$WORKSPACE/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts"
             runHook postInstallCheck
           '';
 

@@ -93,7 +93,9 @@ prior-round commits when `round > 0`.
    gitlinks, undeclared paths, inferred renames, or a manifest assembled before
    the final byte/mode measurement. Retry a lost response with the exact same
    operation id and request; retain the returned receipt verbatim in
-   `gitReceipts`. A changed request requires a new operation id.
+   `gitReceipts`. A broker-capable passing result requires the complete,
+   non-empty receipt chain in commit order. A changed request requires a new
+   operation id.
 
    **Early skeleton write (load-bearing durability).** The first substantive
    action after grounding and base verification MUST be to create a durable

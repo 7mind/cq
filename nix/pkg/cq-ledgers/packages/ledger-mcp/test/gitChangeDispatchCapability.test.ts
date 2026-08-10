@@ -218,4 +218,148 @@ describe("dispatch-bound Git change capability", () => {
       incrementalReceipt.newHead,
     );
   });
+
+  test("broker-capable result storage rejects missing or substituted receipt chains", async () => {
+    let attempt = 0;
+    async function storeCandidate(
+      mutate: (output: Record<string, unknown>) => void,
+    ): Promise<void> {
+      attempt += 1;
+      const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2042-receipt-${attempt}-`));
+      roots.push(repositoryRoot);
+      await git(repositoryRoot, ["init", "-q"]);
+      await fs.writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
+      await git(repositoryRoot, ["add", "file.txt"]);
+      await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
+      const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+      const stateDir = path.join(repositoryRoot, ".manager-state");
+      const managed = await prepareManagedWorktree(
+        { repositoryRoot, taskId: "T2042", baseCommit },
+        { stateDir, skipInstall: true, bunWorkspaceRoot: repositoryRoot },
+      );
+      if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
+      const store = new InMemoryAttestationStore(NAMESPACE);
+      const capability = createDispatchCapability({
+        backend: new InMemoryAttestationBackend(store),
+        promptArtifactStore: artifactStore(),
+        repositoryRoot,
+        worktreeStateDir: stateDir,
+        now: () => "2026-08-10T12:00:00.000Z",
+        randomBytes: sequentialDispatchRandomBytes(attempt * 16),
+      });
+      const prepared = await capability.prepare({
+        roleId: "implement-worker",
+        input: {
+          taskId: "T2042",
+          headline: "verify receipt chain",
+          description: "reject substituted receipt evidence",
+          acceptance: "receipt chain matches Git",
+          worktreePath: managed.handle.absolutePath,
+          branch: managed.handle.branch,
+          baseCommit,
+          round: 0,
+          startingCommit: baseCommit,
+        },
+        idempotencyKey: `T2042-receipt-attempt-${attempt}`,
+        timeoutMs: 600_000,
+        expectedChild: { childId: `child-${attempt}`, runId: `run-${attempt}` },
+      });
+      if (!prepared.accepted || prepared.prepared.gitChangeCapability === undefined) {
+        throw new Error("worker dispatch did not receive a Git change capability");
+      }
+      await capability.fetchInput({
+        attestationId: prepared.prepared.attestationId,
+        generation: prepared.prepared.generation,
+        inputCapability: prepared.prepared.inputCapability,
+      });
+      if (capability.gitCommit === undefined) throw new Error("git_commit was not wired");
+      await fs.writeFile(path.join(managed.handle.absolutePath, "file.txt"), "first\n");
+      const first = await capability.gitCommit({
+        attestationId: prepared.prepared.attestationId,
+        generation: prepared.prepared.generation,
+        gitChangeCapability: prepared.prepared.gitChangeCapability,
+        operationId: `T2042-receipt-${attempt}-1`,
+        expectedHead: baseCommit,
+        message: "first receipt",
+        changes: [
+          {
+            kind: "modify",
+            path: "file.txt",
+            oldState: { mode: "100644", digest: sha256("before\n") },
+            newState: { mode: "100644", digest: sha256("first\n") },
+          },
+        ],
+      });
+      await fs.writeFile(path.join(managed.handle.absolutePath, "file.txt"), "second\n");
+      const second = await capability.gitCommit({
+        attestationId: prepared.prepared.attestationId,
+        generation: prepared.prepared.generation,
+        gitChangeCapability: prepared.prepared.gitChangeCapability,
+        operationId: `T2042-receipt-${attempt}-2`,
+        expectedHead: first.newHead,
+        message: "second receipt",
+        changes: [
+          {
+            kind: "modify",
+            path: "file.txt",
+            oldState: { mode: "100644", digest: sha256("first\n") },
+            newState: { mode: "100644", digest: sha256("second\n") },
+          },
+        ],
+      });
+      const output: Record<string, unknown> = {
+        taskId: "T2042",
+        status: "pass",
+        resultCommit: second.newHead,
+        branch: managed.handle.branch,
+        actualWorktreePath: managed.handle.absolutePath,
+        filesTouched: ["file.txt"],
+        gitReceipts: [
+          { ...first, objectOids: [...first.objectOids], paths: [...first.paths] },
+          { ...second, objectOids: [...second.objectOids], paths: [...second.paths] },
+        ],
+        checkSummary: "REAL_CHECK_EXIT=0",
+        summary: "receipt verification candidate",
+        gateDurationMs: 1,
+        baseVerification: {
+          status: "verified",
+          relation: "descendant",
+          baseCommit,
+          headCommit: second.newHead,
+        },
+      };
+      mutate(output);
+      await expect(
+        capability.storeResult({
+          resultCapability: prepared.prepared.resultCapability,
+          output: output as never,
+        }),
+      ).rejects.toThrow(/receipt/i);
+    }
+
+    await storeCandidate((output) => {
+      delete output["gitReceipts"];
+    });
+    await storeCandidate((output) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      receipts[1] = { ...receipts[1], oldHead: "a".repeat(40) };
+    });
+    await storeCandidate((output) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      receipts[1] = { ...receipts[1], tree: "a".repeat(40) };
+    });
+    await storeCandidate((output) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      receipts[1] = { ...receipts[1], paths: ["other.txt"] };
+    });
+    await storeCandidate((output) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      const first = receipts[0]!;
+      output["resultCommit"] = first["newHead"];
+      output["baseVerification"] = {
+        ...(output["baseVerification"] as Record<string, unknown>),
+        headCommit: first["newHead"],
+      };
+    });
+  });
 });

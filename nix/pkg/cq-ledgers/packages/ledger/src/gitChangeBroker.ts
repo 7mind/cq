@@ -81,6 +81,15 @@ export interface GitChangeBrokerReceipt {
   readonly committedAt: string;
 }
 
+export interface GitChangeBrokerResultEvidence {
+  readonly taskId: string;
+  readonly resultCommit: string | null;
+  readonly branch: string;
+  readonly actualWorktreePath: string;
+  readonly filesTouched: readonly string[];
+  readonly gitReceipts: readonly GitChangeBrokerReceipt[];
+}
+
 export type GitChangeBrokerFaultBoundary =
   | "before-snapshot"
   | "after-private-construction"
@@ -169,6 +178,9 @@ function manifestPaths(changes: readonly GitChangeManifestEntry[]): readonly str
   const sources = new Set<string>();
   const destinations = new Set<string>();
   for (const [index, change] of changes.entries()) {
+    if (!["add", "modify", "delete", "rename"].includes((change as { kind: string }).kind)) {
+      throw new Error(`changes[${index}].kind is not a supported Git change`);
+    }
     if (change.kind === "rename") {
       const oldPath = assertPath(change.oldPath, `changes[${index}].oldPath`);
       const newPath = assertPath(change.newPath, `changes[${index}].newPath`);
@@ -859,4 +871,120 @@ export async function commitManagedWorktreeChanges(
     });
     return await completeConstructed(request, deps, journalFile, constructed.journal);
   });
+}
+
+/** Trusted-parent verification of the receipt chain supplied by a broker-capable worker. */
+export async function validateGitChangeBrokerResultEvidence(
+  authorization: DispatchBoundGitAuthorization,
+  evidence: GitChangeBrokerResultEvidence,
+): Promise<void> {
+  if (evidence.resultCommit === null || !FULL_OID.test(evidence.resultCommit)) {
+    throw new Error("broker receipt chain requires a full resultCommit oid");
+  }
+  if (evidence.taskId !== authorization.taskId) {
+    throw new Error("broker receipt taskId does not match the dispatch binding");
+  }
+  if (evidence.branch !== authorization.branch) {
+    throw new Error("broker receipt branch does not match the dispatch binding");
+  }
+  if (
+    !isAbsolute(evidence.actualWorktreePath) ||
+    resolve(evidence.actualWorktreePath) !== resolve(authorization.worktreePath)
+  ) {
+    throw new Error("broker receipt worktree path does not match the dispatch binding");
+  }
+  if (evidence.gitReceipts.length === 0) {
+    throw new Error("broker-capable worker result requires a non-empty receipt chain");
+  }
+
+  const touched = [...new Set(evidence.filesTouched.map((entryPath, index) =>
+    assertPath(entryPath, `filesTouched[${index}]`),
+  ))].sort();
+  if (touched.length !== evidence.filesTouched.length) {
+    throw new Error("broker result filesTouched contains duplicate paths");
+  }
+  const receiptPaths = new Set<string>();
+  let previousHead: string | undefined;
+  for (const [index, receipt] of evidence.gitReceipts.entries()) {
+    if (receipt.kind !== "cq-git-change-receipt" || receipt.version !== 1) {
+      throw new Error(`broker receipt chain entry ${index} has an unsupported kind or version`);
+    }
+    if (
+      receipt.attestationId !== authorization.attestationId ||
+      receipt.generation !== authorization.generation ||
+      receipt.taskId !== authorization.taskId
+    ) {
+      throw new Error(`broker receipt chain entry ${index} does not match the dispatch identity`);
+    }
+    if (!FULL_OID.test(receipt.oldHead) || !FULL_OID.test(receipt.newHead) || !FULL_OID.test(receipt.tree)) {
+      throw new Error(`broker receipt chain entry ${index} contains a malformed Git oid`);
+    }
+    if (previousHead !== undefined && receipt.oldHead !== previousHead) {
+      throw new Error(`broker receipt chain entry ${index} does not continue the preceding head`);
+    }
+    const paths = receipt.paths.map((entryPath, pathIndex) =>
+      assertPath(entryPath, `gitReceipts[${index}].paths[${pathIndex}]`),
+    );
+    if (canonical(paths) !== canonical([...new Set(paths)].sort())) {
+      throw new Error(`broker receipt chain entry ${index} paths are not unique and sorted`);
+    }
+    const parent = (
+      await checkedGit(authorization.worktreePath, ["rev-parse", "--verify", `${receipt.newHead}^`])
+    ).toString().trim();
+    if (parent !== receipt.oldHead) {
+      throw new Error(`broker receipt chain entry ${index} oldHead is not the commit parent`);
+    }
+    const tree = (
+      await checkedGit(authorization.worktreePath, ["rev-parse", "--verify", `${receipt.newHead}^{tree}`])
+    ).toString().trim();
+    if (tree !== receipt.tree) {
+      throw new Error(`broker receipt chain entry ${index} tree does not match newHead`);
+    }
+    const changedPaths = (
+      await checkedGit(authorization.worktreePath, [
+        "diff-tree",
+        "--no-commit-id",
+        "--name-only",
+        "-r",
+        "-z",
+        receipt.oldHead,
+        receipt.newHead,
+        "--",
+      ])
+    ).toString().split("\0").filter(Boolean).sort();
+    if (canonical(changedPaths) !== canonical(paths)) {
+      throw new Error(`broker receipt chain entry ${index} paths do not match its commit diff`);
+    }
+    for (const oid of receipt.objectOids) {
+      if (!FULL_OID.test(oid)) {
+        throw new Error(`broker receipt chain entry ${index} contains a malformed object oid`);
+      }
+      await checkedGit(authorization.worktreePath, ["cat-file", "-e", oid]);
+    }
+    if (!receipt.objectOids.includes(receipt.newHead) || !receipt.objectOids.includes(receipt.tree)) {
+      throw new Error(`broker receipt chain entry ${index} omits its commit or tree object`);
+    }
+    for (const entryPath of paths) receiptPaths.add(entryPath);
+    previousHead = receipt.newHead;
+  }
+
+  const first = evidence.gitReceipts[0]!;
+  const baseAncestry = await runGit(authorization.worktreePath, [
+    "merge-base",
+    "--is-ancestor",
+    authorization.baseCommit,
+    first.oldHead,
+  ]);
+  if (baseAncestry.code !== 0) {
+    throw new Error("broker receipt chain begins outside the dispatch base ancestry");
+  }
+  if (previousHead !== evidence.resultCommit) {
+    throw new Error("broker receipt chain head does not match resultCommit");
+  }
+  if (canonical([...receiptPaths].sort()) !== canonical(touched)) {
+    throw new Error("broker receipt paths do not match filesTouched");
+  }
+  if ((await currentHead(authorization)) !== evidence.resultCommit) {
+    throw new Error("broker receipt resultCommit does not match the manager-bound branch tip");
+  }
 }

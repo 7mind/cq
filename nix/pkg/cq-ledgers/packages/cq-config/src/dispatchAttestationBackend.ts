@@ -799,7 +799,7 @@ export async function storeDispatchResultOn(
 export async function resolveDispatchGitEffectBindingOn(
   backend: AttestationBackend,
   submission: StoreDispatchResult,
-): Promise<DispatchGitEffectBinding | undefined> {
+): Promise<AuthorizedDispatchGitEffect | undefined> {
   return backend.transact(storeResultLoadScope(submission), (store) =>
     gitEffectBindingForResultCapability(submission, { store, now: () => new Date(0).toISOString() }),
   );

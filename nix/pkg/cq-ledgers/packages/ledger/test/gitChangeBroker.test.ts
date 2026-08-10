@@ -118,8 +118,45 @@ describe("H236 retained reproductions", () => {
     expect(`${result.stdout}${result.stderr}`).toMatch(/index\.lock.*Read-only file system/);
   });
 
-  test("the broker authorization contains no task-gitdir authority", async () => {
+  test("a task-gitdir permission profile admits sibling metadata/ref writes but protects a common object", async () => {
     const fixture = await seed();
+    const siblingPath = await fs.mkdtemp(path.join(tmpdir(), "t2042-sibling-"));
+    roots.push(siblingPath);
+    await fs.rmdir(siblingPath);
+    await git(fixture.repositoryRoot, ["worktree", "add", "-q", "-b", "sibling", siblingPath, fixture.head]);
+    const taskGitDir = await git(fixture.worktreePath, ["rev-parse", "--absolute-git-dir"]);
+    const siblingGitDir = await git(siblingPath, ["rev-parse", "--absolute-git-dir"]);
+    const siblingRef = path.join(fixture.authorization.commonDir, "refs", "heads", "sibling");
+    const objectOid = await git(fixture.repositoryRoot, ["rev-parse", `${fixture.head}^{tree}`]);
+    const commonObject = path.join(
+      fixture.authorization.commonDir,
+      "objects",
+      objectOid.slice(0, 2),
+      objectOid.slice(2),
+    );
+    const commonObjectBefore = await fs.readFile(commonObject);
+    await fs.writeFile(path.join(fixture.worktreePath, "modify.txt"), "profile edit\n");
+    const profile =
+      `permissions.h236={description="H236 task gitdir probe",extends=":workspace",` +
+      `filesystem={${JSON.stringify(taskGitDir)}="write"}}`;
+    const script = [
+      "git add modify.txt",
+      "git commit -q -m profile-commit",
+      `touch ${JSON.stringify(path.join(siblingGitDir, "NEGATIVE"))}`,
+      `git rev-parse HEAD > ${JSON.stringify(siblingRef)}`,
+      `if printf tamper >> ${JSON.stringify(commonObject)}; then exit 91; fi`,
+    ].join(" && ");
+    const result = Bun.spawnSync(
+      ["codex", "sandbox", "-C", fixture.worktreePath, "-c", profile, "-P", "h236", "--", "sh", "-c", script],
+      { cwd: fixture.worktreePath, stdout: "pipe", stderr: "pipe" },
+    );
+    expect(result.exitCode, `${result.stdout}${result.stderr}`).toBe(0);
+    const taskHead = await git(fixture.worktreePath, ["rev-parse", "HEAD"]);
+    expect(taskHead).not.toBe(fixture.head);
+    expect(await fs.readFile(path.join(siblingGitDir, "NEGATIVE"), "utf8")).toBe("");
+    expect((await fs.readFile(siblingRef, "utf8")).trim()).toBe(taskHead);
+    expect(await fs.readFile(commonObject)).toEqual(commonObjectBefore);
+
     expect(Object.keys(fixture.authorization)).not.toContain("gitDir");
     expect(Object.keys(fixture.authorization)).not.toContain("taskGitDir");
     expect(fixture.authorization.commonDir).toBe(path.join(fixture.repositoryRoot, ".git"));
@@ -260,6 +297,185 @@ describe("commitManagedWorktreeChanges", () => {
         }),
         boundary,
       ).toEqual(receipt);
+    }
+  });
+
+  test("serializes competing operations and preserves a concurrent ref CAS winner", async () => {
+    const fixture = await seed();
+    await fs.writeFile(path.join(fixture.worktreePath, "modify.txt"), "serialized\n");
+    const before = digest("before modify\n");
+    const baseRequest: GitChangeBrokerRequest = {
+      authorization: fixture.authorization,
+      operationId: "T2042-serialized-a",
+      expectedHead: fixture.head,
+      message: "serialized winner",
+      changes: [
+        {
+          kind: "modify",
+          path: "modify.txt",
+          oldState: { mode: "100644", digest: before },
+          newState: { mode: "100644", digest: digest("serialized\n") },
+        },
+      ],
+    };
+    const contenders = await Promise.allSettled([
+      commitManagedWorktreeChanges(baseRequest, {
+        stateDir: fixture.stateDir,
+        authorize: async () => {},
+      }),
+      commitManagedWorktreeChanges(
+        { ...baseRequest, operationId: "T2042-serialized-b" },
+        { stateDir: fixture.stateDir, authorize: async () => {} },
+      ),
+    ]);
+    expect(contenders.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    expect(contenders.filter(({ status }) => status === "rejected")).toHaveLength(1);
+    const winner = contenders.find(({ status }) => status === "fulfilled");
+    if (winner?.status !== "fulfilled") throw new Error("serialized broker had no winner");
+    expect(await git(fixture.worktreePath, ["rev-parse", "HEAD"])).toBe(winner.value.newHead);
+
+    const casFixture = await seed();
+    await fs.writeFile(path.join(casFixture.worktreePath, "modify.txt"), "cas candidate\n");
+    const baseTree = await git(casFixture.repositoryRoot, ["rev-parse", `${casFixture.head}^{tree}`]);
+    const competingHead = await git(casFixture.repositoryRoot, [
+      "commit-tree",
+      baseTree,
+      "-p",
+      casFixture.head,
+      "-m",
+      "concurrent ref winner",
+    ]);
+    await expect(
+      commitManagedWorktreeChanges(
+        {
+          authorization: casFixture.authorization,
+          operationId: "T2042-ref-cas",
+          expectedHead: casFixture.head,
+          message: "must lose CAS",
+          changes: [
+            {
+              kind: "modify",
+              path: "modify.txt",
+              oldState: { mode: "100644", digest: before },
+              newState: { mode: "100644", digest: digest("cas candidate\n") },
+            },
+          ],
+        },
+        {
+          stateDir: casFixture.stateDir,
+          authorize: async () => {},
+          faultInjector: async (boundary) => {
+            if (boundary === "before-ref-cas") {
+              await git(casFixture.repositoryRoot, [
+                "update-ref",
+                casFixture.authorization.ref,
+                competingHead,
+                casFixture.head,
+              ]);
+            }
+          },
+        },
+      ),
+    ).rejects.toThrow(/manager-bound ref moved/);
+    expect(await git(casFixture.worktreePath, ["rev-parse", "HEAD"])).toBe(competingHead);
+  });
+
+  test("rejects the closed manifest and dispatch identity substitution matrix before ref advance", async () => {
+    const invalidChanges: readonly { readonly label: string; readonly changes: unknown }[] = [
+      { label: "empty", changes: [] },
+      {
+        label: "unsupported-kind",
+        changes: [
+          {
+            kind: "copy",
+            path: "modify.txt",
+            oldState: { mode: "100644", digest: digest("before modify\n") },
+            newState: { mode: "100644", digest: digest("changed\n") },
+          },
+        ],
+      },
+      {
+        label: "git-metadata",
+        changes: [
+          { kind: "add", path: ".git/config", newState: { mode: "100644", digest: digest("changed\n") } },
+        ],
+      },
+      {
+        label: "unsupported-mode",
+        changes: [
+          { kind: "add", path: "added.txt", newState: { mode: "120000", digest: digest("changed\n") } },
+        ],
+      },
+      {
+        label: "malformed-digest",
+        changes: [
+          { kind: "add", path: "added.txt", newState: { mode: "100644", digest: "not-a-digest" } },
+        ],
+      },
+      {
+        label: "duplicate-path",
+        changes: [
+          { kind: "add", path: "added.txt", newState: { mode: "100644", digest: digest("changed\n") } },
+          { kind: "add", path: "added.txt", newState: { mode: "100644", digest: digest("changed\n") } },
+        ],
+      },
+    ];
+    for (const candidate of invalidChanges) {
+      const fixture = await seed();
+      await fs.writeFile(path.join(fixture.worktreePath, "added.txt"), "changed\n");
+      await expect(
+        commitManagedWorktreeChanges(
+          {
+            authorization: fixture.authorization,
+            operationId: `T2042-manifest-${candidate.label}`,
+            expectedHead: fixture.head,
+            message: "must reject manifest",
+            changes: candidate.changes as GitChangeBrokerRequest["changes"],
+          },
+          { stateDir: fixture.stateDir, authorize: async () => {} },
+        ),
+        candidate.label,
+      ).rejects.toThrow();
+      expect(await git(fixture.worktreePath, ["rev-parse", "HEAD"]), candidate.label).toBe(
+        fixture.head,
+      );
+    }
+
+    for (const field of [
+      "taskId",
+      "handleToken",
+      "handleFingerprint",
+      "repositoryRoot",
+      "repositoryId",
+      "commonDir",
+      "worktreePath",
+      "branch",
+      "ref",
+      "baseCommit",
+    ] as const) {
+      const fixture = await seed();
+      await fs.writeFile(path.join(fixture.worktreePath, "modify.txt"), "identity substitution\n");
+      await expect(
+        commitManagedWorktreeChanges(
+          {
+            authorization: { ...fixture.authorization, [field]: `${fixture.authorization[field]}-substituted` },
+            operationId: `T2042-identity-${field}`,
+            expectedHead: fixture.head,
+            message: "must reject identity substitution",
+            changes: [
+              {
+                kind: "modify",
+                path: "modify.txt",
+                oldState: { mode: "100644", digest: digest("before modify\n") },
+                newState: { mode: "100644", digest: digest("identity substitution\n") },
+              },
+            ],
+          },
+          { stateDir: fixture.stateDir, authorize: async () => {} },
+        ),
+        field,
+      ).rejects.toThrow();
+      expect(await git(fixture.worktreePath, ["rev-parse", "HEAD"]), field).toBe(fixture.head);
     }
   });
 

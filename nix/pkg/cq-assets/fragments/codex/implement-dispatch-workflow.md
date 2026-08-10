@@ -19,7 +19,11 @@
 > consumed-only rule before interpreting the worker result; never key the
 > fetch on any child-reported identifier. Never put the input body or either
 > capability in argv. The worker uses only `git_commit` for incremental commits;
-> the parent retains every returned receipt for result verification.
+> the parent retains every returned receipt. Before accepting a passing result,
+> require a non-empty receipt chain in commit order; verify each old/new head
+> edge and receipt tree against Git, require the final new head to equal
+> `resultCommit`, and require the union of receipt paths to equal
+> `filesTouched`.
 > If the adapter rejects an invalid final reply after it can observe the `result-stored` acknowledgement, the trusted parent persists only that
 > lifecycle state and the adapter's bounded diagnostic through `cq log put`,
 > then calls `abort_dispatch` with reason `protocol-violation`. Do not expose

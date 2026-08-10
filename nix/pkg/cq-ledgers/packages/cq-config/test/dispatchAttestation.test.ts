@@ -1020,6 +1020,53 @@ describe("prepare validates role, input and timeout, then allocates", () => {
     ).toThrow(/live prepared dispatch/);
   });
 
+  test("revokes the worker Git capability across every dispatch terminal state", () => {
+    for (const terminal of ["result-stored", "consumed", "aborted", "expired"] as const) {
+      const h = harness({ seed: terminal.length });
+      const p = prepared(h, { gitEffectBinding: GIT_EFFECT_BINDING });
+      if (p.gitChangeCapability === undefined) throw new Error("missing Git change capability");
+      fetchDispatchInput(fetchInputRequest(p), h.deps);
+      if (terminal === "result-stored" || terminal === "consumed") storeOne(h, p);
+      if (terminal === "consumed") confirmDispatchCompletion(confirmation(p), h.deps);
+      if (terminal === "aborted") abortDispatch(abortRequest(p), h.deps);
+      if (terminal === "expired") h.clock.set(p.childCancelAt).advance(1);
+      expect(
+        () =>
+          authorizeDispatchGitEffect(
+            { namespace: NAMESPACE, ...handleOf(p), gitChangeCapability: p.gitChangeCapability! },
+            h.deps,
+          ),
+        terminal,
+      ).toThrow();
+    }
+
+    const h = harness({ seed: 64 });
+    const first = prepared(h, { gitEffectBinding: GIT_EFFECT_BINDING });
+    if (first.gitChangeCapability === undefined) throw new Error("missing Git change capability");
+    fetchDispatchInput(fetchInputRequest(first), h.deps);
+    abortDispatch(abortRequest(first), h.deps);
+    acceptedOf(
+      prepareDispatch(
+        prepareRequest({
+          idempotencyKey: "T685-git-round-1",
+          reprepareOf: handleOf(first),
+          gitEffectBinding: GIT_EFFECT_BINDING,
+        }),
+        h.prepareDeps,
+      ),
+    );
+    expect(() =>
+      authorizeDispatchGitEffect(
+        {
+          namespace: NAMESPACE,
+          ...handleOf(first),
+          gitChangeCapability: first.gitChangeCapability!,
+        },
+        h.deps,
+      ),
+    ).toThrow(/live prepared dispatch/);
+  });
+
   test("the minters refuse a low-entropy or malformed source", () => {
     const short = (): Uint8Array => new Uint8Array(4);
     expect(() => mintAttestationId(short)).toThrow(

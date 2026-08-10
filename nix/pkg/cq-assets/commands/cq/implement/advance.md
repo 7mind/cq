@@ -131,6 +131,11 @@ If no task is ready and no task awaits review or merge, report and stop.
    `actualWorktreePath` to be a non-empty absolute path,
    `baseVerification.status === "verified"` with full SHAs, and
    `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.
+   When the dispatch carried `gitChangeCapability`, also require a non-empty
+   `gitReceipts` chain: every receipt old/new edge and tree must match Git, the
+   chain head must equal `resultCommit`, and its path union must equal
+   `filesTouched`. The trusted server validates the same invariants before
+   storing a broker-capable passing result.
 
 **Harvest then prefer RESUME.** Before every (re)dispatch, inspect the task
 worktree for a partial artifact — a `WIP-<taskId>.md` (or equivalent
@@ -236,11 +241,13 @@ Before rebase and immediately before merge, the orchestrator independently:
 1. require `git cat-file -t <resultCommit>` to return `commit` (full SHA);
 2. require the worker branch tip to equal `resultCommit`;
 3. require a clean claimed file set vs `filesTouched` / the actual diff;
-4. require `git merge-base --is-ancestor <verifiedBaseCommit> <resultCommit>`
+4. for a broker-capable result, revalidate the receipt chain heads, trees, and
+   path union against `resultCommit` and `filesTouched`;
+5. require `git merge-base --is-ancestor <verifiedBaseCommit> <resultCommit>`
    to exit zero;
-5. require `git merge-base --is-ancestor <startingCommit> <resultCommit>` to
+6. require `git merge-base --is-ancestor <startingCommit> <resultCommit>` to
    exit zero;
-6. require every dependency task `resultCommit` to be an ancestor of the tip
+7. require every dependency task `resultCommit` to be an ancestor of the tip
    (or equal) when resolvable — missing/unresolvable dependency evidence forbids
    merge.
 

@@ -342,12 +342,16 @@ export type {
   ResolveManagedWorktreeDispatchBindingRequest,
   WipOpenCheckpointFinding,
 } from "./managedWorktree.js";
-export { commitManagedWorktreeChanges } from "./gitChangeBroker.js";
+export {
+  commitManagedWorktreeChanges,
+  validateGitChangeBrokerResultEvidence,
+} from "./gitChangeBroker.js";
 export type {
   DispatchBoundGitAuthorization,
   GitChangeBrokerDeps,
   GitChangeBrokerFaultBoundary,
   GitChangeBrokerReceipt,
+  GitChangeBrokerResultEvidence,
   GitChangeBrokerRequest,
   GitChangeManifestEntry,
   GitPathState,

@@ -1782,7 +1782,7 @@ const STORE_RESULT: DispatchProtocolOperation = "store_result";
 export function gitEffectBindingForResultCapability(
   submission: StoreDispatchResult,
   deps: DispatchServiceDeps,
-): DispatchGitEffectBinding | undefined {
+): AuthorizedDispatchGitEffect | undefined {
   const token = submission?.resultCapability?.token;
   if (typeof token !== "string" || !RESULT_CAPABILITY_RE.test(token)) return undefined;
   const row = deps.store.readByCapabilityHash(resultCapabilityHash(token));
@@ -1793,7 +1793,21 @@ export function gitEffectBindingForResultCapability(
   ) {
     return undefined;
   }
-  return row.gitEffectBinding;
+  if (row.gitEffectBinding === undefined) return undefined;
+  if (row.promptProvenance.roleId !== "implement-worker") {
+    throw new AttestationContractError(
+      "row.promptProvenance.roleId",
+      "a stored Git effect binding must belong to implement-worker",
+    );
+  }
+  return Object.freeze({
+    ...row.gitEffectBinding,
+    attestationId: row.attestationId,
+    generation: row.generation,
+    roleId: "implement-worker" as const,
+    surface: row.promptProvenance.surface,
+    childCancelAt: row.deadlines.childCancelAt,
+  });
 }
 
 /** Trusted pre-lock lookup used to serialize abort with a bound Git effect. */

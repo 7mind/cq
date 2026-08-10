@@ -44,10 +44,12 @@ import {
   createAttestationStoreForConstruction,
   createDispatchNarrativeSource,
   commitManagedWorktreeChanges,
+  validateGitChangeBrokerResultEvidence,
   resolveManagedWorktreeDispatchBinding,
   withManagedWorktreeEffectLock,
   resolveSingleProjectAttestationNamespace,
   type DispatchCapability,
+  type GitChangeBrokerResultEvidence,
   type LedgerStore,
   type LedgerServerConstruction,
   type ResolvedLedgerStore,
@@ -64,6 +66,33 @@ export interface DispatchCapabilityOptions {
   /** Enables the implement-worker Git broker for a local project repository. */
   readonly repositoryRoot?: string;
   readonly worktreeStateDir?: string;
+}
+
+function brokerResultEvidence(output: DispatchJSONValue): GitChangeBrokerResultEvidence | undefined {
+  if (output === null || typeof output !== "object" || Array.isArray(output)) {
+    throw new Error("broker-capable worker result must be an object carrying receipt evidence");
+  }
+  const result = output as Record<string, DispatchJSONValue>;
+  if (result["status"] !== "pass") return undefined;
+  if (
+    typeof result["taskId"] !== "string" ||
+    typeof result["resultCommit"] !== "string" ||
+    typeof result["branch"] !== "string" ||
+    typeof result["actualWorktreePath"] !== "string" ||
+    !Array.isArray(result["filesTouched"]) ||
+    !result["filesTouched"].every((entry) => typeof entry === "string") ||
+    !Array.isArray(result["gitReceipts"])
+  ) {
+    throw new Error("broker-capable passing worker result lacks a complete receipt chain");
+  }
+  return {
+    taskId: result["taskId"],
+    resultCommit: result["resultCommit"],
+    branch: result["branch"],
+    actualWorktreePath: result["actualWorktreePath"],
+    filesTouched: result["filesTouched"] as string[],
+    gitReceipts: result["gitReceipts"] as unknown as GitChangeBrokerResultEvidence["gitReceipts"],
+  };
 }
 
 /**
@@ -438,7 +467,15 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     fetchInput: (input) => fetchDispatchInputOn(options.backend, { namespace, ...input }, { now }),
     storeResult: async (input) => {
       const binding = await resolveDispatchGitEffectBindingOn(options.backend, input);
-      const store = async () => await storeDispatchResultOn(options.backend, input, { now });
+      const store = async () => {
+        if (binding !== undefined) {
+          const evidence = brokerResultEvidence(input.output);
+          if (evidence !== undefined) {
+            await validateGitChangeBrokerResultEvidence(binding, evidence);
+          }
+        }
+        return await storeDispatchResultOn(options.backend, input, { now });
+      };
       const outcome =
         binding === undefined
           ? await store()
