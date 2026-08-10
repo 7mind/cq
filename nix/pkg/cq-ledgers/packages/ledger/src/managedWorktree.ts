@@ -25,6 +25,7 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import {
   delimiter as pathDelimiter,
+  dirname,
   isAbsolute,
   join,
   normalize,
@@ -233,8 +234,10 @@ export type ManagedWorktreeIdFactory = () => string;
 export type ManagedWorktreeFaultBoundary =
   | "before-worktree-add"
   | "before-registry-commit"
+  | "after-registry-directory-sync"
   | "after-registry-generation-sync"
   | "before-registry-pointer-rename"
+  | "after-registry-pointer-rename"
   | "before-worktree-remove"
   | "before-registry-release"
   | "before-directory-delete";
@@ -754,6 +757,15 @@ async function syncDirectory(directory: string): Promise<void> {
   }
 }
 
+async function syncRegistryDirectory(
+  directory: string,
+  phase: string,
+  fault: ManagedWorktreeFaultInjector,
+): Promise<void> {
+  await syncDirectory(directory);
+  await fault("after-registry-directory-sync", { directory, phase });
+}
+
 async function readCurrentTaskGeneration(
   regRoot: string,
   taskId: string,
@@ -837,6 +849,7 @@ async function publishTaskGeneration(
   }
 
   const taskDir = taskRegistryDir(regRoot, taskId);
+  const tasksDir = join(regRoot, TASK_REGISTRY_DIRNAME);
   const generationsDir = join(taskDir, TASK_GENERATIONS_DIRNAME);
   const stagingDir = join(taskDir, TASK_STAGING_DIRNAME);
   await fs.mkdir(generationsDir, { recursive: true });
@@ -861,7 +874,7 @@ async function publishTaskGeneration(
       await generationHandle.close();
     }
     await fs.rename(stagedGeneration, finalGeneration);
-    await syncDirectory(generationsDir);
+    await syncRegistryDirectory(generationsDir, "generation", fault);
   }
 
   await fault("after-registry-generation-sync", { taskId, generation });
@@ -881,7 +894,13 @@ async function publishTaskGeneration(
   }
   await fault("before-registry-pointer-rename", { taskId, generation });
   await fs.rename(stagedPointer, taskCurrentPath(regRoot, taskId));
-  await syncDirectory(taskDir);
+  await syncRegistryDirectory(taskDir, "pointer", fault);
+  if (current === null) {
+    await syncRegistryDirectory(tasksDir, "task-directory", fault);
+    await syncRegistryDirectory(regRoot, "tasks-directory", fault);
+    await syncRegistryDirectory(dirname(regRoot), "registry-root", fault);
+  }
+  await fault("after-registry-pointer-rename", { taskId, generation });
 }
 
 async function quarantineLegacyIndex(

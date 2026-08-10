@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { existsSync, promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { serializeWipArtifact } from "@cq/config";
 import {
@@ -33,6 +34,7 @@ import {
 
 const exec = promisify(execFile);
 const repositories: string[] = [];
+const crashWorker = fileURLToPath(new URL("./managedWorktreeCrashWorker.ts", import.meta.url));
 
 async function git(cwd: string, args: string[], env: NodeJS.ProcessEnv = {}): Promise<string> {
   const { stdout } = await exec("git", args, {
@@ -1096,11 +1098,57 @@ describe("releaseManagedWorktree", () => {
     expect(recoveryTip).toBe(head);
   });
 
-  for (const boundary of [
-    "after-registry-generation-sync",
-    "before-registry-pointer-rename",
+  it("first publication fsyncs the new registry reachability chain [Effectual-GoodCommunication]", async () => {
+    const repo = await seedRepository();
+    const syncedDirectories: string[] = [];
+    const deps = {
+      stateDir: repo.stateDir,
+      cacheRoot: repo.cacheRoot,
+      install: recordingInstall().runner,
+      bunWorkspaceRoot: repo.workspace,
+      faultInjector: (boundary: ManagedWorktreeFaultBoundary, context: Readonly<Record<string, string>>) => {
+        if (String(boundary) === "after-registry-directory-sync") {
+          const directory = context.directory;
+          if (directory === undefined) throw new Error("directory-sync fault context is incomplete");
+          syncedDirectories.push(directory);
+        }
+      },
+    };
+    const prepared = await prepareManagedWorktree(
+      { repositoryRoot: repo.cwd, taskId: "T20481", baseCommit: repo.base },
+      deps,
+    );
+    expect(prepared.status).toBe("prepared");
+    if (prepared.status !== "prepared") return;
+
+    const taskDir = path.join(repo.stateDir, "tasks", "T20481");
+    expect(syncedDirectories).toEqual([
+      path.join(taskDir, "generations"),
+      taskDir,
+      path.join(repo.stateDir, "tasks"),
+      repo.stateDir,
+      path.dirname(repo.stateDir),
+    ]);
+
+    syncedDirectories.length = 0;
+    const released = await releaseManagedWorktree(
+      {
+        handle: prepared.handle,
+        terminalDisposition: "done",
+        resultCommit: prepared.evidence.headCommit,
+      },
+      deps,
+    );
+    expect(released.status).toBe("released");
+    expect(syncedDirectories).toEqual([path.join(taskDir, "generations"), taskDir]);
+  });
+
+  for (const { boundary, liveAfterCrash } of [
+    { boundary: "after-registry-generation-sync", liveAfterCrash: true },
+    { boundary: "before-registry-pointer-rename", liveAfterCrash: true },
+    { boundary: "after-registry-pointer-rename", liveAfterCrash: false },
   ] as const) {
-    it(`restart after ${boundary} observes one complete generation`, async () => {
+    it(`process restart after ${boundary} observes one complete generation [Effectual-GoodCommunication]`, async () => {
       const repo = await seedRepository();
       const install = recordingInstall();
       const deps = {
@@ -1116,34 +1164,39 @@ describe("releaseManagedWorktree", () => {
       expect(prepared.status).toBe("prepared");
       if (prepared.status !== "prepared") return;
 
-      await expect(
-        releaseManagedWorktree(
-          {
-            handle: prepared.handle,
-            terminalDisposition: "done",
-            resultCommit: prepared.evidence.headCommit,
-          },
-          {
-            ...deps,
-            faultInjector: (observed) => {
-              if (observed === boundary) throw new Error(`injected fault at ${boundary}`);
-            },
-          },
-        ),
-      ).rejects.toThrow(`injected fault at ${boundary}`);
-
-      // Both named faults precede the pointer rename. Discovery follows the
-      // old complete generation and ignores staged/unreachable new bytes.
-      expect(await listManagedLiveWorktrees(repo.cwd, "T20482", repo.stateDir)).toEqual([
-        prepared.handle,
-      ]);
-      const lookupBeforeRestart = await prepareManagedWorktree(
-        { repositoryRoot: repo.cwd, taskId: "T20482", handle: prepared.handle },
-        deps,
+      const payloadPath = path.join(repo.stateDir, `crash-${boundary}.json`);
+      await fs.writeFile(
+        payloadPath,
+        JSON.stringify({
+          stateDir: repo.stateDir,
+          boundary,
+          handle: prepared.handle,
+          resultCommit: prepared.evidence.headCommit,
+        }),
       );
-      expect(lookupBeforeRestart.status).toBe("refused");
-      if (lookupBeforeRestart.status === "refused") {
-        expect(lookupBeforeRestart.reason).toBe("worktree-missing");
+      const child = Bun.spawn({
+        cmd: [process.execPath, crashWorker, payloadPath],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [exitCode, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stderr).text(),
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(86);
+
+      const live = await listManagedLiveWorktrees(repo.cwd, "T20482", repo.stateDir);
+      expect(live).toEqual(liveAfterCrash ? [prepared.handle] : []);
+      if (liveAfterCrash) {
+        const lookupAfterRestart = await prepareManagedWorktree(
+          { repositoryRoot: repo.cwd, taskId: "T20482", handle: prepared.handle },
+          deps,
+        );
+        expect(lookupAfterRestart.status).toBe("refused");
+        if (lookupAfterRestart.status === "refused") {
+          expect(lookupAfterRestart.reason).toBe("worktree-missing");
+        }
       }
 
       const recovered = await releaseManagedWorktree(
@@ -1156,17 +1209,8 @@ describe("releaseManagedWorktree", () => {
       );
       expect(recovered.status).toBe("released");
       expect(await listManagedLiveWorktrees(repo.cwd, "T20482", repo.stateDir)).toEqual([]);
-      const lookupAfterRestart = await releaseManagedWorktree(
-        {
-          handle: prepared.handle,
-          terminalDisposition: "done",
-          resultCommit: prepared.evidence.headCommit,
-        },
-        deps,
-      );
-      expect(lookupAfterRestart.status).toBe("released");
-      if (lookupAfterRestart.status === "released") {
-        expect(lookupAfterRestart.idempotent).toBe(true);
+      if (!liveAfterCrash && recovered.status === "released") {
+        expect(recovered.idempotent).toBe(true);
       }
     });
   }
