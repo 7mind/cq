@@ -335,6 +335,7 @@ export type { GitObjectLedgerBackendOpts } from "./store/git/GitObjectLedgerBack
 export { SqliteLedgerStore } from "./store/sqlite/SqliteLedgerStore.js";
 export type { SqliteLedgerStoreOpts } from "./store/sqlite/SqliteLedgerStore.js";
 export { createSqliteWorksetStore } from "./store/sqlite/sqliteWorksetStore.js";
+export { openExistingLedgerDb } from "./store/sqlite/connection.js";
 export type { CreateSqliteWorksetStoreOptions } from "./store/sqlite/sqliteWorksetStore.js";
 export {
   openXdgProjectRuntime,

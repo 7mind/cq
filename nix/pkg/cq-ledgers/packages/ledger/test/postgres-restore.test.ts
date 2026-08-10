@@ -29,6 +29,7 @@ import {
   isPostgresTenantEmpty,
   restoreDumpToPostgres,
 } from "../src/store/postgres/restoreImporter.js";
+import { mintWorksetManagementAuthority } from "../src/index.js";
 
 const PG_URL = process.env.CQ_TEST_PG_URL;
 
@@ -126,6 +127,7 @@ describe.skipIf(!PG_URL)("restoreDumpToPostgres (T580)", () => {
         projectKey,
         displayName: projectKey,
         dump: fixture.dump,
+        authority: mintWorksetManagementAuthority(),
       });
       expect(summary.fileCount).toBe(fixture.dump.length);
       expect(summary.logCount).toBe(2);
@@ -180,11 +182,17 @@ describe.skipIf(!PG_URL)("restoreDumpToPostgres (T580)", () => {
         pool: setupPool!,
         projectKey,
         dump: fixtureA.dump,
+        authority: mintWorksetManagementAuthority(),
       });
       expect(await isPostgresTenantEmpty(setupPool!, projectKey)).toBe(false);
 
       await expect(
-        restoreDumpToPostgres({ pool: setupPool!, projectKey, dump: fixtureB.dump }),
+        restoreDumpToPostgres({
+          pool: setupPool!,
+          projectKey,
+          dump: fixtureB.dump,
+          authority: mintWorksetManagementAuthority(),
+        }),
       ).rejects.toThrow(/non-empty tenant/);
 
       // The FIRST restore's data survives untouched.

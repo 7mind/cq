@@ -118,7 +118,7 @@ describe.skipIf(!PG_URL)("cq backup / cq restore — postgres backend (T582, Q27
     const root = await postgresRepo(cqToml);
     const projectKey = await projectKeyOf(root);
 
-    // --- Seed: a milestone + a task item directly against the postgres tenant.
+    // --- Seed: a milestone + a task item + workset roots against the postgres tenant.
     const seeded = await createLedgerStore(root);
     const milestone = await seeded.store.createMilestone({ title: "pg restore round-trip" });
     const item = await seeded.store.createItem(TASKS_LEDGER, milestone.id, {
@@ -127,6 +127,11 @@ describe.skipIf(!PG_URL)("cq backup / cq restore — postgres backend (T582, Q27
       author: "tester[1m]",
       session: "sess-1",
     });
+    const worksetRoots = ["goals:G-pg", "tasks:T-pg"];
+    expect(seeded.store).toBeInstanceOf(PostgresLedgerStore);
+    await (seeded.store as PostgresLedgerStore)
+      .worksetStore()
+      .setRoots(worksetRoots);
     await seeded.store.dispose();
 
     // --- Seed logs via `cq log put` (the postgres branch, tenant-keyed `logs` table).
@@ -152,6 +157,10 @@ describe.skipIf(!PG_URL)("cq backup / cq restore — postgres backend (T582, Q27
     const pool = openPgPool(PG_URL!);
     await ensureSchema(pool);
     await pool.begin(async (tx) => {
+      await tx`DELETE FROM workset_admissions WHERE project_key = ${projectKey}`;
+      await tx`DELETE FROM workset_roots WHERE project_key = ${projectKey}`;
+      await tx`DELETE FROM plan_operations WHERE project_key = ${projectKey}`;
+      await tx`DELETE FROM plan_claims WHERE project_key = ${projectKey}`;
       await tx`DELETE FROM archived_items WHERE project_key = ${projectKey}`;
       await tx`DELETE FROM archive_pointers WHERE project_key = ${projectKey}`;
       await tx`DELETE FROM items WHERE project_key = ${projectKey}`;
@@ -185,6 +194,10 @@ describe.skipIf(!PG_URL)("cq backup / cq restore — postgres backend (T582, Q27
       expect(md.content).toBe(SESSION_LOG_BODY);
       const raw = await restored.readLog(RAW_LOG_REL);
       expect(raw.content).toBe(RAW_LOG_BODY);
+
+      // T1959: workset roots/epoch survive backup → tenant wipe → restore.
+      const wsSnap = await restored.worksetStore().snapshot();
+      expect(wsSnap).toEqual({ roots: worksetRoots, epoch: 1 });
     } finally {
       await restored.dispose();
     }

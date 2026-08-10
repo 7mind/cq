@@ -130,7 +130,7 @@ describe("cq restore (T503)", () => {
     process.env["XDG_STATE_HOME"] = xdgHome;
     await fs.writeFile(path.join(root, "cq.toml"), opts.cqToml);
 
-    // --- Seed: a milestone + a task item directly against the xdg primary.
+    // --- Seed: a milestone + a task item + workset roots against the xdg primary.
     const seeded = await createLedgerStore(root);
     const milestone = await seeded.store.createMilestone({ title: "restore round-trip" });
     const item = await seeded.store.createItem(TASKS_LEDGER, milestone.id, {
@@ -139,6 +139,9 @@ describe("cq restore (T503)", () => {
       author: "tester[1m]",
       session: "sess-1",
     });
+    const worksetRoots = ["goals:G-restore", "tasks:T-restore"];
+    expect(seeded.store).toBeInstanceOf(SqliteLedgerStore);
+    await (seeded.store as SqliteLedgerStore).worksetStore().setRoots(worksetRoots);
     await seeded.store.dispose();
 
     // --- Seed logs via `cq log put` (the same path a real session uses).
@@ -181,6 +184,13 @@ describe("cq restore (T503)", () => {
       const fetchedLedger = restored.store.fetch(TASKS_LEDGER);
       const group = fetchedLedger.milestones.find((g) => g.id === milestone.id);
       expect(group?.items).toEqual([item]);
+
+      // T1959: workset roots/epoch survive backup → wipe → restore.
+      expect(restored.store).toBeInstanceOf(SqliteLedgerStore);
+      const wsSnap = await (restored.store as SqliteLedgerStore)
+        .worksetStore()
+        .snapshot();
+      expect(wsSnap).toEqual({ roots: worksetRoots, epoch: 1 });
     } finally {
       // --- (b) read_log parity — every pre-wipe log artifact is readable
       // with content equal to its pre-wipe content. logsDir is resolved the

@@ -74,6 +74,33 @@ if (PG_URL === undefined || PG_URL.length === 0) {
   runWorksetStoreContract(postgresFactory);
 
   describe("workset store postgres focused [T1958]", () => {
+    it("holds administrative exclusion through atomic tenant deletion", async () => {
+      const projectKey = await prepareTenant();
+      const store = createPostgresWorksetStore({ pool: sharedPool, projectKey });
+      openStores.push(store);
+
+      await store.runAdministrative({
+        kind: "erase",
+        authority: mintWorksetManagementAuthority(),
+        destructivePhase: async () => {
+          await sharedPool.begin(async (tx) => {
+            await tx`DELETE FROM workset_admissions WHERE project_key = ${projectKey}`;
+            await tx`DELETE FROM workset_roots WHERE project_key = ${projectKey}`;
+            await tx`DELETE FROM projects WHERE project_key = ${projectKey}`;
+          });
+        },
+      });
+
+      const [projects, roots, admissions] = await Promise.all([
+        sharedPool`SELECT project_key FROM projects WHERE project_key = ${projectKey}`,
+        sharedPool`SELECT project_key FROM workset_roots WHERE project_key = ${projectKey}`,
+        sharedPool`SELECT project_key FROM workset_admissions WHERE project_key = ${projectKey}`,
+      ]);
+      expect(projects).toHaveLength(0);
+      expect(roots).toHaveLength(0);
+      expect(admissions).toHaveLength(0);
+    });
+
     it("isolates roots across tenants", async () => {
       const aKey = await prepareTenant();
       const bKey = await prepareTenant();

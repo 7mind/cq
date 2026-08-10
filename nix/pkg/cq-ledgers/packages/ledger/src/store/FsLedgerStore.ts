@@ -48,6 +48,12 @@ import {
   type CreateFsWorksetStoreOptions,
 } from "./fsWorksetStore.js";
 import type { WorksetStore } from "../worksetStore.js";
+import {
+  mintWorksetManagementAuthority,
+} from "../worksetEffectAdmission.js";
+import { serializeWorksetRootsDocument } from "../worksetStoreGit.js";
+import { LEDGER_WORKSET_DIRNAME } from "./ledgerArtifacts.js";
+import { atomicWrite } from "./fsAtomic.js";
 
 /**
  * Result of {@link FsLedgerStore.reset}: the absolute path the prior on-disk
@@ -150,6 +156,55 @@ export class FsLedgerStore extends AbstractLedgerStore<FsPersistence> implements
   }
 
   /**
+   * Duck-typed BackupDump source (T1959): emit portable `workset-roots.json`
+   * from the FS workset live state.
+   */
+  async exportWorksetRootsState(): Promise<string> {
+    const snap = await this.createWorksetStore().snapshot();
+    return serializeWorksetRootsDocument(snap);
+  }
+
+  /**
+   * Divergence reinit under exclusive administrative admission (T1959): backup
+   * retains roots; live roots become explicit unrestricted empty.
+   */
+  protected override async backupAndReinit(): Promise<string> {
+    return this.runWorksetAdministrativeReinit("divergence-reinitialization");
+  }
+
+  private async runWorksetAdministrativeReinit(
+    kind: "reset" | "divergence-reinitialization",
+  ): Promise<string> {
+    const workset = this.createWorksetStore();
+    let backupDir = "";
+    await workset.runAdministrative({
+      kind,
+      authority: mintWorksetManagementAuthority(),
+      destructivePhase: async () => {
+        backupDir = await super.backupAndReinit();
+        await this.writeEmptyWorksetRoots();
+      },
+    });
+    return backupDir;
+  }
+
+  /** Write explicit unrestricted empty roots under `.cq/workset/roots.json`. */
+  private async writeEmptyWorksetRoots(): Promise<void> {
+    const worksetDir = path.join(this.root, LEDGER_STORAGE_DIRNAME, LEDGER_WORKSET_DIRNAME);
+    await fs.mkdir(worksetDir, { recursive: true });
+    const payload = {
+      version: 1 as const,
+      roots: [] as string[],
+      epoch: 0,
+      admitGeneration: 0,
+    };
+    await atomicWrite(
+      path.join(worksetDir, "roots.json"),
+      `${JSON.stringify(payload, null, 2)}\n`,
+    );
+  }
+
+  /**
    * The resolved filesystem root this store is bound to (the server `--cwd`).
    * Exposed read-only so a host (e.g. `@cq/ledger-mcp` buildServer) can bind a
    * root-scoped capability — the cq.toml config root — to the SAME directory
@@ -213,7 +268,9 @@ export class FsLedgerStore extends AbstractLedgerStore<FsPersistence> implements
       }
     }
 
-    const backupDir = await this.backupAndReinit();
+    // T1959: reset acquires exclusive administrative admission, waits for
+    // in-flight effects, backs up roots, then clears live roots to empty.
+    const backupDir = await this.runWorksetAdministrativeReinit("reset");
 
     // backupAndReinit rewrote files + this.registry but left the in-memory
     // ledger map and FTS index pointing at the pre-wipe canonical state. Drop

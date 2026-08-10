@@ -74,20 +74,35 @@ interface TenantSnapshot {
   archivedItems: unknown[];
   logs: unknown[];
   project: unknown[];
+  worksetRoots: unknown[];
+  worksetAdmissions: unknown[];
 }
 
 /** Full row-level snapshot of every table for one project_key, ordered deterministically. */
 async function snapshotTenant(pool: ReturnType<typeof openPgPool>, projectKey: string): Promise<TenantSnapshot> {
-  const [ledgers, groups, items, archivePointers, archivedItems, logs, project] = await Promise.all([
-    pool`SELECT * FROM ledgers WHERE project_key = ${projectKey} ORDER BY name`,
-    pool`SELECT * FROM groups WHERE project_key = ${projectKey} ORDER BY ledger, seq`,
-    pool`SELECT * FROM items WHERE project_key = ${projectKey} ORDER BY ledger, seq`,
-    pool`SELECT * FROM archive_pointers WHERE project_key = ${projectKey} ORDER BY ledger, seq`,
-    pool`SELECT * FROM archived_items WHERE project_key = ${projectKey} ORDER BY ledger, pointer_id, seq`,
-    pool`SELECT * FROM logs WHERE project_key = ${projectKey} ORDER BY path`,
-    pool`SELECT * FROM projects WHERE project_key = ${projectKey}`,
-  ]);
-  return { ledgers, groups, items, archivePointers, archivedItems, logs, project };
+  const [ledgers, groups, items, archivePointers, archivedItems, logs, project, worksetRoots, worksetAdmissions] =
+    await Promise.all([
+      pool`SELECT * FROM ledgers WHERE project_key = ${projectKey} ORDER BY name`,
+      pool`SELECT * FROM groups WHERE project_key = ${projectKey} ORDER BY ledger, seq`,
+      pool`SELECT * FROM items WHERE project_key = ${projectKey} ORDER BY ledger, seq`,
+      pool`SELECT * FROM archive_pointers WHERE project_key = ${projectKey} ORDER BY ledger, seq`,
+      pool`SELECT * FROM archived_items WHERE project_key = ${projectKey} ORDER BY ledger, pointer_id, seq`,
+      pool`SELECT * FROM logs WHERE project_key = ${projectKey} ORDER BY path`,
+      pool`SELECT * FROM projects WHERE project_key = ${projectKey}`,
+      pool`SELECT project_key, roots_json, epoch FROM workset_roots WHERE project_key = ${projectKey}`,
+      pool`SELECT admission_id, form FROM workset_admissions WHERE project_key = ${projectKey} ORDER BY admission_id`,
+    ]);
+  return {
+    ledgers,
+    groups,
+    items,
+    archivePointers,
+    archivedItems,
+    logs,
+    project,
+    worksetRoots,
+    worksetAdmissions,
+  };
 }
 
 describe.skipIf(!PG_URL)("cq reset / cq erase — postgres tenant scoping (T583)", () => {
@@ -126,6 +141,13 @@ describe.skipIf(!PG_URL)("cq reset / cq erase — postgres tenant scoping (T583)
     await pool!`
       INSERT INTO logs (project_key, path, content) VALUES (${projectKey}, ${"raw/seed.md"}, ${"seed log"})
     `;
+    // T1959: seed configured workset roots so reset/erase prove root-state wipe.
+    await pool!`
+      INSERT INTO workset_roots (project_key, roots_json, epoch, admit_generation)
+      VALUES (${projectKey}, ${JSON.stringify(["goals:G-seed"])}, ${2}, ${2})
+      ON CONFLICT (project_key) DO UPDATE
+        SET roots_json = EXCLUDED.roots_json, epoch = EXCLUDED.epoch, admit_generation = EXCLUDED.admit_generation
+    `;
     return projectKey;
   }
 
@@ -153,6 +175,8 @@ describe.skipIf(!PG_URL)("cq reset / cq erase — postgres tenant scoping (T583)
     expect(afterA.archivedItems).toHaveLength(0);
     expect(afterA.logs).toHaveLength(0);
     expect(afterA.project).toHaveLength(0);
+    expect(afterA.worksetRoots).toHaveLength(0);
+    expect(afterA.worksetAdmissions).toHaveLength(0);
 
     const afterB = await snapshotTenant(pool!, pkB);
     expect(afterB).toEqual(beforeB);
@@ -181,6 +205,13 @@ describe.skipIf(!PG_URL)("cq reset / cq erase — postgres tenant scoping (T583)
     expect(afterA.logs).toHaveLength(0);
     // Registry entry SURVIVES reset (unlike erase).
     expect(afterA.project).toHaveLength(1);
+    // T1959: live roots become unrestricted empty (row may be absent or empty).
+    if (afterA.worksetRoots.length > 0) {
+      const row = afterA.worksetRoots[0] as { roots_json: string; epoch: number | string };
+      expect(JSON.parse(row.roots_json)).toEqual([]);
+      expect(Number(row.epoch)).toBe(0);
+    }
+    expect(afterA.worksetAdmissions).toHaveLength(0);
 
     const afterB = await snapshotTenant(pool!, pkB);
     expect(afterB).toEqual(beforeB);

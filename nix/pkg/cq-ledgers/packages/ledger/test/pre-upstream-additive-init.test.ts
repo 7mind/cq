@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import {
+
   buildBackupDump,
   CANONICAL_LEDGERS,
   FsLedgerStore,
@@ -44,6 +45,7 @@ import {
   type Ledger,
   type LedgerSchema,
   type LedgerStore,
+  mintWorksetManagementAuthority,
 } from "../src/index.js";
 import { openPgPool } from "../src/store/postgres/connection.js";
 import { ensureSchema as ensurePostgresSchema } from "../src/store/postgres/schema.js";
@@ -742,7 +744,7 @@ describe("pre-upstream lifecycle acceptance states", () => {
     const destinationRoot = await freshRoot("t796-restore-");
     const dbPath = path.join(destinationRoot, "ledger.db");
     const logsDir = path.join(destinationRoot, "logs");
-    await restoreDumpToXdg({ dbPath, logsDir, dump });
+    await restoreDumpToXdg({ dbPath, logsDir, dump, authority: mintWorksetManagementAuthority() });
     const restored = new SqliteLedgerStore({ dbPath, logsDir, now });
     await restored.init();
     try {

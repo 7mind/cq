@@ -21,9 +21,13 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 import {
   GitPlumbing,
+  WORKSET_ROOTS_FILENAME,
+  createLedgerStore,
   parseRegistry,
+  parseWorksetRootsDocument,
   resolveLogsDir,
   resolveProjectKey,
+  SqliteLedgerStore,
   TASKS_LEDGER,
 } from "@cq/ledger";
 import { dispatch, EXIT_USAGE, type ConfirmIo, type DispatchIo } from "../src/main.js";
@@ -119,6 +123,14 @@ describe("cq backup (T502)", () => {
     );
     await seedPrimaryLogs(root);
 
+    // T1959: configured workset roots must appear in the dump.
+    const seeded = await createLedgerStore(root);
+    expect(seeded.store).toBeInstanceOf(SqliteLedgerStore);
+    await (seeded.store as SqliteLedgerStore)
+      .worksetStore()
+      .setRoots(["goals:G-backup", "tasks:T-backup"]);
+    await seeded.store.dispose();
+
     const io = recordingIo();
     const outcome = await dispatch(["backup", "--cwd", root], io);
     expect(outcome.exitCode).toBe(0);
@@ -129,6 +141,14 @@ describe("cq backup (T502)", () => {
     );
     expect(registry.ledgers.map((e) => e.name)).toContain(TASKS_LEDGER);
     expect(await fs.readFile(path.join(root, ".cq", "logs", RAW_REL), "utf8")).toBe(RAW_BYTES);
+    const worksetText = await fs.readFile(
+      path.join(root, ".cq", WORKSET_ROOTS_FILENAME),
+      "utf8",
+    );
+    expect(parseWorksetRootsDocument(worksetText)).toEqual({
+      roots: ["goals:G-backup", "tasks:T-backup"],
+      epoch: 1,
+    });
   });
 
   it('backup="orphan-branch": commits the dump to refs/heads/<branch>', async () => {

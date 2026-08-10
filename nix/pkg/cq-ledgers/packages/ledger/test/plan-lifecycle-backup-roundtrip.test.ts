@@ -17,6 +17,7 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
+
   buildBackupDump,
   CANONICAL_LEDGERS,
   FsLedgerStore,
@@ -30,6 +31,7 @@ import {
   TASKS_LEDGER,
   type PlanClaimInput,
   type PlanLifecycleStore,
+  mintWorksetManagementAuthority,
 } from "../src/index.js";
 import { FsPersistence } from "../src/store/FsPersistence.js";
 import {
@@ -136,7 +138,7 @@ describe("D139 plan-lifecycle BackupDump round-trip", () => {
     expect(dump.some((f) => f.path === PLAN_LIFECYCLE_DUMP_PATH)).toBe(true);
 
     const targetDb = path.join(root, "restored.db");
-    await restoreDumpToXdg({ dbPath: targetDb, logsDir: null, dump });
+    await restoreDumpToXdg({ dbPath: targetDb, logsDir: null, dump, authority: mintWorksetManagementAuthority() });
 
     const restored = new SqliteLedgerStore({ dbPath: targetDb });
     await restored.init();

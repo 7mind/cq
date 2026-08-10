@@ -116,6 +116,41 @@ describe("D170: backup-reinit refuses to destroy a POPULATED store", () => {
     await store.dispose();
   });
 
+  it("rechecks population after administrative exclusion before destructive reinit", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "d170-gate-concurrent-"));
+    const dbPath = join(dir, "ledger.db");
+    const seed = new SqliteLedgerStore({ dbPath });
+    await seed.init();
+    await seed.dispose();
+    injectDivergence(dbPath);
+
+    const store = new SqliteLedgerStore({
+      dbPath,
+      onSchemaDivergence: "backup-reinit",
+      workset: {
+        hooks: {
+          beforeAdministrativeDestructive: () => {
+            const db = new Database(dbPath);
+            db.query(
+              `INSERT INTO items
+               (ledger, id, milestone_id, status, fields_json, created_at, updated_at)
+               VALUES ('tasks', 'T-concurrent', ?, 'planned', ?, ?, ?)`,
+            ).run(
+              MILESTONES_AMBIENT_ID,
+              JSON.stringify({ headline: "arrived before destructive phase" }),
+              "2026-08-10T14:30:00.000Z",
+              "2026-08-10T14:30:00.000Z",
+            );
+            db.close();
+          },
+        },
+      },
+    });
+
+    await expect(store.init()).rejects.toThrow(/refusing to reinitialise a POPULATED ledger/);
+    expect(countItems(dbPath)).toBe(2);
+  });
+
   it("the 'abort' default is unchanged and still refuses first", async () => {
     const dir = mkdtempSync(join(tmpdir(), "d170-gate-abort-"));
     const dbPath = join(dir, "ledger.db");

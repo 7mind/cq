@@ -27,6 +27,8 @@ import {
   FsLedgerStore,
   LEDGER_STORAGE_DIRNAME,
   ProjectKeyResolutionError,
+  WORKSET_ROOTS_FILENAME,
+  parseWorksetRootsDocument,
   type LedgerSchema,
 } from "@cq/ledger";
 import { dispatch, type ConfirmIo, type DispatchIo } from "../src/main.js";
@@ -141,6 +143,15 @@ describe("cq reset", () => {
   it("(e — K117) explicit backend='fs' warns DEPRECATED and restores the pre-T505 FS backup→reinit reset", async () => {
     const root = await seedTree();
     await fs.writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "fs"\n', "utf8");
+
+    // T1959: seed workset roots so reset can prove backup-before-clear + empty live.
+    {
+      const seedWs = new FsLedgerStore({ root });
+      await seedWs.init();
+      await seedWs.createWorksetStore().setRoots(["goals:G-reset", "tasks:T-reset"]);
+      await seedWs.dispose();
+    }
+
     const io = recordingIo(false);
 
     const stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -154,10 +165,25 @@ describe("cq reset", () => {
     }
 
     // The FS reset ran: a backup snapshot exists and the ops ledger is gone.
-    await expect(
-      fs.stat(path.join(root, LEDGER_STORAGE_DIRNAME, ".backup")),
-    ).resolves.toBeDefined();
+    const backupParent = path.join(root, LEDGER_STORAGE_DIRNAME, ".backup");
+    await expect(fs.stat(backupParent)).resolves.toBeDefined();
     expect(await hasOpsLedger(root)).toBe(false);
+
+    // Backup retains prior roots; live roots are unrestricted empty.
+    const backupEntries = await fs.readdir(backupParent);
+    expect(backupEntries.length).toBeGreaterThan(0);
+    const backupDir = path.join(backupParent, backupEntries[0]!);
+    const backed = parseWorksetRootsDocument(
+      await fs.readFile(path.join(backupDir, WORKSET_ROOTS_FILENAME), "utf8"),
+    );
+    expect(backed).toEqual({ roots: ["goals:G-reset", "tasks:T-reset"], epoch: 1 });
+    const live = new FsLedgerStore({ root });
+    await live.init();
+    try {
+      expect(await live.createWorksetStore().snapshot()).toEqual({ roots: [], epoch: 0 });
+    } finally {
+      await live.dispose();
+    }
   });
 
   it("(d) TTY prompt aborts on a non-'y' answer and leaves the tree untouched", async () => {

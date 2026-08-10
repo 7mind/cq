@@ -1043,6 +1043,14 @@ export function createPostgresWorksetStore(
         await hooks.beforeAdministrativeDestructive();
       }
       await input.destructivePhase();
+      const projectRows = await pool<Array<{ present: number }>>`
+        SELECT 1 AS present FROM projects WHERE project_key = ${projectKey}
+      `;
+      // Erase may delete the exclusive row, roots, and tenant atomically in
+      // its destructive transaction. With no tenant left there is no live
+      // generation to advance; recreating roots here would violate the FK and
+      // force callers to release exclusion before their final deletion.
+      if (projectRows.length === 0) return;
       // Advance admit_generation so in-flight grant attempts revoke.
       await writeTransaction(pool, async (tx) => {
         const locked = await lockRoots(tx);

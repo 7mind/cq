@@ -170,6 +170,8 @@ import {
   createPostgresWorksetStore,
   type PostgresWorksetStore,
 } from "./worksetStore.js";
+import { mintWorksetManagementAuthority } from "../../worksetEffectAdmission.js";
+import { serializeWorksetRootsDocument } from "../../worksetStoreGit.js";
 
 export interface PostgresLedgerStoreOpts {
   /**
@@ -543,6 +545,25 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   private async backupAndReinitTenant(): Promise<string> {
     const pk = this.projectKey;
     const shadowKey = `${pk}__divergence-backup-${this.now().replace(/[^0-9A-Za-z]/g, "-")}`;
+    // T1959: exclusive administrative admission; wait for in-flight effects
+    // before the destructive backup+reinit phase. Divergence artifact retains
+    // roots; live tenant starts unrestricted empty.
+    const workset = createPostgresWorksetStore({ pool: this.pool(), projectKey: pk });
+    try {
+      await workset.runAdministrative({
+        kind: "divergence-reinitialization",
+        authority: mintWorksetManagementAuthority(),
+        destructivePhase: async () => {
+          await this.backupAndReinitTenantBody(pk, shadowKey);
+        },
+      });
+    } finally {
+      workset.close();
+    }
+    return shadowKey;
+  }
+
+  private async backupAndReinitTenantBody(pk: string, shadowKey: string): Promise<void> {
     await writeTransaction(this.pool(), async (tx) => {
       await tx`
         INSERT INTO projects (project_key, display_name)
@@ -597,32 +618,26 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         SELECT ${shadowKey}, scope, record_json
         FROM plan_operations WHERE project_key = ${pk}
       `;
-      // T1958: durable workset roots + admissions are tenant state.
+      // T1959: roots/epoch are durable tenant state. Admission rows are live
+      // coordination leases and never travel into a backup.
       await tx`
         INSERT INTO workset_roots (project_key, roots_json, epoch, admit_generation, updated_at)
         SELECT ${shadowKey}, roots_json, epoch, admit_generation, updated_at
         FROM workset_roots WHERE project_key = ${pk}
       `;
-      await tx`
-        INSERT INTO workset_admissions (
-          project_key, admission_id, form, kind, target_key, targets_json, epoch,
-          host_id, holder_pid, holder_start_time, heartbeat_at_ms,
-          process_group_registered, pgid, leader_pid, leader_start_time,
-          settled, created_at_ms
-        )
-        SELECT
-          ${shadowKey}, admission_id, form, kind, target_key, targets_json, epoch,
-          host_id, holder_pid, holder_start_time, heartbeat_at_ms,
-          process_group_registered, pgid, leader_pid, leader_start_time,
-          settled, created_at_ms
-        FROM workset_admissions WHERE project_key = ${pk}
-      `;
 
       // Wipe the ORIGINAL tenant's rows (children first, FK order), then
       // reseed the full canonical set fresh — same write shape as
       // runBootstrapWrites's Pass 2, sharing THIS transaction.
-      await tx`DELETE FROM workset_admissions WHERE project_key = ${pk}`;
+      // Preserve the exclusive administrative admission row held by this reinit
+      // (T1959); non-exclusive admissions go to the shadow above and are dropped live.
+      await tx`
+        DELETE FROM workset_admissions
+        WHERE project_key = ${pk}
+          AND form NOT IN ('exclusive-set', 'exclusive-administrative')
+      `;
       await tx`DELETE FROM workset_roots WHERE project_key = ${pk}`;
+
       await tx`DELETE FROM archived_items WHERE project_key = ${pk}`;
       await tx`DELETE FROM archive_pointers WHERE project_key = ${pk}`;
       await tx`DELETE FROM items WHERE project_key = ${pk}`;
@@ -638,7 +653,6 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         [],
       );
     });
-    return shadowKey;
   }
 
   /**
@@ -868,6 +882,14 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       });
     }
     return this.workset;
+  }
+
+  /**
+   * Duck-typed BackupDump source (T1959): emit portable `workset-roots.json`.
+   */
+  async exportWorksetRootsState(): Promise<string> {
+    const snap = await this.worksetStore().snapshot();
+    return serializeWorksetRootsDocument(snap);
   }
 
   async dispose(): Promise<void> {

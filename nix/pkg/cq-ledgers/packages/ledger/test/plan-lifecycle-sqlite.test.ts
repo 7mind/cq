@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
+
   GOALS_LEDGER,
   GOALS_SCHEMA,
   InMemoryLedgerStore,
@@ -15,6 +16,7 @@ import {
   type PlanClaimInput,
   type PlanLifecycleStore,
   type PlanReleaseInput,
+  mintWorksetManagementAuthority,
 } from "../src/index.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
 
@@ -259,7 +261,7 @@ describe("T850 SQLite lifecycle persistence", () => {
     await source.init();
     const dump = await buildBackupDump(source, null);
     await source.dispose();
-    await restoreDumpToXdg({ dbPath: file, logsDir: null, dump });
+    await restoreDumpToXdg({ dbPath: file, logsDir: null, dump, authority: mintWorksetManagementAuthority() });
 
     const restored = new SqliteLedgerStore({ dbPath: file });
     await restored.init();

@@ -288,6 +288,14 @@ if (PG_URL === undefined || PG_URL.length === 0) {
         SELECT path FROM logs WHERE project_key = ${projectKey}
       `;
       expect(liveLogRows).toHaveLength(0);
+
+      // A backup preserves roots/epoch, never the administrative lease used
+      // to create the backup. Replaying a live lease would strand the shadow.
+      const shadowAdmissions = await setupPool<Array<{ admission_id: string }>>`
+        SELECT admission_id FROM workset_admissions
+        WHERE project_key LIKE ${`${projectKey}__divergence-backup-%`}
+      `;
+      expect(shadowAdmissions).toEqual([]);
     });
   });
 }

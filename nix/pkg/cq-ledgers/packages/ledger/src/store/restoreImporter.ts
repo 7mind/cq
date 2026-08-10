@@ -47,6 +47,17 @@ import {
   parsePlanLifecycleDump,
   type PlanLifecycleDumpState,
 } from "./planLifecycleDump.js";
+import { WORKSET_ROOTS_FILENAME } from "./ledgerArtifacts.js";
+import {
+  parseWorksetRootsDocument,
+} from "../worksetStoreGit.js";
+import {
+  WorksetAdmissionError,
+  isTrustedWorksetManagementAuthority,
+  type WorksetAdministrativeEffectKind,
+  type WorksetRootsEpoch,
+} from "../worksetEffectAdmission.js";
+import { createSqliteWorksetStore } from "./sqlite/sqliteWorksetStore.js";
 
 /** Result of {@link restoreDumpToXdg}: counts for CLI reporting. */
 export interface RestoreSummary {
@@ -124,6 +135,12 @@ export interface ParsedDump {
    * operations.
    */
   planLifecycle: PlanLifecycleDumpState | null;
+  /**
+   * First-class workset roots/epoch (T1959), when the dump carried
+   * `workset-roots.json`. `null` means an older dump without a workset section
+   * — restore treats that as explicit unrestricted empty roots (epoch 0).
+   */
+  worksetRoots: WorksetRootsEpoch | null;
 }
 
 /**
@@ -184,7 +201,11 @@ export function parseBackupDump(dump: readonly BackupDumpFile[]): ParsedDump {
   const planLifecycle =
     planLifecycleSrc === undefined ? null : parsePlanLifecycleDump(planLifecycleSrc);
 
-  return { registry, ledgers, archives, logs, planLifecycle };
+  const worksetSrc = byPath.get(WORKSET_ROOTS_FILENAME);
+  const worksetRoots =
+    worksetSrc === undefined ? null : parseWorksetRootsDocument(worksetSrc);
+
+  return { registry, ledgers, archives, logs, planLifecycle, worksetRoots };
 }
 
 /**
@@ -204,134 +225,177 @@ export async function restoreDumpToXdg(opts: {
   dbPath: string;
   logsDir: string | null;
   dump: readonly BackupDumpFile[];
+  /**
+   * Trusted management authority (t18). Required BEFORE any store open so a
+   * guarded-context denial performs zero store access (T1959).
+   */
+  authority: unknown;
+  /** Administrative kind under exclusive admission (default `restore`). */
+  administrativeKind?: WorksetAdministrativeEffectKind;
 }): Promise<RestoreSummary> {
+  // Authority check precedes every store open / file write.
+  if (!isTrustedWorksetManagementAuthority(opts.authority)) {
+    throw new WorksetAdmissionError(
+      "management-authority-required",
+      `administrative effect "${opts.administrativeKind ?? "restore"}" requires trusted management authority`,
+    );
+  }
+  const kind: WorksetAdministrativeEffectKind = opts.administrativeKind ?? "restore";
   const parsed = parseBackupDump(opts.dump);
   const restoredAt = new Date().toISOString();
+  const restoredRoots: WorksetRootsEpoch = parsed.worksetRoots ?? { roots: [], epoch: 0 };
+  let logCount = 0;
 
   const db = openLedgerDb(opts.dbPath);
   try {
     ensureSchema(db);
-    immediateWriteTransaction(db, () => {
-      db.exec("DELETE FROM plan_operations");
-      db.exec("DELETE FROM plan_claims");
-      db.exec("DELETE FROM archived_items");
-      db.exec("DELETE FROM archive_pointers");
-      db.exec("DELETE FROM items");
-      db.exec("DELETE FROM groups");
-      db.exec("DELETE FROM ledgers");
+    const workset = createSqliteWorksetStore({ db });
+    await workset.runAdministrative({
+      kind,
+      authority: opts.authority,
+      destructivePhase: async () => {
+        immediateWriteTransaction(db, () => {
+          db.exec("DELETE FROM workset_admissions");
+          db.exec("DELETE FROM plan_operations");
+          db.exec("DELETE FROM plan_claims");
+          db.exec("DELETE FROM archived_items");
+          db.exec("DELETE FROM archive_pointers");
+          db.exec("DELETE FROM items");
+          db.exec("DELETE FROM groups");
+          db.exec("DELETE FROM ledgers");
 
-      const insertLedger = db.query(
-        "INSERT INTO ledgers (name, schema_json, milestone_counter, item_counter) VALUES (?, ?, ?, ?)",
-      );
-      const insertGroup = db.query(
-        "INSERT INTO groups (ledger, id, title, description) VALUES (?, ?, ?, ?)",
-      );
-      const insertItem = db.query(
-        `INSERT INTO items (ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      );
-      const insertPointer = db.query(
-        "INSERT INTO archive_pointers (ledger, id, summary, title, status, archived_at) VALUES (?, ?, ?, ?, ?, ?)",
-      );
-      const insertArchivedItem = db.query(
-        `INSERT INTO archived_items (ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      );
+          const insertLedger = db.query(
+            "INSERT INTO ledgers (name, schema_json, milestone_counter, item_counter) VALUES (?, ?, ?, ?)",
+          );
+          const insertGroup = db.query(
+            "INSERT INTO groups (ledger, id, title, description) VALUES (?, ?, ?, ?)",
+          );
+          const insertItem = db.query(
+            `INSERT INTO items (ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          );
+          const insertPointer = db.query(
+            "INSERT INTO archive_pointers (ledger, id, summary, title, status, archived_at) VALUES (?, ?, ?, ?, ?, ?)",
+          );
+          const insertArchivedItem = db.query(
+            `INSERT INTO archived_items (ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          );
 
-      // G80/M245 (T553): normalize dependsOn/blockedBy to the canonical
-      // `<ledger>:<id>` form as rows are (re-)inserted, so importing an OLD
-      // (pre-grammar) backup with bare refs lands normalized — matching the
-      // v1→v2 on-open migration's output for the same data. The removed legacy
-      // fs/git-object primaries re-enter the xdg primary ONLY via `cq restore`
-      // / `cq migrate` (which builds a dump then calls this), so THIS path is
-      // what carries the git-object rollback ref forward normalized too. The
-      // registry spans the dump's full ledger set (canonical + custom), the
-      // same shape the writers' prefix registry uses.
-      const refRegistry = buildPrefixRegistry(
-        [...parsed.ledgers].map(([name, l]) => ({ name, schema: l.schema })),
-      );
-      const normalizeFieldsJson = (item: { fields: Record<string, FieldValue> }): string =>
-        JSON.stringify(normalizeStoredRefFields(item.fields, refRegistry).fields);
+          // G80/M245 (T553): normalize dependsOn/blockedBy to the canonical
+          // `<ledger>:<id>` form as rows are (re-)inserted, so importing an OLD
+          // (pre-grammar) backup with bare refs lands normalized — matching the
+          // v1→v2 on-open migration's output for the same data. The removed legacy
+          // fs/git-object primaries re-enter the xdg primary ONLY via `cq restore`
+          // / `cq migrate` (which builds a dump then calls this), so THIS path is
+          // what carries the git-object rollback ref forward normalized too. The
+          // registry spans the dump's full ledger set (canonical + custom), the
+          // same shape the writers' prefix registry uses.
+          const refRegistry = buildPrefixRegistry(
+            [...parsed.ledgers].map(([name, l]) => ({ name, schema: l.schema })),
+          );
+          const normalizeFieldsJson = (item: { fields: Record<string, FieldValue> }): string =>
+            JSON.stringify(normalizeStoredRefFields(item.fields, refRegistry).fields);
 
-      for (const [name, ledger] of parsed.ledgers) {
-        insertLedger.run(
-          name,
-          JSON.stringify(ledger.schema),
-          ledger.counters.milestone,
-          ledger.counters.item,
-        );
-        for (const group of ledger.milestones) {
-          insertGroup.run(name, group.id, group.title, group.description);
-          for (const item of group.items) {
-            insertItem.run(
+          for (const [name, ledger] of parsed.ledgers) {
+            insertLedger.run(
               name,
-              item.id,
-              item.milestoneId,
-              item.status,
-              normalizeFieldsJson(item),
-              item.createdAt,
-              item.updatedAt,
-              item.author ?? null,
-              item.session ?? null,
+              JSON.stringify(ledger.schema),
+              ledger.counters.milestone,
+              ledger.counters.item,
             );
+            for (const group of ledger.milestones) {
+              insertGroup.run(name, group.id, group.title, group.description);
+              for (const item of group.items) {
+                insertItem.run(
+                  name,
+                  item.id,
+                  item.milestoneId,
+                  item.status,
+                  normalizeFieldsJson(item),
+                  item.createdAt,
+                  item.updatedAt,
+                  item.author ?? null,
+                  item.session ?? null,
+                );
+              }
+            }
+
+            const archiveMap = parsed.archives.get(name);
+            for (const pointer of ledger.archivePointers) {
+              insertPointer.run(
+                name,
+                pointer.id,
+                pointer.summary,
+                pointer.title,
+                pointer.status,
+                restoredAt,
+              );
+              const content = archiveMap?.get(pointer.id);
+              const items =
+                content === undefined
+                  ? []
+                  : content.kind === "item"
+                    ? [content.item]
+                    : content.milestone.items;
+              for (const item of items) {
+                insertArchivedItem.run(
+                  name,
+                  pointer.id,
+                  item.id,
+                  item.milestoneId,
+                  item.status,
+                  normalizeFieldsJson(item),
+                  item.createdAt,
+                  item.updatedAt,
+                  item.author ?? null,
+                  item.session ?? null,
+                );
+              }
+            }
+          }
+
+          // D139: rewrite private plan-lifecycle verifier/replay rows from the dump
+          // (already wiped above). Scopes are reconstructed from record fields so
+          // the dump stays backend-agnostic.
+          if (parsed.planLifecycle !== null) {
+            const insertClaim = db.query(
+              "INSERT INTO plan_claims (scope, record_json) VALUES (?, ?)",
+            );
+            const insertOperation = db.query(
+              "INSERT INTO plan_operations (scope, record_json) VALUES (?, ?)",
+            );
+            for (const [scope, record] of parsed.planLifecycle.claims) {
+              insertClaim.run(scope, JSON.stringify(record));
+            }
+            for (const [scope, record] of parsed.planLifecycle.operations) {
+              insertOperation.run(scope, JSON.stringify(record));
+            }
+          }
+
+          // T1959: rewrite durable workset roots/epoch. Missing dump section →
+          // unrestricted empty roots at epoch 0. Keep the singleton row (do not
+          // DELETE) so the surrounding exclusive hold's admit_generation bump
+          // still has a target.
+          db.query(
+            "UPDATE workset_state SET epoch = ?, roots_json = ? WHERE id = 1",
+          ).run(restoredRoots.epoch, JSON.stringify(restoredRoots.roots.slice()));
+        });
+        if (opts.logsDir !== null) {
+          const logsPrefix = `${LEDGER_LOGS_DIRNAME}/`;
+          for (const f of parsed.logs) {
+            const rel = f.path.slice(logsPrefix.length);
+            const dest = path.join(opts.logsDir, rel);
+            await fs.mkdir(path.dirname(dest), { recursive: true });
+            await fs.writeFile(dest, f.content, "utf8");
+            logCount += 1;
           }
         }
-
-        const archiveMap = parsed.archives.get(name);
-        for (const pointer of ledger.archivePointers) {
-          insertPointer.run(name, pointer.id, pointer.summary, pointer.title, pointer.status, restoredAt);
-          const content = archiveMap?.get(pointer.id);
-          const items = content === undefined ? [] : content.kind === "item" ? [content.item] : content.milestone.items;
-          for (const item of items) {
-            insertArchivedItem.run(
-              name,
-              pointer.id,
-              item.id,
-              item.milestoneId,
-              item.status,
-              normalizeFieldsJson(item),
-              item.createdAt,
-              item.updatedAt,
-              item.author ?? null,
-              item.session ?? null,
-            );
-          }
-        }
-      }
-
-      // D139: rewrite private plan-lifecycle verifier/replay rows from the dump
-      // (already wiped above). Scopes are reconstructed from record fields so
-      // the dump stays backend-agnostic.
-      if (parsed.planLifecycle !== null) {
-        const insertClaim = db.query(
-          "INSERT INTO plan_claims (scope, record_json) VALUES (?, ?)",
-        );
-        const insertOperation = db.query(
-          "INSERT INTO plan_operations (scope, record_json) VALUES (?, ?)",
-        );
-        for (const [scope, record] of parsed.planLifecycle.claims) {
-          insertClaim.run(scope, JSON.stringify(record));
-        }
-        for (const [scope, record] of parsed.planLifecycle.operations) {
-          insertOperation.run(scope, JSON.stringify(record));
-        }
-      }
+      },
     });
   } finally {
     db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     db.close();
-  }
-
-  let logCount = 0;
-  if (opts.logsDir !== null) {
-    const logsPrefix = `${LEDGER_LOGS_DIRNAME}/`;
-    for (const f of parsed.logs) {
-      const rel = f.path.slice(logsPrefix.length);
-      const dest = path.join(opts.logsDir, rel);
-      await fs.mkdir(path.dirname(dest), { recursive: true });
-      await fs.writeFile(dest, f.content, "utf8");
-      logCount += 1;
-    }
   }
 
   return { fileCount: opts.dump.length, ledgerCount: parsed.ledgers.size, logCount };

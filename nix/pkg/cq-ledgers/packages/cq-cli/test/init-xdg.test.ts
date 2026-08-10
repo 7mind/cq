@@ -28,7 +28,12 @@ import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { createLedgerStore, resolveStateDir, resolveStateDirBase } from "@cq/ledger";
+import {
+  createLedgerStore,
+  resolveStateDir,
+  resolveStateDirBase,
+  SqliteLedgerStore,
+} from "@cq/ledger";
 import { createEmbeddedStore } from "@cq/ledger-mcp";
 import {
   dispatch,
@@ -184,6 +189,41 @@ describe("cq init / erase — xdg out-of-tree backend, the fresh-init default (T
 
     // Report mentions the out-of-tree dir removed.
     expect(io.outs.join("\n")).toContain(`removed: ${projectDirA}`);
+  });
+
+  it("cq erase waits for an in-flight brokered effect before removing the XDG primary", async () => {
+    const root = await gitRepo("cq-erase-xdg-admission-");
+    await dispatch(["init", "--cwd", root], recordingIo());
+    const projectKey = await firstCommitSha(root);
+    const projectDir = resolveStateDirBase(projectKey);
+    const resolved = await createLedgerStore(root);
+    expect(resolved.store).toBeInstanceOf(SqliteLedgerStore);
+    const store = resolved.store as SqliteLedgerStore;
+    const effect = await store.worksetStore().admitExternalEffect({
+      kind: "child-dispatch",
+      targetRef: "goals:G-held",
+    });
+    await Promise.resolve(
+      effect.registerProcessGroup({ pgid: process.pid, leaderPid: process.pid }),
+    );
+
+    let eraseFinished = false;
+    const erasePromise = dispatch(["erase", "--cwd", root, "--yes"], recordingIo()).then(
+      (outcome) => {
+        eraseFinished = true;
+        return outcome;
+      },
+    );
+    await Bun.sleep(50);
+    expect(eraseFinished).toBe(false);
+    expect(await exists(projectDir)).toBe(true);
+
+    await Promise.resolve(effect.markSettled());
+    await effect.releaseAfterSettlement();
+    const outcome = await erasePromise;
+    expect(outcome.exitCode).toBe(0);
+    expect(await exists(projectDir)).toBe(false);
+    await store.dispose();
   });
 
   it("(c) cq init fails fast, actionably, outside a git work tree (xdg default has no stable project identity)", async () => {

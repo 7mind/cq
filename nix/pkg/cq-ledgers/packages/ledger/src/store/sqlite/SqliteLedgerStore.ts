@@ -137,6 +137,8 @@ import { immediateWriteTransaction, openLedgerDb } from "./connection.js";
 import { ensureSchema, SCHEMA_VERSION } from "./schema.js";
 import { createSqliteWorksetStore } from "./sqliteWorksetStore.js";
 import type { CreateInMemoryWorksetStoreOptions, WorksetStore } from "../../worksetStore.js";
+import { mintWorksetManagementAuthority } from "../../worksetEffectAdmission.js";
+import { serializeWorksetRootsDocument } from "../../worksetStoreGit.js";
 import {
   claimInMemoryPlan,
   finalizeInMemoryPlan,
@@ -376,53 +378,65 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     }
 
     if (divergent.length > 0) {
-      // D170 DESTRUCTIVE-INTENT GATE — runs BEFORE the backup and before any
-      // row is touched. `backup-reinit` may create a fresh store, but it may
-      // NOT silently destroy one that already holds user data unless the caller
-      // consented explicitly. Route-independent by design: the two 2026-07-27
-      // wipes reached this same code through DIFFERENT resolution paths (an
-      // agent worktree, then the main-checkout path), so guarding paths is
-      // whack-a-mole while guarding the destruction is not.
-      const userRows = this.countUserRows(db);
-      if (userRows.total > 0 && !this.allowDestructiveReinitOfPopulatedStore) {
-        db.close();
-        throw new BootstrapViolationError(
-          `refusing to reinitialise a POPULATED ledger: ${divergent.join(", ")} ledger(s) ` +
-            `diverged from canon, and onSchemaDivergence='backup-reinit' would DESTROY ` +
-            `${userRows.items} item(s), ${userRows.archivedItems} archived item(s) and ` +
-            `${userRows.archivePointers} archive pointer(s) at ${this.dbPath}. No data was ` +
-            `touched. Either resolve the divergence (the usual cause is a build whose canon ` +
-            `differs from the persisted schema — deploy/rebuild so they match), or, if you ` +
-            `genuinely intend to erase this store, pass ` +
-            `allowDestructiveReinitOfPopulatedStore: true. D170: this path destroyed the live ` +
-            `ledger twice on 2026-07-27.`,
-        );
-      }
-
       // Default policy — T529 divergence BACKUP action (parity with
       // AbstractLedgerStore.backupAndReinit): VACUUM INTO a byte-complete
       // snapshot of the WHOLE db (every table, not just the divergent
-      // ledger's) to a timestamped sibling file BEFORE any row is touched,
-      // emit the stderr WARNING naming that locator, then wipe every row and
-      // reseed fresh canonical state (same shape as Pass 2 below).
-      const backupPath = this.backupDivergentState(db);
-      process.stderr.write(
-        `WARNING: LedgerStore divergence detected — prior state backed up to ${backupPath}\n`,
-      );
-      db.transaction(() => {
-        db.exec("DELETE FROM plan_operations");
-        db.exec("DELETE FROM plan_claims");
-        db.exec("DELETE FROM archived_items");
-        db.exec("DELETE FROM archive_pointers");
-        db.exec("DELETE FROM items");
-        db.exec("DELETE FROM groups");
-        db.exec("DELETE FROM ledgers");
-      })();
-      this.bootstrapCanonicalRows(
-        db,
-        CANONICAL_LEDGERS.map((c) => c.name),
-        [],
-      );
+      // ledger's — including workset_state so roots survive in the artifact)
+      // BEFORE any row is touched, emit the stderr WARNING naming that locator,
+      // then wipe every row and reseed fresh canonical state under exclusive
+      // administrative admission (T1959). Live roots become unrestricted empty.
+      const tempWorkset = createSqliteWorksetStore({ db, ...this.worksetOptions });
+      try {
+        await tempWorkset.runAdministrative({
+          kind: "divergence-reinitialization",
+          authority: mintWorksetManagementAuthority(),
+          destructivePhase: () => {
+            // D170 DESTRUCTIVE-INTENT GATE — re-evaluate only after exclusion
+            // drains admitted mutations, before the backup or any destructive
+            // write. A mutation that completed while exclusion was being
+            // acquired therefore cannot slip past the population check.
+            const userRows = this.countUserRows(db);
+            if (userRows.total > 0 && !this.allowDestructiveReinitOfPopulatedStore) {
+              throw new BootstrapViolationError(
+                `refusing to reinitialise a POPULATED ledger: ${divergent.join(", ")} ledger(s) ` +
+                  `diverged from canon, and onSchemaDivergence='backup-reinit' would DESTROY ` +
+                  `${userRows.items} item(s), ${userRows.archivedItems} archived item(s) and ` +
+                  `${userRows.archivePointers} archive pointer(s) at ${this.dbPath}. No data was ` +
+                  `touched. Either resolve the divergence (the usual cause is a build whose canon ` +
+                  `differs from the persisted schema — deploy/rebuild so they match), or, if you ` +
+                  `genuinely intend to erase this store, pass ` +
+                  `allowDestructiveReinitOfPopulatedStore: true. D170: this path destroyed the live ` +
+                  `ledger twice on 2026-07-27.`,
+              );
+            }
+            const backupPath = this.backupDivergentState(db);
+            process.stderr.write(
+              `WARNING: LedgerStore divergence detected — prior state backed up to ${backupPath}\n`,
+            );
+            db.transaction(() => {
+              db.exec("DELETE FROM workset_admissions");
+              db.exec("DELETE FROM plan_operations");
+              db.exec("DELETE FROM plan_claims");
+              db.exec("DELETE FROM archived_items");
+              db.exec("DELETE FROM archive_pointers");
+              db.exec("DELETE FROM items");
+              db.exec("DELETE FROM groups");
+              db.exec("DELETE FROM ledgers");
+              db.query(
+                "UPDATE workset_state SET epoch = 0, roots_json = ? WHERE id = 1",
+              ).run("[]");
+            })();
+            this.bootstrapCanonicalRows(
+              db,
+              CANONICAL_LEDGERS.map((c) => c.name),
+              [],
+            );
+          },
+        });
+      } catch (error) {
+        db.close();
+        throw error;
+      }
     } else {
       // Pass 2 — bootstrap writes, atomically: provision missing canonical
       // ledgers, apply widening upgrades, seed the milestones bootstrap
@@ -461,6 +475,16 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       throw new LedgerError("SqliteLedgerStore workset capability is not mounted");
     }
     return this.worksetHandle;
+  }
+
+  /**
+   * Duck-typed BackupDump source (T1959): emit portable `workset-roots.json`.
+   */
+  exportWorksetRootsState(): string {
+    this.assertInit();
+    const snap = this.worksetStore().snapshot();
+    // snapshot() is sync on the sqlite backend.
+    return serializeWorksetRootsDocument(snap as { roots: readonly string[]; epoch: number });
   }
 
   /**

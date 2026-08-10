@@ -22,6 +22,7 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { randomUUID } from "node:crypto";
 import {
   createLedgerStore,
   CANONICAL_LEDGERS,
@@ -37,6 +38,11 @@ import {
   isXdgPrimaryEmpty,
   restoreDumpToPostgres,
   isPostgresTenantEmpty,
+  mintWorksetManagementAuthority,
+  createPostgresWorksetStore,
+  createSqliteWorksetStore,
+  openExistingLedgerDb,
+  XDG_DB_FILENAME,
   RemoteLedgerClientNotWiredError,
   PostgresBackupNotWiredError,
   PostgresDsnResolutionError,
@@ -490,8 +496,23 @@ async function runResetPostgres(args: SubcommandArgs, io: DispatchIo): Promise<S
     }
 
     const before = await countTenantActiveItems(tenant.pool, tenant.projectKey);
-    await wipeTenantRows(tenant.pool, tenant.projectKey, false);
-    await reseedCanonicalTenant(tenant.pool, tenant.projectKey, displayName);
+    // T1959: exclusive administrative admission; live roots become unrestricted empty.
+    const workset = createPostgresWorksetStore({
+      pool: tenant.pool,
+      projectKey: tenant.projectKey,
+    });
+    try {
+      await workset.runAdministrative({
+        kind: "reset",
+        authority: mintWorksetManagementAuthority(),
+        destructivePhase: async () => {
+          await wipeTenantRows(tenant.pool, tenant.projectKey, false, true);
+          await reseedCanonicalTenant(tenant.pool, tenant.projectKey, displayName);
+        },
+      });
+    } finally {
+      workset.close();
+    }
 
     io.out(
       `cq reset: reset postgres tenant "${displayName}" (project_key ${tenant.projectKey}) at ${args.cwd}`,
@@ -679,23 +700,54 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
   // never touched beyond these.
   const removed: string[] = [];
   let storageDirPreserved = false;
-  if (storageExists) {
-    const result = await removeLedgerArtifacts(storageDir);
-    if (result.docsDirRemoved) {
-      removed.push(storageDir);
-    } else {
-      removed.push(...result.removed);
-      storageDirPreserved = true;
+  const removeLocalArtifacts = async (): Promise<void> => {
+    if (storageExists) {
+      const result = await removeLedgerArtifacts(storageDir);
+      if (result.docsDirRemoved) {
+        removed.push(storageDir);
+      } else {
+        removed.push(...result.removed);
+        storageDirPreserved = true;
+      }
     }
-  }
-  if (configExists) {
-    await fs.rm(configFile, { force: true });
-    removed.push(configFile);
-  }
-  // xdg (T501): remove EXACTLY this project's out-of-tree dir (state/ + logs/)
-  // — never the whole XDG base, never a sibling project's dir.
+    if (configExists) {
+      await fs.rm(configFile, { force: true });
+      removed.push(configFile);
+    }
+  };
+
+  // xdg (T501/T1959): wait for all admitted work, then atomically move this
+  // project's complete state+logs directory out of the canonical namespace.
+  // Cleanup targets only that quarantine path; a peer may legitimately create
+  // fresh canonical state after the rename linearization point.
   if (xdgProjectDirExists && xdgProjectDir !== undefined) {
-    await fs.rm(xdgProjectDir, { recursive: true, force: true });
+    const dbPath = path.join(xdgProjectDir, "state", XDG_DB_FILENAME);
+    const quarantineDir = `${xdgProjectDir}.erase-${randomUUID()}`;
+    if (await pathExists(dbPath)) {
+      const db = openExistingLedgerDb(dbPath);
+      const workset = createSqliteWorksetStore({ db });
+      try {
+        try {
+          await workset.runAdministrative({
+            kind: "erase",
+            authority: mintWorksetManagementAuthority(),
+            destructivePhase: async () => {
+              await fs.rename(xdgProjectDir, quarantineDir);
+            },
+          });
+        } catch (error) {
+          if (!(await pathExists(xdgProjectDir)) && (await pathExists(quarantineDir))) {
+            await fs.rename(quarantineDir, xdgProjectDir);
+          }
+          throw error;
+        }
+      } finally {
+        db.close();
+      }
+    } else {
+      await fs.rename(xdgProjectDir, quarantineDir);
+    }
+    await fs.rm(quarantineDir, { recursive: true, force: true });
     removed.push(xdgProjectDir);
   }
 
@@ -706,13 +758,31 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
     | undefined;
   if (postgresTenant !== undefined) {
     const items = await countTenantActiveItems(postgresTenant.pool, postgresTenant.projectKey);
-    await wipeTenantRows(postgresTenant.pool, postgresTenant.projectKey, true);
+    // T1959: exclusive administrative admission for erase; the final tenant
+    // deletion commits while the exclusive row remains visible to every peer.
+    const workset = createPostgresWorksetStore({
+      pool: postgresTenant.pool,
+      projectKey: postgresTenant.projectKey,
+    });
+    try {
+      await workset.runAdministrative({
+        kind: "erase",
+        authority: mintWorksetManagementAuthority(),
+        destructivePhase: async () => {
+          await wipeTenantRows(postgresTenant.pool, postgresTenant.projectKey, true, false);
+        },
+      });
+    } finally {
+      workset.close();
+    }
     await postgresTenant.pool.close();
     removed.push(
       `postgres tenant "${postgresTenant.registeredDisplayName}" (project_key ${postgresTenant.projectKey})`,
     );
     postgresWipeSummary = { projectKey: postgresTenant.projectKey, items };
   }
+
+  await removeLocalArtifacts();
 
   io.out(`cq erase: erased ledgers + config at ${args.cwd} (IRREVERSIBLE, no backup)`);
   for (const p of removed) {
@@ -1024,7 +1094,12 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
   resolved.backup?.close();
   await resolved.store.dispose();
 
-  const summary = await restoreDumpToXdg({ dbPath, logsDir, dump });
+  const summary = await restoreDumpToXdg({
+    dbPath,
+    logsDir,
+    dump,
+    authority: mintWorksetManagementAuthority(),
+  });
   io.out(
     `cq restore: restored ${summary.ledgerCount} ledger(s) + ${summary.logCount} log artifact(s) ` +
       `from the ${target} dump at ${args.cwd}`,
@@ -1073,6 +1148,7 @@ async function runRestorePostgres(
       projectKey: tenant.projectKey,
       displayName,
       dump,
+      authority: mintWorksetManagementAuthority(),
     });
     io.out(
       `cq restore: restored ${summary.ledgerCount} ledger(s) + ${summary.logCount} log artifact(s) ` +

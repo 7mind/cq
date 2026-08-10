@@ -50,8 +50,15 @@ import {
   MILESTONES_LEDGER,
 } from "../../constants.js";
 import { ensureSchema } from "./schema.js";
-import { writeTransaction } from "./connection.js";
+import { notifyProjectChanged, writeTransaction } from "./connection.js";
 import { encodePostgresPlanScope } from "../planLifecycleDump.js";
+import {
+  WorksetAdmissionError,
+  isTrustedWorksetManagementAuthority,
+  type WorksetAdministrativeEffectKind,
+  type WorksetRootsEpoch,
+} from "../../worksetEffectAdmission.js";
+import { createPostgresWorksetStore } from "./worksetStore.js";
 
 /**
  * True iff `pool`'s tenant `projectKey` currently holds nothing but the
@@ -125,11 +132,27 @@ export async function restoreDumpToPostgres(opts: {
   /** `projects.display_name` to UPSERT; defaults to `projectKey` itself. */
   displayName?: string;
   dump: readonly BackupDumpFile[];
+  /**
+   * Trusted management authority (t18). Required BEFORE any store open so a
+   * guarded-context denial performs zero store access (T1959).
+   */
+  authority: unknown;
+  /** Administrative kind under exclusive admission (default `restore`). */
+  administrativeKind?: WorksetAdministrativeEffectKind;
 }): Promise<RestoreSummary> {
+  // Authority check precedes every store open / row write.
+  if (!isTrustedWorksetManagementAuthority(opts.authority)) {
+    throw new WorksetAdmissionError(
+      "management-authority-required",
+      `administrative effect "${opts.administrativeKind ?? "restore"}" requires trusted management authority`,
+    );
+  }
+  const kind: WorksetAdministrativeEffectKind = opts.administrativeKind ?? "restore";
   const pool = opts.pool;
   const pk = opts.projectKey;
   const parsed = parseBackupDump(opts.dump);
   const restoredAt = new Date().toISOString();
+  const restoredRoots: WorksetRootsEpoch = parsed.worksetRoots ?? { roots: [], epoch: 0 };
 
   await ensureSchema(pool);
 
@@ -147,93 +170,146 @@ export async function restoreDumpToPostgres(opts: {
   const normalizeFieldsJson = (item: { fields: Record<string, FieldValue> }): string =>
     JSON.stringify(normalizeStoredRefFields(item.fields, refRegistry).fields);
 
+  // The durable exclusive admission has tenant-scoped foreign keys. Restore
+  // may target a fully erased tenant, so provision only the registry + empty
+  // roots required to acquire that admission before any destructive write.
+  // A concurrent effect admitted in this interval remains visible and the
+  // administrative drain waits for its settlement before restore proceeds.
   await writeTransaction(pool, async (tx) => {
     await tx`
       INSERT INTO projects (project_key, display_name)
       VALUES (${pk}, ${opts.displayName ?? pk})
-      ON CONFLICT (project_key) DO UPDATE SET display_name = EXCLUDED.display_name, updated_at = now()
+      ON CONFLICT (project_key) DO UPDATE
+        SET display_name = EXCLUDED.display_name, updated_at = now()
     `;
-
-    // Wipe any pre-existing rows for THIS tenant only (children first, FK
-    // order) — defense in depth even though isPostgresTenantEmpty already
-    // gated above; mirrors restoreDumpToXdg's unconditional wipe-then-insert.
-    await tx`DELETE FROM plan_operations WHERE project_key = ${pk}`;
-    await tx`DELETE FROM plan_claims WHERE project_key = ${pk}`;
-    // T1958: clear durable workset state on restore (T1959 carries roots through dumps).
-    await tx`DELETE FROM workset_admissions WHERE project_key = ${pk}`;
-    await tx`DELETE FROM workset_roots WHERE project_key = ${pk}`;
-    await tx`DELETE FROM archived_items WHERE project_key = ${pk}`;
-    await tx`DELETE FROM archive_pointers WHERE project_key = ${pk}`;
-    await tx`DELETE FROM items WHERE project_key = ${pk}`;
-    await tx`DELETE FROM groups WHERE project_key = ${pk}`;
-    await tx`DELETE FROM ledgers WHERE project_key = ${pk}`;
-    await tx`DELETE FROM logs WHERE project_key = ${pk}`;
-
-    for (const [name, ledger] of parsed.ledgers) {
-      await tx`
-        INSERT INTO ledgers (project_key, name, schema_json, milestone_counter, item_counter)
-        VALUES (${pk}, ${name}, ${JSON.stringify(ledger.schema)}, ${ledger.counters.milestone}, ${ledger.counters.item})
-      `;
-      for (const group of ledger.milestones) {
-        await tx`
-          INSERT INTO groups (project_key, ledger, id, title, description)
-          VALUES (${pk}, ${name}, ${group.id}, ${group.title}, ${group.description})
-        `;
-        for (const item of group.items) {
-          await insertItemRow(tx, pk, name, group.id, item, normalizeFieldsJson);
-        }
-      }
-
-      const archiveMap = parsed.archives.get(name);
-      for (const pointer of ledger.archivePointers) {
-        await tx`
-          INSERT INTO archive_pointers (project_key, ledger, id, summary, title, status, archived_at)
-          VALUES (${pk}, ${name}, ${pointer.id}, ${pointer.summary}, ${pointer.title}, ${pointer.status}, ${restoredAt})
-        `;
-        const content = archiveMap?.get(pointer.id);
-        const items: Item[] =
-          content === undefined ? [] : content.kind === "item" ? [content.item] : content.milestone.items;
-        for (const item of items) {
-          await tx`
-            INSERT INTO archived_items
-              (project_key, ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
-            VALUES (${pk}, ${name}, ${pointer.id}, ${item.id}, ${item.milestoneId}, ${item.status},
-                    ${normalizeFieldsJson(item)}, ${item.createdAt}, ${item.updatedAt},
-                    ${item.author ?? null}, ${item.session ?? null})
-          `;
-        }
-      }
-    }
-
-    const logsPrefix = `${LEDGER_LOGS_DIRNAME}/`;
-    for (const f of parsed.logs) {
-      const rel = f.path.slice(logsPrefix.length);
-      await tx`
-        INSERT INTO logs (project_key, path, content) VALUES (${pk}, ${rel}, ${f.content})
-      `;
-    }
-
-    // D139: rewrite private plan-lifecycle verifier/replay rows. Scopes are
-    // encoded for Postgres TEXT (NUL-free) exactly as PostgresLedgerStore does.
-    if (parsed.planLifecycle !== null) {
-      for (const [scope, record] of parsed.planLifecycle.claims) {
-        const key = encodePostgresPlanScope(scope);
-        const json = JSON.stringify(record);
-        await tx`
-          INSERT INTO plan_claims (project_key, scope, record_json)
-          VALUES (${pk}, ${key}, ${json})
-        `;
-      }
-      for (const [scope, record] of parsed.planLifecycle.operations) {
-        const key = encodePostgresPlanScope(scope);
-        const json = JSON.stringify(record);
-        await tx`
-          INSERT INTO plan_operations (project_key, scope, record_json)
-          VALUES (${pk}, ${key}, ${json})
-        `;
-      }
-    }
+    await tx`
+      INSERT INTO workset_roots (project_key, roots_json, epoch, admit_generation)
+      VALUES (${pk}, ${"[]"}, ${0}, ${0})
+      ON CONFLICT (project_key) DO NOTHING
+    `;
   });
+
+  const workset = createPostgresWorksetStore({ pool, projectKey: pk });
+  try {
+    await workset.runAdministrative({
+      kind,
+      authority: opts.authority,
+      destructivePhase: async () => {
+        await writeTransaction(pool, async (tx) => {
+          await tx`
+            INSERT INTO projects (project_key, display_name)
+            VALUES (${pk}, ${opts.displayName ?? pk})
+            ON CONFLICT (project_key) DO UPDATE SET display_name = EXCLUDED.display_name, updated_at = now()
+          `;
+
+          // Wipe any pre-existing rows for THIS tenant only (children first, FK
+          // order) — defense in depth even though isPostgresTenantEmpty already
+          // gated above; mirrors restoreDumpToXdg's unconditional wipe-then-insert.
+          await tx`DELETE FROM plan_operations WHERE project_key = ${pk}`;
+          await tx`DELETE FROM plan_claims WHERE project_key = ${pk}`;
+          // T1959: clear non-exclusive durable admissions. The exclusive
+          // administrative row for THIS restore is held in workset_admissions
+          // (unique partial index) and must survive until runAdministrative
+          // releases it. Roots rewritten below.
+          await tx`
+            DELETE FROM workset_admissions
+            WHERE project_key = ${pk}
+              AND form NOT IN ('exclusive-set', 'exclusive-administrative')
+          `;
+          await tx`DELETE FROM workset_roots WHERE project_key = ${pk}`;
+
+          await tx`DELETE FROM archived_items WHERE project_key = ${pk}`;
+          await tx`DELETE FROM archive_pointers WHERE project_key = ${pk}`;
+          await tx`DELETE FROM items WHERE project_key = ${pk}`;
+          await tx`DELETE FROM groups WHERE project_key = ${pk}`;
+          await tx`DELETE FROM ledgers WHERE project_key = ${pk}`;
+          await tx`DELETE FROM logs WHERE project_key = ${pk}`;
+
+          for (const [name, ledger] of parsed.ledgers) {
+            await tx`
+              INSERT INTO ledgers (project_key, name, schema_json, milestone_counter, item_counter)
+              VALUES (${pk}, ${name}, ${JSON.stringify(ledger.schema)}, ${ledger.counters.milestone}, ${ledger.counters.item})
+            `;
+            for (const group of ledger.milestones) {
+              await tx`
+                INSERT INTO groups (project_key, ledger, id, title, description)
+                VALUES (${pk}, ${name}, ${group.id}, ${group.title}, ${group.description})
+              `;
+              for (const item of group.items) {
+                await insertItemRow(tx, pk, name, group.id, item, normalizeFieldsJson);
+              }
+            }
+
+            const archiveMap = parsed.archives.get(name);
+            for (const pointer of ledger.archivePointers) {
+              await tx`
+                INSERT INTO archive_pointers (project_key, ledger, id, summary, title, status, archived_at)
+                VALUES (${pk}, ${name}, ${pointer.id}, ${pointer.summary}, ${pointer.title}, ${pointer.status}, ${restoredAt})
+              `;
+              const content = archiveMap?.get(pointer.id);
+              const items: Item[] =
+                content === undefined
+                  ? []
+                  : content.kind === "item"
+                    ? [content.item]
+                    : content.milestone.items;
+              for (const item of items) {
+                await tx`
+                  INSERT INTO archived_items
+                    (project_key, ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
+                  VALUES (${pk}, ${name}, ${pointer.id}, ${item.id}, ${item.milestoneId}, ${item.status},
+                          ${normalizeFieldsJson(item)}, ${item.createdAt}, ${item.updatedAt},
+                          ${item.author ?? null}, ${item.session ?? null})
+                `;
+              }
+            }
+          }
+
+          const logsPrefix = `${LEDGER_LOGS_DIRNAME}/`;
+          for (const f of parsed.logs) {
+            const rel = f.path.slice(logsPrefix.length);
+            await tx`
+              INSERT INTO logs (project_key, path, content) VALUES (${pk}, ${rel}, ${f.content})
+            `;
+          }
+
+          // D139: rewrite private plan-lifecycle verifier/replay rows. Scopes are
+          // encoded for Postgres TEXT (NUL-free) exactly as PostgresLedgerStore does.
+          if (parsed.planLifecycle !== null) {
+            for (const [scope, record] of parsed.planLifecycle.claims) {
+              const key = encodePostgresPlanScope(scope);
+              const json = JSON.stringify(record);
+              await tx`
+                INSERT INTO plan_claims (project_key, scope, record_json)
+                VALUES (${pk}, ${key}, ${json})
+              `;
+            }
+            for (const [scope, record] of parsed.planLifecycle.operations) {
+              const key = encodePostgresPlanScope(scope);
+              const json = JSON.stringify(record);
+              await tx`
+                INSERT INTO plan_operations (project_key, scope, record_json)
+                VALUES (${pk}, ${key}, ${json})
+              `;
+            }
+          }
+
+          // T1959: rewrite durable workset roots/epoch (missing dump section →
+          // unrestricted empty roots at epoch 0). admit_generation starts at 0;
+          // the surrounding exclusive hold advances it after the destructive phase.
+          await tx`
+            INSERT INTO workset_roots (project_key, roots_json, epoch, admit_generation)
+            VALUES (${pk}, ${JSON.stringify(restoredRoots.roots.slice())}, ${restoredRoots.epoch}, ${0})
+          `;
+        });
+      },
+    });
+  } finally {
+    workset.close();
+  }
+
+  // Peer invalidation: NOTIFY after the exclusive administrative restore commits.
+  await notifyProjectChanged(pool, pk);
 
   return { fileCount: opts.dump.length, ledgerCount: parsed.ledgers.size, logCount: parsed.logs.length };
 }

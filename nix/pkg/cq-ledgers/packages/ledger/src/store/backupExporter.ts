@@ -61,6 +61,10 @@ import {
 import { atomicWrite } from "./fsAtomic.js";
 import { GitPlumbing, StaleRefError, type TreeEntry } from "./git/GitPlumbing.js";
 import { PLAN_LIFECYCLE_DUMP_PATH } from "./planLifecycleDump.js";
+import { WORKSET_ROOTS_FILENAME } from "./ledgerArtifacts.js";
+import { serializeWorksetRootsDocument } from "../worksetStoreGit.js";
+import type { WorksetStore } from "../worksetStore.js";
+import type { WorksetRootsEpoch } from "../worksetEffectAdmission.js";
 
 /** The backup targets this exporter can write (the non-`none` modes of Q244). */
 export type BackupTarget = "in-tree" | "orphan-branch";
@@ -103,6 +107,28 @@ async function exportPlanLifecycleOf(store: LedgerStore): Promise<string | null>
   if (typeof candidate !== "function") return null;
   const fn = candidate as () => string | null | Promise<string | null>;
   return await fn.call(store);
+}
+
+/**
+ * Duck-typed workset-roots dump source (T1959). Prefer an explicit
+ * `exportWorksetRootsState()` (returns the `workset-roots.json` body, or null
+ * when the backend has no workset capability). Fall back to `worksetStore()`.
+ * Always emits a complete roots/epoch document when a capability is present so
+ * epoch-only state (empty roots after a prior set) survives round-trip.
+ */
+async function exportWorksetRootsOf(store: LedgerStore): Promise<string | null> {
+  const exportCandidate = (store as { exportWorksetRootsState?: unknown }).exportWorksetRootsState;
+  if (typeof exportCandidate === "function") {
+    const fn = exportCandidate as () => string | null | Promise<string | null>;
+    return await fn.call(store);
+  }
+  const worksetCandidate = (store as { worksetStore?: unknown }).worksetStore;
+  if (typeof worksetCandidate === "function") {
+    const ws = (worksetCandidate as () => WorksetStore).call(store);
+    const snap: WorksetRootsEpoch = await ws.snapshot();
+    return serializeWorksetRootsDocument(snap);
+  }
+  return null;
 }
 
 /**
@@ -173,6 +199,12 @@ export async function buildBackupDump(
   const planLifecycle = await exportPlanLifecycleOf(store);
   if (planLifecycle !== null) {
     files.push({ path: PLAN_LIFECYCLE_DUMP_PATH, content: planLifecycle });
+  }
+
+  // T1959: workset roots/epoch are a first-class BackupDump artifact.
+  const worksetRoots = await exportWorksetRootsOf(store);
+  if (worksetRoots !== null) {
+    files.push({ path: WORKSET_ROOTS_FILENAME, content: worksetRoots });
   }
 
   const listLogs = listLogsOf(store);

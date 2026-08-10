@@ -38,9 +38,15 @@ import { CANONICAL_LEDGERS } from "../constants.js";
 import { atomicWrite } from "./fsAtomic.js";
 import {
   ARCHIVE_COMMIT_PENDING_FILENAME,
+  LEDGER_WORKSET_DIRNAME,
   PLAN_LIFECYCLE_PENDING_FILENAME,
   PLAN_LIFECYCLE_STATE_FILENAME,
+  WORKSET_ROOTS_FILENAME,
 } from "./ledgerArtifacts.js";
+import {
+  parseWorksetRootsDocument,
+  serializeWorksetRootsDocument,
+} from "../worksetStoreGit.js";
 
 /**
  * Layout the {@link FsPersistence} seam binds to. Resolved once by the store so
@@ -316,6 +322,11 @@ export class FsPersistence implements LedgerPersistence {
       }
     }
 
+    // T1959: capture FS workset roots into the portable dump name so divergence
+    // / reset backups retain ordered roots + epoch even though live state sits
+    // under `.cq/workset/roots.json`.
+    await this.backupWorksetRoots(backupDir);
+
     // Remove non-canonical ledger files so they don't survive as orphans.
     for (const name of nonCanonicalNames) {
       try {
@@ -325,6 +336,29 @@ export class FsPersistence implements LedgerPersistence {
       }
     }
     return backupDir;
+  }
+
+  /**
+   * Copy live FS workset roots into `backupDir/workset-roots.json` (portable
+   * dump name). Missing live state is a no-op (unrestricted empty is implicit).
+   */
+  private async backupWorksetRoots(backupDir: string): Promise<void> {
+    const livePath = path.join(this.docsDir, LEDGER_WORKSET_DIRNAME, "roots.json");
+    let text: string;
+    try {
+      text = await fs.readFile(livePath, "utf8");
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw e;
+    }
+    // The portable parser accepts the live document's additive admitGeneration
+    // field while rejecting malformed roots instead of silently dropping them.
+    const snap = parseWorksetRootsDocument(text);
+    await fs.writeFile(
+      path.join(backupDir, WORKSET_ROOTS_FILENAME),
+      serializeWorksetRootsDocument(snap),
+      "utf8",
+    );
   }
 
   async currentSourceToken(name: string): Promise<string> {

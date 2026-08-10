@@ -42,6 +42,12 @@ export const ARCHIVE_COMMIT_PENDING_FILENAME = "archive-commit.pending.json";
  */
 export const WORKSET_ROOTS_FILENAME = "workset-roots.json";
 /**
+ * Filesystem workset state directory under `.cq/` (T1955/T1959). Holds live
+ * `roots.json` + process admissions. Erase removes the whole directory; the
+ * portable dump carries roots as {@link WORKSET_ROOTS_FILENAME} instead.
+ */
+export const LEDGER_WORKSET_DIRNAME = "workset";
+/**
  * Portable runtime directory under `.cq/` — session logs that travel with the
  * ledger tree (included in `ledgerTreePaths`).
  */
@@ -74,6 +80,8 @@ export interface LedgerArtifacts {
   archiveDir: string | null;
   /** Absolute runtime dirs (`logs`/`.locks`/`.backup`) that exist on disk. */
   runtimeDirs: string[];
+  /** Absolute `.cq/workset` directory when present (FS workset live state). */
+  worksetDir: string | null;
 }
 
 async function exists(p: string): Promise<boolean> {
@@ -144,12 +152,14 @@ export async function enumerateLedgerArtifacts(docsDir: string): Promise<LedgerA
 
   const registryPath = path.join(docsDir, LEDGER_REGISTRY_FILENAME);
   const archivePath = path.join(docsDir, LEDGER_ARCHIVE_DIRNAME);
+  const worksetPath = path.join(docsDir, LEDGER_WORKSET_DIRNAME);
   return {
     registryFile: (await exists(registryPath)) ? registryPath : null,
     ledgerFiles,
     lifecycleFiles,
     archiveDir: (await exists(archivePath)) ? archivePath : null,
     runtimeDirs,
+    worksetDir: (await exists(worksetPath)) ? worksetPath : null,
   };
 }
 
@@ -223,6 +233,7 @@ export async function removeLedgerArtifacts(docsDir: string): Promise<RemoveLedg
     ...art.lifecycleFiles,
     ...(art.archiveDir !== null ? [art.archiveDir] : []),
     ...art.runtimeDirs,
+    ...(art.worksetDir !== null ? [art.worksetDir] : []),
   ];
 
   const removed: string[] = [];

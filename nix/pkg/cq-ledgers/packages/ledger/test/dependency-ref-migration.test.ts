@@ -32,6 +32,7 @@ import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
 import { buildBackupDump, type BackupDumpFile } from "../src/store/backupExporter.js";
 import { restoreDumpToXdg } from "../src/store/restoreImporter.js";
+import { mintWorksetManagementAuthority } from "../src/index.js";
 import { buildPrefixRegistry, normalizeStoredRefFields } from "../src/refs.js";
 
 const FIXED_NOW = "2026-01-01T00:00:00.000Z";
@@ -230,7 +231,7 @@ describe("SqliteLedgerStore v1->v2 dependency-ref migration (T553)", () => {
     expect(defectsMd).toContain("T1");
 
     const dstPath = path.join(await freshDir("ledger-restore-dst-"), "ledger.db");
-    await restoreDumpToXdg({ dbPath: dstPath, logsDir: null, dump: oldDump });
+    await restoreDumpToXdg({ dbPath: dstPath, logsDir: null, dump: oldDump, authority: mintWorksetManagementAuthority() });
 
     const restored = new SqliteLedgerStore({ dbPath: dstPath, now });
     await restored.init();

@@ -119,8 +119,22 @@ export async function wipeTenantRows(
   pool: SQL,
   projectKey: string,
   includeProjectRow: boolean,
+  /** Keep the caller's exclusive row until its administrative phase returns. */
+  preserveExclusiveAdmission: boolean,
 ): Promise<void> {
   await pool.begin(async (tx) => {
+    if (preserveExclusiveAdmission) {
+      await tx`
+        DELETE FROM workset_admissions
+        WHERE project_key = ${projectKey}
+          AND form NOT IN ('exclusive-set', 'exclusive-administrative')
+      `;
+    } else {
+      await tx`DELETE FROM workset_admissions WHERE project_key = ${projectKey}`;
+    }
+    await tx`DELETE FROM workset_roots WHERE project_key = ${projectKey}`;
+    await tx`DELETE FROM plan_operations WHERE project_key = ${projectKey}`;
+    await tx`DELETE FROM plan_claims WHERE project_key = ${projectKey}`;
     await tx`DELETE FROM archived_items WHERE project_key = ${projectKey}`;
     await tx`DELETE FROM archive_pointers WHERE project_key = ${projectKey}`;
     await tx`DELETE FROM items WHERE project_key = ${projectKey}`;

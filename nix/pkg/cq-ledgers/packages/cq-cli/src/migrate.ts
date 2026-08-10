@@ -79,6 +79,7 @@ import {
   resolveStateDir,
   restoreDumpToPostgres,
   restoreDumpToXdg,
+  mintWorksetManagementAuthority,
   SqliteLedgerStore,
   XDG_DB_FILENAME,
   type BackupDumpFile,
@@ -310,7 +311,13 @@ async function runMigrateLegacyToXdg(args: MigrateArgs, io: MigrateIo): Promise<
   }
 
   // --- Import, then flip the backend. The legacy source is never written.
-  const summary = await restoreDumpToXdg({ dbPath, logsDir, dump });
+  const summary = await restoreDumpToXdg({
+    dbPath,
+    logsDir,
+    dump,
+    authority: mintWorksetManagementAuthority(),
+    administrativeKind: "backend-migration",
+  });
   await setLedgerBackend(args.cwd, "xdg");
 
   const legacyLocation =
@@ -432,7 +439,14 @@ async function runMigrateXdgToPostgres(args: MigrateArgs, io: MigrateIo): Promis
     }
 
     // --- Import, then flip the backend. The xdg source is never written.
-    const summary = await restoreDumpToPostgres({ pool, projectKey, displayName, dump });
+    const summary = await restoreDumpToPostgres({
+      pool,
+      projectKey,
+      displayName,
+      dump,
+      authority: mintWorksetManagementAuthority(),
+      administrativeKind: "backend-migration",
+    });
     await setLedgerBackend(args.cwd, "postgres");
 
     io.out(
