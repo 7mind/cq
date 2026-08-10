@@ -152,7 +152,7 @@ export function validateManagedWorktreeHandle(
   if (!absolutePath.startsWith(`${managedParent}/`)) {
     return {
       status: "invalid",
-      reason: "handle-foreign",
+      reason: handle.version === 1 ? "handle-path-traversal" : "handle-foreign",
       detail: "handle absolutePath lies outside its repositoryRoot",
     };
   }
@@ -191,4 +191,3 @@ export function managedWorktreeHandlesEqual(
 ): boolean {
   return HANDLE_KEYS.every((key) => left[key] === right[key]);
 }
-

@@ -28,7 +28,6 @@ import { serializeWipArtifact } from "@cq/config";
 import {
   createLedgerMcpTools,
   createWorktreeManageCapability,
-  generateUuidV7,
   InMemoryLedgerStore,
   isUuidV7,
   LEDGER_TOOL_NAMES,

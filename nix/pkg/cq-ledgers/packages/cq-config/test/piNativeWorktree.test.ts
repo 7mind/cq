@@ -9,7 +9,6 @@ import { fileURLToPath } from "node:url";
 import {
   PI_NATIVE_WORKTREE_PREPARE_SEAM,
   PI_NATIVE_WORKTREE_RELEASE_SEAM,
-  PiNativeWorktreeBindingError,
   assertPiNativeWorktreeBindingIntact,
   bindPiNativeWorktree,
   preflightPiNativeWorktree,

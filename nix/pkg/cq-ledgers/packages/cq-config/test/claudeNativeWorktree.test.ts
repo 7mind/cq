@@ -9,7 +9,6 @@ import { fileURLToPath } from "node:url";
 import {
   CLAUDE_NATIVE_WORKTREE_PREPARE_SEAM,
   CLAUDE_NATIVE_WORKTREE_RELEASE_SEAM,
-  ClaudeNativeWorktreeBindingError,
   assertClaudeNativeWorktreeBindingIntact,
   bindClaudeNativeWorktree,
   preflightClaudeNativeWorktree,
