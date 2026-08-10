@@ -73,6 +73,7 @@ import {
   GitObjectLedgerBackend,
   type GitObjectLedgerBackendOpts,
 } from "./store/git/GitObjectLedgerBackend.js";
+import { SqliteLedgerStore } from "./store/sqlite/SqliteLedgerStore.js";
 import type {
   ArchiveContent,
   CreateItemInit,
@@ -1216,4 +1217,82 @@ export function inventoriedSealedOwnershipFields(): readonly string[] {
 /** Canonical ledger count (for inventory stability checks). */
 export function canonicalLedgerCount(): number {
   return CANONICAL_LEDGERS.length;
+}
+
+// ---------------------------------------------------------------------------
+// SQLite durable leg (T1974)
+// ---------------------------------------------------------------------------
+
+export interface CreateSqliteWorksetGuardedLedgerOptions {
+  /** Concrete ledger database file path (created on init if absent). */
+  readonly dbPath: string;
+  readonly now?: () => string;
+  /** Optional out-of-tree logs directory for `readLog`. */
+  readonly logsDir?: string;
+  readonly hooks?: WorksetAdmissionCoordinatorHooks;
+  readonly afterGenericAdmit?: () => Promise<void> | void;
+}
+
+/**
+ * Lazy {@link WorksetStore} facade: SqliteLedgerStore mounts the durable
+ * workset capability during {@link SqliteLedgerStore.init}, so gateway
+ * construction must not force init. Every method re-resolves the live handle.
+ */
+function lazySqliteWorksetStore(get: () => WorksetStore): WorksetStore {
+  return {
+    snapshot: () => get().snapshot(),
+    setRoots: (roots) => get().setRoots(roots),
+    admitLedgerMutation: (input) => get().admitLedgerMutation(input),
+    admitExternalEffect: (input) => get().admitExternalEffect(input),
+    runAdministrative: (input) => get().runAdministrative(input),
+    activeAdmissionCount: () => get().activeAdmissionCount(),
+    exclusiveHeld: () => get().exclusiveHeld(),
+  };
+}
+
+/**
+ * T1974 — durable SQLite leg of the guarded generic-mutation dual-test pair.
+ *
+ * Wires the T1961 gateway over {@link SqliteLedgerStore} + the T1957
+ * {@link createSqliteWorksetStore} mounted on the same connection. Closed-graph
+ * membership (plus exact inactive roots) drives ledger-mutation target
+ * admission so gateway validation and t3 admits agree. Each ordinary mutation
+ * still runs as one admitted {@code BEGIN IMMEDIATE} write on the raw store;
+ * raw SQL helpers remain internal to the adapter.
+ */
+export function createSqliteWorksetGuardedLedger(
+  options: CreateSqliteWorksetGuardedLedgerOptions,
+): WorksetGuardedLedger {
+  // Assigned before construction body finishes so workset isTargetAdmitted can
+  // close over the live raw store once init has mounted rows.
+  let rawStore!: SqliteLedgerStore;
+  rawStore = new SqliteLedgerStore({
+    dbPath: options.dbPath,
+    ...(options.now !== undefined ? { now: options.now } : {}),
+    ...(options.logsDir !== undefined ? { logsDir: options.logsDir } : {}),
+    workset: {
+      ...(options.hooks !== undefined ? { hooks: options.hooks } : {}),
+      isTargetAdmitted: (target, roots) => {
+        if (roots.length === 0) return true;
+        try {
+          const state = buildActiveStateFromLedgerStore(rawStore);
+          const graph = closeWorkset(roots, state);
+          if (worksetMemberRefSet(graph).has(target)) return true;
+          if (graph.inactiveRoots.includes(target)) return true;
+          return false;
+        } catch {
+          // Uninitialised store or malformed roots — fail closed.
+          return false;
+        }
+      },
+    },
+  });
+
+  return createWorksetGuardedLedger({
+    rawStore,
+    worksetStore: lazySqliteWorksetStore(() => rawStore.worksetStore()),
+    ...(options.afterGenericAdmit !== undefined
+      ? { afterGenericAdmit: options.afterGenericAdmit }
+      : {}),
+  });
 }
