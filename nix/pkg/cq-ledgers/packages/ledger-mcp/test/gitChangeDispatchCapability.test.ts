@@ -1,5 +1,5 @@
 /**
- * T2042 — Blackbox-Atomic communication test for the dispatch attestation,
+ * T2042 — Effectual Good-Communication tests for the dispatch attestation,
  * managed-worktree registry, broker, and result-store lock integration.
  */
 import { afterAll, describe, expect, test } from "bun:test";
@@ -12,16 +12,18 @@ import { promisify } from "node:util";
 import {
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
+  FsAttestationBackend,
   sequentialDispatchRandomBytes,
   type AttestationNamespace,
 } from "@cq/config";
-import { prepareManagedWorktree } from "@cq/ledger";
+import { fsAttestationProductionRoot, prepareManagedWorktree } from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
 
 const exec = promisify(execFile);
 const roots: string[] = [];
 const NAMESPACE: AttestationNamespace = { backend: "xdg", projectKey: "t2042-integration" };
+const PEER_FIXTURE = new URL("./fixtures/gitChangeBrokerPeer.ts", import.meta.url).pathname;
 
 async function git(cwd: string, args: readonly string[]): Promise<string> {
   const { stdout } = await exec("git", [...args], {
@@ -61,6 +63,207 @@ function artifactStore(): PromptArtifactStore {
       catalogHash: "b".repeat(64),
     }),
     readRole: () => ({ metadata, bytes: new Uint8Array([1]) }),
+  };
+}
+
+interface PeerOutcome {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+function spawnPeer(
+  request: Readonly<Record<string, unknown>>,
+  environment: Readonly<Record<string, string>> = {},
+): {
+  readonly child: ReturnType<typeof Bun.spawn>;
+  readonly outcome: Promise<PeerOutcome>;
+  result(): Promise<Record<string, unknown>>;
+} {
+  const child = Bun.spawn([process.execPath, "run", PEER_FIXTURE], {
+    env: { ...process.env, ...environment },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  child.stdin.write(`${JSON.stringify(request)}\n`);
+  child.stdin.end();
+  const outcome = Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]).then(([code, stdout, stderr]) => ({ code, stdout, stderr }));
+  return {
+    child,
+    outcome,
+    result: async () =>
+      await outcome.then(({ code, stdout, stderr }) => {
+        if (code !== 0) throw new Error(`broker peer exited ${String(code)}: ${stderr}`);
+        return JSON.parse(stdout) as Record<string, unknown>;
+      }),
+  };
+}
+
+async function waitForFile(file: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!(await Bun.file(file).exists())) {
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${file}`);
+    await Bun.sleep(10);
+  }
+}
+
+async function blockingGit(
+  repositoryRoot: string,
+  trigger: "second-top" | "third-top" | "fifth-top" | "index" | "update-ref",
+): Promise<{
+  readonly environment: Readonly<Record<string, string>>;
+  readonly ready: string;
+  readonly release: string;
+}> {
+  const directory = path.join(repositoryRoot, `.blocking-git-${trigger}`);
+  const ready = path.join(directory, "ready");
+  const release = path.join(directory, "release");
+  const counter = path.join(directory, "counter");
+  const executable = path.join(directory, "git");
+  const realGit = Bun.which(process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git");
+  if (realGit === null) throw new Error("git executable is unavailable");
+  await fs.mkdir(directory, { recursive: true });
+  await fs.writeFile(
+    executable,
+    [
+      "#!/bin/sh",
+      "set -eu",
+      'matched=""',
+      'if [ "$CQ_PEER_GIT_TRIGGER" = "update-ref" ]; then',
+      '  case " $* " in *" update-ref "*) matched=yes ;; esac',
+      'elif [ "$CQ_PEER_GIT_TRIGGER" = "index" ]; then',
+      '  case " $* " in *" --git-path index "*) matched=yes ;; esac',
+      'elif [ "${1-}" = "rev-parse" ] && [ "${2-}" = "--show-toplevel" ]; then',
+      '  count=0; test ! -e "$CQ_PEER_GIT_COUNTER" || read -r count < "$CQ_PEER_GIT_COUNTER"',
+      '  count=$((count + 1)); printf "%s\\n" "$count" > "$CQ_PEER_GIT_COUNTER"',
+      '  if [ "$CQ_PEER_GIT_TRIGGER" = "second-top" ] && [ "$count" -eq 2 ]; then matched=yes; fi',
+      '  if [ "$CQ_PEER_GIT_TRIGGER" = "third-top" ] && [ "$count" -eq 3 ]; then matched=yes; fi',
+      '  if [ "$CQ_PEER_GIT_TRIGGER" = "fifth-top" ] && [ "$count" -eq 5 ]; then matched=yes; fi',
+      "fi",
+      'if [ "$matched" = yes ]; then',
+      '  : > "$CQ_PEER_GIT_READY"',
+      '  owner=$PPID',
+      '  while [ ! -e "$CQ_PEER_GIT_RELEASE" ]; do',
+      '    kill -0 "$owner" 2>/dev/null || exit 143',
+      "    sleep 0.01",
+      "  done",
+      "fi",
+      'exec "$CQ_PEER_REAL_GIT" "$@"',
+      "",
+    ].join("\n"),
+  );
+  await fs.chmod(executable, 0o700);
+  return {
+    ready,
+    release,
+    environment: {
+      PATH: `${directory}${path.delimiter}${process.env["PATH"] ?? ""}`,
+      CQ_PEER_GIT_TRIGGER: trigger,
+      CQ_PEER_GIT_COUNTER: counter,
+      CQ_PEER_GIT_READY: ready,
+      CQ_PEER_GIT_RELEASE: release,
+      CQ_PEER_REAL_GIT: realGit,
+    },
+  };
+}
+
+async function durableDispatch(label: string) {
+  const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2042-peer-${label}-`));
+  roots.push(repositoryRoot);
+  await git(repositoryRoot, ["init", "-q"]);
+  await fs.writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
+  await git(repositoryRoot, ["add", "file.txt"]);
+  await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
+  const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+  const stateDir = path.join(repositoryRoot, ".manager-state");
+  const managed = await prepareManagedWorktree(
+    { repositoryRoot, taskId: "T2042", baseCommit },
+    { stateDir, skipInstall: true, bunWorkspaceRoot: repositoryRoot },
+  );
+  if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
+  const namespace: AttestationNamespace = {
+    backend: "fs",
+    projectKey: `t2042-peer-${label}`,
+  };
+  const attestationRoot = fsAttestationProductionRoot(repositoryRoot);
+  const backend = new FsAttestationBackend({ namespace, root: attestationRoot });
+  const capability = createDispatchCapability({
+    backend,
+    promptArtifactStore: artifactStore(),
+    repositoryRoot,
+    worktreeStateDir: stateDir,
+    now: () => "2026-08-10T12:00:00.000Z",
+    randomBytes: sequentialDispatchRandomBytes(label.length * 32),
+  });
+  const prepared = await capability.prepare({
+    roleId: "implement-worker",
+    input: {
+      taskId: "T2042",
+      headline: "exercise peer broker",
+      description: "serialize durable effects across processes",
+      acceptance: "one ordered durable outcome",
+      worktreePath: managed.handle.absolutePath,
+      branch: managed.handle.branch,
+      baseCommit,
+      round: 0,
+      startingCommit: baseCommit,
+    },
+    idempotencyKey: `T2042-peer-${label}`,
+    timeoutMs: 600_000,
+    expectedChild: { childId: `child-${label}`, runId: `run-${label}` },
+  });
+  if (!prepared.accepted || prepared.prepared.gitChangeCapability === undefined) {
+    throw new Error("peer dispatch did not receive a Git capability");
+  }
+  await capability.fetchInput({
+    attestationId: prepared.prepared.attestationId,
+    generation: prepared.prepared.generation,
+    inputCapability: prepared.prepared.inputCapability,
+  });
+  await backend.close();
+  return {
+    repositoryRoot,
+    stateDir,
+    managed,
+    namespace,
+    attestationRoot,
+    baseCommit,
+    prepared: prepared.prepared,
+  };
+}
+
+function commitPeerRequest(
+  fixture: Awaited<ReturnType<typeof durableDispatch>>,
+  operationId: string,
+  content: string,
+): Readonly<Record<string, unknown>> {
+  return {
+    operation: "git-commit",
+    repositoryRoot: fixture.repositoryRoot,
+    stateDir: fixture.stateDir,
+    attestationRoot: fixture.attestationRoot,
+    namespace: fixture.namespace,
+    input: {
+      attestationId: fixture.prepared.attestationId,
+      generation: fixture.prepared.generation,
+      gitChangeCapability: fixture.prepared.gitChangeCapability,
+      operationId,
+      expectedHead: fixture.baseCommit,
+      message: operationId,
+      changes: [
+        {
+          kind: "modify",
+          path: "file.txt",
+          oldState: { mode: "100644", digest: sha256("before\n") },
+          newState: { mode: "100644", digest: sha256(content) },
+        },
+      ],
+    },
   };
 }
 
@@ -219,6 +422,169 @@ describe("dispatch-bound Git change capability", () => {
     );
   });
 
+  test("serializes broker commits against result storage, abort, and guarded release in peer processes", async () => {
+    for (const contender of ["store-result", "abort", "release"] as const) {
+      const fixture = await durableDispatch(contender);
+      const content = `${contender}\n`;
+      await fs.writeFile(path.join(fixture.managed.handle.absolutePath, "file.txt"), content);
+      const blocker = await blockingGit(fixture.repositoryRoot, "second-top");
+      const broker = spawnPeer(
+        commitPeerRequest(fixture, `T2042-peer-${contender}`, content),
+        blocker.environment,
+      );
+      await waitForFile(blocker.ready);
+
+      const startedFile = path.join(fixture.repositoryRoot, `${contender}.started`);
+      const completedFile = path.join(fixture.repositoryRoot, `${contender}.completed`);
+      const peerInput =
+        contender === "store-result"
+          ? {
+              resultCapability: fixture.prepared.resultCapability,
+              output: {
+                taskId: "T2042",
+                status: "fail",
+                resultCommit: null,
+                branch: fixture.managed.handle.branch,
+                actualWorktreePath: fixture.managed.handle.absolutePath,
+                filesTouched: [],
+                checkSummary: "peer serialization probe",
+                summary: "controlled failure after the broker effect",
+                blockedReason: "serialization probe",
+                baseVerification: {
+                  status: "unresolvable",
+                  reason: "base-missing",
+                  baseCommit: null,
+                  headCommit: null,
+                },
+              },
+            }
+          : contender === "abort"
+            ? {
+                attestationId: fixture.prepared.attestationId,
+                generation: fixture.prepared.generation,
+                reason: "cancelled",
+              }
+            : {
+                handle: fixture.managed.handle,
+                terminalDisposition: "done",
+                deleteBranch: false,
+              };
+      const peer = spawnPeer({
+        operation: contender,
+        repositoryRoot: fixture.repositoryRoot,
+        stateDir: fixture.stateDir,
+        attestationRoot: fixture.attestationRoot,
+        namespace: fixture.namespace,
+        input: peerInput,
+        startedFile,
+        completedFile,
+      });
+      await waitForFile(startedFile);
+      await Bun.sleep(150);
+      expect(await Bun.file(completedFile).exists(), contender).toBe(false);
+
+      await fs.writeFile(blocker.release, "release\n");
+      const [receipt, peerResult] = await Promise.all([broker.result(), peer.result()]);
+      expect(receipt["newHead"], contender).toBe(
+        await git(fixture.repositoryRoot, ["rev-parse", fixture.managed.handle.branch]),
+      );
+      expect(await Bun.file(completedFile).exists(), contender).toBe(true);
+      expect(
+        contender === "release" ? peerResult["status"] : peerResult["state"],
+        contender,
+      ).toBe(
+        contender === "store-result"
+          ? "result-stored"
+          : contender === "abort"
+            ? "aborted"
+            : "released",
+      );
+    }
+  }, 30_000);
+
+  test("a fresh broker process recovers the identical operation at each durable journal boundary", async () => {
+    for (const boundary of [
+      { trigger: "third-top", state: "intent" },
+      { trigger: "fifth-top", state: "objects-installed" },
+      { trigger: "index", state: "ref-advanced" },
+    ] as const) {
+      const fixture = await durableDispatch(boundary.state);
+      const content = `${boundary.state}\n`;
+      await fs.writeFile(path.join(fixture.managed.handle.absolutePath, "file.txt"), content);
+      const request = commitPeerRequest(
+        fixture,
+        `T2042-restart-${boundary.state}`,
+        content,
+      );
+      const blocker = await blockingGit(fixture.repositoryRoot, boundary.trigger);
+      const interrupted = spawnPeer(request, blocker.environment);
+      await waitForFile(blocker.ready);
+      const operationDirectories = await fs.readdir(path.join(fixture.stateDir, "git-broker"));
+      expect(operationDirectories).toHaveLength(1);
+      const operationDirectory = operationDirectories[0];
+      if (operationDirectory === undefined) throw new Error("broker operation journal is absent");
+      const journalFile = path.join(
+        fixture.stateDir,
+        "git-broker",
+        operationDirectory,
+        "journal.json",
+      );
+      const journal = JSON.parse(await fs.readFile(journalFile, "utf8")) as {
+        readonly state: string;
+      };
+      expect(journal.state, boundary.state).toBe(boundary.state);
+      interrupted.child.kill("SIGKILL");
+      const killed = await interrupted.outcome;
+      expect(killed.code, boundary.state).not.toBe(0);
+
+      const recovered = await spawnPeer(request).result();
+      expect(recovered["newHead"], boundary.state).toBe(
+        await git(fixture.managed.handle.absolutePath, ["rev-parse", "HEAD"]),
+      );
+      expect(
+        await git(fixture.managed.handle.absolutePath, ["status", "--porcelain"]),
+        boundary.state,
+      ).toBe("");
+      expect(await spawnPeer(request).result(), boundary.state).toEqual(recovered);
+    }
+  }, 30_000);
+
+  test("preserves a peer-process ref CAS winner", async () => {
+    const fixture = await durableDispatch("ref-cas");
+    await fs.writeFile(path.join(fixture.managed.handle.absolutePath, "file.txt"), "candidate\n");
+    const baseTree = await git(fixture.repositoryRoot, [
+      "rev-parse",
+      `${fixture.baseCommit}^{tree}`,
+    ]);
+    const competingHead = await git(fixture.repositoryRoot, [
+      "commit-tree",
+      baseTree,
+      "-p",
+      fixture.baseCommit,
+      "-m",
+      "peer ref winner",
+    ]);
+    const blocker = await blockingGit(fixture.repositoryRoot, "update-ref");
+    const broker = spawnPeer(
+      commitPeerRequest(fixture, "T2042-peer-ref-cas", "candidate\n"),
+      blocker.environment,
+    );
+    await waitForFile(blocker.ready);
+    await git(fixture.repositoryRoot, [
+      "update-ref",
+      `refs/heads/${fixture.managed.handle.branch}`,
+      competingHead,
+      fixture.baseCommit,
+    ]);
+    await fs.writeFile(blocker.release, "release\n");
+    const rejected = await broker.outcome;
+    expect(rejected.code).not.toBe(0);
+    expect(rejected.stderr).toMatch(/update-ref failed/);
+    expect(await git(fixture.managed.handle.absolutePath, ["rev-parse", "HEAD"])).toBe(
+      competingHead,
+    );
+  });
+
   test("broker-capable result storage rejects missing or substituted receipt chains", async () => {
     let attempt = 0;
     async function storeCandidate(
@@ -339,6 +705,39 @@ describe("dispatch-bound Git change capability", () => {
 
     await storeCandidate((output) => {
       delete output["gitReceipts"];
+    });
+    await storeCandidate((output) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      receipts.shift();
+    });
+    await storeCandidate((output) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      receipts[0] = { ...receipts[0], operationId: "substituted-operation" };
+    });
+    await storeCandidate((output) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      receipts[0] = { ...receipts[0], requestDigest: "f".repeat(64) };
+    });
+    await storeCandidate((output) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      receipts[0] = { ...receipts[0], committedAt: "2099-01-01T00:00:00.000Z" };
+    });
+    await storeCandidate((output) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      const first = receipts[0]!;
+      receipts[0] = {
+        ...first,
+        objectOids: [first["newHead"], first["tree"]],
+      };
+    });
+    await storeCandidate((output) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      const first = receipts[0]!;
+      const second = receipts[1]!;
+      receipts[0] = {
+        ...first,
+        objectOids: [...(first["objectOids"] as string[]), second["newHead"]],
+      };
     });
     await storeCandidate((output) => {
       const receipts = output["gitReceipts"] as Record<string, unknown>[];

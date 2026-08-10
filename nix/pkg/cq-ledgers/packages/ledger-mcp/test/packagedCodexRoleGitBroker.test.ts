@@ -1,26 +1,26 @@
 /** T2042 — packaged cq-codex-role broker/confinement acceptance probe. */
 import { afterAll, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { FsAttestationBackend, sequentialDispatchRandomBytes } from "@cq/config";
 import {
-  InMemoryAttestationBackend,
-  InMemoryAttestationStore,
-  sequentialDispatchRandomBytes,
-  type AttestationNamespace,
-} from "@cq/config";
-import { prepareManagedWorktree } from "@cq/ledger";
+  createLedgerStore,
+  fsAttestationProductionRoot,
+  prepareManagedWorktree,
+  resolveSingleProjectAttestationNamespace,
+} from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
 
 const roots: string[] = [];
-const NAMESPACE: AttestationNamespace = { backend: "xdg", projectKey: "t2042-packaged" };
 const INSTALLED_ROLE = process.env["CQ_TEST_CODEX_ROLE_EXECUTABLE"];
 const ROLE_SCRIPT = fileURLToPath(
   new URL("../../cq-config/scripts/codex-role-dispatch.ts", import.meta.url),
 );
 const WORKER_FIXTURE = fileURLToPath(new URL("./fixtures/codexBrokerWorker.ts", import.meta.url));
+const CQ_CLI_SCRIPT = fileURLToPath(new URL("../../cq-cli/src/main.ts", import.meta.url));
 
 async function git(cwd: string, args: readonly string[]): Promise<string> {
   const child = Bun.spawn([process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git", ...args], {
@@ -81,6 +81,9 @@ describe("packaged cq-codex-role Git broker", () => {
     await git(repositoryRoot, ["add", "file.txt"]);
     await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
     const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+    await writeFile(path.join(repositoryRoot, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+    const ledgerStore = await createLedgerStore(repositoryRoot);
+    await ledgerStore.store.dispose();
     const baseTree = await git(repositoryRoot, ["rev-parse", `${baseCommit}^{tree}`]);
     const commonObject = path.join(
       repositoryRoot,
@@ -97,10 +100,9 @@ describe("packaged cq-codex-role Git broker", () => {
     roots.push(siblingPath);
     await rm(siblingPath, { recursive: true });
     await git(repositoryRoot, ["worktree", "add", "-q", "-b", "sibling", siblingPath, baseCommit]);
-    const stateDir = path.join(repositoryRoot, ".manager-state");
     const managed = await prepareManagedWorktree(
       { repositoryRoot, taskId: "T2042", baseCommit },
-      { stateDir, skipInstall: true, bunWorkspaceRoot: repositoryRoot },
+      { skipInstall: true, bunWorkspaceRoot: repositoryRoot },
     );
     if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
     const refsBefore = await git(repositoryRoot, [
@@ -109,13 +111,22 @@ describe("packaged cq-codex-role Git broker", () => {
       "refs/heads",
     ]);
 
-    const store = new InMemoryAttestationStore(NAMESPACE);
+    const namespace = await resolveSingleProjectAttestationNamespace({
+      construction: "direct",
+      backend: "fs",
+      repoRoot: repositoryRoot,
+      projectId: null,
+    });
+    const backend = new FsAttestationBackend({
+      namespace,
+      root: fsAttestationProductionRoot(repositoryRoot),
+    });
+    const dispatchNow = new Date().toISOString();
     const capability = createDispatchCapability({
-      backend: new InMemoryAttestationBackend(store),
+      backend,
       promptArtifactStore: artifactStore(),
       repositoryRoot,
-      worktreeStateDir: stateDir,
-      now: () => "2026-08-10T12:00:00.000Z",
+      now: () => dispatchNow,
       randomBytes: sequentialDispatchRandomBytes(128),
     });
     const prepared = await capability.prepare({
@@ -138,47 +149,26 @@ describe("packaged cq-codex-role Git broker", () => {
     if (!prepared.accepted || prepared.prepared.gitChangeCapability === undefined) {
       throw new Error("packaged worker dispatch did not receive Git capability");
     }
-
-    let storedOutput: Record<string, unknown> | undefined;
-    const endpoint = Bun.serve({
-      hostname: "127.0.0.1",
-      port: 0,
-      fetch: async (request) => {
-        try {
-          const body = (await request.json()) as Record<string, unknown>;
-          switch (new URL(request.url).pathname) {
-            case "/fetch":
-              return Response.json(await capability.fetchInput(body as never));
-            case "/git-commit":
-              if (capability.gitCommit === undefined) throw new Error("git_commit unavailable");
-              return Response.json(await capability.gitCommit(body as never));
-            case "/store": {
-              storedOutput = body["output"] as Record<string, unknown>;
-              return Response.json(await capability.storeResult(body as never));
-            }
-            default:
-              throw new Error("unknown packaged broker endpoint");
-          }
-        } catch (error) {
-          return Response.json(
-            { error: error instanceof Error ? error.message : String(error) },
-            { status: 409 },
-          );
-        }
-      },
-    });
+    await backend.close();
     const fixtureRoot = await mkdtemp(path.join(tmpdir(), "t2042-packaged-fake-"));
     roots.push(fixtureRoot);
     const fakeCodex = path.join(fixtureRoot, "fake-codex");
     const capturePath = path.join(fixtureRoot, "capture.json");
-    const promptRoot = path.join(fixtureRoot, "prompts");
-    await mkdir(path.join(promptRoot, "roles"), { recursive: true });
-    await writeFile(path.join(promptRoot, "roles", "implement-worker.md"), "Use the Git broker.\n");
+    const workerStderrPath = path.join(fixtureRoot, "worker.stderr");
     await writeFile(
       fakeCodex,
-      `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(WORKER_FIXTURE)} "$@"\n`,
+      `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(WORKER_FIXTURE)} "$@" 2>"$CQ_T2042_WORKER_STDERR"\n`,
     );
     await chmod(fakeCodex, 0o700);
+    const ledgerCommand =
+      INSTALLED_ROLE === undefined ? path.join(fixtureRoot, "cq") : path.join(path.dirname(INSTALLED_ROLE), "cq");
+    if (INSTALLED_ROLE === undefined) {
+      await writeFile(
+        ledgerCommand,
+        `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(CQ_CLI_SCRIPT)} -- "$@"\n`,
+      );
+      await chmod(ledgerCommand, 0o700);
+    }
     const roleArgv =
       INSTALLED_ROLE === undefined ? [process.execPath, "run", ROLE_SCRIPT] : [INSTALLED_ROLE];
     const handle = {
@@ -189,11 +179,12 @@ describe("packaged cq-codex-role Git broker", () => {
       cwd: managed.handle.absolutePath,
       env: {
         ...process.env,
-        CQ_PROMPT_ROOT: promptRoot,
         CQ_CODEX_EXECUTABLE: fakeCodex,
-        CQ_CODEX_LEDGER_COMMAND: "cq-not-invoked-by-recording",
-        CQ_T2042_BROKER_ENDPOINT: `http://127.0.0.1:${String(endpoint.port)}`,
+        CQ_CODEX_LEDGER_COMMAND: ledgerCommand,
         CQ_T2042_BROKER_CAPTURE: capturePath,
+        CQ_T2042_WORKER_STDERR: workerStderrPath,
+        CQ_T2042_WORKTREE: managed.handle.absolutePath,
+        CQ_T2042_LEDGER_ROOT: repositoryRoot,
       },
       stdin: "pipe",
       stdout: "pipe",
@@ -220,13 +211,27 @@ describe("packaged cq-codex-role Git broker", () => {
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),
     ]);
-    endpoint.stop(true);
-    expect(exitCode, stderr).toBe(0);
+    const workerStderr = await readFile(workerStderrPath, "utf8").catch(() => "");
+    expect(exitCode, `${stderr}\n${workerStderr}`).toBe(0);
     expect(JSON.parse(stdout)).toEqual(handle);
     const capture = JSON.parse(await readFile(capturePath, "utf8")) as {
+      boundary: {
+        codexCwd: string;
+        ledgerCommand: string;
+        ledgerArgs: string[];
+        ledgerCwd: string;
+        listedTools: string[];
+      };
       denied: string[];
       output: Record<string, unknown>;
     };
+    expect(capture.boundary).toMatchObject({
+      codexCwd: managed.handle.absolutePath,
+      ledgerCommand,
+      ledgerCwd: repositoryRoot,
+      listedTools: ["fetch_dispatch_input", "git_commit", "store_result"],
+    });
+    expect(capture.boundary.ledgerArgs).toContain("--prompt-root");
     expect(capture.denied.sort()).toEqual([
       "base",
       "git-metadata",
@@ -236,7 +241,6 @@ describe("packaged cq-codex-role Git broker", () => {
       "sibling",
       "undeclared-path",
     ]);
-    expect(storedOutput).toEqual(capture.output);
     const receipts = capture.output["gitReceipts"] as Record<string, unknown>[];
     expect(receipts).toHaveLength(2);
     expect(receipts[1]?.["oldHead"]).toBe(receipts[0]?.["newHead"]);

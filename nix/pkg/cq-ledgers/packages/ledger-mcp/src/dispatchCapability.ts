@@ -471,7 +471,13 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         if (binding !== undefined) {
           const evidence = brokerResultEvidence(input.output);
           if (evidence !== undefined) {
-            await validateGitChangeBrokerResultEvidence(binding, evidence);
+            await validateGitChangeBrokerResultEvidence(
+              binding,
+              evidence,
+              options.worktreeStateDir === undefined
+                ? {}
+                : { stateDir: options.worktreeStateDir },
+            );
           }
         }
         return await storeDispatchResultOn(options.backend, input, { now });

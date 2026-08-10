@@ -349,7 +349,7 @@ export {
 export type {
   DispatchBoundGitAuthorization,
   GitChangeBrokerDeps,
-  GitChangeBrokerFaultBoundary,
+  GitChangeBrokerEvidenceDeps,
   GitChangeBrokerReceipt,
   GitChangeBrokerResultEvidence,
   GitChangeBrokerRequest,

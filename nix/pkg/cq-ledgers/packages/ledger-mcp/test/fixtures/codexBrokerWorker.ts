@@ -1,12 +1,40 @@
 import { createHash } from "node:crypto";
 import { rm, writeFile } from "node:fs/promises";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 export {};
 
-const endpoint = process.env["CQ_T2042_BROKER_ENDPOINT"];
 const capturePath = process.env["CQ_T2042_BROKER_CAPTURE"];
-if (endpoint === undefined || capturePath === undefined) {
-  throw new Error("broker endpoint and capture path are required");
+const expectedWorktree = process.env["CQ_T2042_WORKTREE"];
+const expectedLedgerRoot = process.env["CQ_T2042_LEDGER_ROOT"];
+if (capturePath === undefined || expectedWorktree === undefined || expectedLedgerRoot === undefined) {
+  throw new Error("capture path and repository boundary are required");
+}
+
+const argv = process.argv.slice(2);
+if (argv[0] !== "exec") throw new Error("recording executable expected codex exec");
+const cwdIndex = argv.indexOf("-C");
+const codexCwd = cwdIndex < 0 ? undefined : argv[cwdIndex + 1];
+const mcpOverride = argv.find((argument) => argument.startsWith("mcp_servers.ledger="));
+if (codexCwd !== expectedWorktree || mcpOverride === undefined) {
+  throw new Error("Codex role boundary did not select the managed worktree and ledger MCP");
+}
+const commandMatch = /(?:^|[,{}])command=("(?:\\.|[^"\\])*")/.exec(mcpOverride);
+const argsMatch = /(?:^|[,{}])args=(\[[^\]]*\])/.exec(mcpOverride);
+if (commandMatch?.[1] === undefined || argsMatch?.[1] === undefined) {
+  throw new Error("Codex role boundary emitted an unreadable ledger MCP configuration");
+}
+const ledgerCommand = JSON.parse(commandMatch[1]) as string;
+const ledgerArgs = JSON.parse(argsMatch[1]) as string[];
+const ledgerCwdIndex = ledgerArgs.indexOf("--cwd");
+const ledgerCwd = ledgerCwdIndex < 0 ? undefined : ledgerArgs[ledgerCwdIndex + 1];
+if (
+  ledgerCwd !== expectedLedgerRoot ||
+  ledgerCwd === codexCwd ||
+  ledgerArgs.slice(-2).join("\0") !== "--tool-profile\0implement-worker"
+) {
+  throw new Error("Codex role boundary widened or misplaced the ledger repository boundary");
 }
 
 const launch = JSON.parse(await Bun.stdin.text()) as Record<string, unknown>;
@@ -25,28 +53,53 @@ if (
   throw new Error("Codex worker launch lost a scoped capability");
 }
 
+const transport = new StdioClientTransport({
+  command: ledgerCommand,
+  args: ledgerArgs,
+  cwd: codexCwd,
+  env: Object.fromEntries(
+    Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  ),
+  stderr: "pipe",
+});
+const client = new Client(
+  { name: "t2042-packaged-codex-worker", version: "0.0.1" },
+  { capabilities: {} },
+);
+await client.connect(transport);
+const listedTools = (await client.listTools()).tools.map(({ name }) => name).sort();
+if (listedTools.join(",") !== "fetch_dispatch_input,git_commit,store_result") {
+  throw new Error(`packaged worker saw unexpected tools: ${listedTools.join(",")}`);
+}
+
+function decode(result: unknown): Record<string, unknown> {
+  const content = (result as { content?: Array<{ type?: string; text?: string }> }).content;
+  const first = content?.[0];
+  if (first?.type !== "text" || first.text === undefined) {
+    throw new Error("ledger MCP returned no JSON text content");
+  }
+  return JSON.parse(first.text) as Record<string, unknown>;
+}
+
 async function call(
-  path: string,
+  name: string,
   body: unknown,
   expectedOk = true,
 ): Promise<Record<string, unknown>> {
-  const response = await fetch(`${endpoint}${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const result = (await response.json()) as Record<string, unknown>;
-  if (response.ok !== expectedOk) {
-    throw new Error(`broker probe ${path} returned ${response.status}: ${JSON.stringify(result)}`);
+  const response = await client.callTool({ name, arguments: body as Record<string, unknown> });
+  const isError = (response as { isError?: boolean }).isError === true;
+  if (isError === expectedOk) {
+    throw new Error(`broker probe ${name} returned unexpected MCP result: ${JSON.stringify(response)}`);
   }
-  return result;
+  if (!expectedOk) return {};
+  return decode(response);
 }
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-const materialized = await call("/fetch", { ...handle, inputCapability });
+const materialized = await call("fetch_dispatch_input", { ...handle, inputCapability });
 const input = materialized["input"] as Record<string, unknown>;
 const worktreePath = String(input["worktreePath"]);
 const baseCommit = String(input["baseCommit"]);
@@ -70,12 +123,12 @@ const operation = (operationId: string, expectedHead: string, from: string, to: 
 
 await writeFile(`${worktreePath}/file.txt`, "first\n");
 const first = await call(
-  "/git-commit",
+  "git_commit",
   operation("T2042-packaged-1", baseCommit, "before\n", "first\n"),
 );
 await writeFile(`${worktreePath}/file.txt`, "second\n");
 const second = await call(
-  "/git-commit",
+  "git_commit",
   operation("T2042-packaged-2", String(first["newHead"]), "first\n", "second\n"),
 );
 
@@ -134,13 +187,13 @@ for (const [label, body] of [
   ],
   ["base", operation("T2042-deny-base", baseCommit, "second\n", "second\n")],
 ] as const) {
-  await call("/git-commit", body, false);
+  await call("git_commit", body, false);
   denied.push(label);
 }
 
 await writeFile(`${worktreePath}/undeclared.txt`, "undeclared\n");
 await call(
-  "/git-commit",
+  "git_commit",
   operation("T2042-deny-undeclared", String(second["newHead"]), "second\n", "second\n"),
   false,
 );
@@ -165,8 +218,23 @@ const output = {
   },
   summary: "packaged broker worker completed",
 };
-const acknowledgement = await call("/store", { resultCapability, output });
-await writeFile(capturePath, JSON.stringify({ denied, output }));
+const storeResult = await client.callTool({
+  name: "store_result",
+  arguments: { resultCapability, output },
+});
+if ((storeResult as { isError?: boolean }).isError === true) {
+  throw new Error(`store_result failed: ${JSON.stringify(storeResult)}`);
+}
+const acknowledgement = decode(storeResult);
+await writeFile(
+  capturePath,
+  JSON.stringify({
+    boundary: { codexCwd, ledgerCommand, ledgerArgs, ledgerCwd, listedTools },
+    denied,
+    output,
+  }),
+);
+await client.close();
 process.stdout.write(
   [
     JSON.stringify({ type: "thread.started", thread_id: "t2042-packaged-broker" }),
@@ -176,7 +244,7 @@ process.stdout.write(
         type: "mcp_tool_call",
         server: "ledger",
         tool: "store_result",
-        result: { content: [{ type: "text", text: JSON.stringify(acknowledgement) }] },
+        result: storeResult,
       },
     }),
     JSON.stringify({

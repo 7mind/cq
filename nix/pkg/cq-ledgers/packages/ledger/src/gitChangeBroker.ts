@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import { spawn } from "node:child_process";
-import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import {
   assertManagedWorktreeDispatchBindingLive,
   withManagedWorktreeEffectLock,
@@ -90,24 +90,13 @@ export interface GitChangeBrokerResultEvidence {
   readonly gitReceipts: readonly GitChangeBrokerReceipt[];
 }
 
-export type GitChangeBrokerFaultBoundary =
-  | "before-snapshot"
-  | "after-private-construction"
-  | "after-object-install"
-  | "before-ref-cas"
-  | "after-ref-cas"
-  | "after-index-install"
-  | "before-receipt-commit";
-
 export interface GitChangeBrokerDeps extends Pick<ManagedWorktreeDeps, "stateDir" | "lockfile"> {
   /** Revalidates the dispatch envelope. It must fail unless it remains prepared and materialized. */
   readonly authorize: (authorization: DispatchBoundGitAuthorization) => void | Promise<void>;
   readonly now?: () => Date;
-  readonly faultInjector?: (
-    boundary: GitChangeBrokerFaultBoundary,
-    context: Readonly<Record<string, string>>,
-  ) => void | Promise<void>;
 }
+
+export type GitChangeBrokerEvidenceDeps = Pick<ManagedWorktreeDeps, "stateDir">;
 
 interface BrokerJournal {
   readonly version: 1;
@@ -231,6 +220,88 @@ async function readJournal(file: string): Promise<BrokerJournal | null> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
+}
+
+async function committedDispatchReceipts(
+  authorization: DispatchBoundGitAuthorization,
+  resultCommit: string,
+  deps: GitChangeBrokerEvidenceDeps,
+): Promise<readonly GitChangeBrokerReceipt[]> {
+  const root = join(brokerRoot(authorization, deps.stateDir), "git-broker");
+  let operationDirectories;
+  try {
+    operationDirectories = await fs.readdir(root, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return Object.freeze([]);
+    throw error;
+  }
+  const candidates: GitChangeBrokerReceipt[] = [];
+  for (const operationDirectory of operationDirectories) {
+    if (!operationDirectory.isDirectory()) continue;
+    const journal = await readJournal(join(root, operationDirectory.name, "journal.json"));
+    if (journal?.receipt === undefined || journal.state === "intent") continue;
+    const receipt = journal.receipt;
+    if (
+      receipt.attestationId !== authorization.attestationId ||
+      receipt.generation !== authorization.generation ||
+      receipt.taskId !== authorization.taskId
+    ) {
+      continue;
+    }
+    if (
+      operationDirectory.name !==
+      basename(operationRoot(authorization, receipt.operationId, deps.stateDir))
+    ) {
+      throw new Error(`durable broker receipt ${receipt.operationId} has a substituted operationId`);
+    }
+    if (receipt.requestDigest !== journal.requestDigest) {
+      throw new Error(`durable broker receipt ${receipt.operationId} has a substituted requestDigest`);
+    }
+    if (receipt.committedAt !== journal.createdAt) {
+      throw new Error(`durable broker receipt ${receipt.operationId} has a substituted committedAt`);
+    }
+    const ancestry = await runGit(authorization.worktreePath, [
+      "merge-base",
+      "--is-ancestor",
+      receipt.newHead,
+      resultCommit,
+    ]);
+    if (ancestry.code === 0) {
+      candidates.push(receipt);
+      continue;
+    }
+    if (journal.state === "completed" || journal.state === "ref-advanced") {
+      throw new Error(
+        `durable broker receipt ${receipt.operationId} does not belong to resultCommit`,
+      );
+    }
+    if (ancestry.code !== 1 && journal.state !== "constructed") {
+      throw new Error(
+        `durable broker receipt ${receipt.operationId} cannot be resolved from the object store`,
+      );
+    }
+  }
+
+  const byNewHead = new Map<string, GitChangeBrokerReceipt>();
+  for (const receipt of candidates) {
+    if (byNewHead.has(receipt.newHead)) {
+      throw new Error(`durable broker receipt chain repeats commit ${receipt.newHead}`);
+    }
+    byNewHead.set(receipt.newHead, receipt);
+  }
+  const reversed: GitChangeBrokerReceipt[] = [];
+  let cursor = resultCommit;
+  while (true) {
+    const receipt = byNewHead.get(cursor);
+    if (receipt === undefined) break;
+    reversed.push(receipt);
+    byNewHead.delete(cursor);
+    cursor = receipt.oldHead;
+  }
+  if (byNewHead.size > 0) {
+    throw new Error("durable broker receipts do not form one complete commit chain");
+  }
+  return Object.freeze(reversed.reverse());
 }
 
 async function writeJournal(file: string, journal: BrokerJournal): Promise<void> {
@@ -760,18 +831,15 @@ async function completeConstructed(
   if (receipt === undefined || privateIndex === undefined || quarantine === undefined) {
     throw new Error("constructed Git broker journal is incomplete");
   }
-  const fault = deps.faultInjector ?? (async () => undefined);
   let state = journal.state;
   if (state === "constructed") {
     await installObjects(request.authorization, quarantine, receipt.objectOids);
-    await fault("after-object-install", { operationId: request.operationId });
     state = "objects-installed";
     await writeJournal(journalFile, { ...journal, state });
   }
   if (state === "objects-installed") {
     await deps.authorize(request.authorization);
     await assertManagedWorktreeDispatchBindingLive(request.authorization, deps);
-    await fault("before-ref-cas", { operationId: request.operationId, oldHead: receipt.oldHead });
     const observed = await currentHead(request.authorization);
     if (observed === receipt.oldHead) {
       await checkedGit(request.authorization.worktreePath, [
@@ -783,14 +851,11 @@ async function completeConstructed(
     } else if (observed !== receipt.newHead) {
       throw new Error(`manager-bound ref moved to ${observed}, expected ${receipt.oldHead}`);
     }
-    await fault("after-ref-cas", { operationId: request.operationId, newHead: receipt.newHead });
     state = "ref-advanced";
     await writeJournal(journalFile, { ...journal, state });
   }
   if (state === "ref-advanced") {
     await installIndex(request.authorization, privateIndex);
-    await fault("after-index-install", { operationId: request.operationId });
-    await fault("before-receipt-commit", { operationId: request.operationId });
     await writeJournal(journalFile, { ...journal, state: "completed" });
   }
   return receipt;
@@ -853,9 +918,6 @@ export async function commitManagedWorktreeChanges(
     }
     await deps.authorize(request.authorization);
     await assertManagedWorktreeDispatchBindingLive(request.authorization, deps);
-    await (deps.faultInjector ?? (async () => undefined))("before-snapshot", {
-      operationId: request.operationId,
-    });
     const snapshots = await validateAndSnapshot(request, paths);
     const constructed = await constructPrivateCommit(
       request,
@@ -866,9 +928,6 @@ export async function commitManagedWorktreeChanges(
       digest,
     );
     await writeJournal(journalFile, constructed.journal);
-    await (deps.faultInjector ?? (async () => undefined))("after-private-construction", {
-      operationId: request.operationId,
-    });
     return await completeConstructed(request, deps, journalFile, constructed.journal);
   });
 }
@@ -877,6 +936,7 @@ export async function commitManagedWorktreeChanges(
 export async function validateGitChangeBrokerResultEvidence(
   authorization: DispatchBoundGitAuthorization,
   evidence: GitChangeBrokerResultEvidence,
+  deps: GitChangeBrokerEvidenceDeps = {},
 ): Promise<void> {
   if (evidence.resultCommit === null || !FULL_OID.test(evidence.resultCommit)) {
     throw new Error("broker receipt chain requires a full resultCommit oid");
@@ -895,6 +955,20 @@ export async function validateGitChangeBrokerResultEvidence(
   }
   if (evidence.gitReceipts.length === 0) {
     throw new Error("broker-capable worker result requires a non-empty receipt chain");
+  }
+
+  const durableReceipts = await committedDispatchReceipts(
+    authorization,
+    evidence.resultCommit,
+    deps,
+  );
+  if (durableReceipts.length !== evidence.gitReceipts.length) {
+    throw new Error("broker receipt chain omits or invents a durable operation");
+  }
+  for (const [index, receipt] of evidence.gitReceipts.entries()) {
+    if (canonical(receipt) !== canonical(durableReceipts[index])) {
+      throw new Error(`broker receipt chain entry ${index} does not match its durable journal`);
+    }
   }
 
   const touched = [...new Set(evidence.filesTouched.map((entryPath, index) =>
