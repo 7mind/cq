@@ -1102,9 +1102,6 @@ export function createPostgresWorksetStore(
     }
   }
 
-  // Eagerly ensure roots row so snapshot() is defined before first set.
-  void readRoots();
-
   return {
     snapshot,
     setRoots,
