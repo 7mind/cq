@@ -566,6 +566,8 @@ export type {
   DurableWorksetAdmissionRow,
   PostgresWorksetStore,
 } from "./store/postgres/worksetStore.js";
+export { createPostgresWorksetGuardedLedger } from "./store/postgres/worksetGuardedLedger.js";
+export type { CreatePostgresWorksetGuardedLedgerOptions } from "./store/postgres/worksetGuardedLedger.js";
 export { resolvePostgresDsn, PostgresDsnResolutionError } from "./store/postgres/dsn.js";
 export { resolveDisplayName } from "./store/postgres/displayName.js";
 export type { DisplayNameCandidates } from "./store/postgres/displayName.js";
