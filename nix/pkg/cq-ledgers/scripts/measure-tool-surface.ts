@@ -155,6 +155,7 @@ const DURABLE_DISPATCH_CAPABILITY: DispatchCapability = {
   confirmCompletion: unavailableDispatchOperation,
   abort: unavailableDispatchOperation,
   fetch: unavailableDispatchOperation,
+  gitCommit: unavailableDispatchOperation,
 };
 
 const PROFILE_DEFINITIONS: Record<ToolSurfaceProfileName, ProfileDefinition> = {

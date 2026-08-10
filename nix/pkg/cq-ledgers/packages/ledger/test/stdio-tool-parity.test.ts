@@ -170,6 +170,7 @@ const dispatchCapability: DispatchCapability = {
   confirmCompletion: async () => ({ operation: "confirm_dispatch_completion" }) as never,
   abort: async () => ({ operation: "abort_dispatch" }) as never,
   fetch: async () => ({ operation: "fetch_dispatch_result" }) as never,
+  gitCommit: async () => ({ operation: "git_commit" }) as never,
 };
 
 const WORKTREE_MANAGE_PARITY_ACK = {
@@ -777,6 +778,27 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
       },
     },
     {
+      name: "git_commit",
+      args: {
+        attestationId: `att_${"a".repeat(32)}`,
+        generation: 1,
+        gitChangeCapability: {
+          scope: "git-change",
+          token: `cq_git_${"a".repeat(43)}`,
+        },
+        operationId: "T2042_parity_commit",
+        expectedHead: "a".repeat(40),
+        message: "parity broker commit",
+        changes: [
+          {
+            kind: "add",
+            path: "parity.txt",
+            newState: { mode: "100644", digest: "b".repeat(64) },
+          },
+        ],
+      },
+    },
+    {
       name: "confirm_dispatch_completion",
       args: {
         attestationId: `att_${"a".repeat(32)}`,
@@ -1165,7 +1187,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 31 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 32 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);

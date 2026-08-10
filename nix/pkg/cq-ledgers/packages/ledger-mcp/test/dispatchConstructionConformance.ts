@@ -8,15 +8,7 @@ import {
 import { LEDGER_TOOL_NAMES } from "@cq/ledger";
 
 const VALID_INPUT = Object.freeze({
-  taskId: "T977",
-  headline: "Exercise the production dispatch construction",
-  description: "Validate before allocation and fetch the bound input once.",
-  acceptance: "Every production host preserves the compact dispatch contract.",
-  worktreePath: "/tmp/wt-T977-construction",
-  branch: "implement/T977",
-  baseCommit: "fe5d747b07669be02626da96a8ac441f8e0bf550",
-  round: 0,
-  startingCommit: "fe5d747b07669be02626da96a8ac441f8e0bf550",
+  goalId: "G977",
 });
 
 interface ToolResultLike {
@@ -105,7 +97,7 @@ export async function assertDispatchConstructionConformance(
     runId: `run-${fixture.cell}`,
   };
   const baseRequest = {
-    roleId: "implement-worker",
+    roleId: "plan-advance",
     input: VALID_INPUT,
     timeoutMs: 120_000,
     expectedChild,

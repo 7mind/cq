@@ -321,6 +321,7 @@ describe("typed fetch_dispatch_result outcomes", () => {
       "confirm_dispatch_completion",
       "abort_dispatch",
       "fetch_dispatch_result",
+      "git_commit",
     ]);
     expect(DISPATCH_PROTOCOL_OPERATIONS).not.toContain("fetch_prompt");
     expect(DISPATCH_PROTOCOL_OPERATIONS).not.toContain("validate_output");

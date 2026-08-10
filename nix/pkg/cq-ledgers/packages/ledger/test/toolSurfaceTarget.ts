@@ -130,6 +130,41 @@ const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
       additionalProperties: false,
     },
   },
+  {
+    name: "git_commit",
+    description:
+      "Commit one closed add/modify/delete/rename manifest through the dispatch- and managed-worktree-bound durable Git change broker. Returns an idempotent receipt.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        attestationId: { type: "string", minLength: 1 },
+        generation: { type: "integer", minimum: 1 },
+        gitChangeCapability: {
+          type: "object",
+          properties: {
+            scope: { type: "string", const: "git-change" },
+            token: { type: "string", pattern: "^cq_git_[A-Za-z0-9_-]{43,}$" },
+          },
+          required: ["scope", "token"],
+          additionalProperties: false,
+        },
+        operationId: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+        expectedHead: { type: "string", pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+        message: { type: "string", minLength: 1, maxLength: 16384 },
+        changes: { type: "array", minItems: 1, items: { type: "object" } },
+      },
+      required: [
+        "attestationId",
+        "generation",
+        "gitChangeCapability",
+        "operationId",
+        "expectedHead",
+        "message",
+        "changes",
+      ],
+      additionalProperties: false,
+    },
+  },
 ]);
 
 const COMPACT_PROJECTION =

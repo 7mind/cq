@@ -32,6 +32,7 @@ import {
   DispatchStateConflictError,
   FETCH_DISPATCH_RESULT_SCHEMA,
   FakeDispatchClock,
+  GIT_CHANGE_CAPABILITY_ENTROPY_BYTES,
   IDEMPOTENCY_HORIZON_MS,
   InMemoryAttestationStore,
   INPUT_CAPABILITY_ENTROPY_BYTES,
@@ -49,6 +50,7 @@ import {
   TOMBSTONE_RETAINED_FIELDS,
   TRUSTED_DISPATCH_ACTORS,
   abortDispatch,
+  authorizeDispatchGitEffect,
   assertAttestationNamespace,
   assertDispatchHandle,
   assertDispatchOperationAuthorization,
@@ -65,6 +67,7 @@ import {
   fetchDispatchResult,
   fetchDispatchInput,
   formatAttestationNamespace,
+  gitChangeCapabilityHash,
   invalidOutputDetailsOf,
   inputCapabilityAuthorizes,
   inputCapabilityHash,
@@ -91,6 +94,7 @@ import {
   type AttestationStoreOperation,
   type ConfirmDispatchCompletionRequest,
   type DispatchHandle,
+  type DispatchGitEffectBinding,
   type FetchDispatchResultRequest,
   type FetchDispatchInputRequest,
   type InputCapability,
@@ -258,6 +262,19 @@ function prepareRequest(overrides: Readonly<Record<string, unknown>> = {}): Prep
     ...overrides,
   } as PrepareDispatchRequest;
 }
+
+const GIT_EFFECT_BINDING: DispatchGitEffectBinding = Object.freeze({
+  taskId: "T685",
+  handleToken: "server-held-worktree-handle",
+  handleFingerprint: "a".repeat(64),
+  repositoryRoot: "/repo",
+  repositoryId: "b".repeat(64),
+  commonDir: "/repo/.git",
+  worktreePath: "/repo/.claude/worktrees/T685",
+  branch: "implement/T685",
+  ref: "refs/heads/implement/T685",
+  baseCommit: "c".repeat(40),
+});
 
 function acceptedOf(outcome: PrepareDispatchOutcome): DispatchPrepareAccepted {
   if (!outcome.accepted) {
@@ -463,6 +480,7 @@ describe("distinct authorization scopes", () => {
       "input-capability",
       "result-capability",
       "trusted-parent",
+      "git-effect-capability",
     ]);
     expect(DISPATCH_OPERATION_AUTHORIZATION_COVERAGE).toEqual(
       [...DISPATCH_PROTOCOL_OPERATIONS].sort(),
@@ -472,8 +490,10 @@ describe("distinct authorization scopes", () => {
     }
     expect(dispatchOperationScope("store_result")).toBe("result-capability");
     expect(dispatchOperationScope("fetch_dispatch_input")).toBe("input-capability");
+    expect(dispatchOperationScope("git_commit")).toBe("git-effect-capability");
     for (const operation of DISPATCH_PROTOCOL_OPERATIONS.filter(
-      (o) => o !== "store_result" && o !== "fetch_dispatch_input",
+      (o) =>
+        o !== "store_result" && o !== "fetch_dispatch_input" && o !== "git_commit",
     )) {
       expect(dispatchOperationScope(operation), operation).toBe("trusted-parent");
     }
@@ -960,6 +980,44 @@ describe("prepare validates role, input and timeout, then allocates", () => {
       p.resultCapability.token,
     );
     expect(JSON.stringify(h.store.snapshot())).not.toContain(p.resultCapability.token);
+  });
+
+  test("binds the worker-only Git capability to a materialized live generation and revokes it on result store", () => {
+    expect(GIT_CHANGE_CAPABILITY_ENTROPY_BYTES).toBe(32);
+    const h = harness();
+    const p = prepared(h, { gitEffectBinding: GIT_EFFECT_BINDING });
+    expect(p.gitChangeCapability?.scope).toBe("git-change");
+    if (p.gitChangeCapability === undefined) throw new Error("missing Git change capability");
+    const row = envelopeOf(h, p);
+    expect(row.gitChangeCapabilityHash).toBe(
+      gitChangeCapabilityHash(p.gitChangeCapability.token),
+    );
+    expect(JSON.stringify(h.store.snapshot())).not.toContain(p.gitChangeCapability.token);
+    expect(() =>
+      authorizeDispatchGitEffect(
+        { namespace: NAMESPACE, ...handleOf(p), gitChangeCapability: p.gitChangeCapability! },
+        h.deps,
+      ),
+    ).toThrow(/materialized input/);
+    fetchDispatchInput(fetchInputRequest(p), h.deps);
+    expect(
+      authorizeDispatchGitEffect(
+        { namespace: NAMESPACE, ...handleOf(p), gitChangeCapability: p.gitChangeCapability },
+        h.deps,
+      ),
+    ).toMatchObject({
+      ...GIT_EFFECT_BINDING,
+      attestationId: p.attestationId,
+      generation: p.generation,
+      roleId: "implement-worker",
+    });
+    storeOne(h, p);
+    expect(() =>
+      authorizeDispatchGitEffect(
+        { namespace: NAMESPACE, ...handleOf(p), gitChangeCapability: p.gitChangeCapability! },
+        h.deps,
+      ),
+    ).toThrow(/live prepared dispatch/);
   });
 
   test("the minters refuse a low-entropy or malformed source", () => {

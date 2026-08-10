@@ -143,11 +143,11 @@ function expectedItemAcknowledgement(item: Item): Record<string, unknown> {
 }
 
 describe("ledger MCP tools", () => {
-  it("exports 31 canonical names, hides both validators, and omits unwired dispatch handlers", async () => {
+  it("exports 32 canonical names, hides both validators, and omits unwired dispatch handlers", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
     expect(tools.map((t) => t.name).sort()).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
-    expect(LEDGER_TOOL_NAMES.length).toBe(31);
+    expect(LEDGER_TOOL_NAMES.length).toBe(32);
     expect(LEDGER_TOOL_NAMES).toContain("fts_search");
     expect(LEDGER_TOOL_NAMES).toContain("snapshot");
     expect(LEDGER_TOOL_NAMES).toContain("derive_predicates");
@@ -1316,7 +1316,7 @@ describe("ledger MCP tools", () => {
     );
   });
 
-  it("routes all six dispatch tools through the scoped capability with handle-only result fetch", async () => {
+  it("routes all seven dispatch tools through scoped capabilities with handle-only result fetch", async () => {
     const store = await buildStore();
     const calls: Array<{ operation: string; input: unknown }> = [];
     const record = (operation: string, input: unknown): never => {
@@ -1330,6 +1330,7 @@ describe("ledger MCP tools", () => {
       confirmCompletion: async (input) => record("confirm_dispatch_completion", input),
       abort: async (input) => record("abort_dispatch", input),
       fetch: async (input) => record("fetch_dispatch_result", input),
+      gitCommit: async (input) => record("git_commit", input),
     };
     const tools = createLedgerMcpTools(
       store,
@@ -1384,6 +1385,20 @@ describe("ledger MCP tools", () => {
     });
     await callTool(tools, "abort_dispatch", { ...handle, reason: "cancelled" });
     await callTool(tools, "fetch_dispatch_result", handle);
+    await callTool(tools, "git_commit", {
+      ...handle,
+      gitChangeCapability: { scope: "git-change", token: `cq_git_${"d".repeat(43)}` },
+      operationId: "T695-commit-1",
+      expectedHead: "a".repeat(40),
+      message: "brokered change",
+      changes: [
+        {
+          kind: "add",
+          path: "new.txt",
+          newState: { mode: "100644", digest: "e".repeat(64) },
+        },
+      ],
+    });
 
     expect(calls.map((entry) => entry.operation)).toEqual([
       "prepare_dispatch",
@@ -1392,6 +1407,7 @@ describe("ledger MCP tools", () => {
       "confirm_dispatch_completion",
       "abort_dispatch",
       "fetch_dispatch_result",
+      "git_commit",
     ]);
     expect(calls[0]!.input).toEqual({
       roleId: "implement-worker",

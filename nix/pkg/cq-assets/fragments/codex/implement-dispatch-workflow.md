@@ -10,7 +10,7 @@
 > validates the assembled input against the role's typed `inputSchema`. Dispatch
 > `CQ_SUBAGENT` by writing the complete private request described above to the
 > adapter's stdin. Retain the prepared handle, `inputCapability`, and
-> `resultCapability`; set `cwd` to the managed worktree path and `ledgerCwd` to the
+> `resultCapability`, and worker-only `gitChangeCapability`; set `cwd` to the managed worktree path and `ledgerCwd` to the
 > parent project. The child calls `fetch_dispatch_input` exactly once before
 > work, so no parent-rendered task narrative enters the launch. Await its
 > handle-only final response after its capability-scoped `store_result`, confirm
@@ -18,7 +18,8 @@
 > with the exact handle retained from `prepare_dispatch`. Apply the blocking
 > consumed-only rule before interpreting the worker result; never key the
 > fetch on any child-reported identifier. Never put the input body or either
-> capability in argv.
+> capability in argv. The worker uses only `git_commit` for incremental commits;
+> the parent retains every returned receipt for result verification.
 > If the adapter rejects an invalid final reply after it can observe the `result-stored` acknowledgement, the trusted parent persists only that
 > lifecycle state and the adapter's bounded diagnostic through `cq log put`,
 > then calls `abort_dispatch` with reason `protocol-violation`. Do not expose

@@ -157,7 +157,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -189,7 +191,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ]
         },
         "begin": {
@@ -223,7 +227,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -255,7 +261,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ]
         },
         "implement-conflict-resolver": {
@@ -285,11 +293,13 @@
         "implement-worker": {
           "tools": [
             "fetch_dispatch_input",
-            "store_result"
+            "store_result",
+            "git_commit"
           ],
           "preservedCapabilities": [
             "fetch_dispatch_input",
-            "store_result"
+            "store_result",
+            "git_commit"
           ]
         },
         "implement/advance": {
@@ -323,7 +333,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -355,7 +367,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ]
         },
         "implement/start": {
@@ -389,7 +403,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -421,7 +437,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ]
         },
         "investigate": {
@@ -455,7 +473,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -487,7 +507,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ]
         },
         "investigate-explorer": {
@@ -541,7 +563,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -573,7 +597,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ]
         },
         "plan": {
@@ -607,7 +633,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -639,7 +667,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ]
         },
         "plan-advance": {
@@ -711,7 +741,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -743,7 +775,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ]
         },
         "plan/follow-up": {
@@ -777,7 +811,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -809,7 +845,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ]
         },
         "planners": {
@@ -851,7 +889,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -883,7 +923,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ]
         },
         "research-experimenter": {
@@ -937,7 +979,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -969,7 +1013,9 @@
             "claim_plan",
             "publish_plan_draft",
             "release_plan_claim",
-            "finalize_plan"
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit"
           ]
         },
         "reviewers": {
@@ -989,12 +1035,12 @@
           "sha256": "d90b2a7e2243cb6cb1df542f38a6192089f12437d23cb82494a4b64dbdcfb86f"
         },
         "counterfactual": {
-          "utf8Bytes": 504223,
-          "tokens": 118726,
-          "sha256": "5e4d4e3a8ccf1c8d0e8b66b500ef30d9f7400c17e53626a90533747e194b9617"
+          "utf8Bytes": 504338,
+          "tokens": 118761,
+          "sha256": "14b2da01fc5e418aab72cefbf96c1727f682cd14a562b590a8eb38f5bb8baccb"
         },
-        "deltaUtf8Bytes": 606880,
-        "deltaTokens": 143323
+        "deltaUtf8Bytes": 606765,
+        "deltaTokens": 143288
       }
     },
     {
@@ -1114,7 +1160,6 @@
       "finalize_plan",
       "fts_search",
       "get_config",
-      "get_usage_stats",
       "list_milestone_items",
       "list_projects",
       "prepare_dispatch",
@@ -1127,9 +1172,11 @@
       "store_result",
       "unarchive_item",
       "update_item",
-      "worktree_manage"
+      "get_usage_stats",
+      "worktree_manage",
+      "git_commit"
     ],
-    "publicToolCount": 31,
+    "publicToolCount": 32,
     "removedPublicTools": [
       "create_milestone",
       "update_milestone",
@@ -1234,7 +1281,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1267,7 +1315,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ]
       },
       "begin": {
@@ -1302,7 +1351,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1335,7 +1385,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ]
       },
       "implement-conflict-resolver": {
@@ -1365,11 +1416,13 @@
       "implement-worker": {
         "tools": [
           "fetch_dispatch_input",
-          "store_result"
+          "store_result",
+          "git_commit"
         ],
         "preservedCapabilities": [
           "fetch_dispatch_input",
-          "store_result"
+          "store_result",
+          "git_commit"
         ]
       },
       "implement/advance": {
@@ -1404,7 +1457,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1437,7 +1491,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ]
       },
       "implement/start": {
@@ -1472,7 +1527,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1505,7 +1561,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ]
       },
       "investigate": {
@@ -1540,7 +1597,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1573,7 +1631,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ]
       },
       "investigate-explorer": {
@@ -1628,7 +1687,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1661,7 +1721,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ]
       },
       "plan": {
@@ -1696,7 +1757,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1729,7 +1791,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ]
       },
       "plan-advance": {
@@ -1802,7 +1865,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1835,7 +1899,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ]
       },
       "plan/follow-up": {
@@ -1870,7 +1935,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1903,7 +1969,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ]
       },
       "planners": {
@@ -1946,7 +2013,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1979,7 +2047,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ]
       },
       "research-experimenter": {
@@ -2034,7 +2103,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2067,7 +2137,8 @@
           "publish_plan_draft",
           "release_plan_claim",
           "finalize_plan",
-          "worktree_manage"
+          "worktree_manage",
+          "git_commit"
         ]
       },
       "reviewers": {
@@ -2087,12 +2158,12 @@
         "sha256": "a7fbc44f6499b7530a51a31a2270feb6e5883b26fc0803e767db2e4ec006c8d7"
       },
       "counterfactual": {
-        "utf8Bytes": 32312,
-        "tokens": 7614,
-        "sha256": "00d893a37e476092452373038bcb509d23a66a3ea32d43979b154d129f09cbb0"
+        "utf8Bytes": 34986,
+        "tokens": 8300,
+        "sha256": "4c74041d4127f933a9630cee8f53685671428c6171d75b736d3487fee68aa091"
       },
-      "deltaUtf8Bytes": 13966,
-      "deltaTokens": 3302
+      "deltaUtf8Bytes": 11292,
+      "deltaTokens": 2616
     },
     "completeRoleContextMeasurement": {
       "method": "independent whole-value JSON.stringify with o200k_base",
@@ -2102,12 +2173,12 @@
         "sha256": "a0053e2c068f55dfb32683581ab0fcea415ccd7bf77c0d9c1488b4fc01f0a3e2"
       },
       "counterfactual": {
-        "utf8Bytes": 376808,
-        "tokens": 88332,
-        "sha256": "fe23b49aaab8104fd27e723c62645fd69165d661bb9dad89a279f5928012efb0"
+        "utf8Bytes": 407196,
+        "tokens": 96127,
+        "sha256": "6b6775e9f7bb6264b845eda6b6d1278053b6e7aeb0997a3cf8af8a04d0ea7e53"
       },
-      "deltaUtf8Bytes": 737865,
-      "deltaTokens": 174588
+      "deltaUtf8Bytes": 707477,
+      "deltaTokens": 166793
     }
   },
   "migrationMap": [
@@ -2119,9 +2190,6 @@
       "coverage": {
         "scanScope": "Every git-tracked regular repository file, including root and hidden guidance.",
         "matchedPaths": [
-          ".codex/prompts/README.md",
-          "CLAUDE.md",
-          "README.md",
           "docs/drafts/20260725-2130-t679-rs3-remeasure/out/corpus-remeasurement.json",
           "docs/drafts/20260725-2130-t679-rs3-remeasure/out/schema-current.json",
           "docs/drafts/20260725-2130-t679-rs3-remeasure/out/schema-rs3.json",
@@ -2132,41 +2200,8 @@
           "nix/pkg/cq-ledgers/docs/drafts/20260731-0216-g129-tool-surface/after.json",
           "nix/pkg/cq-ledgers/docs/drafts/20260731-0216-g129-tool-surface/baseline.json",
           "nix/pkg/cq-ledgers/packages/cq-config/evidence/role-tool-corpus.json",
-          "nix/pkg/cq-ledgers/packages/cq-config/src/roleToolProfiles.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/README.md",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t681/fetch-prompt/claude/plan-advance.json",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t681/fetch-prompt/codex/plan-advance.json",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t681/fetch-prompt/pi/plan-advance.json",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/http.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/main.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/postgres-http-e2e.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/serverInstructions.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/two-prefixed-servers.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-tui/src/mcpClient.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-tui/test/embedded.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-tui/test/mcpClientWire.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-web/src/mcpClient.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-web/test/hubRouting.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-web/test/mcpClientProjectionContract.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-web/test/serveEmbedded.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-web/test/wholeStoreStartup.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-web/test/xdgCatalogServe.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/mcp/wireResponseContract.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/store/remote/RemoteLedgerClient.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/cq-tool-response-contract.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/enumerate-ledgers-summary.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/fetch-ledger-compact.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/mcp-tools.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/remoteLedgerClientInMemoryAdapter.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/stdio-tool-parity.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/stdio-tool-prefix.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/tool-prefix.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/tool-surface-target.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/upstream-ledger.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/wire-response-contract.test.ts",
           "nix/pkg/cq-ledgers/scripts/baselines/g129-tool-surface.json",
           "nix/pkg/cq-ledgers/scripts/baselines/t1326-tool-surface-target.json"
         ],
@@ -2230,48 +2265,9 @@
             "justification": "Generated T1326 target records the migration itself and must be excluded from its own recursively computed caller inventory."
           }
         ],
-        "callers": [
-          "nix/pkg/cq-ledgers/packages/cq-config/src/roleToolProfiles.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-tui/src/mcpClient.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-web/src/mcpClient.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/mcp/wireResponseContract.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/store/remote/RemoteLedgerClient.ts"
-        ],
-        "documentation": [
-          ".codex/prompts/README.md",
-          "CLAUDE.md",
-          "README.md",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/README.md"
-        ],
-        "contractTests": [
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t681/fetch-prompt/claude/plan-advance.json",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t681/fetch-prompt/codex/plan-advance.json",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t681/fetch-prompt/pi/plan-advance.json",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/http.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/main.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/postgres-http-e2e.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/serverInstructions.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/two-prefixed-servers.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-tui/test/embedded.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-tui/test/mcpClientWire.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-web/test/hubRouting.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-web/test/mcpClientProjectionContract.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-web/test/serveEmbedded.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-web/test/wholeStoreStartup.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-web/test/xdgCatalogServe.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/cq-tool-response-contract.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/enumerate-ledgers-summary.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/fetch-ledger-compact.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/mcp-tools.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/remoteLedgerClientInMemoryAdapter.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/stdio-tool-parity.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/stdio-tool-prefix.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/tool-prefix.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/upstream-ledger.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/wire-response-contract.test.ts"
-        ],
+        "callers": [],
+        "documentation": [],
+        "contractTests": [],
         "generatedArtifacts": []
       }
     },
@@ -2283,7 +2279,6 @@
       "coverage": {
         "scanScope": "Every git-tracked regular repository file, including root and hidden guidance.",
         "matchedPaths": [
-          "README.md",
           "docs/drafts/20260725-2130-t679-rs3-remeasure/README.md",
           "docs/drafts/20260725-2130-t679-rs3-remeasure/out/schema-current.json",
           "docs/drafts/20260725-2130-t679-rs3-remeasure/out/schema-rs3.json",
@@ -2291,31 +2286,10 @@
           "docs/drafts/20260725-2130-t679-rs3-remeasure/remeasure.ts",
           "docs/drafts/20260725-2130-t679-rs3-remeasure/twin-server-probe.ts",
           "docs/drafts/20260725-2130-t679-rs3-remeasurement.md",
-          "nix/pkg/cq-assets/commands/cq/implement/advance.md",
           "nix/pkg/cq-ledgers/docs/drafts/20260731-0216-g129-tool-surface/after.json",
           "nix/pkg/cq-ledgers/docs/drafts/20260731-0216-g129-tool-surface/baseline.json",
-          "nix/pkg/cq-ledgers/packages/cq-config/src/roleToolProfiles.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/README.md",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/serverInstructions.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-tui/src/mcpClient.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-tui/test/mcpClientWire.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-web/src/App.tsx",
-          "nix/pkg/cq-ledgers/packages/ledger-web/src/agentsCatalogue.gen.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-web/src/mcpClient.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-web/test/mcpClientProjectionContract.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/mcp/wireResponseContract.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/store/remote/RemoteLedgerClient.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/cq-tool-response-contract.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/fixtures/cq-tool-response-contract.json",
-          "nix/pkg/cq-ledgers/packages/ledger/test/mcp-tools.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/remoteLedgerClientContract.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/remoteLedgerClientInMemoryAdapter.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/stdio-tool-parity.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/tool-surface-target.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/wire-response-contract.test.ts",
           "nix/pkg/cq-ledgers/scripts/baselines/g129-tool-surface.json",
           "nix/pkg/cq-ledgers/scripts/baselines/t1326-tool-surface-target.json"
         ],
@@ -2375,36 +2349,10 @@
             "justification": "Generated T1326 target records the migration itself and must be excluded from its own recursively computed caller inventory."
           }
         ],
-        "callers": [
-          "nix/pkg/cq-ledgers/packages/cq-config/src/roleToolProfiles.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-tui/src/mcpClient.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-web/src/App.tsx",
-          "nix/pkg/cq-ledgers/packages/ledger-web/src/mcpClient.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/mcp/wireResponseContract.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/store/remote/RemoteLedgerClient.ts"
-        ],
-        "documentation": [
-          "README.md",
-          "nix/pkg/cq-assets/commands/cq/implement/advance.md",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/README.md"
-        ],
-        "contractTests": [
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/serverInstructions.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-tui/test/mcpClientWire.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-web/test/mcpClientProjectionContract.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/cq-tool-response-contract.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/fixtures/cq-tool-response-contract.json",
-          "nix/pkg/cq-ledgers/packages/ledger/test/mcp-tools.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/remoteLedgerClientContract.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/remoteLedgerClientInMemoryAdapter.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/stdio-tool-parity.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/wire-response-contract.test.ts"
-        ],
-        "generatedArtifacts": [
-          "nix/pkg/cq-ledgers/packages/ledger-web/src/agentsCatalogue.gen.ts"
-        ]
+        "callers": [],
+        "documentation": [],
+        "contractTests": [],
+        "generatedArtifacts": []
       }
     },
     {
@@ -2415,8 +2363,6 @@
       "coverage": {
         "scanScope": "Every git-tracked regular repository file, including root and hidden guidance.",
         "matchedPaths": [
-          "CLAUDE.md",
-          "README.md",
           "docs/drafts/20260725-2130-t679-rs3-remeasure/out/corpus-remeasurement.json",
           "docs/drafts/20260725-2130-t679-rs3-remeasure/out/schema-current.json",
           "docs/drafts/20260725-2130-t679-rs3-remeasure/out/schema-rs3.json",
@@ -2427,21 +2373,8 @@
           "nix/pkg/cq-ledgers/docs/drafts/20260731-0216-g129-tool-surface/after.json",
           "nix/pkg/cq-ledgers/docs/drafts/20260731-0216-g129-tool-surface/baseline.json",
           "nix/pkg/cq-ledgers/packages/cq-config/evidence/role-tool-corpus.json",
-          "nix/pkg/cq-ledgers/packages/cq-config/src/roleToolProfiles.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/README.md",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/serverInstructions.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/mcp/wireResponseContract.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/store/remote/RemoteLedgerClient.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/cq-tool-response-contract.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/direct-read-projection.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/mcp-tools.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/remoteLedgerClientInMemoryAdapter.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/stdio-tool-parity.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/tool-surface-target.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/wire-response-contract.test.ts",
           "nix/pkg/cq-ledgers/scripts/baselines/g129-tool-surface.json",
           "nix/pkg/cq-ledgers/scripts/baselines/t1326-tool-surface-target.json"
         ],
@@ -2505,27 +2438,9 @@
             "justification": "Generated T1326 target records the migration itself and must be excluded from its own recursively computed caller inventory."
           }
         ],
-        "callers": [
-          "nix/pkg/cq-ledgers/packages/cq-config/src/roleToolProfiles.ts",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/mcp/wireResponseContract.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/store/remote/RemoteLedgerClient.ts"
-        ],
-        "documentation": [
-          "CLAUDE.md",
-          "README.md",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/README.md"
-        ],
-        "contractTests": [
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/test/serverInstructions.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/cq-tool-response-contract.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/direct-read-projection.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/mcp-tools.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/remoteLedgerClientInMemoryAdapter.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/stdio-tool-parity.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/wire-response-contract.test.ts"
-        ],
+        "callers": [],
+        "documentation": [],
+        "contractTests": [],
         "generatedArtifacts": []
       }
     }

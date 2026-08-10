@@ -12,6 +12,7 @@ import {
   AttestationBackendUnsupportedError,
   DispatchStateConflictError,
   abortDispatchOn,
+  authorizeDispatchGitEffectOn,
   assembleDispatchInput,
   attestationInstantMs,
   confirmDispatchCompletionOn,
@@ -24,10 +25,13 @@ import {
   loadConfig,
   prepareDispatchOn,
   prepareDispatchRequestDigest,
+  resolveDispatchGitEffectBindingOn,
+  resolveDispatchGitEffectBindingForHandleOn,
   storeDispatchResultOn,
   validateDispatchInput,
   type AttestationBackend,
   type DispatchNarrativeSource,
+  type DispatchJSONValue,
   type DispatchPrepareAccepted,
   type DispatchPreLaunchRejection,
   type PrepareDispatchOutcome,
@@ -39,6 +43,9 @@ import {
   attestationNamespaceForTrustedHubProject,
   createAttestationStoreForConstruction,
   createDispatchNarrativeSource,
+  commitManagedWorktreeChanges,
+  resolveManagedWorktreeDispatchBinding,
+  withManagedWorktreeEffectLock,
   resolveSingleProjectAttestationNamespace,
   type DispatchCapability,
   type LedgerStore,
@@ -54,6 +61,9 @@ export interface DispatchCapabilityOptions {
   readonly narrativeSource?: DispatchNarrativeSource;
   readonly now?: () => string;
   readonly randomBytes?: (count: number) => Uint8Array;
+  /** Enables the implement-worker Git broker for a local project repository. */
+  readonly repositoryRoot?: string;
+  readonly worktreeStateDir?: string;
 }
 
 /**
@@ -336,6 +346,40 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           `role-artifact surface "${artifactSurface}" does not match attested manifest surface "${manifestSurface}"`,
         );
       }
+      let gitEffectBinding;
+      if (roleId === "implement-worker" && options.repositoryRoot !== undefined) {
+        if (
+          typeof dispatchInput !== "object" ||
+          dispatchInput === null ||
+          Array.isArray(dispatchInput)
+        ) {
+          return rejectLaunch("input", "implement-worker Git binding requires object input");
+        }
+        const dispatchRecord = dispatchInput as { readonly [key: string]: DispatchJSONValue };
+        const taskId = dispatchRecord["taskId"];
+        const worktreePath = dispatchRecord["worktreePath"];
+        const branch = dispatchRecord["branch"];
+        if (
+          typeof taskId !== "string" ||
+          typeof worktreePath !== "string" ||
+          typeof branch !== "string"
+        ) {
+          return rejectLaunch(
+            "input.worktreePath",
+            "implement-worker requires taskId, worktreePath, and branch from worktree_manage",
+          );
+        }
+        gitEffectBinding = await resolveManagedWorktreeDispatchBinding(
+          { repositoryRoot: options.repositoryRoot, taskId, worktreePath, branch },
+          options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+        );
+        if (gitEffectBinding === null) {
+          return rejectLaunch(
+            "input.worktreePath",
+            "implement-worker worktree coordinates do not resolve to one live manager handle",
+          );
+        }
+      }
       const request = {
         namespace,
         roleId,
@@ -349,6 +393,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         catalogHash,
         expectedChild: input.expectedChild,
         ...(input.reprepareOf === undefined ? {} : { reprepareOf: input.reprepareOf }),
+        ...(gitEffectBinding === undefined ? {} : { gitEffectBinding }),
       } as const;
       const fingerprint = prepareDispatchRequestDigest(request);
       while (true) {
@@ -392,7 +437,16 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     },
     fetchInput: (input) => fetchDispatchInputOn(options.backend, { namespace, ...input }, { now }),
     storeResult: async (input) => {
-      const outcome = await storeDispatchResultOn(options.backend, input, { now });
+      const binding = await resolveDispatchGitEffectBindingOn(options.backend, input);
+      const store = async () => await storeDispatchResultOn(options.backend, input, { now });
+      const outcome =
+        binding === undefined
+          ? await store()
+          : await withManagedWorktreeEffectLock(
+              binding,
+              options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+              store,
+            );
       if (outcome.state === "aborted") {
         rememberTerminal(outcome.result, outcome.result.abortedAt);
       }
@@ -411,11 +465,21 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       return outcome;
     },
     abort: async (input) => {
-      const result = await abortDispatchOn(
-        options.backend,
-        { namespace, actor: "trusted-parent", ...input },
-        { now },
-      );
+      const binding = await resolveDispatchGitEffectBindingForHandleOn(options.backend, input);
+      const abort = async () =>
+        await abortDispatchOn(
+          options.backend,
+          { namespace, actor: "trusted-parent", ...input },
+          { now },
+        );
+      const result =
+        binding === undefined
+          ? await abort()
+          : await withManagedWorktreeEffectLock(
+              binding,
+              options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+              abort,
+            );
       rememberTerminal(result, result.abortedAt);
       return result;
     },
@@ -425,6 +489,60 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         { namespace, actor: "trusted-parent", ...input },
         { now },
       ),
+    gitCommit: async (input) => {
+      if (options.repositoryRoot === undefined) {
+        throw new Error("git_commit is unavailable without a local repository root");
+      }
+      const authorize = async () =>
+        await authorizeDispatchGitEffectOn(
+          options.backend,
+          {
+            namespace,
+            attestationId: input.attestationId,
+            generation: input.generation,
+            gitChangeCapability: input.gitChangeCapability,
+          },
+          { now },
+        );
+      const authorization = await authorize();
+      return await commitManagedWorktreeChanges(
+        {
+          authorization,
+          operationId: input.operationId,
+          expectedHead: input.expectedHead,
+          message: input.message,
+          changes: input.changes,
+        },
+        {
+          ...(options.worktreeStateDir === undefined
+            ? {}
+            : { stateDir: options.worktreeStateDir }),
+          now: () => new Date(now()),
+          authorize: async (expected) => {
+            const observed = await authorize();
+            if (
+              observed.attestationId !== expected.attestationId ||
+              observed.generation !== expected.generation ||
+              observed.taskId !== expected.taskId ||
+              observed.handleToken !== expected.handleToken ||
+              observed.handleFingerprint !== expected.handleFingerprint ||
+              observed.repositoryRoot !== expected.repositoryRoot ||
+              observed.repositoryId !== expected.repositoryId ||
+              observed.commonDir !== expected.commonDir ||
+              observed.worktreePath !== expected.worktreePath ||
+              observed.branch !== expected.branch ||
+              observed.ref !== expected.ref ||
+              observed.baseCommit !== expected.baseCommit ||
+              observed.roleId !== expected.roleId ||
+              observed.surface !== expected.surface ||
+              observed.childCancelAt !== expected.childCancelAt
+            ) {
+              throw new Error("dispatch Git authorization changed during broker operation");
+            }
+          },
+        },
+      );
+    },
   };
 }
 
@@ -452,6 +570,7 @@ function available(
   backend: AttestationBackend,
   promptArtifactStore: PromptArtifactStore,
   narrativeSource?: DispatchNarrativeSource,
+  repositoryRoot?: string,
 ): DispatchRuntime {
   return Object.freeze({
     kind: "available" as const,
@@ -459,6 +578,7 @@ function available(
       backend,
       promptArtifactStore,
       ...(narrativeSource === undefined ? {} : { narrativeSource }),
+      ...(repositoryRoot === undefined ? {} : { repositoryRoot }),
     }),
     close: async (): Promise<void> => backend.close(),
   });
@@ -535,6 +655,7 @@ export async function createSingleProjectDispatchRuntime(
     attestationBackend,
     options.promptArtifactStore,
     createDispatchNarrativeSource(options.resolved.store, namespace.projectKey),
+    options.resolved.configRoot,
   );
 }
 

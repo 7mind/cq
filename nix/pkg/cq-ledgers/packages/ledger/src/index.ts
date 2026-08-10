@@ -310,13 +310,17 @@ export {
   prepareManagedWorktree,
   rebaseBunWorkspaceIntoWorktree,
   releaseManagedWorktree,
+  resolveManagedWorktreeDispatchBinding,
   resolveBunInstallCacheDir,
   resolveCqCacheRoot,
   resolveNodeGypBinDir,
   validateManagedWorktreeHandle,
   validateManagedWorktreeInstallPlan,
+  assertManagedWorktreeDispatchBindingLive,
+  withManagedWorktreeEffectLock,
 } from "./managedWorktree.js";
 export type {
+  ManagedWorktreeDispatchBinding,
   ManagedWorktreeDeps,
   ManagedWorktreeFaultBoundary,
   ManagedWorktreeFaultInjector,
@@ -335,8 +339,20 @@ export type {
   ReleaseManagedWorktreeRefusalReason,
   ReleaseManagedWorktreeRequest,
   ReleaseManagedWorktreeResult,
+  ResolveManagedWorktreeDispatchBindingRequest,
   WipOpenCheckpointFinding,
 } from "./managedWorktree.js";
+export { commitManagedWorktreeChanges } from "./gitChangeBroker.js";
+export type {
+  DispatchBoundGitAuthorization,
+  GitChangeBrokerDeps,
+  GitChangeBrokerFaultBoundary,
+  GitChangeBrokerReceipt,
+  GitChangeBrokerRequest,
+  GitChangeManifestEntry,
+  GitPathState,
+  GitRegularMode,
+} from "./gitChangeBroker.js";
 export { GitPersistence } from "./store/git/GitPersistence.js";
 export { GitObjectLedgerBackend } from "./store/git/GitObjectLedgerBackend.js";
 export type { GitObjectLedgerBackendOpts } from "./store/git/GitObjectLedgerBackend.js";

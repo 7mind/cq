@@ -7,6 +7,7 @@ import type {
   DispatchOverlayApplication,
   FetchDispatchResult,
   InputCapability,
+  GitChangeCapability,
   MaterializedDispatchInput,
   NativeChildIdentity,
   NativeCompletionProof,
@@ -14,6 +15,10 @@ import type {
   ResultCapability,
   StoreDispatchResultOutcome,
 } from "@cq/config";
+import type {
+  GitChangeBrokerReceipt,
+  GitChangeManifestEntry,
+} from "../gitChangeBroker.js";
 
 export interface PrepareDispatchToolInput {
   readonly roleId?: string;
@@ -48,6 +53,14 @@ export interface ConfirmDispatchCompletionToolInput extends DispatchHandle {
 export type AbortDispatchToolInput = AbortDispatch;
 export type FetchDispatchResultToolInput = DispatchHandle;
 
+export interface GitCommitToolInput extends DispatchHandle {
+  readonly gitChangeCapability: GitChangeCapability;
+  readonly operationId: string;
+  readonly expectedHead: string;
+  readonly message: string;
+  readonly changes: readonly GitChangeManifestEntry[];
+}
+
 export interface DispatchCapability {
   prepare(input: PrepareDispatchToolInput): Promise<PrepareDispatchOutcome>;
   fetchInput(input: FetchDispatchInputToolInput): Promise<MaterializedDispatchInput>;
@@ -57,6 +70,7 @@ export interface DispatchCapability {
   ): Promise<ConfirmDispatchCompletionOutcome>;
   abort(input: AbortDispatchToolInput): Promise<AbortedDispatchResult>;
   fetch(input: FetchDispatchResultToolInput): Promise<FetchDispatchResult>;
+  gitCommit?(input: GitCommitToolInput): Promise<GitChangeBrokerReceipt>;
 }
 
 export class DispatchNotImplementedError extends Error {

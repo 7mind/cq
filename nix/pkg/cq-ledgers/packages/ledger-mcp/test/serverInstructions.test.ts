@@ -46,7 +46,7 @@ describe("buildServerInstructions", () => {
     // prefixedToolNames produces exactly one entry per LEDGER_TOOL_NAMES member.
     expect(allowed.size).toBe(LEDGER_TOOL_NAMES.length);
     // Pin the total registered tool count so any accidental addition/removal fails here.
-    expect(LEDGER_TOOL_NAMES.length).toBe(31);
+    expect(LEDGER_TOOL_NAMES.length).toBe(32);
     for (const tok of emitted) {
       expect(allowed.has(tok)).toBe(true);
     }
@@ -55,12 +55,13 @@ describe("buildServerInstructions", () => {
   test("narrow role instructions name only available tools, with or without a prefix", () => {
     const roleId = "implement-worker";
     const available = new Set(exposedLedgerToolsForRole(roleId));
-    expect(available).toEqual(new Set(["fetch_dispatch_input", "store_result"]));
+    expect(available).toEqual(new Set(["fetch_dispatch_input", "store_result", "git_commit"]));
     expect(buildServerInstructions("", roleId)).toBe(
       [
         'Ledger tool profile "implement-worker" exposes only:',
         "- fetch_dispatch_input",
         "- store_result",
+        "- git_commit",
       ].join("\n"),
     );
     expect(buildServerInstructions("worker", roleId)).toBe(
@@ -68,6 +69,7 @@ describe("buildServerInstructions", () => {
         'Ledger tool profile "implement-worker" exposes only:',
         "- worker_fetch_dispatch_input",
         "- worker_store_result",
+        "- worker_git_commit",
       ].join("\n"),
     );
   });

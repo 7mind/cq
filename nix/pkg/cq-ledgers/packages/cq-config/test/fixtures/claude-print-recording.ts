@@ -39,7 +39,8 @@ if (!value("--append-system-prompt").includes("T688-ROLE-PROMPT")) {
   throw new Error("wrong generated role prompt");
 }
 if (
-  value("--allowedTools") !== "mcp__t688store__fetch_dispatch_input,mcp__t688store__store_result"
+  value("--allowedTools") !==
+    "mcp__t688store__fetch_dispatch_input,mcp__t688store__store_result,mcp__t688store__git_commit"
 ) {
   throw new Error("wrong scoped dispatch tools");
 }

@@ -273,6 +273,9 @@ export function createCodexProcessDispatchAdapter(
       handle,
       inputCapability: context.prepared.inputCapability,
       resultCapability: context.prepared.resultCapability,
+      ...(context.prepared.gitChangeCapability === undefined
+        ? {}
+        : { gitChangeCapability: context.prepared.gitChangeCapability }),
       timeoutMs: gate.childWindowMs,
     };
     const plan = createCodexRoleBoundaryPlan(request);

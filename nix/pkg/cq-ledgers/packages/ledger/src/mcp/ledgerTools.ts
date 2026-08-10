@@ -85,6 +85,7 @@ import {
   CONFIRM_DISPATCH_COMPLETION_INPUT,
   FETCH_DISPATCH_INPUT_INPUT,
   FETCH_DISPATCH_RESULT_INPUT,
+  GIT_COMMIT_INPUT,
   PREPARE_DISPATCH_INPUT,
   STORE_RESULT_INPUT,
 } from "./dispatchToolSchemas.js";
@@ -119,6 +120,7 @@ export const DISPATCH_LIFECYCLE_TOOL_NAMES = [
   "confirm_dispatch_completion",
   "abort_dispatch",
   "fetch_dispatch_result",
+  "git_commit",
 ] as const satisfies readonly LedgerToolName[];
 
 const DISPATCH_LIFECYCLE_TOOL_NAME_SET: ReadonlySet<string> = new Set(
@@ -865,6 +867,17 @@ export function createLedgerMcpToolSpecifications(
       return jsonResult(await dispatchCapability.fetch(args));
     },
   );
+  const gitCommitTool = tool(
+    "git_commit",
+    "Commit one closed, dispatch-bound add/modify/delete/rename manifest through the trusted Git broker. Returns a durable parent-verifiable receipt; repeated operationId plus identical request replays that receipt.",
+    GIT_COMMIT_INPUT,
+    async (args) => {
+      if (dispatchCapability?.gitCommit === undefined) {
+        throw new Error("git_commit is unavailable for this dispatch runtime");
+      }
+      return jsonResult(await dispatchCapability.gitCommit(args));
+    },
+  );
 
   // ---- Ordinary prompt-catalog MCP surface (1) ---------------------------
   // Both validators remain available on PromptCatalogCapability only for
@@ -977,6 +990,7 @@ export function createLedgerMcpToolSpecifications(
     listProjectsTool,
     ...planLifecycleTools,
     worktreeManageTool,
+    ...(dispatchCapability === undefined ? [] : [gitCommitTool]),
   ] as unknown as AnyTool[];
 
   const registeredToolNames =

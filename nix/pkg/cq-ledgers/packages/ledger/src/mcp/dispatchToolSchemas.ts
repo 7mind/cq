@@ -16,6 +16,40 @@ const inputCapability = z.object({
   token: z.string(),
 });
 
+const gitChangeCapability = z.object({
+  scope: z.literal("git-change"),
+  token: z.string(),
+});
+
+const gitPathState = z
+  .object({
+    mode: z.enum(["100644", "100755"]),
+    digest: z.string().regex(/^[0-9a-f]{64}$/),
+  })
+  .strict();
+
+const gitChange = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("add"), path: z.string(), newState: gitPathState }).strict(),
+  z
+    .object({
+      kind: z.literal("modify"),
+      path: z.string(),
+      oldState: gitPathState,
+      newState: gitPathState,
+    })
+    .strict(),
+  z.object({ kind: z.literal("delete"), path: z.string(), oldState: gitPathState }).strict(),
+  z
+    .object({
+      kind: z.literal("rename"),
+      oldPath: z.string(),
+      newPath: z.string(),
+      oldState: gitPathState,
+      newState: gitPathState,
+    })
+    .strict(),
+]);
+
 const nativeCompletion = z.object({
   kind: z.literal("native-completion"),
   actor: z.enum(["trusted-parent", "trusted-extension"]),
@@ -73,3 +107,12 @@ export const ABORT_DISPATCH_INPUT = {
 } as const;
 
 export const FETCH_DISPATCH_RESULT_INPUT = handle;
+
+export const GIT_COMMIT_INPUT = {
+  ...handle,
+  gitChangeCapability,
+  operationId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  expectedHead: z.string().regex(/^[0-9a-f]{40,64}$/),
+  message: z.string().min(1).max(16 * 1024),
+  changes: z.array(gitChange).min(1),
+} as const;

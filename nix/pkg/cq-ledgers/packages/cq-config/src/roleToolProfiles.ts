@@ -41,6 +41,7 @@ export const LEDGER_CAPABILITY_TOOL_NAMES = [
   "release_plan_claim",
   "finalize_plan",
   "worktree_manage",
+  "git_commit",
 ] as const;
 
 export type LedgerCapabilityToolName = (typeof LEDGER_CAPABILITY_TOOL_NAMES)[number];
@@ -62,6 +63,7 @@ const NON_DOMAIN_LEDGER_TOOL_NAMES = new Set<LedgerCapabilityToolName>([
   "fetch_dispatch_result",
   "fetch_prompt",
   "list_projects",
+  "git_commit",
 ]);
 
 /** Tools that read or mutate ledger domain state, excluding config/catalog/transport plumbing. */
@@ -76,6 +78,7 @@ export const ROLE_CAPABILITY_CLASSES = [
   "config-read",
   "dispatch-result-plumbing",
   "no-domain-ledger",
+  "git-change-broker",
 ] as const;
 
 export type RoleCapabilityClass = (typeof ROLE_CAPABILITY_CLASSES)[number];
@@ -95,6 +98,7 @@ export const ROLE_CAPABILITY_TOOLS: Readonly<
   "config-read": ["get_config"],
   "dispatch-result-plumbing": DISPATCH_RESULT_PLUMBING_TOOL_NAMES,
   "no-domain-ledger": [],
+  "git-change-broker": ["git_commit"],
 });
 
 export interface RoleToolCapabilityProfile {
@@ -159,6 +163,15 @@ function profileForCatalogRole({
       roleKind,
       ["fallback-review-writes", "dispatch-result-plumbing"],
       ["create_item", "fetch_dispatch_input", "store_result"],
+      DISPATCH_CHILD_EVIDENCE,
+    );
+  }
+  if (roleId === "implement-worker") {
+    return role(
+      roleId,
+      roleKind,
+      ["no-domain-ledger", "dispatch-result-plumbing", "git-change-broker"],
+      ["fetch_dispatch_input", "git_commit", "store_result"],
       DISPATCH_CHILD_EVIDENCE,
     );
   }

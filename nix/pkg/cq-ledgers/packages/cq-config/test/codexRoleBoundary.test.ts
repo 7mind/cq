@@ -20,6 +20,10 @@ const RESULT_CAPABILITY = {
   scope: "store-result",
   token: "cq_result_0123456789abcdefghijklmnopqrstuvwxyz",
 } as const;
+const GIT_CHANGE_CAPABILITY = {
+  scope: "git-change",
+  token: "cq_git_0123456789abcdefghijklmnopqrstuvwxyz",
+} as const;
 const BOUNDARY_CONTEXTS = {
   cwd: "/worktrees/task",
   ledgerCwd: "/projects/cq",
@@ -43,6 +47,29 @@ const REVIEW_TOOLS = [
 const PLUMBING_TOOLS = ["fetch_dispatch_input", "store_result"] as const;
 
 describe("T1330 Codex role process boundary", () => {
+  test("delivers the worker Git capability only in the private stdin envelope", () => {
+    const plan = createCodexRoleBoundaryPlan({
+      roleId: "implement-worker",
+      roleInstructions: "implement the task",
+      handle: HANDLE,
+      inputCapability: INPUT_CAPABILITY,
+      gitChangeCapability: GIT_CHANGE_CAPABILITY,
+      ...BOUNDARY_CONTEXTS,
+      model: "frontier-model",
+      reasoningEffort: "high",
+      sandboxMode: "workspace-write",
+      timeoutMs: 120_000,
+      promptRoot: "/nix/store/codex-prompt-root",
+      ledgerCommand: "/nix/store/cq/bin/cq",
+      codexExecutable: "/nix/store/codex/bin/codex",
+    });
+    expect(JSON.parse(plan.stdin)).toMatchObject({
+      ...HANDLE,
+      gitChangeCapability: GIT_CHANGE_CAPABILITY,
+    });
+    expect(plan.argv.join(" ")).not.toContain(GIT_CHANGE_CAPABILITY.token);
+  });
+
   test("faithfully records every dispatched role's pre-context tool profile and launch invariants", () => {
     const domainTools = new Set<string>(DOMAIN_LEDGER_TOOL_NAMES);
     let unknownRoleRejected = false;
@@ -201,7 +228,7 @@ describe("T1330 Codex role process boundary", () => {
       tools: {
         "plan-advance": PLANNING_TOOLS,
         "plan-reviewer": REVIEW_TOOLS,
-        "implement-worker": PLUMBING_TOOLS,
+        "implement-worker": [...PLUMBING_TOOLS, "git_commit"],
         "implement-reviewer": PLUMBING_TOOLS,
         "implement-conflict-resolver": PLUMBING_TOOLS,
         "investigate-explorer": PLUMBING_TOOLS,

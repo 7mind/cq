@@ -18,8 +18,8 @@
  *
  * - **Output** — the worker result block
  *   `{ taskId, status, resultCommit, branch, actualWorktreePath, filesTouched,
- *   checkSummary, summary, baseVerification, blockedReason?, gateDurationMs?,
- *   mutationTable? }`.
+ *   checkSummary, summary, baseVerification, gitReceipts, blockedReason?,
+ *   gateDurationMs?, mutationTable? }`.
  *   `status` is `pass | fail`; `resultCommit` is a full-sha string
  *   (`^[0-9a-f]{40}$`) on pass and `null` on fail. `actualWorktreePath` is the
  *   absolute path the worker actually operated in (`git rev-parse
@@ -259,6 +259,49 @@ const outputSchema = {
         "Absolute path of the worktree the worker actually operated in (git rev-parse --show-toplevel). Required so the orchestrator learns harness-minted paths (D143).",
     },
     filesTouched: { type: "array", items: { type: "string" } },
+    gitReceipts: {
+      type: "array",
+      minItems: 1,
+      description:
+        "Durable dispatch-bound broker receipts retained when the worker performed brokered commits.",
+      items: {
+        type: "object",
+        properties: {
+          kind: { type: "string", const: "cq-git-change-receipt" },
+          version: { type: "integer", const: 1 },
+          attestationId: { type: "string", minLength: 1 },
+          generation: { type: "integer", minimum: 1 },
+          taskId: { type: "string", pattern: "^T[0-9]+$" },
+          operationId: { type: "string", minLength: 1 },
+          requestDigest: { type: "string", pattern: "^[0-9a-f]{64}$" },
+          oldHead: { type: "string", pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+          newHead: { type: "string", pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+          tree: { type: "string", pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+          objectOids: {
+            type: "array",
+            items: { type: "string", pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+          },
+          paths: { type: "array", items: { type: "string", minLength: 1 } },
+          committedAt: { type: "string", minLength: 1 },
+        },
+        required: [
+          "kind",
+          "version",
+          "attestationId",
+          "generation",
+          "taskId",
+          "operationId",
+          "requestDigest",
+          "oldHead",
+          "newHead",
+          "tree",
+          "objectOids",
+          "paths",
+          "committedAt",
+        ],
+        additionalProperties: false,
+      },
+    },
     checkSummary: { type: "string" },
     summary: { type: "string" },
     baseVerification: {
@@ -341,16 +384,15 @@ const outputSchema = {
 
 /**
  * The implement-worker per-role schema sidecar (storage-format decision 3).
- * `version: 5` (bumped from 4, T1307/G121): required `baseVerification`
- * discriminated union on output; `baseCommit`/`startingCommit` full-SHA only;
- * optional `priorResultCommit` on input for round>0 resume evidence. A stale
- * deployed root rendered against the v4 contract must not be mistaken for this
+ * `version: 6` (bumped from 5, T2042): broker-capable workers retain durable
+ * receipts so the parent can verify the exact commit ancestry and manifest.
+ * A stale deployed root rendered against the v5 contract must not be mistaken for this
  * one. DISPATCHED_ROLE_VERSIONS derives this automatically; it is not
  * hand-edited.
  */
 export const implementWorkerSidecar: RoleSchemaSidecar = {
   id: "implement-worker",
-  version: 5,
+  version: 6,
   inputSchema,
   outputSchema,
 };

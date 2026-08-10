@@ -236,6 +236,7 @@ measured savings without another batching schema.
 | `release_plan_claim` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { kind, …operation key, questions, researches, waitingResearches, tasks, waitingTasks, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
 | `finalize_plan` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { …operation key, reviewId, draft, decisionId, manifest, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
 | `worktree_manage` | `purpose-built-small` | Prepare: `{ status: "prepared"|"resume-required"|"refused", … }`. Release: `{ status: "released"|"refused", … }`. Typed acknowledgements only; never exposes filesystem mutation primitives individually. |
+| `git_commit` | `purpose-built-small` | A replayable `{ kind, version, attestationId, generation, taskId, operationId, requestDigest, oldHead, newHead, tree, objectOids, paths, committedAt }` receipt. |
 <!-- ledger-response-contract:end -->
 
 ### Usage statistics: three access paths

@@ -306,6 +306,10 @@ export const LEDGER_RESPONSE_CONTRACTS = {
       "Release: `{ status: \"released\"|\"refused\", … }`. Typed acknowledgements only; " +
       "never exposes filesystem mutation primitives individually.",
   ),
+  git_commit: purposeBuiltSmall(
+    "A replayable `{ kind, version, attestationId, generation, taskId, operationId, " +
+      "requestDigest, oldHead, newHead, tree, objectOids, paths, committedAt }` receipt.",
+  ),
 } as const satisfies Record<LedgerToolName, LedgerResponseContract>;
 
 export function appendLedgerResponseDescription(

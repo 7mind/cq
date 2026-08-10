@@ -92,6 +92,21 @@ export function validateManagedWorktreeHandle(
   return validateManagedWorktreeHandleContract(value, expectedRepositoryRoot);
 }
 
+/** Server-side worktree identity bound into one dispatch Git-effect capability. */
+export interface ManagedWorktreeDispatchBinding {
+  readonly taskId: string;
+  /** Registry locator retained only inside the trusted server. */
+  readonly handleToken: string;
+  readonly handleFingerprint: string;
+  readonly repositoryRoot: string;
+  readonly repositoryId: string;
+  readonly commonDir: string;
+  readonly worktreePath: string;
+  readonly branch: string;
+  readonly ref: string;
+  readonly baseCommit: string;
+}
+
 export interface PreparedWorktreeEvidence {
   readonly worktreeId: string;
   readonly absolutePath: string;
@@ -158,7 +173,8 @@ export type ReleaseManagedWorktreeRefusalReason =
   | "not-terminal"
   | "commit-mismatch"
   | "ambiguous"
-  | "already-live-elsewhere";
+  | "already-live-elsewhere"
+  | "effect-lock-busy";
 
 export type ReleaseManagedWorktreeResult =
   | {
@@ -272,6 +288,8 @@ export interface ManagedWorktreeDeps {
   readonly lockfile?: Lockfile;
   /** Override prepare-lock timeout (ms). */
   readonly prepareLockTimeoutMs?: number;
+  /** Override broker/store/release effect-lock timeout (ms). */
+  readonly effectLockTimeoutMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -1567,6 +1585,45 @@ export async function releaseManagedWorktree(
   request: ReleaseManagedWorktreeRequest,
   deps: ManagedWorktreeDeps = {},
 ): Promise<ReleaseManagedWorktreeResult> {
+  if (!isHandleShape(request.handle)) {
+    return refusedRelease("handle-invalid", "handle has invalid shape");
+  }
+  const git = deps.git ?? nodeManagedWorktreeGitRunner;
+  const repositoryRoot = await resolveRepositoryRoot(git, request.handle.repositoryRoot);
+  if (repositoryRoot === null) {
+    return refusedRelease("handle-foreign", "handle repositoryRoot is not a git repository");
+  }
+  const lockfile =
+    deps.lockfile ??
+    new Lockfile({
+      ...(deps.effectLockTimeoutMs === undefined
+        ? {}
+        : { acquireTimeoutMs: deps.effectLockTimeoutMs }),
+    });
+  let releaseLock: (() => Promise<void>) | undefined;
+  try {
+    releaseLock = await lockfile.acquire(
+      join(registryRoot(repositoryRoot, deps.stateDir), PREPARE_LOCKS_DIRNAME),
+      `effect-${request.handle.token}`,
+    );
+  } catch (error) {
+    return refusedRelease(
+      "effect-lock-busy",
+      `could not acquire worktree effect lock: ${error instanceof Error ? error.message : String(error)}`,
+      { absolutePath: request.handle.absolutePath },
+    );
+  }
+  try {
+    return await releaseManagedWorktreeUnderEffectLock(request, deps);
+  } finally {
+    if (releaseLock !== undefined) await releaseLock();
+  }
+}
+
+async function releaseManagedWorktreeUnderEffectLock(
+  request: ReleaseManagedWorktreeRequest,
+  deps: ManagedWorktreeDeps = {},
+): Promise<ReleaseManagedWorktreeResult> {
   const git = deps.git ?? nodeManagedWorktreeGitRunner;
   const now = deps.now ?? (() => new Date());
   const fault = deps.faultInjector ?? (async () => undefined);
@@ -1802,6 +1859,125 @@ export async function listManagedLiveWorktrees(
   const root = (await resolveRepositoryRoot(git, repositoryRoot)) ?? resolve(repositoryRoot);
   const live = await listLiveHandlesForTask(registryRoot(root, stateDir), taskId);
   return live.map((entry) => entry.handle);
+}
+
+export interface ResolveManagedWorktreeDispatchBindingRequest {
+  readonly repositoryRoot: string;
+  readonly taskId: string;
+  readonly worktreePath: string;
+  readonly branch: string;
+}
+
+/** Resolve one live manager record without exposing its resolved task Git directory. */
+export async function resolveManagedWorktreeDispatchBinding(
+  request: ResolveManagedWorktreeDispatchBindingRequest,
+  deps: Pick<ManagedWorktreeDeps, "git" | "stateDir"> = {},
+): Promise<ManagedWorktreeDispatchBinding | null> {
+  const git = deps.git ?? nodeManagedWorktreeGitRunner;
+  const repositoryRoot = await resolveRepositoryRoot(git, request.repositoryRoot);
+  if (repositoryRoot === null) return null;
+  const live = await listLiveHandlesForTask(
+    registryRoot(repositoryRoot, deps.stateDir),
+    request.taskId,
+  );
+  const matches = live.filter(
+    ({ handle }) =>
+      resolve(handle.absolutePath) === resolve(request.worktreePath) &&
+      handle.branch === request.branch,
+  );
+  if (matches.length !== 1) return null;
+  const stored = matches[0]!;
+  const top = await resolveRepositoryRoot(git, stored.handle.absolutePath);
+  if (top === null || top !== resolve(stored.handle.absolutePath)) return null;
+  const commonResult = await git(stored.handle.absolutePath, [
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-common-dir",
+  ]);
+  if (commonResult.code !== 0 || commonResult.stdout.trim() === "") return null;
+  const commonDir = resolve(commonResult.stdout.trim());
+  let canonicalCommon: string;
+  let canonicalRepository: string;
+  try {
+    canonicalCommon = await fs.realpath(commonDir);
+    canonicalRepository = await fs.realpath(repositoryRoot);
+  } catch {
+    return null;
+  }
+  const symbolic = await git(stored.handle.absolutePath, ["symbolic-ref", "--quiet", "HEAD"]);
+  const ref = `refs/heads/${stored.handle.branch}`;
+  if (symbolic.code !== 0 || symbolic.stdout.trim() !== ref) return null;
+  return Object.freeze({
+    taskId: stored.handle.taskId,
+    handleToken: stored.handle.token,
+    handleFingerprint: stored.fingerprint,
+    repositoryRoot: canonicalRepository,
+    repositoryId: createHash("sha256")
+      .update(`${canonicalRepository}\n${canonicalCommon}`)
+      .digest("hex"),
+    commonDir: canonicalCommon,
+    worktreePath: resolve(stored.handle.absolutePath),
+    branch: stored.handle.branch,
+    ref,
+    baseCommit: stored.handle.baseCommit,
+  });
+}
+
+/** Recheck the complete manager/repository identity while the effect lock is held. */
+export async function assertManagedWorktreeDispatchBindingLive(
+  binding: ManagedWorktreeDispatchBinding,
+  deps: Pick<ManagedWorktreeDeps, "git" | "stateDir"> = {},
+): Promise<void> {
+  const resolved = await resolveManagedWorktreeDispatchBinding(
+    {
+      repositoryRoot: binding.repositoryRoot,
+      taskId: binding.taskId,
+      worktreePath: binding.worktreePath,
+      branch: binding.branch,
+    },
+    deps,
+  );
+  if (resolved === null) throw new Error("managed worktree binding is no longer live");
+  for (const key of [
+    "taskId",
+    "handleToken",
+    "handleFingerprint",
+    "repositoryRoot",
+    "repositoryId",
+    "commonDir",
+    "worktreePath",
+    "branch",
+    "ref",
+    "baseCommit",
+  ] as const) {
+    if (resolved[key] !== binding[key]) {
+      throw new Error(`managed worktree binding changed at ${key}`);
+    }
+  }
+}
+
+/** Shared lock order for broker commit, result storage, and guarded release. */
+export async function withManagedWorktreeEffectLock<T>(
+  binding: ManagedWorktreeDispatchBinding,
+  deps: Pick<ManagedWorktreeDeps, "stateDir" | "lockfile" | "effectLockTimeoutMs">,
+  effect: () => Promise<T>,
+): Promise<T> {
+  const lockfile =
+    deps.lockfile ??
+    new Lockfile({
+      ...(deps.effectLockTimeoutMs === undefined
+        ? {}
+        : { acquireTimeoutMs: deps.effectLockTimeoutMs }),
+    });
+  const releaseLock = await lockfile.acquire(
+    join(registryRoot(binding.repositoryRoot, deps.stateDir), PREPARE_LOCKS_DIRNAME),
+    `effect-${binding.handleToken}`,
+  );
+  try {
+    return await effect();
+  } finally {
+    await releaseLock();
+  }
 }
 
 export function managedWorktreeHandleSegment(): string {

@@ -116,7 +116,9 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // response/description tokens on full-parent profiles).
     // 946 -> 961 under T1422: ITEM_PROJECTION_DESCRIPTION documents complement
     // + merge invariant (+15 G93-attributable description tokens).
-    maximumRemainingG93AttributableTokens: 961,
+    // 961 -> 1010 under T2042: the worker-only git_commit broker adds its
+    // response/description contract to full-parent profiles.
+    maximumRemainingG93AttributableTokens: 1010,
     corpusMedianResponseSavingTokens: 1461,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,

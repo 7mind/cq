@@ -128,6 +128,10 @@ function invocation(fixture: LifecycleFixture, timeoutMs: number): string {
       scope: "store-result",
       token: "cq_result_0123456789abcdefghijklmnopqrstuvwxyz",
     },
+    gitChangeCapability: {
+      scope: "git-change",
+      token: "cq_git_0123456789abcdefghijklmnopqrstuvwxyz",
+    },
     cwd: fixture.worktree,
     ledgerCwd: fixture.worktree,
     model: "fake-model",

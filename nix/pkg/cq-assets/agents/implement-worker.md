@@ -12,7 +12,7 @@ description: Implement exactly one task in an isolated worktree, prove its guard
 inputs:
   - "task specification, optional advisory worktreePath, branch, verified full-SHA base, required round, authoritative starting commit, optional priorResultCommit, optional prior criticism"
 outputs:
-  - "one verified task commit, actualWorktreePath, required baseVerification evidence, stored structured result, and handle-only final reply"
+  - "one verified task commit, parent-verifiable git receipts, actualWorktreePath, required baseVerification evidence, stored structured result, and handle-only final reply"
 ioSchema:
   - "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)"
   - "pass requires a green full gate, verified commit/clean tree/ancestry, required actualWorktreePath, verified baseVerification (full SHAs only), and required mutation evidence"
@@ -77,9 +77,28 @@ prior-round commits when `round > 0`.
    every initial and criticism round. Never reset away prior task commits.
 
 2. **Implement surgically.**
+   When the private launch supplies `gitChangeCapability`, all Git mutations go
+   through the dispatch-bound `git_commit` broker. On that path, never run
+   `git add`, `git commit`, `git update-index`, `git update-ref`, or write a Git
+   directory, common directory, ref, index, or object yourself. Read-only Git
+   inspection remains permitted. A surface still on the documented held
+   dispatch protocol follows its existing confined commit path and omits
+   `gitReceipts`; it never invents or requests a capability. For each brokered
+   checkpoint choose a stable
+   `operationId` that survives a lost response, set `expectedHead` to the
+   currently verified task head, and submit the closed manifest of add,
+   modify, delete, or explicit rename entries. Every old/new state contains the
+   authoritative repository-relative path, regular mode `100644` or `100755`,
+   and lowercase SHA-256 digest of the file bytes. Do not submit symlinks,
+   gitlinks, undeclared paths, inferred renames, or a manifest assembled before
+   the final byte/mode measurement. Retry a lost response with the exact same
+   operation id and request; retain the returned receipt verbatim in
+   `gitReceipts`. A changed request requires a new operation id.
+
    **Early skeleton write (load-bearing durability).** The first substantive
    action after grounding and base verification MUST be to create a durable
-   partial artifact and commit it, even when nearly empty. Prefer
+   partial artifact and persist it through the applicable commit path, even
+   when nearly empty. Prefer
    `WIP-<taskId>.md` in the worktree root using the existing WIP partial format
    (fenced JSON header with `taskId`, `role`, `baseCommit`, `startedAt`, and a
    non-empty `checkpoints[]` of `{name,status}` where status is
@@ -92,7 +111,8 @@ prior-round commits when `round > 0`.
    project conventions and do not repair unrelated faults. At natural
    checkpoints — after each measurement, probe, acceptance clause, or
    non-trivial edit batch — update the WIP artifact (or the real deliverable)
-   and commit. Keep checkpoint statuses honest (`done` / `todo` / `unmeasured`).
+   and persist it through the applicable commit path. Keep checkpoint statuses
+   honest (`done` / `todo` / `unmeasured`).
    Never couple durability to completion of the whole task.
 
 3. **Prove changed guards.** For every test, assertion, guard, or invariant you
@@ -120,7 +140,7 @@ prior-round commits when `round > 0`.
    of the same selector and signature on this tree and the recorded base; if
    confinement prevents that proof, return `fail`.
 
-6. **Commit and verify.** Commit all task changes, then require:
+6. **Commit and verify.** Commit all task changes through the applicable path, then require:
    - `git rev-parse --verify HEAD` succeeds;
    - `git cat-file -t <head>` returns `commit`;
    - `git status --porcelain --untracked-files=all` is empty;
@@ -144,6 +164,7 @@ prior-round commits when `round > 0`.
   "branch": "implement/<taskId>",
   "actualWorktreePath": "<absolute git rev-parse --show-toplevel>",
   "filesTouched": ["<path>"],
+  "gitReceipts": [{ "kind": "cq-git-change-receipt", "version": 1, "attestationId": "<id>", "generation": 1, "taskId": "<task id>", "operationId": "<stable id>", "requestDigest": "<sha256>", "oldHead": "<commit>", "newHead": "<commit>", "tree": "<tree>", "objectOids": ["<oid>"], "paths": ["<path>"], "committedAt": "<utc timestamp>" }],
   "checkSummary": "<REAL_CHECK_EXIT plus verbatim result tail or failure>",
   "gateDurationMs": 0,
   "baseVerification": {

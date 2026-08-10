@@ -74,14 +74,19 @@ import {
   isAttestationTombstone,
   resultCapabilityHash,
   abortDispatch,
+  authorizeDispatchGitEffect,
   confirmDispatchCompletion,
   fetchDispatchResult,
   fetchDispatchInput,
+  gitEffectBindingForResultCapability,
+  gitEffectBindingForHandle,
   prepareDispatch,
   storeDispatchResult,
   sweepAttestations,
   DISPATCH_ATTESTATION_DEFERRED,
   type AbortDispatchRequest,
+  type AuthorizeDispatchGitEffectRequest,
+  type AuthorizedDispatchGitEffect,
   type AttestationEnvelope,
   type AttestationNamespace,
   type AttestationRow,
@@ -93,6 +98,7 @@ import {
   type DispatchRandomBytes,
   type FetchDispatchResultRequest,
   type FetchDispatchInputRequest,
+  type DispatchGitEffectBinding,
   type PrepareDispatchOutcome,
   type PrepareDispatchRequest,
   type StoreDispatchResultOutcome,
@@ -790,6 +796,24 @@ export async function storeDispatchResultOn(
   );
 }
 
+export async function resolveDispatchGitEffectBindingOn(
+  backend: AttestationBackend,
+  submission: StoreDispatchResult,
+): Promise<DispatchGitEffectBinding | undefined> {
+  return backend.transact(storeResultLoadScope(submission), (store) =>
+    gitEffectBindingForResultCapability(submission, { store, now: () => new Date(0).toISOString() }),
+  );
+}
+
+export async function resolveDispatchGitEffectBindingForHandleOn(
+  backend: AttestationBackend,
+  handle: DispatchHandle,
+): Promise<DispatchGitEffectBinding | undefined> {
+  return backend.transact(handleLoadScope(handle), (store) =>
+    gitEffectBindingForHandle(handle, { store, now: () => new Date(0).toISOString() }),
+  );
+}
+
 /** One-shot child input retrieval, serialized with every other row mutation. */
 export async function fetchDispatchInputOn(
   backend: AttestationBackend,
@@ -798,6 +822,16 @@ export async function fetchDispatchInputOn(
 ): Promise<MaterializedDispatchInput> {
   return backend.transact(handleLoadScope(request), (store) =>
     fetchDispatchInput(request, { store, now: deps.now }),
+  );
+}
+
+export async function authorizeDispatchGitEffectOn(
+  backend: AttestationBackend,
+  request: AuthorizeDispatchGitEffectRequest,
+  deps: AttestationBackendDeps,
+): Promise<AuthorizedDispatchGitEffect> {
+  return backend.transact(handleLoadScope(request), (store) =>
+    authorizeDispatchGitEffect(request, { store, now: deps.now }),
   );
 }
 
@@ -1127,6 +1161,55 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       if (typeof record[field] !== "string" || !STORED_SHA256_HEX.test(record[field])) {
         throw new AttestationStorageError(
           `stored attestation envelope has malformed "${field}"`,
+        );
+      }
+    }
+    const hasGitHash = Object.hasOwn(record, "gitChangeCapabilityHash");
+    const hasGitBinding = Object.hasOwn(record, "gitEffectBinding");
+    if (hasGitHash !== hasGitBinding) {
+      throw new AttestationStorageError(
+        "stored attestation envelope must carry both Git capability hash and effect binding",
+      );
+    }
+    if (hasGitHash) {
+      if (
+        typeof record["gitChangeCapabilityHash"] !== "string" ||
+        !STORED_SHA256_HEX.test(record["gitChangeCapabilityHash"])
+      ) {
+        throw new AttestationStorageError(
+          'stored attestation envelope has malformed "gitChangeCapabilityHash"',
+        );
+      }
+      const binding = record["gitEffectBinding"];
+      if (typeof binding !== "object" || binding === null || Array.isArray(binding)) {
+        throw new AttestationStorageError(
+          'stored attestation envelope has malformed "gitEffectBinding"',
+        );
+      }
+      const bindingRecord = binding as Readonly<Record<string, unknown>>;
+      const fields = [
+        "taskId",
+        "handleToken",
+        "handleFingerprint",
+        "repositoryRoot",
+        "repositoryId",
+        "commonDir",
+        "worktreePath",
+        "branch",
+        "ref",
+        "baseCommit",
+      ] as const;
+      if (
+        Object.keys(bindingRecord).sort().join(",") !== [...fields].sort().join(",") ||
+        fields.some(
+          (field) =>
+            typeof bindingRecord[field] !== "string" || bindingRecord[field].length === 0,
+        ) ||
+        !STORED_SHA256_HEX.test(String(bindingRecord["handleFingerprint"])) ||
+        !STORED_SHA256_HEX.test(String(bindingRecord["repositoryId"]))
+      ) {
+        throw new AttestationStorageError(
+          'stored attestation envelope has malformed "gitEffectBinding"',
         );
       }
     }

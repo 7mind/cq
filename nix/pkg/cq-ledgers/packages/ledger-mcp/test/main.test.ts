@@ -89,7 +89,7 @@ beforeAll(async () => {
 
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-"));
   dispatchPromptRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-dispatch-prompts-"));
-  const roleId = "implement-worker";
+  const roleId = "plan-advance";
   const roleBytes = "Perform the requested implementation task.\n";
   const catalogJson = JSON.stringify([
     {
@@ -234,15 +234,9 @@ describe("ledger-mcp stdio binary", () => {
         await client.callTool({
           name: "prepare_dispatch",
           arguments: {
-            roleId: "implement-worker",
+            roleId: "plan-advance",
             input: {
-              taskId: "T695",
-              acceptance: "Exercise the production stdio lifecycle.",
-              worktreePath: "/tmp/wt-T695",
-              branch: "implement/T695",
-              baseCommit: "33a9f1fc".padEnd(40, "0"),
-              round: 0,
-              startingCommit: "3".repeat(40),
+              goalId: "G695",
             },
             idempotencyKey: "T695-production-stdio",
             timeoutMs: 120_000,
@@ -262,21 +256,8 @@ describe("ledger-mcp stdio binary", () => {
           arguments: {
             resultCapability: prepared.prepared.resultCapability,
             output: {
-              taskId: "T695",
-              status: "pass",
-              resultCommit: "a".repeat(40),
-              branch: "implement/T695",
-              actualWorktreePath: "/tmp/wt-actual",
-              filesTouched: ["packages/ledger-mcp/src/main.ts"],
-              checkSummary: "production stdio lifecycle passed",
-              summary: "Wired the durable production dispatch backend.",
-              gateDurationMs: 1,
-              baseVerification: {
-                status: "verified",
-                relation: "descendant",
-                baseCommit: "a".repeat(40),
-                headCommit: "b".repeat(40),
-              },
+              mode: "default",
+              action: "noop",
             },
           },
         }),

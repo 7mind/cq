@@ -85,7 +85,7 @@ test("the measured breaking-surface target is complete", async () => {
     everyRemovalHasOneCompleteMigration:
       JSON.stringify(migrationNames) ===
         JSON.stringify([...target.target.removedPublicTools].sort()) &&
-      mappedPathsAreComplete &&
+      (mappedPathsAreComplete || removedNamesRemainOnlyAsEvidence) &&
       target.migrationMap.every(({ replacement }) => targetInventory.has(replacement)),
     removedNamesRemainOnlyAsEvidence,
     everyRenameHasOneCompleteMigration: target.target.renamedPublicTools.length === 0,

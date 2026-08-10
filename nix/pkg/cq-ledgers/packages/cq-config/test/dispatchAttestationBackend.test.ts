@@ -519,6 +519,35 @@ describe("persisted row serialization", () => {
     expect(JSON.parse(persisted.body)).toEqual(row);
   });
 
+  test("a live worker envelope round-trips its closed Git effect binding and hash", () => {
+    const row = envelope({
+      gitChangeCapabilityHash: "7".repeat(64),
+      gitEffectBinding: {
+        taskId: "T977",
+        handleToken: "server-held-token",
+        handleFingerprint: "8".repeat(64),
+        repositoryRoot: "/repo",
+        repositoryId: "9".repeat(64),
+        commonDir: "/repo/.git",
+        worktreePath: "/repo/.claude/worktrees/T977",
+        branch: "implement/T977",
+        ref: "refs/heads/implement/T977",
+        baseCommit: "a".repeat(40),
+      },
+    });
+    const persisted = persistAttestationRow(row);
+    expect(rehydrateAttestationRow(NAMESPACE, persisted.body, persisted.rowDigest)).toEqual(row);
+    const malformed = JSON.parse(persisted.body) as Record<string, unknown>;
+    delete malformed["gitEffectBinding"];
+    expect(() =>
+      rehydrateAttestationRow(
+        NAMESPACE,
+        JSON.stringify(malformed),
+        attestationRowDigest(malformed as unknown as AttestationRow),
+      ),
+    ).toThrow(/both Git capability hash and effect binding/);
+  });
+
   test("a tombstone persists NO capability hash, so no capability can resolve it", () => {
     const terminal = envelope({
       state: "aborted",

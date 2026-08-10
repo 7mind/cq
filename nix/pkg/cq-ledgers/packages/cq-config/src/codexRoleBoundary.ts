@@ -10,6 +10,7 @@ import {
 } from "@cq/process-control";
 import type {
   DispatchHandle,
+  GitChangeCapability,
   InputCapability,
   ResultCapability,
 } from "./compactDispatchProtocol.js";
@@ -38,6 +39,8 @@ export interface CodexRoleBoundaryRequest {
   readonly handle: DispatchHandle;
   readonly inputCapability: InputCapability;
   readonly resultCapability: ResultCapability;
+  /** Present only for a manager-bound implement-worker dispatch. */
+  readonly gitChangeCapability?: GitChangeCapability;
   readonly cwd: string;
   readonly ledgerCwd: string;
   readonly model: string;
@@ -211,6 +214,16 @@ function assertBoundaryRequest(request: CodexRoleBoundaryRequest): CodexRoleBoun
       'resultCapability must contain scope "store-result" and a non-empty token',
     );
   }
+  if (
+    request.gitChangeCapability !== undefined &&
+    (request.gitChangeCapability.scope !== "git-change" ||
+      typeof request.gitChangeCapability.token !== "string" ||
+      request.gitChangeCapability.token.trim() === "")
+  ) {
+    throw new CodexRoleBoundaryError(
+      'gitChangeCapability must contain scope "git-change" and a non-empty token',
+    );
+  }
   return request;
 }
 
@@ -267,6 +280,9 @@ export function createCodexRoleBoundaryPlan(
     generation: resolved.handle.generation,
     inputCapability: resolved.inputCapability,
     resultCapability: resolved.resultCapability,
+    ...(resolved.gitChangeCapability === undefined
+      ? {}
+      : { gitChangeCapability: resolved.gitChangeCapability }),
   };
   const argv = Object.freeze([
     resolved.codexExecutable,

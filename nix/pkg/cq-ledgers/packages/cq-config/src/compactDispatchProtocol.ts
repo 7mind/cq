@@ -56,6 +56,12 @@ export interface InputCapability {
   readonly token: string;
 }
 
+/** Implement-worker-only authority for the trusted Git change broker. */
+export interface GitChangeCapability {
+  readonly scope: "git-change";
+  readonly token: string;
+}
+
 /** Compact prompt identity returned by prepare without prompt or schema materialization. */
 export interface DispatchPromptProvenance {
   readonly roleId: DispatchedRoleId;
@@ -78,6 +84,7 @@ export interface DispatchPrepared extends DispatchHandle, DispatchDeadlines {
   readonly promptProvenance: DispatchPromptProvenance;
   readonly inputCapability: InputCapability;
   readonly resultCapability: ResultCapability;
+  readonly gitChangeCapability?: GitChangeCapability;
 }
 
 /** One-shot, capability-bound child retrieval of the prepare-bound typed input. */
@@ -212,6 +219,7 @@ export const DISPATCH_PROTOCOL_OPERATIONS = [
   "confirm_dispatch_completion",
   "abort_dispatch",
   "fetch_dispatch_result",
+  "git_commit",
 ] as const;
 
 export type DispatchProtocolOperation = (typeof DISPATCH_PROTOCOL_OPERATIONS)[number];
@@ -223,6 +231,7 @@ const SHA256_PATTERN = "^[0-9a-f]{64}$";
 const ATTESTATION_ID_PATTERN = "^att_[A-Za-z0-9_-]{32,}$";
 const INPUT_CAPABILITY_PATTERN = "^cq_input_[A-Za-z0-9_-]{43,}$";
 const RESULT_CAPABILITY_PATTERN = "^cq_result_[A-Za-z0-9_-]{43,}$";
+const GIT_CHANGE_CAPABILITY_PATTERN = "^cq_git_[A-Za-z0-9_-]{43,}$";
 
 const handleProperties = {
   attestationId: { type: "string", pattern: ATTESTATION_ID_PATTERN },
@@ -264,6 +273,16 @@ const inputCapabilitySchema = {
   properties: {
     scope: { type: "string", enum: ["fetch-input"] },
     token: { type: "string", pattern: INPUT_CAPABILITY_PATTERN },
+  },
+  required: ["scope", "token"],
+  additionalProperties: false,
+} as const;
+
+const gitChangeCapabilitySchema = {
+  type: "object",
+  properties: {
+    scope: { type: "string", enum: ["git-change"] },
+    token: { type: "string", pattern: GIT_CHANGE_CAPABILITY_PATTERN },
   },
   required: ["scope", "token"],
   additionalProperties: false,
@@ -366,6 +385,7 @@ export const DISPATCH_PREPARED_SCHEMA: JSONSchema = {
     promptProvenance: promptProvenanceSchema,
     inputCapability: inputCapabilitySchema,
     resultCapability: resultCapabilitySchema,
+    gitChangeCapability: gitChangeCapabilitySchema,
   },
   required: [
     "attestationId",
