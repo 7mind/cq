@@ -164,9 +164,10 @@ describe("immediateWriteTransaction", () => {
     );
     // One call site per mutation: updateMilestone, updateItem, createItem,
     // createMilestone, createLedger, reopenItem, unarchiveItem, archiveMilestone,
-    // and the shared plan-lifecycle mutation path.
+    // the shared plan-lifecycle mutation path, and both task-adoption fence
+    // operations.
     const calls = storeSrc.match(/immediateWriteTransaction\(this\.db\(\)/g) ?? [];
-    expect(calls.length).toBe(9);
+    expect(calls.length).toBe(11);
     // No ad-hoc write transactions bypassing the helper in the store: the
     // only BEGIN the store may issue itself is none at all (comments aside).
     expect(storeSrc).not.toMatch(/exec\("BEGIN/);

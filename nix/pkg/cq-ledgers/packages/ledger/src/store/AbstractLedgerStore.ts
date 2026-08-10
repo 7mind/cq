@@ -145,6 +145,13 @@ import {
   type PlanLifecycleSerializationContender,
 } from "./planLifecycleSerialization.js";
 import { serializePlanLifecycleDump } from "./planLifecycleDump.js";
+import {
+  observeTaskAdoptionEligibility,
+  TaskAdoptionFenceRegistry,
+  type TaskAdoptionEligibilityFence,
+  type TaskAdoptionEligibilityResult,
+  type TaskAdoptionPublicationResult,
+} from "../taskAdoptionEligibility.js";
 
 // Moved to schemaCompat.ts (T527) so the sqlite backend's module graph stays
 // free of this file's parser/serialize funnel; re-exported for compatibility.
@@ -175,6 +182,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
   private archiveRecoveryRequired = false;
   private readonly planClaims = new Map<string, PlanPrivateClaimRecord>();
   private readonly planOperations = new Map<string, InMemoryPlanOperationRecord>();
+  private readonly taskAdoptionFences = new TaskAdoptionFenceRegistry();
   private readonly planSerializationBoundaryHook: PlanLifecycleSerializationBoundaryHook | null;
 
   protected constructor(opts: {
@@ -1083,6 +1091,42 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
       // The helper's null-return handles the "registered but not yet written" race.
       await this.loadAndIndexLedger(entry);
     });
+  }
+
+  async captureTaskAdoptionEligibility(taskId: string): Promise<TaskAdoptionEligibilityResult> {
+    const observation = await this.withMilestonesLock(() =>
+      this.withLock(TASKS_LEDGER, async () => {
+        await this.reloadLedgerFromDisk(TASKS_LEDGER);
+        return observeTaskAdoptionEligibility(
+          taskId,
+          this.getLedger(TASKS_LEDGER).milestones.flatMap(({ items }) => items),
+          await this.collectArchivedItems(TASKS_LEDGER),
+        );
+      }),
+    );
+    return this.taskAdoptionFences.capture(taskId, observation);
+  }
+
+  async publishTaskAdoption(
+    fence: TaskAdoptionEligibilityFence,
+    publish: () => undefined,
+  ): Promise<TaskAdoptionPublicationResult> {
+    const taskId = this.taskAdoptionFences.taskId(fence);
+    if (taskId === null) return { status: "invalid-fence" };
+    return this.withMilestonesLock(() =>
+      this.withLock(TASKS_LEDGER, async () => {
+        await this.reloadLedgerFromDisk(TASKS_LEDGER);
+        return this.taskAdoptionFences.compareAndPublish(
+          fence,
+          observeTaskAdoptionEligibility(
+            taskId,
+            this.getLedger(TASKS_LEDGER).milestones.flatMap(({ items }) => items),
+            await this.collectArchivedItems(TASKS_LEDGER),
+          ),
+          publish,
+        );
+      }),
+    );
   }
 
   /**

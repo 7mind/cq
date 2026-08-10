@@ -172,6 +172,14 @@ import {
 } from "./worksetStore.js";
 import { mintWorksetManagementAuthority } from "../../worksetEffectAdmission.js";
 import { serializeWorksetRootsDocument } from "../../worksetStoreGit.js";
+import {
+  observeTaskAdoptionEligibility,
+  TaskAdoptionFenceRegistry,
+  type TaskAdoptionEligibilityFence,
+  type TaskAdoptionEligibilityObservation,
+  type TaskAdoptionEligibilityResult,
+  type TaskAdoptionPublicationResult,
+} from "../../taskAdoptionEligibility.js";
 
 export interface PostgresLedgerStoreOpts {
   /**
@@ -357,6 +365,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly itemArchives = new Map<string, Item>();
   private readonly mutexes = new Map<string, AsyncMutex>();
   private readonly searchIndex = new LedgerSearchIndex();
+  private readonly taskAdoptionFences = new TaskAdoptionFenceRegistry();
   private initialised = false;
   /** Lazy T1958 workset roots/admission store for this tenant. */
   private workset: PostgresWorksetStore | null = null;
@@ -1769,6 +1778,38 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     return pointer;
   }
 
+  async captureTaskAdoptionEligibility(taskId: string): Promise<TaskAdoptionEligibilityResult> {
+    let observation!: TaskAdoptionEligibilityObservation;
+    await readTransaction(this.pool(), async (tx) => {
+      observation = this.observeTaskAdoptionEligibility(
+        taskId,
+        await this.readLiveTenant(tx),
+      );
+    });
+    return this.taskAdoptionFences.capture(taskId, observation);
+  }
+
+  async publishTaskAdoption(
+    fence: TaskAdoptionEligibilityFence,
+    publish: () => undefined,
+  ): Promise<TaskAdoptionPublicationResult> {
+    const taskId = this.taskAdoptionFences.taskId(fence);
+    if (taskId === null) return { status: "invalid-fence" };
+    let result!: TaskAdoptionPublicationResult;
+    let live!: LiveTenantState;
+    await writeTransaction(this.pool(), async (tx) => {
+      await this.lockTaskAdoptionRows(tx);
+      live = await this.readLiveTenant(tx);
+      result = this.taskAdoptionFences.compareAndPublish(
+        fence,
+        this.observeTaskAdoptionEligibility(taskId, live),
+        publish,
+      );
+    });
+    this.absorbLiveLedgers(live);
+    return result;
+  }
+
   // ---------------------------------------------------------------------------
   // PlanLifecycleStore (T851)
   // ---------------------------------------------------------------------------
@@ -2511,6 +2552,34 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   // ---------------------------------------------------------------------------
   // Internals — cache + locks (parity with InMemoryLedgerStore)
   // ---------------------------------------------------------------------------
+
+  private observeTaskAdoptionEligibility(
+    taskId: string,
+    live: LiveTenantState,
+  ): TaskAdoptionEligibilityObservation {
+    const tasks = live.ledgers.get(TASKS_LEDGER);
+    if (tasks === undefined) throw new LedgerNotFoundError(TASKS_LEDGER);
+    return observeTaskAdoptionEligibility(
+      taskId,
+      tasks.milestones.flatMap(({ items }) => items),
+      live.archived
+        .filter(({ ledger }) => ledger === TASKS_LEDGER)
+        .map((row) => rowToItem(row)),
+    );
+  }
+
+  private async lockTaskAdoptionRows(tx: SQL): Promise<void> {
+    await tx`
+      SELECT 1 FROM items
+      WHERE project_key = ${this.projectKey} AND ledger = ${TASKS_LEDGER}
+      ORDER BY id FOR UPDATE
+    `;
+    await tx`
+      SELECT 1 FROM archived_items
+      WHERE project_key = ${this.projectKey} AND ledger = ${TASKS_LEDGER}
+      ORDER BY id FOR UPDATE
+    `;
+  }
 
   private countReferences(milestoneId: string): Record<string, number> {
     const out: Record<string, number> = {};

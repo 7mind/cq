@@ -5,6 +5,12 @@
 export * from "./types.js";
 export * from "./usageStats.js";
 export * from "./planLifecycle.js";
+export type {
+  TaskAdoptionEligibilityFence,
+  TaskAdoptionEligibilityResult,
+  TaskAdoptionIneligibility,
+  TaskAdoptionPublicationResult,
+} from "./taskAdoptionEligibility.js";
 export {
   MILESTONES_LEDGER,
   MILESTONES_ACTIVE_GROUP_ID,

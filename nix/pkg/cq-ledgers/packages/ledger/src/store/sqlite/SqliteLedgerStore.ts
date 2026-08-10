@@ -165,6 +165,14 @@ import {
   ReadLogNotImplementedError,
   type ReadLogResult,
 } from "../../mcp/readLog.js";
+import {
+  observeTaskAdoptionEligibility,
+  TaskAdoptionFenceRegistry,
+  type TaskAdoptionEligibilityFence,
+  type TaskAdoptionEligibilityObservation,
+  type TaskAdoptionEligibilityResult,
+  type TaskAdoptionPublicationResult,
+} from "../../taskAdoptionEligibility.js";
 
 export interface SqliteLedgerStoreOpts {
   /** Concrete ledger database file path (created on init if absent). */
@@ -314,6 +322,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
    * coherence watcher's refresh path), the only post-init full rebuild.
    */
   private readonly searchIndex = new LedgerSearchIndex();
+  private readonly taskAdoptionFences = new TaskAdoptionFenceRegistry();
 
   constructor(opts: SqliteLedgerStoreOpts) {
     this.dbPath = opts.dbPath;
@@ -1381,6 +1390,28 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     return pointer;
   }
 
+  async captureTaskAdoptionEligibility(taskId: string): Promise<TaskAdoptionEligibilityResult> {
+    const observation = immediateWriteTransaction(this.db(), () =>
+      this.observeTaskAdoptionEligibility(taskId),
+    );
+    return this.taskAdoptionFences.capture(taskId, observation);
+  }
+
+  async publishTaskAdoption(
+    fence: TaskAdoptionEligibilityFence,
+    publish: () => undefined,
+  ): Promise<TaskAdoptionPublicationResult> {
+    const taskId = this.taskAdoptionFences.taskId(fence);
+    if (taskId === null) return { status: "invalid-fence" };
+    return immediateWriteTransaction(this.db(), () =>
+      this.taskAdoptionFences.compareAndPublish(
+        fence,
+        this.observeTaskAdoptionEligibility(taskId),
+        publish,
+      ),
+    );
+  }
+
   async claimPlan(input: PlanClaimInput): Promise<PlanClaimResult> {
     return this.runPlanLifecycleMutation(
       (state) => claimInMemoryPlan(state, input),
@@ -1403,6 +1434,16 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   // ---------------------------------------------------------------------------
   // Internals — write path (T527)
   // ---------------------------------------------------------------------------
+
+  private observeTaskAdoptionEligibility(taskId: string): TaskAdoptionEligibilityObservation {
+    const active = this.loadLedger(TASKS_LEDGER).milestones.flatMap(({ items }) => items);
+    const archived = this.db()
+      .query(
+        "SELECT id, milestone_id, status, fields_json, created_at, updated_at, author, session FROM archived_items WHERE ledger = ? ORDER BY rowid",
+      )
+      .all(TASKS_LEDGER) as ItemRow[];
+    return observeTaskAdoptionEligibility(taskId, active, archived.map(rowToItem));
+  }
 
   /**
    * Post-commit mutation hook (parity with AbstractLedgerStore.fireMutation):

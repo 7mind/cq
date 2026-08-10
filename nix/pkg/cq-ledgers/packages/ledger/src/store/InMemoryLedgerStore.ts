@@ -101,6 +101,14 @@ import {
   QUESTIONS_LEDGER,
   TASKS_LEDGER,
 } from "../constants.js";
+import {
+  observeTaskAdoptionEligibility,
+  TaskAdoptionFenceRegistry,
+  type TaskAdoptionEligibilityFence,
+  type TaskAdoptionEligibilityObservation,
+  type TaskAdoptionEligibilityResult,
+  type TaskAdoptionPublicationResult,
+} from "../taskAdoptionEligibility.js";
 
 export interface InMemoryLedgerStoreOpts {
   /** Returns an ISO 8601 UTC timestamp. Defaults to `new Date().toISOString()`. */
@@ -131,6 +139,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly searchIndex = new LedgerSearchIndex();
   private readonly planClaims = new Map<string, PlanPrivateClaimRecord>();
   private readonly planOperations = new Map<string, InMemoryPlanOperationRecord>();
+  private readonly taskAdoptionFences = new TaskAdoptionFenceRegistry();
   private initialised = false;
   private readonly initialSeed: Array<{ name: string; schema: LedgerSchema }>;
 
@@ -652,6 +661,30 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     return ptr;
   }
 
+  async captureTaskAdoptionEligibility(taskId: string): Promise<TaskAdoptionEligibilityResult> {
+    const observation = await this.withMilestonesLock(() =>
+      this.withLock(TASKS_LEDGER, async () => this.observeTaskAdoptionEligibility(taskId)),
+    );
+    return this.taskAdoptionFences.capture(taskId, observation);
+  }
+
+  async publishTaskAdoption(
+    fence: TaskAdoptionEligibilityFence,
+    publish: () => undefined,
+  ): Promise<TaskAdoptionPublicationResult> {
+    const taskId = this.taskAdoptionFences.taskId(fence);
+    if (taskId === null) return { status: "invalid-fence" };
+    return this.withMilestonesLock(() =>
+      this.withLock(TASKS_LEDGER, async () =>
+        this.taskAdoptionFences.compareAndPublish(
+          fence,
+          this.observeTaskAdoptionEligibility(taskId),
+          publish,
+        ),
+      ),
+    );
+  }
+
   async claimPlan(input: PlanClaimInput): Promise<PlanClaimResult> {
     return this.runPlanLifecycleMutation(
       (state) => claimInMemoryPlan(state, input),
@@ -692,6 +725,15 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   // --- internals ---
+
+  private observeTaskAdoptionEligibility(taskId: string): TaskAdoptionEligibilityObservation {
+    const active = this.getLedger(TASKS_LEDGER).milestones.flatMap(({ items }) => items);
+    const archived: Item[] = [];
+    for (const [key, group] of this.archives) {
+      if (key.startsWith(`${TASKS_LEDGER}/`)) archived.push(...group.items);
+    }
+    return observeTaskAdoptionEligibility(taskId, active, archived);
+  }
 
   private planLifecycleState(): InMemoryPlanLifecycleState {
     return {

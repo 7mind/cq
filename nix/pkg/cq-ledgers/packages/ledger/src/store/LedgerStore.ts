@@ -47,6 +47,11 @@ import type {
 import type { FtsSearchHit, FtsSearchOpts } from "../search/LedgerSearchIndex.js";
 import type { LedgerSnapshot } from "../snapshot.js";
 import type { UsageStatsSnapshot } from "../usageStats.js";
+import type {
+  TaskAdoptionEligibilityFence,
+  TaskAdoptionEligibilityResult,
+  TaskAdoptionPublicationResult,
+} from "../taskAdoptionEligibility.js";
 
 export type { FtsSearchHit, FtsSearchOpts } from "../search/LedgerSearchIndex.js";
 
@@ -195,6 +200,23 @@ export interface LedgerStore {
    * `fetch()` (whose views carry active items only).
    */
   snapshot(): LedgerSnapshot;
+
+  /**
+   * Capture the authoritative active `wip` task plus its transitive task
+   * dependency status/result-commit closure. The returned fence is opaque,
+   * store-issued, and valid only for compare-and-publish on this store.
+   */
+  captureTaskAdoptionEligibility(taskId: string): Promise<TaskAdoptionEligibilityResult>;
+
+  /**
+   * Re-read active and archived task authority under the store's mutation
+   * serialization, compare it with `fence`, and invoke the synchronous staged
+   * pointer commit exactly once only when the captured state remains eligible.
+   */
+  publishTaskAdoption(
+    fence: TaskAdoptionEligibilityFence,
+    publish: () => undefined,
+  ): Promise<TaskAdoptionPublicationResult>;
 
   // --- mutations (async, write-through under lock) ------------------------
 
