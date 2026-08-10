@@ -47,9 +47,26 @@ export type WorksetGenericMutationContractBuildOptions =
 export interface WorksetGenericMutationContractFactory {
   readonly name: string;
   readonly classification: WorksetGenericMutationContractClassification;
+  /**
+   * Optional per-case wall-clock bound for durable backends (git/fs/sql).
+   * In-memory dummy leaves this unset (bun default). Assertions are unchanged.
+   */
+  readonly timeoutMs?: number;
   build(
     options?: WorksetGenericMutationContractBuildOptions,
   ): WorksetGuardedLedger | Promise<WorksetGuardedLedger>;
+}
+
+function caseIt(
+  factory: WorksetGenericMutationContractFactory,
+  name: string,
+  fn: () => void | Promise<void>,
+): void {
+  if (factory.timeoutMs !== undefined) {
+    it(name, fn, factory.timeoutMs);
+  } else {
+    it(name, fn);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -108,7 +125,7 @@ export function runWorksetGenericMutationContract(
   factory: WorksetGenericMutationContractFactory,
 ): void {
   describe(`workset generic-mutation contract [T1961] — ${factory.name} (${factory.classification})`, () => {
-    it("exposes no public raw-write escape hatch", async () => {
+    caseIt(factory, "exposes no public raw-write escape hatch", async () => {
       const ledger = await factory.build();
       await ledger.init();
       assertNoPublicRawWriteEscape(ledger);
@@ -122,7 +139,7 @@ export function runWorksetGenericMutationContract(
       expect(typeof ledger.mutations.createItem).toBe("function");
     });
 
-    it("rejects caller-minted admission lookalikes at the gateway boundary", () => {
+    caseIt(factory, "rejects caller-minted admission lookalikes at the gateway boundary", () => {
       expect(() =>
         assertGenericMutationAdmissionNotCallerMinted({
           form: "ledger-mutation",
@@ -133,7 +150,7 @@ export function runWorksetGenericMutationContract(
       expect(() => assertGenericMutationAdmissionNotCallerMinted({ hello: 1 })).not.toThrow();
     });
 
-    it("empty-root parity: create and update succeed unrestricted", async () => {
+    caseIt(factory, "empty-root parity: create and update succeed unrestricted", async () => {
       const ledger = await factory.build();
       await ledger.init();
       expect(await ledger.snapshotRoots()).toEqual({ roots: [], epoch: 0 });
@@ -152,7 +169,7 @@ export function runWorksetGenericMutationContract(
       expect(ledger.fetchItem(TASKS_LEDGER, t.id).status).toBe("wip");
     });
 
-    it("allowed in-graph update under restrictive roots", async () => {
+    caseIt(factory, "allowed in-graph update under restrictive roots", async () => {
       const ledger = await factory.build();
       const { taskIn, taskOut } = await seedMinimalGraph(ledger);
       await ledger.setRoots([`${TASKS_LEDGER}:${taskIn}`]);
@@ -171,7 +188,7 @@ export function runWorksetGenericMutationContract(
       expect(ledger.fetchItem(TASKS_LEDGER, taskOut)).toEqual(before);
     });
 
-    it("denies generic creation and createLedger under non-empty roots (zero mutation)", async () => {
+    caseIt(factory, "denies generic creation and createLedger under non-empty roots (zero mutation)", async () => {
       const ledger = await factory.build();
       const { milestoneId, taskIn } = await seedMinimalGraph(ledger);
       await ledger.setRoots([`${TASKS_LEDGER}:${taskIn}`]);
@@ -206,7 +223,7 @@ export function runWorksetGenericMutationContract(
       );
     });
 
-    it("rejects sealed ownership fields on generic update (zero mutation)", async () => {
+    caseIt(factory, "rejects sealed ownership fields on generic update (zero mutation)", async () => {
       const ledger = await factory.build();
       const { taskIn } = await seedMinimalGraph(ledger);
       // Unrestricted still rejects sealed ownership.
@@ -226,7 +243,7 @@ export function runWorksetGenericMutationContract(
       expect(ledger.fetchItem(TASKS_LEDGER, taskIn)).toEqual(before);
     });
 
-    it("rejects newly introduced closure refs outside the admitted graph (zero mutation)", async () => {
+    caseIt(factory, "rejects newly introduced closure refs outside the admitted graph (zero mutation)", async () => {
       const ledger = await factory.build();
       const { taskIn, taskOut } = await seedMinimalGraph(ledger);
       await ledger.setRoots([`${TASKS_LEDGER}:${taskIn}`]);
@@ -241,7 +258,7 @@ export function runWorksetGenericMutationContract(
       expect(ledger.fetchItem(TASKS_LEDGER, taskIn)).toEqual(before);
     });
 
-    it("allows dependsOn to an already-admitted graph member", async () => {
+    caseIt(factory, "allows dependsOn to an already-admitted graph member", async () => {
       const ledger = await factory.build();
       await ledger.init();
       const m = await ledger.mutations.createMilestone({ title: "dep-m" });
@@ -261,7 +278,7 @@ export function runWorksetGenericMutationContract(
       expect(updated.fields.dependsOn).toEqual([`${TASKS_LEDGER}:${a.id}`]);
     });
 
-    it("exact inactive-root unarchive recovery; non-root unarchive denied", async () => {
+    caseIt(factory, "exact inactive-root unarchive recovery; non-root unarchive denied", async () => {
       const ledger = await factory.build();
       await ledger.init();
       const m = await ledger.mutations.createMilestone({ title: "arch-m" });
@@ -299,7 +316,7 @@ export function runWorksetGenericMutationContract(
       );
     });
 
-    it("archive requires every sweep member in the admitted graph (zero mutation on deny)", async () => {
+    caseIt(factory, "archive requires every sweep member in the admitted graph (zero mutation on deny)", async () => {
       const ledger = await factory.build();
       const { milestoneId, taskIn, taskOut } = await seedMinimalGraph(ledger);
       // Make both terminal so archive would succeed if admitted.
@@ -328,7 +345,7 @@ export function runWorksetGenericMutationContract(
       expect(ptr.id).toBe(milestoneId);
     });
 
-    it("set waits behind an in-flight generic mutation admission", async () => {
+    caseIt(factory, "set waits behind an in-flight generic mutation admission", async () => {
       // Hold only the post-seed mutation critical section so setRoots observes
       // activeAdmissionCount > 0 and cannot finish until release.
       const admitted = deferred();
@@ -370,7 +387,7 @@ export function runWorksetGenericMutationContract(
       await ledger.mutations.createMilestone({ title: "post-clear" });
     });
 
-    it("mutation after set sees the new epoch; excluded target denied at new roots", async () => {
+    caseIt(factory, "mutation after set sees the new epoch; excluded target denied at new roots", async () => {
       const ledger = await factory.build();
       const { taskIn, taskOut } = await seedMinimalGraph(ledger);
       await ledger.setRoots([`${TASKS_LEDGER}:${taskIn}`, `${TASKS_LEDGER}:${taskOut}`]);
@@ -391,7 +408,7 @@ export function runWorksetGenericMutationContract(
       expect(ledger.fetchItem(TASKS_LEDGER, taskOut)).toEqual(beforeOut);
     });
 
-    it("reopen of an in-graph terminal item is allowed under restrictive roots", async () => {
+    caseIt(factory, "reopen of an in-graph terminal item is allowed under restrictive roots", async () => {
       const ledger = await factory.build();
       const { taskIn } = await seedMinimalGraph(ledger);
       await ledger.mutations.updateItem(TASKS_LEDGER, taskIn, { status: "done" });
@@ -400,7 +417,7 @@ export function runWorksetGenericMutationContract(
       expect(reopened.status).toBe("planned");
     });
 
-    it("ambient create under empty roots still works for milestone-less intake", async () => {
+    caseIt(factory, "ambient create under empty roots still works for milestone-less intake", async () => {
       const ledger = await factory.build();
       await ledger.init();
       // Ideas-style ambient: use tasks under ambient only if schema allows;

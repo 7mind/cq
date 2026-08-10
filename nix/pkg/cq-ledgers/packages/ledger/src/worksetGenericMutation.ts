@@ -69,6 +69,10 @@ import {
   createFsWorksetStore,
   type CreateFsWorksetStoreOptions,
 } from "./store/fsWorksetStore.js";
+import {
+  GitObjectLedgerBackend,
+  type GitObjectLedgerBackendOpts,
+} from "./store/git/GitObjectLedgerBackend.js";
 import type {
   ArchiveContent,
   CreateItemInit,
@@ -77,9 +81,16 @@ import type {
   FtsSearchHit,
   FtsSearchOpts,
   LedgerStore,
+  OnMutation,
   UpdateItemPatch,
   UpdateMilestoneItemPatch,
 } from "./store/LedgerStore.js";
+import type { LockfileOpts } from "./store/lockfile.js";
+import {
+  createGitObjectWorksetStore,
+  type CreateGitObjectWorksetStoreOptions,
+} from "./worksetStoreGit.js";
+import type { GitPlumbing } from "./store/git/GitPlumbing.js";
 import type {
   ArchivePointer,
   FetchedLedger,
@@ -973,6 +984,99 @@ export function createInMemoryWorksetGuardedLedger(
   const worksetStore = createInMemoryWorksetStore({
     ...(options.hooks !== undefined ? { hooks: options.hooks } : {}),
     isTargetAdmitted: closedGraphIsTargetAdmitted(rawStore),
+  });
+
+  return createWorksetGuardedLedger({
+    rawStore,
+    worksetStore,
+    ...(options.afterGenericAdmit !== undefined
+      ? { afterGenericAdmit: options.afterGenericAdmit }
+      : {}),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Git-object durable leg (T1973)
+// ---------------------------------------------------------------------------
+
+export interface CreateGitObjectWorksetGuardedLedgerOptions {
+  /** Absolute host repo root the orphan ref + lockfiles live under. */
+  readonly repoRoot: string;
+  /** Short branch name for the orphan ledger/workset ref (default `cq-ledger`). */
+  readonly ref?: string;
+  readonly now?: () => string;
+  readonly hooks?: WorksetAdmissionCoordinatorHooks;
+  readonly afterGenericAdmit?: () => Promise<void> | void;
+  /** Lockfile injection points for tests. */
+  readonly lockfile?: LockfileOpts;
+  /** Injected plumbing (tests drive a throwaway repo / fault injection). */
+  readonly git?: GitPlumbing;
+  /** Cross-process cache invalidation hook (watcher / peer coherence). */
+  readonly onMutation?: OnMutation;
+  /** Schema-divergence policy forwarded to {@link GitObjectLedgerBackend}. */
+  readonly onSchemaDivergence?: GitObjectLedgerBackendOpts["onSchemaDivergence"];
+  /** Workset-store fault-injection seam (roots CAS). */
+  readonly commitRoots?: CreateGitObjectWorksetStoreOptions["commitRoots"];
+  readonly sleep?: CreateGitObjectWorksetStoreOptions["sleep"];
+  readonly isPidAlive?: CreateGitObjectWorksetStoreOptions["isPidAlive"];
+  readonly isProcessGroupAlive?: CreateGitObjectWorksetStoreOptions["isProcessGroupAlive"];
+  readonly locksDir?: CreateGitObjectWorksetStoreOptions["locksDir"];
+  readonly validateReplacement?: CreateGitObjectWorksetStoreOptions["validateReplacement"];
+}
+
+/**
+ * Durable Git-object guarded ledger: {@link GitObjectLedgerBackend} for the
+ * canonical object graph + {@link createGitObjectWorksetStore} for roots/
+ * admission, exposed only through {@link WorksetGuardedLedger}.
+ *
+ * Every successful gateway mutation is one admitted write path on the raw
+ * backend (which advances the orphan ref by one CAS commit). Failures leave
+ * the prior ref tip authoritative. Target admission uses closed-graph
+ * membership against the live raw store (plus exact inactive roots).
+ */
+export async function createGitObjectWorksetGuardedLedger(
+  options: CreateGitObjectWorksetGuardedLedgerOptions,
+): Promise<WorksetGuardedLedger> {
+  const rawStore = new GitObjectLedgerBackend({
+    repoRoot: options.repoRoot,
+    ...(options.ref !== undefined ? { ref: options.ref } : {}),
+    ...(options.now !== undefined ? { now: options.now } : {}),
+    ...(options.lockfile !== undefined ? { lockfile: options.lockfile } : {}),
+    ...(options.git !== undefined ? { git: options.git } : {}),
+    ...(options.onMutation !== undefined ? { onMutation: options.onMutation } : {}),
+    ...(options.onSchemaDivergence !== undefined
+      ? { onSchemaDivergence: options.onSchemaDivergence }
+      : {}),
+  });
+
+  const worksetStore = await createGitObjectWorksetStore({
+    repoRoot: options.repoRoot,
+    ...(options.ref !== undefined ? { ref: options.ref } : {}),
+    ...(options.git !== undefined ? { git: options.git } : {}),
+    ...(options.lockfile !== undefined ? { lockfile: options.lockfile } : {}),
+    ...(options.locksDir !== undefined ? { locksDir: options.locksDir } : {}),
+    ...(options.hooks !== undefined ? { hooks: options.hooks } : {}),
+    ...(options.commitRoots !== undefined ? { commitRoots: options.commitRoots } : {}),
+    ...(options.sleep !== undefined ? { sleep: options.sleep } : {}),
+    ...(options.isPidAlive !== undefined ? { isPidAlive: options.isPidAlive } : {}),
+    ...(options.isProcessGroupAlive !== undefined
+      ? { isProcessGroupAlive: options.isProcessGroupAlive }
+      : {}),
+    ...(options.validateReplacement !== undefined
+      ? { validateReplacement: options.validateReplacement }
+      : {}),
+    isTargetAdmitted: (target, roots) => {
+      if (roots.length === 0) return true;
+      try {
+        const state = buildActiveStateFromLedgerStore(rawStore);
+        const graph = closeWorkset(roots, state);
+        if (worksetMemberRefSet(graph).has(target)) return true;
+        if (graph.inactiveRoots.includes(target)) return true;
+        return false;
+      } catch {
+        return false;
+      }
+    },
   });
 
   return createWorksetGuardedLedger({
