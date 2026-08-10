@@ -1689,7 +1689,14 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
   }
 
   protected async writeLedgerFile(ledger: Ledger): Promise<void> {
-    await this.persistence.writeLedgerSource(ledger.id, serializeLedger(ledger));
+    try {
+      await this.persistence.writeLedgerSource(ledger.id, serializeLedger(ledger));
+    } catch (error) {
+      // Disk is authoritative for durable adapters: a failed write must not leave
+      // the in-memory map holding an uncommitted mutation (T1972 failure-preserves-prior).
+      await this.reloadLedgerFromDisk(ledger.id);
+      throw error;
+    }
   }
 
   protected async writeRegistry(): Promise<void> {

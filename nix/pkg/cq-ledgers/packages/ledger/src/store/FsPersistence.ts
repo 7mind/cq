@@ -290,11 +290,11 @@ export class FsPersistence implements LedgerPersistence {
   }
 
   async writeLedgerSource(name: string, text: string): Promise<void> {
-    await atomicWrite(this.ledgerPath(name), text);
+    await this.writeAtomic(this.ledgerPath(name), text);
   }
 
   async writeRegistrySource(text: string): Promise<void> {
-    await atomicWrite(this.registryPath, text);
+    await this.writeAtomic(this.registryPath, text);
   }
 
   async readArchive(locator: string): Promise<string> {
@@ -304,7 +304,7 @@ export class FsPersistence implements LedgerPersistence {
   async writeArchive(locator: string, text: string): Promise<void> {
     const abs = this.resolveArchive(locator);
     await fs.mkdir(path.dirname(abs), { recursive: true });
-    await atomicWrite(abs, text);
+    await this.writeAtomic(abs, text);
   }
 
   async removeArchive(locator: string): Promise<void> {

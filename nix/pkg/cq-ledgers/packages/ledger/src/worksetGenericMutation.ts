@@ -64,6 +64,11 @@ import {
 } from "./worksetInvocationAuthority.js";
 import { DEPENDENCY_REF_FIELDS, canonicalizeRef, buildPrefixRegistry } from "./refs.js";
 import { InMemoryLedgerStore } from "./store/InMemoryLedgerStore.js";
+import { FsLedgerStore, type FsLedgerStoreOpts } from "./store/FsLedgerStore.js";
+import {
+  createFsWorksetStore,
+  type CreateFsWorksetStoreOptions,
+} from "./store/fsWorksetStore.js";
 import type {
   ArchiveContent,
   CreateItemInit,
@@ -908,6 +913,33 @@ export function createWorksetManagementLedger(
 }
 
 // ---------------------------------------------------------------------------
+// Closed-graph target admission (shared by in-memory + filesystem factories)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the coordinator `isTargetAdmitted` probe used by guarded factories:
+ * empty roots admit everything; otherwise require closed-graph membership or
+ * exact inactive-root equality against the live raw store.
+ */
+function closedGraphIsTargetAdmitted(
+  rawStore: LedgerStore,
+): (target: string, roots: readonly string[]) => boolean {
+  return (target, roots) => {
+    if (roots.length === 0) return true;
+    try {
+      const state = buildActiveStateFromLedgerStore(rawStore);
+      const graph = closeWorkset(roots, state);
+      if (worksetMemberRefSet(graph).has(target)) return true;
+      if (graph.inactiveRoots.includes(target)) return true;
+      return false;
+    } catch {
+      // Uninitialised store or malformed roots — fail closed.
+      return false;
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
 // In-memory Behavioral-Active dummy
 // ---------------------------------------------------------------------------
 
@@ -940,20 +972,85 @@ export function createInMemoryWorksetGuardedLedger(
   // the live store so membership stays coherent with the admitted epoch.
   const worksetStore = createInMemoryWorksetStore({
     ...(options.hooks !== undefined ? { hooks: options.hooks } : {}),
-    isTargetAdmitted: (target, roots) => {
-      if (roots.length === 0) return true;
-      // Build membership from the live raw store against the admitted roots.
-      try {
-        const state = buildActiveStateFromLedgerStore(rawStore);
-        const graph = closeWorkset(roots, state);
-        if (worksetMemberRefSet(graph).has(target)) return true;
-        if (graph.inactiveRoots.includes(target)) return true;
-        return false;
-      } catch {
-        // Uninitialised store or malformed roots — fail closed.
-        return false;
-      }
-    },
+    isTargetAdmitted: closedGraphIsTargetAdmitted(rawStore),
+  });
+
+  return createWorksetGuardedLedger({
+    rawStore,
+    worksetStore,
+    ...(options.afterGenericAdmit !== undefined
+      ? { afterGenericAdmit: options.afterGenericAdmit }
+      : {}),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Filesystem Behavioral-Active Good-Communication factory (T1972)
+// ---------------------------------------------------------------------------
+
+export interface CreateFsWorksetGuardedLedgerOptions {
+  /** Project root (server --cwd). Ledgers + workset live under `<root>/.cq/`. */
+  readonly root: string;
+  readonly now?: () => string;
+  readonly hooks?: WorksetAdmissionCoordinatorHooks;
+  readonly afterGenericAdmit?: () => Promise<void> | void;
+  readonly lockfile?: FsLedgerStoreOpts["lockfile"];
+  readonly onMutation?: FsLedgerStoreOpts["onMutation"];
+  /** Injected into FsLedgerStore persistence writes (ledger/archive/registry). */
+  readonly ledgerAtomicWrite?: (filePath: string, text: string) => Promise<void>;
+  /** Injected into createFsWorksetStore roots writes. */
+  readonly worksetAtomicWrite?: (filePath: string, text: string) => Promise<void>;
+  readonly isPidAlive?: CreateFsWorksetStoreOptions["isPidAlive"];
+  readonly isProcessGroupAlive?: CreateFsWorksetStoreOptions["isProcessGroupAlive"];
+  readonly selfPid?: number;
+  readonly selfHostname?: string;
+  readonly pollIntervalMs?: number;
+}
+
+/**
+ * Filesystem guarded ledger: {@link FsLedgerStore} + {@link createFsWorksetStore}
+ * exposed only through {@link WorksetGuardedLedger}.
+ *
+ * Uses the same closed-graph admission probe as the in-memory dummy so the
+ * shared Blackbox contract is backend-agnostic. Raw FS write primitives stay
+ * inside the adapters (global + ordered per-ledger locks, atomic writes).
+ */
+export function createFsWorksetGuardedLedger(
+  options: CreateFsWorksetGuardedLedgerOptions,
+): WorksetGuardedLedger {
+  if (typeof options.root !== "string" || options.root.length === 0) {
+    throw new Error("createFsWorksetGuardedLedger: root is required");
+  }
+
+  const rawStore = new FsLedgerStore({
+    root: options.root,
+    ...(options.now !== undefined ? { now: options.now } : {}),
+    ...(options.lockfile !== undefined ? { lockfile: options.lockfile } : {}),
+    ...(options.onMutation !== undefined ? { onMutation: options.onMutation } : {}),
+    ...(options.ledgerAtomicWrite !== undefined
+      ? { atomicWrite: options.ledgerAtomicWrite }
+      : {}),
+  });
+
+  const worksetStore = createFsWorksetStore({
+    root: options.root,
+    ...(options.hooks !== undefined ? { hooks: options.hooks } : {}),
+    ...(options.lockfile !== undefined ? { lockfile: options.lockfile } : {}),
+    ...(options.worksetAtomicWrite !== undefined
+      ? { atomicWrite: options.worksetAtomicWrite }
+      : {}),
+    ...(options.isPidAlive !== undefined ? { isPidAlive: options.isPidAlive } : {}),
+    ...(options.isProcessGroupAlive !== undefined
+      ? { isProcessGroupAlive: options.isProcessGroupAlive }
+      : {}),
+    ...(options.selfPid !== undefined ? { selfPid: options.selfPid } : {}),
+    ...(options.selfHostname !== undefined
+      ? { selfHostname: options.selfHostname }
+      : {}),
+    ...(options.pollIntervalMs !== undefined
+      ? { pollIntervalMs: options.pollIntervalMs }
+      : {}),
+    isTargetAdmitted: closedGraphIsTargetAdmitted(rawStore),
   });
 
   return createWorksetGuardedLedger({

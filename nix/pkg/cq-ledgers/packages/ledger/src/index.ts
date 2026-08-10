@@ -209,6 +209,7 @@ export {
   createWorksetManagementLedger,
   createInMemoryWorksetGuardedLedger,
   createInMemoryWorksetManagementLedger,
+  createFsWorksetGuardedLedger,
   assertGenericMutationAdmissionNotCallerMinted,
   inventoriedLedgerStoreMutationMethods,
   inventoriedSealedOwnershipFields,
@@ -227,6 +228,7 @@ export type {
   WorksetGuardedLedger,
   WorksetGenericMutationGatewayHost,
   CreateInMemoryWorksetGuardedLedgerOptions,
+  CreateFsWorksetGuardedLedgerOptions,
 } from "./worksetGenericMutation.js";
 export {
   WorksetOwnedLifecycleError,
