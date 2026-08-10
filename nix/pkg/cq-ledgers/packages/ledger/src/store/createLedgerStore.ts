@@ -46,7 +46,7 @@ import type { LedgerStore } from "./LedgerStore.js";
 import { FsLedgerStore } from "./FsLedgerStore.js";
 import { GitObjectLedgerBackend } from "./git/GitObjectLedgerBackend.js";
 import { SqliteLedgerStore } from "./sqlite/SqliteLedgerStore.js";
-import { dataVersion, openLedgerDb } from "./sqlite/connection.js";
+import { coherenceVersion, openLedgerDb } from "./sqlite/connection.js";
 import { SqliteXdgProjectIdentityAccess } from "./sqlite/projectIdentity.js";
 import { openPgPool } from "./postgres/connection.js";
 import { ensureSchema } from "./postgres/schema.js";
@@ -96,7 +96,7 @@ export interface ResolvedLedgerStore {
   readonly branch: string;
   /**
    * The concrete `ledger.db` path (xdg backend only) — the input
-   * {@link startXdgCoherenceWatcher} polls via `PRAGMA data_version` to
+   * {@link startXdgCoherenceWatcher} polls a domain-state version to
    * detect a peer process's commit. `undefined` for the legacy backends
    * {@link openLegacyLedgerStore} returns, whose coherence watchers key off a
    * different signal (file mtime / ref sha).
@@ -552,19 +552,18 @@ export interface XdgCoherenceWatcher {
 /**
  * The xdg backend's coherence watcher (T530) — parity with the fs file-watch
  * / git-object ref-watch selection the construction site (ledger-mcp) makes
- * for the other backends, keyed here off `PRAGMA data_version` instead of a
- * filesystem event or a ref sha.
+ * for the other backends, keyed here off the persisted domain-state version
+ * instead of a filesystem event or a ref sha.
  *
  * Opens its OWN probe connection to `dbPath` (never touches `store`'s
- * internals) and polls {@link dataVersion} every `pollMs`. `data_version` is
- * bumped by ANY commit on the file, including this process's own writes AND a
- * peer process's — but it carries no per-ledger scope, so a bump invalidates
- * every ledger `store` currently knows (`store.enumerate()`) rather than just
- * the one that changed; the abstract-suite contract makes `invalidate` cheap
- * and idempotent for an unchanged ledger.
+ * internals) and polls {@link coherenceVersion} every `pollMs`. SQLite
+ * triggers bump that counter for persisted domain state while MCP usage
+ * telemetry does not invalidate the derived search index or notify frontend
+ * clients. The counter carries no per-ledger scope, so a bump invalidates
+ * every ledger `store` currently knows (`store.enumerate()`).
  *
  * `onChange`, when given, fires ONCE per invalidate pass with `null` (never a
- * ledger id) — `data_version` carries no per-ledger scope to report, matching
+ * ledger id) — the counter carries no per-ledger scope to report, matching
  * the bulk-invalidate granularity above. Same callback shape as
  * startLedgerWatcher / startLedgerRefWatcher's `onChange`, so the construction
  * site (startLedgerCoherenceWatcher, ledger-mcp/main.ts) can forward it
@@ -580,12 +579,12 @@ export function startXdgCoherenceWatcher(
   onChange?: (ledgerId: string | null) => void,
 ): XdgCoherenceWatcher {
   const probe = openLedgerDb(dbPath);
-  let lastVersion = dataVersion(probe);
+  let lastVersion = coherenceVersion(probe);
   let invalidating = false;
 
   const timer = setInterval(() => {
     if (invalidating) return;
-    const current = dataVersion(probe);
+    const current = coherenceVersion(probe);
     if (current === lastVersion) return;
     lastVersion = current;
     invalidating = true;

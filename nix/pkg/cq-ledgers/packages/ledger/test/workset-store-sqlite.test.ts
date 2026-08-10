@@ -79,7 +79,7 @@ describe("workset store sqlite [T1957]", () => {
         .query("SELECT value FROM meta WHERE key = 'schema_version'")
         .get() as { value: number };
       expect(Number(meta.value)).toBe(SCHEMA_VERSION);
-      expect(SCHEMA_VERSION).toBe(4);
+      expect(SCHEMA_VERSION).toBe(5);
     } finally {
       db.close();
     }

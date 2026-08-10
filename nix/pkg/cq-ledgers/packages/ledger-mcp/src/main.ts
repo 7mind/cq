@@ -42,11 +42,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import {
-  acquireStdioSingletonLock,
-  startParentDeathWatcher,
-  startStdinEndWatcher,
-} from "./stdioProcessGuards.js";
+import { startParentDeathWatcher, startStdinEndWatcher } from "./stdioProcessGuards.js";
 import {
   type LedgerStore,
   type ReadLogCapability,
@@ -457,7 +453,7 @@ export function listProjectsOf(
  * Start the per-backend coherence watcher for a resolved store (T357 item 5;
  * xdg case wired in T500): file-watch ({@link startLedgerWatcher}) for the fs
  * backend, ref-sha-watch ({@link startLedgerRefWatcher}, T353) for git-object,
- * data_version-poll ({@link startXdgCoherenceWatcher}, T530) for xdg, and
+ * domain-state-version poll ({@link startXdgCoherenceWatcher}) for xdg, and
  * LISTEN/NOTIFY push ({@link startPostgresCoherenceWatcher}, T578) for
  * postgres. Remote refuses before watcher construction until its downstream
  * client adapter lands. All four local watchers return a handle with
@@ -466,7 +462,7 @@ export function listProjectsOf(
  * watcher polls `refs/heads/<branch>` for ledger advances by another process.
  *
  * The xdg AND postgres watchers bulk-invalidate every known ledger off a
- * single coherence signal (a `data_version` bump / a NOTIFY on the tenant's
+ * single coherence signal (a content-version bump / a NOTIFY on the tenant's
  * `project_key`) with no per-ledger granularity to report, so their
  * `onChange` (D89) fires once per invalidate pass with `null` rather than once
  * per ledger id — `onChange` is forwarded here exactly as for the other
@@ -971,13 +967,6 @@ export async function main(argv: readonly string[]): Promise<void> {
   // for git-object).
   const watcher = startLedgerCoherenceWatcher(resolved, cwd);
 
-  // D293/T2018: one stdio MCP per project state dir (or cwd fallback).
-  const lockDir =
-    resolved.dbPath !== undefined
-      ? path.dirname(resolved.dbPath)
-      : path.join(cwd, ".cq");
-  const singleton = acquireStdioSingletonLock(lockDir);
-
   // Graceful shutdown on SIGTERM / SIGINT / parent death / stdin end (T2019).
   let stopParentWatch: () => void = () => {};
   let stopStdinWatch: () => void = () => {};
@@ -988,7 +977,6 @@ export async function main(argv: readonly string[]): Promise<void> {
     stopParentWatch();
     stopStdinWatch();
     watcher.close();
-    singleton.release();
     void dispatchRuntime.close().finally(() => process.exit(0));
   };
   stopParentWatch = startParentDeathWatcher(() => {
@@ -998,9 +986,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     shutdown();
   });
   stopStdinWatch = startStdinEndWatcher(() => {
-    process.stderr.write(
-      "ledger-mcp: stdin closed — exiting (release stdio lock for reconnect)\n",
-    );
+    process.stderr.write("ledger-mcp: stdin closed — exiting\n");
     shutdown();
   });
   process.on("SIGTERM", shutdown);
@@ -1010,9 +996,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   await server.connect(transport);
   // McpServer holds the process open by virtue of the stdio listener;
   // exiting here would close stdin and tear the channel down immediately.
-  process.stderr.write(
-    `ledger-mcp: serving stdio MCP on cwd=${cwd} (stdio lock ${singleton.lockPath})\n`,
-  );
+  process.stderr.write(`ledger-mcp: serving stdio MCP on cwd=${cwd}\n`);
 }
 
 // Only run main() when executed directly (not when imported by the test

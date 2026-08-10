@@ -30,8 +30,23 @@ import type { Database } from "bun:sqlite";
  * - v4 (T1957/G158): project workset roots/epoch plus durable admission rows
  *   and an exclusive-claim row so broker admissions survive across processes
  *   without a long-lived write transaction.
+ * - v5: a coherence counter whose triggers exclude MCP usage telemetry.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
+
+const COHERENCE_TABLES = [
+  "ledgers",
+  "groups",
+  "items",
+  "archive_pointers",
+  "archived_items",
+  "plan_claims",
+  "plan_operations",
+  "workset_state",
+  "workset_admissions",
+  "workset_exclusive",
+] as const;
+const COHERENCE_OPERATIONS = ["INSERT", "UPDATE", "DELETE"] as const;
 
 /**
  * Apply the normalized-row DDL to `db`. Idempotent: every statement is
@@ -108,6 +123,13 @@ export function ensureSchema(db: Database): void {
       value NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS coherence_state (
+      id      INTEGER PRIMARY KEY CHECK (id = 1),
+      version INTEGER NOT NULL
+    );
+
+    INSERT OR IGNORE INTO coherence_state (id, version) VALUES (1, 0);
+
     CREATE TABLE IF NOT EXISTS mcp_usage_stats (
       endpoint    TEXT PRIMARY KEY,
       call_count  INTEGER NOT NULL,
@@ -149,7 +171,18 @@ export function ensureSchema(db: Database): void {
       pid         INTEGER NOT NULL,
       started_at  INTEGER NOT NULL
     );
+
   `);
+  for (const table of COHERENCE_TABLES) {
+    for (const operation of COHERENCE_OPERATIONS) {
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS coherence_${table}_${operation.toLowerCase()}
+        AFTER ${operation} ON ${table} BEGIN
+          UPDATE coherence_state SET version = version + 1 WHERE id = 1;
+        END
+      `);
+    }
+  }
   db.query("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)").run(
     SCHEMA_VERSION,
   );

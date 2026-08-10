@@ -261,6 +261,7 @@ describe("XDG project identity storage shape", () => {
         expect(tables).toEqual([
           "archive_pointers",
           "archived_items",
+          "coherence_state",
           "groups",
           "items",
           "ledgers",
@@ -277,7 +278,7 @@ describe("XDG project identity storage shape", () => {
           .all()
           .map((row) => row.name);
         expect(metaColumns).toEqual(["key", "value"]);
-        expect(SCHEMA_VERSION).toBe(4);
+        expect(SCHEMA_VERSION).toBe(5);
       } finally {
         db.close();
       }

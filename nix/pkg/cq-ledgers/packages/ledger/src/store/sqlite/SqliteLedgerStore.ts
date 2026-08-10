@@ -608,8 +608,8 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     const version = versionRow === null ? 1 : Number(versionRow.value);
     if (version >= SCHEMA_VERSION) return;
 
-    // v2→v3 (T1509/G155) and v3→v4 (T1957/G158): additive DDL only
-    // (mcp_usage_stats; workset_state/admissions/exclusive), which
+    // v2→v3 (T1509/G155), v3→v4 (T1957/G158), and v4→v5: additive DDL only
+    // (mcp_usage_stats; workset tables; domain coherence counter/triggers), which
     // ensureSchema already applied idempotently at open — bump the marker
     // WITHOUT the v1 snapshot/rewrite churn.
     if (version >= 2) {
@@ -923,7 +923,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
    * so a peer process's committed write is observed on the next read). The
    * derived search index is this backend's ONLY cache: rebuild the affected
    * ledger's active AND archived buckets from the current committed rows so a
-   * peer commit — surfaced by the T530 data_version coherence watcher —
+   * peer commit — surfaced by the xdg domain-state coherence watcher —
    * becomes visible to ftsSearch (a peer's `archiveMilestone`/`unarchiveItem`
    * moves docs between the two buckets). Unknown ledger ids are a no-op (any
    * stale docs are dropped), matching the abstract-suite contract.

@@ -7,7 +7,7 @@
  * LedgerSearchIndex, so hits are compared EXACTLY (ids, order, scores,
  * matchedFields). Plus the sqlite-specific coherence contract: incremental
  * post-commit index maintenance and the peer-commit + invalidate() refresh
- * path (the T530 data_version watcher's trigger).
+ * path (the xdg domain-state watcher's trigger).
  */
 
 import { afterEach, describe, expect, test } from "bun:test";

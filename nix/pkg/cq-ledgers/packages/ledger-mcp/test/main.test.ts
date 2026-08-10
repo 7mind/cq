@@ -179,6 +179,15 @@ function decode<T>(result: unknown): T {
 }
 
 describe("ledger-mcp stdio binary", () => {
+  it("keeps two stdio clients for the same project alive concurrently", async () => {
+    await withClient(async (first) => {
+      await withClient(async (second) => {
+        expect((await second.listTools()).tools.length).toBeGreaterThan(0);
+        expect((await first.listTools()).tools.length).toBeGreaterThan(0);
+      });
+    });
+  }, 10_000);
+
   it("omits dispatch tools when no attested prompt surface is configured", async () => {
     await withClient(async (client) => {
       const list = await client.listTools();

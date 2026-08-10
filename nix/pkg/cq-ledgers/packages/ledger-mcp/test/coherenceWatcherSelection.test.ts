@@ -2,7 +2,7 @@
  * startLedgerCoherenceWatcher — per-backend SELECTION wiring (T500 / G67).
  *
  * The three coherence watchers (file-watch for fs, ref-sha-poll for
- * git-object, data_version-poll for xdg) are implemented and unit-tested
+ * git-object, domain-state-version poll for xdg) are implemented and unit-tested
  * elsewhere (watch.test.ts, refWatcher.test.ts, store-sqlite.test.ts). THIS
  * file asserts the SELECTION itself: given a `ResolvedLedgerStore` with a
  * given `backend`, `startLedgerCoherenceWatcher` must dispatch to the
@@ -161,7 +161,7 @@ describe("startLedgerCoherenceWatcher — backend selection", () => {
     }
   }, 10_000);
 
-  it("selects the xdg data_version watcher for backend 'xdg': a peer commit becomes visible", async () => {
+  it("selects the xdg coherence watcher for backend 'xdg': a peer commit becomes visible", async () => {
     const dbDir = await tmpDir("coherence-select-xdg-");
     const dbPath = path.join(dbDir, "ledger.db");
     const peer = new SqliteLedgerStore({ dbPath });

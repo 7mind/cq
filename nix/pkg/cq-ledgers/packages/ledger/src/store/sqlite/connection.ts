@@ -164,3 +164,12 @@ export function dataVersion(db: Database): number {
   const row = db.query("PRAGMA data_version").get() as { data_version: number };
   return row.data_version;
 }
+
+/** Read the monotonic version changed by persisted state other than usage telemetry. */
+export function coherenceVersion(db: Database): number {
+  const row = db.query("SELECT version FROM coherence_state WHERE id = 1").get() as {
+    version: number;
+  } | null;
+  if (row === null) throw new Error("SQLite coherence_state singleton row is missing");
+  return row.version;
+}

@@ -177,8 +177,8 @@ describe("SqliteLedgerStore v1->v2 dependency-ref migration (T553)", () => {
     expect(readSchemaJson(dbPath, "defects").satisfiesDependencyStatuses).toEqual(
       DEFECTS_SCHEMA.satisfiesDependencyStatuses,
     );
-    // (d) Version bumped to the current on-disk version (v3 with mcp_usage_stats).
-    expect(readSchemaVersion(dbPath)).toBe(4);
+    // (d) Version bumped to the current on-disk version.
+    expect(readSchemaVersion(dbPath)).toBe(5);
   });
 
   test("second open is a strict no-op — fields_json byte-identical, no new snapshot", async () => {
