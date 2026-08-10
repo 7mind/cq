@@ -160,6 +160,39 @@
             ${pkgs.lib.escapeShellArg (toString root)}
         '';
 
+        nodeGypRuntimeProbe = pkgs.writeText "cq-node-gyp-runtime-probe.ts" ''
+          import { join } from "node:path";
+          import { pathToFileURL } from "node:url";
+
+          const ledgerRoot = process.argv[2];
+          if (ledgerRoot === undefined || ledgerRoot.trim() === "") {
+            throw new Error("missing-ledger-root");
+          }
+          const modulePath = join(ledgerRoot, "src", "managedWorktree.ts");
+          const module = await import(pathToFileURL(modulePath).href);
+          const binDir = module.resolveNodeGypBinDir(modulePath);
+          if (binDir === null) throw new Error("missing-node-gyp-provider");
+          const executable = join(binDir, "node-gyp");
+          if (!(await Bun.file(executable).exists())) {
+            throw new Error(`missing-node-gyp-executable: ''${executable}`);
+          }
+          const result = Bun.spawnSync([executable, "--version"], {
+            cwd: ledgerRoot,
+            env: process.env,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          if (result.exitCode !== 0) {
+            throw new Error(
+              `node-gyp-execution-failed: exit=''${result.exitCode} stderr=''${result.stderr.toString().trim()}`,
+            );
+          }
+          console.log(JSON.stringify({
+            executable,
+            version: result.stdout.toString().trim(),
+          }));
+        '';
+
         # Fixed-output derivation: fetches all npm dependencies via
         # `bun install --frozen-lockfile`. Nix allows network access inside
         # FODs; hermeticity is guaranteed by the output hash.
@@ -288,8 +321,8 @@
           # system. To add a system: set its entry to nixpkgs lib.fakeHash
           # (sha256-AAAA…), `nix build .#node-modules`, paste the reported `got:`.
           outputHash = {
-            "x86_64-linux" = "sha256-m8Ulp2N1CCwc/X+bZcMAMe0NqAbAjv7oXl1VonkV764=";
-            "aarch64-darwin" = "sha256-EahA0RWCjCelK7RhCqbJXDhqzB9R4dmVBDnA0v6SzZQ=";
+            "x86_64-linux" = "sha256-QmusCVAIh7fBs4rWWhiJ2W7s7HyNkkLEXzfjmyyCnUc=";
+            "aarch64-darwin" = "sha256-o6DHi9UeCgeseZFloOcjZpBKLL9LEEvNOIajCQHqWuE=";
           }.${system} or (throw "ledger-node-modules: no FOD hash pinned for ${system}");
         };
 
@@ -443,13 +476,21 @@
 
           # @cq/ledger runtime deps.
           mkdir -p "$WORKSPACE/packages/ledger/node_modules/@anthropic-ai" \
-                   "$WORKSPACE/packages/ledger/node_modules/@modelcontextprotocol"
+                   "$WORKSPACE/packages/ledger/node_modules/@modelcontextprotocol" \
+                   "$WORKSPACE/packages/ledger/node_modules/.bin"
           for dep in zod yaml unified remark-frontmatter remark-parse remark-stringify minisearch postgres bun-types; do
             if [ -e "${bunNodeModules}/packages/ledger/node_modules/$dep" ]; then
               ln -s "${bunNodeModules}/packages/ledger/node_modules/$dep" \
                 "$WORKSPACE/packages/ledger/node_modules/$dep"
             fi
           done
+          ln -s ${bunNodeModules}/packages/ledger/node_modules/node-gyp \
+            "$WORKSPACE/packages/ledger/node_modules/node-gyp"
+          cat > "$WORKSPACE/packages/ledger/node_modules/.bin/node-gyp" <<'EOF'
+#!${pkgs.runtimeShell}
+exec ${pkgs.nodejs_22}/bin/node ${bunNodeModules}/packages/ledger/node_modules/node-gyp/bin/node-gyp.js "$@"
+EOF
+          chmod +x "$WORKSPACE/packages/ledger/node_modules/.bin/node-gyp"
           ln -s ${bunNodeModules}/packages/ledger/node_modules/@anthropic-ai/claude-agent-sdk \
             "$WORKSPACE/packages/ledger/node_modules/@anthropic-ai/claude-agent-sdk"
           ln -s ${bunNodeModules}/packages/ledger/node_modules/@modelcontextprotocol/sdk \
@@ -840,6 +881,37 @@ EOF
         # outside the Nix builder; see docs/macos-home-manager.md.
         checks =
           {
+            cq-node-gyp-runtime = pkgs.runCommand "cq-node-gyp-runtime" {
+              nativeBuildInputs = [ pkgs.bun pkgs.nodejs_22 ];
+            } ''
+              set -eu
+              mkdir -p "$out"
+
+              positiveLedger=${cqCli}/share/cq/packages/ledger
+              ${pkgs.bun}/bin/bun run ${nodeGypRuntimeProbe} "$positiveLedger" \
+                > "$out/positive.json"
+
+              negativeRoot="$TMPDIR/negative-artifact"
+              mkdir -p "$negativeRoot/packages"
+              cp -a "$positiveLedger" "$negativeRoot/packages/ledger"
+              chmod -R u+w "$negativeRoot/packages/ledger"
+              rm -f \
+                "$negativeRoot/packages/ledger/node_modules/node-gyp" \
+                "$negativeRoot/packages/ledger/node_modules/.bin/node-gyp"
+              set +e
+              ${pkgs.bun}/bin/bun run ${nodeGypRuntimeProbe} \
+                "$negativeRoot/packages/ledger" \
+                > "$out/negative.log" 2>&1
+              negativeCode=$?
+              set -e
+              if [ "$negativeCode" -eq 0 ] || \
+                 ! grep -Fq missing-node-gyp-provider "$out/negative.log"; then
+                echo "node-gyp provider omission did not fail closed" >&2
+                cat "$out/negative.log" >&2
+                exit 1
+              fi
+            '';
+
             pi-extensions-tests = pkgs.stdenvNoCC.mkDerivation {
               pname = "pi-extensions-tests";
               version = "0.0.1";

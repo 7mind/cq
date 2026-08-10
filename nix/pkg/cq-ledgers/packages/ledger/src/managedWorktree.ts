@@ -20,7 +20,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
-import { promises as fs } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import {
@@ -306,8 +306,16 @@ export function resolveNodeGypBinDir(
 ): string | null {
   try {
     const require = createRequire(resolveFrom);
-    const nodeGypPkgJson = require.resolve("node-gyp/package.json");
-    return resolve(dirname(nodeGypPkgJson), "..", ".bin");
+    require.resolve("node-gyp/package.json");
+    const searchPaths = require.resolve.paths("node-gyp") ?? [];
+    for (const modulesDir of searchPaths) {
+      const packageJson = join(modulesDir, "node-gyp", "package.json");
+      const executable = join(modulesDir, ".bin", "node-gyp");
+      if (existsSync(packageJson) && existsSync(executable)) {
+        return join(modulesDir, ".bin");
+      }
+    }
+    return null;
   } catch {
     return null;
   }

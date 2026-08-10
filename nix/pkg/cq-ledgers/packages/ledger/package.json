@@ -57,6 +57,7 @@
     "@cq/process-control": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",
     "minisearch": "7.2.0",
+    "node-gyp": "13.0.1",
     "postgres": "3.4.9",
     "remark-frontmatter": "^5.0.0",
     "remark-parse": "^11.0.0",

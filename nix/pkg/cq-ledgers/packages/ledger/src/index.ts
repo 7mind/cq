@@ -306,6 +306,7 @@ export {
   releaseManagedWorktree,
   resolveBunInstallCacheDir,
   resolveCqCacheRoot,
+  resolveNodeGypBinDir,
   validateManagedWorktreeInstallPlan,
 } from "./managedWorktree.js";
 export type {

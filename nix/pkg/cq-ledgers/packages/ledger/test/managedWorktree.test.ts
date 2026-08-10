@@ -20,6 +20,7 @@ import {
   prepareManagedWorktree,
   rebaseBunWorkspaceIntoWorktree,
   releaseManagedWorktree,
+  resolveNodeGypBinDir,
   validateManagedWorktreeInstallPlan,
   type DependencyTaskSnapshot,
   type DependencyTaskSnapshotReader,
@@ -136,6 +137,24 @@ describe("UUIDv7 helpers", () => {
 });
 
 describe("install plan validation (negative controls)", () => {
+  it("resolves only a provider whose sibling .bin executable exists", async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), "t2046-node-gyp-"));
+    repositories.push(root);
+    const consumer = path.join(root, "consumer", "index.js");
+    const provider = path.join(root, "node_modules", "node-gyp");
+    const binDir = path.join(root, "node_modules", ".bin");
+    await fs.mkdir(path.dirname(consumer), { recursive: true });
+    await fs.mkdir(provider, { recursive: true });
+    await fs.mkdir(binDir, { recursive: true });
+    await fs.writeFile(consumer, "");
+    await fs.writeFile(path.join(provider, "package.json"), '{"name":"node-gyp","version":"13.0.1"}\n');
+    await fs.writeFile(path.join(binDir, "node-gyp"), "executable\n");
+
+    expect(resolveNodeGypBinDir(consumer)).toBe(binDir);
+    await fs.rm(path.join(binDir, "node-gyp"));
+    expect(resolveNodeGypBinDir(consumer)).toBeNull();
+  });
+
   it("accepts the exact frozen-lockfile plan under the CQ cache root", () => {
     const plan = buildManagedWorktreeInstallPlan({
       bunWorkspaceRoot: "/tmp/workspace",
@@ -1228,4 +1247,3 @@ describe("T1310 managed worktree prepare→dispatch→release state machine [BA]
     }
   });
 });
-
