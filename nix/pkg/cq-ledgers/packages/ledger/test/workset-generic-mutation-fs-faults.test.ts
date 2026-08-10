@@ -310,4 +310,121 @@ describe("workset generic-mutation filesystem faults [T1972]", () => {
       await ledger.dispose();
     }
   });
+
+  it("mid-sweep archive failure preserves the complete prior durable state", async () => {
+    const root = await freshRoot();
+    let failNextMilestonesWrite = false;
+    const ledger = createFsWorksetGuardedLedger({
+      root,
+      ledgerAtomicWrite: async (filePath, text) => {
+        if (
+          failNextMilestonesWrite &&
+          filePath.endsWith(`${MILESTONES_LEDGER}.md`)
+        ) {
+          failNextMilestonesWrite = false;
+          throw new Error("injected late archive-sweep failure");
+        }
+        await atomicWrite(filePath, text);
+      },
+    });
+    await ledger.init();
+    try {
+      const m = await ledger.mutations.createMilestone({ title: "sweep-atomic" });
+      const task = await ledger.mutations.createItem(TASKS_LEDGER, m.id, {
+        status: "done",
+        fields: { headline: "terminal task" },
+      });
+      await ledger.mutations.updateMilestone(m.id, { status: "done" });
+      await ledger.setRoots([
+        `${MILESTONES_LEDGER}:${m.id}`,
+        `${TASKS_LEDGER}:${task.id}`,
+      ]);
+
+      failNextMilestonesWrite = true;
+      await expect(
+        ledger.mutations.archiveMilestone(m.id, "must roll back"),
+      ).rejects.toThrow(/injected late archive-sweep failure/);
+
+      const peer = createFsWorksetGuardedLedger({ root });
+      await peer.init();
+      try {
+        expect(peer.fetchItem(MILESTONES_LEDGER, m.id).id).toBe(m.id);
+        expect(peer.fetchItem(TASKS_LEDGER, task.id).id).toBe(task.id);
+      } finally {
+        await peer.dispose();
+      }
+
+      const taskArchivePath = path.join(
+        root,
+        LEDGER_STORAGE_DIRNAME,
+        "archive",
+        TASKS_LEDGER,
+        `${m.id}.md`,
+      );
+      const milestoneArchivePath = path.join(
+        root,
+        LEDGER_STORAGE_DIRNAME,
+        "archive",
+        MILESTONES_LEDGER,
+        `${m.id}.md`,
+      );
+      await expect(fs.stat(taskArchivePath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fs.stat(milestoneArchivePath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await ledger.dispose();
+    }
+  });
+
+  it("restart rolls back an interrupted archive commit before exposing state", async () => {
+    const root = await freshRoot();
+    let injectFailure = false;
+    let rollingBack = false;
+    const ledger = createFsWorksetGuardedLedger({
+      root,
+      ledgerAtomicWrite: async (filePath, text) => {
+        if (
+          injectFailure &&
+          !rollingBack &&
+          filePath.endsWith(`${MILESTONES_LEDGER}.md`)
+        ) {
+          rollingBack = true;
+          throw new Error("injected archive commit interruption");
+        }
+        if (rollingBack && filePath.endsWith(`${TASKS_LEDGER}.md`)) {
+          rollingBack = false;
+          throw new Error("injected rollback interruption");
+        }
+        await atomicWrite(filePath, text);
+      },
+    });
+    await ledger.init();
+    const m = await ledger.mutations.createMilestone({ title: "sweep-recovery" });
+    const task = await ledger.mutations.createItem(TASKS_LEDGER, m.id, {
+      status: "done",
+      fields: { headline: "terminal task" },
+    });
+    await ledger.mutations.updateMilestone(m.id, { status: "done" });
+    await ledger.setRoots([
+      `${MILESTONES_LEDGER}:${m.id}`,
+      `${TASKS_LEDGER}:${task.id}`,
+    ]);
+
+    injectFailure = true;
+    await expect(
+      ledger.mutations.archiveMilestone(m.id, "must recover"),
+    ).rejects.toThrow(/archive commit failed.*rollback did not complete/);
+    await ledger.dispose();
+
+    const recovered = createFsWorksetGuardedLedger({ root });
+    await recovered.init();
+    try {
+      expect(recovered.fetchItem(MILESTONES_LEDGER, m.id).id).toBe(m.id);
+      expect(recovered.fetchItem(TASKS_LEDGER, task.id).id).toBe(task.id);
+      await expect(
+        fs.stat(path.join(root, LEDGER_STORAGE_DIRNAME, "archive-commit.pending.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await recovered.dispose();
+    }
+  });
 });

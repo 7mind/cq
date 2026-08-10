@@ -166,7 +166,6 @@ export class GitPersistence implements LedgerPersistence {
     }
     await this.advanceMany(replacements, "ledger: archive milestone");
   }
-
   /** The current ref sha, or null when the ref is absent. */
   private async refSha(): Promise<string | null> {
     return this.git.readRef(this.ref);
