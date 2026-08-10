@@ -14,8 +14,8 @@
  *     terminal disposition, refusing without mutation when ineligible, and
  *     releasing eligible clean terminal trees idempotently.
  *
- * Fault-injection hooks sit immediately before irreversible deletes so a
- * injected failure cannot destroy recoverable work.
+ * Named fault-injection hooks cover registry publication and irreversible
+ * deletes so restart tests can establish the recoverability boundaries.
  */
 
 import { createHash, randomBytes } from "node:crypto";
@@ -25,7 +25,6 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import {
   delimiter as pathDelimiter,
-  dirname,
   isAbsolute,
   join,
   normalize,
@@ -66,10 +65,14 @@ const DEFAULT_BRANCH_PREFIX = "implement/";
 const REGISTRY_DIRNAME = ".cq-managed-registry";
 const TASK_INDEX_DIRNAME = "by-task";
 const HANDLES_DIRNAME = "handles";
+const TASK_REGISTRY_DIRNAME = "tasks";
+const TASK_GENERATIONS_DIRNAME = "generations";
+const TASK_STAGING_DIRNAME = "staging";
+const TASK_CURRENT_FILENAME = "current.json";
+const REGISTRY_QUARANTINE_DIRNAME = "quarantine";
 const PREPARE_LOCKS_DIRNAME = "locks";
 const RECOVERY_REF_PREFIX = "refs/cq-managed-recovery";
-const UUIDV7_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUIDV7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TASK_ID_RE = /^T\d+$/;
 const FULL_COMMIT_SHA = /^[0-9a-f]{40}$/;
 const BUN_LOCK_NAMES = ["bun.lock", "bun.lockb"] as const;
@@ -230,6 +233,8 @@ export type ManagedWorktreeIdFactory = () => string;
 export type ManagedWorktreeFaultBoundary =
   | "before-worktree-add"
   | "before-registry-commit"
+  | "after-registry-generation-sync"
+  | "before-registry-pointer-rename"
   | "before-worktree-remove"
   | "before-registry-release"
   | "before-directory-delete";
@@ -568,12 +573,24 @@ function registryRoot(repositoryRoot: string, stateDir: string | undefined): str
   return join(worktreesParent(repositoryRoot), REGISTRY_DIRNAME);
 }
 
-function handlePath(regRoot: string, token: string): string {
+function legacyHandlePath(regRoot: string, token: string): string {
   return join(regRoot, HANDLES_DIRNAME, `${token}.json`);
 }
 
-function taskIndexDir(regRoot: string, taskId: string): string {
+function legacyTaskIndexDir(regRoot: string, taskId: string): string {
   return join(regRoot, TASK_INDEX_DIRNAME, taskId);
+}
+
+function taskRegistryDir(regRoot: string, taskId: string): string {
+  return join(regRoot, TASK_REGISTRY_DIRNAME, taskId);
+}
+
+function taskGenerationPath(regRoot: string, taskId: string, generation: string): string {
+  return join(taskRegistryDir(regRoot, taskId), TASK_GENERATIONS_DIRNAME, `${generation}.json`);
+}
+
+function taskCurrentPath(regRoot: string, taskId: string): string {
+  return join(taskRegistryDir(regRoot, taskId), TASK_CURRENT_FILENAME);
 }
 
 function fingerprintHandle(handle: ManagedWorktreeHandle): string {
@@ -602,6 +619,17 @@ interface StoredHandleRecord {
   readonly releasedAt?: string;
 }
 
+interface TaskRegistryGeneration {
+  readonly version: 2;
+  readonly taskId: string;
+  readonly records: readonly StoredHandleRecord[];
+}
+
+interface TaskRegistryPointer {
+  readonly version: 2;
+  readonly generation: string;
+}
+
 function isHandleShape(value: unknown): value is ManagedWorktreeHandle {
   return validateManagedWorktreeHandle(value).status === "valid";
 }
@@ -621,83 +649,339 @@ function assertHandleIntegrity(
 
 async function readStoredHandle(
   regRoot: string,
+  taskId: string,
   token: string,
+  fault: ManagedWorktreeFaultInjector,
 ): Promise<StoredHandleRecord | null> {
-  try {
-    const raw = await fs.readFile(handlePath(regRoot, token), "utf8");
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== "object" || parsed === null) return null;
-    const record = parsed as Partial<StoredHandleRecord>;
-    if (!isHandleShape(record.handle)) return null;
-    if (record.fingerprint !== fingerprintHandle(record.handle)) return null;
-    if (record.status !== "live" && record.status !== "released") return null;
-    if (typeof record.headAtPrepare !== "string") return null;
-    if (typeof record.bunWorkspaceRoot !== "string") return null;
-    return record as StoredHandleRecord;
-  } catch {
-    return null;
-  }
+  const records = await loadOrReconcileTaskRecords(regRoot, taskId, fault);
+  return records.find((record) => record.handle.token === token) ?? null;
 }
 
 async function writeStoredHandleExclusive(
   regRoot: string,
   record: StoredHandleRecord,
+  fault: ManagedWorktreeFaultInjector,
 ): Promise<void> {
-  const target = handlePath(regRoot, record.handle.token);
-  await fs.mkdir(dirname(target), { recursive: true });
-  const temporary = `${target}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
-  await fs.writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, { encoding: "utf8" });
-  try {
-    await fs.link(temporary, target);
-  } finally {
-    await fs.rm(temporary, { force: true });
+  const records = await loadOrReconcileTaskRecords(regRoot, record.handle.taskId, fault);
+  if (records.some((entry) => entry.handle.token === record.handle.token)) {
+    throw new Error(`managed registry token already exists: ${record.handle.token}`);
   }
-  const indexDir = taskIndexDir(regRoot, record.handle.taskId);
-  await fs.mkdir(indexDir, { recursive: true });
-  const indexFile = join(indexDir, `${record.handle.token}.json`);
-  await fs.writeFile(
-    indexFile,
-    `${JSON.stringify({ token: record.handle.token, status: record.status }, null, 2)}\n`,
-    { encoding: "utf8" },
-  );
+  await publishTaskGeneration(regRoot, record.handle.taskId, [...records, record], fault);
 }
 
-async function updateStoredHandle(regRoot: string, record: StoredHandleRecord): Promise<void> {
-  const target = handlePath(regRoot, record.handle.token);
-  const temporary = `${target}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
-  await fs.writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, { encoding: "utf8" });
-  await fs.rename(temporary, target);
-  const indexFile = join(taskIndexDir(regRoot, record.handle.taskId), `${record.handle.token}.json`);
-  await fs.mkdir(dirname(indexFile), { recursive: true });
-  await fs.writeFile(
-    indexFile,
-    `${JSON.stringify({ token: record.handle.token, status: record.status }, null, 2)}\n`,
-    { encoding: "utf8" },
-  );
+async function updateStoredHandle(
+  regRoot: string,
+  record: StoredHandleRecord,
+  fault: ManagedWorktreeFaultInjector,
+): Promise<void> {
+  const records = await loadOrReconcileTaskRecords(regRoot, record.handle.taskId, fault);
+  const index = records.findIndex((entry) => entry.handle.token === record.handle.token);
+  if (index < 0) {
+    throw new Error(`managed registry token does not exist: ${record.handle.token}`);
+  }
+  const next = [...records];
+  next[index] = record;
+  await publishTaskGeneration(regRoot, record.handle.taskId, next, fault);
 }
 
 async function listLiveHandlesForTask(
   regRoot: string,
   taskId: string,
+  fault: ManagedWorktreeFaultInjector,
 ): Promise<StoredHandleRecord[]> {
-  const indexDir = taskIndexDir(regRoot, taskId);
-  let names: string[] = [];
+  const records = await loadOrReconcileTaskRecords(regRoot, taskId, fault);
+  return records.filter((record) => record.status === "live");
+}
+
+function isStoredHandleRecord(value: unknown, taskId?: string): value is StoredHandleRecord {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Partial<StoredHandleRecord>;
+  if (!isHandleShape(record.handle)) return false;
+  if (taskId !== undefined && record.handle.taskId !== taskId) return false;
+  if (record.fingerprint !== fingerprintHandle(record.handle)) return false;
+  if (record.status !== "live" && record.status !== "released") return false;
+  if (typeof record.headAtPrepare !== "string") return false;
+  if (typeof record.bunWorkspaceRoot !== "string") return false;
+  if (record.releasedAt !== undefined && typeof record.releasedAt !== "string") return false;
+  return true;
+}
+
+function canonicalStoredHandleRecord(record: StoredHandleRecord): StoredHandleRecord {
+  const handle = record.handle;
+  return {
+    handle: {
+      kind: handle.kind,
+      version: handle.version,
+      token: handle.token,
+      worktreeId: handle.worktreeId,
+      taskId: handle.taskId,
+      branch: handle.branch,
+      repositoryRoot: handle.repositoryRoot,
+      absolutePath: handle.absolutePath,
+      baseCommit: handle.baseCommit,
+      createdAt: handle.createdAt,
+      nonce: handle.nonce,
+    },
+    fingerprint: record.fingerprint,
+    status: record.status,
+    headAtPrepare: record.headAtPrepare,
+    bunWorkspaceRoot: record.bunWorkspaceRoot,
+    ...(record.releasedAt !== undefined ? { releasedAt: record.releasedAt } : {}),
+  };
+}
+
+function serializeTaskGeneration(taskId: string, records: readonly StoredHandleRecord[]): string {
+  const generation: TaskRegistryGeneration = {
+    version: 2,
+    taskId,
+    records: [...records]
+      .sort((left, right) => left.handle.token.localeCompare(right.handle.token))
+      .map(canonicalStoredHandleRecord),
+  };
+  return `${JSON.stringify(generation, null, 2)}\n`;
+}
+
+function digestRegistryBytes(raw: string): string {
+  return createHash("sha256").update(raw).digest("hex");
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  const handle = await fs.open(directory, "r");
   try {
-    names = await fs.readdir(indexDir);
-  } catch {
-    return [];
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
-  const live: StoredHandleRecord[] = [];
-  for (const name of names) {
+}
+
+async function readCurrentTaskGeneration(
+  regRoot: string,
+  taskId: string,
+): Promise<readonly StoredHandleRecord[] | null> {
+  let pointerRaw: string;
+  try {
+    pointerRaw = await fs.readFile(taskCurrentPath(regRoot, taskId), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  let pointerValue: unknown;
+  try {
+    pointerValue = JSON.parse(pointerRaw);
+  } catch {
+    throw new Error(`managed registry current pointer is malformed for ${taskId}`);
+  }
+  if (typeof pointerValue !== "object" || pointerValue === null || Array.isArray(pointerValue)) {
+    throw new Error(`managed registry current pointer is malformed for ${taskId}`);
+  }
+  const pointer = pointerValue as Partial<TaskRegistryPointer>;
+  if (
+    pointer.version !== 2 ||
+    typeof pointer.generation !== "string" ||
+    !/^[0-9a-f]{64}$/.test(pointer.generation)
+  ) {
+    throw new Error(`managed registry current pointer is malformed for ${taskId}`);
+  }
+  const generationRaw = await fs.readFile(
+    taskGenerationPath(regRoot, taskId, pointer.generation),
+    "utf8",
+  );
+  if (digestRegistryBytes(generationRaw) !== pointer.generation) {
+    throw new Error(`managed registry generation fingerprint mismatch for ${taskId}`);
+  }
+  let generationValue: unknown;
+  try {
+    generationValue = JSON.parse(generationRaw);
+  } catch {
+    throw new Error(`managed registry generation is malformed for ${taskId}`);
+  }
+  if (
+    typeof generationValue !== "object" ||
+    generationValue === null ||
+    Array.isArray(generationValue)
+  ) {
+    throw new Error(`managed registry generation is malformed for ${taskId}`);
+  }
+  const generation = generationValue as Partial<TaskRegistryGeneration>;
+  if (
+    generation.version !== 2 ||
+    generation.taskId !== taskId ||
+    !Array.isArray(generation.records)
+  ) {
+    throw new Error(`managed registry generation is malformed for ${taskId}`);
+  }
+  const tokens = new Set<string>();
+  for (const record of generation.records) {
+    if (!isStoredHandleRecord(record, taskId) || tokens.has(record.handle.token)) {
+      throw new Error(`managed registry generation contains an invalid record for ${taskId}`);
+    }
+    tokens.add(record.handle.token);
+  }
+  return generation.records as readonly StoredHandleRecord[];
+}
+
+async function publishTaskGeneration(
+  regRoot: string,
+  taskId: string,
+  records: readonly StoredHandleRecord[],
+  fault: ManagedWorktreeFaultInjector,
+): Promise<void> {
+  const generationRaw = serializeTaskGeneration(taskId, records);
+  const generation = digestRegistryBytes(generationRaw);
+  const current = await readCurrentTaskGeneration(regRoot, taskId);
+  if (
+    current !== null &&
+    digestRegistryBytes(serializeTaskGeneration(taskId, current)) === generation
+  ) {
+    return;
+  }
+
+  const taskDir = taskRegistryDir(regRoot, taskId);
+  const generationsDir = join(taskDir, TASK_GENERATIONS_DIRNAME);
+  const stagingDir = join(taskDir, TASK_STAGING_DIRNAME);
+  await fs.mkdir(generationsDir, { recursive: true });
+  await fs.mkdir(stagingDir, { recursive: true });
+  const finalGeneration = taskGenerationPath(regRoot, taskId, generation);
+  try {
+    const existing = await fs.readFile(finalGeneration, "utf8");
+    if (existing !== generationRaw) {
+      throw new Error(`managed registry immutable generation collision for ${taskId}`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const stagedGeneration = join(
+      stagingDir,
+      `generation-${generation}-${process.pid}-${randomBytes(4).toString("hex")}.json`,
+    );
+    const generationHandle = await fs.open(stagedGeneration, "wx", 0o600);
+    try {
+      await generationHandle.writeFile(generationRaw, "utf8");
+      await generationHandle.sync();
+    } finally {
+      await generationHandle.close();
+    }
+    await fs.rename(stagedGeneration, finalGeneration);
+    await syncDirectory(generationsDir);
+  }
+
+  await fault("after-registry-generation-sync", { taskId, generation });
+
+  const pointer: TaskRegistryPointer = { version: 2, generation };
+  const pointerRaw = `${JSON.stringify(pointer, null, 2)}\n`;
+  const stagedPointer = join(
+    stagingDir,
+    `current-${generation}-${process.pid}-${randomBytes(4).toString("hex")}.json`,
+  );
+  const pointerHandle = await fs.open(stagedPointer, "wx", 0o600);
+  try {
+    await pointerHandle.writeFile(pointerRaw, "utf8");
+    await pointerHandle.sync();
+  } finally {
+    await pointerHandle.close();
+  }
+  await fault("before-registry-pointer-rename", { taskId, generation });
+  await fs.rename(stagedPointer, taskCurrentPath(regRoot, taskId));
+  await syncDirectory(taskDir);
+}
+
+async function quarantineLegacyIndex(
+  regRoot: string,
+  taskId: string,
+  name: string,
+  raw: string,
+): Promise<void> {
+  const source = join(legacyTaskIndexDir(regRoot, taskId), name);
+  const quarantineDir = join(regRoot, REGISTRY_QUARANTINE_DIRNAME, TASK_INDEX_DIRNAME, taskId);
+  await fs.mkdir(quarantineDir, { recursive: true });
+  const digest = digestRegistryBytes(raw).slice(0, 16);
+  const target = join(quarantineDir, `${name}.${digest}.quarantined`);
+  try {
+    const existing = await fs.readFile(target, "utf8");
+    if (existing !== raw) {
+      throw new Error(`managed registry quarantine collision for ${taskId}/${name}`);
+    }
+    await fs.rm(source, { force: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    await fs.rename(source, target);
+  }
+}
+
+async function readLegacyTaskRecords(
+  regRoot: string,
+  taskId: string,
+): Promise<readonly StoredHandleRecord[]> {
+  const records = new Map<string, StoredHandleRecord>();
+  let handleNames: string[] = [];
+  try {
+    handleNames = await fs.readdir(join(regRoot, HANDLES_DIRNAME));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  for (const name of handleNames) {
     if (!name.endsWith(".json")) continue;
     const token = name.slice(0, -".json".length);
-    const stored = await readStoredHandle(regRoot, token);
-    if (stored === null) continue;
-    if (stored.status !== "live") continue;
-    if (stored.handle.taskId !== taskId) continue;
-    live.push(stored);
+    const raw = await fs.readFile(legacyHandlePath(regRoot, token), "utf8");
+    let value: unknown;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    if (!isStoredHandleRecord(value, taskId)) continue;
+    if (name !== `${value.handle.token}.json`) continue;
+    records.set(value.handle.token, value);
   }
-  return live;
+
+  let indexNames: string[] = [];
+  try {
+    indexNames = await fs.readdir(legacyTaskIndexDir(regRoot, taskId));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  for (const name of indexNames) {
+    if (!name.endsWith(".json")) continue;
+    const indexPath = join(legacyTaskIndexDir(regRoot, taskId), name);
+    const raw = await fs.readFile(indexPath, "utf8");
+    let value: unknown;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      await quarantineLegacyIndex(regRoot, taskId, name, raw);
+      continue;
+    }
+    const index = value as { readonly token?: unknown; readonly status?: unknown };
+    const keys = typeof value === "object" && value !== null ? Object.keys(value).sort() : [];
+    const token = name.slice(0, -".json".length);
+    const record = records.get(token);
+    const valid =
+      keys.length === 2 &&
+      keys[0] === "status" &&
+      keys[1] === "token" &&
+      index.token === token &&
+      (index.status === "live" || index.status === "released") &&
+      record !== undefined &&
+      record.status === index.status;
+    if (!valid) {
+      await quarantineLegacyIndex(regRoot, taskId, name, raw);
+    }
+  }
+  return [...records.values()].sort((left, right) =>
+    left.handle.token.localeCompare(right.handle.token),
+  );
+}
+
+async function loadOrReconcileTaskRecords(
+  regRoot: string,
+  taskId: string,
+  fault: ManagedWorktreeFaultInjector,
+): Promise<readonly StoredHandleRecord[]> {
+  const current = await readCurrentTaskGeneration(regRoot, taskId);
+  if (current !== null) return current;
+  const legacy = await readLegacyTaskRecords(regRoot, taskId);
+  if (legacy.length === 0) return [];
+  await publishTaskGeneration(regRoot, taskId, legacy, fault);
+  return legacy;
 }
 
 // ---------------------------------------------------------------------------
@@ -841,13 +1125,17 @@ async function emergencyRegisterLiveHandle(
   bunWorkspaceRoot: string,
 ): Promise<boolean> {
   try {
-    await writeStoredHandleExclusive(regRoot, {
-      handle,
-      fingerprint: fingerprintHandle(handle),
-      status: "live",
-      headAtPrepare: headCommit,
-      bunWorkspaceRoot,
-    });
+    await writeStoredHandleExclusive(
+      regRoot,
+      {
+        handle,
+        fingerprint: fingerprintHandle(handle),
+        status: "live",
+        headAtPrepare: headCommit,
+        bunWorkspaceRoot,
+      },
+      async () => undefined,
+    );
     return true;
   } catch {
     return false;
@@ -1136,31 +1424,22 @@ export async function prepareManagedWorktree(
   const regRoot = registryRoot(repositoryRoot, deps.stateDir);
   await fs.mkdir(regRoot, { recursive: true });
 
-  // Explicit resume via handle.
   if (request.handle !== undefined) {
     const integrity = assertHandleIntegrity(request.handle, repositoryRoot);
     if (integrity !== null) {
       return refusedPrepare(integrity, `handle failed integrity: ${integrity}`);
     }
-    const stored = await readStoredHandle(regRoot, request.handle.token);
-    if (stored === null) {
-      return refusedPrepare("handle-invalid", `unknown or tampered handle token`);
-    }
-    // Reject path/field tampering relative to the stored record.
-    if (fingerprintHandle(request.handle) !== stored.fingerprint) {
+    if (request.handle.taskId !== request.taskId) {
       return refusedPrepare(
         "handle-mismatch",
-        "presented handle does not match the stored registry fingerprint",
+        `handle taskId ${request.handle.taskId} does not match request taskId ${request.taskId}`,
       );
     }
-    if (resolve(request.handle.absolutePath) !== resolve(stored.handle.absolutePath)) {
-      return refusedPrepare("handle-path-traversal", "handle absolutePath does not match registry");
-    }
-    return resumeFromStored(request, deps, stored, repositoryRoot);
   }
 
-  // Handle-free prepare is serialized per task so two concurrent callers cannot
-  // both observe live=0 and mint distinct trees for the same taskId.
+  // Every read that may reconcile legacy state and every publication shares
+  // the same per-task lock. Readers outside this critical section only follow
+  // the atomically replaced current pointer.
   const lockfile =
     deps.lockfile ??
     new Lockfile({
@@ -1180,21 +1459,44 @@ export async function prepareManagedWorktree(
   }
 
   try {
-    return await prepareManagedWorktreeHandleFreeUnderLock(
-      request,
-      deps,
-      {
-        git,
-        dispatchGit,
-        install,
-        idFactory,
-        now,
-        allowResumeRequired,
-        fault,
-        repositoryRoot,
-        regRoot,
-      },
-    );
+    if (request.handle !== undefined) {
+      let stored: StoredHandleRecord | null;
+      try {
+        stored = await readStoredHandle(regRoot, request.taskId, request.handle.token, fault);
+      } catch (error) {
+        return refusedPrepare(
+          "registry-conflict",
+          `managed registry could not be read: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      if (stored === null) {
+        return refusedPrepare("handle-invalid", `unknown or tampered handle token`);
+      }
+      if (fingerprintHandle(request.handle) !== stored.fingerprint) {
+        return refusedPrepare(
+          "handle-mismatch",
+          "presented handle does not match the stored registry fingerprint",
+        );
+      }
+      if (resolve(request.handle.absolutePath) !== resolve(stored.handle.absolutePath)) {
+        return refusedPrepare(
+          "handle-path-traversal",
+          "handle absolutePath does not match registry",
+        );
+      }
+      return resumeFromStored(request, deps, stored, repositoryRoot);
+    }
+    return await prepareManagedWorktreeHandleFreeUnderLock(request, deps, {
+      git,
+      dispatchGit,
+      install,
+      idFactory,
+      now,
+      allowResumeRequired,
+      fault,
+      repositoryRoot,
+      regRoot,
+    });
   } finally {
     if (releasePrepareLock !== undefined) {
       await releasePrepareLock();
@@ -1219,11 +1521,28 @@ async function prepareManagedWorktreeHandleFreeUnderLock(
   deps: ManagedWorktreeDeps,
   ctx: PrepareUnderLockContext,
 ): Promise<PrepareManagedWorktreeResult> {
-  const { git, dispatchGit, install, idFactory, now, allowResumeRequired, fault, repositoryRoot, regRoot } =
-    ctx;
+  const {
+    git,
+    dispatchGit,
+    install,
+    idFactory,
+    now,
+    allowResumeRequired,
+    fault,
+    repositoryRoot,
+    regRoot,
+  } = ctx;
 
   // Handle-free: inspect live trees for this task (under exclusive lock).
-  const live = await listLiveHandlesForTask(regRoot, request.taskId);
+  let live: StoredHandleRecord[];
+  try {
+    live = await listLiveHandlesForTask(regRoot, request.taskId, fault);
+  } catch (error) {
+    return refusedPrepare(
+      "registry-conflict",
+      `managed registry could not be read: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   if (live.length > 1) {
     return refusedPrepare(
       "live-tree-ambiguous",
@@ -1549,7 +1868,7 @@ async function prepareManagedWorktreeHandleFreeUnderLock(
     bunWorkspaceRoot,
   };
   try {
-    await writeStoredHandleExclusive(regRoot, stored);
+    await writeStoredHandleExclusive(regRoot, stored, fault);
   } catch (error) {
     return refuseAfterAdd(
       "registry-conflict",
@@ -1644,91 +1963,215 @@ async function releaseManagedWorktreeUnderEffectLock(
   }
 
   const regRoot = registryRoot(repositoryRoot, deps.stateDir);
-  const stored = await readStoredHandle(regRoot, request.handle.token);
-  if (stored === null) {
-    return refusedRelease("handle-invalid", "unknown or tampered handle token");
-  }
-  if (fingerprintHandle(request.handle) !== stored.fingerprint) {
-    return refusedRelease(
-      "handle-mismatch",
-      "presented handle does not match the stored registry fingerprint",
-    );
-  }
-  if (resolve(request.handle.absolutePath) !== resolve(stored.handle.absolutePath)) {
-    return refusedRelease("handle-path-traversal", "handle absolutePath does not match registry");
-  }
-
-  // Idempotent path: already released cleanly.
-  if (stored.status === "released") {
-    return {
-      status: "released",
-      handle: stored.handle,
-      idempotent: true,
-      absolutePath: stored.handle.absolutePath,
-    };
-  }
-
-  if (!isTerminalDisposition(request.terminalDisposition)) {
-    return refusedRelease(
-      "not-terminal",
-      `terminalDisposition must be done|abandoned, got ${request.terminalDisposition}`,
-      { absolutePath: stored.handle.absolutePath },
-    );
-  }
-
-  const absolutePath = stored.handle.absolutePath;
-  let pathExists = true;
+  await fs.mkdir(regRoot, { recursive: true });
+  const lockfile =
+    deps.lockfile ??
+    new Lockfile({
+      ...(deps.prepareLockTimeoutMs !== undefined
+        ? { acquireTimeoutMs: deps.prepareLockTimeoutMs }
+        : {}),
+    });
+  let releaseTaskLock: (() => Promise<void>) | undefined;
   try {
-    const stat = await fs.stat(absolutePath);
-    if (!stat.isDirectory()) pathExists = false;
-  } catch {
-    pathExists = false;
-  }
-
-  // Ambiguity: more than one live handle for the same path.
-  const live = await listLiveHandlesForTask(regRoot, stored.handle.taskId);
-  const samePath = live.filter(
-    (entry) => resolve(entry.handle.absolutePath) === resolve(absolutePath),
-  );
-  if (samePath.length !== 1) {
+    releaseTaskLock = await lockfile.acquire(
+      join(regRoot, PREPARE_LOCKS_DIRNAME),
+      `prepare-${request.handle.taskId}`,
+    );
+  } catch (error) {
     return refusedRelease(
       "ambiguous",
-      `expected exactly one live handle for path, found ${samePath.length}`,
-      { absolutePath },
+      `could not acquire managed registry lock for ${request.handle.taskId}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
-  // worktree-missing + live registry is completable: the path may already be
-  // gone (crash mid-release, manual removal) while the handle is still live.
-  // Durable registry release happens first; branch cleanup follows.
-  if (!pathExists) {
+  try {
+    let stored: StoredHandleRecord | null;
+    try {
+      stored = await readStoredHandle(regRoot, request.handle.taskId, request.handle.token, fault);
+    } catch (error) {
+      return refusedRelease(
+        "ambiguous",
+        `managed registry could not be read: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (stored === null) {
+      return refusedRelease("handle-invalid", "unknown or tampered handle token");
+    }
+    if (fingerprintHandle(request.handle) !== stored.fingerprint) {
+      return refusedRelease(
+        "handle-mismatch",
+        "presented handle does not match the stored registry fingerprint",
+      );
+    }
+    if (resolve(request.handle.absolutePath) !== resolve(stored.handle.absolutePath)) {
+      return refusedRelease("handle-path-traversal", "handle absolutePath does not match registry");
+    }
+
+    // Idempotent path: already released cleanly.
+    if (stored.status === "released") {
+      return {
+        status: "released",
+        handle: stored.handle,
+        idempotent: true,
+        absolutePath: stored.handle.absolutePath,
+      };
+    }
+
+    if (!isTerminalDisposition(request.terminalDisposition)) {
+      return refusedRelease(
+        "not-terminal",
+        `terminalDisposition must be done|abandoned, got ${request.terminalDisposition}`,
+        { absolutePath: stored.handle.absolutePath },
+      );
+    }
+
+    const absolutePath = stored.handle.absolutePath;
+    let pathExists = true;
+    try {
+      const stat = await fs.stat(absolutePath);
+      if (!stat.isDirectory()) pathExists = false;
+    } catch {
+      pathExists = false;
+    }
+
+    // Ambiguity: more than one live handle for the same path.
+    const live = await listLiveHandlesForTask(regRoot, stored.handle.taskId, fault);
+    const samePath = live.filter(
+      (entry) => resolve(entry.handle.absolutePath) === resolve(absolutePath),
+    );
+    if (samePath.length !== 1) {
+      return refusedRelease(
+        "ambiguous",
+        `expected exactly one live handle for path, found ${samePath.length}`,
+        { absolutePath },
+      );
+    }
+
+    // worktree-missing + live registry is completable: the path may already be
+    // gone (crash mid-release, manual removal) while the handle is still live.
+    // Durable registry release happens first; branch cleanup follows.
+    if (!pathExists) {
+      if (request.resultCommit !== undefined && request.resultCommit !== null) {
+        const branchTip = await revParse(git, repositoryRoot, stored.handle.branch);
+        if (branchTip !== null && branchTip !== request.resultCommit) {
+          return refusedRelease(
+            "commit-mismatch",
+            `branch ${stored.handle.branch} tip ${branchTip} does not equal resultCommit ${request.resultCommit}`,
+            { absolutePath },
+          );
+        }
+      }
+
+      await fault("before-registry-release", {
+        token: stored.handle.token,
+        taskId: stored.handle.taskId,
+        absolutePath,
+        mode: "worktree-missing",
+      });
+
+      const releasedMissing: StoredHandleRecord = {
+        ...stored,
+        status: "released",
+        releasedAt: now().toISOString(),
+      };
+      await updateStoredHandle(regRoot, releasedMissing, fault);
+
+      if (deleteBranch) {
+        await deleteBranchAfterRegistryRelease(git, repositoryRoot, stored.handle.branch);
+      }
+
+      return {
+        status: "released",
+        handle: stored.handle,
+        idempotent: false,
+        absolutePath,
+      };
+    }
+
+    const porcelain = await gitPorcelain(git, absolutePath);
+    if (porcelain.code !== 0) {
+      return refusedRelease("ambiguous", `git status failed in ${absolutePath}`, { absolutePath });
+    }
+    if (porcelain.porcelain.trim() !== "") {
+      return refusedRelease("dirty", `worktree has uncommitted changes`, { absolutePath });
+    }
+
+    const wip = await findOpenWipCheckpoints(absolutePath);
+    if (wip.status === "malformed") {
+      return refusedRelease(
+        "wip-malformed",
+        `WIP artifact malformed at ${wip.path}: ${wip.detail}`,
+        {
+          absolutePath,
+        },
+      );
+    }
+    if (wip.status === "open") {
+      const openCheckpoints = wip.findings.flatMap((finding) => finding.openCheckpoints);
+      return refusedRelease("wip-open", `open WIP checkpoints: ${openCheckpoints.join(", ")}`, {
+        absolutePath,
+        openCheckpoints,
+      });
+    }
+
+    const head = await revParse(git, absolutePath, "HEAD");
+    if (head === null) {
+      return refusedRelease("ambiguous", `cannot resolve HEAD in ${absolutePath}`, {
+        absolutePath,
+      });
+    }
     if (request.resultCommit !== undefined && request.resultCommit !== null) {
-      const branchTip = await revParse(git, repositoryRoot, stored.handle.branch);
-      if (branchTip !== null && branchTip !== request.resultCommit) {
+      if (request.resultCommit !== head) {
         return refusedRelease(
           "commit-mismatch",
-          `branch ${stored.handle.branch} tip ${branchTip} does not equal resultCommit ${request.resultCommit}`,
+          `HEAD ${head} does not equal resultCommit ${request.resultCommit}`,
           { absolutePath },
         );
       }
     }
 
+    await fault("before-worktree-remove", {
+      absolutePath,
+      token: stored.handle.token,
+      taskId: stored.handle.taskId,
+    });
+
+    const remove = await git(repositoryRoot, ["worktree", "remove", "--force", absolutePath]);
+    if (remove.code !== 0) {
+      // Do not delete recoverable work on failure.
+      return refusedRelease(
+        "ambiguous",
+        `git worktree remove failed: ${remove.stderr.trim() || remove.stdout.trim()}`,
+        { absolutePath },
+      );
+    }
+
+    // Durable registry release BEFORE branch -D. A fault at this boundary must
+    // leave the precious commit reachable via the still-live branch tip.
     await fault("before-registry-release", {
       token: stored.handle.token,
       taskId: stored.handle.taskId,
       absolutePath,
-      mode: "worktree-missing",
+      head,
     });
 
-    const releasedMissing: StoredHandleRecord = {
+    const released: StoredHandleRecord = {
       ...stored,
       status: "released",
       releasedAt: now().toISOString(),
     };
-    await updateStoredHandle(regRoot, releasedMissing);
+    await updateStoredHandle(regRoot, released, fault);
 
     if (deleteBranch) {
       await deleteBranchAfterRegistryRelease(git, repositoryRoot, stored.handle.branch);
+    }
+
+    await fault("before-directory-delete", { absolutePath });
+    // git worktree remove already deleted the directory; residual cleanup only.
+    try {
+      await fs.rm(absolutePath, { recursive: true, force: true });
+    } catch {
+      // ignore — path may already be gone
     }
 
     return {
@@ -1737,94 +2180,11 @@ async function releaseManagedWorktreeUnderEffectLock(
       idempotent: false,
       absolutePath,
     };
-  }
-
-  const porcelain = await gitPorcelain(git, absolutePath);
-  if (porcelain.code !== 0) {
-    return refusedRelease("ambiguous", `git status failed in ${absolutePath}`, { absolutePath });
-  }
-  if (porcelain.porcelain.trim() !== "") {
-    return refusedRelease("dirty", `worktree has uncommitted changes`, { absolutePath });
-  }
-
-  const wip = await findOpenWipCheckpoints(absolutePath);
-  if (wip.status === "malformed") {
-    return refusedRelease("wip-malformed", `WIP artifact malformed at ${wip.path}: ${wip.detail}`, {
-      absolutePath,
-    });
-  }
-  if (wip.status === "open") {
-    const openCheckpoints = wip.findings.flatMap((finding) => finding.openCheckpoints);
-    return refusedRelease("wip-open", `open WIP checkpoints: ${openCheckpoints.join(", ")}`, {
-      absolutePath,
-      openCheckpoints,
-    });
-  }
-
-  const head = await revParse(git, absolutePath, "HEAD");
-  if (head === null) {
-    return refusedRelease("ambiguous", `cannot resolve HEAD in ${absolutePath}`, { absolutePath });
-  }
-  if (request.resultCommit !== undefined && request.resultCommit !== null) {
-    if (request.resultCommit !== head) {
-      return refusedRelease(
-        "commit-mismatch",
-        `HEAD ${head} does not equal resultCommit ${request.resultCommit}`,
-        { absolutePath },
-      );
+  } finally {
+    if (releaseTaskLock !== undefined) {
+      await releaseTaskLock();
     }
   }
-
-  await fault("before-worktree-remove", {
-    absolutePath,
-    token: stored.handle.token,
-    taskId: stored.handle.taskId,
-  });
-
-  const remove = await git(repositoryRoot, ["worktree", "remove", "--force", absolutePath]);
-  if (remove.code !== 0) {
-    // Do not delete recoverable work on failure.
-    return refusedRelease(
-      "ambiguous",
-      `git worktree remove failed: ${remove.stderr.trim() || remove.stdout.trim()}`,
-      { absolutePath },
-    );
-  }
-
-  // Durable registry release BEFORE branch -D. A fault at this boundary must
-  // leave the precious commit reachable via the still-live branch tip.
-  await fault("before-registry-release", {
-    token: stored.handle.token,
-    taskId: stored.handle.taskId,
-    absolutePath,
-    head,
-  });
-
-  const released: StoredHandleRecord = {
-    ...stored,
-    status: "released",
-    releasedAt: now().toISOString(),
-  };
-  await updateStoredHandle(regRoot, released);
-
-  if (deleteBranch) {
-    await deleteBranchAfterRegistryRelease(git, repositoryRoot, stored.handle.branch);
-  }
-
-  await fault("before-directory-delete", { absolutePath });
-  // git worktree remove already deleted the directory; residual cleanup only.
-  try {
-    await fs.rm(absolutePath, { recursive: true, force: true });
-  } catch {
-    // ignore — path may already be gone
-  }
-
-  return {
-    status: "released",
-    handle: stored.handle,
-    idempotent: false,
-    absolutePath,
-  };
 }
 
 /**
@@ -1857,8 +2217,19 @@ export async function listManagedLiveWorktrees(
 ): Promise<readonly ManagedWorktreeHandle[]> {
   const git = nodeManagedWorktreeGitRunner;
   const root = (await resolveRepositoryRoot(git, repositoryRoot)) ?? resolve(repositoryRoot);
-  const live = await listLiveHandlesForTask(registryRoot(root, stateDir), taskId);
-  return live.map((entry) => entry.handle);
+  const regRoot = registryRoot(root, stateDir);
+  await fs.mkdir(regRoot, { recursive: true });
+  const lockfile = new Lockfile();
+  const releaseTaskLock = await lockfile.acquire(
+    join(regRoot, PREPARE_LOCKS_DIRNAME),
+    `prepare-${taskId}`,
+  );
+  try {
+    const live = await listLiveHandlesForTask(regRoot, taskId, async () => undefined);
+    return live.map((entry) => entry.handle);
+  } finally {
+    await releaseTaskLock();
+  }
 }
 
 export interface ResolveManagedWorktreeDispatchBindingRequest {

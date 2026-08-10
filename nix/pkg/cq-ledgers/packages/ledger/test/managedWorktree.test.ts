@@ -7,6 +7,7 @@
  */
 import { afterAll, describe, expect, it } from "bun:test";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -110,6 +111,40 @@ function recordingInstall(): {
 function readerOf(snapshots: readonly DependencyTaskSnapshot[]): DependencyTaskSnapshotReader {
   return {
     readTaskSnapshots: async () => snapshots,
+  };
+}
+
+function legacyHandleFingerprint(handle: ManagedWorktreeHandle): string {
+  return createHash("sha256")
+    .update(
+      [
+        handle.kind,
+        String(handle.version),
+        handle.token,
+        handle.worktreeId,
+        handle.taskId,
+        handle.branch,
+        handle.repositoryRoot,
+        handle.absolutePath,
+        handle.baseCommit,
+        handle.createdAt,
+        handle.nonce,
+      ].join("\n"),
+    )
+    .digest("hex");
+}
+
+function legacyStoredHandle(
+  handle: ManagedWorktreeHandle,
+  headAtPrepare: string,
+  bunWorkspaceRoot: string,
+) {
+  return {
+    handle,
+    fingerprint: legacyHandleFingerprint(handle),
+    status: "live" as const,
+    headAtPrepare,
+    bunWorkspaceRoot,
   };
 }
 
@@ -305,6 +340,121 @@ describe("prepareManagedWorktree", () => {
       expect(forced.reason).toBe("registry-conflict");
     }
     expect(await listManagedLiveWorktrees(repo.cwd, "T1305", repo.stateDir)).toHaveLength(1);
+  });
+
+  it("reconciles a legacy orphan handle so lookup and task discovery agree", async () => {
+    const repo = await seedRepository();
+    const install = recordingInstall();
+    const deps = {
+      stateDir: repo.stateDir,
+      cacheRoot: repo.cacheRoot,
+      install: install.runner,
+      bunWorkspaceRoot: repo.workspace,
+    };
+    const prepared = await prepareManagedWorktree(
+      { repositoryRoot: repo.cwd, taskId: "T2048", baseCommit: repo.base },
+      deps,
+    );
+    expect(prepared.status).toBe("prepared");
+    if (prepared.status !== "prepared") return;
+
+    // Regression: reproduce the v1 post-handle/pre-index crash state while
+    // retaining the real worktree that explicit resume must revalidate.
+    await fs.rm(repo.stateDir, { recursive: true, force: true });
+    const handlesDir = path.join(repo.stateDir, "handles");
+    await fs.mkdir(handlesDir, { recursive: true });
+    await fs.writeFile(
+      path.join(handlesDir, `${prepared.handle.token}.json`),
+      `${JSON.stringify(
+        legacyStoredHandle(
+          prepared.handle,
+          prepared.evidence.headCommit,
+          prepared.evidence.bunWorkspaceRoot,
+        ),
+        null,
+        2,
+      )}\n`,
+    );
+
+    const resumed = await prepareManagedWorktree(
+      { repositoryRoot: repo.cwd, taskId: "T2048", handle: prepared.handle },
+      deps,
+    );
+    expect(resumed.status).toBe("prepared");
+    expect(await listManagedLiveWorktrees(repo.cwd, "T2048", repo.stateDir)).toEqual([
+      prepared.handle,
+    ]);
+  });
+
+  it("reconciles a valid legacy pair once, quarantines invalid indexes, and never synthesizes records", async () => {
+    const repo = await seedRepository();
+    const install = recordingInstall();
+    const deps = {
+      stateDir: repo.stateDir,
+      cacheRoot: repo.cacheRoot,
+      install: install.runner,
+      bunWorkspaceRoot: repo.workspace,
+    };
+    const prepared = await prepareManagedWorktree(
+      { repositoryRoot: repo.cwd, taskId: "T20481", baseCommit: repo.base },
+      deps,
+    );
+    expect(prepared.status).toBe("prepared");
+    if (prepared.status !== "prepared") return;
+
+    await fs.rm(repo.stateDir, { recursive: true, force: true });
+    const handlesDir = path.join(repo.stateDir, "handles");
+    const indexDir = path.join(repo.stateDir, "by-task", "T20481");
+    await fs.mkdir(handlesDir, { recursive: true });
+    await fs.mkdir(indexDir, { recursive: true });
+    await fs.writeFile(
+      path.join(handlesDir, `${prepared.handle.token}.json`),
+      `${JSON.stringify(
+        legacyStoredHandle(
+          prepared.handle,
+          prepared.evidence.headCommit,
+          prepared.evidence.bunWorkspaceRoot,
+        ),
+        null,
+        2,
+      )}\n`,
+    );
+    await fs.writeFile(
+      path.join(indexDir, `${prepared.handle.token}.json`),
+      `${JSON.stringify({ token: prepared.handle.token, status: "live" }, null, 2)}\n`,
+    );
+    await fs.writeFile(
+      path.join(indexDir, "dangling.json"),
+      `${JSON.stringify({ token: "dangling", status: "live" }, null, 2)}\n`,
+    );
+    await fs.writeFile(
+      path.join(indexDir, "tampered.json"),
+      `${JSON.stringify({ token: prepared.handle.token, status: "released" }, null, 2)}\n`,
+    );
+
+    expect(await listManagedLiveWorktrees(repo.cwd, "T20481", repo.stateDir)).toEqual([
+      prepared.handle,
+    ]);
+    const taskDir = path.join(repo.stateDir, "tasks", "T20481");
+    const currentPath = path.join(taskDir, "current.json");
+    const currentBefore = await fs.readFile(currentPath, "utf8");
+    const pointer = JSON.parse(currentBefore) as { generation: string };
+    const generationPath = path.join(taskDir, "generations", `${pointer.generation}.json`);
+    const generationBefore = await fs.readFile(generationPath, "utf8");
+    const quarantineDir = path.join(repo.stateDir, "quarantine", "by-task", "T20481");
+    const quarantineNamesBefore = (await fs.readdir(quarantineDir)).sort();
+    expect(quarantineNamesBefore).toHaveLength(2);
+    expect(quarantineNamesBefore.some((name) => name.startsWith("dangling.json."))).toBe(true);
+    expect(quarantineNamesBefore.some((name) => name.startsWith("tampered.json."))).toBe(true);
+
+    // A second reconciliation pass follows current and must not republish or
+    // reinterpret the still-present legacy files.
+    expect(await listManagedLiveWorktrees(repo.cwd, "T20481", repo.stateDir)).toEqual([
+      prepared.handle,
+    ]);
+    expect(await fs.readFile(currentPath, "utf8")).toBe(currentBefore);
+    expect(await fs.readFile(generationPath, "utf8")).toBe(generationBefore);
+    expect((await fs.readdir(quarantineDir)).sort()).toEqual(quarantineNamesBefore);
   });
 
   it("refuses before git worktree add when base verification fails", async () => {
@@ -945,6 +1095,81 @@ describe("releaseManagedWorktree", () => {
     ]);
     expect(recoveryTip).toBe(head);
   });
+
+  for (const boundary of [
+    "after-registry-generation-sync",
+    "before-registry-pointer-rename",
+  ] as const) {
+    it(`restart after ${boundary} observes one complete generation`, async () => {
+      const repo = await seedRepository();
+      const install = recordingInstall();
+      const deps = {
+        stateDir: repo.stateDir,
+        cacheRoot: repo.cacheRoot,
+        install: install.runner,
+        bunWorkspaceRoot: repo.workspace,
+      };
+      const prepared = await prepareManagedWorktree(
+        { repositoryRoot: repo.cwd, taskId: "T20482", baseCommit: repo.base },
+        deps,
+      );
+      expect(prepared.status).toBe("prepared");
+      if (prepared.status !== "prepared") return;
+
+      await expect(
+        releaseManagedWorktree(
+          {
+            handle: prepared.handle,
+            terminalDisposition: "done",
+            resultCommit: prepared.evidence.headCommit,
+          },
+          {
+            ...deps,
+            faultInjector: (observed) => {
+              if (observed === boundary) throw new Error(`injected fault at ${boundary}`);
+            },
+          },
+        ),
+      ).rejects.toThrow(`injected fault at ${boundary}`);
+
+      // Both named faults precede the pointer rename. Discovery follows the
+      // old complete generation and ignores staged/unreachable new bytes.
+      expect(await listManagedLiveWorktrees(repo.cwd, "T20482", repo.stateDir)).toEqual([
+        prepared.handle,
+      ]);
+      const lookupBeforeRestart = await prepareManagedWorktree(
+        { repositoryRoot: repo.cwd, taskId: "T20482", handle: prepared.handle },
+        deps,
+      );
+      expect(lookupBeforeRestart.status).toBe("refused");
+      if (lookupBeforeRestart.status === "refused") {
+        expect(lookupBeforeRestart.reason).toBe("worktree-missing");
+      }
+
+      const recovered = await releaseManagedWorktree(
+        {
+          handle: prepared.handle,
+          terminalDisposition: "done",
+          resultCommit: prepared.evidence.headCommit,
+        },
+        deps,
+      );
+      expect(recovered.status).toBe("released");
+      expect(await listManagedLiveWorktrees(repo.cwd, "T20482", repo.stateDir)).toEqual([]);
+      const lookupAfterRestart = await releaseManagedWorktree(
+        {
+          handle: prepared.handle,
+          terminalDisposition: "done",
+          resultCommit: prepared.evidence.headCommit,
+        },
+        deps,
+      );
+      expect(lookupAfterRestart.status).toBe("released");
+      if (lookupAfterRestart.status === "released") {
+        expect(lookupAfterRestart.idempotent).toBe(true);
+      }
+    });
+  }
 
   it("worktree-missing + live registry release is completable", async () => {
     const repo = await seedRepository();
