@@ -123,6 +123,18 @@ export {
   nativeAdapterIdFor,
 } from "./nativeDispatchQualification.js";
 export type {
+  ManagedWorktreeHandle,
+  ManagedWorktreeHandleV1,
+  ManagedWorktreeHandleV2,
+  ManagedWorktreeHandleValidation,
+} from "./managedWorktreeHandle.js";
+export {
+  MANAGED_WORKTREE_HANDLE_KIND,
+  isManagedWorktreeHandle,
+  managedWorktreeHandlesEqual,
+  validateManagedWorktreeHandle,
+} from "./managedWorktreeHandle.js";
+export type {
   ClaudeNativeManagedWorktreeHandle,
   ClaudeNativePreparedEvidence,
   ClaudeNativeWorktreePrepareResult,

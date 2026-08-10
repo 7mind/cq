@@ -10,26 +10,17 @@
  * Path/handle/base mutations fail closed: a binding is either intact or refused.
  */
 
+import {
+  isManagedWorktreeHandle,
+  managedWorktreeHandlesEqual,
+  type ManagedWorktreeHandle,
+} from "./managedWorktreeHandle.js";
 import { isAbsoluteFilesystemPath } from "./nativeDispatchQualification.js";
 
 const FULL_COMMIT_SHA = /^[0-9a-f]{40}$/;
-/** Must match @cq/ledger ManagedWorktreeHandle.kind (worktree_manage wire). */
-const HANDLE_KIND = "cq-managed-worktree-handle" as const;
 
 /** Structural handle shape returned by worktree_manage prepare (opaque to callers). */
-export interface PiNativeManagedWorktreeHandle {
-  readonly kind: typeof HANDLE_KIND;
-  readonly version: number;
-  readonly token: string;
-  readonly worktreeId: string;
-  readonly taskId: string;
-  readonly branch: string;
-  readonly repositoryRoot: string;
-  readonly absolutePath: string;
-  readonly baseCommit: string;
-  readonly createdAt: string;
-  readonly nonce: string;
-}
+export type PiNativeManagedWorktreeHandle = ManagedWorktreeHandle;
 
 export interface PiNativePreparedEvidence {
   readonly worktreeId: string;
@@ -137,22 +128,7 @@ export class PiNativeWorktreeBindingError extends Error {
 }
 
 function isHandleShape(value: unknown): value is PiNativeManagedWorktreeHandle {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const record = value as Readonly<Record<string, unknown>>;
-  return (
-    record["kind"] === HANDLE_KIND &&
-    typeof record["version"] === "number" &&
-    typeof record["token"] === "string" &&
-    record["token"].length > 0 &&
-    typeof record["worktreeId"] === "string" &&
-    typeof record["taskId"] === "string" &&
-    typeof record["branch"] === "string" &&
-    typeof record["repositoryRoot"] === "string" &&
-    typeof record["absolutePath"] === "string" &&
-    typeof record["baseCommit"] === "string" &&
-    typeof record["createdAt"] === "string" &&
-    typeof record["nonce"] === "string"
-  );
+  return isManagedWorktreeHandle(value);
 }
 
 /** Preflight base/HEAD and optional handle integrity. Mutations fail closed. */
@@ -275,6 +251,16 @@ export async function bindPiNativeWorktree(input: {
       detail: "prepare returned a non-structural handle",
     });
   }
+  if (
+    prepared.evidence.worktreeId !== prepared.handle.worktreeId ||
+    prepared.evidence.branch !== prepared.handle.branch
+  ) {
+    return Object.freeze({
+      status: "refused" as const,
+      reason: "handle-invalid",
+      detail: "prepare evidence worktreeId/branch diverged from the versioned handle identity",
+    });
+  }
 
   const headCommit = await input.observeHead(prepared.evidence.absolutePath);
   const preflight = preflightPiNativeWorktree({
@@ -378,14 +364,10 @@ export function assertPiNativeWorktreeBindingIntact(
     if (!isHandleShape(observed.handle)) {
       throw new PiNativeWorktreeBindingError("handle-invalid", "observed handle is not structural");
     }
-    if (
-      observed.handle.token !== expected.handle.token ||
-      observed.handle.worktreeId !== expected.handle.worktreeId ||
-      observed.handle.nonce !== expected.handle.nonce
-    ) {
+    if (!managedWorktreeHandlesEqual(observed.handle, expected.handle)) {
       throw new PiNativeWorktreeBindingError(
         "handle-mutated",
-        "handle identity token/worktreeId/nonce diverged from the bound handle",
+        "one or more closed handle identity fields diverged from the bound handle",
       );
     }
     if (observed.handle.absolutePath !== expected.absolutePath) {

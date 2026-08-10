@@ -18,6 +18,10 @@
  */
 
 import type { Harness } from "./types.js";
+import {
+  validateManagedWorktreeHandle,
+  type ManagedWorktreeHandle,
+} from "./managedWorktreeHandle.js";
 
 export type NativeAdapterId = `${Harness}:native`;
 
@@ -119,19 +123,7 @@ export function isAbsoluteFilesystemPath(value: string): boolean {
  * ManagedWorktreeHandle / ClaudeNativeManagedWorktreeHandle without importing
  * claudeNativeWorktree (avoids a cycle through isAbsoluteFilesystemPath).
  */
-export interface ClaudeNativeQualificationHandle {
-  readonly kind: "cq-managed-worktree-handle";
-  readonly version: number;
-  readonly token: string;
-  readonly worktreeId: string;
-  readonly taskId: string;
-  readonly branch: string;
-  readonly repositoryRoot: string;
-  readonly absolutePath: string;
-  readonly baseCommit: string;
-  readonly createdAt: string;
-  readonly nonce: string;
-}
+export type ClaudeNativeQualificationHandle = ManagedWorktreeHandle;
 
 export interface ClaudeNativeQualificationInput {
   /**
@@ -141,41 +133,21 @@ export interface ClaudeNativeQualificationInput {
   readonly cwd: string;
   /**
    * Opaque handle from worktree_manage prepare/resume (D287). Required — a free
-   * boolean handoff is refused. basename(cwd) must equal handle.worktreeId and
-   * handle.absolutePath must equal cwd after normalize.
+   * boolean handoff is refused. The versioned handle placement and
+   * handle.absolutePath must equal cwd after normalization.
    */
   readonly handle: ClaudeNativeQualificationHandle;
-}
-
-function isClaudeQualificationHandle(
-  value: unknown,
-): value is ClaudeNativeQualificationHandle {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const record = value as Readonly<Record<string, unknown>>;
-  return (
-    record["kind"] === "cq-managed-worktree-handle" &&
-    typeof record["version"] === "number" &&
-    typeof record["token"] === "string" &&
-    record["token"].length > 0 &&
-    typeof record["worktreeId"] === "string" &&
-    typeof record["taskId"] === "string" &&
-    typeof record["branch"] === "string" &&
-    typeof record["repositoryRoot"] === "string" &&
-    typeof record["absolutePath"] === "string" &&
-    typeof record["baseCommit"] === "string" &&
-    typeof record["createdAt"] === "string" &&
-    typeof record["nonce"] === "string"
-  );
 }
 
 function normalizeAbsPath(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
-/** Managed implement worktrees live under `<repo>/.claude/worktrees/<id>`. */
+/** Managed implement worktrees use a v1 UUID path or v2 adopted implement-T path. */
 const MANAGED_WORKTREE_MARKER = "/.claude/worktrees/";
-/** UUIDv7 (and compatible) worktree id segment. */
-const MANAGED_WORKTREE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MANAGED_WORKTREE_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ADOPTED_WORKTREE_SEGMENT = /^implement-T\d+$/;
 
 export function isManagedWorktreePath(cwd: string): boolean {
   if (!isAbsoluteFilesystemPath(cwd)) return false;
@@ -189,7 +161,7 @@ export function isManagedWorktreePath(cwd: string): boolean {
   const after = normalized.slice(idx + MANAGED_WORKTREE_MARKER.length);
   // Exactly one path segment (the worktree id); no nested escapes.
   if (after.length === 0 || after.includes("/")) return false;
-  return MANAGED_WORKTREE_ID.test(after);
+  return MANAGED_WORKTREE_ID.test(after) || ADOPTED_WORKTREE_SEGMENT.test(after);
 }
 
 /**
@@ -251,18 +223,22 @@ export function qualifyClaudeNativeAdapter(
     });
   }
 
-  if (!isClaudeQualificationHandle(input.handle)) {
+  const handleValidation = validateManagedWorktreeHandle(input.handle);
+  if (handleValidation.status === "invalid") {
     return Object.freeze({
       status: "incompatible" as const,
       adapterId: "claude:native" as const,
       targetHarness: "claude" as const,
       transport: "native" as const,
-      reason: "handle-invalid" as const,
+      reason:
+        handleValidation.reason === "handle-invalid"
+          ? ("handle-invalid" as const)
+          : ("handle-path-mismatch" as const),
       confinement: "unproven" as const,
       defect: "D263" as const,
       detail:
         "claude:native K238 qualification requires a cq-managed-worktree-handle shaped handle " +
-        "from worktree_manage (D287). Free-form boolean handoffs are refused. K170 did NOT " +
+        `from worktree_manage (D287): ${handleValidation.detail}. Free-form boolean handoffs are refused. K170 did NOT ` +
         "accept write-confinement residual.",
     });
   }
@@ -277,15 +253,14 @@ export function qualifyClaudeNativeAdapter(
       confinement: "unproven" as const,
       defect: "D263" as const,
       detail:
-        "claude:native managed path must lie under .claude/worktrees/<uuid>; got " +
+        "claude:native managed path must use a UUID or canonical implement-T segment; got " +
         `${JSON.stringify(input.cwd)}. K170 did NOT accept write-confinement residual.`,
     });
   }
 
   const cwdNorm = normalizeAbsPath(input.cwd);
   const handlePathNorm = normalizeAbsPath(input.handle.absolutePath);
-  const basename = cwdNorm.slice(cwdNorm.lastIndexOf("/") + 1);
-  if (basename !== input.handle.worktreeId || cwdNorm !== handlePathNorm) {
+  if (cwdNorm !== handlePathNorm) {
     return Object.freeze({
       status: "incompatible" as const,
       adapterId: "claude:native" as const,
@@ -295,8 +270,8 @@ export function qualifyClaudeNativeAdapter(
       confinement: "unproven" as const,
       defect: "D263" as const,
       detail:
-        "claude:native K238: cwd basename must equal handle.worktreeId and cwd must equal " +
-        `handle.absolutePath (D287). cwd=${JSON.stringify(input.cwd)} handle.worktreeId=` +
+        "claude:native K238: cwd must equal the version-validated handle.absolutePath " +
+        `(D287). cwd=${JSON.stringify(input.cwd)} handle.worktreeId=` +
         `${JSON.stringify(input.handle.worktreeId)} handle.absolutePath=` +
         `${JSON.stringify(input.handle.absolutePath)}`,
     });

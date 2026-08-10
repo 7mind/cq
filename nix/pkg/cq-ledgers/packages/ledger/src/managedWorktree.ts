@@ -24,7 +24,6 @@ import { existsSync, promises as fs } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import {
-  basename,
   delimiter as pathDelimiter,
   dirname,
   isAbsolute,
@@ -35,7 +34,13 @@ import {
   sep,
 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseWipArtifact, WipArtifactParseError } from "@cq/config";
+import {
+  MANAGED_WORKTREE_HANDLE_KIND,
+  parseWipArtifact,
+  validateManagedWorktreeHandle as validateManagedWorktreeHandleContract,
+  WipArtifactParseError,
+  type ManagedWorktreeHandle as ConfigManagedWorktreeHandle,
+} from "@cq/config";
 import {
   type DependencyResultCommit,
   type DependencyResultCommitResolution,
@@ -56,8 +61,7 @@ import { Lockfile } from "./store/lockfile.js";
 // Constants
 // ---------------------------------------------------------------------------
 
-const HANDLE_KIND = "cq-managed-worktree-handle" as const;
-const HANDLE_VERSION = 1 as const;
+const FRESH_HANDLE_VERSION = 1 as const;
 const DEFAULT_BRANCH_PREFIX = "implement/";
 const REGISTRY_DIRNAME = ".cq-managed-registry";
 const TASK_INDEX_DIRNAME = "by-task";
@@ -78,18 +82,14 @@ export type ManagedWorktreeTerminalDisposition = "done" | "abandoned";
 // ---------------------------------------------------------------------------
 
 /** Opaque handle. Callers must not invent fields; only values returned by prepare. */
-export interface ManagedWorktreeHandle {
-  readonly kind: typeof HANDLE_KIND;
-  readonly version: typeof HANDLE_VERSION;
-  readonly token: string;
-  readonly worktreeId: string;
-  readonly taskId: string;
-  readonly branch: string;
-  readonly repositoryRoot: string;
-  readonly absolutePath: string;
-  readonly baseCommit: string;
-  readonly createdAt: string;
-  readonly nonce: string;
+export type ManagedWorktreeHandle = ConfigManagedWorktreeHandle;
+
+/** Public core validator shared by registry resume/release and transport adapters. */
+export function validateManagedWorktreeHandle(
+  value: unknown,
+  expectedRepositoryRoot?: string,
+) {
+  return validateManagedWorktreeHandleContract(value, expectedRepositoryRoot);
 }
 
 export interface PreparedWorktreeEvidence {
@@ -585,21 +585,7 @@ interface StoredHandleRecord {
 }
 
 function isHandleShape(value: unknown): value is ManagedWorktreeHandle {
-  if (typeof value !== "object" || value === null) return false;
-  const record = value as Record<string, unknown>;
-  return (
-    record["kind"] === HANDLE_KIND &&
-    record["version"] === HANDLE_VERSION &&
-    typeof record["token"] === "string" &&
-    typeof record["worktreeId"] === "string" &&
-    typeof record["taskId"] === "string" &&
-    typeof record["branch"] === "string" &&
-    typeof record["repositoryRoot"] === "string" &&
-    typeof record["absolutePath"] === "string" &&
-    typeof record["baseCommit"] === "string" &&
-    typeof record["createdAt"] === "string" &&
-    typeof record["nonce"] === "string"
-  );
+  return validateManagedWorktreeHandle(value).status === "valid";
 }
 
 type HandleIntegrityFailure =
@@ -611,23 +597,8 @@ function assertHandleIntegrity(
   handle: ManagedWorktreeHandle,
   repositoryRoot: string,
 ): HandleIntegrityFailure | null {
-  if (!isHandleShape(handle)) return "handle-invalid";
-  if (handle.kind !== HANDLE_KIND || handle.version !== HANDLE_VERSION) return "handle-invalid";
-  if (!isUuidV7(handle.worktreeId)) return "handle-invalid";
-  if (!isSafeTaskId(handle.taskId)) return "handle-invalid";
-  if (!FULL_COMMIT_SHA.test(handle.baseCommit)) return "handle-invalid";
-  if (handle.token.trim() === "" || handle.nonce.trim() === "") return "handle-invalid";
-  if (handle.absolutePath.includes("\0") || handle.repositoryRoot.includes("\0")) {
-    return "handle-invalid";
-  }
-  const resolvedRepo = resolve(repositoryRoot);
-  if (resolve(handle.repositoryRoot) !== resolvedRepo) return "handle-foreign";
-  if (!isAbsolute(handle.absolutePath)) return "handle-path-traversal";
-  const expectedParent = worktreesParent(resolvedRepo);
-  if (!containedPath(expectedParent, handle.absolutePath)) return "handle-path-traversal";
-  if (basename(handle.absolutePath) !== handle.worktreeId) return "handle-path-traversal";
-  if (handle.absolutePath.includes("..")) return "handle-path-traversal";
-  return null;
+  const validation = validateManagedWorktreeHandle(handle, resolve(repositoryRoot));
+  return validation.status === "valid" ? null : validation.reason;
 }
 
 async function readStoredHandle(
@@ -1417,8 +1388,8 @@ async function prepareManagedWorktreeHandleFreeUnderLock(
     const token = randomBytes(16).toString("hex");
     const nonce = randomBytes(8).toString("hex");
     const recoveryHandle: ManagedWorktreeHandle = {
-      kind: HANDLE_KIND,
-      version: HANDLE_VERSION,
+      kind: MANAGED_WORKTREE_HANDLE_KIND,
+      version: FRESH_HANDLE_VERSION,
       token,
       worktreeId,
       taskId: request.taskId,
@@ -1526,8 +1497,8 @@ async function prepareManagedWorktreeHandleFreeUnderLock(
   const token = randomBytes(16).toString("hex");
   const nonce = randomBytes(8).toString("hex");
   const handle: ManagedWorktreeHandle = {
-    kind: HANDLE_KIND,
-    version: HANDLE_VERSION,
+    kind: MANAGED_WORKTREE_HANDLE_KIND,
+    version: FRESH_HANDLE_VERSION,
     token,
     worktreeId,
     taskId: request.taskId,

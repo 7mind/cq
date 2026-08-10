@@ -15,6 +15,7 @@ import {
   createNativeDispatchAdapter,
   createPiNativeDispatchAdapter,
   createPiProcessDispatchAdapter,
+  isManagedWorktreePath,
   qualifyClaudeNativeAdapter,
   qualifyPiNativeAdapter,
   selectPiChildDelivery,
@@ -24,6 +25,7 @@ import {
   PI_PROCESS_SESSION_SEAM,
   CLAUDE_ACCEPTED_RESIDUALS,
   CLAUDE_D263_WORKTREE_CONFINEMENT_INCOMPATIBILITY,
+  type ClaudeNativeQualificationHandle,
 } from "@cq/config";
 
 const SRC = fileURLToPath(new URL("../src/nativeDispatchQualification.ts", import.meta.url));
@@ -42,18 +44,28 @@ describe("T1698/D263/K238/D287 — Claude native positive-only qualification", (
       worktreeId: string;
       kind: string;
       token: string;
+      version: 1 | 2;
+      taskId: string;
+      branch: string;
+      repositoryRoot: string;
     }> = {},
-  ) {
+  ): ClaudeNativeQualificationHandle {
     const id = overrides.worktreeId ?? worktreeId;
-    const cwd = overrides.cwd ?? `/tmp/project/.claude/worktrees/${id}`;
+    const version = overrides.version ?? 1;
+    const taskId = overrides.taskId ?? "T1698";
+    const cwd =
+      overrides.cwd ??
+      (version === 1
+        ? `/tmp/project/.claude/worktrees/${id}`
+        : `/tmp/project/.claude/worktrees/implement-${taskId}`);
     return {
       kind: (overrides.kind ?? "cq-managed-worktree-handle") as "cq-managed-worktree-handle",
-      version: 1,
+      version,
       token: overrides.token ?? "tok-valid-handle-evidence",
       worktreeId: id,
-      taskId: "T1698",
-      branch: "implement/T1698",
-      repositoryRoot: "/tmp/project",
+      taskId,
+      branch: overrides.branch ?? `implement/${taskId}`,
+      repositoryRoot: overrides.repositoryRoot ?? "/tmp/project",
       absolutePath: cwd,
       baseCommit: "a".repeat(40),
       createdAt: "2026-08-07T00:00:00.000Z",
@@ -88,6 +100,41 @@ describe("T1698/D263/K238/D287 — Claude native positive-only qualification", (
     expect(q.evidence).not.toMatch(/structural path-scoped write confinement is proven/i);
   });
 
+  test("T2047: canonical adopted T1207 v2 path qualifies without equating basename to worktreeId", () => {
+    const adoptedCwd = "/tmp/project/.claude/worktrees/implement-T1207";
+    const q = qualifyClaudeNativeAdapter({
+      cwd: adoptedCwd,
+      handle: managedHandle({ version: 2, taskId: "T1207" }),
+    });
+    expect(isManagedWorktreePath(adoptedCwd)).toBe(true);
+    expect(isManagedWorktreePath("/tmp/project/.claude/worktrees/implement-t1207")).toBe(false);
+    expect(q.status).toBe("qualified");
+    if (q.status !== "qualified") throw new Error("expected qualified");
+    expect(q.evidence).toContain(worktreeId);
+  });
+
+  test("T2047: unknown, mixed, traversal, foreign, and tampered v2 identities refuse", () => {
+    const adoptedCwd = "/tmp/project/.claude/worktrees/implement-T1207";
+    const valid = managedHandle({ version: 2, taskId: "T1207" });
+    const invalidHandles = [
+      { ...valid, version: 3 },
+      { ...valid, version: 1 },
+      { ...managedHandle(), version: 2 },
+      {
+        ...valid,
+        absolutePath: "/tmp/project/.claude/worktrees/../worktrees/implement-T1207",
+      },
+      { ...valid, repositoryRoot: "/tmp/foreign" },
+      { ...valid, branch: "implement/T1208" },
+      { ...valid, taskId: "T1208" },
+    ];
+    for (const handle of invalidHandles) {
+      expect(
+        qualifyClaudeNativeAdapter({ cwd: adoptedCwd, handle: handle as never }).status,
+      ).toBe("incompatible");
+    }
+  });
+
   test("D287: missing/invalid handle or path mismatch refuses", () => {
     const noHandle = qualifyClaudeNativeAdapter({
       cwd: managedCwd,
@@ -113,7 +160,7 @@ describe("T1698/D263/K238/D287 — Claude native positive-only qualification", (
     });
     expect(idMismatch.status).toBe("incompatible");
     if (idMismatch.status !== "incompatible") throw new Error("expected incompatible");
-    expect(idMismatch.reason).toBe("handle-path-mismatch");
+    expect(idMismatch.reason).toBe("handle-invalid");
 
     const outside = qualifyClaudeNativeAdapter({
       cwd: "/tmp/not-managed",
@@ -511,7 +558,7 @@ describe("T1699 Pi native worktree bind on adapter launch", () => {
     if (result.outcome !== "aborted") throw new Error("expected abort");
     expect(result.details).toMatchObject({
       violation: "pi-native-worktree-preflight-refused",
-      reason: "handle-path-mismatch",
+      reason: "handle-invalid",
     });
     expect(launches).toBe(0);
   });

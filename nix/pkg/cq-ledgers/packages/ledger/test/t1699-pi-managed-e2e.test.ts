@@ -201,6 +201,48 @@ afterAll(async () => {
 });
 
 describe("T1699 Pi-native managed worktree e2e [BA]", () => {
+  it("T2047 consumes a manager-issued adopted T1207 v2 handle", async () => {
+    const handle: PiNativeManagedWorktreeHandle = {
+      kind: "cq-managed-worktree-handle",
+      version: 2,
+      token: "opaque-t1207-token",
+      worktreeId: "019f2c7a-6b21-7c44-9e10-7a3f5d9b2e08",
+      taskId: "T1207",
+      branch: "implement/T1207",
+      repositoryRoot: "/tmp/project",
+      absolutePath: "/tmp/project/.claude/worktrees/implement-T1207",
+      baseCommit: "a".repeat(40),
+      createdAt: "2026-08-10T00:00:00.000Z",
+      nonce: "opaque-t1207-nonce",
+    };
+    const port: PiNativeWorktreeManagePort = {
+      async prepare() {
+        return {
+          status: "prepared",
+          handle,
+          evidence: {
+            worktreeId: handle.worktreeId,
+            absolutePath: handle.absolutePath,
+            branch: handle.branch,
+            baseCommit: handle.baseCommit,
+            headCommit: "b".repeat(40),
+            mode: "resume",
+          },
+        };
+      },
+      async release() {
+        throw new Error("release not exercised by this acceptance probe");
+      },
+    };
+
+    const bound = await bindPiNativeWorktree({
+      port,
+      handle,
+      observeHead: () => "b".repeat(40),
+    });
+    expect(bound).toMatchObject({ status: "bound", binding: { handle: { version: 2 } } });
+  });
+
   it("prepare → marker/commit only in managed tree → resume preserves tip → release; main untouched", async () => {
     const repo = await seedRepository();
     const install = recordingInstall();

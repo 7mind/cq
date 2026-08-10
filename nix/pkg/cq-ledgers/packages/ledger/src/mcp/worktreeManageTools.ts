@@ -16,6 +16,7 @@
  */
 
 import { z } from "zod";
+import { validateManagedWorktreeHandle } from "@cq/config";
 import { TASKS_LEDGER } from "../constants.js";
 import type { DependencyTaskSnapshot, DependencyTaskSnapshotReader } from "../dependencyResultCommits.js";
 import {
@@ -66,10 +67,7 @@ const fullCommitSha = z
 
 const taskIdSchema = z.string().regex(TASK_ID_RE, "expected task id matching /^T\\d+$/");
 
-const managedWorktreeHandleSchema = z
-  .object({
-    kind: z.literal(HANDLE_KIND),
-    version: z.literal(1),
+const managedWorktreeHandleFields = {
     token: z.string().min(1),
     worktreeId: z
       .string()
@@ -82,8 +80,35 @@ const managedWorktreeHandleSchema = z
     baseCommit: fullCommitSha,
     createdAt: z.string().min(1),
     nonce: z.string().min(1),
+} as const;
+
+const managedWorktreeHandleV1Schema = z
+  .object({
+    kind: z.literal(HANDLE_KIND),
+    version: z.literal(1),
+    ...managedWorktreeHandleFields,
   })
   .strict();
+
+const managedWorktreeHandleV2Schema = z
+  .object({
+    kind: z.literal(HANDLE_KIND),
+    version: z.literal(2),
+    ...managedWorktreeHandleFields,
+  })
+  .strict();
+
+const managedWorktreeHandleSchema = z
+  .discriminatedUnion("version", [managedWorktreeHandleV1Schema, managedWorktreeHandleV2Schema])
+  .superRefine((handle, context) => {
+    const validation = validateManagedWorktreeHandle(handle);
+    if (validation.status === "invalid") {
+      context.addIssue({
+        code: "custom",
+        message: validation.detail,
+      });
+    }
+  });
 
 /**
  * Flat wire shape. Variant-specific members are optional here; the handler

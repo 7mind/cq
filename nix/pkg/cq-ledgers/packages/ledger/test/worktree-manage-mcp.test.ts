@@ -338,6 +338,27 @@ afterAll(async () => {
   }
 });
 
+const HANDLE_ID = "019f2c7a-6b21-7c44-9e10-7a3f5d9b2e08";
+
+function wireHandle(version: 1 | 2) {
+  return {
+    kind: "cq-managed-worktree-handle" as const,
+    version,
+    token: `opaque-v${version}-token`,
+    worktreeId: HANDLE_ID,
+    taskId: "T1207",
+    branch: "implement/T1207",
+    repositoryRoot: "/tmp/project",
+    absolutePath:
+      version === 1
+        ? `/tmp/project/.claude/worktrees/${HANDLE_ID}`
+        : "/tmp/project/.claude/worktrees/implement-T1207",
+    baseCommit: "a".repeat(40),
+    createdAt: "2026-08-10T00:00:00.000Z",
+    nonce: `opaque-v${version}-nonce`,
+  };
+}
+
 describe("worktree_manage schema", () => {
   it("rejects mixed prepare/release fields", () => {
     expect(() =>
@@ -352,19 +373,7 @@ describe("worktree_manage schema", () => {
       parseWorktreeManageInput({
         operation: "release",
         terminalDisposition: "done",
-        handle: {
-          kind: "cq-managed-worktree-handle",
-          version: 1,
-          token: "tok",
-          worktreeId: generateUuidV7(),
-          taskId: "T1",
-          branch: "implement/T1",
-          repositoryRoot: "/tmp/r",
-          absolutePath: "/tmp/r/.claude/worktrees/x",
-          baseCommit: "a".repeat(40),
-          createdAt: "2026-01-01T00:00:00.000Z",
-          nonce: "n",
-        },
+        handle: wireHandle(1),
         taskId: "T1",
       }),
     ).toThrow(/prepare-only/);
@@ -398,20 +407,7 @@ describe("worktree_manage schema", () => {
   });
 
   it("accepts a manager-issued v2 handle for the canonical adopted T1207 path", () => {
-    const worktreeId = generateUuidV7();
-    const handle = {
-      kind: "cq-managed-worktree-handle" as const,
-      version: 2 as const,
-      token: "opaque-v2-token",
-      worktreeId,
-      taskId: "T1207",
-      branch: "implement/T1207",
-      repositoryRoot: "/tmp/project",
-      absolutePath: "/tmp/project/.claude/worktrees/implement-T1207",
-      baseCommit: "a".repeat(40),
-      createdAt: "2026-08-10T00:00:00.000Z",
-      nonce: "opaque-v2-nonce",
-    };
+    const handle = wireHandle(2);
 
     expect(
       parseWorktreeManageInput({
@@ -423,6 +419,39 @@ describe("worktree_manage schema", () => {
       operation: "prepare",
       prepare: { taskId: "T1207", handle },
     });
+  });
+
+  it("keeps v1 accepted and rejects unknown, mixed, traversal, foreign, and tampered v2 handles", () => {
+    expect(
+      parseWorktreeManageInput({
+        operation: "release",
+        terminalDisposition: "done",
+        handle: wireHandle(1),
+      }),
+    ).toMatchObject({ operation: "release", release: { handle: wireHandle(1) } });
+
+    const invalidHandles = [
+      { ...wireHandle(2), version: 3 },
+      { ...wireHandle(2), version: 1 },
+      { ...wireHandle(1), version: 2 },
+      {
+        ...wireHandle(2),
+        absolutePath: "/tmp/project/.claude/worktrees/../worktrees/implement-T1207",
+      },
+      { ...wireHandle(2), absolutePath: "/tmp/foreign/.claude/worktrees/implement-T1207" },
+      { ...wireHandle(2), branch: "implement/T1208" },
+      { ...wireHandle(2), taskId: "T1208" },
+      { ...wireHandle(2), placement: "adopted" },
+    ];
+    for (const handle of invalidHandles) {
+      expect(() =>
+        parseWorktreeManageInput({
+          operation: "release",
+          terminalDisposition: "done",
+          handle,
+        }),
+      ).toThrow();
+    }
   });
 
   it("rejects invalid UUID/commit/handle values", () => {
@@ -495,8 +524,12 @@ describe("worktree_manage direct/stdio contract", () => {
 
       expect(freshDirect.status).toBe("prepared");
       expect(freshStdio.status).toBe("prepared");
+      expect(freshDirect.handle.version).toBe(1);
+      expect(freshStdio.handle.version).toBe(1);
       expect(isUuidV7(freshDirect.handle.worktreeId)).toBe(true);
       expect(isUuidV7(freshStdio.handle.worktreeId)).toBe(true);
+      expect(path.basename(freshDirect.handle.absolutePath)).toBe(freshDirect.handle.worktreeId);
+      expect(path.basename(freshStdio.handle.absolutePath)).toBe(freshStdio.handle.worktreeId);
       expect(freshDirect.handle.taskId).toBe("T1306");
       expect(freshStdio.handle.taskId).toBe("T1306");
       expect(

@@ -23,6 +23,7 @@ const SRC = fileURLToPath(new URL("../src/piNativeWorktree.ts", import.meta.url)
 const BASE = "a".repeat(40);
 const HEAD = "b".repeat(40);
 const PATH = "/tmp/project/.claude/worktrees/018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08";
+const ADOPTED_PATH = "/tmp/project/.claude/worktrees/implement-T1207";
 
 function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
@@ -45,6 +46,19 @@ function handle(overrides: Partial<PiNativeManagedWorktreeHandle> = {}): PiNativ
   };
 }
 
+function adoptedHandle(
+  overrides: Partial<PiNativeManagedWorktreeHandle> = {},
+): PiNativeManagedWorktreeHandle {
+  return {
+    ...handle(),
+    version: 2,
+    taskId: "T1207",
+    branch: "implement/T1207",
+    absolutePath: ADOPTED_PATH,
+    ...overrides,
+  };
+}
+
 function binding(overrides: Partial<PiNativeWorktreeBinding> = {}): PiNativeWorktreeBinding {
   const h = handle();
   return {
@@ -62,7 +76,9 @@ function port(opts: {
   prepareStatus?: "prepared" | "resume-required" | "refused";
   mutatePathOnPrepare?: boolean;
   mutateBaseOnPrepare?: boolean;
+  mutateEvidenceBranch?: boolean;
   headOnEvidence?: string;
+  preparedHandle?: PiNativeManagedWorktreeHandle;
 } = {}): PiNativeWorktreeManagePort & {
   releases: number;
   prepares: number;
@@ -75,17 +91,24 @@ function port(opts: {
       if (opts.prepareStatus === "refused") {
         return { status: "refused", reason: "base-unresolvable", detail: "no base" };
       }
-      const h = handle({
+      const h = {
+        ...(opts.preparedHandle ?? handle()),
         absolutePath: opts.mutatePathOnPrepare ? "/tmp/escaped" : PATH,
         baseCommit: opts.mutateBaseOnPrepare ? "c".repeat(40) : BASE,
-      });
+        ...(opts.preparedHandle === undefined
+          ? {}
+          : {
+              absolutePath: opts.preparedHandle.absolutePath,
+              baseCommit: opts.preparedHandle.baseCommit,
+            }),
+      } as PiNativeManagedWorktreeHandle;
       return {
         status: opts.prepareStatus === "resume-required" ? "resume-required" : "prepared",
         handle: h,
         evidence: {
           worktreeId: h.worktreeId,
           absolutePath: h.absolutePath,
-          branch: h.branch,
+          branch: opts.mutateEvidenceBranch ? "implement/T9999" : h.branch,
           baseCommit: h.baseCommit,
           headCommit: opts.headOnEvidence ?? HEAD,
           mode: opts.prepareStatus === "resume-required" ? "resume" : "fresh",
@@ -133,6 +156,55 @@ describe("T1699 Pi native worktree_manage consumption", () => {
     });
   });
 
+  test("T2047 binds a manager-issued canonical adopted T1207 v2 handle", async () => {
+    const h = adoptedHandle();
+    expect(
+      preflightPiNativeWorktree({
+        absolutePath: ADOPTED_PATH,
+        baseCommit: BASE,
+        headCommit: HEAD,
+        expectedHead: HEAD,
+        handle: h,
+      }),
+    ).toMatchObject({ status: "verified", absolutePath: ADOPTED_PATH });
+
+    const bound = await bindPiNativeWorktree({
+      port: port({ preparedHandle: h }),
+      handle: h,
+      observeHead: () => HEAD,
+    });
+    expect(bound).toMatchObject({
+      status: "bound",
+      binding: { absolutePath: ADOPTED_PATH, branch: "implement/T1207", handle: { version: 2 } },
+    });
+  });
+
+  test("T2047 refuses unknown, mixed, traversal, foreign, and tampered v2 handles", () => {
+    const valid = adoptedHandle();
+    const invalidHandles = [
+      { ...valid, version: 3 },
+      { ...valid, version: 1 },
+      { ...handle(), version: 2 },
+      {
+        ...valid,
+        absolutePath: "/tmp/project/.claude/worktrees/../worktrees/implement-T1207",
+      },
+      { ...valid, repositoryRoot: "/tmp/foreign" },
+      { ...valid, branch: "implement/T1208" },
+      { ...valid, taskId: "T1208" },
+    ];
+    for (const invalid of invalidHandles) {
+      expect(
+        preflightPiNativeWorktree({
+          absolutePath: ADOPTED_PATH,
+          baseCommit: BASE,
+          headCommit: HEAD,
+          handle: invalid as never,
+        }),
+      ).toMatchObject({ status: "refused", reason: "handle-invalid" });
+    }
+  });
+
   test("path/handle/base mutation fails closed at preflight", () => {
     expect(
       preflightPiNativeWorktree({
@@ -163,7 +235,7 @@ describe("T1699 Pi native worktree_manage consumption", () => {
         headCommit: HEAD,
         handle: handle({ absolutePath: "/tmp/other" }),
       }),
-    ).toMatchObject({ status: "refused", reason: "handle-path-mismatch" });
+    ).toMatchObject({ status: "refused", reason: "handle-invalid" });
     expect(
       preflightPiNativeWorktree({
         absolutePath: PATH,
@@ -206,17 +278,15 @@ describe("T1699 Pi native worktree_manage consumption", () => {
       baseCommit: BASE,
       observeHead: () => HEAD,
     });
-    // handle path mismatches evidence absolutePath in preflight when observe uses evidence path
-    // prepare returns escaped path on both handle and evidence — preflight still requires absolute
-    expect(pathEscaped.status).toBe("bound"); // absolute /tmp/escaped still absolute
-    // But binding integrity against the ORIGINAL expected path fails closed:
-    if (pathEscaped.status === "bound") {
-      expect(() =>
-        assertPiNativeWorktreeBindingIntact(binding(), {
-          absolutePath: pathEscaped.binding.absolutePath,
-        }),
-      ).toThrow(PiNativeWorktreeBindingError);
-    }
+    expect(pathEscaped).toMatchObject({ status: "refused", reason: "handle-invalid" });
+
+    const branchEscaped = await bindPiNativeWorktree({
+      port: port({ mutateEvidenceBranch: true }),
+      taskId: "T1699",
+      baseCommit: BASE,
+      observeHead: () => HEAD,
+    });
+    expect(branchEscaped).toMatchObject({ status: "refused", reason: "handle-invalid" });
 
     const baseEscaped = await bindPiNativeWorktree({
       port: port({ mutateBaseOnPrepare: true }),
@@ -265,12 +335,17 @@ describe("T1699 Pi native worktree_manage consumption", () => {
     expect(p.releases).toBe(1); // no additional release on refusal
   });
 
-  test("MUTATION: handle token swap is detected", () => {
+  test("MUTATION: closed handle identity field swaps are detected", () => {
     const before = sha256(readFileSync(SRC, "utf8"));
     const expected = binding();
     expect(() =>
       assertPiNativeWorktreeBindingIntact(expected, {
         handle: handle({ token: "tok-MUTATED" }),
+      }),
+    ).toThrow(/handle-mutated/);
+    expect(() =>
+      assertPiNativeWorktreeBindingIntact(expected, {
+        handle: handle({ createdAt: "2026-08-08T00:00:00.000Z" }),
       }),
     ).toThrow(/handle-mutated/);
     const after = sha256(readFileSync(SRC, "utf8"));
