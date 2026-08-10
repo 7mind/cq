@@ -397,6 +397,34 @@ describe("worktree_manage schema", () => {
     ).toThrow(/dependency evidence/);
   });
 
+  it("accepts a manager-issued v2 handle for the canonical adopted T1207 path", () => {
+    const worktreeId = generateUuidV7();
+    const handle = {
+      kind: "cq-managed-worktree-handle" as const,
+      version: 2 as const,
+      token: "opaque-v2-token",
+      worktreeId,
+      taskId: "T1207",
+      branch: "implement/T1207",
+      repositoryRoot: "/tmp/project",
+      absolutePath: "/tmp/project/.claude/worktrees/implement-T1207",
+      baseCommit: "a".repeat(40),
+      createdAt: "2026-08-10T00:00:00.000Z",
+      nonce: "opaque-v2-nonce",
+    };
+
+    expect(
+      parseWorktreeManageInput({
+        operation: "prepare",
+        taskId: "T1207",
+        handle,
+      }),
+    ).toEqual({
+      operation: "prepare",
+      prepare: { taskId: "T1207", handle },
+    });
+  });
+
   it("rejects invalid UUID/commit/handle values", () => {
     expect(() =>
       parseWorktreeManageInput({
