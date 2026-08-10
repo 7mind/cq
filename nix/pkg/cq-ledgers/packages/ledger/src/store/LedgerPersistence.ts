@@ -108,7 +108,19 @@ export interface PlanLifecyclePersistenceCommit {
   readonly ledgers: Readonly<Record<string, string>>;
 }
 
+export interface ArchivePersistenceCommit {
+  readonly archives: Readonly<Record<string, string | null>>;
+  readonly ledgers: Readonly<Record<string, string>>;
+}
+
 export interface LedgerPersistence {
+  /** True when an interrupted archive commit requires rollback before reads. */
+  hasPendingArchiveCommit(): Promise<boolean>;
+  /** Restore the complete pre-archive state recorded by a pending commit. */
+  recoverArchiveCommit(): Promise<void>;
+  /** Commit every archive and active-ledger source as one backend operation. */
+  commitArchive(commit: ArchivePersistenceCommit): Promise<void>;
+
   /**
    * True when an interrupted lifecycle commit is pending replay. A CHEAP probe
    * (a `stat`, not a read+parse) the base uses to decide whether init() must

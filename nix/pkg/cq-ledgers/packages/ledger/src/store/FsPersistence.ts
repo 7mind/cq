@@ -28,6 +28,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import type {
+  ArchivePersistenceCommit,
   LedgerPersistence,
   PlanLifecyclePersistenceCommit,
 } from "./LedgerPersistence.js";
@@ -36,6 +37,7 @@ import { LedgerError } from "../types.js";
 import { CANONICAL_LEDGERS } from "../constants.js";
 import { atomicWrite } from "./fsAtomic.js";
 import {
+  ARCHIVE_COMMIT_PENDING_FILENAME,
   PLAN_LIFECYCLE_PENDING_FILENAME,
   PLAN_LIFECYCLE_STATE_FILENAME,
 } from "./ledgerArtifacts.js";
@@ -71,6 +73,8 @@ export class FsPersistence implements LedgerPersistence {
   private readonly now: () => string;
   private readonly planStatePath: string;
   private readonly planPendingPath: string;
+  private readonly archivePendingPath: string;
+  private readonly writeAtomic: (filePath: string, text: string) => Promise<void>;
   /**
    * Returns the store's CURRENT in-memory registry (for divergence backup).
    * Bound by the owning store AFTER its `super()` call via
@@ -80,14 +84,99 @@ export class FsPersistence implements LedgerPersistence {
    */
   private registrySnapshot: () => LedgerRegistry = () => ({ version: 1, ledgers: [] });
 
-  constructor(opts: { layout: FsPersistenceLayout; now: () => string }) {
+  constructor(opts: {
+    layout: FsPersistenceLayout;
+    now: () => string;
+    atomicWrite?: (filePath: string, text: string) => Promise<void>;
+  }) {
     this.root = opts.layout.root;
     this.docsDir = opts.layout.docsDir;
     this.archiveDir = opts.layout.archiveDir;
     this.registryPath = opts.layout.registryPath;
     this.now = opts.now;
+    this.writeAtomic = opts.atomicWrite ?? atomicWrite;
     this.planStatePath = path.join(this.docsDir, PLAN_LIFECYCLE_STATE_FILENAME);
     this.planPendingPath = path.join(this.docsDir, PLAN_LIFECYCLE_PENDING_FILENAME);
+    this.archivePendingPath = path.join(this.docsDir, ARCHIVE_COMMIT_PENDING_FILENAME);
+  }
+
+  async hasPendingArchiveCommit(): Promise<boolean> {
+    try {
+      await fs.stat(this.archivePendingPath);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+  }
+
+  async recoverArchiveCommit(): Promise<void> {
+    const pending = await readMaybe(this.archivePendingPath);
+    if (pending === null) return;
+    await this.restoreArchivePreState(parseArchiveRollback(pending));
+    await fs.rm(this.archivePendingPath, { force: true });
+  }
+
+  async commitArchive(commit: ArchivePersistenceCommit): Promise<void> {
+    const rollback = await this.captureArchivePreState(commit);
+    await this.writeAtomic(this.archivePendingPath, JSON.stringify(rollback));
+    try {
+      for (const [locator, source] of Object.entries(commit.archives)) {
+        const archivePath = this.resolveArchive(locator);
+        if (source === null) {
+          await fs.rm(archivePath, { force: true });
+          continue;
+        }
+        await fs.mkdir(path.dirname(archivePath), { recursive: true });
+        await this.writeAtomic(archivePath, source);
+      }
+      for (const [name, source] of Object.entries(commit.ledgers)) {
+        await this.writeAtomic(this.ledgerPath(name), source);
+      }
+    } catch (error) {
+      try {
+        await this.restoreArchivePreState(rollback);
+        await fs.rm(this.archivePendingPath, { force: true });
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          "archive commit failed and its pre-state rollback did not complete",
+        );
+      }
+      throw error;
+    }
+    await fs.rm(this.archivePendingPath, { force: true });
+  }
+
+  private async captureArchivePreState(
+    commit: ArchivePersistenceCommit,
+  ): Promise<ArchiveRollback> {
+    const archives: Record<string, string | null> = {};
+    const ledgers: Record<string, string | null> = {};
+    for (const locator of Object.keys(commit.archives)) {
+      archives[locator] = await readMaybe(this.resolveArchive(locator));
+    }
+    for (const name of Object.keys(commit.ledgers)) {
+      ledgers[name] = await readMaybe(this.ledgerPath(name));
+    }
+    return { version: 1, archives, ledgers };
+  }
+
+  private async restoreArchivePreState(rollback: ArchiveRollback): Promise<void> {
+    for (const [locator, source] of Object.entries(rollback.archives)) {
+      await this.restoreSource(this.resolveArchive(locator), source);
+    }
+    for (const [name, source] of Object.entries(rollback.ledgers)) {
+      await this.restoreSource(this.ledgerPath(name), source);
+    }
+  }
+
+  private async restoreSource(filePath: string, source: string | null): Promise<void> {
+    if (source === null) {
+      await fs.rm(filePath, { force: true });
+      return;
+    }
+    await this.writeAtomic(filePath, source);
   }
 
   async hasPendingPlanLifecycleCommit(): Promise<boolean> {
@@ -242,6 +331,57 @@ export class FsPersistence implements LedgerPersistence {
     const stat = await fs.stat(this.ledgerPath(name));
     return String(stat.mtimeMs);
   }
+}
+
+interface ArchiveRollback {
+  readonly version: 1;
+  readonly archives: Readonly<Record<string, string | null>>;
+  readonly ledgers: Readonly<Record<string, string | null>>;
+}
+
+function parseArchiveRollback(text: string): ArchiveRollback {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new LedgerError("invalid pending archive commit");
+  }
+  if (typeof value !== "object" || value === null) {
+    throw new LedgerError("invalid pending archive commit");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record["version"] !== 1 ||
+    !isNullableStringRecord(record["archives"]) ||
+    !isLedgerSourceRecord(record["ledgers"])
+  ) {
+    throw new LedgerError("invalid pending archive commit");
+  }
+  return {
+    version: 1,
+    archives: record["archives"],
+    ledgers: record["ledgers"],
+  };
+}
+
+function isLedgerSourceRecord(
+  value: unknown,
+): value is Readonly<Record<string, string | null>> {
+  return (
+    isNullableStringRecord(value) &&
+    Object.keys(value).every((name) => /^[a-z][a-z0-9-]*$/.test(name))
+  );
+}
+
+function isNullableStringRecord(
+  value: unknown,
+): value is Readonly<Record<string, string | null>> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every((entry) => entry === null || typeof entry === "string")
+  );
 }
 
 function parsePlanLifecycleCommit(text: string): PlanLifecyclePersistenceCommit {

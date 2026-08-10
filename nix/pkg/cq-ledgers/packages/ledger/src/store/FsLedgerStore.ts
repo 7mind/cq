@@ -96,6 +96,8 @@ export interface FsLedgerStoreOpts {
    *   the canonical files from scratch, then continue startup.
    */
   onSchemaDivergence?: "backup-reinit" | "abort";
+  /** Override atomic persistence writes for deterministic fault-injection tests. */
+  atomicWrite?: (filePath: string, text: string) => Promise<void>;
 }
 
 export class FsLedgerStore extends AbstractLedgerStore<FsPersistence> implements LedgerStore {
@@ -113,6 +115,7 @@ export class FsLedgerStore extends AbstractLedgerStore<FsPersistence> implements
     const persistence = new FsPersistence({
       layout: { root, docsDir, archiveDir, registryPath },
       now,
+      ...(opts.atomicWrite !== undefined ? { atomicWrite: opts.atomicWrite } : {}),
     });
     super({
       persistence,

@@ -172,6 +172,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
   protected readonly searchIndex = new LedgerSearchIndex();
   protected registry: LedgerRegistry = { ...EMPTY_REGISTRY, ledgers: [] };
   protected initialised = false;
+  private archiveRecoveryRequired = false;
   private readonly planClaims = new Map<string, PlanPrivateClaimRecord>();
   private readonly planOperations = new Map<string, InMemoryPlanOperationRecord>();
   private readonly planSerializationBoundaryHook: PlanLifecycleSerializationBoundaryHook | null;
@@ -442,7 +443,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     // Replay an interrupted lifecycle commit BEFORE the legacy backfill: the
     // replay re-reads every ledger from the recovered durable bytes, which
     // would otherwise discard the backfill's in-memory pointer edits.
-    await this.recoverPlanLifecycleUnderLocks();
+    await this.recoverPendingPersistenceCommitsUnderLocks();
     // Backfill title+status on legacy ArchivePointers (pre-T91). NOTE: the
     // milestones ledger must be processed FIRST (it appears first in
     // CANONICAL_LEDGERS, and `this.ledgers` preserves that insertion order
@@ -911,9 +912,11 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
         const out = applyReattachItem(ledger, archivedItem.milestoneId, archivedItem, this.now());
         // Per-item archive always becomes empty on extraction: remove the
         // file + its pointer entirely.
-        await this.persistence.removeArchive(locator);
         this.removeArchivePointer(ledger, milestoneId);
-        await this.writeLedgerFile(ledger);
+        await this.commitArchiveSources(
+          { [locator]: null },
+          { [ledger.id]: serializeLedger(ledger) },
+        );
         return cloneItem(out);
       }
 
@@ -937,16 +940,20 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
         assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), milestoneId);
       }
       const out = applyReattachItem(ledger, milestoneId, extracted, this.now());
+      let archiveSource: string | null;
       if (group.items.length === 0) {
         // Last item removed — drop the group archive file + its pointer.
-        await this.persistence.removeArchive(locator);
         this.removeArchivePointer(ledger, milestoneId);
+        archiveSource = null;
       } else {
         // Rewrite the group archive WITHOUT the extracted item; the pointer
         // (id/path/summary/title/status) is unchanged.
-        await this.persistence.writeArchive(locator, serializeArchiveImpl(group));
+        archiveSource = serializeArchiveImpl(group);
       }
-      await this.writeLedgerFile(ledger);
+      await this.commitArchiveSources(
+        { [locator]: archiveSource },
+        { [ledger.id]: serializeLedger(ledger) },
+      );
       return cloneItem(out);
       });
     });
@@ -1190,8 +1197,10 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
    * Runs AFTER the init() load loop so `withLock` sees the ledgers it guards,
    * and reloads them from whatever the replay left durable.
    */
-  private async recoverPlanLifecycleUnderLocks(): Promise<void> {
-    if (!(await this.persistence.hasPendingPlanLifecycleCommit())) {
+  private async recoverPendingPersistenceCommitsUnderLocks(): Promise<void> {
+    const hasPendingArchive = await this.persistence.hasPendingArchiveCommit();
+    const hasPendingPlan = await this.persistence.hasPendingPlanLifecycleCommit();
+    if (!hasPendingArchive && !hasPendingPlan) {
       // Nothing to replay, so no ledger is about to be rewritten and a plain
       // open pays for no lock I/O at all (the git-object backend must not
       // materialise its real-filesystem `.cq/.locks` root just to open — K117).
@@ -1201,9 +1210,10 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     }
     const ledgerIds = this.lockableLedgerIds();
     await this.withMilestonesLock(() =>
-      this.withLocksInOrder(ledgerIds, () =>
-        this.replayPlanLifecycleCommitUnderHeldLocks(ledgerIds),
-      ),
+      this.withLocksInOrder(ledgerIds, async () => {
+        await this.persistence.recoverArchiveCommit();
+        await this.replayPlanLifecycleCommitUnderHeldLocks(ledgerIds);
+      }),
     );
   }
 
@@ -1416,8 +1426,9 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     const msTitle =
       typeof milestoneItem?.fields["title"] === "string" ? milestoneItem.fields["title"] : "";
     const msStatus = milestoneItem?.status ?? "";
-    // Phase 2 — for each non-milestones ledger with a matching group: detach
-    // in-memory, write the archive file, write the ledger file.
+    // Phase 2 — construct every archive and active-ledger source in memory.
+    const archives: Record<string, string> = {};
+    const ledgerSources: Record<string, string> = {};
     for (const [name, ledger] of this.ledgers) {
       if (name === MILESTONES_LEDGER) continue;
       const hasGroup = ledger.milestones.some((m) => m.id === milestoneId);
@@ -1431,8 +1442,8 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
         msTitle,
         msStatus,
       );
-      await this.persistence.writeArchive(relPath, serializeArchiveImpl(milestone));
-      await this.writeLedgerFile(ledger);
+      archives[relPath] = serializeArchiveImpl(milestone);
+      ledgerSources[name] = serializeLedger(ledger);
     }
     // Phase 3 — detach the milestone-item from the milestones ledger, write its
     // single-item archive, write the milestones ledger.
@@ -1445,9 +1456,25 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
       msTitle,
       msStatus,
     );
-    await this.persistence.writeArchive(relPath, serializeMilestoneItemArchive(item));
-    await this.writeLedgerFile(milestonesLedger);
+    archives[relPath] = serializeMilestoneItemArchive(item);
+    ledgerSources[MILESTONES_LEDGER] = serializeLedger(milestonesLedger);
+    await this.commitArchiveSources(archives, ledgerSources);
     return { ...pointer };
+  }
+
+  private async commitArchiveSources(
+    archives: Readonly<Record<string, string | null>>,
+    ledgerSources: Readonly<Record<string, string>>,
+  ): Promise<void> {
+    try {
+      await this.persistence.commitArchive({ archives, ledgers: ledgerSources });
+    } catch (error) {
+      this.archiveRecoveryRequired = await this.persistence.hasPendingArchiveCommit();
+      for (const name of Object.keys(ledgerSources)) {
+        await this.reloadLedgerFromDisk(name);
+      }
+      throw error;
+    }
   }
 
   private async withLock<T>(ledgerId: string, fn: () => Promise<T>): Promise<T> {
@@ -1522,6 +1549,11 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
 
   protected assertInit(): void {
     if (!this.initialised) throw new LedgerError("LedgerStore not initialised");
+    if (this.archiveRecoveryRequired) {
+      throw new LedgerError(
+        "LedgerStore requires restart to recover an interrupted archive commit",
+      );
+    }
   }
 }
 

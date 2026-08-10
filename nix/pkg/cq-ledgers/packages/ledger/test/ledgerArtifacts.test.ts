@@ -37,6 +37,7 @@ describe("ledgerTreePaths", () => {
     // Seed a minimal ledger registry + one ledger file.
     await fs.writeFile(path.join(storageDir, "ledgers.yaml"), "version: 1\nledgers:\n  - tasks\n");
     await fs.writeFile(path.join(storageDir, "tasks.md"), "# tasks\n");
+    await fs.writeFile(path.join(storageDir, "archive-commit.pending.json"), "{}\n");
 
     // Seed archive/** so we can confirm it is also included.
     await fs.mkdir(path.join(storageDir, "archive", "tasks"), { recursive: true });
@@ -63,6 +64,7 @@ describe("ledgerTreePaths", () => {
     expect(paths).toContain("ledgers.yaml");
     expect(paths).toContain("tasks.md");
     expect(paths).toContain("archive/tasks/M1.md");
+    expect(paths).not.toContain("archive-commit.pending.json");
 
     // Ephemeral dirs must NOT appear.
     expect(paths.some((p) => p.startsWith(".locks"))).toBe(false);
@@ -125,6 +127,7 @@ describe("removeLedgerArtifacts", () => {
 
     await fs.writeFile(path.join(storageDir, "ledgers.yaml"), "version: 1\nledgers:\n  - tasks\n");
     await fs.writeFile(path.join(storageDir, "tasks.md"), "# tasks\n");
+    await fs.writeFile(path.join(storageDir, "archive-commit.pending.json"), "{}\n");
     await fs.mkdir(path.join(storageDir, "logs"), { recursive: true });
     await fs.writeFile(path.join(storageDir, "logs", "session.log"), "log\n");
     await fs.mkdir(path.join(storageDir, ".locks"), { recursive: true });
@@ -150,6 +153,7 @@ describe("removeLedgerArtifacts", () => {
     // Standard ledger artifacts removed too.
     expect(await exists(path.join(storageDir, "ledgers.yaml"))).toBe(false);
     expect(await exists(path.join(storageDir, "tasks.md"))).toBe(false);
+    expect(await exists(path.join(storageDir, "archive-commit.pending.json"))).toBe(false);
 
     // Result records the removals.
     expect(result.removed.length).toBeGreaterThan(0);

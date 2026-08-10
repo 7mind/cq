@@ -52,6 +52,7 @@
 import * as path from "node:path";
 import { promises as fs } from "node:fs";
 import type {
+  ArchivePersistenceCommit,
   LedgerPersistence,
   PlanLifecyclePersistenceCommit,
 } from "../LedgerPersistence.js";
@@ -149,6 +150,23 @@ export class GitPersistence implements LedgerPersistence {
     }
   }
 
+  async hasPendingArchiveCommit(): Promise<boolean> {
+    return false;
+  }
+
+  async recoverArchiveCommit(): Promise<void> {}
+
+  async commitArchive(commit: ArchivePersistenceCommit): Promise<void> {
+    const replacements: Record<string, string | null> = {};
+    for (const [locator, source] of Object.entries(commit.archives)) {
+      replacements[normalizePath(locator)] = source;
+    }
+    for (const [name, source] of Object.entries(commit.ledgers)) {
+      replacements[this.ledgerTreePath(name)] = source;
+    }
+    await this.advanceMany(replacements, "ledger: archive milestone");
+  }
+
   /** The current ref sha, or null when the ref is absent. */
   private async refSha(): Promise<string | null> {
     return this.git.readRef(this.ref);
@@ -203,7 +221,7 @@ export class GitPersistence implements LedgerPersistence {
   }
 
   private async advanceMany(
-    replacements: Readonly<Record<string, string>>,
+    replacements: Readonly<Record<string, string | null>>,
     message: string,
   ): Promise<void> {
     const expectedOld = await this.refSha();
@@ -212,13 +230,14 @@ export class GitPersistence implements LedgerPersistence {
     const paths = new Set(Object.keys(replacements));
     const kept = current.filter((entry) => !paths.has(entry.path));
     for (const [treePath, text] of Object.entries(replacements)) {
+      if (text === null) continue;
       kept.push({
         mode: BLOB_MODE,
         sha: await this.git.hashObject(text),
         path: treePath,
       });
     }
-    const tree = await this.git.writeTree(kept);
+    const tree = kept.length === 0 ? EMPTY_TREE_OID : await this.git.writeTree(kept);
     const commit = await this.git.commitTree(tree, expectedOld, message);
     await this.git.updateRef(this.ref, commit, expectedOld);
   }

@@ -14,6 +14,7 @@
  *   - `<name>.md`                    — one per REGISTERED ledger (and the canonical set)
  *   - `plan-lifecycle.json`          — durable verifier/replay state
  *   - `plan-lifecycle.pending.json`  — recoverable filesystem commit decision
+ *   - `archive-commit.pending.json`  — recoverable archive commit pre-state
  *   - `archive/**`                   — archived milestone groups
  *   - `logs/**`                      — portable session logs (travel with the ledger tree)
  *   - `.locks/`, `.backup/`          — ephemeral runtime dirs (NEVER travel)
@@ -33,6 +34,8 @@ export const LEDGER_ARCHIVE_DIRNAME = "archive";
 export const PLAN_LIFECYCLE_STATE_FILENAME = "plan-lifecycle.json";
 /** Recoverable filesystem commit decision; never part of a portable tree. */
 export const PLAN_LIFECYCLE_PENDING_FILENAME = "plan-lifecycle.pending.json";
+/** Recoverable filesystem archive commit pre-state; never part of a portable tree. */
+export const ARCHIVE_COMMIT_PENDING_FILENAME = "archive-commit.pending.json";
 /**
  * Durable workset roots/epoch pair (T1956). One complete batch per visible
  * tip — stored on the orphan ref for git-object and under `.cq/` for fs.
@@ -132,6 +135,7 @@ export async function enumerateLedgerArtifacts(docsDir: string): Promise<LedgerA
   for (const filename of [
     PLAN_LIFECYCLE_STATE_FILENAME,
     PLAN_LIFECYCLE_PENDING_FILENAME,
+    ARCHIVE_COMMIT_PENDING_FILENAME,
     WORKSET_ROOTS_FILENAME,
   ]) {
     const p = path.join(docsDir, filename);
@@ -153,8 +157,8 @@ export async function enumerateLedgerArtifacts(docsDir: string): Promise<LedgerA
  * The PORTABLE ledger tree as STORAGE-RELATIVE paths: `ledgers.yaml`, every
  * registered `<name>.md`, durable lifecycle verifier/replay state, every
  * `archive/**` file (recursive), and every `logs/**` file (recursive).
- * Ephemeral state (`plan-lifecycle.pending.json`, `.locks`, and `.backup`) is
- * EXCLUDED — it never travels with the ledger. Sorted.
+ * Ephemeral state (`plan-lifecycle.pending.json`, `archive-commit.pending.json`,
+ * `.locks`, and `.backup`) is EXCLUDED — it never travels with the ledger. Sorted.
  */
 export async function ledgerTreePaths(docsDir: string): Promise<string[]> {
   const art = await enumerateLedgerArtifacts(docsDir);

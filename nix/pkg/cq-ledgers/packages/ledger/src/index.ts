@@ -504,6 +504,7 @@ export {
   LEDGER_RUNTIME_DIRNAMES,
   LEDGER_PORTABLE_RUNTIME_DIRNAMES,
   LEDGER_EPHEMERAL_RUNTIME_DIRNAMES,
+  ARCHIVE_COMMIT_PENDING_FILENAME,
   WORKSET_ROOTS_FILENAME,
 } from "./store/ledgerArtifacts.js";
 export type { LedgerArtifacts, RemoveLedgerArtifactsResult } from "./store/ledgerArtifacts.js";
