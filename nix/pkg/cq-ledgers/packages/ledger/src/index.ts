@@ -357,6 +357,31 @@ export type {
   GitPathState,
   GitRegularMode,
 } from "./gitChangeBroker.js";
+export {
+  beginLegacyWorktreeReconciliation,
+  classifyLegacyHistory,
+  nodeLegacyReconciliationGitRunner,
+  recoverLegacyWorktreeReconciliation,
+} from "./legacyWorktreeReconciliation.js";
+export type {
+  BeginLegacyWorktreeReconciliationRequest,
+  BeginLegacyWorktreeReconciliationRefusalReason,
+  BeginLegacyWorktreeReconciliationResult,
+  LegacyOverlayJournalEntry,
+  LegacyReconciliationClassification,
+  LegacyReconciliationFaultBoundary,
+  LegacyReconciliationFaultInjector,
+  LegacyReconciliationGitResult,
+  LegacyReconciliationGitRunner,
+  LegacyWorktreeActivityFence,
+  LegacyWorktreeActivityObservation,
+  LegacyWorktreeManagerLock,
+  LegacyWorktreeReconciliationDeps,
+  LegacyWorktreeReconciliationEvidence,
+  LegacyWorktreeReconciliationTransaction,
+  RecoverLegacyWorktreeReconciliationRequest,
+  RecoverLegacyWorktreeReconciliationResult,
+} from "./legacyWorktreeReconciliation.js";
 export { GitPersistence } from "./store/git/GitPersistence.js";
 export { GitObjectLedgerBackend } from "./store/git/GitObjectLedgerBackend.js";
 export type { GitObjectLedgerBackendOpts } from "./store/git/GitObjectLedgerBackend.js";
