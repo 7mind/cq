@@ -1,3 +1,4 @@
+import { promises as fs } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { FsAttestationBackend, type AttestationNamespace } from "@cq/config";
 import { releaseManagedWorktree, type ManagedWorktreeHandle } from "@cq/ledger";
@@ -13,6 +14,25 @@ interface PeerRequest {
   readonly input: Record<string, unknown>;
   readonly startedFile?: string;
   readonly completedFile?: string;
+  readonly crashBoundary?: "after-constructed" | "after-index-install";
+}
+
+function installCrashBoundary(boundary: NonNullable<PeerRequest["crashBoundary"]>): void {
+  if (boundary === "after-constructed") {
+    fs.copyFile = async () => {
+      process.kill(process.pid, "SIGKILL");
+      throw new Error("unreachable after constructed-state SIGKILL");
+    };
+    return;
+  }
+  const rename = fs.rename.bind(fs);
+  fs.rename = async (...args: Parameters<typeof fs.rename>) => {
+    await rename(...args);
+    if (String(args[0]).endsWith(`.cq-broker-${String(process.pid)}`)) {
+      process.kill(process.pid, "SIGKILL");
+      throw new Error("unreachable after index-install SIGKILL");
+    }
+  };
 }
 
 function artifactStore(): PromptArtifactStore {
@@ -38,6 +58,7 @@ function artifactStore(): PromptArtifactStore {
 
 async function main(): Promise<void> {
   const request = JSON.parse(await Bun.stdin.text()) as PeerRequest;
+  if (request.crashBoundary !== undefined) installCrashBoundary(request.crashBoundary);
   if (request.startedFile !== undefined) await writeFile(request.startedFile, request.operation);
   let result: unknown;
   if (request.operation === "release") {

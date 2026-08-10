@@ -24,6 +24,7 @@ const exec = promisify(execFile);
 const roots: string[] = [];
 const NAMESPACE: AttestationNamespace = { backend: "xdg", projectKey: "t2042-integration" };
 const PEER_FIXTURE = new URL("./fixtures/gitChangeBrokerPeer.ts", import.meta.url).pathname;
+const RECEIPT_CHAIN_MATRIX_TIMEOUT_MS = 30_000;
 
 async function git(cwd: string, args: readonly string[]): Promise<string> {
   const { stdout } = await exec("git", [...args], {
@@ -502,23 +503,43 @@ describe("dispatch-bound Git change capability", () => {
     }
   }, 30_000);
 
-  test("a fresh broker process recovers the identical operation at each durable journal boundary", async () => {
+  test("a fresh broker process recovers each durable journal and post-index-install boundary", async () => {
     for (const boundary of [
       { trigger: "third-top", state: "intent" },
+      { crashBoundary: "after-constructed", state: "constructed" },
       { trigger: "fifth-top", state: "objects-installed" },
       { trigger: "index", state: "ref-advanced" },
+      {
+        crashBoundary: "after-index-install",
+        state: "ref-advanced",
+        indexInstalled: true,
+      },
     ] as const) {
-      const fixture = await durableDispatch(boundary.state);
-      const content = `${boundary.state}\n`;
+      const label =
+        "crashBoundary" in boundary ? `${boundary.state}-${boundary.crashBoundary}` : boundary.state;
+      const fixture = await durableDispatch(label);
+      const content = `${label}\n`;
       await fs.writeFile(path.join(fixture.managed.handle.absolutePath, "file.txt"), content);
       const request = commitPeerRequest(
         fixture,
-        `T2042-restart-${boundary.state}`,
+        `T2042-restart-${label}`,
         content,
       );
-      const blocker = await blockingGit(fixture.repositoryRoot, boundary.trigger);
-      const interrupted = spawnPeer(request, blocker.environment);
-      await waitForFile(blocker.ready);
+      const blocker =
+        "trigger" in boundary
+          ? await blockingGit(fixture.repositoryRoot, boundary.trigger)
+          : undefined;
+      const interrupted = spawnPeer(
+        "crashBoundary" in boundary
+          ? { ...request, crashBoundary: boundary.crashBoundary }
+          : request,
+        blocker?.environment,
+      );
+      if (blocker !== undefined) await waitForFile(blocker.ready);
+      else {
+        const killed = await interrupted.outcome;
+        expect(killed.code, label).not.toBe(0);
+      }
       const operationDirectories = await fs.readdir(path.join(fixture.stateDir, "git-broker"));
       expect(operationDirectories).toHaveLength(1);
       const operationDirectory = operationDirectories[0];
@@ -531,21 +552,34 @@ describe("dispatch-bound Git change capability", () => {
       );
       const journal = JSON.parse(await fs.readFile(journalFile, "utf8")) as {
         readonly state: string;
+        readonly privateIndex?: string;
       };
-      expect(journal.state, boundary.state).toBe(boundary.state);
-      interrupted.child.kill("SIGKILL");
-      const killed = await interrupted.outcome;
-      expect(killed.code, boundary.state).not.toBe(0);
+      expect(journal.state, label).toBe(boundary.state);
+      if ("indexInstalled" in boundary) {
+        if (journal.privateIndex === undefined) throw new Error("broker journal lacks private index");
+        const indexPath = await git(fixture.managed.handle.absolutePath, [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-path",
+          "index",
+        ]);
+        expect(await fs.readFile(indexPath), label).toEqual(await fs.readFile(journal.privateIndex));
+      }
+      if (blocker !== undefined) {
+        interrupted.child.kill("SIGKILL");
+        const killed = await interrupted.outcome;
+        expect(killed.code, label).not.toBe(0);
+      }
 
       const recovered = await spawnPeer(request).result();
-      expect(recovered["newHead"], boundary.state).toBe(
+      expect(recovered["newHead"], label).toBe(
         await git(fixture.managed.handle.absolutePath, ["rev-parse", "HEAD"]),
       );
       expect(
         await git(fixture.managed.handle.absolutePath, ["status", "--porcelain"]),
-        boundary.state,
+        label,
       ).toBe("");
-      expect(await spawnPeer(request).result(), boundary.state).toEqual(recovered);
+      expect(await spawnPeer(request).result(), label).toEqual(recovered);
     }
   }, 30_000);
 
@@ -760,5 +794,5 @@ describe("dispatch-bound Git change capability", () => {
         headCommit: first["newHead"],
       };
     });
-  });
+  }, RECEIPT_CHAIN_MATRIX_TIMEOUT_MS);
 });
