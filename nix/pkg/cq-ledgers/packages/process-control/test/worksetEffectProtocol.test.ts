@@ -123,13 +123,13 @@ describe("workset effect protocol [T1953]", () => {
     expect(session.stage).toBe("admission-held");
     expect(session.admissionId).toBe("prov-1");
     expect(session.admissionEpoch).toBe(7);
-    session.registerProcessGroup({ pgid: 4242, leaderPid: 4242 });
+    await session.registerProcessGroup({ pgid: 4242, leaderPid: 4242 });
     expect(session.stage).toBe("process-group-registered");
     session.releaseTarget();
     expect(session.stage).toBe("target-released");
     session.beginTermination("normal");
     expect(session.stage).toBe("terminating");
-    session.markSettled();
+    await session.markSettled();
     expect(session.stage).toBe("settled");
     await session.closeAdmission();
     expect(session.stage).toBe("admission-closed");
@@ -144,7 +144,7 @@ describe("workset effect protocol [T1953]", () => {
       targetRef: "tasks:T2",
     });
     await session.acquireAdmission();
-    session.registerProcessGroup({ pgid: 9, leaderPid: 9 });
+    await session.registerProcessGroup({ pgid: 9, leaderPid: 9 });
     session.releaseTarget();
     try {
       await session.closeAdmission();
@@ -183,7 +183,7 @@ describe("workset effect protocol [T1953]", () => {
       targetRef: "tasks:T4",
     });
     await session.acquireAdmission();
-    session.registerProcessGroup({ pgid: 11, leaderPid: 11 });
+    await session.registerProcessGroup({ pgid: 11, leaderPid: 11 });
     session.releaseTarget();
     try {
       session.releaseTarget();
@@ -234,10 +234,10 @@ describe("workset effect protocol [T1953]", () => {
       targetRef: "tasks:T-race",
     });
     await session.acquireAdmission();
-    session.registerProcessGroup({ pgid: 77, leaderPid: 77 });
+    await session.registerProcessGroup({ pgid: 77, leaderPid: 77 });
     session.releaseTarget();
     session.beginTermination("parent-death");
-    session.markSettled();
+    await session.markSettled();
     await session.closeAdmission();
     expect(session.stage).toBe("admission-closed");
     expect(session.reason).toBe("parent-death");

@@ -87,8 +87,14 @@ export interface WorksetBrokerAdmissionHandle {
   readonly epoch: number;
   readonly kind: WorksetBrokerExternalEffectKind;
   readonly targetRef: string;
-  registerProcessGroup(registration: WorksetBrokerProcessGroupRegistration): void;
-  markSettled(): void;
+  /**
+   * May return a Promise on durable backends (Postgres). Callers must
+   * `await Promise.resolve(...)` (D298).
+   */
+  registerProcessGroup(
+    registration: WorksetBrokerProcessGroupRegistration,
+  ): void | Promise<void>;
+  markSettled(): void | Promise<void>;
   releaseAfterSettlement(): Promise<void>;
 }
 
@@ -192,7 +198,9 @@ export class WorksetEffectProtocolSession {
     this.stageValue = "admission-held";
   }
 
-  registerProcessGroup(registration: WorksetBrokerProcessGroupRegistration): void {
+  async registerProcessGroup(
+    registration: WorksetBrokerProcessGroupRegistration,
+  ): Promise<void> {
     this.assertStage("admission-held", "registerProcessGroup");
     if (this.admission === null) {
       throw new WorksetEffectProtocolError(
@@ -206,7 +214,7 @@ export class WorksetEffectProtocolSession {
         "process-group registration requires leaderPid === pgid",
       );
     }
-    this.admission.registerProcessGroup(registration);
+    await Promise.resolve(this.admission.registerProcessGroup(registration));
     this.registration = {
       pgid: registration.pgid,
       leaderPid: registration.leaderPid,
@@ -249,7 +257,7 @@ export class WorksetEffectProtocolSession {
     this.stageValue = "terminating";
   }
 
-  markSettled(): void {
+  async markSettled(): Promise<void> {
     this.assertStage("terminating", "markSettled");
     if (this.admission === null || this.registration === null) {
       throw new WorksetEffectProtocolError(
@@ -257,7 +265,7 @@ export class WorksetEffectProtocolSession {
         "settlement requires a registered process group under a held admission",
       );
     }
-    this.admission.markSettled();
+    await Promise.resolve(this.admission.markSettled());
     this.stageValue = "settled";
   }
 
@@ -290,7 +298,7 @@ export class WorksetEffectProtocolSession {
    */
   async finish(reason: WorksetBrokerTerminationReason): Promise<void> {
     this.beginTermination(reason);
-    this.markSettled();
+    await this.markSettled();
     await this.closeAdmission();
   }
 
@@ -331,13 +339,13 @@ export async function runWorksetEffectProtocol(input: {
     targetRef: input.targetRef,
   });
   await session.acquireAdmission();
-  session.registerProcessGroup(input.registration);
+  await session.registerProcessGroup(input.registration);
   session.releaseTarget();
   await input.launch();
   const reason = input.reason ?? "normal";
   session.beginTermination(reason);
   await input.settle(reason);
-  session.markSettled();
+  await session.markSettled();
   await session.closeAdmission();
   const admissionId = session.admissionId;
   const epoch = session.admissionEpoch;

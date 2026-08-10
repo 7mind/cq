@@ -387,10 +387,11 @@ export function createSqliteWorksetStore(
             return { kind: "busy" as const };
           }
         }
+        // Include nowMs() for same-host PID-reuse safety (FS parity; D297).
         const id =
           form === "ledger-mutation"
-            ? `lm-${selfPid}-${++nextAdmissionId}`
-            : `ee-${selfPid}-${++nextAdmissionId}`;
+            ? `lm-${selfPid}-${++nextAdmissionId}-${nowMs()}`
+            : `ee-${selfPid}-${++nextAdmissionId}-${nowMs()}`;
         const roots = parseRootsJson(state.roots_json);
         db.query(
           `INSERT INTO workset_admissions (
