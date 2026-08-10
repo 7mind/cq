@@ -1263,10 +1263,10 @@ function lazySqliteWorksetStore(get: () => WorksetStore): WorksetStore {
 export function createSqliteWorksetGuardedLedger(
   options: CreateSqliteWorksetGuardedLedgerOptions,
 ): WorksetGuardedLedger {
-  // Assigned before construction body finishes so workset isTargetAdmitted can
-  // close over the live raw store once init has mounted rows.
-  let rawStore!: SqliteLedgerStore;
-  rawStore = new SqliteLedgerStore({
+  // Box so isTargetAdmitted can close over the live raw store once constructed
+  // (and after init has mounted rows) without a reassigned binding.
+  const box: { raw: SqliteLedgerStore | null } = { raw: null };
+  const rawStore = new SqliteLedgerStore({
     dbPath: options.dbPath,
     ...(options.now !== undefined ? { now: options.now } : {}),
     ...(options.logsDir !== undefined ? { logsDir: options.logsDir } : {}),
@@ -1274,8 +1274,10 @@ export function createSqliteWorksetGuardedLedger(
       ...(options.hooks !== undefined ? { hooks: options.hooks } : {}),
       isTargetAdmitted: (target, roots) => {
         if (roots.length === 0) return true;
+        const live = box.raw;
+        if (live === null) return false;
         try {
-          const state = buildActiveStateFromLedgerStore(rawStore);
+          const state = buildActiveStateFromLedgerStore(live);
           const graph = closeWorkset(roots, state);
           if (worksetMemberRefSet(graph).has(target)) return true;
           if (graph.inactiveRoots.includes(target)) return true;
@@ -1287,6 +1289,7 @@ export function createSqliteWorksetGuardedLedger(
       },
     },
   });
+  box.raw = rawStore;
 
   return createWorksetGuardedLedger({
     rawStore,
