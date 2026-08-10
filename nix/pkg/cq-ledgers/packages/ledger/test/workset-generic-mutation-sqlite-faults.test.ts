@@ -273,13 +273,13 @@ describe("workset generic-mutation sqlite faults [T1974]", () => {
         fields: { headline: "from-b" },
       }),
     ]);
-    expect(["from-a", "from-b"]).toContain(fromA.fields.headline);
-    expect(["from-a", "from-b"]).toContain(fromB.fields.headline);
+    expect(fromA.fields.headline === "from-a" || fromA.fields.headline === "from-b").toBe(true);
+    expect(fromB.fields.headline === "from-a" || fromB.fields.headline === "from-b").toBe(true);
 
     const finalA = a.fetchItem(TASKS_LEDGER, taskIn);
     const finalB = b.fetchItem(TASKS_LEDGER, taskIn);
     expect(finalA).toEqual(finalB);
-    expect(["from-a", "from-b"]).toContain(finalA.fields.headline as string);
+    expect(finalA.fields.headline === "from-a" || finalA.fields.headline === "from-b").toBe(true);
     expect(finalA.status).toBe("planned");
   });
 });
