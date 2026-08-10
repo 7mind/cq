@@ -50,7 +50,11 @@ import {
   isAuthorizedOperatorActionMutation,
   parseOperatorActionEnvelope,
 } from "../operatorActions.js";
-import { assertWorksetOwnershipFieldsAbsent } from "../worksetOwnerEdges.js";
+import {
+  assertWorksetOwnershipFieldsAbsent,
+  ownershipFieldsFrom,
+  type CanonicalOwnership,
+} from "../worksetOwnerEdges.js";
 import type { LedgerSchema } from "../types.js";
 import type {
   CreateItemInit,
@@ -525,6 +529,12 @@ export function applyCreateItem(
   init: CreateItemInit,
   now: string,
   refCtx?: RefValidationContext,
+  /**
+   * T1962 — library-managed sealed ownership. When present, the generic fence
+   * still rejects ownership keys in `init.fields` (forged caller payload) and
+   * the derived pair is merged onto the new item after allocation.
+   */
+  sealedOwnership?: CanonicalOwnership,
 ): Item {
   if (ledger.id === OPERATOR_ACTIONS_LEDGER && !isAuthorizedOperatorActionMutation(init)) {
     throw new LedgerError("operatorActions may be created only through the typed lifecycle");
@@ -552,7 +562,8 @@ export function applyCreateItem(
   }
   assertStatusAllowed(ledger, init.status);
   validateFields(ledger, init.fields, /*creating*/ true);
-  // T1951: sealed workset ownership is library-managed — generic create cannot set it.
+  // T1951/T1962: caller-supplied ownership fields are always rejected; only the
+  // library-derived sealedOwnership argument may establish the owner relation.
   assertWorksetOwnershipFieldsAbsent(init.fields);
   if (ledger.id === TASKS_LEDGER && init.fields["description"] !== undefined) {
     const directive = parseOperatorActionEnvelope(String(init.fields["description"]));
@@ -593,11 +604,15 @@ export function applyCreateItem(
     // Defense-in-depth: the auto-generated id must also satisfy the safe regex.
     assertSafeId("item", id);
   }
+  const fields: Record<string, FieldValue> = { ...init.fields };
+  if (sealedOwnership !== undefined) {
+    Object.assign(fields, ownershipFieldsFrom(sealedOwnership));
+  }
   const item: Item = {
     id,
     milestoneId,
     status: init.status,
-    fields: { ...init.fields },
+    fields,
     createdAt: now,
     updatedAt: now,
   };
@@ -624,6 +639,7 @@ export function applyCreateMilestoneItem(
   init: CreateMilestoneItemInit,
   now: string,
   refCtx?: RefValidationContext,
+  sealedOwnership?: CanonicalOwnership,
 ): Item {
   if (ledger.id !== MILESTONES_LEDGER) {
     throw new BootstrapViolationError(
@@ -640,7 +656,14 @@ export function applyCreateMilestoneItem(
   if (init.session !== undefined) innerInit.session = init.session;
   // dependsOn/blockedBy normalization + dangling-rejection happens inside
   // applyCreateItem via the forwarded refCtx.
-  return applyCreateItem(ledger, MILESTONES_ACTIVE_GROUP_ID, innerInit, now, refCtx);
+  return applyCreateItem(
+    ledger,
+    MILESTONES_ACTIVE_GROUP_ID,
+    innerInit,
+    now,
+    refCtx,
+    sealedOwnership,
+  );
 }
 
 /**

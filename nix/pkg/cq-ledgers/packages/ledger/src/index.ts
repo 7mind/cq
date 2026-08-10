@@ -222,6 +222,38 @@ export type {
   WorksetGenericMutationGatewayHost,
   CreateInMemoryWorksetGuardedLedgerOptions,
 } from "./worksetGenericMutation.js";
+export {
+  WorksetOwnedLifecycleError,
+  createWorksetOwnedWriteGateway,
+  createWorksetCoordinationBundleGateway,
+  createWorksetOwnedGuardedLedger,
+  createInMemoryWorksetOwnedGuardedLedger,
+  assertOwnedWriteAdmissionNotCallerMinted,
+  WORKSET_OWNED_WRITE_CREATION_KINDS,
+  defaultChildLedgerForCreationKind,
+} from "./worksetOwnedLifecycle.js";
+export type {
+  WorksetOwnedLifecycleErrorCode,
+  OwnedOwnerRef,
+  OwnedChildInit,
+  OwnedCreateInput,
+  OwnedCreateResult,
+  OwnerlessCreateInput,
+  IdeaToGoalBundleInput,
+  IdeaToGoalBundleResult,
+  DefectToFixGoalBundleInput,
+  DefectToFixGoalBundleResult,
+  OwnedDraftTaskInit,
+  OwnedDraftBundleInput,
+  OwnedDraftBundleResult,
+  WorksetOwnedWriteGateway,
+  WorksetCoordinationBundleGateway,
+  WorksetOwnedGuardedLedger,
+  WorksetOwnedWriteHost,
+  WorksetOwnedWriteTx,
+  CreateInMemoryWorksetOwnedGuardedLedgerOptions,
+  WorksetOwnedWriteCreationKind,
+} from "./worksetOwnedLifecycle.js";
 export * from "./parser/parse.js";
 export * from "./parser/serialize.js";
 export { parseFrontmatter, serializeFrontmatter } from "./parser/frontmatter.js";

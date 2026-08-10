@@ -114,6 +114,42 @@ import {
   type OperatorActionLifecycleMutation,
   type OperatorActionLifecycleMutationResult,
 } from "./operatorActionLifecycle.js";
+import type { CanonicalOwnership } from "../worksetOwnerEdges.js";
+import {
+  PLAN_CURRENT_DRAFT_FIELD,
+  PLAN_FINALIZED_MANIFEST_FIELD,
+} from "../planLifecycle.js";
+
+/**
+ * T1962 — in-transaction ops for atomic owner-scoped writes / coordination
+ * bundles. All mutations share one multi-ledger lock and roll back together.
+ */
+export interface InMemoryOwnedWriteTx {
+  fetchItem(ledgerId: string, itemId: string): Item;
+  createItemWithSealedOwnership(
+    ledgerId: string,
+    milestoneId: string,
+    init: CreateItemInit,
+    sealedOwnership: CanonicalOwnership,
+  ): Item;
+  createMilestoneWithSealedOwnership(
+    init: CreateMilestoneItemInit,
+    sealedOwnership: CanonicalOwnership,
+  ): Item;
+  createItemOwnerless(
+    ledgerId: string,
+    milestoneId: string,
+    init: CreateItemInit,
+  ): Item;
+  createMilestoneOwnerless(init: CreateMilestoneItemInit): Item;
+  updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Item;
+  writeGoalPhaseManifest(
+    goalId: string,
+    kind: "active-current-draft" | "finalized-manifest",
+    manifestJson: string,
+    draftEnvelopeJson?: string,
+  ): Item;
+}
 
 export interface InMemoryLedgerStoreOpts {
   /** Returns an ISO 8601 UTC timestamp. Defaults to `new Date().toISOString()`. */
@@ -536,6 +572,146 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     });
     this.fireMutation(MILESTONES_LEDGER, "create");
     return item;
+  }
+
+  /**
+   * T1962 — run an owner-scoped write or coordination bundle under one multi-
+   * ledger lock. On throw, every ledger mutation performed inside `mutate` is
+   * rolled back so no partial child/link becomes visible.
+   */
+  async runAtomicOwnedMutation<T>(mutate: (tx: InMemoryOwnedWriteTx) => T | Promise<T>): Promise<T> {
+    this.assertInit();
+    const ledgerIds = [...this.ledgers.keys()]
+      .filter((id) => id !== MILESTONES_LEDGER)
+      .sort();
+    const outcome = await this.withMilestonesLock(() =>
+      this.withLocksInOrder(ledgerIds, async () => {
+        const beforeLedgers = cloneLedgerMap(this.ledgers);
+        const dirty = new Set<string>();
+        const tx: InMemoryOwnedWriteTx = {
+          fetchItem: (ledgerId, itemId) =>
+            cloneItem(findItem(this.getLedger(ledgerId), itemId).item),
+          createItemWithSealedOwnership: (ledgerId, milestoneId, init, sealedOwnership) => {
+            if (ledgerId === MILESTONES_LEDGER) {
+              throw new BootstrapViolationError(
+                `use createMilestoneWithSealedOwnership to add an item to the ${MILESTONES_LEDGER} ledger`,
+              );
+            }
+            assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), milestoneId);
+            assertRawPlanCreateAllowed((id) => this.getLedger(id), ledgerId, init.fields);
+            const created = applyCreateItem(
+              this.getLedger(ledgerId),
+              milestoneId,
+              init,
+              this.now(),
+              this.buildRefValidationContext(),
+              sealedOwnership,
+            );
+            dirty.add(ledgerId);
+            return cloneItem(created);
+          },
+          createMilestoneWithSealedOwnership: (init, sealedOwnership) => {
+            const created = applyCreateMilestoneItem(
+              this.getLedger(MILESTONES_LEDGER),
+              init,
+              this.now(),
+              this.buildRefValidationContext(),
+              sealedOwnership,
+            );
+            dirty.add(MILESTONES_LEDGER);
+            return cloneItem(created);
+          },
+          createItemOwnerless: (ledgerId, milestoneId, init) => {
+            if (ledgerId === MILESTONES_LEDGER) {
+              throw new BootstrapViolationError(
+                `use createMilestoneOwnerless to add an item to the ${MILESTONES_LEDGER} ledger`,
+              );
+            }
+            assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), milestoneId);
+            assertRawPlanCreateAllowed((id) => this.getLedger(id), ledgerId, init.fields);
+            const created = applyCreateItem(
+              this.getLedger(ledgerId),
+              milestoneId,
+              init,
+              this.now(),
+              this.buildRefValidationContext(),
+            );
+            dirty.add(ledgerId);
+            return cloneItem(created);
+          },
+          createMilestoneOwnerless: (init) => {
+            const created = applyCreateMilestoneItem(
+              this.getLedger(MILESTONES_LEDGER),
+              init,
+              this.now(),
+              this.buildRefValidationContext(),
+            );
+            dirty.add(MILESTONES_LEDGER);
+            return cloneItem(created);
+          },
+          updateItem: (ledgerId, itemId, patch) => {
+            if (ledgerId === MILESTONES_LEDGER) {
+              const updated = applyUpdateMilestoneItem(
+                this.getLedger(MILESTONES_LEDGER),
+                itemId,
+                validateMilestoneItemPatch(patch),
+                this.now(),
+                this.buildRefValidationContext(),
+              );
+              dirty.add(MILESTONES_LEDGER);
+              return cloneItem(updated);
+            }
+            const ledger = this.getLedger(ledgerId);
+            assertRawPlanUpdateAllowed(
+              (id) => this.getLedger(id),
+              ledgerId,
+              ledger,
+              itemId,
+              patch,
+            );
+            const precondition = this.statusChangePrecondition(ledgerId, ledger, itemId, patch);
+            const updated = applyUpdateItem(
+              ledger,
+              itemId,
+              patch,
+              this.now(),
+              precondition,
+              this.buildRefValidationContext(),
+            );
+            dirty.add(ledgerId);
+            return cloneItem(updated);
+          },
+          writeGoalPhaseManifest: (goalId, kind, manifestJson, draftEnvelopeJson) => {
+            const ledger = this.getLedger(GOALS_LEDGER);
+            const { item } = findItem(ledger, goalId);
+            if (kind === "active-current-draft") {
+              if (draftEnvelopeJson === undefined) {
+                throw new LedgerError(
+                  "active-current-draft binding requires draftEnvelopeJson",
+                );
+              }
+              item.fields[PLAN_CURRENT_DRAFT_FIELD] = draftEnvelopeJson;
+            } else {
+              item.fields[PLAN_FINALIZED_MANIFEST_FIELD] = manifestJson;
+            }
+            item.updatedAt = this.now();
+            dirty.add(GOALS_LEDGER);
+            return cloneItem(item);
+          },
+        };
+        try {
+          const result = await mutate(tx);
+          return { result, dirtyLedgers: [...dirty] };
+        } catch (error) {
+          replaceMap(this.ledgers, beforeLedgers);
+          throw error;
+        }
+      }),
+    );
+    for (const ledgerId of outcome.dirtyLedgers) {
+      this.fireMutation(ledgerId, "create");
+    }
+    return outcome.result;
   }
 
   async createLedger(name: string, schema: LedgerSchema): Promise<FetchedLedger> {
