@@ -123,6 +123,8 @@ export interface InMemoryLedgerStoreOpts {
   onMutation?: OnMutation;
   /** Test-only hook reached after the decisive plan-serialization lock is held. */
   planSerializationBoundaryHook?: PlanLifecycleSerializationBoundaryHook;
+  /** Test-only hook reached when a task update joins the milestones mutation queue. */
+  taskAdoptionMutationBoundaryHook?: () => void;
 }
 
 /** Lock key for the global milestones mutex. */
@@ -136,6 +138,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly now: () => string;
   private readonly onMutation: OnMutation | null;
   private readonly planSerializationBoundaryHook: PlanLifecycleSerializationBoundaryHook | null;
+  private readonly taskAdoptionMutationBoundaryHook: (() => void) | null;
   private readonly searchIndex = new LedgerSearchIndex();
   private readonly planClaims = new Map<string, PlanPrivateClaimRecord>();
   private readonly planOperations = new Map<string, InMemoryPlanOperationRecord>();
@@ -148,6 +151,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.initialSeed = opts.seed ?? [];
     this.onMutation = opts.onMutation ?? null;
     this.planSerializationBoundaryHook = opts.planSerializationBoundaryHook ?? null;
+    this.taskAdoptionMutationBoundaryHook = opts.taskAdoptionMutationBoundaryHook ?? null;
   }
 
   /**
@@ -464,8 +468,9 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
       // hooks, and no-side-effect behavior cannot diverge.
       return this.updateMilestone(itemId, validateMilestoneItemPatch(patch));
     }
-    const item = await this.withMilestonesLock(async () =>
-      this.withLock(ledgerId, async () => {
+    const item = await this.withMilestonesLock(
+      async () =>
+        this.withLock(ledgerId, async () => {
         const contender = rawTaskSerializationContender(ledgerId, patch.status);
         if (contender !== null && this.planSerializationBoundaryHook !== null) {
           await this.planSerializationBoundaryHook(contender);
@@ -483,7 +488,8 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
             this.buildRefValidationContext(),
           ),
         );
-      }),
+        }),
+      ledgerId === TASKS_LEDGER ? this.taskAdoptionMutationBoundaryHook : null,
     );
     this.fireMutation(ledgerId, "update");
     return item;
@@ -940,9 +946,12 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     const mutex = this.mutexFor(ledgerId);
     return mutex.run(fn);
   }
-  private async withMilestonesLock<T>(fn: () => Promise<T>): Promise<T> {
+  private async withMilestonesLock<T>(
+    fn: () => Promise<T>,
+    onQueued: (() => void) | null = null,
+  ): Promise<T> {
     const mutex = this.mutexFor(MILESTONES_MUTEX_KEY);
-    return mutex.run(fn);
+    return mutex.run(fn, onQueued ?? undefined);
   }
   private async withLocksInOrder<T>(ledgerIds: string[], fn: () => Promise<T>): Promise<T> {
     // Recurse so each lock is held for the duration of all inner work.

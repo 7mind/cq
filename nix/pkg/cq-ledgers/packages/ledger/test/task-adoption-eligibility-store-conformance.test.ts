@@ -24,6 +24,7 @@ const RESULT_C = "c".repeat(40);
 
 interface HeldMutation {
   invoke(): void;
+  assertBoundaryReached(): void;
   readonly completed: Promise<void>;
 }
 
@@ -41,7 +42,31 @@ interface AdoptionStoreFactory {
   build(): Promise<AdoptionStoreFixture>;
 }
 
-function ordinaryHeldMutation(peer: LedgerStore, taskId: string): HeldMutation {
+class InMemoryMutationBoundary {
+  private armed = false;
+  private reached = false;
+
+  readonly hook = (): void => {
+    if (!this.armed) return;
+    if (this.reached) throw new Error("in-memory mutation boundary reached twice");
+    this.reached = true;
+  };
+
+  arm(): void {
+    if (this.armed) throw new Error("in-memory mutation boundary already armed");
+    this.armed = true;
+  }
+
+  assertReached(): void {
+    if (!this.reached) throw new Error("in-memory mutation did not join the mutex queue");
+  }
+}
+
+function inMemoryHeldMutation(
+  peer: LedgerStore,
+  taskId: string,
+  boundary: InMemoryMutationBoundary,
+): HeldMutation {
   let resolveCompleted!: () => void;
   let rejectCompleted!: (error: unknown) => void;
   const completed = new Promise<void>((resolve, reject) => {
@@ -57,15 +82,31 @@ function ordinaryHeldMutation(peer: LedgerStore, taskId: string): HeldMutation {
         .updateItem(TASKS_LEDGER, taskId, { fields: { resultCommit: RESULT_C } })
         .then(() => resolveCompleted(), rejectCompleted);
     },
+    assertBoundaryReached(): void {
+      boundary.assertReached();
+    },
     completed,
   };
 }
 
-async function sqliteHeldMutation(dbPath: string, taskId: string): Promise<HeldMutation> {
+type PersistentRaceWorkerInput =
+  | { readonly backend: "fs"; readonly root: string; readonly taskId: string }
+  | { readonly backend: "git"; readonly root: string; readonly taskId: string }
+  | {
+      readonly backend: "postgres";
+      readonly pgUrl: string;
+      readonly projectKey: string;
+      readonly taskId: string;
+    };
+
+async function workerHeldMutation(
+  workerUrl: URL,
+  input: Record<string, unknown>,
+  backendName: string,
+  boundaryTimeoutMs: number,
+): Promise<HeldMutation> {
   const control = new Int32Array(new SharedArrayBuffer(4));
-  const worker = new Worker(
-    new URL("./taskAdoptionSqliteRaceWorker.ts", import.meta.url).href,
-  );
+  const worker = new Worker(workerUrl.href);
   let resolveReady!: () => void;
   let rejectReady!: (error: unknown) => void;
   const ready = new Promise<void>((resolve, reject) => {
@@ -84,15 +125,20 @@ async function sqliteHeldMutation(dbPath: string, taskId: string): Promise<HeldM
       return;
     }
     worker.terminate();
-    if (event.data.type === "done") resolveCompleted();
-    else rejectCompleted(new Error(event.data.message ?? "SQLite race worker failed"));
+    if (event.data.type === "done") {
+      resolveCompleted();
+      return;
+    }
+    const error = new Error(event.data.message ?? `${backendName} race worker failed`);
+    rejectReady(error);
+    rejectCompleted(error);
   };
   worker.onerror = (event): void => {
     const error = new Error(event.message);
     rejectReady(error);
     rejectCompleted(error);
   };
-  worker.postMessage({ dbPath, taskId, control: control.buffer });
+  worker.postMessage({ ...input, control: control.buffer });
   await ready;
   let invoked = false;
   return {
@@ -101,13 +147,36 @@ async function sqliteHeldMutation(dbPath: string, taskId: string): Promise<HeldM
       invoked = true;
       Atomics.store(control, 0, 1);
       Atomics.notify(control, 0);
-      const wait = Atomics.wait(control, 0, 1, 5_000);
+      const wait = Atomics.wait(control, 0, 1, boundaryTimeoutMs);
       if (wait === "timed-out" || Atomics.load(control, 0) !== 2) {
-        throw new Error("SQLite race worker did not reach its mutation boundary");
+        throw new Error(`${backendName} race worker did not reach its mutation boundary`);
+      }
+    },
+    assertBoundaryReached(): void {
+      if (Atomics.load(control, 0) !== 2) {
+        throw new Error(`${backendName} race worker boundary was not acknowledged`);
       }
     },
     completed,
   };
+}
+
+function sqliteHeldMutation(dbPath: string, taskId: string): Promise<HeldMutation> {
+  return workerHeldMutation(
+    new URL("./taskAdoptionSqliteRaceWorker.ts", import.meta.url),
+    { dbPath, taskId },
+    "SQLite",
+    5_000,
+  );
+}
+
+function persistentHeldMutation(input: PersistentRaceWorkerInput): Promise<HeldMutation> {
+  return workerHeldMutation(
+    new URL("./taskAdoptionPersistentRaceWorker.ts", import.meta.url),
+    input,
+    input.backend,
+    input.backend === "postgres" ? 15_000 : 10_000,
+  );
 }
 
 async function seedEligibleClosure(fixture: AdoptionStoreFixture): Promise<void> {
@@ -274,6 +343,7 @@ function runTaskAdoptionEligibilityStoreContract(factory: AdoptionStoreFactory):
           expect(
             await fixture.primary.publishTaskAdoption(captured.fence, () => {
               heldMutation.invoke();
+              heldMutation.assertBoundaryReached();
               events.push("pointer");
             }),
           ).toEqual({ status: "published" });
@@ -347,12 +417,18 @@ const inMemoryFactory: AdoptionStoreFactory = {
   name: "InMemoryLedgerStore",
   classification: "Behavioral-Active Blackbox-Atomic",
   async build() {
-    const store = new InMemoryLedgerStore();
+    const boundary = new InMemoryMutationBoundary();
+    const store = new InMemoryLedgerStore({
+      taskAdoptionMutationBoundaryHook: boundary.hook,
+    });
     await store.init();
     return {
       primary: store,
       peer: store,
-      prepareHeldMutation: async (taskId) => ordinaryHeldMutation(store, taskId),
+      prepareHeldMutation: async (taskId) => {
+        boundary.arm();
+        return inMemoryHeldMutation(store, taskId, boundary);
+      },
       dispose: () => store.dispose(),
     };
   },
@@ -370,7 +446,8 @@ const fsFactory: AdoptionStoreFactory = {
     return {
       primary,
       peer,
-      prepareHeldMutation: async (taskId) => ordinaryHeldMutation(peer, taskId),
+      prepareHeldMutation: (taskId) =>
+        persistentHeldMutation({ backend: "fs", root, taskId }),
       async dispose() {
         await disposeDistinct([primary, peer]);
         await rm(root, { recursive: true, force: true });
@@ -393,7 +470,8 @@ const gitFactory: AdoptionStoreFactory = {
     return {
       primary,
       peer,
-      prepareHeldMutation: async (taskId) => ordinaryHeldMutation(peer, taskId),
+      prepareHeldMutation: (taskId) =>
+        persistentHeldMutation({ backend: "git", root, taskId }),
       async dispose() {
         await disposeDistinct([primary, peer]);
         await rm(root, { recursive: true, force: true });
@@ -460,7 +538,8 @@ if (pgUrl === undefined || pgUrl.length === 0) {
       return {
         primary,
         peer,
-        prepareHeldMutation: async (taskId) => ordinaryHeldMutation(peer, taskId),
+        prepareHeldMutation: (taskId) =>
+          persistentHeldMutation({ backend: "postgres", pgUrl, projectKey, taskId }),
         dispose: () => disposeDistinct([primary, peer]),
       };
     },
