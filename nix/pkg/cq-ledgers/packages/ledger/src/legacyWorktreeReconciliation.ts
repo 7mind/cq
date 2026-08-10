@@ -33,6 +33,7 @@ export interface LegacyReconciliationGitResult {
 export type LegacyReconciliationGitRunner = (
   cwd: string,
   args: readonly string[],
+  environment?: Readonly<Record<string, string>>,
 ) => Promise<LegacyReconciliationGitResult>;
 
 export type LegacyReconciliationClassification =
@@ -75,8 +76,50 @@ export interface LegacyWorktreeReconciliationDeps {
   readonly managerLock: LegacyWorktreeManagerLock;
   readonly activityFence: LegacyWorktreeActivityFence;
   readonly git?: LegacyReconciliationGitRunner;
+  readonly observationAdapter?: LegacyReconciliationObservationAdapter;
   readonly faultInjector?: LegacyReconciliationFaultInjector;
 }
+
+export type LegacyReconciliationHistoryObservation =
+  | {
+      readonly status: "observed";
+      readonly mergeCommits: readonly string[];
+      readonly cherry: readonly string[];
+    }
+  | {
+      readonly status: "unresolvable";
+      readonly detail: string;
+    };
+
+export interface LegacyReconciliationObservationAdapter {
+  observeActivity(worktreePath: string): Promise<LegacyWorktreeActivityObservation>;
+  observeHistory(input: {
+    readonly repositoryRoot: string;
+    readonly baseCommit: string;
+    readonly headCommit: string;
+  }): Promise<LegacyReconciliationHistoryObservation>;
+}
+
+export type LegacyReconciliationActivityAssessment =
+  | { readonly status: "accepted"; readonly observation: LegacyWorktreeActivityObservation }
+  | {
+      readonly status: "refused";
+      readonly reason: "activity-live" | "activity-changed";
+      readonly detail: string;
+    };
+
+export type LegacyReconciliationHistoryAssessment =
+  | {
+      readonly status: "accepted";
+      readonly classification: LegacyReconciliationClassification;
+      readonly cherry: readonly string[];
+      readonly replayedCommits: readonly string[];
+    }
+  | {
+      readonly status: "refused";
+      readonly reason: "history-unresolvable" | "divergent-merge";
+      readonly detail: string;
+    };
 
 export interface LegacyOverlayJournalEntry {
   readonly path: string;
@@ -217,7 +260,9 @@ class ReconciliationRefusal extends Error {
   }
 }
 
-function gitEnvironment(): NodeJS.ProcessEnv {
+function gitEnvironment(
+  overrides: Readonly<Record<string, string>> | undefined,
+): NodeJS.ProcessEnv {
   const environment = { ...process.env };
   for (const variable of [
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
@@ -231,9 +276,10 @@ function gitEnvironment(): NodeJS.ProcessEnv {
   }
   return {
     ...environment,
-    GIT_TERMINAL_PROMPT: "0",
     GIT_COMMITTER_NAME: "CQ Legacy Reconciliation",
     GIT_COMMITTER_EMAIL: "cq-reconciliation@example.invalid",
+    ...(overrides ?? {}),
+    GIT_TERMINAL_PROMPT: "0",
     LANG: "C",
     LC_ALL: "C",
   };
@@ -242,12 +288,13 @@ function gitEnvironment(): NodeJS.ProcessEnv {
 export const nodeLegacyReconciliationGitRunner: LegacyReconciliationGitRunner = (
   cwd,
   args,
+  environment,
 ) =>
   new Promise((resolvePromise, reject) => {
     execFile(
       "git",
       [...args],
-      { cwd, encoding: "utf8", env: gitEnvironment(), maxBuffer: 32 * 1024 * 1024 },
+      { cwd, encoding: "utf8", env: gitEnvironment(environment), maxBuffer: 32 * 1024 * 1024 },
       (error, stdout, stderr) => {
         if (error && typeof (error as { code?: unknown }).code !== "number") {
           reject(error);
@@ -549,6 +596,29 @@ function assertSameActivity(
   }
 }
 
+export async function assessLegacyReconciliationActivity(
+  adapter: LegacyReconciliationObservationAdapter,
+  worktreePath: string,
+  expected: LegacyWorktreeActivityObservation | null,
+): Promise<LegacyReconciliationActivityAssessment> {
+  const observation = await adapter.observeActivity(worktreePath);
+  try {
+    if (expected === null) assertQuiescent(observation);
+    else assertSameActivity(expected, observation);
+    return { status: "accepted", observation };
+  } catch (error) {
+    const reason =
+      error instanceof ReconciliationRefusal && error.reason === "activity-live"
+        ? "activity-live"
+        : "activity-changed";
+    return {
+      status: "refused",
+      reason,
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 async function durableWrite(path: string, bytes: Uint8Array | string): Promise<void> {
   await fs.mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.tmp-${process.pid}-${Date.now()}`;
@@ -606,8 +676,97 @@ export function classifyLegacyHistory(input: {
     : { classification: "linear-unpublished", replayedCommits: plus };
 }
 
-async function classifyHistory(
+export async function assessLegacyReconciliationHistory(
+  adapter: LegacyReconciliationObservationAdapter,
+  input: {
+    readonly repositoryRoot: string;
+    readonly baseCommit: string;
+    readonly headCommit: string;
+  },
+): Promise<LegacyReconciliationHistoryAssessment> {
+  const observation = await adapter.observeHistory(input);
+  if (observation.status === "unresolvable") {
+    return {
+      status: "refused",
+      reason: "history-unresolvable",
+      detail: observation.detail,
+    };
+  }
+  try {
+    const cherry = parseCherry(observation.cherry.join("\n"));
+    const classified = classifyLegacyHistory({
+      mergeCommits: observation.mergeCommits,
+      cherry,
+    });
+    return { status: "accepted", ...classified, cherry };
+  } catch (error) {
+    if (
+      error instanceof ReconciliationRefusal &&
+      (error.reason === "history-unresolvable" || error.reason === "divergent-merge")
+    ) {
+      return { status: "refused", reason: error.reason, detail: error.message };
+    }
+    throw error;
+  }
+}
+
+export function createGitLegacyReconciliationObservationAdapter(
   git: LegacyReconciliationGitRunner,
+  activityFence: LegacyWorktreeActivityFence,
+): LegacyReconciliationObservationAdapter {
+  return {
+    observeActivity: (worktreePath) => activityFence.observe(worktreePath),
+    async observeHistory(input) {
+      const mergeBase = await git(input.repositoryRoot, [
+        "merge-base",
+        input.baseCommit,
+        input.headCommit,
+      ]);
+      if (mergeBase.code !== 0 || !FULL_SHA.test(mergeBase.stdout.trim())) {
+        return {
+          status: "unresolvable",
+          detail: `base and legacy HEAD have no resolvable merge base: ${mergeBase.stderr.trim()}`,
+        };
+      }
+      const merges = await git(input.repositoryRoot, [
+        "rev-list",
+        "--merges",
+        `${input.baseCommit}..${input.headCommit}`,
+      ]);
+      if (merges.code !== 0) {
+        return {
+          status: "unresolvable",
+          detail: `git rev-list failed (${merges.code}): ${merges.stderr.trim()}`,
+        };
+      }
+      const cherry = await git(input.repositoryRoot, [
+        "cherry",
+        input.baseCommit,
+        input.headCommit,
+      ]);
+      if (cherry.code !== 0) {
+        return {
+          status: "unresolvable",
+          detail: `git cherry failed (${cherry.code}): ${cherry.stderr.trim()}`,
+        };
+      }
+      return {
+        status: "observed",
+        mergeCommits: merges.stdout
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line !== ""),
+        cherry: cherry.stdout
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line !== ""),
+      };
+    },
+  };
+}
+
+async function classifyHistory(
+  adapter: LegacyReconciliationObservationAdapter,
   request: LegacyReconciliationJournal["request"],
   refs: CapturedRefs,
 ): Promise<{
@@ -615,30 +774,15 @@ async function classifyHistory(
   readonly cherry: readonly string[];
   readonly replayedCommits: readonly string[];
 }> {
-  const mergeBase = await git(request.repositoryRoot, ["merge-base", refs.base, refs.head]);
-  if (mergeBase.code !== 0 || !FULL_SHA.test(mergeBase.stdout.trim())) {
-    throw new ReconciliationRefusal(
-      "history-unresolvable",
-      `base and legacy HEAD have no resolvable merge base: ${mergeBase.stderr.trim()}`,
-    );
+  const assessed = await assessLegacyReconciliationHistory(adapter, {
+    repositoryRoot: request.repositoryRoot,
+    baseCommit: refs.base,
+    headCommit: refs.head,
+  });
+  if (assessed.status === "refused") {
+    throw new ReconciliationRefusal(assessed.reason, assessed.detail);
   }
-  const merges = await runRequired(
-    git,
-    request.repositoryRoot,
-    ["rev-list", "--merges", `${refs.base}..${refs.head}`],
-    "history-unresolvable",
-  );
-  const mergeCommits = merges === "" ? [] : merges.split(/\r?\n/).filter((line) => line !== "");
-  const cherryResult = await git(request.repositoryRoot, ["cherry", refs.base, refs.head]);
-  if (cherryResult.code !== 0) {
-    throw new ReconciliationRefusal(
-      "history-unresolvable",
-      `git cherry failed (${cherryResult.code}): ${cherryResult.stderr.trim()}`,
-    );
-  }
-  const cherry = parseCherry(cherryResult.stdout);
-  const classified = classifyLegacyHistory({ mergeCommits, cherry });
-  return { ...classified, cherry };
+  return assessed;
 }
 
 async function ensureSafeParent(root: string, relativePath: string): Promise<void> {
@@ -687,6 +831,34 @@ async function verifyOverlay(
   }
 }
 
+async function deterministicReplayEnvironment(
+  git: LegacyReconciliationGitRunner,
+  cwd: string,
+  commit: string,
+): Promise<Readonly<Record<string, string>>> {
+  const identity = await runRequiredRaw(
+    git,
+    cwd,
+    ["show", "-s", "--format=%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI", commit],
+    "history-unresolvable",
+  );
+  const fields = identity.replace(/\r?\n$/, "").split("\0");
+  if (fields.length !== 6 || fields.some((field) => field === "")) {
+    throw new ReconciliationRefusal(
+      "history-unresolvable",
+      `commit ${commit} has incomplete deterministic identity metadata`,
+    );
+  }
+  return {
+    GIT_AUTHOR_NAME: fields[0]!,
+    GIT_AUTHOR_EMAIL: fields[1]!,
+    GIT_AUTHOR_DATE: fields[2]!,
+    GIT_COMMITTER_NAME: fields[3]!,
+    GIT_COMMITTER_EMAIL: fields[4]!,
+    GIT_COMMITTER_DATE: fields[5]!,
+  };
+}
+
 async function buildCandidateOffPath(
   git: LegacyReconciliationGitRunner,
   request: LegacyReconciliationJournal["request"],
@@ -705,9 +877,13 @@ async function buildCandidateOffPath(
     "history-unresolvable",
   );
   await runRequired(git, buildPath, ["checkout", "--quiet", "--detach", request.baseCommit], "history-unresolvable");
+  await runRequired(git, buildPath, ["config", "commit.gpgSign", "false"], "history-unresolvable");
+  await runRequired(git, buildPath, ["config", "core.hooksPath", "/dev/null"], "history-unresolvable");
+  await runRequired(git, buildPath, ["config", "rerere.enabled", "false"], "history-unresolvable");
   if (classification === "linear-unpublished") {
     for (const commit of replayedCommits) {
-      const cherryPick = await git(buildPath, ["cherry-pick", commit]);
+      const replayEnvironment = await deterministicReplayEnvironment(git, buildPath, commit);
+      const cherryPick = await git(buildPath, ["cherry-pick", commit], replayEnvironment);
       if (cherryPick.code !== 0) {
         await git(buildPath, ["cherry-pick", "--abort"]);
         throw new ReconciliationRefusal(
@@ -948,6 +1124,9 @@ export async function beginLegacyWorktreeReconciliation(
 ): Promise<BeginLegacyWorktreeReconciliationResult> {
   const request = canonicalRequest(input);
   const git = deps.git ?? nodeLegacyReconciliationGitRunner;
+  const observationAdapter =
+    deps.observationAdapter ??
+    createGitLegacyReconciliationObservationAdapter(git, deps.activityFence);
   const fault = deps.faultInjector ?? (async () => undefined);
   const path = journalPath(request.journalDirectory, input.transactionId);
   let releaseLock: (() => Promise<void>) | null = null;
@@ -964,8 +1143,15 @@ export async function beginLegacyWorktreeReconciliation(
       if (error instanceof ReconciliationRefusal) throw error;
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    const capturedActivity = await deps.activityFence.observe(request.worktreePath);
-    assertQuiescent(capturedActivity);
+    const capturedAssessment = await assessLegacyReconciliationActivity(
+      observationAdapter,
+      request.worktreePath,
+      null,
+    );
+    if (capturedAssessment.status === "refused") {
+      throw new ReconciliationRefusal(capturedAssessment.reason, capturedAssessment.detail);
+    }
+    const capturedActivity = capturedAssessment.observation;
     const refs = await captureRefs(request, input.transactionId, git);
     const index = await captureIndex(git, request.worktreePath);
     await fault("after-capture", { transactionId: input.transactionId, oldHead: refs.head });
@@ -985,9 +1171,16 @@ export async function beginLegacyWorktreeReconciliation(
     };
     await writeJournal(path, journal);
     await fault("after-journal-durable", { transactionId: input.transactionId, overlaySha256: journal.overlaySha256 });
-    const journaledActivity = await deps.activityFence.observe(request.worktreePath);
-    assertSameActivity(capturedActivity, journaledActivity);
-    const classified = await classifyHistory(git, request, refs);
+    const journaledAssessment = await assessLegacyReconciliationActivity(
+      observationAdapter,
+      request.worktreePath,
+      capturedActivity,
+    );
+    if (journaledAssessment.status === "refused") {
+      throw new ReconciliationRefusal(journaledAssessment.reason, journaledAssessment.detail);
+    }
+    const journaledActivity = journaledAssessment.observation;
+    const classified = await classifyHistory(observationAdapter, request, refs);
     await fault("after-classification", { transactionId: input.transactionId, classification: classified.classification });
     const built = await buildCandidateOffPath(
       git,
@@ -1011,8 +1204,15 @@ export async function beginLegacyWorktreeReconciliation(
     await writeJournal(path, journal);
     journal = { ...journal, phase: "transition-ready" };
     await writeJournal(path, journal);
-    const transitionActivity = await deps.activityFence.observe(request.worktreePath);
-    assertSameActivity(capturedActivity, transitionActivity);
+    const transitionAssessment = await assessLegacyReconciliationActivity(
+      observationAdapter,
+      request.worktreePath,
+      capturedActivity,
+    );
+    if (transitionAssessment.status === "refused") {
+      throw new ReconciliationRefusal(transitionAssessment.reason, transitionAssessment.detail);
+    }
+    const transitionActivity = transitionAssessment.observation;
     await fault("before-first-mutation", { transactionId: input.transactionId, candidateHead: built.candidateHead });
 
     sourceMutationStarted = true;
@@ -1035,8 +1235,10 @@ export async function beginLegacyWorktreeReconciliation(
     await runRequired(git, request.worktreePath, ["clean", "-f", "-d"], "transition-failed");
     await runRequired(git, request.worktreePath, ["reset", "--hard", built.candidateHead], "transition-failed");
     await fault("after-reset", { transactionId: input.transactionId });
+    await restoreIndex(index);
     await applyOverlay(request.worktreePath, overlay);
     await fault("after-overlay-restore", { transactionId: input.transactionId, overlaySha256: journal.overlaySha256 });
+    await verifyIndex(index);
     await verifyOverlay(request.worktreePath, overlay);
     const transitionedHead = await resolveCommit(git, request.worktreePath, "HEAD");
     if (transitionedHead !== built.candidateHead) {
@@ -1202,21 +1404,23 @@ export async function recoverLegacyWorktreeReconciliation(
     return { status: "refused", reason: "journal-invalid", detail: error instanceof Error ? error.message : String(error) };
   }
   const git = deps.git ?? nodeLegacyReconciliationGitRunner;
+  const observationAdapter =
+    deps.observationAdapter ??
+    createGitLegacyReconciliationObservationAdapter(git, deps.activityFence);
   const release = await deps.managerLock.acquire(journal.request.worktreePath);
   try {
-    const first = await deps.activityFence.observe(journal.request.worktreePath);
-    try {
-      assertQuiescent(first);
-    } catch (error) {
-      return { status: "refused", reason: "activity-live", detail: error instanceof Error ? error.message : String(error) };
-    }
-    const second = await deps.activityFence.observe(journal.request.worktreePath);
-    try {
-      assertSameActivity(first, second);
-    } catch (error) {
-      const reason = error instanceof ReconciliationRefusal && error.reason === "activity-live" ? "activity-live" : "activity-changed";
-      return { status: "refused", reason, detail: error instanceof Error ? error.message : String(error) };
-    }
+    const first = await assessLegacyReconciliationActivity(
+      observationAdapter,
+      journal.request.worktreePath,
+      journal.capturedActivity,
+    );
+    if (first.status === "refused") return first;
+    const second = await assessLegacyReconciliationActivity(
+      observationAdapter,
+      journal.request.worktreePath,
+      journal.capturedActivity,
+    );
+    if (second.status === "refused") return second;
     if (journal.phase === "committed") {
       if (journal.candidateHead !== undefined) {
         await deleteRefIfValue(git, journal.request.repositoryRoot, journal.refs.recoveryRef, journal.refs.head);

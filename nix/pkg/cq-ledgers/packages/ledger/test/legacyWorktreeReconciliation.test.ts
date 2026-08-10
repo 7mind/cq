@@ -1,18 +1,25 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import {
+  assessLegacyReconciliationActivity,
+  assessLegacyReconciliationHistory,
   beginLegacyWorktreeReconciliation,
   classifyLegacyHistory,
+  createGitLegacyReconciliationObservationAdapter,
   nodeLegacyReconciliationGitRunner,
   recoverLegacyWorktreeReconciliation,
   type LegacyWorktreeActivityFence,
   type LegacyWorktreeActivityObservation,
   type LegacyReconciliationFaultBoundary,
   type LegacyReconciliationGitRunner,
+  type LegacyReconciliationHistoryObservation,
+  type LegacyReconciliationObservationAdapter,
   type LegacyWorktreeManagerLock,
 } from "../src/index.js";
 
@@ -113,6 +120,46 @@ function scriptedActivity(
       return observed;
     },
   };
+}
+
+function contentDigest(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function fileContentActivity(filePath: string): LegacyWorktreeActivityFence {
+  return {
+    async observe() {
+      return activity("byte-content-epoch", contentDigest(await fs.readFile(filePath)));
+    },
+  };
+}
+
+class InMemoryLegacyObservationAdapter implements LegacyReconciliationObservationAdapter {
+  private bytes = Buffer.from("captured bytes\n");
+
+  constructor(
+    private readonly histories: ReadonlyMap<string, LegacyReconciliationHistoryObservation>,
+  ) {}
+
+  async observeActivity(): Promise<LegacyWorktreeActivityObservation> {
+    return activity("byte-content-epoch", contentDigest(this.bytes));
+  }
+
+  async observeHistory(input: {
+    readonly repositoryRoot: string;
+    readonly baseCommit: string;
+    readonly headCommit: string;
+  }): Promise<LegacyReconciliationHistoryObservation> {
+    const observed = this.histories.get(`${input.baseCommit}:${input.headCommit}`);
+    if (observed === undefined) {
+      return { status: "unresolvable", detail: "in-memory history pair is absent" };
+    }
+    return observed;
+  }
+
+  mutateBytes(): void {
+    this.bytes = Buffer.from("mutated bytes\n");
+  }
 }
 
 async function seedRepository(prefix: string): Promise<{
@@ -292,81 +339,252 @@ function simpleRequest(
   } as const;
 }
 
+interface ObservationContractCase {
+  readonly name: string;
+  readonly repositoryRoot: string;
+  readonly baseCommit: string;
+  readonly headCommit: string;
+  readonly expected:
+    | { readonly status: "accepted"; readonly classification: "upstream-equivalent" | "linear-unpublished" }
+    | { readonly status: "refused"; readonly reason: "divergent-merge" | "history-unresolvable" };
+}
+
+interface ObservationContractFixture {
+  readonly adapter: LegacyReconciliationObservationAdapter;
+  readonly worktreePath: string;
+  readonly cases: readonly ObservationContractCase[];
+  mutateBytes(): Promise<void>;
+}
+
+async function seedRealObservationContract(): Promise<ObservationContractFixture> {
+  const seeded = await seedRepository("t2050-observation-contract-");
+  const root = seeded.rootCommit;
+
+  await git(seeded.repositoryRoot, ["switch", "-q", "-c", "contract-linear-head", root]);
+  await fs.writeFile(path.join(seeded.repositoryRoot, "linear.txt"), "linear\n");
+  await git(seeded.repositoryRoot, ["add", "."]);
+  await git(seeded.repositoryRoot, ["commit", "-q", "-m", "linear"]);
+  const linearHead = await git(seeded.repositoryRoot, ["rev-parse", "HEAD"]);
+  await git(seeded.repositoryRoot, ["switch", "-q", "-c", "contract-linear-base", root]);
+  await fs.writeFile(path.join(seeded.repositoryRoot, "base-only.txt"), "base\n");
+  await git(seeded.repositoryRoot, ["add", "."]);
+  await git(seeded.repositoryRoot, ["commit", "-q", "-m", "linear base"]);
+  const linearBase = await git(seeded.repositoryRoot, ["rev-parse", "HEAD"]);
+
+  await git(seeded.repositoryRoot, ["switch", "-q", "-c", "contract-equivalent-head", root]);
+  await fs.writeFile(path.join(seeded.repositoryRoot, "equivalent.txt"), "equivalent\n");
+  await git(seeded.repositoryRoot, ["add", "."]);
+  await git(seeded.repositoryRoot, ["commit", "-q", "-m", "equivalent"]);
+  const equivalentHead = await git(seeded.repositoryRoot, ["rev-parse", "HEAD"]);
+  await git(seeded.repositoryRoot, ["switch", "-q", "-c", "contract-equivalent-base", root]);
+  await git(seeded.repositoryRoot, ["cherry-pick", "-x", equivalentHead]);
+  const equivalentBase = await git(seeded.repositoryRoot, ["rev-parse", "HEAD"]);
+
+  await git(seeded.repositoryRoot, ["switch", "-q", "-c", "contract-merge-head", root]);
+  await fs.writeFile(path.join(seeded.repositoryRoot, "merge-main.txt"), "main\n");
+  await git(seeded.repositoryRoot, ["add", "."]);
+  await git(seeded.repositoryRoot, ["commit", "-q", "-m", "merge main"]);
+  await git(seeded.repositoryRoot, ["switch", "-q", "-c", "contract-merge-side", root]);
+  await fs.writeFile(path.join(seeded.repositoryRoot, "merge-side.txt"), "side\n");
+  await git(seeded.repositoryRoot, ["add", "."]);
+  await git(seeded.repositoryRoot, ["commit", "-q", "-m", "merge side"]);
+  await git(seeded.repositoryRoot, ["switch", "-q", "contract-merge-head"]);
+  await git(seeded.repositoryRoot, [
+    "merge",
+    "--no-ff",
+    "-m",
+    "contract merge",
+    "contract-merge-side",
+  ]);
+  const mergeHead = await git(seeded.repositoryRoot, ["rev-parse", "HEAD"]);
+
+  await git(seeded.repositoryRoot, ["switch", "--orphan", "contract-unrelated"]);
+  for (const name of [
+    ".gitignore",
+    "seed.txt",
+    "delete-me.txt",
+    "seed-link",
+    "merge-main.txt",
+    "merge-side.txt",
+  ]) {
+    await fs.rm(path.join(seeded.repositoryRoot, name), { force: true });
+  }
+  await fs.writeFile(path.join(seeded.repositoryRoot, "unrelated.txt"), "unrelated\n");
+  await git(seeded.repositoryRoot, ["add", "."]);
+  await git(seeded.repositoryRoot, ["commit", "-q", "-m", "unrelated"]);
+  const unrelatedBase = await git(seeded.repositoryRoot, ["rev-parse", "HEAD"]);
+
+  const activityPath = path.join(seeded.repositoryRoot, "contract-activity.bin");
+  await fs.writeFile(activityPath, Buffer.from("captured bytes\n"));
+  return {
+    adapter: createGitLegacyReconciliationObservationAdapter(
+      nodeLegacyReconciliationGitRunner,
+      fileContentActivity(activityPath),
+    ),
+    worktreePath: seeded.repositoryRoot,
+    cases: [
+      {
+        name: "upstream-equivalent",
+        repositoryRoot: seeded.repositoryRoot,
+        baseCommit: equivalentBase,
+        headCommit: equivalentHead,
+        expected: { status: "accepted", classification: "upstream-equivalent" },
+      },
+      {
+        name: "linear-unpublished",
+        repositoryRoot: seeded.repositoryRoot,
+        baseCommit: linearBase,
+        headCommit: linearHead,
+        expected: { status: "accepted", classification: "linear-unpublished" },
+      },
+      {
+        name: "divergent-merge",
+        repositoryRoot: seeded.repositoryRoot,
+        baseCommit: root,
+        headCommit: mergeHead,
+        expected: { status: "refused", reason: "divergent-merge" },
+      },
+      {
+        name: "history-unresolvable",
+        repositoryRoot: seeded.repositoryRoot,
+        baseCommit: unrelatedBase,
+        headCommit: linearHead,
+        expected: { status: "refused", reason: "history-unresolvable" },
+      },
+    ],
+    async mutateBytes() {
+      await fs.writeFile(activityPath, Buffer.from("mutated bytes\n"));
+    },
+  };
+}
+
+async function seedInMemoryObservationContract(): Promise<ObservationContractFixture> {
+  const commits = {
+    equivalentBase: "a".repeat(40),
+    equivalentHead: "b".repeat(40),
+    linearBase: "c".repeat(40),
+    linearHead: "d".repeat(40),
+    mergeBase: "e".repeat(40),
+    mergeHead: "1".repeat(40),
+    missingBase: "2".repeat(40),
+    missingHead: "3".repeat(40),
+  } as const;
+  const histories = new Map<string, LegacyReconciliationHistoryObservation>([
+    [
+      `${commits.equivalentBase}:${commits.equivalentHead}`,
+      { status: "observed", mergeCommits: [], cherry: [`- ${commits.equivalentHead}`] },
+    ],
+    [
+      `${commits.linearBase}:${commits.linearHead}`,
+      { status: "observed", mergeCommits: [], cherry: [`+ ${commits.linearHead}`] },
+    ],
+    [
+      `${commits.mergeBase}:${commits.mergeHead}`,
+      {
+        status: "observed",
+        mergeCommits: [commits.mergeHead],
+        cherry: [`+ ${commits.mergeHead}`],
+      },
+    ],
+    [
+      `${commits.missingBase}:${commits.missingHead}`,
+      { status: "unresolvable", detail: "in-memory histories are unrelated" },
+    ],
+  ]);
+  const adapter = new InMemoryLegacyObservationAdapter(histories);
+  return {
+    adapter,
+    worktreePath: "/in-memory/legacy",
+    cases: [
+      {
+        name: "upstream-equivalent",
+        repositoryRoot: "/in-memory/repository",
+        baseCommit: commits.equivalentBase,
+        headCommit: commits.equivalentHead,
+        expected: { status: "accepted", classification: "upstream-equivalent" },
+      },
+      {
+        name: "linear-unpublished",
+        repositoryRoot: "/in-memory/repository",
+        baseCommit: commits.linearBase,
+        headCommit: commits.linearHead,
+        expected: { status: "accepted", classification: "linear-unpublished" },
+      },
+      {
+        name: "divergent-merge",
+        repositoryRoot: "/in-memory/repository",
+        baseCommit: commits.mergeBase,
+        headCommit: commits.mergeHead,
+        expected: { status: "refused", reason: "divergent-merge" },
+      },
+      {
+        name: "history-unresolvable",
+        repositoryRoot: "/in-memory/repository",
+        baseCommit: commits.missingBase,
+        headCommit: commits.missingHead,
+        expected: { status: "refused", reason: "history-unresolvable" },
+      },
+    ],
+    async mutateBytes() {
+      adapter.mutateBytes();
+    },
+  };
+}
+
 afterAll(async () => {
   for (const root of roots) await fs.rm(root, { recursive: true, force: true });
 });
 
-describe("legacy reconciliation against a scripted Git dummy", () => {
-  const cases = [
-    { name: "upstream-equivalent", expectedStatus: "reconciled", expectedReason: null },
-    { name: "linear-unpublished", expectedStatus: "reconciled", expectedReason: null },
-    { name: "divergent-merge", expectedStatus: "refused", expectedReason: "divergent-merge" },
-    { name: "replay-conflict", expectedStatus: "refused", expectedReason: "replay-conflict" },
-    { name: "history-unresolvable", expectedStatus: "refused", expectedReason: "history-unresolvable" },
-  ] as const;
-
-  for (const scenario of cases) {
-    it(`covers ${scenario.name}`, async () => {
-      const fixture = await seedSimpleLegacy(`t2050-dummy-${scenario.name}-`);
-      const dummy: LegacyReconciliationGitRunner = async (cwd, args) => {
-        if (args[0] === "merge-base" && scenario.name === "history-unresolvable") {
-          return { code: 1, stdout: "", stderr: "dummy missing merge base" };
+function runObservationAdapterContract(
+  name: string,
+  build: () => Promise<ObservationContractFixture>,
+): void {
+  describe(`legacy classification/fencing contract: ${name}`, () => {
+    it("classifies equivalent, unpublished, merged, and unresolvable histories", async () => {
+      const fixture = await build();
+      for (const scenario of fixture.cases) {
+        const assessed = await assessLegacyReconciliationHistory(fixture.adapter, {
+          repositoryRoot: scenario.repositoryRoot,
+          baseCommit: scenario.baseCommit,
+          headCommit: scenario.headCommit,
+        });
+        expect(assessed.status).toBe(scenario.expected.status);
+        if (assessed.status === "accepted" && scenario.expected.status === "accepted") {
+          expect(assessed.classification).toBe(scenario.expected.classification);
+        } else if (assessed.status === "refused" && scenario.expected.status === "refused") {
+          expect(assessed.reason).toBe(scenario.expected.reason);
+        } else {
+          throw new Error(`${name} produced the wrong assessment arm for ${scenario.name}`);
         }
-        if (args[0] === "merge-base") {
-          return { code: 0, stdout: `${fixture.legacyHead}\n`, stderr: "" };
-        }
-        if (args[0] === "rev-list" && args[1] === "--merges") {
-          return {
-            code: 0,
-            stdout: scenario.name === "divergent-merge" ? `${fixture.legacyHead}\n` : "",
-            stderr: "",
-          };
-        }
-        if (args[0] === "cherry") {
-          const marker = scenario.name === "upstream-equivalent" ? "-" : "+";
-          return { code: 0, stdout: `${marker} ${fixture.legacyHead}\n`, stderr: "" };
-        }
-        if (args[0] === "cherry-pick" && scenario.name === "replay-conflict") {
-          return { code: 1, stdout: "", stderr: "dummy replay conflict" };
-        }
-        return nodeLegacyReconciliationGitRunner(cwd, args);
-      };
-
-      const result = await beginLegacyWorktreeReconciliation(
-        {
-          repositoryRoot: fixture.repositoryRoot,
-          worktreePath: fixture.worktreePath,
-          branch: "implement/T2050",
-          baseCommit: fixture.baseCommit,
-          expectedHead: fixture.legacyHead,
-          transactionId: `dummy-${scenario.name}`,
-          journalDirectory: fixture.journalDirectory,
-        },
-        { managerLock, activityFence: stableActivity, git: dummy },
-      );
-
-      expect(result.status).toBe(scenario.expectedStatus);
-      if (result.status === "reconciled") {
-        expect(scenario.expectedReason).toBeNull();
-        if (
-          scenario.name !== "upstream-equivalent" &&
-          scenario.name !== "linear-unpublished"
-        ) {
-          throw new Error(`unexpected reconciliation for ${scenario.name}`);
-        }
-        expect(result.evidence.classification).toBe(scenario.name);
-        await result.transaction.rollback();
-      } else {
-        if (scenario.expectedReason === null) {
-          throw new Error(`unexpected refusal for ${scenario.name}`);
-        }
-        expect(result.reason).toBe(scenario.expectedReason);
-        expect(result.restored).toBe(true);
       }
-      expect(await git(fixture.worktreePath, ["rev-parse", "HEAD"])).toBe(fixture.legacyHead);
     });
-  }
-});
+
+    it("derives the content fence from bytes and rejects an actual byte mutation", async () => {
+      const fixture = await build();
+      const captured = await assessLegacyReconciliationActivity(
+        fixture.adapter,
+        fixture.worktreePath,
+        null,
+      );
+      expect(captured.status).toBe("accepted");
+      if (captured.status !== "accepted") return;
+      expect(captured.observation.contentToken).toBe(
+        contentDigest(Buffer.from("captured bytes\n")),
+      );
+      await fixture.mutateBytes();
+      expect(
+        await assessLegacyReconciliationActivity(
+          fixture.adapter,
+          fixture.worktreePath,
+          captured.observation,
+        ),
+      ).toMatchObject({ status: "refused", reason: "activity-changed" });
+    });
+  });
+}
+
+runObservationAdapterContract("hand-written in-memory dummy", seedInMemoryObservationContract);
+runObservationAdapterContract("real Git adapter", seedRealObservationContract);
 
 describe("legacy worktree reconciliation", () => {
   it("pins the observed T1207 HEAD, five-minus history, no-WIP state, and sole untracked test", () => {
@@ -476,6 +694,7 @@ describe("legacy worktree reconciliation", () => {
     expect(result.evidence.overlayEntries.some((entry) => entry.path.includes(".install-cache"))).toBe(
       false,
     );
+    expect((await fs.readFile(fixture.indexPath)).toString("hex")).toBe(fixture.indexHex);
     expect(await fs.readFile(path.join(fixture.worktreePath, "seed.txt"))).toEqual(seedBytes);
     expect(
       Buffer.from(
@@ -506,6 +725,28 @@ describe("legacy worktree reconciliation", () => {
     await expect(fs.stat(postTransitionPath)).rejects.toBeDefined();
     expect(await refValue(fixture.repositoryRoot, result.evidence.recoveryRef)).toBeNull();
     expect(await refValue(fixture.repositoryRoot, result.evidence.candidateRef)).toBeNull();
+  });
+
+  it("replays the same linear commits to the same candidate across wall-clock seconds", async () => {
+    const fixture = await seedSimpleLegacy("t2050-deterministic-replay-");
+    const first = await beginLegacyWorktreeReconciliation(
+      simpleRequest(fixture, "deterministic-first"),
+      { managerLock, activityFence: stableActivity },
+    );
+    expect(first.status).toBe("reconciled");
+    if (first.status !== "reconciled") return;
+    const firstCandidate = first.evidence.candidateHead;
+    await first.transaction.rollback();
+
+    await delay(1_100);
+    const second = await beginLegacyWorktreeReconciliation(
+      simpleRequest(fixture, "deterministic-second"),
+      { managerLock, activityFence: stableActivity },
+    );
+    expect(second.status).toBe("reconciled");
+    if (second.status !== "reconciled") return;
+    expect(second.evidence.candidateHead).toBe(firstCandidate);
+    await second.transaction.rollback();
   });
 
   it("refuses a divergent merge before creating reconciliation refs", async () => {
@@ -635,13 +876,12 @@ describe("legacy worktree reconciliation", () => {
 
 describe("legacy reconciliation fences and recovery", () => {
   const raceCases = [
-    { name: "capture", boundary: "after-capture", tokens: ["content-a", "content-b"] },
+    { name: "capture", boundary: "after-capture" },
     {
       name: "durable-journal",
       boundary: "after-journal-durable",
-      tokens: ["content-a", "content-b"],
     },
-    { name: "transition", boundary: null, tokens: ["content-a", "content-a", "content-b"] },
+    { name: "transition", boundary: "after-candidate-overlay" },
   ] as const;
 
   for (const race of raceCases) {
@@ -650,14 +890,14 @@ describe("legacy reconciliation fences and recovery", () => {
       const deliverable = path.join(fixture.worktreePath, "deliverable.bin");
       await fs.writeFile(deliverable, Buffer.from([0, 1, 255]));
       const sourceMutations: string[] = [];
-      const recordingGit: LegacyReconciliationGitRunner = async (cwd, args) => {
+      const recordingGit: LegacyReconciliationGitRunner = async (cwd, args, environment) => {
         if (
           (cwd === fixture.repositoryRoot || cwd === fixture.worktreePath) &&
           (["update-ref", "fetch", "clean", "reset"].includes(args[0]!))
         ) {
           sourceMutations.push(`${cwd}:${args.join(" ")}`);
         }
-        return nodeLegacyReconciliationGitRunner(cwd, args);
+        return nodeLegacyReconciliationGitRunner(cwd, args, environment);
       };
       let lockHeld = false;
       const lock: LegacyWorktreeManagerLock = {
@@ -669,10 +909,9 @@ describe("legacy reconciliation fences and recovery", () => {
           };
         },
       };
-      const fence = scriptedActivity(race.tokens.map((token) => activity("epoch-a", token)));
       const result = await beginLegacyWorktreeReconciliation(simpleRequest(fixture, `race-${race.name}`), {
         managerLock: lock,
-        activityFence: fence,
+        activityFence: fileContentActivity(deliverable),
         git: recordingGit,
         faultInjector: async (boundary) => {
           if (boundary === race.boundary) {
@@ -793,6 +1032,43 @@ describe("legacy reconciliation fences and recovery", () => {
         activityFence: stableActivity,
       }),
     ).toEqual({ status: "recovered", outcome: "rolled-back", idempotent: true });
+  });
+
+  it("refuses restart restoration when activity differs from the journal-persisted capture", async () => {
+    const fixture = await seedSimpleLegacy("t2050-restart-fence-");
+    const result = await beginLegacyWorktreeReconciliation(
+      simpleRequest(fixture, "restart-fence"),
+      {
+        managerLock,
+        activityFence: scriptedActivity([
+          activity("captured-epoch", "captured-bytes"),
+          activity("captured-epoch", "captured-bytes"),
+          activity("captured-epoch", "captured-bytes"),
+        ]),
+      },
+    );
+    expect(result.status).toBe("reconciled");
+    if (result.status !== "reconciled") return;
+
+    expect(
+      await recoverLegacyWorktreeReconciliation(
+        { transactionId: "restart-fence", journalDirectory: fixture.journalDirectory },
+        {
+          managerLock,
+          activityFence: scriptedActivity([
+            activity("later-epoch", "later-bytes"),
+            activity("later-epoch", "later-bytes"),
+          ]),
+        },
+      ),
+    ).toMatchObject({ status: "refused", reason: "activity-changed" });
+    expect(await git(fixture.worktreePath, ["rev-parse", "HEAD"])).toBe(
+      result.evidence.candidateHead,
+    );
+    expect(await refValue(fixture.repositoryRoot, result.evidence.recoveryRef)).toBe(
+      fixture.legacyHead,
+    );
+    await result.transaction.rollback();
   });
 
   for (const terminalBoundary of ["before-commit", "before-rollback"] as const) {

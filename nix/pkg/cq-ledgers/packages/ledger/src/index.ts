@@ -358,8 +358,11 @@ export type {
   GitRegularMode,
 } from "./gitChangeBroker.js";
 export {
+  assessLegacyReconciliationActivity,
+  assessLegacyReconciliationHistory,
   beginLegacyWorktreeReconciliation,
   classifyLegacyHistory,
+  createGitLegacyReconciliationObservationAdapter,
   nodeLegacyReconciliationGitRunner,
   recoverLegacyWorktreeReconciliation,
 } from "./legacyWorktreeReconciliation.js";
@@ -368,11 +371,15 @@ export type {
   BeginLegacyWorktreeReconciliationRefusalReason,
   BeginLegacyWorktreeReconciliationResult,
   LegacyOverlayJournalEntry,
+  LegacyReconciliationActivityAssessment,
   LegacyReconciliationClassification,
   LegacyReconciliationFaultBoundary,
   LegacyReconciliationFaultInjector,
   LegacyReconciliationGitResult,
   LegacyReconciliationGitRunner,
+  LegacyReconciliationHistoryAssessment,
+  LegacyReconciliationHistoryObservation,
+  LegacyReconciliationObservationAdapter,
   LegacyWorktreeActivityFence,
   LegacyWorktreeActivityObservation,
   LegacyWorktreeManagerLock,
