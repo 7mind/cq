@@ -350,7 +350,10 @@ describe("workset generic-mutation filesystem focused [T1972]", () => {
       expect(() => reader.fetchItem(TASKS_LEDGER, taskA)).toThrow();
       expect(() => reader.fetchItem(TASKS_LEDGER, taskB)).toThrow();
       const arch = await reader.fetchArchive(MILESTONES_LEDGER, milestoneId);
-      expect(arch.item.id).toBe(milestoneId);
+      expect(arch.kind).toBe("item");
+      if (arch.kind === "item") {
+        expect(arch.item.id).toBe(milestoneId);
+      }
     } finally {
       await reader.dispose();
     }
