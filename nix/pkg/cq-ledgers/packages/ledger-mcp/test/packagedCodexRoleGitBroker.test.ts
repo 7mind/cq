@@ -17,6 +17,7 @@ import {
   executeInstalledCodexRoleBoundary,
   implementConflictResolverSidecar,
   qualifyCodexNativeAdapter,
+  recordManagerOwnedReleaseResult,
   sequentialDispatchRandomBytes,
   type CodexInstalledRoleBoundaryExecution,
   type ConsumedDispatchResult,
@@ -297,6 +298,11 @@ describe("packaged cq-codex-role Git broker", () => {
     expect(source).toContain("installedGateTest");
     const workerFixture = await readFile(WORKER_FIXTURE, "utf8");
     expect(workerFixture).toContain('"update-ref"');
+    const workspacePackage = JSON.parse(
+      await readFile(fileURLToPath(new URL("../../../package.json", import.meta.url)), "utf8"),
+    ) as { scripts?: Record<string, string> };
+    expect(workspacePackage.scripts?.["check:codex-installed-gate"]).toBeDefined();
+    expect(workspacePackage.scripts?.["check"]).toContain("check:codex-installed-gate");
   });
 
   installedGateTest("authenticates installed worker and resolver gates before codex:native registration [Effectual-GoodCommunication, Blackbox-Group]", async () => {
@@ -776,6 +782,17 @@ describe("packaged cq-codex-role Git broker", () => {
       consumed: retryConsumed,
       release: released,
     });
+    const publiclyMintedInstalledGateTest = attestCodexInstalledGateTestResult({
+      execution: retryExecution,
+      nativeExecution: execution,
+      priorExecution: execution,
+      priorConsumed: consumed,
+      failureControls: ["capability"],
+      directGitDenied: true,
+      confinementVerified: true,
+      objectAttributionVerified: true,
+      lifecycle: "single-or-typed-abort",
+    });
     const resolverInstalledGateTest = attestCodexInstalledGateTestResult({
       execution: resolverRun.execution,
       failureControls: ["capability"],
@@ -854,6 +871,23 @@ describe("packaged cq-codex-role Git broker", () => {
           release: { ...released, handle: { ...released.handle } },
         }),
       ),
+      publicReleaseAuthorityMintRejected: rejected(() =>
+        authenticateCodexProviderGateObservation({
+          installedGateTest: workerInstalledGateTest,
+          consumed: retryConsumed,
+          release: recordManagerOwnedReleaseResult({
+            ...released,
+            handle: { ...released.handle },
+          }),
+        }),
+      ),
+      publicInstalledGateAuthorityMintRejected: rejected(() =>
+        authenticateCodexProviderGateObservation({
+          installedGateTest: publiclyMintedInstalledGateTest,
+          consumed: retryConsumed,
+          release: released,
+        }),
+      ),
       fabricatedInstalledGateTestRejected: rejected(() =>
         authenticateCodexProviderGateObservation({
           installedGateTest: { ...workerInstalledGateTest },
@@ -875,13 +909,19 @@ describe("packaged cq-codex-role Git broker", () => {
         installedIdentity?.storePath === path.dirname(path.dirname(INSTALLED_ROLE)) &&
         installedIdentity.executablePath === retryExecution.executable &&
         installedIdentity.executableDigest === expectedInstalledDigest,
+      runnerCapturedEffectivePreturn:
+        "effectivePreturn" in retryExecution &&
+        "expectedInstalledIdentity" in retryExecution,
     }).toEqual({
       fabricatedConsumedRejected: true,
       fabricatedReleaseRejected: true,
+      publicReleaseAuthorityMintRejected: true,
+      publicInstalledGateAuthorityMintRejected: true,
       fabricatedInstalledGateTestRejected: true,
       missingInstalledGateTestRejected: true,
       crossHandleTaskRepositoryReplayRejected: true,
       exactInstalledIdentity: true,
+      runnerCapturedEffectivePreturn: true,
     });
     expect(qualification).toMatchObject({
       status: "qualified",
