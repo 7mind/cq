@@ -98,10 +98,9 @@ async function runPackagedResolverGate(): Promise<CodexProviderGateObservation> 
   const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
   const ledgerStore = await createLedgerStore(repositoryRoot);
   await ledgerStore.store.dispose();
-  const stateDir = path.join(repositoryRoot, ".manager-state");
   const managed = await prepareManagedWorktree(
     { repositoryRoot, taskId: "T2044", baseCommit },
-    { stateDir, skipInstall: true, bunWorkspaceRoot: repositoryRoot },
+    { skipInstall: true, bunWorkspaceRoot: repositoryRoot },
   );
   if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
   const binding = await resolveManagedWorktreeDispatchBinding(
@@ -111,7 +110,6 @@ async function runPackagedResolverGate(): Promise<CodexProviderGateObservation> 
       worktreePath: managed.handle.absolutePath,
       branch: managed.handle.branch,
     },
-    { stateDir },
   );
   if (binding === null) throw new Error("resolver managed binding did not resolve");
 
@@ -140,7 +138,7 @@ async function runPackagedResolverGate(): Promise<CodexProviderGateObservation> 
     surface: "codex",
     childCancelAt: "2099-01-01T00:00:00.000Z",
   };
-  const conflictState = await observeManagedRebaseConflict(observerAuthorization, { stateDir });
+  const conflictState = await observeManagedRebaseConflict(observerAuthorization, {});
 
   const namespace = await resolveSingleProjectAttestationNamespace({
     construction: "direct",
@@ -157,7 +155,6 @@ async function runPackagedResolverGate(): Promise<CodexProviderGateObservation> 
     backend,
     promptArtifactStore: artifactStore("implement-conflict-resolver"),
     repositoryRoot,
-    worktreeStateDir: stateDir,
     now: () => dispatchNow,
     randomBytes: sequentialDispatchRandomBytes(512),
   });
@@ -278,7 +275,6 @@ async function runPackagedResolverGate(): Promise<CodexProviderGateObservation> 
       resultCommit: String(capture.output["resultCommit"]),
       deleteBranch: false,
     },
-    { stateDir },
   );
   expect(released).toMatchObject({ status: "released", idempotent: false });
   if (released.status !== "released") throw new Error(released.detail);
