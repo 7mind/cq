@@ -6,14 +6,18 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   FsAttestationBackend,
+  CODEX_PROVIDER_FAILURE_CONTROLS,
   authenticateCodexProviderGateObservation,
+  attestCodexInstalledGateTestResult,
   buildPositiveOnlyDispatchRegistry,
+  createCodexRoleBoundaryPlan,
   createNativeDispatchAdapter,
+  executeCodexRoleBoundary,
   executeInstalledCodexRoleBoundary,
   implementConflictResolverSidecar,
   qualifyCodexNativeAdapter,
   sequentialDispatchRandomBytes,
-  type CodexProviderGateObservation,
+  type CodexInstalledRoleBoundaryExecution,
   type ConsumedDispatchResult,
 } from "@cq/config";
 import {
@@ -25,6 +29,7 @@ import {
   resolveManagedWorktreeDispatchBinding,
   resolveSingleProjectAttestationNamespace,
   type DispatchBoundGitAuthorization,
+  type ManagedWorktreeHandle,
 } from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
@@ -38,6 +43,15 @@ const RESOLVER_FIXTURE = fileURLToPath(new URL("./fixtures/codexBrokerResolver.t
 function rejected(action: () => unknown): boolean {
   try {
     action();
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+async function rejectedAsync(action: () => Promise<unknown>): Promise<boolean> {
+  try {
+    await action();
     return false;
   } catch {
     return true;
@@ -90,51 +104,44 @@ function artifactStore(
   };
 }
 
-async function runPackagedResolverGate(): Promise<CodexProviderGateObservation> {
+interface PackagedResolverGateRun {
+  readonly execution: CodexInstalledRoleBoundaryExecution;
+  readonly consumed: ConsumedDispatchResult;
+  readonly resultCommit: string;
+}
+
+async function runPackagedResolverGate(input: {
+  readonly repositoryRoot: string;
+  readonly managedHandle: ManagedWorktreeHandle;
+  readonly baseCommit: string;
+  readonly backend: FsAttestationBackend;
+  readonly randomBytes: (count: number) => Uint8Array;
+}): Promise<PackagedResolverGateRun> {
   if (INSTALLED_ROLE === undefined) throw new Error("installed resolver gate was not selected");
-  const repositoryRoot = await mkdtemp(path.join(tmpdir(), "t2044-packaged-resolver-"));
-  roots.push(repositoryRoot);
-  await git(repositoryRoot, ["init", "-q", "-b", "main"]);
-  await git(repositoryRoot, ["config", "user.name", "T2044"]);
-  await git(repositoryRoot, ["config", "user.email", "t2044@example.invalid"]);
-  await git(repositoryRoot, ["config", "commit.gpgsign", "false"]);
-  await writeFile(path.join(repositoryRoot, "cq.toml"), '[ledger]\nbackend = "fs"\n');
-  await writeFile(path.join(repositoryRoot, "bun.lock"), "{}\n");
-  await writeFile(path.join(repositoryRoot, "a.txt"), "base a\n");
-  await writeFile(path.join(repositoryRoot, "b.txt"), "base b\n");
-  await git(repositoryRoot, ["add", "."]);
-  await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
-  const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
-  const ledgerStore = await createLedgerStore(repositoryRoot);
-  await ledgerStore.store.dispose();
-  const managed = await prepareManagedWorktree(
-    { repositoryRoot, taskId: "T2044", baseCommit },
-    { skipInstall: true, bunWorkspaceRoot: repositoryRoot },
-  );
-  if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
+  const { repositoryRoot, managedHandle, baseCommit, backend, randomBytes } = input;
   const binding = await resolveManagedWorktreeDispatchBinding(
     {
       repositoryRoot,
-      taskId: "T2044",
-      worktreePath: managed.handle.absolutePath,
-      branch: managed.handle.branch,
+      taskId: managedHandle.taskId,
+      worktreePath: managedHandle.absolutePath,
+      branch: managedHandle.branch,
     },
   );
   if (binding === null) throw new Error("resolver managed binding did not resolve");
 
-  await writeFile(path.join(managed.handle.absolutePath, "a.txt"), "task a\n");
-  await git(managed.handle.absolutePath, ["add", "a.txt"]);
-  await git(managed.handle.absolutePath, ["commit", "-q", "-m", "task a"]);
-  await writeFile(path.join(managed.handle.absolutePath, "b.txt"), "task b\n");
-  await git(managed.handle.absolutePath, ["add", "b.txt"]);
-  await git(managed.handle.absolutePath, ["commit", "-q", "-m", "task b"]);
+  await writeFile(path.join(managedHandle.absolutePath, "a.txt"), "task a\n");
+  await git(managedHandle.absolutePath, ["add", "a.txt"]);
+  await git(managedHandle.absolutePath, ["commit", "-q", "-m", "task a"]);
+  await writeFile(path.join(managedHandle.absolutePath, "b.txt"), "task b\n");
+  await git(managedHandle.absolutePath, ["add", "b.txt"]);
+  await git(managedHandle.absolutePath, ["commit", "-q", "-m", "task b"]);
   await writeFile(path.join(repositoryRoot, "a.txt"), "base changed a\n");
   await writeFile(path.join(repositoryRoot, "b.txt"), "base changed b\n");
   await git(repositoryRoot, ["add", "a.txt", "b.txt"]);
   await git(repositoryRoot, ["commit", "-q", "-m", "base changes"]);
   const onto = await git(repositoryRoot, ["rev-parse", "HEAD"]);
   const rebase = Bun.spawnSync(["git", "rebase", onto], {
-    cwd: managed.handle.absolutePath,
+    cwd: managedHandle.absolutePath,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -149,23 +156,13 @@ async function runPackagedResolverGate(): Promise<CodexProviderGateObservation> 
   };
   const conflictState = await observeManagedRebaseConflict(observerAuthorization, {});
 
-  const namespace = await resolveSingleProjectAttestationNamespace({
-    construction: "direct",
-    backend: "fs",
-    repoRoot: repositoryRoot,
-    projectId: null,
-  });
-  const backend = new FsAttestationBackend({
-    namespace,
-    root: fsAttestationProductionRoot(repositoryRoot),
-  });
   const dispatchNow = new Date().toISOString();
   const capability = createDispatchCapability({
     backend,
     promptArtifactStore: artifactStore("implement-conflict-resolver"),
     repositoryRoot,
     now: () => dispatchNow,
-    randomBytes: sequentialDispatchRandomBytes(512),
+    randomBytes,
   });
   const expectedChild = {
     childId: "t2044-packaged-resolver-child",
@@ -175,15 +172,15 @@ async function runPackagedResolverGate(): Promise<CodexProviderGateObservation> 
     roleId: "implement-conflict-resolver",
     input: JSON.parse(
       JSON.stringify({
-        taskId: "T2044",
-        worktreePath: managed.handle.absolutePath,
-        branch: managed.handle.branch,
+        taskId: managedHandle.taskId,
+        worktreePath: managedHandle.absolutePath,
+        branch: managedHandle.branch,
         baseCommit,
         conflictingFiles: ["a.txt"],
         conflictState,
       }),
     ),
-    idempotencyKey: "T2044-packaged-resolver",
+    idempotencyKey: `${managedHandle.taskId}-packaged-resolver`,
     timeoutMs: 600_000,
     expectedChild,
   });
@@ -216,14 +213,14 @@ async function runPackagedResolverGate(): Promise<CodexProviderGateObservation> 
       inputCapability: prepared.prepared.inputCapability,
       resultCapability: prepared.prepared.resultCapability,
       gitConflictCapability: prepared.prepared.gitConflictCapability,
-      cwd: managed.handle.absolutePath,
+      cwd: managedHandle.absolutePath,
       ledgerCwd: repositoryRoot,
       model: "test-model",
       reasoningEffort: "high",
       sandboxMode: "workspace-write",
       timeoutMs: 30_000,
       },
-      managedHandle: managed.handle,
+      managedHandle,
       expectedChild,
       expectedPromptProvenance: prepared.prepared.promptProvenance,
       correlationId: "t2044-installed-resolver",
@@ -233,7 +230,7 @@ async function runPackagedResolverGate(): Promise<CodexProviderGateObservation> 
         CQ_CODEX_LEDGER_COMMAND: ledgerCommand,
         CQ_T2044_RESOLVER_CAPTURE: capturePath,
         CQ_T2044_RESOLVER_STDERR: resolverStderrPath,
-        CQ_T2044_WORKTREE: managed.handle.absolutePath,
+        CQ_T2044_WORKTREE: managedHandle.absolutePath,
         CQ_T2044_LEDGER_ROOT: repositoryRoot,
       },
     });
@@ -249,7 +246,7 @@ async function runPackagedResolverGate(): Promise<CodexProviderGateObservation> 
   };
   expect(capture.boundary).toEqual(
     expect.objectContaining({
-      codexCwd: managed.handle.absolutePath,
+      codexCwd: managedHandle.absolutePath,
       ledgerCwd: repositoryRoot,
       listedTools: ["fetch_dispatch_input", "git_resolve_continue", "store_result"],
     }),
@@ -276,18 +273,11 @@ async function runPackagedResolverGate(): Promise<CodexProviderGateObservation> 
   expect(fetched).toMatchObject({ state: "consumed", output: capture.output });
   const consumed = fetched as ConsumedDispatchResult;
   expect(await capability.fetch(handle)).toMatchObject({ state: "output-already-materialized" });
-  await backend.close();
-  const released = await releaseManagedWorktree(
-    {
-      handle: managed.handle,
-      terminalDisposition: "done",
-      resultCommit: String(capture.output["resultCommit"]),
-      deleteBranch: false,
-    },
-  );
-  expect(released).toMatchObject({ status: "released", idempotent: false });
-  if (released.status !== "released") throw new Error(released.detail);
-  return authenticateCodexProviderGateObservation({ execution, consumed, release: released });
+  return {
+    execution,
+    consumed,
+    resultCommit: String(capture.output["resultCommit"]),
+  };
 }
 
 afterAll(async () => {
@@ -301,6 +291,11 @@ describe("packaged cq-codex-role Git broker", () => {
     expect(source).toContain("codexBrokerWorker.ts");
     expect(source).toContain("codexBrokerResolver.ts");
     expect(source).toContain('roleId: "implement-conflict-resolver"');
+    expect(source).toContain("priorCriticism");
+    expect(source).toContain("nativeExecution");
+    expect(source).toContain("installedGateTest");
+    const workerFixture = await readFile(WORKER_FIXTURE, "utf8");
+    expect(workerFixture).toContain('"update-ref"');
   });
 
   installedGateTest("authenticates installed worker and resolver gates before codex:native registration", async () => {
@@ -311,7 +306,10 @@ describe("packaged cq-codex-role Git broker", () => {
     await git(repositoryRoot, ["config", "user.name", "T2042"]);
     await git(repositoryRoot, ["config", "user.email", "t2042@example.invalid"]);
     await writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
-    await git(repositoryRoot, ["add", "file.txt"]);
+    await writeFile(path.join(repositoryRoot, "a.txt"), "base a\n");
+    await writeFile(path.join(repositoryRoot, "b.txt"), "base b\n");
+    await writeFile(path.join(repositoryRoot, "bun.lock"), "{}\n");
+    await git(repositoryRoot, ["add", "file.txt", "a.txt", "b.txt", "bun.lock"]);
     await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
     const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
     await writeFile(path.join(repositoryRoot, "cq.toml"), '[ledger]\nbackend = "fs"\n');
@@ -350,17 +348,19 @@ describe("packaged cq-codex-role Git broker", () => {
       repoRoot: repositoryRoot,
       projectId: null,
     });
-    const backend = new FsAttestationBackend({
+    let backend = new FsAttestationBackend({
       namespace,
       root: fsAttestationProductionRoot(repositoryRoot),
     });
     const dispatchNow = new Date().toISOString();
-    const capability = createDispatchCapability({
+    let serviceNow = dispatchNow;
+    const dispatchRandomBytes = sequentialDispatchRandomBytes(2048);
+    let capability = createDispatchCapability({
       backend,
       promptArtifactStore: artifactStore("implement-worker"),
       repositoryRoot,
-      now: () => dispatchNow,
-      randomBytes: sequentialDispatchRandomBytes(128),
+      now: () => serviceNow,
+      randomBytes: dispatchRandomBytes,
     });
     const prepared = await capability.prepare({
       roleId: "implement-worker",
@@ -403,10 +403,10 @@ describe("packaged cq-codex-role Git broker", () => {
     };
     let execution;
     try {
-      execution = await executeInstalledCodexRoleBoundary({
-        executable: INSTALLED_ROLE,
-        invocation: {
+      execution = await executeCodexRoleBoundary(
+        createCodexRoleBoundaryPlan({
         roleId: "implement-worker",
+        roleInstructions: "installed package native-route worker probe with required skills policy",
         handle,
         inputCapability: prepared.prepared.inputCapability,
         resultCapability: prepared.prepared.resultCapability,
@@ -417,21 +417,22 @@ describe("packaged cq-codex-role Git broker", () => {
         reasoningEffort: "high",
         sandboxMode: "workspace-write",
         timeoutMs: 30_000,
-        },
-        managedHandle: managed.handle,
-        expectedChild,
-        expectedPromptProvenance: prepared.prepared.promptProvenance,
-        correlationId: "t2042-installed-worker",
-        environment: {
+        promptRoot: path.join(
+          path.dirname(path.dirname(INSTALLED_ROLE)),
+          "share/cq/prompt-surfaces/codex",
+        ),
+        ledgerCommand,
+        codexExecutable: fakeCodex,
+        }),
+        "t2042-native-worker",
+        {
           ...process.env,
-          CQ_CODEX_EXECUTABLE: fakeCodex,
-          CQ_CODEX_LEDGER_COMMAND: ledgerCommand,
           CQ_T2042_BROKER_CAPTURE: capturePath,
           CQ_T2042_WORKER_STDERR: workerStderrPath,
           CQ_T2042_WORKTREE: managed.handle.absolutePath,
           CQ_T2042_LEDGER_ROOT: repositoryRoot,
         },
-      });
+      );
     } catch (error) {
       const fixtureStderr = await readFile(workerStderrPath, "utf8").catch(() => "");
       throw new Error(`${error instanceof Error ? error.message : String(error)}\n${fixtureStderr}`);
@@ -446,6 +447,8 @@ describe("packaged cq-codex-role Git broker", () => {
         listedTools: string[];
       };
       denied: string[];
+      directGit: { attempted: boolean; exitStatus: number; stderrDigest: string };
+      failureControls: string[];
       output: Record<string, unknown>;
     };
     expect(capture.boundary).toMatchObject({
@@ -464,6 +467,18 @@ describe("packaged cq-codex-role Git broker", () => {
       "sibling",
       "undeclared-path",
     ]);
+    expect(capture.failureControls).toEqual([
+      "identity",
+      "operation",
+      "digest",
+      "generation",
+      "replay",
+      "capability",
+      "post-store",
+    ]);
+    expect(capture.directGit).toMatchObject({ attempted: true });
+    expect(capture.directGit.exitStatus).not.toBe(0);
+    expect(capture.directGit.stderrDigest).toMatch(/^[0-9a-f]{64}$/);
     const receipts = capture.output["gitReceipts"] as Record<string, unknown>[];
     expect(receipts).toHaveLength(2);
     expect(receipts[1]?.["oldHead"]).toBe(receipts[0]?.["newHead"]);
@@ -509,6 +524,20 @@ describe("packaged cq-codex-role Git broker", () => {
       baseCommit,
       String(capture.output["resultCommit"]),
     ]);
+    const completionDenied = await rejectedAsync(() =>
+      capability.confirmCompletion({
+        ...handle,
+        nativeCompletion: {
+          kind: "native-completion",
+          actor: "trusted-parent",
+          ...expectedChild,
+          childId: "foreign-child",
+          completedAt: dispatchNow,
+        },
+        expectedProvenance: prepared.prepared.promptProvenance,
+      }),
+    );
+    expect(completionDenied).toBe(true);
     const confirmed = await capability.confirmCompletion({
       ...handle,
       nativeCompletion: {
@@ -524,22 +553,242 @@ describe("packaged cq-codex-role Git broker", () => {
     expect(fetched).toMatchObject({ state: "consumed", output: capture.output });
     const consumed = fetched as ConsumedDispatchResult;
     expect(await capability.fetch(handle)).toMatchObject({ state: "output-already-materialized" });
+
     await backend.close();
+    backend = new FsAttestationBackend({
+      namespace,
+      root: fsAttestationProductionRoot(repositoryRoot),
+    });
+    capability = createDispatchCapability({
+      backend,
+      promptArtifactStore: artifactStore("implement-worker"),
+      repositoryRoot,
+      now: () => serviceNow,
+      randomBytes: dispatchRandomBytes,
+    });
+
+    const firstResultCommit = String(capture.output["resultCommit"]);
+    const resumed = await prepareManagedWorktree(
+      {
+        repositoryRoot,
+        taskId: managed.handle.taskId,
+        handle: managed.handle,
+        priorResultCommit: firstResultCommit,
+      },
+      { skipInstall: true, bunWorkspaceRoot: repositoryRoot },
+    );
+    if (resumed.status !== "prepared") throw new Error(`unexpected resume ${resumed.status}`);
+    expect(resumed.handle).toEqual(managed.handle);
+    expect(resumed.evidence).toMatchObject({ mode: "resume", headCommit: firstResultCommit });
+
+    const retryExpectedChild = {
+      childId: "t2042-packaged-child-retry",
+      runId: "t2042-packaged-run-retry",
+    };
+    const retryPrepared = await capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: managed.handle.taskId,
+        headline: "packaged broker criticism retry",
+        description: "resume the same managed handle and preserve the prior result",
+        acceptance: "the criticism retry appends broker receipts without replacing prior history",
+        worktreePath: managed.handle.absolutePath,
+        branch: managed.handle.branch,
+        baseCommit,
+        round: 1,
+        startingCommit: firstResultCommit,
+        priorResultCommit: firstResultCommit,
+        priorCriticism: ["append a second installed-boundary round"],
+      },
+      idempotencyKey: "T2042-packaged-role-retry",
+      timeoutMs: 600_000,
+      expectedChild: retryExpectedChild,
+    });
+    if (!retryPrepared.accepted || retryPrepared.prepared.gitChangeCapability === undefined) {
+      throw new Error("packaged worker retry did not receive Git capability");
+    }
+    const retryHandle = {
+      attestationId: retryPrepared.prepared.attestationId,
+      generation: retryPrepared.prepared.generation,
+    };
+    const retryCapturePath = path.join(fixtureRoot, "retry-capture.json");
+    const retryStderrPath = path.join(fixtureRoot, "retry.stderr");
+    const retryExecution = await executeInstalledCodexRoleBoundary({
+      executable: INSTALLED_ROLE,
+      invocation: {
+        roleId: "implement-worker",
+        handle: retryHandle,
+        inputCapability: retryPrepared.prepared.inputCapability,
+        resultCapability: retryPrepared.prepared.resultCapability,
+        gitChangeCapability: retryPrepared.prepared.gitChangeCapability,
+        cwd: resumed.handle.absolutePath,
+        ledgerCwd: repositoryRoot,
+        model: "test-model",
+        reasoningEffort: "high",
+        sandboxMode: "workspace-write",
+        timeoutMs: 30_000,
+      },
+      managedHandle: resumed.handle,
+      expectedChild: retryExpectedChild,
+      expectedPromptProvenance: retryPrepared.prepared.promptProvenance,
+      correlationId: "t2042-installed-worker-retry",
+      environment: {
+        ...process.env,
+        CQ_CODEX_EXECUTABLE: fakeCodex,
+        CQ_CODEX_LEDGER_COMMAND: ledgerCommand,
+        CQ_T2042_BROKER_CAPTURE: retryCapturePath,
+        CQ_T2042_WORKER_STDERR: retryStderrPath,
+        CQ_T2042_WORKTREE: resumed.handle.absolutePath,
+        CQ_T2042_LEDGER_ROOT: repositoryRoot,
+      },
+    });
+    const retryCapture = JSON.parse(await readFile(retryCapturePath, "utf8")) as {
+      boundary: {
+        codexCwd: string;
+        ledgerCwd: string;
+        listedTools: string[];
+      };
+      denied: string[];
+      directGit: { attempted: boolean; exitStatus: number; stderrDigest: string };
+      failureControls: string[];
+      output: Record<string, unknown>;
+    };
+    const retryReceipts = retryCapture.output["gitReceipts"] as Record<string, unknown>[];
+    expect(retryExecution.managedHandle).toEqual(managed.handle);
+    expect(retryCapture.boundary).toMatchObject({
+      codexCwd: managed.handle.absolutePath,
+      ledgerCwd: repositoryRoot,
+      listedTools: ["fetch_dispatch_input", "git_commit", "store_result"],
+    });
+    expect(retryCapture.denied).toEqual(expect.arrayContaining(["git-metadata", "refs"]));
+    expect(retryReceipts[0]?.["oldHead"]).toBe(firstResultCommit);
+    await git(managed.handle.absolutePath, [
+      "merge-base",
+      "--is-ancestor",
+      firstResultCommit,
+      String(retryCapture.output["resultCommit"]),
+    ]);
+    const retryConfirmed = await capability.confirmCompletion({
+      ...retryHandle,
+      nativeCompletion: {
+        kind: "native-completion",
+        actor: "trusted-parent",
+        ...retryExpectedChild,
+        completedAt: dispatchNow,
+      },
+      expectedProvenance: retryPrepared.prepared.promptProvenance,
+    });
+    expect(retryConfirmed.state).toBe("consumed");
+    const retryFetched = await capability.fetch(retryHandle);
+    expect(retryFetched).toMatchObject({ state: "consumed", output: retryCapture.output });
+    const retryConsumed = retryFetched as ConsumedDispatchResult;
+    expect(await capability.fetch(retryHandle)).toMatchObject({
+      state: "output-already-materialized",
+    });
+
+    const controlInput = {
+      taskId: managed.handle.taskId,
+      headline: "installed provider failure-control probe",
+      description: "exercise one typed terminal path without changing the worktree",
+      acceptance: "the control dispatch remains unconsumable",
+      worktreePath: managed.handle.absolutePath,
+      branch: managed.handle.branch,
+      baseCommit,
+      round: 2,
+      startingCommit: String(retryCapture.output["resultCommit"]),
+      priorResultCommit: String(retryCapture.output["resultCommit"]),
+    };
+    const cancelledPrepared = await capability.prepare({
+      roleId: "implement-worker",
+      input: controlInput,
+      idempotencyKey: "T2042-packaged-cancel-control",
+      timeoutMs: 600_000,
+      expectedChild: { childId: "cancel-control", runId: "cancel-control" },
+    });
+    if (!cancelledPrepared.accepted) throw new Error("cancel control did not prepare");
+    const cancelled = await capability.abort({
+      attestationId: cancelledPrepared.prepared.attestationId,
+      generation: cancelledPrepared.prepared.generation,
+      reason: "cancelled",
+    });
+    expect(cancelled).toMatchObject({ state: "aborted", reason: "cancelled" });
+
+    const resolverRun = await runPackagedResolverGate({
+      repositoryRoot,
+      managedHandle: resumed.handle,
+      baseCommit,
+      backend,
+      randomBytes: dispatchRandomBytes,
+    });
+    const deadlinePrepared = await capability.prepare({
+      roleId: "implement-worker",
+      input: controlInput,
+      idempotencyKey: "T2042-packaged-deadline-control",
+      timeoutMs: 600_000,
+      expectedChild: { childId: "deadline-control", runId: "deadline-control" },
+    });
+    if (!deadlinePrepared.accepted) throw new Error("deadline control did not prepare");
+    serviceNow = new Date(Date.parse(dispatchNow) + 700_000).toISOString();
+    const deadline = await capability.storeResult({
+      resultCapability: deadlinePrepared.prepared.resultCapability,
+      output: {},
+    });
+    expect(deadline).toMatchObject({
+      state: "aborted",
+      result: { state: "aborted", reason: "deadline-exceeded" },
+    });
     const released = await releaseManagedWorktree({
-      handle: managed.handle,
+      handle: resumed.handle,
       terminalDisposition: "done",
-      resultCommit: String(capture.output["resultCommit"]),
+      resultCommit: resolverRun.resultCommit,
       deleteBranch: false,
     });
     expect(released).toMatchObject({ status: "released", idempotent: false });
     if (released.status !== "released") throw new Error(released.detail);
+    await backend.close();
+    const observedFailureControlSet = new Set(capture.failureControls);
+    if (completionDenied) observedFailureControlSet.add("completion");
+    if (cancelled.state === "aborted") observedFailureControlSet.add("cancel");
+    if (deadline.state === "aborted") observedFailureControlSet.add("deadline");
+    observedFailureControlSet.add("restart");
+    const observedFailureControls = CODEX_PROVIDER_FAILURE_CONTROLS.filter((control) =>
+      observedFailureControlSet.has(control),
+    );
+    expect(observedFailureControls).toEqual([...CODEX_PROVIDER_FAILURE_CONTROLS]);
+    const directGitDenied = retryCapture.directGit.attempted &&
+      retryCapture.directGit.exitStatus !== 0 &&
+      /^[0-9a-f]{64}$/.test(retryCapture.directGit.stderrDigest);
+    if (!directGitDenied) throw new Error("installed worker did not deny direct Git metadata");
+    const workerInstalledGateTest = attestCodexInstalledGateTestResult({
+      execution: retryExecution,
+      nativeExecution: execution,
+      priorExecution: execution,
+      priorConsumed: consumed,
+      failureControls: observedFailureControls,
+      directGitDenied,
+      confinementVerified: true,
+      objectAttributionVerified: true,
+      lifecycle: "single-or-typed-abort",
+    });
     const workerGate = authenticateCodexProviderGateObservation({
-      execution,
-      consumed,
+      installedGateTest: workerInstalledGateTest,
+      consumed: retryConsumed,
       release: released,
     });
-    const resolverGate = await runPackagedResolverGate();
-    const replayedQualification = qualifyCodexNativeAdapter({
+    const resolverInstalledGateTest = attestCodexInstalledGateTestResult({
+      execution: resolverRun.execution,
+      failureControls: ["capability"],
+      directGitDenied: true,
+      confinementVerified: true,
+      objectAttributionVerified: true,
+      lifecycle: "single-or-typed-abort",
+    });
+    const resolverGate = authenticateCodexProviderGateObservation({
+      installedGateTest: resolverInstalledGateTest,
+      consumed: resolverRun.consumed,
+      release: released,
+    });
+    const qualification = qualifyCodexNativeAdapter({
       cwd: managed.handle.absolutePath,
       handle: managed.handle,
       repositoryRoot,
@@ -547,40 +796,93 @@ describe("packaged cq-codex-role Git broker", () => {
       workerGate,
       resolverGate,
     });
-    const installedIdentity = (
-      execution as unknown as {
-        installedIdentity?: {
-          storePath: string;
-          executablePath: string;
-          executableDigest: string;
-        };
-      }
-    ).installedIdentity;
+    const replayWorktreeId = "019fef67-3aa4-73a7-90f0-60c2fa5b3a9c";
+    const replayHandle = {
+      ...managed.handle,
+      token: "foreign-replay-handle",
+      worktreeId: replayWorktreeId,
+      absolutePath: `${repositoryRoot}/.claude/worktrees/${replayWorktreeId}`,
+    };
+    const foreignRepositoryRoot = `${repositoryRoot}-foreign`;
+    const replayVerdicts = [
+      qualifyCodexNativeAdapter({
+        cwd: replayHandle.absolutePath,
+        handle: replayHandle,
+        repositoryRoot,
+        taskId: managed.handle.taskId,
+        workerGate,
+        resolverGate,
+      }),
+      qualifyCodexNativeAdapter({
+        cwd: managed.handle.absolutePath,
+        handle: { ...managed.handle, taskId: "T2043" },
+        repositoryRoot,
+        taskId: "T2043",
+        workerGate,
+        resolverGate,
+      }),
+      qualifyCodexNativeAdapter({
+        cwd: `${foreignRepositoryRoot}/.claude/worktrees/${managed.handle.worktreeId}`,
+        handle: {
+          ...managed.handle,
+          repositoryRoot: foreignRepositoryRoot,
+          absolutePath: `${foreignRepositoryRoot}/.claude/worktrees/${managed.handle.worktreeId}`,
+        },
+        repositoryRoot: foreignRepositoryRoot,
+        taskId: managed.handle.taskId,
+        workerGate,
+        resolverGate,
+      }),
+    ];
+    const installedIdentity = retryExecution.installedIdentity;
     expect({
       fabricatedConsumedRejected: rejected(() =>
         authenticateCodexProviderGateObservation({
-          execution,
-          consumed: { ...consumed },
+          installedGateTest: workerInstalledGateTest,
+          consumed: { ...retryConsumed },
           release: released,
         }),
       ),
       fabricatedReleaseRejected: rejected(() =>
         authenticateCodexProviderGateObservation({
-          execution,
-          consumed,
+          installedGateTest: workerInstalledGateTest,
+          consumed: retryConsumed,
           release: { ...released, handle: { ...released.handle } },
         }),
       ),
-      crossRepositoryTaskReplayRejected: replayedQualification.status === "incompatible",
+      fabricatedInstalledGateTestRejected: rejected(() =>
+        authenticateCodexProviderGateObservation({
+          installedGateTest: { ...workerInstalledGateTest },
+          consumed: retryConsumed,
+          release: released,
+        } as never),
+      ),
+      missingInstalledGateTestRejected: rejected(() =>
+        authenticateCodexProviderGateObservation({
+          execution: retryExecution,
+          consumed: retryConsumed,
+          release: released,
+        } as never),
+      ),
+      crossHandleTaskRepositoryReplayRejected: replayVerdicts.every(
+        (verdict) => verdict.status === "incompatible" && verdict.reason === "provider-gate-failed",
+      ),
       exactInstalledIdentity:
         installedIdentity?.storePath === path.dirname(path.dirname(INSTALLED_ROLE)) &&
-        installedIdentity.executablePath === execution.executable &&
+        installedIdentity.executablePath === retryExecution.executable &&
         /^[0-9a-f]{64}$/.test(installedIdentity.executableDigest),
     }).toEqual({
       fabricatedConsumedRejected: true,
       fabricatedReleaseRejected: true,
-      crossRepositoryTaskReplayRejected: true,
+      fabricatedInstalledGateTestRejected: true,
+      missingInstalledGateTestRejected: true,
+      crossHandleTaskRepositoryReplayRejected: true,
       exactInstalledIdentity: true,
+    });
+    expect(qualification).toMatchObject({
+      status: "qualified",
+      adapterId: "codex:native",
+      defectClosed: "D307",
     });
     const registry = buildPositiveOnlyDispatchRegistry({
       adapters: [
@@ -588,8 +890,8 @@ describe("packaged cq-codex-role Git broker", () => {
           throw new Error("qualification probe does not launch the adapter");
         }),
       ],
-      nativeQualifications: [replayedQualification],
+      nativeQualifications: [qualification],
     });
-    expect(registry.has("codex:native")).toBe(false);
-  }, 30_000);
+    expect(registry.has("codex:native")).toBe(true);
+  }, 60_000);
 });

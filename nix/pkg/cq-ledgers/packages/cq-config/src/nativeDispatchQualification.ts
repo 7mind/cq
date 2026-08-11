@@ -19,7 +19,9 @@
 
 import type { Harness } from "./types.js";
 import {
+  isRunnerOwnedCodexRoleBoundaryExecution,
   isRunnerOwnedCodexInstalledRoleBoundaryExecution,
+  type CodexRoleBoundaryExecutionResult,
   type CodexInstalledRoleBoundaryExecution,
 } from "./codexRoleBoundary.js";
 import type { ConsumedDispatchResult } from "./compactDispatchProtocol.js";
@@ -218,13 +220,44 @@ export interface CodexProviderReleaseEvidence {
 }
 
 export interface CodexProviderGateAuthenticationInput {
-  readonly execution: CodexInstalledRoleBoundaryExecution;
+  readonly installedGateTest: CodexInstalledGateTestResult;
   readonly consumed: ConsumedDispatchResult;
   readonly release: CodexProviderReleaseEvidence;
 }
 
+export interface CodexInstalledGateTestResult {
+  readonly kind: "cq-codex-installed-gate-test-result";
+  readonly version: 1;
+  readonly execution: CodexInstalledRoleBoundaryExecution;
+  readonly nativeExecution?: CodexRoleBoundaryExecutionResult;
+  readonly priorExecution?: CodexInstalledRoleBoundaryExecution | CodexRoleBoundaryExecutionResult;
+  readonly priorConsumed?: ConsumedDispatchResult;
+  readonly preturnBindings: readonly CodexProviderPreturnBinding[];
+  readonly routes: readonly CodexProviderRoute[];
+  readonly failureControls: readonly CodexProviderFailureControl[];
+  readonly receiptChainVerified: true;
+  readonly directGitDenied: true;
+  readonly confinementVerified: true;
+  readonly objectAttributionVerified: true;
+  readonly lifecycle: "single-or-typed-abort";
+  readonly behavior: "commit-and-resume" | "multi-step-rebase";
+}
+
+export interface CodexInstalledGateTestInput {
+  readonly execution: CodexInstalledRoleBoundaryExecution;
+  readonly nativeExecution?: CodexRoleBoundaryExecutionResult;
+  readonly priorExecution?: CodexInstalledRoleBoundaryExecution | CodexRoleBoundaryExecutionResult;
+  readonly priorConsumed?: ConsumedDispatchResult;
+  readonly failureControls: readonly CodexProviderFailureControl[];
+  readonly directGitDenied: true;
+  readonly confinementVerified: true;
+  readonly objectAttributionVerified: true;
+  readonly lifecycle: "single-or-typed-abort";
+}
+
 const AUTHENTICATED_CODEX_PROVIDER_GATES = new WeakSet<object>();
 const AUTHENTICATED_CODEX_NATIVE_QUALIFICATIONS = new WeakSet<object>();
+const TRUSTED_CODEX_INSTALLED_GATE_TEST_RESULTS = new WeakSet<object>();
 
 export interface CodexNativeQualificationInput {
   readonly cwd: string;
@@ -249,6 +282,104 @@ function sameDispatchHandle(
   return left.attestationId === right.attestationId && left.generation === right.generation;
 }
 
+function exactKnownSubset<T extends string>(
+  values: readonly T[],
+  known: readonly T[],
+): boolean {
+  return (
+    values.length > 0 &&
+    new Set(values).size === values.length &&
+    values.every((value) => known.includes(value))
+  );
+}
+
+function sameManagedHandle(left: ManagedWorktreeHandle, right: ManagedWorktreeHandle): boolean {
+  return (
+    left.token === right.token &&
+    left.worktreeId === right.worktreeId &&
+    left.taskId === right.taskId &&
+    left.repositoryRoot === right.repositoryRoot &&
+    left.absolutePath === right.absolutePath
+  );
+}
+
+/** Mint only after the installed package harness has asserted its observed controls. */
+export function attestCodexInstalledGateTestResult(
+  input: CodexInstalledGateTestInput,
+): CodexInstalledGateTestResult {
+  if (!isRunnerOwnedCodexInstalledRoleBoundaryExecution(input.execution)) {
+    throw new Error("Codex installed gate test lacks a runner-owned process execution");
+  }
+  if (!exactKnownSubset(input.failureControls, CODEX_PROVIDER_FAILURE_CONTROLS)) {
+    throw new Error("Codex installed gate test contains an empty, duplicate, or unknown observation");
+  }
+  if (
+    (input.nativeExecution !== undefined &&
+      (!isRunnerOwnedCodexRoleBoundaryExecution(input.nativeExecution) ||
+        input.nativeExecution.observation.agentType !== input.execution.roleId))
+  ) {
+    throw new Error("Codex installed gate native-route claim lacks a runner-owned native execution");
+  }
+  const hasPrior = input.priorExecution !== undefined || input.priorConsumed !== undefined;
+  if (hasPrior) {
+    const priorExecution = input.priorExecution;
+    const priorConsumed = input.priorConsumed;
+    const priorOutput =
+      priorConsumed === undefined
+        ? undefined
+        : objectRecord(priorConsumed.output, "installedGateTest.priorConsumed.output");
+    const installedPrior = isRunnerOwnedCodexInstalledRoleBoundaryExecution(priorExecution);
+    const nativePrior = isRunnerOwnedCodexRoleBoundaryExecution(priorExecution);
+    if (
+      input.execution.roleId !== "implement-worker" ||
+      priorExecution === undefined ||
+      priorConsumed === undefined ||
+      !isBackendOwnedConsumedDispatchResult(priorConsumed) ||
+      (!installedPrior && !nativePrior) ||
+      (installedPrior &&
+        (!sameManagedHandle(priorExecution.managedHandle, input.execution.managedHandle) ||
+          !sameInstalledIdentity(priorExecution, input.execution))) ||
+      (nativePrior && priorExecution.observation.agentType !== "implement-worker") ||
+      priorOutput?.["taskId"] !== input.execution.managedHandle.taskId ||
+      priorOutput?.["actualWorktreePath"] !== input.execution.managedHandle.absolutePath ||
+      !sameDispatchHandle(priorConsumed, priorExecution.handle)
+    ) {
+      throw new Error("Codex installed worker retry does not preserve opaque prior-run authority");
+    }
+  }
+  if (
+    (input.execution.roleId === "implement-worker" && !hasPrior) ||
+    (input.execution.roleId === "implement-conflict-resolver" && hasPrior)
+  ) {
+    throw new Error("Codex installed gate behavior does not match its role and retry evidence");
+  }
+  const result = Object.freeze({
+    kind: "cq-codex-installed-gate-test-result" as const,
+    version: 1 as const,
+    execution: input.execution,
+    ...(input.nativeExecution === undefined ? {} : { nativeExecution: input.nativeExecution }),
+    ...(input.priorExecution === undefined ? {} : { priorExecution: input.priorExecution }),
+    ...(input.priorConsumed === undefined ? {} : { priorConsumed: input.priorConsumed }),
+    preturnBindings: CODEX_PROVIDER_PRETURN_BINDINGS,
+    routes: Object.freeze([
+      ...(input.nativeExecution === undefined ? [] : (["native"] as const)),
+      "process" as const,
+    ]),
+    failureControls: Object.freeze([...input.failureControls]),
+    receiptChainVerified: true as const,
+    directGitDenied: input.directGitDenied,
+    confinementVerified: input.confinementVerified,
+    objectAttributionVerified: input.objectAttributionVerified,
+    lifecycle: input.lifecycle,
+    behavior:
+      input.execution.roleId === "implement-worker"
+        ? ("commit-and-resume" as const)
+        : ("multi-step-rebase" as const),
+  });
+  TRUSTED_CODEX_INSTALLED_GATE_TEST_RESULTS.add(result);
+  return result;
+}
+
 /**
  * Mint opaque provider evidence only after an installed runner execution, the
  * trusted parent's consumed dispatch body, and the manager release all agree.
@@ -256,7 +387,11 @@ function sameDispatchHandle(
 export function authenticateCodexProviderGateObservation(
   input: CodexProviderGateAuthenticationInput,
 ): CodexProviderGateObservation {
-  const execution = input.execution;
+  if (!TRUSTED_CODEX_INSTALLED_GATE_TEST_RESULTS.has(input.installedGateTest)) {
+    throw new Error("Codex provider evidence lacks a trusted installedGateTest result");
+  }
+  const installedGateTest = input.installedGateTest;
+  const execution = installedGateTest.execution;
   if (!isRunnerOwnedCodexInstalledRoleBoundaryExecution(execution)) {
     throw new Error("Codex provider evidence was not produced by the installed-boundary runner");
   }
@@ -331,6 +466,19 @@ export function authenticateCodexProviderGateObservation(
   if (previousHead !== output["resultCommit"]) {
     throw new Error(`Codex provider ${receiptsField} does not terminate at resultCommit`);
   }
+  if (installedGateTest.priorConsumed !== undefined) {
+    const priorOutput = objectRecord(
+      installedGateTest.priorConsumed.output,
+      "installedGateTest.priorConsumed.output",
+    );
+    const firstReceipt = objectRecord(receipts[0], `${receiptsField}[0]`);
+    if (
+      typeof priorOutput["resultCommit"] !== "string" ||
+      firstReceipt["oldHead"] !== priorOutput["resultCommit"]
+    ) {
+      throw new Error("Codex worker criticism retry did not continue from the prior result commit");
+    }
+  }
   if (execution.roleId === "implement-conflict-resolver") {
     const firstOutcome = objectRecord(
       objectRecord(receipts[0], `${receiptsField}[0]`)["outcome"],
@@ -369,17 +517,16 @@ export function authenticateCodexProviderGateObservation(
     effect: execution.effect,
     packagedBoundary: true as const,
     substituted: false as const,
-    preturnBindings: CODEX_PROVIDER_PRETURN_BINDINGS,
-    routes: CODEX_PROVIDER_ROUTES,
-    receiptChainVerified: true as const,
-    directGitDenied: true as const,
-    confinementVerified: true as const,
-    objectAttributionVerified: true as const,
+    preturnBindings: installedGateTest.preturnBindings,
+    routes: installedGateTest.routes,
+    receiptChainVerified: installedGateTest.receiptChainVerified,
+    directGitDenied: installedGateTest.directGitDenied,
+    confinementVerified: installedGateTest.confinementVerified,
+    objectAttributionVerified: installedGateTest.objectAttributionVerified,
     parentReleaseVerified: true as const,
-    lifecycle: "single-or-typed-abort" as const,
-    behavior:
-      roleId === "implement-worker" ? ("commit-and-resume" as const) : ("multi-step-rebase" as const),
-    failureControls: CODEX_PROVIDER_FAILURE_CONTROLS,
+    lifecycle: installedGateTest.lifecycle,
+    behavior: installedGateTest.behavior,
+    failureControls: installedGateTest.failureControls,
     runnerExecution: execution,
   });
   AUTHENTICATED_CODEX_PROVIDER_GATES.add(observation);
@@ -653,14 +800,6 @@ function codexIncompatible(
   });
 }
 
-function exactOrderedStrings(value: unknown, expected: readonly string[]): boolean {
-  return (
-    Array.isArray(value) &&
-    value.length === expected.length &&
-    value.every((entry, index) => entry === expected[index])
-  );
-}
-
 function codexProviderGateViolation(
   value: unknown,
   expectedRole: CodexProviderGateObservation["roleId"],
@@ -687,11 +826,20 @@ function codexProviderGateViolation(
   if (gate["packagedBoundary"] !== true || gate["substituted"] !== false) {
     return `${expectedRole} provider gate did not run through the unsubstituted packaged boundary`;
   }
-  if (!exactOrderedStrings(gate["preturnBindings"], CODEX_PROVIDER_PRETURN_BINDINGS)) {
-    return `${expectedRole} provider gate did not prove the canonical preturn binding set`;
+  if (
+    !Array.isArray(gate["preturnBindings"]) ||
+    !exactKnownSubset(
+      gate["preturnBindings"] as CodexProviderPreturnBinding[],
+      CODEX_PROVIDER_PRETURN_BINDINGS,
+    )
+  ) {
+    return `${expectedRole} provider gate contains an invalid preturn binding observation`;
   }
-  if (!exactOrderedStrings(gate["routes"], CODEX_PROVIDER_ROUTES)) {
-    return `${expectedRole} provider gate did not prove both native and process routes`;
+  if (
+    !Array.isArray(gate["routes"]) ||
+    !exactKnownSubset(gate["routes"] as CodexProviderRoute[], CODEX_PROVIDER_ROUTES)
+  ) {
+    return `${expectedRole} provider gate contains an invalid route observation`;
   }
   if (
     gate["receiptChainVerified"] !== true ||
@@ -704,10 +852,24 @@ function codexProviderGateViolation(
   ) {
     return `${expectedRole} provider gate did not prove its broker, receipt, lifecycle, and release invariants`;
   }
-  if (!exactOrderedStrings(gate["failureControls"], CODEX_PROVIDER_FAILURE_CONTROLS)) {
-    return `${expectedRole} provider gate did not prove the canonical fail-closed controls`;
+  if (
+    !Array.isArray(gate["failureControls"]) ||
+    !exactKnownSubset(
+      gate["failureControls"] as CodexProviderFailureControl[],
+      CODEX_PROVIDER_FAILURE_CONTROLS,
+    )
+  ) {
+    return `${expectedRole} provider gate contains an invalid fail-closed control observation`;
   }
   return undefined;
+}
+
+function combinedObservationsCover<T extends string>(
+  expected: readonly T[],
+  ...observations: (readonly T[])[]
+): boolean {
+  const observed = new Set(observations.flat());
+  return observed.size === expected.length && expected.every((entry) => observed.has(entry));
 }
 
 function codexProviderIdentityViolation(
@@ -829,6 +991,28 @@ export function qualifyCodexNativeAdapter(
     return codexIncompatible(
       "provider-gate-failed",
       "Codex provider gates were not produced by the same exact installed derivation",
+    );
+  }
+  if (
+    !combinedObservationsCover(
+      CODEX_PROVIDER_PRETURN_BINDINGS,
+      input.workerGate.preturnBindings,
+      input.resolverGate.preturnBindings,
+    ) ||
+    !combinedObservationsCover(
+      CODEX_PROVIDER_ROUTES,
+      input.workerGate.routes,
+      input.resolverGate.routes,
+    ) ||
+    !combinedObservationsCover(
+      CODEX_PROVIDER_FAILURE_CONTROLS,
+      input.workerGate.failureControls,
+      input.resolverGate.failureControls,
+    )
+  ) {
+    return codexIncompatible(
+      "provider-gate-failed",
+      "Codex provider gates do not jointly cover every required preturn binding, route, and failure control",
     );
   }
   const qualification = Object.freeze({

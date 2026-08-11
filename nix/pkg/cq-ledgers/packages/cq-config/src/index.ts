@@ -127,6 +127,7 @@ export {
   isManagedWorktreePath,
   qualifyClaudeNativeAdapter,
   authenticateCodexProviderGateObservation,
+  attestCodexInstalledGateTestResult,
   qualifyCodexNativeAdapter,
   isAuthenticatedCodexNativeQualification,
   qualifyPiNativeAdapter,
@@ -134,6 +135,10 @@ export {
   selectQualifiedNativeAdapterIds,
   isNativeAdapterId,
   nativeAdapterIdFor,
+} from "./nativeDispatchQualification.js";
+export type {
+  CodexInstalledGateTestInput,
+  CodexInstalledGateTestResult,
 } from "./nativeDispatchQualification.js";
 export type {
   ManagedWorktreeHandle,
@@ -748,6 +753,7 @@ export {
   interceptCodexRoleBoundaryResult,
   executeCodexRoleBoundary,
   executeInstalledCodexRoleBoundary,
+  isRunnerOwnedCodexRoleBoundaryExecution,
   isRunnerOwnedCodexInstalledRoleBoundaryExecution,
 } from "./codexRoleBoundary.js";
 export type {

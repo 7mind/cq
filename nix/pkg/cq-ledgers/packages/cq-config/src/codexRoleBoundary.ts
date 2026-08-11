@@ -135,11 +135,18 @@ export interface CodexInstalledRoleBoundaryRequest {
 }
 
 const RUNNER_OWNED_INSTALLED_EXECUTIONS = new WeakSet<object>();
+const RUNNER_OWNED_NATIVE_EXECUTIONS = new WeakSet<object>();
 
 export function isRunnerOwnedCodexInstalledRoleBoundaryExecution(
   value: unknown,
 ): value is CodexInstalledRoleBoundaryExecution {
   return typeof value === "object" && value !== null && RUNNER_OWNED_INSTALLED_EXECUTIONS.has(value);
+}
+
+export function isRunnerOwnedCodexRoleBoundaryExecution(
+  value: unknown,
+): value is CodexRoleBoundaryExecutionResult {
+  return typeof value === "object" && value !== null && RUNNER_OWNED_NATIVE_EXECUTIONS.has(value);
 }
 
 export const CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX = "CQ_CODEX_BOUNDARY_DIAGNOSTIC ";
@@ -781,10 +788,12 @@ export function executeCodexRoleBoundary(plan: CodexRoleBoundaryPlan): Promise<D
 export function executeCodexRoleBoundary(
   plan: CodexRoleBoundaryPlan,
   correlationId: string,
+  environment?: NodeJS.ProcessEnv,
 ): Promise<CodexRoleBoundaryExecutionResult>;
 export async function executeCodexRoleBoundary(
   plan: CodexRoleBoundaryPlan,
   correlationId?: string,
+  environment?: NodeJS.ProcessEnv,
 ): Promise<DispatchHandle | CodexRoleBoundaryExecutionResult> {
   type StopCause = "SIGINT" | "SIGTERM" | "timeout";
   let stop: ((cause: StopCause) => void) | undefined;
@@ -881,8 +890,12 @@ export async function executeCodexRoleBoundary(
     try {
       const childEnvironment: NodeJS.ProcessEnv =
         correlationId === undefined
-          ? process.env
-          : { ...process.env, CQ_CODEX_ROLE_CORRELATION_ID: correlationId };
+          ? { ...process.env, ...environment }
+          : {
+              ...process.env,
+              ...environment,
+              CQ_CODEX_ROLE_CORRELATION_ID: correlationId,
+            };
       launched = await launchRegisteredProcessGroup({
         argv,
         cwd: plan.cwd,
@@ -955,6 +968,7 @@ export async function executeCodexRoleBoundary(
       correlationId !== undefined
         ? observedCodexRoleBoundaryResult(outcome.stdout, plan, correlationId, outcome.exitStatus)
         : interceptCodexRoleBoundaryResult(outcome.stdout, plan.expectedHandle);
+    if (correlationId !== undefined) RUNNER_OWNED_NATIVE_EXECUTIONS.add(result);
     const ownedSettlement = await settle();
     if (ownedSettlement.gate.signaled.length > 0) {
       throw new CodexRoleBoundaryError(
