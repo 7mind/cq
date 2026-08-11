@@ -18,7 +18,11 @@ import {
   fsPlanLifecycleFactory,
   gitPlanLifecycleFactory,
 } from "./planLifecyclePersistentAdapters.js";
-import { postgresPlanLifecycleFactory } from "./planLifecyclePostgresAdapter.js";
+import {
+  postgresPlanLifecycleFactory,
+  type PostgresTestPoolCloseable,
+  withImmediatePostgresTestPoolDisposal,
+} from "./planLifecyclePostgresAdapter.js";
 
 // Required-live mode (T1855): when CQ_TEST_REQUIRE_PG=1 selects it, an absent
 // DSN is fatal at module evaluation rather than a silently skipped PostgreSQL
@@ -83,6 +87,26 @@ runPlanLifecycleStoreContract(sqlitePlanLifecycleFactory);
 runPlanLifecycleStoreContract(fsPlanLifecycleFactory);
 runPlanLifecycleStoreContract(gitPlanLifecycleFactory);
 runPlanLifecycleStoreContract(postgresPlanLifecycleFactory);
+
+describe("PostgresLedgerStore test pool disposal", () => {
+  it("forces retained idle sessions back to the exact baseline", async () => {
+    let sessions = 10;
+    const closeOptions: Array<{ readonly timeout?: number } | undefined> = [];
+    const defaultClosePool: PostgresTestPoolCloseable = {
+      async close(options) {
+        closeOptions.push(options);
+        if (options?.timeout === 0) sessions = 8;
+      },
+    };
+
+    await defaultClosePool.close();
+    expect(sessions).toBe(10);
+
+    await withImmediatePostgresTestPoolDisposal(defaultClosePool).close();
+    expect(sessions).toBe(8);
+    expect(closeOptions).toEqual([undefined, { timeout: 0 }]);
+  });
+});
 // Whatever is left WITHOUT the capability keeps explicit progression coverage.
 // Deriving the set from the capability probe (rather than a hand-maintained
 // name list) is what makes T851's move of the Postgres leg out of progression

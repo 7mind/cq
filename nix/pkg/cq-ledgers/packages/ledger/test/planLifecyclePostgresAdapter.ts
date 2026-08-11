@@ -60,8 +60,26 @@ export const T851_PROJECT_KEY_PREFIX = "t851-";
 
 type PostgresLifecycleStore = PostgresLedgerStore & PlanLifecycleStore;
 
+export interface PostgresTestPoolCloseable {
+  close(options?: { readonly timeout?: number }): Promise<void>;
+}
+
+export function withImmediatePostgresTestPoolDisposal<Pool extends PostgresTestPoolCloseable>(
+  pool: Pool,
+): Pool {
+  return new Proxy(pool, {
+    apply: (target, _thisArgument, argumentsList) =>
+      Reflect.apply(target as unknown as (...args: unknown[]) => unknown, target, argumentsList),
+    get: (target, property) => {
+      if (property === "close") return () => target.close({ timeout: 0 });
+      const value = Reflect.get(target, property, target) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
 function openTestPool(dsn: string): SQL {
-  return new SQL({ url: dsn, max: TEST_POOL_MAX });
+  return withImmediatePostgresTestPoolDisposal(new SQL({ url: dsn, max: TEST_POOL_MAX }));
 }
 
 export function postgresTestDsn(): string {
