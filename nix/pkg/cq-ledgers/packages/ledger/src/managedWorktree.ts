@@ -2266,10 +2266,19 @@ export async function resolveManagedWorktreeDispatchBinding(
   const git = deps.git ?? nodeManagedWorktreeGitRunner;
   const repositoryRoot = await resolveRepositoryRoot(git, request.repositoryRoot);
   if (repositoryRoot === null) return null;
-  const live = await listLiveHandlesForTask(
-    registryRoot(repositoryRoot, deps.stateDir),
-    request.taskId,
+  const regRoot = registryRoot(repositoryRoot, deps.stateDir);
+  await fs.mkdir(regRoot, { recursive: true });
+  const lockfile = new Lockfile();
+  const releaseTaskLock = await lockfile.acquire(
+    join(regRoot, PREPARE_LOCKS_DIRNAME),
+    `prepare-${request.taskId}`,
   );
+  let live: StoredHandleRecord[];
+  try {
+    live = await listLiveHandlesForTask(regRoot, request.taskId, async () => undefined);
+  } finally {
+    await releaseTaskLock();
+  }
   const matches = live.filter(
     ({ handle }) =>
       resolve(handle.absolutePath) === resolve(request.worktreePath) &&
