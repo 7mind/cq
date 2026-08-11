@@ -852,7 +852,7 @@ export function createLedgerMcpToolSpecifications(
 
   const reviseOperatorActionTool = tool(
     "revise_operator_action",
-    "Atomically replace one pending or acknowledged operator-action manifest at an exact expected revision only before evidence or, while pending, after a validated terminal failure in the current revision and acknowledgement epoch; reject every other evidence-bearing state, append the complete prior action/task/handoff audit, reset acknowledgement and evidence, refresh the handoff, and return an abandoned strict task to planned.",
+    "Exact-CAS revise before evidence or after a validated terminal failure from the pending action's current revision and acknowledgement epoch. Reject stale or other evidence; snapshot action/task/handoff, reset action state, refresh handoff, and replan an abandoned task.",
     {
       action_id: z.string().regex(/^OA\d+$/),
       expected_revision: z.number().int().positive(),

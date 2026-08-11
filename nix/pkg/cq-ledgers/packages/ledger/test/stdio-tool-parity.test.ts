@@ -1311,7 +1311,7 @@ describe("stdio/direct ledger tool differential contract", () => {
         expect(stdioDescription).toBe(directDescription);
         expect(directDescription).toContain("validated terminal failure");
         expect(directDescription).toContain("current revision and acknowledgement epoch");
-        expect(directDescription).toContain("reject every other evidence-bearing state");
+        expect(directDescription).toContain("Reject stale or other evidence");
         expect(directDescription).not.toContain("pre-evidence operator-action manifest");
       } finally {
         await stdio.close();
