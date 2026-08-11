@@ -606,6 +606,7 @@ EOF
         '';
 
         codexPackage = pkgs.callPackage ./nix/pkg/codex/package.nix { };
+        substitutedCodexRole = pkgs.writeShellScriptBin "cq-codex-role" "exit 0";
 
         # cq — the ledger-suite CLI (`cq init|reset|erase`). A standalone Bun
         # bin (NOT embedded — it constructs an FsLedgerStore directly), modelled
@@ -810,6 +811,7 @@ EOF
             wait "$firstGate"
             PATH=${pkgs.lib.makeBinPath ([ pkgs.bun pkgs.nodejs_22 pkgs.git ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.procps ])}:$PATH \
               CQ_TEST_CODEX_ROLE_EXECUTABLE=$out/bin/cq-codex-role \
+              CQ_TEST_SUBSTITUTED_CODEX_ROLE_EXECUTABLE=${substitutedCodexRole}/bin/cq-codex-role \
               CQ_TEST_CODEX_SANDBOX_EXECUTABLE=${codexPackage}/bin/codex \
               CQ_TEST_GIT_EXECUTABLE=${pkgs.git}/bin/git \
               ${pkgs.lib.optionalString pkgs.stdenv.isLinux "${pkgs.util-linux}/bin/setsid"} \

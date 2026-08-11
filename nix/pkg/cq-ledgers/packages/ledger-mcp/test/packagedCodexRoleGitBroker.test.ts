@@ -40,9 +40,12 @@ import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
 
 const roots: string[] = [];
 const INSTALLED_ROLE = process.env["CQ_TEST_CODEX_ROLE_EXECUTABLE"];
+const SUBSTITUTED_ROLE = process.env["CQ_TEST_SUBSTITUTED_CODEX_ROLE_EXECUTABLE"];
 const INSTALLED_CODEX = process.env["CQ_TEST_CODEX_SANDBOX_EXECUTABLE"];
 const installedGateTest =
-  INSTALLED_ROLE === undefined || INSTALLED_CODEX === undefined ? test.skip : test;
+  INSTALLED_ROLE === undefined || SUBSTITUTED_ROLE === undefined || INSTALLED_CODEX === undefined
+    ? test.skip
+    : test;
 const WORKER_FIXTURE = fileURLToPath(new URL("./fixtures/codexBrokerWorker.ts", import.meta.url));
 const RESOLVER_FIXTURE = fileURLToPath(new URL("./fixtures/codexBrokerResolver.ts", import.meta.url));
 
@@ -362,7 +365,11 @@ describe("packaged cq-codex-role Git broker", () => {
   });
 
   installedGateTest("authenticates installed worker and resolver gates before codex:native registration [Effectual-GoodCommunication, Blackbox-Group]", async () => {
-    if (INSTALLED_ROLE === undefined || INSTALLED_CODEX === undefined) {
+    if (
+      INSTALLED_ROLE === undefined ||
+      SUBSTITUTED_ROLE === undefined ||
+      INSTALLED_CODEX === undefined
+    ) {
       throw new Error("installed worker gate was not selected");
     }
     const repositoryRoot = await mkdtemp(path.join(tmpdir(), "t2042-packaged-role-"));
@@ -947,6 +954,29 @@ describe("packaged cq-codex-role Git broker", () => {
         correlationId: "t2044-substituted-installed-identity",
       }),
     );
+    const pairedExecutableIdentitySubstitutionRejection = await rejectionOf(async () =>
+      executeInstalledCodexRoleBoundary({
+        executable: SUBSTITUTED_ROLE,
+        expectedInstalledIdentity: await expectedInstalledIdentity(SUBSTITUTED_ROLE),
+        invocation: {
+          roleId: "implement-worker",
+          handle: retryHandle,
+          inputCapability: retryPrepared.prepared.inputCapability,
+          resultCapability: retryPrepared.prepared.resultCapability,
+          gitChangeCapability: retryPrepared.prepared.gitChangeCapability!,
+          cwd: resumed.handle.absolutePath,
+          ledgerCwd: repositoryRoot,
+          model: "test-model",
+          reasoningEffort: "high",
+          sandboxMode: "workspace-write",
+          timeoutMs: 30_000,
+        },
+        managedHandle: resumed.handle,
+        expectedChild: retryExpectedChild,
+        expectedPromptProvenance: retryPrepared.prepared.promptProvenance,
+        correlationId: "t2044-paired-executable-identity-substitution",
+      }),
+    );
     const configExports = await import("@cq/config");
     expect({
       fabricatedConsumedRejected: rejected(() =>
@@ -992,6 +1022,19 @@ describe("packaged cq-codex-role Git broker", () => {
         substitutedIdentityRejection.message.includes(
           "installed boundary identity differs from the independently supplied expected derivation",
         ),
+      pairedExecutableIdentitySubstitutionRejected:
+        pairedExecutableIdentitySubstitutionRejection instanceof Error &&
+        pairedExecutableIdentitySubstitutionRejection.message.includes(
+          "installed boundary identity differs from the trusted runner derivation",
+        ),
+      actualCodexWritableSandboxPositive: sandboxControls.every((control) => {
+        const observed = control as unknown as Record<string, unknown>;
+        return (
+          observed["writableSandboxExitStatus"] === 0 &&
+          observed["writableSandboxRefMatches"] === true &&
+          observed["deniedSandboxRefAbsent"] === true
+        );
+      }),
     }).toEqual({
       fabricatedConsumedRejected: true,
       fabricatedReleaseRejected: true,
@@ -1002,6 +1045,8 @@ describe("packaged cq-codex-role Git broker", () => {
       exactInstalledIdentity: true,
       runnerCapturedEffectivePreturn: true,
       substitutedExpectedIdentityRejected: true,
+      pairedExecutableIdentitySubstitutionRejected: true,
+      actualCodexWritableSandboxPositive: true,
     });
     expect(qualification).toMatchObject({
       status: "qualified",
