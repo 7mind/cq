@@ -1,7 +1,8 @@
 import * as path from "node:path";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import {
   launchRegisteredProcessGroup,
   settleProcessGroups,
@@ -159,7 +160,6 @@ export interface CodexInstalledRoleBoundaryExecution {
 
 export interface CodexInstalledRoleBoundaryRequest {
   readonly executable: string;
-  readonly expectedInstalledIdentity: CodexInstalledIdentity;
   readonly invocation: CodexRoleBoundaryInvocation;
   readonly managedHandle: ManagedWorktreeHandle;
   readonly expectedChild: { readonly childId: string; readonly runId: string };
@@ -177,10 +177,12 @@ export interface CodexProviderSandboxControl {
   readonly route: CodexProviderSandboxControlRoute;
   readonly managedHandle: ManagedWorktreeHandle;
   readonly codexExecutable: string;
-  readonly unsandboxedExitStatus: 0;
-  readonly sandboxedExitStatus: number;
-  readonly sandboxedStderrDigest: string;
-  readonly sandboxedRefAbsent: true;
+  readonly writableSandboxExitStatus: 0;
+  readonly writableSandboxStdoutDigest: string;
+  readonly writableSandboxRefMatches: true;
+  readonly deniedSandboxExitStatus: number;
+  readonly deniedSandboxStderrDigest: string;
+  readonly deniedSandboxRefAbsent: true;
 }
 
 export interface CodexProviderSandboxControlRequest {
@@ -1120,6 +1122,26 @@ function installedIdentityEqual(
   );
 }
 
+async function trustedRunnerInstalledIdentity(): Promise<CodexInstalledIdentity> {
+  const modulePath = await realpath(fileURLToPath(import.meta.url));
+  const storePath = path.resolve(path.dirname(modulePath), "..", "..", "..", "..", "..");
+  const executablePath = path.join(storePath, "bin", "cq-codex-role");
+  const executable = await realpath(executablePath);
+  if (
+    !/^\/nix\/store\/[0-9a-z]{32}-cq-[^/]+$/.test(storePath) ||
+    executable !== executablePath
+  ) {
+    throw new CodexRoleBoundaryError(
+      "installed boundary module does not belong to the trusted cq runner derivation",
+    );
+  }
+  return Object.freeze({
+    storePath,
+    executablePath,
+    executableDigest: createHash("sha256").update(await readFile(executablePath)).digest("hex"),
+  });
+}
+
 function assertInstalledPreturnObservation(
   value: unknown,
   request: CodexInstalledRoleBoundaryRequest,
@@ -1246,6 +1268,7 @@ async function runInstalledRoleProcess(input: {
 export async function executeInstalledCodexRoleBoundary(
   request: CodexInstalledRoleBoundaryRequest,
 ): Promise<CodexInstalledRoleBoundaryExecution> {
+  const expectedInstalledIdentity = await trustedRunnerInstalledIdentity();
   const executable = await realpath(requiredString(request.executable, "executable"));
   const storePath = path.dirname(path.dirname(executable));
   if (
@@ -1262,9 +1285,9 @@ export async function executeInstalledCodexRoleBoundary(
     executablePath: executable,
     executableDigest: createHash("sha256").update(await readFile(executable)).digest("hex"),
   });
-  if (!installedIdentityEqual(installedIdentity, request.expectedInstalledIdentity)) {
+  if (!installedIdentityEqual(installedIdentity, expectedInstalledIdentity)) {
     throw new CodexRoleBoundaryError(
-      "installed boundary identity differs from the independently supplied expected derivation",
+      "installed boundary identity differs from the trusted runner derivation",
     );
   }
   const roleId = assertCodexDispatchedRoleId(request.invocation.roleId);
@@ -1359,7 +1382,7 @@ export async function executeInstalledCodexRoleBoundary(
     effect,
     executable,
     installedIdentity,
-    expectedInstalledIdentity: Object.freeze({ ...request.expectedInstalledIdentity }),
+    expectedInstalledIdentity,
     effectivePreturn,
     observedFailureControls,
     handle: Object.freeze({ ...request.invocation.handle }),
@@ -1417,9 +1440,9 @@ async function requireControlSuccess(
 }
 
 /**
- * Execute the valid Git metadata mutation both without confinement (positive
- * control in an isolated repository) and through Codex's actual workspace
- * sandbox (negative control in the exact managed worktree).
+ * Execute the same valid Git metadata mutation twice through the actual Codex
+ * sandbox in the exact managed worktree. The paired invocations differ only in
+ * whether the repository metadata directory is writable or read-only.
  */
 export async function executeCodexProviderSandboxControl(
   request: CodexProviderSandboxControlRequest,
@@ -1438,35 +1461,33 @@ export async function executeCodexProviderSandboxControl(
       "sandbox controls require exact installed Nix Codex and Git executables",
     );
   }
-  const controlRoot = await mkdtemp(path.join(tmpdir(), "cq-codex-git-control-"));
+  const managedHead = await requireControlSuccess(
+    gitExecutable,
+    ["rev-parse", "HEAD"],
+    request.managedHandle.absolutePath,
+  );
+  const refName =
+    `refs/heads/cq-sandbox-${request.roleId === "implement-worker" ? "worker" : "resolver"}-` +
+    request.route;
+  const sandboxArguments = (gitMetadataPermission: "read" | "write"): readonly string[] => [
+    "-c",
+    'default_permissions="qualification"',
+    "-c",
+    `permissions.qualification.filesystem={":minimal"="read",` +
+      `${JSON.stringify(request.managedHandle.absolutePath)}="write",` +
+      `${JSON.stringify(path.join(request.managedHandle.repositoryRoot, ".git"))}=${JSON.stringify(gitMetadataPermission)}}`,
+    "sandbox",
+    "-P",
+    "qualification",
+    "-C",
+    request.managedHandle.absolutePath,
+    "--",
+    gitExecutable,
+    "update-ref",
+    refName,
+    managedHead,
+  ];
   try {
-    await requireControlSuccess(gitExecutable, ["init", "-q"], controlRoot);
-    await writeFile(path.join(controlRoot, "tracked"), "control\n");
-    await requireControlSuccess(gitExecutable, ["add", "tracked"], controlRoot);
-    await requireControlSuccess(gitExecutable, ["commit", "-q", "-m", "control"], controlRoot);
-    const controlHead = await requireControlSuccess(gitExecutable, ["rev-parse", "HEAD"], controlRoot);
-    await requireControlSuccess(
-      gitExecutable,
-      ["update-ref", "refs/heads/control-unsandboxed", controlHead],
-      controlRoot,
-    );
-    const unsandboxedRef = await requireControlSuccess(
-      gitExecutable,
-      ["rev-parse", "refs/heads/control-unsandboxed"],
-      controlRoot,
-    );
-    if (unsandboxedRef !== controlHead) {
-      throw new CodexRoleBoundaryError("unsandboxed Git metadata positive control changed identity");
-    }
-
-    const managedHead = await requireControlSuccess(
-      gitExecutable,
-      ["rev-parse", "HEAD"],
-      request.managedHandle.absolutePath,
-    );
-    const refName =
-      `refs/heads/cq-sandbox-${request.roleId === "implement-worker" ? "worker" : "resolver"}-` +
-      request.route;
     const before = await runControlCommand(
       gitExecutable,
       ["show-ref", "--verify", "--quiet", refName],
@@ -1475,26 +1496,43 @@ export async function executeCodexProviderSandboxControl(
     if (before.exitStatus === 0) {
       throw new CodexRoleBoundaryError(`sandbox control target ${refName} already exists`);
     }
-    const sandboxed = await runControlCommand(
+    const writableSandbox = await runControlCommand(
       codexExecutable,
-      [
-        "-c",
-        'default_permissions="qualification"',
-        "-c",
-        `permissions.qualification.filesystem={":minimal"="read",` +
-          `${JSON.stringify(request.managedHandle.absolutePath)}="write",` +
-          `${JSON.stringify(path.join(request.managedHandle.repositoryRoot, ".git"))}="read"}`,
-        "sandbox",
-        "-P",
-        "qualification",
-        "-C",
-        request.managedHandle.absolutePath,
-        "--",
-        gitExecutable,
-        "update-ref",
-        refName,
-        managedHead,
-      ],
+      sandboxArguments("write"),
+      request.managedHandle.absolutePath,
+    );
+    if (writableSandbox.exitStatus !== 0) {
+      throw new CodexRoleBoundaryError(
+        `Codex ${request.roleId}/${request.route} writable-metadata sandbox rejected valid Git mutation: ` +
+          writableSandbox.stderr.trim(),
+      );
+    }
+    const writableRef = await requireControlSuccess(
+      gitExecutable,
+      ["rev-parse", refName],
+      request.managedHandle.absolutePath,
+    );
+    if (writableRef !== managedHead) {
+      throw new CodexRoleBoundaryError(
+        `Codex ${request.roleId}/${request.route} writable-metadata sandbox changed ref identity`,
+      );
+    }
+    await requireControlSuccess(
+      gitExecutable,
+      ["update-ref", "-d", refName],
+      request.managedHandle.absolutePath,
+    );
+    const reset = await runControlCommand(
+      gitExecutable,
+      ["show-ref", "--verify", "--quiet", refName],
+      request.managedHandle.absolutePath,
+    );
+    if (reset.exitStatus === 0) {
+      throw new CodexRoleBoundaryError(`sandbox control target ${refName} survived positive reset`);
+    }
+    const deniedSandbox = await runControlCommand(
+      codexExecutable,
+      sandboxArguments("read"),
       request.managedHandle.absolutePath,
     );
     const after = await runControlCommand(
@@ -1502,7 +1540,7 @@ export async function executeCodexProviderSandboxControl(
       ["show-ref", "--verify", "--quiet", refName],
       request.managedHandle.absolutePath,
     );
-    if (sandboxed.exitStatus === 0 || after.exitStatus === 0) {
+    if (deniedSandbox.exitStatus === 0 || after.exitStatus === 0) {
       throw new CodexRoleBoundaryError(
         `Codex ${request.roleId}/${request.route} sandbox admitted direct Git metadata mutation`,
       );
@@ -1514,14 +1552,22 @@ export async function executeCodexProviderSandboxControl(
       route: request.route,
       managedHandle: request.managedHandle,
       codexExecutable,
-      unsandboxedExitStatus: 0 as const,
-      sandboxedExitStatus: sandboxed.exitStatus,
-      sandboxedStderrDigest: createHash("sha256").update(sandboxed.stderr).digest("hex"),
-      sandboxedRefAbsent: true as const,
+      writableSandboxExitStatus: 0 as const,
+      writableSandboxStdoutDigest: createHash("sha256")
+        .update(writableSandbox.stdout)
+        .digest("hex"),
+      writableSandboxRefMatches: true as const,
+      deniedSandboxExitStatus: deniedSandbox.exitStatus,
+      deniedSandboxStderrDigest: createHash("sha256").update(deniedSandbox.stderr).digest("hex"),
+      deniedSandboxRefAbsent: true as const,
     });
     RUNNER_OWNED_SANDBOX_CONTROLS.add(result);
     return result;
   } finally {
-    await rm(controlRoot, { recursive: true, force: true });
+    await runControlCommand(
+      gitExecutable,
+      ["update-ref", "-d", refName],
+      request.managedHandle.absolutePath,
+    );
   }
 }

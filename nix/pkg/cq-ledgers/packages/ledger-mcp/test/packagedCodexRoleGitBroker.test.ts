@@ -19,7 +19,6 @@ import {
   implementConflictResolverSidecar,
   qualifyCodexNativeAdapter,
   sequentialDispatchRandomBytes,
-  type CodexInstalledIdentity,
   type CodexInstalledRoleBoundaryExecution,
   type CodexRoleBoundaryExecutionResult,
   type ConsumedDispatchResult,
@@ -120,14 +119,6 @@ function artifactStore(
       catalogHash: "b".repeat(64),
     }),
     readRole: () => ({ metadata, bytes }),
-  };
-}
-
-async function expectedInstalledIdentity(executable: string): Promise<CodexInstalledIdentity> {
-  return {
-    storePath: path.dirname(path.dirname(executable)),
-    executablePath: executable,
-    executableDigest: createHash("sha256").update(await readFile(executable)).digest("hex"),
   };
 }
 
@@ -282,7 +273,6 @@ async function runPackagedResolverGate<R extends "native" | "process">(input: {
           )
         : await executeInstalledCodexRoleBoundary({
             executable: INSTALLED_ROLE,
-            expectedInstalledIdentity: await expectedInstalledIdentity(INSTALLED_ROLE),
             invocation,
             managedHandle,
             expectedChild,
@@ -693,7 +683,6 @@ describe("packaged cq-codex-role Git broker", () => {
     const retryStderrPath = path.join(fixtureRoot, "retry.stderr");
     const retryExecution = await executeInstalledCodexRoleBoundary({
       executable: INSTALLED_ROLE,
-      expectedInstalledIdentity: await expectedInstalledIdentity(INSTALLED_ROLE),
       invocation: {
         roleId: "implement-worker",
         handle: retryHandle,
@@ -927,37 +916,9 @@ describe("packaged cq-codex-role Git broker", () => {
     const expectedInstalledDigest = createHash("sha256")
       .update(await readFile(INSTALLED_ROLE))
       .digest("hex");
-    const substitutedIdentityRejection = await rejectionOf(() =>
-      executeInstalledCodexRoleBoundary({
-        executable: INSTALLED_ROLE,
-        expectedInstalledIdentity: {
-          storePath: path.dirname(path.dirname(INSTALLED_ROLE)),
-          executablePath: INSTALLED_ROLE,
-          executableDigest: "0".repeat(64),
-        },
-        invocation: {
-          roleId: "implement-worker",
-          handle: retryHandle,
-          inputCapability: retryPrepared.prepared.inputCapability,
-          resultCapability: retryPrepared.prepared.resultCapability,
-          gitChangeCapability: retryPrepared.prepared.gitChangeCapability!,
-          cwd: resumed.handle.absolutePath,
-          ledgerCwd: repositoryRoot,
-          model: "test-model",
-          reasoningEffort: "high",
-          sandboxMode: "workspace-write",
-          timeoutMs: 30_000,
-        },
-        managedHandle: resumed.handle,
-        expectedChild: retryExpectedChild,
-        expectedPromptProvenance: retryPrepared.prepared.promptProvenance,
-        correlationId: "t2044-substituted-installed-identity",
-      }),
-    );
-    const pairedExecutableIdentitySubstitutionRejection = await rejectionOf(async () =>
+    const pairedExecutableIdentitySubstitutionRejection = await rejectionOf(() =>
       executeInstalledCodexRoleBoundary({
         executable: SUBSTITUTED_ROLE,
-        expectedInstalledIdentity: await expectedInstalledIdentity(SUBSTITUTED_ROLE),
         invocation: {
           roleId: "implement-worker",
           handle: retryHandle,
@@ -1017,11 +978,6 @@ describe("packaged cq-codex-role Git broker", () => {
       runnerCapturedEffectivePreturn:
         "effectivePreturn" in retryExecution &&
         "expectedInstalledIdentity" in retryExecution,
-      substitutedExpectedIdentityRejected:
-        substitutedIdentityRejection instanceof Error &&
-        substitutedIdentityRejection.message.includes(
-          "installed boundary identity differs from the independently supplied expected derivation",
-        ),
       pairedExecutableIdentitySubstitutionRejected:
         pairedExecutableIdentitySubstitutionRejection instanceof Error &&
         pairedExecutableIdentitySubstitutionRejection.message.includes(
@@ -1044,7 +1000,6 @@ describe("packaged cq-codex-role Git broker", () => {
       crossHandleTaskRepositoryReplayRejected: true,
       exactInstalledIdentity: true,
       runnerCapturedEffectivePreturn: true,
-      substitutedExpectedIdentityRejected: true,
       pairedExecutableIdentitySubstitutionRejected: true,
       actualCodexWritableSandboxPositive: true,
     });

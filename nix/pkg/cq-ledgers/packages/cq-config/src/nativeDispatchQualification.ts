@@ -329,10 +329,12 @@ function deriveInstalledGateEvidence(input: CodexProviderGateAuthenticationInput
       !isRunnerOwnedCodexProviderSandboxControl(control) ||
       control.roleId !== input.execution.roleId ||
       !sameManagedHandle(control.managedHandle, input.execution.managedHandle) ||
-      control.unsandboxedExitStatus !== 0 ||
-      control.sandboxedExitStatus === 0 ||
-      control.sandboxedRefAbsent !== true ||
-      !/^[0-9a-f]{64}$/.test(control.sandboxedStderrDigest)
+      control.writableSandboxExitStatus !== 0 ||
+      control.writableSandboxRefMatches !== true ||
+      !/^[0-9a-f]{64}$/.test(control.writableSandboxStdoutDigest) ||
+      control.deniedSandboxExitStatus === 0 ||
+      control.deniedSandboxRefAbsent !== true ||
+      !/^[0-9a-f]{64}$/.test(control.deniedSandboxStderrDigest)
     ) {
       throw new Error("Codex installed gate lacks a runner-owned discriminating sandbox control");
     }
