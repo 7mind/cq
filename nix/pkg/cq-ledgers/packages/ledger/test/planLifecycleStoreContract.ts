@@ -266,6 +266,7 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
     `PlanLifecycleStore contract — ${factory.name} (${factory.classification})`,
     () => {
       if (factory.name === "PostgresLedgerStore (two connections)") {
+        describe("PostgreSQL operator-action lifecycle", () => {
         let operatorActionFixture: PlanLifecycleContractFixture;
         beforeAll(async () => {
           operatorActionFixture = await factory.build();
@@ -521,12 +522,13 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
               }
               const taskId = taskRef.slice("tasks:".length);
               expect(first.fetchItem("tasks", taskId).status).toBe("done");
-              expect(first.fetchItem("operator-actions", created.action.id).status).toBe(
+              expect(first.fetchItem("operatorActions", created.action.id).status).toBe(
                 "completed",
               );
           },
           timeout,
         );
+        });
       }
 
       it(
