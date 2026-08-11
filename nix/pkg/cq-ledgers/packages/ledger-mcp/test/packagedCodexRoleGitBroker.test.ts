@@ -920,6 +920,33 @@ describe("packaged cq-codex-role Git broker", () => {
     const expectedInstalledDigest = createHash("sha256")
       .update(await readFile(INSTALLED_ROLE))
       .digest("hex");
+    const substitutedIdentityRejection = await rejectionOf(() =>
+      executeInstalledCodexRoleBoundary({
+        executable: INSTALLED_ROLE,
+        expectedInstalledIdentity: {
+          storePath: path.dirname(path.dirname(INSTALLED_ROLE)),
+          executablePath: INSTALLED_ROLE,
+          executableDigest: "0".repeat(64),
+        },
+        invocation: {
+          roleId: "implement-worker",
+          handle: retryHandle,
+          inputCapability: retryPrepared.prepared.inputCapability,
+          resultCapability: retryPrepared.prepared.resultCapability,
+          gitChangeCapability: retryPrepared.prepared.gitChangeCapability!,
+          cwd: resumed.handle.absolutePath,
+          ledgerCwd: repositoryRoot,
+          model: "test-model",
+          reasoningEffort: "high",
+          sandboxMode: "workspace-write",
+          timeoutMs: 30_000,
+        },
+        managedHandle: resumed.handle,
+        expectedChild: retryExpectedChild,
+        expectedPromptProvenance: retryPrepared.prepared.promptProvenance,
+        correlationId: "t2044-substituted-installed-identity",
+      }),
+    );
     const configExports = await import("@cq/config");
     expect({
       fabricatedConsumedRejected: rejected(() =>
@@ -960,6 +987,11 @@ describe("packaged cq-codex-role Git broker", () => {
       runnerCapturedEffectivePreturn:
         "effectivePreturn" in retryExecution &&
         "expectedInstalledIdentity" in retryExecution,
+      substitutedExpectedIdentityRejected:
+        substitutedIdentityRejection instanceof Error &&
+        substitutedIdentityRejection.message.includes(
+          "installed boundary identity differs from the independently supplied expected derivation",
+        ),
     }).toEqual({
       fabricatedConsumedRejected: true,
       fabricatedReleaseRejected: true,
@@ -969,6 +1001,7 @@ describe("packaged cq-codex-role Git broker", () => {
       crossHandleTaskRepositoryReplayRejected: true,
       exactInstalledIdentity: true,
       runnerCapturedEffectivePreturn: true,
+      substitutedExpectedIdentityRejected: true,
     });
     expect(qualification).toMatchObject({
       status: "qualified",
