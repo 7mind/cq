@@ -35,6 +35,7 @@ import {
   parseWorktreeManageInput,
   registerLedgerStdioTools,
   TASKS_LEDGER,
+  WORKTREE_MANAGE_TOOL_SPEC,
   type LedgerStore,
   type LedgerToolName,
   type ManagedWorktreeHandle,
@@ -360,6 +361,15 @@ function wireHandle(version: 1 | 2) {
 }
 
 describe("worktree_manage schema", () => {
+  it("publishes paired prepare-only adoption coordinates on the public tool schema", () => {
+    expect(WORKTREE_MANAGE_TOOL_SPEC.description).toContain("legacy");
+    expect(WORKTREE_MANAGE_TOOL_SPEC.description).toContain("adoptWorktreePath");
+    expect(WORKTREE_MANAGE_TOOL_SPEC.description).toContain("expectedHead");
+    expect(Object.keys(WORKTREE_MANAGE_TOOL_SPEC.inputSchema)).toEqual(
+      expect.arrayContaining(["adoptWorktreePath", "expectedHead"]),
+    );
+  });
+
   it("rejects mixed prepare/release fields", () => {
     expect(() =>
       parseWorktreeManageInput({

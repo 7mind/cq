@@ -4,7 +4,13 @@
 > (or resume-by-handle with the retained opaque handle). Use the returned
 > absolute path as advisory `worktreePath` / coordinates and as the child `cwd`.
 > Retain the handle across criticism rounds; on restart recover via prepare's
-> resume-required response. Then compose refs only:
+> resume-required response. For an exact pre-registry tree only, use handle-free
+> prepare with paired
+> `adoptWorktreePath: <canonical .claude/worktrees/implement-<taskId>>` and
+> `expectedHead: <observed full HEAD>`; never combine them with a handle, and
+> never supply activity-fence, registry, reconciliation, Git, or install
+> authority. Retain the returned opaque handle and refuse launch when adoption
+> refuses. Then compose refs only:
 > `{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, priorReviewId?, guidance?, resolvedModel? }`,
 > then call `prepare_dispatch`. The server reads the task/review narrative and
 > validates the assembled input against the role's typed `inputSchema`. Dispatch

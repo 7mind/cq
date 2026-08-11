@@ -108,6 +108,8 @@ export interface PiNativeWorktreeManagePort {
     readonly handle?: PiNativeManagedWorktreeHandle;
     readonly allowResumeRequired?: boolean;
     readonly priorResultCommit?: string | null;
+    readonly adoptWorktreePath?: string;
+    readonly expectedHead?: string;
   }): Promise<PiNativeWorktreePrepareResult>;
   release(request: {
     readonly handle: PiNativeManagedWorktreeHandle;
@@ -214,9 +216,21 @@ export async function bindPiNativeWorktree(input: {
   readonly handle?: PiNativeManagedWorktreeHandle;
   readonly allowResumeRequired?: boolean;
   readonly priorResultCommit?: string | null;
+  readonly adoptWorktreePath?: string;
+  readonly expectedHead?: string;
   /** Observed HEAD after prepare; required for preflight. */
   readonly observeHead: (absolutePath: string) => Promise<string> | string;
 }): Promise<PiNativeWorktreeBindResult> {
+  const adoptionFieldCount =
+    Number(input.adoptWorktreePath !== undefined) + Number(input.expectedHead !== undefined);
+  if (adoptionFieldCount === 1 || (adoptionFieldCount > 0 && input.handle !== undefined)) {
+    return Object.freeze({
+      status: "refused" as const,
+      reason: "adoption-invalid",
+      detail:
+        "adoptWorktreePath and expectedHead must appear together on handle-free prepare",
+    });
+  }
   // worktree_manage requires taskId even on resume-by-handle; prefer explicit,
   // else take it from the opaque handle when present.
   const taskId =
@@ -234,6 +248,10 @@ export async function bindPiNativeWorktree(input: {
     ...(input.priorResultCommit === undefined
       ? {}
       : { priorResultCommit: input.priorResultCommit }),
+    ...(input.adoptWorktreePath === undefined
+      ? {}
+      : { adoptWorktreePath: input.adoptWorktreePath }),
+    ...(input.expectedHead === undefined ? {} : { expectedHead: input.expectedHead }),
   });
 
   if (prepared.status === "refused") {

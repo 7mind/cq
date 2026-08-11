@@ -213,6 +213,28 @@ describe("T1699 Pi native worktree_manage consumption", () => {
     ]);
   });
 
+  test("T2052 refuses incomplete adoption coordinates and handle mixing before prepare", async () => {
+    for (const invalid of [
+      { adoptWorktreePath: ADOPTED_PATH },
+      { expectedHead: HEAD },
+      { adoptWorktreePath: ADOPTED_PATH, expectedHead: HEAD, handle: adoptedHandle() },
+    ]) {
+      const p = port({ preparedHandle: adoptedHandle() });
+      const input = {
+        port: p,
+        taskId: "T1207",
+        baseCommit: BASE,
+        observeHead: () => HEAD,
+        ...invalid,
+      } as Parameters<typeof bindPiNativeWorktree>[0];
+      expect(await bindPiNativeWorktree(input)).toMatchObject({
+        status: "refused",
+        reason: "adoption-invalid",
+      });
+      expect(p.prepares).toBe(0);
+    }
+  });
+
   test("T2047 refuses unknown, mixed, traversal, foreign, and tampered v2 handles", () => {
     const valid = adoptedHandle();
     const invalidHandles = [

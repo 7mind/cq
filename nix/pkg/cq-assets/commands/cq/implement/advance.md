@@ -51,6 +51,16 @@ ledger, or merge; stop after two consecutive read-only passes.
   discard worker partial/WIP state. Consume the worker's required
   `actualWorktreePath` on output as the authoritative location; merge by
   `resultCommit` SHA.
+- **Exact pre-registry adoption.** When, and only when, a task already has a
+  pre-registry tree at the canonical
+  `<repositoryRoot>/.claude/worktrees/implement-<taskId>` path on branch
+  `implement/<taskId>`, observe its full `HEAD` and use handle-free prepare:
+  `worktree_manage({ operation: "prepare", taskId, baseCommit, adoptWorktreePath: <exact canonical path>, expectedHead: <observed full HEAD> })`.
+  Supply `adoptWorktreePath` and `expectedHead` only as a pair and never with
+  a handle. Supply no activity fence, registry, reconciliation, Git, or install
+  authority; the production server constructs those internally. A mismatch or
+  refusal blocks the `wip` transition and launch. Retain the returned opaque
+  handle for all later resume, criticism, conflict, and release operations.
 - Persist every child summary and available raw transcript with `cq log put`,
   attach their logical paths to the affected ledger item, and never expose
   capabilities or secrets. Before piping a transcript, require `test -s
@@ -103,9 +113,11 @@ If no task is ready and no task awaits review or merge, report and stop.
 1. Resolve the intended base as the current full main tip with
    `git rev-parse --verify` and require `git cat-file -t` to return `commit`.
 2. Call `worktree_manage({ operation: "prepare", taskId, baseCommit })` (or
-   resume-by-handle with the retained handle / allowResumeRequired recovery).
-   On resume-required, retain the returned handle and path and continue on that
-   tree — do not mint a second tree for the same task.
+   the exact pre-registry handle-free prepare above, or resume-by-handle with
+   the retained handle / allowResumeRequired recovery). On adoption or
+   resume-required, retain the returned handle and path and continue on that
+   tree — do not mint a second tree for the same task. Never use adoption for
+   any non-canonical path, branch, task identity, or changed `HEAD`.
 3. Accept only verified dependency-base evidence from prepare. Missing or
    unresolvable dependency `resultCommit` evidence blocks dispatch without a
    `wip` write; it becomes actionable after the ledger object is corrected.

@@ -383,7 +383,9 @@ const WORKTREE_MANAGE_DESCRIPTION =
   "Prepare, observe an active rebase conflict, or release ONE managed implement-flow worktree. " +
   "`operation=prepare` mints a fresh UUIDv7-named tree under `.claude/worktrees/` " +
   "(or resumes by optional handle / returns typed resume-required when a live " +
-  "tree already exists). Dependency result-commit closure is derived " +
+  "tree already exists). A handle-free prepare may adopt one exact legacy tree " +
+  "only when paired `adoptWorktreePath` and `expectedHead` coordinates are supplied; " +
+  "the server constructs adoption authority internally. Dependency result-commit closure is derived " +
   "authoritatively from `taskId` and the bound ledger — callers MUST NOT supply " +
   "dependency evidence. `operation=release` performs guarded teardown " +
   "(dirty/WIP/terminal checks) and is idempotent once released. Returns a typed " +
