@@ -35,6 +35,15 @@ const installedGateTest = INSTALLED_ROLE === undefined ? test.skip : test;
 const WORKER_FIXTURE = fileURLToPath(new URL("./fixtures/codexBrokerWorker.ts", import.meta.url));
 const RESOLVER_FIXTURE = fileURLToPath(new URL("./fixtures/codexBrokerResolver.ts", import.meta.url));
 
+function rejected(action: () => unknown): boolean {
+  try {
+    action();
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 async function git(cwd: string, args: readonly string[]): Promise<string> {
   const child = Bun.spawn([process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git", ...args], {
     cwd,
@@ -530,7 +539,7 @@ describe("packaged cq-codex-role Git broker", () => {
       release: released,
     });
     const resolverGate = await runPackagedResolverGate();
-    const qualification = qualifyCodexNativeAdapter({
+    const replayedQualification = qualifyCodexNativeAdapter({
       cwd: managed.handle.absolutePath,
       handle: managed.handle,
       repositoryRoot,
@@ -538,10 +547,40 @@ describe("packaged cq-codex-role Git broker", () => {
       workerGate,
       resolverGate,
     });
-    expect(qualification).toMatchObject({
-      status: "qualified",
-      adapterId: "codex:native",
-      defectClosed: "D307",
+    const installedIdentity = (
+      execution as unknown as {
+        installedIdentity?: {
+          storePath: string;
+          executablePath: string;
+          executableDigest: string;
+        };
+      }
+    ).installedIdentity;
+    expect({
+      fabricatedConsumedRejected: rejected(() =>
+        authenticateCodexProviderGateObservation({
+          execution,
+          consumed: { ...consumed },
+          release: released,
+        }),
+      ),
+      fabricatedReleaseRejected: rejected(() =>
+        authenticateCodexProviderGateObservation({
+          execution,
+          consumed,
+          release: { ...released, handle: { ...released.handle } },
+        }),
+      ),
+      crossRepositoryTaskReplayRejected: replayedQualification.status === "incompatible",
+      exactInstalledIdentity:
+        installedIdentity?.storePath === path.dirname(path.dirname(INSTALLED_ROLE)) &&
+        installedIdentity.executablePath === execution.executable &&
+        /^[0-9a-f]{64}$/.test(installedIdentity.executableDigest),
+    }).toEqual({
+      fabricatedConsumedRejected: true,
+      fabricatedReleaseRejected: true,
+      crossRepositoryTaskReplayRejected: true,
+      exactInstalledIdentity: true,
     });
     const registry = buildPositiveOnlyDispatchRegistry({
       adapters: [
@@ -549,8 +588,8 @@ describe("packaged cq-codex-role Git broker", () => {
           throw new Error("qualification probe does not launch the adapter");
         }),
       ],
-      nativeQualifications: [qualification],
+      nativeQualifications: [replayedQualification],
     });
-    expect(registry.has("codex:native")).toBe(true);
+    expect(registry.has("codex:native")).toBe(false);
   }, 30_000);
 });
