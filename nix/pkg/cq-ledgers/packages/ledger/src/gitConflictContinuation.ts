@@ -476,7 +476,7 @@ async function assertHermeticConfiguration(
 ): Promise<void> {
   const configured = await runGit(authorization.worktreePath, [
     "config",
-    "--local",
+    "--includes",
     "--get-regexp",
     "^(filter\\.|merge\\..*\\.driver$)",
   ]);
@@ -1270,8 +1270,8 @@ export async function validateGitConflictContinuationResultEvidence(
   if (authorization.roleId !== "implement-conflict-resolver") {
     throw new Error("conflict receipt verification requires a resolver authorization");
   }
-  if (evidence.resultCommit === null || !FULL_OID.test(evidence.resultCommit)) {
-    throw new Error("conflict receipt chain requires a full resultCommit oid");
+  if (evidence.resultCommit !== null && !FULL_OID.test(evidence.resultCommit)) {
+    throw new Error("conflict receipt resultCommit must be null or a full oid");
   }
   if (evidence.taskId !== authorization.taskId || evidence.branch !== authorization.branch) {
     throw new Error("conflict receipt result identity does not match the dispatch binding");
@@ -1279,12 +1279,15 @@ export async function validateGitConflictContinuationResultEvidence(
   if (!isAbsolute(evidence.actualWorktreePath) || resolve(evidence.actualWorktreePath) !== resolve(authorization.worktreePath)) {
     throw new Error("conflict receipt worktree path does not match the dispatch binding");
   }
-  if (evidence.conflictReceipts.length === 0) {
-    throw new Error("broker-capable resolver result requires continuation receipts");
-  }
   const durable = await durableReceipts(authorization, deps);
   if (canonical(durable) !== canonical(evidence.conflictReceipts)) {
     throw new Error("conflict receipt chain omits, invents, or substitutes a durable operation");
+  }
+  if (evidence.conflictReceipts.length === 0) {
+    if (evidence.resultCommit !== null || evidence.filesResolved.length !== 0) {
+      throw new Error("an empty conflict receipt chain can describe only a pre-mutation failure");
+    }
+    return;
   }
   let previous: string | undefined;
   const paths = new Set<string>();
@@ -1315,11 +1318,27 @@ export async function validateGitConflictContinuationResultEvidence(
     previous = receipt.newHead;
   }
   const final = evidence.conflictReceipts.at(-1)!;
-  if (final.outcome.kind !== "terminal" || final.newHead !== evidence.resultCommit) {
-    throw new Error("conflict receipt chain is not terminal at resultCommit");
-  }
-  if ((await checkedGit(authorization.worktreePath, ["rev-parse", "HEAD"])).toString().trim() !== evidence.resultCommit) {
-    throw new Error("conflict receipt resultCommit is not the worktree tip");
+  const actualHead = (await checkedGit(authorization.worktreePath, ["rev-parse", "HEAD"]))
+    .toString()
+    .trim();
+  if (evidence.resultCommit === null) {
+    if (final.outcome.kind !== "conflict") {
+      throw new Error("a failed conflict result cannot conceal a terminal continuation receipt");
+    }
+    if (actualHead !== final.newHead) {
+      throw new Error("failed conflict receipt chain does not end at the worktree tip");
+    }
+    const observed = await observeManagedRebaseConflict(authorization, deps);
+    if (canonical(observed) !== canonical(final.outcome.state)) {
+      throw new Error("failed conflict receipt chain does not end at the live conflict state");
+    }
+  } else {
+    if (final.outcome.kind !== "terminal" || final.newHead !== evidence.resultCommit) {
+      throw new Error("conflict receipt chain is not terminal at resultCommit");
+    }
+    if (actualHead !== evidence.resultCommit) {
+      throw new Error("conflict receipt resultCommit is not the worktree tip");
+    }
   }
   const claimed = evidence.filesResolved.map((entryPath) => assertPath(entryPath, "filesResolved")).sort();
   if (canonical([...paths].sort()) !== canonical([...new Set(claimed)])) {

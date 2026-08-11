@@ -1574,7 +1574,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "implement-conflict-resolver": {
-    version: 3,
+    version: 4,
     input: [
       {
         required: ["baseCommit", "branch", "conflictState", "conflictingFiles", "taskId"],
@@ -1595,7 +1595,10 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     output: [
       {
         required: [
+          "actualWorktreePath",
+          "branch",
           "checkSummary",
+          "conflictReceipts",
           "filesResolved",
           "resultCommit",
           "status",

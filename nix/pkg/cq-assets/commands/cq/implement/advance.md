@@ -269,8 +269,11 @@ base, current HEAD and ancestry, sequencer identity/todo/current command, and
 every unmerged stage OID/mode) to `implement-conflict-resolver`. Continue only
 from a consumed `pass` result whose
 durable continuation receipts form one chain ending at its terminal
-`resultCommit`. On `fail`, create a linked question, set the task
-`blocked`, keep the worktree/handle, and skip its dependants.
+`resultCommit`. A consumed `fail` must still carry the bound branch, absolute
+worktree path, and the complete durable receipt chain; after any continuation
+its last receipt must end at the exact live nonterminal conflict state. Then
+create a linked question, set the task `blocked`, keep the worktree/handle, and
+skip its dependants.
 
 After the final checks, merge the exact object:
 

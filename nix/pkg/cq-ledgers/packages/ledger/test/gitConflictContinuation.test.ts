@@ -63,9 +63,12 @@ function digest(bytes: string | Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-async function seed(): Promise<{
+async function seed(
+  options: { readonly worktreeScopedMergeDriver?: boolean } = {},
+): Promise<{
   stateDir: string;
   worktreePath: string;
+  worktreeMergeSentinel: string | null;
   authorization: DispatchBoundGitAuthorization;
 }> {
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), "t2043-continuation-"));
@@ -77,6 +80,9 @@ async function seed(): Promise<{
   await fs.writeFile(path.join(repositoryRoot, "bun.lock"), "{}\n");
   await fs.writeFile(path.join(repositoryRoot, "a.txt"), "base a\n");
   await fs.writeFile(path.join(repositoryRoot, "b.txt"), "base b\n");
+  if (options.worktreeScopedMergeDriver === true) {
+    await fs.writeFile(path.join(repositoryRoot, ".gitattributes"), "b.txt merge=external\n");
+  }
   await git(repositoryRoot, ["add", "."]);
   await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
   const base = await git(repositoryRoot, ["rev-parse", "HEAD"]);
@@ -96,6 +102,24 @@ async function seed(): Promise<{
     { stateDir },
   );
   if (binding === null) throw new Error("managed dispatch binding did not resolve");
+  let worktreeMergeSentinel: string | null = null;
+  if (options.worktreeScopedMergeDriver === true) {
+    worktreeMergeSentinel = path.join(stateDir, "worktree-merge-driver-ran");
+    const external = path.join(stateDir, "worktree-merge-driver");
+    await fs.mkdir(stateDir, { recursive: true });
+    await fs.writeFile(
+      external,
+      `#!/bin/sh\n: > "${worktreeMergeSentinel}"\nexit 73\n`,
+    );
+    await fs.chmod(external, 0o755);
+    await git(repositoryRoot, ["config", "extensions.worktreeConfig", "true"]);
+    await git(prepared.handle.absolutePath, [
+      "config",
+      "--worktree",
+      "merge.external.driver",
+      external,
+    ]);
+  }
 
   await fs.writeFile(path.join(prepared.handle.absolutePath, "a.txt"), "task a\n");
   await git(prepared.handle.absolutePath, ["add", "a.txt"]);
@@ -119,6 +143,7 @@ async function seed(): Promise<{
   return {
     stateDir,
     worktreePath: prepared.handle.absolutePath,
+    worktreeMergeSentinel,
     authorization: {
       ...binding,
       attestationId: "cq_attest_BBBBBBBBBBBBBBBBBBBBBB",
@@ -364,6 +389,39 @@ describe("continueManagedWorktreeRebase", () => {
       ),
     ).rejects.toThrow(/filter/i);
     await expect(fs.lstat(sentinel)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  test("rejects a worktree-scoped merge driver before a later rebase step can invoke it", async () => {
+    const fixture = await seed({ worktreeScopedMergeDriver: true });
+    if (fixture.worktreeMergeSentinel === null) throw new Error("missing merge-driver sentinel");
+    const state = await observeManagedRebaseConflict(fixture.authorization, {
+      stateDir: fixture.stateDir,
+    });
+    const authorization = {
+      ...fixture.authorization,
+      conflictStateDigest: gitRebaseConflictStateDigest(state),
+    };
+    await expect(fs.lstat(fixture.worktreeMergeSentinel)).rejects.toMatchObject({ code: "ENOENT" });
+    await fs.writeFile(path.join(fixture.worktreePath, "a.txt"), "base changed a + task a\n");
+    await expect(
+      continueManagedWorktreeRebase(
+        {
+          authorization,
+          operationId: "T2043-reject-worktree-merge-driver",
+          expectedState: state,
+          resolutions: [
+            {
+              kind: "regular",
+              path: "a.txt",
+              newState: { mode: "100644", digest: digest("base changed a + task a\n") },
+            },
+          ],
+        },
+        { stateDir: fixture.stateDir, authorize: async () => {} },
+      ),
+    ).rejects.toThrow(/merge driver/i);
+    expect(await git(fixture.worktreePath, ["rev-parse", "HEAD"])).toBe(state.currentHead);
+    await expect(fs.lstat(fixture.worktreeMergeSentinel)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   test("rejects replace refs and exec sequencer lines before advancing", async () => {

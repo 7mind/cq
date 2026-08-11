@@ -130,8 +130,9 @@ const inputSchema = {
 } as const;
 
 /**
- * The result-block output contract. `resultCommit` is the rebased tip sha on
- * pass and `null` on fail; `blockedReason` is present only on fail.
+ * The result-block output contract. Every status binds the manager branch,
+ * worktree and complete durable receipt chain. `resultCommit` is the rebased
+ * tip sha on pass and `null` on fail; `blockedReason` is present only on fail.
  */
 const outputSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -141,7 +142,7 @@ const outputSchema = {
   properties: {
     taskId: { type: "string", pattern: "^T[0-9]+$" },
     status: { type: "string", enum: [...CONFLICT_RESOLVER_STATUSES] },
-    resultCommit: { type: ["string", "null"] },
+    resultCommit: { type: ["string", "null"], pattern: GIT_OBJECT_ID_PATTERN },
     filesResolved: { type: "array", items: { type: "string" } },
     checkSummary: { type: "string" },
     summary: { type: "string" },
@@ -150,7 +151,7 @@ const outputSchema = {
       type: "string",
       minLength: 1,
       description:
-        "Optional absolute path of the worktree the resolver actually operated in (D143).",
+        "Absolute path of the worktree the resolver actually operated in (D143).",
     },
     branch: {
       type: "string",
@@ -163,8 +164,37 @@ const outputSchema = {
         "Complete durable git_resolve_continue receipt chain when the dispatch carries the resolver capability.",
     },
   },
-  required: ["taskId", "status", "resultCommit", "filesResolved", "checkSummary", "summary"],
+  required: [
+    "taskId",
+    "status",
+    "resultCommit",
+    "filesResolved",
+    "checkSummary",
+    "summary",
+    "actualWorktreePath",
+    "branch",
+    "conflictReceipts",
+  ],
   additionalProperties: false,
+  allOf: [
+    {
+      if: { properties: { status: { const: "pass" } }, required: ["status"] },
+      then: {
+        properties: {
+          resultCommit: { type: "string", pattern: GIT_OBJECT_ID_PATTERN },
+          conflictReceipts: { type: "array", minItems: 1 },
+        },
+        not: { required: ["blockedReason"] },
+      },
+    },
+    {
+      if: { properties: { status: { const: "fail" } }, required: ["status"] },
+      then: {
+        properties: { resultCommit: { type: "null" } },
+        required: ["blockedReason"],
+      },
+    },
+  ],
   $defs: {
     rebaseState: rebaseStateSchema,
     conflictReceipt: {
@@ -231,12 +261,12 @@ const outputSchema = {
 
 /**
  * The conflict-resolver per-role schema sidecar (storage-format decision 3).
- * `version: 3` adds the durable conflict-continuation evidence carried by a
- * resolver dispatch without changing D143's advisory worktree input.
+ * `version: 4` requires durable conflict-continuation evidence for both
+ * terminal statuses and closes their resultCommit/blockedReason invariants.
  */
 export const implementConflictResolverSidecar: RoleSchemaSidecar = {
   id: "implement-conflict-resolver",
-  version: 3,
+  version: 4,
   inputSchema,
   outputSchema,
 };

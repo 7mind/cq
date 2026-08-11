@@ -32,7 +32,9 @@ ledger, operate on another checkout, or spawn a child.
 
 If the intents require task redesign or the gate cannot pass through conflict
 resolution alone, leave the worktree for inspection and return `fail` with a
-precise reason.
+precise reason. A failure still reports the bound branch and absolute worktree
+path plus the complete receipt chain (empty only when no continuation occurred);
+after a durable step the last receipt must describe the live next conflict.
 
 ```json
 {

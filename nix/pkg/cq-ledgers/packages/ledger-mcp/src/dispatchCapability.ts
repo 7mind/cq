@@ -93,7 +93,7 @@ function brokerResultEvidence(output: DispatchJSONValue): GitChangeBrokerResultE
   }
   return {
     taskId: result["taskId"],
-    resultCommit: result["resultCommit"],
+    resultCommit: result["resultCommit"] as string,
     branch: result["branch"],
     actualWorktreePath: result["actualWorktreePath"],
     filesTouched: result["filesTouched"] as string[],
@@ -103,26 +103,29 @@ function brokerResultEvidence(output: DispatchJSONValue): GitChangeBrokerResultE
 
 function conflictResultEvidence(
   output: DispatchJSONValue,
-): GitConflictContinuationResultEvidence | undefined {
+): GitConflictContinuationResultEvidence {
   if (output === null || typeof output !== "object" || Array.isArray(output)) {
     throw new Error("broker-capable resolver result must carry conflict receipt evidence");
   }
   const result = output as Record<string, DispatchJSONValue>;
-  if (result["status"] !== "pass") return undefined;
+  const status = result["status"];
   if (
+    (status !== "pass" && status !== "fail") ||
     typeof result["taskId"] !== "string" ||
-    typeof result["resultCommit"] !== "string" ||
+    (status === "pass"
+      ? typeof result["resultCommit"] !== "string"
+      : result["resultCommit"] !== null) ||
     typeof result["branch"] !== "string" ||
     typeof result["actualWorktreePath"] !== "string" ||
     !Array.isArray(result["filesResolved"]) ||
     !result["filesResolved"].every((entry) => typeof entry === "string") ||
     !Array.isArray(result["conflictReceipts"])
   ) {
-    throw new Error("broker-capable passing resolver result lacks continuation receipts");
+    throw new Error("broker-capable resolver result lacks complete continuation receipt evidence");
   }
   return {
     taskId: result["taskId"],
-    resultCommit: result["resultCommit"],
+    resultCommit: result["resultCommit"] as string | null,
     branch: result["branch"],
     actualWorktreePath: result["actualWorktreePath"],
     filesResolved: result["filesResolved"] as string[],
@@ -575,15 +578,13 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           }
         } else if (binding?.roleId === "implement-conflict-resolver") {
           const evidence = conflictResultEvidence(input.output);
-          if (evidence !== undefined) {
-            await validateGitConflictContinuationResultEvidence(
-              binding,
-              evidence,
-              options.worktreeStateDir === undefined
-                ? {}
-                : { stateDir: options.worktreeStateDir },
-            );
-          }
+          await validateGitConflictContinuationResultEvidence(
+            binding,
+            evidence,
+            options.worktreeStateDir === undefined
+              ? {}
+              : { stateDir: options.worktreeStateDir },
+          );
         }
         return await storeDispatchResultOn(options.backend, input, { now });
       };

@@ -71,8 +71,8 @@ const SCHEMA_PINS_JSON = String.raw`{
     "digest": "8223f3f3a15a7ad3a687c66e1860c76b8627cddcfa7d6c372f8fb3e54be38ad4"
   },
   "implement-conflict-resolver": {
-    "version": 3,
-    "digest": "2785602d874b8f433a73c21d97b0f3de41913955f21e84adcf99708fb849298f"
+    "version": 4,
+    "digest": "76c063c0261e551260ac2d0ef2d2cebd47ddf51a693ad4100e9bab46e0f1a0d8"
   },
   "investigate-explorer": {
     "version": 1,
