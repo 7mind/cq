@@ -2,6 +2,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,17 +10,18 @@ import {
   FsAttestationBackend,
   CODEX_PROVIDER_FAILURE_CONTROLS,
   authenticateCodexProviderGateObservation,
-  attestCodexInstalledGateTestResult,
   buildPositiveOnlyDispatchRegistry,
   createCodexRoleBoundaryPlan,
   createNativeDispatchAdapter,
+  executeCodexProviderSandboxControl,
   executeCodexRoleBoundary,
   executeInstalledCodexRoleBoundary,
   implementConflictResolverSidecar,
   qualifyCodexNativeAdapter,
-  recordManagerOwnedReleaseResult,
   sequentialDispatchRandomBytes,
+  type CodexInstalledIdentity,
   type CodexInstalledRoleBoundaryExecution,
+  type CodexRoleBoundaryExecutionResult,
   type ConsumedDispatchResult,
 } from "@cq/config";
 import {
@@ -38,7 +40,9 @@ import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
 
 const roots: string[] = [];
 const INSTALLED_ROLE = process.env["CQ_TEST_CODEX_ROLE_EXECUTABLE"];
-const installedGateTest = INSTALLED_ROLE === undefined ? test.skip : test;
+const INSTALLED_CODEX = process.env["CQ_TEST_CODEX_SANDBOX_EXECUTABLE"];
+const installedGateTest =
+  INSTALLED_ROLE === undefined || INSTALLED_CODEX === undefined ? test.skip : test;
 const WORKER_FIXTURE = fileURLToPath(new URL("./fixtures/codexBrokerWorker.ts", import.meta.url));
 const RESOLVER_FIXTURE = fileURLToPath(new URL("./fixtures/codexBrokerResolver.ts", import.meta.url));
 
@@ -51,13 +55,13 @@ function rejected(action: () => unknown): boolean {
   }
 }
 
-async function rejectedAsync(action: () => Promise<unknown>): Promise<boolean> {
+async function rejectionOf(action: () => Promise<unknown>): Promise<unknown> {
   try {
     await action();
-    return false;
-  } catch {
-    return true;
+  } catch (error) {
+    return error;
   }
+  return undefined;
 }
 
 async function git(cwd: string, args: readonly string[]): Promise<string> {
@@ -86,13 +90,23 @@ async function git(cwd: string, args: readonly string[]): Promise<string> {
 function artifactStore(
   roleId: "implement-worker" | "implement-conflict-resolver",
 ): PromptArtifactStore {
+  const bytes =
+    INSTALLED_ROLE === undefined
+      ? new Uint8Array([1])
+      : readFileSync(
+          path.join(
+            path.dirname(path.dirname(INSTALLED_ROLE)),
+            "share/cq/prompt-surfaces/codex/roles",
+            `${roleId}.md`,
+          ),
+        );
   const metadata = {
     roleId,
     roleKind: "dispatched-subagent" as const,
     artifactPath: `roles/${roleId}.md`,
     sidecarSchemaRoleId: roleId,
     promptSurface: "codex" as const,
-    promptDigest: "a".repeat(64),
+    promptDigest: createHash("sha256").update(bytes).digest("hex"),
     schemaVersion: roleId === "implement-worker" ? 6 : implementConflictResolverSidecar.version,
   };
   return {
@@ -102,25 +116,37 @@ function artifactStore(
       promptSurface: "codex",
       catalogHash: "b".repeat(64),
     }),
-    readRole: () => ({ metadata, bytes: new Uint8Array([1]) }),
+    readRole: () => ({ metadata, bytes }),
   };
 }
 
-interface PackagedResolverGateRun {
-  readonly execution: CodexInstalledRoleBoundaryExecution;
+async function expectedInstalledIdentity(executable: string): Promise<CodexInstalledIdentity> {
+  return {
+    storePath: path.dirname(path.dirname(executable)),
+    executablePath: executable,
+    executableDigest: createHash("sha256").update(await readFile(executable)).digest("hex"),
+  };
+}
+
+interface PackagedResolverGateRun<R extends "native" | "process"> {
+  readonly route: R;
+  readonly execution: R extends "native"
+    ? CodexRoleBoundaryExecutionResult
+    : CodexInstalledRoleBoundaryExecution;
   readonly consumed: ConsumedDispatchResult;
   readonly resultCommit: string;
 }
 
-async function runPackagedResolverGate(input: {
+async function runPackagedResolverGate<R extends "native" | "process">(input: {
   readonly repositoryRoot: string;
   readonly managedHandle: ManagedWorktreeHandle;
   readonly baseCommit: string;
   readonly backend: FsAttestationBackend;
   readonly randomBytes: (count: number) => Uint8Array;
-}): Promise<PackagedResolverGateRun> {
+  readonly route: R;
+}): Promise<PackagedResolverGateRun<R>> {
   if (INSTALLED_ROLE === undefined) throw new Error("installed resolver gate was not selected");
-  const { repositoryRoot, managedHandle, baseCommit, backend, randomBytes } = input;
+  const { repositoryRoot, managedHandle, baseCommit, backend, randomBytes, route } = input;
   const binding = await resolveManagedWorktreeDispatchBinding(
     {
       repositoryRoot,
@@ -131,14 +157,14 @@ async function runPackagedResolverGate(input: {
   );
   if (binding === null) throw new Error("resolver managed binding did not resolve");
 
-  await writeFile(path.join(managedHandle.absolutePath, "a.txt"), "task a\n");
+  await writeFile(path.join(managedHandle.absolutePath, "a.txt"), `task a ${route}\n`);
   await git(managedHandle.absolutePath, ["add", "a.txt"]);
   await git(managedHandle.absolutePath, ["commit", "-q", "-m", "task a"]);
-  await writeFile(path.join(managedHandle.absolutePath, "b.txt"), "task b\n");
+  await writeFile(path.join(managedHandle.absolutePath, "b.txt"), `task b ${route}\n`);
   await git(managedHandle.absolutePath, ["add", "b.txt"]);
   await git(managedHandle.absolutePath, ["commit", "-q", "-m", "task b"]);
-  await writeFile(path.join(repositoryRoot, "a.txt"), "base changed a\n");
-  await writeFile(path.join(repositoryRoot, "b.txt"), "base changed b\n");
+  await writeFile(path.join(repositoryRoot, "a.txt"), `base changed a ${route}\n`);
+  await writeFile(path.join(repositoryRoot, "b.txt"), `base changed b ${route}\n`);
   await git(repositoryRoot, ["add", "a.txt", "b.txt"]);
   await git(repositoryRoot, ["commit", "-q", "-m", "base changes"]);
   const onto = await git(repositoryRoot, ["rev-parse", "HEAD"]);
@@ -167,8 +193,8 @@ async function runPackagedResolverGate(input: {
     randomBytes,
   });
   const expectedChild = {
-    childId: "t2044-packaged-resolver-child",
-    runId: "t2044-packaged-resolver-run",
+    childId: `t2044-packaged-resolver-${route}-child`,
+    runId: `t2044-packaged-resolver-${route}-run`,
   };
   const prepared = await capability.prepare({
     roleId: "implement-conflict-resolver",
@@ -182,7 +208,7 @@ async function runPackagedResolverGate(input: {
         conflictState,
       }),
     ),
-    idempotencyKey: `${managedHandle.taskId}-packaged-resolver`,
+    idempotencyKey: `${managedHandle.taskId}-packaged-resolver-${route}`,
     timeoutMs: 600_000,
     expectedChild,
   });
@@ -193,8 +219,8 @@ async function runPackagedResolverGate(input: {
   const fixtureRoot = await mkdtemp(path.join(tmpdir(), "t2044-packaged-resolver-fake-"));
   roots.push(fixtureRoot);
   const fakeCodex = path.join(fixtureRoot, "fake-codex");
-  const capturePath = path.join(fixtureRoot, "resolver-capture.json");
-  const resolverStderrPath = path.join(fixtureRoot, "resolver.stderr");
+  const capturePath = path.join(fixtureRoot, `resolver-${route}-capture.json`);
+  const resolverStderrPath = path.join(fixtureRoot, `resolver-${route}.stderr`);
   await writeFile(
     fakeCodex,
     `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(RESOLVER_FIXTURE)} "$@" 2>"$CQ_T2044_RESOLVER_STDERR"\n`,
@@ -205,28 +231,22 @@ async function runPackagedResolverGate(input: {
     attestationId: prepared.prepared.attestationId,
     generation: prepared.prepared.generation,
   };
-  let execution;
+  const invocation = {
+    roleId: "implement-conflict-resolver",
+    handle,
+    inputCapability: prepared.prepared.inputCapability,
+    resultCapability: prepared.prepared.resultCapability,
+    gitConflictCapability: prepared.prepared.gitConflictCapability,
+    cwd: managedHandle.absolutePath,
+    ledgerCwd: repositoryRoot,
+    model: "test-model",
+    reasoningEffort: "high",
+    sandboxMode: "workspace-write" as const,
+    timeoutMs: 30_000,
+  };
+  let execution: CodexInstalledRoleBoundaryExecution | CodexRoleBoundaryExecutionResult;
   try {
-    execution = await executeInstalledCodexRoleBoundary({
-      executable: INSTALLED_ROLE,
-      invocation: {
-      roleId: "implement-conflict-resolver",
-      handle,
-      inputCapability: prepared.prepared.inputCapability,
-      resultCapability: prepared.prepared.resultCapability,
-      gitConflictCapability: prepared.prepared.gitConflictCapability,
-      cwd: managedHandle.absolutePath,
-      ledgerCwd: repositoryRoot,
-      model: "test-model",
-      reasoningEffort: "high",
-      sandboxMode: "workspace-write",
-      timeoutMs: 30_000,
-      },
-      managedHandle,
-      expectedChild,
-      expectedPromptProvenance: prepared.prepared.promptProvenance,
-      correlationId: "t2044-installed-resolver",
-      environment: {
+    const environment = {
         ...process.env,
         CQ_CODEX_EXECUTABLE: fakeCodex,
         CQ_CODEX_LEDGER_COMMAND: ledgerCommand,
@@ -234,8 +254,39 @@ async function runPackagedResolverGate(input: {
         CQ_T2044_RESOLVER_STDERR: resolverStderrPath,
         CQ_T2044_WORKTREE: managedHandle.absolutePath,
         CQ_T2044_LEDGER_ROOT: repositoryRoot,
-      },
-    });
+    };
+    execution =
+      route === "native"
+        ? await executeCodexRoleBoundary(
+            createCodexRoleBoundaryPlan({
+              ...invocation,
+              roleInstructions: await readFile(
+                path.join(
+                  path.dirname(path.dirname(INSTALLED_ROLE)),
+                  "share/cq/prompt-surfaces/codex/roles/implement-conflict-resolver.md",
+                ),
+                "utf8",
+              ),
+              promptRoot: path.join(
+                path.dirname(path.dirname(INSTALLED_ROLE)),
+                "share/cq/prompt-surfaces/codex",
+              ),
+              ledgerCommand,
+              codexExecutable: fakeCodex,
+            }),
+            "t2044-native-resolver",
+            environment,
+          )
+        : await executeInstalledCodexRoleBoundary({
+            executable: INSTALLED_ROLE,
+            expectedInstalledIdentity: await expectedInstalledIdentity(INSTALLED_ROLE),
+            invocation,
+            managedHandle,
+            expectedChild,
+            expectedPromptProvenance: prepared.prepared.promptProvenance,
+            correlationId: "t2044-installed-resolver",
+            environment,
+          });
   } catch (error) {
     const fixtureStderr = await readFile(resolverStderrPath, "utf8").catch(() => "");
     throw new Error(`${error instanceof Error ? error.message : String(error)}\n${fixtureStderr}`);
@@ -244,6 +295,7 @@ async function runPackagedResolverGate(input: {
 
   const capture = JSON.parse(await readFile(capturePath, "utf8")) as {
     boundary: { listedTools: string[]; codexCwd: string; ledgerCwd: string };
+    directGit: { attempted: boolean; exitStatus: number; stderrDigest: string };
     output: Record<string, unknown>;
   };
   expect(capture.boundary).toEqual(
@@ -253,6 +305,9 @@ async function runPackagedResolverGate(input: {
       listedTools: ["fetch_dispatch_input", "git_resolve_continue", "store_result"],
     }),
   );
+  expect(capture.directGit).toMatchObject({ attempted: true });
+  expect(capture.directGit.exitStatus).not.toBe(0);
+  expect(capture.directGit.stderrDigest).toMatch(/^[0-9a-f]{64}$/);
   const receipts = capture.output["conflictReceipts"] as Record<string, unknown>[];
   expect(receipts).toHaveLength(2);
   expect((receipts[0]?.["outcome"] as Record<string, unknown>)["kind"]).toBe("conflict");
@@ -276,10 +331,11 @@ async function runPackagedResolverGate(input: {
   const consumed = fetched as ConsumedDispatchResult;
   expect(await capability.fetch(handle)).toMatchObject({ state: "output-already-materialized" });
   return {
+    route,
     execution,
     consumed,
     resultCommit: String(capture.output["resultCommit"]),
-  };
+  } as PackagedResolverGateRun<R>;
 }
 
 afterAll(async () => {
@@ -306,7 +362,9 @@ describe("packaged cq-codex-role Git broker", () => {
   });
 
   installedGateTest("authenticates installed worker and resolver gates before codex:native registration [Effectual-GoodCommunication, Blackbox-Group]", async () => {
-    if (INSTALLED_ROLE === undefined) throw new Error("installed worker gate was not selected");
+    if (INSTALLED_ROLE === undefined || INSTALLED_CODEX === undefined) {
+      throw new Error("installed worker gate was not selected");
+    }
     const repositoryRoot = await mkdtemp(path.join(tmpdir(), "t2042-packaged-role-"));
     roots.push(repositoryRoot);
     await git(repositoryRoot, ["init", "-q"]);
@@ -413,7 +471,13 @@ describe("packaged cq-codex-role Git broker", () => {
       execution = await executeCodexRoleBoundary(
         createCodexRoleBoundaryPlan({
         roleId: "implement-worker",
-        roleInstructions: "installed package native-route worker probe with required skills policy",
+        roleInstructions: await readFile(
+          path.join(
+            path.dirname(path.dirname(INSTALLED_ROLE)),
+            "share/cq/prompt-surfaces/codex/roles/implement-worker.md",
+          ),
+          "utf8",
+        ),
         handle,
         inputCapability: prepared.prepared.inputCapability,
         resultCapability: prepared.prepared.resultCapability,
@@ -531,7 +595,7 @@ describe("packaged cq-codex-role Git broker", () => {
       baseCommit,
       String(capture.output["resultCommit"]),
     ]);
-    const completionDenied = await rejectedAsync(() =>
+    const completionRejection = await rejectionOf(() =>
       capability.confirmCompletion({
         ...handle,
         nativeCompletion: {
@@ -544,7 +608,7 @@ describe("packaged cq-codex-role Git broker", () => {
         expectedProvenance: prepared.prepared.promptProvenance,
       }),
     );
-    expect(completionDenied).toBe(true);
+    expect(completionRejection).toBeDefined();
     const confirmed = await capability.confirmCompletion({
       ...handle,
       nativeCompletion: {
@@ -622,6 +686,7 @@ describe("packaged cq-codex-role Git broker", () => {
     const retryStderrPath = path.join(fixtureRoot, "retry.stderr");
     const retryExecution = await executeInstalledCodexRoleBoundary({
       executable: INSTALLED_ROLE,
+      expectedInstalledIdentity: await expectedInstalledIdentity(INSTALLED_ROLE),
       invocation: {
         roleId: "implement-worker",
         handle: retryHandle,
@@ -720,12 +785,21 @@ describe("packaged cq-codex-role Git broker", () => {
     });
     expect(cancelled).toMatchObject({ state: "aborted", reason: "cancelled" });
 
+    const nativeResolverRun = await runPackagedResolverGate({
+      repositoryRoot,
+      managedHandle: resumed.handle,
+      baseCommit,
+      backend,
+      randomBytes: dispatchRandomBytes,
+      route: "native",
+    });
     const resolverRun = await runPackagedResolverGate({
       repositoryRoot,
       managedHandle: resumed.handle,
       baseCommit,
       backend,
       randomBytes: dispatchRandomBytes,
+      route: "process",
     });
     const deadlinePrepared = await capability.prepare({
       roleId: "implement-worker",
@@ -744,6 +818,21 @@ describe("packaged cq-codex-role Git broker", () => {
       state: "aborted",
       result: { state: "aborted", reason: "deadline-exceeded" },
     });
+    if (deadline.state !== "aborted") throw new Error("deadline control did not abort");
+    const sandboxControls = [];
+    for (const roleId of ["implement-worker", "implement-conflict-resolver"] as const) {
+      for (const route of ["native", "process"] as const) {
+        sandboxControls.push(
+          await executeCodexProviderSandboxControl({
+            codexExecutable: INSTALLED_CODEX,
+            gitExecutable: process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git",
+            managedHandle: resumed.handle,
+            roleId,
+            route,
+          }),
+        );
+      }
+    }
     const released = await releaseManagedWorktree({
       handle: resumed.handle,
       terminalDisposition: "done",
@@ -753,59 +842,34 @@ describe("packaged cq-codex-role Git broker", () => {
     expect(released).toMatchObject({ status: "released", idempotent: false });
     if (released.status !== "released") throw new Error(released.detail);
     await backend.close();
-    const observedFailureControlSet = new Set(capture.failureControls);
-    if (completionDenied) observedFailureControlSet.add("completion");
-    if (cancelled.state === "aborted") observedFailureControlSet.add("cancel");
-    if (deadline.state === "aborted") observedFailureControlSet.add("deadline");
-    observedFailureControlSet.add("restart");
-    const observedFailureControls = CODEX_PROVIDER_FAILURE_CONTROLS.filter((control) =>
-      observedFailureControlSet.has(control),
-    );
-    expect(observedFailureControls).toEqual([...CODEX_PROVIDER_FAILURE_CONTROLS]);
     const directGitDenied = retryCapture.directGit.attempted &&
       retryCapture.directGit.exitStatus !== 0 &&
       /^[0-9a-f]{64}$/.test(retryCapture.directGit.stderrDigest);
     if (!directGitDenied) throw new Error("installed worker did not deny direct Git metadata");
-    const workerInstalledGateTest = attestCodexInstalledGateTestResult({
+    const workerAuthentication = {
       execution: retryExecution,
       nativeExecution: execution,
       priorExecution: execution,
       priorConsumed: consumed,
-      failureControls: observedFailureControls,
-      directGitDenied,
-      confinementVerified: true,
-      objectAttributionVerified: true,
-      lifecycle: "single-or-typed-abort",
-    });
-    const workerGate = authenticateCodexProviderGateObservation({
-      installedGateTest: workerInstalledGateTest,
       consumed: retryConsumed,
       release: released,
-    });
-    const publiclyMintedInstalledGateTest = attestCodexInstalledGateTestResult({
-      execution: retryExecution,
-      nativeExecution: execution,
-      priorExecution: execution,
-      priorConsumed: consumed,
-      failureControls: ["capability"],
-      directGitDenied: true,
-      confinementVerified: true,
-      objectAttributionVerified: true,
-      lifecycle: "single-or-typed-abort",
-    });
-    const resolverInstalledGateTest = attestCodexInstalledGateTestResult({
+      sandboxControls: sandboxControls.filter(({ roleId }) => roleId === "implement-worker"),
+      completionRejection,
+      cancelled,
+      deadline: deadline.result,
+    } as const;
+    const workerGate = authenticateCodexProviderGateObservation(workerAuthentication);
+    const resolverAuthentication = {
       execution: resolverRun.execution,
-      failureControls: ["capability"],
-      directGitDenied: true,
-      confinementVerified: true,
-      objectAttributionVerified: true,
-      lifecycle: "single-or-typed-abort",
-    });
-    const resolverGate = authenticateCodexProviderGateObservation({
-      installedGateTest: resolverInstalledGateTest,
+      nativeExecution: nativeResolverRun.execution,
       consumed: resolverRun.consumed,
       release: released,
-    });
+      sandboxControls: sandboxControls.filter(
+        ({ roleId }) => roleId === "implement-conflict-resolver",
+      ),
+    } as const;
+    const resolverGate = authenticateCodexProviderGateObservation(resolverAuthentication);
+    expect(workerGate.failureControls).toEqual([...CODEX_PROVIDER_FAILURE_CONTROLS]);
     const qualification = qualifyCodexNativeAdapter({
       cwd: managed.handle.absolutePath,
       handle: managed.handle,
@@ -856,52 +920,36 @@ describe("packaged cq-codex-role Git broker", () => {
     const expectedInstalledDigest = createHash("sha256")
       .update(await readFile(INSTALLED_ROLE))
       .digest("hex");
+    const configExports = await import("@cq/config");
     expect({
       fabricatedConsumedRejected: rejected(() =>
         authenticateCodexProviderGateObservation({
-          installedGateTest: workerInstalledGateTest,
+          ...workerAuthentication,
           consumed: { ...retryConsumed },
-          release: released,
         }),
       ),
       fabricatedReleaseRejected: rejected(() =>
         authenticateCodexProviderGateObservation({
-          installedGateTest: workerInstalledGateTest,
-          consumed: retryConsumed,
+          ...workerAuthentication,
           release: { ...released, handle: { ...released.handle } },
         }),
       ),
-      publicReleaseAuthorityMintRejected: rejected(() =>
+      fabricatedExecutionRejected: rejected(() =>
         authenticateCodexProviderGateObservation({
-          installedGateTest: workerInstalledGateTest,
-          consumed: retryConsumed,
-          release: recordManagerOwnedReleaseResult({
-            ...released,
-            handle: { ...released.handle },
-          }),
-        }),
+          ...workerAuthentication,
+          execution: { ...retryExecution },
+        } as never),
       ),
-      publicInstalledGateAuthorityMintRejected: rejected(() =>
+      missingRunnerEvidenceRejected: rejected(() =>
         authenticateCodexProviderGateObservation({
-          installedGateTest: publiclyMintedInstalledGateTest,
-          consumed: retryConsumed,
-          release: released,
-        }),
-      ),
-      fabricatedInstalledGateTestRejected: rejected(() =>
-        authenticateCodexProviderGateObservation({
-          installedGateTest: { ...workerInstalledGateTest },
+          nativeExecution: execution,
           consumed: retryConsumed,
           release: released,
         } as never),
       ),
-      missingInstalledGateTestRejected: rejected(() =>
-        authenticateCodexProviderGateObservation({
-          execution: retryExecution,
-          consumed: retryConsumed,
-          release: released,
-        } as never),
-      ),
+      publicAuthorityFactoriesAbsent:
+        !Object.hasOwn(configExports, "recordManagerOwnedReleaseResult") &&
+        !Object.hasOwn(configExports, "attestCodexInstalledGateTestResult"),
       crossHandleTaskRepositoryReplayRejected: replayVerdicts.every(
         (verdict) => verdict.status === "incompatible" && verdict.reason === "provider-gate-failed",
       ),
@@ -915,10 +963,9 @@ describe("packaged cq-codex-role Git broker", () => {
     }).toEqual({
       fabricatedConsumedRejected: true,
       fabricatedReleaseRejected: true,
-      publicReleaseAuthorityMintRejected: true,
-      publicInstalledGateAuthorityMintRejected: true,
-      fabricatedInstalledGateTestRejected: true,
-      missingInstalledGateTestRejected: true,
+      fabricatedExecutionRejected: true,
+      missingRunnerEvidenceRejected: true,
+      publicAuthorityFactoriesAbsent: true,
       crossHandleTaskRepositoryReplayRejected: true,
       exactInstalledIdentity: true,
       runnerCapturedEffectivePreturn: true,

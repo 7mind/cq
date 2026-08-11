@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import { createHash } from "node:crypto";
-import { readFile, realpath } from "node:fs/promises";
-import { constants } from "node:os";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { constants, tmpdir } from "node:os";
 import {
   launchRegisteredProcessGroup,
   settleProcessGroups,
@@ -84,12 +84,15 @@ export interface CodexRoleBoundaryPlan {
   readonly timeoutMs: number;
   readonly expectedHandle: DispatchHandle;
   readonly ledgerMcp: CodexRoleLedgerMcpConfiguration;
+  readonly effectivePreturn: CodexEffectivePreturn;
   /** The child JSONL stream stays inside the adapter; only a verified handle escapes. */
   readonly interceptStdout: true;
 }
 
 export interface CodexRoleBoundaryExecutionResult {
   readonly handle: DispatchHandle;
+  readonly effectivePreturn: CodexEffectivePreturn;
+  readonly observedFailureControls: readonly string[];
   readonly observation: {
     readonly agentType: string;
     /** Parent-minted label carried on the registered subprocess launch, never read from child text. */
@@ -103,6 +106,33 @@ export interface CodexRoleBoundaryExecutionResult {
   };
 }
 
+export interface CodexEffectivePreturn {
+  readonly kind: "cq-codex-effective-preturn";
+  readonly version: 1;
+  readonly roleId: string;
+  readonly cwd: string;
+  readonly ledgerCwd: string;
+  readonly handle: DispatchHandle;
+  readonly effectCapabilityScope: "git-change" | "git-conflict" | null;
+  readonly receiptExpectation:
+    | "cq-git-change-receipt"
+    | "cq-git-conflict-continuation-receipt"
+    | null;
+  readonly rolePromptDigest: string;
+  readonly enabledTools: readonly LedgerCapabilityToolName[];
+  readonly model: string;
+  readonly reasoningEffort: string;
+  readonly sandboxMode: CodexRoleSandboxMode;
+  readonly skillsPolicy: "role-instructions";
+  readonly multiAgent: false;
+}
+
+export interface CodexInstalledIdentity {
+  readonly storePath: string;
+  readonly executablePath: string;
+  readonly executableDigest: string;
+}
+
 export interface CodexInstalledRoleBoundaryExecution {
   readonly kind: "cq-codex-installed-role-boundary-execution";
   readonly version: 1;
@@ -114,6 +144,9 @@ export interface CodexInstalledRoleBoundaryExecution {
     readonly executablePath: string;
     readonly executableDigest: string;
   };
+  readonly expectedInstalledIdentity: CodexInstalledIdentity;
+  readonly effectivePreturn: CodexEffectivePreturn;
+  readonly observedFailureControls: readonly string[];
   readonly handle: DispatchHandle;
   readonly managedHandle: ManagedWorktreeHandle;
   readonly expectedChild: { readonly childId: string; readonly runId: string };
@@ -126,6 +159,7 @@ export interface CodexInstalledRoleBoundaryExecution {
 
 export interface CodexInstalledRoleBoundaryRequest {
   readonly executable: string;
+  readonly expectedInstalledIdentity: CodexInstalledIdentity;
   readonly invocation: CodexRoleBoundaryInvocation;
   readonly managedHandle: ManagedWorktreeHandle;
   readonly expectedChild: { readonly childId: string; readonly runId: string };
@@ -134,8 +168,35 @@ export interface CodexInstalledRoleBoundaryRequest {
   readonly environment?: NodeJS.ProcessEnv;
 }
 
+export type CodexProviderSandboxControlRoute = "native" | "process";
+
+export interface CodexProviderSandboxControl {
+  readonly kind: "cq-codex-provider-sandbox-control";
+  readonly version: 1;
+  readonly roleId: "implement-worker" | "implement-conflict-resolver";
+  readonly route: CodexProviderSandboxControlRoute;
+  readonly managedHandle: ManagedWorktreeHandle;
+  readonly codexExecutable: string;
+  readonly unsandboxedExitStatus: 0;
+  readonly sandboxedExitStatus: number;
+  readonly sandboxedStderrDigest: string;
+  readonly sandboxedRefAbsent: true;
+}
+
+export interface CodexProviderSandboxControlRequest {
+  readonly codexExecutable: string;
+  readonly gitExecutable: string;
+  readonly managedHandle: ManagedWorktreeHandle;
+  readonly roleId: "implement-worker" | "implement-conflict-resolver";
+  readonly route: CodexProviderSandboxControlRoute;
+}
+
 const RUNNER_OWNED_INSTALLED_EXECUTIONS = new WeakSet<object>();
 const RUNNER_OWNED_NATIVE_EXECUTIONS = new WeakSet<object>();
+const RUNNER_OWNED_SANDBOX_CONTROLS = new WeakSet<object>();
+
+export const CODEX_PRETURN_OBSERVATION_PATH_ENV =
+  "CQ_CODEX_PRETURN_OBSERVATION_PATH" as const;
 
 export function isRunnerOwnedCodexInstalledRoleBoundaryExecution(
   value: unknown,
@@ -147,6 +208,12 @@ export function isRunnerOwnedCodexRoleBoundaryExecution(
   value: unknown,
 ): value is CodexRoleBoundaryExecutionResult {
   return typeof value === "object" && value !== null && RUNNER_OWNED_NATIVE_EXECUTIONS.has(value);
+}
+
+export function isRunnerOwnedCodexProviderSandboxControl(
+  value: unknown,
+): value is CodexProviderSandboxControl {
+  return typeof value === "object" && value !== null && RUNNER_OWNED_SANDBOX_CONTROLS.has(value);
 }
 
 export const CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX = "CQ_CODEX_BOUNDARY_DIAGNOSTIC ";
@@ -377,6 +444,35 @@ export function createCodexRoleBoundaryPlan(
     renderLedgerMcpOverride(ledgerMcp),
     "-",
   ]);
+  const effectCapabilityScope =
+    resolved.gitChangeCapability !== undefined
+      ? ("git-change" as const)
+      : resolved.gitConflictCapability !== undefined
+        ? ("git-conflict" as const)
+        : null;
+  const receiptExpectation =
+    effectCapabilityScope === "git-change"
+      ? ("cq-git-change-receipt" as const)
+      : effectCapabilityScope === "git-conflict"
+        ? ("cq-git-conflict-continuation-receipt" as const)
+        : null;
+  const effectivePreturn = Object.freeze({
+    kind: "cq-codex-effective-preturn" as const,
+    version: 1 as const,
+    roleId: resolved.roleId,
+    cwd: resolved.cwd,
+    ledgerCwd: resolved.ledgerCwd,
+    handle: Object.freeze({ ...resolved.handle }),
+    effectCapabilityScope,
+    receiptExpectation,
+    rolePromptDigest: createHash("sha256").update(resolved.roleInstructions).digest("hex"),
+    enabledTools,
+    model: resolved.model,
+    reasoningEffort: resolved.reasoningEffort,
+    sandboxMode: resolved.sandboxMode,
+    skillsPolicy: "role-instructions" as const,
+    multiAgent: false as const,
+  });
   return Object.freeze({
     roleId: resolved.roleId,
     cwd: resolved.cwd,
@@ -386,6 +482,7 @@ export function createCodexRoleBoundaryPlan(
     timeoutMs: resolved.timeoutMs,
     expectedHandle: resolved.handle,
     ledgerMcp,
+    effectivePreturn,
     interceptStdout: true as const,
   });
 }
@@ -399,6 +496,7 @@ interface CodexExecEvent {
     readonly server?: unknown;
     readonly tool?: unknown;
     readonly result?: unknown;
+    readonly failure_controls?: unknown;
   };
 }
 
@@ -438,6 +536,7 @@ interface CodexRoleBoundaryStreamObservation {
   readonly matchingResultStoredAcknowledgementPresent: boolean;
   readonly threadIds: readonly string[];
   readonly turnOutcomes: readonly ("completed" | "transport-failed")[];
+  readonly failureControls: readonly string[];
 }
 
 function observeCodexRoleBoundaryStream(
@@ -450,6 +549,7 @@ function observeCodexRoleBoundaryStream(
   let matchingResultStoredAcknowledgementPresent = false;
   const threadIds: string[] = [];
   const turnOutcomes: ("completed" | "transport-failed")[] = [];
+  const failureControls: string[] = [];
   for (const line of jsonl.split("\n")) {
     if (line.trim() === "") continue;
     let parsed: unknown;
@@ -473,6 +573,14 @@ function observeCodexRoleBoundaryStream(
     }
     if (event.type === "turn.completed") turnOutcomes.push("completed");
     if (event.type === "turn.failed") turnOutcomes.push("transport-failed");
+    if (
+      event.type === "item.completed" &&
+      event.item?.type === "cq_provider_gate_observation" &&
+      Array.isArray(event.item.failure_controls) &&
+      event.item.failure_controls.every((control) => typeof control === "string")
+    ) {
+      failureControls.push(...(event.item.failure_controls as string[]));
+    }
     if (eventCarriesMatchingResultStoredAcknowledgement(event, expectedHandle)) {
       matchingResultStoredAcknowledgementPresent = true;
     }
@@ -492,6 +600,7 @@ function observeCodexRoleBoundaryStream(
     matchingResultStoredAcknowledgementPresent,
     threadIds: Object.freeze(threadIds),
     turnOutcomes: Object.freeze(turnOutcomes),
+    failureControls: Object.freeze(failureControls),
   });
 }
 
@@ -517,6 +626,8 @@ function observedCodexRoleBoundaryResult(
   }
   return Object.freeze({
     handle: interceptCodexRoleBoundaryResult(jsonl, plan.expectedHandle),
+    effectivePreturn: plan.effectivePreturn,
+    observedFailureControls: observation.failureControls,
     observation: Object.freeze({
       agentType: plan.roleId,
       correlationId,
@@ -998,6 +1109,135 @@ export async function executeCodexRoleBoundary(
   }
 }
 
+function installedIdentityEqual(
+  left: CodexInstalledIdentity,
+  right: CodexInstalledIdentity,
+): boolean {
+  return (
+    left.storePath === right.storePath &&
+    left.executablePath === right.executablePath &&
+    left.executableDigest === right.executableDigest
+  );
+}
+
+function assertInstalledPreturnObservation(
+  value: unknown,
+  request: CodexInstalledRoleBoundaryRequest,
+): CodexEffectivePreturn {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new CodexRoleBoundaryError("installed boundary emitted no effective preturn observation");
+  }
+  const observed = value as Record<string, unknown>;
+  const expectedTools = exposedLedgerToolsForRole(request.invocation.roleId);
+  const expectedCapability =
+    request.invocation.gitChangeCapability !== undefined ? "git-change" : "git-conflict";
+  const expectedReceipt =
+    expectedCapability === "git-change"
+      ? "cq-git-change-receipt"
+      : "cq-git-conflict-continuation-receipt";
+  const handle = observed["handle"] as Record<string, unknown> | undefined;
+  if (
+    observed["kind"] !== "cq-codex-effective-preturn" ||
+    observed["version"] !== 1 ||
+    observed["roleId"] !== request.invocation.roleId ||
+    path.resolve(String(observed["cwd"])) !== path.resolve(request.invocation.cwd) ||
+    path.resolve(String(observed["ledgerCwd"])) !== path.resolve(request.invocation.ledgerCwd) ||
+    handle?.["attestationId"] !== request.invocation.handle.attestationId ||
+    handle["generation"] !== request.invocation.handle.generation ||
+    observed["effectCapabilityScope"] !== expectedCapability ||
+    observed["receiptExpectation"] !== expectedReceipt ||
+    observed["rolePromptDigest"] !== request.expectedPromptProvenance.promptDigest ||
+    JSON.stringify(observed["enabledTools"]) !== JSON.stringify(expectedTools) ||
+    observed["model"] !== request.invocation.model ||
+    observed["reasoningEffort"] !== request.invocation.reasoningEffort ||
+    observed["sandboxMode"] !== request.invocation.sandboxMode ||
+    observed["skillsPolicy"] !== "role-instructions" ||
+    observed["multiAgent"] !== false
+  ) {
+    throw new CodexRoleBoundaryError(
+      "installed boundary effective preturn differs from the trusted dispatch bindings",
+    );
+  }
+  return Object.freeze(value as CodexEffectivePreturn);
+}
+
+async function runInstalledRoleProcess(input: {
+  readonly executable: string;
+  readonly cwd: string;
+  readonly invocationJson: string;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly correlationId: string;
+  readonly request: CodexInstalledRoleBoundaryRequest;
+}): Promise<{
+  readonly exitStatus: number;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly effectivePreturn: CodexEffectivePreturn;
+  readonly observedFailureControls: readonly string[];
+}> {
+  const observationRoot = await mkdtemp(path.join(tmpdir(), "cq-codex-preturn-"));
+  const observationPath = path.join(observationRoot, "effective-preturn.json");
+  try {
+    const child = Bun.spawn([input.executable], {
+      cwd: input.cwd,
+      env: {
+        ...process.env,
+        ...input.environment,
+        CQ_CODEX_ROLE_CORRELATION_ID: input.correlationId,
+        [CODEX_PRETURN_OBSERVATION_PATH_ENV]: observationPath,
+      },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    child.stdin.write(`${input.invocationJson}\n`);
+    child.stdin.end();
+    const [exitStatus, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    let observedLines: unknown[];
+    try {
+      observedLines = (await readFile(observationPath, "utf8"))
+        .split("\n")
+        .filter((line) => line.trim() !== "")
+        .map((line) => JSON.parse(line) as unknown);
+    } catch {
+      throw new CodexRoleBoundaryError(
+        `installed boundary did not record its effective preturn: ${stderr.trim()}`,
+      );
+    }
+    const outcome = observedLines[1];
+    if (outcome === null || typeof outcome !== "object" || Array.isArray(outcome)) {
+      throw new CodexRoleBoundaryError("installed boundary emitted no effective outcome observation");
+    }
+    const outcomeRecord = outcome as Record<string, unknown>;
+    const outcomeHandle = outcomeRecord["handle"] as Record<string, unknown> | undefined;
+    const observedFailureControls = outcomeRecord["observedFailureControls"];
+    if (
+      observedLines.length !== 2 ||
+      outcomeRecord["kind"] !== "cq-codex-effective-outcome" ||
+      outcomeRecord["version"] !== 1 ||
+      outcomeHandle?.["attestationId"] !== input.request.invocation.handle.attestationId ||
+      outcomeHandle?.["generation"] !== input.request.invocation.handle.generation ||
+      !Array.isArray(observedFailureControls) ||
+      !observedFailureControls.every((control) => typeof control === "string")
+    ) {
+      throw new CodexRoleBoundaryError("installed boundary emitted a malformed effective outcome");
+    }
+    return {
+      exitStatus,
+      stdout,
+      stderr,
+      effectivePreturn: assertInstalledPreturnObservation(observedLines[0], input.request),
+      observedFailureControls: Object.freeze([...observedFailureControls] as string[]),
+    };
+  } finally {
+    await rm(observationRoot, { recursive: true, force: true });
+  }
+}
+
 /**
  * Runner-owned installed-boundary execution used by the Codex provider gates.
  * The opaque result is admitted to the qualification path only while it remains
@@ -1022,6 +1262,11 @@ export async function executeInstalledCodexRoleBoundary(
     executablePath: executable,
     executableDigest: createHash("sha256").update(await readFile(executable)).digest("hex"),
   });
+  if (!installedIdentityEqual(installedIdentity, request.expectedInstalledIdentity)) {
+    throw new CodexRoleBoundaryError(
+      "installed boundary identity differs from the independently supplied expected derivation",
+    );
+  }
   const roleId = assertCodexDispatchedRoleId(request.invocation.roleId);
   if (roleId !== "implement-worker" && roleId !== "implement-conflict-resolver") {
     throw new CodexRoleBoundaryError(
@@ -1070,24 +1315,15 @@ export async function executeInstalledCodexRoleBoundary(
   }
 
   const invocationJson = JSON.stringify(request.invocation);
-  const child = Bun.spawn([executable], {
+  const { exitStatus, stdout, stderr, effectivePreturn, observedFailureControls } =
+    await runInstalledRoleProcess({
+    executable,
     cwd: request.managedHandle.absolutePath,
-    env: {
-      ...process.env,
-      ...request.environment,
-      CQ_CODEX_ROLE_CORRELATION_ID: request.correlationId,
-    },
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  child.stdin.write(`${invocationJson}\n`);
-  child.stdin.end();
-  const [exitStatus, stdout, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
+    invocationJson,
+    ...(request.environment === undefined ? {} : { environment: request.environment }),
+    correlationId: request.correlationId,
+    request,
+    });
   if (exitStatus !== 0) {
     throw new CodexRoleBoundaryError(
       `installed ${roleId} boundary exited ${String(exitStatus)}: ${stderr.trim()}`,
@@ -1123,6 +1359,9 @@ export async function executeInstalledCodexRoleBoundary(
     effect,
     executable,
     installedIdentity,
+    expectedInstalledIdentity: Object.freeze({ ...request.expectedInstalledIdentity }),
+    effectivePreturn,
+    observedFailureControls,
     handle: Object.freeze({ ...request.invocation.handle }),
     managedHandle: request.managedHandle,
     expectedChild: Object.freeze({ ...request.expectedChild }),
@@ -1134,4 +1373,153 @@ export async function executeInstalledCodexRoleBoundary(
   });
   RUNNER_OWNED_INSTALLED_EXECUTIONS.add(execution);
   return execution;
+}
+
+async function runControlCommand(
+  executable: string,
+  args: readonly string[],
+  cwd: string,
+): Promise<{ readonly exitStatus: number; readonly stdout: string; readonly stderr: string }> {
+  const child = Bun.spawn([executable, ...args], {
+    cwd,
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "cq-codex-sandbox-control",
+      GIT_AUTHOR_EMAIL: "cq-codex-sandbox-control@example.invalid",
+      GIT_COMMITTER_NAME: "cq-codex-sandbox-control",
+      GIT_COMMITTER_EMAIL: "cq-codex-sandbox-control@example.invalid",
+      GIT_TERMINAL_PROMPT: "0",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitStatus, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  return { exitStatus, stdout, stderr };
+}
+
+async function requireControlSuccess(
+  executable: string,
+  args: readonly string[],
+  cwd: string,
+): Promise<string> {
+  const result = await runControlCommand(executable, args, cwd);
+  if (result.exitStatus !== 0) {
+    throw new CodexRoleBoundaryError(
+      `sandbox control ${path.basename(executable)} ${args.join(" ")} exited ` +
+        `${String(result.exitStatus)}: ${result.stderr.trim()}`,
+    );
+  }
+  return result.stdout.trim();
+}
+
+/**
+ * Execute the valid Git metadata mutation both without confinement (positive
+ * control in an isolated repository) and through Codex's actual workspace
+ * sandbox (negative control in the exact managed worktree).
+ */
+export async function executeCodexProviderSandboxControl(
+  request: CodexProviderSandboxControlRequest,
+): Promise<CodexProviderSandboxControl> {
+  const validation = validateManagedWorktreeHandle(request.managedHandle);
+  if (validation.status === "invalid") {
+    throw new CodexRoleBoundaryError(`sandbox control managed handle is invalid: ${validation.detail}`);
+  }
+  const codexExecutable = await realpath(requiredString(request.codexExecutable, "codexExecutable"));
+  const gitExecutable = await realpath(requiredString(request.gitExecutable, "gitExecutable"));
+  if (
+    !/^\/nix\/store\/[0-9a-z]{32}-[^/]+\/bin\/codex$/.test(codexExecutable) ||
+    !/^\/nix\/store\/[0-9a-z]{32}-[^/]+\/bin\/git$/.test(gitExecutable)
+  ) {
+    throw new CodexRoleBoundaryError(
+      "sandbox controls require exact installed Nix Codex and Git executables",
+    );
+  }
+  const controlRoot = await mkdtemp(path.join(tmpdir(), "cq-codex-git-control-"));
+  try {
+    await requireControlSuccess(gitExecutable, ["init", "-q"], controlRoot);
+    await writeFile(path.join(controlRoot, "tracked"), "control\n");
+    await requireControlSuccess(gitExecutable, ["add", "tracked"], controlRoot);
+    await requireControlSuccess(gitExecutable, ["commit", "-q", "-m", "control"], controlRoot);
+    const controlHead = await requireControlSuccess(gitExecutable, ["rev-parse", "HEAD"], controlRoot);
+    await requireControlSuccess(
+      gitExecutable,
+      ["update-ref", "refs/heads/control-unsandboxed", controlHead],
+      controlRoot,
+    );
+    const unsandboxedRef = await requireControlSuccess(
+      gitExecutable,
+      ["rev-parse", "refs/heads/control-unsandboxed"],
+      controlRoot,
+    );
+    if (unsandboxedRef !== controlHead) {
+      throw new CodexRoleBoundaryError("unsandboxed Git metadata positive control changed identity");
+    }
+
+    const managedHead = await requireControlSuccess(
+      gitExecutable,
+      ["rev-parse", "HEAD"],
+      request.managedHandle.absolutePath,
+    );
+    const refName =
+      `refs/heads/cq-sandbox-${request.roleId === "implement-worker" ? "worker" : "resolver"}-` +
+      request.route;
+    const before = await runControlCommand(
+      gitExecutable,
+      ["show-ref", "--verify", "--quiet", refName],
+      request.managedHandle.absolutePath,
+    );
+    if (before.exitStatus === 0) {
+      throw new CodexRoleBoundaryError(`sandbox control target ${refName} already exists`);
+    }
+    const sandboxed = await runControlCommand(
+      codexExecutable,
+      [
+        "-c",
+        'default_permissions="workspace"',
+        "-c",
+        'permissions.workspace.extends=":workspace"',
+        "sandbox",
+        "-P",
+        "workspace",
+        "-C",
+        request.managedHandle.absolutePath,
+        "--",
+        gitExecutable,
+        "update-ref",
+        refName,
+        managedHead,
+      ],
+      request.managedHandle.absolutePath,
+    );
+    const after = await runControlCommand(
+      gitExecutable,
+      ["show-ref", "--verify", "--quiet", refName],
+      request.managedHandle.absolutePath,
+    );
+    if (sandboxed.exitStatus === 0 || after.exitStatus === 0) {
+      throw new CodexRoleBoundaryError(
+        `Codex ${request.roleId}/${request.route} sandbox admitted direct Git metadata mutation`,
+      );
+    }
+    const result = Object.freeze({
+      kind: "cq-codex-provider-sandbox-control" as const,
+      version: 1 as const,
+      roleId: request.roleId,
+      route: request.route,
+      managedHandle: request.managedHandle,
+      codexExecutable,
+      unsandboxedExitStatus: 0 as const,
+      sandboxedExitStatus: sandboxed.exitStatus,
+      sandboxedStderrDigest: createHash("sha256").update(sandboxed.stderr).digest("hex"),
+      sandboxedRefAbsent: true as const,
+    });
+    RUNNER_OWNED_SANDBOX_CONTROLS.add(result);
+    return result;
+  } finally {
+    await rm(controlRoot, { recursive: true, force: true });
+  }
 }

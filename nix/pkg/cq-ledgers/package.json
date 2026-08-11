@@ -13,7 +13,8 @@
     "packages/ledger-web"
   ],
   "scripts": {
-    "check": "tsc -b && bun run lint && bun test && bun run check:flake-enumeration",
+    "check": "tsc -b && bun run lint && bun test && bun run check:codex-installed-gate && bun run check:flake-enumeration",
+    "check:codex-installed-gate": "cd ../../.. && nix build --no-link .#cq",
     "check:flake-enumeration": "cd ../../.. && nix flake show --all-systems --json",
     "typecheck": "tsc -b",
     "lint": "eslint .",

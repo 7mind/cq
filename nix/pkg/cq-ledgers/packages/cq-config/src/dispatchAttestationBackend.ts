@@ -72,6 +72,7 @@ import {
   attestationRowDigest,
   formatAttestationNamespace,
   isAttestationTombstone,
+  isBackendOwnedConsumedDispatchResult,
   resultCapabilityHash,
   abortDispatch,
   authorizeDispatchGitConflict,
@@ -108,6 +109,7 @@ import {
 import { LEDGER_BACKENDS } from "./types.js";
 import type {
   AbortedDispatchResult,
+  ConsumedDispatchResult,
   DispatchHandle,
   FetchDispatchResult,
   MaterializedDispatchInput,
@@ -880,9 +882,24 @@ export async function fetchDispatchResultOn(
   request: FetchDispatchResultRequest,
   deps: AttestationBackendDeps,
 ): Promise<FetchDispatchResult> {
-  return backend.transact(handleLoadScope(request), (store) =>
+  const result = await backend.transact(handleLoadScope(request), (store) =>
     fetchDispatchResult(request, { store, now: deps.now }),
   );
+  if (isBackendOwnedConsumedDispatchResult(result)) {
+    CONSUMED_RESULT_BACKENDS.set(result, backend);
+  }
+  return result;
+}
+
+const CONSUMED_RESULT_BACKENDS = new WeakMap<object, AttestationBackend>();
+
+export function consumedResultsComeFromDifferentBackendInstances(
+  left: ConsumedDispatchResult,
+  right: ConsumedDispatchResult,
+): boolean {
+  const leftBackend = CONSUMED_RESULT_BACKENDS.get(left);
+  const rightBackend = CONSUMED_RESULT_BACKENDS.get(right);
+  return leftBackend !== undefined && rightBackend !== undefined && leftBackend !== rightBackend;
 }
 
 export async function sweepAttestationsOn(

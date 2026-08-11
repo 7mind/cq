@@ -45,11 +45,11 @@ import { fileURLToPath } from "node:url";
 import {
   MANAGED_WORKTREE_HANDLE_KIND,
   parseWipArtifact,
-  recordManagerOwnedReleaseResult,
   validateManagedWorktreeHandle as validateManagedWorktreeHandleContract,
   WipArtifactParseError,
   type ManagedWorktreeHandle as ConfigManagedWorktreeHandle,
 } from "@cq/config";
+import { recordManagerOwnedReleaseResult } from "../../cq-config/src/internal/managedWorktreeReleaseAuthority.js";
 import {
   type DependencyResultCommit,
   type DependencyResultCommitResolution,

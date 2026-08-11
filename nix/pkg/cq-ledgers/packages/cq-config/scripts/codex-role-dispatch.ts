@@ -1,9 +1,10 @@
 #!/usr/bin/env -S bun run
 
-import { readFile } from "node:fs/promises";
+import { appendFile, readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import {
   assertCodexDispatchedRoleId,
+  CODEX_PRETURN_OBSERVATION_PATH_ENV,
   CodexRoleBoundaryError,
   createCodexRoleBoundaryPlan,
   executeCodexRoleBoundary,
@@ -59,7 +60,30 @@ export async function main(): Promise<void> {
     ledgerCommand: process.env[LEDGER_COMMAND_ENV] ?? "cq",
     codexExecutable: process.env[CODEX_EXECUTABLE_ENV] ?? "codex",
   });
-  const handle = await executeCodexRoleBoundary(plan);
+  const observationPath = process.env[CODEX_PRETURN_OBSERVATION_PATH_ENV];
+  if (observationPath !== undefined) {
+    await writeFile(observationPath, `${JSON.stringify(plan.effectivePreturn)}\n`, {
+      flag: "wx",
+      mode: 0o600,
+    });
+  }
+  const correlationId = process.env["CQ_CODEX_ROLE_CORRELATION_ID"];
+  if (observationPath !== undefined && (correlationId === undefined || correlationId.trim() === "")) {
+    throw new Error("codex-role-dispatch: runner observation requires a correlation id");
+  }
+  const execution = await executeCodexRoleBoundary(plan, correlationId);
+  const handle = "observation" in execution ? execution.handle : execution;
+  if (observationPath !== undefined && "observation" in execution) {
+    await appendFile(
+      observationPath,
+      `${JSON.stringify({
+        kind: "cq-codex-effective-outcome",
+        version: 1,
+        handle: execution.handle,
+        observedFailureControls: execution.observedFailureControls,
+      })}\n`,
+    );
+  }
   process.stdout.write(`${JSON.stringify(handle)}\n`);
 }
 

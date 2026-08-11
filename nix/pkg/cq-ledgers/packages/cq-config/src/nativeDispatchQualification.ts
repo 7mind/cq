@@ -21,16 +21,20 @@ import type { Harness } from "./types.js";
 import {
   isRunnerOwnedCodexRoleBoundaryExecution,
   isRunnerOwnedCodexInstalledRoleBoundaryExecution,
+  isRunnerOwnedCodexProviderSandboxControl,
   type CodexRoleBoundaryExecutionResult,
   type CodexInstalledRoleBoundaryExecution,
+  type CodexProviderSandboxControl,
 } from "./codexRoleBoundary.js";
-import type { ConsumedDispatchResult } from "./compactDispatchProtocol.js";
-import { isBackendOwnedConsumedDispatchResult } from "./dispatchAttestation.js";
+import type { AbortedDispatchResult, ConsumedDispatchResult } from "./compactDispatchProtocol.js";
 import {
-  isManagerOwnedReleaseResult,
-  validateManagedWorktreeHandle,
-  type ManagedWorktreeHandle,
-} from "./managedWorktreeHandle.js";
+  AttestationBindingError,
+  isBackendOwnedAbortedDispatchResult,
+  isBackendOwnedConsumedDispatchResult,
+} from "./dispatchAttestation.js";
+import { consumedResultsComeFromDifferentBackendInstances } from "./dispatchAttestationBackend.js";
+import { isManagerOwnedReleaseResult } from "./internal/managedWorktreeReleaseAuthority.js";
+import { validateManagedWorktreeHandle, type ManagedWorktreeHandle } from "./managedWorktreeHandle.js";
 
 export type NativeAdapterId = `${Harness}:native`;
 
@@ -220,44 +224,20 @@ export interface CodexProviderReleaseEvidence {
 }
 
 export interface CodexProviderGateAuthenticationInput {
-  readonly installedGateTest: CodexInstalledGateTestResult;
+  readonly execution: CodexInstalledRoleBoundaryExecution;
+  readonly nativeExecution: CodexRoleBoundaryExecutionResult;
+  readonly priorExecution?: CodexInstalledRoleBoundaryExecution | CodexRoleBoundaryExecutionResult;
+  readonly priorConsumed?: ConsumedDispatchResult;
   readonly consumed: ConsumedDispatchResult;
   readonly release: CodexProviderReleaseEvidence;
-}
-
-export interface CodexInstalledGateTestResult {
-  readonly kind: "cq-codex-installed-gate-test-result";
-  readonly version: 1;
-  readonly execution: CodexInstalledRoleBoundaryExecution;
-  readonly nativeExecution?: CodexRoleBoundaryExecutionResult;
-  readonly priorExecution?: CodexInstalledRoleBoundaryExecution | CodexRoleBoundaryExecutionResult;
-  readonly priorConsumed?: ConsumedDispatchResult;
-  readonly preturnBindings: readonly CodexProviderPreturnBinding[];
-  readonly routes: readonly CodexProviderRoute[];
-  readonly failureControls: readonly CodexProviderFailureControl[];
-  readonly receiptChainVerified: true;
-  readonly directGitDenied: true;
-  readonly confinementVerified: true;
-  readonly objectAttributionVerified: true;
-  readonly lifecycle: "single-or-typed-abort";
-  readonly behavior: "commit-and-resume" | "multi-step-rebase";
-}
-
-export interface CodexInstalledGateTestInput {
-  readonly execution: CodexInstalledRoleBoundaryExecution;
-  readonly nativeExecution?: CodexRoleBoundaryExecutionResult;
-  readonly priorExecution?: CodexInstalledRoleBoundaryExecution | CodexRoleBoundaryExecutionResult;
-  readonly priorConsumed?: ConsumedDispatchResult;
-  readonly failureControls: readonly CodexProviderFailureControl[];
-  readonly directGitDenied: true;
-  readonly confinementVerified: true;
-  readonly objectAttributionVerified: true;
-  readonly lifecycle: "single-or-typed-abort";
+  readonly sandboxControls: readonly CodexProviderSandboxControl[];
+  readonly completionRejection?: unknown;
+  readonly cancelled?: AbortedDispatchResult;
+  readonly deadline?: AbortedDispatchResult;
 }
 
 const AUTHENTICATED_CODEX_PROVIDER_GATES = new WeakSet<object>();
 const AUTHENTICATED_CODEX_NATIVE_QUALIFICATIONS = new WeakSet<object>();
-const TRUSTED_CODEX_INSTALLED_GATE_TEST_RESULTS = new WeakSet<object>();
 
 export interface CodexNativeQualificationInput {
   readonly cwd: string;
@@ -303,23 +283,68 @@ function sameManagedHandle(left: ManagedWorktreeHandle, right: ManagedWorktreeHa
   );
 }
 
-/** Mint only after the installed package harness has asserted its observed controls. */
-export function attestCodexInstalledGateTestResult(
-  input: CodexInstalledGateTestInput,
-): CodexInstalledGateTestResult {
+function deriveInstalledGateEvidence(input: CodexProviderGateAuthenticationInput) {
   if (!isRunnerOwnedCodexInstalledRoleBoundaryExecution(input.execution)) {
     throw new Error("Codex installed gate test lacks a runner-owned process execution");
   }
-  if (!exactKnownSubset(input.failureControls, CODEX_PROVIDER_FAILURE_CONTROLS)) {
-    throw new Error("Codex installed gate test contains an empty, duplicate, or unknown observation");
-  }
   if (
-    (input.nativeExecution !== undefined &&
-      (!isRunnerOwnedCodexRoleBoundaryExecution(input.nativeExecution) ||
-        input.nativeExecution.observation.agentType !== input.execution.roleId))
+    !isRunnerOwnedCodexRoleBoundaryExecution(input.nativeExecution) ||
+    input.nativeExecution.observation.agentType !== input.execution.roleId
   ) {
     throw new Error("Codex installed gate native-route claim lacks a runner-owned native execution");
   }
+  const installedPreturn = input.execution.effectivePreturn;
+  const nativePreturn = input.nativeExecution.effectivePreturn;
+  if (
+    installedPreturn.rolePromptDigest !== input.execution.expectedPromptProvenance.promptDigest ||
+    nativePreturn.rolePromptDigest !== input.execution.expectedPromptProvenance.promptDigest ||
+    installedPreturn.roleId !== input.execution.roleId ||
+    nativePreturn.roleId !== input.execution.roleId ||
+    installedPreturn.cwd !== input.execution.managedHandle.absolutePath ||
+    nativePreturn.cwd !== input.execution.managedHandle.absolutePath ||
+    installedPreturn.ledgerCwd !== input.execution.managedHandle.repositoryRoot ||
+    nativePreturn.ledgerCwd !== input.execution.managedHandle.repositoryRoot ||
+    installedPreturn.model !== nativePreturn.model ||
+    installedPreturn.reasoningEffort !== nativePreturn.reasoningEffort ||
+    installedPreturn.sandboxMode !== "workspace-write" ||
+    nativePreturn.sandboxMode !== "workspace-write" ||
+    installedPreturn.skillsPolicy !== "role-instructions" ||
+    nativePreturn.skillsPolicy !== "role-instructions" ||
+    installedPreturn.multiAgent !== false ||
+    nativePreturn.multiAgent !== false ||
+    JSON.stringify(installedPreturn.enabledTools) !== JSON.stringify(nativePreturn.enabledTools)
+  ) {
+    throw new Error("Codex installed gate preturn observations differ across native/process routes");
+  }
+  if (!sameInstalledIdentity(input.execution, {
+    ...input.execution,
+    installedIdentity: input.execution.expectedInstalledIdentity,
+  })) {
+    throw new Error("Codex installed gate did not execute the independently expected derivation");
+  }
+
+  const sandboxRoutes = new Set<CodexProviderRoute>();
+  for (const control of input.sandboxControls) {
+    if (
+      !isRunnerOwnedCodexProviderSandboxControl(control) ||
+      control.roleId !== input.execution.roleId ||
+      !sameManagedHandle(control.managedHandle, input.execution.managedHandle) ||
+      control.unsandboxedExitStatus !== 0 ||
+      control.sandboxedExitStatus === 0 ||
+      control.sandboxedRefAbsent !== true ||
+      !/^[0-9a-f]{64}$/.test(control.sandboxedStderrDigest)
+    ) {
+      throw new Error("Codex installed gate lacks a runner-owned discriminating sandbox control");
+    }
+    sandboxRoutes.add(control.route);
+  }
+  if (
+    sandboxRoutes.size !== CODEX_PROVIDER_ROUTES.length ||
+    !CODEX_PROVIDER_ROUTES.every((route) => sandboxRoutes.has(route))
+  ) {
+    throw new Error("Codex installed gate lacks native/process direct-Git controls for its role");
+  }
+
   const hasPrior = input.priorExecution !== undefined || input.priorConsumed !== undefined;
   if (hasPrior) {
     const priorExecution = input.priorExecution;
@@ -353,31 +378,57 @@ export function attestCodexInstalledGateTestResult(
   ) {
     throw new Error("Codex installed gate behavior does not match its role and retry evidence");
   }
-  const result = Object.freeze({
-    kind: "cq-codex-installed-gate-test-result" as const,
-    version: 1 as const,
-    execution: input.execution,
-    ...(input.nativeExecution === undefined ? {} : { nativeExecution: input.nativeExecution }),
-    ...(input.priorExecution === undefined ? {} : { priorExecution: input.priorExecution }),
-    ...(input.priorConsumed === undefined ? {} : { priorConsumed: input.priorConsumed }),
+
+  const observedFailureControls = new Set<CodexProviderFailureControl>();
+  for (const control of input.execution.observedFailureControls) {
+    if (!CODEX_PROVIDER_FAILURE_CONTROLS.includes(control as CodexProviderFailureControl)) {
+      throw new Error(`Codex installed gate observed unknown failure control ${JSON.stringify(control)}`);
+    }
+    observedFailureControls.add(control as CodexProviderFailureControl);
+  }
+  if (input.completionRejection instanceof AttestationBindingError) {
+    observedFailureControls.add("completion");
+  }
+  if (
+    input.cancelled !== undefined &&
+    isBackendOwnedAbortedDispatchResult(input.cancelled) &&
+    input.cancelled.reason === "cancelled"
+  ) {
+    observedFailureControls.add("cancel");
+  }
+  if (
+    input.deadline !== undefined &&
+    isBackendOwnedAbortedDispatchResult(input.deadline) &&
+    input.deadline.reason === "deadline-exceeded"
+  ) {
+    observedFailureControls.add("deadline");
+  }
+  if (
+    input.priorConsumed !== undefined &&
+    consumedResultsComeFromDifferentBackendInstances(input.priorConsumed, input.consumed)
+  ) {
+    observedFailureControls.add("restart");
+  }
+  const failureControls = CODEX_PROVIDER_FAILURE_CONTROLS.filter((control) =>
+    observedFailureControls.has(control),
+  );
+  if (!exactKnownSubset(failureControls, CODEX_PROVIDER_FAILURE_CONTROLS)) {
+    throw new Error("Codex installed gate contains no authenticated failure-control observation");
+  }
+  return Object.freeze({
     preturnBindings: CODEX_PROVIDER_PRETURN_BINDINGS,
-    routes: Object.freeze([
-      ...(input.nativeExecution === undefined ? [] : (["native"] as const)),
-      "process" as const,
-    ]),
-    failureControls: Object.freeze([...input.failureControls]),
+    routes: CODEX_PROVIDER_ROUTES,
+    failureControls: Object.freeze(failureControls),
     receiptChainVerified: true as const,
-    directGitDenied: input.directGitDenied,
-    confinementVerified: input.confinementVerified,
-    objectAttributionVerified: input.objectAttributionVerified,
-    lifecycle: input.lifecycle,
+    directGitDenied: true as const,
+    confinementVerified: true as const,
+    objectAttributionVerified: true as const,
+    lifecycle: "single-or-typed-abort" as const,
     behavior:
       input.execution.roleId === "implement-worker"
         ? ("commit-and-resume" as const)
         : ("multi-step-rebase" as const),
   });
-  TRUSTED_CODEX_INSTALLED_GATE_TEST_RESULTS.add(result);
-  return result;
 }
 
 /**
@@ -387,11 +438,8 @@ export function attestCodexInstalledGateTestResult(
 export function authenticateCodexProviderGateObservation(
   input: CodexProviderGateAuthenticationInput,
 ): CodexProviderGateObservation {
-  if (!TRUSTED_CODEX_INSTALLED_GATE_TEST_RESULTS.has(input.installedGateTest)) {
-    throw new Error("Codex provider evidence lacks a trusted installedGateTest result");
-  }
-  const installedGateTest = input.installedGateTest;
-  const execution = installedGateTest.execution;
+  const installedGateTest = deriveInstalledGateEvidence(input);
+  const execution = input.execution;
   if (!isRunnerOwnedCodexInstalledRoleBoundaryExecution(execution)) {
     throw new Error("Codex provider evidence was not produced by the installed-boundary runner");
   }
@@ -466,9 +514,9 @@ export function authenticateCodexProviderGateObservation(
   if (previousHead !== output["resultCommit"]) {
     throw new Error(`Codex provider ${receiptsField} does not terminate at resultCommit`);
   }
-  if (installedGateTest.priorConsumed !== undefined) {
+  if (input.priorConsumed !== undefined) {
     const priorOutput = objectRecord(
-      installedGateTest.priorConsumed.output,
+      input.priorConsumed.output,
       "installedGateTest.priorConsumed.output",
     );
     const firstReceipt = objectRecord(receipts[0], `${receiptsField}[0]`);

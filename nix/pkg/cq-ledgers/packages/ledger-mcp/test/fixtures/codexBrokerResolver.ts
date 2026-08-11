@@ -138,6 +138,43 @@ const secondOutcome = second["outcome"] as Record<string, unknown>;
 if (secondOutcome?.["kind"] !== "terminal" || secondOutcome["tip"] !== second["newHead"]) {
   throw new Error("second resolver continuation did not terminate the rebase");
 }
+const directGit = Bun.spawnSync(
+  [
+    process.env["CQ_TEST_CODEX_SANDBOX_EXECUTABLE"] ?? "codex",
+    "-c",
+    'default_permissions="workspace"',
+    "-c",
+    'permissions.workspace.extends=":workspace"',
+    "sandbox",
+    "-P",
+    "workspace",
+    "-C",
+    worktreePath,
+    "--",
+    process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git",
+    "update-ref",
+    "refs/heads/cq-direct-git-resolver-probe",
+    String(second["newHead"]),
+  ],
+  { cwd: worktreePath, stdout: "pipe", stderr: "pipe" },
+);
+if (directGit.exitCode === 0) {
+  throw new Error("resolver direct Git ref mutation unexpectedly succeeded");
+}
+const deniedCapability = await client.callTool({
+  name: "git_resolve_continue",
+  arguments: {
+    ...handle,
+    gitConflictCapability: { scope: "git-conflict", token: "cq_conflict_foreign_capability" },
+    operationId: "T2044-resolver-deny-capability",
+    expectedState: firstOutcome["state"],
+    resolutions: [],
+  },
+});
+if ((deniedCapability as { isError?: boolean }).isError !== true) {
+  throw new Error("resolver foreign Git capability unexpectedly succeeded");
+}
+const failureControls = ["capability"];
 
 const output = {
   taskId,
@@ -162,6 +199,11 @@ await writeFile(
   capturePath,
   JSON.stringify({
     boundary: { codexCwd, ledgerCommand, ledgerArgs, ledgerCwd, listedTools },
+    directGit: {
+      attempted: true,
+      exitStatus: directGit.exitCode,
+      stderrDigest: digest(directGit.stderr.toString()),
+    },
     output,
   }),
 );
@@ -169,6 +211,10 @@ await client.close();
 process.stdout.write(
   [
     JSON.stringify({ type: "thread.started", thread_id: "t2044-packaged-resolver" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: { type: "cq_provider_gate_observation", failure_controls: failureControls },
+    }),
     JSON.stringify({
       type: "item.completed",
       item: {

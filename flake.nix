@@ -605,6 +605,8 @@ EOF
             "$WORKSPACE/packages/ledger-web/node_modules/@cq/config"
         '';
 
+        codexPackage = pkgs.callPackage ./nix/pkg/codex/package.nix { };
+
         # cq — the ledger-suite CLI (`cq init|reset|erase`). A standalone Bun
         # bin (NOT embedded — it constructs an FsLedgerStore directly), modelled
         # on ledgerMcp; see the numbered installPhase below for the staging steps.
@@ -808,6 +810,7 @@ EOF
             wait "$firstGate"
             PATH=${pkgs.lib.makeBinPath ([ pkgs.bun pkgs.nodejs_22 pkgs.git ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.procps ])}:$PATH \
               CQ_TEST_CODEX_ROLE_EXECUTABLE=$out/bin/cq-codex-role \
+              CQ_TEST_CODEX_SANDBOX_EXECUTABLE=${codexPackage}/bin/codex \
               CQ_TEST_GIT_EXECUTABLE=${pkgs.git}/bin/git \
               ${pkgs.lib.optionalString pkgs.stdenv.isLinux "${pkgs.util-linux}/bin/setsid"} \
               ${pkgs.bun}/bin/bun test \
@@ -849,7 +852,7 @@ EOF
               cp ${pkgs.writeText "context-with-env-body" (contexts.general + "\n\n" + skills.environmentContent)} "$out"
             '';
           claude-code = pkgs.callPackage ./nix/pkg/claude-code/package.nix { };
-          codex = pkgs.callPackage ./nix/pkg/codex/package.nix { };
+          codex = codexPackage;
           pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
           claude-prompt-root = claudePromptRoot;
           codex-prompt-root = codexPromptRoot;

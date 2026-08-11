@@ -151,6 +151,17 @@ const second = await call(
 
 const directGit = Bun.spawnSync(
   [
+    process.env["CQ_TEST_CODEX_SANDBOX_EXECUTABLE"] ?? "codex",
+    "-c",
+    'default_permissions="workspace"',
+    "-c",
+    'permissions.workspace.extends=":workspace"',
+    "sandbox",
+    "-P",
+    "workspace",
+    "-C",
+    worktreePath,
+    "--",
     process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git",
     "update-ref",
     "refs/heads/cq-direct-git-probe",
@@ -395,6 +406,10 @@ await client.close();
 process.stdout.write(
   [
     JSON.stringify({ type: "thread.started", thread_id: "t2042-packaged-broker" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: { type: "cq_provider_gate_observation", failure_controls: failureControls },
+    }),
     JSON.stringify({
       type: "item.completed",
       item: {

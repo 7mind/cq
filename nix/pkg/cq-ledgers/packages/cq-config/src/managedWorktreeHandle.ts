@@ -53,18 +53,6 @@ export interface ManagedWorktreeHandleV2 extends ManagedWorktreeHandleFields {
 
 export type ManagedWorktreeHandle = ManagedWorktreeHandleV1 | ManagedWorktreeHandleV2;
 
-const MANAGER_OWNED_RELEASE_RESULTS = new WeakSet<object>();
-
-/** Manager-only bridge: retain the identity of a successful guarded release. */
-export function recordManagerOwnedReleaseResult<T extends object>(value: T): T {
-  MANAGER_OWNED_RELEASE_RESULTS.add(value);
-  return value;
-}
-
-export function isManagerOwnedReleaseResult(value: unknown): boolean {
-  return typeof value === "object" && value !== null && MANAGER_OWNED_RELEASE_RESULTS.has(value);
-}
-
 export type ManagedWorktreeHandleValidation =
   | { readonly status: "valid"; readonly handle: ManagedWorktreeHandle }
   | {

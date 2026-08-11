@@ -127,7 +127,6 @@ export {
   isManagedWorktreePath,
   qualifyClaudeNativeAdapter,
   authenticateCodexProviderGateObservation,
-  attestCodexInstalledGateTestResult,
   qualifyCodexNativeAdapter,
   isAuthenticatedCodexNativeQualification,
   qualifyPiNativeAdapter,
@@ -135,10 +134,6 @@ export {
   selectQualifiedNativeAdapterIds,
   isNativeAdapterId,
   nativeAdapterIdFor,
-} from "./nativeDispatchQualification.js";
-export type {
-  CodexInstalledGateTestInput,
-  CodexInstalledGateTestResult,
 } from "./nativeDispatchQualification.js";
 export type {
   ManagedWorktreeHandle,
@@ -149,9 +144,7 @@ export type {
 export {
   MANAGED_WORKTREE_HANDLE_KIND,
   isManagedWorktreeHandle,
-  isManagerOwnedReleaseResult,
   managedWorktreeHandlesEqual,
-  recordManagerOwnedReleaseResult,
   validateManagedWorktreeHandle,
 } from "./managedWorktreeHandle.js";
 export type {
@@ -669,6 +662,7 @@ export {
   abortDispatch,
   fetchDispatchResult,
   isBackendOwnedConsumedDispatchResult,
+  isBackendOwnedAbortedDispatchResult,
   collapseAttestationEnvelope,
   sweepAttestations,
   DISPATCH_ATTESTATION_DEFERRED_TO,
@@ -735,8 +729,13 @@ export type {
   CodexRoleLedgerMcpConfiguration,
   CodexRoleBoundaryPlan,
   CodexRoleBoundaryExecutionResult,
+  CodexEffectivePreturn,
+  CodexInstalledIdentity,
   CodexInstalledRoleBoundaryExecution,
   CodexInstalledRoleBoundaryRequest,
+  CodexProviderSandboxControl,
+  CodexProviderSandboxControlRequest,
+  CodexProviderSandboxControlRoute,
   CodexRoleBoundaryDiagnosticVerdict,
   CodexRoleBoundaryDiagnosticDetailCode,
   CodexRoleBoundaryDiagnostic,
@@ -746,6 +745,7 @@ export {
   CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX,
   CODEX_ROLE_BOUNDARY_DIAGNOSTIC_VERDICTS,
   CODEX_ROLE_BOUNDARY_DIAGNOSTIC_DETAIL_CODES,
+  CODEX_PRETURN_OBSERVATION_PATH_ENV,
   CodexRoleBoundaryError,
   formatCodexRoleBoundaryDiagnostic,
   assertCodexDispatchedRoleId,
@@ -753,8 +753,10 @@ export {
   interceptCodexRoleBoundaryResult,
   executeCodexRoleBoundary,
   executeInstalledCodexRoleBoundary,
+  executeCodexProviderSandboxControl,
   isRunnerOwnedCodexRoleBoundaryExecution,
   isRunnerOwnedCodexInstalledRoleBoundaryExecution,
+  isRunnerOwnedCodexProviderSandboxControl,
 } from "./codexRoleBoundary.js";
 export type {
   CodexSandboxPipeProbeVerdict,
@@ -953,6 +955,7 @@ export {
   confirmDispatchCompletionOn,
   defaultAttestationSweepTimer,
   fetchDispatchResultOn,
+  consumedResultsComeFromDifferentBackendInstances,
   fetchDispatchInputOn,
   authorizeDispatchGitEffectOn,
   authorizeDispatchGitConflictOn,

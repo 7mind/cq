@@ -1775,11 +1775,19 @@ function terminalDigestOf(
   return dispatchPayloadDigest({ terminalKind: kind, ...detail });
 }
 
+const BACKEND_OWNED_ABORTED_RESULTS = new WeakSet<object>();
+
+export function isBackendOwnedAbortedDispatchResult(
+  value: unknown,
+): value is AbortedDispatchResult {
+  return typeof value === "object" && value !== null && BACKEND_OWNED_ABORTED_RESULTS.has(value);
+}
+
 function abortedResultOf(row: AttestationEnvelope): AbortedDispatchResult {
   if (row.state !== "aborted" || row.abortedAt === undefined || row.abortReason === undefined) {
     throw new AttestationContractError("row", `expected an aborted envelope, got "${row.state}"`);
   }
-  return Object.freeze({
+  const aborted = Object.freeze({
     state: "aborted" as const,
     attestationId: row.attestationId,
     generation: row.generation,
@@ -1787,6 +1795,8 @@ function abortedResultOf(row: AttestationEnvelope): AbortedDispatchResult {
     reason: row.abortReason,
     ...(row.abortDetails === undefined ? {} : { details: row.abortDetails }),
   });
+  BACKEND_OWNED_ABORTED_RESULTS.add(aborted);
+  return aborted;
 }
 
 /**
