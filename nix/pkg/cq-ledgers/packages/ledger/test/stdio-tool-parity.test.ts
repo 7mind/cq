@@ -1353,6 +1353,135 @@ describe("stdio/direct ledger tool differential contract", () => {
         await stdioFixture.store.dispose();
       }
     });
+
+    // BG over the direct handler and stdio MCP transport; regression-origin: R1317.
+    it(`fences operator-action reopen and stale evidence for prefix ${JSON.stringify(prefix)}`, async () => {
+      const directFixture = await buildFixture();
+      const stdioFixture = await buildFixture();
+      const direct = directTools(directFixture.store, prefix, AVAILABLE_CAPABILITIES);
+      const stdio = await connectStdio(stdioFixture.store, prefix, AVAILABLE_CAPABILITIES);
+      const invokeBoth = async (invocation: Invocation): Promise<ToolOutcome> => {
+        const name = prefixed(prefix, invocation.name);
+        const directOutcome = await invokeDirect(direct, name, invocation.args);
+        const stdioOutcome = await invokeStdio(stdio.client, name, invocation.args);
+        expect(stdioOutcome, invocation.name).toEqual(directOutcome);
+        return directOutcome;
+      };
+      const actionId = `OA${directFixture.ids.operatorActionTask.slice(1)}`;
+      const identity = "/nix/store/parity-epoch";
+      const evidenceArgs = (
+        command: string,
+        exitCode: number,
+        observedAt: string,
+      ): Record<string, unknown> => ({
+        action_id: actionId,
+        command,
+        stdout: exitCode === 0 ? "ok" : "",
+        stderr: exitCode === 0 ? "" : "failed",
+        exit_code: exitCode,
+        output_identity: identity,
+        observed_at: observedAt,
+        author: "parity-parent",
+      });
+
+      try {
+        expect(
+          decode(
+            await invokeBoth({
+              name: "materialize_operator_action",
+              args: {
+                task_id: directFixture.ids.operatorActionTask,
+                expected_output_identity: identity,
+                expected_evidence: ["probe-a", "probe-b"],
+                author: "parity-parent",
+              },
+            }),
+          ),
+        ).toMatchObject({ state: "created", action: { status: "pending" } });
+        await invokeBoth({
+          name: "acknowledge_operator_action",
+          args: {
+            action_id: actionId,
+            output_identity: identity,
+            acknowledged_at: "2026-08-11T08:00:00.000Z",
+          },
+        });
+        expect(
+          decode(
+            await invokeBoth({
+              name: "record_operator_action_evidence",
+              args: evidenceArgs("probe-a", 0, "2026-08-11T08:01:00.000Z"),
+            }),
+          ),
+        ).toMatchObject({ state: "acknowledged" });
+        expect(
+          decode(
+            await invokeBoth({
+              name: "record_operator_action_evidence",
+              args: evidenceArgs("probe-b", 1, "2026-08-11T08:02:00.000Z"),
+            }),
+          ),
+        ).toMatchObject({ state: "pending" });
+        await invokeBoth({
+          name: "acknowledge_operator_action",
+          args: {
+            action_id: actionId,
+            output_identity: identity,
+            acknowledged_at: "2026-08-11T08:03:00.000Z",
+          },
+        });
+        expect(
+          decode(
+            await invokeBoth({
+              name: "record_operator_action_evidence",
+              args: evidenceArgs("probe-b", 0, "2026-08-11T08:04:00.000Z"),
+            }),
+          ),
+        ).toMatchObject({ state: "acknowledged" });
+        expect(
+          decode(
+            await invokeBoth({
+              name: "record_operator_action_evidence",
+              args: evidenceArgs("probe-a", 0, "2026-08-11T08:05:00.000Z"),
+            }),
+          ),
+        ).toMatchObject({ state: "verified", action: { status: "verified" } });
+        expect(
+          decode(
+            await invokeBoth({
+              name: "complete_operator_action",
+              args: {
+                action_id: actionId,
+                completion: "latest epoch verified",
+                author: "parity-parent",
+              },
+            }),
+          ),
+        ).toMatchObject({ task: { status: "done" } });
+
+        for (const [ledgerId, itemId, toStatus] of [
+          ["operatorActions", actionId, "pending"],
+          ["tasks", directFixture.ids.operatorActionTask, "planned"],
+        ] as const) {
+          const outcome = await invokeBoth({
+            name: "reopen_item",
+            args: { ledger_id: ledgerId, item_id: itemId, to_status: toStatus },
+          });
+          expect(outcome).toMatchObject({
+            kind: "error",
+            error: { category: "handler", message: expect.stringMatching(/typed operator-action lifecycle/) },
+          });
+        }
+        expect(directFixture.store.fetchItem("operatorActions", actionId).status).toBe("verified");
+        expect(stdioFixture.store.fetchItem("operatorActions", actionId).status).toBe("verified");
+        expect(directFixture.store.fetchItem("tasks", directFixture.ids.operatorActionTask).status).toBe("done");
+        expect(stdioFixture.store.fetchItem("tasks", stdioFixture.ids.operatorActionTask).status).toBe("done");
+      } finally {
+        await stdio.close();
+        await directFixture.store.dispose();
+        await stdioFixture.store.dispose();
+      }
+    });
   }
 
   for (const prefix of PREFIXES) {

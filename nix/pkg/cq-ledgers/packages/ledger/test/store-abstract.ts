@@ -20,7 +20,11 @@ import {
   MILESTONES_ACTIVE_GROUP_ID,
   MILESTONES_AMBIENT_ID,
   CANONICAL_LEDGERS,
+  acknowledgeOperatorAction,
+  completeOperatorActionTask,
   isIsoTimestamp,
+  materializeOperatorAction,
+  recordOperatorActionEvidence,
 } from "../src/index.js";
 
 // All canonical ledgers are bootstrapped on init(); the suite therefore
@@ -957,6 +961,131 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
     // -----------------------------------------------------------------------
 
     describe("Q78 — reopenItem", () => {
+      // BG for the dummy / Blackbox-GoodCommunication for production adapters;
+      // regression-origin: R1317 generic reopen bypassed the typed lifecycle.
+      it("R1317 generic reopenItem fences operator-action state and its strict-envelope task", async () => {
+        const store = await factory.build([]);
+        try {
+          const milestone = await store.createMilestone({ title: "operator action" });
+          const goal = await store.createItem("goals", milestone.id, {
+            status: "planned",
+            fields: { title: "deploy", description: "deploy" },
+          });
+          const task = await store.createItem("tasks", milestone.id, {
+            status: "planned",
+            fields: {
+              headline: "deploy",
+              description: "CQ-OPERATOR-ACTION v1 reopen-fence. User deploys.",
+              ledgerRefs: [`goals:${goal.id}`],
+            },
+          });
+          const materialized = await materializeOperatorAction(store, {
+            taskId: task.id,
+            expectedOutputIdentity: "/nix/store/reopen-fence",
+            expectedEvidence: ["cq --version"],
+          });
+          await acknowledgeOperatorAction(store, {
+            actionId: materialized.action.id,
+            outputIdentity: "/nix/store/reopen-fence",
+            acknowledgedAt: "2026-08-11T08:00:00.000Z",
+          });
+          await recordOperatorActionEvidence(
+            store,
+            materialized.action.id,
+            {
+              command: "cq --version",
+              stdout: "cq 1",
+              stderr: "",
+              exitCode: 0,
+              outputIdentity: "/nix/store/reopen-fence",
+              observedAt: "2026-08-11T08:01:00.000Z",
+            },
+            { author: "parent" },
+          );
+          await completeOperatorActionTask(store, materialized.action.id, "verified", {
+            author: "parent",
+          });
+
+          await expect(
+            store.reopenItem("operatorActions", materialized.action.id, "pending"),
+          ).rejects.toThrow(/typed operator-action lifecycle/);
+          await expect(store.reopenItem("tasks", task.id, "planned")).rejects.toThrow(
+            /typed operator-action lifecycle/,
+          );
+          expect(store.fetchItem("operatorActions", materialized.action.id).status).toBe(
+            "verified",
+          );
+          expect(store.fetchItem("tasks", task.id).status).toBe("done");
+        } finally {
+          await factory.teardown?.(store);
+        }
+      }, TIMEOUT);
+
+      // BG for the dummy / Blackbox-GoodCommunication for production adapters;
+      // regression-origin: R1317 stale success crossed a failure/re-ack epoch.
+      it("R1317 verification requires every probe in the latest exact acknowledgement epoch", async () => {
+        const store = await factory.build([]);
+        try {
+          const milestone = await store.createMilestone({ title: "probe epoch" });
+          const goal = await store.createItem("goals", milestone.id, {
+            status: "planned",
+            fields: { title: "deploy", description: "deploy" },
+          });
+          const task = await store.createItem("tasks", milestone.id, {
+            status: "planned",
+            fields: {
+              headline: "deploy",
+              description: "CQ-OPERATOR-ACTION v1 probe-epoch. User deploys.",
+              ledgerRefs: [`goals:${goal.id}`],
+            },
+          });
+          const materialized = await materializeOperatorAction(store, {
+            taskId: task.id,
+            expectedOutputIdentity: "/nix/store/probe-epoch",
+            expectedEvidence: ["probe-a", "probe-b"],
+          });
+          await acknowledgeOperatorAction(store, {
+            actionId: materialized.action.id,
+            outputIdentity: "/nix/store/probe-epoch",
+            acknowledgedAt: "2026-08-11T08:00:00.000Z",
+          });
+          const evidence = async (command: string, exitCode: number, observedAt: string) =>
+            recordOperatorActionEvidence(
+              store,
+              materialized.action.id,
+              {
+                command,
+                stdout: exitCode === 0 ? "ok" : "",
+                stderr: exitCode === 0 ? "" : "failed",
+                exitCode,
+                outputIdentity: "/nix/store/probe-epoch",
+                observedAt,
+              },
+              { author: "parent" },
+            );
+
+          expect((await evidence("probe-a", 0, "2026-08-11T08:01:00.000Z")).state).toBe(
+            "acknowledged",
+          );
+          expect((await evidence("probe-b", 1, "2026-08-11T08:02:00.000Z")).state).toBe(
+            "pending",
+          );
+          await acknowledgeOperatorAction(store, {
+            actionId: materialized.action.id,
+            outputIdentity: "/nix/store/probe-epoch",
+            acknowledgedAt: "2026-08-11T08:03:00.000Z",
+          });
+          expect((await evidence("probe-b", 0, "2026-08-11T08:04:00.000Z")).state).toBe(
+            "acknowledged",
+          );
+          const verified = await evidence("probe-a", 0, "2026-08-11T08:05:00.000Z");
+          expect(verified.state).toBe("verified");
+          expect(verified.action.fields["evidence"]).toHaveLength(4);
+        } finally {
+          await factory.teardown?.(store);
+        }
+      }, TIMEOUT);
+
       it("moves a TERMINAL item to a chosen NON-terminal status (createdAt preserved, updatedAt fresh)", async () => {
         const store = await factory.build([{ name: WIDGETS, schema: widgetsSchema }]);
         try {
