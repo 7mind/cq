@@ -255,6 +255,9 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   record_operator_action_evidence: purposeBuiltSmall(
     "An append-only `{ state: \"acknowledged\"|\"verified\"|\"pending\", action, reason? }` evidence acknowledgement.",
   ),
+  revise_operator_action: purposeBuiltSmall(
+    "`{ action, task, handoff }` after one exact pre-evidence manifest revision.",
+  ),
   complete_operator_action: purposeBuiltSmall(
     "`{ task }` only after the linked action is verified.",
   ),

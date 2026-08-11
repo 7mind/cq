@@ -109,6 +109,11 @@ import {
   type TaskAdoptionEligibilityResult,
   type TaskAdoptionPublicationResult,
 } from "../taskAdoptionEligibility.js";
+import {
+  applyOperatorActionLifecycleMutation,
+  type OperatorActionLifecycleMutation,
+  type OperatorActionLifecycleMutationResult,
+} from "./operatorActionLifecycle.js";
 
 export interface InMemoryLedgerStoreOpts {
   /** Returns an ISO 8601 UTC timestamp. Defaults to `new Date().toISOString()`. */
@@ -708,6 +713,15 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   async finalizePlan(input: PlanFinalizeInput): Promise<PlanFinalizeResult> {
     return this.runPlanLifecycleMutation((state) => finalizeInMemoryPlan(state, input), null);
+  }
+
+  async mutateOperatorAction(
+    mutation: OperatorActionLifecycleMutation,
+  ): Promise<OperatorActionLifecycleMutationResult> {
+    return this.runPlanLifecycleMutation(
+      (state) => applyOperatorActionLifecycleMutation(state.ledgers, mutation, state.now),
+      null,
+    );
   }
 
   /**

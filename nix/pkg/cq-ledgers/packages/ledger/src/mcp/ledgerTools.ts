@@ -107,6 +107,7 @@ import {
   completeOperatorActionTask,
   materializeOperatorAction,
   recordOperatorActionEvidence,
+  reviseOperatorAction,
 } from "../operatorActions.js";
 
 /** The compatibility profile: every capability-gated tool specification. */
@@ -795,6 +796,7 @@ export function createLedgerMcpToolSpecifications(
     "Acknowledge that the user deployed one operator action's exact expected output identity. A mismatch performs no write and returns pending; an exact identity advances pending to acknowledged so the parent may run bounded probes, while a verified replay returns verified.",
     {
       action_id: z.string().regex(/^OA\d+$/),
+      expected_revision: z.number().int().positive(),
       output_identity: z.string().min(1),
       acknowledged_at: z.string().min(1),
       session: z.string().min(1).optional(),
@@ -803,6 +805,7 @@ export function createLedgerMcpToolSpecifications(
       jsonResult(
         await acknowledgeOperatorAction(store, {
           actionId: args.action_id,
+          expectedRevision: args.expected_revision,
           outputIdentity: args.output_identity,
           acknowledgedAt: args.acknowledged_at,
           ...(args.session === undefined ? {} : { session: args.session }),
@@ -815,6 +818,7 @@ export function createLedgerMcpToolSpecifications(
     "Append one bounded parent-run shell probe with command/stdout/stderr/exit/output identity. Undeclared commands fail; every retry remains append-only. A nonzero exit or identity mismatch returns the action to pending; only a complete successful probe set from the latest exact acknowledgement epoch verifies it.",
     {
       action_id: z.string().regex(/^OA\d+$/),
+      expected_revision: z.number().int().positive(),
       command: z.string().min(1),
       stdout: z.string(),
       stderr: z.string(),
@@ -829,6 +833,7 @@ export function createLedgerMcpToolSpecifications(
         await recordOperatorActionEvidence(
           store,
           args.action_id,
+          args.expected_revision,
           {
             command: args.command,
             stdout: args.stdout,
@@ -845,21 +850,54 @@ export function createLedgerMcpToolSpecifications(
       ),
   );
 
+  const reviseOperatorActionTool = tool(
+    "revise_operator_action",
+    "Atomically replace one pending or acknowledged pre-evidence operator-action manifest at an exact expected revision, append the complete prior action/task/handoff audit, reset acknowledgement, refresh the handoff, and return an abandoned strict task to planned.",
+    {
+      action_id: z.string().regex(/^OA\d+$/),
+      expected_revision: z.number().int().positive(),
+      expected_output_identity: z.string().min(1),
+      expected_evidence: z.array(z.string().min(1)).min(1),
+      revised_at: z.string().min(1),
+      author: z.string().min(1),
+      session: z.string().min(1).optional(),
+    } as const,
+    async (args) =>
+      jsonResult(
+        await reviseOperatorAction(store, {
+          actionId: args.action_id,
+          expectedRevision: args.expected_revision,
+          expectedOutputIdentity: args.expected_output_identity,
+          expectedEvidence: args.expected_evidence,
+          revisedAt: args.revised_at,
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      ),
+  );
+
   const completeOperatorActionTool = tool(
     "complete_operator_action",
     "Mark the linked task done only after its operator action reached verified through exact acknowledged identity and all declared shell evidence.",
     {
       action_id: z.string().regex(/^OA\d+$/),
+      expected_revision: z.number().int().positive(),
       completion: z.string().min(1),
       author: z.string().min(1),
       session: z.string().min(1).optional(),
     } as const,
     async (args) =>
       jsonResult({
-        task: await completeOperatorActionTask(store, args.action_id, args.completion, {
-          author: args.author,
-          ...(args.session === undefined ? {} : { session: args.session }),
-        }),
+        task: await completeOperatorActionTask(
+          store,
+          args.action_id,
+          args.expected_revision,
+          args.completion,
+          {
+            author: args.author,
+            ...(args.session === undefined ? {} : { session: args.session }),
+          },
+        ),
       }),
   );
 
@@ -1097,6 +1135,7 @@ export function createLedgerMcpToolSpecifications(
     materializeOperatorActionTool,
     acknowledgeOperatorActionTool,
     recordOperatorActionEvidenceTool,
+    reviseOperatorActionTool,
     completeOperatorActionTool,
     reopenItem,
     unarchiveItem,

@@ -152,6 +152,11 @@ import {
   type TaskAdoptionEligibilityResult,
   type TaskAdoptionPublicationResult,
 } from "../taskAdoptionEligibility.js";
+import {
+  applyOperatorActionLifecycleMutation,
+  type OperatorActionLifecycleMutation,
+  type OperatorActionLifecycleMutationResult,
+} from "./operatorActionLifecycle.js";
 
 // Moved to schemaCompat.ts (T527) so the sqlite backend's module graph stays
 // free of this file's parser/serialize funnel; re-exported for compatibility.
@@ -512,6 +517,15 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
 
   async finalizePlan(input: PlanFinalizeInput): Promise<PlanFinalizeResult> {
     return this.runPlanLifecycleMutation((state) => finalizeInMemoryPlan(state, input), null);
+  }
+
+  async mutateOperatorAction(
+    mutation: OperatorActionLifecycleMutation,
+  ): Promise<OperatorActionLifecycleMutationResult> {
+    return this.runPlanLifecycleMutation(
+      (state) => applyOperatorActionLifecycleMutation(state.ledgers, mutation, state.now),
+      null,
+    );
   }
 
   // ---------------------------------------------------------------------------

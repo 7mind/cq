@@ -48,6 +48,10 @@ import type { FtsSearchHit, FtsSearchOpts } from "../search/LedgerSearchIndex.js
 import type { LedgerSnapshot } from "../snapshot.js";
 import type { UsageStatsSnapshot } from "../usageStats.js";
 import type {
+  OperatorActionLifecycleMutation,
+  OperatorActionLifecycleMutationResult,
+} from "./operatorActionLifecycle.js";
+import type {
   TaskAdoptionEligibilityFence,
   TaskAdoptionEligibilityResult,
   TaskAdoptionPublicationResult,
@@ -217,6 +221,15 @@ export interface LedgerStore {
     fence: TaskAdoptionEligibilityFence,
     publish: () => undefined,
   ): Promise<TaskAdoptionPublicationResult>;
+
+  /**
+   * Apply one revision-bound operator-action lifecycle mutation under the
+   * backend's authoritative serialization boundary. Multi-item effects commit
+   * atomically across operatorActions, tasks, and handoffs.
+   */
+  mutateOperatorAction(
+    mutation: OperatorActionLifecycleMutation,
+  ): Promise<OperatorActionLifecycleMutationResult>;
 
   // --- mutations (async, write-through under lock) ------------------------
 

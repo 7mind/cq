@@ -180,6 +180,11 @@ import {
   type TaskAdoptionEligibilityResult,
   type TaskAdoptionPublicationResult,
 } from "../../taskAdoptionEligibility.js";
+import {
+  applyOperatorActionLifecycleMutation,
+  type OperatorActionLifecycleMutation,
+  type OperatorActionLifecycleMutationResult,
+} from "../operatorActionLifecycle.js";
 
 export interface PostgresLedgerStoreOpts {
   /**
@@ -1838,6 +1843,14 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     );
   }
 
+  async mutateOperatorAction(
+    mutation: OperatorActionLifecycleMutation,
+  ): Promise<OperatorActionLifecycleMutationResult> {
+    return this.runOperatorActionLifecycleMutation((state) =>
+      applyOperatorActionLifecycleMutation(state.ledgers, mutation, state.now),
+    );
+  }
+
   /**
    * Re-read `ledgerId`'s rows from Postgres into the cache under its per-ledger
    * lock (the T578 LISTEN watcher's refresh path). No-op for an unknown ledger
@@ -1968,6 +1981,35 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     // Post-commit only: both read surfaces adopt the live map the transaction
     // read and mutated, so this instance publishes its own write AND picks up
     // whatever a peer had committed since its last refresh.
+    this.absorbLiveLedgers(live);
+    for (const ledgerId of dirty) this.fireHook(ledgerId, "update");
+    await this.notify();
+    return value;
+  }
+
+  private async runOperatorActionLifecycleMutation(
+    mutate: (
+      state: InMemoryPlanLifecycleState,
+    ) => InMemoryPlanMutation<OperatorActionLifecycleMutationResult>,
+  ): Promise<OperatorActionLifecycleMutationResult> {
+    this.assertInit();
+    let value!: OperatorActionLifecycleMutationResult;
+    let dirty: readonly string[] = [];
+    let live!: LiveTenantState;
+    await writeTransaction(this.pool(), async (tx) => {
+      // The counters lock serializes this lifecycle with every plan lifecycle
+      // mutation before any authoritative action/task/handoff read.
+      await this.lockTenantCounters(tx);
+      const tenant = await this.readLiveTenant(tx);
+      const state = await this.loadPlanLifecycleState(tx, tenant.ledgers);
+      const mutation = mutate(state);
+      for (const ledgerId of new Set(mutation.dirtyLedgers)) {
+        await this.persistLedgerState(tx, requireLiveLedger(state.ledgers, ledgerId));
+      }
+      value = mutation.result;
+      dirty = [...new Set(mutation.dirtyLedgers)];
+      live = tenant;
+    });
     this.absorbLiveLedgers(live);
     for (const ledgerId of dirty) this.fireHook(ledgerId, "update");
     await this.notify();

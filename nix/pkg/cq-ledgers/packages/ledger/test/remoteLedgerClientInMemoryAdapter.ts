@@ -680,6 +680,7 @@ const materializeOperatorAction: ToolHandler = (tenant, args) => {
       goalRef,
       expectedOutputIdentity: str(args, "expected_output_identity"),
       expectedEvidence,
+      revision: "1",
       ledgerRefs: [`tasks:${taskId}`, goalRef],
     },
     author: str(args, "author"),
@@ -705,6 +706,9 @@ const materializeOperatorAction: ToolHandler = (tenant, args) => {
 
 const acknowledgeOperatorAction: ToolHandler = (tenant, args) => {
   const action = findItem(tenant, "operatorActions", str(args, "action_id"));
+  if (action.fields["revision"] !== String(args["expected_revision"])) {
+    throw new DummyToolError("operator action revision conflict");
+  }
   if (action.status === "verified") return { state: "verified", action };
   const identity = str(args, "output_identity");
   if (action.fields["expectedOutputIdentity"] !== identity) {
@@ -718,6 +722,9 @@ const acknowledgeOperatorAction: ToolHandler = (tenant, args) => {
 
 const recordOperatorActionEvidence: ToolHandler = (tenant, args) => {
   const action = findItem(tenant, "operatorActions", str(args, "action_id"));
+  if (action.fields["revision"] !== String(args["expected_revision"])) {
+    throw new DummyToolError("operator action revision conflict");
+  }
   const evidence = {
     command: str(args, "command"),
     stdout: str(args, "stdout"),
@@ -742,8 +749,47 @@ const recordOperatorActionEvidence: ToolHandler = (tenant, args) => {
     : { state: "pending", reason: "probe-failed", action };
 };
 
+const reviseOperatorAction: ToolHandler = (tenant, args) => {
+  const action = findItem(tenant, "operatorActions", str(args, "action_id"));
+  if (action.fields["revision"] !== String(args["expected_revision"])) {
+    throw new DummyToolError("operator action revision conflict");
+  }
+  if (action.status !== "pending" && action.status !== "acknowledged") {
+    throw new DummyToolError("operator action cannot be revised");
+  }
+  if (Array.isArray(action.fields["evidence"]) && action.fields["evidence"].length > 0) {
+    throw new DummyToolError("operator action may not be revised after evidence");
+  }
+  const taskRef = String(action.fields["taskRef"]);
+  const task = findItem(tenant, "tasks", taskRef.slice("tasks:".length));
+  const handoff = findItem(tenant, "handoffs", `HO${task.id.slice(1)}`);
+  action.fields["revisionHistory"] = [
+    JSON.stringify({
+      revision: Number(action.fields["revision"]),
+      action: structuredClone(action),
+      task: structuredClone(task),
+      handoff: structuredClone(handoff),
+    }),
+  ];
+  action.fields["revision"] = String(Number(action.fields["revision"]) + 1);
+  action.fields["expectedOutputIdentity"] = str(args, "expected_output_identity");
+  const expectedEvidence = args["expected_evidence"];
+  if (!Array.isArray(expectedEvidence)) throw new DummyToolError("expected_evidence required");
+  action.fields["expectedEvidence"] = expectedEvidence as string[];
+  action.status = "pending";
+  for (const field of ["acknowledgedOutputIdentity", "acknowledgedAt", "evidence"]) {
+    delete action.fields[field];
+  }
+  task.status = "planned";
+  handoff.status = "user-action-required";
+  return { action, task, handoff };
+};
+
 const completeOperatorAction: ToolHandler = (tenant, args) => {
   const action = findItem(tenant, "operatorActions", str(args, "action_id"));
+  if (action.fields["revision"] !== String(args["expected_revision"])) {
+    throw new DummyToolError("operator action revision conflict");
+  }
   if (action.status !== "verified") throw new DummyToolError("operator action is not verified");
   const taskRef = String(action.fields["taskRef"]);
   const task = findItem(tenant, "tasks", taskRef.slice("tasks:".length));
@@ -1033,6 +1079,7 @@ export class InMemoryMcpService {
       materialize_operator_action: materializeOperatorAction,
       acknowledge_operator_action: acknowledgeOperatorAction,
       record_operator_action_evidence: recordOperatorActionEvidence,
+      revise_operator_action: reviseOperatorAction,
       complete_operator_action: completeOperatorAction,
       // Fixed snapshot (the adapter mirrors wire SHAPES, not server-side
       // usage tracking): totals stay consistent with the endpoints.

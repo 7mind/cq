@@ -218,10 +218,11 @@ measured savings without another batching schema.
 | `list_milestone_items` | `mandatory-item-projection` | `{ items: Record<ledgerId, Item[]> }`; every item uses the requested projection. |
 | `snapshot` | `purpose-built-small` | `{ ledger: Record<ledgerId, Record<status, { count, items: [{ id, status, summary }] }>> }`. |
 | `derive_predicates` | `purpose-built-small` | Predicate verdicts `{ value, items }` for `pInvestigate`, `pSeed`, `pPlan`, `pResearch`, `pImplement`, `pOperatorAction`, `openQuestionGate`, `belowFloor`, `planBusy`, and `goalDrift`. |
-| `materialize_operator_action` | `purpose-built-small` | `{ state: "created"\|"existing", action, handoff }` with deterministic identities. |
-| `acknowledge_operator_action` | `purpose-built-small` | `{ state: "acknowledged"\|"verified", action }` or `{ state: "pending", reason: "identity-mismatch", action }`. |
-| `record_operator_action_evidence` | `purpose-built-small` | An append-only `{ state: "acknowledged"\|"verified"\|"pending", action, reason? }` evidence acknowledgement. |
-| `complete_operator_action` | `purpose-built-small` | `{ task }` only after the linked action is verified. |
+| `materialize_operator_action` | `purpose-built-small` | `{ state: "created"\|"existing", action, handoff }` with deterministic identities and revision 1. |
+| `revise_operator_action` | `purpose-built-small` | `{ action, task, handoff }` after an exact revision CAS replaces the pre-evidence contract and records the prior snapshot. |
+| `acknowledge_operator_action` | `purpose-built-small` | Revision-CAS `{ state: "acknowledged"\|"verified", action }` or `{ state: "pending", reason: "identity-mismatch", action }`. |
+| `record_operator_action_evidence` | `purpose-built-small` | A revision-bound, append-only `{ state: "acknowledged"\|"verified"\|"pending", action, reason? }` evidence acknowledgement. |
+| `complete_operator_action` | `purpose-built-small` | Revision-CAS `{ task }` only after the linked action is verified. |
 | `reopen_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
 | `unarchive_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
 | `read_log` | `requested-full-content` | `{ path, content, truncated? }`. |
@@ -246,6 +247,11 @@ measured savings without another batching schema.
 
 Operator-action probe history remains append-only, but verification counts only
 the complete successful probe set from the latest exact acknowledgement epoch.
+Every typed lifecycle write requires the caller's current `expected_revision`.
+Before evidence exists, the parent-only revision transition archives exact
+action/task/handoff snapshots, advances the revision, replaces the complete
+identity/evidence contract, clears acknowledgement state, and refreshes the
+handoff. Revision rejects stale writers and never permits post-evidence editing.
 Generic `reopen_item` rejects canonical operator actions and their linked strict-
 envelope tasks; callers must use the typed operator-action lifecycle.
 

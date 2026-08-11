@@ -2,13 +2,14 @@ import {
   GOALS_LEDGER,
   HANDOFFS_LEDGER,
   isIsoTimestamp,
-  OPERATOR_ACTION_ACKNOWLEDGEMENT_EPOCH_FIELD,
   OPERATOR_ACTIONS_LEDGER,
   TASKS_LEDGER,
 } from "./constants.js";
-import type { LedgerStore, UpdateItemPatch } from "./store/LedgerStore.js";
+import type { LedgerStore } from "./store/LedgerStore.js";
 import type { Item } from "./types.js";
 import { DuplicateIdError, LedgerError, SchemaValidationError } from "./types.js";
+
+export { operatorActionRevision } from "./store/operatorActionLifecycle.js";
 
 export const OPERATOR_ACTION_ENVELOPE_PREFIX = "CQ-OPERATOR-ACTION" as const;
 export const OPERATOR_ACTION_ENVELOPE_VERSION = "v1" as const;
@@ -41,6 +42,7 @@ export interface MaterializedOperatorAction {
 
 export interface AcknowledgeOperatorActionInput {
   readonly actionId: string;
+  readonly expectedRevision: number;
   readonly outputIdentity: string;
   readonly acknowledgedAt: string;
   readonly session?: string;
@@ -60,13 +62,25 @@ export interface OperatorActionShellEvidence {
   readonly observedAt: string;
 }
 
-interface StoredOperatorActionShellEvidence extends OperatorActionShellEvidence {
-  readonly acknowledgementEpoch: string;
-}
-
 export type RecordOperatorActionEvidenceResult =
   | { readonly state: "acknowledged" | "verified"; readonly action: Item }
   | { readonly state: "pending"; readonly reason: "probe-failed"; readonly action: Item };
+
+export interface ReviseOperatorActionInput {
+  readonly actionId: string;
+  readonly expectedRevision: number;
+  readonly expectedOutputIdentity: string;
+  readonly expectedEvidence: readonly string[];
+  readonly revisedAt: string;
+  readonly author: string;
+  readonly session?: string;
+}
+
+export interface RevisedOperatorAction {
+  readonly action: Item;
+  readonly task: Item;
+  readonly handoff: Item;
+}
 
 export class OperatorActionEnvelopeError extends SchemaValidationError {
   constructor(reason: string) {
@@ -142,6 +156,7 @@ export async function materializeOperatorAction(
     goalRef: goalRefs[0]!,
     expectedOutputIdentity: input.expectedOutputIdentity,
     expectedEvidence: [...input.expectedEvidence],
+    revision: "1",
     ledgerRefs: [`${TASKS_LEDGER}:${task.id}`, goalRefs[0]!],
   };
 
@@ -203,126 +218,85 @@ export async function acknowledgeOperatorAction(
   store: LedgerStore,
   input: AcknowledgeOperatorActionInput,
 ): Promise<AcknowledgeOperatorActionResult> {
-  const action = store.fetchItem(OPERATOR_ACTIONS_LEDGER, input.actionId);
-  if (action.status === "verified") return { state: "verified", action };
-  const expectedIdentity = stringField(action, "expectedOutputIdentity");
-  if (input.outputIdentity !== expectedIdentity) {
-    return { state: "pending", reason: "identity-mismatch", action };
+  assertRevision(input.expectedRevision);
+  if (!isIsoTimestamp(input.acknowledgedAt)) {
+    throw new SchemaValidationError("acknowledgedAt must be an ISO timestamp");
   }
-  const patch: UpdateItemPatch = {
-    status: action.status === "pending" ? "acknowledged" : action.status,
-    fields: {
-      acknowledgedOutputIdentity: input.outputIdentity,
-      acknowledgedAt: input.acknowledgedAt,
-      [OPERATOR_ACTION_ACKNOWLEDGEMENT_EPOCH_FIELD]: acknowledgementEpochForExactReplay(action),
-    },
-    author: "user",
-    ...(input.session === undefined ? {} : { session: input.session }),
-  };
-  authorizedActionMutations.add(patch);
-  const updated = await store.updateItem(OPERATOR_ACTIONS_LEDGER, action.id, patch);
-  return { state: "acknowledged", action: updated };
+  const result = await store.mutateOperatorAction({ kind: "acknowledge", ...input });
+  if (result.kind !== "acknowledge") throw new LedgerError("unexpected lifecycle result");
+  if (result.state === "pending") {
+    return { state: "pending", reason: "identity-mismatch", action: result.action };
+  }
+  return { state: result.state, action: result.action };
 }
 
 export async function recordOperatorActionEvidence(
   store: LedgerStore,
   actionId: string,
+  expectedRevision: number,
   evidence: OperatorActionShellEvidence,
   provenance: { readonly author: string; readonly session?: string },
 ): Promise<RecordOperatorActionEvidenceResult> {
+  assertRevision(expectedRevision);
   assertEvidenceBounds(evidence);
-  const action = store.fetchItem(OPERATOR_ACTIONS_LEDGER, actionId);
-  if (action.status !== "acknowledged") {
-    throw new LedgerError(`Operator action ${action.id} is not acknowledged`);
+  const result = await store.mutateOperatorAction({
+    kind: "record-evidence",
+    actionId,
+    expectedRevision,
+    evidence,
+    provenance,
+  });
+  if (result.kind !== "record-evidence") throw new LedgerError("unexpected lifecycle result");
+  if (result.state === "pending") {
+    return { state: "pending", reason: "probe-failed", action: result.action };
   }
-  const prior = stringArray(action.fields["evidence"]);
-  const decoded = prior.map(parseEvidence);
-  const acknowledgementEpoch = stringField(
-    action,
-    OPERATOR_ACTION_ACKNOWLEDGEMENT_EPOCH_FIELD,
-  );
-  if (acknowledgementEpoch.length === 0) {
-    throw new LedgerError(`Operator action ${action.id} has no acknowledgement epoch`);
+  return { state: result.state, action: result.action };
+}
+
+export async function reviseOperatorAction(
+  store: LedgerStore,
+  input: ReviseOperatorActionInput,
+): Promise<RevisedOperatorAction> {
+  assertRevision(input.expectedRevision);
+  assertNonEmpty(input.expectedOutputIdentity, "expectedOutputIdentity");
+  assertExpectedEvidence(input.expectedEvidence);
+  if (!isIsoTimestamp(input.revisedAt)) {
+    throw new SchemaValidationError("revisedAt must be an ISO timestamp");
   }
-  const expectedCommands = stringArray(action.fields["expectedEvidence"]);
-  if (!expectedCommands.includes(evidence.command)) {
-    throw new LedgerError(`Operator action ${action.id} did not declare command ${evidence.command}`);
-  }
-  const storedEvidence: StoredOperatorActionShellEvidence = {
-    ...evidence,
-    acknowledgementEpoch,
-  };
-  const encoded = JSON.stringify(storedEvidence);
-  const identityMatches =
-    evidence.outputIdentity === stringField(action, "expectedOutputIdentity") &&
-    evidence.outputIdentity === stringField(action, "acknowledgedOutputIdentity");
-  if (evidence.exitCode !== 0 || !identityMatches) {
-    const patch: UpdateItemPatch = {
-      status: "pending",
-      fields: { evidence: [...prior, encoded], lastFailure: encoded },
-      author: provenance.author,
-      ...(provenance.session === undefined ? {} : { session: provenance.session }),
-    };
-    authorizedActionMutations.add(patch);
-    const updated = await store.updateItem(OPERATOR_ACTIONS_LEDGER, action.id, patch);
-    return { state: "pending", reason: "probe-failed", action: updated };
-  }
-  const evidenceEntries = [...decoded, storedEvidence];
-  const expectedIdentity = stringField(action, "expectedOutputIdentity");
-  const complete = expectedCommands.every((command) =>
-    evidenceEntries.some(
-      (entry) =>
-        entry.command === command &&
-        entry.exitCode === 0 &&
-        entry.acknowledgementEpoch === acknowledgementEpoch &&
-        entry.outputIdentity === expectedIdentity,
-    ),
-  );
-  const patch: UpdateItemPatch = {
-    status: complete ? "verified" : "acknowledged",
-    fields: {
-      evidence: [...prior, encoded],
-      ...(complete ? { verifiedAt: evidence.observedAt } : {}),
+  const result = await store.mutateOperatorAction({
+    kind: "revise",
+    actionId: input.actionId,
+    expectedRevision: input.expectedRevision,
+    expectedOutputIdentity: input.expectedOutputIdentity,
+    expectedEvidence: input.expectedEvidence,
+    revisedAt: input.revisedAt,
+    provenance: {
+      author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
     },
-    author: provenance.author,
-    ...(provenance.session === undefined ? {} : { session: provenance.session }),
-  };
-  authorizedActionMutations.add(patch);
-  const updated = await store.updateItem(OPERATOR_ACTIONS_LEDGER, action.id, patch);
-  return { state: complete ? "verified" : "acknowledged", action: updated };
+  });
+  if (result.kind !== "revise") throw new LedgerError("unexpected lifecycle result");
+  return { action: result.action, task: result.task, handoff: result.handoff };
 }
 
 export async function completeOperatorActionTask(
   store: LedgerStore,
   actionId: string,
+  expectedRevision: number,
   completion: string,
   provenance: { readonly author: string; readonly session?: string },
 ): Promise<Item> {
+  assertRevision(expectedRevision);
   assertNonEmpty(completion, "completion");
-  const action = store.fetchItem(OPERATOR_ACTIONS_LEDGER, actionId);
-  if (action.status !== "verified") {
-    throw new LedgerError(`Operator action ${action.id} is not verified`);
-  }
-  const taskRef = stringField(action, "taskRef");
-  if (!taskRef.startsWith(`${TASKS_LEDGER}:`)) {
-    throw new LedgerError(`Operator action ${action.id} has an invalid taskRef`);
-  }
-  const taskId = taskRef.slice(TASKS_LEDGER.length + 1);
-  const actionPatch: UpdateItemPatch = {
-    fields: { completion },
-    author: provenance.author,
-    ...(provenance.session === undefined ? {} : { session: provenance.session }),
-  };
-  authorizedActionMutations.add(actionPatch);
-  await store.updateItem(OPERATOR_ACTIONS_LEDGER, action.id, actionPatch);
-  const taskPatch: UpdateItemPatch = {
-    status: "done",
-    fields: { completion },
-    author: provenance.author,
-    ...(provenance.session === undefined ? {} : { session: provenance.session }),
-  };
-  authorizedCompletionPatches.add(taskPatch);
-  return await store.updateItem(TASKS_LEDGER, taskId, taskPatch);
+  const result = await store.mutateOperatorAction({
+    kind: "complete",
+    actionId,
+    expectedRevision,
+    completion,
+    provenance,
+  });
+  if (result.kind !== "complete") throw new LedgerError("unexpected lifecycle result");
+  return result.task;
 }
 
 function actionIdForTask(taskId: string): string {
@@ -393,46 +367,14 @@ function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
-function acknowledgementEpochForExactReplay(action: Item): string {
-  const current = stringField(action, OPERATOR_ACTION_ACKNOWLEDGEMENT_EPOCH_FIELD);
-  if (action.status === "acknowledged" && current.length > 0) return current;
-  if (current.length === 0) return "1";
-  if (!/^[1-9]\d*$/.test(current)) {
-    throw new SchemaValidationError(`stored acknowledgement epoch is malformed`);
+function assertRevision(value: number): void {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new SchemaValidationError("expectedRevision must be a positive safe integer");
   }
-  const parsed = Number(current);
-  if (!Number.isSafeInteger(parsed) || parsed === Number.MAX_SAFE_INTEGER) {
-    throw new SchemaValidationError(`stored acknowledgement epoch exceeds the safe range`);
-  }
-  return String(parsed + 1);
 }
 
 function stringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
-}
-
-function stringField(item: Item, field: string): string {
-  const value = item.fields[field];
-  return typeof value === "string" ? value : "";
-}
-
-function parseEvidence(value: string): Partial<StoredOperatorActionShellEvidence> & OperatorActionShellEvidence {
-  const parsed = JSON.parse(value) as Partial<StoredOperatorActionShellEvidence>;
-  if (
-    typeof parsed.command !== "string" ||
-    typeof parsed.stdout !== "string" ||
-    typeof parsed.stderr !== "string" ||
-    typeof parsed.exitCode !== "number" ||
-    typeof parsed.outputIdentity !== "string" ||
-    typeof parsed.observedAt !== "string"
-  ) {
-    throw new SchemaValidationError("stored operator-action evidence is malformed");
-  }
-  if (
-    parsed.acknowledgementEpoch !== undefined &&
-    !/^[1-9]\d*$/.test(parsed.acknowledgementEpoch)
-  ) {
-    throw new SchemaValidationError("stored operator-action acknowledgement epoch is malformed");
-  }
-  return parsed as Partial<StoredOperatorActionShellEvidence> & OperatorActionShellEvidence;
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
 }

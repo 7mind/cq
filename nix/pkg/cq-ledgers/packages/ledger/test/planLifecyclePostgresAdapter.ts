@@ -265,6 +265,7 @@ class TenantLease {
 class PostgresPlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<PostgresLifecycleStore> {
   /** Fixtures spawned by {@link restart}; each owns its own tenant. */
   private readonly spawned: PostgresPlanLifecycleFixture[] = [];
+  readonly operatorActionPeers: readonly [PostgresLifecycleStore, PostgresLifecycleStore];
 
   private constructor(
     private readonly admin: SQL,
@@ -279,6 +280,7 @@ class PostgresPlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<Postg
       undefined,
       serializationHarness.boundary,
     );
+    this.operatorActionPeers = stores;
   }
 
   private static async openOver(

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type {
+  LedgerStore,
   PlanClaimAcknowledgement,
   PlanClaimInput,
   PlanDraftIdentity,
@@ -7,6 +8,13 @@ import type {
   PlanFinalizeInput,
   PlanPublishDraftInput,
   PlanReleaseInput,
+} from "../src/index.js";
+import {
+  acknowledgeOperatorAction,
+  completeOperatorActionTask,
+  materializeOperatorAction,
+  recordOperatorActionEvidence,
+  reviseOperatorAction,
 } from "../src/index.js";
 import { DanglingRefError } from "../src/types.js";
 import type {
@@ -171,6 +179,43 @@ async function buildGoal(
   return fixture;
 }
 
+function operatorActionPeers(
+  fixture: PlanLifecycleContractFixture,
+): readonly [LedgerStore, LedgerStore] {
+  const peers = (
+    fixture as PlanLifecycleContractFixture & {
+      readonly operatorActionPeers?: readonly [LedgerStore, LedgerStore];
+    }
+  ).operatorActionPeers;
+  if (peers === undefined) throw new Error("PostgreSQL operator-action peers are unavailable");
+  return peers;
+}
+
+async function seedOperatorAction(
+  store: LedgerStore,
+  actionKey: string,
+  expectedEvidence: readonly string[],
+): Promise<Awaited<ReturnType<typeof materializeOperatorAction>>> {
+  const milestone = await store.createMilestone({ title: `operator action ${actionKey}` });
+  const goal = await store.createItem("goals", milestone.id, {
+    status: "planned",
+    fields: { title: actionKey, description: actionKey },
+  });
+  const task = await store.createItem("tasks", milestone.id, {
+    status: "planned",
+    fields: {
+      headline: actionKey,
+      description: `CQ-OPERATOR-ACTION v1 ${actionKey}. User deploys.`,
+      ledgerRefs: [`goals:${goal.id}`],
+    },
+  });
+  return await materializeOperatorAction(store, {
+    taskId: task.id,
+    expectedOutputIdentity: `/nix/store/${actionKey}`,
+    expectedEvidence,
+  });
+}
+
 describe("one-shot plan-lifecycle serialization boundary", () => {
   it("rejects unarmed, wrong, and duplicate arrivals", async () => {
     const unarmed = new OneShotSerializationBoundary();
@@ -220,6 +265,274 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
   contractDescribe(
     `PlanLifecycleStore contract — ${factory.name} (${factory.classification})`,
     () => {
+      if (factory.name === "PostgresLedgerStore (two connections)") {
+        it(
+          "serializes operator-action revision before and after acknowledgement",
+          async () => {
+            const fixture = await factory.build();
+            try {
+              const [first, second] = operatorActionPeers(fixture);
+              const revisionFirst = await seedOperatorAction(first, "pg-revision-first", [
+                "probe-v1",
+              ]);
+              await reviseOperatorAction(first, {
+                actionId: revisionFirst.action.id,
+                expectedRevision: 1,
+                expectedOutputIdentity: "/nix/store/pg-revision-2",
+                expectedEvidence: ["probe-v2"],
+                revisedAt: "2026-08-11T12:00:00.000Z",
+                author: "postgres-reviser",
+              });
+              await expect(
+                acknowledgeOperatorAction(second, {
+                  actionId: revisionFirst.action.id,
+                  expectedRevision: 1,
+                  outputIdentity: "/nix/store/pg-revision-first",
+                  acknowledgedAt: "2026-08-11T12:01:00.000Z",
+                }),
+              ).rejects.toThrow(/revision conflict/);
+
+              const acknowledgementFirst = await seedOperatorAction(
+                first,
+                "pg-acknowledgement-first",
+                ["probe-v1"],
+              );
+              await acknowledgeOperatorAction(second, {
+                actionId: acknowledgementFirst.action.id,
+                expectedRevision: 1,
+                outputIdentity: "/nix/store/pg-acknowledgement-first",
+                acknowledgedAt: "2026-08-11T12:02:00.000Z",
+              });
+              const revised = await reviseOperatorAction(first, {
+                actionId: acknowledgementFirst.action.id,
+                expectedRevision: 1,
+                expectedOutputIdentity: "/nix/store/pg-acknowledgement-revision-2",
+                expectedEvidence: ["probe-v2"],
+                revisedAt: "2026-08-11T12:03:00.000Z",
+                author: "postgres-reviser",
+              });
+              const history = JSON.parse(
+                (revised.action.fields["revisionHistory"] as string[])[0]!,
+              ) as { action: { status: string; fields: Record<string, unknown> } };
+              expect(history.action).toMatchObject({
+                status: "acknowledged",
+                fields: {
+                  acknowledgedOutputIdentity: "/nix/store/pg-acknowledgement-first",
+                },
+              });
+              expect(revised.action).toMatchObject({
+                status: "pending",
+                fields: { revision: "2" },
+              });
+            } finally {
+              await fixture.dispose();
+            }
+          },
+          timeout,
+        );
+
+        it(
+          "serializes operator-action revision before and after evidence",
+          async () => {
+            const fixture = await factory.build();
+            try {
+              const [first, second] = operatorActionPeers(fixture);
+              const revisionFirst = await seedOperatorAction(first, "pg-evidence-stale", [
+                "probe-a",
+                "probe-b",
+              ]);
+              await acknowledgeOperatorAction(first, {
+                actionId: revisionFirst.action.id,
+                expectedRevision: 1,
+                outputIdentity: "/nix/store/pg-evidence-stale",
+                acknowledgedAt: "2026-08-11T12:04:00.000Z",
+              });
+              await reviseOperatorAction(first, {
+                actionId: revisionFirst.action.id,
+                expectedRevision: 1,
+                expectedOutputIdentity: "/nix/store/pg-evidence-revision-2",
+                expectedEvidence: ["probe-v2"],
+                revisedAt: "2026-08-11T12:05:00.000Z",
+                author: "postgres-reviser",
+              });
+              await expect(
+                recordOperatorActionEvidence(
+                  second,
+                  revisionFirst.action.id,
+                  1,
+                  {
+                    command: "probe-a",
+                    stdout: "ok",
+                    stderr: "",
+                    exitCode: 0,
+                    outputIdentity: "/nix/store/pg-evidence-stale",
+                    observedAt: "2026-08-11T12:06:00.000Z",
+                  },
+                  { author: "postgres-evidence" },
+                ),
+              ).rejects.toThrow(/revision conflict/);
+
+              const evidenceFirst = await seedOperatorAction(first, "pg-evidence-first", [
+                "probe-a",
+                "probe-b",
+              ]);
+              await acknowledgeOperatorAction(first, {
+                actionId: evidenceFirst.action.id,
+                expectedRevision: 1,
+                outputIdentity: "/nix/store/pg-evidence-first",
+                acknowledgedAt: "2026-08-11T12:07:00.000Z",
+              });
+              await recordOperatorActionEvidence(
+                second,
+                evidenceFirst.action.id,
+                1,
+                {
+                  command: "probe-a",
+                  stdout: "ok",
+                  stderr: "",
+                  exitCode: 0,
+                  outputIdentity: "/nix/store/pg-evidence-first",
+                  observedAt: "2026-08-11T12:08:00.000Z",
+                },
+                { author: "postgres-evidence" },
+              );
+              const before = JSON.stringify({
+                action: second.fetchItem("operatorActions", evidenceFirst.action.id),
+                task: second.fetchItem(
+                  "tasks",
+                  String(evidenceFirst.action.fields["taskRef"]).slice("tasks:".length),
+                ),
+                handoff: second.fetchItem("handoffs", evidenceFirst.handoff.id),
+              });
+              await expect(
+                reviseOperatorAction(first, {
+                  actionId: evidenceFirst.action.id,
+                  expectedRevision: 1,
+                  expectedOutputIdentity: "/nix/store/pg-evidence-revision-2",
+                  expectedEvidence: ["probe-v2"],
+                  revisedAt: "2026-08-11T12:09:00.000Z",
+                  author: "postgres-reviser",
+                }),
+              ).rejects.toThrow(/after evidence/);
+              expect(
+                JSON.stringify({
+                  action: second.fetchItem("operatorActions", evidenceFirst.action.id),
+                  task: second.fetchItem(
+                    "tasks",
+                    String(evidenceFirst.action.fields["taskRef"]).slice("tasks:".length),
+                  ),
+                  handoff: second.fetchItem("handoffs", evidenceFirst.handoff.id),
+                }),
+              ).toBe(before);
+            } finally {
+              await fixture.dispose();
+            }
+          },
+          timeout,
+        );
+
+        it(
+          "permits exactly one simultaneous operator-action revision",
+          async () => {
+            const fixture = await factory.build();
+            try {
+              const [first, second] = operatorActionPeers(fixture);
+              const created = await seedOperatorAction(first, "pg-simultaneous-revision", [
+                "probe-v1",
+              ]);
+              const outcomes = await Promise.allSettled([
+                reviseOperatorAction(first, {
+                  actionId: created.action.id,
+                  expectedRevision: 1,
+                  expectedOutputIdentity: "/nix/store/pg-winner-a",
+                  expectedEvidence: ["probe-a"],
+                  revisedAt: "2026-08-11T12:10:00.000Z",
+                  author: "postgres-a",
+                }),
+                reviseOperatorAction(second, {
+                  actionId: created.action.id,
+                  expectedRevision: 1,
+                  expectedOutputIdentity: "/nix/store/pg-winner-b",
+                  expectedEvidence: ["probe-b"],
+                  revisedAt: "2026-08-11T12:10:00.000Z",
+                  author: "postgres-b",
+                }),
+              ]);
+              expect(outcomes.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+              expect(outcomes.filter(({ status }) => status === "rejected")).toHaveLength(1);
+              const winner = outcomes.find(({ status }) => status === "fulfilled");
+              if (winner?.status !== "fulfilled") throw new Error("revision winner missing");
+              expect(winner.value.action.fields["revision"]).toBe("2");
+            } finally {
+              await fixture.dispose();
+            }
+          },
+          timeout,
+        );
+
+        it(
+          "commits one simultaneous operator-action completion with its linked task",
+          async () => {
+            const fixture = await factory.build();
+            try {
+              const [first, second] = operatorActionPeers(fixture);
+              const created = await seedOperatorAction(first, "pg-simultaneous-completion", [
+                "probe-v1",
+              ]);
+              const acknowledged = await acknowledgeOperatorAction(first, {
+                actionId: created.action.id,
+                expectedRevision: 1,
+                outputIdentity: "/nix/store/pg-simultaneous-completion",
+                acknowledgedAt: "2026-08-11T12:20:00.000Z",
+              });
+              expect(acknowledged.state).toBe("acknowledged");
+              const verified = await recordOperatorActionEvidence(
+                first,
+                created.action.id,
+                1,
+                {
+                  command: "probe-v1",
+                  stdout: "ok",
+                  stderr: "",
+                  exitCode: 0,
+                  outputIdentity: "/nix/store/pg-simultaneous-completion",
+                  observedAt: "2026-08-11T12:21:00.000Z",
+                },
+                { author: "postgres-verifier" },
+              );
+              expect(verified.state).toBe("verified");
+
+              const outcomes = await Promise.allSettled([
+                completeOperatorActionTask(
+                  first,
+                  created.action.id,
+                  1,
+                  "completed by first",
+                  { author: "postgres-a" },
+                ),
+                completeOperatorActionTask(
+                  second,
+                  created.action.id,
+                  1,
+                  "completed by second",
+                  { author: "postgres-b" },
+                ),
+              ]);
+              expect(outcomes.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+              expect(outcomes.filter(({ status }) => status === "rejected")).toHaveLength(1);
+              const taskId = created.action.fields["taskId"] as string;
+              expect(first.fetchItem("tasks", taskId).status).toBe("done");
+              expect(first.fetchItem("operator-actions", created.action.id).status).toBe(
+                "completed",
+              );
+            } finally {
+              await fixture.dispose();
+            }
+          },
+          timeout,
+        );
+      }
+
       it(
         "returns every boundary conflict omitted from the initial conformance pass",
         async () => {

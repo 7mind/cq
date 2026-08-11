@@ -610,6 +610,12 @@ ledgers:
         expectedEvidence:
           type: string[]
           required: true
+        revision:
+          type: string
+          required: false
+        revisionHistory:
+          type: string[]
+          required: false
         acknowledgedOutputIdentity:
           type: string
           required: false
@@ -627,6 +633,9 @@ ledgers:
           required: false
         verifiedAt:
           type: timestamp
+          required: false
+        verifiedRevision:
+          type: string
           required: false
         completion:
           type: string

@@ -381,15 +381,20 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     }
   });
 
-  it("T2053 keeps operator actions in one parent-only lifecycle on every surface", () => {
+  it("T2053/T2058 keep revisioned operator actions in one parent-only lifecycle", () => {
     for (const surface of PROMPT_SURFACES) {
       const advance = normalize(renderedOf(surface, "implement/advance"));
       expect(advance).toContain("CQ-OPERATOR-ACTION v1 <action-key>.");
       expect(advance).toContain("deployed-recovery");
       expect(advance).toContain("materialize_operator_action");
       expect(advance).toContain("acknowledge_operator_action");
+      expect(advance).toContain("revise_operator_action");
       expect(advance).toContain("record_operator_action_evidence");
       expect(advance).toContain("complete_operator_action");
+      expect(advance).toContain("expected_revision");
+      expect(advance).toContain("complete replacement contract");
+      expect(advance).toContain("prior action/task/handoff snapshot");
+      expect(advance).toContain("Never revise after evidence");
       expect(advance).toContain("the user performs deployment");
       expect(advance).toContain("this parent runs bounded shell probes");
       expect(advance).toContain("MUST NOT enter worktree preparation");

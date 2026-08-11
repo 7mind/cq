@@ -207,7 +207,7 @@ export class FsPersistence implements LedgerPersistence {
   }
 
   async commitPlanLifecycle(commit: PlanLifecyclePersistenceCommit): Promise<void> {
-    await atomicWrite(this.planPendingPath, JSON.stringify(commit));
+    await this.writeAtomic(this.planPendingPath, JSON.stringify(commit));
     await this.applyPlanLifecycleCommit(commit);
   }
 
@@ -215,9 +215,9 @@ export class FsPersistence implements LedgerPersistence {
     commit: PlanLifecyclePersistenceCommit,
   ): Promise<void> {
     for (const [name, source] of Object.entries(commit.ledgers)) {
-      await atomicWrite(this.ledgerPath(name), source);
+      await this.writeAtomic(this.ledgerPath(name), source);
     }
-    await atomicWrite(this.planStatePath, commit.state);
+    await this.writeAtomic(this.planStatePath, commit.state);
     await fs.rm(this.planPendingPath, { force: true });
   }
 
@@ -442,7 +442,7 @@ function parsePlanLifecycleCommit(text: string): PlanLifecyclePersistenceCommit 
   }
   const ledgers: Record<string, string> = {};
   for (const [name, source] of Object.entries(record["ledgers"])) {
-    if (!/^[a-z][a-z0-9-]*$/.test(name) || typeof source !== "string") {
+    if (!/^[A-Za-z0-9_-]+$/.test(name) || typeof source !== "string") {
       throw new LedgerError("invalid pending plan lifecycle ledger source");
     }
     ledgers[name] = source;

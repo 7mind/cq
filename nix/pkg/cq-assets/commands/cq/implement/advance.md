@@ -131,26 +131,38 @@ merge, push, deploy, switch, or implicit acknowledgement is forbidden.
    `ledger::materialize_operator_action({ task_id, expected_output_identity,
    expected_evidence, author, session })` before any ordinary readiness action.
    Accept only `created` or exact `existing`. This deterministically creates or
-   restart-reuses one pending action and one `user-action-required` handoff;
-   conflicting identity/evidence fails closed.
+   restart-reuses one pending revision-1 action and one `user-action-required`
+   handoff; conflicting identity/evidence fails closed.
 3. While pending, park without changing the task to `wip`. Report the action id,
-   exact identity, handoff id, and the user instruction to deploy then call
-   `ledger::acknowledge_operator_action`. A mismatching acknowledgement leaves
-   the action pending and authorizes no probe. A replay against an already
-   `verified` action returns `verified`; skip directly to typed completion.
+   current revision, exact identity, handoff id, and the user instruction to
+   deploy then call `ledger::acknowledge_operator_action` with that
+   `expected_revision`. A mismatching acknowledgement leaves the action pending
+   and authorizes no probe. A replay against an already `verified` action returns
+   `verified`; skip directly to typed completion.
+   If the persisted identity or evidence contract proves incorrect before any
+   evidence exists, this parent may call
+   `ledger::revise_operator_action({ action_id, expected_revision,
+   expected_output_identity, expected_evidence, revised_at, author, session })`
+   with the complete replacement contract. The revision CAS preserves the exact
+   prior action/task/handoff snapshot, advances to the next revision, clears
+   acknowledgement state, refreshes the handoff, and returns an abandoned linked
+   strict task to `planned`. Never revise after evidence, and never use generic
+   reopening as a substitute.
 4. After the exact user acknowledgement returns `acknowledged`, run only the
    persisted commands, sequentially and with bounded stdout/stderr capture.
    After each command call `ledger::record_operator_action_evidence` with the
-   literal command, stdout, stderr, exit code, observed output identity, and
-   timestamp. Evidence is append-only. A nonzero exit or identity mismatch
-   returns the action to pending; do not erase earlier observations or finish
-   the task. After the next exact acknowledgement, rerun every persisted probe;
-   successes from an earlier acknowledgement/failure epoch do not count toward
-   verification.
+   current `expected_revision`, literal command, stdout, stderr, exit code,
+   observed output identity, and timestamp. Evidence is append-only and bound
+   to that revision. A nonzero exit or identity mismatch returns the action to
+   pending; do not erase earlier observations or finish the task. After the next
+   exact acknowledgement, rerun every persisted probe; successes from an earlier
+   acknowledgement/failure epoch do not count toward verification.
 5. Only a `verified` action authorizes
-   `ledger::complete_operator_action({ action_id, completion, author, session })`.
-   This typed transition marks the linked task `done`. Re-derive predicates;
-   never use generic `update_item` or another resurrection operation to bypass verification.
+   `ledger::complete_operator_action({ action_id, expected_revision, completion,
+   author, session })`. Re-read the action and pass its current revision before
+   every acknowledgement, evidence, revision, or completion call. This typed
+   transition marks the linked task `done`. Re-derive predicates; never use
+   generic `update_item` or another resurrection operation to bypass verification.
 
 ## 3. Dispatch workers
 

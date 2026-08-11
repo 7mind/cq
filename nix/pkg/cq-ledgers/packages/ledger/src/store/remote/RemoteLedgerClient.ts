@@ -72,6 +72,7 @@ import type {
   MaterializedOperatorAction,
   OperatorActionShellEvidence,
   RecordOperatorActionEvidenceResult,
+  RevisedOperatorAction,
 } from "../../operatorActions.js";
 
 /**
@@ -689,12 +690,14 @@ export class RemoteLedgerClient {
 
   async acknowledgeOperatorAction(input: {
     actionId: string;
+    expectedRevision: number;
     outputIdentity: string;
     acknowledgedAt: string;
     session?: string;
   }): Promise<AcknowledgeOperatorActionResult> {
     const args: Record<string, unknown> = {
       action_id: input.actionId,
+      expected_revision: input.expectedRevision,
       output_identity: input.outputIdentity,
       acknowledged_at: input.acknowledgedAt,
     };
@@ -704,12 +707,14 @@ export class RemoteLedgerClient {
 
   async recordOperatorActionEvidence(input: {
     actionId: string;
+    expectedRevision: number;
     evidence: OperatorActionShellEvidence;
     author: string;
     session?: string;
   }): Promise<RecordOperatorActionEvidenceResult> {
     const args: Record<string, unknown> = {
       action_id: input.actionId,
+      expected_revision: input.expectedRevision,
       command: input.evidence.command,
       stdout: input.evidence.stdout,
       stderr: input.evidence.stderr,
@@ -725,14 +730,37 @@ export class RemoteLedgerClient {
     );
   }
 
+  async reviseOperatorAction(input: {
+    actionId: string;
+    expectedRevision: number;
+    expectedOutputIdentity: string;
+    expectedEvidence: string[];
+    revisedAt: string;
+    author: string;
+    session?: string;
+  }): Promise<RevisedOperatorAction> {
+    const args: Record<string, unknown> = {
+      action_id: input.actionId,
+      expected_revision: input.expectedRevision,
+      expected_output_identity: input.expectedOutputIdentity,
+      expected_evidence: input.expectedEvidence,
+      revised_at: input.revisedAt,
+      author: input.author,
+    };
+    if (input.session !== undefined) args["session"] = input.session;
+    return await this.call<RevisedOperatorAction>("revise_operator_action", args);
+  }
+
   async completeOperatorAction(input: {
     actionId: string;
+    expectedRevision: number;
     completion: string;
     author: string;
     session?: string;
   }): Promise<Item> {
     const args: Record<string, unknown> = {
       action_id: input.actionId,
+      expected_revision: input.expectedRevision,
       completion: input.completion,
       author: input.author,
     };

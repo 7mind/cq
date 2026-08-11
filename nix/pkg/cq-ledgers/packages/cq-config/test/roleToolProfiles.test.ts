@@ -105,6 +105,10 @@ describe("T1325 role tool capability matrix", () => {
       expect(() => exposedLedgerToolsForRole(name)).toThrow(/unknown role tool profile/);
     }
     expect(exposedLedgerToolsForRole("implement-worker").length).toBeGreaterThan(0);
+    expect(exposedLedgerToolsForRole("implement-worker")).not.toContain(
+      "revise_operator_action",
+    );
+    expect(exposedLedgerToolsForRole("implement/advance")).toContain("revise_operator_action");
   });
 
   test("every contract-required tool is exposed and zero-domain roles expose no domain tool", () => {
@@ -300,7 +304,7 @@ describe("T1325 role tool capability matrix", () => {
       mechanism: "mcp-server-enabled-tools",
       nativePerAgentFiltering: false,
     });
-    expect(LEDGER_CAPABILITY_TOOL_NAMES).toHaveLength(37);
+    expect(LEDGER_CAPABILITY_TOOL_NAMES).toHaveLength(38);
   });
 
   test("ships an executable Codex child-boundary probe, not a configuration-only assertion", () => {

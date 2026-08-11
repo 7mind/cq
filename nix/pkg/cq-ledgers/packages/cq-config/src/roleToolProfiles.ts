@@ -26,6 +26,7 @@ export const LEDGER_CAPABILITY_TOOL_NAMES = [
   "materialize_operator_action",
   "acknowledge_operator_action",
   "record_operator_action_evidence",
+  "revise_operator_action",
   "complete_operator_action",
   "reopen_item",
   "unarchive_item",

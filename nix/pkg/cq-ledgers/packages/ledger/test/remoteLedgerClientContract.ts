@@ -390,14 +390,25 @@ export function runRemoteLedgerClientContract(
                 author: "remote-parent",
               });
               expect(materialized.state).toBe("created");
+              const revised = await client.reviseOperatorAction({
+                actionId: materialized.action.id,
+                expectedRevision: 1,
+                expectedOutputIdentity: "/nix/store/remote-cq",
+                expectedEvidence: ["cq --version"],
+                revisedAt: "2026-08-11T05:59:00.000Z",
+                author: "remote-parent",
+              });
+              expect(revised.action.fields["revision"]).toBe("2");
               const acknowledged = await client.acknowledgeOperatorAction({
                 actionId: materialized.action.id,
+                expectedRevision: 2,
                 outputIdentity: "/nix/store/remote-cq",
                 acknowledgedAt: "2026-08-11T06:00:00.000Z",
               });
               expect(acknowledged.state).toBe("acknowledged");
               const evidence = await client.recordOperatorActionEvidence({
                 actionId: materialized.action.id,
+                expectedRevision: 2,
                 evidence: {
                   command: "cq --version",
                   stdout: "cq remote",
@@ -411,6 +422,7 @@ export function runRemoteLedgerClientContract(
               expect(evidence.state).toBe("verified");
               const completed = await client.completeOperatorAction({
                 actionId: materialized.action.id,
+                expectedRevision: 2,
                 completion: "remote output verified",
                 author: "remote-parent",
               });

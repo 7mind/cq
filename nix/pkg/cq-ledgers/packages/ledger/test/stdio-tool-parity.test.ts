@@ -748,9 +748,21 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
       },
     },
     {
+      name: "revise_operator_action",
+      args: {
+        action_id: `OA${ids.operatorActionTask.slice(1)}`,
+        expected_revision: 1,
+        expected_output_identity: "/nix/store/parity-cq",
+        expected_evidence: ["cq --version"],
+        revised_at: FIXED_NOW,
+        author: "parity-parent",
+      },
+    },
+    {
       name: "acknowledge_operator_action",
       args: {
         action_id: `OA${ids.operatorActionTask.slice(1)}`,
+        expected_revision: 2,
         output_identity: "/nix/store/parity-cq",
         acknowledged_at: FIXED_NOW,
       },
@@ -759,6 +771,7 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
       name: "record_operator_action_evidence",
       args: {
         action_id: `OA${ids.operatorActionTask.slice(1)}`,
+        expected_revision: 2,
         command: "cq --version",
         stdout: "cq parity",
         stderr: "",
@@ -772,6 +785,7 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
       name: "complete_operator_action",
       args: {
         action_id: `OA${ids.operatorActionTask.slice(1)}`,
+        expected_revision: 2,
         completion: "parity probe verified",
         author: "parity-parent",
       },
@@ -1080,6 +1094,11 @@ function assertRepresentativeContracts(
     action: { status: "pending" },
     handoff: { status: "user-action-required" },
   });
+  expect(responses.get("revise_operator_action")).toMatchObject({
+    action: { status: "pending", fields: { revision: "2" } },
+    task: { status: "planned" },
+    handoff: { status: "user-action-required" },
+  });
   expect(responses.get("acknowledge_operator_action")).toMatchObject({
     state: "acknowledged",
     action: { status: "acknowledged" },
@@ -1291,7 +1310,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 37 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 38 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);
@@ -1375,6 +1394,7 @@ describe("stdio/direct ledger tool differential contract", () => {
         observedAt: string,
       ): Record<string, unknown> => ({
         action_id: actionId,
+        expected_revision: 1,
         command,
         stdout: exitCode === 0 ? "ok" : "",
         stderr: exitCode === 0 ? "" : "failed",
@@ -1402,6 +1422,7 @@ describe("stdio/direct ledger tool differential contract", () => {
           name: "acknowledge_operator_action",
           args: {
             action_id: actionId,
+            expected_revision: 1,
             output_identity: identity,
             acknowledged_at: "2026-08-11T08:00:00.000Z",
           },
@@ -1426,6 +1447,7 @@ describe("stdio/direct ledger tool differential contract", () => {
           name: "acknowledge_operator_action",
           args: {
             action_id: actionId,
+            expected_revision: 1,
             output_identity: identity,
             acknowledged_at: "2026-08-11T08:03:00.000Z",
           },
@@ -1452,6 +1474,7 @@ describe("stdio/direct ledger tool differential contract", () => {
               name: "complete_operator_action",
               args: {
                 action_id: actionId,
+                expected_revision: 1,
                 completion: "latest epoch verified",
                 author: "parity-parent",
               },

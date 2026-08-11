@@ -986,12 +986,14 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
           });
           await acknowledgeOperatorAction(store, {
             actionId: materialized.action.id,
+            expectedRevision: 1,
             outputIdentity: "/nix/store/reopen-fence",
             acknowledgedAt: "2026-08-11T08:00:00.000Z",
           });
           await recordOperatorActionEvidence(
             store,
             materialized.action.id,
+            1,
             {
               command: "cq --version",
               stdout: "cq 1",
@@ -1002,7 +1004,7 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
             },
             { author: "parent" },
           );
-          await completeOperatorActionTask(store, materialized.action.id, "verified", {
+          await completeOperatorActionTask(store, materialized.action.id, 1, "verified", {
             author: "parent",
           });
 
@@ -1046,6 +1048,7 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
           });
           await acknowledgeOperatorAction(store, {
             actionId: materialized.action.id,
+            expectedRevision: 1,
             outputIdentity: "/nix/store/probe-epoch",
             acknowledgedAt: "2026-08-11T08:00:00.000Z",
           });
@@ -1053,6 +1056,7 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
             recordOperatorActionEvidence(
               store,
               materialized.action.id,
+              1,
               {
                 command,
                 stdout: exitCode === 0 ? "ok" : "",
@@ -1072,6 +1076,7 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
           );
           await acknowledgeOperatorAction(store, {
             actionId: materialized.action.id,
+            expectedRevision: 1,
             outputIdentity: "/nix/store/probe-epoch",
             acknowledgedAt: "2026-08-11T08:03:00.000Z",
           });

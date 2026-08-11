@@ -6,6 +6,7 @@ import {
   FsLedgerStore,
   InMemoryLedgerStore,
   LedgerError,
+  MILESTONES_AMBIENT_ID,
   OperatorActionConflictError,
   OperatorActionEnvelopeError,
   SqliteLedgerStore,
@@ -13,10 +14,15 @@ import {
   completeOperatorActionTask,
   derivePredicates,
   materializeOperatorAction,
+  operatorActionRevision,
   parseOperatorActionEnvelope,
   recordOperatorActionEvidence,
+  reviseOperatorAction,
   type LedgerStore,
+  type PlanLifecycleStore,
+  type PlanDraftManifest,
 } from "../src/index.js";
+import { atomicWrite as productionAtomicWrite } from "../src/store/fsAtomic.js";
 
 const NOW = "2026-08-11T06:00:00.000Z";
 const IDENTITY = "/nix/store/exact-cq";
@@ -123,6 +129,7 @@ for (const factory of factories) {
 
         const mismatch = await acknowledgeOperatorAction(store, {
           actionId: first.action.id,
+          expectedRevision: 1,
           outputIdentity: "/nix/store/wrong",
           acknowledgedAt: NOW,
         });
@@ -148,11 +155,14 @@ for (const factory of factories) {
           }),
         ).rejects.toBeInstanceOf(LedgerError);
         expect(
-          completeOperatorActionTask(store, first.action.id, "premature", { author: "parent" }),
+          completeOperatorActionTask(store, first.action.id, 1, "premature", {
+            author: "parent",
+          }),
         ).rejects.toBeInstanceOf(LedgerError);
 
         const acknowledged = await acknowledgeOperatorAction(store, {
           actionId: first.action.id,
+          expectedRevision: 1,
           outputIdentity: IDENTITY,
           acknowledgedAt: NOW,
         });
@@ -160,6 +170,7 @@ for (const factory of factories) {
         const failedProbe = await recordOperatorActionEvidence(
           store,
           first.action.id,
+          1,
           {
             command: "cq --version",
             stdout: "",
@@ -174,12 +185,14 @@ for (const factory of factories) {
 
         await acknowledgeOperatorAction(store, {
           actionId: first.action.id,
+          expectedRevision: 1,
           outputIdentity: IDENTITY,
           acknowledgedAt: NOW,
         });
         const firstProbe = await recordOperatorActionEvidence(
           store,
           first.action.id,
+          1,
           {
             command: "cq worktree probe",
             stdout: "ok",
@@ -195,6 +208,7 @@ for (const factory of factories) {
         const mismatchingProbe = await recordOperatorActionEvidence(
           store,
           first.action.id,
+          1,
           {
             command: "cq --version",
             stdout: "cq 1",
@@ -209,12 +223,14 @@ for (const factory of factories) {
 
         await acknowledgeOperatorAction(store, {
           actionId: first.action.id,
+          expectedRevision: 1,
           outputIdentity: IDENTITY,
           acknowledgedAt: NOW,
         });
         const stillAcknowledged = await recordOperatorActionEvidence(
           store,
           first.action.id,
+          1,
           {
             command: "cq worktree probe",
             stdout: "ok",
@@ -229,6 +245,7 @@ for (const factory of factories) {
         const verified = await recordOperatorActionEvidence(
           store,
           first.action.id,
+          1,
           {
             command: "cq --version",
             stdout: "cq 1",
@@ -244,6 +261,7 @@ for (const factory of factories) {
         expect(
           await acknowledgeOperatorAction(store, {
             actionId: first.action.id,
+            expectedRevision: 1,
             outputIdentity: IDENTITY,
             acknowledgedAt: NOW,
           }),
@@ -252,6 +270,7 @@ for (const factory of factories) {
         const completed = await completeOperatorActionTask(
           store,
           first.action.id,
+          1,
           "deployed identity and both probes verified",
           { author: "parent" },
         );
@@ -325,6 +344,350 @@ for (const factory of factories) {
   });
 }
 
+test("shared SQLite serializes revise versus acknowledge at the authoritative store", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "cq-operator-action-shared-sqlite-"));
+  dirs.push(root);
+  const dbPath = path.join(root, "ledger.db");
+  const first = new SqliteLedgerStore({ dbPath, now: () => NOW });
+  const second = new SqliteLedgerStore({ dbPath, now: () => NOW });
+  await first.init();
+  await second.init();
+  try {
+    const milestone = await first.createMilestone({ title: "shared race" });
+    const goal = await first.createItem("goals", milestone.id, {
+      status: "planned",
+      fields: { title: "goal", description: "goal" },
+    });
+    const task = await first.createItem("tasks", milestone.id, {
+      status: "planned",
+      fields: {
+        headline: "deploy",
+        description: "CQ-OPERATOR-ACTION v1 shared-ack-race. User deploys.",
+        ledgerRefs: [`goals:${goal.id}`],
+      },
+    });
+    const created = await materializeOperatorAction(first, {
+      taskId: task.id,
+      expectedOutputIdentity: "/nix/store/revision-1",
+      expectedEvidence: ["probe-v1"],
+    });
+    const [revision, acknowledgement] = await Promise.allSettled([
+      reviseOperatorAction(first, {
+        actionId: created.action.id,
+        expectedRevision: 1,
+        expectedOutputIdentity: "/nix/store/revision-2",
+        expectedEvidence: ["probe-v2"],
+        revisedAt: NOW,
+        author: "reviser",
+      }),
+      acknowledgeOperatorAction(second, {
+        actionId: created.action.id,
+        expectedRevision: 1,
+        outputIdentity: "/nix/store/revision-1",
+        acknowledgedAt: NOW,
+      }),
+    ]);
+    expect(revision.status).toBe("fulfilled");
+    const final = first.fetchItem("operatorActions", created.action.id);
+    expect(final).toMatchObject({ status: "pending", fields: { revision: "2" } });
+    const historical = JSON.parse((final.fields["revisionHistory"] as string[])[0]!) as {
+      action: { status: string; fields: Record<string, unknown> };
+    };
+    if (acknowledgement.status === "fulfilled") {
+      expect(historical.action).toMatchObject({
+        status: "acknowledged",
+        fields: { acknowledgedOutputIdentity: "/nix/store/revision-1" },
+      });
+    } else {
+      expect(historical.action.status).toBe("pending");
+      expect(historical.action.fields["acknowledgedOutputIdentity"]).toBeUndefined();
+    }
+  } finally {
+    await first.dispose();
+    await second.dispose();
+  }
+});
+
+test("shared SQLite serializes revise versus evidence without mixed triple state", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "cq-operator-evidence-shared-sqlite-"));
+  dirs.push(root);
+  const dbPath = path.join(root, "ledger.db");
+  const first = new SqliteLedgerStore({ dbPath, now: () => NOW });
+  const second = new SqliteLedgerStore({ dbPath, now: () => NOW });
+  await first.init();
+  await second.init();
+  try {
+    const milestone = await first.createMilestone({ title: "shared evidence race" });
+    const goal = await first.createItem("goals", milestone.id, {
+      status: "planned",
+      fields: { title: "goal", description: "goal" },
+    });
+    const task = await first.createItem("tasks", milestone.id, {
+      status: "planned",
+      fields: {
+        headline: "deploy",
+        description: "CQ-OPERATOR-ACTION v1 shared-evidence-race. User deploys.",
+        ledgerRefs: [`goals:${goal.id}`],
+      },
+    });
+    const created = await materializeOperatorAction(first, {
+      taskId: task.id,
+      expectedOutputIdentity: IDENTITY,
+      expectedEvidence: ["probe-a", "probe-b"],
+    });
+    await acknowledgeOperatorAction(first, {
+      actionId: created.action.id,
+      expectedRevision: 1,
+      outputIdentity: IDENTITY,
+      acknowledgedAt: NOW,
+    });
+    const [revision, evidence] = await Promise.allSettled([
+      reviseOperatorAction(first, {
+        actionId: created.action.id,
+        expectedRevision: 1,
+        expectedOutputIdentity: "/nix/store/revision-2",
+        expectedEvidence: ["probe-v2"],
+        revisedAt: NOW,
+        author: "reviser",
+      }),
+      recordOperatorActionEvidence(
+        second,
+        created.action.id,
+        1,
+        {
+          command: "probe-a",
+          stdout: "ok",
+          stderr: "",
+          exitCode: 0,
+          outputIdentity: IDENTITY,
+          observedAt: NOW,
+        },
+        { author: "evidence-recorder" },
+      ),
+    ]);
+    const action = first.fetchItem("operatorActions", created.action.id);
+    const triple = JSON.stringify({
+      action,
+      task: first.fetchItem("tasks", task.id),
+      handoff: first.fetchItem("handoffs", created.handoff.id),
+    });
+    if (revision.status === "fulfilled") {
+      expect(evidence.status).toBe("rejected");
+      expect(action).toMatchObject({ status: "pending", fields: { revision: "2" } });
+      expect(action.fields["evidence"]).toBeUndefined();
+    } else {
+      expect(evidence.status).toBe("fulfilled");
+      expect(action).toMatchObject({ status: "acknowledged", fields: { revision: "1" } });
+      expect(action.fields["evidence"]).toHaveLength(1);
+      await expect(
+        reviseOperatorAction(first, {
+          actionId: created.action.id,
+          expectedRevision: 1,
+          expectedOutputIdentity: "/nix/store/revision-2",
+          expectedEvidence: ["probe-v2"],
+          revisedAt: NOW,
+          author: "reviser",
+        }),
+      ).rejects.toThrow(/after evidence/);
+      expect(
+        JSON.stringify({
+          action: first.fetchItem("operatorActions", created.action.id),
+          task: first.fetchItem("tasks", task.id),
+          handoff: first.fetchItem("handoffs", created.handoff.id),
+        }),
+      ).toBe(triple);
+    }
+  } finally {
+    await first.dispose();
+    await second.dispose();
+  }
+});
+
+for (const failAt of [1, 2, 3, 4, 5]) {
+  test(`filesystem revision restart is old-or-new after durable boundary ${String(failAt)}`, async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "cq-operator-revision-fault-"));
+    dirs.push(root);
+    let armed = false;
+    let writes = 0;
+    let store = new FsLedgerStore({
+      root,
+      now: () => NOW,
+      atomicWrite: async (filePath, text) => {
+        if (armed) {
+          writes += 1;
+          if (writes === failAt) throw new Error(`injected revision boundary ${String(failAt)}`);
+        }
+        await productionAtomicWrite(filePath, text);
+      },
+    });
+    await store.init();
+    const milestone = await store.createMilestone({ title: "fault revision" });
+    const goal = await store.createItem("goals", milestone.id, {
+      status: "planned",
+      fields: { title: "goal", description: "goal" },
+    });
+    const task = await store.createItem("tasks", milestone.id, {
+      status: "planned",
+      fields: {
+        headline: "deploy",
+        description: "CQ-OPERATOR-ACTION v1 fault-revision. User deploys.",
+        ledgerRefs: [`goals:${goal.id}`],
+      },
+    });
+    const created = await materializeOperatorAction(store, {
+      taskId: task.id,
+      expectedOutputIdentity: "/nix/store/revision-1",
+      expectedEvidence: ["probe-v1"],
+    });
+    await acknowledgeOperatorAction(store, {
+      actionId: created.action.id,
+      expectedRevision: 1,
+      outputIdentity: "/nix/store/revision-1",
+      acknowledgedAt: NOW,
+    });
+    armed = true;
+    await expect(
+      reviseOperatorAction(store, {
+        actionId: created.action.id,
+        expectedRevision: 1,
+        expectedOutputIdentity: "/nix/store/revision-2",
+        expectedEvidence: ["probe-v2"],
+        revisedAt: NOW,
+        author: "parent",
+      }),
+    ).rejects.toThrow(`injected revision boundary ${String(failAt)}`);
+    await store.dispose();
+
+    store = new FsLedgerStore({ root, now: () => NOW });
+    await store.init();
+    try {
+      const triple = {
+        action: store.fetchItem("operatorActions", created.action.id),
+        task: store.fetchItem("tasks", task.id),
+        handoff: store.fetchItem("handoffs", created.handoff.id),
+      };
+      if (failAt === 1) {
+        expect(triple).toMatchObject({
+          action: { status: "acknowledged", fields: { revision: "1" } },
+          task: { status: "planned" },
+          handoff: { status: "user-action-required" },
+        });
+      } else {
+        expect(triple).toMatchObject({
+          action: {
+            status: "pending",
+            fields: {
+              revision: "2",
+              expectedOutputIdentity: "/nix/store/revision-2",
+              expectedEvidence: ["probe-v2"],
+            },
+          },
+          task: { status: "planned" },
+          handoff: { status: "user-action-required" },
+        });
+        const historical = JSON.parse(
+          (triple.action.fields["revisionHistory"] as string[])[0]!,
+        ) as { action: { status: string; fields: Record<string, unknown> } };
+        expect(historical.action).toMatchObject({
+          status: "acknowledged",
+          fields: {
+            revision: "1",
+            expectedOutputIdentity: "/nix/store/revision-1",
+            acknowledgedOutputIdentity: "/nix/store/revision-1",
+          },
+        });
+      }
+    } finally {
+      await store.dispose();
+    }
+  });
+}
+
+for (const failAt of [1, 2, 3, 4]) {
+  test(`filesystem completion restart is old-or-new after durable boundary ${String(failAt)}`, async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "cq-operator-completion-fault-"));
+    dirs.push(root);
+    let armed = false;
+    let writes = 0;
+    let store = new FsLedgerStore({
+      root,
+      now: () => NOW,
+      atomicWrite: async (filePath, text) => {
+        if (armed) {
+          writes += 1;
+          if (writes === failAt) throw new Error(`injected completion boundary ${String(failAt)}`);
+        }
+        await productionAtomicWrite(filePath, text);
+      },
+    });
+    await store.init();
+    const milestone = await store.createMilestone({ title: "fault completion" });
+    const goal = await store.createItem("goals", milestone.id, {
+      status: "planned",
+      fields: { title: "goal", description: "goal" },
+    });
+    const task = await store.createItem("tasks", milestone.id, {
+      status: "planned",
+      fields: {
+        headline: "deploy",
+        description: "CQ-OPERATOR-ACTION v1 fault-completion. User deploys.",
+        ledgerRefs: [`goals:${goal.id}`],
+      },
+    });
+    const created = await materializeOperatorAction(store, {
+      taskId: task.id,
+      expectedOutputIdentity: IDENTITY,
+      expectedEvidence: ["probe"],
+    });
+    await acknowledgeOperatorAction(store, {
+      actionId: created.action.id,
+      expectedRevision: 1,
+      outputIdentity: IDENTITY,
+      acknowledgedAt: NOW,
+    });
+    await recordOperatorActionEvidence(
+      store,
+      created.action.id,
+      1,
+      {
+        command: "probe",
+        stdout: "ok",
+        stderr: "",
+        exitCode: 0,
+        outputIdentity: IDENTITY,
+        observedAt: NOW,
+      },
+      { author: "parent" },
+    );
+    armed = true;
+    await expect(
+      completeOperatorActionTask(store, created.action.id, 1, "verified completion", {
+        author: "parent",
+      }),
+    ).rejects.toThrow(`injected completion boundary ${String(failAt)}`);
+    await store.dispose();
+
+    store = new FsLedgerStore({ root, now: () => NOW });
+    await store.init();
+    try {
+      const action = store.fetchItem("operatorActions", created.action.id);
+      const recoveredTask = store.fetchItem("tasks", task.id);
+      if (failAt === 1) {
+        expect(action.fields["completion"]).toBeUndefined();
+        expect(recoveredTask).toMatchObject({ status: "planned" });
+      } else {
+        expect(action.fields["completion"]).toBe("verified completion");
+        expect(recoveredTask).toMatchObject({
+          status: "done",
+          fields: { completion: "verified completion" },
+        });
+      }
+    } finally {
+      await store.dispose();
+    }
+  });
+}
+
 test("filesystem restart reuses the durable action and handoff", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "cq-operator-action-restart-"));
   dirs.push(root);
@@ -393,14 +756,18 @@ test("D312 acknowledged pre-evidence action can replace an incorrect immutable m
     });
     await acknowledgeOperatorAction(store, {
       actionId: created.action.id,
+      expectedRevision: 1,
       outputIdentity: IDENTITY,
       acknowledgedAt: NOW,
     });
 
-    const revised = await materializeOperatorAction(store, {
-      taskId: task.id,
+    const revised = await reviseOperatorAction(store, {
+      actionId: created.action.id,
+      expectedRevision: 1,
       expectedOutputIdentity: IDENTITY,
       expectedEvidence: ["cq correct-probe"],
+      revisedAt: NOW,
+      author: "parent",
     });
 
     expect(revised.action).toMatchObject({
@@ -411,3 +778,315 @@ test("D312 acknowledged pre-evidence action can replace an incorrect immutable m
     await store.dispose();
   }
 });
+
+test("legacy operator actions without a revision field read as revision 1", () => {
+  expect(
+    operatorActionRevision({
+      id: "OA2054",
+      milestoneId: "M1",
+      status: "pending",
+      fields: {},
+      createdAt: NOW,
+      updatedAt: NOW,
+    }),
+  ).toBe(1);
+});
+
+for (const factory of factories) {
+  test(`revision lifecycle preserves audit and fences stale calls (${factory.name})`, async () => {
+    const store = await factory.build();
+    try {
+      const milestone = await store.createMilestone({ title: "revision audit" });
+      const goal = await store.createItem("goals", milestone.id, {
+        status: "planned",
+        fields: { title: "goal", description: "goal" },
+      });
+      const task = await store.createItem("tasks", milestone.id, {
+        status: "planned",
+        fields: {
+          headline: "deploy",
+          description: "CQ-OPERATOR-ACTION v1 audit-deployment. User deploys.",
+          ledgerRefs: [`goals:${goal.id}`],
+        },
+      });
+      const created = await materializeOperatorAction(store, {
+        taskId: task.id,
+        expectedOutputIdentity: "/nix/store/revision-1",
+        expectedEvidence: ["probe-v1"],
+      });
+      await acknowledgeOperatorAction(store, {
+        actionId: created.action.id,
+        expectedRevision: 1,
+        outputIdentity: "/nix/store/revision-1",
+        acknowledgedAt: NOW,
+      });
+      const revised = await reviseOperatorAction(store, {
+        actionId: created.action.id,
+        expectedRevision: 1,
+        expectedOutputIdentity: "/nix/store/revision-2",
+        expectedEvidence: ["probe-v2", "probe-v2-extra"],
+        revisedAt: NOW,
+        author: "parent",
+      });
+      expect(revised.action).toMatchObject({
+        status: "pending",
+        fields: {
+          revision: "2",
+          expectedOutputIdentity: "/nix/store/revision-2",
+          expectedEvidence: ["probe-v2", "probe-v2-extra"],
+        },
+      });
+      expect(revised.action.fields["acknowledgedAt"]).toBeUndefined();
+      const history = revised.action.fields["revisionHistory"] as string[];
+      expect(history).toHaveLength(1);
+      expect(JSON.parse(history[0]!) as unknown).toMatchObject({
+        revision: 1,
+        action: {
+          status: "acknowledged",
+          fields: {
+            expectedOutputIdentity: "/nix/store/revision-1",
+            expectedEvidence: ["probe-v1"],
+            acknowledgedOutputIdentity: "/nix/store/revision-1",
+          },
+        },
+        task: { id: task.id, status: "planned" },
+        handoff: { id: created.handoff.id, status: "user-action-required" },
+      });
+
+      const beforeStale = JSON.stringify({
+        action: store.fetchItem("operatorActions", created.action.id),
+        task: store.fetchItem("tasks", task.id),
+        handoff: store.fetchItem("handoffs", created.handoff.id),
+      });
+      await expect(
+        acknowledgeOperatorAction(store, {
+          actionId: created.action.id,
+          expectedRevision: 1,
+          outputIdentity: "/nix/store/revision-1",
+          acknowledgedAt: NOW,
+        }),
+      ).rejects.toThrow(/revision conflict/);
+      expect(
+        JSON.stringify({
+          action: store.fetchItem("operatorActions", created.action.id),
+          task: store.fetchItem("tasks", task.id),
+          handoff: store.fetchItem("handoffs", created.handoff.id),
+        }),
+      ).toBe(beforeStale);
+
+      await acknowledgeOperatorAction(store, {
+        actionId: created.action.id,
+        expectedRevision: 2,
+        outputIdentity: "/nix/store/revision-2",
+        acknowledgedAt: NOW,
+      });
+      await expect(
+        recordOperatorActionEvidence(
+          store,
+          created.action.id,
+          1,
+          {
+            command: "probe-v1",
+            stdout: "ok",
+            stderr: "",
+            exitCode: 0,
+            outputIdentity: "/nix/store/revision-1",
+            observedAt: NOW,
+          },
+          { author: "parent" },
+        ),
+      ).rejects.toThrow(/revision conflict/);
+      await recordOperatorActionEvidence(
+        store,
+        created.action.id,
+        2,
+        {
+          command: "probe-v2",
+          stdout: "ok",
+          stderr: "",
+          exitCode: 0,
+          outputIdentity: "/nix/store/revision-2",
+          observedAt: NOW,
+        },
+        { author: "parent" },
+      );
+      const postEvidence = JSON.stringify({
+        action: store.fetchItem("operatorActions", created.action.id),
+        task: store.fetchItem("tasks", task.id),
+        handoff: store.fetchItem("handoffs", created.handoff.id),
+      });
+      await expect(
+        reviseOperatorAction(store, {
+          actionId: created.action.id,
+          expectedRevision: 2,
+          expectedOutputIdentity: "/nix/store/revision-3",
+          expectedEvidence: ["probe-v3"],
+          revisedAt: NOW,
+          author: "parent",
+        }),
+      ).rejects.toThrow(/after evidence/);
+      expect(
+        JSON.stringify({
+          action: store.fetchItem("operatorActions", created.action.id),
+          task: store.fetchItem("tasks", task.id),
+          handoff: store.fetchItem("handoffs", created.handoff.id),
+        }),
+      ).toBe(postEvidence);
+      await recordOperatorActionEvidence(
+        store,
+        created.action.id,
+        2,
+        {
+          command: "probe-v2-extra",
+          stdout: "ok",
+          stderr: "",
+          exitCode: 0,
+          outputIdentity: "/nix/store/revision-2",
+          observedAt: NOW,
+        },
+        { author: "parent" },
+      );
+      await expect(
+        completeOperatorActionTask(store, created.action.id, 1, "stale", {
+          author: "parent",
+        }),
+      ).rejects.toThrow(/revision conflict/);
+      expect(
+        await completeOperatorActionTask(store, created.action.id, 2, "revision 2 verified", {
+          author: "parent",
+        }),
+      ).toMatchObject({ status: "done" });
+    } finally {
+      await store.dispose();
+    }
+  });
+
+  test(`exactly one simultaneous manifest revision wins (${factory.name})`, async () => {
+    const store = await factory.build();
+    try {
+      const milestone = await store.createMilestone({ title: "revision race" });
+      const goal = await store.createItem("goals", milestone.id, {
+        status: "planned",
+        fields: { title: "goal", description: "goal" },
+      });
+      const task = await store.createItem("tasks", milestone.id, {
+        status: "planned",
+        fields: {
+          headline: "deploy",
+          description: "CQ-OPERATOR-ACTION v1 race-deployment. User deploys.",
+          ledgerRefs: [`goals:${goal.id}`],
+        },
+      });
+      const created = await materializeOperatorAction(store, {
+        taskId: task.id,
+        expectedOutputIdentity: IDENTITY,
+        expectedEvidence: ["probe-v1"],
+      });
+      const revisions = await Promise.allSettled([
+        reviseOperatorAction(store, {
+          actionId: created.action.id,
+          expectedRevision: 1,
+          expectedOutputIdentity: "/nix/store/winner-a",
+          expectedEvidence: ["probe-a"],
+          revisedAt: NOW,
+          author: "parent-a",
+        }),
+        reviseOperatorAction(store, {
+          actionId: created.action.id,
+          expectedRevision: 1,
+          expectedOutputIdentity: "/nix/store/winner-b",
+          expectedEvidence: ["probe-b"],
+          revisedAt: NOW,
+          author: "parent-b",
+        }),
+      ]);
+      expect(revisions.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+      expect(revisions.filter(({ status }) => status === "rejected")).toHaveLength(1);
+      expect(store.fetchItem("operatorActions", created.action.id).fields["revision"]).toBe("2");
+    } finally {
+      await store.dispose();
+    }
+  });
+
+  test(`typed revision alone revives an abandoned strict task (${factory.name})`, async () => {
+    const store = (await factory.build()) as LedgerStore & PlanLifecycleStore;
+    try {
+      await store.createItem("goals", MILESTONES_AMBIENT_ID, {
+        id: "G2054",
+        status: "clarifying",
+        fields: { title: "deploy", description: "deploy" },
+      });
+      const claimed = await store.claimPlan({
+        goalId: "G2054",
+        purpose: "initial",
+        claimRequestId: "t2058-revision",
+        ownerFenceToken: "A".repeat(22),
+        expectedGeneration: null,
+        author: "planner",
+      });
+      if (!claimed.ok) throw new Error("plan claim failed");
+      const manifest = {
+        milestones: [{ key: "deployment", title: "Deployment" }],
+        tasks: [
+          {
+            key: "operator",
+            milestoneKey: "deployment",
+            headline: "Deploy",
+            description: "CQ-OPERATOR-ACTION v1 t2054-recovery. User deploys.",
+          },
+        ],
+      } satisfies PlanDraftManifest;
+      const first = await store.publishPlanDraft({
+        goalId: "G2054",
+        claimId: claimed.acknowledgement.claimId,
+        generation: claimed.acknowledgement.generation,
+        operationId: "t2058-first",
+        ownerFenceToken: claimed.acknowledgement.ownerFenceToken,
+        author: "planner",
+        manifest,
+      });
+      if (!first.ok) throw new Error("first plan publication failed");
+      const taskId = first.acknowledgement.manifest.tasks[0]!.id;
+      const created = await materializeOperatorAction(store, {
+        taskId,
+        expectedOutputIdentity: IDENTITY,
+        expectedEvidence: ["probe-v1"],
+      });
+      await acknowledgeOperatorAction(store, {
+        actionId: created.action.id,
+        expectedRevision: 1,
+        outputIdentity: IDENTITY,
+        acknowledgedAt: NOW,
+      });
+      const replacement = await store.publishPlanDraft({
+        goalId: "G2054",
+        claimId: claimed.acknowledgement.claimId,
+        generation: claimed.acknowledgement.generation,
+        operationId: "t2058-replacement",
+        ownerFenceToken: claimed.acknowledgement.ownerFenceToken,
+        author: "planner",
+        manifest,
+      });
+      if (!replacement.ok) throw new Error("replacement plan publication failed");
+      expect(store.fetchItem("tasks", taskId).status).toBe("abandoned");
+      await expect(store.reopenItem("tasks", taskId, "planned")).rejects.toThrow(
+        /draft|typed operator-action lifecycle/,
+      );
+      const revised = await reviseOperatorAction(store, {
+        actionId: created.action.id,
+        expectedRevision: 1,
+        expectedOutputIdentity: "/nix/store/recovered",
+        expectedEvidence: ["probe-v2"],
+        revisedAt: NOW,
+        author: "parent",
+      });
+      expect(revised.task.status).toBe("planned");
+      const history = JSON.parse((revised.action.fields["revisionHistory"] as string[])[0]!) as {
+        task: { status: string };
+      };
+      expect(history.task.status).toBe("abandoned");
+    } finally {
+      await store.dispose();
+    }
+  });
+}
