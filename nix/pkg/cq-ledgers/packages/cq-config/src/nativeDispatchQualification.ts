@@ -19,6 +19,11 @@
 
 import type { Harness } from "./types.js";
 import {
+  isRunnerOwnedCodexInstalledRoleBoundaryExecution,
+  type CodexInstalledRoleBoundaryExecution,
+} from "./codexRoleBoundary.js";
+import type { ConsumedDispatchResult } from "./compactDispatchProtocol.js";
+import {
   validateManagedWorktreeHandle,
   type ManagedWorktreeHandle,
 } from "./managedWorktreeHandle.js";
@@ -200,7 +205,24 @@ export interface CodexProviderGateObservation {
   readonly lifecycle: "single-or-typed-abort";
   readonly behavior: "commit-and-resume" | "multi-step-rebase";
   readonly failureControls: readonly CodexProviderFailureControl[];
+  readonly runnerExecution: CodexInstalledRoleBoundaryExecution;
 }
+
+export interface CodexProviderReleaseEvidence {
+  readonly status: "released";
+  readonly handle: ManagedWorktreeHandle;
+  readonly idempotent: boolean;
+  readonly absolutePath: string;
+}
+
+export interface CodexProviderGateAuthenticationInput {
+  readonly execution: CodexInstalledRoleBoundaryExecution;
+  readonly consumed: ConsumedDispatchResult;
+  readonly release: CodexProviderReleaseEvidence;
+}
+
+const AUTHENTICATED_CODEX_PROVIDER_GATES = new WeakSet<object>();
+const AUTHENTICATED_CODEX_NATIVE_QUALIFICATIONS = new WeakSet<object>();
 
 export interface CodexNativeQualificationInput {
   readonly cwd: string;
@@ -209,6 +231,151 @@ export interface CodexNativeQualificationInput {
   readonly taskId: string;
   readonly workerGate: CodexProviderGateObservation;
   readonly resolverGate: CodexProviderGateObservation;
+}
+
+function objectRecord(value: unknown, field: string): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${field} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function sameDispatchHandle(
+  left: { readonly attestationId: string; readonly generation: number },
+  right: { readonly attestationId: string; readonly generation: number },
+): boolean {
+  return left.attestationId === right.attestationId && left.generation === right.generation;
+}
+
+/**
+ * Mint opaque provider evidence only after an installed runner execution, the
+ * trusted parent's consumed dispatch body, and the manager release all agree.
+ */
+export function authenticateCodexProviderGateObservation(
+  input: CodexProviderGateAuthenticationInput,
+): CodexProviderGateObservation {
+  const execution = input.execution;
+  if (!isRunnerOwnedCodexInstalledRoleBoundaryExecution(execution)) {
+    throw new Error("Codex provider evidence was not produced by the installed-boundary runner");
+  }
+  if (input.consumed.state !== "consumed" || !sameDispatchHandle(input.consumed, execution.handle)) {
+    throw new Error("Codex provider consumed result does not match the runner dispatch handle");
+  }
+  const completion = input.consumed.nativeCompletion;
+  if (
+    completion.kind !== "native-completion" ||
+    completion.actor !== "trusted-parent" ||
+    completion.childId !== execution.expectedChild.childId ||
+    completion.runId !== execution.expectedChild.runId
+  ) {
+    throw new Error("Codex provider completion does not match the runner-owned child identity");
+  }
+  const expectedProvenance = execution.expectedPromptProvenance;
+  const observedProvenance = input.consumed.promptProvenance;
+  if (
+    observedProvenance.roleId !== expectedProvenance.roleId ||
+    observedProvenance.version !== expectedProvenance.version ||
+    observedProvenance.promptDigest !== expectedProvenance.promptDigest ||
+    observedProvenance.inputDigest !== expectedProvenance.inputDigest ||
+    observedProvenance.catalogHash !== expectedProvenance.catalogHash
+  ) {
+    throw new Error("Codex provider consumed result has substituted prompt provenance");
+  }
+
+  const output = objectRecord(input.consumed.output, "consumed.output");
+  const managed = execution.managedHandle;
+  if (
+    output["status"] !== "pass" ||
+    output["taskId"] !== managed.taskId ||
+    output["branch"] !== managed.branch ||
+    output["actualWorktreePath"] !== managed.absolutePath ||
+    typeof output["resultCommit"] !== "string"
+  ) {
+    throw new Error("Codex provider result does not match its managed task/worktree binding");
+  }
+  const receiptsField =
+    execution.roleId === "implement-worker" ? "gitReceipts" : "conflictReceipts";
+  const receipts = output[receiptsField];
+  if (!Array.isArray(receipts) || receipts.length < 2) {
+    throw new Error(`Codex provider ${receiptsField} must contain a multi-step receipt chain`);
+  }
+  let previousHead: string | undefined;
+  for (const [index, value] of receipts.entries()) {
+    const receipt = objectRecord(value, `${receiptsField}[${String(index)}]`);
+    const expectedKind =
+      execution.roleId === "implement-worker"
+        ? "cq-git-change-receipt"
+        : "cq-git-conflict-continuation-receipt";
+    if (
+      receipt["kind"] !== expectedKind ||
+      receipt["version"] !== 1 ||
+      receipt["attestationId"] !== execution.handle.attestationId ||
+      receipt["generation"] !== execution.handle.generation ||
+      receipt["taskId"] !== managed.taskId ||
+      typeof receipt["oldHead"] !== "string" ||
+      typeof receipt["newHead"] !== "string" ||
+      (previousHead !== undefined && receipt["oldHead"] !== previousHead)
+    ) {
+      throw new Error(`Codex provider ${receiptsField}[${String(index)}] breaks its dispatch chain`);
+    }
+    previousHead = receipt["newHead"];
+  }
+  if (previousHead !== output["resultCommit"]) {
+    throw new Error(`Codex provider ${receiptsField} does not terminate at resultCommit`);
+  }
+  if (execution.roleId === "implement-conflict-resolver") {
+    const firstOutcome = objectRecord(
+      objectRecord(receipts[0], `${receiptsField}[0]`)["outcome"],
+      `${receiptsField}[0].outcome`,
+    );
+    const lastOutcome = objectRecord(
+      objectRecord(receipts.at(-1), `${receiptsField}[-1]`)["outcome"],
+      `${receiptsField}[-1].outcome`,
+    );
+    if (
+      firstOutcome["kind"] !== "conflict" ||
+      lastOutcome["kind"] !== "terminal" ||
+      lastOutcome["tip"] !== output["resultCommit"]
+    ) {
+      throw new Error("Codex resolver evidence does not prove a multi-step terminal rebase");
+    }
+  }
+
+  if (
+    input.release.status !== "released" ||
+    input.release.idempotent !== false ||
+    input.release.absolutePath !== managed.absolutePath ||
+    input.release.handle.token !== managed.token ||
+    input.release.handle.taskId !== managed.taskId ||
+    input.release.handle.repositoryRoot !== managed.repositoryRoot ||
+    input.release.handle.absolutePath !== managed.absolutePath
+  ) {
+    throw new Error("Codex provider parent release does not match the managed runner handle");
+  }
+
+  const roleId = execution.roleId;
+  const observation = Object.freeze({
+    kind: "cq-codex-provider-gate" as const,
+    version: 1 as const,
+    roleId,
+    effect: execution.effect,
+    packagedBoundary: true as const,
+    substituted: false as const,
+    preturnBindings: CODEX_PROVIDER_PRETURN_BINDINGS,
+    routes: CODEX_PROVIDER_ROUTES,
+    receiptChainVerified: true as const,
+    directGitDenied: true as const,
+    confinementVerified: true as const,
+    objectAttributionVerified: true as const,
+    parentReleaseVerified: true as const,
+    lifecycle: "single-or-typed-abort" as const,
+    behavior:
+      roleId === "implement-worker" ? ("commit-and-resume" as const) : ("multi-step-rebase" as const),
+    failureControls: CODEX_PROVIDER_FAILURE_CONTROLS,
+    runnerExecution: execution,
+  });
+  AUTHENTICATED_CODEX_PROVIDER_GATES.add(observation);
+  return observation;
 }
 
 function normalizeAbsPath(path: string): string {
@@ -493,6 +660,9 @@ function codexProviderGateViolation(
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return `${expectedRole} provider gate is not an observation object`;
   }
+  if (!AUTHENTICATED_CODEX_PROVIDER_GATES.has(value)) {
+    return `${expectedRole} provider gate was not authenticated by the installed-boundary runner`;
+  }
   const gate = value as Record<string, unknown>;
   const expectedEffect =
     expectedRole === "implement-worker" ? "git-commit" : "git-conflict-continue";
@@ -605,7 +775,7 @@ export function qualifyCodexNativeAdapter(
   if (resolverViolation !== undefined) {
     return codexIncompatible("provider-gate-failed", resolverViolation);
   }
-  return Object.freeze({
+  const qualification = Object.freeze({
     status: "qualified" as const,
     adapterId: "codex:native" as const,
     targetHarness: "codex" as const,
@@ -619,6 +789,19 @@ export function qualifyCodexNativeAdapter(
       "capabilities, receipt chains, native+process routing, confinement/OID attribution, " +
       "single-or-typed-abort lifecycle, same-handle resume, multi-step rebase, and parent release.",
   });
+  AUTHENTICATED_CODEX_NATIVE_QUALIFICATIONS.add(qualification);
+  return qualification;
+}
+
+/** Registry guard: a caller-constructed qualified object has no authority. */
+export function isAuthenticatedCodexNativeQualification(
+  value: NativeAdapterQualification,
+): value is NativeAdapterQualified & { readonly adapterId: "codex:native" } {
+  return (
+    value.status === "qualified" &&
+    value.adapterId === "codex:native" &&
+    AUTHENTICATED_CODEX_NATIVE_QUALIFICATIONS.has(value)
+  );
 }
 
 /**

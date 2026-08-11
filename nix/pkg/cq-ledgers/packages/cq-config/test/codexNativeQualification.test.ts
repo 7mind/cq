@@ -51,6 +51,7 @@ function gate(
     lifecycle: "single-or-typed-abort",
     behavior: roleId === "implement-worker" ? "commit-and-resume" : "multi-step-rebase",
     failureControls: CODEX_PROVIDER_FAILURE_CONTROLS,
+    runnerExecution: {} as never,
   };
 }
 
@@ -97,6 +98,25 @@ describe("T2044 Codex native composed qualification", () => {
       resolverGate: gate("implement-conflict-resolver"),
     });
     expect(qualification).toEqual(incompatible("provider-gate-failed"));
+    const fabricatedRegistry = buildPositiveOnlyDispatchRegistry({
+      adapters: [
+        createNativeDispatchAdapter("codex", () => {
+          throw new Error("fabricated qualification must not launch");
+        }),
+      ],
+      nativeQualifications: [
+        {
+          status: "qualified",
+          adapterId: "codex:native",
+          targetHarness: "codex",
+          transport: "native",
+          confinement: "structural",
+          evidence: "caller-authored",
+          defectClosed: "D307",
+        },
+      ],
+    });
+    expect(fabricatedRegistry.has("codex:native")).toBe(false);
   });
 
   test("registers only after the exact managed binding and both unsubstituted provider gates", () => {
@@ -156,13 +176,7 @@ describe("T2044 Codex native composed qualification", () => {
       incompatible("provider-gate-failed"),
       incompatible("provider-gate-failed"),
       incompatible("provider-gate-failed"),
-      {
-        status: "qualified",
-        reason: null,
-        defect: "D307",
-        confinement: "structural",
-        registered: true,
-      },
+      incompatible("provider-gate-failed"),
     ]);
   });
 });

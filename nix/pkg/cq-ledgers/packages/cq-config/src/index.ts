@@ -113,6 +113,8 @@ export type {
   CodexProviderRoute,
   CodexProviderFailureControl,
   CodexProviderGateObservation,
+  CodexProviderReleaseEvidence,
+  CodexProviderGateAuthenticationInput,
   CodexNativeQualificationInput,
 } from "./nativeDispatchQualification.js";
 export {
@@ -124,7 +126,9 @@ export {
   isAbsoluteFilesystemPath,
   isManagedWorktreePath,
   qualifyClaudeNativeAdapter,
+  authenticateCodexProviderGateObservation,
   qualifyCodexNativeAdapter,
+  isAuthenticatedCodexNativeQualification,
   qualifyPiNativeAdapter,
   assertNativeAdapterQualified,
   selectQualifiedNativeAdapterIds,
@@ -723,6 +727,8 @@ export type {
   CodexRoleLedgerMcpConfiguration,
   CodexRoleBoundaryPlan,
   CodexRoleBoundaryExecutionResult,
+  CodexInstalledRoleBoundaryExecution,
+  CodexInstalledRoleBoundaryRequest,
   CodexRoleBoundaryDiagnosticVerdict,
   CodexRoleBoundaryDiagnosticDetailCode,
   CodexRoleBoundaryDiagnostic,
@@ -738,6 +744,8 @@ export {
   createCodexRoleBoundaryPlan,
   interceptCodexRoleBoundaryResult,
   executeCodexRoleBoundary,
+  executeInstalledCodexRoleBoundary,
+  isRunnerOwnedCodexInstalledRoleBoundaryExecution,
 } from "./codexRoleBoundary.js";
 export type {
   CodexSandboxPipeProbeVerdict,

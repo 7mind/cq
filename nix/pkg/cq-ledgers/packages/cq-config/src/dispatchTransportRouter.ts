@@ -49,6 +49,7 @@ import {
 import type { ActiveHarness, Harness } from "./types.js";
 import {
   NativeAdapterIncompatibilityError,
+  isAuthenticatedCodexNativeQualification,
   isNativeAdapterId,
   type NativeAdapterQualification,
 } from "./nativeDispatchQualification.js";
@@ -436,7 +437,11 @@ export function buildPositiveOnlyDispatchRegistry(input: {
 }): DispatchTransportAdapterRegistry {
   const qualifiedNativeIds = new Set(
     input.nativeQualifications
-      .filter((entry) => entry.status === "qualified")
+      .filter(
+        (entry) =>
+          entry.status === "qualified" &&
+          (entry.adapterId !== "codex:native" || isAuthenticatedCodexNativeQualification(entry)),
+      )
       .map((entry) => entry.adapterId),
   );
   const incompatibilities: NativeAdapterQualification[] = input.nativeQualifications.filter(

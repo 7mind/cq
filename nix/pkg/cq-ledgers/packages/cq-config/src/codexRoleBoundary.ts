@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import { createHash } from "node:crypto";
+import { realpath } from "node:fs/promises";
 import { constants } from "node:os";
 import {
   launchRegisteredProcessGroup,
@@ -13,8 +14,13 @@ import type {
   GitChangeCapability,
   GitConflictCapability,
   InputCapability,
+  DispatchPromptProvenance,
   ResultCapability,
 } from "./compactDispatchProtocol.js";
+import {
+  validateManagedWorktreeHandle,
+  type ManagedWorktreeHandle,
+} from "./managedWorktreeHandle.js";
 import { classifyCodexFinalMessage } from "./codexDispatchProtocol.js";
 import {
   CODEX_READ_ONLY_SANDBOX_TMPDIR,
@@ -95,6 +101,40 @@ export interface CodexRoleBoundaryExecutionResult {
     /** Actual registered target exit status; corroborating evidence only. */
     readonly exitStatus: number;
   };
+}
+
+export interface CodexInstalledRoleBoundaryExecution {
+  readonly kind: "cq-codex-installed-role-boundary-execution";
+  readonly version: 1;
+  readonly roleId: "implement-worker" | "implement-conflict-resolver";
+  readonly effect: "git-commit" | "git-conflict-continue";
+  readonly executable: string;
+  readonly handle: DispatchHandle;
+  readonly managedHandle: ManagedWorktreeHandle;
+  readonly expectedChild: { readonly childId: string; readonly runId: string };
+  readonly expectedPromptProvenance: DispatchPromptProvenance;
+  readonly correlationId: string;
+  readonly invocationDigest: string;
+  readonly stdoutDigest: string;
+  readonly exitStatus: 0;
+}
+
+export interface CodexInstalledRoleBoundaryRequest {
+  readonly executable: string;
+  readonly invocation: CodexRoleBoundaryInvocation;
+  readonly managedHandle: ManagedWorktreeHandle;
+  readonly expectedChild: { readonly childId: string; readonly runId: string };
+  readonly expectedPromptProvenance: DispatchPromptProvenance;
+  readonly correlationId: string;
+  readonly environment?: NodeJS.ProcessEnv;
+}
+
+const RUNNER_OWNED_INSTALLED_EXECUTIONS = new WeakSet<object>();
+
+export function isRunnerOwnedCodexInstalledRoleBoundaryExecution(
+  value: unknown,
+): value is CodexInstalledRoleBoundaryExecution {
+  return typeof value === "object" && value !== null && RUNNER_OWNED_INSTALLED_EXECUTIONS.has(value);
 }
 
 export const CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX = "CQ_CODEX_BOUNDARY_DIAGNOSTIC ";
@@ -937,4 +977,131 @@ export async function executeCodexRoleBoundary(
     process.off("SIGINT", onSigint);
     process.off("SIGTERM", onSigterm);
   }
+}
+
+/**
+ * Runner-owned installed-boundary execution used by the Codex provider gates.
+ * The opaque result is admitted to the qualification path only while it remains
+ * in this module's WeakSet; JSON reconstructed by a caller has no authority.
+ */
+export async function executeInstalledCodexRoleBoundary(
+  request: CodexInstalledRoleBoundaryRequest,
+): Promise<CodexInstalledRoleBoundaryExecution> {
+  const executable = await realpath(requiredString(request.executable, "executable"));
+  if (!executable.startsWith("/nix/store/") || path.basename(executable) !== "cq-codex-role") {
+    throw new CodexRoleBoundaryError(
+      `provider gate requires an installed Nix cq-codex-role; got ${JSON.stringify(executable)}`,
+    );
+  }
+  const roleId = assertCodexDispatchedRoleId(request.invocation.roleId);
+  if (roleId !== "implement-worker" && roleId !== "implement-conflict-resolver") {
+    throw new CodexRoleBoundaryError(
+      `provider gate role must be implement-worker or implement-conflict-resolver; got ${JSON.stringify(roleId)}`,
+    );
+  }
+  const handleValidation = validateManagedWorktreeHandle(request.managedHandle);
+  if (handleValidation.status === "invalid") {
+    throw new CodexRoleBoundaryError(
+      `provider gate managed handle is invalid: ${handleValidation.detail}`,
+    );
+  }
+  if (
+    path.resolve(request.invocation.cwd) !== path.resolve(request.managedHandle.absolutePath) ||
+    path.resolve(request.invocation.ledgerCwd) !== path.resolve(request.managedHandle.repositoryRoot)
+  ) {
+    throw new CodexRoleBoundaryError(
+      "provider gate invocation does not match the managed worktree/repository binding",
+    );
+  }
+  if (request.invocation.sandboxMode !== "workspace-write") {
+    throw new CodexRoleBoundaryError("provider gate requires workspace-write sandbox mode");
+  }
+  const effect = roleId === "implement-worker" ? "git-commit" : "git-conflict-continue";
+  if (
+    (roleId === "implement-worker" &&
+      (request.invocation.gitChangeCapability === undefined ||
+        request.invocation.gitConflictCapability !== undefined)) ||
+    (roleId === "implement-conflict-resolver" &&
+      (request.invocation.gitConflictCapability === undefined ||
+        request.invocation.gitChangeCapability !== undefined))
+  ) {
+    throw new CodexRoleBoundaryError(
+      `provider gate ${roleId} did not receive exactly its role-scoped Git capability`,
+    );
+  }
+  if (
+    request.expectedPromptProvenance.roleId !== roleId ||
+    request.expectedChild.childId.trim() === "" ||
+    request.expectedChild.runId.trim() === "" ||
+    request.correlationId.trim() === ""
+  ) {
+    throw new CodexRoleBoundaryError(
+      "provider gate expected child, provenance, and correlation bindings must be non-empty and role-matched",
+    );
+  }
+
+  const invocationJson = JSON.stringify(request.invocation);
+  const child = Bun.spawn([executable], {
+    cwd: request.managedHandle.absolutePath,
+    env: {
+      ...process.env,
+      ...request.environment,
+      CQ_CODEX_ROLE_CORRELATION_ID: request.correlationId,
+    },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  child.stdin.write(`${invocationJson}\n`);
+  child.stdin.end();
+  const [exitStatus, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  if (exitStatus !== 0) {
+    throw new CodexRoleBoundaryError(
+      `installed ${roleId} boundary exited ${String(exitStatus)}: ${stderr.trim()}`,
+    );
+  }
+  let output: unknown;
+  try {
+    output = JSON.parse(stdout.trim()) as unknown;
+  } catch {
+    throw new CodexRoleBoundaryError(`installed ${roleId} boundary emitted non-JSON stdout`);
+  }
+  if (
+    output === null ||
+    typeof output !== "object" ||
+    Array.isArray(output) ||
+    Object.keys(output).sort().join(",") !== "attestationId,generation"
+  ) {
+    throw new CodexRoleBoundaryError(
+      `installed ${roleId} boundary did not emit exactly the dispatch handle`,
+    );
+  }
+  const returned = output as Record<string, unknown>;
+  if (
+    returned["attestationId"] !== request.invocation.handle.attestationId ||
+    returned["generation"] !== request.invocation.handle.generation
+  ) {
+    throw new CodexRoleBoundaryError(`installed ${roleId} boundary returned a foreign handle`);
+  }
+  const execution = Object.freeze({
+    kind: "cq-codex-installed-role-boundary-execution" as const,
+    version: 1 as const,
+    roleId,
+    effect,
+    executable,
+    handle: Object.freeze({ ...request.invocation.handle }),
+    managedHandle: request.managedHandle,
+    expectedChild: Object.freeze({ ...request.expectedChild }),
+    expectedPromptProvenance: Object.freeze({ ...request.expectedPromptProvenance }),
+    correlationId: request.correlationId,
+    invocationDigest: createHash("sha256").update(invocationJson).digest("hex"),
+    stdoutDigest: createHash("sha256").update(stdout).digest("hex"),
+    exitStatus: 0 as const,
+  });
+  RUNNER_OWNED_INSTALLED_EXECUTIONS.add(execution);
+  return execution;
 }
