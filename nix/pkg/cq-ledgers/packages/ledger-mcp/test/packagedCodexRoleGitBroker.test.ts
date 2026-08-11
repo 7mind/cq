@@ -19,6 +19,7 @@ import {
   implementConflictResolverSidecar,
   qualifyCodexNativeAdapter,
   sequentialDispatchRandomBytes,
+  type CodexInstalledIdentity,
   type CodexInstalledRoleBoundaryExecution,
   type CodexRoleBoundaryExecutionResult,
   type ConsumedDispatchResult,
@@ -119,6 +120,16 @@ function artifactStore(
       catalogHash: "b".repeat(64),
     }),
     readRole: () => ({ metadata, bytes }),
+  };
+}
+
+async function selectedExecutableSelfIdentity(
+  executable: string,
+): Promise<CodexInstalledIdentity> {
+  return {
+    storePath: path.dirname(path.dirname(executable)),
+    executablePath: executable,
+    executableDigest: createHash("sha256").update(await readFile(executable)).digest("hex"),
   };
 }
 
@@ -916,27 +927,29 @@ describe("packaged cq-codex-role Git broker", () => {
     const expectedInstalledDigest = createHash("sha256")
       .update(await readFile(INSTALLED_ROLE))
       .digest("hex");
+    const pairedExecutableIdentitySubstitutionRequest = {
+      executable: SUBSTITUTED_ROLE,
+      expectedInstalledIdentity: await selectedExecutableSelfIdentity(SUBSTITUTED_ROLE),
+      invocation: {
+        roleId: "implement-worker",
+        handle: retryHandle,
+        inputCapability: retryPrepared.prepared.inputCapability,
+        resultCapability: retryPrepared.prepared.resultCapability,
+        gitChangeCapability: retryPrepared.prepared.gitChangeCapability!,
+        cwd: resumed.handle.absolutePath,
+        ledgerCwd: repositoryRoot,
+        model: "test-model",
+        reasoningEffort: "high",
+        sandboxMode: "workspace-write",
+        timeoutMs: 30_000,
+      },
+      managedHandle: resumed.handle,
+      expectedChild: retryExpectedChild,
+      expectedPromptProvenance: retryPrepared.prepared.promptProvenance,
+      correlationId: "t2044-paired-executable-identity-substitution",
+    } as const;
     const pairedExecutableIdentitySubstitutionRejection = await rejectionOf(() =>
-      executeInstalledCodexRoleBoundary({
-        executable: SUBSTITUTED_ROLE,
-        invocation: {
-          roleId: "implement-worker",
-          handle: retryHandle,
-          inputCapability: retryPrepared.prepared.inputCapability,
-          resultCapability: retryPrepared.prepared.resultCapability,
-          gitChangeCapability: retryPrepared.prepared.gitChangeCapability!,
-          cwd: resumed.handle.absolutePath,
-          ledgerCwd: repositoryRoot,
-          model: "test-model",
-          reasoningEffort: "high",
-          sandboxMode: "workspace-write",
-          timeoutMs: 30_000,
-        },
-        managedHandle: resumed.handle,
-        expectedChild: retryExpectedChild,
-        expectedPromptProvenance: retryPrepared.prepared.promptProvenance,
-        correlationId: "t2044-paired-executable-identity-substitution",
-      }),
+      executeInstalledCodexRoleBoundary(pairedExecutableIdentitySubstitutionRequest),
     );
     const configExports = await import("@cq/config");
     expect({
