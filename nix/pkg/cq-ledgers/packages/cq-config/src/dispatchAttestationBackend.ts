@@ -1176,7 +1176,14 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
         );
       }
     }
-    const hasGitHash = Object.hasOwn(record, "gitChangeCapabilityHash");
+    const hasGitChangeHash = Object.hasOwn(record, "gitChangeCapabilityHash");
+    const hasGitConflictHash = Object.hasOwn(record, "gitConflictCapabilityHash");
+    if (hasGitChangeHash && hasGitConflictHash) {
+      throw new AttestationStorageError(
+        "stored attestation envelope cannot carry both Git capability hashes",
+      );
+    }
+    const hasGitHash = hasGitChangeHash || hasGitConflictHash;
     const hasGitBinding = Object.hasOwn(record, "gitEffectBinding");
     if (hasGitHash !== hasGitBinding) {
       throw new AttestationStorageError(
@@ -1184,12 +1191,15 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       );
     }
     if (hasGitHash) {
+      const capabilityHashField = hasGitChangeHash
+        ? "gitChangeCapabilityHash"
+        : "gitConflictCapabilityHash";
       if (
-        typeof record["gitChangeCapabilityHash"] !== "string" ||
-        !STORED_SHA256_HEX.test(record["gitChangeCapabilityHash"])
+        typeof record[capabilityHashField] !== "string" ||
+        !STORED_SHA256_HEX.test(record[capabilityHashField])
       ) {
         throw new AttestationStorageError(
-          'stored attestation envelope has malformed "gitChangeCapabilityHash"',
+          `stored attestation envelope has malformed "${capabilityHashField}"`,
         );
       }
       const binding = record["gitEffectBinding"];
@@ -1211,14 +1221,17 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
         "ref",
         "baseCommit",
       ] as const;
+      const expectedFields = hasGitConflictHash ? [...fields, "conflictStateDigest"] : fields;
       if (
-        Object.keys(bindingRecord).sort().join(",") !== [...fields].sort().join(",") ||
+        Object.keys(bindingRecord).sort().join(",") !== [...expectedFields].sort().join(",") ||
         fields.some(
           (field) =>
             typeof bindingRecord[field] !== "string" || bindingRecord[field].length === 0,
         ) ||
         !STORED_SHA256_HEX.test(String(bindingRecord["handleFingerprint"])) ||
-        !STORED_SHA256_HEX.test(String(bindingRecord["repositoryId"]))
+        !STORED_SHA256_HEX.test(String(bindingRecord["repositoryId"])) ||
+        (hasGitConflictHash &&
+          !STORED_SHA256_HEX.test(String(bindingRecord["conflictStateDigest"])))
       ) {
         throw new AttestationStorageError(
           'stored attestation envelope has malformed "gitEffectBinding"',
