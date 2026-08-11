@@ -9,6 +9,7 @@ import {
   qualifyCodexNativeAdapter,
   type CodexProviderGateObservation,
   type ManagedWorktreeHandle,
+  type NativeQualificationRefusalReason,
 } from "@cq/config";
 
 const taskId = "T2044";
@@ -75,6 +76,16 @@ function verdict(input: Parameters<typeof qualifyCodexNativeAdapter>[0] | undefi
   };
 }
 
+function incompatible(reason: NativeQualificationRefusalReason) {
+  return {
+    status: "incompatible" as const,
+    reason,
+    defect: "D307" as const,
+    confinement: "unproven" as const,
+    registered: false,
+  };
+}
+
 describe("T2044 Codex native composed qualification", () => {
   test("registers only after the exact managed binding and both unsubstituted provider gates", () => {
     const workerGate = gate("implement-worker");
@@ -91,44 +102,48 @@ describe("T2044 Codex native composed qualification", () => {
           preturnBindings: resolverGate.preturnBindings.slice(1),
         },
       }),
+      verdict({ ...valid, cwd: "relative/worktree" }),
+      verdict({ ...valid, handle: { ...handle, token: "" } }),
+      verdict({
+        ...valid,
+        cwd: `${repositoryRoot}/.claude/worktrees/11111111-1111-1111-1111-111111111111`,
+      }),
       verdict({ ...valid, repositoryRoot: "/tmp/foreign" }),
+      verdict({ ...valid, taskId: "T2045" }),
+      verdict({
+        ...valid,
+        workerGate: {
+          ...workerGate,
+          roleId: "implement-conflict-resolver",
+          effect: "git-conflict-continue",
+        },
+      } as never),
+      verdict({ ...valid, workerGate: { ...workerGate, routes: ["native"] } }),
+      verdict({ ...valid, workerGate: { ...workerGate, receiptChainVerified: false } } as never),
+      verdict({ ...valid, workerGate: { ...workerGate, behavior: "multi-step-rebase" } }),
+      verdict({
+        ...valid,
+        workerGate: {
+          ...workerGate,
+          failureControls: workerGate.failureControls.slice(0, -1),
+        },
+      }),
       verdict(valid),
     ]).toEqual([
-      {
-        status: "incompatible",
-        reason: "provider-gates-required",
-        defect: "D307",
-        confinement: "unproven",
-        registered: false,
-      },
-      {
-        status: "incompatible",
-        reason: "provider-gates-required",
-        defect: "D307",
-        confinement: "unproven",
-        registered: false,
-      },
-      {
-        status: "incompatible",
-        reason: "provider-gate-failed",
-        defect: "D307",
-        confinement: "unproven",
-        registered: false,
-      },
-      {
-        status: "incompatible",
-        reason: "provider-gate-failed",
-        defect: "D307",
-        confinement: "unproven",
-        registered: false,
-      },
-      {
-        status: "incompatible",
-        reason: "handle-repository-mismatch",
-        defect: "D307",
-        confinement: "unproven",
-        registered: false,
-      },
+      incompatible("provider-gates-required"),
+      incompatible("provider-gates-required"),
+      incompatible("provider-gate-failed"),
+      incompatible("provider-gate-failed"),
+      incompatible("cwd-not-absolute"),
+      incompatible("handle-invalid"),
+      incompatible("handle-path-mismatch"),
+      incompatible("handle-repository-mismatch"),
+      incompatible("handle-task-mismatch"),
+      incompatible("provider-gate-failed"),
+      incompatible("provider-gate-failed"),
+      incompatible("provider-gate-failed"),
+      incompatible("provider-gate-failed"),
+      incompatible("provider-gate-failed"),
       {
         status: "qualified",
         reason: null,
