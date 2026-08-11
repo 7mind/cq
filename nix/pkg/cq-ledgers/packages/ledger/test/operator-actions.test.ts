@@ -368,3 +368,46 @@ test("filesystem restart reuses the durable action and handoff", async () => {
     await store.dispose();
   }
 });
+
+test("D312 acknowledged pre-evidence action can replace an incorrect immutable manifest", async () => {
+  const store = new InMemoryLedgerStore({ now: () => NOW });
+  await store.init();
+  try {
+    const milestone = await store.createMilestone({ title: "revise" });
+    const goal = await store.createItem("goals", milestone.id, {
+      status: "planned",
+      fields: { title: "goal", description: "goal" },
+    });
+    const task = await store.createItem("tasks", milestone.id, {
+      status: "planned",
+      fields: {
+        headline: "deploy",
+        description: "CQ-OPERATOR-ACTION v1 revised-deployment. User deploys.",
+        ledgerRefs: [`goals:${goal.id}`],
+      },
+    });
+    const created = await materializeOperatorAction(store, {
+      taskId: task.id,
+      expectedOutputIdentity: IDENTITY,
+      expectedEvidence: ["cq wrong-probe"],
+    });
+    await acknowledgeOperatorAction(store, {
+      actionId: created.action.id,
+      outputIdentity: IDENTITY,
+      acknowledgedAt: NOW,
+    });
+
+    const revised = await materializeOperatorAction(store, {
+      taskId: task.id,
+      expectedOutputIdentity: IDENTITY,
+      expectedEvidence: ["cq correct-probe"],
+    });
+
+    expect(revised.action).toMatchObject({
+      status: "pending",
+      fields: { revision: "2", expectedEvidence: ["cq correct-probe"] },
+    });
+  } finally {
+    await store.dispose();
+  }
+});
