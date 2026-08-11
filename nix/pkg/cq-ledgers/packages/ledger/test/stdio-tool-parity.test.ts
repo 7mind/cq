@@ -1303,6 +1303,16 @@ describe("stdio/direct ledger tool differential contract", () => {
         expect(expectedNames).not.toContain(prefixed(prefix, "validate_input"));
         expect(directDefinitionList.map((tool) => tool.name)).toEqual(expectedNames);
         expect(stdio.definitions).toEqual(directDefinitionList);
+        const reviseName = prefixed(prefix, "revise_operator_action");
+        const directDescription = directDefinitionList.find(({ name }) => name === reviseName)
+          ?.description;
+        const stdioDescription = stdio.definitions.find(({ name }) => name === reviseName)
+          ?.description;
+        expect(stdioDescription).toBe(directDescription);
+        expect(directDescription).toContain("validated terminal failure");
+        expect(directDescription).toContain("current revision and acknowledgement epoch");
+        expect(directDescription).toContain("reject every other evidence-bearing state");
+        expect(directDescription).not.toContain("pre-evidence operator-action manifest");
       } finally {
         await stdio.close();
         await directFixture.store.dispose();
