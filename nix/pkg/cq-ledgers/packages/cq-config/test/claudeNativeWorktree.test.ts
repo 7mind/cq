@@ -81,12 +81,19 @@ function port(opts: {
 } = {}): ClaudeNativeWorktreeManagePort & {
   releases: number;
   prepares: number;
+  prepareRequests: Array<Parameters<ClaudeNativeWorktreeManagePort["prepare"]>[0]>;
 } {
-  const api: ClaudeNativeWorktreeManagePort & { releases: number; prepares: number } = {
+  const api: ClaudeNativeWorktreeManagePort & {
+    releases: number;
+    prepares: number;
+    prepareRequests: Array<Parameters<ClaudeNativeWorktreeManagePort["prepare"]>[0]>;
+  } = {
     prepares: 0,
     releases: 0,
-    async prepare() {
+    prepareRequests: [],
+    async prepare(request) {
       api.prepares += 1;
+      api.prepareRequests.push(request);
       if (opts.prepareStatus === "refused") {
         return { status: "refused", reason: "base-unresolvable", detail: "no base" };
       }
@@ -176,6 +183,34 @@ describe("T1698 Claude native worktree_manage consumption", () => {
       status: "bound",
       binding: { absolutePath: ADOPTED_PATH, branch: "implement/T1207", handle: { version: 2 } },
     });
+  });
+
+  test("T2052 forwards only the paired legacy adoption path and exact HEAD to prepare", async () => {
+    const p = port({ preparedHandle: adoptedHandle() });
+    const input = {
+      port: p,
+      taskId: "T1207",
+      baseCommit: BASE,
+      adoptWorktreePath: ADOPTED_PATH,
+      expectedHead: HEAD,
+      observeHead: () => HEAD,
+    } as Parameters<typeof bindClaudeNativeWorktree>[0] & {
+      readonly adoptWorktreePath: string;
+      readonly expectedHead: string;
+    };
+
+    expect(await bindClaudeNativeWorktree(input)).toMatchObject({
+      status: "bound",
+      binding: { absolutePath: ADOPTED_PATH, handle: { version: 2 } },
+    });
+    expect(p.prepareRequests).toEqual([
+      {
+        taskId: "T1207",
+        baseCommit: BASE,
+        adoptWorktreePath: ADOPTED_PATH,
+        expectedHead: HEAD,
+      },
+    ]);
   });
 
   test("T2047 refuses unknown, mixed, traversal, foreign, and tampered v2 handles", () => {

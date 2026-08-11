@@ -367,6 +367,20 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     }
   });
 
+  it("T2052 exposes exact pre-registry adoption on every implement/advance surface", () => {
+    for (const surface of PROMPT_SURFACES) {
+      const advance = normalize(renderedOf(surface, "implement/advance"));
+      expect(advance).toContain("pre-registry");
+      expect(advance).toContain("adoptWorktreePath");
+      expect(advance).toContain("expectedHead");
+      expect(advance).toContain("handle-free prepare");
+      expect(advance).toContain("Retain the returned opaque handle");
+      expect(advance).not.toContain("git worktree add ");
+      expect(advance).not.toContain("git worktree remove");
+      expect(advance).not.toContain("git worktree prune");
+    }
+  });
+
   it("T1629 orders bounded Codex invalid-output diagnostics before protocol abort", () => {
     const advance = normalize(renderedOf("codex", "implement/advance"));
     const stored = advance.indexOf("observe the `result-stored` acknowledgement");
