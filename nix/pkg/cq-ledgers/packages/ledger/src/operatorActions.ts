@@ -324,6 +324,7 @@ function assertExistingActionMatches(
     throw new OperatorActionConflictError(action.id, "milestone differs");
   }
   for (const [field, value] of Object.entries(expected)) {
+    if (field === "revision" && value === "1" && action.fields[field] === undefined) continue;
     if (JSON.stringify(action.fields[field]) !== JSON.stringify(value)) {
       throw new OperatorActionConflictError(action.id, `${field} differs`);
     }

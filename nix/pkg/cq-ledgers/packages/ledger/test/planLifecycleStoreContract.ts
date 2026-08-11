@@ -204,6 +204,40 @@ async function postgresConnectionCount(observer: SQL): Promise<number> {
   return count;
 }
 
+const POSTGRES_CONNECTION_SETTLE_TIMEOUT_MS = 2_000;
+const POSTGRES_CONNECTION_SETTLE_INTERVAL_MS = 20;
+
+async function waitForPostgresConnectionBaseline(
+  readCount: () => Promise<number>,
+  baseline: number,
+  options: {
+    readonly timeoutMs: number;
+    readonly intervalMs: number;
+    readonly now: () => number;
+    readonly sleep: (milliseconds: number) => Promise<void>;
+  } = {
+    timeoutMs: POSTGRES_CONNECTION_SETTLE_TIMEOUT_MS,
+    intervalMs: POSTGRES_CONNECTION_SETTLE_INTERVAL_MS,
+    now: Date.now,
+    sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  },
+): Promise<void> {
+  const deadline = options.now() + options.timeoutMs;
+  const observed: number[] = [];
+  while (true) {
+    const count = await readCount();
+    observed.push(count);
+    if (count === baseline) return;
+    if (options.now() >= deadline) {
+      throw new Error(
+        `PostgreSQL connections did not settle to expected baseline ${String(baseline)}; ` +
+          `observed ${observed.map(String).join(" -> ")}`,
+      );
+    }
+    await options.sleep(options.intervalMs);
+  }
+}
+
 async function seedOperatorAction(
   store: LedgerStore,
   actionKey: string,
@@ -270,6 +304,44 @@ describe("one-shot plan-lifecycle serialization boundary", () => {
   });
 });
 
+describe("PostgresLedgerStore connection baseline settlement", () => {
+  it("accepts delayed exact 10 to 8 settlement", async () => {
+    const counts = [10, 10, 8];
+    let now = 0;
+    await waitForPostgresConnectionBaseline(
+      async () => {
+        const count = counts.shift();
+        if (count === undefined) throw new Error("connection probe exhausted");
+        return count;
+      },
+      8,
+      {
+        timeoutMs: 20,
+        intervalMs: 5,
+        now: () => now,
+        sleep: async (milliseconds) => {
+          now += milliseconds;
+        },
+      },
+    );
+    expect(counts).toEqual([]);
+  });
+
+  it("fails with every observed count when connections never settle", async () => {
+    let now = 0;
+    await expect(
+      waitForPostgresConnectionBaseline(async () => 10, 8, {
+        timeoutMs: 10,
+        intervalMs: 5,
+        now: () => now,
+        sleep: async (milliseconds) => {
+          now += milliseconds;
+        },
+      }),
+    ).rejects.toThrow(/expected baseline 8; observed 10 -> 10 -> 10/);
+  });
+});
+
 export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFactory): void {
   const contractDescribe = factory.progression || factory.skip === true ? describe.skip : describe;
   const timeout =
@@ -293,7 +365,10 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
         afterAll(async () => {
           await operatorActionFixture.dispose();
           try {
-            expect(await postgresConnectionCount(connectionObserver)).toBe(connectionBaseline);
+            await waitForPostgresConnectionBaseline(
+              () => postgresConnectionCount(connectionObserver),
+              connectionBaseline,
+            );
           } finally {
             await connectionObserver.close({ timeout: 0 });
           }
