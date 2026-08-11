@@ -39,6 +39,10 @@ export type NativeQualificationRefusalReason =
   | "cwd-not-absolute"
   | "handle-invalid"
   | "handle-path-mismatch"
+  | "handle-repository-mismatch"
+  | "handle-task-mismatch"
+  | "provider-gates-required"
+  | "provider-gate-failed"
   | "provider-probe-unavailable";
 
 export type NativePathConfinementStrength = "structural" | "harness-owned" | "unproven";
@@ -50,7 +54,7 @@ export interface NativeAdapterQualified {
   readonly transport: "native";
   readonly confinement: "structural" | "harness-owned";
   readonly evidence: string;
-  readonly defectClosed: "D263" | "D160" | null;
+  readonly defectClosed: "D263" | "D160" | "D307" | null;
 }
 
 export interface NativeAdapterIncompatible {
@@ -60,7 +64,7 @@ export interface NativeAdapterIncompatible {
   readonly transport: "native";
   readonly reason: NativeQualificationRefusalReason;
   readonly detail: string;
-  readonly defect: "D263" | "D160";
+  readonly defect: "D263" | "D160" | "D307";
   readonly confinement: "unproven";
 }
 
@@ -73,7 +77,7 @@ export type NativeAdapterQualification = NativeAdapterQualified | NativeAdapterI
 export class NativeAdapterIncompatibilityError extends Error {
   readonly adapterId: NativeAdapterId;
   readonly reason: NativeQualificationRefusalReason;
-  readonly defect: "D263" | "D160";
+  readonly defect: "D263" | "D160" | "D307";
 
   constructor(qualification: NativeAdapterIncompatible) {
     super(
@@ -137,6 +141,74 @@ export interface ClaudeNativeQualificationInput {
    * handle.absolutePath must equal cwd after normalization.
    */
   readonly handle: ClaudeNativeQualificationHandle;
+}
+
+export const CODEX_PROVIDER_PRETURN_BINDINGS = Object.freeze([
+  "worktree-path",
+  "managed-handle",
+  "repository",
+  "task",
+  "role-effect-capability",
+  "receipt-expectations",
+  "role-prompt",
+  "role-tools",
+  "model",
+  "reasoning-effort",
+  "workspace-write",
+  "skills-policy",
+  "multi-agent-disabled",
+] as const);
+
+export type CodexProviderPreturnBinding = (typeof CODEX_PROVIDER_PRETURN_BINDINGS)[number];
+
+export const CODEX_PROVIDER_ROUTES = Object.freeze(["native", "process"] as const);
+
+export type CodexProviderRoute = (typeof CODEX_PROVIDER_ROUTES)[number];
+
+export const CODEX_PROVIDER_FAILURE_CONTROLS = Object.freeze([
+  "identity",
+  "operation",
+  "digest",
+  "capability",
+  "generation",
+  "deadline",
+  "completion",
+  "cancel",
+  "restart",
+  "post-store",
+  "replay",
+] as const);
+
+export type CodexProviderFailureControl = (typeof CODEX_PROVIDER_FAILURE_CONTROLS)[number];
+
+export interface CodexProviderGateObservation {
+  readonly kind: "cq-codex-provider-gate";
+  readonly version: 1;
+  readonly roleId: "implement-worker" | "implement-conflict-resolver";
+  readonly effect: "git-commit" | "git-conflict-continue";
+  /** The installed cq-codex-role boundary ran; a source wrapper cannot set this. */
+  readonly packagedBoundary: true;
+  /** A selector-only, mocked, skipped, or substituted provider run cannot qualify. */
+  readonly substituted: false;
+  readonly preturnBindings: readonly CodexProviderPreturnBinding[];
+  readonly routes: readonly CodexProviderRoute[];
+  readonly receiptChainVerified: true;
+  readonly directGitDenied: true;
+  readonly confinementVerified: true;
+  readonly objectAttributionVerified: true;
+  readonly parentReleaseVerified: true;
+  readonly lifecycle: "single-or-typed-abort";
+  readonly behavior: "commit-and-resume" | "multi-step-rebase";
+  readonly failureControls: readonly CodexProviderFailureControl[];
+}
+
+export interface CodexNativeQualificationInput {
+  readonly cwd: string;
+  readonly handle: ManagedWorktreeHandle;
+  readonly repositoryRoot: string;
+  readonly taskId: string;
+  readonly workerGate: CodexProviderGateObservation;
+  readonly resolverGate: CodexProviderGateObservation;
 }
 
 function normalizeAbsPath(path: string): string {
@@ -390,9 +462,167 @@ export function qualifyPiNativeAdapter(
   });
 }
 
+function codexIncompatible(
+  reason: NativeQualificationRefusalReason,
+  detail: string,
+): NativeAdapterIncompatible {
+  return Object.freeze({
+    status: "incompatible" as const,
+    adapterId: "codex:native" as const,
+    targetHarness: "codex" as const,
+    transport: "native" as const,
+    reason,
+    confinement: "unproven" as const,
+    defect: "D307" as const,
+    detail,
+  });
+}
+
+function exactOrderedStrings(value: unknown, expected: readonly string[]): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length === expected.length &&
+    value.every((entry, index) => entry === expected[index])
+  );
+}
+
+function codexProviderGateViolation(
+  value: unknown,
+  expectedRole: CodexProviderGateObservation["roleId"],
+): string | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return `${expectedRole} provider gate is not an observation object`;
+  }
+  const gate = value as Record<string, unknown>;
+  const expectedEffect =
+    expectedRole === "implement-worker" ? "git-commit" : "git-conflict-continue";
+  const expectedBehavior =
+    expectedRole === "implement-worker" ? "commit-and-resume" : "multi-step-rebase";
+  if (
+    gate["kind"] !== "cq-codex-provider-gate" ||
+    gate["version"] !== 1 ||
+    gate["roleId"] !== expectedRole ||
+    gate["effect"] !== expectedEffect
+  ) {
+    return `${expectedRole} provider gate identity or effect does not match its bound role`;
+  }
+  if (gate["packagedBoundary"] !== true || gate["substituted"] !== false) {
+    return `${expectedRole} provider gate did not run through the unsubstituted packaged boundary`;
+  }
+  if (!exactOrderedStrings(gate["preturnBindings"], CODEX_PROVIDER_PRETURN_BINDINGS)) {
+    return `${expectedRole} provider gate did not prove the canonical preturn binding set`;
+  }
+  if (!exactOrderedStrings(gate["routes"], CODEX_PROVIDER_ROUTES)) {
+    return `${expectedRole} provider gate did not prove both native and process routes`;
+  }
+  if (
+    gate["receiptChainVerified"] !== true ||
+    gate["directGitDenied"] !== true ||
+    gate["confinementVerified"] !== true ||
+    gate["objectAttributionVerified"] !== true ||
+    gate["parentReleaseVerified"] !== true ||
+    gate["lifecycle"] !== "single-or-typed-abort" ||
+    gate["behavior"] !== expectedBehavior
+  ) {
+    return `${expectedRole} provider gate did not prove its broker, receipt, lifecycle, and release invariants`;
+  }
+  if (!exactOrderedStrings(gate["failureControls"], CODEX_PROVIDER_FAILURE_CONTROLS)) {
+    return `${expectedRole} provider gate did not prove the canonical fail-closed controls`;
+  }
+  return undefined;
+}
+
 /**
- * Codex native remains out of scope for D263/D160; callers supply their own
- * qualification. This helper only documents the positive-only gate shape.
+ * T2044 positive-only Codex qualification. A task binding alone cannot qualify:
+ * both role-specific packaged provider gates must attest the trusted Git effect
+ * boundary before `codex:native` may enter the dispatch registry.
+ */
+export function qualifyCodexNativeAdapter(
+  input?: CodexNativeQualificationInput,
+): NativeAdapterQualification {
+  if (input === undefined || input.workerGate === undefined || input.resolverGate === undefined) {
+    return codexIncompatible(
+      "provider-gates-required",
+      "codex:native requires both unsubstituted packaged provider gates: implement-worker " +
+        "git_commit and implement-conflict-resolver git_conflict_continue. D307 remains the " +
+        "controlling incompatibility until both observations pass.",
+    );
+  }
+  if (typeof input.cwd !== "string" || input.cwd.trim() === "") {
+    return codexIncompatible(
+      "missing-cwd-binding",
+      "codex:native requires a non-empty worktree_manage cwd binding.",
+    );
+  }
+  if (!isAbsoluteFilesystemPath(input.cwd)) {
+    return codexIncompatible(
+      "cwd-not-absolute",
+      `codex:native cwd must be absolute; got ${JSON.stringify(input.cwd)}`,
+    );
+  }
+  const handleValidation = validateManagedWorktreeHandle(input.handle);
+  if (handleValidation.status === "invalid") {
+    return codexIncompatible(
+      handleValidation.reason === "handle-invalid" ? "handle-invalid" : "handle-path-mismatch",
+      `codex:native requires an intact worktree_manage handle: ${handleValidation.detail}`,
+    );
+  }
+  if (!isManagedWorktreePath(input.cwd)) {
+    return codexIncompatible(
+      "path-scoped-confinement-unproven",
+      `codex:native cwd is not a managed worktree path: ${JSON.stringify(input.cwd)}`,
+    );
+  }
+  if (normalizeAbsPath(input.cwd) !== normalizeAbsPath(input.handle.absolutePath)) {
+    return codexIncompatible(
+      "handle-path-mismatch",
+      "codex:native cwd must equal the validated managed handle absolutePath.",
+    );
+  }
+  if (
+    !isAbsoluteFilesystemPath(input.repositoryRoot) ||
+    normalizeAbsPath(input.repositoryRoot) !== normalizeAbsPath(input.handle.repositoryRoot)
+  ) {
+    return codexIncompatible(
+      "handle-repository-mismatch",
+      "codex:native repositoryRoot must equal the repository identity bound into the managed handle.",
+    );
+  }
+  if (typeof input.taskId !== "string" || input.taskId !== input.handle.taskId) {
+    return codexIncompatible(
+      "handle-task-mismatch",
+      "codex:native taskId must equal the task identity bound into the managed handle.",
+    );
+  }
+  const workerViolation = codexProviderGateViolation(input.workerGate, "implement-worker");
+  if (workerViolation !== undefined) {
+    return codexIncompatible("provider-gate-failed", workerViolation);
+  }
+  const resolverViolation = codexProviderGateViolation(
+    input.resolverGate,
+    "implement-conflict-resolver",
+  );
+  if (resolverViolation !== undefined) {
+    return codexIncompatible("provider-gate-failed", resolverViolation);
+  }
+  return Object.freeze({
+    status: "qualified" as const,
+    adapterId: "codex:native" as const,
+    targetHarness: "codex" as const,
+    transport: "native" as const,
+    confinement: "structural" as const,
+    defectClosed: "D307" as const,
+    evidence:
+      "T2044: exact worktree_manage path/handle/repository/task binding plus unsubstituted " +
+      "packaged implement-worker and implement-conflict-resolver provider gates proved preturn " +
+      "prompt/tool/model/effort/workspace-write/skills/multi-agent bindings, role-specific broker " +
+      "capabilities, receipt chains, native+process routing, confinement/OID attribution, " +
+      "single-or-typed-abort lifecycle, same-handle resume, multi-step rebase, and parent release.",
+  });
+}
+
+/**
+ * Refuse any incompatible positive-only qualification.
  */
 export function assertNativeAdapterQualified(
   qualification: NativeAdapterQualification,
