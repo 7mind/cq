@@ -389,7 +389,7 @@ describe("T692 §1 — a Codex child's authority is bounded by types, not by pro
           ? "result-capability"
           : operation === "fetch_dispatch_input"
             ? "input-capability"
-            : operation === "git_commit"
+            : operation === "git_commit" || operation === "git_resolve_continue"
               ? "git-effect-capability"
             : "trusted-parent";
       expect(scope).toBe(expectedScope);

@@ -317,6 +317,7 @@ export {
   validateManagedWorktreeHandle,
   validateManagedWorktreeInstallPlan,
   assertManagedWorktreeDispatchBindingLive,
+  assertManagedWorktreeConflictDispatchBindingLive,
   withManagedWorktreeEffectLock,
 } from "./managedWorktree.js";
 export type {
@@ -389,6 +390,26 @@ export type {
   RecoverLegacyWorktreeReconciliationRequest,
   RecoverLegacyWorktreeReconciliationResult,
 } from "./legacyWorktreeReconciliation.js";
+export {
+  continueManagedWorktreeRebase,
+  gitRebaseConflictStateDigest,
+  observeManagedRebaseConflict,
+  observeManagedWorktreeConflictState,
+  validateGitConflictContinuationResultEvidence,
+} from "./gitConflictContinuation.js";
+export type {
+  GitConflictContinuationDeps,
+  GitConflictContinuationEvidenceDeps,
+  GitConflictContinuationOutcome,
+  GitConflictContinuationReceipt,
+  GitConflictContinuationRequest,
+  GitConflictContinuationResultEvidence,
+  GitConflictResolution,
+  GitConflictStage,
+  GitExpectedAncestry,
+  GitRebaseConflictState,
+  GitRebaseSequencerState,
+} from "./gitConflictContinuation.js";
 export { GitPersistence } from "./store/git/GitPersistence.js";
 export { GitObjectLedgerBackend } from "./store/git/GitObjectLedgerBackend.js";
 export type { GitObjectLedgerBackendOpts } from "./store/git/GitObjectLedgerBackend.js";

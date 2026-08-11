@@ -159,7 +159,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -193,7 +194,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ]
         },
         "begin": {
@@ -229,7 +231,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -263,17 +266,20 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ]
         },
         "implement-conflict-resolver": {
           "tools": [
             "fetch_dispatch_input",
-            "store_result"
+            "store_result",
+            "git_resolve_continue"
           ],
           "preservedCapabilities": [
             "fetch_dispatch_input",
-            "store_result"
+            "store_result",
+            "git_resolve_continue"
           ]
         },
         "implement-review": {
@@ -335,7 +341,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -369,7 +376,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ]
         },
         "implement/start": {
@@ -405,7 +413,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -439,7 +448,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ]
         },
         "investigate": {
@@ -475,7 +485,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -509,7 +520,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ]
         },
         "investigate-explorer": {
@@ -565,7 +577,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -599,7 +612,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ]
         },
         "plan": {
@@ -635,7 +649,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -669,7 +684,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ]
         },
         "plan-advance": {
@@ -743,7 +759,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -777,7 +794,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ]
         },
         "plan/follow-up": {
@@ -813,7 +831,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -847,7 +866,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ]
         },
         "planners": {
@@ -891,7 +911,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -925,7 +946,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ]
         },
         "research-experimenter": {
@@ -981,7 +1003,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -1015,7 +1038,8 @@
             "release_plan_claim",
             "finalize_plan",
             "worktree_manage",
-            "git_commit"
+            "git_commit",
+            "git_resolve_continue"
           ]
         },
         "reviewers": {
@@ -1035,12 +1059,12 @@
           "sha256": "d90b2a7e2243cb6cb1df542f38a6192089f12437d23cb82494a4b64dbdcfb86f"
         },
         "counterfactual": {
-          "utf8Bytes": 504338,
-          "tokens": 118761,
-          "sha256": "14b2da01fc5e418aab72cefbf96c1727f682cd14a562b590a8eb38f5bb8baccb"
+          "utf8Bytes": 504398,
+          "tokens": 118774,
+          "sha256": "825fb3a0dd9127ce8df90ecba5cee3ed07639747059b1799eab0a70a40b29175"
         },
-        "deltaUtf8Bytes": 606765,
-        "deltaTokens": 143288
+        "deltaUtf8Bytes": 606705,
+        "deltaTokens": 143275
       }
     },
     {
@@ -1174,9 +1198,10 @@
       "update_item",
       "get_usage_stats",
       "worktree_manage",
-      "git_commit"
+      "git_commit",
+      "git_resolve_continue"
     ],
-    "publicToolCount": 32,
+    "publicToolCount": 33,
     "removedPublicTools": [
       "create_milestone",
       "update_milestone",
@@ -1282,7 +1307,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1316,7 +1342,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ]
       },
       "begin": {
@@ -1352,7 +1379,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1386,17 +1414,20 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ]
       },
       "implement-conflict-resolver": {
         "tools": [
           "fetch_dispatch_input",
-          "store_result"
+          "store_result",
+          "git_resolve_continue"
         ],
         "preservedCapabilities": [
           "fetch_dispatch_input",
-          "store_result"
+          "store_result",
+          "git_resolve_continue"
         ]
       },
       "implement-review": {
@@ -1458,7 +1489,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1492,7 +1524,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ]
       },
       "implement/start": {
@@ -1528,7 +1561,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1562,7 +1596,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ]
       },
       "investigate": {
@@ -1598,7 +1633,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1632,7 +1668,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ]
       },
       "investigate-explorer": {
@@ -1688,7 +1725,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1722,7 +1760,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ]
       },
       "plan": {
@@ -1758,7 +1797,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1792,7 +1832,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ]
       },
       "plan-advance": {
@@ -1866,7 +1907,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1900,7 +1942,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ]
       },
       "plan/follow-up": {
@@ -1936,7 +1979,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1970,7 +2014,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ]
       },
       "planners": {
@@ -2014,7 +2059,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2048,7 +2094,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ]
       },
       "research-experimenter": {
@@ -2104,7 +2151,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2138,7 +2186,8 @@
           "release_plan_claim",
           "finalize_plan",
           "worktree_manage",
-          "git_commit"
+          "git_commit",
+          "git_resolve_continue"
         ]
       },
       "reviewers": {
@@ -2158,12 +2207,12 @@
         "sha256": "a7fbc44f6499b7530a51a31a2270feb6e5883b26fc0803e767db2e4ec006c8d7"
       },
       "counterfactual": {
-        "utf8Bytes": 34986,
-        "tokens": 8300,
-        "sha256": "4c74041d4127f933a9630cee8f53685671428c6171d75b736d3487fee68aa091"
+        "utf8Bytes": 35896,
+        "tokens": 8513,
+        "sha256": "e614e14ec6efb91bd0ad76ad7740eb5f956ee61a2f8b348c89d34ce779a3fd45"
       },
-      "deltaUtf8Bytes": 11292,
-      "deltaTokens": 2616
+      "deltaUtf8Bytes": 10382,
+      "deltaTokens": 2403
     },
     "completeRoleContextMeasurement": {
       "method": "independent whole-value JSON.stringify with o200k_base",
@@ -2173,12 +2222,12 @@
         "sha256": "a0053e2c068f55dfb32683581ab0fcea415ccd7bf77c0d9c1488b4fc01f0a3e2"
       },
       "counterfactual": {
-        "utf8Bytes": 407196,
-        "tokens": 96127,
-        "sha256": "6b6775e9f7bb6264b845eda6b6d1278053b6e7aeb0997a3cf8af8a04d0ea7e53"
+        "utf8Bytes": 418116,
+        "tokens": 98683,
+        "sha256": "a0d2960df521b33f165af2b7698c5a7c6b492abf8cb2e47610b4462564213f5d"
       },
-      "deltaUtf8Bytes": 707477,
-      "deltaTokens": 166793
+      "deltaUtf8Bytes": 696557,
+      "deltaTokens": 164237
     }
   },
   "migrationMap": [

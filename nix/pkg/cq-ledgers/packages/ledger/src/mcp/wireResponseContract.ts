@@ -303,12 +303,17 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   ),
   worktree_manage: purposeBuiltSmall(
     "Prepare: `{ status: \"prepared\"|\"resume-required\"|\"refused\", … }`. " +
+      "Observe conflict: `{ status: \"conflict-observed\", conflictState }`. " +
       "Release: `{ status: \"released\"|\"refused\", … }`. Typed acknowledgements only; " +
       "never exposes filesystem mutation primitives individually.",
   ),
   git_commit: purposeBuiltSmall(
     "A replayable `{ kind, version, attestationId, generation, taskId, operationId, " +
       "requestDigest, oldHead, newHead, tree, objectOids, paths, committedAt }` receipt.",
+  ),
+  git_resolve_continue: purposeBuiltSmall(
+    "A replayable durable conflict-continuation receipt carrying attributed objects and " +
+      "either the terminal rebased tip or the exact next parent-bound conflict state.",
   ),
 } as const satisfies Record<LedgerToolName, LedgerResponseContract>;
 

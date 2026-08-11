@@ -6,9 +6,10 @@
  * linked-pair stdio `McpServer`), never a direct `prepareManagedWorktree` call.
  *
  * Covered:
- *  - schema rejects mixed prepare/release fields, unknown fields, invalid
+ *  - schema rejects mixed prepare/observe/release fields, unknown fields, invalid
  *    UUID/commit/handle values, and caller-supplied dependency evidence;
- *  - both transports exercise fresh prepare, resume-required, resume-by-handle,
+ *  - both transports exercise fresh prepare, exact conflict observation,
+ *    resume-required, resume-by-handle,
  *    typed base/dependency refusal, guarded release refusal, and idempotent
  *    release with identical normalised acknowledgements;
  *  - neither transport exposes filesystem mutation primitives individually.
@@ -420,6 +421,16 @@ describe("worktree_manage schema", () => {
     });
   });
 
+  it("accepts only a manager handle for observe-conflict", () => {
+    const handle = wireHandle(2);
+    expect(
+      parseWorktreeManageInput({ operation: "observe-conflict", handle }),
+    ).toEqual({ operation: "observe-conflict", observeHandle: handle });
+    expect(() =>
+      parseWorktreeManageInput({ operation: "observe-conflict", handle, taskId: "T1207" }),
+    ).toThrow(/must not accompany/);
+  });
+
   it("keeps v1 accepted and rejects unknown, mixed, traversal, foreign, and tampered v2 handles", () => {
     expect(
       parseWorktreeManageInput({
@@ -496,6 +507,66 @@ describe("worktree_manage direct/stdio contract", () => {
     expect(LEDGER_TOOL_NAMES).not.toContain("worktree_prepare" as never);
     expect(LEDGER_TOOL_NAMES).not.toContain("worktree_release" as never);
     expect(LEDGER_TOOL_NAMES).not.toContain("git_worktree_add" as never);
+  });
+
+  it("returns the complete manager-observed conflict state over both transports", async () => {
+    for (const label of ["direct", "stdio"] as const) {
+      const transport = await openTransportPair(label, { rootTaskId: "T2043" });
+      try {
+        const prepared = expectOk(
+          await transport.call({
+            operation: "prepare",
+            taskId: "T2043",
+            baseCommit: transport.repo.base,
+          }),
+          `${label} prepare conflict observer`,
+        ) as { readonly status: string; readonly handle: ManagedWorktreeHandle };
+        expect(prepared.status).toBe("prepared");
+        await fs.writeFile(path.join(prepared.handle.absolutePath, "README.md"), "task side\n");
+        await git(prepared.handle.absolutePath, ["add", "README.md"]);
+        await git(prepared.handle.absolutePath, ["commit", "-q", "-m", "task side"]);
+        await fs.writeFile(path.join(transport.repo.cwd, "README.md"), "base side\n");
+        await git(transport.repo.cwd, ["add", "README.md"]);
+        await git(transport.repo.cwd, ["commit", "-q", "-m", "base side"]);
+        const onto = await git(transport.repo.cwd, ["rev-parse", "HEAD"]);
+        const rebase = Bun.spawnSync(["git", "rebase", onto], {
+          cwd: prepared.handle.absolutePath,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        expect(rebase.exitCode).not.toBe(0);
+
+        const observed = expectOk(
+          await transport.call({ operation: "observe-conflict", handle: prepared.handle }),
+          `${label} observe conflict`,
+        ) as {
+          readonly status: string;
+          readonly conflictState: {
+            readonly baseCommit: string;
+            readonly currentHead: string;
+            readonly expectedAncestry: readonly unknown[];
+            readonly sequencer: { readonly headName: string; readonly identity: string };
+            readonly conflicts: readonly { readonly path: string; readonly stage: number }[];
+          };
+        };
+        expect(observed.status).toBe("conflict-observed");
+        expect(observed.conflictState.baseCommit).toBe(transport.repo.base);
+        expect(observed.conflictState.currentHead).toBe(onto);
+        expect(observed.conflictState.expectedAncestry).toHaveLength(3);
+        expect(observed.conflictState.sequencer.headName).toBe(
+          `refs/heads/${prepared.handle.branch}`,
+        );
+        expect(observed.conflictState.sequencer.identity).toMatch(/^[0-9a-f]{64}$/);
+        expect(observed.conflictState.conflicts.map((stage) => stage.path)).toEqual([
+          "README.md",
+          "README.md",
+          "README.md",
+        ]);
+        expect(observed.conflictState.conflicts.map((stage) => stage.stage)).toEqual([1, 2, 3]);
+      } finally {
+        await transport.close();
+      }
+    }
   });
 
   it("returns identical acknowledgements on both transports for the full lifecycle matrix", async () => {

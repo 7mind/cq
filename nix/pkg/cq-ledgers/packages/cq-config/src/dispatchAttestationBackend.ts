@@ -74,6 +74,7 @@ import {
   isAttestationTombstone,
   resultCapabilityHash,
   abortDispatch,
+  authorizeDispatchGitConflict,
   authorizeDispatchGitEffect,
   confirmDispatchCompletion,
   fetchDispatchResult,
@@ -86,6 +87,7 @@ import {
   DISPATCH_ATTESTATION_DEFERRED,
   type AbortDispatchRequest,
   type AuthorizeDispatchGitEffectRequest,
+  type AuthorizeDispatchGitConflictRequest,
   type AuthorizedDispatchGitEffect,
   type AttestationEnvelope,
   type AttestationNamespace,
@@ -832,6 +834,16 @@ export async function authorizeDispatchGitEffectOn(
 ): Promise<AuthorizedDispatchGitEffect> {
   return backend.transact(handleLoadScope(request), (store) =>
     authorizeDispatchGitEffect(request, { store, now: deps.now }),
+  );
+}
+
+export async function authorizeDispatchGitConflictOn(
+  backend: AttestationBackend,
+  request: AuthorizeDispatchGitConflictRequest,
+  deps: AttestationBackendDeps,
+): Promise<AuthorizedDispatchGitEffect> {
+  return backend.transact(handleLoadScope(request), (store) =>
+    authorizeDispatchGitConflict(request, { store, now: deps.now }),
   );
 }
 

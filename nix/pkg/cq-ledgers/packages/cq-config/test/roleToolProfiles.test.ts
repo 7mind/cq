@@ -194,6 +194,9 @@ describe("T1325 role tool capability matrix", () => {
       expect(decision.excludedTools, roleId).toEqual(excludedLedgerToolsForRole(roleId));
     }
     expect(manifest.roles["implement-worker"]?.roleTools).toEqual(["git_commit"]);
+    expect(manifest.roles["implement-conflict-resolver"]?.roleTools).toEqual([
+      "git_resolve_continue",
+    ]);
     expect(manifest.roles["plan-advance"]?.roleTools).toEqual([
       "fetch_item",
       "fts_search",
@@ -297,7 +300,7 @@ describe("T1325 role tool capability matrix", () => {
       mechanism: "mcp-server-enabled-tools",
       nativePerAgentFiltering: false,
     });
-    expect(LEDGER_CAPABILITY_TOOL_NAMES).toHaveLength(32);
+    expect(LEDGER_CAPABILITY_TOOL_NAMES).toHaveLength(33);
   });
 
   test("ships an executable Codex child-boundary probe, not a configuration-only assertion", () => {

@@ -41,6 +41,7 @@
         "get_config",
         "get_usage_stats",
         "git_commit",
+        "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
         "prepare_dispatch",
@@ -55,7 +56,7 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 32,
+      "toolCount": 33,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 766,
@@ -63,23 +64,23 @@
         "sha256": "b03f085cf0fa36b2dc273e3d1e4497e44c4eab265bed38dc3f1feb7833784862"
       },
       "toolsList": {
-        "utf8Bytes": 40082,
-        "tokens": 9506,
-        "sha256": "21050d0060176309f3e5e4e1af68ad53f42e25773cd71a8b178de5f13f5fc38f"
+        "utf8Bytes": 43526,
+        "tokens": 10445,
+        "sha256": "71fe28a121a391f8148889a13a78b8925ea74762685ca947acbb2e71af9efc7c"
       },
-      "surfaceTokens": 9653,
+      "surfaceTokens": 10592,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -2129,
+      "deltaTokens": -1190,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4252,
+      "domainInputSchemaTokens": 4256,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 798,
-        "allTokens": 1010,
+        "authoritativeResponseTokens": 848,
+        "allTokens": 1060,
         "deltasAreAdditive": false
       }
     },
@@ -120,23 +121,23 @@
         "sha256": "b03f085cf0fa36b2dc273e3d1e4497e44c4eab265bed38dc3f1feb7833784862"
       },
       "toolsList": {
-        "utf8Bytes": 31097,
-        "tokens": 7399,
-        "sha256": "510508431cefcaf7c5b443661553015418bbc3977034a1365e5bc9f72c60d502"
+        "utf8Bytes": 31222,
+        "tokens": 7427,
+        "sha256": "5592cf6cc9b5222fa72ebd4acdff2441217b907b7dd786bcfed15ca236cd300a"
       },
-      "surfaceTokens": 7546,
+      "surfaceTokens": 7574,
       "baselineSurfaceTokens": 10386,
-      "deltaTokens": -2840,
+      "deltaTokens": -2812,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4252,
+      "domainInputSchemaTokens": 4256,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 641,
-        "allTokens": 853,
+        "authoritativeResponseTokens": 657,
+        "allTokens": 869,
         "deltasAreAdditive": false
       }
     },
@@ -162,6 +163,7 @@
         "get_config",
         "get_usage_stats",
         "git_commit",
+        "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
         "prepare_dispatch",
@@ -176,31 +178,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 32,
+      "toolCount": 33,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 664,
-        "tokens": 168,
-        "sha256": "8449dad6e5d76e469e9d4a50924af01c23973d2606e124d509f2e3795c334266"
+        "utf8Bytes": 688,
+        "tokens": 174,
+        "sha256": "5222af85a12a5a49a2a5cd217ad299234b06379f6b654089576410cccf100987"
       },
       "toolsList": {
-        "utf8Bytes": 40082,
-        "tokens": 9506,
-        "sha256": "21050d0060176309f3e5e4e1af68ad53f42e25773cd71a8b178de5f13f5fc38f"
+        "utf8Bytes": 43526,
+        "tokens": 10445,
+        "sha256": "71fe28a121a391f8148889a13a78b8925ea74762685ca947acbb2e71af9efc7c"
       },
-      "surfaceTokens": 9674,
+      "surfaceTokens": 10619,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -2108,
+      "deltaTokens": -1163,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4252,
+      "domainInputSchemaTokens": 4256,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 798,
-        "allTokens": 1010,
+        "authoritativeResponseTokens": 848,
+        "allTokens": 1060,
         "deltasAreAdditive": false
       }
     },
@@ -226,6 +228,7 @@
         "get_config",
         "get_usage_stats",
         "git_commit",
+        "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
         "prepare_dispatch",
@@ -240,31 +243,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 32,
+      "toolCount": 33,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 662,
-        "tokens": 168,
-        "sha256": "4afd9d7586e930d6581a88f53f2808264644e6274c6b1c59d868fd074aa52166"
+        "utf8Bytes": 686,
+        "tokens": 174,
+        "sha256": "a5ea864221e6965849fe337328764d854d004e7ce30d6479957a41961fde6705"
       },
       "toolsList": {
-        "utf8Bytes": 40082,
-        "tokens": 9506,
-        "sha256": "21050d0060176309f3e5e4e1af68ad53f42e25773cd71a8b178de5f13f5fc38f"
+        "utf8Bytes": 43526,
+        "tokens": 10445,
+        "sha256": "71fe28a121a391f8148889a13a78b8925ea74762685ca947acbb2e71af9efc7c"
       },
-      "surfaceTokens": 9674,
+      "surfaceTokens": 10619,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -2108,
+      "deltaTokens": -1163,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4252,
+      "domainInputSchemaTokens": 4256,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 798,
-        "allTokens": 1010,
+        "authoritativeResponseTokens": 848,
+        "allTokens": 1060,
         "deltasAreAdditive": false
       }
     },
@@ -272,26 +275,28 @@
       "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:implement-conflict-resolver",
       "inventory": [
         "fetch_dispatch_input",
+        "git_resolve_continue",
         "store_result"
       ],
-      "toolCount": 2,
+      "toolCount": 3,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 141,
-        "tokens": 33,
-        "sha256": "f62139f29da80f8cc2cc53e86683dbbdc0b05bc432ed0a63947c94f83943e5d2"
+        "utf8Bytes": 165,
+        "tokens": 39,
+        "sha256": "5b97c070d30f6e7852703100df3dc86d37a2a7710e2df5ccdd5e0b566cf8562a"
       },
       "toolsList": {
-        "utf8Bytes": 1513,
-        "tokens": 323,
-        "sha256": "9a2e683c561fa57bbd0e89867b689face918f9bceca163af4fee94aece3549f7"
+        "utf8Bytes": 4832,
+        "tokens": 1234,
+        "sha256": "5f143f2fe0368c407ee9e603e3f19743f52b82478ceba8c41e0f7f8caa48fba2"
       },
-      "surfaceTokens": 356,
+      "surfaceTokens": 1273,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11426,
+      "deltaTokens": -10509,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_dispatch_input",
+        "git_resolve_continue",
         "store_result"
       ],
       "requiredCallInventoryCovered": true,
@@ -300,8 +305,8 @@
       "responseContractCounterfactual": {
         "projectionTokens": 0,
         "acknowledgementSentenceTokens": 0,
-        "authoritativeResponseTokens": 35,
-        "allTokens": 35,
+        "authoritativeResponseTokens": 69,
+        "allTokens": 69,
         "deltasAreAdditive": false
       }
     },
@@ -434,6 +439,7 @@
         "get_config",
         "get_usage_stats",
         "git_commit",
+        "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
         "prepare_dispatch",
@@ -448,31 +454,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 32,
+      "toolCount": 33,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 674,
-        "tokens": 170,
-        "sha256": "828806974d2d664c8bd8cf9c0a16c4d759cfce4ce790617445164a12a695d21b"
+        "utf8Bytes": 698,
+        "tokens": 176,
+        "sha256": "eb348de8833a6f7b7e4bb22428158600817b4f0a28990468c8ffb2e2b62c61a0"
       },
       "toolsList": {
-        "utf8Bytes": 40082,
-        "tokens": 9506,
-        "sha256": "21050d0060176309f3e5e4e1af68ad53f42e25773cd71a8b178de5f13f5fc38f"
+        "utf8Bytes": 43526,
+        "tokens": 10445,
+        "sha256": "71fe28a121a391f8148889a13a78b8925ea74762685ca947acbb2e71af9efc7c"
       },
-      "surfaceTokens": 9676,
+      "surfaceTokens": 10621,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -2106,
+      "deltaTokens": -1161,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4252,
+      "domainInputSchemaTokens": 4256,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 798,
-        "allTokens": 1010,
+        "authoritativeResponseTokens": 848,
+        "allTokens": 1060,
         "deltasAreAdditive": false
       }
     },
@@ -498,6 +504,7 @@
         "get_config",
         "get_usage_stats",
         "git_commit",
+        "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
         "prepare_dispatch",
@@ -512,31 +519,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 32,
+      "toolCount": 33,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 672,
-        "tokens": 169,
-        "sha256": "c1996c0a099cae7ec498d1f43815c4fea7b2b7caa1094bf54e780a0266a7f178"
+        "utf8Bytes": 696,
+        "tokens": 175,
+        "sha256": "6220c393764b81e51650a9ffbbe8ba85dd7fd388c62aa153821c977b69948658"
       },
       "toolsList": {
-        "utf8Bytes": 40082,
-        "tokens": 9506,
-        "sha256": "21050d0060176309f3e5e4e1af68ad53f42e25773cd71a8b178de5f13f5fc38f"
+        "utf8Bytes": 43526,
+        "tokens": 10445,
+        "sha256": "71fe28a121a391f8148889a13a78b8925ea74762685ca947acbb2e71af9efc7c"
       },
-      "surfaceTokens": 9675,
+      "surfaceTokens": 10620,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -2107,
+      "deltaTokens": -1162,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4252,
+      "domainInputSchemaTokens": 4256,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 798,
-        "allTokens": 1010,
+        "authoritativeResponseTokens": 848,
+        "allTokens": 1060,
         "deltasAreAdditive": false
       }
     },
@@ -562,6 +569,7 @@
         "get_config",
         "get_usage_stats",
         "git_commit",
+        "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
         "prepare_dispatch",
@@ -576,31 +584,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 32,
+      "toolCount": 33,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 668,
-        "tokens": 169,
-        "sha256": "154ef770d3428c01ea5674f1d7cd6f24eea0b94b004e1a0c263c2e9470160b9b"
+        "utf8Bytes": 692,
+        "tokens": 175,
+        "sha256": "d5e2ac2cddc2ccd42a37fdca4f3bc70b6d7e8deb2f0e340d6013902a60e26d97"
       },
       "toolsList": {
-        "utf8Bytes": 40082,
-        "tokens": 9506,
-        "sha256": "21050d0060176309f3e5e4e1af68ad53f42e25773cd71a8b178de5f13f5fc38f"
+        "utf8Bytes": 43526,
+        "tokens": 10445,
+        "sha256": "71fe28a121a391f8148889a13a78b8925ea74762685ca947acbb2e71af9efc7c"
       },
-      "surfaceTokens": 9675,
+      "surfaceTokens": 10620,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -2107,
+      "deltaTokens": -1162,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4252,
+      "domainInputSchemaTokens": 4256,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 798,
-        "allTokens": 1010,
+        "authoritativeResponseTokens": 848,
+        "allTokens": 1060,
         "deltasAreAdditive": false
       }
     },
@@ -700,6 +708,7 @@
         "get_config",
         "get_usage_stats",
         "git_commit",
+        "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
         "prepare_dispatch",
@@ -714,31 +723,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 32,
+      "toolCount": 33,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 676,
-        "tokens": 171,
-        "sha256": "1252c63843e3cc7851d35f5d7b632ed9578e907c7c85075bcb9902e4a1f37cdc"
+        "utf8Bytes": 700,
+        "tokens": 177,
+        "sha256": "3289026549f7cea3f06e523a36e3d1425b1c6bbecb05cb74de147b46b9e0e162"
       },
       "toolsList": {
-        "utf8Bytes": 40082,
-        "tokens": 9506,
-        "sha256": "21050d0060176309f3e5e4e1af68ad53f42e25773cd71a8b178de5f13f5fc38f"
+        "utf8Bytes": 43526,
+        "tokens": 10445,
+        "sha256": "71fe28a121a391f8148889a13a78b8925ea74762685ca947acbb2e71af9efc7c"
       },
-      "surfaceTokens": 9677,
+      "surfaceTokens": 10622,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -2105,
+      "deltaTokens": -1160,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4252,
+      "domainInputSchemaTokens": 4256,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 798,
-        "allTokens": 1010,
+        "authoritativeResponseTokens": 848,
+        "allTokens": 1060,
         "deltasAreAdditive": false
       }
     },
@@ -764,6 +773,7 @@
         "get_config",
         "get_usage_stats",
         "git_commit",
+        "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
         "prepare_dispatch",
@@ -778,31 +788,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 32,
+      "toolCount": 33,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 661,
-        "tokens": 168,
-        "sha256": "871fc21a301dfd0668c69e2fc1af95b7fc71fafc64549fdcf6a2d49ac7a937d3"
+        "utf8Bytes": 685,
+        "tokens": 174,
+        "sha256": "fe2fe295af18da239ed154ccb9ca8217712a87f39f7ff75cfceed52cd07c5efb"
       },
       "toolsList": {
-        "utf8Bytes": 40082,
-        "tokens": 9506,
-        "sha256": "21050d0060176309f3e5e4e1af68ad53f42e25773cd71a8b178de5f13f5fc38f"
+        "utf8Bytes": 43526,
+        "tokens": 10445,
+        "sha256": "71fe28a121a391f8148889a13a78b8925ea74762685ca947acbb2e71af9efc7c"
       },
-      "surfaceTokens": 9674,
+      "surfaceTokens": 10619,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -2108,
+      "deltaTokens": -1163,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4252,
+      "domainInputSchemaTokens": 4256,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 798,
-        "allTokens": 1010,
+        "authoritativeResponseTokens": 848,
+        "allTokens": 1060,
         "deltasAreAdditive": false
       }
     },
@@ -943,6 +953,7 @@
         "get_config",
         "get_usage_stats",
         "git_commit",
+        "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
         "prepare_dispatch",
@@ -957,31 +968,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 32,
+      "toolCount": 33,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 669,
-        "tokens": 170,
-        "sha256": "93caef182141ca48c2beb08dceb0af8a160987920679809c30ff202ec29800d6"
+        "utf8Bytes": 693,
+        "tokens": 176,
+        "sha256": "8ffec228016fca57d24e2c399b42a0de1ece725eb22f8b90406b4c6fb0fa237a"
       },
       "toolsList": {
-        "utf8Bytes": 40082,
-        "tokens": 9506,
-        "sha256": "21050d0060176309f3e5e4e1af68ad53f42e25773cd71a8b178de5f13f5fc38f"
+        "utf8Bytes": 43526,
+        "tokens": 10445,
+        "sha256": "71fe28a121a391f8148889a13a78b8925ea74762685ca947acbb2e71af9efc7c"
       },
-      "surfaceTokens": 9676,
+      "surfaceTokens": 10621,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -2106,
+      "deltaTokens": -1161,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4252,
+      "domainInputSchemaTokens": 4256,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 798,
-        "allTokens": 1010,
+        "authoritativeResponseTokens": 848,
+        "allTokens": 1060,
         "deltasAreAdditive": false
       }
     },
@@ -1007,6 +1018,7 @@
         "get_config",
         "get_usage_stats",
         "git_commit",
+        "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
         "prepare_dispatch",
@@ -1021,31 +1033,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 32,
+      "toolCount": 33,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 671,
-        "tokens": 171,
-        "sha256": "90f7a7ceba6da2a381d28235a30a6ebc5e245c4149bcf1468a2e685aa2da61f8"
+        "utf8Bytes": 695,
+        "tokens": 177,
+        "sha256": "21924dfee68a9e7e8cc34370080d29ace22d15f04694a0cae5f1f77f68b05840"
       },
       "toolsList": {
-        "utf8Bytes": 40082,
-        "tokens": 9506,
-        "sha256": "21050d0060176309f3e5e4e1af68ad53f42e25773cd71a8b178de5f13f5fc38f"
+        "utf8Bytes": 43526,
+        "tokens": 10445,
+        "sha256": "71fe28a121a391f8148889a13a78b8925ea74762685ca947acbb2e71af9efc7c"
       },
-      "surfaceTokens": 9677,
+      "surfaceTokens": 10622,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -2105,
+      "deltaTokens": -1160,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4252,
+      "domainInputSchemaTokens": 4256,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 798,
-        "allTokens": 1010,
+        "authoritativeResponseTokens": 848,
+        "allTokens": 1060,
         "deltasAreAdditive": false
       }
     },
@@ -1106,6 +1118,7 @@
         "get_config",
         "get_usage_stats",
         "git_commit",
+        "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
         "prepare_dispatch",
@@ -1120,31 +1133,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 32,
+      "toolCount": 33,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 665,
-        "tokens": 168,
-        "sha256": "2f99ac80c63bde436f8db4f3fb2081c3b64a6a5225a3cf960202789d4bf6b99e"
+        "utf8Bytes": 689,
+        "tokens": 174,
+        "sha256": "e597768d487f920041dde892f9229cabb337d2abe38df7b6aed50fd0d03c75da"
       },
       "toolsList": {
-        "utf8Bytes": 40082,
-        "tokens": 9506,
-        "sha256": "21050d0060176309f3e5e4e1af68ad53f42e25773cd71a8b178de5f13f5fc38f"
+        "utf8Bytes": 43526,
+        "tokens": 10445,
+        "sha256": "71fe28a121a391f8148889a13a78b8925ea74762685ca947acbb2e71af9efc7c"
       },
-      "surfaceTokens": 9674,
+      "surfaceTokens": 10619,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -2108,
+      "deltaTokens": -1163,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4252,
+      "domainInputSchemaTokens": 4256,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 798,
-        "allTokens": 1010,
+        "authoritativeResponseTokens": 848,
+        "allTokens": 1060,
         "deltasAreAdditive": false
       }
     },
@@ -1244,6 +1257,7 @@
         "get_config",
         "get_usage_stats",
         "git_commit",
+        "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
         "prepare_dispatch",
@@ -1258,31 +1272,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 32,
+      "toolCount": 33,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 673,
-        "tokens": 170,
-        "sha256": "16fb57ab2481381df04762417ae963188e8b182230c7893d98b45e066bc22374"
+        "utf8Bytes": 697,
+        "tokens": 176,
+        "sha256": "7014e5299dc1897fffeb833c84d4768a2fc2e93b82d035753bf9fa5564399337"
       },
       "toolsList": {
-        "utf8Bytes": 40082,
-        "tokens": 9506,
-        "sha256": "21050d0060176309f3e5e4e1af68ad53f42e25773cd71a8b178de5f13f5fc38f"
+        "utf8Bytes": 43526,
+        "tokens": 10445,
+        "sha256": "71fe28a121a391f8148889a13a78b8925ea74762685ca947acbb2e71af9efc7c"
       },
-      "surfaceTokens": 9676,
+      "surfaceTokens": 10621,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -2106,
+      "deltaTokens": -1161,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4252,
+      "domainInputSchemaTokens": 4256,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 798,
-        "allTokens": 1010,
+        "authoritativeResponseTokens": 848,
+        "allTokens": 1060,
         "deltasAreAdditive": false
       }
     },
@@ -2416,6 +2430,58 @@
       }
     },
     {
+      "name": "git_resolve_continue",
+      "whole": {
+        "baselineTokens": 0,
+        "afterTokens": 911,
+        "deltaTokens": 911
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          },
+          "delta": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 75,
+            "marginalTokens": 76
+          },
+          "delta": {
+            "serializedTokens": 75,
+            "marginalTokens": 76
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 825,
+            "marginalTokens": 826
+          },
+          "delta": {
+            "serializedTokens": 825,
+            "marginalTokens": 826
+          }
+        }
+      }
+    },
+    {
       "name": "list_milestone_items",
       "whole": {
         "baselineTokens": 299,
@@ -3095,8 +3161,8 @@
       "name": "worktree_manage",
       "whole": {
         "baselineTokens": 0,
-        "afterTokens": 752,
-        "deltaTokens": 752
+        "afterTokens": 780,
+        "deltaTokens": 780
       },
       "fields": {
         "name": {
@@ -3119,12 +3185,12 @@
             "marginalTokens": 0
           },
           "after": {
-            "serializedTokens": 170,
-            "marginalTokens": 171
+            "serializedTokens": 194,
+            "marginalTokens": 195
           },
           "delta": {
-            "serializedTokens": 170,
-            "marginalTokens": 171
+            "serializedTokens": 194,
+            "marginalTokens": 195
           }
         },
         "inputSchema": {
@@ -3133,12 +3199,12 @@
             "marginalTokens": 0
           },
           "after": {
-            "serializedTokens": 572,
-            "marginalTokens": 573
+            "serializedTokens": 576,
+            "marginalTokens": 577
           },
           "delta": {
-            "serializedTokens": 572,
-            "marginalTokens": 573
+            "serializedTokens": 576,
+            "marginalTokens": 577
           }
         }
       }
@@ -3411,23 +3477,23 @@
     "ledgerCallingProfiles": [
       {
         "profileName": "full",
-        "remainingG93AttributableTokens": 1010
+        "remainingG93AttributableTokens": 1060
       },
       {
         "profileName": "non-dispatch",
-        "remainingG93AttributableTokens": 853
+        "remainingG93AttributableTokens": 869
       },
       {
         "profileName": "advance",
-        "remainingG93AttributableTokens": 1010
+        "remainingG93AttributableTokens": 1060
       },
       {
         "profileName": "begin",
-        "remainingG93AttributableTokens": 1010
+        "remainingG93AttributableTokens": 1060
       },
       {
         "profileName": "implement-conflict-resolver",
-        "remainingG93AttributableTokens": 35
+        "remainingG93AttributableTokens": 69
       },
       {
         "profileName": "implement-reviewer",
@@ -3439,15 +3505,15 @@
       },
       {
         "profileName": "implement/advance",
-        "remainingG93AttributableTokens": 1010
+        "remainingG93AttributableTokens": 1060
       },
       {
         "profileName": "implement/start",
-        "remainingG93AttributableTokens": 1010
+        "remainingG93AttributableTokens": 1060
       },
       {
         "profileName": "investigate",
-        "remainingG93AttributableTokens": 1010
+        "remainingG93AttributableTokens": 1060
       },
       {
         "profileName": "investigate-explorer",
@@ -3459,11 +3525,11 @@
       },
       {
         "profileName": "investigate/advance",
-        "remainingG93AttributableTokens": 1010
+        "remainingG93AttributableTokens": 1060
       },
       {
         "profileName": "plan",
-        "remainingG93AttributableTokens": 1010
+        "remainingG93AttributableTokens": 1060
       },
       {
         "profileName": "plan-advance",
@@ -3475,11 +3541,11 @@
       },
       {
         "profileName": "plan/advance",
-        "remainingG93AttributableTokens": 1010
+        "remainingG93AttributableTokens": 1060
       },
       {
         "profileName": "plan/follow-up",
-        "remainingG93AttributableTokens": 1010
+        "remainingG93AttributableTokens": 1060
       },
       {
         "profileName": "planners",
@@ -3487,7 +3553,7 @@
       },
       {
         "profileName": "research",
-        "remainingG93AttributableTokens": 1010
+        "remainingG93AttributableTokens": 1060
       },
       {
         "profileName": "research-experimenter",
@@ -3499,14 +3565,14 @@
       },
       {
         "profileName": "research/advance",
-        "remainingG93AttributableTokens": 1010
+        "remainingG93AttributableTokens": 1060
       },
       {
         "profileName": "reviewers",
         "remainingG93AttributableTokens": 19
       }
     ],
-    "maximumRemainingG93AttributableTokens": 1010
+    "maximumRemainingG93AttributableTokens": 1060
   },
   "budgets": {
     "tokenizerMatches": true,

@@ -1,7 +1,8 @@
 /**
  * Single `worktree_manage` MCP capability (T1306 / G121 / Q363).
  *
- * One tool over a flat operation-discriminated input (`prepare` | `release`).
+ * One tool over a flat operation-discriminated input
+ * (`prepare` | `observe-conflict` | `release`).
  * Direct Claude `tool()` and raw MCP SDK registrations both consume
  * {@link WORKTREE_MANAGE_TOOL_SPEC} so transport parity is structural.
  *
@@ -23,6 +24,7 @@ import {
   isUuidV7,
   prepareManagedWorktree,
   releaseManagedWorktree,
+  resolveManagedWorktreeDispatchBinding,
   type ManagedWorktreeDeps,
   type ManagedWorktreeHandle,
   type PrepareManagedWorktreeRequest,
@@ -30,6 +32,7 @@ import {
   type ReleaseManagedWorktreeRequest,
   type ReleaseManagedWorktreeResult,
 } from "../managedWorktree.js";
+import { observeManagedWorktreeConflictState } from "../gitConflictContinuation.js";
 import type { Item } from "../types.js";
 import type { LedgerStore } from "../store/LedgerStore.js";
 import { produceWireDto, type ProducedWireDto } from "./wireResponseContract.js";
@@ -117,8 +120,10 @@ const managedWorktreeHandleSchema = z
  */
 export const WORKTREE_MANAGE_INPUT_SHAPE = {
   operation: z
-    .enum(["prepare", "release"])
-    .describe("prepare = mint or resume a managed worktree; release = guarded teardown"),
+    .enum(["prepare", "observe-conflict", "release"])
+    .describe(
+      "prepare = mint or resume; observe-conflict = return the manager-observed rebase state; release = guarded teardown",
+    ),
   taskId: taskIdSchema.optional().describe("required for prepare (except pure handle resume)"),
   baseCommit: fullCommitSha.optional().describe("required for fresh prepare"),
   handle: managedWorktreeHandleSchema
@@ -169,6 +174,10 @@ export interface WorktreeManageCapability {
     request: ReleaseManagedWorktreeRequest,
     deps?: ManagedWorktreeDeps,
   ) => Promise<ReleaseManagedWorktreeResult>;
+  readonly observeConflict?: (
+    handle: ManagedWorktreeHandle,
+    deps: ManagedWorktreeDeps,
+  ) => Promise<object>;
   readonly deps?: ManagedWorktreeDeps;
 }
 
@@ -261,8 +270,9 @@ function rejectPath(path: string, message: string): never {
  * UUID/commit/handle values, and any smuggled dependency-evidence keys.
  */
 export function parseWorktreeManageInput(args: unknown): {
-  readonly operation: "prepare" | "release";
+  readonly operation: "prepare" | "observe-conflict" | "release";
   readonly prepare?: Omit<PrepareManagedWorktreeRequest, "repositoryRoot" | "dependencyReader">;
+  readonly observeHandle?: ManagedWorktreeHandle;
   readonly release?: ReleaseManagedWorktreeRequest;
 } {
   if (args !== null && typeof args === "object") {
@@ -303,6 +313,21 @@ export function parseWorktreeManageInput(args: unknown): {
     return { operation: "prepare", prepare };
   }
 
+  if (flat.operation === "observe-conflict") {
+    for (const key of [...PREPARE_ONLY_KEYS, ...RELEASE_ONLY_KEYS]) {
+      if (raw[key] !== undefined) {
+        rejectPath(key, `field "${key}" must not accompany operation=observe-conflict`);
+      }
+    }
+    if (flat.handle === undefined) {
+      rejectPath("handle", "observe-conflict requires handle");
+    }
+    return {
+      operation: "observe-conflict",
+      observeHandle: managedWorktreeHandleSchema.parse(flat.handle) as ManagedWorktreeHandle,
+    };
+  }
+
   for (const key of PREPARE_ONLY_KEYS) {
     if (raw[key] !== undefined) {
       rejectPath(key, `field "${key}" is prepare-only and must not accompany operation=release`);
@@ -334,7 +359,7 @@ export interface WorktreeManageToolSpec {
 }
 
 const WORKTREE_MANAGE_DESCRIPTION =
-  "Prepare or release ONE managed implement-flow worktree. " +
+  "Prepare, observe an active rebase conflict, or release ONE managed implement-flow worktree. " +
   "`operation=prepare` mints a fresh UUIDv7-named tree under `.claude/worktrees/` " +
   "(or resumes by optional handle / returns typed resume-required when a live " +
   "tree already exists). Dependency result-commit closure is derived " +
@@ -371,6 +396,32 @@ export const WORKTREE_MANAGE_TOOL_SPEC: WorktreeManageToolSpec = {
       };
       const result = await prepareFn(request, deps);
       return produceWireDto(result as object);
+    }
+
+    if (parsed.operation === "observe-conflict") {
+      const handle = parsed.observeHandle!;
+      if (capability.observeConflict !== undefined) {
+        return produceWireDto(await capability.observeConflict(handle, deps));
+      }
+      const binding = await resolveManagedWorktreeDispatchBinding(
+        {
+          repositoryRoot: capability.repositoryRoot,
+          taskId: handle.taskId,
+          worktreePath: handle.absolutePath,
+          branch: handle.branch,
+          allowDetachedRebase: true,
+        },
+        deps,
+      );
+      if (
+        binding === null ||
+        binding.handleToken !== handle.token ||
+        binding.baseCommit !== handle.baseCommit
+      ) {
+        throw new Error("observe-conflict handle does not resolve to one live managed worktree");
+      }
+      const conflictState = await observeManagedWorktreeConflictState(binding, deps);
+      return produceWireDto({ status: "conflict-observed", conflictState });
     }
 
     const result = await releaseFn(parsed.release!, deps);

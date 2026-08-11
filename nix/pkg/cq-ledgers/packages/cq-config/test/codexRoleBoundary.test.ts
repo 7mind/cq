@@ -24,6 +24,10 @@ const GIT_CHANGE_CAPABILITY = {
   scope: "git-change",
   token: "cq_git_0123456789abcdefghijklmnopqrstuvwxyz",
 } as const;
+const GIT_CONFLICT_CAPABILITY = {
+  scope: "git-conflict",
+  token: "cq_conflict_0123456789abcdefghijklmnopqrstuvwxyz",
+} as const;
 const BOUNDARY_CONTEXTS = {
   cwd: "/worktrees/task",
   ledgerCwd: "/projects/cq",
@@ -68,6 +72,29 @@ describe("T1330 Codex role process boundary", () => {
       gitChangeCapability: GIT_CHANGE_CAPABILITY,
     });
     expect(plan.argv.join(" ")).not.toContain(GIT_CHANGE_CAPABILITY.token);
+  });
+
+  test("delivers the resolver continuation capability only in the private stdin envelope", () => {
+    const plan = createCodexRoleBoundaryPlan({
+      roleId: "implement-conflict-resolver",
+      roleInstructions: "resolve the conflict",
+      handle: HANDLE,
+      inputCapability: INPUT_CAPABILITY,
+      gitConflictCapability: GIT_CONFLICT_CAPABILITY,
+      ...BOUNDARY_CONTEXTS,
+      model: "frontier-model",
+      reasoningEffort: "high",
+      sandboxMode: "workspace-write",
+      timeoutMs: 120_000,
+      promptRoot: "/nix/store/codex-prompt-root",
+      ledgerCommand: "/nix/store/cq/bin/cq",
+      codexExecutable: "/nix/store/codex/bin/codex",
+    });
+    expect(JSON.parse(plan.stdin)).toMatchObject({
+      ...HANDLE,
+      gitConflictCapability: GIT_CONFLICT_CAPABILITY,
+    });
+    expect(plan.argv.join(" ")).not.toContain(GIT_CONFLICT_CAPABILITY.token);
   });
 
   test("faithfully records every dispatched role's pre-context tool profile and launch invariants", () => {
@@ -230,7 +257,7 @@ describe("T1330 Codex role process boundary", () => {
         "plan-reviewer": REVIEW_TOOLS,
         "implement-worker": [...PLUMBING_TOOLS, "git_commit"],
         "implement-reviewer": PLUMBING_TOOLS,
-        "implement-conflict-resolver": PLUMBING_TOOLS,
+        "implement-conflict-resolver": [...PLUMBING_TOOLS, "git_resolve_continue"],
         "investigate-explorer": PLUMBING_TOOLS,
         "investigate-prober": PLUMBING_TOOLS,
         "research-explorer": PLUMBING_TOOLS,

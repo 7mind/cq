@@ -16,6 +16,7 @@ import {
   implementWorkerSidecar,
   validateAgainstSchema,
 } from "@cq/config";
+import { TEST_GIT_CONFLICT_STATE } from "./fixtures/gitConflictState.js";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..", "..", "..");
 const WORKER_AGENT = path.join(REPO_ROOT, "nix/pkg/cq-assets/agents/implement-worker.md");
@@ -91,6 +92,7 @@ describe("D143 implement-role worktreePath contract [BA]", () => {
       branch: "implement/T2010",
       baseCommit: "a".repeat(40),
       conflictingFiles: ["a.ts"],
+      conflictState: TEST_GIT_CONFLICT_STATE,
     };
     expect(
       validateAgainstSchema(implementConflictResolverSidecar.inputSchema, payload).ok,

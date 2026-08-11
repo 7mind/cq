@@ -25,6 +25,7 @@ import {
   type ResultCapability,
   type StoreDispatchResult,
 } from "@cq/config";
+import { TEST_GIT_CONFLICT_STATE } from "./fixtures/gitConflictState.js";
 
 const SHA256 = "a".repeat(64);
 const HANDLE: DispatchHandle = {
@@ -91,6 +92,7 @@ const ROLE_INPUTS = {
     branch: "implement/T682",
     baseCommit: "92129aeb".padEnd(40, "0"),
     conflictingFiles: ["src/compactDispatchProtocol.ts"],
+    conflictState: TEST_GIT_CONFLICT_STATE,
   },
   "investigate-explorer": {
     hypothesisId: "H1",
@@ -322,6 +324,7 @@ describe("typed fetch_dispatch_result outcomes", () => {
       "abort_dispatch",
       "fetch_dispatch_result",
       "git_commit",
+      "git_resolve_continue",
     ]);
     expect(DISPATCH_PROTOCOL_OPERATIONS).not.toContain("fetch_prompt");
     expect(DISPATCH_PROTOCOL_OPERATIONS).not.toContain("validate_output");

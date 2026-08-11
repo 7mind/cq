@@ -50,8 +50,9 @@
 > external shellouts driving the shared `CQ::implement-review` rubric.
 >
 > **Conflict-resolver dispatch.** For
-> `implement-conflict-resolver`, compose `{ taskId, headline?, description?, worktreePath, branch, baseCommit, conflictingFiles, baseSideNote? }`, dispatch
+> `implement-conflict-resolver`, compose `{ taskId, headline?, description?, worktreePath, branch, baseCommit, conflictingFiles, conflictState, baseSideNote? }`, dispatch
 > with the frontier model and `isolation: "worktree"`, require the same
 > store/handle-only/confirm/fetch sequence, and accept only the consumed fetched
-> body. Every other lifecycle outcome enters the command's bailout; never fall back to
+> body. The parent-observed `conflictState` binds the first continuation; require
+> a non-empty receipt chain ending at the terminal `resultCommit`. Every other lifecycle outcome enters the command's bailout; never fall back to
 > a body-returning completion.

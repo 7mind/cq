@@ -21,12 +21,19 @@ const gitChangeCapability = z.object({
   token: z.string(),
 });
 
+const gitConflictCapability = z.object({
+  scope: z.literal("git-conflict"),
+  token: z.string(),
+});
+
 const gitPathState = z
   .object({
     mode: z.enum(["100644", "100755"]),
     digest: z.string().regex(/^[0-9a-f]{64}$/),
   })
   .strict();
+
+const gitObjectId = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
 
 const gitChange = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("add"), path: z.string(), newState: gitPathState }).strict(),
@@ -48,6 +55,49 @@ const gitChange = z.discriminatedUnion("kind", [
       newState: gitPathState,
     })
     .strict(),
+]);
+
+const gitConflictStage = z
+  .object({
+    path: z.string(),
+    stage: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    mode: z.string().regex(/^\d{6}$/),
+    oid: gitObjectId,
+  })
+  .strict();
+
+const gitRebaseConflictState = z
+  .object({
+    baseCommit: gitObjectId,
+    currentHead: gitObjectId,
+    expectedAncestry: z.array(
+      z
+        .object({
+          ancestor: gitObjectId,
+          descendant: gitObjectId,
+        })
+        .strict(),
+    ),
+    sequencer: z
+      .object({
+        kind: z.literal("rebase-merge"),
+        identity: z.string().regex(/^[0-9a-f]{64}$/),
+        headName: z.string(),
+        originalTip: gitObjectId,
+        onto: gitObjectId,
+        stoppedCommit: gitObjectId,
+        currentCommand: z.string().min(1),
+        todoDigest: z.string().regex(/^[0-9a-f]{64}$/),
+        doneDigest: z.string().regex(/^[0-9a-f]{64}$/),
+      })
+      .strict(),
+    conflicts: z.array(gitConflictStage).min(1),
+  })
+  .strict();
+
+const gitConflictResolution = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("regular"), path: z.string(), newState: gitPathState }).strict(),
+  z.object({ kind: z.literal("delete"), path: z.string() }).strict(),
 ]);
 
 const nativeCompletion = z.object({
@@ -115,4 +165,12 @@ export const GIT_COMMIT_INPUT = {
   expectedHead: z.string().regex(/^[0-9a-f]{40,64}$/),
   message: z.string().min(1).max(16 * 1024),
   changes: z.array(gitChange).min(1),
+} as const;
+
+export const GIT_RESOLVE_CONTINUE_INPUT = {
+  ...handle,
+  gitConflictCapability,
+  operationId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  expectedState: gitRebaseConflictState,
+  resolutions: z.array(gitConflictResolution).min(1),
 } as const;

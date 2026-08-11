@@ -19,6 +19,7 @@ import {
   implementConflictResolverSidecar,
   validateAgainstSchema,
 } from "@cq/config";
+import { TEST_GIT_CONFLICT_STATE } from "./fixtures/gitConflictState.js";
 
 /** A fresh Ajv compiling draft 2020-12 schemas with strict structural checks. */
 function newAjv(): Ajv2020 {
@@ -134,6 +135,7 @@ describe("D77 — implement-conflict-resolver inputSchema.branch accepts both na
     worktreePath: "/tmp/wt",
     baseCommit: "deadbeef",
     conflictingFiles: ["a.ts"],
+    conflictState: TEST_GIT_CONFLICT_STATE,
   };
 
   test("accepts implement/T123", () => {

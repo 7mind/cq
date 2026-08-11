@@ -2256,6 +2256,8 @@ export interface ResolveManagedWorktreeDispatchBindingRequest {
   readonly taskId: string;
   readonly worktreePath: string;
   readonly branch: string;
+  /** Admit the detached HEAD only when an active rebase names the bound task ref. */
+  readonly allowDetachedRebase?: boolean;
 }
 
 /** Resolve one live manager record without exposing its resolved task Git directory. */
@@ -2305,7 +2307,23 @@ export async function resolveManagedWorktreeDispatchBinding(
   }
   const symbolic = await git(stored.handle.absolutePath, ["symbolic-ref", "--quiet", "HEAD"]);
   const ref = `refs/heads/${stored.handle.branch}`;
-  if (symbolic.code !== 0 || symbolic.stdout.trim() !== ref) return null;
+  if (symbolic.code !== 0 || symbolic.stdout.trim() !== ref) {
+    if (request.allowDetachedRebase !== true) return null;
+    const gitDirResult = await git(stored.handle.absolutePath, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--absolute-git-dir",
+    ]);
+    if (gitDirResult.code !== 0 || gitDirResult.stdout.trim() === "") return null;
+    try {
+      const headName = (
+        await fs.readFile(join(resolve(gitDirResult.stdout.trim()), "rebase-merge", "head-name"), "utf8")
+      ).trim();
+      if (headName !== ref) return null;
+    } catch {
+      return null;
+    }
+  }
   return Object.freeze({
     taskId: stored.handle.taskId,
     handleToken: stored.handle.token,
@@ -2351,6 +2369,40 @@ export async function assertManagedWorktreeDispatchBindingLive(
   ] as const) {
     if (resolved[key] !== binding[key]) {
       throw new Error(`managed worktree binding changed at ${key}`);
+    }
+  }
+}
+
+/** Recheck a manager binding while Git has detached HEAD for its active rebase. */
+export async function assertManagedWorktreeConflictDispatchBindingLive(
+  binding: ManagedWorktreeDispatchBinding,
+  deps: Pick<ManagedWorktreeDeps, "git" | "stateDir">,
+): Promise<void> {
+  const resolved = await resolveManagedWorktreeDispatchBinding(
+    {
+      repositoryRoot: binding.repositoryRoot,
+      taskId: binding.taskId,
+      worktreePath: binding.worktreePath,
+      branch: binding.branch,
+      allowDetachedRebase: true,
+    },
+    deps,
+  );
+  if (resolved === null) throw new Error("managed conflict worktree binding is no longer live");
+  for (const key of [
+    "taskId",
+    "handleToken",
+    "handleFingerprint",
+    "repositoryRoot",
+    "repositoryId",
+    "commonDir",
+    "worktreePath",
+    "branch",
+    "ref",
+    "baseCommit",
+  ] as const) {
+    if (resolved[key] !== binding[key]) {
+      throw new Error(`managed conflict worktree binding changed at ${key}`);
     }
   }
 }

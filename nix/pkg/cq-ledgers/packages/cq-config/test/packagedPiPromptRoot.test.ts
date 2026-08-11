@@ -205,6 +205,9 @@ describe("packaged Pi prompt root", () => {
     };
     expect(profiles.ledgerToolNames).toEqual(LEDGER_CAPABILITY_TOOL_NAMES);
     expect(profiles.roles["implement-worker"]?.roleTools).toEqual(["git_commit"]);
+    expect(profiles.roles["implement-conflict-resolver"]?.roleTools).toEqual([
+      "git_resolve_continue",
+    ]);
     expect(profiles.roles["plan-advance"]?.roleTools).toEqual([
       "fetch_item",
       "fts_search",

@@ -8,6 +8,7 @@ import type {
   FetchDispatchResult,
   InputCapability,
   GitChangeCapability,
+  GitConflictCapability,
   MaterializedDispatchInput,
   NativeChildIdentity,
   NativeCompletionProof,
@@ -19,6 +20,11 @@ import type {
   GitChangeBrokerReceipt,
   GitChangeManifestEntry,
 } from "../gitChangeBroker.js";
+import type {
+  GitConflictContinuationReceipt,
+  GitConflictResolution,
+  GitRebaseConflictState,
+} from "../gitConflictContinuation.js";
 
 export interface PrepareDispatchToolInput {
   readonly roleId?: string;
@@ -61,6 +67,13 @@ export interface GitCommitToolInput extends DispatchHandle {
   readonly changes: readonly GitChangeManifestEntry[];
 }
 
+export interface GitResolveContinueToolInput extends DispatchHandle {
+  readonly gitConflictCapability: GitConflictCapability;
+  readonly operationId: string;
+  readonly expectedState: GitRebaseConflictState;
+  readonly resolutions: readonly GitConflictResolution[];
+}
+
 export interface DispatchCapability {
   prepare(input: PrepareDispatchToolInput): Promise<PrepareDispatchOutcome>;
   fetchInput(input: FetchDispatchInputToolInput): Promise<MaterializedDispatchInput>;
@@ -71,6 +84,7 @@ export interface DispatchCapability {
   abort(input: AbortDispatchToolInput): Promise<AbortedDispatchResult>;
   fetch(input: FetchDispatchResultToolInput): Promise<FetchDispatchResult>;
   gitCommit?(input: GitCommitToolInput): Promise<GitChangeBrokerReceipt>;
+  gitResolveContinue?(input: GitResolveContinueToolInput): Promise<GitConflictContinuationReceipt>;
 }
 
 export class DispatchNotImplementedError extends Error {

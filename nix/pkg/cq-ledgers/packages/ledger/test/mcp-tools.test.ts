@@ -143,11 +143,11 @@ function expectedItemAcknowledgement(item: Item): Record<string, unknown> {
 }
 
 describe("ledger MCP tools", () => {
-  it("exports 32 canonical names, hides both validators, and omits unwired dispatch handlers", async () => {
+  it("exports 33 canonical names, hides both validators, and omits unwired dispatch handlers", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
     expect(tools.map((t) => t.name).sort()).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
-    expect(LEDGER_TOOL_NAMES.length).toBe(32);
+    expect(LEDGER_TOOL_NAMES.length).toBe(33);
     expect(LEDGER_TOOL_NAMES).toContain("fts_search");
     expect(LEDGER_TOOL_NAMES).toContain("snapshot");
     expect(LEDGER_TOOL_NAMES).toContain("derive_predicates");
@@ -1316,7 +1316,7 @@ describe("ledger MCP tools", () => {
     );
   });
 
-  it("routes all seven dispatch tools through scoped capabilities with handle-only result fetch", async () => {
+  it("routes all eight dispatch tools through scoped capabilities with handle-only result fetch", async () => {
     const store = await buildStore();
     const calls: Array<{ operation: string; input: unknown }> = [];
     const record = (operation: string, input: unknown): never => {
@@ -1331,6 +1331,7 @@ describe("ledger MCP tools", () => {
       abort: async (input) => record("abort_dispatch", input),
       fetch: async (input) => record("fetch_dispatch_result", input),
       gitCommit: async (input) => record("git_commit", input),
+      gitResolveContinue: async (input) => record("git_resolve_continue", input),
     };
     const tools = createLedgerMcpTools(
       store,
@@ -1399,6 +1400,40 @@ describe("ledger MCP tools", () => {
         },
       ],
     });
+    await callTool(tools, "git_resolve_continue", {
+      ...handle,
+      gitConflictCapability: {
+        scope: "git-conflict",
+        token: `cq_conflict_${"f".repeat(43)}`,
+      },
+      operationId: "T695-conflict-1",
+      expectedState: {
+        baseCommit: "a".repeat(40),
+        currentHead: "b".repeat(40),
+        expectedAncestry: [],
+        sequencer: {
+          kind: "rebase-merge",
+          identity: "c".repeat(64),
+          headName: "refs/heads/implement/T695",
+          originalTip: "d".repeat(40),
+          onto: "e".repeat(40),
+          stoppedCommit: "f".repeat(40),
+          currentCommand: `pick ${"f".repeat(40)} change`,
+          todoDigest: "1".repeat(64),
+          doneDigest: "2".repeat(64),
+        },
+        conflicts: [
+          { path: "new.txt", stage: 2, mode: "100644", oid: "3".repeat(40) },
+        ],
+      },
+      resolutions: [
+        {
+          kind: "regular",
+          path: "new.txt",
+          newState: { mode: "100644", digest: "4".repeat(64) },
+        },
+      ],
+    });
 
     expect(calls.map((entry) => entry.operation)).toEqual([
       "prepare_dispatch",
@@ -1408,6 +1443,7 @@ describe("ledger MCP tools", () => {
       "abort_dispatch",
       "fetch_dispatch_result",
       "git_commit",
+      "git_resolve_continue",
     ]);
     expect(calls[0]!.input).toEqual({
       roleId: "implement-worker",

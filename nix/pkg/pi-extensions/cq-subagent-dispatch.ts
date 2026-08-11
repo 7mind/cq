@@ -1574,14 +1574,15 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "implement-conflict-resolver": {
-    version: 2,
+    version: 3,
     input: [
       {
-        required: ["baseCommit", "branch", "conflictingFiles", "taskId"],
+        required: ["baseCommit", "branch", "conflictState", "conflictingFiles", "taskId"],
         kinds: {
           baseCommit: ["string"],
           baseSideNote: ["string"],
           branch: ["string"],
+          conflictState: ["object"],
           conflictingFiles: ["array"],
           description: ["string"],
           headline: ["string"],
@@ -1604,7 +1605,9 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
         kinds: {
           actualWorktreePath: ["string"],
           blockedReason: ["string"],
+          branch: ["string"],
           checkSummary: ["string"],
+          conflictReceipts: ["array"],
           filesResolved: ["array"],
           resultCommit: ["null", "string"],
           status: ["string"],

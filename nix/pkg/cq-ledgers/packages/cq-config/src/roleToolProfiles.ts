@@ -42,6 +42,7 @@ export const LEDGER_CAPABILITY_TOOL_NAMES = [
   "finalize_plan",
   "worktree_manage",
   "git_commit",
+  "git_resolve_continue",
 ] as const;
 
 export type LedgerCapabilityToolName = (typeof LEDGER_CAPABILITY_TOOL_NAMES)[number];
@@ -64,6 +65,7 @@ const NON_DOMAIN_LEDGER_TOOL_NAMES = new Set<LedgerCapabilityToolName>([
   "fetch_prompt",
   "list_projects",
   "git_commit",
+  "git_resolve_continue",
 ]);
 
 /** Tools that read or mutate ledger domain state, excluding config/catalog/transport plumbing. */
@@ -79,6 +81,7 @@ export const ROLE_CAPABILITY_CLASSES = [
   "dispatch-result-plumbing",
   "no-domain-ledger",
   "git-change-broker",
+  "git-conflict-broker",
 ] as const;
 
 export type RoleCapabilityClass = (typeof ROLE_CAPABILITY_CLASSES)[number];
@@ -99,6 +102,7 @@ export const ROLE_CAPABILITY_TOOLS: Readonly<
   "dispatch-result-plumbing": DISPATCH_RESULT_PLUMBING_TOOL_NAMES,
   "no-domain-ledger": [],
   "git-change-broker": ["git_commit"],
+  "git-conflict-broker": ["git_resolve_continue"],
 });
 
 export interface RoleToolCapabilityProfile {
@@ -172,6 +176,15 @@ function profileForCatalogRole({
       roleKind,
       ["no-domain-ledger", "dispatch-result-plumbing", "git-change-broker"],
       ["fetch_dispatch_input", "git_commit", "store_result"],
+      DISPATCH_CHILD_EVIDENCE,
+    );
+  }
+  if (roleId === "implement-conflict-resolver") {
+    return role(
+      roleId,
+      roleKind,
+      ["no-domain-ledger", "dispatch-result-plumbing", "git-conflict-broker"],
+      ["fetch_dispatch_input", "git_resolve_continue", "store_result"],
       DISPATCH_CHILD_EVIDENCE,
     );
   }

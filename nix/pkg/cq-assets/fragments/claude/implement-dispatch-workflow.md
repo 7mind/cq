@@ -33,9 +33,12 @@
 > shellouts driving the shared `CQ::implement-review` rubric.
 >
 > **Conflict-resolver dispatch.** On a merge
-> conflict, prepare `{ taskId, headline?, description?, worktreePath, branch, baseCommit, conflictingFiles, baseSideNote? }` for
+> conflict, prepare `{ taskId, headline?, description?, worktreePath, branch, baseCommit, conflictingFiles, conflictState, baseSideNote? }` for
 > `implement-conflict-resolver` and use the frontier model through the same
-> handle-only sequence. A prepare, scoped-store, correlation, confirmation, or
+> handle-only sequence. Its entire serialized launch prompt is
+> `{ attestationId, generation, inputCapability, gitConflictCapability }` from
+> that prepare; never expose the worker Git capability to the resolver. A
+> prepare, scoped-store, correlation, confirmation, or
 > fetch failure enters the command's bailout. Only the fetched consumed body is a
 > usable resolution. A second materialization attempt is a protocol violation.
 > Never fall back to a body-returning completion.

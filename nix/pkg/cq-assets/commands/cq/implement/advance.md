@@ -263,8 +263,13 @@ increment criticism/no-files counters. If the tip changes under rebase, the old
 worker result loses authority: redispatch the worker on the rebased tree (same
 handle), rerun its gate and review, and repeat the success checks.
 
-On conflict, dispatch `implement-conflict-resolver`. Continue only from a
-consumed `pass` result. On `fail`, create a linked question, set the task
+On conflict, call `worktree_manage` with `operation: "observe-conflict"` and the
+manager handle. Supply its exact `conflictState` (original tip, onto, dispatch
+base, current HEAD and ancestry, sequencer identity/todo/current command, and
+every unmerged stage OID/mode) to `implement-conflict-resolver`. Continue only
+from a consumed `pass` result whose
+durable continuation receipts form one chain ending at its terminal
+`resultCommit`. On `fail`, create a linked question, set the task
 `blocked`, keep the worktree/handle, and skip its dependants.
 
 After the final checks, merge the exact object:

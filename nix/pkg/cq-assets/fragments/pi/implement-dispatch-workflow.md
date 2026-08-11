@@ -37,7 +37,9 @@
 > rubric and count as votes under the external-reviewer usable-verdict rule.
 >
 > **Conflict-resolver dispatch.** For
-> `implement-conflict-resolver`, compose `{ taskId, headline?, description?, worktreePath, branch, baseCommit, conflictingFiles, baseSideNote? }`, dispatch
-> with the frontier model and `isolation: "worktree"`. Prefer consumed-handle
-> results when available; otherwise apply the same parent-verification bar
-> before continuing merge.
+> `implement-conflict-resolver`, compose `{ taskId, headline?, description?, worktreePath, branch, baseCommit, conflictingFiles, conflictState, baseSideNote? }`, dispatch
+> with the frontier model and `isolation: "worktree"` only when the extension
+> delivers a prepare-bound `gitConflictCapability` to the child. Conflict
+> continuation has no held-freeform mutation path: without that capability,
+> fail closed and retain the managed worktree for inspection. Accept only a
+> consumed result whose durable receipt chain ends at the terminal tip.

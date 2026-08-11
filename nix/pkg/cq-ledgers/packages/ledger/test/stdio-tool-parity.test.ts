@@ -171,6 +171,7 @@ const dispatchCapability: DispatchCapability = {
   abort: async () => ({ operation: "abort_dispatch" }) as never,
   fetch: async () => ({ operation: "fetch_dispatch_result" }) as never,
   gitCommit: async () => ({ operation: "git_commit" }) as never,
+  gitResolveContinue: async () => ({ operation: "git_resolve_continue" }) as never,
 };
 
 const WORKTREE_MANAGE_PARITY_ACK = {
@@ -799,6 +800,44 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
       },
     },
     {
+      name: "git_resolve_continue",
+      args: {
+        attestationId: `att_${"a".repeat(32)}`,
+        generation: 1,
+        gitConflictCapability: {
+          scope: "git-conflict",
+          token: `cq_conflict_${"a".repeat(43)}`,
+        },
+        operationId: "T2043_parity_continue",
+        expectedState: {
+          baseCommit: "a".repeat(40),
+          currentHead: "b".repeat(40),
+          expectedAncestry: [],
+          sequencer: {
+            kind: "rebase-merge",
+            identity: "c".repeat(64),
+            headName: "refs/heads/implement/T2043",
+            originalTip: "d".repeat(40),
+            onto: "e".repeat(40),
+            stoppedCommit: "f".repeat(40),
+            currentCommand: `pick ${"f".repeat(40)} change`,
+            todoDigest: "1".repeat(64),
+            doneDigest: "2".repeat(64),
+          },
+          conflicts: [
+            { path: "parity.txt", stage: 2, mode: "100644", oid: "3".repeat(40) },
+          ],
+        },
+        resolutions: [
+          {
+            kind: "regular",
+            path: "parity.txt",
+            newState: { mode: "100644", digest: "4".repeat(64) },
+          },
+        ],
+      },
+    },
+    {
       name: "confirm_dispatch_completion",
       args: {
         attestationId: `att_${"a".repeat(32)}`,
@@ -1187,7 +1226,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 32 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 33 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);

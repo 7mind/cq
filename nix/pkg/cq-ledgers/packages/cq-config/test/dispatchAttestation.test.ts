@@ -33,6 +33,7 @@ import {
   FETCH_DISPATCH_RESULT_SCHEMA,
   FakeDispatchClock,
   GIT_CHANGE_CAPABILITY_ENTROPY_BYTES,
+  GIT_CONFLICT_CAPABILITY_ENTROPY_BYTES,
   IDEMPOTENCY_HORIZON_MS,
   InMemoryAttestationStore,
   INPUT_CAPABILITY_ENTROPY_BYTES,
@@ -50,6 +51,7 @@ import {
   TOMBSTONE_RETAINED_FIELDS,
   TRUSTED_DISPATCH_ACTORS,
   abortDispatch,
+  authorizeDispatchGitConflict,
   authorizeDispatchGitEffect,
   assertAttestationNamespace,
   assertDispatchHandle,
@@ -68,6 +70,7 @@ import {
   fetchDispatchInput,
   formatAttestationNamespace,
   gitChangeCapabilityHash,
+  gitConflictCapabilityHash,
   invalidOutputDetailsOf,
   inputCapabilityAuthorizes,
   inputCapabilityHash,
@@ -112,6 +115,7 @@ import {
   type ResultCapability,
   type StoreDispatchResult,
 } from "@cq/config";
+import { TEST_GIT_CONFLICT_STATE } from "./fixtures/gitConflictState.js";
 
 /** Every `Object.prototype` property name that a naive membership test admits. */
 const PROTOTYPE_NAMES = [
@@ -274,6 +278,10 @@ const GIT_EFFECT_BINDING: DispatchGitEffectBinding = Object.freeze({
   branch: "implement/T685",
   ref: "refs/heads/implement/T685",
   baseCommit: "c".repeat(40),
+});
+const GIT_CONFLICT_EFFECT_BINDING: DispatchGitEffectBinding = Object.freeze({
+  ...GIT_EFFECT_BINDING,
+  conflictStateDigest: dispatchPayloadDigest(TEST_GIT_CONFLICT_STATE),
 });
 
 function acceptedOf(outcome: PrepareDispatchOutcome): DispatchPrepareAccepted {
@@ -491,9 +499,13 @@ describe("distinct authorization scopes", () => {
     expect(dispatchOperationScope("store_result")).toBe("result-capability");
     expect(dispatchOperationScope("fetch_dispatch_input")).toBe("input-capability");
     expect(dispatchOperationScope("git_commit")).toBe("git-effect-capability");
+    expect(dispatchOperationScope("git_resolve_continue")).toBe("git-effect-capability");
     for (const operation of DISPATCH_PROTOCOL_OPERATIONS.filter(
       (o) =>
-        o !== "store_result" && o !== "fetch_dispatch_input" && o !== "git_commit",
+        o !== "store_result" &&
+        o !== "fetch_dispatch_input" &&
+        o !== "git_commit" &&
+        o !== "git_resolve_continue",
     )) {
       expect(dispatchOperationScope(operation), operation).toBe("trusted-parent");
     }
@@ -1018,6 +1030,58 @@ describe("prepare validates role, input and timeout, then allocates", () => {
         h.deps,
       ),
     ).toThrow(/live prepared dispatch/);
+  });
+
+  test("mints a distinct conflict capability only for a parent-bound resolver transaction", () => {
+    expect(GIT_CONFLICT_CAPABILITY_ENTROPY_BYTES).toBe(32);
+    const h = harness({ seed: 96 });
+    const conflictInput = {
+      taskId: "T685",
+      branch: "implement/T685",
+      baseCommit: "c".repeat(40),
+      conflictingFiles: ["conflict.txt"],
+      conflictState: TEST_GIT_CONFLICT_STATE,
+    };
+    const p = prepared(h, {
+      roleId: "implement-conflict-resolver",
+      input: conflictInput,
+      gitEffectBinding: GIT_CONFLICT_EFFECT_BINDING,
+    });
+    expect(p.gitChangeCapability).toBeUndefined();
+    expect(p.gitConflictCapability?.scope).toBe("git-conflict");
+    if (p.gitConflictCapability === undefined) throw new Error("missing Git conflict capability");
+    const row = envelopeOf(h, p);
+    expect(row.gitConflictCapabilityHash).toBe(
+      gitConflictCapabilityHash(p.gitConflictCapability.token),
+    );
+    expect(JSON.stringify(h.store.snapshot())).not.toContain(p.gitConflictCapability.token);
+    fetchDispatchInput(fetchInputRequest(p), h.deps);
+    expect(
+      authorizeDispatchGitConflict(
+        {
+          namespace: NAMESPACE,
+          ...handleOf(p),
+          gitConflictCapability: p.gitConflictCapability,
+        },
+        h.deps,
+      ),
+    ).toMatchObject({
+      ...GIT_CONFLICT_EFFECT_BINDING,
+      roleId: "implement-conflict-resolver",
+    });
+    expect(() =>
+      authorizeDispatchGitEffect(
+        {
+          namespace: NAMESPACE,
+          ...handleOf(p),
+          gitChangeCapability: {
+            scope: "git-change",
+            token: p.gitConflictCapability!.token,
+          },
+        },
+        h.deps,
+      ),
+    ).toThrow(/Git change capability/);
   });
 
   test("revokes the worker Git capability across every dispatch terminal state", () => {

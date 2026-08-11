@@ -97,6 +97,7 @@ import {
   type FetchDispatchInput,
   type InputCapability,
   type GitChangeCapability,
+  type GitConflictCapability,
   type MaterializedDispatchInput,
   type NativeCompletionProof,
   type ResultCapability,
@@ -108,6 +109,7 @@ const ATTESTATION_ID_RE = /^att_[A-Za-z0-9_-]{32,}$/;
 const INPUT_CAPABILITY_RE = /^cq_input_[A-Za-z0-9_-]{43,}$/;
 const RESULT_CAPABILITY_RE = /^cq_result_[A-Za-z0-9_-]{43,}$/;
 const GIT_CHANGE_CAPABILITY_RE = /^cq_git_[A-Za-z0-9_-]{43,}$/;
+const GIT_CONFLICT_CAPABILITY_RE = /^cq_conflict_[A-Za-z0-9_-]{43,}$/;
 const PROJECT_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const IDEMPOTENCY_KEY_MAX_LENGTH = 256;
 
@@ -387,6 +389,7 @@ export const INPUT_CAPABILITY_ENTROPY_BYTES = 32;
 
 /** Entropy behind the implement-worker Git change capability. */
 export const GIT_CHANGE_CAPABILITY_ENTROPY_BYTES = 32;
+export const GIT_CONFLICT_CAPABILITY_ENTROPY_BYTES = 32;
 
 // ---------------------------------------------------------------------------
 // Authorization scopes — the distinct privileges the operations require
@@ -423,6 +426,7 @@ export const DISPATCH_OPERATION_AUTHORIZATION: ReadonlyMap<
   ["abort_dispatch", "trusted-parent"],
   ["fetch_dispatch_result", "trusted-parent"],
   ["git_commit", "git-effect-capability"],
+  ["git_resolve_continue", "git-effect-capability"],
 ] as const);
 
 /**
@@ -437,10 +441,14 @@ const RESULT_CAPABILITY_OPERATION_SET: ReadonlySet<string> = new Set(RESULT_CAPA
 export const INPUT_CAPABILITY_OPERATIONS = ["fetch_dispatch_input"] as const;
 
 export const GIT_CHANGE_CAPABILITY_OPERATIONS = ["git_commit"] as const;
+export const GIT_CONFLICT_CAPABILITY_OPERATIONS = ["git_resolve_continue"] as const;
 
 const INPUT_CAPABILITY_OPERATION_SET: ReadonlySet<string> = new Set(INPUT_CAPABILITY_OPERATIONS);
 const GIT_CHANGE_CAPABILITY_OPERATION_SET: ReadonlySet<string> = new Set(
   GIT_CHANGE_CAPABILITY_OPERATIONS,
+);
+const GIT_CONFLICT_CAPABILITY_OPERATION_SET: ReadonlySet<string> = new Set(
+  GIT_CONFLICT_CAPABILITY_OPERATIONS,
 );
 
 /**
@@ -455,7 +463,10 @@ export function assertDispatchOperationAuthorization(
   scopes: ReadonlyMap<string, DispatchAuthorizationScope>,
   inputCapabilityOperations: readonly string[],
   capabilityOperations: readonly string[],
-  gitChangeCapabilityOperations: readonly string[] = GIT_CHANGE_CAPABILITY_OPERATIONS,
+  gitEffectCapabilityOperations: readonly string[] = [
+    ...GIT_CHANGE_CAPABILITY_OPERATIONS,
+    ...GIT_CONFLICT_CAPABILITY_OPERATIONS,
+  ],
 ): readonly string[] {
   const declared = [...operations].sort();
   const scoped = [...scopes.keys()].sort();
@@ -491,11 +502,11 @@ export function assertDispatchOperationAuthorization(
     .filter(([, scope]) => scope === "git-effect-capability")
     .map(([operation]) => operation)
     .sort();
-  if (gitEffectScoped.join(",") !== [...gitChangeCapabilityOperations].sort().join(",")) {
+  if (gitEffectScoped.join(",") !== [...gitEffectCapabilityOperations].sort().join(",")) {
     throw new AttestationContractError(
       "GIT_CHANGE_CAPABILITY_OPERATIONS",
       `git-effect-capability operations [${gitEffectScoped.join(", ")}] do not match the declared ` +
-        `Git change operations [${[...gitChangeCapabilityOperations].join(", ")}]`,
+        `Git effect operations [${[...gitEffectCapabilityOperations].join(", ")}]`,
     );
   }
   return Object.freeze(scoped);
@@ -507,7 +518,7 @@ export const DISPATCH_OPERATION_AUTHORIZATION_COVERAGE: readonly string[] =
     DISPATCH_OPERATION_AUTHORIZATION,
     INPUT_CAPABILITY_OPERATIONS,
     RESULT_CAPABILITY_OPERATIONS,
-    GIT_CHANGE_CAPABILITY_OPERATIONS,
+    [...GIT_CHANGE_CAPABILITY_OPERATIONS, ...GIT_CONFLICT_CAPABILITY_OPERATIONS],
   );
 
 /** The scope one operation requires. Throws for anything undeclared. */
@@ -534,6 +545,10 @@ export function inputCapabilityAuthorizes(operation: string): boolean {
 
 export function gitChangeCapabilityAuthorizes(operation: string): boolean {
   return typeof operation === "string" && GIT_CHANGE_CAPABILITY_OPERATION_SET.has(operation);
+}
+
+export function gitConflictCapabilityAuthorizes(operation: string): boolean {
+  return typeof operation === "string" && GIT_CONFLICT_CAPABILITY_OPERATION_SET.has(operation);
 }
 
 /**
@@ -607,6 +622,16 @@ export function gitChangeCapabilityHash(token: string): string {
   return sha256Utf8(token);
 }
 
+export function gitConflictCapabilityHash(token: string): string {
+  if (typeof token !== "string" || !GIT_CONFLICT_CAPABILITY_RE.test(token)) {
+    throw new AttestationContractError(
+      "gitConflictCapability.token",
+      "expected a minted Git conflict capability token",
+    );
+  }
+  return sha256Utf8(token);
+}
+
 /**
  * Constant-time comparison of a presented capability against a STORED HASH
  * (Q273's pattern: hash first, then `timingSafeEqual` over two fixed 32-byte
@@ -632,6 +657,11 @@ export function inputCapabilityMatches(token: string, storedHash: string): boole
 }
 
 export function gitChangeCapabilityMatches(token: string, storedHash: string): boolean {
+  if (typeof storedHash !== "string" || !SHA256_HEX.test(storedHash)) return false;
+  return timingSafeEqual(hexBytes(sha256Utf8(token)), hexBytes(storedHash));
+}
+
+export function gitConflictCapabilityMatches(token: string, storedHash: string): boolean {
   if (typeof storedHash !== "string" || !SHA256_HEX.test(storedHash)) return false;
   return timingSafeEqual(hexBytes(sha256Utf8(token)), hexBytes(storedHash));
 }
@@ -740,6 +770,19 @@ export function mintGitChangeCapability(randomBytes: DispatchRandomBytes): GitCh
   return Object.freeze({ scope: "git-change" as const, token });
 }
 
+export function mintGitConflictCapability(randomBytes: DispatchRandomBytes): GitConflictCapability {
+  const token = `cq_conflict_${base64url(
+    drawEntropy(randomBytes, GIT_CONFLICT_CAPABILITY_ENTROPY_BYTES, "gitConflictCapability.token"),
+  )}`;
+  if (!GIT_CONFLICT_CAPABILITY_RE.test(token)) {
+    throw new AttestationContractError(
+      "gitConflictCapability.token",
+      `minted a malformed capability "${token}"`,
+    );
+  }
+  return Object.freeze({ scope: "git-conflict" as const, token });
+}
+
 // ---------------------------------------------------------------------------
 // Rows: the live envelope and the collapsed tombstone
 // ---------------------------------------------------------------------------
@@ -791,12 +834,13 @@ export interface DispatchGitEffectBinding {
   readonly branch: string;
   readonly ref: string;
   readonly baseCommit: string;
+  readonly conflictStateDigest?: string;
 }
 
 export interface AuthorizedDispatchGitEffect extends DispatchGitEffectBinding {
   readonly attestationId: string;
   readonly generation: number;
-  readonly roleId: "implement-worker";
+  readonly roleId: "implement-worker" | "implement-conflict-resolver";
   readonly surface: string;
   readonly childCancelAt: string;
 }
@@ -813,6 +857,9 @@ function gitEffectBindingPayload(binding: DispatchGitEffectBinding): DispatchJSO
     branch: binding.branch,
     ref: binding.ref,
     baseCommit: binding.baseCommit,
+    ...(binding.conflictStateDigest === undefined
+      ? {}
+      : { conflictStateDigest: binding.conflictStateDigest }),
   };
 }
 
@@ -837,6 +884,7 @@ export interface AttestationEnvelope {
   /** The HASH of the minted capability. The token itself is never stored. */
   readonly resultCapabilityHash: string;
   readonly gitChangeCapabilityHash?: string;
+  readonly gitConflictCapabilityHash?: string;
   readonly gitEffectBinding?: DispatchGitEffectBinding;
   readonly createdAt: string;
   readonly storedAt?: string;
@@ -906,6 +954,7 @@ export const TOMBSTONE_FORBIDDEN_FIELDS = [
   "outputDigest",
   "resultCapabilityHash",
   "gitChangeCapabilityHash",
+  "gitConflictCapabilityHash",
   "gitEffectBinding",
   "input",
   "inputCapabilityHash",
@@ -1150,10 +1199,10 @@ function assertGitEffectBinding(
   roleId: string,
 ): DispatchGitEffectBinding | undefined {
   if (binding === undefined) return undefined;
-  if (roleId !== "implement-worker") {
+  if (roleId !== "implement-worker" && roleId !== "implement-conflict-resolver") {
     throw new AttestationContractError(
       "gitEffectBinding",
-      "only implement-worker may receive a Git effect binding",
+      "only implement-worker or implement-conflict-resolver may receive a Git effect binding",
     );
   }
   for (const field of [
@@ -1174,6 +1223,20 @@ function assertGitEffectBinding(
   }
   for (const field of ["handleFingerprint", "repositoryId"] as const) {
     assertDigest(binding[field], `gitEffectBinding.${field}`);
+  }
+  if (roleId === "implement-conflict-resolver") {
+    if (binding.conflictStateDigest === undefined) {
+      throw new AttestationContractError(
+        "gitEffectBinding.conflictStateDigest",
+        "implement-conflict-resolver requires a parent-observed conflict state digest",
+      );
+    }
+    assertDigest(binding.conflictStateDigest, "gitEffectBinding.conflictStateDigest");
+  } else if (binding.conflictStateDigest !== undefined) {
+    throw new AttestationContractError(
+      "gitEffectBinding.conflictStateDigest",
+      "implement-worker cannot carry a conflict state digest",
+    );
   }
   return Object.freeze({ ...binding });
 }
@@ -1319,7 +1382,13 @@ export function prepareDispatch(
   executed.push("mint-result-capability");
   const resultCapability = mintResultCapability(deps.randomBytes);
   const gitChangeCapability =
-    gitEffectBinding === undefined ? undefined : mintGitChangeCapability(deps.randomBytes);
+    gitEffectBinding === undefined || validation.roleId !== "implement-worker"
+      ? undefined
+      : mintGitChangeCapability(deps.randomBytes);
+  const gitConflictCapability =
+    gitEffectBinding === undefined || validation.roleId !== "implement-conflict-resolver"
+      ? undefined
+      : mintGitConflictCapability(deps.randomBytes);
 
   // T976's declared ordering clause, asserted against what THIS call actually
   // executed. The recorded order is returned on `executedStepOrder`, where the
@@ -1368,6 +1437,9 @@ export function prepareDispatch(
       ...(gitChangeCapability === undefined
         ? {}
         : { gitChangeCapabilityHash: gitChangeCapabilityHash(gitChangeCapability.token) }),
+      ...(gitConflictCapability === undefined
+        ? {}
+        : { gitConflictCapabilityHash: gitConflictCapabilityHash(gitConflictCapability.token) }),
       ...(gitEffectBinding === undefined ? {} : { gitEffectBinding }),
       createdAt: at,
     }),
@@ -1382,6 +1454,7 @@ export function prepareDispatch(
       inputCapability,
       resultCapability,
       ...(gitChangeCapability === undefined ? {} : { gitChangeCapability }),
+      ...(gitConflictCapability === undefined ? {} : { gitConflictCapability }),
     }),
     handle: Object.freeze({ attestationId, generation }),
     executedStepOrder: Object.freeze(executed),
@@ -1625,6 +1698,72 @@ export function authorizeDispatchGitEffect(
   });
 }
 
+export interface AuthorizeDispatchGitConflictRequest extends DispatchHandle {
+  readonly namespace: AttestationNamespace;
+  readonly gitConflictCapability: GitConflictCapability;
+}
+
+/** Resolver-only authorization recheck before conflict snapshot and continuation. */
+export function authorizeDispatchGitConflict(
+  request: AuthorizeDispatchGitConflictRequest,
+  deps: DispatchServiceDeps,
+): AuthorizedDispatchGitEffect {
+  assertTrustedNamespace(request.namespace, deps, "git_resolve_continue");
+  const capability = request.gitConflictCapability;
+  if (capability?.scope !== "git-conflict") {
+    throw new DispatchAuthorizationError(
+      "git_resolve_continue",
+      "expected a Git conflict capability",
+    );
+  }
+  if (typeof capability.token !== "string" || !GIT_CONFLICT_CAPABILITY_RE.test(capability.token)) {
+    throw new DispatchAuthorizationError("git_resolve_continue", "malformed Git conflict capability");
+  }
+  const row = requireRow(request, deps);
+  if (
+    isAttestationTombstone(row) ||
+    row.gitConflictCapabilityHash === undefined ||
+    !gitConflictCapabilityMatches(capability.token, row.gitConflictCapabilityHash)
+  ) {
+    throw new DispatchAuthorizationError(
+      "git_resolve_continue",
+      "unknown or foreign Git conflict capability",
+    );
+  }
+  if (row.state !== "prepared" || row.inputMaterializedAt === undefined) {
+    throw new DispatchStateConflictError(
+      "git_resolve_continue",
+      row.state,
+      "Git conflict effects require a live prepared dispatch with materialized input",
+    );
+  }
+  const { atMs } = readNow(deps);
+  if (atMs > attestationInstantMs(row.deadlines.childCancelAt, "deadlines.childCancelAt")) {
+    throw new DispatchStateConflictError(
+      "git_resolve_continue",
+      row.state,
+      "Git conflict capability expired",
+    );
+  }
+  if (
+    row.promptProvenance.roleId !== "implement-conflict-resolver" ||
+    row.gitEffectBinding === undefined
+  ) {
+    throw new DispatchAuthorizationError(
+      "git_resolve_continue",
+      "dispatch has no implement-conflict-resolver Git binding",
+    );
+  }
+  return Object.freeze({
+    ...row.gitEffectBinding,
+    attestationId: row.attestationId,
+    generation: row.generation,
+    roleId: "implement-conflict-resolver" as const,
+    surface: row.promptProvenance.surface,
+    childCancelAt: row.deadlines.childCancelAt,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Terminal transitions
 // ---------------------------------------------------------------------------
@@ -1724,6 +1863,9 @@ function writeAbort(
     ...(row.gitChangeCapabilityHash === undefined
       ? {}
       : { gitChangeCapabilityHash: row.gitChangeCapabilityHash }),
+    ...(row.gitConflictCapabilityHash === undefined
+      ? {}
+      : { gitConflictCapabilityHash: row.gitConflictCapabilityHash }),
     ...(row.gitEffectBinding === undefined ? {} : { gitEffectBinding: row.gitEffectBinding }),
     createdAt: row.createdAt,
     // A pre-abort stored result stays visible for the 24h envelope, but it is
@@ -1794,17 +1936,20 @@ export function gitEffectBindingForResultCapability(
     return undefined;
   }
   if (row.gitEffectBinding === undefined) return undefined;
-  if (row.promptProvenance.roleId !== "implement-worker") {
+  if (
+    row.promptProvenance.roleId !== "implement-worker" &&
+    row.promptProvenance.roleId !== "implement-conflict-resolver"
+  ) {
     throw new AttestationContractError(
       "row.promptProvenance.roleId",
-      "a stored Git effect binding must belong to implement-worker",
+      "a stored Git effect binding must belong to an implementation Git role",
     );
   }
   return Object.freeze({
     ...row.gitEffectBinding,
     attestationId: row.attestationId,
     generation: row.generation,
-    roleId: "implement-worker" as const,
+    roleId: row.promptProvenance.roleId,
     surface: row.promptProvenance.surface,
     childCancelAt: row.deadlines.childCancelAt,
   });

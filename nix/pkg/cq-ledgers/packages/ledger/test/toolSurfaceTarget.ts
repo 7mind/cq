@@ -165,6 +165,39 @@ const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
       additionalProperties: false,
     },
   },
+  {
+    name: "git_resolve_continue",
+    description:
+      "Resolve and continue one fully observed rebase conflict through the dispatch- and managed-worktree-bound durable Git broker. Returns a terminal tip or exact next conflict state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        attestationId: { type: "string", minLength: 1 },
+        generation: { type: "integer", minimum: 1 },
+        gitConflictCapability: {
+          type: "object",
+          properties: {
+            scope: { type: "string", const: "git-conflict" },
+            token: { type: "string", pattern: "^cq_conflict_[A-Za-z0-9_-]{43,}$" },
+          },
+          required: ["scope", "token"],
+          additionalProperties: false,
+        },
+        operationId: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+        expectedState: { type: "object" },
+        resolutions: { type: "array", minItems: 1, items: { type: "object" } },
+      },
+      required: [
+        "attestationId",
+        "generation",
+        "gitConflictCapability",
+        "operationId",
+        "expectedState",
+        "resolutions",
+      ],
+      additionalProperties: false,
+    },
+  },
 ]);
 
 const COMPACT_PROJECTION =

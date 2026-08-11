@@ -11,6 +11,7 @@ import {
 import type {
   DispatchHandle,
   GitChangeCapability,
+  GitConflictCapability,
   InputCapability,
   ResultCapability,
 } from "./compactDispatchProtocol.js";
@@ -41,6 +42,8 @@ export interface CodexRoleBoundaryRequest {
   readonly resultCapability: ResultCapability;
   /** Present only for a manager-bound implement-worker dispatch. */
   readonly gitChangeCapability?: GitChangeCapability;
+  /** Present only for a manager-bound implement-conflict-resolver dispatch. */
+  readonly gitConflictCapability?: GitConflictCapability;
   readonly cwd: string;
   readonly ledgerCwd: string;
   readonly model: string;
@@ -197,6 +200,16 @@ function assertBoundaryRequest(request: CodexRoleBoundaryRequest): CodexRoleBoun
     );
   }
   if (
+    request.gitConflictCapability !== undefined &&
+    (request.gitConflictCapability.scope !== "git-conflict" ||
+      typeof request.gitConflictCapability.token !== "string" ||
+      request.gitConflictCapability.token.trim() === "")
+  ) {
+    throw new CodexRoleBoundaryError(
+      'gitConflictCapability must contain scope "git-conflict" and a non-empty token',
+    );
+  }
+  if (
     request.inputCapability?.scope !== "fetch-input" ||
     typeof request.inputCapability.token !== "string" ||
     request.inputCapability.token.trim() === ""
@@ -283,6 +296,9 @@ export function createCodexRoleBoundaryPlan(
     ...(resolved.gitChangeCapability === undefined
       ? {}
       : { gitChangeCapability: resolved.gitChangeCapability }),
+    ...(resolved.gitConflictCapability === undefined
+      ? {}
+      : { gitConflictCapability: resolved.gitConflictCapability }),
   };
   const argv = Object.freeze([
     resolved.codexExecutable,

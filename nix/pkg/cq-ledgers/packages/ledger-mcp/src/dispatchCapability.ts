@@ -12,6 +12,7 @@ import {
   AttestationBackendUnsupportedError,
   DispatchStateConflictError,
   abortDispatchOn,
+  authorizeDispatchGitConflictOn,
   authorizeDispatchGitEffectOn,
   assembleDispatchInput,
   attestationInstantMs,
@@ -44,12 +45,17 @@ import {
   createAttestationStoreForConstruction,
   createDispatchNarrativeSource,
   commitManagedWorktreeChanges,
+  continueManagedWorktreeRebase,
+  gitRebaseConflictStateDigest,
+  validateGitConflictContinuationResultEvidence,
   validateGitChangeBrokerResultEvidence,
   resolveManagedWorktreeDispatchBinding,
   withManagedWorktreeEffectLock,
   resolveSingleProjectAttestationNamespace,
   type DispatchCapability,
   type GitChangeBrokerResultEvidence,
+  type GitRebaseConflictState,
+  type GitConflictContinuationResultEvidence,
   type LedgerStore,
   type LedgerServerConstruction,
   type ResolvedLedgerStore,
@@ -92,6 +98,36 @@ function brokerResultEvidence(output: DispatchJSONValue): GitChangeBrokerResultE
     actualWorktreePath: result["actualWorktreePath"],
     filesTouched: result["filesTouched"] as string[],
     gitReceipts: result["gitReceipts"] as unknown as GitChangeBrokerResultEvidence["gitReceipts"],
+  };
+}
+
+function conflictResultEvidence(
+  output: DispatchJSONValue,
+): GitConflictContinuationResultEvidence | undefined {
+  if (output === null || typeof output !== "object" || Array.isArray(output)) {
+    throw new Error("broker-capable resolver result must carry conflict receipt evidence");
+  }
+  const result = output as Record<string, DispatchJSONValue>;
+  if (result["status"] !== "pass") return undefined;
+  if (
+    typeof result["taskId"] !== "string" ||
+    typeof result["resultCommit"] !== "string" ||
+    typeof result["branch"] !== "string" ||
+    typeof result["actualWorktreePath"] !== "string" ||
+    !Array.isArray(result["filesResolved"]) ||
+    !result["filesResolved"].every((entry) => typeof entry === "string") ||
+    !Array.isArray(result["conflictReceipts"])
+  ) {
+    throw new Error("broker-capable passing resolver result lacks continuation receipts");
+  }
+  return {
+    taskId: result["taskId"],
+    resultCommit: result["resultCommit"],
+    branch: result["branch"],
+    actualWorktreePath: result["actualWorktreePath"],
+    filesResolved: result["filesResolved"] as string[],
+    conflictReceipts:
+      result["conflictReceipts"] as unknown as GitConflictContinuationResultEvidence["conflictReceipts"],
   };
 }
 
@@ -376,18 +412,22 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         );
       }
       let gitEffectBinding;
-      if (roleId === "implement-worker" && options.repositoryRoot !== undefined) {
+      if (
+        (roleId === "implement-worker" || roleId === "implement-conflict-resolver") &&
+        options.repositoryRoot !== undefined
+      ) {
         if (
           typeof dispatchInput !== "object" ||
           dispatchInput === null ||
           Array.isArray(dispatchInput)
         ) {
-          return rejectLaunch("input", "implement-worker Git binding requires object input");
+          return rejectLaunch("input", `${roleId} Git binding requires object input`);
         }
         const dispatchRecord = dispatchInput as { readonly [key: string]: DispatchJSONValue };
         const taskId = dispatchRecord["taskId"];
         const worktreePath = dispatchRecord["worktreePath"];
         const branch = dispatchRecord["branch"];
+        const conflictState = dispatchRecord["conflictState"];
         if (
           typeof taskId !== "string" ||
           typeof worktreePath !== "string" ||
@@ -395,19 +435,73 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         ) {
           return rejectLaunch(
             "input.worktreePath",
-            "implement-worker requires taskId, worktreePath, and branch from worktree_manage",
+            `${roleId} requires taskId, worktreePath, and branch from worktree_manage`,
           );
         }
-        gitEffectBinding = await resolveManagedWorktreeDispatchBinding(
-          { repositoryRoot: options.repositoryRoot, taskId, worktreePath, branch },
+        if (
+          roleId === "implement-conflict-resolver" &&
+          (conflictState === null || typeof conflictState !== "object" || Array.isArray(conflictState))
+        ) {
+          return rejectLaunch(
+            "input.conflictState",
+            "implement-conflict-resolver requires the parent-observed conflict state",
+          );
+        }
+        const resolvedGitEffectBinding = await resolveManagedWorktreeDispatchBinding(
+          {
+            repositoryRoot: options.repositoryRoot,
+            taskId,
+            worktreePath,
+            branch,
+            ...(roleId === "implement-conflict-resolver" ? { allowDetachedRebase: true } : {}),
+          },
           options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
         );
-        if (gitEffectBinding === null) {
+        if (resolvedGitEffectBinding === null) {
           return rejectLaunch(
             "input.worktreePath",
-            "implement-worker worktree coordinates do not resolve to one live manager handle",
+            `${roleId} worktree coordinates do not resolve to one live manager handle`,
           );
         }
+        if (roleId === "implement-conflict-resolver") {
+          const resolverState = conflictState as unknown as GitRebaseConflictState;
+          const conflictingFiles = dispatchRecord["conflictingFiles"];
+          const observedPaths = [...new Set(resolverState.conflicts.map((stage) => stage.path))].sort();
+          if (
+            dispatchRecord["baseCommit"] !== resolvedGitEffectBinding.baseCommit ||
+            resolverState.baseCommit !== resolvedGitEffectBinding.baseCommit
+          ) {
+            return rejectLaunch(
+              "input.baseCommit",
+              "resolver baseCommit and conflictState must match the managed handle binding",
+            );
+          }
+          if (resolverState.sequencer.headName !== resolvedGitEffectBinding.ref) {
+            return rejectLaunch(
+              "input.conflictState.sequencer.headName",
+              "resolver conflictState must name the managed task ref",
+            );
+          }
+          if (
+            !Array.isArray(conflictingFiles) ||
+            !conflictingFiles.every((entry) => typeof entry === "string") ||
+            JSON.stringify([...new Set(conflictingFiles)].sort()) !== JSON.stringify(observedPaths)
+          ) {
+            return rejectLaunch(
+              "input.conflictingFiles",
+              "resolver conflictingFiles must equal the conflictState path set",
+            );
+          }
+        }
+        gitEffectBinding =
+          roleId === "implement-conflict-resolver"
+            ? {
+                ...resolvedGitEffectBinding,
+                conflictStateDigest: gitRebaseConflictStateDigest(
+                  conflictState as unknown as GitRebaseConflictState,
+                ),
+              }
+            : resolvedGitEffectBinding;
       }
       const request = {
         namespace,
@@ -468,10 +562,21 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     storeResult: async (input) => {
       const binding = await resolveDispatchGitEffectBindingOn(options.backend, input);
       const store = async () => {
-        if (binding !== undefined) {
+        if (binding?.roleId === "implement-worker") {
           const evidence = brokerResultEvidence(input.output);
           if (evidence !== undefined) {
             await validateGitChangeBrokerResultEvidence(
+              binding,
+              evidence,
+              options.worktreeStateDir === undefined
+                ? {}
+                : { stateDir: options.worktreeStateDir },
+            );
+          }
+        } else if (binding?.roleId === "implement-conflict-resolver") {
+          const evidence = conflictResultEvidence(input.output);
+          if (evidence !== undefined) {
+            await validateGitConflictContinuationResultEvidence(
               binding,
               evidence,
               options.worktreeStateDir === undefined
@@ -581,6 +686,62 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               observed.childCancelAt !== expected.childCancelAt
             ) {
               throw new Error("dispatch Git authorization changed during broker operation");
+            }
+          },
+        },
+      );
+    },
+    gitResolveContinue: async (input) => {
+      if (options.repositoryRoot === undefined) {
+        throw new Error("git_resolve_continue is unavailable without a local repository root");
+      }
+      const authorize = async () =>
+        await authorizeDispatchGitConflictOn(
+          options.backend,
+          {
+            namespace,
+            attestationId: input.attestationId,
+            generation: input.generation,
+            gitConflictCapability: input.gitConflictCapability,
+          },
+          { now },
+        );
+      const authorization = await authorize();
+      return await continueManagedWorktreeRebase(
+        {
+          authorization,
+          operationId: input.operationId,
+          expectedState: input.expectedState,
+          resolutions: input.resolutions,
+        },
+        {
+          ...(options.worktreeStateDir === undefined
+            ? {}
+            : { stateDir: options.worktreeStateDir }),
+          now: () => new Date(now()),
+          authorize: async (expected) => {
+            const observed = await authorize();
+            for (const field of [
+              "attestationId",
+              "generation",
+              "taskId",
+              "handleToken",
+              "handleFingerprint",
+              "repositoryRoot",
+              "repositoryId",
+              "commonDir",
+              "worktreePath",
+              "branch",
+              "ref",
+              "baseCommit",
+              "conflictStateDigest",
+              "roleId",
+              "surface",
+              "childCancelAt",
+            ] as const) {
+              if (observed[field] !== expected[field]) {
+                throw new Error(`dispatch Git conflict authorization changed at ${field}`);
+              }
             }
           },
         },

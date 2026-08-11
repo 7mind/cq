@@ -52,7 +52,8 @@ export type GitChangeManifestEntry =
 export interface DispatchBoundGitAuthorization extends ManagedWorktreeDispatchBinding {
   readonly attestationId: string;
   readonly generation: number;
-  readonly roleId: "implement-worker";
+  readonly roleId: "implement-worker" | "implement-conflict-resolver";
+  readonly conflictStateDigest?: string;
   readonly surface: string;
   readonly childCancelAt: string;
 }

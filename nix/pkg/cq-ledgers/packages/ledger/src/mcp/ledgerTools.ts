@@ -86,6 +86,7 @@ import {
   FETCH_DISPATCH_INPUT_INPUT,
   FETCH_DISPATCH_RESULT_INPUT,
   GIT_COMMIT_INPUT,
+  GIT_RESOLVE_CONTINUE_INPUT,
   PREPARE_DISPATCH_INPUT,
   STORE_RESULT_INPUT,
 } from "./dispatchToolSchemas.js";
@@ -121,6 +122,7 @@ export const DISPATCH_LIFECYCLE_TOOL_NAMES = [
   "abort_dispatch",
   "fetch_dispatch_result",
   "git_commit",
+  "git_resolve_continue",
 ] as const satisfies readonly LedgerToolName[];
 
 const DISPATCH_LIFECYCLE_TOOL_NAME_SET: ReadonlySet<string> = new Set(
@@ -878,6 +880,17 @@ export function createLedgerMcpToolSpecifications(
       return jsonResult(await dispatchCapability.gitCommit(args));
     },
   );
+  const gitResolveContinueTool = tool(
+    "git_resolve_continue",
+    "Resolve and continue one fully observed, dispatch-bound rebase conflict through the durable hermetic Git broker. Returns a replayable parent-verifiable receipt and either the terminal tip or the exact next conflict state.",
+    GIT_RESOLVE_CONTINUE_INPUT,
+    async (args) => {
+      if (dispatchCapability?.gitResolveContinue === undefined) {
+        throw new Error("git_resolve_continue is unavailable for this dispatch runtime");
+      }
+      return jsonResult(await dispatchCapability.gitResolveContinue(args));
+    },
+  );
 
   // ---- Ordinary prompt-catalog MCP surface (1) ---------------------------
   // Both validators remain available on PromptCatalogCapability only for
@@ -990,7 +1003,7 @@ export function createLedgerMcpToolSpecifications(
     listProjectsTool,
     ...planLifecycleTools,
     worktreeManageTool,
-    ...(dispatchCapability === undefined ? [] : [gitCommitTool]),
+    ...(dispatchCapability === undefined ? [] : [gitCommitTool, gitResolveContinueTool]),
   ] as unknown as AnyTool[];
 
   const registeredToolNames =
