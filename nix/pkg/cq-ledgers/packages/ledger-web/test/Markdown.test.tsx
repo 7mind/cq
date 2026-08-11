@@ -18,6 +18,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { createElement, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Markdown } from "../src/Markdown";
+import { LEDGER_TOOL_NAMES } from "@cq/ledger";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -104,5 +105,27 @@ describe("Markdown JSON pretty-print + colorize (D57)", () => {
     const css = readFileSync(cssPath, "utf8");
     // The rule must be present in the .lw-md pre block
     expect(css).toContain("white-space: pre-wrap");
+  });
+});
+
+// Behavioral-Active / Blackbox-Group: exercise the production GFM renderer against the public docs.
+describe("ledger response-contract Markdown", () => {
+  it("renders the complete response matrix as one three-column table", async () => {
+    const readme = readFileSync(join(import.meta.dir, "../../ledger-mcp/README.md"), "utf8");
+    const start = "<!-- ledger-response-contract:start -->";
+    const end = "<!-- ledger-response-contract:end -->";
+    const matrix = readme.slice(readme.indexOf(start) + start.length, readme.indexOf(end));
+
+    await render(matrix);
+
+    expect(container.querySelectorAll("table")).toHaveLength(1);
+    expect(container.querySelectorAll(".lw-md > *")).toHaveLength(1);
+    expect(
+      [...container.querySelectorAll("thead th")].map((cell) => cell.textContent),
+    ).toEqual(["Tool(s)", "Category", "Response"]);
+    const rows = [...container.querySelectorAll("tbody tr")];
+    expect(rows).toHaveLength(LEDGER_TOOL_NAMES.length);
+    expect(rows.map((row) => row.cells.length)).toEqual(LEDGER_TOOL_NAMES.map(() => 3));
+    expect(rows.map((row) => row.cells[0]?.textContent)).toEqual([...LEDGER_TOOL_NAMES]);
   });
 });
