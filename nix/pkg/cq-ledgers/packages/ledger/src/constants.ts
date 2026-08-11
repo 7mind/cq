@@ -115,6 +115,7 @@ export const REVIEWS_LEDGER = "reviews" as const;
 export const PLAN_REVIEW_DRAFT_FIELD = "planDraft" as const;
 export const HANDOFFS_LEDGER = "handoffs" as const;
 export const OPERATOR_ACTIONS_LEDGER = "operatorActions" as const;
+export const OPERATOR_ACTION_ACKNOWLEDGEMENT_EPOCH_FIELD = "acknowledgementEpoch" as const;
 export const IDEAS_LEDGER = "ideas" as const;
 
 /**
@@ -467,6 +468,7 @@ export const OPERATOR_ACTIONS_SCHEMA: LedgerSchema = {
     expectedEvidence: { type: "string[]", required: true },
     acknowledgedOutputIdentity: { type: "string", required: false },
     acknowledgedAt: { type: "timestamp", required: false },
+    [OPERATOR_ACTION_ACKNOWLEDGEMENT_EPOCH_FIELD]: { type: "string", required: false },
     evidence: { type: "string[]", required: false },
     lastFailure: { type: "string", required: false },
     verifiedAt: { type: "timestamp", required: false },

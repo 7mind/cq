@@ -902,6 +902,17 @@ export function applyReopenItem(
   now: string,
 ): Item {
   const { item } = findItem(ledger, itemId);
+  if (ledger.id === OPERATOR_ACTIONS_LEDGER) {
+    throw new LedgerError("operatorActions may reopen only through the typed operator-action lifecycle");
+  }
+  if (
+    ledger.id === TASKS_LEDGER &&
+    parseOperatorActionEnvelope(String(item.fields["description"] ?? "")) !== null
+  ) {
+    throw new LedgerError(
+      `Operator-action task ${item.id} may reopen only through the typed operator-action lifecycle`,
+    );
+  }
   const terminal = new Set(ledger.schema.terminalStatuses);
   if (!terminal.has(item.status)) {
     throw new LedgerError(

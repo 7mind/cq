@@ -812,7 +812,7 @@ export function createLedgerMcpToolSpecifications(
 
   const recordOperatorActionEvidenceTool = tool(
     "record_operator_action_evidence",
-    "Append one bounded parent-run shell probe with command/stdout/stderr/exit/output identity. Undeclared commands fail; every retry remains append-only. A nonzero exit or identity mismatch returns the action to pending; all declared successful probes verify it.",
+    "Append one bounded parent-run shell probe with command/stdout/stderr/exit/output identity. Undeclared commands fail; every retry remains append-only. A nonzero exit or identity mismatch returns the action to pending; only a complete successful probe set from the latest exact acknowledgement epoch verifies it.",
     {
       action_id: z.string().regex(/^OA\d+$/),
       command: z.string().min(1),

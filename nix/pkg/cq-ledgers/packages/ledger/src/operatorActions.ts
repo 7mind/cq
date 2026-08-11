@@ -2,6 +2,7 @@ import {
   GOALS_LEDGER,
   HANDOFFS_LEDGER,
   isIsoTimestamp,
+  OPERATOR_ACTION_ACKNOWLEDGEMENT_EPOCH_FIELD,
   OPERATOR_ACTIONS_LEDGER,
   TASKS_LEDGER,
 } from "./constants.js";
@@ -57,6 +58,10 @@ export interface OperatorActionShellEvidence {
   readonly exitCode: number;
   readonly outputIdentity: string;
   readonly observedAt: string;
+}
+
+interface StoredOperatorActionShellEvidence extends OperatorActionShellEvidence {
+  readonly acknowledgementEpoch: string;
 }
 
 export type RecordOperatorActionEvidenceResult =
@@ -209,6 +214,7 @@ export async function acknowledgeOperatorAction(
     fields: {
       acknowledgedOutputIdentity: input.outputIdentity,
       acknowledgedAt: input.acknowledgedAt,
+      [OPERATOR_ACTION_ACKNOWLEDGEMENT_EPOCH_FIELD]: acknowledgementEpochForExactReplay(action),
     },
     author: "user",
     ...(input.session === undefined ? {} : { session: input.session }),
@@ -231,11 +237,22 @@ export async function recordOperatorActionEvidence(
   }
   const prior = stringArray(action.fields["evidence"]);
   const decoded = prior.map(parseEvidence);
+  const acknowledgementEpoch = stringField(
+    action,
+    OPERATOR_ACTION_ACKNOWLEDGEMENT_EPOCH_FIELD,
+  );
+  if (acknowledgementEpoch.length === 0) {
+    throw new LedgerError(`Operator action ${action.id} has no acknowledgement epoch`);
+  }
   const expectedCommands = stringArray(action.fields["expectedEvidence"]);
   if (!expectedCommands.includes(evidence.command)) {
     throw new LedgerError(`Operator action ${action.id} did not declare command ${evidence.command}`);
   }
-  const encoded = JSON.stringify(evidence);
+  const storedEvidence: StoredOperatorActionShellEvidence = {
+    ...evidence,
+    acknowledgementEpoch,
+  };
+  const encoded = JSON.stringify(storedEvidence);
   const identityMatches =
     evidence.outputIdentity === stringField(action, "expectedOutputIdentity") &&
     evidence.outputIdentity === stringField(action, "acknowledgedOutputIdentity");
@@ -250,13 +267,14 @@ export async function recordOperatorActionEvidence(
     const updated = await store.updateItem(OPERATOR_ACTIONS_LEDGER, action.id, patch);
     return { state: "pending", reason: "probe-failed", action: updated };
   }
-  const evidenceEntries = [...decoded, evidence];
+  const evidenceEntries = [...decoded, storedEvidence];
   const expectedIdentity = stringField(action, "expectedOutputIdentity");
   const complete = expectedCommands.every((command) =>
     evidenceEntries.some(
       (entry) =>
         entry.command === command &&
         entry.exitCode === 0 &&
+        entry.acknowledgementEpoch === acknowledgementEpoch &&
         entry.outputIdentity === expectedIdentity,
     ),
   );
@@ -375,6 +393,20 @@ function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
+function acknowledgementEpochForExactReplay(action: Item): string {
+  const current = stringField(action, OPERATOR_ACTION_ACKNOWLEDGEMENT_EPOCH_FIELD);
+  if (action.status === "acknowledged" && current.length > 0) return current;
+  if (current.length === 0) return "1";
+  if (!/^[1-9]\d*$/.test(current)) {
+    throw new SchemaValidationError(`stored acknowledgement epoch is malformed`);
+  }
+  const parsed = Number(current);
+  if (!Number.isSafeInteger(parsed) || parsed === Number.MAX_SAFE_INTEGER) {
+    throw new SchemaValidationError(`stored acknowledgement epoch exceeds the safe range`);
+  }
+  return String(parsed + 1);
+}
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
@@ -384,8 +416,8 @@ function stringField(item: Item, field: string): string {
   return typeof value === "string" ? value : "";
 }
 
-function parseEvidence(value: string): OperatorActionShellEvidence {
-  const parsed = JSON.parse(value) as Partial<OperatorActionShellEvidence>;
+function parseEvidence(value: string): Partial<StoredOperatorActionShellEvidence> & OperatorActionShellEvidence {
+  const parsed = JSON.parse(value) as Partial<StoredOperatorActionShellEvidence>;
   if (
     typeof parsed.command !== "string" ||
     typeof parsed.stdout !== "string" ||
@@ -396,5 +428,11 @@ function parseEvidence(value: string): OperatorActionShellEvidence {
   ) {
     throw new SchemaValidationError("stored operator-action evidence is malformed");
   }
-  return parsed as OperatorActionShellEvidence;
+  if (
+    parsed.acknowledgementEpoch !== undefined &&
+    !/^[1-9]\d*$/.test(parsed.acknowledgementEpoch)
+  ) {
+    throw new SchemaValidationError("stored operator-action acknowledgement epoch is malformed");
+  }
+  return parsed as Partial<StoredOperatorActionShellEvidence> & OperatorActionShellEvidence;
 }

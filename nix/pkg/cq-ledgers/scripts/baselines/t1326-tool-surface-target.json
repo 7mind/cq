@@ -2387,12 +2387,12 @@
         "sha256": "a7fbc44f6499b7530a51a31a2270feb6e5883b26fc0803e767db2e4ec006c8d7"
       },
       "counterfactual": {
-        "utf8Bytes": 38690,
-        "tokens": 9129,
-        "sha256": "9259c8401a8d858d3a90a944a142b7f8e4e929c6e23baff1a34f56cd935050b4"
+        "utf8Bytes": 38742,
+        "tokens": 9137,
+        "sha256": "52fea27f4b9391a52cafcea3c481c8c0b0c3cb1c2cfe86b71e9e5109b85735e7"
       },
-      "deltaUtf8Bytes": 7588,
-      "deltaTokens": 1787
+      "deltaUtf8Bytes": 7536,
+      "deltaTokens": 1779
     },
     "completeRoleContextMeasurement": {
       "method": "independent whole-value JSON.stringify with o200k_base",
@@ -2402,12 +2402,12 @@
         "sha256": "a0053e2c068f55dfb32683581ab0fcea415ccd7bf77c0d9c1488b4fc01f0a3e2"
       },
       "counterfactual": {
-        "utf8Bytes": 448850,
-        "tokens": 105459,
-        "sha256": "04868b344abc1ce56fe61d2443f0211a11b4fe5dc015f66ef266d95fad4a42c2"
+        "utf8Bytes": 449422,
+        "tokens": 105547,
+        "sha256": "3434873375aae7fbcb9a6dbe65603dc8730f7a9e17f112650177e4af1c09515f"
       },
-      "deltaUtf8Bytes": 665823,
-      "deltaTokens": 157461
+      "deltaUtf8Bytes": 665251,
+      "deltaTokens": 157373
     }
   },
   "migrationMap": [

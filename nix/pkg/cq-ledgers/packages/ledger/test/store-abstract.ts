@@ -1081,6 +1081,12 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
           const verified = await evidence("probe-a", 0, "2026-08-11T08:05:00.000Z");
           expect(verified.state).toBe("verified");
           expect(verified.action.fields["evidence"]).toHaveLength(4);
+          expect(
+            (verified.action.fields["evidence"] as string[]).map(
+              (entry) =>
+                (JSON.parse(entry) as { acknowledgementEpoch: string }).acknowledgementEpoch,
+            ),
+          ).toEqual(["1", "1", "2", "2"]);
         } finally {
           await factory.teardown?.(store);
         }

@@ -144,11 +144,13 @@ merge, push, deploy, switch, or implicit acknowledgement is forbidden.
    literal command, stdout, stderr, exit code, observed output identity, and
    timestamp. Evidence is append-only. A nonzero exit or identity mismatch
    returns the action to pending; do not erase earlier observations or finish
-   the task.
+   the task. After the next exact acknowledgement, rerun every persisted probe;
+   successes from an earlier acknowledgement/failure epoch do not count toward
+   verification.
 5. Only a `verified` action authorizes
    `ledger::complete_operator_action({ action_id, completion, author, session })`.
    This typed transition marks the linked task `done`. Re-derive predicates;
-   never use generic `update_item` to bypass verification.
+   never use generic `update_item` or `reopen_item` to bypass verification.
 
 ## 3. Dispatch workers
 

@@ -616,6 +616,9 @@ ledgers:
         acknowledgedAt:
           type: timestamp
           required: false
+        acknowledgementEpoch:
+          type: string
+          required: false
         evidence:
           type: string[]
           required: false

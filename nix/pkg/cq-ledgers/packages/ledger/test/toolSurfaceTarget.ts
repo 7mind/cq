@@ -116,7 +116,7 @@ const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
   {
     name: "record_operator_action_evidence",
     description:
-      "Append one bounded parent-run shell probe with command/stdout/stderr/exit/output identity. Undeclared commands fail; every retry remains append-only. A nonzero exit or identity mismatch returns the action to pending; all declared successful probes verify it.",
+      "Append one bounded parent-run shell probe with command/stdout/stderr/exit/output identity. Undeclared commands fail; every retry remains append-only. A nonzero exit or identity mismatch returns the action to pending; only a complete successful probe set from the latest exact acknowledgement epoch verifies it.",
     inputSchema: {
       type: "object",
       properties: {

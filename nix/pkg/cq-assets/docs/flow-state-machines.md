@@ -511,8 +511,9 @@ The `tasks` schema statuses are `planned`, `wip`, `done`, `blocked`,
   bailout, or a merge-back conflict the resolver could not fix. A reversible
   hold (its worktree is left intact).
 - **done** — either the task's worker passed, review/check/merge succeeded, or
-  its operator action reached `verified` after exact deployment identity and
-  all declared probes. Terminal.
+  its operator action reached `verified` after exact deployment identity and a
+  complete successful probe set in the latest acknowledgement/failure epoch.
+  Terminal.
 - **abandoned** — the task was dropped. Terminal.
 
 ### Transitions (labelled)
@@ -523,7 +524,7 @@ The `tasks` schema statuses are `planned`, `wip`, `done`, `blocked`,
 | `wip → blocked` | the reviewer returned non-empty `questions`, or the criticism loop bailed as an ill loop, or a merge conflict could not be resolved — an `open` question is filed and the task parked. |
 | `blocked → planned` | resume bookkeeping: the task's blocking `questions` are now all `answered`, so it is flipped back and re-dispatched with the answer folded in. |
 | `wip → done` | the success gate passed (green check + reconciled `approve`) AND the branch rebased and merged back cleanly. Sets `resultCommit`/`completion`. |
-| `planned → done` | a strict `CQ-OPERATOR-ACTION v1` task's user deployment identity matched and every parent-run bounded probe produced verified append-only evidence. |
+| `planned → done` | a strict `CQ-OPERATOR-ACTION v1` task's user deployment identity matched and every parent-run bounded probe produced append-only success evidence in the latest acknowledgement/failure epoch. Generic reopen remains forbidden. |
 | `planned → blocked` / `wip → blocked` | reversible hold (see above). |
 | `→ done` / `→ abandoned` | terminal from any non-terminal state (`done` via the success gate; `abandoned` if dropped). |
 

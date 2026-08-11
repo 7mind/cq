@@ -240,6 +240,11 @@ measured savings without another batching schema.
 | `release_plan_claim` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { kind, …operation key, questions, researches, waitingResearches, tasks, waitingTasks, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
 | `finalize_plan` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { …operation key, reviewId, draft, decisionId, manifest, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
 | `worktree_manage` | `purpose-built-small` | Prepare: `{ status: "prepared"|"resume-required"|"refused", … }`. Observe conflict: `{ status: "conflict-observed", conflictState }`. Release: `{ status: "released"|"refused", … }`. Typed acknowledgements only; never exposes filesystem mutation primitives individually. |
+
+Operator-action probe history remains append-only, but verification counts only
+the complete successful probe set from the latest exact acknowledgement epoch.
+Generic `reopen_item` rejects canonical operator actions and their linked strict-
+envelope tasks; callers must use the typed operator-action lifecycle.
 | `git_commit` | `purpose-built-small` | A replayable `{ kind, version, attestationId, generation, taskId, operationId, requestDigest, oldHead, newHead, tree, objectOids, paths, committedAt }` receipt. |
 | `git_resolve_continue` | `purpose-built-small` | A replayable durable conflict-continuation receipt carrying attributed objects and either the terminal rebased tip or the exact next parent-bound conflict state. |
 <!-- ledger-response-contract:end -->
