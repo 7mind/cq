@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import type { SQL } from "bun";
 import type {
   LedgerStore,
   PlanClaimAcknowledgement,
@@ -13,6 +14,7 @@ import {
   acknowledgeOperatorAction,
   completeOperatorActionTask,
   materializeOperatorAction,
+  openPgPool,
   recordOperatorActionEvidence,
   reviseOperatorAction,
 } from "../src/index.js";
@@ -191,6 +193,17 @@ function operatorActionPeers(
   return peers;
 }
 
+async function postgresConnectionCount(observer: SQL): Promise<number> {
+  const rows = await observer<Array<{ count: number }>>`
+    SELECT count(*)::int AS count
+    FROM pg_stat_activity
+    WHERE datname = current_database() AND usename = current_user
+  `;
+  const count = rows[0]?.count;
+  if (count === undefined) throw new Error("PostgreSQL connection count is unavailable");
+  return count;
+}
+
 async function seedOperatorAction(
   store: LedgerStore,
   actionKey: string,
@@ -268,11 +281,22 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
       if (factory.name === "PostgresLedgerStore (two connections)") {
         describe("PostgreSQL operator-action lifecycle", () => {
         let operatorActionFixture: PlanLifecycleContractFixture;
+        let connectionObserver: SQL;
+        let connectionBaseline: number;
         beforeAll(async () => {
+          const dsn = process.env["CQ_TEST_PG_URL"];
+          if (dsn === undefined || dsn === "") throw new Error("CQ_TEST_PG_URL is unavailable");
+          connectionObserver = openPgPool(dsn);
+          connectionBaseline = await postgresConnectionCount(connectionObserver);
           operatorActionFixture = await factory.build();
         });
         afterAll(async () => {
           await operatorActionFixture.dispose();
+          try {
+            expect(await postgresConnectionCount(connectionObserver)).toBe(connectionBaseline);
+          } finally {
+            await connectionObserver.close({ timeout: 0 });
+          }
         });
 
         it(
@@ -523,7 +547,7 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
               const taskId = taskRef.slice("tasks:".length);
               expect(first.fetchItem("tasks", taskId).status).toBe("done");
               expect(first.fetchItem("operatorActions", created.action.id).status).toBe(
-                "completed",
+                "verified",
               );
           },
           timeout,

@@ -26,10 +26,9 @@
 
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { SQL } from "bun";
+import { SQL } from "bun";
 import {
   ensureSchema,
-  openPgPool,
   PostgresLedgerStore,
   type Item,
   type PlanClaimInput,
@@ -55,10 +54,15 @@ import type {
 import { OneShotSerializationBoundary } from "./planLifecycleSerializationBoundary.js";
 
 const PG_URL_ENV = "CQ_TEST_PG_URL";
+const TEST_POOL_MAX = 4;
 /** Prefix distinguishing this suite's throwaway tenants from every other one. */
 export const T851_PROJECT_KEY_PREFIX = "t851-";
 
 type PostgresLifecycleStore = PostgresLedgerStore & PlanLifecycleStore;
+
+function openTestPool(dsn: string): SQL {
+  return new SQL({ url: dsn, max: TEST_POOL_MAX });
+}
 
 export function postgresTestDsn(): string {
   const dsn = process.env[PG_URL_ENV];
@@ -74,7 +78,7 @@ export async function openTenantStore(
   projectKey: string,
   serializationHarness?: PostgresSerializationHarness,
 ): Promise<PostgresLifecycleStore> {
-  const rawPool = openPgPool(dsn);
+  const rawPool = openTestPool(dsn);
   await ensureSchema(rawPool);
   const pool = serializationHarness?.wrapPool(rawPool) ?? rawPool;
   const store = new PostgresLedgerStore({ pool, projectKey, displayName: projectKey });
@@ -322,7 +326,7 @@ class PostgresPlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<Postg
 
   static async create(): Promise<PostgresPlanLifecycleFixture> {
     const dsn = postgresTestDsn();
-    const admin = openPgPool(dsn);
+    const admin = openTestPool(dsn);
     await ensureSchema(admin);
     const lease = new TenantLease(dsn, `${T851_PROJECT_KEY_PREFIX}${randomUUID()}`);
     return PostgresPlanLifecycleFixture.openOver(admin, lease, true);
