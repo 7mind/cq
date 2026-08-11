@@ -270,6 +270,29 @@ function runPredicatesSuite(factory: PredicatesStoreFactory): void {
       }
     });
 
+    it("operator-action tasks never enter the worker-ready predicate", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "deployment" });
+        const g = await store.createItem(GOALS, m.id, {
+          status: "planned",
+          fields: { title: "g", description: "d" },
+        });
+        await store.createItem(TASKS, m.id, {
+          status: "planned",
+          fields: {
+            headline: "deploy exact output",
+            description: "CQ-OPERATOR-ACTION v1 deployed-output. User deploys; parent measures.",
+            ledgerRefs: [`${GOALS}:${g.id}`],
+          },
+        });
+
+        expect(derivePredicates(store).pImplement).toEqual({ value: false, items: [] });
+      } finally {
+        await factory.teardown(store);
+      }
+    });
+
     it("(e2) DAG-ready task held back by an unfinished dependsOn task → pImplement FALSE", async () => {
       const store = await factory.build();
       try {
