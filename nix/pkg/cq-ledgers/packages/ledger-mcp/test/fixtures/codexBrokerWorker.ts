@@ -153,8 +153,8 @@ const directGit = Bun.spawnSync(
   [
     process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git",
     "update-ref",
-    "refs/heads/main",
-    "f".repeat(40),
+    "refs/heads/cq-direct-git-probe",
+    startingCommit,
   ],
   { cwd: worktreePath, stdout: "pipe", stderr: "pipe" },
 );
