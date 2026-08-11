@@ -64,7 +64,11 @@ interface ResponseMatrixRow {
 function responseMatrixRows(markdown: string): ResponseMatrixRow[] {
   const matrix = section(markdown, "ledger-response-contract");
   return [...matrix.matchAll(/^\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|\s*(.+?)\s*\|$/gm)].map(
-    ([, tool, kind, response]) => ({ tool: tool!, kind: kind!, response: response! }),
+    ([, tool, kind, response]) => ({
+      tool: tool!,
+      kind: kind!,
+      response: response!.replaceAll("\\|", "|"),
+    }),
   );
 }
 

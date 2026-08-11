@@ -18,7 +18,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { createElement, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Markdown } from "../src/Markdown";
-import { LEDGER_TOOL_NAMES } from "@cq/ledger";
+import { LEDGER_RESPONSE_CONTRACTS, LEDGER_TOOL_NAMES } from "@cq/ledger";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -110,7 +110,7 @@ describe("Markdown JSON pretty-print + colorize (D57)", () => {
 
 // Behavioral-Active / Blackbox-Group: exercise the production GFM renderer against the public docs.
 describe("ledger response-contract Markdown", () => {
-  it("renders the complete response matrix as one three-column table", async () => {
+  it("renders the complete response matrix with escaped operator unions", async () => {
     const readme = readFileSync(join(import.meta.dir, "../../ledger-mcp/README.md"), "utf8");
     const start = "<!-- ledger-response-contract:start -->";
     const end = "<!-- ledger-response-contract:end -->";
@@ -122,10 +122,17 @@ describe("ledger response-contract Markdown", () => {
     expect(container.querySelectorAll(".lw-md > *")).toHaveLength(1);
     expect(
       [...container.querySelectorAll("thead th")].map((cell) => cell.textContent),
-    ).toEqual(["Tool(s)", "Category", "Response"]);
+    ).toEqual(["Tool", "Category", "Authoritative response"]);
     const rows = [...container.querySelectorAll("tbody tr")];
     expect(rows).toHaveLength(LEDGER_TOOL_NAMES.length);
     expect(rows.map((row) => row.cells.length)).toEqual(LEDGER_TOOL_NAMES.map(() => 3));
     expect(rows.map((row) => row.cells[0]?.textContent)).toEqual([...LEDGER_TOOL_NAMES]);
+    for (const tool of [
+      "materialize_operator_action",
+      "acknowledge_operator_action",
+      "record_operator_action_evidence",
+    ] as const) {
+      expect(matrix).toContain(LEDGER_RESPONSE_CONTRACTS[tool].responseCell.replaceAll("|", "\\|"));
+    }
   });
 });

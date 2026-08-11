@@ -218,9 +218,9 @@ measured savings without another batching schema.
 | `list_milestone_items` | `mandatory-item-projection` | `{ items: Record<ledgerId, Item[]> }`; every item uses the requested projection. |
 | `snapshot` | `purpose-built-small` | `{ ledger: Record<ledgerId, Record<status, { count, items: [{ id, status, summary }] }>> }`. |
 | `derive_predicates` | `purpose-built-small` | Predicate verdicts `{ value, items }` for `pInvestigate`, `pSeed`, `pPlan`, `pResearch`, `pImplement`, `pOperatorAction`, `openQuestionGate`, `belowFloor`, `planBusy`, and `goalDrift`. |
-| `materialize_operator_action` | `purpose-built-small` | `{ state: "created"|"existing", action, handoff }` with deterministic identities. |
-| `acknowledge_operator_action` | `purpose-built-small` | `{ state: "acknowledged"|"verified", action }` or `{ state: "pending", reason: "identity-mismatch", action }`. |
-| `record_operator_action_evidence` | `purpose-built-small` | An append-only `{ state: "acknowledged"|"verified"|"pending", action, reason? }` evidence acknowledgement. |
+| `materialize_operator_action` | `purpose-built-small` | `{ state: "created"\|"existing", action, handoff }` with deterministic identities. |
+| `acknowledge_operator_action` | `purpose-built-small` | `{ state: "acknowledged"\|"verified", action }` or `{ state: "pending", reason: "identity-mismatch", action }`. |
+| `record_operator_action_evidence` | `purpose-built-small` | An append-only `{ state: "acknowledged"\|"verified"\|"pending", action, reason? }` evidence acknowledgement. |
 | `complete_operator_action` | `purpose-built-small` | `{ task }` only after the linked action is verified. |
 | `reopen_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
 | `unarchive_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
@@ -240,14 +240,14 @@ measured savings without another batching schema.
 | `release_plan_claim` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { kind, …operation key, questions, researches, waitingResearches, tasks, waitingTasks, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
 | `finalize_plan` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { …operation key, reviewId, draft, decisionId, manifest, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
 | `worktree_manage` | `purpose-built-small` | Prepare: `{ status: "prepared"|"resume-required"|"refused", … }`. Observe conflict: `{ status: "conflict-observed", conflictState }`. Release: `{ status: "released"|"refused", … }`. Typed acknowledgements only; never exposes filesystem mutation primitives individually. |
+| `git_commit` | `purpose-built-small` | A replayable `{ kind, version, attestationId, generation, taskId, operationId, requestDigest, oldHead, newHead, tree, objectOids, paths, committedAt }` receipt. |
+| `git_resolve_continue` | `purpose-built-small` | A replayable durable conflict-continuation receipt carrying attributed objects and either the terminal rebased tip or the exact next parent-bound conflict state. |
+<!-- ledger-response-contract:end -->
 
 Operator-action probe history remains append-only, but verification counts only
 the complete successful probe set from the latest exact acknowledgement epoch.
 Generic `reopen_item` rejects canonical operator actions and their linked strict-
 envelope tasks; callers must use the typed operator-action lifecycle.
-| `git_commit` | `purpose-built-small` | A replayable `{ kind, version, attestationId, generation, taskId, operationId, requestDigest, oldHead, newHead, tree, objectOids, paths, committedAt }` receipt. |
-| `git_resolve_continue` | `purpose-built-small` | A replayable durable conflict-continuation receipt carrying attributed objects and either the terminal rebased tip or the exact next parent-bound conflict state. |
-<!-- ledger-response-contract:end -->
 
 ### Usage statistics: three access paths
 
