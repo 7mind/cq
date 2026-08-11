@@ -83,7 +83,7 @@ describe("T2044 Codex native composed qualification", () => {
     expect([
       verdict(undefined),
       verdict({ ...valid, resolverGate: undefined } as never),
-      verdict({ ...valid, resolverGate: { ...resolverGate, substituted: true } }),
+      verdict({ ...valid, resolverGate: { ...resolverGate, substituted: true } } as never),
       verdict({
         ...valid,
         resolverGate: {
