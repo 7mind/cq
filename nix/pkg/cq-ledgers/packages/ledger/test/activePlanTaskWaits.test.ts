@@ -128,7 +128,7 @@ describe("T1268 structural guard — activePlanTaskWaits is the sole production 
     ]);
   });
 
-  test("DerivedPredicates shape is unchanged (still the nine canonical keys)", async () => {
+  test("DerivedPredicates exposes the ten canonical keys", async () => {
     const text = await readFile(
       fileURLToPath(new URL("../src/store/predicates.ts", import.meta.url)),
       "utf8",
@@ -143,6 +143,7 @@ describe("T1268 structural guard — activePlanTaskWaits is the sole production 
       "pPlan",
       "pResearch",
       "pImplement",
+      "pOperatorAction",
       "openQuestionGate",
       "belowFloor",
       "planBusy",

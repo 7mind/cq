@@ -167,6 +167,26 @@ async function seedImplementLedger(): Promise<string> {
   return root;
 }
 
+/** Seed a strict deployment task that only P-operator-action may own. */
+async function seedOperatorActionLedger(): Promise<string> {
+  const root = await xdgRoot();
+  await seedStore(root, async (store) => {
+    const goal = await store.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
+      status: "planned",
+      fields: { title: "deploy", description: "deploy" },
+    });
+    await store.createItem(TASKS_LEDGER, MILESTONES_AMBIENT_ID, {
+      status: "planned",
+      fields: {
+        headline: "deploy exact output",
+        description: "CQ-OPERATOR-ACTION v1 G121-deployed-recovery. User deploys.",
+        ledgerRefs: [`${GOALS_LEDGER}:${goal.id}`],
+      },
+    });
+  });
+  return root;
+}
+
 /** Seed a fresh, EMPTY (all-FALSE) ledger root — init only, no items. */
 async function seedEmptyLedger(): Promise<string> {
   const root = await xdgRoot();
@@ -252,9 +272,22 @@ describe("cq advance-gate — verdict + exit-code contract (T367)", () => {
     expect(verdict.predicates.pImplement.items.length).toBeGreaterThan(0);
   });
 
-  // --- Case 1c: marker PRESENT + P-seed TRUE ⇒ BLOCK (non-zero) -------------
+  it("(1c) marker present + P-operator-action TRUE names the parent-only arm", async () => {
+    const root = await seedOperatorActionLedger();
+    await writeFile(markerFile(runtimeDir), "started\n", "utf8");
 
-  it("(1c) marker present + P-seed TRUE (root-caused unowned high defect) → block=true, non-zero exit, reason names P-seed", async () => {
+    const { exitCode, verdict } = await runGate(root);
+
+    expect(exitCode).toBe(EXIT_BLOCK);
+    expect(verdict.reason).toContain("P-operator-action=TRUE");
+    expect(verdict.predicates.pOperatorAction.value).toBe(true);
+    expect(verdict.predicates.pOperatorAction.items).toHaveLength(1);
+    expect(verdict.predicates.pImplement).toEqual({ value: false, items: [] });
+  });
+
+  // --- Case 1d: marker PRESENT + P-seed TRUE ⇒ BLOCK (non-zero) -------------
+
+  it("(1d) marker present + P-seed TRUE (root-caused unowned high defect) → block=true, non-zero exit, reason names P-seed", async () => {
     const root = await seedSeedLedger();
     await writeFile(markerFile(runtimeDir), "started\n", "utf8");
 
@@ -273,7 +306,7 @@ describe("cq advance-gate — verdict + exit-code contract (T367)", () => {
 
   // --- Case 1d: marker PRESENT + P-research TRUE ⇒ BLOCK (non-zero) ---------
 
-  it("(1d) marker present + P-research TRUE (open research) → block=true, non-zero exit, reason names P-research", async () => {
+  it("(1e) marker present + P-research TRUE (open research) → block=true, non-zero exit, reason names P-research", async () => {
     const root = await seedResearchLedger();
     await writeFile(markerFile(runtimeDir), "started\n", "utf8");
 

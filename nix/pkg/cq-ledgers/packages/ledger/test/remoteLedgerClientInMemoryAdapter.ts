@@ -638,11 +638,118 @@ const derivePredicates: ToolHandler = () => {
     pPlan: verdict(),
     pResearch: verdict(),
     pImplement: verdict(),
+    pOperatorAction: verdict(),
     openQuestionGate: verdict(),
     belowFloor: verdict(),
     planBusy: verdict(),
     goalDrift: verdict(),
   };
+};
+
+const materializeOperatorAction: ToolHandler = (tenant, args) => {
+  const taskId = str(args, "task_id");
+  const task = findItem(tenant, "tasks", taskId);
+  const goalRef = Array.isArray(task.fields["ledgerRefs"])
+    ? task.fields["ledgerRefs"].find((ref) => ref.startsWith("goals:"))
+    : undefined;
+  if (goalRef === undefined) throw new DummyToolError("operator task has no goal");
+  const actionId = `OA${taskId.slice(1)}`;
+  const prior = ledgerOf(tenant, "operatorActions").find((item) => item.id === actionId);
+  if (prior !== undefined) {
+    const handoff = ledgerOf(tenant, "handoffs").find((item) =>
+      Array.isArray(item.fields["ledgerRefs"])
+        ? item.fields["ledgerRefs"].includes(`operatorActions:${actionId}`)
+        : false,
+    );
+    if (handoff === undefined) throw new DummyToolError("operator handoff missing");
+    return { state: "existing", action: prior, handoff };
+  }
+  const expectedEvidence = args["expected_evidence"];
+  if (!Array.isArray(expectedEvidence) || !expectedEvidence.every((entry) => typeof entry === "string")) {
+    throw new DummyToolError("expected_evidence must be a string[]");
+  }
+  createItem(tenant, {
+    ledger_id: "operatorActions",
+    milestone_id: task.milestoneId,
+    id: actionId,
+    status: "pending",
+    fields: {
+      actionKey: "remote-deployment",
+      summary: "Operator action remote-deployment",
+      taskRef: `tasks:${taskId}`,
+      goalRef,
+      expectedOutputIdentity: str(args, "expected_output_identity"),
+      expectedEvidence,
+      ledgerRefs: [`tasks:${taskId}`, goalRef],
+    },
+    author: str(args, "author"),
+  });
+  createItem(tenant, {
+    ledger_id: "handoffs",
+    milestone_id: task.milestoneId,
+    id: `HO${taskId.slice(1)}`,
+    status: "user-action-required",
+    fields: {
+      summary: "operator action pending",
+      flow: "implement",
+      ledgerRefs: [`tasks:${taskId}`, goalRef, `operatorActions:${actionId}`],
+      handoffReasons: ["deploy and acknowledge"],
+    },
+  });
+  return {
+    state: "created",
+    action: findItem(tenant, "operatorActions", actionId),
+    handoff: findItem(tenant, "handoffs", `HO${taskId.slice(1)}`),
+  };
+};
+
+const acknowledgeOperatorAction: ToolHandler = (tenant, args) => {
+  const action = findItem(tenant, "operatorActions", str(args, "action_id"));
+  if (action.status === "verified") return { state: "verified", action };
+  const identity = str(args, "output_identity");
+  if (action.fields["expectedOutputIdentity"] !== identity) {
+    return { state: "pending", reason: "identity-mismatch", action };
+  }
+  action.status = "acknowledged";
+  action.fields["acknowledgedOutputIdentity"] = identity;
+  action.fields["acknowledgedAt"] = str(args, "acknowledged_at");
+  return { state: "acknowledged", action };
+};
+
+const recordOperatorActionEvidence: ToolHandler = (tenant, args) => {
+  const action = findItem(tenant, "operatorActions", str(args, "action_id"));
+  const evidence = {
+    command: str(args, "command"),
+    stdout: str(args, "stdout"),
+    stderr: str(args, "stderr"),
+    exitCode: Number(args["exit_code"]),
+    outputIdentity: str(args, "output_identity"),
+    observedAt: str(args, "observed_at"),
+  };
+  const prior = Array.isArray(action.fields["evidence"]) ? action.fields["evidence"] : [];
+  action.fields["evidence"] = [...prior, JSON.stringify(evidence)];
+  const expected = Array.isArray(action.fields["expectedEvidence"])
+    ? action.fields["expectedEvidence"]
+    : [];
+  const verified =
+    evidence.exitCode === 0 &&
+    evidence.outputIdentity === action.fields["expectedOutputIdentity"] &&
+    expected.length === 1 &&
+    expected[0] === evidence.command;
+  action.status = verified ? "verified" : "pending";
+  return verified
+    ? { state: "verified", action }
+    : { state: "pending", reason: "probe-failed", action };
+};
+
+const completeOperatorAction: ToolHandler = (tenant, args) => {
+  const action = findItem(tenant, "operatorActions", str(args, "action_id"));
+  if (action.status !== "verified") throw new DummyToolError("operator action is not verified");
+  const taskRef = String(action.fields["taskRef"]);
+  const task = findItem(tenant, "tasks", taskRef.slice("tasks:".length));
+  task.status = "done";
+  task.fields["completion"] = str(args, "completion");
+  return { task };
 };
 
 const readLog: ToolHandler = (tenant, args) => {
@@ -923,6 +1030,10 @@ export class InMemoryMcpService {
       list_milestone_items: listMilestoneItems,
       snapshot: snapshotTool,
       derive_predicates: derivePredicates,
+      materialize_operator_action: materializeOperatorAction,
+      acknowledge_operator_action: acknowledgeOperatorAction,
+      record_operator_action_evidence: recordOperatorActionEvidence,
+      complete_operator_action: completeOperatorAction,
       // Fixed snapshot (the adapter mirrors wire SHAPES, not server-side
       // usage tracking): totals stay consistent with the endpoints.
       get_usage_stats: (_tenant) => ({

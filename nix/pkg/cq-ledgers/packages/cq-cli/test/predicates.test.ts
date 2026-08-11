@@ -45,6 +45,7 @@ const PREDICATE_KEYS = [
   "pPlan",
   "pResearch",
   "pImplement",
+  "pOperatorAction",
   "openQuestionGate",
   "belowFloor",
   "goalDrift",

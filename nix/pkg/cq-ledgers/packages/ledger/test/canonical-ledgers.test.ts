@@ -865,8 +865,8 @@ describe("HANDOFFS_SCHEMA shape", () => {
     expect(f!.required).toBe(false);
   });
 
-  it("CANONICAL_LEDGERS has 12 entries and upstream is last", () => {
-    expect(CANONICAL_LEDGERS).toHaveLength(12);
+  it("CANONICAL_LEDGERS has 13 entries and upstream is last", () => {
+    expect(CANONICAL_LEDGERS).toHaveLength(13);
     expect(CANONICAL_LEDGERS[CANONICAL_LEDGERS.length - 1]!.name).toBe(
       UPSTREAM_LEDGER_SPEC,
     );

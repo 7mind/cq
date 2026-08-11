@@ -45,6 +45,7 @@ It returns:
   "pPlan": { "value": true, "items": ["<goal-id>"] },
   "pResearch": { "value": true, "items": ["<research-id>"] },
   "pImplement": { "value": true, "items": ["<task-id>"] },
+  "pOperatorAction": { "value": true, "items": ["<task-id>"] },
   "openQuestionGate": { "value": false, "items": [] },
   "belowFloor": { "value": false, "items": [] },
   "planBusy": { "value": false, "items": [] },
@@ -85,8 +86,10 @@ Repeat the following order. Re-read predicates after each numbered stage.
 4. **Research.** For every id currently returned by `pResearch.items`, run
    `CQ::research/advance <research-id>` INLINE.
 
-5. **Implement.** If `pImplement.value`, run `CQ::implement/advance` INLINE
-   once; it owns worker dispatch, review, merge-back, and task status.
+5. **Implement.** If `pImplement.value` or `pOperatorAction.value`, run
+   `CQ::implement/advance` INLINE once. It owns worker dispatch/review/merge for
+   ordinary tasks and the parent-only operator-action lifecycle for
+   `pOperatorAction.items`; an operator action never dispatches a worker.
 
 6. **Re-check investigation.** Re-read predicates and run newly actionable
    defects before deciding whether the cycle made progress. Planning,
@@ -100,7 +103,7 @@ time, or token cap.
 A full cycle may stop only when it made no ledger progress and one of these
 conditions holds:
 
-- all five actionable predicates are false (`drained`);
+- all six actionable predicates are false (`drained`);
 - every remaining actionable branch waits on open requirements questions
   (`answers-required`);
 - progress requires an operation CQ cannot perform, such as missing credentials,

@@ -37,6 +37,7 @@ function emptyPredicates(): DerivedPredicates {
     pPlan: emptyVerdict(),
     pResearch: emptyVerdict(),
     pImplement: emptyVerdict(),
+    pOperatorAction: emptyVerdict(),
     openQuestionGate: emptyVerdict(),
     belowFloor: emptyVerdict(),
     planBusy: emptyVerdict(),

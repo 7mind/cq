@@ -101,12 +101,56 @@ A task is ready when:
   configured sets);
 - every prerequisite milestone has all tasks terminal.
 
+A description beginning exactly
+`CQ-OPERATOR-ACTION v1 <action-key>.` selects the closed operator-action
+arm below. The key contains ASCII alphanumeric segments separated by single
+hyphens, for example `G121-deployed-recovery`. The store rejects a misplaced,
+malformed, or duplicate envelope.
+Such tasks appear only in `pOperatorAction`, never `pImplement`, and MUST NOT
+enter worktree preparation, `wip`, worker dispatch, review, rebase, merge, or
+release logic.
+
 Terminal-but-unsatisfying statuses such as `abandoned` and `wontfix` do not
 satisfy dependencies. Advisory or unresolvable free-text references do.
 
 If no task is ready and no task awaits review or merge, report and stop.
 
-## 2. Dispatch workers
+## 2. Operator-action tasks (parent only)
+
+For each DAG-ready strict-envelope task, keep the actor split from questions:Q365:
+the user performs deployment and acknowledges its observed identity; this
+parent runs bounded shell probes after acknowledgement. A child, worktree,
+merge, push, deploy, switch, or implicit acknowledgement is forbidden.
+
+1. Resolve one exact expected output identity and a non-empty, closed list of
+   exact probe commands from the task description and acceptance. Build/package
+   output observation may establish the identity; do not deploy it. If the task
+   does not specify enough information to make either exact, stop
+   `illness-detected` rather than inventing acceptance.
+2. Call
+   `ledger::materialize_operator_action({ task_id, expected_output_identity,
+   expected_evidence, author, session })` before any ordinary readiness action.
+   Accept only `created` or exact `existing`. This deterministically creates or
+   restart-reuses one pending action and one `user-action-required` handoff;
+   conflicting identity/evidence fails closed.
+3. While pending, park without changing the task to `wip`. Report the action id,
+   exact identity, handoff id, and the user instruction to deploy then call
+   `ledger::acknowledge_operator_action`. A mismatching acknowledgement leaves
+   the action pending and authorizes no probe. A replay against an already
+   `verified` action returns `verified`; skip directly to typed completion.
+4. After the exact user acknowledgement returns `acknowledged`, run only the
+   persisted commands, sequentially and with bounded stdout/stderr capture.
+   After each command call `ledger::record_operator_action_evidence` with the
+   literal command, stdout, stderr, exit code, observed output identity, and
+   timestamp. Evidence is append-only. A nonzero exit or identity mismatch
+   returns the action to pending; do not erase earlier observations or finish
+   the task.
+5. Only a `verified` action authorizes
+   `ledger::complete_operator_action({ action_id, completion, author, session })`.
+   This typed transition marks the linked task `done`. Re-derive predicates;
+   never use generic `update_item` to bypass verification.
+
+## 3. Dispatch workers
 
 **Prepare BEFORE wip and BEFORE launch.** For each selected task:
 
@@ -162,7 +206,7 @@ LOST REPORT or an incomplete turn, harvest first, then resume.
 A base-only repair / reprepare / rebase maintenance round does **not** count as
 criticism, no-files output, or an ill-loop counter increment.
 
-## 3. Review
+## 4. Review
 
 Before any review dispatch, require
 `git merge-base --is-ancestor <startingCommit> <resultCommit>` to exit zero.
@@ -213,7 +257,7 @@ File each out-of-scope or pre-existing `defects[]` entry once as an open defect
 linked to the task and owning goal. Such defects do not block the current task
 and never become user disposition questions.
 
-## 4. Correct or park
+## 5. Correct or park
 
 When the reconciled verdict disapproves with criticism and no questions,
 redispatch the same worker in the **same managed worktree** (retained handle;
@@ -232,7 +276,7 @@ Create linked open questions with the round history, set the task `blocked`,
 and preserve its worktree + handle. Do not ask the user to decide whether a
 confirmed fault deserves a fix.
 
-## 5. Success authority
+## 6. Success authority
 
 A task may merge only when all of these hold:
 
@@ -266,7 +310,7 @@ Before rebase and immediately before merge, the orchestrator independently:
 Fabricated, missing, non-tip, stale-base, or non-ancestor result commits never
 merge. Any failure is a contract breach and forbids merge-back.
 
-## 6. Merge in DAG order
+## 7. Merge in DAG order
 
 Process successful tasks sequentially after their dependencies have landed.
 If main has advanced past the dispatch base, rebase onto current main and rerun
@@ -322,7 +366,7 @@ all reviewer log paths.
 
 Re-derive the ready set after every merge and continue until drained.
 
-## 7. Milestones and goals
+## 8. Milestones and goals
 
 For each touched milestone, close and archive it only when every contained item
 is terminal and, for a coordination milestone, its goal is also terminal.

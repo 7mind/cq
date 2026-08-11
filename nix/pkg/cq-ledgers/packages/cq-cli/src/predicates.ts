@@ -44,7 +44,7 @@ export interface PredicatesOutcome {
 
 /**
  * The object serialised to stdout — the SAME `predicates` shape advance-gate
- * emits (pInvestigate, pSeed, pPlan, pResearch, pImplement, openQuestionGate,
+ * emits (pInvestigate, pSeed, pPlan, pResearch, pImplement, pOperatorAction, openQuestionGate,
  * belowFloor, planBusy, goalDrift),
  * so the oracle's `parseAdvanceGateOutput` reads `parsed.predicates`
  * identically.

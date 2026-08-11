@@ -42,9 +42,14 @@ import {
   MILESTONES_ACTIVE_GROUP_ID,
   MILESTONES_AMBIENT_ID,
   MILESTONES_LEDGER,
+  OPERATOR_ACTIONS_LEDGER,
   TASKS_LEDGER,
 } from "../constants.js";
-import { parseOperatorActionEnvelope } from "../operatorActions.js";
+import {
+  isAuthorizedOperatorActionCompletionPatch,
+  isAuthorizedOperatorActionMutation,
+  parseOperatorActionEnvelope,
+} from "../operatorActions.js";
 import { assertWorksetOwnershipFieldsAbsent } from "../worksetOwnerEdges.js";
 import type { LedgerSchema } from "../types.js";
 import type {
@@ -398,6 +403,36 @@ export function applyUpdateItem(
   refCtx?: RefValidationContext,
 ): Item {
   const { item } = findItem(ledger, itemId);
+  if (ledger.id === OPERATOR_ACTIONS_LEDGER && !isAuthorizedOperatorActionMutation(patch)) {
+    throw new LedgerError("operatorActions may mutate only through the typed lifecycle");
+  }
+  const currentOperatorDirective =
+    ledger.id === TASKS_LEDGER
+      ? parseOperatorActionEnvelope(String(item.fields["description"] ?? ""))
+      : null;
+  if (
+    currentOperatorDirective !== null &&
+    patch.status !== undefined &&
+    patch.status !== item.status &&
+    patch.status !== "done"
+  ) {
+    throw new LedgerError(
+      `Operator-action task ${item.id} must remain planned until verified completion`,
+    );
+  }
+  if (ledger.id === TASKS_LEDGER && patch.status === "done") {
+    const currentDescription = item.fields["description"] ?? "";
+    const effectiveDescription = patch.fields?.["description"] ?? currentDescription;
+    if (
+      (parseOperatorActionEnvelope(String(currentDescription)) !== null ||
+        parseOperatorActionEnvelope(String(effectiveDescription)) !== null) &&
+      !isAuthorizedOperatorActionCompletionPatch(patch)
+    ) {
+      throw new LedgerError(
+        `Operator-action task ${item.id} may complete only through verified operator action evidence`,
+      );
+    }
+  }
   if (patch.status !== undefined) {
     assertStatusAllowed(ledger, patch.status);
     // F1: enforce the declarative transition guard only when the status
@@ -416,7 +451,21 @@ export function applyUpdateItem(
     // T1951: sealed workset ownership is library-managed — generic update cannot set/change it.
     assertWorksetOwnershipFieldsAbsent(patch.fields, item);
     if (ledger.id === TASKS_LEDGER && patch.fields["description"] !== undefined) {
-      parseOperatorActionEnvelope(String(patch.fields["description"]));
+      const currentDirective = parseOperatorActionEnvelope(String(item.fields["description"] ?? ""));
+      const nextDirective = parseOperatorActionEnvelope(String(patch.fields["description"]));
+      if (
+        currentDirective !== null &&
+        (nextDirective === null || nextDirective.actionKey !== currentDirective.actionKey)
+      ) {
+        throw new LedgerError(`Operator-action envelope on task ${item.id} is immutable`);
+      }
+      if (
+        currentDirective === null &&
+        nextDirective !== null &&
+        (patch.status ?? item.status) !== "planned"
+      ) {
+        throw new LedgerError(`Only a planned task may acquire an operator-action envelope`);
+      }
     }
   }
   // D39: re-check the handoffs conditional invariant on the EFFECTIVE status +
@@ -477,6 +526,9 @@ export function applyCreateItem(
   now: string,
   refCtx?: RefValidationContext,
 ): Item {
+  if (ledger.id === OPERATOR_ACTIONS_LEDGER && !isAuthorizedOperatorActionMutation(init)) {
+    throw new LedgerError("operatorActions may be created only through the typed lifecycle");
+  }
   let milestone: Milestone;
   const existing = ledger.milestones.find((m) => m.id === milestoneId);
   if (existing !== undefined) {
@@ -503,7 +555,10 @@ export function applyCreateItem(
   // T1951: sealed workset ownership is library-managed — generic create cannot set it.
   assertWorksetOwnershipFieldsAbsent(init.fields);
   if (ledger.id === TASKS_LEDGER && init.fields["description"] !== undefined) {
-    parseOperatorActionEnvelope(String(init.fields["description"]));
+    const directive = parseOperatorActionEnvelope(String(init.fields["description"]));
+    if (directive !== null && init.status !== "planned") {
+      throw new LedgerError("An operator-action task must be created in planned status");
+    }
   }
   // D39: handoffs-specific conditional invariant (status-dependent required
   // fields the status-blind schema cannot express). The concrete id is not

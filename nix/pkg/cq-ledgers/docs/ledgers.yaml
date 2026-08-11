@@ -583,6 +583,70 @@ ledgers:
         mixed: []
         illness-detected: []
         user-action-required: []
+  - name: operatorActions
+    schema:
+      statusValues:
+        - pending
+        - acknowledged
+        - verified
+      terminalStatuses:
+        - verified
+      fields:
+        actionKey:
+          type: string
+          required: true
+        summary:
+          type: string
+          required: true
+        taskRef:
+          type: id
+          required: true
+        goalRef:
+          type: id
+          required: true
+        expectedOutputIdentity:
+          type: string
+          required: true
+        expectedEvidence:
+          type: string[]
+          required: true
+        acknowledgedOutputIdentity:
+          type: string
+          required: false
+        acknowledgedAt:
+          type: timestamp
+          required: false
+        evidence:
+          type: string[]
+          required: false
+        lastFailure:
+          type: string
+          required: false
+        verifiedAt:
+          type: timestamp
+          required: false
+        completion:
+          type: string
+          required: false
+        ledgerRefs:
+          type: id[]
+          required: true
+        worksetOwnerRef:
+          type: string
+          required: false
+        worksetOwnerEdgeKind:
+          type: string
+          required: false
+      idPrefix: OA
+      transitions:
+        pending:
+          - acknowledged
+        acknowledged:
+          - pending
+          - verified
+        verified: []
+      satisfiesDependencyStatuses:
+        - verified
   - name: ideas
     schema:
       statusValues:

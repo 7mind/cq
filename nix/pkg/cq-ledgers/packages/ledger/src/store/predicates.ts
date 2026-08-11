@@ -3,7 +3,8 @@
  * M240, fixes D94).
  *
  * The SINGLE SOURCE OF TRUTH for the `/cq:advance` flow's five detection
- * predicates — P-investigate, P-seed, P-plan, P-research, P-implement — plus the
+ * predicates — P-investigate, P-seed, P-plan, P-research, P-implement, and
+ * P-operator-action — plus the
  * open-question gate and the informational `belowFloor` companion. Both
  * `@cq/cli` and `@cq/ledger-mcp` import this so the flow's actionability
  * semantics are derived in exactly ONE place rather than re-implemented per
@@ -40,7 +41,7 @@
  *    `ledgerRefs` name `researches:<RS>`). Because RESEARCHES_SCHEMA declares
  *    `satisfiesDependencyStatuses ["concluded"]`, the dependency resolver
  *    separately gates research-dependent tasks in P-implement.
- *  - P-implement — a goal in `planned`/`building` with a DAG-READY non-terminal
+ *  - P-implement / P-operator-action — a goal in `planned`/`building` with a DAG-READY non-terminal
  *    task: status non-terminal and not `blocked`; every entry in its `dependsOn`
  *    is SATISFIED (see the dependency-resolution spec below); its milestone's
  *    `dependsOn` milestones are satisfied (all their tasks terminal); and no
@@ -53,7 +54,9 @@
  *    when one is present (D166/T855: the write-side selection fence for
  *    concurrent legacy planning sessions — only the selected DAG is
  *    actionable); a legacy goal with NO declared `milestones` field keeps the
- *    pre-G99 goal-ref readiness rule verbatim.
+ *    pre-G99 goal-ref readiness rule verbatim. A valid strict operator-action
+ *    envelope routes the task only to P-operator-action; every other task routes
+ *    to P-implement, so workers never receive deployment authority.
  *  - openQuestionGate — the open `questions` items gating the above.
  *
  * Dependency-resolution spec (G80/M245, read-side of the `<ledger>:<id>`

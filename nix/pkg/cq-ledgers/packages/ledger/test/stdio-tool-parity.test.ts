@@ -247,6 +247,7 @@ interface Fixture {
     targetItem: string;
     terminalItem: string;
     archivedItem: string;
+    operatorActionTask: string;
   };
 }
 
@@ -312,6 +313,14 @@ async function buildFixture(): Promise<Fixture> {
     },
     ...PARITY_PROVENANCE,
   });
+  const operatorActionTask = await store.createItem("tasks", activeMilestone.id, {
+    status: "planned",
+    fields: {
+      headline: "Operator deployment",
+      description: "CQ-OPERATOR-ACTION v1 parity-deployment. User deploys; parent measures.",
+      ledgerRefs: [`goals:${PARITY_GOAL_ID}`],
+    },
+  });
 
   const archivableMilestone = await store.createMilestone({
     title: "Archive through tool",
@@ -332,6 +341,7 @@ async function buildFixture(): Promise<Fixture> {
       targetItem: targetItem.id,
       terminalItem: terminalItem.id,
       archivedItem: archivedItem.id,
+      operatorActionTask: operatorActionTask.id,
     },
   };
 }
@@ -729,6 +739,44 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
     { name: "snapshot", args: { include_archived: false } },
     { name: "derive_predicates", args: {} },
     {
+      name: "materialize_operator_action",
+      args: {
+        task_id: ids.operatorActionTask,
+        expected_output_identity: "/nix/store/parity-cq",
+        expected_evidence: ["cq --version"],
+        author: "parity-parent",
+      },
+    },
+    {
+      name: "acknowledge_operator_action",
+      args: {
+        action_id: `OA${ids.operatorActionTask.slice(1)}`,
+        output_identity: "/nix/store/parity-cq",
+        acknowledged_at: FIXED_NOW,
+      },
+    },
+    {
+      name: "record_operator_action_evidence",
+      args: {
+        action_id: `OA${ids.operatorActionTask.slice(1)}`,
+        command: "cq --version",
+        stdout: "cq parity",
+        stderr: "",
+        exit_code: 0,
+        output_identity: "/nix/store/parity-cq",
+        observed_at: FIXED_NOW,
+        author: "parity-parent",
+      },
+    },
+    {
+      name: "complete_operator_action",
+      args: {
+        action_id: `OA${ids.operatorActionTask.slice(1)}`,
+        completion: "parity probe verified",
+        author: "parity-parent",
+      },
+    },
+    {
       name: "reopen_item",
       args: {
         ledger_id: "tasks",
@@ -1001,7 +1049,7 @@ function assertRepresentativeContracts(
   expect(responses.get("snapshot")).toMatchObject({
     ledger: {
       tasks: {
-        planned: { count: 1 },
+      planned: { count: 2 },
         wip: { count: 1 },
         done: { count: 1 },
       },
@@ -1015,6 +1063,7 @@ function assertRepresentativeContracts(
       "openQuestionGate",
       "pImplement",
       "pInvestigate",
+      "pOperatorAction",
       "pPlan",
       "pResearch",
       "pSeed",
@@ -1025,6 +1074,22 @@ function assertRepresentativeContracts(
     pInvestigate: { value: false },
     pResearch: { value: false },
     openQuestionGate: { value: false },
+  });
+  expect(responses.get("materialize_operator_action")).toMatchObject({
+    state: "created",
+    action: { status: "pending" },
+    handoff: { status: "user-action-required" },
+  });
+  expect(responses.get("acknowledge_operator_action")).toMatchObject({
+    state: "acknowledged",
+    action: { status: "acknowledged" },
+  });
+  expect(responses.get("record_operator_action_evidence")).toMatchObject({
+    state: "verified",
+    action: { status: "verified" },
+  });
+  expect(responses.get("complete_operator_action")).toMatchObject({
+    task: { status: "done" },
   });
   expect(responses.get("reopen_item")).toMatchObject({
     item: { id: fixture.ids.terminalItem, status: "planned" },
@@ -1226,7 +1291,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 33 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 37 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);

@@ -196,7 +196,7 @@ export const USAGE = [
   "                                                  exit 0 = allow, non-zero = block.",
   "  predicates  [--cwd <path>]                      emit the derived flow predicates JSON",
   "                                                  ({ predicates: { pInvestigate, pSeed, pPlan,",
-  "                                                  pResearch, pImplement, openQuestionGate,",
+  "                                                  pResearch, pImplement, pOperatorAction, openQuestionGate,",
   "                                                  belowFloor, planBusy, goalDrift } })",
   "                                                  to stdout UNCONDITIONALLY;",
   "                                                  no session/marker, always exit 0.",

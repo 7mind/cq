@@ -763,7 +763,7 @@ export function createLedgerMcpToolSpecifications(
 
   const derivePredicatesTool = tool(
     "derive_predicates",
-    "Return the authoritative /cq:advance verdicts pInvestigate, pSeed, pPlan, pResearch, pImplement, openQuestionGate, belowFloor, planBusy, and goalDrift as {value,items}. The first five are actionable flows; openQuestionGate suppresses gated work; belowFloor, planBusy, and goalDrift are informational.",
+    "Return the authoritative /cq:advance verdicts pInvestigate, pSeed, pPlan, pResearch, pImplement, pOperatorAction, openQuestionGate, belowFloor, planBusy, and goalDrift as {value,items}. The first six are actionable flows; operator actions execute only in the parent; openQuestionGate suppresses gated work; belowFloor, planBusy, and goalDrift are informational.",
     {} as Record<string, never>,
     async () => jsonResult(derivePredicates(store)),
   );
@@ -792,7 +792,7 @@ export function createLedgerMcpToolSpecifications(
 
   const acknowledgeOperatorActionTool = tool(
     "acknowledge_operator_action",
-    "Acknowledge that the user deployed one operator action's exact expected output identity. A mismatch performs no write and returns pending; an exact identity advances pending to acknowledged so the parent may run bounded probes.",
+    "Acknowledge that the user deployed one operator action's exact expected output identity. A mismatch performs no write and returns pending; an exact identity advances pending to acknowledged so the parent may run bounded probes, while a verified replay returns verified.",
     {
       action_id: z.string().regex(/^OA\d+$/),
       output_identity: z.string().min(1),
@@ -812,7 +812,7 @@ export function createLedgerMcpToolSpecifications(
 
   const recordOperatorActionEvidenceTool = tool(
     "record_operator_action_evidence",
-    "Append one bounded parent-run shell probe with command/stdout/stderr/exit/output identity. Undeclared or duplicate commands fail; a nonzero exit or identity mismatch appends the observation and returns the action to pending; all declared successful probes verify it.",
+    "Append one bounded parent-run shell probe with command/stdout/stderr/exit/output identity. Undeclared commands fail; every retry remains append-only. A nonzero exit or identity mismatch returns the action to pending; all declared successful probes verify it.",
     {
       action_id: z.string().regex(/^OA\d+$/),
       command: z.string().min(1),

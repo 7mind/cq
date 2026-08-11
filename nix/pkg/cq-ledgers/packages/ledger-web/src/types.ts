@@ -150,7 +150,7 @@ export interface LedgerClient {
   /**
    * Derive the /cq:advance flow-detection predicates from the current ledger
    * state (derive_predicates MCP tool, G84/D113): the same
-   * `{ pInvestigate, pSeed, pPlan, pResearch, pImplement, openQuestionGate,
+   * `{ pInvestigate, pSeed, pPlan, pResearch, pImplement, pOperatorAction, openQuestionGate,
    * belowFloor, goalDrift }` verdicts @cq/cli reads. The web UI consumes only
    * `goalDrift` today (report-only phase-drift warning).
    */

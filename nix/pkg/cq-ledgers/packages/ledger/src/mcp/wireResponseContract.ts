@@ -244,7 +244,19 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     "`{ ledger: Record<ledgerId, Record<status, { count, items: [{ id, status, summary }] }>> }`.",
   ),
   derive_predicates: purposeBuiltSmall(
-    "Predicate verdicts `{ value, items }` for `pInvestigate`, `pSeed`, `pPlan`, `pResearch`, `pImplement`, `openQuestionGate`, `belowFloor`, `planBusy`, and `goalDrift`.",
+    "Predicate verdicts `{ value, items }` for `pInvestigate`, `pSeed`, `pPlan`, `pResearch`, `pImplement`, `pOperatorAction`, `openQuestionGate`, `belowFloor`, `planBusy`, and `goalDrift`.",
+  ),
+  materialize_operator_action: purposeBuiltSmall(
+    "`{ state: \"created\"|\"existing\", action, handoff }` with deterministic identities.",
+  ),
+  acknowledge_operator_action: purposeBuiltSmall(
+    "`{ state: \"acknowledged\"|\"verified\", action }` or `{ state: \"pending\", reason: \"identity-mismatch\", action }`.",
+  ),
+  record_operator_action_evidence: purposeBuiltSmall(
+    "An append-only `{ state: \"acknowledged\"|\"verified\"|\"pending\", action, reason? }` evidence acknowledgement.",
+  ),
+  complete_operator_action: purposeBuiltSmall(
+    "`{ task }` only after the linked action is verified.",
   ),
   reopen_item: fixedAcknowledgement(
     "item",

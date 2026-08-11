@@ -45,7 +45,7 @@ import {
 } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
-import type { ArchivePointer, FieldValue } from "../../types.js";
+import type { ArchivePointer, FieldValue, Item } from "../../types.js";
 import type { ArchiveContent } from "../LedgerStore.js";
 import type {
   CompactItemDto,
@@ -73,7 +73,6 @@ import type {
   OperatorActionShellEvidence,
   RecordOperatorActionEvidenceResult,
 } from "../../operatorActions.js";
-import type { Item } from "../../types.js";
 
 /**
  * Authenticated MCP initialize metadata used to label the project registry

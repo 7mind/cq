@@ -460,6 +460,7 @@ export const OPERATOR_ACTIONS_SCHEMA: LedgerSchema = {
   },
   fields: {
     actionKey: { type: "string", required: true },
+    summary: { type: "string", required: true },
     taskRef: { type: "id", required: true },
     goalRef: { type: "id", required: true },
     expectedOutputIdentity: { type: "string", required: true },
@@ -471,6 +472,7 @@ export const OPERATOR_ACTIONS_SCHEMA: LedgerSchema = {
     verifiedAt: { type: "timestamp", required: false },
     completion: { type: "string", required: false },
     ledgerRefs: { type: "id[]", required: true },
+    ...WORKSET_OWNERSHIP_SCHEMA_FIELDS,
   },
 };
 

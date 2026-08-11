@@ -19,14 +19,14 @@
  *  4. Else construct the store IN-PROCESS via `createLedgerStore(cwd)`
  *     (exactly like `runInit` — NO MCP server), call
  *     `derivePredicates(store)`, dispose, and: if ANY of
- *     pInvestigate/pSeed/pPlan/pResearch/pImplement is TRUE-and-unblocked →
+ *     pInvestigate/pSeed/pPlan/pResearch/pOperatorAction/pImplement is TRUE-and-unblocked →
  *     BLOCK (block=true), naming the FIRST such predicate in flow order
  *     (investigate → seed → plan → research → implement); else ALLOW.
  *     The informational `belowFloor`, `planBusy`, and `goalDrift` companions
  *     are NEVER part of the block decision.
  *  5. Emit on stdout the NEUTRAL verdict JSON
  *     `{ block, reason, predicates: { pInvestigate, pSeed, pPlan, pResearch,
- *     pImplement, openQuestionGate, belowFloor, planBusy, goalDrift } }`. EXIT CODE:
+ *     pImplement, pOperatorAction, openQuestionGate, belowFloor, planBusy, goalDrift } }`. EXIT CODE:
  *     0 = allow, non-zero = block.
  *
  * The CLI emits NO Claude-Code `{decision}` JSON — translating the neutral
@@ -187,7 +187,7 @@ export async function computeVerdict(args: AdvanceGateArgs): Promise<AdvanceGate
   return {
     block: false,
     reason:
-      "no actionable predicate (P-investigate/P-seed/P-plan/P-research/P-implement all FALSE) — allow",
+      "no actionable predicate (P-investigate/P-seed/P-plan/P-research/P-operator-action/P-implement all FALSE) — allow",
     predicates,
   };
 }

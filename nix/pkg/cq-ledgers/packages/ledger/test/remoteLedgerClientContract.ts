@@ -149,6 +149,7 @@ const PREDICATE_KEYS = [
   "pPlan",
   "pResearch",
   "pImplement",
+  "pOperatorAction",
   "openQuestionGate",
   "belowFloor",
   "planBusy",
@@ -351,6 +352,69 @@ export function runRemoteLedgerClientContract(
               expect(
                 after.milestones.some((g) => g.id === milestone.id),
               ).toBe(false);
+            } finally {
+              await client.close();
+            }
+          } finally {
+            await service.dispose();
+          }
+        },
+        CONTRACT_TIMEOUT_MS,
+      );
+
+      it(
+        "drives the typed operator-action acknowledgement and evidence lifecycle",
+        async () => {
+          const service = await factory.build();
+          try {
+            const client = await connect(service);
+            try {
+              const milestone = await client.createMilestone({ title: "Operator action" });
+              const goal = await client.createItem("goals", milestone.id, {
+                status: "planned",
+                fields: { title: "Deploy", description: "Deploy" },
+              });
+              const task = await client.createItem("tasks", milestone.id, {
+                status: "planned",
+                fields: {
+                  headline: "Deploy exact output",
+                  description:
+                    "CQ-OPERATOR-ACTION v1 remote-deployment. User deploys; parent measures.",
+                  ledgerRefs: [`goals:${goal.id}`],
+                },
+              });
+              const materialized = await client.materializeOperatorAction({
+                taskId: task.id,
+                expectedOutputIdentity: "/nix/store/remote-cq",
+                expectedEvidence: ["cq --version"],
+                author: "remote-parent",
+              });
+              expect(materialized.state).toBe("created");
+              const acknowledged = await client.acknowledgeOperatorAction({
+                actionId: materialized.action.id,
+                outputIdentity: "/nix/store/remote-cq",
+                acknowledgedAt: "2026-08-11T06:00:00.000Z",
+              });
+              expect(acknowledged.state).toBe("acknowledged");
+              const evidence = await client.recordOperatorActionEvidence({
+                actionId: materialized.action.id,
+                evidence: {
+                  command: "cq --version",
+                  stdout: "cq remote",
+                  stderr: "",
+                  exitCode: 0,
+                  outputIdentity: "/nix/store/remote-cq",
+                  observedAt: "2026-08-11T06:01:00.000Z",
+                },
+                author: "remote-parent",
+              });
+              expect(evidence.state).toBe("verified");
+              const completed = await client.completeOperatorAction({
+                actionId: materialized.action.id,
+                completion: "remote output verified",
+                author: "remote-parent",
+              });
+              expect(completed.status).toBe("done");
             } finally {
               await client.close();
             }

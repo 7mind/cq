@@ -108,7 +108,7 @@ async function initializedStore(): Promise<InMemoryLedgerStore> {
 }
 
 describe("ledger response contract matrix", () => {
-  it("covers all 31 tools exactly and classifies every response", () => {
+  it("covers all 35 ledger tools exactly and classifies every response", () => {
     expect(Object.keys(LEDGER_RESPONSE_CONTRACTS)).toEqual([...LEDGER_TOOL_NAMES]);
     expect(LEDGER_RESPONSE_CONTRACTS).toMatchObject({
       enumerate_ledgers: { kind: "purpose-built-small" },

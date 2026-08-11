@@ -77,6 +77,89 @@ const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
     inputSchema: { type: "object", properties: {} },
   },
   {
+    name: "materialize_operator_action",
+    description:
+      "Create or restart-reuse the deterministic operator action and its single user-action-required handoff for a strict CQ-OPERATOR-ACTION v1 task. Returns the typed action and handoff; conflicting expected identity/evidence fails closed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", pattern: "^T\\d+$" },
+        expected_output_identity: { type: "string", minLength: 1 },
+        expected_evidence: {
+          type: "array",
+          minItems: 1,
+          items: { type: "string", minLength: 1 },
+        },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: ["task_id", "expected_output_identity", "expected_evidence", "author"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "acknowledge_operator_action",
+    description:
+      "Acknowledge that the user deployed one operator action's exact expected output identity. A mismatch performs no write and returns pending; an exact identity advances pending to acknowledged so the parent may run bounded probes, while a verified replay returns verified.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action_id: { type: "string", pattern: "^OA\\d+$" },
+        output_identity: { type: "string", minLength: 1 },
+        acknowledged_at: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: ["action_id", "output_identity", "acknowledged_at"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "record_operator_action_evidence",
+    description:
+      "Append one bounded parent-run shell probe with command/stdout/stderr/exit/output identity. Undeclared commands fail; every retry remains append-only. A nonzero exit or identity mismatch returns the action to pending; all declared successful probes verify it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action_id: { type: "string", pattern: "^OA\\d+$" },
+        command: { type: "string", minLength: 1 },
+        stdout: { type: "string" },
+        stderr: { type: "string" },
+        exit_code: { type: "integer" },
+        output_identity: { type: "string", minLength: 1 },
+        observed_at: { type: "string", minLength: 1 },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: [
+        "action_id",
+        "command",
+        "stdout",
+        "stderr",
+        "exit_code",
+        "output_identity",
+        "observed_at",
+        "author",
+      ],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "complete_operator_action",
+    description:
+      "Mark the linked task done only after its operator action reached verified through exact acknowledged identity and all declared shell evidence.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action_id: { type: "string", pattern: "^OA\\d+$" },
+        completion: { type: "string", minLength: 1 },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: ["action_id", "completion", "author"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "worktree_manage",
     description:
       "Prepare or release ONE managed implement-flow worktree. operation=prepare mints or resumes a UUIDv7-named tree; dependency closure is derived from taskId and the ledger. operation=release performs guarded teardown. Returns a typed acknowledgement.",
@@ -209,7 +292,7 @@ const DESCRIPTION_REPLACEMENTS: Readonly<Record<string, string>> = Object.freeze
   create_milestone:
     "Create an open root item in the milestones ledger, allocating its M<n> id and preserving explicit dependency-DAG fields. Returns a fixed non-narrative milestone acknowledgement.",
   derive_predicates:
-    "Return the authoritative /cq:advance verdicts pInvestigate, pSeed, pPlan, pResearch, pImplement, openQuestionGate, belowFloor, planBusy, and goalDrift as {value,items}. The first five are actionable flows; openQuestionGate suppresses gated work; belowFloor, planBusy, and goalDrift are informational.",
+    "Return the authoritative /cq:advance verdicts pInvestigate, pSeed, pPlan, pResearch, pImplement, pOperatorAction, openQuestionGate, belowFloor, planBusy, and goalDrift as {value,items}. The first six are actionable flows; operator actions execute only in the parent; openQuestionGate suppresses gated work; belowFloor, planBusy, and goalDrift are informational.",
   fetch_item: `Fetch one active item from a ledger. projection is required: ${COMPACT_PROJECTION}. Returns {item}.`,
   fetch_ledger: `Fetch a ledger's schema, active milestone groups with resolved milestone metadata, and archive pointers. projection is required: ${COMPACT_PROJECTION}. Without pagination returns grouped {ledger}; offset/limit returns flattened {ledger,items,total,offset,limit,nextOffset}. Follow nextOffset until null.`,
   fetch_milestone: `Fetch a milestones-ledger item plus resolved dependency metadata and per-ledger active reference counts. projection is required: ${COMPACT_PROJECTION}. Returns {milestone,resolved,references}.`,

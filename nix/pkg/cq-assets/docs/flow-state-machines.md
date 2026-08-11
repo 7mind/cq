@@ -94,7 +94,8 @@ counter):
    Research-flow drives each actionable `researches` item over a hypothesis
    tree of candidate answers, then writes the research's
    findings/conclusion/recommendation on a confirmed answer.
-4. **Implement stage** — if P-implement, run `/cq:implement:advance` inline. A
+4. **Implement stage** — if P-implement or P-operator-action, run
+   `/cq:implement:advance` inline. A
    just-`planned` goal with no prior implement pass is bootstrapped and built;
    reviewers may file new `open` defects (file-and-defer).
 5. **Re-check investigate** — because the implement reviewer may have filed new
@@ -102,7 +103,7 @@ counter):
    again the loop made progress and continues.
 
 It **stops** only when progress is genuinely impossible: a full cycle in which no
-stage did work and no new actionable item appeared — i.e. all five predicates
+stage did work and no new actionable item appeared — i.e. all six predicates
 FALSE (everything DRAINED), or every still-actionable item is BLOCKED on an
 unanswered `open` user question. The stop is progress-bounded, never
 effort-bounded.
@@ -487,7 +488,8 @@ One `/cq:investigate:advance` invocation = one round:
 ## Implement flow
 
 The implement flow executes a plan-flow roadmap: it drives `tasks` to completion
-in isolated git worktrees, reviews each adversarially, fixes criticism
+in isolated git worktrees, while strict operator-action tasks remain in the
+parent for user deployment plus parent-run measurement. It reviews code tasks adversarially, fixes criticism
 autonomously, and merges back in dependency order. It is driven by `tasks` ledger
 items, bootstrapped by `/cq:implement:start` (scope resolution + DAG validation)
 and advanced by `/cq:implement:advance`. The loop lives in the command; it drives
@@ -500,16 +502,17 @@ The `tasks` schema statuses are `planned`, `wip`, `done`, `blocked`,
 `abandoned`; `done` and `abandoned` are terminal.
 
 - **planned** — the task exists in the DAG and is awaiting pickup (the
-  plan-flow's output).
+  plan-flow's output), or a strict operator action awaits acknowledgement or
+  verified evidence without acquiring a worker.
 - **wip** — a worker is implementing the task in its worktree
   (`implement/<taskId>`).
 - **blocked** — the task is parked on an `open` question: either the reviewer
   returned `questions`, or the autonomous criticism loop hit an ill-loop
   bailout, or a merge-back conflict the resolver could not fix. A reversible
   hold (its worktree is left intact).
-- **done** — the task's worker passed, the reconciled reviewer verdict was
-  `approve`, `bun run check` was green, and the branch merged back into the
-  integration target. Terminal.
+- **done** — either the task's worker passed, review/check/merge succeeded, or
+  its operator action reached `verified` after exact deployment identity and
+  all declared probes. Terminal.
 - **abandoned** — the task was dropped. Terminal.
 
 ### Transitions (labelled)
@@ -520,6 +523,7 @@ The `tasks` schema statuses are `planned`, `wip`, `done`, `blocked`,
 | `wip → blocked` | the reviewer returned non-empty `questions`, or the criticism loop bailed as an ill loop, or a merge conflict could not be resolved — an `open` question is filed and the task parked. |
 | `blocked → planned` | resume bookkeeping: the task's blocking `questions` are now all `answered`, so it is flipped back and re-dispatched with the answer folded in. |
 | `wip → done` | the success gate passed (green check + reconciled `approve`) AND the branch rebased and merged back cleanly. Sets `resultCommit`/`completion`. |
+| `planned → done` | a strict `CQ-OPERATOR-ACTION v1` task's user deployment identity matched and every parent-run bounded probe produced verified append-only evidence. |
 | `planned → blocked` / `wip → blocked` | reversible hold (see above). |
 | `→ done` / `→ abandoned` | terminal from any non-terminal state (`done` via the success gate; `abandoned` if dropped). |
 
@@ -535,28 +539,33 @@ The `tasks` schema statuses are `planned`, `wip`, `done`, `blocked`,
    all its tasks terminal; free-text/archived/absent refs satisfy by default;
    `abandoned`/`wontfix` never satisfy), its milestone's `dependsOn`
    satisfied, and no linked `open` question.
-2. **Dispatch workers** — up to N = 8 concurrently; set each `planned → wip` and
+2. **Run operator gates** — split strict-envelope tasks into
+   `pOperatorAction`, materialize/reuse one `operatorActions` item and handoff,
+   park pending identity, then run bounded probes only after the user's exact
+   acknowledgement. Failed evidence returns to pending; verified evidence alone
+   marks the task done. No worker/worktree/review/merge arm can consume one.
+3. **Dispatch workers** — up to N = 8 concurrently; set each ordinary `planned → wip` and
    dispatch an `implement-worker` into an isolated worktree.
-3. **Review** — run the reviewer panel (single native `implement-reviewer`, or a
+4. **Review** — run the reviewer panel (single native `implement-reviewer`, or a
    configured panel reconciled strictest-wins + union) against the worktree
    diff. The reconciled verdict is `approve` ONLY when ALL surviving reviewers
    approve AND `bun run check` is green; any `disapprove` makes it `disapprove`.
    File the reviewer's `defects[]` bucket (file-and-defer — see handoffs).
-4. **Autonomous criticism loop** — on `disapprove` with non-empty `criticism`
+5. **Autonomous criticism loop** — on `disapprove` with non-empty `criticism`
    and empty `questions`, re-dispatch the same worker in the same worktree with
    the criticism, then re-review. No fixed cap; stops (→ bailout) on an ILL LOOP
    (no file changes, criticism not shrinking, or the same check failure
    recurring).
-5. **Register questions** — on reviewer `questions` or an ill-loop bailout, file
+6. **Register questions** — on reviewer `questions` or an ill-loop bailout, file
    an `open` question and set the task `blocked` (`wip → blocked`).
-6. **Success gate** — a task succeeds only with green check AND reconciled
+7. **Success gate** — a code task succeeds only with green check AND reconciled
    `approve`; only succeeded tasks merge.
-7. **Merge-back** — sequential, in DAG order, rebase-before-merge. On a clean
+8. **Merge-back** — sequential, in DAG order, rebase-before-merge. On a clean
    rebase, fast-forward merge and set the task `done`. On conflict, dispatch the
    `implement-conflict-resolver`; on its `fail`, treat as a question bailout
    (park `blocked`). When a merged task fixes a defect, close that defect to
    `resolved` once ALL its fix tasks are `done` (orchestrator-owned closure).
-8. **Loop** — re-derive the ready-set; continue until empty.
+9. **Loop** — re-derive the ready-set; continue until empty.
 
 ### The `reviews` lifecycle (one per task)
 
@@ -608,6 +617,7 @@ For grounding, the canonical status lifecycles (from
 | `reviews` | **go-ahead** / **revise** (both terminal — immutable per-round record) | plan, implement |
 | `decisions` | proposed → **locked** / **superseded** | plan (the `locked` plan-approval decision gating `planned`) |
 | `handoffs` | **drained** / **answers-required** / **user-action-required** / **mixed** / **illness-detected** (all terminal) | every flow's stop record |
+| `operatorActions` | pending → acknowledged → **verified** (failed evidence returns acknowledged → pending) | implement parent only; user deploys/acknowledges, parent measures |
 | `milestones` | open → **done** (postponed/blocked ↔ open) | all (auto-close+archive sweep) |
 
 Each flow's stop is **progress-bounded, never effort-bounded**: it stops only

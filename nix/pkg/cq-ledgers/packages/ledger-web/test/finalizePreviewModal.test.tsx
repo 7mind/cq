@@ -118,6 +118,7 @@ function emptyPredicates(): DerivedPredicates {
     pPlan: v(),
     pResearch: v(),
     pImplement: v(),
+    pOperatorAction: v(),
     openQuestionGate: v(),
     belowFloor: v(),
     planBusy: v(),

@@ -1,10 +1,11 @@
 import {
   GOALS_LEDGER,
   HANDOFFS_LEDGER,
+  isIsoTimestamp,
   OPERATOR_ACTIONS_LEDGER,
   TASKS_LEDGER,
 } from "./constants.js";
-import type { LedgerStore } from "./store/LedgerStore.js";
+import type { LedgerStore, UpdateItemPatch } from "./store/LedgerStore.js";
 import type { Item } from "./types.js";
 import { DuplicateIdError, LedgerError, SchemaValidationError } from "./types.js";
 
@@ -12,9 +13,11 @@ export const OPERATOR_ACTION_ENVELOPE_PREFIX = "CQ-OPERATOR-ACTION" as const;
 export const OPERATOR_ACTION_ENVELOPE_VERSION = "v1" as const;
 
 const OPERATOR_ACTION_ENVELOPE_RE =
-  /^CQ-OPERATOR-ACTION v1 ([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\.(?:\s|$)/;
+  /^CQ-OPERATOR-ACTION v1 ([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)\.(?:\s|$)/;
 const MAX_COMMAND_BYTES = 4096;
 const MAX_STREAM_BYTES = 65_536;
+const authorizedCompletionPatches = new WeakSet<object>();
+const authorizedActionMutations = new WeakSet<object>();
 
 export interface OperatorActionDirective {
   readonly version: "v1";
@@ -44,6 +47,7 @@ export interface AcknowledgeOperatorActionInput {
 
 export type AcknowledgeOperatorActionResult =
   | { readonly state: "acknowledged"; readonly action: Item }
+  | { readonly state: "verified"; readonly action: Item }
   | { readonly state: "pending"; readonly reason: "identity-mismatch"; readonly action: Item };
 
 export interface OperatorActionShellEvidence {
@@ -73,6 +77,16 @@ export class OperatorActionConflictError extends LedgerError {
   }
 }
 
+/** Internal cross-adapter completion authority consumed by store/core.ts. */
+export function isAuthorizedOperatorActionCompletionPatch(patch: object): boolean {
+  return authorizedCompletionPatches.has(patch);
+}
+
+/** Internal authority for canonical operatorActions creates/updates. */
+export function isAuthorizedOperatorActionMutation(mutation: object): boolean {
+  return authorizedActionMutations.has(mutation);
+}
+
 export function parseOperatorActionEnvelope(description: string): OperatorActionDirective | null {
   const occurrences = description.split(OPERATOR_ACTION_ENVELOPE_PREFIX).length - 1;
   if (occurrences === 0) return null;
@@ -82,7 +96,7 @@ export function parseOperatorActionEnvelope(description: string): OperatorAction
   const match = OPERATOR_ACTION_ENVELOPE_RE.exec(description);
   if (match === null || match[1] === undefined) {
     throw new OperatorActionEnvelopeError(
-      "expected `CQ-OPERATOR-ACTION v1 <lower-kebab-key>.` at description start",
+      "expected `CQ-OPERATOR-ACTION v1 <action-key>.` at description start",
     );
   }
   return { version: OPERATOR_ACTION_ENVELOPE_VERSION, actionKey: match[1] };
@@ -100,6 +114,9 @@ export async function materializeOperatorAction(
   assertNonEmpty(input.expectedOutputIdentity, "expectedOutputIdentity");
   assertExpectedEvidence(input.expectedEvidence);
   const task = store.fetchItem(TASKS_LEDGER, input.taskId);
+  if (task.status !== "planned") {
+    throw new LedgerError(`Operator-action task ${task.id} must remain planned until verification`);
+  }
   const directive = operatorActionDirectiveForTask(task);
   if (directive === null) {
     throw new OperatorActionEnvelopeError(`task ${task.id} has no envelope`);
@@ -115,6 +132,7 @@ export async function materializeOperatorAction(
   const actionId = actionIdForTask(task.id);
   const expectedFields = {
     actionKey: directive.actionKey,
+    summary: `Operator action ${directive.actionKey}`,
     taskRef: `${TASKS_LEDGER}:${task.id}`,
     goalRef: goalRefs[0]!,
     expectedOutputIdentity: input.expectedOutputIdentity,
@@ -125,13 +143,15 @@ export async function materializeOperatorAction(
   let action: Item;
   let state: MaterializedOperatorAction["state"] = "created";
   try {
-    action = await store.createItem(OPERATOR_ACTIONS_LEDGER, task.milestoneId, {
+    const init = {
       id: actionId,
       status: "pending",
       fields: expectedFields,
       ...(input.author === undefined ? {} : { author: input.author }),
       ...(input.session === undefined ? {} : { session: input.session }),
-    });
+    } as const;
+    authorizedActionMutations.add(init);
+    action = await store.createItem(OPERATOR_ACTIONS_LEDGER, task.milestoneId, init);
   } catch (error) {
     if (!(error instanceof DuplicateIdError)) throw error;
     state = "existing";
@@ -179,12 +199,12 @@ export async function acknowledgeOperatorAction(
   input: AcknowledgeOperatorActionInput,
 ): Promise<AcknowledgeOperatorActionResult> {
   const action = store.fetchItem(OPERATOR_ACTIONS_LEDGER, input.actionId);
-  if (action.status === "verified") return { state: "acknowledged", action };
+  if (action.status === "verified") return { state: "verified", action };
   const expectedIdentity = stringField(action, "expectedOutputIdentity");
   if (input.outputIdentity !== expectedIdentity) {
     return { state: "pending", reason: "identity-mismatch", action };
   }
-  const updated = await store.updateItem(OPERATOR_ACTIONS_LEDGER, action.id, {
+  const patch: UpdateItemPatch = {
     status: action.status === "pending" ? "acknowledged" : action.status,
     fields: {
       acknowledgedOutputIdentity: input.outputIdentity,
@@ -192,7 +212,9 @@ export async function acknowledgeOperatorAction(
     },
     author: "user",
     ...(input.session === undefined ? {} : { session: input.session }),
-  });
+  };
+  authorizedActionMutations.add(patch);
+  const updated = await store.updateItem(OPERATOR_ACTIONS_LEDGER, action.id, patch);
   return { state: "acknowledged", action: updated };
 }
 
@@ -218,19 +240,27 @@ export async function recordOperatorActionEvidence(
     evidence.outputIdentity === stringField(action, "expectedOutputIdentity") &&
     evidence.outputIdentity === stringField(action, "acknowledgedOutputIdentity");
   if (evidence.exitCode !== 0 || !identityMatches) {
-    const updated = await store.updateItem(OPERATOR_ACTIONS_LEDGER, action.id, {
+    const patch: UpdateItemPatch = {
       status: "pending",
       fields: { evidence: [...prior, encoded], lastFailure: encoded },
       author: provenance.author,
       ...(provenance.session === undefined ? {} : { session: provenance.session }),
-    });
+    };
+    authorizedActionMutations.add(patch);
+    const updated = await store.updateItem(OPERATOR_ACTIONS_LEDGER, action.id, patch);
     return { state: "pending", reason: "probe-failed", action: updated };
   }
   const evidenceEntries = [...decoded, evidence];
+  const expectedIdentity = stringField(action, "expectedOutputIdentity");
   const complete = expectedCommands.every((command) =>
-    evidenceEntries.some((entry) => entry.command === command && entry.exitCode === 0),
+    evidenceEntries.some(
+      (entry) =>
+        entry.command === command &&
+        entry.exitCode === 0 &&
+        entry.outputIdentity === expectedIdentity,
+    ),
   );
-  const updated = await store.updateItem(OPERATOR_ACTIONS_LEDGER, action.id, {
+  const patch: UpdateItemPatch = {
     status: complete ? "verified" : "acknowledged",
     fields: {
       evidence: [...prior, encoded],
@@ -238,7 +268,9 @@ export async function recordOperatorActionEvidence(
     },
     author: provenance.author,
     ...(provenance.session === undefined ? {} : { session: provenance.session }),
-  });
+  };
+  authorizedActionMutations.add(patch);
+  const updated = await store.updateItem(OPERATOR_ACTIONS_LEDGER, action.id, patch);
   return { state: complete ? "verified" : "acknowledged", action: updated };
 }
 
@@ -248,6 +280,7 @@ export async function completeOperatorActionTask(
   completion: string,
   provenance: { readonly author: string; readonly session?: string },
 ): Promise<Item> {
+  assertNonEmpty(completion, "completion");
   const action = store.fetchItem(OPERATOR_ACTIONS_LEDGER, actionId);
   if (action.status !== "verified") {
     throw new LedgerError(`Operator action ${action.id} is not verified`);
@@ -257,12 +290,21 @@ export async function completeOperatorActionTask(
     throw new LedgerError(`Operator action ${action.id} has an invalid taskRef`);
   }
   const taskId = taskRef.slice(TASKS_LEDGER.length + 1);
-  return await store.updateItem(TASKS_LEDGER, taskId, {
+  const actionPatch: UpdateItemPatch = {
+    fields: { completion },
+    author: provenance.author,
+    ...(provenance.session === undefined ? {} : { session: provenance.session }),
+  };
+  authorizedActionMutations.add(actionPatch);
+  await store.updateItem(OPERATOR_ACTIONS_LEDGER, action.id, actionPatch);
+  const taskPatch: UpdateItemPatch = {
     status: "done",
     fields: { completion },
     author: provenance.author,
     ...(provenance.session === undefined ? {} : { session: provenance.session }),
-  });
+  };
+  authorizedCompletionPatches.add(taskPatch);
+  return await store.updateItem(TASKS_LEDGER, taskId, taskPatch);
 }
 
 function actionIdForTask(taskId: string): string {
@@ -313,6 +355,9 @@ function assertEvidenceBounds(evidence: OperatorActionShellEvidence): void {
   assertNonEmpty(evidence.outputIdentity, "outputIdentity");
   if (!Number.isSafeInteger(evidence.exitCode)) {
     throw new SchemaValidationError("exitCode must be a safe integer");
+  }
+  if (!isIsoTimestamp(evidence.observedAt)) {
+    throw new SchemaValidationError("observedAt must be an ISO timestamp");
   }
   if (byteLength(evidence.command) > MAX_COMMAND_BYTES) {
     throw new SchemaValidationError("command exceeds 4096 bytes");
