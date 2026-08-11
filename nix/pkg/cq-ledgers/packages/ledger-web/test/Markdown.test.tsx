@@ -123,7 +123,7 @@ describe("ledger response-contract Markdown", () => {
     expect(
       [...container.querySelectorAll("thead th")].map((cell) => cell.textContent),
     ).toEqual(["Tool", "Category", "Authoritative response"]);
-    const rows = [...container.querySelectorAll("tbody tr")];
+    const rows = [...container.querySelectorAll<HTMLTableRowElement>("tbody tr")];
     expect(rows).toHaveLength(LEDGER_TOOL_NAMES.length);
     expect(rows.map((row) => row.cells.length)).toEqual(LEDGER_TOOL_NAMES.map(() => 3));
     expect(rows.map((row) => row.cells[0]?.textContent)).toEqual([...LEDGER_TOOL_NAMES]);
