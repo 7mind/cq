@@ -87,7 +87,7 @@ function incompatible(reason: NativeQualificationRefusalReason) {
   };
 }
 
-describe("T2044 Codex native composed qualification", () => {
+describe("T2044 Codex native composed qualification [Behavioral-Active, Blackbox-Group]", () => {
   test("rejects caller-authored provider observations without runner authentication", () => {
     const qualification = verdict({
       cwd,

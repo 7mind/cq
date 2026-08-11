@@ -1,5 +1,6 @@
 /** T2042 — packaged cq-codex-role broker/confinement acceptance probe. */
 import { afterAll, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -298,7 +299,7 @@ describe("packaged cq-codex-role Git broker", () => {
     expect(workerFixture).toContain('"update-ref"');
   });
 
-  installedGateTest("authenticates installed worker and resolver gates before codex:native registration", async () => {
+  installedGateTest("authenticates installed worker and resolver gates before codex:native registration [Effectual-GoodCommunication, Blackbox-Group]", async () => {
     if (INSTALLED_ROLE === undefined) throw new Error("installed worker gate was not selected");
     const repositoryRoot = await mkdtemp(path.join(tmpdir(), "t2042-packaged-role-"));
     roots.push(repositoryRoot);
@@ -835,6 +836,9 @@ describe("packaged cq-codex-role Git broker", () => {
       }),
     ];
     const installedIdentity = retryExecution.installedIdentity;
+    const expectedInstalledDigest = createHash("sha256")
+      .update(await readFile(INSTALLED_ROLE))
+      .digest("hex");
     expect({
       fabricatedConsumedRejected: rejected(() =>
         authenticateCodexProviderGateObservation({
@@ -870,7 +874,7 @@ describe("packaged cq-codex-role Git broker", () => {
       exactInstalledIdentity:
         installedIdentity?.storePath === path.dirname(path.dirname(INSTALLED_ROLE)) &&
         installedIdentity.executablePath === retryExecution.executable &&
-        /^[0-9a-f]{64}$/.test(installedIdentity.executableDigest),
+        installedIdentity.executableDigest === expectedInstalledDigest,
     }).toEqual({
       fabricatedConsumedRejected: true,
       fabricatedReleaseRejected: true,
