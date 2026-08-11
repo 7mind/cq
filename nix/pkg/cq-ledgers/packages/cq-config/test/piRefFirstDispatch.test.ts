@@ -21,7 +21,7 @@
  * outside this composite project's rootDir fails `tsc -b` (TS6059/TS6307).
  */
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, mock } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -141,6 +141,17 @@ function sha256Hex(value: string): string {
 }
 
 async function loadExtension(): Promise<ExtensionModule> {
+  mock.module("typebox", () => {
+    const identity = <T>(value: T): T => value;
+    return {
+      Type: {
+        Literal: identity,
+        Object: identity,
+        Optional: identity,
+        String: identity,
+      },
+    };
+  });
   return (await import(EXTENSION_FILE)) as ExtensionModule;
 }
 

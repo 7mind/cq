@@ -122,7 +122,9 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // adds its response/description contract to full-parent profiles.
     // 1060 -> 1177: the four operator-action lifecycle tools add their closed
     // schemas and purpose-built response contracts to full-parent profiles.
-    maximumRemainingG93AttributableTokens: 1177,
+    // 1177 -> 1188: revision fencing adds revise_operator_action and the
+    // expected_revision schemas while retaining concise response contracts.
+    maximumRemainingG93AttributableTokens: 1188,
     corpusMedianResponseSavingTokens: 1461,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,

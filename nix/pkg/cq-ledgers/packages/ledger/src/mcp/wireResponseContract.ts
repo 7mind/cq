@@ -247,19 +247,19 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     "Predicate verdicts `{ value, items }` for `pInvestigate`, `pSeed`, `pPlan`, `pResearch`, `pImplement`, `pOperatorAction`, `openQuestionGate`, `belowFloor`, `planBusy`, and `goalDrift`.",
   ),
   materialize_operator_action: purposeBuiltSmall(
-    "`{ state: \"created\"|\"existing\", action, handoff }` with deterministic identities.",
+    "`{ state: \"created\"|\"existing\", action, handoff }` with revision 1.",
   ),
   acknowledge_operator_action: purposeBuiltSmall(
-    "`{ state: \"acknowledged\"|\"verified\", action }` or `{ state: \"pending\", reason: \"identity-mismatch\", action }`.",
+    "`{ state: \"acknowledged\"|\"verified\", action }` or identity-mismatch pending, revision-fenced.",
   ),
   record_operator_action_evidence: purposeBuiltSmall(
-    "An append-only `{ state: \"acknowledged\"|\"verified\"|\"pending\", action, reason? }` evidence acknowledgement.",
+    "Revision-bound append-only `{ state: \"acknowledged\"|\"verified\"|\"pending\", action, reason? }`.",
   ),
   revise_operator_action: purposeBuiltSmall(
-    "`{ action, task, handoff }` after one exact pre-evidence manifest revision.",
+    "`{ action, task, handoff }`; exact revision, prior snapshots.",
   ),
   complete_operator_action: purposeBuiltSmall(
-    "`{ task }` only after the linked action is verified.",
+    "`{ task }` after the exact verified revision.",
   ),
   reopen_item: fixedAcknowledgement(
     "item",
