@@ -150,7 +150,7 @@ merge, push, deploy, switch, or implicit acknowledgement is forbidden.
 5. Only a `verified` action authorizes
    `ledger::complete_operator_action({ action_id, completion, author, session })`.
    This typed transition marks the linked task `done`. Re-derive predicates;
-   never use generic `update_item` or `reopen_item` to bypass verification.
+   never use generic `update_item` or another resurrection operation to bypass verification.
 
 ## 3. Dispatch workers
 
