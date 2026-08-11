@@ -92,7 +92,7 @@ export interface ResolveDependencyResultCommitsRequest {
   readonly taskSnapshots: readonly DependencyTaskSnapshot[];
 }
 
-function canonicalTaskRef(raw: string): string | null {
+export function canonicalTaskDependencyRef(raw: string): string | null {
   try {
     const canonical = canonicalizeRef(raw, TASK_REF_REGISTRY);
     const parsed = parseRef(canonical);
@@ -114,12 +114,12 @@ export function resolveDependencyResultCommits(
 ): DependencyResultCommitResolution {
   const tasksByRef = new Map<string, DependencyTaskSnapshot>();
   for (const task of request.taskSnapshots) {
-    const taskRef = canonicalTaskRef(task.taskId);
+    const taskRef = canonicalTaskDependencyRef(task.taskId);
     if (taskRef === null) return invalidDependencyRef(task.taskId);
     tasksByRef.set(taskRef, task);
   }
 
-  const rootTaskRef = canonicalTaskRef(request.rootTaskRef);
+  const rootTaskRef = canonicalTaskDependencyRef(request.rootTaskRef);
   if (rootTaskRef === null) return invalidDependencyRef(request.rootTaskRef);
   if (!tasksByRef.has(rootTaskRef)) {
     return { status: "unresolvable", reason: "dependency-not-found", dependencyRef: rootTaskRef };
@@ -173,7 +173,7 @@ export function resolveDependencyResultCommits(
     stack.push(taskRef);
     const dependencyRefs = new Set<string>();
     for (const rawDependencyRef of [...task.dependsOn].sort()) {
-      const dependencyRef = canonicalTaskRef(rawDependencyRef);
+      const dependencyRef = canonicalTaskDependencyRef(rawDependencyRef);
       if (dependencyRef === null) return invalidDependencyRef(rawDependencyRef);
       dependencyRefs.add(dependencyRef);
     }

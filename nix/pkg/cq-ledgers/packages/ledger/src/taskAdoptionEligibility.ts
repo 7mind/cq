@@ -1,6 +1,7 @@
 import type { Item } from "./types.js";
 import { LedgerError } from "./types.js";
 import {
+  canonicalTaskDependencyRef,
   resolveDependencyResultCommits,
   type DependencyTaskSnapshot,
   type UnresolvableDependencyResultCommits,
@@ -117,8 +118,9 @@ function assertReachableTaskIdentitiesUnambiguous(
     if (snapshot === undefined) throw new LedgerError(`task ${taskId} has no snapshot`);
 
     for (const dependencyRef of snapshot.dependsOn) {
-      if (!dependencyRef.startsWith(TASK_REF_PREFIX)) continue;
-      const dependencyTaskId = dependencyRef.slice(TASK_REF_PREFIX.length);
+      const canonicalDependencyRef = canonicalTaskDependencyRef(dependencyRef);
+      if (canonicalDependencyRef === null) continue;
+      const dependencyTaskId = taskIdFromRef(canonicalDependencyRef);
       if (dependencyTaskId !== "") visit(dependencyTaskId);
     }
   }
