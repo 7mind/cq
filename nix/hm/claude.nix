@@ -103,8 +103,7 @@ let
 in
 {
   options.smind.hm.dev.llm.openaiCodexPlugin.enable =
-    lib.mkEnableOption "the OpenAI Codex plugin for Claude Code"
-    // { default = true; };
+    lib.mkEnableOption "the OpenAI Codex plugin for Claude Code" // { default = false; };
 
   config = lib.mkIf cfg.enable {
     programs.claude-code = sharedAgentWiring // {
