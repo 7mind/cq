@@ -19,6 +19,7 @@ import {
   recordOperatorActionEvidence,
   reviseOperatorAction,
   type LedgerStore,
+  type Item,
   type PlanLifecycleStore,
   type PlanDraftManifest,
 } from "../src/index.js";
@@ -27,6 +28,18 @@ import { atomicWrite as productionAtomicWrite } from "../src/store/fsAtomic.js";
 const NOW = "2026-08-11T06:00:00.000Z";
 const IDENTITY = "/nix/store/exact-cq";
 const dirs: string[] = [];
+
+function mutableStoredItem(store: InMemoryLedgerStore, ledgerId: string, itemId: string): Item {
+  const state = store as unknown as {
+    ledgers: Map<string, { milestones: Array<{ items: Item[] }> }>;
+  };
+  const item = state.ledgers
+    .get(ledgerId)
+    ?.milestones.flatMap(({ items }) => items)
+    .find(({ id }) => id === itemId);
+  if (item === undefined) throw new Error(`stored item ${ledgerId}:${itemId} is unavailable`);
+  return item;
+}
 
 test("accepts the goal-prefixed operator action key used by deployment tasks", () => {
   expect(
@@ -545,6 +558,20 @@ for (const failAt of [1, 2, 3, 4, 5]) {
       outputIdentity: "/nix/store/revision-1",
       acknowledgedAt: NOW,
     });
+    await recordOperatorActionEvidence(
+      store,
+      created.action.id,
+      1,
+      {
+        command: "probe-v1",
+        stdout: "",
+        stderr: "failed before restart",
+        exitCode: 1,
+        outputIdentity: "/nix/store/revision-1",
+        observedAt: NOW,
+      },
+      { author: "parent" },
+    );
     armed = true;
     await expect(
       reviseOperatorAction(store, {
@@ -568,7 +595,15 @@ for (const failAt of [1, 2, 3, 4, 5]) {
       };
       if (failAt === 1) {
         expect(triple).toMatchObject({
-          action: { status: "acknowledged", fields: { revision: "1" } },
+          action: {
+            status: "pending",
+            fields: {
+              revision: "1",
+              acknowledgementEpoch: "1",
+              evidence: [expect.any(String)],
+              lastFailure: expect.any(String),
+            },
+          },
           task: { status: "planned" },
           handoff: { status: "user-action-required" },
         });
@@ -589,11 +624,14 @@ for (const failAt of [1, 2, 3, 4, 5]) {
           (triple.action.fields["revisionHistory"] as string[])[0]!,
         ) as { action: { status: string; fields: Record<string, unknown> } };
         expect(historical.action).toMatchObject({
-          status: "acknowledged",
+          status: "pending",
           fields: {
             revision: "1",
             expectedOutputIdentity: "/nix/store/revision-1",
             acknowledgedOutputIdentity: "/nix/store/revision-1",
+            acknowledgementEpoch: "1",
+            evidence: [expect.any(String)],
+            lastFailure: expect.any(String),
           },
         });
       }
@@ -958,6 +996,150 @@ test("OA2054 failed evidence epoch can be revised with a complete audit and fres
     ).toMatchObject({ state: "verified", action: { status: "verified" } });
   } finally {
     await store.dispose();
+  }
+});
+
+test("failed-evidence revision rejects malformed, stale, inconsistent, and unsafe stored state", async () => {
+  const cases: ReadonlyArray<{
+    name: string;
+    mutate(action: Item, task: Item, handoff: Item): void;
+  }> = [
+    {
+      name: "malformed evidence",
+      mutate(action) {
+        (action.fields as Record<string, unknown>)["evidence"] = [1];
+      },
+    },
+    {
+      name: "inconsistent last failure",
+      mutate(action) {
+        action.fields["lastFailure"] = (action.fields["evidence"] as string[])[0]!;
+      },
+    },
+    {
+      name: "stale revision",
+      mutate(action) {
+        const evidence = action.fields["evidence"] as string[];
+        const terminal = JSON.parse(evidence[evidence.length - 1]!) as Record<string, unknown>;
+        terminal["revision"] = 2;
+        evidence[evidence.length - 1] = JSON.stringify(terminal);
+        action.fields["lastFailure"] = evidence[evidence.length - 1]!;
+      },
+    },
+    {
+      name: "stale acknowledgement epoch",
+      mutate(action) {
+        action.fields["acknowledgementEpoch"] = "2";
+      },
+    },
+    {
+      name: "successful terminal evidence",
+      mutate(action) {
+        const evidence = action.fields["evidence"] as string[];
+        const terminal = JSON.parse(evidence[evidence.length - 1]!) as Record<string, unknown>;
+        terminal["exitCode"] = 0;
+        const encoded = JSON.stringify(terminal);
+        evidence[evidence.length - 1] = encoded;
+        action.fields["lastFailure"] = encoded;
+      },
+    },
+    {
+      name: "unsafe task",
+      mutate(_action, task) {
+        task.status = "wip";
+      },
+    },
+    {
+      name: "unsafe handoff",
+      mutate(_action, _task, handoff) {
+        handoff.status = "drained";
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    const store = new InMemoryLedgerStore({ now: () => NOW });
+    await store.init();
+    try {
+      const milestone = await store.createMilestone({ title: testCase.name });
+      const goal = await store.createItem("goals", milestone.id, {
+        status: "planned",
+        fields: { title: "goal", description: "goal" },
+      });
+      const task = await store.createItem("tasks", milestone.id, {
+        status: "planned",
+        fields: {
+          headline: "deploy",
+          description: `CQ-OPERATOR-ACTION v1 ${testCase.name.replaceAll(" ", "-")}. User deploys.`,
+          ledgerRefs: [`goals:${goal.id}`],
+        },
+      });
+      const created = await materializeOperatorAction(store, {
+        taskId: task.id,
+        expectedOutputIdentity: IDENTITY,
+        expectedEvidence: ["probe-a", "probe-b"],
+      });
+      await acknowledgeOperatorAction(store, {
+        actionId: created.action.id,
+        expectedRevision: 1,
+        outputIdentity: IDENTITY,
+        acknowledgedAt: NOW,
+      });
+      await recordOperatorActionEvidence(
+        store,
+        created.action.id,
+        1,
+        {
+          command: "probe-a",
+          stdout: "ok",
+          stderr: "",
+          exitCode: 0,
+          outputIdentity: IDENTITY,
+          observedAt: NOW,
+        },
+        { author: "parent" },
+      );
+      await recordOperatorActionEvidence(
+        store,
+        created.action.id,
+        1,
+        {
+          command: "probe-b",
+          stdout: "",
+          stderr: "failed",
+          exitCode: 1,
+          outputIdentity: IDENTITY,
+          observedAt: NOW,
+        },
+        { author: "parent" },
+      );
+      const action = mutableStoredItem(store, "operatorActions", created.action.id);
+      const storedTask = mutableStoredItem(store, "tasks", task.id);
+      const handoff = mutableStoredItem(store, "handoffs", created.handoff.id);
+      testCase.mutate(action, storedTask, handoff);
+      const before = JSON.stringify({ action, task: storedTask, handoff });
+      await expect(
+        reviseOperatorAction(store, {
+          actionId: created.action.id,
+          expectedRevision: 1,
+          expectedOutputIdentity: "/nix/store/rejected",
+          expectedEvidence: ["probe-v2"],
+          revisedAt: NOW,
+          author: "parent",
+        }),
+        testCase.name,
+      ).rejects.toThrow();
+      expect(
+        JSON.stringify({
+          action: mutableStoredItem(store, "operatorActions", created.action.id),
+          task: mutableStoredItem(store, "tasks", task.id),
+          handoff: mutableStoredItem(store, "handoffs", created.handoff.id),
+        }),
+        testCase.name,
+      ).toBe(before);
+    } finally {
+      await store.dispose();
+    }
   }
 });
 

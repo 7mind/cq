@@ -532,6 +532,126 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
         );
 
         it(
+          "revises a terminal failed current evidence epoch with coherent action/task/handoff state",
+          async () => {
+              const [first] = operatorActionPeers(operatorActionFixture);
+              const created = await seedOperatorAction(first, "pg-failed-epoch", ["probe-v1"]);
+              await acknowledgeOperatorAction(first, {
+                actionId: created.action.id,
+                expectedRevision: 1,
+                outputIdentity: "/nix/store/pg-failed-epoch",
+                acknowledgedAt: "2026-08-11T12:09:10.000Z",
+              });
+              await recordOperatorActionEvidence(
+                first,
+                created.action.id,
+                1,
+                {
+                  command: "probe-v1",
+                  stdout: "",
+                  stderr: "failed",
+                  exitCode: 1,
+                  outputIdentity: "/nix/store/pg-failed-epoch",
+                  observedAt: "2026-08-11T12:09:20.000Z",
+                },
+                { author: "postgres-evidence" },
+              );
+              const revised = await reviseOperatorAction(first, {
+                actionId: created.action.id,
+                expectedRevision: 1,
+                expectedOutputIdentity: "/nix/store/pg-failed-epoch-v2",
+                expectedEvidence: ["probe-v2"],
+                revisedAt: "2026-08-11T12:09:30.000Z",
+                author: "postgres-reviser",
+              });
+              expect(revised).toMatchObject({
+                action: { status: "pending", fields: { revision: "2" } },
+                task: { status: "planned" },
+                handoff: { status: "user-action-required" },
+              });
+              const history = JSON.parse(
+                (revised.action.fields["revisionHistory"] as string[])[0]!,
+              ) as { action: { status: string; fields: Record<string, unknown> } };
+              expect(history.action).toMatchObject({
+                status: "pending",
+                fields: {
+                  revision: "1",
+                  acknowledgementEpoch: "1",
+                  evidence: [expect.any(String)],
+                  lastFailure: expect.any(String),
+                },
+              });
+          },
+          timeout,
+        );
+
+        it(
+          "serializes concurrent failed evidence and revision without mixed action/task/handoff state",
+          async () => {
+              const [first, second] = operatorActionPeers(operatorActionFixture);
+              const created = await seedOperatorAction(first, "pg-failed-evidence-race", [
+                "probe-v1",
+              ]);
+              await acknowledgeOperatorAction(first, {
+                actionId: created.action.id,
+                expectedRevision: 1,
+                outputIdentity: "/nix/store/pg-failed-evidence-race",
+                acknowledgedAt: "2026-08-11T12:09:40.000Z",
+              });
+              const [evidence, revision] = await Promise.allSettled([
+                recordOperatorActionEvidence(
+                  second,
+                  created.action.id,
+                  1,
+                  {
+                    command: "probe-v1",
+                    stdout: "",
+                    stderr: "failed concurrently",
+                    exitCode: 1,
+                    outputIdentity: "/nix/store/pg-failed-evidence-race",
+                    observedAt: "2026-08-11T12:09:50.000Z",
+                  },
+                  { author: "postgres-evidence" },
+                ),
+                reviseOperatorAction(first, {
+                  actionId: created.action.id,
+                  expectedRevision: 1,
+                  expectedOutputIdentity: "/nix/store/pg-failed-evidence-race-v2",
+                  expectedEvidence: ["probe-v2"],
+                  revisedAt: "2026-08-11T12:09:50.000Z",
+                  author: "postgres-reviser",
+                }),
+              ]);
+              expect(revision.status).toBe("fulfilled");
+              const action = first.fetchItem("operatorActions", created.action.id);
+              const taskId = String(action.fields["taskRef"]).slice("tasks:".length);
+              const task = first.fetchItem("tasks", taskId);
+              const handoff = first.fetchItem("handoffs", created.handoff.id);
+              expect({ action, task, handoff }).toMatchObject({
+                action: {
+                  status: "pending",
+                  fields: {
+                    revision: "2",
+                    expectedOutputIdentity: "/nix/store/pg-failed-evidence-race-v2",
+                  },
+                },
+                task: { status: "planned" },
+                handoff: { status: "user-action-required" },
+              });
+              expect(action.fields["evidence"]).toBeUndefined();
+              const history = JSON.parse(
+                (action.fields["revisionHistory"] as string[])[0]!,
+              ) as { action: { fields: Record<string, unknown> } };
+              if (evidence.status === "fulfilled") {
+                expect(history.action.fields["lastFailure"]).toEqual(expect.any(String));
+              } else {
+                expect(history.action.fields["evidence"]).toBeUndefined();
+              }
+          },
+          timeout,
+        );
+
+        it(
           "permits exactly one simultaneous operator-action revision",
           async () => {
               const fixture = operatorActionFixture;

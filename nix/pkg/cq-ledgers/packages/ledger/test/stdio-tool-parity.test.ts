@@ -1374,7 +1374,7 @@ describe("stdio/direct ledger tool differential contract", () => {
     });
 
     // BG over the direct handler and stdio MCP transport; regression-origin: R1317.
-    it(`fences operator-action reopen and stale evidence for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`revises failed operator-action evidence and fences reopen for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       const direct = directTools(directFixture.store, prefix, AVAILABLE_CAPABILITIES);
@@ -1389,12 +1389,13 @@ describe("stdio/direct ledger tool differential contract", () => {
       const actionId = `OA${directFixture.ids.operatorActionTask.slice(1)}`;
       const identity = "/nix/store/parity-epoch";
       const evidenceArgs = (
+        expectedRevision: number,
         command: string,
         exitCode: number,
         observedAt: string,
       ): Record<string, unknown> => ({
         action_id: actionId,
-        expected_revision: 1,
+        expected_revision: expectedRevision,
         command,
         stdout: exitCode === 0 ? "ok" : "",
         stderr: exitCode === 0 ? "" : "failed",
@@ -1431,7 +1432,7 @@ describe("stdio/direct ledger tool differential contract", () => {
           decode(
             await invokeBoth({
               name: "record_operator_action_evidence",
-              args: evidenceArgs("probe-a", 0, "2026-08-11T08:01:00.000Z"),
+              args: evidenceArgs(1, "probe-a", 0, "2026-08-11T08:01:00.000Z"),
             }),
           ),
         ).toMatchObject({ state: "acknowledged" });
@@ -1439,16 +1440,44 @@ describe("stdio/direct ledger tool differential contract", () => {
           decode(
             await invokeBoth({
               name: "record_operator_action_evidence",
-              args: evidenceArgs("probe-b", 1, "2026-08-11T08:02:00.000Z"),
+              args: evidenceArgs(1, "probe-b", 1, "2026-08-11T08:02:00.000Z"),
             }),
           ),
         ).toMatchObject({ state: "pending" });
+        const revised = decode(
+          await invokeBoth({
+            name: "revise_operator_action",
+            args: {
+              action_id: actionId,
+              expected_revision: 1,
+              expected_output_identity: "/nix/store/parity-epoch-v2",
+              expected_evidence: ["probe-v2"],
+              revised_at: "2026-08-11T08:02:30.000Z",
+              author: "parity-parent",
+            },
+          }),
+        ) as { action: { fields: Record<string, unknown> } };
+        expect(revised).toMatchObject({
+          action: { status: "pending", fields: { revision: "2" } },
+          task: { status: "planned" },
+          handoff: { status: "user-action-required" },
+        });
+        expect(revised.action.fields["evidence"]).toBeUndefined();
+        expect(revised.action.fields["lastFailure"]).toBeUndefined();
+        const history = JSON.parse(
+          (revised.action.fields["revisionHistory"] as string[])[0]!,
+        ) as { action: { fields: Record<string, unknown> } };
+        expect(history.action.fields).toMatchObject({
+          acknowledgementEpoch: "1",
+          evidence: [expect.any(String), expect.any(String)],
+          lastFailure: expect.any(String),
+        });
         await invokeBoth({
           name: "acknowledge_operator_action",
           args: {
             action_id: actionId,
-            expected_revision: 1,
-            output_identity: identity,
+            expected_revision: 2,
+            output_identity: "/nix/store/parity-epoch-v2",
             acknowledged_at: "2026-08-11T08:03:00.000Z",
           },
         });
@@ -1456,15 +1485,10 @@ describe("stdio/direct ledger tool differential contract", () => {
           decode(
             await invokeBoth({
               name: "record_operator_action_evidence",
-              args: evidenceArgs("probe-b", 0, "2026-08-11T08:04:00.000Z"),
-            }),
-          ),
-        ).toMatchObject({ state: "acknowledged" });
-        expect(
-          decode(
-            await invokeBoth({
-              name: "record_operator_action_evidence",
-              args: evidenceArgs("probe-a", 0, "2026-08-11T08:05:00.000Z"),
+              args: {
+                ...evidenceArgs(2, "probe-v2", 0, "2026-08-11T08:04:00.000Z"),
+                output_identity: "/nix/store/parity-epoch-v2",
+              },
             }),
           ),
         ).toMatchObject({ state: "verified", action: { status: "verified" } });
@@ -1474,7 +1498,7 @@ describe("stdio/direct ledger tool differential contract", () => {
               name: "complete_operator_action",
               args: {
                 action_id: actionId,
-                expected_revision: 1,
+                expected_revision: 2,
                 completion: "latest epoch verified",
                 author: "parity-parent",
               },

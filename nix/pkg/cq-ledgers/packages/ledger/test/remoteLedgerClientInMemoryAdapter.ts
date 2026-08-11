@@ -714,9 +714,13 @@ const acknowledgeOperatorAction: ToolHandler = (tenant, args) => {
   if (action.fields["expectedOutputIdentity"] !== identity) {
     return { state: "pending", reason: "identity-mismatch", action };
   }
+  const currentEpoch = Number(action.fields["acknowledgementEpoch"] ?? "0");
+  const acknowledgementEpoch =
+    action.status === "acknowledged" ? String(currentEpoch) : String(currentEpoch + 1);
   action.status = "acknowledged";
   action.fields["acknowledgedOutputIdentity"] = identity;
   action.fields["acknowledgedAt"] = str(args, "acknowledged_at");
+  action.fields["acknowledgementEpoch"] = acknowledgementEpoch;
   return { state: "acknowledged", action };
 };
 
@@ -725,6 +729,9 @@ const recordOperatorActionEvidence: ToolHandler = (tenant, args) => {
   if (action.fields["revision"] !== String(args["expected_revision"])) {
     throw new DummyToolError("operator action revision conflict");
   }
+  if (action.status !== "acknowledged") {
+    throw new DummyToolError("operator action is not acknowledged");
+  }
   const evidence = {
     command: str(args, "command"),
     stdout: str(args, "stdout"),
@@ -732,21 +739,41 @@ const recordOperatorActionEvidence: ToolHandler = (tenant, args) => {
     exitCode: Number(args["exit_code"]),
     outputIdentity: str(args, "output_identity"),
     observedAt: str(args, "observed_at"),
+    acknowledgementEpoch: String(action.fields["acknowledgementEpoch"]),
+    revision: Number(action.fields["revision"]),
   };
   const prior = Array.isArray(action.fields["evidence"]) ? action.fields["evidence"] : [];
-  action.fields["evidence"] = [...prior, JSON.stringify(evidence)];
+  const encoded = JSON.stringify(evidence);
+  action.fields["evidence"] = [...prior, encoded];
   const expected = Array.isArray(action.fields["expectedEvidence"])
     ? action.fields["expectedEvidence"]
     : [];
-  const verified =
-    evidence.exitCode === 0 &&
-    evidence.outputIdentity === action.fields["expectedOutputIdentity"] &&
-    expected.length === 1 &&
-    expected[0] === evidence.command;
-  action.status = verified ? "verified" : "pending";
+  const failed =
+    evidence.exitCode !== 0 ||
+    evidence.outputIdentity !== action.fields["expectedOutputIdentity"] ||
+    evidence.outputIdentity !== action.fields["acknowledgedOutputIdentity"];
+  if (failed) {
+    action.status = "pending";
+    action.fields["lastFailure"] = encoded;
+    return { state: "pending", reason: "probe-failed", action };
+  }
+  const currentEpochEvidence = (action.fields["evidence"] as string[]).map(
+    (entry) => JSON.parse(entry) as typeof evidence,
+  );
+  const verified = expected.every((command) =>
+    currentEpochEvidence.some(
+      (entry) =>
+        entry.command === command &&
+        entry.exitCode === 0 &&
+        entry.outputIdentity === action.fields["expectedOutputIdentity"] &&
+        entry.acknowledgementEpoch === evidence.acknowledgementEpoch &&
+        entry.revision === evidence.revision,
+    ),
+  );
+  action.status = verified ? "verified" : "acknowledged";
   return verified
     ? { state: "verified", action }
-    : { state: "pending", reason: "probe-failed", action };
+    : { state: "acknowledged", action };
 };
 
 const reviseOperatorAction: ToolHandler = (tenant, args) => {
@@ -757,13 +784,40 @@ const reviseOperatorAction: ToolHandler = (tenant, args) => {
   if (action.status !== "pending" && action.status !== "acknowledged") {
     throw new DummyToolError("operator action cannot be revised");
   }
-  if (Array.isArray(action.fields["evidence"]) && action.fields["evidence"].length > 0) {
-    throw new DummyToolError("operator action may not be revised after evidence");
+  const evidence = action.fields["evidence"];
+  if (Array.isArray(evidence) && evidence.length > 0) {
+    const terminal = evidence[evidence.length - 1];
+    if (
+      action.status !== "pending" ||
+      typeof terminal !== "string" ||
+      action.fields["lastFailure"] !== terminal
+    ) {
+      throw new DummyToolError("operator action may not be revised after successful evidence");
+    }
+    const parsed = JSON.parse(terminal) as {
+      exitCode: number;
+      outputIdentity: string;
+      acknowledgementEpoch: string;
+      revision: number;
+    };
+    if (
+      parsed.revision !== Number(action.fields["revision"]) ||
+      parsed.acknowledgementEpoch !== action.fields["acknowledgementEpoch"] ||
+      (parsed.exitCode === 0 &&
+        parsed.outputIdentity === action.fields["expectedOutputIdentity"] &&
+        parsed.outputIdentity === action.fields["acknowledgedOutputIdentity"])
+    ) {
+      throw new DummyToolError("operator action has invalid failed-evidence audit state");
+    }
   }
   const taskRef = String(action.fields["taskRef"]);
   const task = findItem(tenant, "tasks", taskRef.slice("tasks:".length));
   const handoff = findItem(tenant, "handoffs", `HO${task.id.slice(1)}`);
+  const priorHistory = Array.isArray(action.fields["revisionHistory"])
+    ? action.fields["revisionHistory"]
+    : [];
   action.fields["revisionHistory"] = [
+    ...priorHistory,
     JSON.stringify({
       revision: Number(action.fields["revision"]),
       action: structuredClone(action),
@@ -777,7 +831,13 @@ const reviseOperatorAction: ToolHandler = (tenant, args) => {
   if (!Array.isArray(expectedEvidence)) throw new DummyToolError("expected_evidence required");
   action.fields["expectedEvidence"] = expectedEvidence as string[];
   action.status = "pending";
-  for (const field of ["acknowledgedOutputIdentity", "acknowledgedAt", "evidence"]) {
+  for (const field of [
+    "acknowledgedOutputIdentity",
+    "acknowledgedAt",
+    "acknowledgementEpoch",
+    "evidence",
+    "lastFailure",
+  ]) {
     delete action.fields[field];
   }
   task.status = "planned";

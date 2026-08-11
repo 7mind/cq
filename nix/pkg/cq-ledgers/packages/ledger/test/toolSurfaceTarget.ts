@@ -149,7 +149,7 @@ const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
   {
     name: "revise_operator_action",
     description:
-      "Atomically replace one pending or acknowledged pre-evidence operator-action manifest at an exact expected revision, append the complete prior action/task/handoff audit, reset acknowledgement, refresh the handoff, and return an abandoned strict task to planned.",
+      "Atomically replace one pending or acknowledged operator-action manifest at an exact expected revision only before evidence or, while pending, after a validated terminal failure in the current revision and acknowledgement epoch; reject every other evidence-bearing state, append the complete prior action/task/handoff audit, reset acknowledgement and evidence, refresh the handoff, and return an abandoned strict task to planned.",
     inputSchema: {
       type: "object",
       properties: {

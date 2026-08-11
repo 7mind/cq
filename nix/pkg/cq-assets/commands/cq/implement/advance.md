@@ -140,14 +140,20 @@ merge, push, deploy, switch, or implicit acknowledgement is forbidden.
    and authorizes no probe. A replay against an already `verified` action returns
    `verified`; skip directly to typed completion.
    If the persisted identity or evidence contract proves incorrect before any
-   evidence exists, this parent may call
+   evidence exists, or a pending action's current acknowledgement epoch ended
+   in recorded failure, this parent may call
    `ledger::revise_operator_action({ action_id, expected_revision,
    expected_output_identity, expected_evidence, revised_at, author, session })`
-   with the complete replacement contract. The revision CAS preserves the exact
-   prior action/task/handoff snapshot, advances to the next revision, clears
-   acknowledgement state, refreshes the handoff, and returns an abandoned linked
-   strict task to `planned`. Never revise after evidence, and never use generic
-   reopening as a substitute.
+   with the exact current revision and complete replacement contract. For the
+   evidence-bearing exception, require the terminal evidence entry and
+   `lastFailure` to identify the same failed probe in the current revision and
+   acknowledgement epoch; fail closed on malformed, stale, or inconsistent audit
+   state. The revision CAS preserves the exact prior action/task/handoff snapshot,
+   advances to the next revision, clears acknowledgement and evidence state,
+   refreshes the handoff, and returns an abandoned linked strict task to
+   `planned`. Reject successful partial evidence, acknowledged evidence without a
+   terminal failure, verified or completed actions, stale revisions, and unsafe
+   task/handoff states. Never use generic reopening as a substitute.
 4. After the exact user acknowledgement returns `acknowledged`, run only the
    persisted commands, sequentially and with bounded stdout/stderr capture.
    After each command call `ledger::record_operator_action_evidence` with the

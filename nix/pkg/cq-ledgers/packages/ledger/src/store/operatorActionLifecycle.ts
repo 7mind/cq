@@ -255,15 +255,22 @@ function revise(
       `Operator action ${action.id} may be revised only while pending or acknowledged`,
     );
   }
-  if (stringArray(action.fields["evidence"]).length !== 0) {
-    throw new LedgerError(`Operator action ${action.id} may not be revised after evidence`);
-  }
+  assertRevisionEvidenceState(action, revision);
   const taskId = referencedId(action, "taskRef", TASKS_LEDGER);
   const task = findMutableItem(ledgers, TASKS_LEDGER, taskId);
   const handoff = findMutableItem(ledgers, HANDOFFS_LEDGER, handoffIdForTask(taskId));
   if (task.status !== "planned" && task.status !== "abandoned") {
     throw new LedgerError(
       `Operator-action task ${task.id} may be revised only from planned or abandoned`,
+    );
+  }
+  if (
+    action.milestoneId !== task.milestoneId ||
+    handoff.milestoneId !== task.milestoneId ||
+    handoff.status !== "user-action-required"
+  ) {
+    throw new LedgerError(
+      `Operator action ${action.id} may be revised only with a safe task and handoff state`,
     );
   }
   const history = stringArray(action.fields["revisionHistory"]);
@@ -407,6 +414,89 @@ function parseEvidence(value: string): StoredOperatorActionEvidence {
     throw new SchemaValidationError("stored operator-action evidence is malformed");
   }
   return parsed as StoredOperatorActionEvidence;
+}
+
+function assertRevisionEvidenceState(action: Item, revision: number): void {
+  const rawEvidence = action.fields["evidence"];
+  const rawLastFailure = action.fields["lastFailure"];
+  if (rawEvidence === undefined) {
+    if (rawLastFailure !== undefined) {
+      throw new LedgerError(
+        `Operator action ${action.id} has inconsistent failed-evidence audit state`,
+      );
+    }
+    return;
+  }
+  if (!Array.isArray(rawEvidence) || rawEvidence.some((entry) => typeof entry !== "string")) {
+    throw new SchemaValidationError("stored operator-action evidence is malformed");
+  }
+  if (rawEvidence.length === 0) {
+    if (rawLastFailure !== undefined) {
+      throw new LedgerError(
+        `Operator action ${action.id} has inconsistent failed-evidence audit state`,
+      );
+    }
+    return;
+  }
+  if (action.status !== "pending" || typeof rawLastFailure !== "string") {
+    throw new LedgerError(
+      `Operator action ${action.id} may not be revised after evidence without a terminal failure`,
+    );
+  }
+  const evidence = rawEvidence.map(parseEvidence);
+  const terminal = evidence[evidence.length - 1]!;
+  const lastFailure = parseEvidence(rawLastFailure);
+  if (
+    rawLastFailure !== rawEvidence[rawEvidence.length - 1] ||
+    JSON.stringify(lastFailure) !== JSON.stringify(terminal)
+  ) {
+    throw new LedgerError(
+      `Operator action ${action.id} has inconsistent failed-evidence audit state`,
+    );
+  }
+  const acknowledgementEpoch = positiveIntegerStringField(
+    action,
+    OPERATOR_ACTION_ACKNOWLEDGEMENT_EPOCH_FIELD,
+  );
+  if (
+    terminal.revision !== revision ||
+    terminal.acknowledgementEpoch !== acknowledgementEpoch
+  ) {
+    throw new LedgerError(`Operator action ${action.id} has stale failed-evidence audit state`);
+  }
+  const expectedOutputIdentity = stringField(action, "expectedOutputIdentity");
+  const acknowledgedOutputIdentity = stringField(action, "acknowledgedOutputIdentity");
+  const expectedEvidence = stringArray(action.fields["expectedEvidence"]);
+  if (
+    expectedOutputIdentity.length === 0 ||
+    acknowledgedOutputIdentity.length === 0 ||
+    !expectedEvidence.includes(terminal.command)
+  ) {
+    throw new LedgerError(
+      `Operator action ${action.id} has inconsistent failed-evidence audit state`,
+    );
+  }
+  const terminalFailed =
+    terminal.exitCode !== 0 ||
+    terminal.outputIdentity !== expectedOutputIdentity ||
+    terminal.outputIdentity !== acknowledgedOutputIdentity;
+  if (!terminalFailed) {
+    throw new LedgerError(
+      `Operator action ${action.id} may not be revised after successful evidence`,
+    );
+  }
+}
+
+function positiveIntegerStringField(item: Item, field: string): string {
+  const value = item.fields[field];
+  if (typeof value !== "string" || !/^[1-9]\d*$/.test(value)) {
+    throw new SchemaValidationError(`stored ${field} is malformed`);
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new SchemaValidationError(`stored ${field} exceeds the safe range`);
+  }
+  return value;
 }
 
 function snapshotWithoutHistory(action: Item): Item {

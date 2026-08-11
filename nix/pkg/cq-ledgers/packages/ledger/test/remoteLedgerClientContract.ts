@@ -390,6 +390,27 @@ export function runRemoteLedgerClientContract(
                 author: "remote-parent",
               });
               expect(materialized.state).toBe("created");
+              const firstAcknowledgement = await client.acknowledgeOperatorAction({
+                actionId: materialized.action.id,
+                expectedRevision: 1,
+                outputIdentity: "/nix/store/remote-cq",
+                acknowledgedAt: "2026-08-11T05:57:00.000Z",
+              });
+              expect(firstAcknowledgement.state).toBe("acknowledged");
+              const failed = await client.recordOperatorActionEvidence({
+                actionId: materialized.action.id,
+                expectedRevision: 1,
+                evidence: {
+                  command: "cq --version",
+                  stdout: "",
+                  stderr: "not ready",
+                  exitCode: 1,
+                  outputIdentity: "/nix/store/remote-cq",
+                  observedAt: "2026-08-11T05:58:00.000Z",
+                },
+                author: "remote-parent",
+              });
+              expect(failed).toMatchObject({ state: "pending", reason: "probe-failed" });
               const revised = await client.reviseOperatorAction({
                 actionId: materialized.action.id,
                 expectedRevision: 1,
@@ -399,6 +420,20 @@ export function runRemoteLedgerClientContract(
                 author: "remote-parent",
               });
               expect(revised.action.fields["revision"]).toBe("2");
+              expect(revised.action.fields["evidence"]).toBeUndefined();
+              expect(revised.action.fields["lastFailure"]).toBeUndefined();
+              const history = JSON.parse(
+                (revised.action.fields["revisionHistory"] as string[])[0]!,
+              ) as { action: { status: string; fields: Record<string, unknown> } };
+              expect(history.action).toMatchObject({
+                status: "pending",
+                fields: {
+                  revision: "1",
+                  acknowledgementEpoch: "1",
+                  evidence: [expect.any(String)],
+                  lastFailure: expect.any(String),
+                },
+              });
               const acknowledged = await client.acknowledgeOperatorAction({
                 actionId: materialized.action.id,
                 expectedRevision: 2,
