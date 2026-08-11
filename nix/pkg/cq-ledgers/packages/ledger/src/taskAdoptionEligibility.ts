@@ -103,25 +103,31 @@ export function observeTaskAdoptionEligibility(
   activeItems: readonly Item[],
   archivedItems: readonly Item[],
 ): TaskAdoptionEligibilityObservation {
-  const snapshots = new Map<string, DependencyTaskSnapshot>();
+  const snapshotsById = new Map<string, DependencyTaskSnapshot[]>();
   for (const [items, archived] of [
     [activeItems, false],
     [archivedItems, true],
   ] as const) {
     for (const item of items) {
-      if (snapshots.has(item.id)) {
-        throw new LedgerError(`task ${item.id} exists in both active and archived storage`);
-      }
-      snapshots.set(item.id, dependencyTaskSnapshot(item, archived));
+      const snapshots = snapshotsById.get(item.id) ?? [];
+      snapshots.push(dependencyTaskSnapshot(item, archived));
+      snapshotsById.set(item.id, snapshots);
     }
   }
 
-  const root = snapshots.get(taskId);
-  if (root === undefined) {
+  const rootSnapshots = snapshotsById.get(taskId);
+  if (rootSnapshots === undefined) {
     return {
       status: "ineligible",
       ineligibility: { reason: "task-not-found", taskId },
     };
+  }
+  if (rootSnapshots.length !== 1) {
+    throw new LedgerError(`reachable task identity ambiguity: ${taskId}`);
+  }
+  const root = rootSnapshots[0];
+  if (root === undefined) {
+    throw new LedgerError(`task adoption root ${taskId} has no snapshot`);
   }
   if (root.archived) {
     return {
@@ -136,6 +142,12 @@ export function observeTaskAdoptionEligibility(
     };
   }
 
+  const snapshots = new Map<string, DependencyTaskSnapshot>();
+  for (const [id, candidates] of snapshotsById) {
+    const snapshot = candidates[0];
+    if (snapshot === undefined) throw new LedgerError(`task ${id} has no snapshot`);
+    snapshots.set(id, snapshot);
+  }
   const resolution = resolveDependencyResultCommits({
     rootTaskRef: taskId,
     taskSnapshots: [...snapshots.values()],
@@ -154,10 +166,15 @@ export function observeTaskAdoptionEligibility(
     ),
   ];
   const tasks = [...new Set(closureIds)].map((id): TaskAdoptionSnapshotRow => {
-    const snapshot = snapshots.get(id);
-    if (snapshot === undefined) {
+    const candidates = snapshotsById.get(id);
+    if (candidates === undefined || candidates.length === 0) {
       throw new LedgerError(`validated task adoption dependency ${id} disappeared`);
     }
+    if (candidates.length !== 1) {
+      throw new LedgerError(`reachable task identity ambiguity: ${id}`);
+    }
+    const snapshot = candidates[0];
+    if (snapshot === undefined) throw new LedgerError(`task ${id} has no snapshot`);
     return {
       taskId: snapshot.taskId,
       status: snapshot.status,
