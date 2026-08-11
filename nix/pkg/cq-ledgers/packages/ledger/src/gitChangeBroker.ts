@@ -128,6 +128,48 @@ function sha256(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+export function decodeVerifiedGitBatchObject(
+  output: Uint8Array,
+  expectedOid: string,
+  expectedType: string,
+): Buffer {
+  const batch = Buffer.from(output);
+  const headerEnd = batch.indexOf(0x0a);
+  if (headerEnd < 0) throw new Error("Git batch-object response lacks a header terminator");
+  const [oid, type, sizeText, ...extra] = batch.subarray(0, headerEnd).toString().split(" ");
+  if (
+    extra.length !== 0 ||
+    oid !== expectedOid ||
+    !FULL_OID.test(oid) ||
+    !/^(?:0|[1-9][0-9]*)$/.test(sizeText ?? "")
+  ) {
+    throw new Error("Git batch-object response does not identify the requested object");
+  }
+  if (type !== expectedType) {
+    throw new Error(`Git batch-object response must have type ${expectedType}`);
+  }
+  const size = Number(sizeText);
+  const contentStart = headerEnd + 1;
+  const contentEnd = contentStart + size;
+  if (
+    !Number.isSafeInteger(size) ||
+    batch.byteLength !== contentEnd + 1 ||
+    batch[contentEnd] !== 0x0a
+  ) {
+    throw new Error("Git batch-object response has an invalid content boundary");
+  }
+  const content = batch.subarray(contentStart, contentEnd);
+  const algorithm = expectedOid.length === 40 ? "sha1" : "sha256";
+  const observedOid = createHash(algorithm)
+    .update(`${type} ${content.byteLength}\0`)
+    .update(content)
+    .digest("hex");
+  if (observedOid !== expectedOid) {
+    throw new Error("Git batch-object content does not match requested oid");
+  }
+  return Buffer.from(content);
+}
+
 function requestDigest(request: GitChangeBrokerRequest): string {
   const { authorization, ...effect } = request;
   const { handleToken: _serverHeld, ...publicBinding } = authorization;
@@ -612,6 +654,56 @@ async function quarantineOids(directory: string): Promise<readonly string[]> {
   return Object.freeze(oids.sort());
 }
 
+async function materializeExistingTree(
+  worktreePath: string,
+  commonDir: string,
+  quarantine: string,
+  environment: NodeJS.ProcessEnv,
+  tree: string,
+): Promise<void> {
+  const isolatedObjectEnvironment = { ...environment };
+  delete isolatedObjectEnvironment.GIT_ALTERNATE_OBJECT_DIRECTORIES;
+  const target = join(quarantine, tree.slice(0, 2), tree.slice(2));
+  await fs.mkdir(dirname(target), { recursive: true });
+  try {
+    await fs.copyFile(
+      join(commonDir, "objects", tree.slice(0, 2), tree.slice(2)),
+      target,
+      fsConstants.COPYFILE_EXCL,
+    );
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "EEXIST") throw error;
+    if (code === "ENOENT") {
+      const batch = await checkedGit(
+        worktreePath,
+        ["cat-file", "--batch"],
+        environment,
+        Buffer.from(`${tree}\n`),
+      );
+      const content = decodeVerifiedGitBatchObject(batch, tree, "tree");
+      const written = (
+        await checkedGit(
+          worktreePath,
+          ["hash-object", "-w", "-t", "tree", "--stdin"],
+          isolatedObjectEnvironment,
+          content,
+        )
+      )
+        .toString()
+        .trim();
+      if (written !== tree) throw new Error("materialized tree oid does not match write-tree output");
+    }
+  }
+  const isolatedBatch = await checkedGit(
+    worktreePath,
+    ["cat-file", "--batch"],
+    isolatedObjectEnvironment,
+    Buffer.from(`${tree}\n`),
+  );
+  decodeVerifiedGitBatchObject(isolatedBatch, tree, "tree");
+}
+
 async function constructPrivateCommit(
   request: GitChangeBrokerRequest,
   operationDirectory: string,
@@ -698,6 +790,15 @@ async function constructPrivateCommit(
   if (canonical(changedPaths) !== canonical(paths)) {
     throw new Error(
       `private tree changed [${changedPaths.join(", ")}], expected [${paths.join(", ")}]`,
+    );
+  }
+  if (!(await quarantineOids(quarantine)).includes(tree)) {
+    await materializeExistingTree(
+      request.authorization.worktreePath,
+      request.authorization.commonDir,
+      quarantine,
+      environment,
+      tree,
     );
   }
   const newHead = (

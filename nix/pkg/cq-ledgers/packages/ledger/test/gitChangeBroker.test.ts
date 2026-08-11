@@ -19,6 +19,7 @@ import {
   type DispatchBoundGitAuthorization,
   type GitChangeBrokerRequest,
 } from "../src/index.js";
+import { decodeVerifiedGitBatchObject } from "../src/gitChangeBroker.js";
 
 const exec = promisify(execFile);
 const roots: string[] = [];
@@ -41,6 +42,13 @@ async function git(cwd: string, args: readonly string[]): Promise<string> {
 
 function digest(bytes: string | Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function objectId(type: string, bytes: Uint8Array): string {
+  return createHash("sha1")
+    .update(`${type} ${bytes.byteLength}\0`)
+    .update(bytes)
+    .digest("hex");
 }
 
 async function seed(): Promise<{
@@ -164,6 +172,33 @@ describe("H236 retained reproductions", () => {
 });
 
 describe("commitManagedWorktreeChanges", () => {
+  test("admits only the requested tree from Git's batch-object boundary", () => {
+    const emptyTree = Buffer.alloc(0);
+    const tree = objectId("tree", emptyTree);
+    expect(
+      decodeVerifiedGitBatchObject(Buffer.from(`${tree} tree 0\n\n`), tree, "tree"),
+    ).toEqual(emptyTree);
+
+    const forged = Buffer.from("forged");
+    expect(() =>
+      decodeVerifiedGitBatchObject(
+        Buffer.concat([Buffer.from(`${tree} tree ${forged.byteLength}\n`), forged, Buffer.from("\n")]),
+        tree,
+        "tree",
+      ),
+    ).toThrow(/content does not match requested oid/);
+
+    const blob = Buffer.from("not a tree");
+    const blobOid = objectId("blob", blob);
+    expect(() =>
+      decodeVerifiedGitBatchObject(
+        Buffer.concat([Buffer.from(`${blobOid} blob ${blob.byteLength}\n`), blob, Buffer.from("\n")]),
+        blobOid,
+        "tree",
+      ),
+    ).toThrow(/must have type tree/);
+  });
+
   test("commits the closed add/modify/delete/rename/mode algebra and durably replays one receipt", async () => {
     const fixture = await seed();
     const beforeModify = await fs.readFile(path.join(fixture.worktreePath, "modify.txt"));
@@ -241,6 +276,51 @@ describe("commitManagedWorktreeChanges", () => {
     await expect(
       commitManagedWorktreeChanges({ ...request, message: "substituted request" }, deps),
     ).rejects.toThrow(/operationId .* reused with a different request/);
+  });
+
+  test("commits a deletion whose resulting tree already exists in the repository", async () => {
+    const fixture = await seed();
+    const recovery = "report recovery\n";
+    await fs.writeFile(path.join(fixture.worktreePath, "recovery.txt"), recovery);
+    const deps = { stateDir: fixture.stateDir, authorize: async () => {} };
+    const added = await commitManagedWorktreeChanges(
+      {
+        authorization: fixture.authorization,
+        operationId: "T2042-existing-tree-add",
+        expectedHead: fixture.head,
+        message: "add recovery artifact",
+        changes: [
+          {
+            kind: "add",
+            path: "recovery.txt",
+            newState: { mode: "100644", digest: digest(recovery) },
+          },
+        ],
+      },
+      deps,
+    );
+    await fs.rm(path.join(fixture.worktreePath, "recovery.txt"));
+
+    const removed = await commitManagedWorktreeChanges(
+      {
+        authorization: fixture.authorization,
+        operationId: "T2042-existing-tree-delete",
+        expectedHead: added.newHead,
+        message: "remove recovery artifact",
+        changes: [
+          {
+            kind: "delete",
+            path: "recovery.txt",
+            oldState: { mode: "100644", digest: digest(recovery) },
+          },
+        ],
+      },
+      deps,
+    );
+
+    expect(removed.tree).toBe(await git(fixture.worktreePath, ["rev-parse", `${fixture.head}^{tree}`]));
+    expect(removed.objectOids).toContain(removed.tree);
+    expect(await git(fixture.worktreePath, ["status", "--porcelain"])).toBe("");
   });
 
   test("rejects the closed manifest and dispatch identity substitution matrix before ref advance", async () => {
