@@ -142,12 +142,14 @@ const directGit = Bun.spawnSync(
   [
     process.env["CQ_TEST_CODEX_SANDBOX_EXECUTABLE"] ?? "codex",
     "-c",
-    'default_permissions="workspace"',
+    'default_permissions="qualification"',
     "-c",
-    'permissions.workspace.extends=":workspace"',
+    `permissions.qualification.filesystem={":minimal"="read",` +
+      `${JSON.stringify(worktreePath)}="write",` +
+      `${JSON.stringify(`${expectedLedgerRoot}/.git`)}="read"}`,
     "sandbox",
     "-P",
-    "workspace",
+    "qualification",
     "-C",
     worktreePath,
     "--",

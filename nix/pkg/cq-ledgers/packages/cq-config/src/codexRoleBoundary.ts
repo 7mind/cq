@@ -1479,12 +1479,14 @@ export async function executeCodexProviderSandboxControl(
       codexExecutable,
       [
         "-c",
-        'default_permissions="workspace"',
+        'default_permissions="qualification"',
         "-c",
-        'permissions.workspace.extends=":workspace"',
+        `permissions.qualification.filesystem={":minimal"="read",` +
+          `${JSON.stringify(request.managedHandle.absolutePath)}="write",` +
+          `${JSON.stringify(path.join(request.managedHandle.repositoryRoot, ".git"))}="read"}`,
         "sandbox",
         "-P",
-        "workspace",
+        "qualification",
         "-C",
         request.managedHandle.absolutePath,
         "--",
