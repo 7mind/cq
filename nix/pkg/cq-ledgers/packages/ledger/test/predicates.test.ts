@@ -287,7 +287,9 @@ function runPredicatesSuite(factory: PredicatesStoreFactory): void {
           },
         });
 
-        expect(derivePredicates(store).pImplement).toEqual({ value: false, items: [] });
+        const predicates = derivePredicates(store);
+        expect(predicates.pImplement).toEqual({ value: false, items: [] });
+        expect(predicates.pOperatorAction).toEqual({ value: true, items: ["T1"] });
       } finally {
         await factory.teardown(store);
       }

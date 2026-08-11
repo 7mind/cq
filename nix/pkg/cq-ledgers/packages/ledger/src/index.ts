@@ -5,6 +5,7 @@
 export * from "./types.js";
 export * from "./usageStats.js";
 export * from "./planLifecycle.js";
+export * from "./operatorActions.js";
 export type {
   TaskAdoptionEligibilityFence,
   TaskAdoptionEligibilityResult,
@@ -26,6 +27,7 @@ export {
   REVIEWS_LEDGER,
   PLAN_REVIEW_DRAFT_FIELD,
   HANDOFFS_LEDGER,
+  OPERATOR_ACTIONS_LEDGER,
   IDEAS_LEDGER,
   RESEARCHES_LEDGER,
   UPSTREAM_LEDGER,
@@ -37,6 +39,7 @@ export {
   GOALS_SCHEMA,
   REVIEWS_SCHEMA,
   HANDOFFS_SCHEMA,
+  OPERATOR_ACTIONS_SCHEMA,
   IDEAS_SCHEMA,
   RESEARCHES_SCHEMA,
   UPSTREAM_SCHEMA,

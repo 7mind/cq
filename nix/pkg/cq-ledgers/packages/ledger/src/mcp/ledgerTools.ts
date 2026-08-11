@@ -102,6 +102,12 @@ import {
   WORKTREE_MANAGE_TOOL_SPEC,
   type WorktreeManageCapability,
 } from "./worktreeManageTools.js";
+import {
+  acknowledgeOperatorAction,
+  completeOperatorActionTask,
+  materializeOperatorAction,
+  recordOperatorActionEvidence,
+} from "../operatorActions.js";
 
 /** The compatibility profile: every capability-gated tool specification. */
 export const FULL_LEDGER_TOOL_PROFILE = "full";
@@ -762,6 +768,101 @@ export function createLedgerMcpToolSpecifications(
     async () => jsonResult(derivePredicates(store)),
   );
 
+  const materializeOperatorActionTool = tool(
+    "materialize_operator_action",
+    "Create or restart-reuse the deterministic operator action and its single user-action-required handoff for a strict CQ-OPERATOR-ACTION v1 task. Returns the typed action and handoff; conflicting expected identity/evidence fails closed.",
+    {
+      task_id: z.string().regex(/^T\d+$/),
+      expected_output_identity: z.string().min(1),
+      expected_evidence: z.array(z.string().min(1)).min(1),
+      author: z.string().min(1),
+      session: z.string().min(1).optional(),
+    } as const,
+    async (args) =>
+      jsonResult(
+        await materializeOperatorAction(store, {
+          taskId: args.task_id,
+          expectedOutputIdentity: args.expected_output_identity,
+          expectedEvidence: args.expected_evidence,
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      ),
+  );
+
+  const acknowledgeOperatorActionTool = tool(
+    "acknowledge_operator_action",
+    "Acknowledge that the user deployed one operator action's exact expected output identity. A mismatch performs no write and returns pending; an exact identity advances pending to acknowledged so the parent may run bounded probes.",
+    {
+      action_id: z.string().regex(/^OA\d+$/),
+      output_identity: z.string().min(1),
+      acknowledged_at: z.string().min(1),
+      session: z.string().min(1).optional(),
+    } as const,
+    async (args) =>
+      jsonResult(
+        await acknowledgeOperatorAction(store, {
+          actionId: args.action_id,
+          outputIdentity: args.output_identity,
+          acknowledgedAt: args.acknowledged_at,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      ),
+  );
+
+  const recordOperatorActionEvidenceTool = tool(
+    "record_operator_action_evidence",
+    "Append one bounded parent-run shell probe with command/stdout/stderr/exit/output identity. Undeclared or duplicate commands fail; a nonzero exit or identity mismatch appends the observation and returns the action to pending; all declared successful probes verify it.",
+    {
+      action_id: z.string().regex(/^OA\d+$/),
+      command: z.string().min(1),
+      stdout: z.string(),
+      stderr: z.string(),
+      exit_code: z.number().int(),
+      output_identity: z.string().min(1),
+      observed_at: z.string().min(1),
+      author: z.string().min(1),
+      session: z.string().min(1).optional(),
+    } as const,
+    async (args) =>
+      jsonResult(
+        await recordOperatorActionEvidence(
+          store,
+          args.action_id,
+          {
+            command: args.command,
+            stdout: args.stdout,
+            stderr: args.stderr,
+            exitCode: args.exit_code,
+            outputIdentity: args.output_identity,
+            observedAt: args.observed_at,
+          },
+          {
+            author: args.author,
+            ...(args.session === undefined ? {} : { session: args.session }),
+          },
+        ),
+      ),
+  );
+
+  const completeOperatorActionTool = tool(
+    "complete_operator_action",
+    "Mark the linked task done only after its operator action reached verified through exact acknowledged identity and all declared shell evidence.",
+    {
+      action_id: z.string().regex(/^OA\d+$/),
+      completion: z.string().min(1),
+      author: z.string().min(1),
+      session: z.string().min(1).optional(),
+    } as const,
+    async (args) =>
+      jsonResult({
+        task: await completeOperatorActionTask(store, args.action_id, args.completion, {
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      }),
+  );
+
   // ---- Filesystem read (1) -----------------------------------------------
 
   const readLogTool = tool(
@@ -993,6 +1094,10 @@ export function createLedgerMcpToolSpecifications(
     listMilestoneItems,
     snapshotTool,
     derivePredicatesTool,
+    materializeOperatorActionTool,
+    acknowledgeOperatorActionTool,
+    recordOperatorActionEvidenceTool,
+    completeOperatorActionTool,
     reopenItem,
     unarchiveItem,
     readLogTool,

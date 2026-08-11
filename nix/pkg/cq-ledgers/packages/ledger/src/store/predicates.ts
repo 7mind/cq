@@ -118,6 +118,7 @@ import {
 } from "../planLifecycle.js";
 import { buildPrefixRegistry, canonicalizeRef, parseRef } from "../refs.js";
 import type { LedgerStore } from "./LedgerStore.js";
+import { operatorActionDirectiveForTask } from "../operatorActions.js";
 
 /**
  * One detection predicate's verdict: its boolean `value` plus the ids of the
@@ -143,6 +144,8 @@ export interface DerivedPredicates {
   pPlan: PredicateVerdict;
   pResearch: PredicateVerdict;
   pImplement: PredicateVerdict;
+  /** Parent-executed operator gates; these items never enter `pImplement`. */
+  pOperatorAction: PredicateVerdict;
   openQuestionGate: PredicateVerdict;
   belowFloor: PredicateVerdict;
   /**
@@ -612,6 +615,7 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
     return gate;
   }
   const implementItems: string[] = [];
+  const operatorActionItems: string[] = [];
   for (const t of tasks) {
     // Authorized by an owning goal? A goal authorizes its task iff ALL hold:
     //  - the goal is in planned/building;
@@ -646,7 +650,8 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
       for (const qid of blockingQs) gatingQuestionIds.add(qid);
       continue;
     }
-    implementItems.push(t.id);
+    if (operatorActionDirectiveForTask(t) === null) implementItems.push(t.id);
+    else operatorActionItems.push(t.id);
   }
 
   // --- goalDrift (REPORT-ONLY, G84 / D113) ----------------------------------
@@ -675,6 +680,10 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
     pPlan: { value: planItems.length > 0, items: planItems },
     pResearch: { value: researchItems.length > 0, items: researchItems },
     pImplement: { value: implementItems.length > 0, items: implementItems },
+    pOperatorAction: {
+      value: operatorActionItems.length > 0,
+      items: operatorActionItems,
+    },
     openQuestionGate: {
       value: gatingQuestionIds.size > 0,
       items: [...gatingQuestionIds],

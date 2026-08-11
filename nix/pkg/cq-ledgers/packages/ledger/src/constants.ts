@@ -114,6 +114,7 @@ export const QUESTIONS_ANSWER_FIELD = "answer" as const;
 export const REVIEWS_LEDGER = "reviews" as const;
 export const PLAN_REVIEW_DRAFT_FIELD = "planDraft" as const;
 export const HANDOFFS_LEDGER = "handoffs" as const;
+export const OPERATOR_ACTIONS_LEDGER = "operatorActions" as const;
 export const IDEAS_LEDGER = "ideas" as const;
 
 /**
@@ -446,6 +447,33 @@ export const HANDOFFS_SCHEMA: LedgerSchema = {
   },
 };
 
+/** Durable user-deployment gates consumed by implement-flow, never workers. */
+export const OPERATOR_ACTIONS_SCHEMA: LedgerSchema = {
+  statusValues: ["pending", "acknowledged", "verified"],
+  terminalStatuses: ["verified"],
+  satisfiesDependencyStatuses: ["verified"],
+  idPrefix: "OA",
+  transitions: {
+    pending: ["acknowledged"],
+    acknowledged: ["pending", "verified"],
+    verified: [],
+  },
+  fields: {
+    actionKey: { type: "string", required: true },
+    taskRef: { type: "id", required: true },
+    goalRef: { type: "id", required: true },
+    expectedOutputIdentity: { type: "string", required: true },
+    expectedEvidence: { type: "string[]", required: true },
+    acknowledgedOutputIdentity: { type: "string", required: false },
+    acknowledgedAt: { type: "timestamp", required: false },
+    evidence: { type: "string[]", required: false },
+    lastFailure: { type: "string", required: false },
+    verifiedAt: { type: "timestamp", required: false },
+    completion: { type: "string", required: false },
+    ledgerRefs: { type: "id[]", required: true },
+  },
+};
+
 /**
  * ideas ledger (Q188). idPrefix `I` — verified FREE against every existing
  * single/double-char prefix in the canon (M/D/T/H/Q/K/G/R/HO).
@@ -631,6 +659,7 @@ export const CANONICAL_LEDGERS: ReadonlyArray<{ name: string; schema: LedgerSche
   { name: GOALS_LEDGER, schema: GOALS_SCHEMA },
   { name: REVIEWS_LEDGER, schema: REVIEWS_SCHEMA },
   { name: HANDOFFS_LEDGER, schema: HANDOFFS_SCHEMA },
+  { name: OPERATOR_ACTIONS_LEDGER, schema: OPERATOR_ACTIONS_SCHEMA },
   { name: IDEAS_LEDGER, schema: IDEAS_SCHEMA },
   { name: RESEARCHES_LEDGER, schema: RESEARCHES_SCHEMA },
   { name: UPSTREAM_LEDGER, schema: UPSTREAM_SCHEMA },

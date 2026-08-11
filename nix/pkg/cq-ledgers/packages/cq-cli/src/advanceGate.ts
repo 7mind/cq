@@ -202,11 +202,12 @@ export async function computeVerdict(args: AdvanceGateArgs): Promise<AdvanceGate
  */
 function firstBlockingPredicate(
   p: DerivedPredicates,
-): "investigate" | "seed" | "plan" | "research" | "implement" | null {
+): "investigate" | "seed" | "plan" | "research" | "operator-action" | "implement" | null {
   if (p.pInvestigate.value) return "investigate";
   if (p.pSeed.value) return "seed";
   if (p.pPlan.value) return "plan";
   if (p.pResearch.value) return "research";
+  if (p.pOperatorAction.value) return "operator-action";
   if (p.pImplement.value) return "implement";
   return null;
 }
@@ -227,6 +228,7 @@ function allowVerdict(reason: string): AdvanceGateVerdict {
       pPlan: empty,
       pResearch: empty,
       pImplement: empty,
+      pOperatorAction: empty,
       openQuestionGate: empty,
       belowFloor: empty,
       planBusy: empty,

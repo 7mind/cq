@@ -67,6 +67,13 @@ import type { DerivedPredicates } from "../predicates.js";
 import type { LedgerSnapshot } from "../../snapshot.js";
 import type { LedgerSummariesResult } from "../../summaries.js";
 import type { UsageStatsSnapshot } from "../../usageStats.js";
+import type {
+  AcknowledgeOperatorActionResult,
+  MaterializedOperatorAction,
+  OperatorActionShellEvidence,
+  RecordOperatorActionEvidenceResult,
+} from "../../operatorActions.js";
+import type { Item } from "../../types.js";
 
 /**
  * Authenticated MCP initialize metadata used to label the project registry
@@ -662,6 +669,78 @@ export class RemoteLedgerClient {
         summary,
       })
     ).pointer;
+  }
+
+  async materializeOperatorAction(input: {
+    taskId: string;
+    expectedOutputIdentity: string;
+    expectedEvidence: string[];
+    author: string;
+    session?: string;
+  }): Promise<MaterializedOperatorAction> {
+    const args: Record<string, unknown> = {
+      task_id: input.taskId,
+      expected_output_identity: input.expectedOutputIdentity,
+      expected_evidence: input.expectedEvidence,
+      author: input.author,
+    };
+    if (input.session !== undefined) args["session"] = input.session;
+    return await this.call<MaterializedOperatorAction>("materialize_operator_action", args);
+  }
+
+  async acknowledgeOperatorAction(input: {
+    actionId: string;
+    outputIdentity: string;
+    acknowledgedAt: string;
+    session?: string;
+  }): Promise<AcknowledgeOperatorActionResult> {
+    const args: Record<string, unknown> = {
+      action_id: input.actionId,
+      output_identity: input.outputIdentity,
+      acknowledged_at: input.acknowledgedAt,
+    };
+    if (input.session !== undefined) args["session"] = input.session;
+    return await this.call<AcknowledgeOperatorActionResult>("acknowledge_operator_action", args);
+  }
+
+  async recordOperatorActionEvidence(input: {
+    actionId: string;
+    evidence: OperatorActionShellEvidence;
+    author: string;
+    session?: string;
+  }): Promise<RecordOperatorActionEvidenceResult> {
+    const args: Record<string, unknown> = {
+      action_id: input.actionId,
+      command: input.evidence.command,
+      stdout: input.evidence.stdout,
+      stderr: input.evidence.stderr,
+      exit_code: input.evidence.exitCode,
+      output_identity: input.evidence.outputIdentity,
+      observed_at: input.evidence.observedAt,
+      author: input.author,
+    };
+    if (input.session !== undefined) args["session"] = input.session;
+    return await this.call<RecordOperatorActionEvidenceResult>(
+      "record_operator_action_evidence",
+      args,
+    );
+  }
+
+  async completeOperatorAction(input: {
+    actionId: string;
+    completion: string;
+    author: string;
+    session?: string;
+  }): Promise<Item> {
+    const args: Record<string, unknown> = {
+      action_id: input.actionId,
+      completion: input.completion,
+      author: input.author,
+    };
+    if (input.session !== undefined) args["session"] = input.session;
+    return (
+      await this.call<{ task: Item }>("complete_operator_action", args)
+    ).task;
   }
 
   /** Close the MCP session and release the transport. */
