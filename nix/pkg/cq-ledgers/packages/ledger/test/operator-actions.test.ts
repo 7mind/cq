@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
@@ -790,6 +790,76 @@ test("legacy operator actions without a revision field read as revision 1", () =
       updatedAt: NOW,
     }),
   ).toBe(1);
+});
+
+test("filesystem restart materializes and revises a persisted legacy action", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "cq-operator-action-legacy-revision-"));
+  dirs.push(root);
+  let store = new FsLedgerStore({ root, now: () => NOW });
+  await store.init();
+  const milestone = await store.createMilestone({ title: "legacy revision" });
+  const goal = await store.createItem("goals", milestone.id, {
+    status: "planned",
+    fields: { title: "legacy goal", description: "legacy goal" },
+  });
+  const task = await store.createItem("tasks", milestone.id, {
+    status: "planned",
+    fields: {
+      headline: "legacy deploy",
+      description: "CQ-OPERATOR-ACTION v1 legacy-revision. User deploys.",
+      ledgerRefs: [`goals:${goal.id}`],
+    },
+  });
+  const created = await materializeOperatorAction(store, {
+    taskId: task.id,
+    expectedOutputIdentity: "/nix/store/legacy-revision-1",
+    expectedEvidence: ["legacy-probe-v1"],
+  });
+  await store.dispose();
+
+  const actionPath = path.join(root, ".cq", "operatorActions.md");
+  const currentSource = await readFile(actionPath, "utf8");
+  const legacySource = currentSource.replace('- revision: "1"\n', "");
+  expect(legacySource).not.toBe(currentSource);
+  await writeFile(actionPath, legacySource);
+
+  store = new FsLedgerStore({ root, now: () => NOW });
+  await store.init();
+  try {
+    const resumed = await materializeOperatorAction(store, {
+      taskId: task.id,
+      expectedOutputIdentity: "/nix/store/legacy-revision-1",
+      expectedEvidence: ["legacy-probe-v1"],
+    });
+    expect(resumed.state).toBe("existing");
+    expect(operatorActionRevision(resumed.action)).toBe(1);
+
+    const revised = await reviseOperatorAction(store, {
+      actionId: created.action.id,
+      expectedRevision: 1,
+      expectedOutputIdentity: "/nix/store/legacy-revision-2",
+      expectedEvidence: ["legacy-probe-v2"],
+      revisedAt: NOW,
+      author: "legacy-reviser",
+    });
+    expect(revised.action.fields["revision"]).toBe("2");
+    const audit = JSON.parse((revised.action.fields["revisionHistory"] as string[])[0]!) as {
+      revision: number;
+      action: { id: string; fields: Record<string, unknown> };
+    };
+    expect(audit).toMatchObject({
+      revision: 1,
+      action: {
+        id: created.action.id,
+        fields: {
+          expectedOutputIdentity: "/nix/store/legacy-revision-1",
+          expectedEvidence: ["legacy-probe-v1"],
+        },
+      },
+    });
+  } finally {
+    await store.dispose();
+  }
 });
 
 for (const factory of factories) {
