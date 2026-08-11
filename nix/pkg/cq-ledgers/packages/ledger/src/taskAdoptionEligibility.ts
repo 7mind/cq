@@ -98,6 +98,34 @@ function taskIdFromRef(taskRef: string): string {
   return taskRef.slice(TASK_REF_PREFIX.length);
 }
 
+function assertReachableTaskIdentitiesUnambiguous(
+  rootTaskId: string,
+  snapshotsById: ReadonlyMap<string, readonly DependencyTaskSnapshot[]>,
+): void {
+  const visitedTaskIds = new Set<string>();
+
+  function visit(taskId: string): void {
+    if (visitedTaskIds.has(taskId)) return;
+    visitedTaskIds.add(taskId);
+
+    const candidates = snapshotsById.get(taskId);
+    if (candidates === undefined || candidates.length === 0) return;
+    if (candidates.length !== 1) {
+      throw new LedgerError(`reachable task identity ambiguity: ${taskId}`);
+    }
+    const snapshot = candidates[0];
+    if (snapshot === undefined) throw new LedgerError(`task ${taskId} has no snapshot`);
+
+    for (const dependencyRef of snapshot.dependsOn) {
+      if (!dependencyRef.startsWith(TASK_REF_PREFIX)) continue;
+      const dependencyTaskId = dependencyRef.slice(TASK_REF_PREFIX.length);
+      if (dependencyTaskId !== "") visit(dependencyTaskId);
+    }
+  }
+
+  visit(rootTaskId);
+}
+
 export function observeTaskAdoptionEligibility(
   taskId: string,
   activeItems: readonly Item[],
@@ -141,6 +169,8 @@ export function observeTaskAdoptionEligibility(
       ineligibility: { reason: "task-not-wip", taskId, taskStatus: root.status },
     };
   }
+
+  assertReachableTaskIdentitiesUnambiguous(taskId, snapshotsById);
 
   const snapshots = new Map<string, DependencyTaskSnapshot>();
   for (const [id, candidates] of snapshotsById) {
