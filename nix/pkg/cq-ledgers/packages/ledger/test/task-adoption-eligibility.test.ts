@@ -70,4 +70,17 @@ describe("task adoption eligibility identity scope", () => {
       ),
     ).toThrow("reachable task identity ambiguity: T1206");
   });
+
+  it("fails closed when a bare reachable dependency identity is ambiguous", () => {
+    expect(() =>
+      observeTaskAdoptionEligibility(
+        "T1207",
+        [
+          task("T1206", "blocked", { headline: "active divergent dependency" }),
+          task("T1207", "wip", { headline: "root", dependsOn: ["T1206"] }),
+        ],
+        [task("T1206", "done", { headline: "archived duplicate", resultCommit: RESULT_A })],
+      ),
+    ).toThrow("reachable task identity ambiguity: T1206");
+  });
 });
