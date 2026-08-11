@@ -87,6 +87,18 @@ function incompatible(reason: NativeQualificationRefusalReason) {
 }
 
 describe("T2044 Codex native composed qualification", () => {
+  test("rejects caller-authored provider observations without runner authentication", () => {
+    const qualification = verdict({
+      cwd,
+      handle,
+      repositoryRoot,
+      taskId,
+      workerGate: gate("implement-worker"),
+      resolverGate: gate("implement-conflict-resolver"),
+    });
+    expect(qualification).toEqual(incompatible("provider-gate-failed"));
+  });
+
   test("registers only after the exact managed binding and both unsubstituted provider gates", () => {
     const workerGate = gate("implement-worker");
     const resolverGate = gate("implement-conflict-resolver");

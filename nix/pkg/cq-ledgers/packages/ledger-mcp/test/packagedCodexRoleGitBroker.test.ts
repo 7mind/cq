@@ -71,6 +71,14 @@ afterAll(async () => {
 });
 
 describe("packaged cq-codex-role Git broker", () => {
+  test("contains installed-only worker and conflict-resolver provider gates", async () => {
+    const source = await readFile(import.meta.filename, "utf8");
+    expect(source).not.toContain("ROLE_SCRIPT");
+    expect(source).toContain("codexBrokerWorker.ts");
+    expect(source).toContain("codexBrokerResolver.ts");
+    expect(source).toContain('roleId: "implement-conflict-resolver"');
+  });
+
   test("makes two receipt-verified commits while every confinement negative remains unchanged", async () => {
     const repositoryRoot = await mkdtemp(path.join(tmpdir(), "t2042-packaged-role-"));
     roots.push(repositoryRoot);
