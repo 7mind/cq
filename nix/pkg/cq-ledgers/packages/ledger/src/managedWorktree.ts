@@ -20,7 +20,15 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
-import { existsSync, promises as fs } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  openSync,
+  promises as fs,
+  renameSync,
+  rmSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import {
@@ -55,13 +63,29 @@ import {
   verifyDispatchBase,
 } from "./dispatchBase.js";
 import { AGENT_WORKTREE_SEGMENT } from "./projectKey.js";
+import {
+  assessLegacyReconciliationActivity,
+  beginLegacyWorktreeReconciliation,
+  createGitLegacyReconciliationObservationAdapter,
+  nodeLegacyReconciliationGitRunner,
+  recoverLegacyWorktreeReconciliation,
+  type LegacyWorktreeActivityFence,
+  type LegacyWorktreeManagerLock,
+  type LegacyWorktreeReconciliationTransaction,
+} from "./legacyWorktreeReconciliation.js";
 import { Lockfile } from "./store/lockfile.js";
+import type {
+  TaskAdoptionEligibilityFence,
+  TaskAdoptionEligibilityResult,
+  TaskAdoptionPublicationResult,
+} from "./taskAdoptionEligibility.js";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const FRESH_HANDLE_VERSION = 1 as const;
+const ADOPTED_HANDLE_VERSION = 2 as const;
 const DEFAULT_BRANCH_PREFIX = "implement/";
 const REGISTRY_DIRNAME = ".cq-managed-registry";
 const TASK_INDEX_DIRNAME = "by-task";
@@ -121,7 +145,7 @@ export interface PreparedWorktreeEvidence {
   readonly bunInstallCacheDir: string;
   readonly bunInstallArgs: readonly string[];
   readonly dependencyResultCommits: readonly DependencyResultCommit[];
-  readonly mode: "fresh" | "resume";
+  readonly mode: "fresh" | "resume" | "adopted";
 }
 
 export type PrepareManagedWorktreeRefusalReason =
@@ -142,6 +166,13 @@ export type PrepareManagedWorktreeRefusalReason =
   | "bun-workspace-missing"
   | "bun-install-plan-invalid"
   | "bun-install-failed"
+  | "adoption-invalid"
+  | "adoption-unavailable"
+  | "adoption-ineligible"
+  | "adoption-activity-changed"
+  | "adoption-reconciliation-failed"
+  | "adoption-authority-stale"
+  | "adoption-recovery-failed"
   | "registry-conflict"
   | "prepare-lock-busy";
 
@@ -238,6 +269,11 @@ export type ManagedWorktreeFaultBoundary =
   | "after-registry-generation-sync"
   | "before-registry-pointer-rename"
   | "after-registry-pointer-rename"
+  | "after-adoption-reconciliation"
+  | "after-adoption-install"
+  | "after-adoption-stage"
+  | "after-adoption-publication"
+  | "before-adoption-commit"
   | "before-worktree-remove"
   | "before-registry-release"
   | "before-directory-delete";
@@ -269,6 +305,18 @@ export interface PrepareManagedWorktreeRequest {
   readonly priorResultCommit?: string | null;
   /** Integration / main-checkout HEAD used as the dispatch-base ancestry tip. */
   readonly integrationHead?: string;
+  /** Prepare-only exact legacy worktree target; requires expectedHead. */
+  readonly adoptWorktreePath?: string;
+  /** Prepare-only exact legacy HEAD; requires adoptWorktreePath. */
+  readonly expectedHead?: string;
+}
+
+export interface ManagedWorktreeTaskAdoptionAuthority {
+  captureTaskAdoptionEligibility(taskId: string): Promise<TaskAdoptionEligibilityResult>;
+  publishTaskAdoption(
+    fence: TaskAdoptionEligibilityFence,
+    publish: () => undefined,
+  ): Promise<TaskAdoptionPublicationResult>;
 }
 
 export interface ReleaseManagedWorktreeRequest {
@@ -298,6 +346,10 @@ export interface ManagedWorktreeDeps {
   readonly prepareLockTimeoutMs?: number;
   /** Override broker/store/release effect-lock timeout (ms). */
   readonly effectLockTimeoutMs?: number;
+  /** Bound ledger authority; required only for prepare-only legacy adoption. */
+  readonly taskAdoptionAuthority?: ManagedWorktreeTaskAdoptionAuthority;
+  /** Bound dispatch/lease/process/content observer required for legacy adoption. */
+  readonly adoptionActivityFence?: LegacyWorktreeActivityFence;
 }
 
 // ---------------------------------------------------------------------------
@@ -903,6 +955,121 @@ async function publishTaskGeneration(
   await fault("after-registry-pointer-rename", { taskId, generation });
 }
 
+interface StagedTaskGenerationPublication {
+  readonly generation: string;
+  publish(): undefined;
+  rollback(): Promise<void>;
+}
+
+function syncDirectoryNow(directory: string): void {
+  const descriptor = openSync(directory, "r");
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+async function stageTaskGenerationPublication(
+  regRoot: string,
+  taskId: string,
+  records: readonly StoredHandleRecord[],
+  fault: ManagedWorktreeFaultInjector,
+): Promise<StagedTaskGenerationPublication> {
+  const generationRaw = serializeTaskGeneration(taskId, records);
+  const generation = digestRegistryBytes(generationRaw);
+  const taskDir = taskRegistryDir(regRoot, taskId);
+  const tasksDir = join(regRoot, TASK_REGISTRY_DIRNAME);
+  const generationsDir = join(taskDir, TASK_GENERATIONS_DIRNAME);
+  const stagingDir = join(taskDir, TASK_STAGING_DIRNAME);
+  await fs.mkdir(generationsDir, { recursive: true });
+  await fs.mkdir(stagingDir, { recursive: true });
+  const finalGeneration = taskGenerationPath(regRoot, taskId, generation);
+  try {
+    const existing = await fs.readFile(finalGeneration, "utf8");
+    if (existing !== generationRaw) {
+      throw new Error(`managed registry immutable generation collision for ${taskId}`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const stagedGeneration = join(
+      stagingDir,
+      `generation-${generation}-${process.pid}-${randomBytes(4).toString("hex")}.json`,
+    );
+    const generationHandle = await fs.open(stagedGeneration, "wx", 0o600);
+    try {
+      await generationHandle.writeFile(generationRaw, "utf8");
+      await generationHandle.sync();
+    } finally {
+      await generationHandle.close();
+    }
+    await fs.rename(stagedGeneration, finalGeneration);
+    await syncRegistryDirectory(generationsDir, "generation", fault);
+  }
+  await fault("after-registry-generation-sync", { taskId, generation });
+
+  const currentPath = taskCurrentPath(regRoot, taskId);
+  let oldPointerRaw: string | null = null;
+  try {
+    oldPointerRaw = await fs.readFile(currentPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const pointerRaw = `${JSON.stringify({ version: 2, generation } satisfies TaskRegistryPointer, null, 2)}\n`;
+  const stagedPointer = join(
+    stagingDir,
+    `current-${generation}-${process.pid}-${randomBytes(4).toString("hex")}.json`,
+  );
+  const pointerHandle = await fs.open(stagedPointer, "wx", 0o600);
+  try {
+    await pointerHandle.writeFile(pointerRaw, "utf8");
+    await pointerHandle.sync();
+  } finally {
+    await pointerHandle.close();
+  }
+
+  let published = false;
+  return {
+    generation,
+    publish(): undefined {
+      if (published) throw new Error(`managed registry generation ${generation} already published`);
+      renameSync(stagedPointer, currentPath);
+      published = true;
+      syncDirectoryNow(taskDir);
+      if (oldPointerRaw === null) {
+        syncDirectoryNow(tasksDir);
+        syncDirectoryNow(regRoot);
+        syncDirectoryNow(dirname(regRoot));
+      }
+      return undefined;
+    },
+    async rollback(): Promise<void> {
+      if (!published) {
+        await fs.rm(stagedPointer, { force: true });
+        return;
+      }
+      if (oldPointerRaw === null) {
+        rmSync(currentPath, { force: true });
+        syncDirectoryNow(taskDir);
+        return;
+      }
+      const restorePointer = join(
+        stagingDir,
+        `restore-${generation}-${process.pid}-${randomBytes(4).toString("hex")}.json`,
+      );
+      const restoreHandle = await fs.open(restorePointer, "wx", 0o600);
+      try {
+        await restoreHandle.writeFile(oldPointerRaw, "utf8");
+        await restoreHandle.sync();
+      } finally {
+        await restoreHandle.close();
+      }
+      await fs.rename(restorePointer, currentPath);
+      syncDirectoryNow(taskDir);
+    },
+  };
+}
+
 async function quarantineLegacyIndex(
   regRoot: string,
   taskId: string,
@@ -1305,7 +1472,7 @@ async function buildEvidence(
   bunWorkspaceRoot: string,
   bunInstallCacheDir: string,
   dependencyResultCommits: readonly DependencyResultCommit[],
-  mode: "fresh" | "resume",
+  mode: "fresh" | "resume" | "adopted",
 ): Promise<PreparedWorktreeEvidence> {
   return {
     worktreeId: handle.worktreeId,
@@ -1455,6 +1622,14 @@ export async function prepareManagedWorktree(
       );
     }
   }
+  const adoptionFieldCount =
+    Number(request.adoptWorktreePath !== undefined) + Number(request.expectedHead !== undefined);
+  if (adoptionFieldCount === 1 || (adoptionFieldCount > 0 && request.handle !== undefined)) {
+    return refusedPrepare(
+      "adoption-invalid",
+      "adoptWorktreePath and expectedHead must appear together on handle-free prepare",
+    );
+  }
 
   // Every read that may reconcile legacy state and every publication shares
   // the same per-task lock. Readers outside this critical section only follow
@@ -1535,6 +1710,420 @@ interface PrepareUnderLockContext {
   readonly regRoot: string;
 }
 
+class AdoptionRefusal extends Error {
+  constructor(
+    readonly reason: PrepareManagedWorktreeRefusalReason,
+    detail: string,
+  ) {
+    super(detail);
+  }
+}
+
+const heldAdoptionManagerLock: LegacyWorktreeManagerLock = {
+  async acquire() {
+    return async () => undefined;
+  },
+};
+
+function adoptionTransactionId(taskId: string, expectedHead: string): string {
+  return `adopt-${taskId}-${expectedHead.slice(0, 16)}`;
+}
+
+async function prepareAdoptedWorktreeUnderLock(
+  request: PrepareManagedWorktreeRequest & {
+    readonly adoptWorktreePath: string;
+    readonly expectedHead: string;
+  },
+  deps: ManagedWorktreeDeps,
+  ctx: PrepareUnderLockContext,
+  live: readonly StoredHandleRecord[],
+): Promise<PrepareManagedWorktreeResult> {
+  const {
+    git,
+    dispatchGit,
+    install,
+    idFactory,
+    now,
+    fault,
+    repositoryRoot,
+    regRoot,
+  } = ctx;
+  const authority = deps.taskAdoptionAuthority;
+  const activityFence = deps.adoptionActivityFence;
+  if (authority === undefined || activityFence === undefined || deps.skipInstall === true) {
+    return refusedPrepare(
+      "adoption-unavailable",
+      "legacy adoption requires bound task authority, activity fencing, and the real frozen install",
+    );
+  }
+
+  const baseCommit = request.baseCommit;
+  if (baseCommit === undefined || !FULL_COMMIT_SHA.test(baseCommit)) {
+    return refusedPrepare("base-unresolvable", "legacy adoption requires a full baseCommit");
+  }
+  if (!FULL_COMMIT_SHA.test(request.expectedHead) || !isAbsolute(request.adoptWorktreePath)) {
+    return refusedPrepare(
+      "adoption-invalid",
+      "legacy adoption requires an absolute adoptWorktreePath and full expectedHead",
+    );
+  }
+  const branch = request.branch ?? defaultBranchForTask(request.taskId);
+  const expectedBranch = defaultBranchForTask(request.taskId);
+  const absolutePath = resolve(request.adoptWorktreePath);
+  const expectedPath = join(worktreesParent(repositoryRoot), `implement-${request.taskId}`);
+  if (branch !== expectedBranch || absolutePath !== expectedPath) {
+    return refusedPrepare(
+      "adoption-invalid",
+      `legacy adoption requires branch ${expectedBranch} at ${expectedPath}`,
+    );
+  }
+
+  const transactionId = adoptionTransactionId(request.taskId, request.expectedHead);
+  const journalDirectory = join(regRoot, "adoption-reconciliation");
+  const journalPath = join(journalDirectory, `${transactionId}.json`);
+  const recoveryRequest = { transactionId, journalDirectory } as const;
+
+  if (live.length === 1) {
+    const stored = live[0]!;
+    if (
+      stored.handle.version !== ADOPTED_HANDLE_VERSION ||
+      resolve(stored.handle.absolutePath) !== absolutePath ||
+      stored.handle.branch !== branch ||
+      stored.handle.baseCommit !== baseCommit
+    ) {
+      return refusedPrepare(
+        "registry-conflict",
+        `task ${request.taskId} already owns a different live managed worktree`,
+      );
+    }
+    const recovered = await recoverLegacyWorktreeReconciliation(
+      { ...recoveryRequest, finalizeReconciled: true },
+      { managerLock: heldAdoptionManagerLock, activityFence },
+    );
+    if (
+      recovered.status === "refused" &&
+      recovered.reason !== "journal-missing"
+    ) {
+      return refusedPrepare(
+        "adoption-recovery-failed",
+        `published adoption recovery refused: ${recovered.reason}: ${recovered.detail}`,
+      );
+    }
+    const resumed = await resumeFromStored(request, deps, stored, repositoryRoot);
+    if (resumed.status !== "prepared") return resumed;
+    return { ...resumed, evidence: { ...resumed.evidence, mode: "adopted" } };
+  }
+  if (live.length > 1) {
+    return refusedPrepare(
+      "live-tree-ambiguous",
+      `task ${request.taskId} owns ${live.length} live managed worktrees`,
+    );
+  }
+
+  const records = await loadOrReconcileTaskRecords(regRoot, request.taskId, fault);
+  if (records.length !== 0) {
+    return refusedPrepare(
+      "registry-conflict",
+      `task ${request.taskId} already has ${records.length} managed registry record(s)`,
+    );
+  }
+
+  const pendingRecovery = await recoverLegacyWorktreeReconciliation(recoveryRequest, {
+    managerLock: heldAdoptionManagerLock,
+    activityFence,
+  });
+  if (pendingRecovery.status === "recovered") {
+    if (pendingRecovery.outcome !== "rolled-back") {
+      return refusedPrepare(
+        "adoption-recovery-failed",
+        "reconciliation is committed but no authoritative managed handle exists",
+      );
+    }
+    await fs.rm(journalPath, { force: true });
+  } else if (pendingRecovery.reason !== "journal-missing") {
+    return refusedPrepare(
+      "adoption-recovery-failed",
+      `pending adoption recovery refused: ${pendingRecovery.reason}: ${pendingRecovery.detail}`,
+    );
+  }
+
+  let stat;
+  try {
+    stat = await fs.lstat(absolutePath);
+  } catch (error) {
+    return refusedPrepare(
+      "adoption-invalid",
+      `legacy adoption path cannot be read: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    return refusedPrepare("adoption-invalid", "legacy adoption path must be a real directory");
+  }
+  const top = await resolveRepositoryRoot(git, absolutePath);
+  if (top !== absolutePath) {
+    return refusedPrepare("adoption-invalid", "legacy adoption path is not its worktree root");
+  }
+  const checkedOut = await branchCheckedOutPaths(git, repositoryRoot, branch);
+  if (checkedOut.length !== 1 || resolve(checkedOut[0]!) !== absolutePath) {
+    return refusedPrepare(
+      "adoption-invalid",
+      `branch ${branch} is not checked out exactly at ${absolutePath}`,
+    );
+  }
+  const symbolic = await git(absolutePath, ["symbolic-ref", "--quiet", "HEAD"]);
+  const observedHead = await revParse(git, absolutePath, "HEAD");
+  const branchHead = await revParse(git, repositoryRoot, branch);
+  if (
+    symbolic.code !== 0 ||
+    symbolic.stdout.trim() !== `refs/heads/${branch}` ||
+    observedHead !== request.expectedHead ||
+    branchHead !== request.expectedHead
+  ) {
+    return refusedPrepare(
+      "adoption-invalid",
+      `legacy adoption identity does not match branch ${branch} at expected HEAD ${request.expectedHead}`,
+    );
+  }
+
+  const wip = await findOpenWipCheckpoints(absolutePath);
+  if (wip.status !== "clean") {
+    const detail =
+      wip.status === "open"
+        ? `open WIP checkpoints: ${wip.findings.flatMap((entry) => entry.openCheckpoints).join(", ")}`
+        : `malformed WIP artifact ${wip.path}: ${wip.detail}`;
+    return refusedPrepare("adoption-invalid", detail);
+  }
+
+  const baseVerification = await verifyBaseCommit(
+    dispatchGit,
+    repositoryRoot,
+    baseCommit,
+    request.integrationHead,
+  );
+  if (baseVerification.status === "rebase-required") {
+    return refusedPrepare("base-rebase-required", `base ${baseCommit} has diverged`, {
+      base: baseVerification,
+    });
+  }
+  if (baseVerification.status === "unresolvable") {
+    return refusedPrepare(
+      "base-unresolvable",
+      `base verification failed: ${baseVerification.reason}`,
+      { base: baseVerification },
+    );
+  }
+
+  let dependencyResultCommits: readonly DependencyResultCommit[] = [];
+  if (request.dependencyReader !== undefined) {
+    const resolution = await resolveDependencyResultCommitsForDispatch(
+      { cwd: repositoryRoot, rootTaskRef: request.taskId, proposedDispatchBase: baseCommit },
+      request.dependencyReader,
+      dispatchGit,
+    );
+    if (resolution.status === "unresolvable") {
+      return refusedPrepare(
+        "dependency-unresolvable",
+        `dependency closure refused: ${resolution.reason}`,
+        { dependency: resolution },
+      );
+    }
+    dependencyResultCommits = resolution.dependencyResultCommits;
+  }
+
+  const eligibility = await authority.captureTaskAdoptionEligibility(request.taskId);
+  if (eligibility.status !== "eligible") {
+    return refusedPrepare(
+      "adoption-ineligible",
+      `task adoption is ineligible: ${eligibility.ineligibility.reason}`,
+    );
+  }
+
+  const seedBunWorkspaceRoot =
+    deps.bunWorkspaceRoot ?? (await discoverBunWorkspaceRoot(repositoryRoot));
+  if (seedBunWorkspaceRoot === null) {
+    return refusedPrepare("bun-workspace-missing", "no Bun workspace found for adoption");
+  }
+  const bunWorkspaceRoot = rebaseBunWorkspaceIntoWorktree(
+    repositoryRoot,
+    seedBunWorkspaceRoot,
+    absolutePath,
+  );
+  if (bunWorkspaceRoot === null) {
+    return refusedPrepare("bun-workspace-missing", "Bun workspace is outside the adopted tree");
+  }
+  const installPlan = buildManagedWorktreeInstallPlan({
+    bunWorkspaceRoot,
+    ...(deps.cacheRoot === undefined ? {} : { cacheRoot: deps.cacheRoot }),
+  });
+  const planValidation = validateManagedWorktreeInstallPlan(
+    installPlan,
+    deps.cacheRoot === undefined ? {} : { cacheRoot: deps.cacheRoot },
+  );
+  if (planValidation.status === "invalid") {
+    return refusedPrepare(
+      "bun-install-plan-invalid",
+      `${planValidation.reason}: ${planValidation.detail}`,
+    );
+  }
+  const preInstallSymlink = await assertNoNodeModulesSymlink(bunWorkspaceRoot);
+  if (preInstallSymlink !== null) {
+    return refusedPrepare("bun-install-plan-invalid", preInstallSymlink);
+  }
+
+  let transaction: LegacyWorktreeReconciliationTransaction | null = null;
+  let staged: StagedTaskGenerationPublication | null = null;
+  try {
+    const reconciled = await beginLegacyWorktreeReconciliation(
+      {
+        repositoryRoot,
+        worktreePath: absolutePath,
+        branch,
+        baseCommit,
+        expectedHead: request.expectedHead,
+        transactionId,
+        journalDirectory,
+      },
+      { managerLock: heldAdoptionManagerLock, activityFence },
+    );
+    if (reconciled.status !== "reconciled") {
+      throw new AdoptionRefusal(
+        "adoption-reconciliation-failed",
+        `${reconciled.reason}: ${reconciled.detail}`,
+      );
+    }
+    transaction = reconciled.transaction;
+    await fault("after-adoption-reconciliation", { taskId: request.taskId, transactionId });
+
+    await fs.mkdir(installPlan.bunInstallCacheDir, { recursive: true });
+    const installResult = await install(installPlan);
+    if (installResult.code !== 0) {
+      throw new AdoptionRefusal(
+        "bun-install-failed",
+        `bun install failed (exit ${installResult.code}): ${installResult.stderr.trim()}`,
+      );
+    }
+    const postInstallSymlink = await assertNoNodeModulesSymlink(bunWorkspaceRoot);
+    if (postInstallSymlink !== null) {
+      throw new AdoptionRefusal("bun-install-plan-invalid", postInstallSymlink);
+    }
+    await fault("after-adoption-install", { taskId: request.taskId, transactionId });
+
+    const observationAdapter = createGitLegacyReconciliationObservationAdapter(
+      nodeLegacyReconciliationGitRunner,
+      activityFence,
+    );
+    const afterInstall = await assessLegacyReconciliationActivity(
+      observationAdapter,
+      absolutePath,
+      reconciled.evidence.activity.transition,
+    );
+    if (afterInstall.status !== "accepted") {
+      throw new AdoptionRefusal("adoption-activity-changed", afterInstall.detail);
+    }
+    const headCommit = await revParse(git, absolutePath, "HEAD");
+    if (headCommit !== reconciled.evidence.candidateHead) {
+      throw new AdoptionRefusal(
+        "adoption-activity-changed",
+        `adopted HEAD changed to ${String(headCommit)}`,
+      );
+    }
+
+    const worktreeId = idFactory();
+    if (!isUuidV7(worktreeId)) {
+      throw new AdoptionRefusal("registry-conflict", "idFactory produced a non-UUIDv7 id");
+    }
+    const handle: ManagedWorktreeHandle = {
+      kind: MANAGED_WORKTREE_HANDLE_KIND,
+      version: ADOPTED_HANDLE_VERSION,
+      token: randomBytes(16).toString("hex"),
+      worktreeId,
+      taskId: request.taskId,
+      branch,
+      repositoryRoot,
+      absolutePath,
+      baseCommit,
+      createdAt: now().toISOString(),
+      nonce: randomBytes(8).toString("hex"),
+    };
+    const stored: StoredHandleRecord = {
+      handle,
+      fingerprint: fingerprintHandle(handle),
+      status: "live",
+      headAtPrepare: headCommit,
+      bunWorkspaceRoot,
+    };
+    staged = await stageTaskGenerationPublication(regRoot, request.taskId, [stored], fault);
+    await fault("after-adoption-stage", {
+      taskId: request.taskId,
+      transactionId,
+      generation: staged.generation,
+    });
+    const beforePublication = await assessLegacyReconciliationActivity(
+      observationAdapter,
+      absolutePath,
+      reconciled.evidence.activity.transition,
+    );
+    if (beforePublication.status !== "accepted") {
+      throw new AdoptionRefusal("adoption-activity-changed", beforePublication.detail);
+    }
+
+    const publication = await authority.publishTaskAdoption(eligibility.fence, () =>
+      staged!.publish(),
+    );
+    if (publication.status !== "published") {
+      throw new AdoptionRefusal(
+        "adoption-authority-stale",
+        `task adoption publication refused: ${publication.status}`,
+      );
+    }
+    await fault("after-adoption-publication", {
+      taskId: request.taskId,
+      transactionId,
+      generation: staged.generation,
+    });
+    await fault("before-adoption-commit", { taskId: request.taskId, transactionId });
+    await transaction.commit();
+    transaction = null;
+    const evidence = await buildEvidence(
+      handle,
+      headCommit,
+      bunWorkspaceRoot,
+      installPlan.bunInstallCacheDir,
+      dependencyResultCommits,
+      "adopted",
+    );
+    return { status: "prepared", handle, evidence };
+  } catch (error) {
+    const compensation: string[] = [];
+    if (staged !== null) {
+      try {
+        await staged.rollback();
+      } catch (caught) {
+        compensation.push(`registry rollback failed: ${caught instanceof Error ? caught.message : String(caught)}`);
+      }
+    }
+    if (transaction !== null) {
+      try {
+        await transaction.rollback();
+        await fs.rm(journalPath, { force: true });
+      } catch (caught) {
+        compensation.push(`reconciliation rollback failed: ${caught instanceof Error ? caught.message : String(caught)}`);
+      }
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    if (compensation.length > 0) {
+      return refusedPrepare(
+        "adoption-recovery-failed",
+        `${detail}; ${compensation.join("; ")}`,
+      );
+    }
+    return refusedPrepare(
+      error instanceof AdoptionRefusal ? error.reason : "adoption-reconciliation-failed",
+      detail,
+    );
+  }
+}
+
 async function prepareManagedWorktreeHandleFreeUnderLock(
   request: PrepareManagedWorktreeRequest,
   deps: ManagedWorktreeDeps,
@@ -1560,6 +2149,17 @@ async function prepareManagedWorktreeHandleFreeUnderLock(
     return refusedPrepare(
       "registry-conflict",
       `managed registry could not be read: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (request.adoptWorktreePath !== undefined && request.expectedHead !== undefined) {
+    return prepareAdoptedWorktreeUnderLock(
+      request as PrepareManagedWorktreeRequest & {
+        readonly adoptWorktreePath: string;
+        readonly expectedHead: string;
+      },
+      deps,
+      ctx,
+      live,
     );
   }
   if (live.length > 1) {

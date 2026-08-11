@@ -332,6 +332,7 @@ export type {
   ManagedWorktreeInstallPlan,
   ManagedWorktreeInstallPlanValidation,
   ManagedWorktreeInstallRunner,
+  ManagedWorktreeTaskAdoptionAuthority,
   ManagedWorktreeTerminalDisposition,
   PrepareManagedWorktreeRefusalReason,
   PrepareManagedWorktreeRequest,

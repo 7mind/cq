@@ -28,7 +28,7 @@ export interface ClaudeNativePreparedEvidence {
   readonly branch: string;
   readonly baseCommit: string;
   readonly headCommit: string;
-  readonly mode: "fresh" | "resume";
+  readonly mode: "fresh" | "resume" | "adopted";
 }
 
 export type ClaudeNativeWorktreePrepareResult =
@@ -90,7 +90,7 @@ export interface ClaudeNativeWorktreeBinding {
   readonly baseCommit: string;
   readonly headCommit: string;
   readonly branch: string;
-  readonly mode: "fresh" | "resume";
+  readonly mode: "fresh" | "resume" | "adopted";
 }
 
 export type ClaudeNativeWorktreeBindResult =

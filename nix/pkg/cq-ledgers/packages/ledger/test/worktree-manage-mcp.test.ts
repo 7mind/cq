@@ -431,6 +431,52 @@ describe("worktree_manage schema", () => {
     ).toThrow(/must not accompany/);
   });
 
+  it("accepts only a complete prepare-only legacy adoption target", () => {
+    const expectedHead = "b".repeat(40);
+    const adoptWorktreePath = "/tmp/project/.claude/worktrees/implement-T1207";
+    expect(
+      parseWorktreeManageInput({
+        operation: "prepare",
+        taskId: "T1207",
+        baseCommit: "a".repeat(40),
+        adoptWorktreePath,
+        expectedHead,
+      }),
+    ).toEqual({
+      operation: "prepare",
+      prepare: {
+        taskId: "T1207",
+        baseCommit: "a".repeat(40),
+        adoptWorktreePath,
+        expectedHead,
+      },
+    });
+
+    for (const args of [
+      {
+        operation: "prepare",
+        taskId: "T1207",
+        baseCommit: "a".repeat(40),
+        adoptWorktreePath,
+      },
+      {
+        operation: "prepare",
+        taskId: "T1207",
+        baseCommit: "a".repeat(40),
+        expectedHead,
+      },
+      {
+        operation: "release",
+        handle: wireHandle(2),
+        terminalDisposition: "done",
+        adoptWorktreePath,
+        expectedHead,
+      },
+    ]) {
+      expect(() => parseWorktreeManageInput(args)).toThrow();
+    }
+  });
+
   it("keeps v1 accepted and rejects unknown, mixed, traversal, foreign, and tampered v2 handles", () => {
     expect(
       parseWorktreeManageInput({

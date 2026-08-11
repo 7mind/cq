@@ -28,7 +28,7 @@ export interface PiNativePreparedEvidence {
   readonly branch: string;
   readonly baseCommit: string;
   readonly headCommit: string;
-  readonly mode: "fresh" | "resume";
+  readonly mode: "fresh" | "resume" | "adopted";
 }
 
 export type PiNativeWorktreePrepareResult =
@@ -90,7 +90,7 @@ export interface PiNativeWorktreeBinding {
   readonly baseCommit: string;
   readonly headCommit: string;
   readonly branch: string;
-  readonly mode: "fresh" | "resume";
+  readonly mode: "fresh" | "resume" | "adopted";
 }
 
 export type PiNativeWorktreeBindResult =

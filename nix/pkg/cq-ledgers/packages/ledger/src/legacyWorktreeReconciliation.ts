@@ -185,6 +185,8 @@ export type BeginLegacyWorktreeReconciliationResult =
 export interface RecoverLegacyWorktreeReconciliationRequest {
   readonly transactionId: string;
   readonly journalDirectory: string;
+  /** Adoption recovery only: finalize an already-reconciled transaction. */
+  readonly finalizeReconciled?: boolean;
 }
 
 export type RecoverLegacyWorktreeReconciliationResult =
@@ -1433,6 +1435,44 @@ export async function recoverLegacyWorktreeReconciliation(
       await deleteRefIfValue(git, journal.request.repositoryRoot, journal.refs.recoveryRef, journal.refs.head);
       await deleteRefIfValue(git, journal.request.repositoryRoot, journal.refs.candidateRef, candidateHead);
       return { status: "recovered", outcome: "rolled-back", idempotent: true };
+    }
+    if (request.finalizeReconciled === true) {
+      if (journal.phase !== "reconciled" || journal.candidateHead === undefined) {
+        return {
+          status: "refused",
+          reason: "journal-invalid",
+          detail: `cannot finalize reconciliation from phase ${journal.phase}`,
+        };
+      }
+      const candidateHead = journal.candidateHead;
+      const branch = await resolveRef(git, journal.request.repositoryRoot, journal.refs.branchRef);
+      const recovery = await resolveRef(
+        git,
+        journal.request.repositoryRoot,
+        journal.refs.recoveryRef,
+      );
+      if (branch !== candidateHead || recovery !== journal.refs.head) {
+        return {
+          status: "refused",
+          reason: "journal-invalid",
+          detail: "reconciled refs no longer match the durable journal",
+        };
+      }
+      journal = { ...journal, phase: "committed" };
+      await writeJournal(path, journal);
+      await deleteRefIfValue(
+        git,
+        journal.request.repositoryRoot,
+        journal.refs.recoveryRef,
+        journal.refs.head,
+      );
+      await deleteRefIfValue(
+        git,
+        journal.request.repositoryRoot,
+        journal.refs.candidateRef,
+        candidateHead,
+      );
+      return { status: "recovered", outcome: "committed", idempotent: false };
     }
     try {
       journal = await rollbackJournalState(git, path, journal);

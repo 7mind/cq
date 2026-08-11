@@ -60,6 +60,8 @@ const PREPARE_ONLY_KEYS = [
   "branch",
   "priorResultCommit",
   "integrationHead",
+  "adoptWorktreePath",
+  "expectedHead",
 ] as const;
 
 const RELEASE_ONLY_KEYS = ["terminalDisposition", "resultCommit", "deleteBranch"] as const;
@@ -141,6 +143,14 @@ export const WORKTREE_MANAGE_INPUT_SHAPE = {
   integrationHead: fullCommitSha
     .optional()
     .describe("prepare only: integration tip for base ancestry verification"),
+  adoptWorktreePath: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("prepare only: exact canonical legacy worktree path to adopt"),
+  expectedHead: fullCommitSha
+    .optional()
+    .describe("prepare only: exact legacy HEAD at adoptWorktreePath"),
   terminalDisposition: z
     .enum(["done", "abandoned"])
     .optional()
@@ -301,6 +311,8 @@ export function parseWorktreeManageInput(args: unknown): {
         "branch",
         "priorResultCommit",
         "integrationHead",
+        "adoptWorktreePath",
+        "expectedHead",
       ]),
     } as Omit<PrepareManagedWorktreeRequest, "repositoryRoot" | "dependencyReader">;
     if (prepare.taskId === undefined && prepare.handle === undefined) {
@@ -309,6 +321,15 @@ export function parseWorktreeManageInput(args: unknown): {
     if (prepare.handle !== undefined) {
       // Re-validate handle through the strict schema path already applied.
       managedWorktreeHandleSchema.parse(prepare.handle);
+    }
+    const adoptionFieldCount =
+      Number(prepare.adoptWorktreePath !== undefined) +
+      Number(prepare.expectedHead !== undefined);
+    if (adoptionFieldCount === 1 || (adoptionFieldCount > 0 && prepare.handle !== undefined)) {
+      rejectPath(
+        "adoptWorktreePath",
+        "adoptWorktreePath and expectedHead must appear together on handle-free prepare",
+      );
     }
     return { operation: "prepare", prepare };
   }
@@ -394,7 +415,10 @@ export const WORKTREE_MANAGE_TOOL_SPEC: WorktreeManageToolSpec = {
         // Always authoritative — ignore any caller attempt to inject a reader.
         dependencyReader: dependencyTaskSnapshotReaderFromStore(store),
       };
-      const result = await prepareFn(request, deps);
+      const result = await prepareFn(request, {
+        ...deps,
+        taskAdoptionAuthority: store,
+      });
       return produceWireDto(result as object);
     }
 
