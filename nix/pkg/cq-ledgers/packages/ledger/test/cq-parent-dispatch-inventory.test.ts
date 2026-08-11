@@ -269,8 +269,8 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
 
   it("T899 makes the fetched resultCommit the sole pre-merge git authority", () => {
     const body = bodyOf("implement");
-    const gateStart = body.indexOf("## 5. Success authority");
-    const gateEnd = body.indexOf("## 7. Milestones and goals");
+    const gateStart = body.indexOf("## 6. Success authority");
+    const gateEnd = body.indexOf("## 8. Milestones and goals");
     expect(gateStart).toBeGreaterThanOrEqual(0);
     expect(gateEnd).toBeGreaterThan(gateStart);
     const mergeGate = normalize(body.slice(gateStart, gateEnd));
@@ -285,8 +285,8 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
 
   it("T900 treats implausible worker gate duration as a blocking tripwire", () => {
     const body = bodyOf("implement");
-    const gateStart = body.indexOf("## 5. Success authority");
-    const gateEnd = body.indexOf("## 6. Merge in DAG order");
+    const gateStart = body.indexOf("## 6. Success authority");
+    const gateEnd = body.indexOf("## 7. Merge in DAG order");
     expect(gateStart).toBeGreaterThanOrEqual(0);
     expect(gateEnd).toBeGreaterThan(gateStart);
     const mergeGate = normalize(body.slice(gateStart, gateEnd));
@@ -299,8 +299,8 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
 
   it("T1629 verifies and records the base plus authoritative tip before worker launch", () => {
     const body = bodyOf("implement");
-    const dispatchStart = body.indexOf("## 2. Dispatch workers");
-    const dispatchEnd = body.indexOf("## 3. Review");
+    const dispatchStart = body.indexOf("## 3. Dispatch workers");
+    const dispatchEnd = body.indexOf("## 4. Review");
     expect(dispatchStart).toBeGreaterThanOrEqual(0);
     expect(dispatchEnd).toBeGreaterThan(dispatchStart);
     const dispatchGate = normalize(body.slice(dispatchStart, dispatchEnd));
@@ -320,8 +320,8 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
 
   it("T902 makes verified-base ancestry a blocking merge precondition", () => {
     const body = bodyOf("implement");
-    const gateStart = body.indexOf("## 5. Success authority");
-    const gateEnd = body.indexOf("## 6. Merge in DAG order");
+    const gateStart = body.indexOf("## 6. Success authority");
+    const gateEnd = body.indexOf("## 7. Merge in DAG order");
     expect(gateStart).toBeGreaterThanOrEqual(0);
     expect(gateEnd).toBeGreaterThan(gateStart);
     const mergeGate = normalize(body.slice(gateStart, gateEnd));

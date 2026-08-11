@@ -23,8 +23,10 @@
       "inventorySource": "LEDGER_TOOL_NAMES",
       "inventory": [
         "abort_dispatch",
+        "acknowledge_operator_action",
         "archive_milestone",
         "claim_plan",
+        "complete_operator_action",
         "confirm_dispatch_completion",
         "create_item",
         "create_ledger",
@@ -44,9 +46,11 @@
         "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
+        "materialize_operator_action",
         "prepare_dispatch",
         "publish_plan_draft",
         "read_log",
+        "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
         "search_items",
@@ -56,7 +60,7 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 33,
+      "toolCount": 37,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 766,
@@ -64,31 +68,33 @@
         "sha256": "b03f085cf0fa36b2dc273e3d1e4497e44c4eab265bed38dc3f1feb7833784862"
       },
       "toolsList": {
-        "utf8Bytes": 43827,
-        "tokens": 10516,
-        "sha256": "b8ac8f3234003763a69f86d0d00933868a32edfe7c90abcf928f4cdf3f67fe8d"
+        "utf8Bytes": 47155,
+        "tokens": 11267,
+        "sha256": "b052d8f5d753797df4d5d4cc480103fa4b8e3d9baab1a8417959fe945df3f158"
       },
-      "surfaceTokens": 10663,
+      "surfaceTokens": 11414,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1119,
+      "deltaTokens": -368,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4291,
+      "domainInputSchemaTokens": 4699,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 848,
-        "allTokens": 1060,
+        "authoritativeResponseTokens": 965,
+        "allTokens": 1177,
         "deltasAreAdditive": false
       }
     },
     "non-dispatch": {
       "inventorySource": "NON_DISPATCH_LEDGER_TOOL_NAMES",
       "inventory": [
+        "acknowledge_operator_action",
         "archive_milestone",
         "claim_plan",
+        "complete_operator_action",
         "create_item",
         "create_ledger",
         "derive_predicates",
@@ -103,8 +109,10 @@
         "get_usage_stats",
         "list_milestone_items",
         "list_projects",
+        "materialize_operator_action",
         "publish_plan_draft",
         "read_log",
+        "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
         "search_items",
@@ -113,7 +121,7 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 25,
+      "toolCount": 29,
       "baselineProfile": "non-dispatch",
       "initialize": {
         "utf8Bytes": 766,
@@ -121,23 +129,23 @@
         "sha256": "b03f085cf0fa36b2dc273e3d1e4497e44c4eab265bed38dc3f1feb7833784862"
       },
       "toolsList": {
-        "utf8Bytes": 31523,
-        "tokens": 7498,
-        "sha256": "e2fde99def2e006a12f93aac3c7a0bbea09f1bb7399e71b32d0f2b60dd7c0c0d"
+        "utf8Bytes": 34851,
+        "tokens": 8249,
+        "sha256": "4b0ae4ae73fbca502b3f0941ba1852047a38e84771740b9a05a36f4816f570dd"
       },
-      "surfaceTokens": 7645,
+      "surfaceTokens": 8396,
       "baselineSurfaceTokens": 10386,
-      "deltaTokens": -2741,
+      "deltaTokens": -1990,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4291,
+      "domainInputSchemaTokens": 4699,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 657,
-        "allTokens": 869,
+        "authoritativeResponseTokens": 774,
+        "allTokens": 986,
         "deltasAreAdditive": false
       }
     },
@@ -145,8 +153,10 @@
       "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:advance",
       "inventory": [
         "abort_dispatch",
+        "acknowledge_operator_action",
         "archive_milestone",
         "claim_plan",
+        "complete_operator_action",
         "confirm_dispatch_completion",
         "create_item",
         "create_ledger",
@@ -166,9 +176,11 @@
         "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
+        "materialize_operator_action",
         "prepare_dispatch",
         "publish_plan_draft",
         "read_log",
+        "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
         "search_items",
@@ -178,31 +190,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 33,
+      "toolCount": 37,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 688,
-        "tokens": 174,
-        "sha256": "5222af85a12a5a49a2a5cd217ad299234b06379f6b654089576410cccf100987"
+        "utf8Bytes": 813,
+        "tokens": 197,
+        "sha256": "5886f65d2357dba585fa3f68da4c0d4e24a87eccad276b0c8027c235774fd5c2"
       },
       "toolsList": {
-        "utf8Bytes": 43827,
-        "tokens": 10516,
-        "sha256": "b8ac8f3234003763a69f86d0d00933868a32edfe7c90abcf928f4cdf3f67fe8d"
+        "utf8Bytes": 47155,
+        "tokens": 11267,
+        "sha256": "b052d8f5d753797df4d5d4cc480103fa4b8e3d9baab1a8417959fe945df3f158"
       },
-      "surfaceTokens": 10690,
+      "surfaceTokens": 11464,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1092,
+      "deltaTokens": -318,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4291,
+      "domainInputSchemaTokens": 4699,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 848,
-        "allTokens": 1060,
+        "authoritativeResponseTokens": 965,
+        "allTokens": 1177,
         "deltasAreAdditive": false
       }
     },
@@ -210,8 +222,10 @@
       "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:begin",
       "inventory": [
         "abort_dispatch",
+        "acknowledge_operator_action",
         "archive_milestone",
         "claim_plan",
+        "complete_operator_action",
         "confirm_dispatch_completion",
         "create_item",
         "create_ledger",
@@ -231,9 +245,11 @@
         "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
+        "materialize_operator_action",
         "prepare_dispatch",
         "publish_plan_draft",
         "read_log",
+        "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
         "search_items",
@@ -243,31 +259,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 33,
+      "toolCount": 37,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 686,
-        "tokens": 174,
-        "sha256": "a5ea864221e6965849fe337328764d854d004e7ce30d6479957a41961fde6705"
+        "utf8Bytes": 811,
+        "tokens": 197,
+        "sha256": "2ad25b22a8cd6fa6b7172b5a976a3323eafa6891661e1af0388e2e12bcadc99b"
       },
       "toolsList": {
-        "utf8Bytes": 43827,
-        "tokens": 10516,
-        "sha256": "b8ac8f3234003763a69f86d0d00933868a32edfe7c90abcf928f4cdf3f67fe8d"
+        "utf8Bytes": 47155,
+        "tokens": 11267,
+        "sha256": "b052d8f5d753797df4d5d4cc480103fa4b8e3d9baab1a8417959fe945df3f158"
       },
-      "surfaceTokens": 10690,
+      "surfaceTokens": 11464,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1092,
+      "deltaTokens": -318,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4291,
+      "domainInputSchemaTokens": 4699,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 848,
-        "allTokens": 1060,
+        "authoritativeResponseTokens": 965,
+        "allTokens": 1177,
         "deltasAreAdditive": false
       }
     },
@@ -421,8 +437,10 @@
       "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:implement/advance",
       "inventory": [
         "abort_dispatch",
+        "acknowledge_operator_action",
         "archive_milestone",
         "claim_plan",
+        "complete_operator_action",
         "confirm_dispatch_completion",
         "create_item",
         "create_ledger",
@@ -442,9 +460,11 @@
         "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
+        "materialize_operator_action",
         "prepare_dispatch",
         "publish_plan_draft",
         "read_log",
+        "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
         "search_items",
@@ -454,31 +474,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 33,
+      "toolCount": 37,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 698,
-        "tokens": 176,
-        "sha256": "eb348de8833a6f7b7e4bb22428158600817b4f0a28990468c8ffb2e2b62c61a0"
+        "utf8Bytes": 823,
+        "tokens": 199,
+        "sha256": "3398f799050de179f0c04048056ef823800ec2009f40bb6e0b9da09dc005b8cb"
       },
       "toolsList": {
-        "utf8Bytes": 43827,
-        "tokens": 10516,
-        "sha256": "b8ac8f3234003763a69f86d0d00933868a32edfe7c90abcf928f4cdf3f67fe8d"
+        "utf8Bytes": 47155,
+        "tokens": 11267,
+        "sha256": "b052d8f5d753797df4d5d4cc480103fa4b8e3d9baab1a8417959fe945df3f158"
       },
-      "surfaceTokens": 10692,
+      "surfaceTokens": 11466,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1090,
+      "deltaTokens": -316,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4291,
+      "domainInputSchemaTokens": 4699,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 848,
-        "allTokens": 1060,
+        "authoritativeResponseTokens": 965,
+        "allTokens": 1177,
         "deltasAreAdditive": false
       }
     },
@@ -486,8 +506,10 @@
       "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:implement/start",
       "inventory": [
         "abort_dispatch",
+        "acknowledge_operator_action",
         "archive_milestone",
         "claim_plan",
+        "complete_operator_action",
         "confirm_dispatch_completion",
         "create_item",
         "create_ledger",
@@ -507,9 +529,11 @@
         "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
+        "materialize_operator_action",
         "prepare_dispatch",
         "publish_plan_draft",
         "read_log",
+        "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
         "search_items",
@@ -519,31 +543,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 33,
+      "toolCount": 37,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 696,
-        "tokens": 175,
-        "sha256": "6220c393764b81e51650a9ffbbe8ba85dd7fd388c62aa153821c977b69948658"
+        "utf8Bytes": 821,
+        "tokens": 198,
+        "sha256": "97ad8b41e820a2665c845584b7188f4050b314ed3d626c31d3f8f7c91c4a50dc"
       },
       "toolsList": {
-        "utf8Bytes": 43827,
-        "tokens": 10516,
-        "sha256": "b8ac8f3234003763a69f86d0d00933868a32edfe7c90abcf928f4cdf3f67fe8d"
+        "utf8Bytes": 47155,
+        "tokens": 11267,
+        "sha256": "b052d8f5d753797df4d5d4cc480103fa4b8e3d9baab1a8417959fe945df3f158"
       },
-      "surfaceTokens": 10691,
+      "surfaceTokens": 11465,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1091,
+      "deltaTokens": -317,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4291,
+      "domainInputSchemaTokens": 4699,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 848,
-        "allTokens": 1060,
+        "authoritativeResponseTokens": 965,
+        "allTokens": 1177,
         "deltasAreAdditive": false
       }
     },
@@ -551,8 +575,10 @@
       "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:investigate",
       "inventory": [
         "abort_dispatch",
+        "acknowledge_operator_action",
         "archive_milestone",
         "claim_plan",
+        "complete_operator_action",
         "confirm_dispatch_completion",
         "create_item",
         "create_ledger",
@@ -572,9 +598,11 @@
         "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
+        "materialize_operator_action",
         "prepare_dispatch",
         "publish_plan_draft",
         "read_log",
+        "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
         "search_items",
@@ -584,31 +612,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 33,
+      "toolCount": 37,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 692,
-        "tokens": 175,
-        "sha256": "d5e2ac2cddc2ccd42a37fdca4f3bc70b6d7e8deb2f0e340d6013902a60e26d97"
+        "utf8Bytes": 817,
+        "tokens": 198,
+        "sha256": "5161d08638ff3aa8eca073b4c329cf8b0cc48ede946d0d8fced659ae7df3ee12"
       },
       "toolsList": {
-        "utf8Bytes": 43827,
-        "tokens": 10516,
-        "sha256": "b8ac8f3234003763a69f86d0d00933868a32edfe7c90abcf928f4cdf3f67fe8d"
+        "utf8Bytes": 47155,
+        "tokens": 11267,
+        "sha256": "b052d8f5d753797df4d5d4cc480103fa4b8e3d9baab1a8417959fe945df3f158"
       },
-      "surfaceTokens": 10691,
+      "surfaceTokens": 11465,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1091,
+      "deltaTokens": -317,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4291,
+      "domainInputSchemaTokens": 4699,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 848,
-        "allTokens": 1060,
+        "authoritativeResponseTokens": 965,
+        "allTokens": 1177,
         "deltasAreAdditive": false
       }
     },
@@ -690,8 +718,10 @@
       "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:investigate/advance",
       "inventory": [
         "abort_dispatch",
+        "acknowledge_operator_action",
         "archive_milestone",
         "claim_plan",
+        "complete_operator_action",
         "confirm_dispatch_completion",
         "create_item",
         "create_ledger",
@@ -711,9 +741,11 @@
         "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
+        "materialize_operator_action",
         "prepare_dispatch",
         "publish_plan_draft",
         "read_log",
+        "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
         "search_items",
@@ -723,31 +755,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 33,
+      "toolCount": 37,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 700,
-        "tokens": 177,
-        "sha256": "3289026549f7cea3f06e523a36e3d1425b1c6bbecb05cb74de147b46b9e0e162"
+        "utf8Bytes": 825,
+        "tokens": 200,
+        "sha256": "658efe04533ea76f60d2f9686a19970fddf88ed1099d8acd643e20b450501f72"
       },
       "toolsList": {
-        "utf8Bytes": 43827,
-        "tokens": 10516,
-        "sha256": "b8ac8f3234003763a69f86d0d00933868a32edfe7c90abcf928f4cdf3f67fe8d"
+        "utf8Bytes": 47155,
+        "tokens": 11267,
+        "sha256": "b052d8f5d753797df4d5d4cc480103fa4b8e3d9baab1a8417959fe945df3f158"
       },
-      "surfaceTokens": 10693,
+      "surfaceTokens": 11467,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1089,
+      "deltaTokens": -315,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4291,
+      "domainInputSchemaTokens": 4699,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 848,
-        "allTokens": 1060,
+        "authoritativeResponseTokens": 965,
+        "allTokens": 1177,
         "deltasAreAdditive": false
       }
     },
@@ -755,8 +787,10 @@
       "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:plan",
       "inventory": [
         "abort_dispatch",
+        "acknowledge_operator_action",
         "archive_milestone",
         "claim_plan",
+        "complete_operator_action",
         "confirm_dispatch_completion",
         "create_item",
         "create_ledger",
@@ -776,9 +810,11 @@
         "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
+        "materialize_operator_action",
         "prepare_dispatch",
         "publish_plan_draft",
         "read_log",
+        "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
         "search_items",
@@ -788,31 +824,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 33,
+      "toolCount": 37,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 685,
-        "tokens": 174,
-        "sha256": "fe2fe295af18da239ed154ccb9ca8217712a87f39f7ff75cfceed52cd07c5efb"
+        "utf8Bytes": 810,
+        "tokens": 197,
+        "sha256": "de66117aa89df5f108f67e6cf1497b8f8a42e2816fbfdc59aa08570cf12a6613"
       },
       "toolsList": {
-        "utf8Bytes": 43827,
-        "tokens": 10516,
-        "sha256": "b8ac8f3234003763a69f86d0d00933868a32edfe7c90abcf928f4cdf3f67fe8d"
+        "utf8Bytes": 47155,
+        "tokens": 11267,
+        "sha256": "b052d8f5d753797df4d5d4cc480103fa4b8e3d9baab1a8417959fe945df3f158"
       },
-      "surfaceTokens": 10690,
+      "surfaceTokens": 11464,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1092,
+      "deltaTokens": -318,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4291,
+      "domainInputSchemaTokens": 4699,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 848,
-        "allTokens": 1060,
+        "authoritativeResponseTokens": 965,
+        "allTokens": 1177,
         "deltasAreAdditive": false
       }
     },
@@ -935,8 +971,10 @@
       "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:plan/advance",
       "inventory": [
         "abort_dispatch",
+        "acknowledge_operator_action",
         "archive_milestone",
         "claim_plan",
+        "complete_operator_action",
         "confirm_dispatch_completion",
         "create_item",
         "create_ledger",
@@ -956,9 +994,11 @@
         "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
+        "materialize_operator_action",
         "prepare_dispatch",
         "publish_plan_draft",
         "read_log",
+        "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
         "search_items",
@@ -968,31 +1008,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 33,
+      "toolCount": 37,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 693,
-        "tokens": 176,
-        "sha256": "8ffec228016fca57d24e2c399b42a0de1ece725eb22f8b90406b4c6fb0fa237a"
+        "utf8Bytes": 818,
+        "tokens": 199,
+        "sha256": "ee11a1ed021f2079b9a9da5a4505d81a87b577a0e39f6208d9c5a42487093618"
       },
       "toolsList": {
-        "utf8Bytes": 43827,
-        "tokens": 10516,
-        "sha256": "b8ac8f3234003763a69f86d0d00933868a32edfe7c90abcf928f4cdf3f67fe8d"
+        "utf8Bytes": 47155,
+        "tokens": 11267,
+        "sha256": "b052d8f5d753797df4d5d4cc480103fa4b8e3d9baab1a8417959fe945df3f158"
       },
-      "surfaceTokens": 10692,
+      "surfaceTokens": 11466,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1090,
+      "deltaTokens": -316,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4291,
+      "domainInputSchemaTokens": 4699,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 848,
-        "allTokens": 1060,
+        "authoritativeResponseTokens": 965,
+        "allTokens": 1177,
         "deltasAreAdditive": false
       }
     },
@@ -1000,8 +1040,10 @@
       "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:plan/follow-up",
       "inventory": [
         "abort_dispatch",
+        "acknowledge_operator_action",
         "archive_milestone",
         "claim_plan",
+        "complete_operator_action",
         "confirm_dispatch_completion",
         "create_item",
         "create_ledger",
@@ -1021,9 +1063,11 @@
         "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
+        "materialize_operator_action",
         "prepare_dispatch",
         "publish_plan_draft",
         "read_log",
+        "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
         "search_items",
@@ -1033,31 +1077,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 33,
+      "toolCount": 37,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 695,
-        "tokens": 177,
-        "sha256": "21924dfee68a9e7e8cc34370080d29ace22d15f04694a0cae5f1f77f68b05840"
+        "utf8Bytes": 820,
+        "tokens": 200,
+        "sha256": "7fb1fc7df1fcc511cbc1eab299061303de9844cc4becbe98c419791a66b6160f"
       },
       "toolsList": {
-        "utf8Bytes": 43827,
-        "tokens": 10516,
-        "sha256": "b8ac8f3234003763a69f86d0d00933868a32edfe7c90abcf928f4cdf3f67fe8d"
+        "utf8Bytes": 47155,
+        "tokens": 11267,
+        "sha256": "b052d8f5d753797df4d5d4cc480103fa4b8e3d9baab1a8417959fe945df3f158"
       },
-      "surfaceTokens": 10693,
+      "surfaceTokens": 11467,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1089,
+      "deltaTokens": -315,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4291,
+      "domainInputSchemaTokens": 4699,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 848,
-        "allTokens": 1060,
+        "authoritativeResponseTokens": 965,
+        "allTokens": 1177,
         "deltasAreAdditive": false
       }
     },
@@ -1100,8 +1144,10 @@
       "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:research",
       "inventory": [
         "abort_dispatch",
+        "acknowledge_operator_action",
         "archive_milestone",
         "claim_plan",
+        "complete_operator_action",
         "confirm_dispatch_completion",
         "create_item",
         "create_ledger",
@@ -1121,9 +1167,11 @@
         "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
+        "materialize_operator_action",
         "prepare_dispatch",
         "publish_plan_draft",
         "read_log",
+        "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
         "search_items",
@@ -1133,31 +1181,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 33,
+      "toolCount": 37,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 689,
-        "tokens": 174,
-        "sha256": "e597768d487f920041dde892f9229cabb337d2abe38df7b6aed50fd0d03c75da"
+        "utf8Bytes": 814,
+        "tokens": 197,
+        "sha256": "6f8f35af2a93323aa9a2ef0e9f2799fdfca534a294d746afed75bcf0c0112b29"
       },
       "toolsList": {
-        "utf8Bytes": 43827,
-        "tokens": 10516,
-        "sha256": "b8ac8f3234003763a69f86d0d00933868a32edfe7c90abcf928f4cdf3f67fe8d"
+        "utf8Bytes": 47155,
+        "tokens": 11267,
+        "sha256": "b052d8f5d753797df4d5d4cc480103fa4b8e3d9baab1a8417959fe945df3f158"
       },
-      "surfaceTokens": 10690,
+      "surfaceTokens": 11464,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1092,
+      "deltaTokens": -318,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4291,
+      "domainInputSchemaTokens": 4699,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 848,
-        "allTokens": 1060,
+        "authoritativeResponseTokens": 965,
+        "allTokens": 1177,
         "deltasAreAdditive": false
       }
     },
@@ -1239,8 +1287,10 @@
       "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:research/advance",
       "inventory": [
         "abort_dispatch",
+        "acknowledge_operator_action",
         "archive_milestone",
         "claim_plan",
+        "complete_operator_action",
         "confirm_dispatch_completion",
         "create_item",
         "create_ledger",
@@ -1260,9 +1310,11 @@
         "git_resolve_continue",
         "list_milestone_items",
         "list_projects",
+        "materialize_operator_action",
         "prepare_dispatch",
         "publish_plan_draft",
         "read_log",
+        "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
         "search_items",
@@ -1272,31 +1324,31 @@
         "update_item",
         "worktree_manage"
       ],
-      "toolCount": 33,
+      "toolCount": 37,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 697,
-        "tokens": 176,
-        "sha256": "7014e5299dc1897fffeb833c84d4768a2fc2e93b82d035753bf9fa5564399337"
+        "utf8Bytes": 822,
+        "tokens": 199,
+        "sha256": "b34ebd4d2329229d0e078e12dfc3ba290a035388f90db47201719849c5caec03"
       },
       "toolsList": {
-        "utf8Bytes": 43827,
-        "tokens": 10516,
-        "sha256": "b8ac8f3234003763a69f86d0d00933868a32edfe7c90abcf928f4cdf3f67fe8d"
+        "utf8Bytes": 47155,
+        "tokens": 11267,
+        "sha256": "b052d8f5d753797df4d5d4cc480103fa4b8e3d9baab1a8417959fe945df3f158"
       },
-      "surfaceTokens": 10692,
+      "surfaceTokens": 11466,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1090,
+      "deltaTokens": -316,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 4291,
+      "domainInputSchemaTokens": 4699,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 210,
-        "authoritativeResponseTokens": 848,
-        "allTokens": 1060,
+        "authoritativeResponseTokens": 965,
+        "allTokens": 1177,
         "deltasAreAdditive": false
       }
     },
@@ -1385,6 +1437,58 @@
           "delta": {
             "serializedTokens": -15,
             "marginalTokens": -16
+          }
+        }
+      }
+    },
+    {
+      "name": "acknowledge_operator_action",
+      "whole": {
+        "baselineTokens": 0,
+        "afterTokens": 179,
+        "deltaTokens": 179
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 7,
+            "marginalTokens": 8
+          },
+          "delta": {
+            "serializedTokens": 7,
+            "marginalTokens": 8
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 86,
+            "marginalTokens": 88
+          },
+          "delta": {
+            "serializedTokens": 86,
+            "marginalTokens": 88
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 80,
+            "marginalTokens": 81
+          },
+          "delta": {
+            "serializedTokens": 80,
+            "marginalTokens": 81
           }
         }
       }
@@ -1489,6 +1593,58 @@
           "delta": {
             "serializedTokens": -9,
             "marginalTokens": -11
+          }
+        }
+      }
+    },
+    {
+      "name": "complete_operator_action",
+      "whole": {
+        "baselineTokens": 0,
+        "afterTokens": 123,
+        "deltaTokens": 123
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "delta": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 41,
+            "marginalTokens": 42
+          },
+          "delta": {
+            "serializedTokens": 41,
+            "marginalTokens": 42
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 72,
+            "marginalTokens": 73
+          },
+          "delta": {
+            "serializedTokens": 72,
+            "marginalTokens": 73
           }
         }
       }
@@ -1705,8 +1861,8 @@
       "name": "derive_predicates",
       "whole": {
         "baselineTokens": 298,
-        "afterTokens": 98,
-        "deltaTokens": -200
+        "afterTokens": 110,
+        "deltaTokens": -188
       },
       "fields": {
         "name": {
@@ -1729,12 +1885,12 @@
             "marginalTokens": 256
           },
           "after": {
-            "serializedTokens": 74,
-            "marginalTokens": 75
+            "serializedTokens": 86,
+            "marginalTokens": 87
           },
           "delta": {
-            "serializedTokens": -181,
-            "marginalTokens": -181
+            "serializedTokens": -169,
+            "marginalTokens": -169
           }
         },
         "inputSchema": {
@@ -2586,6 +2742,58 @@
       }
     },
     {
+      "name": "materialize_operator_action",
+      "whole": {
+        "baselineTokens": 0,
+        "afterTokens": 189,
+        "deltaTokens": 189
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          },
+          "delta": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 73,
+            "marginalTokens": 74
+          },
+          "delta": {
+            "serializedTokens": 73,
+            "marginalTokens": 74
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 105,
+            "marginalTokens": 106
+          },
+          "delta": {
+            "serializedTokens": 105,
+            "marginalTokens": 106
+          }
+        }
+      }
+    },
+    {
       "name": "prepare_dispatch",
       "whole": {
         "baselineTokens": 441,
@@ -2737,6 +2945,58 @@
           "delta": {
             "serializedTokens": -21,
             "marginalTokens": -23
+          }
+        }
+      }
+    },
+    {
+      "name": "record_operator_action_evidence",
+      "whole": {
+        "baselineTokens": 0,
+        "afterTokens": 248,
+        "deltaTokens": 248
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 7,
+            "marginalTokens": 8
+          },
+          "delta": {
+            "serializedTokens": 7,
+            "marginalTokens": 8
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 85,
+            "marginalTokens": 86
+          },
+          "delta": {
+            "serializedTokens": 85,
+            "marginalTokens": 86
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 151,
+            "marginalTokens": 152
+          },
+          "delta": {
+            "serializedTokens": 151,
+            "marginalTokens": 152
           }
         }
       }
@@ -3477,19 +3737,19 @@
     "ledgerCallingProfiles": [
       {
         "profileName": "full",
-        "remainingG93AttributableTokens": 1060
+        "remainingG93AttributableTokens": 1177
       },
       {
         "profileName": "non-dispatch",
-        "remainingG93AttributableTokens": 869
+        "remainingG93AttributableTokens": 986
       },
       {
         "profileName": "advance",
-        "remainingG93AttributableTokens": 1060
+        "remainingG93AttributableTokens": 1177
       },
       {
         "profileName": "begin",
-        "remainingG93AttributableTokens": 1060
+        "remainingG93AttributableTokens": 1177
       },
       {
         "profileName": "implement-conflict-resolver",
@@ -3505,15 +3765,15 @@
       },
       {
         "profileName": "implement/advance",
-        "remainingG93AttributableTokens": 1060
+        "remainingG93AttributableTokens": 1177
       },
       {
         "profileName": "implement/start",
-        "remainingG93AttributableTokens": 1060
+        "remainingG93AttributableTokens": 1177
       },
       {
         "profileName": "investigate",
-        "remainingG93AttributableTokens": 1060
+        "remainingG93AttributableTokens": 1177
       },
       {
         "profileName": "investigate-explorer",
@@ -3525,11 +3785,11 @@
       },
       {
         "profileName": "investigate/advance",
-        "remainingG93AttributableTokens": 1060
+        "remainingG93AttributableTokens": 1177
       },
       {
         "profileName": "plan",
-        "remainingG93AttributableTokens": 1060
+        "remainingG93AttributableTokens": 1177
       },
       {
         "profileName": "plan-advance",
@@ -3541,11 +3801,11 @@
       },
       {
         "profileName": "plan/advance",
-        "remainingG93AttributableTokens": 1060
+        "remainingG93AttributableTokens": 1177
       },
       {
         "profileName": "plan/follow-up",
-        "remainingG93AttributableTokens": 1060
+        "remainingG93AttributableTokens": 1177
       },
       {
         "profileName": "planners",
@@ -3553,7 +3813,7 @@
       },
       {
         "profileName": "research",
-        "remainingG93AttributableTokens": 1060
+        "remainingG93AttributableTokens": 1177
       },
       {
         "profileName": "research-experimenter",
@@ -3565,14 +3825,14 @@
       },
       {
         "profileName": "research/advance",
-        "remainingG93AttributableTokens": 1060
+        "remainingG93AttributableTokens": 1177
       },
       {
         "profileName": "reviewers",
         "remainingG93AttributableTokens": 19
       }
     ],
-    "maximumRemainingG93AttributableTokens": 1060
+    "maximumRemainingG93AttributableTokens": 1177
   },
   "budgets": {
     "tokenizerMatches": true,

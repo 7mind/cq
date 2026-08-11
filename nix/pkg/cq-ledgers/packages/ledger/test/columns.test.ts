@@ -186,6 +186,18 @@ describe("eligibleColumnFields", () => {
         "tags",
         "sourceRefs",
       ],
+      operatorActions: [
+        "actionKey",
+        "taskRef",
+        "goalRef",
+        "expectedOutputIdentity",
+        "expectedEvidence",
+        "acknowledgedOutputIdentity",
+        "acknowledgedAt",
+        "lastFailure",
+        "verifiedAt",
+        "ledgerRefs",
+      ],
       ideas: ["ledgerRefs"],
       researches: [
         "scope",

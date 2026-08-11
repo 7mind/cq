@@ -385,7 +385,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     for (const surface of PROMPT_SURFACES) {
       const advance = normalize(renderedOf(surface, "implement/advance"));
       expect(advance).toContain("CQ-OPERATOR-ACTION v1 <action-key>.");
-      expect(advance).toContain("G121-deployed-recovery");
+      expect(advance).toContain("deployed-recovery");
       expect(advance).toContain("materialize_operator_action");
       expect(advance).toContain("acknowledge_operator_action");
       expect(advance).toContain("record_operator_action_evidence");

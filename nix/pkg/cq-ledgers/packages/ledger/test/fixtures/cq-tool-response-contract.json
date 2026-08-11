@@ -37,7 +37,8 @@
       "calls": [
         "Shared rules::get_config#1|full-content",
         "Shared rules::get_config#2|full-content",
-        "7. Milestones and goals::update_item#1|ack"
+        "2. Operator-action tasks (parent only)::update_item#1|ack",
+        "8. Milestones and goals::update_item#1|ack"
       ]
     },
     {

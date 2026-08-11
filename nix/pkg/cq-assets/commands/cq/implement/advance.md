@@ -104,7 +104,7 @@ A task is ready when:
 A description beginning exactly
 `CQ-OPERATOR-ACTION v1 <action-key>.` selects the closed operator-action
 arm below. The key contains ASCII alphanumeric segments separated by single
-hyphens, for example `G121-deployed-recovery`. The store rejects a misplaced,
+hyphens, for example `deployed-recovery`. The store rejects a misplaced,
 malformed, or duplicate envelope.
 Such tasks appear only in `pOperatorAction`, never `pImplement`, and MUST NOT
 enter worktree preparation, `wip`, worker dispatch, review, rebase, merge, or
@@ -117,7 +117,7 @@ If no task is ready and no task awaits review or merge, report and stop.
 
 ## 2. Operator-action tasks (parent only)
 
-For each DAG-ready strict-envelope task, keep the actor split from questions:Q365:
+For each DAG-ready strict-envelope task, keep the actor split explicit:
 the user performs deployment and acknowledges its observed identity; this
 parent runs bounded shell probes after acknowledgement. A child, worktree,
 merge, push, deploy, switch, or implicit acknowledgement is forbidden.

@@ -28,6 +28,7 @@ import {
   IDEAS_LEDGER,
   InMemoryLedgerStore,
   LEDGER_STORAGE_DIRNAME,
+  OPERATOR_ACTIONS_LEDGER,
   parseRegistry,
   PLAN_MANAGED_GOAL_FIELD_NAMES,
   PLAN_REVIEW_DRAFT_FIELD,
@@ -75,9 +76,17 @@ afterAll(async () => {
 });
 
 const PRE_UPSTREAM_NAMES = CANONICAL_LEDGERS.filter(({ name }) => name !== UPSTREAM_LEDGER)
+  .filter(({ name }) => name !== OPERATOR_ACTIONS_LEDGER)
   .map(({ name }) => name)
   .sort();
 const CURRENT_NAMES = CANONICAL_LEDGERS.map(({ name }) => name).sort();
+const POST_FIXTURE_LEDGER_NAMES: ReadonlySet<string> = new Set([
+  OPERATOR_ACTIONS_LEDGER,
+  UPSTREAM_LEDGER,
+]);
+const POST_FIXTURE_CANONICAL_LEDGERS = CANONICAL_LEDGERS.filter(({ name }) =>
+  POST_FIXTURE_LEDGER_NAMES.has(name),
+);
 
 type PublicSnapshot = Record<string, FetchedLedger>;
 
@@ -184,11 +193,13 @@ async function assertAdditivePublicState(
     expect(await store.fetchArchive(ledger, pointer)).toEqual(archive);
   }
 
-  const upstream = store.fetch(UPSTREAM_LEDGER);
-  expect(upstream.schema).toEqual(UPSTREAM_SCHEMA);
-  expect(upstream.counters).toEqual({ milestone: 0, item: 0 });
-  expect(upstream.milestones).toEqual([]);
-  expect(upstream.archivePointers).toEqual([]);
+  for (const { name, schema } of POST_FIXTURE_CANONICAL_LEDGERS) {
+    const additive = store.fetch(name);
+    expect(additive.schema).toEqual(schema);
+    expect(additive.counters).toEqual({ milestone: 0, item: 0 });
+    expect(additive.milestones).toEqual([]);
+    expect(additive.archivePointers).toEqual([]);
+  }
 }
 
 async function assertLegacyLogs(store: LedgerStore): Promise<void> {
@@ -283,7 +294,7 @@ async function captureFsPriorState(storageDir: string): Promise<string> {
   const registry = parseRegistry(await readFile(path.join(storageDir, "ledgers.yaml"), "utf8"));
   return JSON.stringify({
     registry: registry.ledgers
-      .filter(({ name }) => name !== UPSTREAM_LEDGER)
+      .filter(({ name }) => !POST_FIXTURE_LEDGER_NAMES.has(name))
       .map((entry) => ({
         ...entry,
         schema: withoutPlanLifecycleFields(entry.name, entry.schema),
@@ -368,7 +379,7 @@ async function captureGitState(
     registry: complete
       ? registry.ledgers
       : registry.ledgers
-          .filter(({ name }) => name !== UPSTREAM_LEDGER)
+          .filter(({ name }) => !POST_FIXTURE_LEDGER_NAMES.has(name))
           .map((entry) => ({
             ...entry,
             schema: withoutPlanLifecycleFields(entry.name, entry.schema),
@@ -418,9 +429,9 @@ async function captureSqliteState(
           .all()
       : db
           .query(
-            "SELECT name, schema_json, milestone_counter, item_counter FROM ledgers WHERE name <> ? ORDER BY rowid",
+            "SELECT name, schema_json, milestone_counter, item_counter FROM ledgers WHERE name NOT IN (?, ?) ORDER BY rowid",
           )
-          .all(UPSTREAM_LEDGER);
+          .all(UPSTREAM_LEDGER, OPERATOR_ACTIONS_LEDGER);
     const ledgers = includeUpstream
       ? ledgerRows
       : withoutPlanLifecycleSchemaRows(
@@ -491,7 +502,9 @@ async function capturePostgresState(
     : await pool<Array<Record<string, unknown>>>`
         SELECT name, schema_json, milestone_counter, item_counter
         FROM ledgers
-        WHERE project_key = ${projectKey} AND name <> ${UPSTREAM_LEDGER}
+        WHERE project_key = ${projectKey}
+          AND name <> ${UPSTREAM_LEDGER}
+          AND name <> ${OPERATOR_ACTIONS_LEDGER}
         ORDER BY name
       `;
   const ledgers = includeUpstream
@@ -667,7 +680,7 @@ describe("pre-upstream canonical-ledger initialization", () => {
     expect(
       JSON.stringify({
         ledgers: Array.from(fixtureState.ledgers.entries()).filter(
-          ([name]) => name !== UPSTREAM_LEDGER,
+          ([name]) => !POST_FIXTURE_LEDGER_NAMES.has(name),
         ),
         archives: Array.from(fixtureState.archives.entries()),
         itemArchives: Array.from(fixtureState.itemArchives.entries()),
