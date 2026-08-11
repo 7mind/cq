@@ -8,6 +8,7 @@ const WORKSPACE_PACKAGE_JSON = path.join(REPO_ROOT, "nix", "pkg", "cq-ledgers", 
 interface WorkspacePackage {
   readonly scripts: {
     readonly check: string;
+    readonly "check:codex-installed-gate": string;
     readonly "check:flake-enumeration": string;
     readonly lint: string;
   };
@@ -25,7 +26,10 @@ describe("workspace script contract", () => {
 
   test("composes the aggregate check from named scripts", () => {
     expect(workspacePackage.scripts.check).toBe(
-      "tsc -b && bun run lint && bun test && bun run check:flake-enumeration",
+      "tsc -b && bun run lint && bun test && bun run check:codex-installed-gate && bun run check:flake-enumeration",
+    );
+    expect(workspacePackage.scripts["check:codex-installed-gate"]).toBe(
+      "cd ../../.. && nix build --no-link .#cq",
     );
     expect(workspacePackage.scripts["check:flake-enumeration"]).toBe(
       "cd ../../.. && nix flake show --all-systems --json",
