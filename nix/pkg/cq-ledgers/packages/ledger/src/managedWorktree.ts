@@ -45,6 +45,7 @@ import { fileURLToPath } from "node:url";
 import {
   MANAGED_WORKTREE_HANDLE_KIND,
   parseWipArtifact,
+  recordManagerOwnedReleaseResult,
   validateManagedWorktreeHandle as validateManagedWorktreeHandleContract,
   WipArtifactParseError,
   type ManagedWorktreeHandle as ConfigManagedWorktreeHandle,
@@ -2595,7 +2596,8 @@ export async function releaseManagedWorktree(
     );
   }
   try {
-    return await releaseManagedWorktreeUnderEffectLock(request, deps);
+    const result = await releaseManagedWorktreeUnderEffectLock(request, deps);
+    return result.status === "released" ? recordManagerOwnedReleaseResult(result) : result;
   } finally {
     if (releaseLock !== undefined) await releaseLock();
   }

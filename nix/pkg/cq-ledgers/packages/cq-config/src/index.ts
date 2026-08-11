@@ -144,7 +144,9 @@ export type {
 export {
   MANAGED_WORKTREE_HANDLE_KIND,
   isManagedWorktreeHandle,
+  isManagerOwnedReleaseResult,
   managedWorktreeHandlesEqual,
+  recordManagerOwnedReleaseResult,
   validateManagedWorktreeHandle,
 } from "./managedWorktreeHandle.js";
 export type {
@@ -661,6 +663,7 @@ export {
   provenanceBindingOf,
   abortDispatch,
   fetchDispatchResult,
+  isBackendOwnedConsumedDispatchResult,
   collapseAttestationEnvelope,
   sweepAttestations,
   DISPATCH_ATTESTATION_DEFERRED_TO,

@@ -1809,6 +1809,15 @@ function confirmedViewOf(row: AttestationEnvelope): ConfirmedDispatchResultView 
   });
 }
 
+const BACKEND_OWNED_CONSUMED_RESULTS = new WeakSet<object>();
+
+/** Only the attestation backend's one-shot fetch projection enters this set. */
+export function isBackendOwnedConsumedDispatchResult(
+  value: unknown,
+): value is ConsumedDispatchResult {
+  return typeof value === "object" && value !== null && BACKEND_OWNED_CONSUMED_RESULTS.has(value);
+}
+
 function consumedResultOf(row: AttestationEnvelope): ConsumedDispatchResult {
   if (
     row.state !== "consumed" ||
@@ -1818,7 +1827,7 @@ function consumedResultOf(row: AttestationEnvelope): ConsumedDispatchResult {
   ) {
     throw new AttestationContractError("row", `expected a consumed envelope, got "${row.state}"`);
   }
-  return Object.freeze({
+  const consumed = Object.freeze({
     state: "consumed" as const,
     attestationId: row.attestationId,
     generation: row.generation,
@@ -1827,6 +1836,8 @@ function consumedResultOf(row: AttestationEnvelope): ConsumedDispatchResult {
     promptProvenance: row.promptProvenance,
     nativeCompletion: row.nativeCompletion,
   });
+  BACKEND_OWNED_CONSUMED_RESULTS.add(consumed);
+  return consumed;
 }
 
 /**

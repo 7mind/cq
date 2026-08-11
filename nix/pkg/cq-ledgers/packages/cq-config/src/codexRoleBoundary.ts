@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { createHash } from "node:crypto";
-import { realpath } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { constants } from "node:os";
 import {
   launchRegisteredProcessGroup,
@@ -109,6 +109,11 @@ export interface CodexInstalledRoleBoundaryExecution {
   readonly roleId: "implement-worker" | "implement-conflict-resolver";
   readonly effect: "git-commit" | "git-conflict-continue";
   readonly executable: string;
+  readonly installedIdentity: {
+    readonly storePath: string;
+    readonly executablePath: string;
+    readonly executableDigest: string;
+  };
   readonly handle: DispatchHandle;
   readonly managedHandle: ManagedWorktreeHandle;
   readonly expectedChild: { readonly childId: string; readonly runId: string };
@@ -988,11 +993,21 @@ export async function executeInstalledCodexRoleBoundary(
   request: CodexInstalledRoleBoundaryRequest,
 ): Promise<CodexInstalledRoleBoundaryExecution> {
   const executable = await realpath(requiredString(request.executable, "executable"));
-  if (!executable.startsWith("/nix/store/") || path.basename(executable) !== "cq-codex-role") {
+  const storePath = path.dirname(path.dirname(executable));
+  if (
+    !/^\/nix\/store\/[0-9a-z]{32}-[^/]+$/.test(storePath) ||
+    path.dirname(executable) !== path.join(storePath, "bin") ||
+    path.basename(executable) !== "cq-codex-role"
+  ) {
     throw new CodexRoleBoundaryError(
       `provider gate requires an installed Nix cq-codex-role; got ${JSON.stringify(executable)}`,
     );
   }
+  const installedIdentity = Object.freeze({
+    storePath,
+    executablePath: executable,
+    executableDigest: createHash("sha256").update(await readFile(executable)).digest("hex"),
+  });
   const roleId = assertCodexDispatchedRoleId(request.invocation.roleId);
   if (roleId !== "implement-worker" && roleId !== "implement-conflict-resolver") {
     throw new CodexRoleBoundaryError(
@@ -1093,6 +1108,7 @@ export async function executeInstalledCodexRoleBoundary(
     roleId,
     effect,
     executable,
+    installedIdentity,
     handle: Object.freeze({ ...request.invocation.handle }),
     managedHandle: request.managedHandle,
     expectedChild: Object.freeze({ ...request.expectedChild }),

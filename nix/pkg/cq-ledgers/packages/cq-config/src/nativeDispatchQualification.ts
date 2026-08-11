@@ -23,7 +23,9 @@ import {
   type CodexInstalledRoleBoundaryExecution,
 } from "./codexRoleBoundary.js";
 import type { ConsumedDispatchResult } from "./compactDispatchProtocol.js";
+import { isBackendOwnedConsumedDispatchResult } from "./dispatchAttestation.js";
 import {
+  isManagerOwnedReleaseResult,
   validateManagedWorktreeHandle,
   type ManagedWorktreeHandle,
 } from "./managedWorktreeHandle.js";
@@ -257,6 +259,12 @@ export function authenticateCodexProviderGateObservation(
   const execution = input.execution;
   if (!isRunnerOwnedCodexInstalledRoleBoundaryExecution(execution)) {
     throw new Error("Codex provider evidence was not produced by the installed-boundary runner");
+  }
+  if (!isBackendOwnedConsumedDispatchResult(input.consumed)) {
+    throw new Error("Codex provider consumed result was not materialized by the attestation backend");
+  }
+  if (!isManagerOwnedReleaseResult(input.release)) {
+    throw new Error("Codex provider release was not produced by the managed-worktree manager");
   }
   if (input.consumed.state !== "consumed" || !sameDispatchHandle(input.consumed, execution.handle)) {
     throw new Error("Codex provider consumed result does not match the runner dispatch handle");
@@ -702,6 +710,35 @@ function codexProviderGateViolation(
   return undefined;
 }
 
+function codexProviderIdentityViolation(
+  gate: CodexProviderGateObservation,
+  expected: CodexNativeQualificationInput,
+): string | undefined {
+  const execution = gate.runnerExecution;
+  const managed = execution.managedHandle;
+  if (
+    managed.token !== expected.handle.token ||
+    managed.worktreeId !== expected.handle.worktreeId ||
+    managed.taskId !== expected.taskId ||
+    managed.repositoryRoot !== expected.repositoryRoot ||
+    managed.absolutePath !== expected.cwd
+  ) {
+    return `${gate.roleId} provider gate does not match the exact qualification handle/repository/task identity`;
+  }
+  return undefined;
+}
+
+function sameInstalledIdentity(
+  left: CodexInstalledRoleBoundaryExecution,
+  right: CodexInstalledRoleBoundaryExecution,
+): boolean {
+  return (
+    left.installedIdentity.storePath === right.installedIdentity.storePath &&
+    left.installedIdentity.executablePath === right.installedIdentity.executablePath &&
+    left.installedIdentity.executableDigest === right.installedIdentity.executableDigest
+  );
+}
+
 /**
  * T2044 positive-only Codex qualification. A task binding alone cannot qualify:
  * both role-specific packaged provider gates must attest the trusted Git effect
@@ -774,6 +811,25 @@ export function qualifyCodexNativeAdapter(
   );
   if (resolverViolation !== undefined) {
     return codexIncompatible("provider-gate-failed", resolverViolation);
+  }
+  const workerIdentityViolation = codexProviderIdentityViolation(input.workerGate, input);
+  if (workerIdentityViolation !== undefined) {
+    return codexIncompatible("provider-gate-failed", workerIdentityViolation);
+  }
+  const resolverIdentityViolation = codexProviderIdentityViolation(input.resolverGate, input);
+  if (resolverIdentityViolation !== undefined) {
+    return codexIncompatible("provider-gate-failed", resolverIdentityViolation);
+  }
+  if (
+    !sameInstalledIdentity(
+      input.workerGate.runnerExecution,
+      input.resolverGate.runnerExecution,
+    )
+  ) {
+    return codexIncompatible(
+      "provider-gate-failed",
+      "Codex provider gates were not produced by the same exact installed derivation",
+    );
   }
   const qualification = Object.freeze({
     status: "qualified" as const,
