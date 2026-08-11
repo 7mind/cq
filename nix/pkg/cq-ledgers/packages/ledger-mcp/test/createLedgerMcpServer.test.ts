@@ -12,6 +12,11 @@
  */
 
 import { describe, it, expect } from "bun:test";
+import { execFile } from "node:child_process";
+import { promises as fs } from "node:fs";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
@@ -21,7 +26,9 @@ import {
 import {
   InMemoryLedgerStore,
   LEDGER_TOOL_NAMES,
+  MILESTONES_AMBIENT_ID,
   NON_DISPATCH_LEDGER_TOOL_NAMES,
+  TASKS_LEDGER,
   prefixedToolNames,
   type DispatchCapability,
   type LedgerStore,
@@ -29,6 +36,67 @@ import {
 import { createLedgerMcpServer, InMemoryPromptArtifactStore } from "../src/main.js";
 
 const encoder = new TextEncoder();
+const exec = promisify(execFile);
+const GIT_ENV = {
+  ...process.env,
+  GIT_AUTHOR_NAME: "T2051",
+  GIT_AUTHOR_EMAIL: "t2051@example.invalid",
+  GIT_COMMITTER_NAME: "T2051",
+  GIT_COMMITTER_EMAIL: "t2051@example.invalid",
+  GIT_TERMINAL_PROMPT: "0",
+};
+
+async function git(cwd: string, args: readonly string[]): Promise<string> {
+  const result = await exec("git", [...args], { cwd, env: GIT_ENV, encoding: "utf8" });
+  return result.stdout.trim();
+}
+
+async function seedDefaultAdoptionFixture(): Promise<{
+  readonly root: string;
+  readonly repositoryRoot: string;
+  readonly worktreePath: string;
+  readonly baseCommit: string;
+  readonly expectedHead: string;
+  readonly dependencyCommit: string;
+}> {
+  const root = await fs.mkdtemp(join(tmpdir(), "t2051-default-server-"));
+  const repositoryRoot = join(root, "repo");
+  const worktreePath = join(repositoryRoot, ".claude", "worktrees", "implement-T1207");
+  await fs.mkdir(repositoryRoot);
+  await git(repositoryRoot, ["init", "-q", "-b", "main"]);
+  await fs.writeFile(join(repositoryRoot, ".gitignore"), "node_modules/\n");
+  await fs.mkdir(join(repositoryRoot, "fixture-package"));
+  await fs.writeFile(
+    join(repositoryRoot, "fixture-package", "package.json"),
+    '{"name":"fixture-package","version":"1.0.0"}\n',
+  );
+  await fs.writeFile(
+    join(repositoryRoot, "package.json"),
+    '{"name":"t2051-default","dependencies":{"fixture-package":"file:./fixture-package"}}\n',
+  );
+  await fs.writeFile(join(repositoryRoot, "seed.txt"), "seed\n");
+  await exec("bun", ["install", "--lockfile-only"], { cwd: repositoryRoot, encoding: "utf8" });
+  await fs.rm(join(repositoryRoot, "node_modules"), { recursive: true, force: true });
+  await git(repositoryRoot, ["add", "."]);
+  await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
+  const dependencyCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+  await git(repositoryRoot, ["switch", "-q", "-c", "implement/T1207"]);
+  const commits: string[] = [];
+  for (let index = 1; index <= 5; index += 1) {
+    await fs.writeFile(join(repositoryRoot, `legacy-${index}.txt`), `${index}\n`);
+    await git(repositoryRoot, ["add", "."]);
+    await git(repositoryRoot, ["commit", "-q", "-m", `legacy ${index}`]);
+    commits.push(await git(repositoryRoot, ["rev-parse", "HEAD"]));
+  }
+  const expectedHead = commits.at(-1)!;
+  await git(repositoryRoot, ["switch", "-q", "main"]);
+  for (const commit of commits) await git(repositoryRoot, ["cherry-pick", "-x", commit]);
+  const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+  await fs.mkdir(dirname(worktreePath), { recursive: true });
+  await git(repositoryRoot, ["worktree", "add", "-q", worktreePath, "implement/T1207"]);
+  await fs.writeFile(join(worktreePath, "retained.bin"), Buffer.from([0, 255, 10]));
+  return { root, repositoryRoot, worktreePath, baseCommit, expectedHead, dependencyCommit };
+}
 
 async function buildStore(): Promise<LedgerStore> {
   const store = new InMemoryLedgerStore();
@@ -78,6 +146,84 @@ async function registeredNames(toolPrefix?: string, toolProfile?: string): Promi
 }
 
 describe("createLedgerMcpServer — public builder", () => {
+  it("adopts a legacy worktree through the default repository capability", async () => {
+    const fixture = await seedDefaultAdoptionFixture();
+    const store = new InMemoryLedgerStore();
+    await store.init();
+    await store.createItem(TASKS_LEDGER, MILESTONES_AMBIENT_ID, {
+      id: "T1206",
+      status: "done",
+      fields: { headline: "dependency", resultCommit: fixture.dependencyCommit },
+    });
+    await store.createItem(TASKS_LEDGER, MILESTONES_AMBIENT_ID, {
+      id: "T1207",
+      status: "wip",
+      fields: { headline: "legacy adoption", dependsOn: ["tasks:T1206"] },
+    });
+    const server = createLedgerMcpServer({
+      store,
+      displayName: "default-adoption",
+      repositoryRoot: fixture.repositoryRoot,
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client(
+      { name: "default-adoption-client", version: "0.0.1" },
+      { capabilities: {} },
+    );
+    await client.connect(clientTransport);
+    const owner = Bun.spawn(
+      [process.execPath, "-e", 'process.stdout.write("ready\\n"); setInterval(() => {}, 1_000)'],
+      { cwd: fixture.worktreePath, stdout: "pipe", stderr: "pipe" },
+    );
+    try {
+      const prepare = async (): Promise<{
+        readonly status: string;
+        readonly reason?: string;
+        readonly detail?: string;
+      }> => {
+        const response = (await client.callTool({
+          name: "worktree_manage",
+          arguments: {
+            operation: "prepare",
+            taskId: "T1207",
+            baseCommit: fixture.baseCommit,
+            adoptWorktreePath: fixture.worktreePath,
+            expectedHead: fixture.expectedHead,
+          },
+        })) as { content: Array<{ type: string; text?: string }> };
+        return JSON.parse(response.content[0]?.text ?? "") as {
+          readonly status: string;
+          readonly reason?: string;
+          readonly detail?: string;
+        };
+      };
+      const reader = owner.stdout.getReader();
+      const ready = await reader.read();
+      reader.releaseLock();
+      expect(new TextDecoder().decode(ready.value)).toBe("ready\n");
+      const refused = await prepare();
+      expect(refused).toMatchObject({
+        status: "refused",
+        reason: "adoption-reconciliation-failed",
+      });
+      expect(refused.detail).toContain(`process:${owner.pid}`);
+      owner.kill();
+      await owner.exited;
+
+      expect(await prepare()).toMatchObject({ status: "prepared" });
+      expect(await fs.readFile(join(fixture.worktreePath, "retained.bin"))).toEqual(
+        Buffer.from([0, 255, 10]),
+      );
+    } finally {
+      owner.kill();
+      await owner.exited;
+      await client.close();
+      await store.dispose();
+      await fs.rm(fixture.root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("registers prefixedToolNames(prefix) for a non-empty toolPrefix", async () => {
     const names = await registeredNames("myproj");
     expect(names).toEqual([...prefixedToolNames("myproj")].sort());

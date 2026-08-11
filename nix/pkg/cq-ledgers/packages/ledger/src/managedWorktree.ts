@@ -957,6 +957,7 @@ async function publishTaskGeneration(
 
 interface StagedTaskGenerationPublication {
   readonly generation: string;
+  readonly published: boolean;
   publish(): undefined;
   rollback(): Promise<void>;
 }
@@ -1031,6 +1032,9 @@ async function stageTaskGenerationPublication(
   let published = false;
   return {
     generation,
+    get published(): boolean {
+      return published;
+    },
     publish(): undefined {
       if (published) throw new Error(`managed registry generation ${generation} already published`);
       renameSync(stagedPointer, currentPath);
@@ -1972,6 +1976,10 @@ async function prepareAdoptedWorktreeUnderLock(
 
   let transaction: LegacyWorktreeReconciliationTransaction | null = null;
   let staged: StagedTaskGenerationPublication | null = null;
+  let publishedResult: Extract<
+    PrepareManagedWorktreeResult,
+    { readonly status: "prepared" }
+  > | null = null;
   try {
     const reconciled = await beginLegacyWorktreeReconciliation(
       {
@@ -2067,6 +2075,15 @@ async function prepareAdoptedWorktreeUnderLock(
       throw new AdoptionRefusal("adoption-activity-changed", beforePublication.detail);
     }
 
+    const evidence = await buildEvidence(
+      handle,
+      headCommit,
+      bunWorkspaceRoot,
+      installPlan.bunInstallCacheDir,
+      dependencyResultCommits,
+      "adopted",
+    );
+    publishedResult = { status: "prepared", handle, evidence };
     const publication = await authority.publishTaskAdoption(eligibility.fence, () =>
       staged!.publish(),
     );
@@ -2082,18 +2099,44 @@ async function prepareAdoptedWorktreeUnderLock(
       generation: staged.generation,
     });
     await fault("before-adoption-commit", { taskId: request.taskId, transactionId });
-    await transaction.commit();
-    transaction = null;
-    const evidence = await buildEvidence(
-      handle,
-      headCommit,
-      bunWorkspaceRoot,
-      installPlan.bunInstallCacheDir,
-      dependencyResultCommits,
-      "adopted",
+    const finalized = await recoverLegacyWorktreeReconciliation(
+      { ...recoveryRequest, finalizeReconciled: true },
+      { managerLock: heldAdoptionManagerLock, activityFence },
     );
-    return { status: "prepared", handle, evidence };
+    if (finalized.status !== "recovered" || finalized.outcome !== "committed") {
+      throw new AdoptionRefusal(
+        "adoption-recovery-failed",
+        finalized.status === "recovered"
+          ? `published adoption finalized as ${finalized.outcome}`
+          : `published adoption recovery refused: ${finalized.reason}: ${finalized.detail}`,
+      );
+    }
+    transaction = null;
+    return publishedResult;
   } catch (error) {
+    if (staged?.published === true) {
+      const recovered = await recoverLegacyWorktreeReconciliation(
+        { ...recoveryRequest, finalizeReconciled: true },
+        { managerLock: heldAdoptionManagerLock, activityFence },
+      );
+      if (
+        recovered.status === "recovered" &&
+        recovered.outcome === "committed" &&
+        publishedResult !== null
+      ) {
+        transaction = null;
+        return publishedResult;
+      }
+      const detail = error instanceof Error ? error.message : String(error);
+      const recoveryDetail =
+        recovered.status === "recovered"
+          ? `recovery produced ${recovered.outcome}`
+          : `${recovered.reason}: ${recovered.detail}`;
+      return refusedPrepare(
+        "adoption-recovery-failed",
+        `${detail}; published generation remains authoritative; ${recoveryDetail}`,
+      );
+    }
     const compensation: string[] = [];
     if (staged !== null) {
       try {

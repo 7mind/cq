@@ -74,6 +74,11 @@ export interface GitResolveContinueToolInput extends DispatchHandle {
   readonly resolutions: readonly GitConflictResolution[];
 }
 
+export interface DispatchWorktreeActivityObservation {
+  readonly liveDispatches: readonly string[];
+  readonly liveLeases: readonly string[];
+}
+
 export interface DispatchCapability {
   prepare(input: PrepareDispatchToolInput): Promise<PrepareDispatchOutcome>;
   fetchInput(input: FetchDispatchInputToolInput): Promise<MaterializedDispatchInput>;
@@ -85,6 +90,9 @@ export interface DispatchCapability {
   fetch(input: FetchDispatchResultToolInput): Promise<FetchDispatchResult>;
   gitCommit?(input: GitCommitToolInput): Promise<GitChangeBrokerReceipt>;
   gitResolveContinue?(input: GitResolveContinueToolInput): Promise<GitConflictContinuationReceipt>;
+  observeWorktreeActivity?(
+    worktreePath: string,
+  ): Promise<DispatchWorktreeActivityObservation>;
 }
 
 export class DispatchNotImplementedError extends Error {

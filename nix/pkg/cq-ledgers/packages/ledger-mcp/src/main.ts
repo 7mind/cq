@@ -69,6 +69,7 @@ import {
   type LedgerToolName,
   type LedgerToolProfileName,
   type WorktreeManageCapability,
+  createGitLegacyWorktreeActivityFence,
   createWorktreeManageCapability,
 } from "@cq/ledger";
 import { createConfigCapability } from "./configCapability.js";
@@ -621,7 +622,13 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
   const worktreeManage: WorktreeManageCapability | undefined =
     opts.worktreeManage ??
     (opts.repositoryRoot !== undefined
-      ? createWorktreeManageCapability(opts.repositoryRoot)
+      ? createWorktreeManageCapability(opts.repositoryRoot, {
+          deps: {
+            adoptionActivityFence: createGitLegacyWorktreeActivityFence(
+              opts.dispatchCapability?.observeWorktreeActivity,
+            ),
+          },
+        })
       : undefined);
   const specifications = selectLedgerMcpToolSpecifications(
     createLedgerMcpToolSpecifications(

@@ -39,6 +39,7 @@ import {
   type PrepareDispatchRequest,
 } from "@cq/config";
 import type { SQL } from "bun";
+import { resolve } from "node:path";
 import {
   assertAttestationConstructionSupported,
   attestationNamespaceForTrustedHubProject,
@@ -748,6 +749,24 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         },
       );
     },
+    observeWorktreeActivity: async (worktreePath) =>
+      await options.backend.transact({ kind: "namespace" }, (store) => {
+        const liveDispatches: string[] = [];
+        const liveLeases: string[] = [];
+        for (const row of store.rows()) {
+          if (
+            isAttestationTombstone(row) ||
+            row.gitEffectBinding === undefined ||
+            resolve(row.gitEffectBinding.worktreePath) !== resolve(worktreePath)
+          ) {
+            continue;
+          }
+          const owner = `${row.attestationId}#${row.generation}`;
+          if (row.state === "prepared") liveDispatches.push(owner);
+          if (row.state === "result-stored") liveLeases.push(owner);
+        }
+        return { liveDispatches, liveLeases };
+      }),
   };
 }
 

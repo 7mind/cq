@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { promises as fs } from "node:fs";
+import { promises as fs, type Dirent } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const JOURNAL_VERSION = 1 as const;
@@ -19,6 +19,15 @@ export interface LegacyWorktreeActivityObservation {
 export interface LegacyWorktreeActivityFence {
   observe(worktreePath: string): Promise<LegacyWorktreeActivityObservation>;
 }
+
+export interface LegacyWorktreeManagedOwnerObservation {
+  readonly liveDispatches: readonly string[];
+  readonly liveLeases: readonly string[];
+}
+
+export type LegacyWorktreeManagedOwnerObserver = (
+  worktreePath: string,
+) => Promise<LegacyWorktreeManagedOwnerObservation>;
 
 export interface LegacyWorktreeManagerLock {
   acquire(worktreePath: string): Promise<() => Promise<void>>;
@@ -565,6 +574,93 @@ function overlayDigest(entries: readonly LegacyOverlayJournalEntry[]): string {
       })),
     ),
   );
+}
+
+async function liveWorktreeProcesses(worktreePath: string): Promise<readonly string[]> {
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir("/proc", { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return await new Promise((resolvePromise, reject) => {
+      execFile(
+        "lsof",
+        ["-a", "-d", "cwd", "-Fpn"],
+        { encoding: "utf8" },
+        (lsofError, stdout) => {
+          const code = (lsofError as { readonly code?: string | number } | null)?.code;
+          if (lsofError !== null && code !== 1) {
+            if (code === "ENOENT") {
+              resolvePromise(["process-observation-unavailable"]);
+              return;
+            }
+            reject(lsofError);
+            return;
+          }
+          const live = new Set<string>();
+          let pid: string | null = null;
+          for (const line of String(stdout).split(/\r?\n/)) {
+            if (line.startsWith("p")) pid = line.slice(1);
+            if (line.startsWith("n") && pid !== null && isContained(worktreePath, line.slice(1))) {
+              live.add(pid);
+            }
+          }
+          resolvePromise([...live].sort(comparePaths));
+        },
+      );
+    });
+  }
+  const live: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
+    try {
+      const cwd = await fs.readlink(join("/proc", entry.name, "cwd"));
+      if (isContained(worktreePath, cwd)) live.push(entry.name);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EACCES" && code !== "ENOENT" && code !== "EPERM") throw error;
+    }
+  }
+  return live.sort(comparePaths);
+}
+
+/**
+ * Production activity authority for a legacy worktree. The Git index and
+ * overlay digest exclude install-owned node_modules while retaining staged,
+ * tracked, untracked, deletion, mode, symlink, and byte changes. Process cwd
+ * ownership fails closed when neither procfs nor lsof can observe it.
+ */
+export function createGitLegacyWorktreeActivityFence(
+  observeManagedOwners?: LegacyWorktreeManagedOwnerObserver,
+): LegacyWorktreeActivityFence {
+  const owners =
+    observeManagedOwners ??
+    (async (): Promise<LegacyWorktreeManagedOwnerObservation> => ({
+      liveDispatches: [],
+      liveLeases: [],
+    }));
+  return {
+    async observe(worktreePath) {
+      const index = await runRequiredRaw(
+        nodeLegacyReconciliationGitRunner,
+        worktreePath,
+        ["ls-files", "--stage", "-z"],
+        "identity-mismatch",
+      );
+      const overlay = await captureOverlay(nodeLegacyReconciliationGitRunner, worktreePath, []);
+      const [managed, liveProcesses] = await Promise.all([
+        owners(worktreePath),
+        liveWorktreeProcesses(worktreePath),
+      ]);
+      return {
+        epoch: sha256(resolve(worktreePath)),
+        contentToken: sha256(`${sha256(index)}\n${overlayDigest(overlay)}`),
+        liveDispatches: [...managed.liveDispatches].sort(comparePaths),
+        liveLeases: [...managed.liveLeases].sort(comparePaths),
+        liveProcesses,
+      };
+    },
+  };
 }
 
 async function listWipArtifacts(worktreePath: string): Promise<readonly string[]> {

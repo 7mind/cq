@@ -364,6 +364,52 @@ describe("prepare-only adoption crash recovery (Effectual-GoodCommunication)", (
   }
 });
 
+describe("prepare-only adoption publication visibility", () => {
+  it("keeps the first externally visible v2 pointer authoritative after a commit fault", async () => {
+    const fixture = await seedT1207Shape();
+    const store = new InMemoryLedgerStore();
+    const stateDir = join(fixture.root, "managed-registry");
+    const currentPath = join(stateDir, "tasks", "T1207", "current.json");
+    let observedPointer: string | null = null;
+    await seedEligibleTask(store, fixture);
+    try {
+      const observer = (async (): Promise<string> => {
+        for (let attempt = 0; attempt < 2_000; attempt += 1) {
+          try {
+            return await fs.readFile(currentPath, "utf8");
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            await Bun.sleep(1);
+          }
+        }
+        throw new Error("concurrent observer did not see the v2 current pointer");
+      })();
+      const result = await invokeAdoption(store, fixture, {
+        async faultInjector(boundary) {
+          if (boundary !== "before-adoption-commit") return;
+          observedPointer = await observer;
+          expect(JSON.parse(observedPointer)).toMatchObject({ version: 2 });
+          throw new Error("injected post-publication commit failure");
+        },
+      });
+
+      expect(result.status).toBe("prepared");
+      if (result.status !== "prepared") throw new Error(`unexpected ${result.reason}`);
+      if (result.handle === undefined) throw new Error("prepared adoption lacks a handle");
+      if (observedPointer === null) throw new Error("observer did not capture the pointer");
+      expect(await fs.readFile(currentPath, "utf8")).toBe(observedPointer);
+      expect(
+        await listManagedLiveWorktrees(fixture.repositoryRoot, "T1207", stateDir),
+      ).toEqual([result.handle]);
+      expect(await git(fixture.worktreePath, ["rev-parse", "HEAD"])).toBe(
+        fixture.baseCommit,
+      );
+    } finally {
+      await store.dispose();
+    }
+  }, 30_000);
+});
+
 async function openControlFixture(): Promise<{
   readonly fixture: T1207Fixture;
   readonly store: InMemoryLedgerStore;
@@ -579,7 +625,6 @@ describe("prepare-only adoption refusal and compensation controls", () => {
     "after-adoption-reconciliation",
     "after-adoption-install",
     "after-adoption-stage",
-    "after-adoption-publication",
   ] satisfies readonly ManagedWorktreeFaultBoundary[]) {
     it(`restores bounded state after a caught ${boundary} fault`, async () => {
       const { fixture, store } = await openControlFixture();

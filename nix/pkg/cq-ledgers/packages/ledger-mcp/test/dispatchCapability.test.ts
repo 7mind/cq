@@ -493,6 +493,49 @@ describe("live compact-dispatch capability", () => {
     );
   });
 
+  test("reports durable dispatch and lease owners for one bound worktree", async () => {
+    const { store, capability } = runtime();
+    const prepared = await capability.prepare(inlineRequest());
+    if (!prepared.accepted) throw new Error(`unexpected rejection: ${prepared.detail}`);
+    const row = store.read(prepared.handle);
+    if (row === undefined || row.kind !== "envelope") throw new Error("expected envelope");
+    const bound: AttestationEnvelope = {
+      ...row,
+      gitEffectBinding: {
+        taskId: "T977",
+        handleToken: "handle-token",
+        handleFingerprint: "c".repeat(64),
+        repositoryRoot: "/tmp/repo",
+        repositoryId: "d".repeat(64),
+        commonDir: "/tmp/repo/.git",
+        worktreePath: "/tmp/wt-T977",
+        branch: "implement/T977",
+        ref: "refs/heads/implement/T977",
+        baseCommit: INLINE_INPUT.baseCommit,
+      },
+    };
+    store.replace(row, bound);
+    const owner = `${row.attestationId}#${row.generation}`;
+    await expect(capability.observeWorktreeActivity!("/tmp/wt-T977")).resolves.toEqual({
+      liveDispatches: [owner],
+      liveLeases: [],
+    });
+
+    const output = { status: "fail" } as const;
+    const leased: AttestationEnvelope = {
+      ...bound,
+      state: "result-stored",
+      storedAt: NOW,
+      output,
+      outputDigest: dispatchPayloadDigest(output),
+    };
+    store.replace(bound, leased);
+    await expect(capability.observeWorktreeActivity!("/tmp/wt-T977")).resolves.toEqual({
+      liveDispatches: [],
+      liveLeases: [owner],
+    });
+  });
+
   test("a missing cached durable row before the horizon fails closed without allocation", async () => {
     const { store, capability } = runtime();
     const request = inlineRequest({ idempotencyKey: "T977-missing-before-horizon" });
