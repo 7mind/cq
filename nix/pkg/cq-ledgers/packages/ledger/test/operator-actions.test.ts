@@ -779,6 +779,188 @@ test("D312 acknowledged pre-evidence action can replace an incorrect immutable m
   }
 });
 
+test("OA2054 failed evidence epoch can be revised with a complete audit and fresh verification", async () => {
+  const store = new InMemoryLedgerStore({ now: () => NOW });
+  await store.init();
+  try {
+    await store.createItem("goals", MILESTONES_AMBIENT_ID, {
+      id: "G2054",
+      status: "clarifying",
+      fields: { title: "deploy", description: "deploy" },
+    });
+    const claimed = await store.claimPlan({
+      goalId: "G2054",
+      purpose: "initial",
+      claimRequestId: "oa2054-claim",
+      ownerFenceToken: "A".repeat(22),
+      expectedGeneration: null,
+      author: "planner",
+    });
+    if (!claimed.ok) throw new Error("plan claim failed");
+    const manifest = {
+      milestones: [{ key: "deployment", title: "Deployment" }],
+      tasks: [
+        {
+          key: "operator",
+          milestoneKey: "deployment",
+          headline: "Deploy",
+          description: "CQ-OPERATOR-ACTION v1 oa2054-recovery. User deploys.",
+        },
+      ],
+    } satisfies PlanDraftManifest;
+    const first = await store.publishPlanDraft({
+      goalId: "G2054",
+      claimId: claimed.acknowledgement.claimId,
+      generation: claimed.acknowledgement.generation,
+      operationId: "oa2054-first",
+      ownerFenceToken: claimed.acknowledgement.ownerFenceToken,
+      author: "planner",
+      manifest,
+    });
+    if (!first.ok) throw new Error("first plan publication failed");
+    const taskId = first.acknowledgement.manifest.tasks[0]!.id;
+    const created = await materializeOperatorAction(store, {
+      taskId,
+      expectedOutputIdentity: "/nix/store/oa2054-v1",
+      expectedEvidence: ["probe-a", "probe-b"],
+      author: "parent",
+    });
+    await acknowledgeOperatorAction(store, {
+      actionId: created.action.id,
+      expectedRevision: 1,
+      outputIdentity: "/nix/store/oa2054-v1",
+      acknowledgedAt: "2026-08-11T06:01:00.000Z",
+    });
+    await recordOperatorActionEvidence(
+      store,
+      created.action.id,
+      1,
+      {
+        command: "probe-a",
+        stdout: "ok",
+        stderr: "",
+        exitCode: 0,
+        outputIdentity: "/nix/store/oa2054-v1",
+        observedAt: "2026-08-11T06:02:00.000Z",
+      },
+      { author: "parent" },
+    );
+    const failed = await recordOperatorActionEvidence(
+      store,
+      created.action.id,
+      1,
+      {
+        command: "probe-b",
+        stdout: "",
+        stderr: "failed",
+        exitCode: 1,
+        outputIdentity: "/nix/store/oa2054-v1",
+        observedAt: "2026-08-11T06:03:00.000Z",
+      },
+      { author: "parent", session: "failed-epoch" },
+    );
+    expect(failed).toMatchObject({ state: "pending", action: { status: "pending" } });
+
+    const replacement = await store.publishPlanDraft({
+      goalId: "G2054",
+      claimId: claimed.acknowledgement.claimId,
+      generation: claimed.acknowledgement.generation,
+      operationId: "oa2054-replacement",
+      ownerFenceToken: claimed.acknowledgement.ownerFenceToken,
+      author: "planner",
+      manifest,
+    });
+    if (!replacement.ok) throw new Error("replacement plan publication failed");
+    const before = {
+      action: store.fetchItem("operatorActions", created.action.id),
+      task: store.fetchItem("tasks", taskId),
+      handoff: store.fetchItem("handoffs", created.handoff.id),
+    };
+    expect(before.task.status).toBe("abandoned");
+
+    const revised = await reviseOperatorAction(store, {
+      actionId: created.action.id,
+      expectedRevision: 1,
+      expectedOutputIdentity: "/nix/store/oa2054-v2",
+      expectedEvidence: ["probe-v2"],
+      revisedAt: "2026-08-11T06:04:00.000Z",
+      author: "parent",
+      session: "revision",
+    });
+    expect(revised).toMatchObject({
+      action: {
+        status: "pending",
+        fields: {
+          revision: "2",
+          expectedOutputIdentity: "/nix/store/oa2054-v2",
+          expectedEvidence: ["probe-v2"],
+        },
+      },
+      task: { status: "planned" },
+      handoff: {
+        status: "user-action-required",
+        fields: {
+          summary: expect.stringContaining("revision 2"),
+          handoffReasons: [expect.stringContaining("revision 2")],
+        },
+      },
+    });
+    for (const field of [
+      "acknowledgedOutputIdentity",
+      "acknowledgedAt",
+      "acknowledgementEpoch",
+      "evidence",
+      "lastFailure",
+    ]) {
+      expect(revised.action.fields[field]).toBeUndefined();
+    }
+    const audit = JSON.parse((revised.action.fields["revisionHistory"] as string[])[0]!) as {
+      revision: number;
+      action: typeof before.action;
+      task: typeof before.task;
+      handoff: typeof before.handoff;
+    };
+    expect(audit).toEqual({ revision: 1, ...before });
+
+    await expect(
+      reviseOperatorAction(store, {
+        actionId: created.action.id,
+        expectedRevision: 1,
+        expectedOutputIdentity: "/nix/store/stale",
+        expectedEvidence: ["stale"],
+        revisedAt: "2026-08-11T06:05:00.000Z",
+        author: "stale-parent",
+      }),
+    ).rejects.toThrow(/revision conflict/);
+    expect(
+      await acknowledgeOperatorAction(store, {
+        actionId: created.action.id,
+        expectedRevision: 2,
+        outputIdentity: "/nix/store/oa2054-v2",
+        acknowledgedAt: "2026-08-11T06:06:00.000Z",
+      }),
+    ).toMatchObject({ state: "acknowledged" });
+    expect(
+      await recordOperatorActionEvidence(
+        store,
+        created.action.id,
+        2,
+        {
+          command: "probe-v2",
+          stdout: "ok",
+          stderr: "",
+          exitCode: 0,
+          outputIdentity: "/nix/store/oa2054-v2",
+          observedAt: "2026-08-11T06:07:00.000Z",
+        },
+        { author: "parent" },
+      ),
+    ).toMatchObject({ state: "verified", action: { status: "verified" } });
+  } finally {
+    await store.dispose();
+  }
+});
+
 test("legacy operator actions without a revision field read as revision 1", () => {
   expect(
     operatorActionRevision({

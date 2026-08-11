@@ -381,7 +381,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     }
   });
 
-  it("T2053/T2058 keep revisioned operator actions in one parent-only lifecycle", () => {
+  it("T2053/T2058/T2066 keep revisioned operator actions in one parent-only lifecycle", () => {
     for (const surface of PROMPT_SURFACES) {
       const advance = normalize(renderedOf(surface, "implement/advance"));
       expect(advance).toContain("CQ-OPERATOR-ACTION v1 <action-key>.");
@@ -394,7 +394,11 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       expect(advance).toContain("expected_revision");
       expect(advance).toContain("complete replacement contract");
       expect(advance).toContain("prior action/task/handoff snapshot");
-      expect(advance).toContain("Never revise after evidence");
+      expect(advance).toContain("terminal evidence entry and `lastFailure`");
+      expect(advance).toContain("current revision and acknowledgement epoch");
+      expect(advance).toContain("successful partial evidence");
+      expect(advance).toContain("fail closed on malformed, stale, or inconsistent audit state");
+      expect(advance).not.toContain("Never revise after evidence");
       expect(advance).toContain("the user performs deployment");
       expect(advance).toContain("this parent runs bounded shell probes");
       expect(advance).toContain("MUST NOT enter worktree preparation");
