@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type {
   LedgerStore,
   PlanClaimAcknowledgement,
@@ -266,11 +266,18 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
     `PlanLifecycleStore contract — ${factory.name} (${factory.classification})`,
     () => {
       if (factory.name === "PostgresLedgerStore (two connections)") {
+        let operatorActionFixture: PlanLifecycleContractFixture;
+        beforeAll(async () => {
+          operatorActionFixture = await factory.build();
+        });
+        afterAll(async () => {
+          await operatorActionFixture.dispose();
+        });
+
         it(
           "serializes operator-action revision before and after acknowledgement",
           async () => {
-            const fixture = await factory.build();
-            try {
+              const fixture = operatorActionFixture;
               const [first, second] = operatorActionPeers(fixture);
               const revisionFirst = await seedOperatorAction(first, "pg-revision-first", [
                 "probe-v1",
@@ -324,9 +331,6 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
                 status: "pending",
                 fields: { revision: "2" },
               });
-            } finally {
-              await fixture.dispose();
-            }
           },
           timeout,
         );
@@ -334,8 +338,7 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
         it(
           "serializes operator-action revision before and after evidence",
           async () => {
-            const fixture = await factory.build();
-            try {
+              const fixture = operatorActionFixture;
               const [first, second] = operatorActionPeers(fixture);
               const revisionFirst = await seedOperatorAction(first, "pg-evidence-stale", [
                 "probe-a",
@@ -424,9 +427,6 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
                   handoff: second.fetchItem("handoffs", evidenceFirst.handoff.id),
                 }),
               ).toBe(before);
-            } finally {
-              await fixture.dispose();
-            }
           },
           timeout,
         );
@@ -434,8 +434,7 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
         it(
           "permits exactly one simultaneous operator-action revision",
           async () => {
-            const fixture = await factory.build();
-            try {
+              const fixture = operatorActionFixture;
               const [first, second] = operatorActionPeers(fixture);
               const created = await seedOperatorAction(first, "pg-simultaneous-revision", [
                 "probe-v1",
@@ -463,9 +462,6 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
               const winner = outcomes.find(({ status }) => status === "fulfilled");
               if (winner?.status !== "fulfilled") throw new Error("revision winner missing");
               expect(winner.value.action.fields["revision"]).toBe("2");
-            } finally {
-              await fixture.dispose();
-            }
           },
           timeout,
         );
@@ -473,8 +469,7 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
         it(
           "commits one simultaneous operator-action completion with its linked task",
           async () => {
-            const fixture = await factory.build();
-            try {
+              const fixture = operatorActionFixture;
               const [first, second] = operatorActionPeers(fixture);
               const created = await seedOperatorAction(first, "pg-simultaneous-completion", [
                 "probe-v1",
@@ -520,14 +515,15 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
               ]);
               expect(outcomes.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
               expect(outcomes.filter(({ status }) => status === "rejected")).toHaveLength(1);
-              const taskId = created.action.fields["taskId"] as string;
+              const taskRef = created.action.fields["taskRef"];
+              if (typeof taskRef !== "string" || !taskRef.startsWith("tasks:")) {
+                throw new Error("operator-action taskRef is malformed");
+              }
+              const taskId = taskRef.slice("tasks:".length);
               expect(first.fetchItem("tasks", taskId).status).toBe("done");
               expect(first.fetchItem("operator-actions", created.action.id).status).toBe(
                 "completed",
               );
-            } finally {
-              await fixture.dispose();
-            }
           },
           timeout,
         );
