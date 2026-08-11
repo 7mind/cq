@@ -14,6 +14,7 @@
  * admitGeneration together and revokes not-yet-granted admits.
  */
 
+import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as fsSync from "node:fs";
 import * as os from "node:os";
@@ -72,6 +73,7 @@ interface ExclusiveHolderDocument {
   readonly hostname: string;
   readonly startedAt: number;
   readonly kind: "exclusive-set" | "exclusive-administrative";
+  readonly nonce: string;
 }
 
 type AdmissionFormDisk = "ledger-mutation" | "external-effect";
@@ -205,6 +207,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? defaultSleep;
+  const exclusiveStoreNonce = randomUUID();
 
   const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
   const worksetDir = path.join(docsDir, WORKSET_DIRNAME);
@@ -222,6 +225,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
   let localExclusiveHeld = false;
   /** In-process exclusive queue so same-process set/admin serialise without thrashing the disk. */
   let exclusiveTail: Promise<void> = Promise.resolve();
+  let nextExclusiveSeq = 0;
   let nextAdmissionSeq = 0;
   /** This process's held admission ids — primary signal for same-process drain. */
   const localActiveIds = new Set<string>();
@@ -425,6 +429,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
    */
   async function tryClaimExclusiveHolder(
     kind: ExclusiveHolderDocument["kind"],
+    nonce: string,
   ): Promise<boolean> {
     await ensureLayout();
     const doc: ExclusiveHolderDocument = {
@@ -432,6 +437,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
       hostname: selfHostname,
       startedAt: now(),
       kind,
+      nonce,
     };
     let fh: fs.FileHandle;
     try {
@@ -449,13 +455,13 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
     return true;
   }
 
-  async function clearExclusiveHolder(): Promise<void> {
-    // Only unlink if we still own the marker (pid match) — a peer reclaim of a
-    // dead holder must not delete a live successor's claim.
+  async function clearExclusiveHolder(nonce: string): Promise<void> {
+    // Only unlink if we still own the marker (pid + nonce match) — a peer
+    // reclaim or independent same-process store must not delete a successor.
     try {
       const text = await fs.readFile(exclusiveHolderPath, "utf8");
       const holder = JSON.parse(text) as ExclusiveHolderDocument;
-      if (holder.pid !== selfPid) return;
+      if (holder.pid !== selfPid || holder.nonce !== nonce) return;
     } catch {
       return;
     }
@@ -581,6 +587,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
     kind: ExclusiveHolderDocument["kind"],
     body: () => Promise<T>,
   ): Promise<T> {
+    const ownerNonce = `${exclusiveStoreNonce}:${String(++nextExclusiveSeq)}`;
     const prior = exclusiveTail;
     const gate = deferred();
     exclusiveTail = gate.promise;
@@ -596,7 +603,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
       await waitUntil(async () => {
         const holder = await readExclusiveHolder();
         if (holder !== null) {
-          if (holder.pid === selfPid) {
+          if (holder.pid === selfPid && holder.nonce === ownerNonce) {
             claimed = true;
             return true;
           }
@@ -606,7 +613,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
             return false;
           }
         }
-        claimed = await tryClaimExclusiveHolder(kind);
+        claimed = await tryClaimExclusiveHolder(kind, ownerNonce);
         return claimed;
       });
       // Drain live admissions. Same-process path is notify-driven via
@@ -623,7 +630,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
       localExclusiveHeld = false;
       notify();
       if (claimed) {
-        await clearExclusiveHolder();
+        await clearExclusiveHolder(ownerNonce);
       }
       gate.resolve();
     }

@@ -12,6 +12,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   WorksetAdmissionError,
   createFsWorksetStore,
@@ -22,6 +23,8 @@ import {
 import { atomicWrite } from "../src/store/fsAtomic.js";
 
 const dirs: string[] = [];
+const PEER_FIXTURE = fileURLToPath(new URL("./worksetFsStorePeer.ts", import.meta.url));
+const PEER_WAIT_TIMEOUT_MS = 5_000;
 
 afterAll(async () => {
   for (const d of dirs) await fs.rm(d, { recursive: true, force: true });
@@ -31,6 +34,48 @@ async function freshRoot(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(tmpdir(), "workset-effect-fs-"));
   dirs.push(dir);
   return dir;
+}
+
+interface PeerOutcome {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+function spawnPeer(request: Readonly<Record<string, unknown>>): {
+  readonly child: ReturnType<typeof Bun.spawn>;
+  readonly outcome: Promise<PeerOutcome>;
+  result(): Promise<{ readonly roots: readonly string[]; readonly epoch: number }>;
+} {
+  const child = Bun.spawn([process.execPath, "run", PEER_FIXTURE], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  child.stdin.write(`${JSON.stringify(request)}\n`);
+  child.stdin.end();
+  const outcome = Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]).then(([code, stdout, stderr]) => ({ code, stdout, stderr }));
+  return {
+    child,
+    outcome,
+    result: async () =>
+      await outcome.then(({ code, stdout, stderr }) => {
+        if (code !== 0) throw new Error(`workset peer exited ${String(code)}: ${stderr}`);
+        return JSON.parse(stdout) as { readonly roots: readonly string[]; readonly epoch: number };
+      }),
+  };
+}
+
+async function waitForFile(file: string): Promise<void> {
+  const deadline = Date.now() + PEER_WAIT_TIMEOUT_MS;
+  while (!(await Bun.file(file).exists())) {
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${file}`);
+    await Bun.sleep(5);
+  }
 }
 
 function openStore(
@@ -355,14 +400,37 @@ describe("workset effect admission filesystem [T1955]", () => {
     });
   });
 
-  it("two peer writers serialize exclusive replacement", async () => {
+  it("same-process independent stores serialize nonce-qualified exclusive replacement", async () => {
     const root = await freshRoot();
-    const a = openStore(root);
+    const firstReady = deferred();
+    const releaseFirst = deferred();
+    const a = openStore(root, {
+      hooks: {
+        afterExclusiveReady: async () => {
+          firstReady.resolve();
+          await releaseFirst.promise;
+        },
+      },
+    });
     const b = openStore(root);
-    const results = await Promise.all([
-      a.setRoots(["goals:GA"]),
-      b.setRoots(["goals:GB"]),
-    ]);
+    const first = a.setRoots(["goals:GA"]);
+    await firstReady.promise;
+    const holder = JSON.parse(
+      await fs.readFile(path.join(root, ".cq", "workset", "exclusive-holder.json"), "utf8"),
+    ) as { readonly nonce?: unknown };
+    const holderNonceType = typeof holder.nonce;
+
+    let secondDone = false;
+    const second = b.setRoots(["goals:GB"]).then((result) => {
+      secondDone = true;
+      return result;
+    });
+    await Bun.sleep(40);
+    const completedWhileFirstHeld = secondDone;
+    releaseFirst.resolve();
+    const results = await Promise.all([first, second]);
+    expect(holderNonceType).toBe("string");
+    expect(completedWhileFirstHeld).toBe(false);
     const epochs = results.map((r) => r.epoch).sort((x, y) => x - y);
     expect(epochs).toEqual([1, 2]);
     const final = await readWorksetRootsEpoch(openStore(root));
@@ -371,6 +439,76 @@ describe("workset effect admission filesystem [T1955]", () => {
     expect(final.roots[0] === "goals:GA" || final.roots[0] === "goals:GB").toBe(
       true,
     );
+  });
+
+  it("peer processes serialize exclusive replacement [Effectual-GoodCommunication]", async () => {
+    const root = await freshRoot();
+    const readyFile = path.join(root, "first.ready");
+    const releaseFile = path.join(root, "first.release");
+    const secondStarted = path.join(root, "second.started");
+    const secondCompleted = path.join(root, "second.completed");
+    const first = spawnPeer({ root, roots: ["goals:GA"], readyFile, releaseFile });
+    await waitForFile(readyFile);
+    const second = spawnPeer({
+      root,
+      roots: ["goals:GB"],
+      startedFile: secondStarted,
+      completedFile: secondCompleted,
+    });
+    await waitForFile(secondStarted);
+    await Bun.sleep(40);
+    expect(await Bun.file(secondCompleted).exists()).toBe(false);
+
+    await fs.writeFile(releaseFile, "release\n");
+    const results = await Promise.all([first.result(), second.result()]);
+    expect(results.map((result) => result.epoch).sort((a, b) => a - b)).toEqual([1, 2]);
+    expect(await readWorksetRootsEpoch(openStore(root))).toEqual(results[1]);
+  });
+
+  it("a stale nonce-qualified holder is reclaimed by PID liveness", async () => {
+    const root = await freshRoot();
+    const worksetDir = path.join(root, ".cq", "workset");
+    await fs.mkdir(worksetDir, { recursive: true });
+    await fs.writeFile(
+      path.join(worksetDir, "exclusive-holder.json"),
+      `${JSON.stringify({
+        pid: 9_000_003,
+        hostname: "stale-holder",
+        startedAt: 1,
+        kind: "exclusive-set",
+        nonce: "stale-store:1",
+      })}\n`,
+    );
+    const store = openStore(root, {
+      isPidAlive: (pid) => pid !== 9_000_003 && defaultPidAlive(pid),
+    });
+    expect(await store.setRoots(["goals:G-reclaimed"])).toEqual({
+      roots: ["goals:G-reclaimed"],
+      epoch: 1,
+    });
+  });
+
+  it("a fresh peer reclaims an exclusive holder after process crash [Effectual-GoodCommunication]", async () => {
+    const root = await freshRoot();
+    const readyFile = path.join(root, "crash.ready");
+    const neverRelease = path.join(root, "crash.release");
+    const crashed = spawnPeer({
+      root,
+      roots: ["goals:G-crashed"],
+      readyFile,
+      releaseFile: neverRelease,
+    });
+    await waitForFile(readyFile);
+    crashed.child.kill("SIGKILL");
+    const crashedOutcome = await crashed.outcome;
+    expect(crashedOutcome.code).not.toBe(0);
+    expect(await Bun.file(path.join(root, ".cq", "workset", "exclusive-holder.json")).exists()).toBe(
+      true,
+    );
+
+    const recovered = await spawnPeer({ root, roots: ["goals:G-recovered"] }).result();
+    expect(recovered).toEqual({ roots: ["goals:G-recovered"], epoch: 1 });
+    expect(await readWorksetRootsEpoch(openStore(root))).toEqual(recovered);
   });
 });
 
