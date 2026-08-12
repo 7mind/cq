@@ -39,7 +39,17 @@ function boundaryDiagnosticFromError(
 }
 
 export async function main(): Promise<void> {
-  const invocation = JSON.parse(await readOneBoundedNewlineTerminatedRequest(process.stdin)) as CodexRoleBoundaryInvocation;
+  const request = await readOneBoundedNewlineTerminatedRequest(process.stdin);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(request);
+  } catch {
+    throw new Error("codex-role-dispatch: request must contain one valid JSON object");
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("codex-role-dispatch: request must contain one valid JSON object");
+  }
+  const invocation = parsed as CodexRoleBoundaryInvocation;
   const roleId = assertCodexDispatchedRoleId(invocation.roleId);
   const promptRoot = requiredEnvironment(PROMPT_ROOT_ENV);
   const roleInstructions = await readFile(

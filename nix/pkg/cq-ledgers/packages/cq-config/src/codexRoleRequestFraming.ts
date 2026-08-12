@@ -16,6 +16,7 @@ export async function readOneBoundedNewlineTerminatedRequest(
       input.off("data", onData);
       input.off("end", onEnd);
       input.off("error", onError);
+      input.pause();
       callback();
     };
     const fail = (message: string): void => settle(() => rejectRequest(new Error(message)));
