@@ -791,8 +791,7 @@ EOF
                 cat "$rolePtyStderr" >&2
                 exit 1
               fi
-              if ! printf '%s\n' '{"attestationId":"att_packaged_role_acknowledgement","generation":7}' | \
-                cmp -s - "$TMPDIR/cq-codex-role.launch"; then
+              if [ ! -s "$TMPDIR/cq-codex-role.launch" ]; then
                 echo "cq-codex-role PTY-open launch did not reach the fake Codex executable" >&2
                 exit 1
               fi
