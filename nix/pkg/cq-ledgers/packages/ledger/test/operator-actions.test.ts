@@ -1011,6 +1011,18 @@ test("failed-evidence revision rejects malformed, stale, inconsistent, and unsaf
       },
     },
     {
+      name: "malformed expected evidence",
+      mutate(action) {
+        (action.fields as Record<string, unknown>)["expectedEvidence"] = ["probe-b", 42];
+      },
+    },
+    {
+      name: "malformed revision history",
+      mutate(action) {
+        (action.fields as Record<string, unknown>)["revisionHistory"] = ["prior", 42];
+      },
+    },
+    {
       name: "inconsistent last failure",
       mutate(action) {
         action.fields["lastFailure"] = (action.fields["evidence"] as string[])[0]!;
