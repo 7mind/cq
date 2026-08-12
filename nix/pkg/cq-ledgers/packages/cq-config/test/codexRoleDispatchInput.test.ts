@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { PassThrough } from "node:stream";
-import { readOneBoundedNewlineTerminatedRequest } from "../scripts/codex-role-dispatch.js";
+import { readOneBoundedNewlineTerminatedRequest } from "../src/codexRoleRequestFraming.js";
 
 describe("Codex role dispatch request framing", () => {
   test("accepts one newline-terminated request before the PTY closes", async () => {
