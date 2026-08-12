@@ -313,18 +313,22 @@ export function createCodexProcessDispatchAdapter(
         handleOnlyEnforcement: "structural",
       };
     } catch (error) {
-      return codexProcessBoundaryFailure(error);
+      return codexProcessBoundaryFailure(error, "codex:process");
     }
   });
 }
 
-function codexProcessBoundaryFailure(error: unknown): DispatchAdapterAbortion {
+function codexProcessBoundaryFailure(
+  error: unknown,
+  adapterId: "codex:process",
+): DispatchAdapterAbortion {
   const boundaryError = findCodexRoleBoundaryError(error);
   if (boundaryError instanceof CodexOperationalAbstentionError) {
     return {
       outcome: "aborted",
       reason: "operational-abstention",
       details: {
+        adapterId,
         source: boundaryError.operationalAbstention.source,
         verdict: boundaryError.operationalAbstention.verdict,
         message: boundaryError.message,

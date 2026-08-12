@@ -1563,16 +1563,23 @@ export async function recoverLegacyWorktreeReconciliation(
     createGitLegacyReconciliationObservationAdapter(git, deps.activityFence);
   const release = await deps.managerLock.acquire(journal.request.worktreePath);
   try {
+    // A completed rollback restores the legacy HEAD, index, and overlay. Its
+    // terminal recovery fence must therefore use the pre-transition snapshot;
+    // all candidate-state phases retain the post-transition baseline.
+    const recoveryActivity =
+      journal.phase === "rolled-back"
+        ? journal.capturedActivity
+        : journal.postTransitionActivity ?? journal.capturedActivity;
     const first = await assessLegacyReconciliationActivity(
       observationAdapter,
       journal.request.worktreePath,
-      journal.postTransitionActivity ?? journal.capturedActivity,
+      recoveryActivity,
     );
     if (first.status === "refused") return first;
     const second = await assessLegacyReconciliationActivity(
       observationAdapter,
       journal.request.worktreePath,
-      journal.postTransitionActivity ?? journal.capturedActivity,
+      recoveryActivity,
     );
     if (second.status === "refused") return second;
     if (journal.phase === "committed") {

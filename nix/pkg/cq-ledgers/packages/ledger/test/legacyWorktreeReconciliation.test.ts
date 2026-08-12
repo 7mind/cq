@@ -11,6 +11,7 @@ import {
   assessLegacyReconciliationHistory,
   beginLegacyWorktreeReconciliation,
   classifyLegacyHistory,
+  createGitLegacyWorktreeActivityFence,
   createGitLegacyReconciliationObservationAdapter,
   nodeLegacyReconciliationGitRunner,
   recoverLegacyWorktreeReconciliation,
@@ -1030,6 +1031,34 @@ describe("legacy reconciliation fences and recovery", () => {
       await recoverLegacyWorktreeReconciliation(recoveryRequest, {
         managerLock,
         activityFence: stableActivity,
+      }),
+    ).toEqual({ status: "recovered", outcome: "rolled-back", idempotent: true });
+  });
+
+  it("uses the restored legacy-state activity baseline for a repeated real-Git rollback recovery", async () => {
+    const fixture = await seedSimpleLegacy("t2050-restart-real-git-");
+    const fence = createGitLegacyWorktreeActivityFence();
+    const result = await beginLegacyWorktreeReconciliation(simpleRequest(fixture, "restart-real-git"), {
+      managerLock,
+      activityFence: fence,
+    });
+    expect(result.status).toBe("reconciled");
+    if (result.status !== "reconciled") return;
+
+    const recoveryRequest = {
+      transactionId: "restart-real-git",
+      journalDirectory: fixture.journalDirectory,
+    } as const;
+    expect(
+      await recoverLegacyWorktreeReconciliation(recoveryRequest, {
+        managerLock,
+        activityFence: fence,
+      }),
+    ).toEqual({ status: "recovered", outcome: "rolled-back", idempotent: false });
+    expect(
+      await recoverLegacyWorktreeReconciliation(recoveryRequest, {
+        managerLock,
+        activityFence: fence,
       }),
     ).toEqual({ status: "recovered", outcome: "rolled-back", idempotent: true });
   });

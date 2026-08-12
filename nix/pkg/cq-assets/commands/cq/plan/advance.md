@@ -120,7 +120,8 @@ candidate despite a non-zero shell exit; log that exit anomaly. A non-zero exit
 causes abstention only when no complete, parseable, fully validated candidate
 exists; a stalled adapter remains an operational failure rather than a silent
 abstention. If all abstain, use the single-planner fallback under the same
-claim.
+claim, excluding each exact adapter identity that returned an
+`operational-abstention`; never retry that unavailable adapter in the fallback.
 
 Synthesize one manifest:
 
@@ -172,7 +173,9 @@ complete, parseable verdict counts as a vote despite a non-zero shell exit; log
 that exit anomaly. Require full-object validation before accepting the verdict.
 Only a returned failure without such a verdict, empty/malformed result, or
 off-enum verdict abstains and is logged. If all abstain, use the single-reviewer
-fallback.
+fallback, excluding each exact adapter identity that returned an
+`operational-abstention`. A fallback with zero successful reviewers remains
+fail-closed and cannot approve.
 
 Reconcile surviving reviews in configured order:
 

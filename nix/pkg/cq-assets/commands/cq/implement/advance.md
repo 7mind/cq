@@ -261,7 +261,9 @@ vote despite a non-zero shell exit; log that exit anomaly. A non-zero exit
 causes abstention only when no complete, parseable, fully validated verdict
 exists; a genuinely stalled adapter remains an operational failure. If every
 configured reviewer abstains, use one native reviewer; zero successful
-reviewers can never approve a task.
+reviewers can never approve a task. Exclude the exact adapter identity from a
+structured `operational-abstention` when selecting that fallback, so the same
+unavailable adapter is not retried.
 
 Reconcile surviving reviews in configured order:
 
