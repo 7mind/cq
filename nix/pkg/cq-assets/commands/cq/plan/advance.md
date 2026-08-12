@@ -136,6 +136,7 @@ Synthesize one manifest:
    moving any entry into `sourceRefs`.
 
 When exactly one usable candidate survives, report `UNCONTESTED (1 surviving candidate)` in the run output.
+Carry that planner-synthesis label into the aggregated review record regardless of how many reviews survive.
 
 Publish that complete manifest under the active claim. Empty candidate DAGs
 mean clarification remains necessary: pause with concrete questions when

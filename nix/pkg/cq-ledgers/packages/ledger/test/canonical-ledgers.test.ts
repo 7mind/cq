@@ -1873,6 +1873,8 @@ describe("T854: claim-before-plan protocol shape — structural grep invariants"
 
 const UNCONTESTED_PLANNER_REPORTING =
   "When exactly one usable candidate survives, report `UNCONTESTED (1 surviving candidate)` in the run output.";
+const UNCONTESTED_PLANNER_REVIEW_PERSISTENCE =
+  "Carry that planner-synthesis label into the aggregated review record regardless of how many reviews survive.";
 const UNCONTESTED_REVIEWER_REPORTING =
   "When exactly one usable review survives, report `UNCONTESTED (1 surviving review)` in the run output and write the same label to the aggregated review record.";
 
@@ -1880,6 +1882,9 @@ function missingUncontestedPanelReporting(asset: string): string[] {
   const missing: string[] = [];
   if (!asset.includes(UNCONTESTED_PLANNER_REPORTING)) {
     missing.push("configured planner panel is missing UNCONTESTED one-survivor reporting");
+  }
+  if (!asset.includes(UNCONTESTED_PLANNER_REVIEW_PERSISTENCE)) {
+    missing.push("planner UNCONTESTED candidate count is missing from the aggregated review record");
   }
   if (!asset.includes(UNCONTESTED_REVIEWER_REPORTING)) {
     missing.push("configured reviewer panel is missing UNCONTESTED one-survivor reporting");
@@ -1902,11 +1907,13 @@ describe("T1262: one-survivor panel synthesis is explicitly uncontested", () => 
     const asset = await readFile(advanceMd, "utf8");
     const withoutRequirements = asset
       .replace(UNCONTESTED_PLANNER_REPORTING, "")
+      .replace(UNCONTESTED_PLANNER_REVIEW_PERSISTENCE, "")
       .replace(UNCONTESTED_REVIEWER_REPORTING, "");
 
     expect(withoutRequirements).not.toBe(asset);
     expect(missingUncontestedPanelReporting(withoutRequirements)).toEqual([
       "configured planner panel is missing UNCONTESTED one-survivor reporting",
+      "planner UNCONTESTED candidate count is missing from the aggregated review record",
       "configured reviewer panel is missing UNCONTESTED one-survivor reporting",
     ]);
   });
