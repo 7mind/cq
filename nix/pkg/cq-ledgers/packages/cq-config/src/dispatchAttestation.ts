@@ -845,6 +845,14 @@ export interface AuthorizedDispatchGitEffect extends DispatchGitEffectBinding {
   readonly childCancelAt: string;
 }
 
+/** Trusted server-side context for one Codex implement-worker gate supervision. */
+export interface AuthorizedSupervisedWorkerGateContext extends AuthorizedDispatchGitEffect {
+  readonly roleId: "implement-worker";
+  readonly surface: "codex";
+  readonly promptProvenance: DispatchPromptProvenance;
+  readonly startingCommit: string;
+}
+
 function gitEffectBindingPayload(binding: DispatchGitEffectBinding): DispatchJSONValue {
   return {
     taskId: binding.taskId,
@@ -1973,6 +1981,55 @@ export function gitEffectBindingForResultCapability(
     roleId: row.promptProvenance.roleId,
     surface: row.promptProvenance.surface,
     childCancelAt: row.deadlines.childCancelAt,
+  });
+}
+
+/**
+ * Resolve the runner-only gate context from the result capability. No field in
+ * child output selects this context; every identity comes from the prepared row.
+ */
+export function supervisedWorkerGateContextForResultCapability(
+  submission: StoreDispatchResult,
+  deps: DispatchServiceDeps,
+): AuthorizedSupervisedWorkerGateContext | undefined {
+  const authorization = gitEffectBindingForResultCapability(submission, deps);
+  if (
+    authorization === undefined ||
+    authorization.roleId !== "implement-worker" ||
+    authorization.surface !== "codex"
+  ) {
+    return undefined;
+  }
+  const token = submission.resultCapability.token;
+  const row = deps.store.readByCapabilityHash(resultCapabilityHash(token));
+  if (row === undefined || isAttestationTombstone(row)) {
+    throw new DispatchAuthorizationError(STORE_RESULT, "unknown result capability");
+  }
+  if (row.state !== "prepared" || row.inputMaterializedAt === undefined) {
+    throw new DispatchStateConflictError(
+      STORE_RESULT,
+      row.state,
+      "supervised gate requires a live prepared dispatch with materialized input",
+    );
+  }
+  if (row.input === null || typeof row.input !== "object" || Array.isArray(row.input)) {
+    throw new AttestationContractError("row.input", "implement-worker input must be an object");
+  }
+  const startingCommit = (row.input as Readonly<Record<string, DispatchJSONValue>>)[
+    "startingCommit"
+  ];
+  if (typeof startingCommit !== "string" || !/^[0-9a-f]{40}$/.test(startingCommit)) {
+    throw new AttestationContractError(
+      "row.input.startingCommit",
+      "Codex implement-worker supervision requires a full starting commit",
+    );
+  }
+  return Object.freeze({
+    ...authorization,
+    roleId: "implement-worker" as const,
+    surface: "codex" as const,
+    promptProvenance: row.promptProvenance,
+    startingCommit,
   });
 }
 

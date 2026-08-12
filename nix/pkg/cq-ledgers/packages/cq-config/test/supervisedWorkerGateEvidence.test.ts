@@ -90,13 +90,13 @@ describe("T2081 implement-worker supervised-gate evidence schema [BA]", () => {
   });
 
   test("retains the existing in-child gate arm", () => {
-    const pass = workerPass({ gateDurationMs: 4_321 });
+    const pass = workerPass({ gateDurationMs: 4_321 }) as Record<string, unknown>;
     delete pass.supervisedGateEvidence;
     expect(validateAgainstSchema(implementWorkerSidecar.outputSchema, pass)).toEqual({ ok: true });
   });
 
   test("rejects incomplete or red supervised evidence", () => {
-    const incomplete = supervisedGateEvidence();
+    const incomplete = supervisedGateEvidence() as Record<string, unknown>;
     delete incomplete.promptDigest;
     expect(
       validateAgainstSchema(
@@ -118,11 +118,9 @@ describe("T2081 implement-worker supervised-gate evidence schema [BA]", () => {
     ).toBe(false);
   });
 
-  test("rejects foreign dispatch, role, tip, command, and dirty-tree substitutions", () => {
+  test("rejects role, command, and dirty-tree substitutions at the shape boundary", () => {
     for (const substitution of [
-      { generation: 2 },
       { roleId: "implement-reviewer" },
-      { resultCommit: SHA_A },
       { command: "bun run check" },
       { clean: false },
     ]) {

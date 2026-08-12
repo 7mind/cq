@@ -82,6 +82,7 @@ import {
   fetchDispatchInput,
   gitEffectBindingForResultCapability,
   gitEffectBindingForHandle,
+  supervisedWorkerGateContextForResultCapability,
   prepareDispatch,
   storeDispatchResult,
   sweepAttestations,
@@ -90,6 +91,7 @@ import {
   type AuthorizeDispatchGitEffectRequest,
   type AuthorizeDispatchGitConflictRequest,
   type AuthorizedDispatchGitEffect,
+  type AuthorizedSupervisedWorkerGateContext,
   type AttestationEnvelope,
   type AttestationNamespace,
   type AttestationRow,
@@ -806,6 +808,18 @@ export async function resolveDispatchGitEffectBindingOn(
 ): Promise<AuthorizedDispatchGitEffect | undefined> {
   return backend.transact(storeResultLoadScope(submission), (store) =>
     gitEffectBindingForResultCapability(submission, { store, now: () => new Date(0).toISOString() }),
+  );
+}
+
+export async function resolveSupervisedWorkerGateContextOn(
+  backend: AttestationBackend,
+  submission: StoreDispatchResult,
+): Promise<AuthorizedSupervisedWorkerGateContext | undefined> {
+  return backend.transact(storeResultLoadScope(submission), (store) =>
+    supervisedWorkerGateContextForResultCapability(submission, {
+      store,
+      now: () => new Date(0).toISOString(),
+    }),
   );
 }
 

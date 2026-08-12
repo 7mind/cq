@@ -46,21 +46,21 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function artifactStore(): PromptArtifactStore {
+function artifactStore(surface: "claude" | "codex" = "claude"): PromptArtifactStore {
   const metadata = {
     roleId: "implement-worker",
     roleKind: "dispatched-subagent" as const,
     artifactPath: "roles/implement-worker.md",
     sidecarSchemaRoleId: "implement-worker",
-    promptSurface: "codex" as const,
+    promptSurface: surface,
     promptDigest: "a".repeat(64),
-    schemaVersion: 6,
+    schemaVersion: 7,
   };
   return {
     readManifest: () => ({
       bytes: new Uint8Array(),
       roles: [metadata],
-      promptSurface: "codex",
+      promptSurface: surface,
       catalogHash: "b".repeat(64),
     }),
     readRole: () => ({ metadata, bytes: new Uint8Array([1]) }),

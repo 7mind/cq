@@ -27,6 +27,7 @@ import {
   prepareDispatchOn,
   prepareDispatchRequestDigest,
   resolveDispatchGitEffectBindingOn,
+  resolveSupervisedWorkerGateContextOn,
   resolveDispatchGitEffectBindingForHandleOn,
   storeDispatchResultOn,
   validateDispatchInput,
@@ -52,6 +53,7 @@ import {
   validateGitChangeBrokerResultEvidence,
   resolveManagedWorktreeDispatchBinding,
   withManagedWorktreeEffectLock,
+  superviseImplementWorkerGate,
   resolveSingleProjectAttestationNamespace,
   type DispatchCapability,
   type GitChangeBrokerResultEvidence,
@@ -60,6 +62,7 @@ import {
   type LedgerStore,
   type LedgerServerConstruction,
   type ResolvedLedgerStore,
+  type SupervisedWorkerGateRunner,
   type SingleProjectConstruction,
 } from "@cq/ledger";
 import type { PromptArtifactStore } from "./promptArtifactStore.js";
@@ -73,6 +76,8 @@ export interface DispatchCapabilityOptions {
   /** Enables the implement-worker Git broker for a local project repository. */
   readonly repositoryRoot?: string;
   readonly worktreeStateDir?: string;
+  /** Host-owned gate adapter; tests inject a deterministic contract dummy. */
+  readonly supervisedWorkerGateRunner?: SupervisedWorkerGateRunner;
 }
 
 function brokerResultEvidence(output: DispatchJSONValue): GitChangeBrokerResultEvidence | undefined {
@@ -564,10 +569,13 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     },
     fetchInput: (input) => fetchDispatchInputOn(options.backend, { namespace, ...input }, { now }),
     storeResult: async (input) => {
-      const binding = await resolveDispatchGitEffectBindingOn(options.backend, input);
+      const gateContext = await resolveSupervisedWorkerGateContextOn(options.backend, input);
+      const binding =
+        gateContext ?? (await resolveDispatchGitEffectBindingOn(options.backend, input));
       const store = async () => {
+        let output = input.output;
         if (binding?.roleId === "implement-worker") {
-          const evidence = brokerResultEvidence(input.output);
+          const evidence = brokerResultEvidence(output);
           if (evidence !== undefined) {
             await validateGitChangeBrokerResultEvidence(
               binding,
@@ -577,8 +585,28 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                 : { stateDir: options.worktreeStateDir },
             );
           }
+          if (gateContext !== undefined) {
+            output = await superviseImplementWorkerGate(
+              { context: gateContext, output },
+              {
+                ...(options.worktreeStateDir === undefined
+                  ? {}
+                  : { stateDir: options.worktreeStateDir }),
+                ...(options.supervisedWorkerGateRunner === undefined
+                  ? {}
+                  : { runner: options.supervisedWorkerGateRunner }),
+              },
+            );
+          } else if (
+            output !== null &&
+            typeof output === "object" &&
+            !Array.isArray(output) &&
+            Object.hasOwn(output, "supervisedGateEvidence")
+          ) {
+            throw new Error("caller-minted supervised gate evidence is forbidden");
+          }
         } else if (binding?.roleId === "implement-conflict-resolver") {
-          const evidence = conflictResultEvidence(input.output);
+          const evidence = conflictResultEvidence(output);
           await validateGitConflictContinuationResultEvidence(
             binding,
             evidence,
@@ -587,7 +615,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               : { stateDir: options.worktreeStateDir },
           );
         }
-        return await storeDispatchResultOn(options.backend, input, { now });
+        return await storeDispatchResultOn(options.backend, { ...input, output }, { now });
       };
       const outcome =
         binding === undefined

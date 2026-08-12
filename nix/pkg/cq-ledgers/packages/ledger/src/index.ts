@@ -351,6 +351,17 @@ export {
   commitManagedWorktreeChanges,
   validateGitChangeBrokerResultEvidence,
 } from "./gitChangeBroker.js";
+export {
+  nodeSupervisedWorkerGateRunner,
+  superviseImplementWorkerGate,
+} from "./supervisedWorkerGate.js";
+export type {
+  SupervisedWorkerGateRunRequest,
+  SupervisedWorkerGateRunResult,
+  SupervisedWorkerGateRunner,
+  SuperviseImplementWorkerGateRequest,
+  SuperviseImplementWorkerGateDeps,
+} from "./supervisedWorkerGate.js";
 export type {
   DispatchBoundGitAuthorization,
   GitChangeBrokerDeps,

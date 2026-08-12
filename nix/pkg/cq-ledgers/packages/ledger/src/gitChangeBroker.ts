@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { constants as fsConstants, promises as fs } from "node:fs";
-import { spawn } from "node:child_process";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import {
   assertManagedWorktreeDispatchBindingLive,
@@ -407,27 +406,25 @@ function runGit(
   environment?: NodeJS.ProcessEnv,
   input?: Uint8Array,
 ): Promise<GitResult> {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(
-      "git",
-      ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", ...args],
-      { cwd, env: environment ?? trustedGitEnvironment(), stdio: ["pipe", "pipe", "pipe"] },
-    );
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.once("error", reject);
-    child.once("close", (code) => {
-      resolvePromise({
-        code: code ?? 1,
-        stdout: Buffer.concat(stdout),
-        stderr: Buffer.concat(stderr),
-      });
-    });
-    if (input === undefined) child.stdin.end();
-    else child.stdin.end(input);
-  });
+  const child = Bun.spawn(
+    ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", ...args],
+    {
+      cwd,
+      env: environment ?? trustedGitEnvironment(),
+      stdin: input ?? "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  return Promise.all([
+    child.exited,
+    new Response(child.stdout).arrayBuffer(),
+    new Response(child.stderr).arrayBuffer(),
+  ]).then(([code, stdout, stderr]) => ({
+    code,
+    stdout: Buffer.from(stdout),
+    stderr: Buffer.from(stderr),
+  }));
 }
 
 async function checkedGit(

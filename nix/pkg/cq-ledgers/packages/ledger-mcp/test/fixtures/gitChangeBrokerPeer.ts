@@ -43,7 +43,7 @@ function artifactStore(): PromptArtifactStore {
     sidecarSchemaRoleId: "implement-worker",
     promptSurface: "codex" as const,
     promptDigest: "a".repeat(64),
-    schemaVersion: 6,
+    schemaVersion: 7,
   };
   return {
     readManifest: () => ({

@@ -352,13 +352,19 @@ export {
   implementWorkerSidecar,
   IMPLEMENT_WORKER_STATUSES,
   IMPLEMENT_WORKER_FULL_SHA_PATTERN,
+  IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+  IMPLEMENT_WORKER_SUPERVISED_GATE_KIND,
   IMPLEMENT_WORKER_BASE_UNRESOLVABLE_REASONS,
   TEST_GUARD_GLOBS,
   implementWorkerBaseVerificationSchema,
   implementWorkerVerifiedBaseVerificationSchema,
   implementWorkerUnresolvableBaseVerificationSchema,
+  implementWorkerSupervisedGateEvidenceSchema,
 } from "./schemas/implement-worker.js";
-export type { ImplementWorkerBaseUnresolvableReason } from "./schemas/implement-worker.js";
+export type {
+  ImplementWorkerBaseUnresolvableReason,
+  ImplementWorkerSupervisedGateEvidence,
+} from "./schemas/implement-worker.js";
 export {
   implementReviewerSidecar,
   IMPLEMENT_REVIEW_VERDICTS,
@@ -560,6 +566,7 @@ export type {
   DispatchProvenanceBinding,
   DispatchGitEffectBinding,
   AuthorizedDispatchGitEffect,
+  AuthorizedSupervisedWorkerGateContext,
   AttestationEnvelope,
   AttestationTombstone,
   AttestationRow,
@@ -654,6 +661,7 @@ export {
   authorizeDispatchGitEffect,
   authorizeDispatchGitConflict,
   gitEffectBindingForResultCapability,
+  supervisedWorkerGateContextForResultCapability,
   gitEffectBindingForHandle,
   storeDispatchResult,
   invalidOutputDetailsOf,
@@ -961,6 +969,7 @@ export {
   authorizeDispatchGitEffectOn,
   authorizeDispatchGitConflictOn,
   resolveDispatchGitEffectBindingOn,
+  resolveSupervisedWorkerGateContextOn,
   resolveDispatchGitEffectBindingForHandleOn,
   formatAttestationNamespaceLockKey,
   handleLoadScope,

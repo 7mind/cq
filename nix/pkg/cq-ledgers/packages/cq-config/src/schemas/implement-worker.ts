@@ -41,6 +41,13 @@ export const IMPLEMENT_WORKER_STATUSES = ["pass", "fail"] as const;
 /** Full lowercase object SHA — every commit field on this contract uses it. */
 export const IMPLEMENT_WORKER_FULL_SHA_PATTERN = "^[0-9a-f]{40}$";
 
+/** The only full-gate command the trusted Codex supervisor may attest. */
+export const IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND =
+  'cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check';
+
+/** Versioned discriminator for runner-owned Codex full-gate evidence. */
+export const IMPLEMENT_WORKER_SUPERVISED_GATE_KIND = "cq-supervised-gate-evidence" as const;
+
 /**
  * Closed unresolvable reasons a worker may report on `baseVerification` without
  * inventing a SHA (T1307 / G121 / Q364 fail-closed). Mirrors
@@ -96,6 +103,110 @@ const fullShaOrNull = {
   type: ["string", "null"],
   pattern: IMPLEMENT_WORKER_FULL_SHA_PATTERN,
 } as const;
+
+const sha256String = {
+  type: "string",
+  pattern: "^[0-9a-f]{64}$",
+} as const;
+
+/**
+ * Runner-owned exact-tip gate evidence. The public schema pins its complete
+ * wire shape; store_result additionally resolves every binding against the
+ * prepared dispatch and refuses caller-authored instances.
+ */
+export const implementWorkerSupervisedGateEvidenceSchema = {
+  type: "object",
+  properties: {
+    kind: { type: "string", const: IMPLEMENT_WORKER_SUPERVISED_GATE_KIND },
+    version: { type: "integer", const: 1 },
+    attestationId: { type: "string", pattern: "^att_[A-Za-z0-9_-]{32,}$" },
+    generation: { type: "integer", minimum: 1 },
+    roleId: { type: "string", const: "implement-worker" },
+    roleVersion: { type: "integer", minimum: 1 },
+    surface: { type: "string", const: "codex" },
+    promptDigest: sha256String,
+    catalogHash: sha256String,
+    inputDigest: sha256String,
+    taskId: { type: "string", pattern: "^T[0-9]+$" },
+    worktreePath: { type: "string", minLength: 1 },
+    branch: { type: "string", pattern: "^implement/T[0-9]+$" },
+    baseCommit: fullShaString,
+    startingCommit: fullShaString,
+    resultCommit: fullShaString,
+    clean: { type: "boolean", const: true },
+    command: { type: "string", const: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND },
+    gateExitCode: { type: "integer", const: 0 },
+    passCount: { type: "integer", minimum: 1 },
+    failCount: { type: "integer", const: 0 },
+    gateDurationMs: { type: "integer", minimum: 0 },
+    capturedAt: {
+      type: "string",
+      pattern:
+        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$",
+    },
+    filesTouchedDigest: sha256String,
+    gitReceiptsDigest: sha256String,
+    mutationTableDigest: sha256String,
+  },
+  required: [
+    "kind",
+    "version",
+    "attestationId",
+    "generation",
+    "roleId",
+    "roleVersion",
+    "surface",
+    "promptDigest",
+    "catalogHash",
+    "inputDigest",
+    "taskId",
+    "worktreePath",
+    "branch",
+    "baseCommit",
+    "startingCommit",
+    "resultCommit",
+    "clean",
+    "command",
+    "gateExitCode",
+    "passCount",
+    "failCount",
+    "gateDurationMs",
+    "capturedAt",
+    "filesTouchedDigest",
+    "gitReceiptsDigest",
+    "mutationTableDigest",
+  ],
+  additionalProperties: false,
+} as const;
+
+export interface ImplementWorkerSupervisedGateEvidence {
+  readonly kind: typeof IMPLEMENT_WORKER_SUPERVISED_GATE_KIND;
+  readonly version: 1;
+  readonly attestationId: string;
+  readonly generation: number;
+  readonly roleId: "implement-worker";
+  readonly roleVersion: number;
+  readonly surface: "codex";
+  readonly promptDigest: string;
+  readonly catalogHash: string;
+  readonly inputDigest: string;
+  readonly taskId: string;
+  readonly worktreePath: string;
+  readonly branch: string;
+  readonly baseCommit: string;
+  readonly startingCommit: string;
+  readonly resultCommit: string;
+  readonly clean: true;
+  readonly command: typeof IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND;
+  readonly gateExitCode: 0;
+  readonly passCount: number;
+  readonly failCount: 0;
+  readonly gateDurationMs: number;
+  readonly capturedAt: string;
+  readonly filesTouchedDigest: string;
+  readonly gitReceiptsDigest: string;
+  readonly mutationTableDigest: string;
+}
 
 /**
  * Verified arm of `baseVerification` — only full object SHAs, never abbreviated
@@ -315,6 +426,11 @@ const outputSchema = {
       minimum: 0,
       description: "Wall-clock milliseconds `bun run check` took. Required when status is \"pass\".",
     },
+    supervisedGateEvidence: {
+      ...implementWorkerSupervisedGateEvidenceSchema,
+      description:
+        "Runner-owned Codex exact-tip gate evidence. This arm is mutually exclusive with the legacy in-child gateDurationMs arm and is accepted only after store_result resolves it against the prepared dispatch.",
+    },
     mutationTable: {
       type: "array",
       description:
@@ -356,7 +472,16 @@ const outputSchema = {
         required: ["status"],
       },
       then: {
-        required: ["gateDurationMs"],
+        oneOf: [
+          {
+            required: ["gateDurationMs"],
+            not: { required: ["supervisedGateEvidence"] },
+          },
+          {
+            required: ["supervisedGateEvidence"],
+            not: { required: ["gateDurationMs"] },
+          },
+        ],
         properties: {
           baseVerification: implementWorkerVerifiedBaseVerificationSchema,
         },
@@ -379,20 +504,27 @@ const outputSchema = {
         required: ["mutationTable"],
       },
     },
+    {
+      if: { required: ["supervisedGateEvidence"] },
+      then: {
+        properties: { status: { const: "pass" } },
+        required: ["status"],
+      },
+    },
   ],
 } as const;
 
 /**
  * The implement-worker per-role schema sidecar (storage-format decision 3).
- * `version: 6` (bumped from 5, T2042): broker-capable workers retain durable
- * receipts so the parent can verify the exact commit ancestry and manifest.
- * A stale deployed root rendered against the v5 contract must not be mistaken for this
+ * `version: 7` (bumped from 6, T2081): Codex broker-capable workers may carry
+ * runner-owned exact-tip supervised-gate evidence instead of an in-child gate.
+ * A stale deployed root rendered against the v6 contract must not be mistaken for this
  * one. DISPATCHED_ROLE_VERSIONS derives this automatically; it is not
  * hand-edited.
  */
 export const implementWorkerSidecar: RoleSchemaSidecar = {
   id: "implement-worker",
-  version: 6,
+  version: 7,
   inputSchema,
   outputSchema,
 };
