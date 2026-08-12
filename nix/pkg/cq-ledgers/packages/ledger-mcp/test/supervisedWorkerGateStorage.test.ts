@@ -118,6 +118,41 @@ class MovingTipGateDummy implements SupervisedWorkerGateRunner {
   }
 }
 
+class BlockingGateDummy implements SupervisedWorkerGateRunner {
+  readonly requests: SupervisedWorkerGateRunRequest[] = [];
+  readonly started: Promise<void>;
+  private resolveStarted!: () => void;
+  private readonly released: Promise<void>;
+  private resolveReleased!: () => void;
+
+  constructor() {
+    this.started = new Promise((resolve) => {
+      this.resolveStarted = resolve;
+    });
+    this.released = new Promise((resolve) => {
+      this.resolveReleased = resolve;
+    });
+  }
+
+  release(): void {
+    this.resolveReleased();
+  }
+
+  async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
+    this.requests.push(request);
+    this.resolveStarted();
+    await this.released;
+    return {
+      gateExitCode: 0,
+      passCount: 17,
+      failCount: 0,
+      gateDurationMs: 123,
+      capturedAt: "2026-08-12T20:00:01.000Z",
+      outputTail: "17 pass\n0 fail",
+    };
+  }
+}
+
 async function fixture(runner: SupervisedWorkerGateRunner = new GateDummy()) {
   sequence += 1;
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2081-gate-${sequence}-`));
@@ -360,5 +395,25 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       ).rejects.toThrow(message);
       expect(runner.requests).toHaveLength(1);
     }
+  });
+
+  test("serializes concurrent stores into one active gate attempt", async () => {
+    const runner = new BlockingGateDummy();
+    const subject = await fixture(runner);
+    const first = subject.capability.storeResult({
+      resultCapability: subject.prepared.resultCapability,
+      output: subject.output,
+    });
+    await runner.started;
+    const second = subject.capability.storeResult({
+      resultCapability: subject.prepared.resultCapability,
+      output: subject.output,
+    });
+    await Promise.resolve();
+    runner.release();
+
+    await expect(first).resolves.toMatchObject({ state: "result-stored" });
+    await expect(second).rejects.toThrow("live prepared dispatch");
+    expect(runner.requests).toHaveLength(1);
   });
 });

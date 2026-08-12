@@ -586,8 +586,15 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             );
           }
           if (gateContext !== undefined) {
+            const liveGateContext = await resolveSupervisedWorkerGateContextOn(
+              options.backend,
+              input,
+            );
+            if (liveGateContext === undefined) {
+              throw new Error("supervised worker gate context disappeared under the effect lock");
+            }
             output = await superviseImplementWorkerGate(
-              { context: gateContext, output },
+              { context: liveGateContext, output },
               {
                 ...(options.worktreeStateDir === undefined
                   ? {}
