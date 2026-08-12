@@ -672,6 +672,12 @@ describe("legacy worktree reconciliation", () => {
 
   it("replays only linear unpublished commits and rolls back bytes, types, modes, index, refs, and new overlay paths", async () => {
     const fixture = await seedLinearLegacy();
+    const stagedDelta = await git(fixture.worktreePath, [
+      "diff", "--cached", "--binary", "--full-index", "--no-renames",
+    ]);
+    const unstagedDelta = await git(fixture.worktreePath, [
+      "diff", "--binary", "--full-index", "--no-renames",
+    ]);
     const seedBytes = await fs.readFile(path.join(fixture.worktreePath, "seed.txt"));
     const linkBytes = Buffer.from(
       await fs.readlink(path.join(fixture.worktreePath, "seed-link"), {
@@ -714,7 +720,13 @@ describe("legacy worktree reconciliation", () => {
     expect(result.evidence.overlayEntries.some((entry) => entry.path.includes(".install-cache"))).toBe(
       false,
     );
-    expect((await fs.readFile(fixture.indexPath)).toString("hex")).toBe(fixture.indexHex);
+    expect((await fs.readFile(fixture.indexPath)).toString("hex")).not.toBe(fixture.indexHex);
+    expect(await git(fixture.worktreePath, [
+      "diff", "--cached", "--binary", "--full-index", "--no-renames",
+    ])).toBe(stagedDelta);
+    expect(await git(fixture.worktreePath, [
+      "diff", "--binary", "--full-index", "--no-renames",
+    ])).toBe(unstagedDelta);
     expect(await fs.readFile(path.join(fixture.worktreePath, "seed.txt"))).toEqual(seedBytes);
     expect(
       Buffer.from(

@@ -3,8 +3,10 @@ import { execFile } from "node:child_process";
 import { promises as fs, type Dirent } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-const JOURNAL_VERSION = 1 as const;
+const LEGACY_JOURNAL_VERSION = 1 as const;
+const JOURNAL_VERSION = 2 as const;
 const FULL_SHA = /^[0-9a-f]{40}$/;
+const SHA256 = /^[0-9a-f]{64}$/;
 const TRANSACTION_ID = /^[A-Za-z0-9_-]+$/;
 const ZERO_SHA = "0".repeat(40);
 
@@ -138,6 +140,48 @@ export interface LegacyOverlayJournalEntry {
   readonly bytesBase64: string | null;
 }
 
+type GitFileMode = "100644" | "100755" | "120000";
+
+interface GitPathState {
+  readonly mode: GitFileMode;
+  readonly oid: string;
+}
+
+interface WorktreePathState extends GitPathState {
+  readonly type: "file" | "symlink";
+  readonly sha256: string;
+  readonly bytesBase64: string;
+}
+
+interface GitPathDelta {
+  readonly path: string;
+  readonly before: GitPathState | null;
+  readonly after: GitPathState | null;
+}
+
+interface WorktreePathDelta {
+  readonly path: string;
+  readonly before: GitPathState | null;
+  readonly after: WorktreePathState | null;
+}
+
+interface UntrackedPathEntry {
+  readonly path: string;
+  readonly after: WorktreePathState;
+}
+
+interface CandidatePathPreimage {
+  readonly path: string;
+  readonly head: GitPathState | null;
+}
+
+interface LegacySemanticOverlay {
+  readonly paths: readonly CandidatePathPreimage[];
+  readonly staged: readonly GitPathDelta[];
+  readonly unstaged: readonly WorktreePathDelta[];
+  readonly untracked: readonly UntrackedPathEntry[];
+}
+
 export interface LegacyWorktreeReconciliationEvidence {
   readonly transactionId: string;
   readonly journalPath: string;
@@ -176,6 +220,7 @@ export type BeginLegacyWorktreeReconciliationRefusalReason =
   | "history-unresolvable"
   | "divergent-merge"
   | "replay-conflict"
+  | "candidate-path-collision"
   | "overlay-unsupported"
   | "overlay-mismatch"
   | "transition-failed"
@@ -239,7 +284,7 @@ type JournalPhase =
   | "rolled-back";
 
 interface LegacyReconciliationJournal {
-  readonly version: typeof JOURNAL_VERSION;
+  readonly version: typeof LEGACY_JOURNAL_VERSION | typeof JOURNAL_VERSION;
   readonly transactionId: string;
   readonly request: {
     readonly repositoryRoot: string;
@@ -254,6 +299,8 @@ interface LegacyReconciliationJournal {
   readonly index: CapturedIndex;
   readonly overlay: readonly LegacyOverlayJournalEntry[];
   readonly overlaySha256: string;
+  readonly semanticOverlay?: LegacySemanticOverlay;
+  readonly semanticOverlaySha256?: string;
   readonly wipArtifacts: readonly string[];
   readonly capturedActivity: LegacyWorktreeActivityObservation;
   readonly phase: JournalPhase;
@@ -384,8 +431,9 @@ async function runRequired(
   cwd: string,
   args: readonly string[],
   reason: BeginLegacyWorktreeReconciliationRefusalReason,
+  environment?: Readonly<Record<string, string>>,
 ): Promise<string> {
-  const result = await git(cwd, args);
+  const result = await git(cwd, args, environment);
   if (result.code !== 0) {
     throw new ReconciliationRefusal(
       reason,
@@ -400,8 +448,9 @@ async function runRequiredRaw(
   cwd: string,
   args: readonly string[],
   reason: BeginLegacyWorktreeReconciliationRefusalReason,
+  environment?: Readonly<Record<string, string>>,
 ): Promise<string> {
-  const result = await git(cwd, args);
+  const result = await git(cwd, args, environment);
   if (result.code !== 0) {
     throw new ReconciliationRefusal(
       reason,
@@ -565,6 +614,184 @@ async function captureOverlay(
   }
   const sorted = [...paths].sort(comparePaths);
   return Promise.all(sorted.map((path) => captureOneOverlayEntry(worktreePath, path)));
+}
+
+function parseNulPaths(raw: string, excludedRelativePaths: readonly string[]): readonly string[] {
+  const paths = new Set<string>();
+  for (const path of raw.split("\0")) {
+    if (path !== "" && !isExcludedPath(path, excludedRelativePaths)) paths.add(path);
+  }
+  return [...paths].sort(comparePaths);
+}
+
+function isGitFileMode(value: string): value is GitFileMode {
+  return value === "100644" || value === "100755" || value === "120000";
+}
+
+function parseGitPathState(raw: string, expectedPath: string): GitPathState | null {
+  if (raw === "") return null;
+  const records = raw.split("\0").filter((record) => record !== "");
+  if (records.length !== 1) {
+    throw new ReconciliationRefusal(
+      "overlay-unsupported",
+      `path ${expectedPath} has ${records.length} index/tree records`,
+    );
+  }
+  const record = records[0]!;
+  const tab = record.indexOf("\t");
+  if (tab < 0 || record.slice(tab + 1) !== expectedPath) {
+    throw new ReconciliationRefusal("overlay-unsupported", `malformed state record for ${expectedPath}`);
+  }
+  const fields = record.slice(0, tab).split(" ");
+  const mode = fields[0];
+  const treeRecord = fields[1] === "blob";
+  const oid = treeRecord ? fields[2] : fields[1];
+  const stage = treeRecord ? undefined : fields[2];
+  if (!isGitFileMode(mode ?? "") || !FULL_SHA.test(oid ?? "") || (stage !== undefined && stage !== "0")) {
+    throw new ReconciliationRefusal(
+      "overlay-unsupported",
+      `unsupported mode, object, or stage for ${expectedPath}`,
+    );
+  }
+  return { mode: mode as GitFileMode, oid: oid! };
+}
+
+async function captureTreePathState(
+  git: LegacyReconciliationGitRunner,
+  cwd: string,
+  commit: string,
+  path: string,
+): Promise<GitPathState | null> {
+  const raw = await runRequiredRaw(
+    git,
+    cwd,
+    ["ls-tree", "-z", commit, "--", path],
+    "history-unresolvable",
+  );
+  return parseGitPathState(raw, path);
+}
+
+async function captureIndexPathState(
+  git: LegacyReconciliationGitRunner,
+  cwd: string,
+  path: string,
+  environment?: Readonly<Record<string, string>>,
+): Promise<GitPathState | null> {
+  const raw = await runRequiredRaw(
+    git,
+    cwd,
+    ["ls-files", "--stage", "-z", "--", path],
+    "overlay-unsupported",
+    environment,
+  );
+  return parseGitPathState(raw, path);
+}
+
+function gitBlobOid(bytes: Uint8Array): string {
+  const header = Buffer.from(`blob ${bytes.byteLength}\0`);
+  return createHash("sha1").update(header).update(bytes).digest("hex");
+}
+
+async function captureWorktreePathState(
+  worktreePath: string,
+  path: string,
+): Promise<WorktreePathState | null> {
+  const fullPath = join(worktreePath, path);
+  let stat;
+  try {
+    stat = await fs.lstat(fullPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  let bytes: Buffer;
+  let type: WorktreePathState["type"];
+  let mode: GitFileMode;
+  if (stat.isFile()) {
+    bytes = await fs.readFile(fullPath);
+    type = "file";
+    mode = (stat.mode & 0o111) === 0 ? "100644" : "100755";
+  } else if (stat.isSymbolicLink()) {
+    bytes = Buffer.from(await fs.readlink(fullPath, { encoding: "buffer" }));
+    type = "symlink";
+    mode = "120000";
+  } else {
+    throw new ReconciliationRefusal("overlay-unsupported", `overlay path ${path} has unsupported filesystem type`);
+  }
+  return {
+    type,
+    mode,
+    oid: gitBlobOid(bytes),
+    sha256: sha256(bytes),
+    bytesBase64: bytes.toString("base64"),
+  };
+}
+
+async function captureSemanticOverlay(
+  git: LegacyReconciliationGitRunner,
+  worktreePath: string,
+  head: string,
+  excludedRelativePaths: readonly string[],
+): Promise<LegacySemanticOverlay> {
+  const [stagedRaw, unstagedRaw, untrackedRaw] = await Promise.all([
+    runRequiredRaw(
+      git,
+      worktreePath,
+      ["diff", "--cached", "--name-only", "--no-renames", "-z", head, "--"],
+      "identity-mismatch",
+    ),
+    runRequiredRaw(
+      git,
+      worktreePath,
+      ["diff", "--name-only", "--no-renames", "-z", "--"],
+      "identity-mismatch",
+    ),
+    runRequiredRaw(
+      git,
+      worktreePath,
+      ["ls-files", "--others", "--exclude-standard", "-z", "--"],
+      "identity-mismatch",
+    ),
+  ]);
+  const stagedPaths = parseNulPaths(stagedRaw, excludedRelativePaths);
+  const unstagedPaths = parseNulPaths(unstagedRaw, excludedRelativePaths);
+  const untrackedPaths = parseNulPaths(untrackedRaw, excludedRelativePaths);
+  const allPaths = [...new Set([...stagedPaths, ...unstagedPaths, ...untrackedPaths])].sort(comparePaths);
+  const paths = await Promise.all(
+    allPaths.map(async (path) => ({ path, head: await captureTreePathState(git, worktreePath, head, path) })),
+  );
+  const staged = await Promise.all(
+    stagedPaths.map(async (path) => ({
+      path,
+      before: await captureTreePathState(git, worktreePath, head, path),
+      after: await captureIndexPathState(git, worktreePath, path),
+    })),
+  );
+  const unstaged = await Promise.all(
+    unstagedPaths.map(async (path) => ({
+      path,
+      before: await captureIndexPathState(git, worktreePath, path),
+      after: await captureWorktreePathState(worktreePath, path),
+    })),
+  );
+  const untracked = await Promise.all(
+    untrackedPaths.map(async (path) => {
+      const after = await captureWorktreePathState(worktreePath, path);
+      if (after === null) {
+        throw new ReconciliationRefusal("activity-changed", `untracked path ${path} disappeared during capture`);
+      }
+      return { path, after };
+    }),
+  );
+  return { paths, staged, unstaged, untracked };
+}
+
+function semanticOverlayDigest(overlay: LegacySemanticOverlay): string {
+  return sha256(JSON.stringify(overlay));
+}
+
+function sameSemanticOverlay(left: LegacySemanticOverlay, right: LegacySemanticOverlay): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function overlayDigest(entries: readonly LegacyOverlayJournalEntry[]): string {
@@ -933,6 +1160,232 @@ async function verifyOverlay(
   }
 }
 
+function sameGitPathState(left: GitPathState | null, right: GitPathState | null): boolean {
+  return left?.mode === right?.mode && left?.oid === right?.oid;
+}
+
+function assertSafeOverlayPath(path: string, excludedRelativePaths: readonly string[]): void {
+  if (
+    path === "" ||
+    isAbsolute(path) ||
+    path === ".." ||
+    path.startsWith("../") ||
+    path.includes("/../") ||
+    isExcludedPath(path, excludedRelativePaths)
+  ) {
+    throw new Error(`journal contains unsafe overlay path ${path}`);
+  }
+}
+
+function validateGitPathState(state: unknown, context: string): asserts state is GitPathState | null {
+  if (state === null) return;
+  if (typeof state !== "object" || Array.isArray(state)) {
+    throw new Error(`${context} has an invalid Git state`);
+  }
+  const record = state as Partial<GitPathState>;
+  if (!isGitFileMode(record.mode ?? "") || !FULL_SHA.test(record.oid ?? "")) {
+    throw new Error(`${context} has an invalid mode or object`);
+  }
+}
+
+function validateWorktreePathState(state: unknown, context: string): asserts state is WorktreePathState | null {
+  if (state === null) return;
+  validateGitPathState(state, context);
+  const record = state as Partial<WorktreePathState>;
+  if (
+    (record.type !== "file" && record.type !== "symlink") ||
+    !SHA256.test(record.sha256 ?? "") ||
+    typeof record.bytesBase64 !== "string"
+  ) {
+    throw new Error(`${context} has invalid worktree bytes`);
+  }
+  if ((record.type === "symlink") !== (record.mode === "120000")) {
+    throw new Error(`${context} has inconsistent type and mode`);
+  }
+  const bytes = Buffer.from(record.bytesBase64, "base64");
+  if (sha256(bytes) !== record.sha256 || gitBlobOid(bytes) !== record.oid) {
+    throw new Error(`${context} bytes do not match their object guards`);
+  }
+}
+
+function validateSemanticOverlay(
+  value: unknown,
+  excludedRelativePaths: readonly string[],
+): asserts value is LegacySemanticOverlay {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("journal lacks a semantic overlay");
+  }
+  const overlay = value as Partial<LegacySemanticOverlay>;
+  if (
+    !Array.isArray(overlay.paths) ||
+    !Array.isArray(overlay.staged) ||
+    !Array.isArray(overlay.unstaged) ||
+    !Array.isArray(overlay.untracked)
+  ) {
+    throw new Error("journal semantic overlay has invalid layers");
+  }
+  const validateSortedPaths = (entries: readonly { readonly path: string }[], layer: string): void => {
+    let prior: string | null = null;
+    for (const entry of entries) {
+      if (typeof entry.path !== "string") throw new Error(`${layer} contains an invalid path`);
+      assertSafeOverlayPath(entry.path, excludedRelativePaths);
+      if (prior !== null && comparePaths(prior, entry.path) >= 0) {
+        throw new Error(`${layer} paths are not strictly byte-sorted and unique`);
+      }
+      prior = entry.path;
+    }
+  };
+  validateSortedPaths(overlay.paths, "semantic preimage");
+  validateSortedPaths(overlay.staged, "staged overlay");
+  validateSortedPaths(overlay.unstaged, "unstaged overlay");
+  validateSortedPaths(overlay.untracked, "untracked overlay");
+
+  const preimages = new Map<string, GitPathState | null>();
+  for (const entry of overlay.paths) {
+    validateGitPathState(entry.head, `preimage ${entry.path}`);
+    preimages.set(entry.path, entry.head);
+  }
+  const staged = new Map<string, GitPathState | null>();
+  for (const entry of overlay.staged) {
+    validateGitPathState(entry.before, `staged preimage ${entry.path}`);
+    validateGitPathState(entry.after, `staged postimage ${entry.path}`);
+    if (!sameGitPathState(entry.before, preimages.get(entry.path) ?? null)) {
+      throw new Error(`staged preimage ${entry.path} does not match HEAD`);
+    }
+    if (sameGitPathState(entry.before, entry.after)) {
+      throw new Error(`staged delta ${entry.path} does not change mode or object`);
+    }
+    staged.set(entry.path, entry.after);
+  }
+  const layeredPaths = new Set<string>(overlay.staged.map((entry) => entry.path));
+  for (const entry of overlay.unstaged) {
+    validateGitPathState(entry.before, `unstaged preimage ${entry.path}`);
+    validateWorktreePathState(entry.after, `unstaged postimage ${entry.path}`);
+    const expectedBefore = staged.has(entry.path)
+      ? staged.get(entry.path)!
+      : preimages.get(entry.path) ?? null;
+    if (!sameGitPathState(entry.before, expectedBefore)) {
+      throw new Error(`unstaged preimage ${entry.path} does not match the staged layer`);
+    }
+    if (sameGitPathState(entry.before, entry.after)) {
+      throw new Error(`unstaged delta ${entry.path} does not change mode or object`);
+    }
+    layeredPaths.add(entry.path);
+  }
+  for (const entry of overlay.untracked) {
+    validateWorktreePathState(entry.after, `untracked postimage ${entry.path}`);
+    if (entry.after === null) throw new Error(`untracked path ${entry.path} is deleted`);
+    if ((preimages.get(entry.path) ?? null) !== null || layeredPaths.has(entry.path)) {
+      throw new Error(`untracked path ${entry.path} collides with a tracked layer`);
+    }
+    layeredPaths.add(entry.path);
+  }
+  if (
+    overlay.paths.length !== layeredPaths.size ||
+    overlay.paths.some((entry) => !layeredPaths.has(entry.path))
+  ) {
+    throw new Error("semantic preimage paths do not equal the layered path set");
+  }
+}
+
+async function verifySemanticObjects(
+  git: LegacyReconciliationGitRunner,
+  repositoryRoot: string,
+  overlay: LegacySemanticOverlay,
+): Promise<void> {
+  const objectIds = new Set<string>();
+  for (const entry of overlay.paths) if (entry.head !== null) objectIds.add(entry.head.oid);
+  for (const entry of overlay.staged) {
+    if (entry.before !== null) objectIds.add(entry.before.oid);
+    if (entry.after !== null) objectIds.add(entry.after.oid);
+  }
+  for (const entry of overlay.unstaged) if (entry.before !== null) objectIds.add(entry.before.oid);
+  for (const oid of objectIds) {
+    const observed = await git(repositoryRoot, ["cat-file", "-t", oid]);
+    if (observed.code !== 0 || observed.stdout.trim() !== "blob") {
+      throw new ReconciliationRefusal("overlay-mismatch", `semantic object ${oid} is not an available blob`);
+    }
+  }
+}
+
+async function assertCandidateCompatible(
+  git: LegacyReconciliationGitRunner,
+  cwd: string,
+  candidateHead: string,
+  overlay: LegacySemanticOverlay,
+): Promise<void> {
+  for (const entry of overlay.paths) {
+    const candidate = await captureTreePathState(git, cwd, candidateHead, entry.path);
+    if (!sameGitPathState(candidate, entry.head)) {
+      throw new ReconciliationRefusal(
+        "candidate-path-collision",
+        `candidate changed touched path ${entry.path} from its captured HEAD preimage`,
+      );
+    }
+  }
+}
+
+async function installCandidateIndex(
+  git: LegacyReconciliationGitRunner,
+  cwd: string,
+  candidateHead: string,
+  overlay: LegacySemanticOverlay,
+  indexPath: string,
+): Promise<void> {
+  const temporary = `${indexPath}.cq-candidate-${process.pid}-${Date.now()}`;
+  const environment = { GIT_INDEX_FILE: temporary } as const;
+  await fs.rm(temporary, { force: true });
+  try {
+    await runRequired(git, cwd, ["read-tree", candidateHead], "transition-failed", environment);
+    for (const entry of overlay.staged) {
+      const before = await captureIndexPathState(git, cwd, entry.path, environment);
+      if (!sameGitPathState(before, entry.before)) {
+        throw new ReconciliationRefusal(
+          "candidate-path-collision",
+          `candidate index preimage changed for ${entry.path}`,
+        );
+      }
+      if (entry.after === null) {
+        await runRequired(
+          git,
+          cwd,
+          ["update-index", "--force-remove", "--", entry.path],
+          "transition-failed",
+          environment,
+        );
+      } else {
+        await runRequired(
+          git,
+          cwd,
+          ["update-index", "--add", "--cacheinfo", `${entry.after.mode},${entry.after.oid},${entry.path}`],
+          "transition-failed",
+          environment,
+        );
+      }
+      const installed = await captureIndexPathState(git, cwd, entry.path, environment);
+      if (!sameGitPathState(installed, entry.after)) {
+        throw new ReconciliationRefusal("overlay-mismatch", `candidate index postimage differs for ${entry.path}`);
+      }
+    }
+    await durableWrite(indexPath, await fs.readFile(temporary));
+  } finally {
+    await fs.rm(temporary, { force: true });
+  }
+}
+
+async function verifySemanticOverlay(
+  git: LegacyReconciliationGitRunner,
+  worktreePath: string,
+  head: string,
+  excludedRelativePaths: readonly string[],
+  expected: LegacySemanticOverlay,
+): Promise<void> {
+  const observed = await captureSemanticOverlay(git, worktreePath, head, excludedRelativePaths);
+  if (!sameSemanticOverlay(observed, expected)) {
+    throw new ReconciliationRefusal("overlay-mismatch", "candidate delta space does not match the durable semantic overlay");
+  }
+}
+
 async function deterministicReplayEnvironment(
   git: LegacyReconciliationGitRunner,
   cwd: string,
@@ -968,6 +1421,7 @@ async function buildCandidateOffPath(
   classification: LegacyReconciliationClassification,
   replayedCommits: readonly string[],
   overlay: readonly LegacyOverlayJournalEntry[],
+  semanticOverlay: LegacySemanticOverlay,
 ): Promise<{ readonly buildPath: string; readonly candidateHead: string }> {
   const buildPath = candidateBuildPath(request.journalDirectory, transactionId);
   await fs.rm(buildPath, { recursive: true, force: true });
@@ -999,6 +1453,7 @@ async function buildCandidateOffPath(
   if (candidateHead === null) {
     throw new ReconciliationRefusal("history-unresolvable", "off-path candidate HEAD is missing");
   }
+  await assertCandidateCompatible(git, buildPath, candidateHead, semanticOverlay);
   await applyOverlay(buildPath, overlay);
   await verifyOverlay(buildPath, overlay);
   return { buildPath, candidateHead };
@@ -1259,6 +1714,14 @@ export async function beginLegacyWorktreeReconciliation(
     const index = await captureIndex(git, request.worktreePath);
     await fault("after-capture", { transactionId: input.transactionId, oldHead: refs.head });
     const overlay = await captureOverlay(git, request.worktreePath, request.excludedRelativePaths);
+    const semanticOverlay = await captureSemanticOverlay(
+      git,
+      request.worktreePath,
+      refs.head,
+      request.excludedRelativePaths,
+    );
+    validateSemanticOverlay(semanticOverlay, request.excludedRelativePaths);
+    await verifySemanticObjects(git, request.repositoryRoot, semanticOverlay);
     const wipArtifacts = await listWipArtifacts(request.worktreePath);
     journal = {
       version: JOURNAL_VERSION,
@@ -1268,6 +1731,8 @@ export async function beginLegacyWorktreeReconciliation(
       index,
       overlay,
       overlaySha256: overlayDigest(overlay),
+      semanticOverlay,
+      semanticOverlaySha256: semanticOverlayDigest(semanticOverlay),
       wipArtifacts,
       capturedActivity,
       phase: "captured",
@@ -1292,6 +1757,7 @@ export async function beginLegacyWorktreeReconciliation(
       classified.classification,
       classified.replayedCommits,
       overlay,
+      semanticOverlay,
     );
     buildPath = built.buildPath;
     await fault("after-candidate-overlay", { transactionId: input.transactionId, candidateHead: built.candidateHead });
@@ -1305,8 +1771,6 @@ export async function beginLegacyWorktreeReconciliation(
       journaledActivity,
     };
     await writeJournal(path, journal);
-    journal = { ...journal, phase: "transition-ready" };
-    await writeJournal(path, journal);
     const transitionAssessment = await assessLegacyReconciliationActivity(
       observationAdapter,
       request.worktreePath,
@@ -1316,6 +1780,34 @@ export async function beginLegacyWorktreeReconciliation(
       throw new ReconciliationRefusal(transitionAssessment.reason, transitionAssessment.detail);
     }
     const transitionActivity = transitionAssessment.observation;
+    journal = { ...journal, phase: "transition-ready", transitionActivity };
+    await writeJournal(path, journal);
+    const guardedHead = await resolveCommit(git, request.worktreePath, "HEAD");
+    const guardedBranch = await resolveRef(git, request.repositoryRoot, refs.branchRef);
+    const guardedRecovery = await resolveRef(git, request.repositoryRoot, refs.recoveryRef);
+    const guardedCandidate = await resolveRef(git, request.repositoryRoot, refs.candidateRef);
+    if (
+      guardedHead !== refs.head ||
+      guardedBranch !== refs.head ||
+      guardedRecovery !== refs.recoveryValue ||
+      guardedCandidate !== refs.candidateValue
+    ) {
+      throw new ReconciliationRefusal(
+        "activity-changed",
+        "HEAD, branch, recovery, or candidate ref changed before transition",
+      );
+    }
+    await verifyIndex(index);
+    await verifyOverlay(request.worktreePath, overlay);
+    const guardedSemanticOverlay = await captureSemanticOverlay(
+      git,
+      request.worktreePath,
+      refs.head,
+      request.excludedRelativePaths,
+    );
+    if (!sameSemanticOverlay(guardedSemanticOverlay, semanticOverlay)) {
+      throw new ReconciliationRefusal("activity-changed", "semantic overlay changed before transition");
+    }
     await fault("before-first-mutation", { transactionId: input.transactionId, candidateHead: built.candidateHead });
 
     sourceMutationStarted = true;
@@ -1338,11 +1830,23 @@ export async function beginLegacyWorktreeReconciliation(
     await runRequired(git, request.worktreePath, ["clean", "-f", "-d"], "transition-failed");
     await runRequired(git, request.worktreePath, ["reset", "--hard", built.candidateHead], "transition-failed");
     await fault("after-reset", { transactionId: input.transactionId });
-    await restoreIndex(index);
+    await installCandidateIndex(
+      git,
+      request.worktreePath,
+      built.candidateHead,
+      semanticOverlay,
+      index.path,
+    );
     await applyOverlay(request.worktreePath, overlay);
     await fault("after-overlay-restore", { transactionId: input.transactionId, overlaySha256: journal.overlaySha256 });
-    await verifyIndex(index);
     await verifyOverlay(request.worktreePath, overlay);
+    await verifySemanticOverlay(
+      git,
+      request.worktreePath,
+      built.candidateHead,
+      request.excludedRelativePaths,
+      semanticOverlay,
+    );
     const transitionedHead = await resolveCommit(git, request.worktreePath, "HEAD");
     if (transitionedHead !== built.candidateHead) {
       throw new ReconciliationRefusal(
@@ -1420,7 +1924,7 @@ function isJournal(value: unknown): value is LegacyReconciliationJournal {
   if (value === null || typeof value !== "object") return false;
   const record = value as Partial<LegacyReconciliationJournal>;
   return (
-    record.version === JOURNAL_VERSION &&
+    (record.version === LEGACY_JOURNAL_VERSION || record.version === JOURNAL_VERSION) &&
     typeof record.transactionId === "string" &&
     typeof record.phase === "string" &&
     record.request !== undefined &&
@@ -1511,6 +2015,15 @@ function validatePersistedJournal(
   }
   if (overlayDigest(journal.overlay) !== journal.overlaySha256) {
     throw new Error("journal overlay digest does not match its entries");
+  }
+  if (journal.version === JOURNAL_VERSION) {
+    validateSemanticOverlay(journal.semanticOverlay, journal.request.excludedRelativePaths);
+    if (
+      typeof journal.semanticOverlaySha256 !== "string" ||
+      semanticOverlayDigest(journal.semanticOverlay) !== journal.semanticOverlaySha256
+    ) {
+      throw new Error("journal semantic overlay digest does not match its layers");
+    }
   }
   if (!isActivityObservation(journal.capturedActivity)) {
     throw new Error("journal contains an invalid captured activity observation");
