@@ -475,6 +475,55 @@ describe("prepare-only adoption publication visibility", () => {
     }
   }, 30_000);
 
+  for (const scenario of [
+    { name: "staged modification reversed unstaged", path: "landed-1.txt" },
+    { name: "staged addition deleted unstaged", path: "staged-then-deleted.txt" },
+  ] as const) {
+    it(`repairs a synthetic published v1 layered delta with ${scenario.name}`, async () => {
+      const fixture = await seedT1207Shape();
+      const store = new InMemoryLedgerStore();
+      await seedEligibleTask(store, fixture);
+      const layeredPath = join(fixture.worktreePath, scenario.path);
+      try {
+        await fs.writeFile(layeredPath, `${scenario.name}\n`);
+        await git(fixture.worktreePath, ["add", "--", scenario.path]);
+        if (scenario.name === "staged modification reversed unstaged") {
+          await fs.writeFile(layeredPath, "change 1\n");
+        } else {
+          await fs.rm(layeredPath);
+        }
+        expect(await git(fixture.worktreePath, ["diff", "--cached", "--name-only", "--"])).toBe(
+          scenario.path,
+        );
+        expect(await git(fixture.worktreePath, ["diff", "--name-only", "--"])).toBe(
+          scenario.path,
+        );
+
+        const { published } = await synthesizePublishedV1Journal(store, fixture);
+        const resumed = await invokeAdoption(store, fixture);
+
+        if (resumed.status !== "prepared") {
+          throw new Error(`v1 layered repair refused: ${resumed.reason}: ${resumed.detail}`);
+        }
+        expect(resumed.status).toBe("prepared");
+        expect(resumed.handle).toEqual(published.handle);
+        expect(await git(fixture.worktreePath, ["diff", "--cached", "--name-only", "--"])).toBe(
+          scenario.path,
+        );
+        expect(await git(fixture.worktreePath, ["diff", "--name-only", "--"])).toBe(
+          scenario.path,
+        );
+        if (scenario.name === "staged modification reversed unstaged") {
+          expect(await fs.readFile(layeredPath, "utf8")).toBe("change 1\n");
+        } else {
+          await expect(fs.access(layeredPath)).rejects.toMatchObject({ code: "ENOENT" });
+        }
+      } finally {
+        await store.dispose();
+      }
+    }, 30_000);
+  }
+
   it("refuses v1 repair after post-publication tracked mutation without changing data or registry authority", async () => {
     const fixture = await seedT1207Shape();
     const store = new InMemoryLedgerStore();
