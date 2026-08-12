@@ -10,7 +10,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { constants as fsConstants, promises as fs } from "node:fs";
-import { delimiter as pathDelimiter, dirname, join } from "node:path";
+import { delimiter as pathDelimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -82,6 +82,23 @@ async function git(cwd: string, args: readonly string[]): Promise<string> {
   return result.stdout.trim();
 }
 
+async function gitResult(
+  cwd: string,
+  args: readonly string[],
+): Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }> {
+  try {
+    const result = await exec("git", [...args], { cwd, env: GIT_ENV, encoding: "utf8" });
+    return { code: 0, stdout: result.stdout.trim(), stderr: result.stderr.trim() };
+  } catch (error) {
+    const failed = error as { readonly code?: number; readonly stdout?: string; readonly stderr?: string };
+    return {
+      code: typeof failed.code === "number" ? failed.code : 1,
+      stdout: String(failed.stdout ?? "").trim(),
+      stderr: String(failed.stderr ?? "").trim(),
+    };
+  }
+}
+
 function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
@@ -114,6 +131,10 @@ async function seedT1207Shape(): Promise<T1207Fixture> {
   for (const commit of legacyCommits) {
     await git(repositoryRoot, ["cherry-pick", "-x", commit]);
   }
+  await fs.writeFile(join(repositoryRoot, "seed.txt"), "main advanced seed\n");
+  await fs.writeFile(join(repositoryRoot, "main-only.txt"), "main-only addition\n");
+  await git(repositoryRoot, ["add", "."]);
+  await git(repositoryRoot, ["commit", "-q", "-m", "unrelated main advance"]);
   const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
   await fs.mkdir(dirname(worktreePath), { recursive: true });
   await git(repositoryRoot, ["worktree", "add", "-q", worktreePath, "implement/T1207"]);
@@ -381,6 +402,60 @@ describe("prepare-only adoption crash recovery (Effectual-GoodCommunication)", (
 });
 
 describe("prepare-only adoption publication visibility", () => {
+  it("repairs a synthetic published v1 stale index without replacing its v2 handle or extra untracked bytes", async () => {
+    const fixture = await seedT1207Shape();
+    const store = new InMemoryLedgerStore();
+    const stateDir = join(fixture.root, "managed-registry");
+    await seedEligibleTask(store, fixture);
+    try {
+      const published = await invokeAdoption(store, fixture);
+      expect(published.status).toBe("prepared");
+      if (published.handle === undefined) throw new Error("published adoption lacks a handle");
+      const journalPath = join(
+        stateDir,
+        "adoption-reconciliation",
+        `adopt-T1207-${fixture.expectedHead.slice(0, 16)}.json`,
+      );
+      const journal = JSON.parse(await fs.readFile(journalPath, "utf8")) as Record<string, unknown> & {
+        index: { readonly bytesBase64: string };
+      };
+      journal["version"] = 1;
+      delete journal["semanticOverlay"];
+      delete journal["semanticOverlaySha256"];
+      await fs.writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+
+      const rawIndexPath = await git(fixture.worktreePath, ["rev-parse", "--git-path", "index"]);
+      const indexPath = isAbsolute(rawIndexPath)
+        ? rawIndexPath
+        : resolve(fixture.worktreePath, rawIndexPath);
+      await fs.writeFile(indexPath, Buffer.from(journal.index.bytesBase64, "base64"));
+      const additionalUntrackedPath = join(fixture.worktreePath, "additional-untracked.bin");
+      const additionalUntrackedBytes = Buffer.from([3, 0, 255, 12]);
+      await fs.writeFile(additionalUntrackedPath, additionalUntrackedBytes);
+      expect({
+        cached: (await gitResult(fixture.worktreePath, ["diff", "--cached", "--quiet", "--exit-code"])).code,
+        unstaged: (await gitResult(fixture.worktreePath, ["diff", "--quiet", "--exit-code"])).code,
+      }).toEqual({ cached: 1, unstaged: 1 });
+
+      const resumed = await invokeAdoption(store, fixture);
+      expect(resumed.status).toBe("prepared");
+      expect(resumed.handle).toEqual(published.handle);
+      expect(resumed.handle?.absolutePath).toBe(fixture.worktreePath);
+      expect({
+        cached: (await gitResult(fixture.worktreePath, ["diff", "--cached", "--quiet", "--exit-code"])).code,
+        unstaged: (await gitResult(fixture.worktreePath, ["diff", "--quiet", "--exit-code"])).code,
+      }).toEqual({ cached: 0, unstaged: 0 });
+      expect(await fs.readFile(additionalUntrackedPath)).toEqual(additionalUntrackedBytes);
+      expect(sha256(await fs.readFile(fixture.untrackedPath))).toBe(fixture.untrackedSha256);
+
+      const repeated = await invokeAdoption(store, fixture);
+      expect(repeated.handle).toEqual(published.handle);
+      expect(await fs.readFile(additionalUntrackedPath)).toEqual(additionalUntrackedBytes);
+    } finally {
+      await store.dispose();
+    }
+  }, 30_000);
+
   it("keeps the first externally visible v2 pointer authoritative after a commit fault", async () => {
     const fixture = await seedT1207Shape();
     const store = new InMemoryLedgerStore();
