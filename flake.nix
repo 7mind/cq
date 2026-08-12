@@ -761,6 +761,107 @@ EOF
               exit 1
             fi
 
+            ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+              # Behavioral-Active, Effectual-GoodCommunication. Regression D320:
+              # exercise the installed wrapper through a real PTY and keep its
+              # input open until the role has launched and settled its result.
+              rm -f "$TMPDIR/cq-codex-role.launch"
+              rolePtyInput=$TMPDIR/cq-codex-role.pty-input
+              rolePtyStdout=$TMPDIR/cq-codex-role.pty-stdout
+              rolePtyStderr=$TMPDIR/cq-codex-role.pty-stderr
+              mkfifo "$rolePtyInput"
+              exec 9<>"$rolePtyInput"
+              HOME=$TMPDIR \
+                CQ_CODEX_EXECUTABLE="$fakeCodex" \
+                ${pkgs.coreutils}/bin/timeout 10s \
+                ${pkgs.util-linux}/bin/script --quiet --return \
+                  --command "$out/bin/cq-codex-role" \
+                  "$TMPDIR/cq-codex-role.typescript" \
+                  < "$rolePtyInput" > "$rolePtyStdout" 2> "$rolePtyStderr" &
+              rolePtyPid=$!
+              printf '%s\n' '{"roleId":"implement-worker","handle":{"attestationId":"att_packaged_role_acknowledgement","generation":7},"inputCapability":{"scope":"fetch-input","token":"cq_input_packaged_role_acknowledgement"},"resultCapability":{"scope":"store-result","token":"cq_result_packaged_role_acknowledgement"},"gitChangeCapability":{"scope":"git-change","token":"cq_git_packaged_role_acknowledgement"},"cwd":"'"$roleCwd"'","ledgerCwd":"'"$ledgerCwd"'","model":"test-model","reasoningEffort":"high","sandboxMode":"read-only","timeoutMs":30000}' >&9
+              set +e
+              wait "$rolePtyPid"
+              rolePtyStatus=$?
+              set -e
+              exec 9>&-
+              exec 9<&-
+              if [ "$rolePtyStatus" -ne 0 ]; then
+                echo "cq-codex-role did not settle before PTY EOF (exit $rolePtyStatus):" >&2
+                cat "$rolePtyStderr" >&2
+                exit 1
+              fi
+              if ! printf '%s\n' '{"attestationId":"att_packaged_role_acknowledgement","generation":7}' | \
+                cmp -s - "$TMPDIR/cq-codex-role.launch"; then
+                echo "cq-codex-role PTY-open launch did not reach the fake Codex executable" >&2
+                exit 1
+              fi
+              tr -d '\r' < "$rolePtyStdout" > "$TMPDIR/cq-codex-role.pty-normalized"
+              if ! grep -Fxq '{"attestationId":"att_packaged_role_acknowledgement","generation":7}' \
+                "$TMPDIR/cq-codex-role.pty-normalized"; then
+                echo "cq-codex-role PTY-open result did not settle:" >&2
+                cat "$rolePtyStdout" >&2
+                exit 1
+              fi
+            ''}
+
+            assertRoleInputRefusal() {
+              refusalName=$1
+              expectedDiagnostic=$2
+              refusalInput=$3
+              refusalStdout=$TMPDIR/cq-codex-role-$refusalName.stdout
+              refusalStderr=$TMPDIR/cq-codex-role-$refusalName.stderr
+              rm -f "$TMPDIR/cq-codex-role.launch"
+              set +e
+              HOME=$TMPDIR \
+                CQ_CODEX_EXECUTABLE="$fakeCodex" \
+                $out/bin/cq-codex-role \
+                  < "$refusalInput" > "$refusalStdout" 2> "$refusalStderr"
+              refusalStatus=$?
+              set -e
+              if [ "$refusalStatus" -eq 0 ]; then
+                echo "cq-codex-role accepted $refusalName input" >&2
+                exit 1
+              fi
+              if ! grep -Fxq "$expectedDiagnostic" "$refusalStderr"; then
+                echo "cq-codex-role $refusalName refusal was not deterministic:" >&2
+                cat "$refusalStderr" >&2
+                exit 1
+              fi
+              if [ -e "$TMPDIR/cq-codex-role.launch" ]; then
+                echo "cq-codex-role used child capabilities for $refusalName input" >&2
+                exit 1
+              fi
+              if grep -Fq 'T2068_CAPABILITY_SENTINEL' "$refusalStdout" "$refusalStderr"; then
+                echo "cq-codex-role leaked input capabilities for $refusalName input" >&2
+                exit 1
+              fi
+            }
+
+            incompleteRoleInput=$TMPDIR/cq-codex-role.incomplete
+            printf '%s' '{"roleId":"implement-worker","inputCapability":{"scope":"fetch-input","token":"T2068_CAPABILITY_SENTINEL"}}' \
+              > "$incompleteRoleInput"
+            assertRoleInputRefusal \
+              incomplete \
+              'codex-role-dispatch: request ended before a newline-terminated JSON value' \
+              "$incompleteRoleInput"
+
+            malformedRoleInput=$TMPDIR/cq-codex-role.malformed
+            printf '%s\n' '{"roleId":"implement-worker","inputCapability":{"scope":"fetch-input","token":"T2068_CAPABILITY_SENTINEL"}' \
+              > "$malformedRoleInput"
+            assertRoleInputRefusal \
+              malformed \
+              'codex-role-dispatch: request must contain one valid JSON object' \
+              "$malformedRoleInput"
+
+            oversizedRoleInput=$TMPDIR/cq-codex-role.oversized
+            printf '%s' 'T2068_CAPABILITY_SENTINEL' > "$oversizedRoleInput"
+            head -c 65537 /dev/zero | tr '\0' x >> "$oversizedRoleInput"
+            assertRoleInputRefusal \
+              oversized \
+              'codex-role-dispatch: request exceeds 65536 bytes before newline' \
+              "$oversizedRoleInput"
+
             gateRepo=$TMPDIR/gate-repo
             gateAlias=$TMPDIR/gate-repo-alias
             gateOutside=$TMPDIR/gate-outside
