@@ -865,6 +865,49 @@ describe("legacy worktree reconciliation", () => {
     expect(await refValue(seeded.repositoryRoot, "refs/cq-managed-recovery/legacy/replay-conflict")).toBeNull();
   });
 
+  it("refuses a candidate collision with a staged path before mutating source", async () => {
+    const fixture = await seedSimpleLegacy("t2071-candidate-collision-");
+    const stagedPath = path.join(fixture.worktreePath, "seed.txt");
+    await fs.writeFile(stagedPath, "legacy staged bytes\n");
+    await git(fixture.worktreePath, ["add", "seed.txt"]);
+    const stagedBytes = await fs.readFile(stagedPath);
+    const rawIndexPath = await git(fixture.worktreePath, ["rev-parse", "--git-path", "index"]);
+    const indexPath = path.isAbsolute(rawIndexPath)
+      ? rawIndexPath
+      : path.resolve(fixture.worktreePath, rawIndexPath);
+    const indexBytes = await fs.readFile(indexPath);
+
+    await fs.writeFile(path.join(fixture.repositoryRoot, "seed.txt"), "candidate bytes\n");
+    await git(fixture.repositoryRoot, ["add", "seed.txt"]);
+    await git(fixture.repositoryRoot, ["commit", "-q", "-m", "candidate changes staged path"]);
+    const collidingBase = await git(fixture.repositoryRoot, ["rev-parse", "HEAD"]);
+    const sourceMutations: string[] = [];
+    const recordingGit: LegacyReconciliationGitRunner = async (cwd, args, environment) => {
+      if (
+        (cwd === fixture.repositoryRoot || cwd === fixture.worktreePath) &&
+        ["update-ref", "fetch", "clean", "reset"].includes(args[0]!)
+      ) {
+        sourceMutations.push(`${cwd}:${args.join(" ")}`);
+      }
+      return nodeLegacyReconciliationGitRunner(cwd, args, environment);
+    };
+    const result = await beginLegacyWorktreeReconciliation(
+      { ...simpleRequest(fixture, "candidate-path-collision"), baseCommit: collidingBase },
+      { managerLock, activityFence: stableActivity, git: recordingGit },
+    );
+
+    expect(result).toMatchObject({
+      status: "refused",
+      reason: "candidate-path-collision",
+      restored: true,
+    });
+    expect(sourceMutations).toEqual([]);
+    expect(await git(fixture.worktreePath, ["rev-parse", "HEAD"])).toBe(fixture.legacyHead);
+    expect(await fs.readFile(indexPath)).toEqual(indexBytes);
+    expect(await fs.readFile(stagedPath)).toEqual(stagedBytes);
+    expect(await refValue(fixture.repositoryRoot, "refs/cq-managed-recovery/legacy/candidate-path-collision")).toBeNull();
+  });
+
   it("refuses unrelated history as unresolvable without mutation", async () => {
     const seeded = await seedRepository("t2050-unrelated-");
     await git(seeded.repositoryRoot, ["switch", "-q", "-c", "implement/T2050"]);
@@ -990,6 +1033,30 @@ describe("legacy reconciliation fences and recovery", () => {
     expect(result).toMatchObject({ status: "refused", reason: "activity-live", restored: true });
     expect(releases).toBe(1);
     expect(lockHeld).toBe(false);
+  });
+
+  it("refuses a changed current index at the final pre-transition guard without overwriting it", async () => {
+    const fixture = await seedSimpleLegacy("t2071-index-guard-");
+    const result = await beginLegacyWorktreeReconciliation(
+      simpleRequest(fixture, "changed-current-index"),
+      {
+        managerLock,
+        activityFence: stableActivity,
+        async faultInjector(boundary) {
+          if (boundary === "after-candidate-overlay") {
+            await git(fixture.worktreePath, ["update-index", "--chmod=+x", "seed.txt"]);
+          }
+        },
+      },
+    );
+
+    expect(result).toMatchObject({ status: "refused", reason: "overlay-mismatch", restored: true });
+    expect(await git(fixture.worktreePath, ["rev-parse", "HEAD"])).toBe(fixture.legacyHead);
+    expect(await git(fixture.worktreePath, ["diff", "--cached", "--summary"])).toContain(
+      "mode change 100644 => 100755 seed.txt",
+    );
+    expect(await refValue(fixture.repositoryRoot, "refs/cq-managed-recovery/legacy/changed-current-index")).toBeNull();
+    expect(await refValue(fixture.repositoryRoot, "refs/cq-managed-candidates/legacy/changed-current-index")).toBeNull();
   });
 
   for (const boundary of [

@@ -1802,7 +1802,18 @@ async function prepareAdoptedWorktreeUnderLock(
       );
     }
     const recovered = await recoverLegacyWorktreeReconciliation(
-      { ...recoveryRequest, finalizeReconciled: true },
+      {
+        ...recoveryRequest,
+        finalizeReconciled: true,
+        repairPublishedV1: {
+          repositoryRoot,
+          worktreePath: absolutePath,
+          branch,
+          baseCommit,
+          legacyHead: request.expectedHead,
+          candidateHead: stored.headAtPrepare,
+        },
+      },
       { managerLock: heldAdoptionManagerLock, activityFence },
     );
     if (

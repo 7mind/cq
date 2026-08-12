@@ -238,6 +238,41 @@ async function invokeAdoption(
   )) as unknown as AdoptionResult;
 }
 
+async function synthesizePublishedV1Journal(
+  store: LedgerStore,
+  fixture: T1207Fixture,
+): Promise<{
+  readonly published: AdoptionResult & { readonly handle: ManagedWorktreeHandle };
+  readonly journalPath: string;
+  readonly indexPath: string;
+  readonly staleIndexBytes: Buffer;
+}> {
+  const published = await invokeAdoption(store, fixture);
+  if (published.status !== "prepared" || published.handle === undefined) {
+    throw new Error(`could not publish synthetic v1 fixture: ${published.reason}: ${published.detail}`);
+  }
+  const journalPath = join(
+    fixture.root,
+    "managed-registry",
+    "adoption-reconciliation",
+    `adopt-T1207-${fixture.expectedHead.slice(0, 16)}.json`,
+  );
+  const journal = JSON.parse(await fs.readFile(journalPath, "utf8")) as Record<string, unknown> & {
+    index: { readonly bytesBase64: string };
+  };
+  journal["version"] = 1;
+  delete journal["semanticOverlay"];
+  delete journal["semanticOverlaySha256"];
+  await fs.writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+  const rawIndexPath = await git(fixture.worktreePath, ["rev-parse", "--git-path", "index"]);
+  const indexPath = isAbsolute(rawIndexPath)
+    ? rawIndexPath
+    : resolve(fixture.worktreePath, rawIndexPath);
+  const staleIndexBytes = Buffer.from(journal.index.bytesBase64, "base64");
+  await fs.writeFile(indexPath, staleIndexBytes);
+  return { published: published as AdoptionResult & { readonly handle: ManagedWorktreeHandle }, journalPath, indexPath, staleIndexBytes };
+}
+
 const factories: readonly AuthorityFactory[] = [
   {
     name: "hand-written in-memory authority",
@@ -379,7 +414,9 @@ describe("prepare-only adoption crash recovery (Effectual-GoodCommunication)", (
       await restarted.init();
       try {
         const recovered = await invokeAdoption(restarted, fixture);
-        expect(recovered.status).toBe("prepared");
+        if (recovered.status !== "prepared") {
+          throw new Error(`crash recovery refused: ${recovered.reason}: ${recovered.detail}`);
+        }
         expect(recovered.handle).toMatchObject({
           version: 2,
           taskId: "T1207",
@@ -405,30 +442,9 @@ describe("prepare-only adoption publication visibility", () => {
   it("repairs a synthetic published v1 stale index without replacing its v2 handle or extra untracked bytes", async () => {
     const fixture = await seedT1207Shape();
     const store = new InMemoryLedgerStore();
-    const stateDir = join(fixture.root, "managed-registry");
     await seedEligibleTask(store, fixture);
     try {
-      const published = await invokeAdoption(store, fixture);
-      expect(published.status).toBe("prepared");
-      if (published.handle === undefined) throw new Error("published adoption lacks a handle");
-      const journalPath = join(
-        stateDir,
-        "adoption-reconciliation",
-        `adopt-T1207-${fixture.expectedHead.slice(0, 16)}.json`,
-      );
-      const journal = JSON.parse(await fs.readFile(journalPath, "utf8")) as Record<string, unknown> & {
-        index: { readonly bytesBase64: string };
-      };
-      journal["version"] = 1;
-      delete journal["semanticOverlay"];
-      delete journal["semanticOverlaySha256"];
-      await fs.writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
-
-      const rawIndexPath = await git(fixture.worktreePath, ["rev-parse", "--git-path", "index"]);
-      const indexPath = isAbsolute(rawIndexPath)
-        ? rawIndexPath
-        : resolve(fixture.worktreePath, rawIndexPath);
-      await fs.writeFile(indexPath, Buffer.from(journal.index.bytesBase64, "base64"));
+      const { published } = await synthesizePublishedV1Journal(store, fixture);
       const additionalUntrackedPath = join(fixture.worktreePath, "additional-untracked.bin");
       const additionalUntrackedBytes = Buffer.from([3, 0, 255, 12]);
       await fs.writeFile(additionalUntrackedPath, additionalUntrackedBytes);
@@ -449,8 +465,94 @@ describe("prepare-only adoption publication visibility", () => {
       expect(sha256(await fs.readFile(fixture.untrackedPath))).toBe(fixture.untrackedSha256);
 
       const repeated = await invokeAdoption(store, fixture);
+      if (repeated.status !== "prepared") {
+        throw new Error(`repeated v1 repair refused: ${repeated.reason}: ${repeated.detail}`);
+      }
       expect(repeated.handle).toEqual(published.handle);
       expect(await fs.readFile(additionalUntrackedPath)).toEqual(additionalUntrackedBytes);
+    } finally {
+      await store.dispose();
+    }
+  }, 30_000);
+
+  it("refuses v1 repair after post-publication tracked mutation without changing data or registry authority", async () => {
+    const fixture = await seedT1207Shape();
+    const store = new InMemoryLedgerStore();
+    await seedEligibleTask(store, fixture);
+    try {
+      const synthetic = await synthesizePublishedV1Journal(store, fixture);
+      const mutatedBytes = Buffer.from("post-publication mutation\n");
+      await fs.writeFile(join(fixture.worktreePath, "seed.txt"), mutatedBytes);
+      const result = await invokeAdoption(store, fixture);
+      expect(result).toMatchObject({ status: "refused", reason: "adoption-recovery-failed" });
+      expect(await fs.readFile(join(fixture.worktreePath, "seed.txt"))).toEqual(mutatedBytes);
+      expect(await fs.readFile(synthetic.indexPath)).toEqual(synthetic.staleIndexBytes);
+      expect(await listManagedLiveWorktrees(
+        fixture.repositoryRoot,
+        "T1207",
+        join(fixture.root, "managed-registry"),
+      )).toEqual([synthetic.published.handle]);
+    } finally {
+      await store.dispose();
+    }
+  }, 30_000);
+
+  for (const control of ["live-owner", "activity-race"] as const) {
+    it(`refuses v1 repair on ${control} without installing an index`, async () => {
+      const fixture = await seedT1207Shape();
+      const store = new InMemoryLedgerStore();
+      await seedEligibleTask(store, fixture);
+      let observations = 0;
+      try {
+        const synthetic = await synthesizePublishedV1Journal(store, fixture);
+        const result = await invokeAdoption(store, fixture, {
+          adoptionActivityFence: {
+            async observe() {
+              observations += 1;
+              return {
+                epoch: "t1207-quiescent",
+                contentToken: control === "activity-race" && observations > 1
+                  ? "changed-during-repair"
+                  : "stable-during-repair",
+                liveDispatches: control === "live-owner" && observations === 1 ? ["dispatch-live"] : [],
+                liveLeases: [],
+                liveProcesses: [],
+              };
+            },
+          },
+        });
+        expect(result).toMatchObject({ status: "refused", reason: "adoption-recovery-failed" });
+        expect(await fs.readFile(synthetic.indexPath)).toEqual(synthetic.staleIndexBytes);
+        expect(await listManagedLiveWorktrees(
+          fixture.repositoryRoot,
+          "T1207",
+          join(fixture.root, "managed-registry"),
+        )).toEqual([synthetic.published.handle]);
+      } finally {
+        await store.dispose();
+      }
+    }, 30_000);
+  }
+
+  it("refuses a mismatched committed v1 journal without following its repair data", async () => {
+    const fixture = await seedT1207Shape();
+    const store = new InMemoryLedgerStore();
+    await seedEligibleTask(store, fixture);
+    try {
+      const synthetic = await synthesizePublishedV1Journal(store, fixture);
+      const journal = JSON.parse(await fs.readFile(synthetic.journalPath, "utf8")) as {
+        request: { baseCommit: string };
+      };
+      journal.request.baseCommit = "f".repeat(40);
+      await fs.writeFile(synthetic.journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+      const result = await invokeAdoption(store, fixture);
+      expect(result).toMatchObject({ status: "refused", reason: "adoption-recovery-failed" });
+      expect(await fs.readFile(synthetic.indexPath)).toEqual(synthetic.staleIndexBytes);
+      expect(await listManagedLiveWorktrees(
+        fixture.repositoryRoot,
+        "T1207",
+        join(fixture.root, "managed-registry"),
+      )).toEqual([synthetic.published.handle]);
     } finally {
       await store.dispose();
     }
