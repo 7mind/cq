@@ -29,6 +29,7 @@ import {
   argvWithSandboxTmpdir,
   requiresCodexSandboxPreflight,
   runCodexSandboxPipeProbe,
+  SandboxPipeProbeError,
 } from "./codexSandboxPreflight.js";
 import { DISPATCHED_ROLE_IDS } from "./promptCatalogStore.js";
 import { exposedLedgerToolsForRole, type LedgerCapabilityToolName } from "./roleToolProfiles.js";
@@ -262,6 +263,23 @@ export class CodexRoleBoundaryError extends Error {
     super(`Codex role boundary: ${message}`);
     this.name = "CodexRoleBoundaryError";
     this.diagnostic = diagnostic;
+  }
+}
+
+/** A verified environmental refusal before any child capability can be consumed. */
+export class CodexOperationalAbstentionError extends CodexRoleBoundaryError {
+  readonly operationalAbstention: {
+    readonly source: "sandbox-preflight";
+    readonly verdict: string;
+  };
+
+  constructor(error: SandboxPipeProbeError) {
+    super(error.message);
+    this.name = "CodexOperationalAbstentionError";
+    this.operationalAbstention = Object.freeze({
+      source: "sandbox-preflight",
+      verdict: error.verdict,
+    });
   }
 }
 
@@ -991,12 +1009,17 @@ export async function executeCodexRoleBoundary(
       if (codexExecutable === undefined) {
         throw new CodexRoleBoundaryError("boundary argv has no codex executable");
       }
-      await runCodexSandboxPipeProbe({
-        codexExecutable,
-        cwd: plan.cwd,
-        env: process.env,
-        timeoutMs: CODEX_SANDBOX_PIPE_PROBE_TIMEOUT_MS,
-      });
+      try {
+        await runCodexSandboxPipeProbe({
+          codexExecutable,
+          cwd: plan.cwd,
+          env: process.env,
+          timeoutMs: CODEX_SANDBOX_PIPE_PROBE_TIMEOUT_MS,
+        });
+      } catch (error) {
+        if (error instanceof SandboxPipeProbeError) throw new CodexOperationalAbstentionError(error);
+        throw error;
+      }
       argv = argvWithSandboxTmpdir(plan.argv, CODEX_READ_ONLY_SANDBOX_TMPDIR);
     }
     let launched;

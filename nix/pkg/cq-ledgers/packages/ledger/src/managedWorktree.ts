@@ -2024,7 +2024,7 @@ async function prepareAdoptedWorktreeUnderLock(
     const afterInstall = await assessLegacyReconciliationActivity(
       observationAdapter,
       absolutePath,
-      reconciled.evidence.activity.transition,
+      reconciled.evidence.activity.postTransition,
     );
     if (afterInstall.status !== "accepted") {
       throw new AdoptionRefusal("adoption-activity-changed", afterInstall.detail);
@@ -2070,7 +2070,7 @@ async function prepareAdoptedWorktreeUnderLock(
     const beforePublication = await assessLegacyReconciliationActivity(
       observationAdapter,
       absolutePath,
-      reconciled.evidence.activity.transition,
+      reconciled.evidence.activity.postTransition,
     );
     if (beforePublication.status !== "accepted") {
       throw new AdoptionRefusal("adoption-activity-changed", beforePublication.detail);

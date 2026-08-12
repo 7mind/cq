@@ -35,6 +35,7 @@ import {
 } from "./claudeDispatchProtocol.js";
 import {
   CodexRoleBoundaryError,
+  CodexOperationalAbstentionError,
   createCodexRoleBoundaryPlan,
   executeCodexRoleBoundary,
   type CodexRoleBoundaryRequest,
@@ -319,6 +320,17 @@ export function createCodexProcessDispatchAdapter(
 
 function codexProcessBoundaryFailure(error: unknown): DispatchAdapterAbortion {
   const boundaryError = findCodexRoleBoundaryError(error);
+  if (boundaryError instanceof CodexOperationalAbstentionError) {
+    return {
+      outcome: "aborted",
+      reason: "operational-abstention",
+      details: {
+        source: boundaryError.operationalAbstention.source,
+        verdict: boundaryError.operationalAbstention.verdict,
+        message: boundaryError.message,
+      },
+    };
+  }
   if (boundaryError?.diagnostic !== undefined) {
     return {
       outcome: "aborted",

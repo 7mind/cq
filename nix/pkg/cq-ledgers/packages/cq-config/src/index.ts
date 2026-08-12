@@ -747,6 +747,7 @@ export {
   CODEX_ROLE_BOUNDARY_DIAGNOSTIC_DETAIL_CODES,
   CODEX_PRETURN_OBSERVATION_PATH_ENV,
   CodexRoleBoundaryError,
+  CodexOperationalAbstentionError,
   formatCodexRoleBoundaryDiagnostic,
   assertCodexDispatchedRoleId,
   createCodexRoleBoundaryPlan,

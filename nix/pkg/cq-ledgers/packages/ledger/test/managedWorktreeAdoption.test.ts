@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   createWorktreeManageCapability,
+  createGitLegacyWorktreeActivityFence,
   FsLedgerStore,
   InMemoryLedgerStore,
   isUuidV7,
@@ -239,6 +240,21 @@ afterAll(async () => {
 
 for (const factory of factories) {
   describe(`prepare-only legacy adoption — ${factory.name} (${factory.classification})`, () => {
+    it("adopts the unmodified real-Git T1207 shape with a post-transition activity baseline", async () => {
+      const fixture = await seedT1207Shape();
+      const store = await factory.open(fixture.root);
+      await seedEligibleTask(store, fixture);
+
+      const result = await invokeAdoption(store, fixture, {
+        adoptionActivityFence: createGitLegacyWorktreeActivityFence(),
+      });
+
+      expect(result.status).toBe("prepared");
+      expect(result.handle).toMatchObject({ version: 2, taskId: "T1207" });
+      expect(await git(fixture.worktreePath, ["rev-parse", "HEAD"])).toBe(fixture.baseCommit);
+      expect(sha256(await fs.readFile(fixture.untrackedPath))).toBe(fixture.untrackedSha256);
+    });
+
     it("adopts the exact T1207 shape without changing its path or untracked bytes", async () => {
       const fixture = await seedT1207Shape();
       const store = await factory.open(fixture.root);

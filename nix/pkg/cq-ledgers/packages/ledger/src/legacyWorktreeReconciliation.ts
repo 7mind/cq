@@ -154,7 +154,10 @@ export interface LegacyWorktreeReconciliationEvidence {
   readonly activity: {
     readonly captured: LegacyWorktreeActivityObservation;
     readonly journaled: LegacyWorktreeActivityObservation;
+    /** Last pre-mutation fence; prevents a concurrent adoption transition. */
     readonly transition: LegacyWorktreeActivityObservation;
+    /** Durable quiescent baseline captured after the candidate becomes live. */
+    readonly postTransition: LegacyWorktreeActivityObservation;
   };
 }
 
@@ -260,6 +263,7 @@ interface LegacyReconciliationJournal {
   readonly candidateHead?: string;
   readonly journaledActivity?: LegacyWorktreeActivityObservation;
   readonly transitionActivity?: LegacyWorktreeActivityObservation;
+  readonly postTransitionActivity?: LegacyWorktreeActivityObservation;
 }
 
 class ReconciliationRefusal extends Error {
@@ -1124,6 +1128,7 @@ function evidenceFromJournal(journal: LegacyReconciliationJournal, path: string)
       captured: journal.capturedActivity,
       journaled: journal.journaledActivity!,
       transition: journal.transitionActivity!,
+      postTransition: journal.postTransitionActivity!,
     },
   };
 }
@@ -1345,7 +1350,25 @@ export async function beginLegacyWorktreeReconciliation(
         `transitioned HEAD ${String(transitionedHead)} does not equal candidate ${built.candidateHead}`,
       );
     }
-    journal = { ...journal, phase: "reconciled", transitionActivity };
+    // The pre-transition fence protects the mutation window. Once the candidate
+    // has become live, its index/overlay are intentionally different from the
+    // legacy state, so all later adoption checks must compare to this distinct
+    // production-Git baseline instead of the legacy snapshot.
+    const postTransitionAssessment = await assessLegacyReconciliationActivity(
+      observationAdapter,
+      request.worktreePath,
+      null,
+    );
+    if (postTransitionAssessment.status === "refused") {
+      throw new ReconciliationRefusal(postTransitionAssessment.reason, postTransitionAssessment.detail);
+    }
+    const postTransitionActivity = postTransitionAssessment.observation;
+    journal = {
+      ...journal,
+      phase: "reconciled",
+      transitionActivity,
+      postTransitionActivity,
+    };
     await writeJournal(path, journal);
     await fault("after-reconciled-journal", { transactionId: input.transactionId });
     await fs.rm(buildPath, { recursive: true, force: true });
@@ -1404,6 +1427,18 @@ function isJournal(value: unknown): value is LegacyReconciliationJournal {
     record.refs !== undefined &&
     record.index !== undefined &&
     Array.isArray(record.overlay)
+  );
+}
+
+function isActivityObservation(value: unknown): value is LegacyWorktreeActivityObservation {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record["epoch"] === "string" &&
+    typeof record["contentToken"] === "string" &&
+    ["liveDispatches", "liveLeases", "liveProcesses"].every((key) =>
+      Array.isArray(record[key]) && record[key].every((item) => typeof item === "string"),
+    )
   );
 }
 
@@ -1477,6 +1512,27 @@ function validatePersistedJournal(
   if (overlayDigest(journal.overlay) !== journal.overlaySha256) {
     throw new Error("journal overlay digest does not match its entries");
   }
+  if (!isActivityObservation(journal.capturedActivity)) {
+    throw new Error("journal contains an invalid captured activity observation");
+  }
+  if (
+    journal.phase !== "captured" &&
+    !isActivityObservation(journal.journaledActivity)
+  ) {
+    throw new Error("journal phase requires a valid journaled activity observation");
+  }
+  if (
+    ["transition-ready", "reconciled", "committed"].includes(journal.phase) &&
+    !isActivityObservation(journal.transitionActivity)
+  ) {
+    throw new Error("journal phase requires a valid pre-transition activity observation");
+  }
+  if (
+    ["reconciled", "committed"].includes(journal.phase) &&
+    !isActivityObservation(journal.postTransitionActivity)
+  ) {
+    throw new Error("journal phase requires a valid post-transition activity observation");
+  }
 }
 
 export async function recoverLegacyWorktreeReconciliation(
@@ -1510,13 +1566,13 @@ export async function recoverLegacyWorktreeReconciliation(
     const first = await assessLegacyReconciliationActivity(
       observationAdapter,
       journal.request.worktreePath,
-      journal.capturedActivity,
+      journal.postTransitionActivity ?? journal.capturedActivity,
     );
     if (first.status === "refused") return first;
     const second = await assessLegacyReconciliationActivity(
       observationAdapter,
       journal.request.worktreePath,
-      journal.capturedActivity,
+      journal.postTransitionActivity ?? journal.capturedActivity,
     );
     if (second.status === "refused") return second;
     if (journal.phase === "committed") {
