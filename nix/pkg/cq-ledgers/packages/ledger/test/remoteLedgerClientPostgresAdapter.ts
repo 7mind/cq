@@ -51,6 +51,62 @@ interface HubProc {
   readonly exited: Promise<number>;
 }
 
+type InvalidFailedEvidenceState =
+  | "malformed-prior-entry"
+  | "malformed-terminal"
+  | "last-failure-mismatch"
+  | "stale-revision"
+  | "stale-acknowledgement-epoch"
+  | "undeclared-command"
+  | "missing-expected-identity"
+  | "missing-acknowledged-identity";
+
+function corruptFailedEvidenceAudit(
+  fields: Record<string, unknown>,
+  state: InvalidFailedEvidenceState,
+): void {
+  const evidence = fields["evidence"];
+  if (!Array.isArray(evidence) || evidence.length === 0) {
+    throw new Error("operator action has no failed evidence to corrupt");
+  }
+  const terminal = evidence[evidence.length - 1];
+  if (typeof terminal !== "string") {
+    throw new Error("operator action has a non-string terminal evidence entry");
+  }
+  if (state === "malformed-prior-entry") {
+    fields["evidence"] = ["{}", ...evidence];
+    return;
+  }
+  if (state === "last-failure-mismatch") {
+    fields["lastFailure"] = `${terminal} `;
+    return;
+  }
+  if (state === "missing-expected-identity") {
+    delete fields["expectedOutputIdentity"];
+    return;
+  }
+  if (state === "missing-acknowledged-identity") {
+    delete fields["acknowledgedOutputIdentity"];
+    return;
+  }
+  const parsed = JSON.parse(terminal) as Record<string, unknown>;
+  if (state === "malformed-terminal") {
+    delete parsed["command"];
+    delete parsed["stdout"];
+    delete parsed["stderr"];
+    delete parsed["observedAt"];
+  } else if (state === "stale-revision") {
+    parsed["revision"] = 0;
+  } else if (state === "stale-acknowledgement-epoch") {
+    parsed["acknowledgementEpoch"] = "2";
+  } else {
+    parsed["command"] = "undeclared probe";
+  }
+  const encoded = JSON.stringify(parsed);
+  fields["evidence"] = [...evidence.slice(0, -1), encoded];
+  fields["lastFailure"] = encoded;
+}
+
 let shared: SharedHub | null = null;
 
 /** Read the hub's machine-readable `http://host:port/` stdout line. */
@@ -181,6 +237,30 @@ export const postgresRemoteClientFactory: RemoteLedgerClientContractFactory = {
           VALUES (${projectKey}, ${relPath}, ${content})
           ON CONFLICT (project_key, path) DO UPDATE SET content = EXCLUDED.content
         `;
+      },
+      seedInvalidOperatorActionFailedEvidence: async (actionId, state) => {
+        const rows = await hub.pool<Array<{ fields_json: string }>>`
+          SELECT fields_json FROM items
+          WHERE project_key = ${projectKey}
+            AND ledger = 'operatorActions'
+            AND id = ${actionId}
+        `;
+        const fieldsJson = rows[0]?.fields_json;
+        if (fieldsJson === undefined) {
+          throw new Error(`expected one failed-evidence corruption target for ${actionId}`);
+        }
+        const fields = JSON.parse(fieldsJson) as Record<string, unknown>;
+        corruptFailedEvidenceAudit(fields, state);
+        const updated = await hub.pool<Array<{ id: string }>>`
+          UPDATE items SET fields_json = ${JSON.stringify(fields)}
+          WHERE project_key = ${projectKey}
+            AND ledger = 'operatorActions'
+            AND id = ${actionId}
+          RETURNING id
+        `;
+        if (updated.length !== 1) {
+          throw new Error(`expected one failed-evidence corruption target for ${actionId}`);
+        }
       },
       seedUnsafeOperatorActionLinkedState: async (actionId, state) => {
         const taskId = `T${actionId.slice(2)}`;

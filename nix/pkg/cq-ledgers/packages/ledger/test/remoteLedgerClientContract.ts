@@ -70,6 +70,19 @@ export interface RemoteContractService {
       | "action-milestone-mismatch"
       | "handoff-milestone-mismatch",
   ): Promise<void>;
+  /** Inject malformed or inconsistent failed-evidence audit state. */
+  seedInvalidOperatorActionFailedEvidence(
+    actionId: string,
+    state:
+      | "malformed-prior-entry"
+      | "malformed-terminal"
+      | "last-failure-mismatch"
+      | "stale-revision"
+      | "stale-acknowledgement-epoch"
+      | "undeclared-command"
+      | "missing-expected-identity"
+      | "missing-acknowledged-identity",
+  ): Promise<void>;
   /**
    * In-memory leg ONLY: make the NEXT initialize answer a protocolVersion
    * outside the SDK's supported set. Absent on the production leg (the real
@@ -568,6 +581,102 @@ export function runRemoteLedgerClientContract(
                     author: "remote-parent",
                   }),
                 ).rejects.toThrow(testCase.expected);
+                const after = await Promise.all([
+                  client.fetchItem("operatorActions", materialized.action.id, "full"),
+                  client.fetchItem("tasks", task.id, "full"),
+                  client.fetchItem("handoffs", handoffId, "full"),
+                ]);
+                expect(after).toEqual(before);
+              }
+            } finally {
+              await client.close();
+            }
+          } finally {
+            await service.dispose();
+          }
+        },
+        CONTRACT_TIMEOUT_MS,
+      );
+
+      it(
+        "rejects malformed or inconsistent failed-evidence audit state without partial mutation",
+        async () => {
+          const service = await factory.build();
+          try {
+            const client = await connect(service);
+            try {
+              const cases = [
+                "malformed-prior-entry",
+                "malformed-terminal",
+                "last-failure-mismatch",
+                "stale-revision",
+                "stale-acknowledgement-epoch",
+                "undeclared-command",
+                "missing-expected-identity",
+                "missing-acknowledged-identity",
+              ] as const;
+              for (const state of cases) {
+                const milestone = await client.createMilestone({
+                  title: `Invalid failed evidence ${state}`,
+                });
+                const goal = await client.createItem("goals", milestone.id, {
+                  status: "planned",
+                  fields: { title: "Deploy", description: "Deploy" },
+                });
+                const task = await client.createItem("tasks", milestone.id, {
+                  status: "planned",
+                  fields: {
+                    headline: `Reject ${state}`,
+                    description:
+                      "CQ-OPERATOR-ACTION v1 remote-deployment. User deploys; parent measures.",
+                    ledgerRefs: [`goals:${goal.id}`],
+                  },
+                });
+                const materialized = await client.materializeOperatorAction({
+                  taskId: task.id,
+                  expectedOutputIdentity: "/nix/store/remote-cq",
+                  expectedEvidence: ["cq --version"],
+                  author: "remote-parent",
+                });
+                await client.acknowledgeOperatorAction({
+                  actionId: materialized.action.id,
+                  expectedRevision: 1,
+                  outputIdentity: "/nix/store/remote-cq",
+                  acknowledgedAt: "2026-08-11T06:20:00.000Z",
+                });
+                await client.recordOperatorActionEvidence({
+                  actionId: materialized.action.id,
+                  expectedRevision: 1,
+                  evidence: {
+                    command: "cq --version",
+                    stdout: "",
+                    stderr: "not ready",
+                    exitCode: 1,
+                    outputIdentity: "/nix/store/remote-cq",
+                    observedAt: "2026-08-11T06:21:00.000Z",
+                  },
+                  author: "remote-parent",
+                });
+                await service.seedInvalidOperatorActionFailedEvidence(
+                  materialized.action.id,
+                  state,
+                );
+                const handoffId = `HO${task.id.slice(1)}`;
+                const before = await Promise.all([
+                  client.fetchItem("operatorActions", materialized.action.id, "full"),
+                  client.fetchItem("tasks", task.id, "full"),
+                  client.fetchItem("handoffs", handoffId, "full"),
+                ]);
+                await expect(
+                  client.reviseOperatorAction({
+                    actionId: materialized.action.id,
+                    expectedRevision: 1,
+                    expectedOutputIdentity: "/nix/store/remote-cq-revised",
+                    expectedEvidence: ["cq --version"],
+                    revisedAt: "2026-08-11T06:22:00.000Z",
+                    author: "remote-parent",
+                  }),
+                ).rejects.toThrow(/malformed|inconsistent|stale|invalid failed-evidence/);
                 const after = await Promise.all([
                   client.fetchItem("operatorActions", materialized.action.id, "full"),
                   client.fetchItem("tasks", task.id, "full"),

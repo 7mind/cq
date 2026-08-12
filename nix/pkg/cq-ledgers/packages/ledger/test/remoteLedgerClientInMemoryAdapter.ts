@@ -95,6 +95,59 @@ interface DummyTenant {
   readonly logs: Map<string, string>;
 }
 
+type InvalidFailedEvidenceState =
+  | "malformed-prior-entry"
+  | "malformed-terminal"
+  | "last-failure-mismatch"
+  | "stale-revision"
+  | "stale-acknowledgement-epoch"
+  | "undeclared-command"
+  | "missing-expected-identity"
+  | "missing-acknowledged-identity";
+
+function corruptFailedEvidenceAudit(action: Item, state: InvalidFailedEvidenceState): void {
+  const evidence = action.fields["evidence"];
+  if (!Array.isArray(evidence) || evidence.length === 0) {
+    throw new Error(`operator action ${action.id} has no failed evidence to corrupt`);
+  }
+  const terminal = evidence[evidence.length - 1];
+  if (typeof terminal !== "string") {
+    throw new Error(`operator action ${action.id} has a non-string terminal evidence entry`);
+  }
+  if (state === "malformed-prior-entry") {
+    action.fields["evidence"] = ["{}", ...evidence];
+    return;
+  }
+  if (state === "last-failure-mismatch") {
+    action.fields["lastFailure"] = `${terminal} `;
+    return;
+  }
+  if (state === "missing-expected-identity") {
+    delete action.fields["expectedOutputIdentity"];
+    return;
+  }
+  if (state === "missing-acknowledged-identity") {
+    delete action.fields["acknowledgedOutputIdentity"];
+    return;
+  }
+  const parsed = JSON.parse(terminal) as Record<string, unknown>;
+  if (state === "malformed-terminal") {
+    delete parsed["command"];
+    delete parsed["stdout"];
+    delete parsed["stderr"];
+    delete parsed["observedAt"];
+  } else if (state === "stale-revision") {
+    parsed["revision"] = 0;
+  } else if (state === "stale-acknowledgement-epoch") {
+    parsed["acknowledgementEpoch"] = "2";
+  } else {
+    parsed["command"] = "undeclared probe";
+  }
+  const encoded = JSON.stringify(parsed);
+  action.fields["evidence"] = [...evidence.slice(0, -1), encoded];
+  action.fields["lastFailure"] = encoded;
+}
+
 /** A tool-level failure, surfaced over the wire as `isError: true`. */
 class DummyToolError extends Error {
   constructor(message: string) {
@@ -996,6 +1049,16 @@ export class InMemoryMcpService {
     }
   }
 
+  seedInvalidOperatorActionFailedEvidence(
+    projectKey: string,
+    actionId: string,
+    state: InvalidFailedEvidenceState,
+  ): void {
+    const tenant = this.tenants.get(projectKey);
+    if (tenant === undefined) throw new Error(`tenant ${projectKey} is not initialized`);
+    corruptFailedEvidenceAudit(findItem(tenant, "operatorActions", actionId), state);
+  }
+
   async stop(): Promise<void> {
     await this.server.stop(true);
   }
@@ -1225,6 +1288,10 @@ export const inMemoryRemoteClientFactory: RemoteLedgerClientContractFactory = {
       },
       seedUnsafeOperatorActionLinkedState: (actionId, state) => {
         service.seedUnsafeOperatorActionLinkedState(projectKey, actionId, state);
+        return Promise.resolve();
+      },
+      seedInvalidOperatorActionFailedEvidence: (actionId, state) => {
+        service.seedInvalidOperatorActionFailedEvidence(projectKey, actionId, state);
         return Promise.resolve();
       },
       respondBogusProtocolVersionOnce: () => service.respondBogusProtocolVersionOnce(),
