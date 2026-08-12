@@ -64,7 +64,11 @@ export interface RemoteContractService {
   /** Inject one persisted unsafe linked state without passing transition guards. */
   seedUnsafeOperatorActionLinkedState(
     actionId: string,
-    state: "task-status" | "handoff-status" | "milestone-mismatch",
+    state:
+      | "task-status"
+      | "handoff-status"
+      | "action-milestone-mismatch"
+      | "handoff-milestone-mismatch",
   ): Promise<void>;
   /**
    * In-memory leg ONLY: make the NEXT initialize answer a protocolVersion
@@ -494,7 +498,11 @@ export function runRemoteLedgerClientContract(
                   expected: /safe task and handoff state/,
                 },
                 {
-                  state: "milestone-mismatch" as const,
+                  state: "action-milestone-mismatch" as const,
+                  expected: /safe task and handoff state/,
+                },
+                {
+                  state: "handoff-milestone-mismatch" as const,
                   expected: /safe task and handoff state/,
                 },
               ];

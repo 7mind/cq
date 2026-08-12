@@ -198,11 +198,17 @@ export const postgresRemoteClientFactory: RemoteLedgerClientContractFactory = {
                   WHERE project_key = ${projectKey} AND ledger = 'handoffs' AND id = ${handoffId}
                   RETURNING id
                 `
-              : await hub.pool<Array<{ id: string }>>`
-                  UPDATE items SET milestone_id = ${MILESTONES_AMBIENT_ID}
-                  WHERE project_key = ${projectKey} AND ledger = 'operatorActions' AND id = ${actionId}
-                  RETURNING id
-                `;
+              : state === "action-milestone-mismatch"
+                ? await hub.pool<Array<{ id: string }>>`
+                    UPDATE items SET milestone_id = ${MILESTONES_AMBIENT_ID}
+                    WHERE project_key = ${projectKey} AND ledger = 'operatorActions' AND id = ${actionId}
+                    RETURNING id
+                  `
+                : await hub.pool<Array<{ id: string }>>`
+                    UPDATE items SET milestone_id = ${MILESTONES_AMBIENT_ID}
+                    WHERE project_key = ${projectKey} AND ledger = 'handoffs' AND id = ${handoffId}
+                    RETURNING id
+                  `;
         if (updated.length !== 1) {
           throw new Error(`expected one ${state} corruption target for ${actionId}`);
         }

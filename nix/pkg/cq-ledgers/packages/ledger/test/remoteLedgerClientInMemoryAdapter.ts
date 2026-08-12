@@ -813,6 +813,20 @@ const reviseOperatorAction: ToolHandler = (tenant, args) => {
   const taskRef = String(action.fields["taskRef"]);
   const task = findItem(tenant, "tasks", taskRef.slice("tasks:".length));
   const handoff = findItem(tenant, "handoffs", `HO${task.id.slice(1)}`);
+  if (task.status !== "planned" && task.status !== "abandoned") {
+    throw new DummyToolError(
+      `Operator-action task ${task.id} may be revised only from planned or abandoned`,
+    );
+  }
+  if (
+    action.milestoneId !== task.milestoneId ||
+    handoff.milestoneId !== task.milestoneId ||
+    handoff.status !== "user-action-required"
+  ) {
+    throw new DummyToolError(
+      `Operator action ${action.id} may be revised only with a safe task and handoff state`,
+    );
+  }
   const priorHistory = Array.isArray(action.fields["revisionHistory"])
     ? action.fields["revisionHistory"]
     : [];
@@ -959,7 +973,11 @@ export class InMemoryMcpService {
   seedUnsafeOperatorActionLinkedState(
     projectKey: string,
     actionId: string,
-    state: "task-status" | "handoff-status" | "milestone-mismatch",
+    state:
+      | "task-status"
+      | "handoff-status"
+      | "action-milestone-mismatch"
+      | "handoff-milestone-mismatch",
   ): void {
     const tenant = this.tenants.get(projectKey);
     if (tenant === undefined) throw new Error(`tenant ${projectKey} is not initialized`);
@@ -971,8 +989,10 @@ export class InMemoryMcpService {
       task.status = "wip";
     } else if (state === "handoff-status") {
       handoff.status = "drained";
-    } else {
+    } else if (state === "action-milestone-mismatch") {
       action.milestoneId = MILESTONES_AMBIENT_ID;
+    } else {
+      handoff.milestoneId = MILESTONES_AMBIENT_ID;
     }
   }
 
