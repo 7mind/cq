@@ -320,10 +320,10 @@ A task may merge only when all of these hold:
   commit/ancestry evidence;
 - the orchestrator independently verified the exact commit and ancestry.
 
-For the legacy in-child arm, treat `gateDurationMs` below `50`, absent/zero, or
-below one quarter of the median for earlier rounds of this same task as
-implausible. Re-run `bun run check` in the foreground and use its real exit
-status. If that cannot be done, fail closed. Runner-owned
+Treat `gateDurationMs` below `50`, absent/zero, or below one quarter of the
+median for earlier rounds of this same task as implausible. Apply this check
+only to the legacy in-child arm. Re-run `bun run check` in the foreground and
+use its real exit status. If that cannot be done, fail closed. Runner-owned
 `supervisedGateEvidence` carries its measured duration and does not use this
 caller-plausibility heuristic.
 

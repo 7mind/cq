@@ -63,12 +63,12 @@ const SCHEMA_PINS_JSON = String.raw`{
     "digest": "99be6cac6e847fbe1e66dd62ded37beab7890f5963930fa4053da3efb7325b22"
   },
   "implement-worker": {
-    "version": 6,
-    "digest": "2bad22f11e5c144338325d7532142e6eb44256acf693bbb5a1a8cfeb4bcb98e7"
+    "version": 7,
+    "digest": "d3c6516e8acf04b420ef523f1896d53c7110d915c1ef0d0a8db63e26715df789"
   },
   "implement-reviewer": {
-    "version": 6,
-    "digest": "8223f3f3a15a7ad3a687c66e1860c76b8627cddcfa7d6c372f8fb3e54be38ad4"
+    "version": 7,
+    "digest": "fdc47a55f6da749ba854dac1e8b69a382f8ec339a33a67e0a845fad40e2334a9"
   },
   "implement-conflict-resolver": {
     "version": 4,
@@ -624,8 +624,8 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
     expect(schemaPinHistoryErrors([SCHEMA_PINS, deletedPins])).toEqual([]);
   });
 
-  test.each([1, 2, 3, 4, 5, 6])(
-    "rejects reintroduction at version %i when the last historical version is 6",
+  test.each([1, 2, 3, 4, 5, 6, 7])(
+    "rejects reintroduction at version %i when the last historical version is 7",
     (version) => {
       const implementWorkerPin = SCHEMA_PINS["implement-worker"]!;
       const deletedPins = { ...SCHEMA_PINS };
@@ -639,7 +639,7 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
       };
 
       expect(schemaPinHistoryErrors([SCHEMA_PINS, deletedPins, reintroducedPins])).toEqual([
-        "reintroduced schema pin must advance beyond version 6 for implement-worker",
+        "reintroduced schema pin must advance beyond version 7 for implement-worker",
       ]);
     },
   );

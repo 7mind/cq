@@ -15,7 +15,7 @@ outputs:
   - "one verified task commit, parent-verifiable git receipts, actualWorktreePath, required baseVerification evidence, green legacy or trusted supervised gate evidence, stored structured result, and handle-only final reply"
 ioSchema:
   - "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)"
-  - "pass requires a green full gate (in-child on legacy dispatches; trusted result-storage supervision on brokered Codex dispatches), verified commit/clean tree/ancestry, required actualWorktreePath, verified baseVerification (full SHAs only), and required mutation evidence"
+  - "pass requires a green full gate (in-child on legacy dispatches; trusted result-storage supervision on brokered process dispatches), verified commit/clean tree/ancestry, required actualWorktreePath, verified baseVerification (full SHAs only), and required mutation evidence"
   - "fail may carry verified or unresolvable baseVerification with a closed reason and null SHAs where unobserved"
 ```
 
@@ -198,7 +198,7 @@ prior-round commits when `round > 0`.
 }
 ```
 
-The stored brokered Codex result contains runner-owned
+The stored brokered process result contains runner-owned
 `supervisedGateEvidence` instead of caller-supplied `gateDurationMs`; the child
 omits both fields when calling `store_result`.
 

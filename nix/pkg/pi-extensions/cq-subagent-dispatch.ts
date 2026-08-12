@@ -1445,7 +1445,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "implement-worker": {
-    version: 6,
+    version: 7,
     input: [
       {
         required: [
@@ -1499,6 +1499,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
           resultCommit: ["null", "string"],
           status: ["string"],
           summary: ["string"],
+          supervisedGateEvidence: ["object"],
           taskId: ["string"],
         },
         closed: true,
@@ -1506,7 +1507,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "implement-reviewer": {
-    version: 6,
+    version: 7,
     input: [
       {
         required: [
@@ -1531,6 +1532,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
           priorCriticism: ["array"],
           responseStoreNow: ["string"],
           round: ["integer"],
+          supervisedGateEvidence: ["object"],
           synthesisStoreReserveMs: [],
           taskId: ["string"],
           workerResult: ["object"],
