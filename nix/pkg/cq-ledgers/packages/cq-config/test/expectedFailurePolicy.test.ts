@@ -232,6 +232,31 @@ test("the scanner rejects orphan annotations and both marker/inventory mismatch 
   ).toThrow("annotation and inventory ledger references differ");
 });
 
+test("the scanner rejects duplicate live markers sharing one inventory entry", () => {
+  const file = "packages/example/test/example.test.ts";
+  const duplicateMarkers = [
+    "// expected-failure: tasks:T1",
+    "test.failing('alpha', () => {});",
+    "// expected-failure: tasks:T1",
+    "test.failing('alpha', () => {});",
+  ].join("\n");
+  expect(() =>
+    scanExpectedFailures([source(file, duplicateMarkers)], [inventory(file, "alpha")]),
+  ).toThrow("duplicate live expected-failure marker");
+});
+
+test("the scanner rejects a computed expected-failure title", () => {
+  const file = "packages/example/test/example.test.ts";
+  const computedTitle = [
+    "const suffix = '-computed';",
+    "// expected-failure: tasks:T1",
+    "test.failing('alpha' + suffix, () => {});",
+  ].join("\n");
+  expect(() =>
+    scanExpectedFailures([source(file, computedTitle)], [inventory(file, "alpha")]),
+  ).toThrow(`${file}:3: expected-failure title must be solely a quoted string literal`);
+});
+
 test("the committed inventory agrees bidirectionally with exactly six live markers", () => {
   const sources = readExpectedFailureSources(WORKSPACE_ROOT, REPO_ROOT);
   const markers = scanExpectedFailures(sources, EXPECTED_FAILURE_INVENTORY);
