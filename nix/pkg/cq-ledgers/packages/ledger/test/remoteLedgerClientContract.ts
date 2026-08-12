@@ -476,7 +476,9 @@ export function runRemoteLedgerClientContract(factory: RemoteLedgerClientContrac
                 task: before[1],
                 handoff: before[2],
               });
-              const expectedActionFields = { ...before[0].fields };
+              const expectedActionFields: Record<string, FieldValue> = {
+                ...before[0].fields,
+              };
               for (const field of [
                 "acknowledgedOutputIdentity",
                 "acknowledgedAt",
@@ -487,14 +489,16 @@ export function runRemoteLedgerClientContract(factory: RemoteLedgerClientContrac
                 "verifiedRevision",
                 "completion",
               ]) {
-                delete expectedActionFields[field];
+                Reflect.deleteProperty(expectedActionFields, field);
               }
               expectedActionFields["revisionHistory"] = [historyEntry];
               expectedActionFields["revision"] = "2";
               expectedActionFields["expectedOutputIdentity"] = replacementIdentity;
               expectedActionFields["expectedEvidence"] = replacementEvidence;
-              const expectedTaskFields = { ...before[1].fields };
-              delete expectedTaskFields["completion"];
+              const expectedTaskFields: Record<string, FieldValue> = {
+                ...before[1].fields,
+              };
+              Reflect.deleteProperty(expectedTaskFields, "completion");
               const after = await Promise.all([
                 client.fetchItem("operatorActions", materialized.action.id, "full"),
                 client.fetchItem("tasks", task.id, "full"),
