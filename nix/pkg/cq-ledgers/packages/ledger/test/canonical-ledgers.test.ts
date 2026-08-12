@@ -1919,6 +1919,69 @@ describe("T1262: one-survivor panel synthesis is explicitly uncontested", () => 
   });
 });
 
+interface PlanTaskWaitContract {
+  readonly preClaim: string;
+  readonly failures: readonly string[];
+}
+
+function planTaskWaitContract(asset: string): PlanTaskWaitContract {
+  const normalized = asset.replace(/\r\n/g, "\n");
+  const start = normalized.indexOf("### 1. Pre-claim gate and claim");
+  const end = normalized.indexOf("### 2. Resolve planners and dispatch", start);
+  const preClaim = start >= 0 && end > start ? normalized.slice(start, end) : "";
+  const failures: string[] = [];
+  if (!preClaim.includes("`fields.waitingTasks`")) {
+    failures.push("pre-claim gate does not read fields.waitingTasks");
+  }
+  if (!preClaim.includes("`awaiting-tasks`")) {
+    failures.push("pre-claim gate does not emit awaiting-tasks");
+  }
+  if (!preClaim.includes("`task-wait-active`")) {
+    failures.push("claim conflict does not map task-wait-active");
+  }
+  if (!/never parse goal descriptions for task-wait\s+state/i.test(preClaim)) {
+    failures.push("pre-claim gate does not forbid goal-description parsing");
+  }
+  return { preClaim, failures };
+}
+
+describe("plan pre-claim task-wait contract", () => {
+  const cqAssetsRoot = path.resolve(import.meta.dir, "../../../../cq-assets");
+  const advanceMd = path.join(cqAssetsRoot, "commands", "cq", "plan", "advance.md");
+  const plannerMd = path.join(cqAssetsRoot, "agents", "plan-advance.md");
+
+  it("uses the authoritative waitingTasks field and clean waiting token", async () => {
+    const contract = planTaskWaitContract(await readFile(advanceMd, "utf8"));
+    expect(contract.failures).toEqual([]);
+  });
+
+  it("distinguishes deletion of the waiting token from deletion of the field reference", async () => {
+    const asset = await readFile(advanceMd, "utf8");
+    const contract = planTaskWaitContract(asset);
+    const withoutToken = asset.replace(
+      contract.preClaim,
+      contract.preClaim.replaceAll("`awaiting-tasks`", ""),
+    );
+    const withoutField = asset.replace(
+      contract.preClaim,
+      contract.preClaim.replace("`fields.waitingTasks`", ""),
+    );
+
+    expect(planTaskWaitContract(withoutToken).failures).toEqual([
+      "pre-claim gate does not emit awaiting-tasks",
+    ]);
+    expect(planTaskWaitContract(withoutField).failures).toEqual([
+      "pre-claim gate does not read fields.waitingTasks",
+    ]);
+  });
+
+  it("keeps task-wait coordination outside the planner result vocabulary", async () => {
+    const planner = (await readFile(plannerMd, "utf8")).replace(/\r\n/g, "\n");
+    expect(planner).toContain("Task waits are orchestrator-owned coordination.");
+    expect(planner).toMatch(/Do not add a PlanStepResult\s+action for task waits\./);
+  });
+});
+
 // Regression T1319: managed follow-up intake must acquire authority before any
 // user-visible mutation, then transfer that authority into planner dispatch.
 describe("T1319: managed follow-up claim ordering and planner resume", () => {

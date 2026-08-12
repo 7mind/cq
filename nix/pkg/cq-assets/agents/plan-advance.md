@@ -46,6 +46,9 @@ Use default mode unless the dispatch explicitly requests candidate mode. The
 orchestrator already owns a guarded planning claim. Return one state-derived
 action and perform no mutation.
 
+Task waits are orchestrator-owned coordination. Do not add a PlanStepResult
+action for task waits.
+
 ```json
 {
   "mode": "default",

@@ -45,7 +45,8 @@ from progressing.
 
 Each iteration must dispatch a child or change state. Stop after a terminal
 token or two consecutive read-only passes. Terminal tokens are
-`awaiting-answers`, `awaiting-research`, `completed`, and `noop`.
+`awaiting-answers`, `awaiting-research`, `awaiting-tasks`, `completed`, and
+`noop`.
 
 When `CQ::plan/follow-up` transfers an acknowledged active follow-up claim,
 retain its claim id, generation, and fence token and resume at **§2. Resolve
@@ -55,11 +56,16 @@ starts at the pre-claim gate.
 
 ### 1. Pre-claim gate and claim
 
-Read the goal and exact goal-linked questions/research waits.
+Read the goal, exact goal-linked questions/research waits, and
+`fields.waitingTasks`. Consumers never parse goal descriptions for task-wait
+state.
 
 - An open question → `awaiting-answers`.
 - Any waited research in `open`, `wip`, or `inconclusive` →
   `awaiting-research`.
+- Any waited task in `planned`, `wip`, or `blocked` → `awaiting-tasks`.
+- A waited task in `done` or `abandoned`, or one missing from the active view
+  because it is absent or archived, does not block planning.
 
 Otherwise mint a fresh request id and secret fence token and call `claim_plan`
 with `purpose: "initial"` and the observed plan generation. Keep the
@@ -69,6 +75,7 @@ Treat claim conflicts as follows:
 
 - active claim: report the goal busy;
 - active research wait: `awaiting-research`;
+- `task-wait-active`: `awaiting-tasks`;
 - stale generation: reread and retry once;
 - terminal/phase conflict: report and skip;
 - request reuse or fence mismatch: stop with an invariant failure.
