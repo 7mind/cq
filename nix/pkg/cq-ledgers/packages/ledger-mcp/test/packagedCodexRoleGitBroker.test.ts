@@ -34,6 +34,9 @@ import {
   resolveSingleProjectAttestationNamespace,
   type DispatchBoundGitAuthorization,
   type ManagedWorktreeHandle,
+  type SupervisedWorkerGateRunRequest,
+  type SupervisedWorkerGateRunResult,
+  type SupervisedWorkerGateRunner,
 } from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
@@ -110,7 +113,7 @@ function artifactStore(
     sidecarSchemaRoleId: roleId,
     promptSurface: "codex" as const,
     promptDigest: createHash("sha256").update(bytes).digest("hex"),
-    schemaVersion: roleId === "implement-worker" ? 6 : implementConflictResolverSidecar.version,
+    schemaVersion: roleId === "implement-worker" ? 7 : implementConflictResolverSidecar.version,
   };
   return {
     readManifest: () => ({
@@ -121,6 +124,22 @@ function artifactStore(
     }),
     readRole: () => ({ metadata, bytes }),
   };
+}
+
+class PackagedWorkerGateDummy implements SupervisedWorkerGateRunner {
+  readonly requests: SupervisedWorkerGateRunRequest[] = [];
+
+  async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
+    this.requests.push(request);
+    return {
+      gateExitCode: 0,
+      passCount: 17,
+      failCount: 0,
+      gateDurationMs: 91,
+      capturedAt: "2026-08-12T20:00:00.000Z",
+      outputTail: "17 pass\n0 fail",
+    };
+  }
 }
 
 async function selectedExecutableSelfIdentity(
@@ -358,6 +377,8 @@ describe("packaged cq-codex-role Git broker", () => {
     expect(source).toContain("installedGateTest");
     const workerFixture = await readFile(WORKER_FIXTURE, "utf8");
     expect(workerFixture).toContain('"update-ref"');
+    expect(workerFixture).toContain("trusted result-storage boundary");
+    expect(workerFixture).not.toContain("gateDurationMs:");
     const workspacePackage = JSON.parse(
       await readFile(fileURLToPath(new URL("../../../package.json", import.meta.url)), "utf8"),
     ) as { scripts?: Record<string, string> };
@@ -428,12 +449,14 @@ describe("packaged cq-codex-role Git broker", () => {
     const dispatchNow = new Date().toISOString();
     let serviceNow = dispatchNow;
     const dispatchRandomBytes = sequentialDispatchRandomBytes(2048);
+    const workerGateRunner = new PackagedWorkerGateDummy();
     let capability = createDispatchCapability({
       backend,
       promptArtifactStore: artifactStore("implement-worker"),
       repositoryRoot,
       now: () => serviceNow,
       randomBytes: dispatchRandomBytes,
+      supervisedWorkerGateRunner: workerGateRunner,
     });
     const prepared = await capability.prepare({
       roleId: "implement-worker",
@@ -631,6 +654,20 @@ describe("packaged cq-codex-role Git broker", () => {
     const fetched = await capability.fetch(handle);
     expect(fetched).toMatchObject({ state: "consumed", output: capture.output });
     const consumed = fetched as ConsumedDispatchResult;
+    expect(capture.output).not.toHaveProperty("supervisedGateEvidence");
+    expect(consumed.output).toMatchObject({
+      supervisedGateEvidence: {
+        kind: "cq-supervised-gate-evidence",
+        taskId: "T2042",
+        worktreePath: managed.handle.absolutePath,
+        branch: managed.handle.branch,
+        resultCommit: capture.output["resultCommit"],
+        clean: true,
+        gateExitCode: 0,
+        passCount: 17,
+        failCount: 0,
+      },
+    });
     expect(await capability.fetch(handle)).toMatchObject({ state: "output-already-materialized" });
 
     await backend.close();
@@ -644,6 +681,7 @@ describe("packaged cq-codex-role Git broker", () => {
       repositoryRoot,
       now: () => serviceNow,
       randomBytes: dispatchRandomBytes,
+      supervisedWorkerGateRunner: workerGateRunner,
     });
 
     const firstResultCommit = String(capture.output["resultCommit"]);
@@ -761,6 +799,16 @@ describe("packaged cq-codex-role Git broker", () => {
     const retryFetched = await capability.fetch(retryHandle);
     expect(retryFetched).toMatchObject({ state: "consumed", output: retryCapture.output });
     const retryConsumed = retryFetched as ConsumedDispatchResult;
+    expect(retryCapture.output).not.toHaveProperty("supervisedGateEvidence");
+    expect(retryConsumed.output).toMatchObject({
+      supervisedGateEvidence: {
+        kind: "cq-supervised-gate-evidence",
+        taskId: "T2042",
+        resultCommit: retryCapture.output["resultCommit"],
+        passCount: 17,
+      },
+    });
+    expect(workerGateRunner.requests).toHaveLength(2);
     expect(await capability.fetch(retryHandle)).toMatchObject({
       state: "output-already-materialized",
     });

@@ -30,7 +30,7 @@
 > and attached strict, versioned
 > `supervisedGateEvidence`; the sandboxed worker neither runs that gate nor
 > supplies the evidence. Require exact task/result commit/branch/worktree
-> binding, `cleanTree === true`, `gateExitCode === 0`, `failCount === 0`, and
+> binding, `clean === true`, `gateExitCode === 0`, `failCount === 0`, and
 > `passCount > 0`. A red, zero-test, timed-out, cancelled, dirty, moved-tip, or
 > replay attempt must remain unconsumable. Before accepting a passing result,
 > require a non-empty receipt chain in commit order; verify each old/new head

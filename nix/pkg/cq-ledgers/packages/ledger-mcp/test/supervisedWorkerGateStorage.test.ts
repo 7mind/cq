@@ -88,6 +88,36 @@ class GateDummy implements SupervisedWorkerGateRunner {
   }
 }
 
+class ThrowingGateDummy implements SupervisedWorkerGateRunner {
+  readonly requests: SupervisedWorkerGateRunRequest[] = [];
+
+  constructor(private readonly message: string) {}
+
+  async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
+    this.requests.push(request);
+    throw new Error(this.message);
+  }
+}
+
+class MovingTipGateDummy implements SupervisedWorkerGateRunner {
+  readonly requests: SupervisedWorkerGateRunRequest[] = [];
+
+  async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
+    this.requests.push(request);
+    const branchRef = await git(request.worktreePath, ["symbolic-ref", "HEAD"]);
+    const parent = await git(request.worktreePath, ["rev-parse", "HEAD^"]);
+    await git(request.worktreePath, ["update-ref", branchRef, parent]);
+    return {
+      gateExitCode: 0,
+      passCount: 17,
+      failCount: 0,
+      gateDurationMs: 123,
+      capturedAt: "2026-08-12T20:00:01.000Z",
+      outputTail: "17 pass\n0 fail",
+    };
+  }
+}
+
 async function fixture(runner: SupervisedWorkerGateRunner = new GateDummy()) {
   sequence += 1;
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2081-gate-${sequence}-`));
@@ -293,6 +323,16 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     ).rejects.toThrow("clean result tree");
     expect(dirtyRunner.requests).toHaveLength(0);
 
+    const movingRunner = new MovingTipGateDummy();
+    const moving = await fixture(movingRunner);
+    await expect(
+      moving.capability.storeResult({
+        resultCapability: moving.prepared.resultCapability,
+        output: moving.output,
+      }),
+    ).rejects.toThrow("branch tip moved during the gate");
+    expect(movingRunner.requests).toHaveLength(1);
+
     const replayRunner = new GateDummy();
     const replay = await fixture(replayRunner);
     await replay.capability.storeResult({
@@ -306,5 +346,19 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       }),
     ).rejects.toThrow("live prepared dispatch");
     expect(replayRunner.requests).toHaveLength(1);
+  });
+
+  test("fails closed when the trusted runner times out or is cancelled", async () => {
+    for (const message of ["supervised worker gate timed out", "supervised worker gate cancelled"]) {
+      const runner = new ThrowingGateDummy(message);
+      const subject = await fixture(runner);
+      await expect(
+        subject.capability.storeResult({
+          resultCapability: subject.prepared.resultCapability,
+          output: subject.output,
+        }),
+      ).rejects.toThrow(message);
+      expect(runner.requests).toHaveLength(1);
+    }
   });
 });

@@ -77,7 +77,7 @@ practical, and verify or re-run the gate as below.
 require its strict versioned schema and verify that its `taskId`,
 `resultCommit`, `branch`, and `worktreePath` exactly match this review input.
 Also require the canonical command, `gateExitCode === 0`, `failCount === 0`,
-`passCount > 0`, `cleanTree === true`, `roleId === "implement-worker"`, and
+`passCount > 0`, `clean === true`, `roleId === "implement-worker"`, and
 `surface === "codex"`. Reject caller substitutions or incomplete evidence.
 Do **not** invoke `cq gate run` inside the sandbox. On valid evidence set
 `gateReRan=false`, `gateReRanReason=sandbox-denied-primitives`, omit reviewer

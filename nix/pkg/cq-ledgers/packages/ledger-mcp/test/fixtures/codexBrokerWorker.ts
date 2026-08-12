@@ -361,8 +361,7 @@ const output = {
   actualWorktreePath: worktreePath,
   filesTouched: ["file.txt"],
   gitReceipts: [first, second],
-  checkSummary: "REAL_CHECK_EXIT=0",
-  gateDurationMs: 1,
+  checkSummary: "canonical gate delegated to trusted result-storage boundary",
   baseVerification: {
     status: "verified",
     relation: "descendant",
