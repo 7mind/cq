@@ -81,14 +81,13 @@ function spawnPeer(
   readonly outcome: Promise<PeerOutcome>;
   result(): Promise<Record<string, unknown>>;
 } {
+  const input = Buffer.from(`${JSON.stringify(request)}\n`);
   const child = Bun.spawn([process.execPath, "run", PEER_FIXTURE], {
     env: { ...process.env, ...environment },
-    stdin: "pipe",
+    stdin: input,
     stdout: "pipe",
     stderr: "pipe",
   });
-  child.stdin.write(`${JSON.stringify(request)}\n`);
-  child.stdin.end();
   const outcome = Promise.all([
     child.exited,
     new Response(child.stdout).text(),

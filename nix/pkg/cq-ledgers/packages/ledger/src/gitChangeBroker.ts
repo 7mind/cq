@@ -406,11 +406,12 @@ function runGit(
   environment?: NodeJS.ProcessEnv,
   input?: Uint8Array,
 ): Promise<GitResult> {
+  const selectedEnvironment = environment ?? trustedGitEnvironment();
   const child = Bun.spawn(
     ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", ...args],
     {
       cwd,
-      env: environment ?? trustedGitEnvironment(),
+      env: selectedEnvironment,
       stdin: input ?? "ignore",
       stdout: "pipe",
       stderr: "pipe",
