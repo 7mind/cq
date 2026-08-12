@@ -23,7 +23,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
-import { ensureSchema, MILESTONES_AMBIENT_ID, openPgPool } from "../src/index.js";
+import { ensureSchema, openPgPool } from "../src/index.js";
 import type {
   RemoteContractService,
   RemoteLedgerClientContractFactory,
@@ -185,6 +185,41 @@ export const postgresRemoteClientFactory: RemoteLedgerClientContractFactory = {
       seedUnsafeOperatorActionLinkedState: async (actionId, state) => {
         const taskId = `T${actionId.slice(2)}`;
         const handoffId = `HO${actionId.slice(2)}`;
+        const mismatchTarget =
+          state === "action-milestone-mismatch"
+            ? { ledger: "operatorActions", id: actionId }
+            : { ledger: "handoffs", id: handoffId };
+        const alternateMilestone =
+          state === "action-milestone-mismatch" ||
+          state === "handoff-milestone-mismatch"
+            ? await hub.pool<Array<{ id: string }>>`
+                SELECT groups.id
+                FROM groups
+                JOIN items AS target
+                  ON target.project_key = groups.project_key
+                  AND target.ledger = ${mismatchTarget.ledger}
+                  AND target.id = ${mismatchTarget.id}
+                WHERE groups.project_key = ${projectKey}
+                  AND groups.ledger = ${mismatchTarget.ledger}
+                  AND groups.id <> target.milestone_id
+                ORDER BY groups.seq
+                LIMIT 1
+              `
+            : [];
+        if (
+          (state === "action-milestone-mismatch" ||
+            state === "handoff-milestone-mismatch") &&
+          alternateMilestone.length !== 1
+        ) {
+          throw new Error(`expected one valid alternate milestone for ${actionId}`);
+        }
+        const alternateMilestoneId = (): string => {
+          const id = alternateMilestone[0]?.id;
+          if (id === undefined) {
+            throw new Error(`missing valid alternate milestone for ${actionId}`);
+          }
+          return id;
+        };
         const updated =
           state === "task-status"
             ? await hub.pool<Array<{ id: string }>>`
@@ -200,12 +235,12 @@ export const postgresRemoteClientFactory: RemoteLedgerClientContractFactory = {
                 `
               : state === "action-milestone-mismatch"
                 ? await hub.pool<Array<{ id: string }>>`
-                    UPDATE items SET milestone_id = ${MILESTONES_AMBIENT_ID}
+                    UPDATE items SET milestone_id = ${alternateMilestoneId()}
                     WHERE project_key = ${projectKey} AND ledger = 'operatorActions' AND id = ${actionId}
                     RETURNING id
                   `
                 : await hub.pool<Array<{ id: string }>>`
-                    UPDATE items SET milestone_id = ${MILESTONES_AMBIENT_ID}
+                    UPDATE items SET milestone_id = ${alternateMilestoneId()}
                     WHERE project_key = ${projectKey} AND ledger = 'handoffs' AND id = ${handoffId}
                     RETURNING id
                   `;
