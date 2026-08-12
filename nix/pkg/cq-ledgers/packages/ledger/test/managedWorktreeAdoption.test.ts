@@ -486,7 +486,7 @@ describe("prepare-only adoption publication visibility", () => {
       const result = await invokeAdoption(store, fixture);
       expect(result).toMatchObject({ status: "refused", reason: "adoption-recovery-failed" });
       expect(await fs.readFile(join(fixture.worktreePath, "seed.txt"))).toEqual(mutatedBytes);
-      expect(await fs.readFile(synthetic.indexPath)).toEqual(synthetic.staleIndexBytes);
+      expect((await fs.readFile(synthetic.indexPath)).equals(synthetic.staleIndexBytes)).toBe(true);
       expect(await listManagedLiveWorktrees(
         fixture.repositoryRoot,
         "T1207",
@@ -522,7 +522,7 @@ describe("prepare-only adoption publication visibility", () => {
           },
         });
         expect(result).toMatchObject({ status: "refused", reason: "adoption-recovery-failed" });
-        expect(await fs.readFile(synthetic.indexPath)).toEqual(synthetic.staleIndexBytes);
+        expect((await fs.readFile(synthetic.indexPath)).equals(synthetic.staleIndexBytes)).toBe(true);
         expect(await listManagedLiveWorktrees(
           fixture.repositoryRoot,
           "T1207",
@@ -547,7 +547,7 @@ describe("prepare-only adoption publication visibility", () => {
       await fs.writeFile(synthetic.journalPath, `${JSON.stringify(journal, null, 2)}\n`);
       const result = await invokeAdoption(store, fixture);
       expect(result).toMatchObject({ status: "refused", reason: "adoption-recovery-failed" });
-      expect(await fs.readFile(synthetic.indexPath)).toEqual(synthetic.staleIndexBytes);
+      expect((await fs.readFile(synthetic.indexPath)).equals(synthetic.staleIndexBytes)).toBe(true);
       expect(await listManagedLiveWorktrees(
         fixture.repositoryRoot,
         "T1207",
