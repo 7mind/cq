@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   CODEX_READ_ONLY_SANDBOX_TMPDIR,
+  CodexOperationalAbstentionError,
   SandboxPipeProbeError,
   argvWithSandboxTmpdir,
   createCodexRoleBoundaryPlan,
@@ -287,17 +288,25 @@ describe("T1999 Codex sandbox pipe pre-flight (D266)", () => {
   );
 
   test(
-    "a read-only reviewer dispatch on a pipe-losing sandbox aborts before any exec",
+    "a read-only reviewer dispatch preserves pipe preflight refusal as an operational abstention",
     async () => {
       const fixture = await createSandboxFixture("broken");
       try {
-        const error = await expectProbeFailure(
-          withFixtureEnvironment(fixture, () =>
+        let thrown: unknown;
+        try {
+          await withFixtureEnvironment(fixture, () =>
             executeCodexRoleBoundary(reviewerPlan(fixture, "implement-reviewer", "read-only")),
-          ),
-          "pipe-capture-lost",
-        );
+          );
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(CodexOperationalAbstentionError);
+        const error = thrown as CodexOperationalAbstentionError;
         expect(error.message).toContain("openai/codex#18473");
+        expect(error.operationalAbstention).toEqual({
+          source: "sandbox-preflight",
+          verdict: "pipe-capture-lost",
+        });
         const argvs = await loggedArgvs(fixture);
         expect(argvs).toHaveLength(1);
         expect(argvs[0]?.[0]).toBe("sandbox");

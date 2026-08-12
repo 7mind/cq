@@ -2369,6 +2369,7 @@ const ABORT_REASON_SET: ReadonlySet<string> = new Set([
   "missing-result",
   "deadline-exceeded",
   "parent-lost",
+  "operational-abstention",
 ]);
 
 /**
