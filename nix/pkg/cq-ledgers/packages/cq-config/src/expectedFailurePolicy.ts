@@ -195,6 +195,7 @@ export function scanExpectedFailures(
   }
 
   const markers: ExpectedFailureMarker[] = [];
+  const markerKeys = new Set<string>();
   const consumedAnnotations = new Set<string>();
   for (const source of sources) {
     const { tokens, annotations } = lex(source.source);
@@ -216,6 +217,13 @@ export function scanExpectedFailures(
       if (titleToken?.kind !== "string") {
         throw new ExpectedFailurePolicyError(source.file, token.line, "expected-failure title must be a quoted string literal");
       }
+      if (tokens[index + 5]?.value !== ",") {
+        throw new ExpectedFailurePolicyError(
+          source.file,
+          token.line,
+          "expected-failure title must be solely a quoted string literal",
+        );
+      }
       const annotation = annotationsByLine.get(token.line - 1);
       if (annotation === undefined) {
         throw new ExpectedFailurePolicyError(source.file, token.line, "expected-failure marker lacks an immediately preceding annotation");
@@ -227,6 +235,15 @@ export function scanExpectedFailures(
       if (entry.ledgerRef !== annotation.ledgerRef) {
         throw new ExpectedFailurePolicyError(source.file, annotation.line, "annotation and inventory ledger references differ");
       }
+      const key = inventoryKey(entry);
+      if (markerKeys.has(key)) {
+        throw new ExpectedFailurePolicyError(
+          source.file,
+          token.line,
+          "duplicate live expected-failure marker for one inventory entry",
+        );
+      }
+      markerKeys.add(key);
       consumedAnnotations.add(`${source.file}\0${annotation.line}`);
       markers.push({ ...entry, line: token.line });
     }
@@ -237,7 +254,6 @@ export function scanExpectedFailures(
     }
   }
 
-  const markerKeys = new Set(markers.map(inventoryKey));
   for (const entry of inventory) {
     if (!markerKeys.has(inventoryKey(entry))) {
       throw new ExpectedFailurePolicyError(entry.file, 1, `inventory entry has no live marker: ${JSON.stringify(entry.title)}`);
