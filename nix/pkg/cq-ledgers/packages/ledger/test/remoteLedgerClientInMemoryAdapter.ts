@@ -105,6 +105,43 @@ type InvalidFailedEvidenceState =
   | "missing-expected-identity"
   | "missing-acknowledged-identity";
 
+interface DummyStoredOperatorActionEvidence {
+  readonly command: string;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode: number;
+  readonly outputIdentity: string;
+  readonly observedAt: string;
+  readonly acknowledgementEpoch: string;
+  readonly revision: number;
+}
+
+function parseStoredOperatorActionEvidence(value: string): DummyStoredOperatorActionEvidence {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new DummyToolError("stored operator-action evidence is malformed");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new DummyToolError("stored operator-action evidence is malformed");
+  }
+  const evidence = parsed as Record<string, unknown>;
+  if (
+    typeof evidence["command"] !== "string" ||
+    typeof evidence["stdout"] !== "string" ||
+    typeof evidence["stderr"] !== "string" ||
+    typeof evidence["exitCode"] !== "number" ||
+    typeof evidence["outputIdentity"] !== "string" ||
+    typeof evidence["observedAt"] !== "string" ||
+    typeof evidence["acknowledgementEpoch"] !== "string" ||
+    typeof evidence["revision"] !== "number"
+  ) {
+    throw new DummyToolError("stored operator-action evidence is malformed");
+  }
+  return evidence as unknown as DummyStoredOperatorActionEvidence;
+}
+
 function corruptFailedEvidenceAudit(action: Item, state: InvalidFailedEvidenceState): void {
   const evidence = action.fields["evidence"];
   if (!Array.isArray(evidence) || evidence.length === 0) {
@@ -837,30 +874,66 @@ const reviseOperatorAction: ToolHandler = (tenant, args) => {
   if (action.status !== "pending" && action.status !== "acknowledged") {
     throw new DummyToolError("operator action cannot be revised");
   }
-  const evidence = action.fields["evidence"];
-  if (Array.isArray(evidence) && evidence.length > 0) {
-    const terminal = evidence[evidence.length - 1];
-    if (
-      action.status !== "pending" ||
-      typeof terminal !== "string" ||
-      action.fields["lastFailure"] !== terminal
-    ) {
-      throw new DummyToolError("operator action may not be revised after successful evidence");
+  const rawEvidence = action.fields["evidence"];
+  const rawLastFailure = action.fields["lastFailure"];
+  if (rawEvidence === undefined) {
+    if (rawLastFailure !== undefined) {
+      throw new DummyToolError("operator action has inconsistent failed-evidence audit state");
     }
-    const parsed = JSON.parse(terminal) as {
-      exitCode: number;
-      outputIdentity: string;
-      acknowledgementEpoch: string;
-      revision: number;
-    };
+  } else {
     if (
-      parsed.revision !== Number(action.fields["revision"]) ||
-      parsed.acknowledgementEpoch !== action.fields["acknowledgementEpoch"] ||
-      (parsed.exitCode === 0 &&
-        parsed.outputIdentity === action.fields["expectedOutputIdentity"] &&
-        parsed.outputIdentity === action.fields["acknowledgedOutputIdentity"])
+      !Array.isArray(rawEvidence) ||
+      rawEvidence.some((entry) => typeof entry !== "string")
     ) {
-      throw new DummyToolError("operator action has invalid failed-evidence audit state");
+      throw new DummyToolError("stored operator-action evidence is malformed");
+    }
+    if (rawEvidence.length === 0) {
+      if (rawLastFailure !== undefined) {
+        throw new DummyToolError("operator action has inconsistent failed-evidence audit state");
+      }
+    } else {
+      if (action.status !== "pending" || typeof rawLastFailure !== "string") {
+        throw new DummyToolError("operator action may not be revised after successful evidence");
+      }
+      const evidence = rawEvidence.map(parseStoredOperatorActionEvidence);
+      const terminal = evidence[evidence.length - 1]!;
+      const lastFailure = parseStoredOperatorActionEvidence(rawLastFailure);
+      if (
+        rawLastFailure !== rawEvidence[rawEvidence.length - 1] ||
+        JSON.stringify(lastFailure) !== JSON.stringify(terminal)
+      ) {
+        throw new DummyToolError("operator action has inconsistent failed-evidence audit state");
+      }
+      const acknowledgementEpoch = action.fields["acknowledgementEpoch"];
+      if (
+        typeof acknowledgementEpoch !== "string" ||
+        !/^[1-9]\d*$/.test(acknowledgementEpoch) ||
+        terminal.revision !== Number(action.fields["revision"]) ||
+        terminal.acknowledgementEpoch !== acknowledgementEpoch
+      ) {
+        throw new DummyToolError("operator action has stale failed-evidence audit state");
+      }
+      const expectedOutputIdentity = action.fields["expectedOutputIdentity"];
+      const acknowledgedOutputIdentity = action.fields["acknowledgedOutputIdentity"];
+      const expectedEvidence = action.fields["expectedEvidence"];
+      if (
+        typeof expectedOutputIdentity !== "string" ||
+        expectedOutputIdentity.length === 0 ||
+        typeof acknowledgedOutputIdentity !== "string" ||
+        acknowledgedOutputIdentity.length === 0 ||
+        !Array.isArray(expectedEvidence) ||
+        expectedEvidence.some((entry) => typeof entry !== "string") ||
+        !expectedEvidence.includes(terminal.command)
+      ) {
+        throw new DummyToolError("operator action has inconsistent failed-evidence audit state");
+      }
+      const terminalFailed =
+        terminal.exitCode !== 0 ||
+        terminal.outputIdentity !== expectedOutputIdentity ||
+        terminal.outputIdentity !== acknowledgedOutputIdentity;
+      if (!terminalFailed) {
+        throw new DummyToolError("operator action may not be revised after successful evidence");
+      }
     }
   }
   const taskRef = String(action.fields["taskRef"]);
