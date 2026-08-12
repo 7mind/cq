@@ -1,7 +1,7 @@
 /** T2042 — packaged cq-codex-role broker/confinement acceptance probe. */
 import { afterAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -34,9 +34,6 @@ import {
   resolveSingleProjectAttestationNamespace,
   type DispatchBoundGitAuthorization,
   type ManagedWorktreeHandle,
-  type SupervisedWorkerGateRunRequest,
-  type SupervisedWorkerGateRunResult,
-  type SupervisedWorkerGateRunner,
 } from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
@@ -124,22 +121,6 @@ function artifactStore(
     }),
     readRole: () => ({ metadata, bytes }),
   };
-}
-
-class PackagedWorkerGateDummy implements SupervisedWorkerGateRunner {
-  readonly requests: SupervisedWorkerGateRunRequest[] = [];
-
-  async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
-    this.requests.push(request);
-    return {
-      gateExitCode: 0,
-      passCount: 17,
-      failCount: 0,
-      gateDurationMs: 91,
-      capturedAt: "2026-08-12T20:00:00.000Z",
-      outputTail: "17 pass\n0 fail",
-    };
-  }
 }
 
 async function selectedExecutableSelfIdentity(
@@ -403,7 +384,13 @@ describe("packaged cq-codex-role Git broker", () => {
     await writeFile(path.join(repositoryRoot, "a.txt"), "base a\n");
     await writeFile(path.join(repositoryRoot, "b.txt"), "base b\n");
     await writeFile(path.join(repositoryRoot, "bun.lock"), "{}\n");
-    await git(repositoryRoot, ["add", "file.txt", "a.txt", "b.txt", "bun.lock"]);
+    const workspaceRoot = path.join(repositoryRoot, "nix", "pkg", "cq-ledgers");
+    await mkdir(workspaceRoot, { recursive: true });
+    await writeFile(
+      path.join(workspaceRoot, "package.json"),
+      `${JSON.stringify({ private: true, scripts: { check: "printf '1 pass\\n0 fail\\n'" } }, null, 2)}\n`,
+    );
+    await git(repositoryRoot, ["add", "file.txt", "a.txt", "b.txt", "bun.lock", "nix"]);
     await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
     const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
     await writeFile(path.join(repositoryRoot, "cq.toml"), '[ledger]\nbackend = "fs"\n');
@@ -449,14 +436,12 @@ describe("packaged cq-codex-role Git broker", () => {
     const dispatchNow = new Date().toISOString();
     let serviceNow = dispatchNow;
     const dispatchRandomBytes = sequentialDispatchRandomBytes(2048);
-    const workerGateRunner = new PackagedWorkerGateDummy();
     let capability = createDispatchCapability({
       backend,
       promptArtifactStore: artifactStore("implement-worker"),
       repositoryRoot,
       now: () => serviceNow,
       randomBytes: dispatchRandomBytes,
-      supervisedWorkerGateRunner: workerGateRunner,
     });
     const prepared = await capability.prepare({
       roleId: "implement-worker",
@@ -664,7 +649,7 @@ describe("packaged cq-codex-role Git broker", () => {
         resultCommit: capture.output["resultCommit"],
         clean: true,
         gateExitCode: 0,
-        passCount: 17,
+        passCount: 1,
         failCount: 0,
       },
     });
@@ -681,7 +666,6 @@ describe("packaged cq-codex-role Git broker", () => {
       repositoryRoot,
       now: () => serviceNow,
       randomBytes: dispatchRandomBytes,
-      supervisedWorkerGateRunner: workerGateRunner,
     });
 
     const firstResultCommit = String(capture.output["resultCommit"]);
@@ -805,10 +789,9 @@ describe("packaged cq-codex-role Git broker", () => {
         kind: "cq-supervised-gate-evidence",
         taskId: "T2042",
         resultCommit: retryCapture.output["resultCommit"],
-        passCount: 17,
+        passCount: 1,
       },
     });
-    expect(workerGateRunner.requests).toHaveLength(2);
     expect(await capability.fetch(retryHandle)).toMatchObject({
       state: "output-already-materialized",
     });
@@ -864,6 +847,11 @@ describe("packaged cq-codex-role Git broker", () => {
       expectedChild: { childId: "deadline-control", runId: "deadline-control" },
     });
     if (!deadlinePrepared.accepted) throw new Error("deadline control did not prepare");
+    await capability.fetchInput({
+      attestationId: deadlinePrepared.prepared.attestationId,
+      generation: deadlinePrepared.prepared.generation,
+      inputCapability: deadlinePrepared.prepared.inputCapability,
+    });
     serviceNow = new Date(Date.parse(dispatchNow) + 700_000).toISOString();
     const deadline = await capability.storeResult({
       resultCapability: deadlinePrepared.prepared.resultCapability,

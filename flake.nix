@@ -909,7 +909,7 @@ EOF
             fi
             touch "$TMPDIR/gate-release"
             wait "$firstGate"
-            PATH=${pkgs.lib.makeBinPath ([ pkgs.bun pkgs.nodejs_22 pkgs.git ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.procps ])}:$PATH \
+            PATH=$out/bin:${pkgs.lib.makeBinPath ([ pkgs.bun pkgs.nodejs_22 pkgs.git ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.procps ])}:$PATH \
               CQ_TEST_CODEX_ROLE_EXECUTABLE=$out/bin/cq-codex-role \
               CQ_TEST_SUBSTITUTED_CODEX_ROLE_EXECUTABLE=${substitutedCodexRole}/bin/cq-codex-role \
               CQ_TEST_CODEX_SANDBOX_EXECUTABLE=${codexPackage}/bin/codex \
