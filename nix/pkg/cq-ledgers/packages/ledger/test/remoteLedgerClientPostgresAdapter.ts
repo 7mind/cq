@@ -267,6 +267,54 @@ export const postgresRemoteClientFactory: RemoteLedgerClientContractFactory = {
           throw new Error(`expected one failed-evidence corruption target for ${actionId}`);
         }
       },
+      seedOperatorActionRevisionPostconditionState: async (actionId) => {
+        const taskId = `T${actionId.slice(2)}`;
+        const handoffId = `HO${actionId.slice(2)}`;
+        const rows = await hub.pool<Array<{ ledger: string; id: string; fields_json: string }>>`
+          SELECT ledger, id, fields_json FROM items
+          WHERE project_key = ${projectKey}
+            AND (
+              (ledger = 'operatorActions' AND id = ${actionId})
+              OR (ledger = 'tasks' AND id = ${taskId})
+              OR (ledger = 'handoffs' AND id = ${handoffId})
+            )
+        `;
+        const fieldsFor = (ledger: string, id: string): Record<string, unknown> => {
+          const row = rows.find((candidate) => candidate.ledger === ledger && candidate.id === id);
+          if (row === undefined) throw new Error(`missing ${ledger}:${id} revision fixture`);
+          return JSON.parse(row.fields_json) as Record<string, unknown>;
+        };
+        const actionFields = fieldsFor("operatorActions", actionId);
+        actionFields["verifiedAt"] = "2026-08-11T05:58:30.000Z";
+        actionFields["verifiedRevision"] = "1";
+        actionFields["completion"] = "stale action completion";
+        const taskFields = fieldsFor("tasks", taskId);
+        taskFields["completion"] = "stale task completion";
+        const handoffFields = fieldsFor("handoffs", handoffId);
+        handoffFields["summary"] = "stale handoff summary";
+        handoffFields["handoffReasons"] = ["stale handoff reason"];
+        await hub.pool.begin(async (tx) => {
+          await tx`
+            UPDATE items SET fields_json = ${JSON.stringify(actionFields)},
+              updated_at = ${"2026-08-11T05:58:31.000Z"},
+              author = ${"stale-action-author"}, session = ${"stale-action-session"}
+            WHERE project_key = ${projectKey}
+              AND ledger = 'operatorActions' AND id = ${actionId}
+          `;
+          await tx`
+            UPDATE items SET status = 'abandoned', fields_json = ${JSON.stringify(taskFields)},
+              updated_at = ${"2026-08-11T05:58:32.000Z"},
+              author = ${"stale-task-author"}, session = ${"stale-task-session"}
+            WHERE project_key = ${projectKey} AND ledger = 'tasks' AND id = ${taskId}
+          `;
+          await tx`
+            UPDATE items SET fields_json = ${JSON.stringify(handoffFields)},
+              updated_at = ${"2026-08-11T05:58:33.000Z"},
+              author = ${"stale-handoff-author"}, session = ${"stale-handoff-session"}
+            WHERE project_key = ${projectKey} AND ledger = 'handoffs' AND id = ${handoffId}
+          `;
+        });
+      },
       seedUnsafeOperatorActionLinkedState: async (actionId, state) => {
         const taskId = `T${actionId.slice(2)}`;
         const handoffId = `HO${actionId.slice(2)}`;
@@ -275,8 +323,7 @@ export const postgresRemoteClientFactory: RemoteLedgerClientContractFactory = {
             ? { ledger: "operatorActions", id: actionId }
             : { ledger: "handoffs", id: handoffId };
         const alternateMilestone =
-          state === "action-milestone-mismatch" ||
-          state === "handoff-milestone-mismatch"
+          state === "action-milestone-mismatch" || state === "handoff-milestone-mismatch"
             ? await hub.pool<Array<{ id: string }>>`
                 SELECT groups.id
                 FROM groups
@@ -292,8 +339,7 @@ export const postgresRemoteClientFactory: RemoteLedgerClientContractFactory = {
               `
             : [];
         if (
-          (state === "action-milestone-mismatch" ||
-            state === "handoff-milestone-mismatch") &&
+          (state === "action-milestone-mismatch" || state === "handoff-milestone-mismatch") &&
           alternateMilestone.length !== 1
         ) {
           throw new Error(`expected one valid alternate milestone for ${actionId}`);

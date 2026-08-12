@@ -256,7 +256,10 @@ function milestoneOf(tenant: DummyTenant, milestoneId: string): Item {
   return milestone;
 }
 
-function resolvedMilestone(tenant: DummyTenant, milestoneId: string): {
+function resolvedMilestone(
+  tenant: DummyTenant,
+  milestoneId: string,
+): {
   id: string;
   status: string;
   title: string;
@@ -437,9 +440,7 @@ const fetchLedger: ToolHandler = (tenant, args) => {
     const start = offset ?? 0;
     const items = limit !== undefined ? all.slice(start, start + limit) : all.slice(start);
     const nextOffset =
-      limit !== undefined && start + items.length < all.length
-        ? start + items.length
-        : null;
+      limit !== undefined && start + items.length < all.length ? start + items.length : null;
     return {
       ledger: meta,
       items,
@@ -495,7 +496,14 @@ const createItem: ToolHandler = (tenant, args) => {
   assertRequiredFields(ledgerId, fields);
   const timestamp = nowIso();
   const id = optStr(args, "id") ?? allocateItemId(tenant, ledgerId);
-  const item: Item = { id, milestoneId, status, fields, createdAt: timestamp, updatedAt: timestamp };
+  const item: Item = {
+    id,
+    milestoneId,
+    status,
+    fields,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
   const author = optStr(args, "author");
   const session = optStr(args, "session");
   if (author !== undefined) item.author = author;
@@ -552,7 +560,12 @@ const ftsSearch: ToolHandler = (tenant, args) => {
     .toLowerCase()
     .split(/\s+/)
     .filter((term) => term.length > 0 && !term.includes(":"));
-  const results: Array<{ ledgerId: string; item: unknown; score: number; matchedFields: string[] }> = [];
+  const results: Array<{
+    ledgerId: string;
+    item: unknown;
+    score: number;
+    matchedFields: string[];
+  }> = [];
   for (const { name } of CANONICAL_LEDGERS) {
     if (ledger !== undefined && name !== ledger) continue;
     const active =
@@ -561,9 +574,7 @@ const ftsSearch: ToolHandler = (tenant, args) => {
       let score = 0;
       const matchedFields: string[] = [];
       for (const [fieldName, value] of Object.entries(item.fields)) {
-        const haystack = (
-          Array.isArray(value) ? value.join(" ") : String(value)
-        ).toLowerCase();
+        const haystack = (Array.isArray(value) ? value.join(" ") : String(value)).toLowerCase();
         if (terms.some((term) => haystack.includes(term))) {
           matchedFields.push(fieldName);
           score += fieldName === "headline" || fieldName === "title" ? 3 : 1;
@@ -629,9 +640,7 @@ const fetchRoot: ToolHandler = (tenant, args) => {
   const references: Record<string, number> = {};
   for (const { name } of CANONICAL_LEDGERS) {
     if (name === MILESTONES_LEDGER) continue;
-    const count = ledgerOf(tenant, name).filter(
-      (item) => item.milestoneId === milestoneId,
-    ).length;
+    const count = ledgerOf(tenant, name).filter((item) => item.milestoneId === milestoneId).length;
     if (count > 0) references[name] = count;
   }
   return {
@@ -658,7 +667,10 @@ const archiveMilestone: ToolHandler = (tenant, args) => {
     }
   }
   const milestoneSchema = SCHEMAS.get(MILESTONES_LEDGER);
-  if (milestoneSchema === undefined || !milestoneSchema.terminalStatuses.includes(milestone.status)) {
+  if (
+    milestoneSchema === undefined ||
+    !milestoneSchema.terminalStatuses.includes(milestone.status)
+  ) {
     throw new DummyToolError(`milestone ${milestoneId} has non-terminal items`);
   }
   const title = milestone.fields["title"];
@@ -760,7 +772,10 @@ const materializeOperatorAction: ToolHandler = (tenant, args) => {
     return { state: "existing", action: prior, handoff };
   }
   const expectedEvidence = args["expected_evidence"];
-  if (!Array.isArray(expectedEvidence) || !expectedEvidence.every((entry) => typeof entry === "string")) {
+  if (
+    !Array.isArray(expectedEvidence) ||
+    !expectedEvidence.every((entry) => typeof entry === "string")
+  ) {
     throw new DummyToolError("expected_evidence must be a string[]");
   }
   createItem(tenant, {
@@ -866,84 +881,30 @@ const recordOperatorActionEvidence: ToolHandler = (tenant, args) => {
     ),
   );
   action.status = verified ? "verified" : "acknowledged";
-  return verified
-    ? { state: "verified", action }
-    : { state: "acknowledged", action };
+  return verified ? { state: "verified", action } : { state: "acknowledged", action };
 };
 
 const reviseOperatorAction: ToolHandler = (tenant, args) => {
   const action = findItem(tenant, "operatorActions", str(args, "action_id"));
-  if (action.fields["revision"] !== String(args["expected_revision"])) {
+  const expectedRevision = args["expected_revision"];
+  if (
+    typeof expectedRevision !== "number" ||
+    !Number.isSafeInteger(expectedRevision) ||
+    expectedRevision < 1
+  ) {
+    throw new DummyToolError("expected revision must be a positive safe integer");
+  }
+  const revision = dummyOperatorActionRevision(action);
+  if (revision !== expectedRevision) {
     throw new DummyToolError("operator action revision conflict");
   }
   if (action.status !== "pending" && action.status !== "acknowledged") {
     throw new DummyToolError("operator action cannot be revised");
   }
-  const rawEvidence = action.fields["evidence"];
-  const rawLastFailure = action.fields["lastFailure"];
-  if (rawEvidence === undefined) {
-    if (rawLastFailure !== undefined) {
-      throw new DummyToolError("operator action has inconsistent failed-evidence audit state");
-    }
-  } else {
-    if (
-      !Array.isArray(rawEvidence) ||
-      rawEvidence.some((entry) => typeof entry !== "string")
-    ) {
-      throw new DummyToolError("stored operator-action evidence is malformed");
-    }
-    if (rawEvidence.length === 0) {
-      if (rawLastFailure !== undefined) {
-        throw new DummyToolError("operator action has inconsistent failed-evidence audit state");
-      }
-    } else {
-      if (action.status !== "pending" || typeof rawLastFailure !== "string") {
-        throw new DummyToolError("operator action may not be revised after successful evidence");
-      }
-      const evidence = rawEvidence.map(parseStoredOperatorActionEvidence);
-      const terminal = evidence[evidence.length - 1]!;
-      const lastFailure = parseStoredOperatorActionEvidence(rawLastFailure);
-      if (
-        rawLastFailure !== rawEvidence[rawEvidence.length - 1] ||
-        JSON.stringify(lastFailure) !== JSON.stringify(terminal)
-      ) {
-        throw new DummyToolError("operator action has inconsistent failed-evidence audit state");
-      }
-      const acknowledgementEpoch = action.fields["acknowledgementEpoch"];
-      if (
-        typeof acknowledgementEpoch !== "string" ||
-        !/^[1-9]\d*$/.test(acknowledgementEpoch) ||
-        terminal.revision !== Number(action.fields["revision"]) ||
-        terminal.acknowledgementEpoch !== acknowledgementEpoch
-      ) {
-        throw new DummyToolError("operator action has stale failed-evidence audit state");
-      }
-      const expectedOutputIdentity = action.fields["expectedOutputIdentity"];
-      const acknowledgedOutputIdentity = action.fields["acknowledgedOutputIdentity"];
-      const expectedEvidence = action.fields["expectedEvidence"];
-      if (
-        typeof expectedOutputIdentity !== "string" ||
-        expectedOutputIdentity.length === 0 ||
-        typeof acknowledgedOutputIdentity !== "string" ||
-        acknowledgedOutputIdentity.length === 0 ||
-        !Array.isArray(expectedEvidence) ||
-        expectedEvidence.some((entry) => typeof entry !== "string") ||
-        !expectedEvidence.includes(terminal.command)
-      ) {
-        throw new DummyToolError("operator action has inconsistent failed-evidence audit state");
-      }
-      const terminalFailed =
-        terminal.exitCode !== 0 ||
-        terminal.outputIdentity !== expectedOutputIdentity ||
-        terminal.outputIdentity !== acknowledgedOutputIdentity;
-      if (!terminalFailed) {
-        throw new DummyToolError("operator action may not be revised after successful evidence");
-      }
-    }
-  }
-  const taskRef = String(action.fields["taskRef"]);
-  const task = findItem(tenant, "tasks", taskRef.slice("tasks:".length));
-  const handoff = findItem(tenant, "handoffs", `HO${task.id.slice(1)}`);
+  assertDummyRevisionEvidenceState(action, revision);
+  const taskId = dummyReferencedId(action, "taskRef", "tasks");
+  const task = findItem(tenant, "tasks", taskId);
+  const handoff = findItem(tenant, "handoffs", dummyHandoffIdForTask(taskId));
   if (task.status !== "planned" && task.status !== "abandoned") {
     throw new DummyToolError(
       `Operator-action task ${task.id} may be revised only from planned or abandoned`,
@@ -958,37 +919,188 @@ const reviseOperatorAction: ToolHandler = (tenant, args) => {
       `Operator action ${action.id} may be revised only with a safe task and handoff state`,
     );
   }
-  const priorHistory = Array.isArray(action.fields["revisionHistory"])
-    ? action.fields["revisionHistory"]
-    : [];
+  const history =
+    action.fields["revisionHistory"] === undefined
+      ? []
+      : dummyStoredStringArrayField(action, "revisionHistory");
+  const expectedOutputIdentity = str(args, "expected_output_identity");
+  const expectedEvidence = args["expected_evidence"];
+  if (
+    !Array.isArray(expectedEvidence) ||
+    expectedEvidence.some((entry) => typeof entry !== "string")
+  ) {
+    throw new DummyToolError("expected_evidence must be a string[]");
+  }
+  const revisedAt = str(args, "revised_at");
+  const author = str(args, "author");
+  const session = optStr(args, "session");
   action.fields["revisionHistory"] = [
-    ...priorHistory,
+    ...history,
     JSON.stringify({
-      revision: Number(action.fields["revision"]),
-      action: structuredClone(action),
+      revision,
+      action: dummySnapshotWithoutHistory(action),
       task: structuredClone(task),
       handoff: structuredClone(handoff),
     }),
   ];
-  action.fields["revision"] = String(Number(action.fields["revision"]) + 1);
-  action.fields["expectedOutputIdentity"] = str(args, "expected_output_identity");
-  const expectedEvidence = args["expected_evidence"];
-  if (!Array.isArray(expectedEvidence)) throw new DummyToolError("expected_evidence required");
-  action.fields["expectedEvidence"] = expectedEvidence as string[];
   action.status = "pending";
+  action.fields["revision"] = String(revision + 1);
+  action.fields["expectedOutputIdentity"] = expectedOutputIdentity;
+  action.fields["expectedEvidence"] = [...expectedEvidence];
   for (const field of [
     "acknowledgedOutputIdentity",
     "acknowledgedAt",
     "acknowledgementEpoch",
     "evidence",
     "lastFailure",
+    "verifiedAt",
+    "verifiedRevision",
+    "completion",
   ]) {
     delete action.fields[field];
   }
+  applyDummyRevisionProvenance(action, author, session, revisedAt);
+
   task.status = "planned";
+  delete task.fields["completion"];
+  applyDummyRevisionProvenance(task, author, session, revisedAt);
+
   handoff.status = "user-action-required";
+  handoff.fields["summary"] =
+    `Operator action ${action.id} revision ${String(revision + 1)} awaits deployment identity ` +
+    expectedOutputIdentity;
+  handoff.fields["handoffReasons"] = [
+    `Deploy ${expectedOutputIdentity} and acknowledge ${action.id} revision ${String(revision + 1)}`,
+  ];
+  applyDummyRevisionProvenance(handoff, author, session, revisedAt);
   return { action, task, handoff };
 };
+
+function assertDummyRevisionEvidenceState(action: Item, revision: number): void {
+  const rawEvidence = action.fields["evidence"];
+  const rawLastFailure = action.fields["lastFailure"];
+  if (rawEvidence === undefined) {
+    if (rawLastFailure !== undefined) {
+      throw new DummyToolError("operator action has inconsistent failed-evidence audit state");
+    }
+    return;
+  }
+  if (!Array.isArray(rawEvidence) || rawEvidence.some((entry) => typeof entry !== "string")) {
+    throw new DummyToolError("stored operator-action evidence is malformed");
+  }
+  if (rawEvidence.length === 0) {
+    if (rawLastFailure !== undefined) {
+      throw new DummyToolError("operator action has inconsistent failed-evidence audit state");
+    }
+    return;
+  }
+  if (action.status !== "pending" || typeof rawLastFailure !== "string") {
+    throw new DummyToolError(
+      "operator action may not be revised after evidence without a terminal failure",
+    );
+  }
+  const evidence = rawEvidence.map(parseStoredOperatorActionEvidence);
+  const terminal = evidence[evidence.length - 1]!;
+  const lastFailure = parseStoredOperatorActionEvidence(rawLastFailure);
+  if (
+    rawLastFailure !== rawEvidence[rawEvidence.length - 1] ||
+    JSON.stringify(lastFailure) !== JSON.stringify(terminal)
+  ) {
+    throw new DummyToolError("operator action has inconsistent failed-evidence audit state");
+  }
+  const acknowledgementEpoch = dummyPositiveIntegerStringField(action, "acknowledgementEpoch");
+  if (terminal.revision !== revision || terminal.acknowledgementEpoch !== acknowledgementEpoch) {
+    throw new DummyToolError("operator action has stale failed-evidence audit state");
+  }
+  const expectedOutputIdentity = dummyStringField(action, "expectedOutputIdentity");
+  const acknowledgedOutputIdentity = dummyStringField(action, "acknowledgedOutputIdentity");
+  const expectedEvidence = dummyStoredStringArrayField(action, "expectedEvidence");
+  if (
+    expectedOutputIdentity.length === 0 ||
+    acknowledgedOutputIdentity.length === 0 ||
+    !expectedEvidence.includes(terminal.command)
+  ) {
+    throw new DummyToolError("operator action has inconsistent failed-evidence audit state");
+  }
+  const terminalFailed =
+    terminal.exitCode !== 0 ||
+    terminal.outputIdentity !== expectedOutputIdentity ||
+    terminal.outputIdentity !== acknowledgedOutputIdentity;
+  if (!terminalFailed) {
+    throw new DummyToolError("operator action may not be revised after successful evidence");
+  }
+}
+
+function dummyOperatorActionRevision(action: Item): number {
+  const value = action.fields["revision"];
+  if (value === undefined) return 1;
+  if (typeof value !== "string" || !/^[1-9]\d*$/.test(value)) {
+    throw new DummyToolError("stored operator-action revision is malformed");
+  }
+  const revision = Number(value);
+  if (!Number.isSafeInteger(revision)) {
+    throw new DummyToolError("stored operator-action revision exceeds the safe range");
+  }
+  return revision;
+}
+
+function dummyPositiveIntegerStringField(item: Item, field: string): string {
+  const value = item.fields[field];
+  if (typeof value !== "string" || !/^[1-9]\d*$/.test(value)) {
+    throw new DummyToolError(`stored ${field} is malformed`);
+  }
+  if (!Number.isSafeInteger(Number(value))) {
+    throw new DummyToolError(`stored ${field} exceeds the safe range`);
+  }
+  return value;
+}
+
+function dummyStoredStringArrayField(item: Item, field: string): string[] {
+  const value = item.fields[field];
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new DummyToolError(`stored ${field} is malformed`);
+  }
+  return value;
+}
+
+function dummyStringField(item: Item, field: string): string {
+  const value = item.fields[field];
+  return typeof value === "string" ? value : "";
+}
+
+function dummyReferencedId(action: Item, field: string, ledgerId: string): string {
+  const value = dummyStringField(action, field);
+  const prefix = `${ledgerId}:`;
+  if (!value.startsWith(prefix) || value.length === prefix.length) {
+    throw new DummyToolError(`Operator action ${action.id} has an invalid ${field}`);
+  }
+  return value.slice(prefix.length);
+}
+
+function dummyHandoffIdForTask(taskId: string): string {
+  const match = /^T(\d+)$/.exec(taskId);
+  if (match?.[1] === undefined) {
+    throw new DummyToolError(`Operator-action task ${taskId} cannot derive a handoff id`);
+  }
+  return `HO${match[1]}`;
+}
+
+function dummySnapshotWithoutHistory(action: Item): Item {
+  const snapshot = structuredClone(action);
+  delete snapshot.fields["revisionHistory"];
+  return snapshot;
+}
+
+function applyDummyRevisionProvenance(
+  item: Item,
+  author: string,
+  session: string | undefined,
+  revisedAt: string,
+): void {
+  item.updatedAt = revisedAt;
+  item.author = author;
+  if (session !== undefined) item.session = session;
+}
 
 const completeOperatorAction: ToolHandler = (tenant, args) => {
   const action = findItem(tenant, "operatorActions", str(args, "action_id"));
@@ -1033,12 +1145,7 @@ function rpcResult(id: unknown, result: unknown, headers: Record<string, string>
   });
 }
 
-function rpcError(
-  id: unknown,
-  code: number,
-  message: string,
-  status = 200,
-): Response {
+function rpcError(id: unknown, code: number, message: string, status = 200): Response {
   return new Response(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }), {
     status,
     headers: { "content-type": "application/json" },
@@ -1105,10 +1212,7 @@ export class InMemoryMcpService {
     projectKey: string,
     actionId: string,
     state:
-      | "task-status"
-      | "handoff-status"
-      | "action-milestone-mismatch"
-      | "handoff-milestone-mismatch",
+      "task-status" | "handoff-status" | "action-milestone-mismatch" | "handoff-milestone-mismatch",
   ): void {
     const tenant = this.tenants.get(projectKey);
     if (tenant === undefined) throw new Error(`tenant ${projectKey} is not initialized`);
@@ -1135,6 +1239,31 @@ export class InMemoryMcpService {
     const tenant = this.tenants.get(projectKey);
     if (tenant === undefined) throw new Error(`tenant ${projectKey} is not initialized`);
     corruptFailedEvidenceAudit(findItem(tenant, "operatorActions", actionId), state);
+  }
+
+  seedOperatorActionRevisionPostconditionState(projectKey: string, actionId: string): void {
+    const tenant = this.tenants.get(projectKey);
+    if (tenant === undefined) throw new Error(`tenant ${projectKey} is not initialized`);
+    const action = findItem(tenant, "operatorActions", actionId);
+    const taskId = dummyReferencedId(action, "taskRef", "tasks");
+    const task = findItem(tenant, "tasks", taskId);
+    const handoff = findItem(tenant, "handoffs", dummyHandoffIdForTask(taskId));
+    action.fields["verifiedAt"] = "2026-08-11T05:58:30.000Z";
+    action.fields["verifiedRevision"] = "1";
+    action.fields["completion"] = "stale action completion";
+    action.updatedAt = "2026-08-11T05:58:31.000Z";
+    action.author = "stale-action-author";
+    action.session = "stale-action-session";
+    task.status = "abandoned";
+    task.fields["completion"] = "stale task completion";
+    task.updatedAt = "2026-08-11T05:58:32.000Z";
+    task.author = "stale-task-author";
+    task.session = "stale-task-session";
+    handoff.fields["summary"] = "stale handoff summary";
+    handoff.fields["handoffReasons"] = ["stale handoff reason"];
+    handoff.updatedAt = "2026-08-11T05:58:33.000Z";
+    handoff.author = "stale-handoff-author";
+    handoff.session = "stale-handoff-session";
   }
 
   async stop(): Promise<void> {
@@ -1232,8 +1361,7 @@ export class InMemoryMcpService {
             title: displayName,
           },
           instructions:
-            `Project: ${displayName}\n\n` +
-            "Hand-written in-memory MCP contract service (T727).",
+            `Project: ${displayName}\n\n` + "Hand-written in-memory MCP contract service (T727).",
         },
         { "mcp-session-id": sessionId },
       );
@@ -1285,8 +1413,7 @@ export class InMemoryMcpService {
       return new Response("unknown project", { status: 404 });
     }
     const args =
-      typeof message.params?.["arguments"] === "object" &&
-      message.params["arguments"] !== null
+      typeof message.params?.["arguments"] === "object" && message.params["arguments"] !== null
         ? (message.params["arguments"] as Record<string, unknown>)
         : {};
     try {
@@ -1366,6 +1493,10 @@ export const inMemoryRemoteClientFactory: RemoteLedgerClientContractFactory = {
       },
       seedUnsafeOperatorActionLinkedState: (actionId, state) => {
         service.seedUnsafeOperatorActionLinkedState(projectKey, actionId, state);
+        return Promise.resolve();
+      },
+      seedOperatorActionRevisionPostconditionState: (actionId) => {
+        service.seedOperatorActionRevisionPostconditionState(projectKey, actionId);
         return Promise.resolve();
       },
       seedInvalidOperatorActionFailedEvidence: (actionId, state) => {
