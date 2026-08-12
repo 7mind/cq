@@ -69,7 +69,7 @@ Use snapshot and derive_predicates for CQ flow state. Dispatch and plan-lifecycl
  * measured target so the inventory gate tracks legitimate additions
  * (I20/G155, T1511: get_usage_stats).
  */
-const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
+export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
   {
     name: "get_usage_stats",
     description:

@@ -24,6 +24,7 @@ import {
   type ReadLogCapability,
   type WorktreeManageCapability,
 } from "../src/index.js";
+import { POST_TARGET_ADDITIONS } from "./toolSurfaceTarget.js";
 
 const FIXED_NOW = "2026-07-24T12:00:00.000Z";
 const PREFIXES = ["", "mirror"] as const;
@@ -1313,6 +1314,11 @@ describe("stdio/direct ledger tool differential contract", () => {
         expect(directDescription).toContain("current revision and acknowledgement epoch");
         expect(directDescription).toContain("Reject stale or other evidence");
         expect(directDescription).not.toContain("pre-evidence operator-action manifest");
+        expect(
+          POST_TARGET_ADDITIONS.filter(({ name }) => name === "revise_operator_action").map(
+            ({ description }) => description,
+          ),
+        ).toEqual([directDescription?.split("\n\n", 1)[0]]);
       } finally {
         await stdio.close();
         await directFixture.store.dispose();
