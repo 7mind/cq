@@ -53,6 +53,7 @@ interface HubProc {
 
 type InvalidFailedEvidenceState =
   | "malformed-prior-entry"
+  | "malformed-revision-history"
   | "malformed-terminal"
   | "last-failure-mismatch"
   | "stale-revision"
@@ -65,6 +66,10 @@ function corruptFailedEvidenceAudit(
   fields: Record<string, unknown>,
   state: InvalidFailedEvidenceState,
 ): void {
+  if (state === "malformed-revision-history") {
+    fields["revisionHistory"] = ["prior", 42];
+    return;
+  }
   const evidence = fields["evidence"];
   if (!Array.isArray(evidence) || evidence.length === 0) {
     throw new Error("operator action has no failed evidence to corrupt");

@@ -97,6 +97,7 @@ interface DummyTenant {
 
 type InvalidFailedEvidenceState =
   | "malformed-prior-entry"
+  | "malformed-revision-history"
   | "malformed-terminal"
   | "last-failure-mismatch"
   | "stale-revision"
@@ -143,6 +144,10 @@ function parseStoredOperatorActionEvidence(value: string): DummyStoredOperatorAc
 }
 
 function corruptFailedEvidenceAudit(action: Item, state: InvalidFailedEvidenceState): void {
+  if (state === "malformed-revision-history") {
+    (action.fields as Record<string, unknown>)["revisionHistory"] = ["prior", 42];
+    return;
+  }
   const evidence = action.fields["evidence"];
   if (!Array.isArray(evidence) || evidence.length === 0) {
     throw new Error(`operator action ${action.id} has no failed evidence to corrupt`);

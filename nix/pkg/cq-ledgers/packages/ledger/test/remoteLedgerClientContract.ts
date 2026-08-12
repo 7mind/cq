@@ -75,6 +75,7 @@ export interface RemoteContractService {
     actionId: string,
     state:
       | "malformed-prior-entry"
+      | "malformed-revision-history"
       | "malformed-terminal"
       | "last-failure-mismatch"
       | "stale-revision"
@@ -433,33 +434,128 @@ export function runRemoteLedgerClientContract(
                 author: "remote-parent",
               });
               expect(failed).toMatchObject({ state: "pending", reason: "probe-failed" });
+              await client.updateItem("operatorActions", materialized.action.id, {
+                fields: {
+                  verifiedAt: "2026-08-11T05:58:30.000Z",
+                  verifiedRevision: "1",
+                  completion: "stale action completion",
+                },
+                author: "stale-action-author",
+                session: "stale-action-session",
+              });
+              await client.updateItem("tasks", task.id, {
+                status: "abandoned",
+                fields: { completion: "stale task completion" },
+                author: "stale-task-author",
+                session: "stale-task-session",
+              });
+              const handoffId = `HO${task.id.slice(1)}`;
+              await client.updateItem("handoffs", handoffId, {
+                fields: {
+                  summary: "stale handoff summary",
+                  handoffReasons: ["stale handoff reason"],
+                },
+                author: "stale-handoff-author",
+                session: "stale-handoff-session",
+              });
+              const before = await Promise.all([
+                client.fetchItem("operatorActions", materialized.action.id, "full"),
+                client.fetchItem("tasks", task.id, "full"),
+                client.fetchItem("handoffs", handoffId, "full"),
+              ]);
+              const revisedAt = "2026-08-11T05:59:00.000Z";
+              const revisedAuthor = "remote-reviser";
+              const revisedSession = "remote-revision-session";
+              const replacementIdentity = "/nix/store/remote-cq-revised";
+              const replacementEvidence = ["cq --version", "cq doctor"];
               const revised = await client.reviseOperatorAction({
                 actionId: materialized.action.id,
                 expectedRevision: 1,
-                expectedOutputIdentity: "/nix/store/remote-cq",
-                expectedEvidence: ["cq --version"],
-                revisedAt: "2026-08-11T05:59:00.000Z",
-                author: "remote-parent",
+                expectedOutputIdentity: replacementIdentity,
+                expectedEvidence: replacementEvidence,
+                revisedAt,
+                author: revisedAuthor,
+                session: revisedSession,
               });
-              expect(revised.action.fields["revision"]).toBe("2");
-              expect(revised.action.fields["evidence"]).toBeUndefined();
-              expect(revised.action.fields["lastFailure"]).toBeUndefined();
-              const history = JSON.parse(
-                (revised.action.fields["revisionHistory"] as string[])[0]!,
-              ) as { action: { status: string; fields: Record<string, unknown> } };
-              expect(history.action).toMatchObject({
-                status: "pending",
-                fields: {
-                  revision: "1",
-                  acknowledgementEpoch: "1",
-                  evidence: [expect.any(String)],
-                  lastFailure: expect.any(String),
+              const historyEntry = (
+                revised.action.fields["revisionHistory"] as string[]
+              )[0]!;
+              const history = JSON.parse(historyEntry) as {
+                revision: number;
+                action: ItemDto;
+                task: ItemDto;
+                handoff: ItemDto;
+              };
+              expect(history).toEqual({
+                revision: 1,
+                action: before[0],
+                task: before[1],
+                handoff: before[2],
+              });
+              const expectedActionFields = { ...before[0].fields };
+              for (const field of [
+                "acknowledgedOutputIdentity",
+                "acknowledgedAt",
+                "acknowledgementEpoch",
+                "evidence",
+                "lastFailure",
+                "verifiedAt",
+                "verifiedRevision",
+                "completion",
+              ]) {
+                delete expectedActionFields[field];
+              }
+              expectedActionFields["revisionHistory"] = [historyEntry];
+              expectedActionFields["revision"] = "2";
+              expectedActionFields["expectedOutputIdentity"] = replacementIdentity;
+              expectedActionFields["expectedEvidence"] = replacementEvidence;
+              const expectedTaskFields = { ...before[1].fields };
+              delete expectedTaskFields["completion"];
+              const after = await Promise.all([
+                client.fetchItem("operatorActions", materialized.action.id, "full"),
+                client.fetchItem("tasks", task.id, "full"),
+                client.fetchItem("handoffs", handoffId, "full"),
+              ]);
+              expect([revised.action, revised.task, revised.handoff]).toEqual(after);
+              expect(after).toEqual([
+                {
+                  ...before[0],
+                  status: "pending",
+                  fields: expectedActionFields,
+                  updatedAt: revisedAt,
+                  author: revisedAuthor,
+                  session: revisedSession,
                 },
-              });
+                {
+                  ...before[1],
+                  status: "planned",
+                  fields: expectedTaskFields,
+                  updatedAt: revisedAt,
+                  author: revisedAuthor,
+                  session: revisedSession,
+                },
+                {
+                  ...before[2],
+                  status: "user-action-required",
+                  fields: {
+                    ...before[2].fields,
+                    summary:
+                      `Operator action ${materialized.action.id} revision 2 awaits ` +
+                      `deployment identity ${replacementIdentity}`,
+                    handoffReasons: [
+                      `Deploy ${replacementIdentity} and acknowledge ` +
+                        `${materialized.action.id} revision 2`,
+                    ],
+                  },
+                  updatedAt: revisedAt,
+                  author: revisedAuthor,
+                  session: revisedSession,
+                },
+              ]);
               const acknowledged = await client.acknowledgeOperatorAction({
                 actionId: materialized.action.id,
                 expectedRevision: 2,
-                outputIdentity: "/nix/store/remote-cq",
+                outputIdentity: replacementIdentity,
                 acknowledgedAt: "2026-08-11T06:00:00.000Z",
               });
               expect(acknowledged.state).toBe("acknowledged");
@@ -471,7 +567,7 @@ export function runRemoteLedgerClientContract(
                   stdout: "cq remote",
                   stderr: "",
                   exitCode: 0,
-                  outputIdentity: "/nix/store/remote-cq",
+                  outputIdentity: replacementIdentity,
                   observedAt: "2026-08-11T06:01:00.000Z",
                 },
                 author: "remote-parent",
@@ -607,6 +703,7 @@ export function runRemoteLedgerClientContract(
             try {
               const cases = [
                 "malformed-prior-entry",
+                "malformed-revision-history",
                 "malformed-terminal",
                 "last-failure-mismatch",
                 "stale-revision",
