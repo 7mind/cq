@@ -410,6 +410,12 @@ class PostgresPlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<Postg
     for (const store of this.lease.stores) await store.invalidate(GOALS_LEDGER);
   }
 
+  async corruptOperatorActionExpectedEvidence(actionId: string): Promise<void> {
+    await this.seedUpdate("operatorActions", actionId, (action) => {
+      (action.fields as Record<string, unknown>)["expectedEvidence"] = ["probe-v1", 42];
+    });
+  }
+
   async restart(): Promise<PlanLifecycleContractFixture> {
     const lease = new TenantLease(
       this.lease.dsn,

@@ -273,7 +273,10 @@ function revise(
       `Operator action ${action.id} may be revised only with a safe task and handoff state`,
     );
   }
-  const history = stringArray(action.fields["revisionHistory"]);
+  const history =
+    action.fields["revisionHistory"] === undefined
+      ? []
+      : storedStringArrayField(action, "revisionHistory");
   action.fields["revisionHistory"] = [
     ...history,
     JSON.stringify({
@@ -466,7 +469,7 @@ function assertRevisionEvidenceState(action: Item, revision: number): void {
   }
   const expectedOutputIdentity = stringField(action, "expectedOutputIdentity");
   const acknowledgedOutputIdentity = stringField(action, "acknowledgedOutputIdentity");
-  const expectedEvidence = stringArray(action.fields["expectedEvidence"]);
+  const expectedEvidence = storedStringArrayField(action, "expectedEvidence");
   if (
     expectedOutputIdentity.length === 0 ||
     acknowledgedOutputIdentity.length === 0 ||
@@ -525,6 +528,14 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string")
     : [];
+}
+
+function storedStringArrayField(item: Item, field: string): string[] {
+  const value = item.fields[field];
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new SchemaValidationError(`stored ${field} is malformed`);
+  }
+  return value;
 }
 
 function stringField(item: Item, field: string): string {

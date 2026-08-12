@@ -205,6 +205,21 @@ function postgresApplicationName(fixture: PlanLifecycleContractFixture): string 
   return applicationName;
 }
 
+async function corruptOperatorActionExpectedEvidence(
+  fixture: PlanLifecycleContractFixture,
+  actionId: string,
+): Promise<void> {
+  const corrupt = (
+    fixture as PlanLifecycleContractFixture & {
+      readonly corruptOperatorActionExpectedEvidence?: (actionId: string) => Promise<void>;
+    }
+  ).corruptOperatorActionExpectedEvidence;
+  if (corrupt === undefined) {
+    throw new Error("PostgreSQL malformed operator-action fixture hook is unavailable");
+  }
+  await corrupt.call(fixture, actionId);
+}
+
 async function postgresConnectionCount(
   observer: SQL,
   applicationName: string,
@@ -597,6 +612,64 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
                   lastFailure: expect.any(String),
                 },
               });
+          },
+          timeout,
+        );
+
+        it(
+          "rejects malformed mixed-type expected evidence without changing action/task/handoff state",
+          async () => {
+              const [first] = operatorActionPeers(operatorActionFixture);
+              const created = await seedOperatorAction(first, "pg-malformed-expected-evidence", [
+                "probe-v1",
+              ]);
+              await acknowledgeOperatorAction(first, {
+                actionId: created.action.id,
+                expectedRevision: 1,
+                outputIdentity: "/nix/store/pg-malformed-expected-evidence",
+                acknowledgedAt: "2026-08-11T12:09:31.000Z",
+              });
+              await recordOperatorActionEvidence(
+                first,
+                created.action.id,
+                1,
+                {
+                  command: "probe-v1",
+                  stdout: "",
+                  stderr: "failed",
+                  exitCode: 1,
+                  outputIdentity: "/nix/store/pg-malformed-expected-evidence",
+                  observedAt: "2026-08-11T12:09:32.000Z",
+                },
+                { author: "postgres-evidence" },
+              );
+              await corruptOperatorActionExpectedEvidence(
+                operatorActionFixture,
+                created.action.id,
+              );
+              const taskId = String(created.action.fields["taskRef"]).slice("tasks:".length);
+              const before = JSON.stringify({
+                action: first.fetchItem("operatorActions", created.action.id),
+                task: first.fetchItem("tasks", taskId),
+                handoff: first.fetchItem("handoffs", created.handoff.id),
+              });
+              await expect(
+                reviseOperatorAction(first, {
+                  actionId: created.action.id,
+                  expectedRevision: 1,
+                  expectedOutputIdentity: "/nix/store/pg-malformed-expected-evidence-v2",
+                  expectedEvidence: ["probe-v2"],
+                  revisedAt: "2026-08-11T12:09:33.000Z",
+                  author: "postgres-reviser",
+                }),
+              ).rejects.toThrow(/stored expectedEvidence is malformed/);
+              expect(
+                JSON.stringify({
+                  action: first.fetchItem("operatorActions", created.action.id),
+                  task: first.fetchItem("tasks", taskId),
+                  handoff: first.fetchItem("handoffs", created.handoff.id),
+                }),
+              ).toBe(before);
           },
           timeout,
         );
