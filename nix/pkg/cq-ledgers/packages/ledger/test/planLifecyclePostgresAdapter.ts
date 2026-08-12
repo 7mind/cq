@@ -82,6 +82,12 @@ function openTestPool(dsn: string): SQL {
   return withImmediatePostgresTestPoolDisposal(new SQL({ url: dsn, max: TEST_POOL_MAX }));
 }
 
+function postgresApplicationDsn(dsn: string, applicationName: string): string {
+  const url = new URL(dsn);
+  url.searchParams.set("application_name", applicationName);
+  return url.href;
+}
+
 export function postgresTestDsn(): string {
   const dsn = process.env[PG_URL_ENV];
   if (dsn === undefined || dsn.length === 0) {
@@ -276,6 +282,7 @@ class TenantLease {
   constructor(
     readonly dsn: string,
     readonly projectKey: string,
+    readonly applicationName: string,
   ) {}
 
   async release(admin: SQL): Promise<void> {
@@ -293,6 +300,7 @@ class PostgresPlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<Postg
     private readonly admin: SQL,
     private readonly lease: TenantLease,
     private readonly ownsAdmin: boolean,
+    readonly postgresApplicationName: string,
     stores: readonly [PostgresLifecycleStore, PostgresLifecycleStore],
     private readonly serializationHarness: PostgresSerializationHarness,
   ) {
@@ -323,6 +331,7 @@ class PostgresPlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<Postg
       admin,
       lease,
       ownsAdmin,
+      lease.applicationName,
       [first, second],
       serializationHarness,
     );
@@ -343,10 +352,15 @@ class PostgresPlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<Postg
   }
 
   static async create(): Promise<PostgresPlanLifecycleFixture> {
-    const dsn = postgresTestDsn();
+    const applicationName = `cq-plan-lifecycle-${randomUUID()}`;
+    const dsn = postgresApplicationDsn(postgresTestDsn(), applicationName);
     const admin = openTestPool(dsn);
     await ensureSchema(admin);
-    const lease = new TenantLease(dsn, `${T851_PROJECT_KEY_PREFIX}${randomUUID()}`);
+    const lease = new TenantLease(
+      dsn,
+      `${T851_PROJECT_KEY_PREFIX}${randomUUID()}`,
+      applicationName,
+    );
     return PostgresPlanLifecycleFixture.openOver(admin, lease, true);
   }
 
@@ -400,6 +414,7 @@ class PostgresPlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<Postg
     const lease = new TenantLease(
       this.lease.dsn,
       `${this.lease.projectKey}-r${String(this.spawned.length + 1)}`,
+      this.lease.applicationName,
     );
     await cloneTenant(this.admin, this.lease.projectKey, lease.projectKey);
     const restarted = await PostgresPlanLifecycleFixture.openOver(this.admin, lease, false);

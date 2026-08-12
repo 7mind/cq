@@ -193,11 +193,28 @@ function operatorActionPeers(
   return peers;
 }
 
-async function postgresConnectionCount(observer: SQL): Promise<number> {
+function postgresApplicationName(fixture: PlanLifecycleContractFixture): string {
+  const applicationName = (
+    fixture as PlanLifecycleContractFixture & {
+      readonly postgresApplicationName?: string;
+    }
+  ).postgresApplicationName;
+  if (applicationName === undefined) {
+    throw new Error("PostgreSQL fixture application name is unavailable");
+  }
+  return applicationName;
+}
+
+async function postgresConnectionCount(
+  observer: SQL,
+  applicationName: string,
+): Promise<number> {
   const rows = await observer<Array<{ count: number }>>`
     SELECT count(*)::int AS count
     FROM pg_stat_activity
-    WHERE datname = current_database() AND usename = current_user
+    WHERE datname = current_database()
+      AND usename = current_user
+      AND application_name = ${applicationName}
   `;
   const count = rows[0]?.count;
   if (count === undefined) throw new Error("PostgreSQL connection count is unavailable");
@@ -354,20 +371,19 @@ export function runPlanLifecycleStoreContract(factory: PlanLifecycleContractFact
         describe("PostgreSQL operator-action lifecycle", () => {
         let operatorActionFixture: PlanLifecycleContractFixture;
         let connectionObserver: SQL;
-        let connectionBaseline: number;
         beforeAll(async () => {
           const dsn = process.env["CQ_TEST_PG_URL"];
           if (dsn === undefined || dsn === "") throw new Error("CQ_TEST_PG_URL is unavailable");
           connectionObserver = openPgPool(dsn);
-          connectionBaseline = await postgresConnectionCount(connectionObserver);
           operatorActionFixture = await factory.build();
         });
         afterAll(async () => {
+          const applicationName = postgresApplicationName(operatorActionFixture);
           await operatorActionFixture.dispose();
           try {
             await waitForPostgresConnectionBaseline(
-              () => postgresConnectionCount(connectionObserver),
-              connectionBaseline,
+              () => postgresConnectionCount(connectionObserver, applicationName),
+              0,
             );
           } finally {
             await connectionObserver.close({ timeout: 0 });
