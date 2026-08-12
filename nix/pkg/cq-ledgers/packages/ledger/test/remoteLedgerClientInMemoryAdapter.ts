@@ -982,6 +982,7 @@ const reviseOperatorAction: ToolHandler = (tenant, args) => {
 };
 
 function assertDummyRevisionEvidenceState(action: Item, revision: number): void {
+  const expectedEvidence = dummyStoredStringArrayField(action, "expectedEvidence");
   const rawEvidence = action.fields["evidence"];
   const rawLastFailure = action.fields["lastFailure"];
   if (rawEvidence === undefined) {
@@ -1019,7 +1020,6 @@ function assertDummyRevisionEvidenceState(action: Item, revision: number): void 
   }
   const expectedOutputIdentity = dummyStringField(action, "expectedOutputIdentity");
   const acknowledgedOutputIdentity = dummyStringField(action, "acknowledgedOutputIdentity");
-  const expectedEvidence = dummyStoredStringArrayField(action, "expectedEvidence");
   if (
     expectedOutputIdentity.length === 0 ||
     acknowledgedOutputIdentity.length === 0 ||

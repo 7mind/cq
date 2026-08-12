@@ -420,6 +420,7 @@ function parseEvidence(value: string): StoredOperatorActionEvidence {
 }
 
 function assertRevisionEvidenceState(action: Item, revision: number): void {
+  const expectedEvidence = storedStringArrayField(action, "expectedEvidence");
   const rawEvidence = action.fields["evidence"];
   const rawLastFailure = action.fields["lastFailure"];
   if (rawEvidence === undefined) {
@@ -469,7 +470,6 @@ function assertRevisionEvidenceState(action: Item, revision: number): void {
   }
   const expectedOutputIdentity = stringField(action, "expectedOutputIdentity");
   const acknowledgedOutputIdentity = stringField(action, "acknowledgedOutputIdentity");
-  const expectedEvidence = storedStringArrayField(action, "expectedEvidence");
   if (
     expectedOutputIdentity.length === 0 ||
     acknowledgedOutputIdentity.length === 0 ||
