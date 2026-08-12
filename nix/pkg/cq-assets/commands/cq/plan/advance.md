@@ -135,6 +135,8 @@ Synthesize one manifest:
    the mandatory `goals:<goalId>` owner reference, and de-duplicate without
    moving any entry into `sourceRefs`.
 
+When exactly one usable candidate survives, report `UNCONTESTED (1 surviving candidate)` in the run output.
+
 Publish that complete manifest under the active claim. Empty candidate DAGs
 mean clarification remains necessary: pause with concrete questions when
 available, otherwise abandon and return `awaiting-answers`.
@@ -183,6 +185,8 @@ Reconcile surviving reviews in configured order:
 - union and source-tag `new_questions`, `criticism`, and structured `defects`;
 - deduplicate only equivalent findings;
 - `revise` requires at least one question or criticism.
+
+When exactly one usable review survives, report `UNCONTESTED (1 surviving review)` in the run output and write the same label to the aggregated review record.
 
 Write exactly one aggregated review linked to the goal and stamp it with the
 current draft identity.

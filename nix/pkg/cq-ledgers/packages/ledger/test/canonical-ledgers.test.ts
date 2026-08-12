@@ -1871,6 +1871,47 @@ describe("T854: claim-before-plan protocol shape — structural grep invariants"
   });
 });
 
+const UNCONTESTED_PLANNER_REPORTING =
+  "When exactly one usable candidate survives, report `UNCONTESTED (1 surviving candidate)` in the run output.";
+const UNCONTESTED_REVIEWER_REPORTING =
+  "When exactly one usable review survives, report `UNCONTESTED (1 surviving review)` in the run output and write the same label to the aggregated review record.";
+
+function missingUncontestedPanelReporting(asset: string): string[] {
+  const missing: string[] = [];
+  if (!asset.includes(UNCONTESTED_PLANNER_REPORTING)) {
+    missing.push("configured planner panel is missing UNCONTESTED one-survivor reporting");
+  }
+  if (!asset.includes(UNCONTESTED_REVIEWER_REPORTING)) {
+    missing.push("configured reviewer panel is missing UNCONTESTED one-survivor reporting");
+  }
+  return missing;
+}
+
+describe("T1262: one-survivor panel synthesis is explicitly uncontested", () => {
+  const advanceMd = path.resolve(
+    import.meta.dir,
+    "../../../../cq-assets/commands/cq/plan/advance.md",
+  );
+
+  it("requires UNCONTESTED reporting in the real planner asset", async () => {
+    const asset = await readFile(advanceMd, "utf8");
+    expect(missingUncontestedPanelReporting(asset)).toEqual([]);
+  });
+
+  it("detects both missing requirements after deleting them from an in-memory asset copy", async () => {
+    const asset = await readFile(advanceMd, "utf8");
+    const withoutRequirements = asset
+      .replace(UNCONTESTED_PLANNER_REPORTING, "")
+      .replace(UNCONTESTED_REVIEWER_REPORTING, "");
+
+    expect(withoutRequirements).not.toBe(asset);
+    expect(missingUncontestedPanelReporting(withoutRequirements)).toEqual([
+      "configured planner panel is missing UNCONTESTED one-survivor reporting",
+      "configured reviewer panel is missing UNCONTESTED one-survivor reporting",
+    ]);
+  });
+});
+
 // Regression T1319: managed follow-up intake must acquire authority before any
 // user-visible mutation, then transfer that authority into planner dispatch.
 describe("T1319: managed follow-up claim ordering and planner resume", () => {
