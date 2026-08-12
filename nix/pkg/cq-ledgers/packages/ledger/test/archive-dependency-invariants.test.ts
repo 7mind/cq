@@ -203,6 +203,7 @@ for (const adapter of ADAPTERS) {
     // -- A: active nonterminal incoming dependsOn must prevent archiving a
     //       non-satisfying target. TODAY: the archive succeeds and the
     //       dependent flips blocked → ready (false-unblock).
+    // expected-failure: tasks:T826
     test.failing("A: archive refuses while an active nonterminal incoming dependsOn targets a non-satisfying item", () =>
       withStore(async (store) => {
         const m = await store.createMilestone({ title: "upstream fixes" });
@@ -222,6 +223,7 @@ for (const adapter of ADAPTERS) {
     //       dependsOn (create/update × bare/canonical) must reject. TODAY:
     //       refExists counts archived items as existing, so the write is
     //       accepted and born satisfied (false-unblock).
+    // expected-failure: tasks:T826
     test.failing("B: newly-added dependsOn on an archived non-satisfying target rejects (create/update, bare/canonical)", () =>
       withStore(async (store) => {
         const m = await store.createMilestone({ title: "upstream fixes" });
@@ -250,6 +252,7 @@ for (const adapter of ADAPTERS) {
     //       must reject until the gate is explicitly removed. TODAY: reopen
     //       performs no dependency check; the task returns to wip already
     //       satisfied (false-unblock).
+    // expected-failure: tasks:T826
     test.failing("C: reopening a dependent with a retained gate on an archived non-satisfying target rejects until the gate is removed", () =>
       withStore(async (store) => {
         const m = await store.createMilestone({ title: "upstream fixes" });
@@ -272,6 +275,7 @@ for (const adapter of ADAPTERS) {
 
     // -- Race, deterministic ordering 1: reopen lands FIRST, so the archive
     //       must refuse (scenario A kicks in). TODAY: both succeed.
+    // expected-failure: tasks:T826
     test.failing("race ordering (reopen → archive): the archive refuses once the dependent is active again", () =>
       withStore(async (store) => {
         const m = await store.createMilestone({ title: "upstream fixes" });
@@ -293,6 +297,7 @@ for (const adapter of ADAPTERS) {
     // -- Race, deterministic ordering 2: archive lands FIRST (legal — the
     //       dependent is terminal), so the reopen must refuse (scenario C).
     //       TODAY: both succeed.
+    // expected-failure: tasks:T826
     test.failing("race ordering (archive → reopen): the reopen refuses while the gate is retained", () =>
       withStore(async (store) => {
         const m = await store.createMilestone({ title: "upstream fixes" });
@@ -309,6 +314,7 @@ for (const adapter of ADAPTERS) {
     // -- Race, barrier-concurrent: both operations are released together;
     //       EXACTLY ONE must refuse so the invariant holds in whichever
     //       serialization the locks choose. TODAY: both succeed.
+    // expected-failure: tasks:T826
     test.failing("race (barrier-concurrent): exactly one of reopen/archive refuses — never an active dependent on an archived non-satisfying target", () =>
       withStore(async (store) => {
         const m = await store.createMilestone({ title: "upstream fixes" });

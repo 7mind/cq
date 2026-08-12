@@ -96,6 +96,13 @@ Non-sandboxed reviewers always take this child re-run path.
 Check acceptance, correctness, boundary handling, type safety, surgical scope,
 and defect reproduction.
 
+For a task that declares an expected failure, apply §6a of the implementation
+orchestrator. Forms (a) and (b) require the annotation, live marker, and
+inventory entry; form (c) needs no marker. A completed fix replaces the marker
+with a same-titled plain test and removes the annotation and inventory entry.
+Reject co-deletion of that triple when no same-titled plain test remains, and
+never approve a red full gate.
+
 If the phase expires before a complete acceptance verdict can be established,
 store a disapproval before `responseStoreNow` whose sole criticism is exactly
 `Implementation-review phase budget exhausted before a complete acceptance verdict could be established.`

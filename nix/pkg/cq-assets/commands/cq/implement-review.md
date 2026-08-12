@@ -40,6 +40,13 @@ Review one implementation against the actual diff and task acceptance. Verify:
 - correctness, boundary handling, type safety, and surgical scope;
 - defect-fix reproduction and regression coverage.
 
+For a task that declares an expected failure, apply §6a of the implementation
+orchestrator. Forms (a) and (b) require the annotation, live marker, and
+inventory entry; form (c) needs no marker. A completed fix replaces the marker
+with a same-titled plain test and removes the annotation and inventory entry.
+Reject co-deletion of that triple when no same-titled plain test remains, and
+never approve a red full gate.
+
 Classify each finding once:
 
 - `criticism`: objective defects the worker can fix;

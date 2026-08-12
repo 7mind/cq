@@ -23,6 +23,13 @@ repository. Judge:
 - grounding in real code and constraints;
 - completeness against the goal.
 
+When a task declares an expected failure, require §6a of the implementation
+orchestrator. Forms (a) and (b) use the annotation, live marker, and inventory
+entry; form (c) needs no marker. The planned fix must replace a marker with a
+same-titled plain test and remove the annotation and inventory entry. Reject a
+plan that permits triple co-deletion without that plain test or requires a red
+full gate.
+
 Classify each finding once:
 
 - `new_questions`: user-only requirements or preferences;

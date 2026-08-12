@@ -128,6 +128,12 @@ prior-round commits when `round > 0`.
    record nonzero test counts. Check wrapped prose with a multiline-aware
    operation.
 
+   **Expected-failure tasks.** A task that declares an expected failure follows
+   §6a of the implementation orchestrator. Forms (a) and (b) carry the required
+   annotation, live marker, and inventory entry; form (c) needs no marker. A fix
+   replaces the marker with a same-titled plain test and removes its annotation
+   and inventory entry. Never use a red full gate as expected-failure evidence.
+
 5. **Run the full gate in the foreground.** From the worktree root, run exactly
    `cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check`.
    A yielded command-session handle remains the sole full-gate attempt. Continue

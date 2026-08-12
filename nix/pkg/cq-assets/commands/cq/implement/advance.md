@@ -332,6 +332,20 @@ Before rebase and immediately before merge, the orchestrator independently:
 Fabricated, missing, non-tip, stale-base, or non-ancestor result commits never
 merge. Any failure is a contract breach and forbids merge-back.
 
+## 6a. Expected-failure tasks
+
+§6a governs only a task that declares an expected failure.
+
+Form (a), inversion marker: use the runner's test.failing or it.failing for an in-suite assertion.
+
+Form (b), subprocess exit-code assertion: spawn the failing tool as a child and assert its non-zero exit code and output.
+
+Form (c), green-on-arrival discriminating control: exercise the same detector with paired inputs or a pure mutation while the task's gate stays green.
+
+Forms (a) and (b) express the expected failure inside a green full gate. Form
+(c) carries no marker. A red full gate remains unmergeable. Capturing failure
+against a parent commit may supplement, but never replace, these controls.
+
 ## 7. Merge in DAG order
 
 Process successful tasks sequentially after their dependencies have landed.

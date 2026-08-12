@@ -1002,6 +1002,18 @@ export {
   fsAttestationRowFileContent,
   fsAttestationRowPath,
 } from "./dispatchAttestationFs.js";
+export type {
+  ExpectedFailureInventoryEntry,
+  ExpectedFailureSource,
+  ExpectedFailureMarker,
+} from "./expectedFailurePolicy.js";
+export {
+  ExpectedFailurePolicyError,
+  enumerateExpectedFailureSourceFiles,
+  readExpectedFailureSources,
+  scanExpectedFailures,
+} from "./expectedFailurePolicy.js";
+export { EXPECTED_FAILURE_INVENTORY } from "./expectedFailureInventory.js";
 export type { PostgresAttestationBackendOptions } from "./dispatchAttestationPostgres.js";
 export {
   PostgresAttestationBackend,

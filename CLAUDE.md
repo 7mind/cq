@@ -38,6 +38,9 @@ under `nix/` (see `nix/hm/dev-llm.nix`, `nix/pkg/{yolo,codex,claude-code,…}`).
 - Tests: `ink-testing-library` for the TUI, happy-dom for the web; controlled
   *text* inputs don't fire onChange under happy-dom, so use uncontrolled
   inputs (refs) — selects are fine controlled.
+- Tasks that declare an expected failure follow §6a of
+  `nix/pkg/cq-assets/commands/cq/implement/advance.md`; the production scanner
+  and committed inventory enforce its marker convention.
 
 ## Track work in the ledger (dogfooding)
 
