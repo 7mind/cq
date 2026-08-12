@@ -23,7 +23,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
-import { ensureSchema, openPgPool } from "../src/index.js";
+import { ensureSchema, MILESTONES_AMBIENT_ID, openPgPool } from "../src/index.js";
 import type {
   RemoteContractService,
   RemoteLedgerClientContractFactory,
@@ -181,6 +181,31 @@ export const postgresRemoteClientFactory: RemoteLedgerClientContractFactory = {
           VALUES (${projectKey}, ${relPath}, ${content})
           ON CONFLICT (project_key, path) DO UPDATE SET content = EXCLUDED.content
         `;
+      },
+      seedUnsafeOperatorActionLinkedState: async (actionId, state) => {
+        const taskId = `T${actionId.slice(2)}`;
+        const handoffId = `HO${actionId.slice(2)}`;
+        const updated =
+          state === "task-status"
+            ? await hub.pool<Array<{ id: string }>>`
+                UPDATE items SET status = 'wip'
+                WHERE project_key = ${projectKey} AND ledger = 'tasks' AND id = ${taskId}
+                RETURNING id
+              `
+            : state === "handoff-status"
+              ? await hub.pool<Array<{ id: string }>>`
+                  UPDATE items SET status = 'drained'
+                  WHERE project_key = ${projectKey} AND ledger = 'handoffs' AND id = ${handoffId}
+                  RETURNING id
+                `
+              : await hub.pool<Array<{ id: string }>>`
+                  UPDATE items SET milestone_id = ${MILESTONES_AMBIENT_ID}
+                  WHERE project_key = ${projectKey} AND ledger = 'operatorActions' AND id = ${actionId}
+                  RETURNING id
+                `;
+        if (updated.length !== 1) {
+          throw new Error(`expected one ${state} corruption target for ${actionId}`);
+        }
       },
       // Tenant rows are throwaway (unique projectKey per case); the shared hub
       // subprocess + pool are released by sharedTeardown.

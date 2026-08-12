@@ -33,7 +33,7 @@
  *
  * Deliberate rough-equivalence edges (documented per the dual-tests skill —
  * exact store semantics are pinned by the store/predicate suites, not here):
- *  - no transition-guard enforcement (the contract only drives legal moves);
+ *  - only operator-action revision's cross-record transition guards are mirrored;
  *  - a naive substring fts_search scorer (the contract asserts the top hit,
  *    not exact scores);
  *  - derive_predicates answers the all-false verdict set, which is the TRUE
@@ -956,6 +956,26 @@ export class InMemoryMcpService {
     tenant.logs.set(relPath, content);
   }
 
+  seedUnsafeOperatorActionLinkedState(
+    projectKey: string,
+    actionId: string,
+    state: "task-status" | "handoff-status" | "milestone-mismatch",
+  ): void {
+    const tenant = this.tenants.get(projectKey);
+    if (tenant === undefined) throw new Error(`tenant ${projectKey} is not initialized`);
+    const action = findItem(tenant, "operatorActions", actionId);
+    const taskRef = String(action.fields["taskRef"]);
+    const task = findItem(tenant, "tasks", taskRef.slice("tasks:".length));
+    const handoff = findItem(tenant, "handoffs", `HO${task.id.slice(1)}`);
+    if (state === "task-status") {
+      task.status = "wip";
+    } else if (state === "handoff-status") {
+      handoff.status = "drained";
+    } else {
+      action.milestoneId = MILESTONES_AMBIENT_ID;
+    }
+  }
+
   async stop(): Promise<void> {
     await this.server.stop(true);
   }
@@ -1181,6 +1201,10 @@ export const inMemoryRemoteClientFactory: RemoteLedgerClientContractFactory = {
       displayName: `T727 InMemory ${projectKey}`,
       seedLog: (relPath, content) => {
         service.seedLog(projectKey, relPath, content);
+        return Promise.resolve();
+      },
+      seedUnsafeOperatorActionLinkedState: (actionId, state) => {
+        service.seedUnsafeOperatorActionLinkedState(projectKey, actionId, state);
         return Promise.resolve();
       },
       respondBogusProtocolVersionOnce: () => service.respondBogusProtocolVersionOnce(),
