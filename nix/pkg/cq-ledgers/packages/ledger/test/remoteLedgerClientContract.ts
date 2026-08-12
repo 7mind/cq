@@ -73,6 +73,7 @@ export interface RemoteContractService {
   seedInvalidOperatorActionFailedEvidence(
     actionId: string,
     state:
+      | "malformed-expected-evidence"
       | "malformed-prior-entry"
       | "malformed-revision-history"
       | "malformed-terminal"
@@ -568,6 +569,71 @@ export function runRemoteLedgerClientContract(factory: RemoteLedgerClientContrac
                 author: "remote-parent",
               });
               expect(completed.status).toBe("done");
+            } finally {
+              await client.close();
+            }
+          } finally {
+            await service.dispose();
+          }
+        },
+        CONTRACT_TIMEOUT_MS,
+      );
+
+      it(
+        "rejects malformed expected evidence before evidence exists without partial mutation",
+        async () => {
+          const service = await factory.build();
+          try {
+            const client = await connect(service);
+            try {
+              const milestone = await client.createMilestone({
+                title: "Invalid pre-evidence operator action",
+              });
+              const goal = await client.createItem("goals", milestone.id, {
+                status: "planned",
+                fields: { title: "Deploy", description: "Deploy" },
+              });
+              const task = await client.createItem("tasks", milestone.id, {
+                status: "planned",
+                fields: {
+                  headline: "Reject malformed expected evidence",
+                  description:
+                    "CQ-OPERATOR-ACTION v1 remote-deployment. User deploys; parent measures.",
+                  ledgerRefs: [`goals:${goal.id}`],
+                },
+              });
+              const materialized = await client.materializeOperatorAction({
+                taskId: task.id,
+                expectedOutputIdentity: "/nix/store/remote-cq",
+                expectedEvidence: ["probe"],
+                author: "remote-parent",
+              });
+              await service.seedInvalidOperatorActionFailedEvidence(
+                materialized.action.id,
+                "malformed-expected-evidence",
+              );
+              const handoffId = `HO${task.id.slice(1)}`;
+              const before = await Promise.all([
+                client.fetchItem("operatorActions", materialized.action.id, "full"),
+                client.fetchItem("tasks", task.id, "full"),
+                client.fetchItem("handoffs", handoffId, "full"),
+              ]);
+              await expect(
+                client.reviseOperatorAction({
+                  actionId: materialized.action.id,
+                  expectedRevision: 1,
+                  expectedOutputIdentity: "/nix/store/remote-cq-revised",
+                  expectedEvidence: ["probe"],
+                  revisedAt: "2026-08-11T06:05:00.000Z",
+                  author: "remote-parent",
+                }),
+              ).rejects.toThrow(/stored expectedEvidence is malformed/);
+              const after = await Promise.all([
+                client.fetchItem("operatorActions", materialized.action.id, "full"),
+                client.fetchItem("tasks", task.id, "full"),
+                client.fetchItem("handoffs", handoffId, "full"),
+              ]);
+              expect(after).toEqual(before);
             } finally {
               await client.close();
             }

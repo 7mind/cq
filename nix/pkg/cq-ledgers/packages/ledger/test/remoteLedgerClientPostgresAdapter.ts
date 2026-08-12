@@ -52,6 +52,7 @@ interface HubProc {
 }
 
 type InvalidFailedEvidenceState =
+  | "malformed-expected-evidence"
   | "malformed-prior-entry"
   | "malformed-revision-history"
   | "malformed-terminal"
@@ -66,6 +67,10 @@ function corruptFailedEvidenceAudit(
   fields: Record<string, unknown>,
   state: InvalidFailedEvidenceState,
 ): void {
+  if (state === "malformed-expected-evidence") {
+    fields["expectedEvidence"] = ["probe", 42];
+    return;
+  }
   if (state === "malformed-revision-history") {
     fields["revisionHistory"] = ["prior", 42];
     return;
