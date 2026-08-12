@@ -26,6 +26,13 @@
 > fetch on any child-reported identifier. Never put the input body or either
 > capability in argv. The worker uses only `git_commit` for incremental commits;
 > the parent retains every returned receipt. Before accepting a passing result,
+> require `store_result` to have run the canonical full gate at the trusted result-storage boundary
+> and attached strict, versioned
+> `supervisedGateEvidence`; the sandboxed worker neither runs that gate nor
+> supplies the evidence. Require exact task/result commit/branch/worktree
+> binding, `cleanTree === true`, `gateExitCode === 0`, `failCount === 0`, and
+> `passCount > 0`. A red, zero-test, timed-out, cancelled, dirty, moved-tip, or
+> replay attempt must remain unconsumable. Before accepting a passing result,
 > require a non-empty receipt chain in commit order; verify each old/new head
 > edge and receipt tree against Git, require the final new head to equal
 > `resultCommit`, and require the union of receipt paths to equal
@@ -39,16 +46,19 @@
 > only — never raw git worktree lifecycle commands.
 >
 > **Implement-reviewer dispatch.** For each process-boundary
-> `implement-reviewer`, compose `{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism?, parentGateAttestation? }`.
+> `implement-reviewer`, compose `{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism?, supervisedGateEvidence?, parentGateAttestation? }`.
 > Omit `responseStoreNow`, `gateCompleteBy`, and `synthesisStoreReserveMs` from
 > caller input because `prepare_dispatch` binds those absolute values. When the
-> reviewer runs under the `read-only` sandbox (gate primitives denied), attach
+> reviewer runs under the `read-only` sandbox (gate primitives denied), pass
+> through the trusted `supervisedGateEvidence` from the consumed worker result
+> and require the reviewer to validate its exact bindings and green counts.
+> For a legacy worker result without trusted evidence, attach
 > `parentGateAttestation` from a just-run or freshly run full gate on the worker
 > tip before launch: `{ resultCommit, gateExitCode, passCount, failCount,
 > gateDurationMs?, command, capturedAt }` with `resultCommit` equal to the
 > worker tip, `gateExitCode === 0`, `failCount === 0`, and `passCount > 0`.
 > Never use `danger-full-access` to let the child re-run the gate. Non-sandboxed
-> reviewers omit `parentGateAttestation` and re-run the gate themselves. Then
+> reviewers omit both evidence fields and re-run the gate themselves. Then
 > dispatch through `CQ_SUBAGENT`, require its capability-scoped `store_result`
 > plus handle-only final response, confirm native completion, and fetch once
 > with the retained prepared handle. Only a consumed fetched body is a usable

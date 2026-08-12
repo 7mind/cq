@@ -12,10 +12,10 @@ description: Implement exactly one task in an isolated worktree, prove its guard
 inputs:
   - "task specification, optional advisory worktreePath, branch, verified full-SHA base, required round, authoritative starting commit, optional priorResultCommit, optional prior criticism"
 outputs:
-  - "one verified task commit, parent-verifiable git receipts, actualWorktreePath, required baseVerification evidence, stored structured result, and handle-only final reply"
+  - "one verified task commit, parent-verifiable git receipts, actualWorktreePath, required baseVerification evidence, green legacy or trusted supervised gate evidence, stored structured result, and handle-only final reply"
 ioSchema:
   - "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)"
-  - "pass requires a green full gate, verified commit/clean tree/ancestry, required actualWorktreePath, verified baseVerification (full SHAs only), and required mutation evidence"
+  - "pass requires a green full gate (in-child on legacy dispatches; trusted result-storage supervision on brokered Codex dispatches), verified commit/clean tree/ancestry, required actualWorktreePath, verified baseVerification (full SHAs only), and required mutation evidence"
   - "fail may carry verified or unresolvable baseVerification with a closed reason and null SHAs where unobserved"
 ```
 
@@ -134,19 +134,31 @@ prior-round commits when `round > 0`.
    replaces the marker with a same-titled plain test and removes its annotation
    and inventory entry. Never use a red full gate as expected-failure evidence.
 
-5. **Run the full gate in the foreground.** From the worktree root, run exactly
+5. **Obtain a green full gate through the dispatch's trusted path.** When the
+   private launch supplies `gitChangeCapability`, do **not** invoke `cq gate run`
+   inside the sandbox. Finish the commit and verification in Step 6, then
+   call `store_result` without `gateDurationMs` or `supervisedGateEvidence`.
+   The trusted result-storage boundary holds the managed worktree effect lock,
+   verifies the exact clean branch tip and receipt chain, runs the canonical
+   full gate, rechecks the tip and tree, and attaches
+   `supervisedGateEvidence` before the result becomes consumable. A caller must
+   never mint or copy that evidence. A red, zero-test, timed-out, cancelled,
+   dirty, moved-tip, or replayed attempt fails storage and cannot yield
+   `result-stored`.
+
+   On a dispatch without `gitChangeCapability`, run the full gate in the
+   foreground from the worktree root exactly as
    `cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check`.
    A yielded command-session handle remains the sole full-gate attempt. Continue
    to poll that exact session or explicitly terminate it; after termination,
    continue polling and require terminal settlement before retrying the gate,
    calling `store_result`, or returning. Never launch a replacement full-gate
-   attempt while the prior session remains live.
-   Capture start/end time and assign its exit status
-   immediately after the command, independent of any pipe or wrapper. Preserve
-   `REAL_CHECK_EXIT=<n>`, the verbatim result tail, and `gateDurationMs`.
-   Iterate until zero. An unrelated-failure claim requires an A/B reproduction
-   of the same selector and signature on this tree and the recorded base; if
-   confinement prevents that proof, return `fail`.
+   attempt while the prior session remains live. Capture start/end time and
+   assign its exit status immediately after the command, independent of any
+   pipe or wrapper. Preserve `REAL_CHECK_EXIT=<n>`, the verbatim result tail,
+   and `gateDurationMs`. Iterate until zero. An unrelated-failure claim requires
+   an A/B reproduction of the same selector and signature on this tree and the
+   recorded base; if confinement prevents that proof, return `fail`.
 
 6. **Commit and verify.** Commit all task changes through the applicable path, then require:
    - `git rev-parse --verify HEAD` succeeds;
@@ -173,8 +185,8 @@ prior-round commits when `round > 0`.
   "actualWorktreePath": "<absolute git rev-parse --show-toplevel>",
   "filesTouched": ["<path>"],
   "gitReceipts": [{ "kind": "cq-git-change-receipt", "version": 1, "attestationId": "<id>", "generation": 1, "taskId": "<task id>", "operationId": "<stable id>", "requestDigest": "<sha256>", "oldHead": "<commit>", "newHead": "<commit>", "tree": "<tree>", "objectOids": ["<oid>"], "paths": ["<path>"], "committedAt": "<utc timestamp>" }],
-  "checkSummary": "<REAL_CHECK_EXIT plus verbatim result tail or failure>",
-  "gateDurationMs": 0,
+  "checkSummary": "<legacy REAL_CHECK_EXIT plus tail, or trusted-gate delegation summary>",
+  "gateDurationMs": "<legacy dispatches only>",
   "baseVerification": {
     "status": "verified",
     "relation": "equal | descendant",
@@ -185,6 +197,10 @@ prior-round commits when `round > 0`.
   "blockedReason": "<fail only>"
 }
 ```
+
+The stored brokered Codex result contains runner-owned
+`supervisedGateEvidence` instead of caller-supplied `gateDurationMs`; the child
+omits both fields when calling `store_result`.
 
 On fail with unresolvable base evidence use:
 `baseVerification: { status: "unresolvable", reason: "<closed reason>",

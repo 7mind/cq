@@ -14,13 +14,19 @@ import {
   implementReviewerSidecar,
   validateAgainstSchema,
   validateParentGateAttestation,
+  validateSupervisedWorkerGateEvidenceForReview,
   type ParentGateAttestation,
+  type ImplementWorkerSupervisedGateEvidence,
 } from "@cq/config";
 
 const REPOSITORY_ROOT = resolve(import.meta.dir, "../../../../../..");
 const IMPLEMENT_REVIEWER_AGENT = resolve(
   REPOSITORY_ROOT,
   "nix/pkg/cq-assets/agents/implement-reviewer.md",
+);
+const IMPLEMENT_WORKER_AGENT = resolve(
+  REPOSITORY_ROOT,
+  "nix/pkg/cq-assets/agents/implement-worker.md",
 );
 const CODEX_IMPLEMENT_DISPATCH = resolve(
   REPOSITORY_ROOT,
@@ -59,6 +65,41 @@ function baseReviewerInput(
     responseStoreNow: "2026-08-04T10:02:00.000Z",
     gateCompleteBy: "2026-08-04T10:01:00.000Z",
     synthesisStoreReserveMs: 60_000,
+    ...overrides,
+  };
+}
+
+function supervisedEvidence(
+  overrides: Partial<ImplementWorkerSupervisedGateEvidence> = {},
+): ImplementWorkerSupervisedGateEvidence {
+  return {
+    kind: "cq-supervised-gate-evidence",
+    version: 1,
+    attestationId: `att_${"A".repeat(32)}`,
+    generation: 1,
+    roleId: "implement-worker",
+    roleVersion: 7,
+    surface: "codex",
+    promptDigest: "a".repeat(64),
+    catalogHash: "b".repeat(64),
+    inputDigest: "c".repeat(64),
+    taskId: "T2007",
+    worktreePath: "/tmp/wt-T2007",
+    branch: "implement/T2007",
+    baseCommit: "b".repeat(40),
+    startingCommit: "b".repeat(40),
+    resultCommit: RESULT_COMMIT,
+    clean: true,
+    command:
+      'cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check',
+    gateExitCode: 0,
+    passCount: 12,
+    failCount: 0,
+    gateDurationMs: 45_000,
+    capturedAt: "2026-08-04T10:00:30.000Z",
+    filesTouchedDigest: "d".repeat(64),
+    gitReceiptsDigest: "e".repeat(64),
+    mutationTableDigest: "f".repeat(64),
     ...overrides,
   };
 }
@@ -176,11 +217,59 @@ describe("T2007 validateParentGateAttestation", () => {
   });
 });
 
+describe("T2081 supervised worker evidence reviewer handoff [BA]", () => {
+  const expected = {
+    taskId: "T2007",
+    resultCommit: RESULT_COMMIT,
+    branch: "implement/T2007",
+    worktreePath: "/tmp/wt-T2007",
+  };
+
+  test("accepts the stored exact-tip evidence on reviewer input", () => {
+    expect(
+      validateAgainstSchema(
+        implementReviewerSidecar.inputSchema,
+        baseReviewerInput({ supervisedGateEvidence: supervisedEvidence() }),
+      ).ok,
+    ).toBe(true);
+    expect(validateSupervisedWorkerGateEvidenceForReview(supervisedEvidence(), expected)).toBe(
+      true,
+    );
+  });
+
+  test("rejects task, commit, branch, worktree, and gate substitutions", () => {
+    for (const substitution of [
+      { taskId: "T2008" },
+      { resultCommit: "d".repeat(40) },
+      { branch: "implement/T2008" },
+      { worktreePath: "/tmp/foreign" },
+      { passCount: 0 },
+      { failCount: 1 },
+    ]) {
+      expect(
+        validateSupervisedWorkerGateEvidenceForReview(
+          supervisedEvidence(substitution as Partial<ImplementWorkerSupervisedGateEvidence>),
+          expected,
+        ),
+      ).toBe(false);
+    }
+  });
+});
+
 describe("T2007 sandbox-denied prompt and parent dispatch guards", () => {
+  test("Codex worker delegates the canonical gate to trusted result storage [BG]", () => {
+    const body = readFileSync(IMPLEMENT_WORKER_AGENT, "utf8");
+    expect(body).toContain("gitChangeCapability");
+    expect(body).toMatch(/do \*\*not\*\* invoke `cq gate\s+run`\s+inside the sandbox/im);
+    expect(body).toContain("store_result");
+    expect(body).toContain("supervisedGateEvidence");
+  });
+
   test("implement-reviewer pins sandbox-denied-primitives and keeps child gate prose [BG]", () => {
     const body = readFileSync(IMPLEMENT_REVIEWER_AGENT, "utf8");
     expect(body).toContain(SANDBOX_DENIED_PRIMITIVES_GATE_REASON);
     expect(body).toContain("parentGateAttestation");
+    expect(body).toContain("supervisedGateEvidence");
     expect(body).toContain("Do **not** invoke `cq gate run` inside the sandbox");
     expect(body).toContain(
       "`cq gate run --worktree <worktree> --command-cwd <worktree>/nix/pkg/cq-ledgers --deadline <gateCompleteBy> -- bun run check`",
@@ -194,6 +283,8 @@ describe("T2007 sandbox-denied prompt and parent dispatch guards", () => {
   test("Codex parent dispatch attaches parentGateAttestation on the sandboxed path [BG]", () => {
     const body = readFileSync(CODEX_IMPLEMENT_DISPATCH, "utf8");
     expect(body).toContain("parentGateAttestation");
+    expect(body).toContain("supervisedGateEvidence");
+    expect(body).toMatch(/trusted\s+result-storage boundary/m);
     expect(body).toContain("read-only");
     expect(body).toContain("danger-full-access");
     expect(body).toContain("gateExitCode === 0");
@@ -203,6 +294,7 @@ describe("T2007 sandbox-denied prompt and parent dispatch guards", () => {
   test("implement/advance pins the parent-attested gate rule [BG]", () => {
     const body = readFileSync(IMPLEMENT_ADVANCE, "utf8");
     expect(body).toContain("parentGateAttestation");
+    expect(body).toContain("supervisedGateEvidence");
     expect(body).toContain("gate primitives denied");
     expect(body).toContain("Do not escalate the child sandbox");
     expect(body).toContain("gateReRan=true");

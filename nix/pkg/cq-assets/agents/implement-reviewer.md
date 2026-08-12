@@ -12,12 +12,12 @@ description: Adversarial implementation reviewer that verifies one task and stor
 
 ```yaml
 inputs:
-  - "task specification, worktree/branch/full-SHA base, worker result, round, prior criticism, optional parentGateAttestation, and prepare-bound absolute phase timing"
+  - "task specification, worktree/branch/full-SHA base, worker result, round, prior criticism, optional trusted supervisedGateEvidence or parentGateAttestation, and prepare-bound absolute phase timing"
 outputs:
   - "stored structured verdict with resultCommitEvidence + baseAncestry, and handle-only final reply"
 ioSchema:
   - "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)"
-  - "approve requires empty criticism/questions, green gate (child re-run or verified parentGateAttestation), resultCommitVerified=true, and verified resultCommitEvidence + baseAncestry (full SHAs)"
+  - "approve requires empty criticism/questions, green gate (verified supervisedGateEvidence, child re-run, or verified parentGateAttestation), resultCommitVerified=true, and verified resultCommitEvidence + baseAncestry (full SHAs)"
   - "disapprove may carry unresolvable evidence with closed reasons and nullable observed SHAs"
 ```
 
@@ -71,10 +71,21 @@ Approval requires both evidence arms verified; never approve with unresolvable
 or missing ancestry.
 
 Also verify the worktree diff against the claimed `filesTouched` set where
-practical, and re-run or accept parent-attested gates as below.
+practical, and verify or re-run the gate as below.
 
-**Gate evidence.** When the fetched input carries `parentGateAttestation`
-(sandboxed path where gate primitives are denied):
+**Gate evidence.** When the fetched input carries `supervisedGateEvidence`,
+require its strict versioned schema and verify that its `taskId`,
+`resultCommit`, `branch`, and `worktreePath` exactly match this review input.
+Also require the canonical command, `gateExitCode === 0`, `failCount === 0`,
+`passCount > 0`, `cleanTree === true`, `roleId === "implement-worker"`, and
+`surface === "codex"`. Reject caller substitutions or incomplete evidence.
+Do **not** invoke `cq gate run` inside the sandbox. On valid evidence set
+`gateReRan=false`, `gateReRanReason=sandbox-denied-primitives`, omit reviewer
+`gateDurationMs`, and cite the runner-owned counts, command, duration, and
+capture time in the rationale.
+
+Otherwise, when the fetched input carries `parentGateAttestation` (the legacy
+sandboxed path where gate primitives are denied):
 
 1. Do **not** invoke `cq gate run` inside the sandbox.
 2. Verify the attestation against `workerResult.resultCommit`: require exact
@@ -85,7 +96,7 @@ practical, and re-run or accept parent-attested gates as below.
    include the attested `gateExitCode` / `passCount` / `failCount` /
    `command` / optional `gateDurationMs` in `rationale` (or `summary`).
 
-When `parentGateAttestation` is absent, re-run the gate yourself. Use the
+When both evidence fields are absent, re-run the gate yourself. Use the
 foreground process's real exit status and measure its duration. Invoke that
 gate as
 `cq gate run --worktree <worktree> --command-cwd <worktree>/nix/pkg/cq-ledgers --deadline <gateCompleteBy> -- bun run check`.

@@ -337,7 +337,7 @@ describe("T1308 implement-reviewer resultCommit + baseAncestry [BA]", () => {
   });
 
   test("sidecar version advanced for the T1308 contract mutation", () => {
-    expect(implementReviewerSidecar.version).toBe(6);
+    expect(implementReviewerSidecar.version).toBe(7);
   });
 });
 

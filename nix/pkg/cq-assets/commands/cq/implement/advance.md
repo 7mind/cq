@@ -17,7 +17,7 @@ outputs:
   - "task transitions, one terminal review per task, verified fast-forward merges, defect closure, and milestone archival"
   - "standalone handoff"
 ioSchema:
-  - "worker: {taskId,status,resultCommit,branch,actualWorktreePath,baseVerification,filesTouched,checkSummary,gateDurationMs,summary,blockedReason?}"
+  - "worker: {taskId,status,resultCommit,branch,actualWorktreePath,baseVerification,filesTouched,checkSummary,gateDurationMs?|supervisedGateEvidence?,summary,blockedReason?}"
   - "reviewer: {taskId,verdict,criticism[],questions[],defects[],rationale,resultCommitEvidence,baseAncestry,summary?}"
   - "resolver: {taskId,status,resultCommit?,summary,blockedReason?}"
 ```
@@ -234,15 +234,25 @@ Review each passing worker result against the actual `baseCommit..resultCommit`
 diff, acceptance criteria, and gate evidence. A worker failure enters the
 criticism loop using `blockedReason`.
 
+For a brokered Codex worker, accept only runner-owned
+`supervisedGateEvidence` attached by the trusted result-storage boundary.
+Require exact task/result commit/branch/worktree bindings, canonical command,
+clean tree, `gateExitCode === 0`, `failCount === 0`, and `passCount > 0` before
+review dispatch. Never accept caller-minted evidence or a passing result that
+still contains caller-supplied `gateDurationMs`.
+
 If reviewers are unconfigured, dispatch one native `implement-reviewer`. If
 configured, dispatch the panel concurrently. Native reviewers use the
 surface-specific dispatch protocol. External reviewers run through their
 configured non-interactive adapter and the shared implement-review rubric.
 
-**Sandboxed reviewer parent-attested gate.** When a surface's dispatch workflow
-requires parent-attested gate evidence for a sandboxed `implement-reviewer`
-(gate primitives denied), the parent MUST attach `parentGateAttestation` built
-from a just-run or freshly run full gate on the worker tip:
+**Sandboxed reviewer gate evidence.** Pass a consumed worker's verified
+`supervisedGateEvidence` through to a sandboxed `implement-reviewer` and require
+the reviewer to validate its exact bindings and green counts without rerunning
+the gate. For a legacy result without this evidence, when a surface's dispatch
+workflow requires parent-attested gate evidence (gate primitives denied), the
+parent MUST attach `parentGateAttestation` built from a just-run or freshly run
+full gate on the worker tip:
 `{ resultCommit, gateExitCode, passCount, failCount, gateDurationMs?, command,
 capturedAt }` with exact tip match, `gateExitCode === 0`, `failCount === 0`, and
 `passCount > 0`. Do not escalate the child sandbox to gain gate primitives.
@@ -304,15 +314,18 @@ A task may merge only when all of these hold:
 
 - its latest worker and required native-reviewer results were consumed through
   parent-retained handles;
-- the worker reported `REAL_CHECK_EXIT=0`;
+- the worker carries either trusted green `supervisedGateEvidence` or a
+  legacy in-child `REAL_CHECK_EXIT=0` gate result;
 - all surviving reviewers approved with empty criticism/questions and verified
   commit/ancestry evidence;
 - the orchestrator independently verified the exact commit and ancestry.
 
-Treat `gateDurationMs` below `50`, absent/zero, or below one quarter of the
-median for earlier rounds of this same task as implausible. Re-run
-`bun run check` in the foreground and use its real exit status. If that cannot
-be done, fail closed.
+For the legacy in-child arm, treat `gateDurationMs` below `50`, absent/zero, or
+below one quarter of the median for earlier rounds of this same task as
+implausible. Re-run `bun run check` in the foreground and use its real exit
+status. If that cannot be done, fail closed. Runner-owned
+`supervisedGateEvidence` carries its measured duration and does not use this
+caller-plausibility heuristic.
 
 Before rebase and immediately before merge, the orchestrator independently:
 

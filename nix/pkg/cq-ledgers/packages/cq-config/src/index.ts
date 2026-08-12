@@ -374,6 +374,7 @@ export {
   IMPLEMENT_REVIEWER_BASE_ANCESTRY_UNRESOLVABLE_REASONS,
   SANDBOX_DENIED_PRIMITIVES_GATE_REASON,
   validateParentGateAttestation,
+  validateSupervisedWorkerGateEvidenceForReview,
   implementReviewerResultCommitEvidenceSchema,
   implementReviewerBaseAncestrySchema,
   implementReviewerVerifiedResultCommitEvidenceSchema,

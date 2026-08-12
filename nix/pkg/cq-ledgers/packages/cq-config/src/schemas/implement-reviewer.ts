@@ -28,6 +28,10 @@
  */
 
 import type { RoleSchemaSidecar } from "../promptCatalog.js";
+import {
+  implementWorkerSupervisedGateEvidenceSchema,
+  type ImplementWorkerSupervisedGateEvidence,
+} from "./implement-worker.js";
 
 /** The two implement-reviewer verdict tokens. */
 export const IMPLEMENT_REVIEW_VERDICTS = ["approve", "disapprove"] as const;
@@ -276,6 +280,28 @@ export function validateParentGateAttestation(
   return true;
 }
 
+/** Reviewer-side semantic binding for consumed runner-owned worker evidence. */
+export function validateSupervisedWorkerGateEvidenceForReview(
+  evidence: ImplementWorkerSupervisedGateEvidence,
+  expected: {
+    readonly taskId: string;
+    readonly resultCommit: string;
+    readonly branch: string;
+    readonly worktreePath: string;
+  },
+): boolean {
+  return (
+    evidence.taskId === expected.taskId &&
+    evidence.resultCommit === expected.resultCommit &&
+    evidence.branch === expected.branch &&
+    evidence.worktreePath === expected.worktreePath &&
+    evidence.clean === true &&
+    evidence.gateExitCode === 0 &&
+    evidence.failCount === 0 &&
+    evidence.passCount > 0
+  );
+}
+
 /**
  * The parent-supplied input contract for an implement-reviewer dispatch: the
  * task spec, worktree coordinates, the worker's result, the round number, and
@@ -313,6 +339,7 @@ const inputSchema = {
     round: { type: "integer", minimum: 1 },
     priorCriticism: { type: "array", items: { type: "string" } },
     parentGateAttestation: parentGateAttestationSchema,
+    supervisedGateEvidence: implementWorkerSupervisedGateEvidenceSchema,
     responseStoreNow: {
       type: "string",
       minLength: 1,
@@ -487,16 +514,16 @@ const outputSchema = {
 
 /**
  * The implement-reviewer per-role schema sidecar (storage-format decision 3).
- * `version: 6` (bumped from 5, T1308/G121): required structured
- * `resultCommitEvidence` and `baseAncestry` verified-or-unresolvable unions;
- * `baseCommit` full-SHA on input; approval requires both verified arms. A stale
- * deployed root rendered against the v5 contract must not be mistaken for this
+ * `version: 7` (bumped from 6, T2081): sandboxed Codex reviewers may consume
+ * the exact runner-owned gate evidence stored with a process worker result.
+ * Existing parentGateAttestation and non-sandboxed child rerun paths remain.
+ * A stale deployed root rendered against the v6 contract must not be mistaken for this
  * one; DISPATCHED_ROLE_VERSIONS derives this automatically, it is not
  * hand-edited.
  */
 export const implementReviewerSidecar: RoleSchemaSidecar = {
   id: "implement-reviewer",
-  version: 6,
+  version: 7,
   inputSchema,
   outputSchema,
 };
