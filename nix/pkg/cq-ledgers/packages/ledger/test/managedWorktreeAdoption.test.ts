@@ -525,6 +525,34 @@ describe("prepare-only adoption publication visibility", () => {
     }, 30_000);
   }
 
+  it("refuses v1 layered repair when an absent-overlay staged path diverges after publication", async () => {
+    const fixture = await seedT1207Shape();
+    const store = new InMemoryLedgerStore();
+    await seedEligibleTask(store, fixture);
+    const layeredPath = join(fixture.worktreePath, "landed-1.txt");
+    try {
+      await fs.writeFile(layeredPath, "staged modification\n");
+      await git(fixture.worktreePath, ["add", "--", "landed-1.txt"]);
+      await fs.writeFile(layeredPath, "change 1\n");
+      const synthetic = await synthesizePublishedV1Journal(store, fixture);
+      const divergentBytes = Buffer.from("post-publication divergence\n");
+      await fs.writeFile(layeredPath, divergentBytes);
+
+      const result = await invokeAdoption(store, fixture);
+
+      expect(result).toMatchObject({ status: "refused", reason: "adoption-recovery-failed" });
+      expect(await fs.readFile(layeredPath)).toEqual(divergentBytes);
+      expect((await fs.readFile(synthetic.indexPath)).equals(synthetic.staleIndexBytes)).toBe(true);
+      expect(await listManagedLiveWorktrees(
+        fixture.repositoryRoot,
+        "T1207",
+        join(fixture.root, "managed-registry"),
+      )).toEqual([synthetic.published.handle]);
+    } finally {
+      await store.dispose();
+    }
+  }, 30_000);
+
   it("refuses v1 repair after post-publication tracked mutation without changing data or registry authority", async () => {
     const fixture = await seedT1207Shape();
     const store = new InMemoryLedgerStore();
