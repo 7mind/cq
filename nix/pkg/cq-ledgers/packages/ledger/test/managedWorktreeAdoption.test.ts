@@ -484,6 +484,10 @@ describe("prepare-only adoption publication visibility", () => {
       const store = new InMemoryLedgerStore();
       await seedEligibleTask(store, fixture);
       const layeredPath = join(fixture.worktreePath, scenario.path);
+      const observeLayerPaths = async (): Promise<{ readonly cached: string; readonly unstaged: string }> => ({
+        cached: await git(fixture.worktreePath, ["diff", "--cached", "--name-only", "--"]),
+        unstaged: await git(fixture.worktreePath, ["diff", "--name-only", "--"]),
+      });
       try {
         await fs.writeFile(layeredPath, `${scenario.name}\n`);
         await git(fixture.worktreePath, ["add", "--", scenario.path]);
@@ -492,12 +496,7 @@ describe("prepare-only adoption publication visibility", () => {
         } else {
           await fs.rm(layeredPath);
         }
-        expect(await git(fixture.worktreePath, ["diff", "--cached", "--name-only", "--"])).toBe(
-          scenario.path,
-        );
-        expect(await git(fixture.worktreePath, ["diff", "--name-only", "--"])).toBe(
-          scenario.path,
-        );
+        expect(await observeLayerPaths()).toEqual({ cached: scenario.path, unstaged: scenario.path });
 
         const { published } = await synthesizePublishedV1Journal(store, fixture);
         const resumed = await invokeAdoption(store, fixture);
@@ -507,17 +506,19 @@ describe("prepare-only adoption publication visibility", () => {
         }
         expect(resumed.status).toBe("prepared");
         expect(resumed.handle).toEqual(published.handle);
-        expect(await git(fixture.worktreePath, ["diff", "--cached", "--name-only", "--"])).toBe(
-          scenario.path,
-        );
-        expect(await git(fixture.worktreePath, ["diff", "--name-only", "--"])).toBe(
-          scenario.path,
-        );
+        expect(await observeLayerPaths()).toEqual({ cached: scenario.path, unstaged: scenario.path });
         if (scenario.name === "staged modification reversed unstaged") {
           expect(await fs.readFile(layeredPath, "utf8")).toBe("change 1\n");
         } else {
           await expect(fs.access(layeredPath)).rejects.toMatchObject({ code: "ENOENT" });
         }
+
+        const repeated = await invokeAdoption(store, fixture);
+        if (repeated.status !== "prepared") {
+          throw new Error(`repeated v1 layered repair refused: ${repeated.reason}: ${repeated.detail}`);
+        }
+        expect(repeated.handle).toEqual(published.handle);
+        expect(await observeLayerPaths()).toEqual({ cached: scenario.path, unstaged: scenario.path });
       } finally {
         await store.dispose();
       }

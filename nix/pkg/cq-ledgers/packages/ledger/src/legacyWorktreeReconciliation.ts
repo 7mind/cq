@@ -1430,6 +1430,27 @@ function legacyOverlayWorktreeState(entry: LegacyOverlayJournalEntry): WorktreeP
   };
 }
 
+async function reconstructV1HeadWorktreePostimage(
+  git: LegacyReconciliationGitRunner,
+  journal: LegacyReconciliationJournal,
+  path: string,
+): Promise<WorktreePathState | null> {
+  const expected = await captureTreePathState(
+    git,
+    journal.request.worktreePath,
+    journal.refs.head,
+    path,
+  );
+  const observed = await captureWorktreePathState(journal.request.worktreePath, path);
+  if (!sameGitPathState(expected, observed)) {
+    throw new ReconciliationRefusal(
+      "overlay-mismatch",
+      `post-publication tracked bytes differ from legacy HEAD for ${path}`,
+    );
+  }
+  return observed;
+}
+
 async function reconstructV1SemanticOverlay(
   git: LegacyReconciliationGitRunner,
   journal: LegacyReconciliationJournal,
@@ -1447,11 +1468,6 @@ async function reconstructV1SemanticOverlay(
     );
     const stagedPaths = parseNulPaths(stagedRaw, journal.request.excludedRelativePaths);
     const legacyEntries = new Map(journal.overlay.map((entry) => [entry.path, entry]));
-    for (const path of stagedPaths) {
-      if (!legacyEntries.has(path)) {
-        throw new ReconciliationRefusal("overlay-mismatch", `v1 journal lacks staged worktree postimage ${path}`);
-      }
-    }
     const staged = await Promise.all(
       stagedPaths.map(async (path) => ({
         path,
@@ -1461,6 +1477,11 @@ async function reconstructV1SemanticOverlay(
     );
     const unstaged: WorktreePathDelta[] = [];
     const untracked: UntrackedPathEntry[] = [];
+    for (const entry of staged) {
+      if (legacyEntries.has(entry.path)) continue;
+      const after = await reconstructV1HeadWorktreePostimage(git, journal, entry.path);
+      unstaged.push({ path: entry.path, before: entry.after, after });
+    }
     for (const entry of journal.overlay) {
       const head = await captureTreePathState(
         git,
