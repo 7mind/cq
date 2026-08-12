@@ -217,6 +217,10 @@ async function seedT1207Shape(): Promise<{
   for (const commit of legacyCommits) {
     await git(repositoryRoot, ["cherry-pick", "-x", commit]);
   }
+  await fs.writeFile(path.join(repositoryRoot, "seed.txt"), "main advanced seed\n");
+  await fs.writeFile(path.join(repositoryRoot, "main-only.txt"), "main-only addition\n");
+  await git(repositoryRoot, ["add", "."]);
+  await git(repositoryRoot, ["commit", "-q", "-m", "unrelated main advance"]);
   const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
   await git(repositoryRoot, ["worktree", "add", "-q", worktreePath, "implement/T1207"]);
   const untrackedPath = path.join(
@@ -638,6 +642,21 @@ describe("legacy worktree reconciliation", () => {
     ]);
     expect(await git(fixture.worktreePath, ["rev-parse", "HEAD"])).toBe(fixture.baseCommit);
     expect(await fs.readFile(fixture.untrackedPath)).toEqual(before);
+    const [cached, unstaged] = await Promise.all([
+      gitResult(fixture.worktreePath, ["diff", "--cached", "--quiet", "--exit-code"]),
+      gitResult(fixture.worktreePath, ["diff", "--quiet", "--exit-code"]),
+    ]);
+    expect({
+      head: await git(fixture.worktreePath, ["rev-parse", "HEAD"]),
+      untrackedSha256: contentDigest(await fs.readFile(fixture.untrackedPath)),
+      cachedExit: cached.code,
+      unstagedExit: unstaged.code,
+    }).toEqual({
+      head: fixture.baseCommit,
+      untrackedSha256: contentDigest(before),
+      cachedExit: 0,
+      unstagedExit: 0,
+    });
     expect(await refValue(fixture.repositoryRoot, result.evidence.recoveryRef)).toBe(
       fixture.legacyHead,
     );
