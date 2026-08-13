@@ -737,6 +737,7 @@ cat > "$TMPDIR/cq-codex-role.launch"
 printf '%s\n' '{"attestationId":"att_packaged_role_acknowledgement","generation":7,"inputCapability":{"scope":"fetch-input","token":"cq_input_packaged_role_acknowledgement"},"resultCapability":{"scope":"store-result","token":"cq_result_packaged_role_acknowledgement"},"gitChangeCapability":{"scope":"git-change","token":"cq_git_packaged_role_acknowledgement"}}' | \
   cmp -s - "$TMPDIR/cq-codex-role.launch"
 printf '%s\n' '{"type":"thread.started","thread_id":"packaged-role-thread"}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"mcp_tool_call","server":"ledger","tool":"store_result","result":{"content":[{"type":"text","text":"{\"state\":\"result-stored\",\"result\":{\"state\":\"result-stored\",\"attestationId\":\"att_packaged_role_acknowledgement\",\"generation\":7,\"storedAt\":\"2026-08-13T09:00:00.000Z\",\"outputDigest\":\"digest-bound-output\"}}"}]}}}'
 printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"state\":\"result-stored\",\"attestationId\":\"att_packaged_role_acknowledgement\",\"generation\":7,\"outputDigest\":\"digest-bound-output\"}"}}'
 printf '%s\n' '{"type":"turn.completed"}'
 EOF

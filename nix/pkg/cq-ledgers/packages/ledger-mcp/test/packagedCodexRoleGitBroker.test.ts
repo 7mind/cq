@@ -233,7 +233,7 @@ async function runPackagedReviewer(input: {
   const reviewerStderrPath = path.join(fixtureRoot, "reviewer.stderr");
   await writeFile(
     fakeCodex,
-    `#!/bin/sh\nif test "$1" = sandbox; then exec ${JSON.stringify(INSTALLED_CODEX)} "$@"; fi\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(REVIEWER_FIXTURE)} "$@" 2>"$CQ_T2081_REVIEW_STDERR"\n`,
+    `#!/bin/sh\nif test "$1" = sandbox; then while test "$1" != --; do shift; done; shift; exec "$@"; fi\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(REVIEWER_FIXTURE)} "$@" 2>"$CQ_T2081_REVIEW_STDERR"\n`,
   );
   await chmod(fakeCodex, 0o700);
   const ledgerCommand = path.join(path.dirname(INSTALLED_ROLE), "cq");
