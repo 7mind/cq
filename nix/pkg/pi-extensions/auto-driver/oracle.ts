@@ -20,7 +20,7 @@
 //
 // CHOSEN CHANNEL (STEP 2): the `cq predicates` CLI subcommand. It prints a
 //   JSON object `{ predicates: { pInvestigate, pSeed, pPlan, pResearch,
-//   pImplement, openQuestionGate, belowFloor, planBusy, goalDrift } }` to stdout, where `predicates`
+//   pImplement, pOperatorAction, openQuestionGate, belowFloor, planBusy, goalDrift } }` to stdout, where `predicates`
 //   shares the SAME `derivePredicates` single source of truth as the ledger MCP
 //   `derive_predicates` tool. `cq predicates` is harness-agnostic — it ALWAYS
 //   derives from the fs store, uses NO session, requires NO marker, and ALWAYS

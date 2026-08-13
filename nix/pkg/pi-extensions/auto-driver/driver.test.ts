@@ -138,6 +138,7 @@ const ALL_FALSE: DerivedPredicates = {
   pPlan: { value: false, items: [] },
   pResearch: { value: false, items: [] },
   pImplement: { value: false, items: [] },
+  pOperatorAction: { value: false, items: [] },
   openQuestionGate: { value: false, items: [] },
   belowFloor: { value: false, items: [] },
   planBusy: { value: false, items: [] },
@@ -974,13 +975,14 @@ describe("T468: preset terminalPredicates (bound correctly to each flow)", () =>
     pPlan: { value: false, items: [] },
     pResearch: { value: false, items: [] },
     pImplement: { value: false, items: [] },
+    pOperatorAction: { value: false, items: [] },
     openQuestionGate: { value: false, items: [] },
     belowFloor: { value: false, items: [] },
     planBusy: { value: false, items: [] },
     goalDrift: { value: false, items: [] },
   };
 
-  test("advanceAutoPreset terminal when ALL FIVE p-predicates are false", () => {
+  test("advanceAutoPreset terminal when ALL SIX p-predicates are false", () => {
     expect(advanceAutoPreset.terminalPredicate(ALL_FALSE_P)).toBe(true);
   });
 
@@ -1016,6 +1018,24 @@ describe("T468: preset terminalPredicates (bound correctly to each flow)", () =>
 
   test("implementAutoPreset not terminal when pImplement is true", () => {
     expect(implementAutoPreset.terminalPredicate({ ...ALL_FALSE_P, pImplement: { value: true, items: ["T1"] } })).toBe(false);
+  });
+
+  test("implementAutoPreset not terminal when only pOperatorAction is true", () => {
+    expect(
+      implementAutoPreset.terminalPredicate({
+        ...ALL_FALSE_P,
+        pOperatorAction: { value: true, items: ["T2"] },
+      }),
+    ).toBe(false);
+  });
+
+  test("advanceAutoPreset not terminal when only pOperatorAction is true", () => {
+    expect(
+      advanceAutoPreset.terminalPredicate({
+        ...ALL_FALSE_P,
+        pOperatorAction: { value: true, items: ["T2"] },
+      }),
+    ).toBe(false);
   });
 
   test("researchAutoPreset terminal when pResearch is false", () => {

@@ -278,13 +278,20 @@ async function hasProcessGroupMembersOtherThanLeader(
 ): Promise<boolean> {
   if (!(await isProcessIdentityAlive(registration.leader))) return false;
   if (assertSupportedPlatform() === "darwin") {
-    const result = spawnSync("ps", ["-axo", "pid=,pgid="], { encoding: "utf8" });
+    const configuredHelper = process.env["CQ_PROCESS_IDENTITY_HELPER"];
+    const helper =
+      configuredHelper === undefined || configuredHelper === "" ? null : configuredHelper;
+    const result =
+      helper === null
+        ? spawnSync("ps", ["-axo", "pid=,pgid="], { encoding: "utf8" })
+        : spawnSync(helper, ["--list-groups"], { encoding: "utf8" });
     if (result.status !== 0) {
+      const detail = (result.stderr ?? result.error?.message ?? "").trim();
       throw new Error(
-        `@cq/process-control: could not inspect Darwin process groups: ${result.stderr.trim()}`,
+        `@cq/process-control: could not inspect Darwin process groups${detail === "" ? "" : `: ${detail}`}`,
       );
     }
-    return result.stdout.split("\n").some((line) => {
+    return (result.stdout ?? "").split("\n").some((line) => {
       const fields = line.trim().split(/\s+/u);
       return (
         Number(fields[1]) === registration.pgid &&

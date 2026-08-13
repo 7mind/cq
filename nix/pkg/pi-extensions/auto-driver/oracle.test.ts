@@ -20,16 +20,17 @@ import { advanceAutoPreset, type DerivedPredicates } from "./decision";
 // G80/M246 pResearch key, the G99/D134/T853 report-only planBusy key, and the
 // G84/D113 report-only goalDrift key).
 const REAL_PREDICATES_STDOUT =
-  '{"predicates":{"pInvestigate":{"value":true,"items":["D72","D73"]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":true,"items":["T463"]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"planBusy":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
+  '{"predicates":{"pInvestigate":{"value":true,"items":["D72","D73"]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":true,"items":["T463"]},"pOperatorAction":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"planBusy":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
 
 describe("parsePredicatesOutput", () => {
-  test("parses the real cq predicates verdict into all nine predicates", () => {
+  test("parses the real cq predicates verdict into all ten predicates", () => {
     const expected: DerivedPredicates = {
       pInvestigate: { value: true, items: ["D72", "D73"] },
       pSeed: { value: false, items: [] },
       pPlan: { value: false, items: [] },
       pResearch: { value: false, items: [] },
       pImplement: { value: true, items: ["T463"] },
+      pOperatorAction: { value: false, items: [] },
       openQuestionGate: { value: false, items: [] },
       belowFloor: { value: false, items: [] },
       planBusy: { value: false, items: [] },
@@ -43,7 +44,7 @@ describe("parsePredicatesOutput", () => {
     // carried since T853: a goal carrying an ACTIVE plan claim. The parser
     // must surface it verbatim from the live `cq predicates` JSON.
     const stdout =
-      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"planBusy":{"value":true,"items":["G99"]},"goalDrift":{"value":false,"items":[]}}}';
+      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"pOperatorAction":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"planBusy":{"value":true,"items":["G99"]},"goalDrift":{"value":false,"items":[]}}}';
     const parsed = parsePredicatesOutput(stdout);
     expect(parsed.planBusy).toEqual({ value: true, items: ["G99"] });
     // Report-only: a busy-only snapshot remains TERMINAL for the advance
@@ -53,13 +54,14 @@ describe("parsePredicatesOutput", () => {
 
   test("parses an all-false drained verdict", () => {
     const stdout =
-      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"planBusy":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
+      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"pOperatorAction":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"planBusy":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
     expect(parsePredicatesOutput(stdout)).toEqual({
       pInvestigate: { value: false, items: [] },
       pSeed: { value: false, items: [] },
       pPlan: { value: false, items: [] },
       pResearch: { value: false, items: [] },
       pImplement: { value: false, items: [] },
+      pOperatorAction: { value: false, items: [] },
       openQuestionGate: { value: false, items: [] },
       belowFloor: { value: false, items: [] },
       planBusy: { value: false, items: [] },
@@ -71,7 +73,7 @@ describe("parsePredicatesOutput", () => {
     // A root-caused defect owned by no goal → ONLY pSeed TRUE. The parser must
     // surface it and the advance preset must NOT read it as DRAINED.
     const stdout =
-      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":true,"items":["D94"]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"planBusy":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
+      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":true,"items":["D94"]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"pOperatorAction":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"planBusy":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
     const parsed = parsePredicatesOutput(stdout);
     expect(parsed.pSeed).toEqual({ value: true, items: ["D94"] });
     expect(advanceAutoPreset.terminalPredicate(parsed)).toBe(false);
@@ -86,11 +88,11 @@ describe("parsePredicatesOutput", () => {
   });
 
   test("throws when a predicate key is missing", () => {
-    // pInvestigate/pSeed/pPlan/pResearch/pImplement present; openQuestionGate
+    // pInvestigate/pSeed/pPlan/pResearch/pImplement present; pOperatorAction
     // (the first missing key in canonical order) is absent → the parser names it.
     const stdout =
       '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]}}}';
-    expect(() => parsePredicatesOutput(stdout)).toThrow(/openQuestionGate/);
+    expect(() => parsePredicatesOutput(stdout)).toThrow(/pOperatorAction/);
   });
 
   test("throws when value is not a boolean", () => {
@@ -158,7 +160,7 @@ function oldAdvanceTerminalPredicate(p: Record<string, { value: boolean }>): boo
 // drained), but pResearch — a key the OLD auto-driver has never heard of — is
 // TRUE with outstanding research work.
 const NEW_PAYLOAD_RESEARCH_ONLY =
-  '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":true,"items":["RS1"]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"planBusy":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
+  '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":true,"items":["RS1"]},"pImplement":{"value":false,"items":[]},"pOperatorAction":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"planBusy":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
 
 describe("T559 false-DRAINED characterization (corrected model, G80/M246)", () => {
   test("OLD key set fed the NEW payload => parses fine but SILENTLY DROPS pResearch, and the old advance preset terminates", () => {

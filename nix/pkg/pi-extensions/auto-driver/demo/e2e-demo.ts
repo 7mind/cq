@@ -119,6 +119,7 @@ const ALL_FALSE: DerivedPredicates = {
   pSeed: { value: false, items: [] },
   pPlan: { value: false, items: [] },
   pImplement: { value: false, items: [] },
+  pOperatorAction: { value: false, items: [] },
   openQuestionGate: { value: false, items: [] },
   belowFloor: { value: false, items: [] },
 };
@@ -203,6 +204,7 @@ async function scenario2DrainedStop(): Promise<void> {
     pSeed: { value: false, items: [] },
     pPlan: { value: false, items: [] },
     pImplement: { value: true, items: ["T470"] },
+    pOperatorAction: { value: false, items: [] },
     openQuestionGate: { value: false, items: [] },
     belowFloor: { value: false, items: [] },
   };
@@ -211,6 +213,7 @@ async function scenario2DrainedStop(): Promise<void> {
     pSeed: { value: false, items: [] },
     pPlan: { value: true, items: ["G99"] },
     pImplement: { value: false, items: [] },
+    pOperatorAction: { value: false, items: [] },
     openQuestionGate: { value: false, items: [] },
     belowFloor: { value: false, items: [] },
   };
@@ -251,6 +254,7 @@ async function scenario3BlockedOnQuestions(): Promise<void> {
     pSeed: { value: false, items: [] },
     pPlan: { value: true, items: ["G42"] },
     pImplement: { value: false, items: [] },
+    pOperatorAction: { value: false, items: [] },
     openQuestionGate: { value: true, items: ["Q237"] },
     belowFloor: { value: false, items: [] },
   };

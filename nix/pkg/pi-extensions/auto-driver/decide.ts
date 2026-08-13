@@ -163,14 +163,15 @@ const PREDICATE_KEYS: ReadonlyArray<keyof DerivedPredicates> = [
   "pPlan",
   "pResearch",
   "pImplement",
+  "pOperatorAction",
   "openQuestionGate",
 ];
 
 /**
  * Canonical no-progress equality between two predicate snapshots.
  *
- * Returns true iff, for ALL SIX keys (pInvestigate, pSeed, pPlan, pResearch,
- * pImplement, openQuestionGate):
+ * Returns true iff, for ALL SEVEN keys (pInvestigate, pSeed, pPlan, pResearch,
+ * pImplement, pOperatorAction, openQuestionGate):
  *   (i)  a[key].value === b[key].value, AND
  *   (ii) the SET of a[key].items[] ids equals the set of b[key].items[] ids,
  *        compared as SORTED id arrays (order-insensitive).

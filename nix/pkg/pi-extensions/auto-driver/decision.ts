@@ -35,9 +35,9 @@ export interface PredicateVerdict {
 
 /**
  * The flow-detection verdicts derived from one store snapshot. `pInvestigate`,
- * `pSeed`, `pPlan`, `pResearch`, and `pImplement` mirror the `/cq:advance` cycle
- * stages (in flow order); `openQuestionGate` enumerates the open questions that
- * gate any of them; `belowFloor` is an INFORMATIONAL companion to `pSeed`
+ * `pSeed`, `pPlan`, `pResearch`, `pImplement`, and `pOperatorAction` mirror the
+ * `/cq:advance` cycle stages (in flow order); `openQuestionGate` enumerates the
+ * open questions that gate any of them; `belowFloor` is an INFORMATIONAL companion to `pSeed`
  * (root-caused, unowned, un-gated defects below the severity floor) that gates
  * NOTHING; `planBusy` (G99/D134, T853) is the REPORT-ONLY busy signal (goals
  * carrying an ACTIVE plan claim — a planner already owns their planning round)
@@ -51,6 +51,8 @@ export interface DerivedPredicates {
   pPlan: PredicateVerdict;
   pResearch: PredicateVerdict;
   pImplement: PredicateVerdict;
+  /** Parent-executed operator gates; these items never enter `pImplement`. */
+  pOperatorAction: PredicateVerdict;
   openQuestionGate: PredicateVerdict;
   belowFloor: PredicateVerdict;
   planBusy: PredicateVerdict;
@@ -72,6 +74,7 @@ export const DERIVED_PREDICATE_KEYS = [
   "pPlan",
   "pResearch",
   "pImplement",
+  "pOperatorAction",
   "openQuestionGate",
   "belowFloor",
   "planBusy",
@@ -145,11 +148,11 @@ export interface AutoPreset {
 }
 
 /**
- * `cq:advance:auto` — drains the whole flow. Terminal when ALL FIVE stage
- * P-predicates are FALSE (no investigate, seed, plan, research, or implement
- * work remains). The informational `belowFloor` companion is intentionally NOT
- * part of the terminal check — a sub-floor defect never keeps the run alive.
- * Wraps `/cq:advance`; registered as `cq:advance:auto`.
+ * `cq:advance:auto` — drains the whole flow. Terminal when ALL SIX actionable
+ * P-predicates are FALSE (no investigate, seed, plan, research, implement, or
+ * operator-action work remains). The informational `belowFloor` companion is
+ * intentionally NOT part of the terminal check — a sub-floor defect never keeps
+ * the run alive. Wraps `/cq:advance`; registered as `cq:advance:auto`.
  */
 export const advanceAutoPreset: AutoPreset = {
   wrappedCommand: "cq:advance",
@@ -158,7 +161,8 @@ export const advanceAutoPreset: AutoPreset = {
     !p.pSeed.value &&
     !p.pPlan.value &&
     !p.pResearch.value &&
-    !p.pImplement.value,
+    !p.pImplement.value &&
+    !p.pOperatorAction.value,
 };
 
 /**
@@ -184,14 +188,14 @@ export const investigateAutoPreset: AutoPreset = {
 };
 
 /**
- * `cq:implement:auto` — drains implement-flow. Terminal when `pImplement.value`
- * is FALSE.
+ * `cq:implement:auto` — drains implement-flow. Terminal when both
+ * `pImplement` and `pOperatorAction` are FALSE (`implement:advance` owns both).
  * Wraps `/cq:implement:advance`; registered as `cq:implement:auto`.
  */
 export const implementAutoPreset: AutoPreset = {
   wrappedCommand: "cq:implement:advance",
   commandName: "cq:implement:auto",
-  terminalPredicate: (p) => !p.pImplement.value,
+  terminalPredicate: (p) => !p.pImplement.value && !p.pOperatorAction.value,
 };
 
 /**

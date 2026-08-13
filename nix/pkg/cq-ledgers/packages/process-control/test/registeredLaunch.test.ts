@@ -988,10 +988,16 @@ describe("registered process-group launch bootstrap [T1624]", () => {
     const root = await mkdtemp(join(tmpdir(), "cq-registered-launch-darwin-exact-env-"));
     roots.push(root);
     const identityHelper = join(root, "identity-helper");
-    await writeFile(identityHelper, "#!/bin/sh\nprintf '%s.0\\n' \"$1\"\n");
+    await writeFile(
+      identityHelper,
+      "#!/bin/sh\n[ \"$1\" = --list-groups ] && exit 0\nprintf '%s.0\\n' \"$1\"\n",
+    );
     await chmod(identityHelper, 0o755);
     const targetIdentityHelper = join(root, "target-identity-helper");
-    await writeFile(targetIdentityHelper, "#!/bin/sh\nprintf '%s.1\\n' \"$1\"\n");
+    await writeFile(
+      targetIdentityHelper,
+      "#!/bin/sh\n[ \"$1\" = --list-groups ] && exit 0\nprintf '%s.1\\n' \"$1\"\n",
+    );
     await chmod(targetIdentityHelper, 0o755);
     const originalPlatform = process.platform;
     const originalIdentityHelper = process.env["CQ_PROCESS_IDENTITY_HELPER"];

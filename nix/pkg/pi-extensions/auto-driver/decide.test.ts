@@ -40,6 +40,7 @@ function emptyPredicates(): DerivedPredicates {
     pPlan: { value: false, items: [] },
     pResearch: { value: false, items: [] },
     pImplement: { value: false, items: [] },
+    pOperatorAction: { value: false, items: [] },
     openQuestionGate: { value: false, items: [] },
     belowFloor: { value: false, items: [] },
     planBusy: { value: false, items: [] },
@@ -47,7 +48,7 @@ function emptyPredicates(): DerivedPredicates {
   };
 }
 
-/** Predicates with all five stage predicates TRUE and no gate. */
+/** Predicates with all six actionable predicates TRUE and no gate. */
 function allActivePredicates(items?: string[]): DerivedPredicates {
   const it = items ?? ["T1", "T2"];
   return {
@@ -56,6 +57,7 @@ function allActivePredicates(items?: string[]): DerivedPredicates {
     pPlan: { value: true, items: it },
     pResearch: { value: true, items: it },
     pImplement: { value: true, items: it },
+    pOperatorAction: { value: true, items: it },
     openQuestionGate: { value: false, items: [] },
     belowFloor: { value: false, items: [] },
     planBusy: { value: false, items: [] },
@@ -73,6 +75,7 @@ function allActivePredicates(items?: string[]): DerivedPredicates {
 const SEED_DEFAULTS = {
   pSeed: { value: false, items: [] as string[] },
   pResearch: { value: false, items: [] as string[] },
+  pOperatorAction: { value: false, items: [] as string[] },
   belowFloor: { value: false, items: [] as string[] },
   planBusy: { value: false, items: [] as string[] },
   goalDrift: { value: false, items: [] as string[] },

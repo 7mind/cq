@@ -1024,7 +1024,8 @@ EOF
               version = "0.0.1";
               src = piExtensionsTestSource;
 
-              nativeBuildInputs = [ pkgs.bun pkgs.nodejs_22 ];
+              nativeBuildInputs = [ pkgs.bun pkgs.nodejs_22 ]
+                ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.stdenv.cc ];
 
               dontConfigure = true;
               dontInstall = true;
@@ -1084,6 +1085,14 @@ EOF
                 # only — the extension itself stays copy-not-import).
                 ln -s "$cqLedgersRoot/packages/cq-config" \
                   "$piExtensionsRoot/node_modules/@cq/config"
+
+                ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
+                  mkdir -p "$NIX_BUILD_TOP/libexec"
+                  $CC -Wall -Wextra -Werror \
+                    "$cqLedgersRoot/packages/process-control/native/darwin-process-identity.c" \
+                    -o "$NIX_BUILD_TOP/libexec/cq-process-identity"
+                  export CQ_PROCESS_IDENTITY_HELPER="$NIX_BUILD_TOP/libexec/cq-process-identity"
+                ''}
 
                 for project in \
                   nix/pkg/pi-extensions \
