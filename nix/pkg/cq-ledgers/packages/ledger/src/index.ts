@@ -246,6 +246,7 @@ export {
   readDumpInTree,
   readDumpOrphanBranch,
   restoreDumpToXdg,
+  RestoreTargetChangedError,
   isXdgPrimaryEmpty,
   parseBackupDump,
 } from "./store/restoreImporter.js";

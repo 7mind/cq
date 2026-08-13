@@ -128,6 +128,7 @@ describe.skipIf(!PG_URL)("restoreDumpToPostgres (T580)", () => {
         displayName: projectKey,
         dump: fixture.dump,
         authority: mintWorksetManagementAuthority(),
+        overwriteAuthorized: false,
       });
       expect(summary.fileCount).toBe(fixture.dump.length);
       expect(summary.logCount).toBe(2);
@@ -183,6 +184,7 @@ describe.skipIf(!PG_URL)("restoreDumpToPostgres (T580)", () => {
         projectKey,
         dump: fixtureA.dump,
         authority: mintWorksetManagementAuthority(),
+        overwriteAuthorized: false,
       });
       expect(await isPostgresTenantEmpty(setupPool!, projectKey)).toBe(false);
 
@@ -192,6 +194,7 @@ describe.skipIf(!PG_URL)("restoreDumpToPostgres (T580)", () => {
           projectKey,
           dump: fixtureB.dump,
           authority: mintWorksetManagementAuthority(),
+          overwriteAuthorized: false,
         }),
       ).rejects.toThrow(/non-empty tenant/);
 

@@ -757,7 +757,13 @@ describe("pre-upstream lifecycle acceptance states", () => {
     const destinationRoot = await freshRoot("t796-restore-");
     const dbPath = path.join(destinationRoot, "ledger.db");
     const logsDir = path.join(destinationRoot, "logs");
-    await restoreDumpToXdg({ dbPath, logsDir, dump, authority: mintWorksetManagementAuthority() });
+    await restoreDumpToXdg({
+      dbPath,
+      logsDir,
+      dump,
+      authority: mintWorksetManagementAuthority(),
+      overwriteAuthorized: false,
+    });
     const restored = new SqliteLedgerStore({ dbPath, logsDir, now });
     await restored.init();
     try {

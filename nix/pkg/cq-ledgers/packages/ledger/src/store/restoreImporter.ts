@@ -57,6 +57,42 @@ import {
 } from "../worksetEffectAdmission.js";
 import { createSqliteWorksetStore } from "./sqlite/sqliteWorksetStore.js";
 
+export class RestoreTargetChangedError extends LedgerError {
+  constructor(target: string) {
+    super(`restore target ${target} became non-empty before destructive import`);
+    this.name = "RestoreTargetChangedError";
+  }
+}
+
+function isSqliteRestoreTargetEmpty(db: import("bun:sqlite").Database): boolean {
+  const workset = db
+    .query<{ roots_json: string; epoch: number }, []>(
+      "SELECT roots_json, epoch FROM workset_state WHERE id = 1",
+    )
+    .get();
+  if (workset !== null) {
+    const roots = JSON.parse(workset.roots_json) as unknown[];
+    if (workset.epoch !== 0 || roots.length !== 0) return false;
+  }
+  const canonicalNames = new Set(CANONICAL_LEDGERS.map((entry) => entry.name));
+  const ledgers = db.query<{ name: string }, []>("SELECT name FROM ledgers").all();
+  if (ledgers.some(({ name }) => !canonicalNames.has(name))) return false;
+  const pointers = db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM archive_pointers").get();
+  if (pointers !== null && pointers.count !== 0) return false;
+  const items = db.query<{ ledger: string; id: string }, []>("SELECT ledger, id FROM items").all();
+  if (
+    items.some(
+      ({ ledger, id }) => ledger !== MILESTONES_LEDGER || id !== MILESTONES_AMBIENT_ID,
+    )
+  ) {
+    return false;
+  }
+  const groups = db.query<{ ledger: string; id: string }, []>("SELECT ledger, id FROM groups").all();
+  return groups.every(
+    ({ ledger, id }) => ledger === MILESTONES_LEDGER && id === MILESTONES_ACTIVE_GROUP_ID,
+  );
+}
+
 /** Result of {@link restoreDumpToXdg}: counts for CLI reporting. */
 export interface RestoreSummary {
   /** Number of dump files read (ledgers + registry + archives + logs). */
@@ -227,6 +263,8 @@ export async function restoreDumpToXdg(opts: {
    * guarded-context denial performs zero store access (T1959).
    */
   authority: unknown;
+  /** Prior explicit authorization to replace a substantive target. */
+  overwriteAuthorized: boolean;
   /** Administrative kind under exclusive admission (default `restore`). */
   administrativeKind?: WorksetAdministrativeEffectKind;
 }): Promise<RestoreSummary> {
@@ -251,6 +289,9 @@ export async function restoreDumpToXdg(opts: {
       kind,
       authority: opts.authority,
       destructivePhase: async () => {
+        if (!opts.overwriteAuthorized && !isSqliteRestoreTargetEmpty(db)) {
+          throw new RestoreTargetChangedError(opts.dbPath);
+        }
         immediateWriteTransaction(db, () => {
           db.exec("DELETE FROM workset_admissions");
           db.exec("DELETE FROM plan_operations");

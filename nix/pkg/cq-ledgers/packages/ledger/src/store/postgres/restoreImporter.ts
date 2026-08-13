@@ -38,9 +38,12 @@
 
 import type { SQL } from "bun";
 import type { FieldValue, Item } from "../../types.js";
-import { LedgerError } from "../../types.js";
 import type { BackupDumpFile } from "../backupExporter.js";
-import { parseBackupDump, type RestoreSummary } from "../restoreImporter.js";
+import {
+  parseBackupDump,
+  RestoreTargetChangedError,
+  type RestoreSummary,
+} from "../restoreImporter.js";
 import { buildPrefixRegistry, normalizeStoredRefFields } from "../../refs.js";
 import {
   CANONICAL_LEDGERS,
@@ -80,7 +83,7 @@ export async function isPostgresTenantEmpty(pool: SQL, projectKey: string): Prom
   `;
   for (const row of worksetRows) {
     const roots = JSON.parse(row.roots_json) as unknown[];
-    if (row.epoch !== 0 || roots.length !== 0) return false;
+    if (Number(row.epoch) !== 0 || roots.length !== 0) return false;
   }
   const ledgerRows = await pool<Array<{ name: string }>>`
     SELECT name FROM ledgers WHERE project_key = ${projectKey}
@@ -125,7 +128,7 @@ export async function isPostgresTenantEmpty(pool: SQL, projectKey: string): Prom
  * (`PostgresLedgerStore.putLog`'s table, T575). Scoped STRICTLY to
  * `projectKey` — never touches another tenant's rows.
  *
- * Refuses ({@link LedgerError}) when {@link isPostgresTenantEmpty} finds
+ * Refuses ({@link RestoreTargetChangedError}) when {@link isPostgresTenantEmpty} finds
  * `projectKey` already holds more than the canonical bootstrap state — no
  * merge semantics, same disaster-recovery contract as {@link restoreDumpToXdg}.
  *
@@ -144,6 +147,8 @@ export async function restoreDumpToPostgres(opts: {
    * guarded-context denial performs zero store access (T1959).
    */
   authority: unknown;
+  /** Prior explicit authorization to replace a substantive target. */
+  overwriteAuthorized: boolean;
   /** Administrative kind under exclusive admission (default `restore`). */
   administrativeKind?: WorksetAdministrativeEffectKind;
 }): Promise<RestoreSummary> {
@@ -164,11 +169,8 @@ export async function restoreDumpToPostgres(opts: {
   await ensureSchema(pool);
 
   const empty = await isPostgresTenantEmpty(pool, pk);
-  if (!empty) {
-    throw new LedgerError(
-      `restore: postgres tenant ${pk} already holds data beyond the canonical bootstrap state — ` +
-        `refusing to overwrite a non-empty tenant`,
-    );
+  if (!empty && !opts.overwriteAuthorized) {
+    throw new RestoreTargetChangedError(`postgres tenant ${pk}`);
   }
 
   const refRegistry = buildPrefixRegistry(
@@ -202,6 +204,9 @@ export async function restoreDumpToPostgres(opts: {
       kind,
       authority: opts.authority,
       destructivePhase: async () => {
+        if (!opts.overwriteAuthorized && !(await isPostgresTenantEmpty(pool, pk))) {
+          throw new RestoreTargetChangedError(`postgres tenant ${pk}`);
+        }
         await writeTransaction(pool, async (tx) => {
           await tx`
             INSERT INTO projects (project_key, display_name)

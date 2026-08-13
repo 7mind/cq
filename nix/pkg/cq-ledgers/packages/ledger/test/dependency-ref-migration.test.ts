@@ -231,7 +231,13 @@ describe("SqliteLedgerStore v1->v2 dependency-ref migration (T553)", () => {
     expect(defectsMd).toContain("T1");
 
     const dstPath = path.join(await freshDir("ledger-restore-dst-"), "ledger.db");
-    await restoreDumpToXdg({ dbPath: dstPath, logsDir: null, dump: oldDump, authority: mintWorksetManagementAuthority() });
+    await restoreDumpToXdg({
+      dbPath: dstPath,
+      logsDir: null,
+      dump: oldDump,
+      authority: mintWorksetManagementAuthority(),
+      overwriteAuthorized: false,
+    });
 
     const restored = new SqliteLedgerStore({ dbPath: dstPath, now });
     await restored.init();

@@ -3,11 +3,18 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  buildBackupDump,
+  createPostgresWorksetStore,
   ensureSchema,
+  InMemoryLedgerStore,
   isPostgresTenantEmpty,
   isXdgPrimaryEmpty,
+  mintWorksetManagementAuthority,
   openPgPool,
+  restoreDumpToPostgres,
+  RestoreTargetChangedError,
   SqliteLedgerStore,
+  TASKS_LEDGER,
 } from "../src/index.js";
 
 describe("workset root migration target guards [T1960]", () => {
@@ -44,6 +51,87 @@ describe.skipIf(pgPool === undefined)(
       VALUES (${projectKey}, ${JSON.stringify(["tasks:T-root"])}, 3, 0, ${new Date().toISOString()})
     `;
       expect(await isPostgresTenantEmpty(pgPool, projectKey)).toBe(false);
+    });
+
+    it("treats a bootstrap root row with epoch zero as empty", async () => {
+      if (pgPool === undefined) throw new Error("fixture: PostgreSQL pool missing");
+      await ensureSchema(pgPool);
+      const projectKey = `t1960_empty_${crypto.randomUUID().replaceAll("-", "")}`;
+      await pgPool`
+        INSERT INTO projects (project_key, display_name) VALUES (${projectKey}, ${projectKey})
+      `;
+      await pgPool`
+        INSERT INTO workset_roots (project_key, roots_json, epoch, admit_generation, updated_at)
+        VALUES (${projectKey}, ${"[]"}, 0, 0, ${new Date().toISOString()})
+      `;
+      expect(await isPostgresTenantEmpty(pgPool, projectKey)).toBe(true);
+    });
+
+    it("refuses a tenant mutation that commits after the initial emptiness check", async () => {
+      if (pgPool === undefined) throw new Error("fixture: PostgreSQL pool missing");
+      await ensureSchema(pgPool);
+      const projectKey = `t1960_race_${crypto.randomUUID().replaceAll("-", "")}`;
+      await pgPool`
+        INSERT INTO projects (project_key, display_name) VALUES (${projectKey}, ${projectKey})
+      `;
+      await pgPool`
+        INSERT INTO workset_roots (project_key, roots_json, epoch, admit_generation, updated_at)
+        VALUES (${projectKey}, ${"[]"}, 0, 0, ${new Date().toISOString()})
+      `;
+      const targetWorkset = createPostgresWorksetStore({ pool: pgPool, projectKey });
+      const mutation = await targetWorkset.admitLedgerMutation({
+        kind: "generic-write",
+        targets: [],
+      });
+      const source = new InMemoryLedgerStore();
+      await source.init();
+      const taskSchema = source.fetch(TASKS_LEDGER).schema;
+      const dump = await buildBackupDump(source, null);
+      const restore = restoreDumpToPostgres({
+        pool: pgPool,
+        projectKey,
+        dump,
+        authority: mintWorksetManagementAuthority(),
+        overwriteAuthorized: false,
+        administrativeKind: "backend-migration",
+      });
+      let outcome: "pending" | "resolved" | "rejected" = "pending";
+      void restore.then(
+        () => {
+          outcome = "resolved";
+        },
+        () => {
+          outcome = "rejected";
+        },
+      );
+
+      let exclusiveObserved = false;
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        const rows = await pgPool<Array<{ present: number }>>`
+          SELECT 1 AS present FROM workset_admissions
+          WHERE project_key = ${projectKey} AND form = 'exclusive-administrative'
+        `;
+        if (rows.length === 1) {
+          exclusiveObserved = true;
+          break;
+        }
+        if (outcome !== "pending") throw new Error("restore settled before acquiring target exclusion");
+        await Bun.sleep(5);
+      }
+      expect(exclusiveObserved).toBe(true);
+
+      await pgPool`
+        INSERT INTO ledgers (project_key, name, schema_json, milestone_counter, item_counter)
+        VALUES (${projectKey}, ${"late_target"}, ${JSON.stringify(taskSchema)}, 0, 0)
+      `;
+      await mutation.acknowledge();
+      await expect(restore).rejects.toBeInstanceOf(RestoreTargetChangedError);
+      const surviving = await pgPool<Array<{ name: string }>>`
+        SELECT name FROM ledgers WHERE project_key = ${projectKey} AND name = 'late_target'
+      `;
+      expect(surviving).toHaveLength(1);
+      targetWorkset.close();
+      await source.dispose();
     });
   },
 );

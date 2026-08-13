@@ -138,7 +138,13 @@ describe("D139 plan-lifecycle BackupDump round-trip", () => {
     expect(dump.some((f) => f.path === PLAN_LIFECYCLE_DUMP_PATH)).toBe(true);
 
     const targetDb = path.join(root, "restored.db");
-    await restoreDumpToXdg({ dbPath: targetDb, logsDir: null, dump, authority: mintWorksetManagementAuthority() });
+    await restoreDumpToXdg({
+      dbPath: targetDb,
+      logsDir: null,
+      dump,
+      authority: mintWorksetManagementAuthority(),
+      overwriteAuthorized: false,
+    });
 
     const restored = new SqliteLedgerStore({ dbPath: targetDb });
     await restored.init();

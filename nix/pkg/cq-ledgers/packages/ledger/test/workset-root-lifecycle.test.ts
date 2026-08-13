@@ -113,6 +113,7 @@ describe("workset root lifecycle [T1959]", () => {
       logsDir: null,
       dump,
       authority: mintWorksetManagementAuthority(),
+      overwriteAuthorized: false,
     });
     const dst = new SqliteLedgerStore({ dbPath: dstPath });
     await dst.init();
@@ -131,6 +132,7 @@ describe("workset root lifecycle [T1959]", () => {
       logsDir: null,
       dump: legacy,
       authority: mintWorksetManagementAuthority(),
+      overwriteAuthorized: false,
     });
     const legacyStore = new SqliteLedgerStore({ dbPath: legacyDst });
     await legacyStore.init();
@@ -161,6 +163,7 @@ describe("workset root lifecycle [T1959]", () => {
         logsDir: null,
         dump,
         authority: { forged: true },
+        overwriteAuthorized: false,
       });
       throw new Error("expected WorksetAdmissionError");
     } catch (e) {
@@ -202,6 +205,7 @@ describe("workset root lifecycle [T1959]", () => {
           logsDir: null,
           dump: dumpEmptyRoots,
           authority: mintWorksetManagementAuthority(),
+          overwriteAuthorized: true,
         });
         destructiveRan = true;
         beforeDestructive.resolve();
@@ -246,6 +250,7 @@ describe("workset root lifecycle [T1959]", () => {
         logsDir,
         dump,
         authority: mintWorksetManagementAuthority(),
+        overwriteAuthorized: false,
       });
       await Bun.sleep(50);
 

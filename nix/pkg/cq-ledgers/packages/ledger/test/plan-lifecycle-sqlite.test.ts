@@ -261,7 +261,13 @@ describe("T850 SQLite lifecycle persistence", () => {
     await source.init();
     const dump = await buildBackupDump(source, null);
     await source.dispose();
-    await restoreDumpToXdg({ dbPath: file, logsDir: null, dump, authority: mintWorksetManagementAuthority() });
+    await restoreDumpToXdg({
+      dbPath: file,
+      logsDir: null,
+      dump,
+      authority: mintWorksetManagementAuthority(),
+      overwriteAuthorized: true,
+    });
 
     const restored = new SqliteLedgerStore({ dbPath: file });
     await restored.init();

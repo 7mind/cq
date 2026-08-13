@@ -81,6 +81,7 @@ import {
   resolveStateDir,
   restoreDumpToPostgres,
   restoreDumpToXdg,
+  RestoreTargetChangedError,
   mintWorksetManagementAuthority,
   SqliteLedgerStore,
   XDG_DB_FILENAME,
@@ -321,6 +322,7 @@ async function runMigrateLegacyToXdg(args: MigrateArgs, io: MigrateIo): Promise<
     await probe.init();
     const targetEmpty = await isXdgPrimaryEmpty(probe);
     await probe.dispose();
+    let overwriteAuthorized = false;
     if (!targetEmpty) {
       const decision = await confirmDestructive(
         args.yes,
@@ -332,16 +334,28 @@ async function runMigrateLegacyToXdg(args: MigrateArgs, io: MigrateIo): Promise<
       if (!decision.proceed) {
         return { exitCode: decision.exitCode };
       }
+      overwriteAuthorized = true;
     }
 
     // --- Import, then flip the backend. The legacy ledger data is not rewritten.
-    const summary = await restoreDumpToXdg({
-      dbPath,
-      logsDir,
-      dump,
-      authority: mintWorksetManagementAuthority(),
-      administrativeKind: "backend-migration",
-    });
+    let summary;
+    try {
+      summary = await restoreDumpToXdg({
+        dbPath,
+        logsDir,
+        dump,
+        authority: mintWorksetManagementAuthority(),
+        overwriteAuthorized,
+        administrativeKind: "backend-migration",
+      });
+    } catch (error) {
+      if (!(error instanceof RestoreTargetChangedError)) throw error;
+      io.err(
+        `cq migrate: refusing to overwrite the xdg primary at ${dbPath}; ` +
+          `it became non-empty after the initial check`,
+      );
+      return { exitCode: EXIT_USAGE };
+    }
     await setLedgerBackend(args.cwd, "xdg");
 
     const legacyLocation =
@@ -468,14 +482,25 @@ async function runMigrateXdgToPostgres(args: MigrateArgs, io: MigrateIo): Promis
 
         // --- Import, then flip the backend. Source user data remains intact;
         // only the durable administrative admission is created and closed.
-        const summary = await restoreDumpToPostgres({
-          pool,
-          projectKey,
-          displayName,
-          dump,
-          authority: mintWorksetManagementAuthority(),
-          administrativeKind: "backend-migration",
-        });
+        let summary;
+        try {
+          summary = await restoreDumpToPostgres({
+            pool,
+            projectKey,
+            displayName,
+            dump,
+            authority: mintWorksetManagementAuthority(),
+            overwriteAuthorized: false,
+            administrativeKind: "backend-migration",
+          });
+        } catch (error) {
+          if (!(error instanceof RestoreTargetChangedError)) throw error;
+          io.err(
+            `cq migrate --to postgres: refusing — tenant ${projectKey} became non-empty ` +
+              `after the initial check`,
+          );
+          return { exitCode: EXIT_USAGE };
+        }
         await setLedgerBackend(args.cwd, "postgres");
 
         io.out(

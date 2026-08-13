@@ -18,6 +18,7 @@
  */
 
 import { describe, it, expect, afterAll, beforeEach, afterEach } from "bun:test";
+import { Database } from "bun:sqlite";
 import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -300,13 +301,60 @@ describe("cq migrate (T504)", () => {
       settled = true;
     });
 
-    await Bun.sleep(50);
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if (sourceWorkset.exclusiveHeld()) break;
+      if (settled) throw new Error("migration settled before acquiring source exclusion");
+      await Bun.sleep(5);
+    }
     expect(settled).toBe(false);
+    expect(sourceWorkset.exclusiveHeld()).toBe(true);
     expect(resolveLedgerBackend(root).backend).toBe("fs");
 
     await mutation.acknowledge();
     expect((await migration).exitCode).toBe(0);
     expect(resolveLedgerBackend(root).backend).toBe("xdg");
+  });
+
+  it("refuses a target mutation that commits after the initial emptiness check", async () => {
+    const root = await gitRepo("cq-migrate-target-admission-");
+    await fs.writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "xdg"\n');
+    const target = await createLedgerStore(root);
+    if (target.dbPath === undefined) throw new Error("fixture: xdg dbPath missing");
+    const targetWorkset = target.store as typeof target.store & {
+      worksetStore(): ReturnType<SqliteLedgerStore["worksetStore"]>;
+    };
+    const taskSchema = target.store.fetch(TASKS_LEDGER).schema;
+
+    await fs.writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+    await seedLegacy(root);
+    const mutation = await targetWorkset.worksetStore().admitLedgerMutation({
+      kind: "generic-write",
+      targets: [],
+    });
+    const migration = dispatch(["migrate", "--cwd", root], recordingIo());
+    let outcome: Awaited<typeof migration> | undefined;
+    void migration.then((value) => {
+      outcome = value;
+    });
+
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if (targetWorkset.worksetStore().exclusiveHeld()) break;
+      if (outcome !== undefined) throw new Error("migration settled before acquiring target exclusion");
+      await Bun.sleep(5);
+    }
+    expect(targetWorkset.worksetStore().exclusiveHeld()).toBe(true);
+
+    const db = new Database(target.dbPath);
+    db.query(
+      "INSERT INTO ledgers (name, schema_json, milestone_counter, item_counter) VALUES (?, ?, 0, 0)",
+    ).run("late_target", JSON.stringify(taskSchema));
+    db.close();
+    await mutation.acknowledge();
+
+    expect((await migration).exitCode).toBe(EXIT_REFUSED);
+    expect(resolveLedgerBackend(root).backend).toBe("fs");
+    expect(target.store.enumerate()).toContain("late_target");
+    await target.store.dispose();
   });
 
   it("K117: a cq.toml-less legacy tree migrates as an fs source (default resolution is xdg, but the in-tree ledger is detected)", async () => {

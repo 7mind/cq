@@ -20,7 +20,7 @@
  */
 import { describe, it, expect } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
@@ -44,6 +44,18 @@ function countItems(dbPath: string): number {
   const row = db.query<{ c: number }, []>("SELECT count(*) AS c FROM items").get();
   db.close();
   return row === null ? 0 : row.c;
+}
+
+function readRoots(dbPath: string): { roots: string[]; epoch: number } {
+  const db = new Database(dbPath, { readonly: true });
+  const row = db
+    .query<{ roots_json: string; epoch: number }, []>(
+      "SELECT roots_json, epoch FROM workset_state WHERE id = 1",
+    )
+    .get();
+  db.close();
+  if (row === null) throw new Error("fixture: workset state missing");
+  return { roots: JSON.parse(row.roots_json) as string[], epoch: row.epoch };
 }
 
 async function seedPopulatedStore(dbPath: string, n: number): Promise<void> {
@@ -123,7 +135,9 @@ describe("D170: backup-reinit refuses to destroy a POPULATED store", () => {
     const dbPath = join(dir, "ledger.db");
     const seed = new SqliteLedgerStore({ dbPath });
     await seed.init();
-    await seed.worksetStore().setRoots(["tasks:T-root"]);
+    const roots = ["tasks:T-root", "goals:G-root"];
+    await seed.worksetStore().setRoots(roots);
+    await seed.worksetStore().setRoots(roots);
     await seed.dispose();
     injectDivergence(dbPath);
 
@@ -135,6 +149,12 @@ describe("D170: backup-reinit refuses to destroy a POPULATED store", () => {
     await store.init();
     expect(await store.worksetStore().snapshot()).toEqual({ roots: [], epoch: 0 });
     await store.dispose();
+
+    const backups = readdirSync(dir).filter(
+      (name) => name.startsWith("ledger.backup-") && name.endsWith(".db"),
+    );
+    expect(backups).toHaveLength(1);
+    expect(readRoots(join(dir, backups[0]!))).toEqual({ roots, epoch: 2 });
   });
 
   it("rechecks population after administrative exclusion before destructive reinit", async () => {

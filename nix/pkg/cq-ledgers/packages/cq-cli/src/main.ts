@@ -35,6 +35,7 @@ import {
   readDumpInTree,
   readDumpOrphanBranch,
   restoreDumpToXdg,
+  RestoreTargetChangedError,
   isXdgPrimaryEmpty,
   restoreDumpToPostgres,
   isPostgresTenantEmpty,
@@ -50,7 +51,12 @@ import {
   type ResetSummary,
 } from "@cq/ledger";
 import { loadConfig } from "@cq/config";
-import { type ConfirmIo, defaultConfirmIo, confirmDestructive } from "./confirm.js";
+import {
+  EXIT_REFUSED,
+  type ConfirmIo,
+  defaultConfirmIo,
+  confirmDestructive,
+} from "./confirm.js";
 import { CQ_TOML_TEMPLATE } from "./cqTomlTemplate.js";
 import { runMigrate } from "./migrate.js";
 import { runAdvanceGate } from "./advanceGate.js";
@@ -1088,6 +1094,7 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
     return { exitCode: EXIT_USAGE };
   }
 
+  let overwriteAuthorized = false;
   if (!(await isXdgPrimaryEmpty(resolved.store))) {
     const decision = await confirmDestructive(
       args.yes,
@@ -1101,16 +1108,25 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
       await resolved.store.dispose();
       return { exitCode: decision.exitCode };
     }
+    overwriteAuthorized = true;
   }
   resolved.backup?.close();
   await resolved.store.dispose();
 
-  const summary = await restoreDumpToXdg({
-    dbPath,
-    logsDir,
-    dump,
-    authority: mintWorksetManagementAuthority(),
-  });
+  let summary;
+  try {
+    summary = await restoreDumpToXdg({
+      dbPath,
+      logsDir,
+      dump,
+      authority: mintWorksetManagementAuthority(),
+      overwriteAuthorized,
+    });
+  } catch (error) {
+    if (!(error instanceof RestoreTargetChangedError)) throw error;
+    io.err("cq restore: refusing because the xdg primary became non-empty after confirmation");
+    return { exitCode: EXIT_REFUSED };
+  }
   io.out(
     `cq restore: restored ${summary.ledgerCount} ledger(s) + ${summary.logCount} log artifact(s) ` +
       `from the ${target} dump at ${args.cwd}`,
@@ -1139,6 +1155,7 @@ async function runRestorePostgres(
   const displayName = tenant.registeredDisplayName ?? tenant.candidateDisplayName;
   try {
     const empty = await isPostgresTenantEmpty(tenant.pool, tenant.projectKey);
+    let overwriteAuthorized = false;
     if (!empty) {
       const decision = await confirmDestructive(
         args.yes,
@@ -1152,15 +1169,27 @@ async function runRestorePostgres(
       if (!decision.proceed) {
         return { exitCode: decision.exitCode };
       }
+      overwriteAuthorized = true;
     }
 
-    const summary = await restoreDumpToPostgres({
-      pool: tenant.pool,
-      projectKey: tenant.projectKey,
-      displayName,
-      dump,
-      authority: mintWorksetManagementAuthority(),
-    });
+    let summary;
+    try {
+      summary = await restoreDumpToPostgres({
+        pool: tenant.pool,
+        projectKey: tenant.projectKey,
+        displayName,
+        dump,
+        authority: mintWorksetManagementAuthority(),
+        overwriteAuthorized,
+      });
+    } catch (error) {
+      if (!(error instanceof RestoreTargetChangedError)) throw error;
+      io.err(
+        `cq restore: refusing because postgres tenant ${tenant.projectKey} became non-empty ` +
+          `after confirmation`,
+      );
+      return { exitCode: EXIT_REFUSED };
+    }
     io.out(
       `cq restore: restored ${summary.ledgerCount} ledger(s) + ${summary.logCount} log artifact(s) ` +
         `from the ${target} dump at ${args.cwd} (postgres tenant "${displayName}", ` +
