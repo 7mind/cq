@@ -55,6 +55,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
           targetRef: "tasks:T-hold",
         });
         await Promise.resolve(admission.registerProcessGroup({ pgid: 7001, leaderPid: 7001 }));
+        await Promise.resolve(admission.shareWithGuardian());
         // Flush durable register.
         await Bun.sleep(30);
 

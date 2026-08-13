@@ -176,8 +176,11 @@ export {
   worksetStoreFromCoordinator,
   worksetEffectAdmissionProviderFromStore,
 } from "./worksetStore.js";
-export type { WorksetStore,
-  WorksetEffectAdmissionProvider, CreateInMemoryWorksetStoreOptions } from "./worksetStore.js";
+export type {
+  WorksetStore,
+  WorksetEffectAdmissionProvider,
+  CreateInMemoryWorksetStoreOptions,
+} from "./worksetStore.js";
 export {
   createGitObjectWorksetStore,
   parseWorksetRootsDocument,

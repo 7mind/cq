@@ -95,11 +95,11 @@ export interface WorksetBrokerAdmissionHandle {
     registration: WorksetBrokerProcessGroupRegistration,
   ): void | Promise<void>;
   /** Share the held admission with the already registered bootstrap guardian. */
-  readonly shareWithGuardian?: () => void | Promise<void>;
+  shareWithGuardian(): void | Promise<void>;
   markSettled(): void | Promise<void>;
   releaseAfterSettlement(): Promise<void>;
   /** Close an acquired admission when its fenced bootstrap never registered. */
-  readonly abandonBeforeRegistration?: () => Promise<void>;
+  abandonBeforeRegistration(): Promise<void>;
 }
 
 export interface WorksetEffectAdmissionProvider {
@@ -211,12 +211,6 @@ export class WorksetEffectProtocolSession {
         "abandonBeforeRegistration requires a held admission",
       );
     }
-    if (this.admission.abandonBeforeRegistration === undefined) {
-      throw new WorksetEffectProtocolError(
-        "settlement-required",
-        "the admission provider cannot close an unregistered fenced launch",
-      );
-    }
     await this.admission.abandonBeforeRegistration();
     this.stageValue = "admission-closed";
   }
@@ -259,7 +253,7 @@ export class WorksetEffectProtocolSession {
         "workset effect admission already has a guardian share",
       );
     }
-    await Promise.resolve(this.admission.shareWithGuardian?.());
+    await Promise.resolve(this.admission.shareWithGuardian());
     this.guardianShared = true;
   }
 
@@ -269,6 +263,12 @@ export class WorksetEffectProtocolSession {
    */
   releaseTarget(): void {
     this.assertStage("process-group-registered", "releaseTarget");
+    if (!this.guardianShared) {
+      throw new WorksetEffectProtocolError(
+        "illegal-stage-transition",
+        "releaseTarget requires the registered guardian to share admission",
+      );
+    }
     this.effectCount += 1;
     this.stageValue = "target-released";
   }
@@ -381,6 +381,7 @@ export async function runWorksetEffectProtocol(input: {
   });
   await session.acquireAdmission();
   await session.registerProcessGroup(input.registration);
+  await session.shareWithGuardian();
   session.releaseTarget();
   await input.launch();
   const reason = input.reason ?? "normal";

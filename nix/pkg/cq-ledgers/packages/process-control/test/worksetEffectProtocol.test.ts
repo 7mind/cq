@@ -50,6 +50,7 @@ function createRecordingProvider(): WorksetEffectAdmissionProvider & {
         epoch: grantedEpoch,
       });
       let registered = false;
+      let guardianShared = false;
       let settled = false;
       let closed = false;
       return {
@@ -64,9 +65,19 @@ function createRecordingProvider(): WorksetEffectAdmissionProvider & {
           }
           registered = true;
         },
-        markSettled() {
+        shareWithGuardian() {
           if (closed) throw new Error("closed");
           if (!registered) throw new Error("not registered");
+          guardianShared = true;
+        },
+        async abandonBeforeRegistration() {
+          if (closed) throw new Error("already released");
+          if (registered) throw new Error("already registered");
+          closed = true;
+        },
+        markSettled() {
+          if (closed) throw new Error("closed");
+          if (!registered || !guardianShared) throw new Error("guardian not shared");
           settled = true;
         },
         async releaseAfterSettlement() {
@@ -125,6 +136,7 @@ describe("workset effect protocol [T1953]", () => {
     expect(session.admissionEpoch).toBe(7);
     await session.registerProcessGroup({ pgid: 4242, leaderPid: 4242 });
     expect(session.stage).toBe("process-group-registered");
+    await session.shareWithGuardian();
     session.releaseTarget();
     expect(session.stage).toBe("target-released");
     session.beginTermination("normal");
@@ -145,6 +157,7 @@ describe("workset effect protocol [T1953]", () => {
     });
     await session.acquireAdmission();
     await session.registerProcessGroup({ pgid: 9, leaderPid: 9 });
+    await session.shareWithGuardian();
     session.releaseTarget();
     try {
       await session.closeAdmission();
@@ -175,6 +188,21 @@ describe("workset effect protocol [T1953]", () => {
     }
   });
 
+  it("refuses target release before the registered guardian shares admission", async () => {
+    const provider = createRecordingProvider();
+    const session = new WorksetEffectProtocolSession({
+      provider,
+      kind: "child-dispatch",
+      targetRef: "tasks:T-guardian",
+    });
+    await session.acquireAdmission();
+    await session.registerProcessGroup({ pgid: 10, leaderPid: 10 });
+    expect(() => session.releaseTarget()).toThrow(WorksetEffectProtocolError);
+    await session.shareWithGuardian();
+    session.releaseTarget();
+    expect(session.stage).toBe("target-released");
+  });
+
   it("one session admits exactly one observable effect", async () => {
     const provider = createRecordingProvider();
     const session = new WorksetEffectProtocolSession({
@@ -184,6 +212,7 @@ describe("workset effect protocol [T1953]", () => {
     });
     await session.acquireAdmission();
     await session.registerProcessGroup({ pgid: 11, leaderPid: 11 });
+    await session.shareWithGuardian();
     session.releaseTarget();
     try {
       session.releaseTarget();
@@ -235,6 +264,7 @@ describe("workset effect protocol [T1953]", () => {
     });
     await session.acquireAdmission();
     await session.registerProcessGroup({ pgid: 77, leaderPid: 77 });
+    await session.shareWithGuardian();
     session.releaseTarget();
     session.beginTermination("parent-death");
     await session.markSettled();
