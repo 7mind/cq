@@ -18,6 +18,7 @@ import {
   FsLedgerStore,
   CANONICAL_LEDGERS,
   LEDGER_STORAGE_DIRNAME,
+  createTrustedWorksetManagementAuthority,
 } from "../src/index.js";
 import type { LedgerSchema } from "../src/index.js";
 
@@ -29,7 +30,10 @@ afterAll(async () => {
 async function makeStore(now?: () => string): Promise<{ store: FsLedgerStore; root: string }> {
   const root = await mkdtemp(path.join(tmpdir(), "ledger-reset-nc-"));
   dirs.push(root);
-  const opts: ConstructorParameters<typeof FsLedgerStore>[0] = { root };
+  const opts: ConstructorParameters<typeof FsLedgerStore>[0] = {
+    root,
+    worksetAuthority: createTrustedWorksetManagementAuthority(),
+  };
   if (now !== undefined) opts.now = now;
   const store = new FsLedgerStore(opts);
   await store.init();

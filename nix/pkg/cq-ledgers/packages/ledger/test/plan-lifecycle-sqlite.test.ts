@@ -161,6 +161,7 @@ describe("T850 SQLite lifecycle persistence", () => {
       onSchemaDivergence: "backup-reinit",
       // D170: this test DELIBERATELY reinitialises a populated store.
       allowDestructiveReinitOfPopulatedStore: true,
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
     });
     await reset.init();
     try {

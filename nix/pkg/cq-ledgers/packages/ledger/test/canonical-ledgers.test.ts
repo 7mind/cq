@@ -53,6 +53,7 @@ import {
   type LedgerStore,
   type FieldValue,
   LEDGER_STORAGE_DIRNAME,
+  createTrustedWorksetManagementAuthority,
 } from "../src/index.js";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
@@ -707,7 +708,11 @@ describe("repo docs/ledgers.yaml matches canon (no bootstrap divergence)", () =>
       const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
       await mkdir(docsDir, { recursive: true });
       await writeFile(path.join(docsDir, "ledgers.yaml"), staleText, "utf8");
-      const store = new FsLedgerStore({ root: dir, onSchemaDivergence: "backup-reinit" });
+      const store = new FsLedgerStore({
+        root: dir,
+        onSchemaDivergence: "backup-reinit",
+        worksetAuthority: createTrustedWorksetManagementAuthority(),
+      });
       // Must NOT throw — it self-heals silently (the D47 defect).
       await store.init();
       await store.dispose();

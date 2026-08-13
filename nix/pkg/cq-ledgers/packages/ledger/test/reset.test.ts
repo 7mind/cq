@@ -18,6 +18,7 @@ import {
   DEFECTS_LEDGER,
   TASKS_LEDGER,
   LEDGER_STORAGE_DIRNAME,
+  createTrustedWorksetManagementAuthority,
 } from "../src/index.js";
 
 const dirs: string[] = [];
@@ -28,7 +29,10 @@ afterAll(async () => {
 async function makeStore(now?: () => string): Promise<{ store: FsLedgerStore; root: string }> {
   const root = await mkdtemp(path.join(tmpdir(), "ledger-reset-"));
   dirs.push(root);
-  const storeOpts: ConstructorParameters<typeof FsLedgerStore>[0] = { root };
+  const storeOpts: ConstructorParameters<typeof FsLedgerStore>[0] = {
+    root,
+    worksetAuthority: createTrustedWorksetManagementAuthority(),
+  };
   if (now !== undefined) storeOpts.now = now;
   const store = new FsLedgerStore(storeOpts);
   await store.init();

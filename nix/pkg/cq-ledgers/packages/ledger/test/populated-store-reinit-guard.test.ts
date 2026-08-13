@@ -25,6 +25,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
 import { MILESTONES_AMBIENT_ID } from "../src/constants.js";
+import { createTrustedWorksetManagementAuthority } from "../src/worksetInvocationAuthority.js";
 
 /** Make one canonical ledger's persisted schema diverge from canon. */
 function injectDivergence(dbPath: string): void {
@@ -79,7 +80,11 @@ describe("D170: backup-reinit refuses to destroy a POPULATED store", () => {
     expect(before).toBeGreaterThan(1); // bootstrap milestone + seeded rows
     injectDivergence(dbPath);
 
-    const store = new SqliteLedgerStore({ dbPath, onSchemaDivergence: "backup-reinit" });
+    const store = new SqliteLedgerStore({
+      dbPath,
+      onSchemaDivergence: "backup-reinit",
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
+    });
     await expect(store.init()).rejects.toThrow(/refusing to reinitialise a POPULATED ledger/);
 
     // The refusal must be non-destructive: same row count, still openable.
@@ -92,7 +97,11 @@ describe("D170: backup-reinit refuses to destroy a POPULATED store", () => {
     await seedPopulatedStore(dbPath, 3);
     injectDivergence(dbPath);
 
-    const store = new SqliteLedgerStore({ dbPath, onSchemaDivergence: "backup-reinit" });
+    const store = new SqliteLedgerStore({
+      dbPath,
+      onSchemaDivergence: "backup-reinit",
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
+    });
     // 3 seeded items — the bootstrap milestone is excluded from the count.
     await expect(store.init()).rejects.toThrow(/DESTROY 3 item\(s\)/);
   });
@@ -107,6 +116,7 @@ describe("D170: backup-reinit refuses to destroy a POPULATED store", () => {
       dbPath,
       onSchemaDivergence: "backup-reinit",
       allowDestructiveReinitOfPopulatedStore: true,
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
     });
     await store.init(); // must NOT throw
     // Reinit happened: only the reseeded bootstrap milestone remains.
@@ -125,7 +135,11 @@ describe("D170: backup-reinit refuses to destroy a POPULATED store", () => {
     injectDivergence(dbPath);
 
     // No consent flag, yet this must succeed: nothing of value is at risk.
-    const store = new SqliteLedgerStore({ dbPath, onSchemaDivergence: "backup-reinit" });
+    const store = new SqliteLedgerStore({
+      dbPath,
+      onSchemaDivergence: "backup-reinit",
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
+    });
     await store.init();
     await store.dispose();
   });
@@ -168,6 +182,7 @@ describe("D170: backup-reinit refuses to destroy a POPULATED store", () => {
     const store = new SqliteLedgerStore({
       dbPath,
       onSchemaDivergence: "backup-reinit",
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
       workset: {
         hooks: {
           beforeAdministrativeDestructive: () => {

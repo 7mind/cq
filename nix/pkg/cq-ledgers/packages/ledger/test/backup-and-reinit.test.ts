@@ -13,6 +13,7 @@ import {
   FsLedgerStore,
   CANONICAL_LEDGERS,
   MILESTONES_LEDGER,
+  createTrustedWorksetManagementAuthority,
   serializeRegistry,
   LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
@@ -37,7 +38,10 @@ async function makeStore(
       "utf8",
     );
   }
-  const storeOpts: ConstructorParameters<typeof FsLedgerStore>[0] = { root };
+  const storeOpts: ConstructorParameters<typeof FsLedgerStore>[0] = {
+    root,
+    worksetAuthority: createTrustedWorksetManagementAuthority(),
+  };
   if (opts.now !== undefined) storeOpts.now = opts.now;
   const store = new FsLedgerStore(storeOpts);
   return { store, root };

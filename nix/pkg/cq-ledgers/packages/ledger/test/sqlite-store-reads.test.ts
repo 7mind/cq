@@ -28,6 +28,7 @@ import { FsLedgerStore } from "../src/store/FsLedgerStore.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
 import { ensureSchema } from "../src/store/sqlite/schema.js";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
+import { createTrustedWorksetManagementAuthority } from "../src/worksetInvocationAuthority.js";
 
 const FIXED_NOW = "2026-01-01T00:00:00.000Z";
 const now = (): string => FIXED_NOW;
@@ -242,6 +243,7 @@ describe("SqliteLedgerStore init/bootstrap (acceptance a)", () => {
       dbPath: await divergedDbPath(),
       now,
       onSchemaDivergence: "backup-reinit",
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
     });
     await expect(backupStore.init()).resolves.toBeUndefined();
     expect(backupStore.fetch("tasks").schema.idPrefix).not.toBe("ZZ");

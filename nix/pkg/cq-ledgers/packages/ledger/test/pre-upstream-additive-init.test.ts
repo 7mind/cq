@@ -786,7 +786,11 @@ describe("pre-upstream lifecycle acceptance states", () => {
 
   test("reset preserves legacy archive/log bytes, retains upstream canon, and erase removes it", async () => {
     const fixture = await prepareFsFixture();
-    const store = fixture.open();
+    const store = new FsLedgerStore({
+      root: fixture.root,
+      now,
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
+    });
     await store.init();
     await store.createItem(UPSTREAM_LEDGER, "M41", {
       status: "open",

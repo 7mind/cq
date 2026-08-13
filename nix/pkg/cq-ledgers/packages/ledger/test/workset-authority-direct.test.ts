@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
 import {
+  FsLedgerStore,
   WorksetInvocationAuthorityError,
+  WorksetAdmissionError,
   createInMemoryWorksetGuardedLedger,
   createInMemoryWorksetManagementLedger,
   createLedgerMcpTools,
@@ -49,5 +54,28 @@ describe("direct workset management authority", () => {
       "authority",
     );
     await store.dispose();
+  });
+
+  test("ordinary store construction denies reset without changing persisted items", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "workset-authority-reset-"));
+    const store = new FsLedgerStore({ root });
+    await store.init();
+    try {
+      const milestone = await store.createMilestone({ title: "reset denial" });
+      const task = await store.createItem("tasks", milestone.id, {
+        status: "planned",
+        fields: { headline: "must survive denied reset" },
+      });
+
+      await expect(store.reset()).rejects.toMatchObject({
+        code: "management-authority-required",
+      } satisfies Partial<WorksetAdmissionError>);
+      expect(store.fetchItem("tasks", task.id).fields["headline"]).toBe(
+        "must survive denied reset",
+      );
+    } finally {
+      await store.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

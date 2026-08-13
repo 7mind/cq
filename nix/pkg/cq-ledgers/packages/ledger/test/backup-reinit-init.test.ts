@@ -24,6 +24,7 @@ import {
   MILESTONES_ACTIVE_GROUP_ID,
   MILESTONES_AMBIENT_ID,
   BootstrapViolationError,
+  createTrustedWorksetManagementAuthority,
   serializeRegistry,
   LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
@@ -49,6 +50,15 @@ async function makeTmpDir(): Promise<{ root: string; docsDir: string }> {
   const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
   await mkdir(docsDir, { recursive: true });
   return { root, docsDir };
+}
+
+function createBackupReinitStore(root: string, now: () => string): FsLedgerStore {
+  return new FsLedgerStore({
+    root,
+    now,
+    onSchemaDivergence: "backup-reinit",
+    worksetAuthority: createTrustedWorksetManagementAuthority(),
+  });
 }
 
 /**
@@ -125,7 +135,7 @@ describe("FsLedgerStore.init() divergence → backup+reinit (explicit opt-in)", 
     const { root, docsDir } = await makeTmpDir();
     await writeFile(path.join(docsDir, "ledgers.yaml"), divergentRegistryYaml(GOALS_LEDGER), "utf8");
     await writeFile(path.join(docsDir, `${GOALS_LEDGER}.md`), PRIOR_GOALS_MD, "utf8");
-    const store = new FsLedgerStore({ root, now: () => FIXED_TS, onSchemaDivergence: "backup-reinit" });
+    const store = createBackupReinitStore(root, () => FIXED_TS);
 
     await expect(store.init()).resolves.toBeUndefined();
     await store.dispose();
@@ -135,7 +145,7 @@ describe("FsLedgerStore.init() divergence → backup+reinit (explicit opt-in)", 
     const { root, docsDir } = await makeTmpDir();
     await writeFile(path.join(docsDir, "ledgers.yaml"), divergentRegistryYaml(GOALS_LEDGER), "utf8");
     await writeFile(path.join(docsDir, `${GOALS_LEDGER}.md`), PRIOR_GOALS_MD, "utf8");
-    const store = new FsLedgerStore({ root, now: () => FIXED_TS, onSchemaDivergence: "backup-reinit" });
+    const store = createBackupReinitStore(root, () => FIXED_TS);
     await store.init();
     await store.dispose();
 
@@ -149,7 +159,7 @@ describe("FsLedgerStore.init() divergence → backup+reinit (explicit opt-in)", 
     const originalRegistryYaml = divergentRegistryYaml(GOALS_LEDGER);
     await writeFile(path.join(docsDir, "ledgers.yaml"), originalRegistryYaml, "utf8");
     await writeFile(path.join(docsDir, `${GOALS_LEDGER}.md`), PRIOR_GOALS_MD, "utf8");
-    const store = new FsLedgerStore({ root, now: () => FIXED_TS, onSchemaDivergence: "backup-reinit" });
+    const store = createBackupReinitStore(root, () => FIXED_TS);
     await store.init();
     await store.dispose();
 
@@ -162,7 +172,7 @@ describe("FsLedgerStore.init() divergence → backup+reinit (explicit opt-in)", 
     const { root, docsDir } = await makeTmpDir();
     await writeFile(path.join(docsDir, "ledgers.yaml"), divergentRegistryYaml(GOALS_LEDGER), "utf8");
     await writeFile(path.join(docsDir, `${GOALS_LEDGER}.md`), PRIOR_GOALS_MD, "utf8");
-    const store = new FsLedgerStore({ root, now: () => FIXED_TS, onSchemaDivergence: "backup-reinit" });
+    const store = createBackupReinitStore(root, () => FIXED_TS);
     await store.init();
     await store.dispose();
 
@@ -175,7 +185,7 @@ describe("FsLedgerStore.init() divergence → backup+reinit (explicit opt-in)", 
     const { root, docsDir } = await makeTmpDir();
     await writeFile(path.join(docsDir, "ledgers.yaml"), divergentRegistryYaml(GOALS_LEDGER), "utf8");
     await writeFile(path.join(docsDir, `${GOALS_LEDGER}.md`), PRIOR_GOALS_MD, "utf8");
-    const store = new FsLedgerStore({ root, now: () => FIXED_TS, onSchemaDivergence: "backup-reinit" });
+    const store = createBackupReinitStore(root, () => FIXED_TS);
     await store.init();
     await store.dispose();
 
@@ -188,7 +198,7 @@ describe("FsLedgerStore.init() divergence → backup+reinit (explicit opt-in)", 
     const { root, docsDir } = await makeTmpDir();
     await writeFile(path.join(docsDir, "ledgers.yaml"), divergentRegistryYaml(GOALS_LEDGER), "utf8");
     await writeFile(path.join(docsDir, `${GOALS_LEDGER}.md`), PRIOR_GOALS_MD, "utf8");
-    const store = new FsLedgerStore({ root, now: () => FIXED_TS, onSchemaDivergence: "backup-reinit" });
+    const store = createBackupReinitStore(root, () => FIXED_TS);
     await store.init();
     await store.dispose();
 
@@ -204,7 +214,7 @@ describe("FsLedgerStore.init() divergence → backup+reinit (explicit opt-in)", 
     const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
     await writeFile(path.join(docsDir, "ledgers.yaml"), divergentRegistryYaml(GOALS_LEDGER), "utf8");
     await writeFile(path.join(docsDir, `${GOALS_LEDGER}.md`), PRIOR_GOALS_MD, "utf8");
-    const store = new FsLedgerStore({ root, now: () => FIXED_TS, onSchemaDivergence: "backup-reinit" });
+    const store = createBackupReinitStore(root, () => FIXED_TS);
     await store.init();
 
     const fetched = store.fetch(GOALS_LEDGER);
@@ -218,7 +228,7 @@ describe("FsLedgerStore.init() divergence → backup+reinit (explicit opt-in)", 
     const { root, docsDir } = await makeTmpDir();
     await writeFile(path.join(docsDir, "ledgers.yaml"), divergentRegistryYaml(GOALS_LEDGER), "utf8");
     await writeFile(path.join(docsDir, `${GOALS_LEDGER}.md`), PRIOR_GOALS_MD, "utf8");
-    const store = new FsLedgerStore({ root, now: () => FIXED_TS, onSchemaDivergence: "backup-reinit" });
+    const store = createBackupReinitStore(root, () => FIXED_TS);
     await store.init();
 
     const fetched = store.fetch(GOALS_LEDGER);
@@ -232,7 +242,7 @@ describe("FsLedgerStore.init() divergence → backup+reinit (explicit opt-in)", 
     const { root, docsDir } = await makeTmpDir();
     await writeFile(path.join(docsDir, "ledgers.yaml"), divergentRegistryYaml(GOALS_LEDGER), "utf8");
     await writeFile(path.join(docsDir, `${GOALS_LEDGER}.md`), PRIOR_GOALS_MD, "utf8");
-    const store = new FsLedgerStore({ root, now: () => FIXED_TS, onSchemaDivergence: "backup-reinit" });
+    const store = createBackupReinitStore(root, () => FIXED_TS);
     await store.init();
 
     const milestones = store.fetch(MILESTONES_LEDGER);
@@ -248,7 +258,7 @@ describe("FsLedgerStore.init() divergence → backup+reinit (explicit opt-in)", 
     const { root, docsDir } = await makeTmpDir();
     await writeFile(path.join(docsDir, "ledgers.yaml"), divergentRegistryYaml(GOALS_LEDGER), "utf8");
     await writeFile(path.join(docsDir, `${GOALS_LEDGER}.md`), PRIOR_GOALS_MD, "utf8");
-    const store = new FsLedgerStore({ root, now: () => FIXED_TS, onSchemaDivergence: "backup-reinit" });
+    const store = createBackupReinitStore(root, () => FIXED_TS);
 
     const stderr = await captureStderr(() => store.init());
     await store.dispose();

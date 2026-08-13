@@ -39,6 +39,7 @@ import { FsLedgerStore } from "../src/store/FsLedgerStore.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
 import { ensureSchema } from "../src/store/sqlite/schema.js";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
+import { createTrustedWorksetManagementAuthority } from "../src/worksetInvocationAuthority.js";
 
 const FIXED_NOW = "2026-01-01T00:00:00.000Z";
 const now = (): string => FIXED_NOW;
@@ -431,6 +432,7 @@ describe("T529: schema-divergence BACKUP action (VACUUM INTO a timestamped sibli
       onSchemaDivergence: "backup-reinit",
       // D170: this test DELIBERATELY reinitialises a populated store.
       allowDestructiveReinitOfPopulatedStore: true,
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
     });
     const stderr = await captureStderr(() => store.init());
     try {

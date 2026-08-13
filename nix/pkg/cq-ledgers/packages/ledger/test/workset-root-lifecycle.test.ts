@@ -357,7 +357,11 @@ describe("workset root lifecycle [T1959]", () => {
 
   it("FS reset: backup retains roots; live roots become unrestricted empty", async () => {
     const root = await tmp("wrl-fs-reset-");
-    const store = new FsLedgerStore({ root, now: () => "2026-08-10T12:00:00.000Z" });
+    const store = new FsLedgerStore({
+      root,
+      now: () => "2026-08-10T12:00:00.000Z",
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
+    });
     await store.init();
     try {
       const roots = ["goals:G-fs", "tasks:T-fs"];
@@ -441,6 +445,7 @@ describe("workset root lifecycle [T1959]", () => {
       root,
       now: () => FIXED_TS,
       onSchemaDivergence: "backup-reinit",
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
     });
     await store.init();
     try {
@@ -484,6 +489,7 @@ describe("workset root lifecycle [T1959]", () => {
       now: () => timestamp,
       onSchemaDivergence: "backup-reinit",
       allowDestructiveReinitOfPopulatedStore: true,
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
       workset: {
         hooks: {
           beforeAdministrativeDestructive: async () => {
