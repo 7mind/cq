@@ -37,6 +37,9 @@ describe.skipIf(pgPool === undefined)(
       await ensureSchema(pgPool);
       const projectKey = `t1960_target_${crypto.randomUUID().replaceAll("-", "")}`;
       await pgPool`
+      INSERT INTO projects (project_key, display_name) VALUES (${projectKey}, ${projectKey})
+    `;
+      await pgPool`
       INSERT INTO workset_roots (project_key, roots_json, epoch, admit_generation, updated_at)
       VALUES (${projectKey}, ${JSON.stringify(["tasks:T-root"])}, 3, 0, ${new Date().toISOString()})
     `;

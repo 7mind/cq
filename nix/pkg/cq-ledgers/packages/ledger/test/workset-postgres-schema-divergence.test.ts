@@ -51,20 +51,20 @@ describe.skipIf(setupPool === undefined)(
       await store.init();
       await store.dispose();
 
-      const shadowRows = await setupPool<Array<{ roots_json: string; epoch: number }>>`
+      const shadowRows = await setupPool<Array<{ roots_json: string; epoch: string }>>`
       SELECT roots_json, epoch FROM workset_roots
       WHERE project_key LIKE ${`${projectKey}__divergence-backup-%`}
     `;
       expect(shadowRows).toHaveLength(1);
       expect(JSON.parse(shadowRows[0]!.roots_json)).toEqual(roots);
-      expect(shadowRows[0]!.epoch).toBe(4);
+      expect(Number(shadowRows[0]!.epoch)).toBe(4);
 
-      const liveRows = await setupPool<Array<{ roots_json: string; epoch: number }>>`
+      const liveRows = await setupPool<Array<{ roots_json: string; epoch: string }>>`
       SELECT roots_json, epoch FROM workset_roots WHERE project_key = ${projectKey}
     `;
       expect(liveRows).toHaveLength(1);
       expect(JSON.parse(liveRows[0]!.roots_json)).toEqual([]);
-      expect(liveRows[0]!.epoch).toBe(0);
+      expect(Number(liveRows[0]!.epoch)).toBe(0);
     });
   },
 );
