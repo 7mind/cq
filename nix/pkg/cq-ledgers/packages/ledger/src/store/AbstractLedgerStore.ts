@@ -1486,9 +1486,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
           for (const ledgerId of priorLedgerIds) {
             if (!authoritativeLedgerIds.has(ledgerId)) this.searchIndex.removeLedger(ledgerId);
           }
-          for (const ledgerId of authoritativeLedgerIds) {
-            if (!priorLedgerIds.has(ledgerId)) await this.indexLedgerFull(ledgerId);
-          }
+          for (const ledgerId of authoritativeLedgerIds) await this.indexLedgerFull(ledgerId);
           const beforeLedgers = cloneMap(this.ledgers);
           const beforeRegistry = structuredClone(this.registry);
           const archives = new Map<string, GenericArchiveEntry>();

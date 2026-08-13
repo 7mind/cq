@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   MILESTONES_LEDGER,
+  TASKS_LEDGER,
   type LedgerSchema,
   type WorksetGuardedLedger,
 } from "../src/index.js";
@@ -128,6 +129,51 @@ export function runGenericCreateLedgerPeerContract(
         } finally {
           await reader.dispose();
         }
+      } finally {
+        await disposePeers(fixture);
+      }
+    });
+
+    it("reindexes peer changes absorbed by an unrelated generic mutation", async () => {
+      const fixture = await factory.build();
+      await fixture.first.init();
+      await fixture.second.init();
+      try {
+        const milestone = await fixture.first.mutations.createMilestone({
+          title: "peer index reconciliation",
+        });
+        const task = await fixture.first.mutations.createItem(TASKS_LEDGER, milestone.id, {
+          status: "planned",
+          fields: { headline: "zqxoldalpha" },
+        });
+        await fixture.second.invalidate(MILESTONES_LEDGER);
+        await fixture.second.invalidate(TASKS_LEDGER);
+        expect(
+          (await fixture.second.ftsSearch("zqxoldalpha"))
+            .filter((hit) => hit.ledgerId === TASKS_LEDGER)
+            .map((hit) => hit.item.id),
+        ).toContain(task.id);
+        await fixture.first.mutations.updateItem(TASKS_LEDGER, task.id, {
+          fields: { headline: "vbwnewomega" },
+        });
+
+        await fixture.second.mutations.updateMilestone(milestone.id, {
+          description: "trigger authoritative reconciliation",
+        });
+
+        expect(fixture.second.fetchItem(TASKS_LEDGER, task.id).fields.headline).toBe(
+          "vbwnewomega",
+        );
+        expect(
+          (await fixture.second.ftsSearch("vbwnewomega"))
+            .filter((hit) => hit.ledgerId === TASKS_LEDGER)
+            .map((hit) => hit.item.id),
+        ).toContain(task.id);
+        expect(
+          (await fixture.second.ftsSearch("zqxoldalpha"))
+            .filter((hit) => hit.ledgerId === TASKS_LEDGER)
+            .map((hit) => hit.item.id),
+        ).not.toContain(task.id);
       } finally {
         await disposePeers(fixture);
       }
