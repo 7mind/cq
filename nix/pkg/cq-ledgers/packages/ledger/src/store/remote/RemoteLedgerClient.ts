@@ -75,9 +75,8 @@ import type {
   RevisedOperatorAction,
 } from "../../operatorActions.js";
 import type {
-  WorksetObserveRequest,
   WorksetRequest,
-  WorksetResult,
+  WorksetResultFor,
 } from "../../mcp/worksetTool.js";
 
 /**
@@ -489,13 +488,11 @@ export class RemoteLedgerClient {
     return await this.call<unknown>(name, args);
   }
 
-  async workset(request: WorksetObserveRequest): Promise<WorksetResult>;
-  async workset(request: WorksetRequest): Promise<WorksetResult>;
-  async workset(request: WorksetRequest): Promise<WorksetResult> {
+  async workset<R extends WorksetRequest>(request: R): Promise<WorksetResultFor<R>> {
     if (request.op === "set" && this._scope !== "management") {
       throw new RemoteManagementScopeError();
     }
-    return await this.call<WorksetResult>("workset", { ...request });
+    return await this.call<WorksetResultFor<R>>("workset", { ...request });
   }
 
   // ---- Routine read families ---------------------------------------------

@@ -120,6 +120,7 @@ export type {
   WorksetProjectionRequest,
   WorksetRequest,
   WorksetResult,
+  WorksetResultFor,
 } from "./mcp/worksetTool.js";
 export type {
   WorksetProjection,

@@ -10,6 +10,7 @@ import {
   RemoteLedgerClientConfigError,
   RemoteManagementScopeError,
   remoteMcpUrl,
+  type WorksetResult,
 } from "../src/index.js";
 import { runRemoteLedgerClientContract } from "./remoteLedgerClientContract.js";
 import { inMemoryRemoteClientFactory } from "./remoteLedgerClientInMemoryAdapter.js";
@@ -47,6 +48,26 @@ describe("remoteMcpUrl (BA)", () => {
 });
 
 describe("RemoteLedgerClient workset scope (Behavioral-Active Blackbox-Atomic)", () => {
+  it("correlates each request discriminant with its result at compile time", () => {
+    const assertCorrelation = (remote: RemoteLedgerClient): void => {
+      const get: Promise<Extract<WorksetResult, { op: "get" }>> = remote.workset({
+        op: "get",
+        projection: "id",
+      });
+      const fetch: Promise<Extract<WorksetResult, { op: "fetch" }>> = remote.workset({
+        op: "fetch",
+        roots: [],
+        projection: "compact",
+      });
+      const set: Promise<Extract<WorksetResult, { op: "set" }>> = remote.workset({
+        op: "set",
+        roots: [],
+      });
+      void [get, fetch, set];
+    };
+    expect(typeof assertCorrelation).toBe("function");
+  });
+
   it("rejects ordinary set locally without issuing a request", async () => {
     let requests = 0;
     const remote = Object.assign(Object.create(RemoteLedgerClient.prototype), {

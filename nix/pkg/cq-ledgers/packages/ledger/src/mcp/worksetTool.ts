@@ -36,6 +36,11 @@ export type WorksetResult =
   | { readonly op: "fetch"; readonly graph: WorksetProjectedGraph }
   | { readonly op: "set"; readonly acknowledgement: WorksetRootsEpoch };
 
+export type WorksetResultFor<R extends WorksetRequest> = Extract<
+  WorksetResult,
+  { readonly op: R["op"] }
+>;
+
 const OBSERVE_OPERATIONS = ["get", "fetch"] as const;
 const MANAGEMENT_OPERATIONS = ["get", "fetch", "set"] as const;
 

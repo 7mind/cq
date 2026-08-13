@@ -313,6 +313,51 @@ describe("architecture guard self-check", () => {
 });
 
 describe("explicit XDG catalog HTTP/WS host", () => {
+  test("rejects trusted XDG management on a non-loopback host before opening a runtime", async () => {
+    const fixture = await makeHostFixture();
+    const catalog = createStaticXdgHostCatalog([
+      { key: "alpha", displayName: "Alpha" },
+    ]);
+    let opens = 0;
+    expect(() => serveXdgCatalog({
+      host: "0.0.0.0",
+      port: 0,
+      projectsRoot: fixture.projectsRoot,
+      outdir: fixture.outdir,
+      aliasProjectKey: "alpha",
+      catalog,
+      runtimeOpener: async () => {
+        opens += 1;
+        throw new Error("non-loopback host reached runtime construction");
+      },
+    }, fixture.indexPath)).toThrow(/loopback/);
+    expect(opens).toBe(0);
+  });
+
+  test("binds loopback XDG MCP sessions to trusted workset management", async () => {
+    const fixture = await makeHostFixture();
+    await seedProject(fixture.projectsRoot, "alpha");
+    const catalog = createStaticXdgHostCatalog([
+      { key: "alpha", displayName: "Alpha" },
+    ]);
+    const { base } = startHost(fixture, catalog, observeRuntimes().opener);
+    const client = await connectMcp(base, "/p/alpha/mcp", "xdg-workset-management");
+    try {
+      const definition = (await client.listTools()).tools.find(
+        (tool) => tool.name === "workset",
+      );
+      expect(
+        (definition?.inputSchema.properties?.["op"] as { enum?: string[] } | undefined)?.enum,
+      ).toEqual(["get", "fetch", "set"]);
+      expect(textOf(await client.callTool({
+        name: "workset",
+        arguments: { op: "set", roots: [] },
+      }))).toBe('{"op":"set","acknowledgement":{"roots":[],"epoch":1}}');
+    } finally {
+      await client.close();
+    }
+  });
+
   test("lazily serves two isolated projects, one global listing, aliases, scoped WS, and disposal", async () => {
     const fixture = await makeHostFixture();
     await seedProject(fixture.projectsRoot, "alpha");

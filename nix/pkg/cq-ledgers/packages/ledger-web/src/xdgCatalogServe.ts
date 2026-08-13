@@ -15,7 +15,7 @@ import {
   type PromptArtifactStore,
 } from "@cq/ledger-mcp";
 import { hubTopic, matchProjectRoute } from "./projectRoutes.js";
-import { scanForPort, serveStatic } from "./serve.js";
+import { isEmbeddedLoopbackHost, scanForPort, serveStatic } from "./serve.js";
 
 export interface XdgHostProject {
   readonly key: string;
@@ -119,6 +119,11 @@ export function serveXdgCatalog(
   opts: XdgCatalogServeOpts,
   indexPath: string,
 ): ReturnType<typeof Bun.serve> {
+  if (!isEmbeddedLoopbackHost(opts.host)) {
+    throw new Error(
+      `XDG catalog management requires a loopback host, got ${opts.host}`,
+    );
+  }
   const aliasProject = opts.catalog.projects.find(
     (project) => project.key === opts.aliasProjectKey,
   );
@@ -156,6 +161,10 @@ export function serveXdgCatalog(
         opts.promptArtifactStore,
         listProjects,
         dispatchRuntime.kind === "available" ? dispatchRuntime.capability : undefined,
+        "full",
+        undefined,
+        undefined,
+        "management",
       );
       return { runtime, handlers };
     })();

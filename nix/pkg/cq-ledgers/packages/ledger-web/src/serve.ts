@@ -66,7 +66,7 @@ export const WHOLE_STORE_DEFAULT_PORT = 5191;
  */
 const MAX_PORT_SCAN = 64;
 
-function isEmbeddedLoopbackHost(host: string): boolean {
+export function isEmbeddedLoopbackHost(host: string): boolean {
   if (host === "localhost" || host === "::1") return true;
   const match = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
   return (
