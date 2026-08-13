@@ -63,6 +63,12 @@ import {
   type RefValidationContext,
 } from "./core.js";
 import { activePlanResearchWaits, activePlanTaskWaits } from "./predicates.js";
+import {
+  deriveCanonicalOwnership,
+  ownershipFieldsFrom,
+  resolveOwnerEdgePolicy,
+  type LifecycleCreationKind,
+} from "../worksetOwnerEdges.js";
 
 interface StoredDraft {
   readonly identity: PlanDraftIdentity;
@@ -318,6 +324,53 @@ function addItem(
   const item = makeItem(id, milestoneId, status, fields, provenance, state.now());
   group(source, milestoneId).items.push(item);
   return item;
+}
+
+function goalOwnedFields(
+  state: InMemoryPlanLifecycleState,
+  goalId: string,
+  creationKind: LifecycleCreationKind,
+  childLedger: string,
+): Record<string, string> {
+  const goal = requireGoal(state, goalId);
+  const resolution = resolveOwnerEdgePolicy({
+    ownerLedger: GOALS_LEDGER,
+    ownerStatus: goal.status,
+    creationKind,
+  });
+  if (resolution.decision === "deny" || !resolution.childLedgers.includes(childLedger)) {
+    throw new LedgerError(
+      `goal ${goalId} status ${goal.status} cannot own ${childLedger} through ${creationKind}`,
+    );
+  }
+  return ownershipFieldsFrom(
+    deriveCanonicalOwnership(GOALS_LEDGER, goalId, resolution),
+  );
+}
+
+function sealManifestOwnership(
+  state: InMemoryPlanLifecycleState,
+  goalId: string,
+  manifest: PlanPublishedManifest,
+  creationKind: "active-current-draft" | "finalized-manifest",
+): void {
+  const milestoneOwnership = goalOwnedFields(
+    state,
+    goalId,
+    creationKind,
+    MILESTONES_LEDGER,
+  );
+  const taskOwnership = goalOwnedFields(state, goalId, creationKind, TASKS_LEDGER);
+  for (const { id } of manifest.milestones) {
+    const item = findActiveItem(ledger(state, MILESTONES_LEDGER), id);
+    if (item === undefined) throw new LedgerError(`manifest milestone not found: ${id}`);
+    Object.assign(item.fields, milestoneOwnership);
+  }
+  for (const { id } of manifest.tasks) {
+    const item = findActiveItem(ledger(state, TASKS_LEDGER), id);
+    if (item === undefined) throw new LedgerError(`manifest task not found: ${id}`);
+    Object.assign(item.fields, taskOwnership);
+  }
 }
 
 /**
@@ -624,7 +677,15 @@ function materializeManifest(
   for (const draft of input.manifest.milestones) {
     const id = milestoneAllocations.get(draft.key);
     if (id === undefined) throw new LedgerError(`missing milestone allocation ${draft.key}`);
-    const fields: Record<string, FieldValue> = { title: draft.title };
+    const fields: Record<string, FieldValue> = {
+      title: draft.title,
+      ...goalOwnedFields(
+        state,
+        input.goalId,
+        "active-current-draft",
+        MILESTONES_LEDGER,
+      ),
+    };
     if (draft.description !== undefined) fields["description"] = draft.description;
     const dependsOn = materializeReferences(
       draft.dependsOn,
@@ -659,6 +720,7 @@ function materializeManifest(
     const fields: Record<string, FieldValue> = {
       headline: draft.headline,
       ledgerRefs: [...new Set([`${GOALS_LEDGER}:${input.goalId}`, ...(draft.ledgerRefs ?? [])])],
+      ...goalOwnedFields(state, input.goalId, "active-current-draft", TASKS_LEDGER),
     };
     if (draft.description !== undefined) fields["description"] = draft.description;
     if (draft.acceptance !== undefined) fields["acceptance"] = draft.acceptance;
@@ -707,6 +769,7 @@ function addReviewDefects(
       headline: defect.headline,
       severity: defect.severity,
       ledgerRefs: [`${GOALS_LEDGER}:${goalId}`, `${REVIEWS_LEDGER}:${batch.reviewId}`],
+      ...goalOwnedFields(state, goalId, "review-filed-defect", DEFECTS_LEDGER),
     };
     if (defect.description !== undefined) fields["description"] = defect.description;
     if (defect.rootCause !== undefined) fields["rootCause"] = defect.rootCause;
@@ -1328,6 +1391,12 @@ export function releaseInMemoryPlanClaim(
       const fields: Record<string, FieldValue> = {
         question: question.question,
         ledgerRefs: [`${GOALS_LEDGER}:${input.goalId}`],
+        ...goalOwnedFields(
+          state,
+          input.goalId,
+          "exact-gate-question",
+          QUESTIONS_LEDGER,
+        ),
       };
       if (question.context !== undefined) fields["context"] = question.context;
       if (question.suggestions !== undefined) fields["suggestions"] = [...question.suggestions];
@@ -1367,6 +1436,7 @@ export function releaseInMemoryPlanClaim(
       const fields: Record<string, FieldValue> = {
         question: research.question,
         ledgerRefs: [`${GOALS_LEDGER}:${input.goalId}`],
+        ...goalOwnedFields(state, input.goalId, "research", RESEARCHES_LEDGER),
       };
       if (research.scope !== undefined) fields["scope"] = research.scope;
       const item = addItem(
@@ -1540,6 +1610,7 @@ export function finalizeInMemoryPlan(
   const decisionFields: Record<string, FieldValue> = {
     headline: input.decision.headline,
     ledgerRefs: [`${GOALS_LEDGER}:${input.goalId}`, `${REVIEWS_LEDGER}:${input.reviewId}`],
+    ...goalOwnedFields(state, input.goalId, "decision", DECISIONS_LEDGER),
   };
   if (input.decision.rationale !== undefined) {
     decisionFields["rationale"] = input.decision.rationale;
@@ -1557,6 +1628,7 @@ export function finalizeInMemoryPlan(
   );
   const defects = addReviewDefects(state, input.goalId, input.reviewDefects, input);
   goal.status = "planned";
+  sealManifestOwnership(state, input.goalId, draft.manifest, "finalized-manifest");
   setField(goal, "milestones", draft.manifest.milestones.map(({ id }) => id));
   setJsonField(goal, PLAN_FINALIZED_DRAFT_FIELD, draft.identity);
   setJsonField(goal, PLAN_FINALIZED_MANIFEST_FIELD, draft.manifest);
@@ -1586,6 +1658,7 @@ export function finalizeInMemoryPlan(
     dirtyLedgers: [
       GOALS_LEDGER,
       DECISIONS_LEDGER,
+      MILESTONES_LEDGER,
       TASKS_LEDGER,
       ...(defects.length > 0 ? [DEFECTS_LEDGER, REVIEWS_LEDGER] : []),
     ],

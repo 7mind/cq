@@ -156,6 +156,19 @@ export interface InMemoryOwnedWriteTx {
   ): Item;
 }
 
+/**
+ * T1967 — plan lifecycle operations exposed only inside one all-ledger
+ * transaction. The guarded gateway derives membership from {@link activeState}
+ * and performs exactly one of these operations before the transaction commits.
+ */
+export interface InMemoryWorksetPlanLifecycleTx {
+  activeState(): WorksetActiveState;
+  claimPlan(input: PlanClaimInput): PlanClaimResult;
+  publishPlanDraft(input: PlanPublishDraftInput): PlanPublishDraftResult;
+  releasePlanClaim(input: PlanReleaseInput): PlanReleaseResult;
+  finalizePlan(input: PlanFinalizeInput): PlanFinalizeResult;
+}
+
 export interface InMemoryLedgerStoreOpts {
   /** Returns an ISO 8601 UTC timestamp. Defaults to `new Date().toISOString()`. */
   now?: () => string;
@@ -728,6 +741,71 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     );
     for (const ledgerId of outcome.dirtyLedgers) {
       this.fireMutation(ledgerId, "create");
+    }
+    return outcome.result;
+  }
+
+  /**
+   * T1967 — execute one guarded plan mutation after membership validation while
+   * holding the same all-ledger lock that protects the plan state transition.
+   */
+  async runAtomicWorksetPlanLifecycleMutation<T>(
+    mutate: (tx: InMemoryWorksetPlanLifecycleTx) => T,
+  ): Promise<T> {
+    this.assertInit();
+    const ledgerIds = [...this.ledgers.keys()]
+      .filter((id) => id !== MILESTONES_LEDGER)
+      .sort();
+    const outcome = await this.withMilestonesLock(() =>
+      this.withLocksInOrder(ledgerIds, async () => {
+        const beforeLedgers = cloneLedgerMap(this.ledgers);
+        const beforeClaims = cloneMap(this.planClaims);
+        const beforeOperations = cloneMap(this.planOperations);
+        const dirty = new Set<string>();
+        const apply = <R>(
+          planMutation: (state: InMemoryPlanLifecycleState) => {
+            result: R;
+            dirtyLedgers: readonly string[];
+          },
+        ): R => {
+          const result = planMutation(this.planLifecycleState());
+          for (const ledgerId of result.dirtyLedgers) dirty.add(ledgerId);
+          return result.result;
+        };
+        const tx: InMemoryWorksetPlanLifecycleTx = {
+          activeState: () =>
+            buildWorksetActiveState(
+              [...this.ledgers].map(([ledger, value]) => ({
+                ledger,
+                items: value.milestones.flatMap((group) => group.items),
+              })),
+              buildPrefixRegistry(
+                [...this.ledgers].map(([name, value]) => ({
+                  name,
+                  schema: value.schema,
+                })),
+              ),
+            ),
+          claimPlan: (input) => apply((state) => claimInMemoryPlan(state, input)),
+          publishPlanDraft: (input) =>
+            apply((state) => publishInMemoryPlanDraft(state, input)),
+          releasePlanClaim: (input) =>
+            apply((state) => releaseInMemoryPlanClaim(state, input)),
+          finalizePlan: (input) => apply((state) => finalizeInMemoryPlan(state, input)),
+        };
+        try {
+          const result = mutate(tx);
+          return { result, dirtyLedgers: [...dirty] };
+        } catch (error) {
+          replaceMap(this.ledgers, beforeLedgers);
+          replaceMap(this.planClaims, beforeClaims);
+          replaceMap(this.planOperations, beforeOperations);
+          throw error;
+        }
+      }),
+    );
+    for (const ledgerId of outcome.dirtyLedgers) {
+      this.fireMutation(ledgerId, "update");
     }
     return outcome.result;
   }

@@ -764,6 +764,59 @@ const reviewDraftMismatchConflictSchema = z
   })
   .strict();
 
+const worksetConflictShape = {
+    code: z.literal("workset-conflict"),
+    operation: z.enum([
+      "claim-plan",
+      "publish-plan-draft",
+      "release-plan-claim",
+      "finalize-plan",
+    ]),
+    reason: z.enum(["target-excluded", "stale-epoch", "revoked"]),
+    goalId: goalIdSchema,
+    refs: z.array(z.string().regex(/^[a-z][A-Za-z0-9_-]*:[A-Za-z][A-Za-z0-9_-]*$/)),
+    epoch: z.number().int().nonnegative(),
+} as const;
+
+function sortedUniqueWorksetRefs(
+  conflict: { readonly refs: readonly string[] },
+  context: z.RefinementCtx,
+): void {
+  const canonical = [...new Set(conflict.refs)].sort();
+  if (
+    canonical.length !== conflict.refs.length ||
+    canonical.some((ref, index) => ref !== conflict.refs[index])
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "workset conflict refs must be sorted and unique",
+      path: ["refs"],
+    });
+  }
+}
+
+export const PlanWorksetConflictSchema = z
+  .object(worksetConflictShape)
+  .strict()
+  .superRefine(sortedUniqueWorksetRefs);
+
+const claimWorksetConflictSchema = z
+  .object({ ...worksetConflictShape, operation: z.literal("claim-plan") })
+  .strict()
+  .superRefine(sortedUniqueWorksetRefs);
+const publishWorksetConflictSchema = z
+  .object({ ...worksetConflictShape, operation: z.literal("publish-plan-draft") })
+  .strict()
+  .superRefine(sortedUniqueWorksetRefs);
+const releaseWorksetConflictSchema = z
+  .object({ ...worksetConflictShape, operation: z.literal("release-plan-claim") })
+  .strict()
+  .superRefine(sortedUniqueWorksetRefs);
+const finalizeWorksetConflictSchema = z
+  .object({ ...worksetConflictShape, operation: z.literal("finalize-plan") })
+  .strict()
+  .superRefine(sortedUniqueWorksetRefs);
+
 const conflictSchemas = [
   goalNotFoundConflictSchema,
   goalTerminalConflictSchema,
@@ -785,6 +838,7 @@ const conflictSchemas = [
   reviewNotApprovedConflictSchema,
   reviewGenerationMismatchConflictSchema,
   reviewDraftMismatchConflictSchema,
+  PlanWorksetConflictSchema,
 ] as const;
 
 export const PlanConflictSchema = z.discriminatedUnion("code", conflictSchemas);
@@ -803,6 +857,7 @@ export const PlanClaimConflictSchema = z.discriminatedUnion("code", [
   researchWaitActiveConflictSchema,
   taskWaitActiveConflictSchema,
   claimRequestReusedConflictSchema,
+  claimWorksetConflictSchema,
 ]);
 export type PlanClaimConflict = z.infer<typeof PlanClaimConflictSchema>;
 
@@ -816,6 +871,7 @@ export const PlanPublishDraftConflictSchema = z.discriminatedUnion("code", [
   ownerFenceMismatchConflictSchema,
   goalPhaseConflictSchema,
   publishDraftIdempotencyKeyReusedConflictSchema,
+  publishWorksetConflictSchema,
 ]);
 export type PlanPublishDraftConflict = z.infer<typeof PlanPublishDraftConflictSchema>;
 
@@ -827,6 +883,7 @@ export const PlanPauseConflictSchema = z.discriminatedUnion("code", [
   ownerFenceMismatchConflictSchema,
   goalPhaseConflictSchema,
   releaseIdempotencyKeyReusedConflictSchema,
+  releaseWorksetConflictSchema,
 ]);
 export type PlanPauseConflict = z.infer<typeof PlanPauseConflictSchema>;
 
@@ -836,6 +893,7 @@ export const PlanAbandonConflictSchema = z.discriminatedUnion("code", [
   staleClaimConflictSchema,
   staleGenerationConflictSchema,
   releaseIdempotencyKeyReusedConflictSchema,
+  releaseWorksetConflictSchema,
 ]);
 export type PlanAbandonConflict = z.infer<typeof PlanAbandonConflictSchema>;
 
@@ -847,6 +905,7 @@ export const PlanReleaseConflictSchema = z.discriminatedUnion("code", [
   ownerFenceMismatchConflictSchema,
   goalPhaseConflictSchema,
   releaseIdempotencyKeyReusedConflictSchema,
+  releaseWorksetConflictSchema,
 ]);
 export type PlanReleaseConflict = z.infer<typeof PlanReleaseConflictSchema>;
 
@@ -862,6 +921,7 @@ export const PlanFinalizeConflictSchema = z.discriminatedUnion("code", [
   reviewGenerationMismatchConflictSchema,
   reviewDraftMismatchConflictSchema,
   finalizeIdempotencyKeyReusedConflictSchema,
+  finalizeWorksetConflictSchema,
 ]);
 export type PlanFinalizeConflict = z.infer<typeof PlanFinalizeConflictSchema>;
 

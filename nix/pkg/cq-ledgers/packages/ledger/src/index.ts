@@ -56,6 +56,7 @@ export {
   WORKSET_OWNERSHIP_SCHEMA_FIELDS,
 } from "./constants.js";
 export type { WorksetOwnedFieldName } from "./constants.js";
+export * from "./worksetPlanLifecycle.js";
 export {
   PLANNING_LIFECYCLE_CREATION_KINDS,
   IMPLEMENTATION_LIFECYCLE_CREATION_KINDS,
