@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import {
   FsLedgerStore,
   InMemoryLedgerStore,
@@ -28,6 +29,89 @@ import { atomicWrite as productionAtomicWrite } from "../src/store/fsAtomic.js";
 const NOW = "2026-08-11T06:00:00.000Z";
 const IDENTITY = "/nix/store/exact-cq";
 const dirs: string[] = [];
+
+interface OperatorActionTriple {
+  readonly action: Item;
+  readonly task: Item;
+  readonly handoff: Item;
+}
+
+function fetchOperatorActionTriple(
+  store: LedgerStore,
+  actionId: string,
+  taskId: string,
+  handoffId: string,
+): OperatorActionTriple {
+  return {
+    action: store.fetchItem("operatorActions", actionId),
+    task: store.fetchItem("tasks", taskId),
+    handoff: store.fetchItem("handoffs", handoffId),
+  };
+}
+
+function expectCoherentOldOrNew<T>(actual: T, oldState: T, newState: T): "old" | "new" {
+  if (isDeepStrictEqual(actual, oldState)) return "old";
+  expect(actual).toEqual(newState);
+  return "new";
+}
+
+function revisedTriple(before: OperatorActionTriple): OperatorActionTriple {
+  const next = structuredClone(before);
+  const historicalAction = structuredClone(before.action);
+  delete historicalAction.fields["revisionHistory"];
+  next.action.status = "pending";
+  next.action.fields["revisionHistory"] = [
+    JSON.stringify({
+      revision: 1,
+      action: historicalAction,
+      task: before.task,
+      handoff: before.handoff,
+    }),
+  ];
+  next.action.fields["revision"] = "2";
+  next.action.fields["expectedOutputIdentity"] = "/nix/store/revision-2";
+  next.action.fields["expectedEvidence"] = ["probe-v2"];
+  for (const field of [
+    "acknowledgedOutputIdentity",
+    "acknowledgedAt",
+    "acknowledgementEpoch",
+    "evidence",
+    "lastFailure",
+    "verifiedAt",
+    "verifiedRevision",
+    "completion",
+  ]) {
+    delete next.action.fields[field];
+  }
+  next.action.author = "parent";
+  next.action.updatedAt = NOW;
+  next.task.status = "planned";
+  delete next.task.fields["completion"];
+  next.task.author = "parent";
+  next.task.updatedAt = NOW;
+  next.handoff.status = "user-action-required";
+  next.handoff.fields["summary"] =
+    `Operator action ${before.action.id} revision 2 awaits deployment identity ` +
+    "/nix/store/revision-2";
+  next.handoff.fields["handoffReasons"] = [
+    `Deploy /nix/store/revision-2 and acknowledge ${before.action.id} revision 2`,
+  ];
+  next.handoff.author = "parent";
+  next.handoff.updatedAt = NOW;
+  return next;
+}
+
+function completedTriple(before: OperatorActionTriple): OperatorActionTriple {
+  const next = structuredClone(before);
+  next.action.fields["completion"] = "verified completion";
+  next.action.author = "parent";
+  next.action.updatedAt = NOW;
+  next.task.status = "done";
+  next.task.fields["completion"] = "verified completion";
+  next.task.author = "parent";
+  next.task.updatedAt = NOW;
+  return next;
+}
 
 function mutableStoredItem(store: InMemoryLedgerStore, ledgerId: string, itemId: string): Item {
   const state = store as unknown as {
@@ -572,6 +656,13 @@ for (const failAt of [1, 2, 3, 4, 5]) {
       },
       { author: "parent" },
     );
+    const oldTriple = fetchOperatorActionTriple(
+      store,
+      created.action.id,
+      task.id,
+      created.handoff.id,
+    );
+    const newTriple = revisedTriple(oldTriple);
     armed = true;
     await expect(
       reviseOperatorAction(store, {
@@ -588,53 +679,43 @@ for (const failAt of [1, 2, 3, 4, 5]) {
     store = new FsLedgerStore({ root, now: () => NOW });
     await store.init();
     try {
-      const triple = {
-        action: store.fetchItem("operatorActions", created.action.id),
-        task: store.fetchItem("tasks", task.id),
-        handoff: store.fetchItem("handoffs", created.handoff.id),
-      };
-      if (failAt === 1) {
-        expect(triple).toMatchObject({
-          action: {
-            status: "pending",
-            fields: {
-              revision: "1",
-              acknowledgementEpoch: "1",
-              evidence: [expect.any(String)],
-              lastFailure: expect.any(String),
-            },
-          },
-          task: { status: "planned" },
-          handoff: { status: "user-action-required" },
+      const recovered = fetchOperatorActionTriple(
+        store,
+        created.action.id,
+        task.id,
+        created.handoff.id,
+      );
+      const recovery = expectCoherentOldOrNew(recovered, oldTriple, newTriple);
+      expect(store.exportPlanLifecycleState()).toBeNull();
+      if (recovery === "old") {
+        const retried = await reviseOperatorAction(store, {
+          actionId: created.action.id,
+          expectedRevision: 1,
+          expectedOutputIdentity: "/nix/store/revision-2",
+          expectedEvidence: ["probe-v2"],
+          revisedAt: NOW,
+          author: "parent",
         });
+        expect(retried).toEqual(newTriple);
+        expect(
+          fetchOperatorActionTriple(store, created.action.id, task.id, created.handoff.id),
+        ).toEqual(newTriple);
       } else {
-        expect(triple).toMatchObject({
-          action: {
-            status: "pending",
-            fields: {
-              revision: "2",
-              expectedOutputIdentity: "/nix/store/revision-2",
-              expectedEvidence: ["probe-v2"],
-            },
-          },
-          task: { status: "planned" },
-          handoff: { status: "user-action-required" },
-        });
-        const historical = JSON.parse(
-          (triple.action.fields["revisionHistory"] as string[])[0]!,
-        ) as { action: { status: string; fields: Record<string, unknown> } };
-        expect(historical.action).toMatchObject({
-          status: "pending",
-          fields: {
-            revision: "1",
-            expectedOutputIdentity: "/nix/store/revision-1",
-            acknowledgedOutputIdentity: "/nix/store/revision-1",
-            acknowledgementEpoch: "1",
-            evidence: [expect.any(String)],
-            lastFailure: expect.any(String),
-          },
-        });
+        await expect(
+          reviseOperatorAction(store, {
+            actionId: created.action.id,
+            expectedRevision: 1,
+            expectedOutputIdentity: "/nix/store/revision-2",
+            expectedEvidence: ["probe-v2"],
+            revisedAt: NOW,
+            author: "parent",
+          }),
+        ).rejects.toThrow(/revision conflict/);
+        expect(
+          fetchOperatorActionTriple(store, created.action.id, task.id, created.handoff.id),
+        ).toEqual(newTriple);
       }
+      expect(store.exportPlanLifecycleState()).toBeNull();
     } finally {
       await store.dispose();
     }
@@ -697,6 +778,13 @@ for (const failAt of [1, 2, 3, 4]) {
       },
       { author: "parent" },
     );
+    const oldTriple = fetchOperatorActionTriple(
+      store,
+      created.action.id,
+      task.id,
+      created.handoff.id,
+    );
+    const newTriple = completedTriple(oldTriple);
     armed = true;
     await expect(
       completeOperatorActionTask(store, created.action.id, 1, "verified completion", {
@@ -708,18 +796,37 @@ for (const failAt of [1, 2, 3, 4]) {
     store = new FsLedgerStore({ root, now: () => NOW });
     await store.init();
     try {
-      const action = store.fetchItem("operatorActions", created.action.id);
-      const recoveredTask = store.fetchItem("tasks", task.id);
-      if (failAt === 1) {
-        expect(action.fields["completion"]).toBeUndefined();
-        expect(recoveredTask).toMatchObject({ status: "planned" });
+      const recovered = fetchOperatorActionTriple(
+        store,
+        created.action.id,
+        task.id,
+        created.handoff.id,
+      );
+      const recovery = expectCoherentOldOrNew(recovered, oldTriple, newTriple);
+      expect(store.exportPlanLifecycleState()).toBeNull();
+      if (recovery === "old") {
+        const retried = await completeOperatorActionTask(
+          store,
+          created.action.id,
+          1,
+          "verified completion",
+          { author: "parent" },
+        );
+        expect(retried).toEqual(newTriple.task);
+        expect(
+          fetchOperatorActionTriple(store, created.action.id, task.id, created.handoff.id),
+        ).toEqual(newTriple);
       } else {
-        expect(action.fields["completion"]).toBe("verified completion");
-        expect(recoveredTask).toMatchObject({
-          status: "done",
-          fields: { completion: "verified completion" },
-        });
+        await expect(
+          completeOperatorActionTask(store, created.action.id, 1, "verified completion", {
+            author: "parent",
+          }),
+        ).rejects.toThrow(/not planned/);
+        expect(
+          fetchOperatorActionTriple(store, created.action.id, task.id, created.handoff.id),
+        ).toEqual(newTriple);
       }
+      expect(store.exportPlanLifecycleState()).toBeNull();
     } finally {
       await store.dispose();
     }
