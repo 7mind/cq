@@ -17,7 +17,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AgentModelEntry, ArchiveContent, FetchedLedger, FetchedMilestoneGroup, FieldValue, FtsHit, Item, ItemPatch, LedgerClient, LedgerSchema, LedgerSummary, MilestonePatch, PredicateVerdict, ProjectEntry, UsageStatsSnapshot } from "./types.js";
+import type { AgentModelEntry, ArchiveContent, FetchedLedger, FetchedMilestoneGroup, FieldValue, FtsHit, Item, ItemPatch, LedgerClient, LedgerSchema, LedgerSummary, MilestonePatch, PredicateVerdict, ProjectEntry, UsageStatsSnapshot, WorksetCapableLedgerClient } from "./types.js";
 import { DagView } from "./DagView.js";
 import { Markdown } from "./Markdown.js";
 import { loadDagData, type DagData } from "./dagData.js";
@@ -37,6 +37,7 @@ import {
 } from "@cq/ledger/relationships";
 import { HoldButton, type HoldClock } from "./HoldButton.js";
 import { useBackdropDismiss } from "./useBackdropDismiss.js";
+import { WorksetManager } from "./WorksetManager.js";
 import { isSafeProjectKeySegment } from "./projectRoutes.js";
 // Browser-safe JSONL transcript parser (T412): turns the raw `.jsonl` content
 // returned by `onReadLog` into the structured conversation model the
@@ -384,6 +385,12 @@ function ledgerRows(view: FetchedLedger): Row[] {
   return view.milestones.flatMap((g) => g.items.map((item) => ({ item, milestoneId: g.id })));
 }
 
+function asWorksetClient(client: LedgerClient | null): WorksetCapableLedgerClient | null {
+  if (client === null) return null;
+  if (typeof (client as { readonly workset?: unknown }).workset !== "function") return null;
+  return client as WorksetCapableLedgerClient;
+}
+
 export interface AppProps {
   connect: (url: string) => Promise<LedgerClient>;
   initialUrl: string;
@@ -506,6 +513,10 @@ export function App({
   // lives elsewhere (T620/T622) — this component only wires the plumbing.
   const [finalizeMenuOpen, setFinalizeMenuOpen] = useState(false);
   const [finalizePreview, setFinalizePreview] = useState<FinalizePreviewState | null>(null);
+  const [worksetSession, setWorksetSession] = useState<number | null>(null);
+  const [clientGeneration, setClientGeneration] = useState(0);
+  const worksetSessionRef = useRef(0);
+  const connectionGenerationRef = useRef(0);
   // Per-open generation token for the finalize modal (T620 review round 1):
   // incremented on every open AND every close. Each async finalize flow
   // (snapshot fan-out, execution) captures the token at dispatch and drops
@@ -653,6 +664,7 @@ export function App({
 
   useEffect(() => {
     let alive = true;
+    const connectionGeneration = ++connectionGenerationRef.current;
     // Capture the persisted view BEFORE the resets below trigger the
     // persistence effect (which would overwrite it with the cleared state).
     const saved = loadView();
@@ -688,6 +700,7 @@ export function App({
           return;
         }
         setClient(c);
+        setClientGeneration(connectionGeneration);
         // Apply a pending project-switch's derived ws URL in the SAME batched
         // update as `setClient(c)` (T589) — see `pendingLiveUrlRef`'s doc.
         if (pendingLiveUrlRef.current !== null) {
@@ -845,6 +858,17 @@ export function App({
     },
     [url, liveUrl, activeProjectKey],
   );
+
+  const openWorkset = useCallback(() => {
+    if (asWorksetClient(client) === null) return;
+    const session = ++worksetSessionRef.current;
+    setWorksetSession(session);
+  }, [client]);
+
+  const closeWorkset = useCallback(() => {
+    worksetSessionRef.current += 1;
+    setWorksetSession(null);
+  }, []);
 
   // Close the finalize preview modal, invalidating every in-flight finalize
   // async flow by bumping the generation token (T620 review round 1). ALL
@@ -1364,6 +1388,8 @@ export function App({
     return [...grouped, ...custom];
   }, [ledgers]);
 
+  const worksetClient = asWorksetClient(client);
+
   // Reset cursors when their underlying lists change.
   useEffect(() => setHitCursor(0), [hits]);
   useEffect(
@@ -1380,6 +1406,13 @@ export function App({
     const typing =
       t !== null &&
       (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+    if (worksetSession !== null && worksetClient !== null) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeWorkset();
+      }
+      return;
+    }
     // While the batch-answer modal is open it captures the keyboard: Esc closes
     // it, ctrl/cmd+[ steps to the previous open question and ctrl/cmd+] to the
     // next. The modifier-chord prev/next fire even while a textarea is focused
@@ -1551,6 +1584,15 @@ export function App({
           {mainView === "dag" ? "table" : "graph"}
         </button>
         <div className="lw-header-right">
+        <button
+          type="button"
+          data-testid="workset-toggle"
+          className="lw-workset-toggle"
+          disabled={worksetClient === null}
+          onClick={openWorkset}
+        >
+          Workset
+        </button>
         <GoalDriftIndicator goalDrift={goalDrift} />
         <LedgerProgressBar testid="progress-questions" label="questions" ledgers={ledgers} />
         <LedgerProgressBar testid="progress-tasks" label="tasks" ledgers={ledgers} />
@@ -1603,6 +1645,13 @@ export function App({
         </div>
         </div>
       </header>
+      {worksetSession !== null && worksetClient !== null && (
+        <WorksetManager
+          key={`${clientGeneration}:${worksetSession}`}
+          client={worksetClient}
+          onClose={closeWorkset}
+        />
+      )}
       {helpOpen && (
         <HelpOverlay
           onClose={() => setHelpOpen(false)}
