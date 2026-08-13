@@ -28,6 +28,7 @@ const exec = promisify(execFile);
 const tempRoots: string[] = [];
 const openLedgers: WorksetOwnedGuardedLedger[] = [];
 let postgresSchemaReady: Promise<void> | null = null;
+let postgresPool: ReturnType<typeof openPgPool> | null = null;
 
 afterAll(async () => {
   for (const ledger of openLedgers.splice(0)) {
@@ -157,16 +158,15 @@ export const sqliteOwnedWriteFactory: WorksetOwnedWriteContractFactory = {
 
 async function ensurePostgres(dsn: string): Promise<void> {
   if (postgresSchemaReady === null) {
-    postgresSchemaReady = (async () => {
-      const pool = openPgPool(dsn);
-      try {
-        await ensureSchema(pool);
-      } finally {
-        await pool.close();
-      }
-    })();
+    postgresPool = openPgPool(dsn);
+    postgresSchemaReady = ensureSchema(postgresPool);
   }
   await postgresSchemaReady;
+}
+
+function sharedPostgresPool(): ReturnType<typeof openPgPool> {
+  if (postgresPool === null) throw new Error("PostgreSQL owned-write fixture is not ready");
+  return postgresPool;
 }
 
 export function postgresOwnedWriteFactory(
@@ -179,7 +179,7 @@ export function postgresOwnedWriteFactory(
       await ensurePostgres(dsn);
       const projectKey = `t1966-owned-${randomUUID()}`;
       const rawStore: PostgresLedgerStore = new PostgresLedgerStore({
-        pool: openPgPool(dsn),
+        pool: sharedPostgresPool(),
         projectKey,
         displayName: projectKey,
         ...(options?.now !== undefined ? { now: options.now } : {}),
