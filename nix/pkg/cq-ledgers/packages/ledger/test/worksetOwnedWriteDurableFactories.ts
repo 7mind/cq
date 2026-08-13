@@ -132,7 +132,7 @@ export const sqliteOwnedWriteFactory: WorksetOwnedWriteContractFactory = {
   classification: "Behavioral-Active Blackbox-GoodCommunication",
   async build(options) {
     const dbPath = path.join(await freshRoot("owned-write-sqlite-"), "ledger.db");
-    const rawStore = new SqliteLedgerStore({
+    const rawStore: SqliteLedgerStore = new SqliteLedgerStore({
       dbPath,
       ...(options?.now !== undefined ? { now: options.now } : {}),
       workset: {
@@ -178,7 +178,7 @@ export function postgresOwnedWriteFactory(
     async build(options?: CreateInMemoryWorksetOwnedGuardedLedgerOptions) {
       await ensurePostgres(dsn);
       const projectKey = `t1966-owned-${randomUUID()}`;
-      const rawStore = new PostgresLedgerStore({
+      const rawStore: PostgresLedgerStore = new PostgresLedgerStore({
         pool: openPgPool(dsn),
         projectKey,
         displayName: projectKey,

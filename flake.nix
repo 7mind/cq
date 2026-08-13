@@ -1676,6 +1676,31 @@ PY
                   exit 1
                 fi
 
+                ownedWriteLog="$NIX_BUILD_TOP/t1966-live-owned-write.log"
+                if ! ${pkgs.bun}/bin/bun test \
+                  packages/ledger/test/workset-owned-write-postgres.test.ts \
+                  packages/ledger/test/workset-coordination-bundle-postgres.test.ts \
+                  packages/ledger/test/workset-coordination-bundle-postgres-faults.test.ts \
+                  > "$ownedWriteLog" 2>&1; then
+                  cat "$ownedWriteLog" >&2
+                  exit 1
+                fi
+                cat "$ownedWriteLog"
+                if grep -Fq '(skip)' "$ownedWriteLog"; then
+                  echo "T1966 live PostgreSQL owned-write run skipped" >&2
+                  exit 1
+                fi
+                for expectedLeg in \
+                  'workset owned-write contract [T1962] — PostgresLedgerStore' \
+                  'workset coordination-bundle contract [T1962] — PostgresLedgerStore' \
+                  'statement failure rolls back the tenant and emits no post-commit hook' \
+                  'post-commit NOTIFY invalidates a peer after the complete owned write'; do
+                  if ! grep -F '(pass)' "$ownedWriteLog" | grep -Fq "$expectedLeg"; then
+                    echo "T1966 live PostgreSQL owned-write run did not execute: $expectedLeg" >&2
+                    exit 1
+                  fi
+                done
+
                 runHook postCheck
               '';
 
