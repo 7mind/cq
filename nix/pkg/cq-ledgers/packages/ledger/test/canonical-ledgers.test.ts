@@ -34,6 +34,7 @@ import {
   HANDOFFS_SCHEMA,
   IDEAS_LEDGER,
   IDEAS_SCHEMA,
+  MEMORIES_LEDGER,
   RESEARCHES_LEDGER,
   RESEARCHES_SCHEMA,
   MILESTONES_AMBIENT_ID,
@@ -107,6 +108,8 @@ interface LedgerCase {
    * directly.
    */
   createStatus?: string;
+  /** Fixed attachment for canonical ledgers that cannot use a user milestone. */
+  milestoneId?: string;
 }
 
 const UPSTREAM_LEDGER_SPEC = "upstream";
@@ -220,6 +223,19 @@ const CASES: LedgerCase[] = [
     // open → discarded is a legal direct edge; `open` is the first status.
   },
   {
+    ledger: MEMORIES_LEDGER,
+    prefix: "MEM",
+    create: {
+      title: "Durable project fact",
+      content: "The project uses canonical memories.",
+      tags: ["architecture"],
+    },
+    update: { status: "superseded", fields: { sourceRefs: ["decisions:K1"] } },
+    searchNeedle: "canonical memories",
+    terminalStatus: "superseded",
+    milestoneId: MILESTONES_AMBIENT_ID,
+  },
+  {
     ledger: RESEARCHES_LEDGER,
     prefix: "RS",
     create: { question: "Does the read-side resolver settle on prefixed refs?" },
@@ -276,11 +292,15 @@ describe("T793: upstream canonical-ledger specification", () => {
 for (const factory of [inMem, fs_]) {
   describe(`canonical ledgers — lifecycle (${factory.name})`, () => {
     for (const c of CASES) {
-      it(`${c.ledger}: create/update/fetch/search/archive`, async () => {
+      it(`${c.ledger}: create/update/fetch/search${c.milestoneId === undefined ? "/archive" : ""}`, async () => {
         const store = await factory.build();
         try {
-          const m = await store.createMilestone({ title: `${c.ledger} milestone` });
-          const created = await store.createItem(c.ledger, m.id, {
+          const milestone = c.milestoneId === undefined
+            ? await store.createMilestone({ title: `${c.ledger} milestone` })
+            : null;
+          const milestoneId = milestone === null ? c.milestoneId : milestone.id;
+          if (milestoneId === undefined) throw new Error(`missing milestone for ${c.ledger}`);
+          const created = await store.createItem(c.ledger, milestoneId, {
             status:
               c.update.status === undefined
                 ? "open"
@@ -288,7 +308,7 @@ for (const factory of [inMem, fs_]) {
             fields: c.create,
           });
           expect(created.id).toBe(`${c.prefix}1`);
-          expect(created.milestoneId).toBe(m.id);
+          expect(created.milestoneId).toBe(milestoneId);
 
           const fetched = store.fetchItem(c.ledger, created.id);
           expect(fetched.id).toBe(created.id);
@@ -300,14 +320,17 @@ for (const factory of [inMem, fs_]) {
           const updated = await store.updateItem(c.ledger, created.id, c.update);
           expect(updated.status).toBe(c.terminalStatus);
 
-          // archive once the item is terminal; mark the milestone done too.
-          await store.updateMilestone(m.id, { status: "done" });
-          const ptr = await store.archiveMilestone(m.id, `${c.ledger} done`);
-          expect(ptr.id).toBe(m.id);
-          const arch = await store.fetchArchive(c.ledger, m.id);
-          expect(arch.kind).toBe("group");
-          if (arch.kind === "group") {
-            expect(arch.milestone.items.map((i) => i.id)).toEqual([created.id]);
+          // M-AMBIENT is immortal; ordinary user-milestone cases complete the
+          // shared archive leg after their item reaches a terminal status.
+          if (milestone !== null) {
+            await store.updateMilestone(milestone.id, { status: "done" });
+            const ptr = await store.archiveMilestone(milestone.id, `${c.ledger} done`);
+            expect(ptr.id).toBe(milestone.id);
+            const arch = await store.fetchArchive(c.ledger, milestone.id);
+            expect(arch.kind).toBe("group");
+            if (arch.kind === "group") {
+              expect(arch.milestone.items.map((i) => i.id)).toEqual([created.id]);
+            }
           }
         } finally {
           await store.dispose();
@@ -321,7 +344,7 @@ for (const factory of [inMem, fs_]) {
         const m = await store.createMilestone({ title: "uniqueness" });
         const ids = new Set<string>();
         for (const c of CASES) {
-          const it = await store.createItem(c.ledger, m.id, {
+          const it = await store.createItem(c.ledger, c.milestoneId ?? m.id, {
             status: c.createStatus ?? firstStatus(c.ledger),
             fields: c.create,
           });
@@ -358,6 +381,7 @@ for (const factory of [inMem, fs_]) {
           "HO",
           "I",
           "K",
+          "MEM",
           "Q",
           "R",
           "RS",
@@ -870,8 +894,8 @@ describe("HANDOFFS_SCHEMA shape", () => {
     expect(f!.required).toBe(false);
   });
 
-  it("CANONICAL_LEDGERS has 13 entries and upstream is last", () => {
-    expect(CANONICAL_LEDGERS).toHaveLength(13);
+  it("CANONICAL_LEDGERS has 14 entries and upstream is last", () => {
+    expect(CANONICAL_LEDGERS).toHaveLength(14);
     expect(CANONICAL_LEDGERS[CANONICAL_LEDGERS.length - 1]!.name).toBe(
       UPSTREAM_LEDGER_SPEC,
     );
