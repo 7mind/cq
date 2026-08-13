@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import {
-  createGitObjectWorksetGuardedLedger,
+  createGitObjectWorksetManagementLedger,
   WorksetGenericMutationError,
   WorksetAdmissionError,
   GitPlumbing,
@@ -52,9 +52,9 @@ async function seedRepo(): Promise<string> {
 }
 
 async function buildGitGuarded(
-  options: Parameters<typeof createGitObjectWorksetGuardedLedger>[0],
+  options: Parameters<typeof createGitObjectWorksetManagementLedger>[0],
 ): Promise<WorksetGuardedLedger> {
-  return createGitObjectWorksetGuardedLedger(options);
+  return createGitObjectWorksetManagementLedger(options);
 }
 
 async function readRefSha(repoRoot: string): Promise<string | null> {

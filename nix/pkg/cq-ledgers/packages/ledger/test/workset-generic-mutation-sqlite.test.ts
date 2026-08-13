@@ -2,7 +2,7 @@
  * T1974 — SQLite durable leg of the guarded generic-mutation dual-test pair.
  *
  * Runs the shared Behavioral-Active Blackbox contract unchanged against
- * {@link createSqliteWorksetGuardedLedger}, plus focused Good-Communication
+ * {@link createSqliteWorksetManagementLedger}, plus focused Good-Communication
  * cases for status/reference updates, exact-root unarchive, and archive sweeps
  * on real temporary databases.
  */
@@ -12,7 +12,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  createSqliteWorksetGuardedLedger,
+  createSqliteWorksetManagementLedger,
   MILESTONES_LEDGER,
   TASKS_LEDGER,
   WorksetGenericMutationError,
@@ -36,7 +36,7 @@ async function buildSqliteGuarded(
   options?: WorksetGenericMutationContractBuildOptions,
 ): Promise<WorksetGuardedLedger> {
   const dbPath = await freshDbPath();
-  const ledger = createSqliteWorksetGuardedLedger({
+  const ledger = createSqliteWorksetManagementLedger({
     dbPath,
     ...(options?.now !== undefined ? { now: options.now } : {}),
     ...(options?.hooks !== undefined ? { hooks: options.hooks } : {}),

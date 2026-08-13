@@ -2,7 +2,7 @@
  * T1972 — filesystem leg of the guarded generic-mutation dual-test pair.
  *
  * Runs the shared Behavioral-Active Blackbox contract against
- * {@link createFsWorksetGuardedLedger}, plus focused Good-Communication cases
+ * {@link createFsWorksetManagementLedger}, plus focused Good-Communication cases
  * for restart, competing writers, in-graph updates, closure refs, exact-root
  * unarchive, and whole-milestone archive durability.
  */
@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
   createFsWorksetGuardedLedger,
+  createFsWorksetManagementLedger,
   assertNoPublicRawWriteEscape,
   WorksetGenericMutationError,
   TASKS_LEDGER,
@@ -39,7 +40,7 @@ async function buildFsLedger(
   options: CreateInMemoryWorksetGuardedLedgerOptions = {},
 ): Promise<WorksetGuardedLedger> {
   const root = await freshRoot();
-  return createFsWorksetGuardedLedger({
+  return createFsWorksetManagementLedger({
     root,
     ...(options.now !== undefined ? { now: options.now } : {}),
     ...(options.hooks !== undefined ? { hooks: options.hooks } : {}),
@@ -76,7 +77,7 @@ describe("workset generic-mutation filesystem focused [T1972]", () => {
 
   it("restart retains roots epoch and admitted mutation results", async () => {
     const root = await freshRoot();
-    const first = createFsWorksetGuardedLedger({ root });
+    const first = createFsWorksetManagementLedger({ root });
     await first.init();
     let taskId: string;
     let milestoneId: string;
@@ -101,7 +102,7 @@ describe("workset generic-mutation filesystem focused [T1972]", () => {
       await first.dispose();
     }
 
-    const second = createFsWorksetGuardedLedger({ root });
+    const second = createFsWorksetManagementLedger({ root });
     await second.init();
     try {
       expect(await second.snapshotRoots()).toEqual({
@@ -141,8 +142,8 @@ describe("workset generic-mutation filesystem focused [T1972]", () => {
         return (e as NodeJS.ErrnoException).code === "EPERM";
       }
     };
-    const a = createFsWorksetGuardedLedger({ root, selfPid: pidA, isPidAlive });
-    const b = createFsWorksetGuardedLedger({ root, selfPid: pidB, isPidAlive });
+    const a = createFsWorksetManagementLedger({ root, selfPid: pidA, isPidAlive });
+    const b = createFsWorksetManagementLedger({ root, selfPid: pidB, isPidAlive });
     await a.init();
     await b.init();
     try {
@@ -167,7 +168,7 @@ describe("workset generic-mutation filesystem focused [T1972]", () => {
       const epochs = results.map((r) => r.epoch).sort((x, y) => x - y);
       expect(epochs).toEqual([1, 2]);
 
-      const reader = createFsWorksetGuardedLedger({ root });
+      const reader = createFsWorksetManagementLedger({ root });
       await reader.init();
       try {
         const final = await reader.snapshotRoots();
@@ -188,7 +189,7 @@ describe("workset generic-mutation filesystem focused [T1972]", () => {
 
   it("persists in-graph update and denies excluded target before durable change", async () => {
     const root = await freshRoot();
-    const ledger = createFsWorksetGuardedLedger({ root });
+    const ledger = createFsWorksetManagementLedger({ root });
     await ledger.init();
     try {
       const m = await ledger.mutations.createMilestone({ title: "upd-m" });
@@ -227,7 +228,7 @@ describe("workset generic-mutation filesystem focused [T1972]", () => {
 
   it("rejects excluded introduced closure refs with zero durable mutation", async () => {
     const root = await freshRoot();
-    const ledger = createFsWorksetGuardedLedger({ root });
+    const ledger = createFsWorksetManagementLedger({ root });
     await ledger.init();
     try {
       const m = await ledger.mutations.createMilestone({ title: "dep-m" });
@@ -259,7 +260,7 @@ describe("workset generic-mutation filesystem focused [T1972]", () => {
 
   it("exact inactive-root unarchive survives reopen; non-root stays archived", async () => {
     const root = await freshRoot();
-    const ledger = createFsWorksetGuardedLedger({ root });
+    const ledger = createFsWorksetManagementLedger({ root });
     await ledger.init();
     let milestoneId: string;
     let keepId: string;
@@ -293,7 +294,7 @@ describe("workset generic-mutation filesystem focused [T1972]", () => {
       await ledger.dispose();
     }
 
-    const reopened = createFsWorksetGuardedLedger({ root });
+    const reopened = createFsWorksetManagementLedger({ root });
     await reopened.init();
     try {
       expect(reopened.fetchItem(TASKS_LEDGER, keepId).id).toBe(keepId);
@@ -312,7 +313,7 @@ describe("workset generic-mutation filesystem focused [T1972]", () => {
 
   it("full-sweep archive commits durably under explicit admitted roots", async () => {
     const root = await freshRoot();
-    const ledger = createFsWorksetGuardedLedger({ root });
+    const ledger = createFsWorksetManagementLedger({ root });
     await ledger.init();
     let milestoneId: string;
     let taskA: string;
@@ -343,7 +344,7 @@ describe("workset generic-mutation filesystem focused [T1972]", () => {
       await ledger.dispose();
     }
 
-    const reader = createFsWorksetGuardedLedger({ root });
+    const reader = createFsWorksetManagementLedger({ root });
     await reader.init();
     try {
       expect(() => reader.fetchItem(MILESTONES_LEDGER, milestoneId)).toThrow();

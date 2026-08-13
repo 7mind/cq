@@ -2,7 +2,7 @@
  * T1975 — Postgres durable leg of the guarded generic-mutation dual-test pair.
  *
  * Runs the shared Behavioral-Active Blackbox contract (T1961) unchanged against
- * {@link createPostgresWorksetGuardedLedger}, plus focused Good-Communication
+ * {@link createPostgresWorksetManagementLedger}, plus focused Good-Communication
  * cases for updates, unarchive, archive, restart, tenant isolation, and
  * NOTIFY-after-commit ordering.
  *
@@ -14,7 +14,7 @@ import { afterAll, afterEach, describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { SQL } from "bun";
 import {
-  createPostgresWorksetGuardedLedger,
+  createPostgresWorksetManagementLedger,
   ensureSchema,
   openPgPool,
   PostgresLedgerStore,
@@ -74,13 +74,16 @@ if (PG_URL === undefined || PG_URL.length === 0) {
   }
 
   async function buildGuarded(
-    options: Omit<CreatePostgresWorksetGuardedLedgerOptions, "pool" | "displayName"> & {
+    options: Omit<
+      CreatePostgresWorksetGuardedLedgerOptions,
+      "pool" | "displayName" | "projectKey" | "invocationAuthority"
+    > & {
       projectKey?: string;
     } = {},
   ): Promise<WorksetGuardedLedger> {
     const projectKey = options.projectKey ?? (await prepareTenant());
     const { projectKey: _ignored, ...rest } = options;
-    const ledger = await createPostgresWorksetGuardedLedger({
+    const ledger = await createPostgresWorksetManagementLedger({
       ...rest,
       pool: openNarrowPool(dsn),
       projectKey,

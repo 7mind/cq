@@ -2,7 +2,7 @@
  * T1973 — Git-object durable leg of the guarded generic-mutation dual-test pair.
  *
  * Runs the shared Behavioral-Active Blackbox contract unchanged against
- * {@link createGitObjectWorksetGuardedLedger}, plus focused Effectual
+ * {@link createGitObjectWorksetManagementLedger}, plus focused Effectual
  * Good-Communication cases: durable updates, closure refs, exact-root
  * unarchive, archive sweeps, competing writers, replacement races,
  * restart/ref reload, and watcher invalidation.
@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import {
-  createGitObjectWorksetGuardedLedger,
+  createGitObjectWorksetManagementLedger,
   assertNoPublicRawWriteEscape,
   WorksetGenericMutationError,
   TASKS_LEDGER,
@@ -53,14 +53,14 @@ async function seedRepo(): Promise<string> {
 async function buildGitGuarded(
   options: {
     readonly afterGenericAdmit?: () => Promise<void> | void;
-    readonly hooks?: Parameters<typeof createGitObjectWorksetGuardedLedger>[0]["hooks"];
+    readonly hooks?: Parameters<typeof createGitObjectWorksetManagementLedger>[0]["hooks"];
     readonly now?: () => string;
-    readonly onMutation?: Parameters<typeof createGitObjectWorksetGuardedLedger>[0]["onMutation"];
+    readonly onMutation?: Parameters<typeof createGitObjectWorksetManagementLedger>[0]["onMutation"];
     readonly repoRoot?: string;
   } = {},
 ): Promise<WorksetGuardedLedger> {
   const repoRoot = options.repoRoot ?? (await seedRepo());
-  return createGitObjectWorksetGuardedLedger({
+  return createGitObjectWorksetManagementLedger({
     repoRoot,
     ...(options.afterGenericAdmit !== undefined
       ? { afterGenericAdmit: options.afterGenericAdmit }

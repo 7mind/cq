@@ -11,7 +11,7 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  createFsWorksetGuardedLedger,
+  createFsWorksetManagementLedger,
   TASKS_LEDGER,
   MILESTONES_LEDGER,
   LEDGER_STORAGE_DIRNAME,
@@ -62,7 +62,7 @@ describe("workset generic-mutation filesystem faults [T1972]", () => {
   it("injected ledger write failure preserves prior item state and drains admission", async () => {
     const root = await freshRoot();
     let failNextTasksWrite = false;
-    const ledger = createFsWorksetGuardedLedger({
+    const ledger = createFsWorksetManagementLedger({
       root,
       ledgerAtomicWrite: async (filePath, text) => {
         if (failNextTasksWrite && filePath.endsWith(`${TASKS_LEDGER}.md`)) {
@@ -107,7 +107,7 @@ describe("workset generic-mutation filesystem faults [T1972]", () => {
   it("injected ledger rename failure leaves prior durable content intact", async () => {
     const root = await freshRoot();
     let failRename = false;
-    const ledger = createFsWorksetGuardedLedger({
+    const ledger = createFsWorksetManagementLedger({
       root,
       ledgerAtomicWrite: async (filePath, text) => {
         if (failRename && filePath.endsWith(`${TASKS_LEDGER}.md`)) {
@@ -136,7 +136,7 @@ describe("workset generic-mutation filesystem faults [T1972]", () => {
       expect(ledger.fetchItem(TASKS_LEDGER, inside)).toEqual(before);
       expect(await fs.readFile(tasksPath, "utf8")).toBe(beforeDisk);
 
-      const peer = createFsWorksetGuardedLedger({ root });
+      const peer = createFsWorksetManagementLedger({ root });
       await peer.init();
       try {
         expect(peer.fetchItem(TASKS_LEDGER, inside)).toEqual(before);
@@ -151,7 +151,7 @@ describe("workset generic-mutation filesystem faults [T1972]", () => {
   it("injected roots write failure preserves prior epoch during replacement", async () => {
     const root = await freshRoot();
     let failNextRoots = false;
-    const ledger = createFsWorksetGuardedLedger({
+    const ledger = createFsWorksetManagementLedger({
       root,
       worksetAtomicWrite: async (filePath, text) => {
         if (failNextRoots && filePath.endsWith("roots.json")) {
@@ -173,7 +173,7 @@ describe("workset generic-mutation filesystem faults [T1972]", () => {
       ).rejects.toThrow(/injected roots write failure/);
 
       expect(await ledger.snapshotRoots()).toEqual(first);
-      const peer = createFsWorksetGuardedLedger({ root });
+      const peer = createFsWorksetManagementLedger({ root });
       await peer.init();
       try {
         expect(await peer.snapshotRoots()).toEqual(first);
@@ -196,7 +196,7 @@ describe("workset generic-mutation filesystem faults [T1972]", () => {
     const admitted = deferred();
     const releaseHold = deferred();
     let holdEnabled = false;
-    const ledger = createFsWorksetGuardedLedger({
+    const ledger = createFsWorksetManagementLedger({
       root,
       afterGenericAdmit: async () => {
         if (!holdEnabled) return;
@@ -241,7 +241,7 @@ describe("workset generic-mutation filesystem faults [T1972]", () => {
   it("excluded target fails before ledger I/O (disk bytes unchanged)", async () => {
     const root = await freshRoot();
     let ledgerWriteCount = 0;
-    const ledger = createFsWorksetGuardedLedger({
+    const ledger = createFsWorksetManagementLedger({
       root,
       ledgerAtomicWrite: async (filePath, text) => {
         if (filePath.endsWith(`${TASKS_LEDGER}.md`)) {
@@ -273,7 +273,7 @@ describe("workset generic-mutation filesystem faults [T1972]", () => {
 
   it("archive-sweep denial leaves milestone files and on-disk archive absent", async () => {
     const root = await freshRoot();
-    const ledger = createFsWorksetGuardedLedger({ root });
+    const ledger = createFsWorksetManagementLedger({ root });
     await ledger.init();
     try {
       const m = await ledger.mutations.createMilestone({ title: "sweep-deny" });
@@ -314,7 +314,7 @@ describe("workset generic-mutation filesystem faults [T1972]", () => {
   it("mid-sweep archive failure preserves the complete prior durable state", async () => {
     const root = await freshRoot();
     let failNextMilestonesWrite = false;
-    const ledger = createFsWorksetGuardedLedger({
+    const ledger = createFsWorksetManagementLedger({
       root,
       ledgerAtomicWrite: async (filePath, text) => {
         if (
@@ -345,7 +345,7 @@ describe("workset generic-mutation filesystem faults [T1972]", () => {
         ledger.mutations.archiveMilestone(m.id, "must roll back"),
       ).rejects.toThrow(/injected late archive-sweep failure/);
 
-      const peer = createFsWorksetGuardedLedger({ root });
+      const peer = createFsWorksetManagementLedger({ root });
       await peer.init();
       try {
         expect(peer.fetchItem(MILESTONES_LEDGER, m.id).id).toBe(m.id);
@@ -379,7 +379,7 @@ describe("workset generic-mutation filesystem faults [T1972]", () => {
     const root = await freshRoot();
     let injectFailure = false;
     let rollingBack = false;
-    const ledger = createFsWorksetGuardedLedger({
+    const ledger = createFsWorksetManagementLedger({
       root,
       ledgerAtomicWrite: async (filePath, text) => {
         if (
@@ -415,7 +415,7 @@ describe("workset generic-mutation filesystem faults [T1972]", () => {
     ).rejects.toThrow(/archive commit failed.*rollback did not complete/);
     await ledger.dispose();
 
-    const recovered = createFsWorksetGuardedLedger({ root });
+    const recovered = createFsWorksetManagementLedger({ root });
     await recovered.init();
     try {
       expect(recovered.fetchItem(MILESTONES_LEDGER, m.id).id).toBe(m.id);

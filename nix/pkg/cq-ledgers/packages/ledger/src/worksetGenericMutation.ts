@@ -990,6 +990,9 @@ export function createInMemoryWorksetGuardedLedger(
   return createWorksetGuardedLedger({
     rawStore,
     worksetStore,
+    ...(options.invocationAuthority !== undefined
+      ? { invocationAuthority: options.invocationAuthority }
+      : {}),
     ...(options.afterGenericAdmit !== undefined
       ? { afterGenericAdmit: options.afterGenericAdmit }
       : {}),
@@ -1008,6 +1011,7 @@ export interface CreateGitObjectWorksetGuardedLedgerOptions {
   readonly now?: () => string;
   readonly hooks?: WorksetAdmissionCoordinatorHooks;
   readonly afterGenericAdmit?: () => Promise<void> | void;
+  readonly invocationAuthority?: WorksetInvocationAuthority;
   /** Lockfile injection points for tests. */
   readonly lockfile?: LockfileOpts;
   /** Injected plumbing (tests drive a throwaway repo / fault injection). */
@@ -1083,9 +1087,22 @@ export async function createGitObjectWorksetGuardedLedger(
   return createWorksetGuardedLedger({
     rawStore,
     worksetStore,
+    ...(options.invocationAuthority !== undefined
+      ? { invocationAuthority: options.invocationAuthority }
+      : {}),
     ...(options.afterGenericAdmit !== undefined
       ? { afterGenericAdmit: options.afterGenericAdmit }
       : {}),
+  });
+}
+
+/** Git-object trusted-host management surface for direct administration and contracts. */
+export async function createGitObjectWorksetManagementLedger(
+  options: Omit<CreateGitObjectWorksetGuardedLedgerOptions, "invocationAuthority">,
+): Promise<WorksetGuardedLedger> {
+  return createGitObjectWorksetGuardedLedger({
+    ...options,
+    invocationAuthority: createTrustedWorksetManagementAuthority(),
   });
 }
 
@@ -1099,6 +1116,7 @@ export interface CreateFsWorksetGuardedLedgerOptions {
   readonly now?: () => string;
   readonly hooks?: WorksetAdmissionCoordinatorHooks;
   readonly afterGenericAdmit?: () => Promise<void> | void;
+  readonly invocationAuthority?: WorksetInvocationAuthority;
   readonly lockfile?: FsLedgerStoreOpts["lockfile"];
   readonly onMutation?: FsLedgerStoreOpts["onMutation"];
   /** Injected into FsLedgerStore persistence writes (ledger/archive/registry). */
@@ -1170,6 +1188,16 @@ export function createFsWorksetGuardedLedger(
   });
 }
 
+/** Filesystem trusted-host management surface for direct administration and contracts. */
+export function createFsWorksetManagementLedger(
+  options: Omit<CreateFsWorksetGuardedLedgerOptions, "invocationAuthority">,
+): WorksetGuardedLedger {
+  return createFsWorksetGuardedLedger({
+    ...options,
+    invocationAuthority: createTrustedWorksetManagementAuthority(),
+  });
+}
+
 /** In-memory trusted-host management surface for direct administration and contracts. */
 export function createInMemoryWorksetManagementLedger(
   options: Omit<CreateInMemoryWorksetGuardedLedgerOptions, "invocationAuthority"> = {},
@@ -1231,6 +1259,7 @@ export interface CreateSqliteWorksetGuardedLedgerOptions {
   readonly logsDir?: string;
   readonly hooks?: WorksetAdmissionCoordinatorHooks;
   readonly afterGenericAdmit?: () => Promise<void> | void;
+  readonly invocationAuthority?: WorksetInvocationAuthority;
 }
 
 /**
@@ -1294,8 +1323,21 @@ export function createSqliteWorksetGuardedLedger(
   return createWorksetGuardedLedger({
     rawStore,
     worksetStore: lazySqliteWorksetStore(() => rawStore.worksetStore()),
+    ...(options.invocationAuthority !== undefined
+      ? { invocationAuthority: options.invocationAuthority }
+      : {}),
     ...(options.afterGenericAdmit !== undefined
       ? { afterGenericAdmit: options.afterGenericAdmit }
       : {}),
+  });
+}
+
+/** SQLite trusted-host management surface for direct administration and contracts. */
+export function createSqliteWorksetManagementLedger(
+  options: Omit<CreateSqliteWorksetGuardedLedgerOptions, "invocationAuthority">,
+): WorksetGuardedLedger {
+  return createSqliteWorksetGuardedLedger({
+    ...options,
+    invocationAuthority: createTrustedWorksetManagementAuthority(),
   });
 }

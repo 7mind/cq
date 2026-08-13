@@ -13,7 +13,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  createSqliteWorksetGuardedLedger,
+  createSqliteWorksetManagementLedger,
   TASKS_LEDGER,
   WorksetGenericMutationError,
   type WorksetGuardedLedger,
@@ -30,7 +30,7 @@ async function freshDbPath(): Promise<string> {
 }
 
 function openGuarded(dbPath: string): WorksetGuardedLedger {
-  const ledger = createSqliteWorksetGuardedLedger({ dbPath });
+  const ledger = createSqliteWorksetManagementLedger({ dbPath });
   liveLedgers.push(ledger);
   return ledger;
 }
@@ -139,7 +139,7 @@ describe("workset generic-mutation sqlite faults [T1974]", () => {
     });
     let holdEnabled = false;
 
-    const holder = createSqliteWorksetGuardedLedger({
+    const holder = createSqliteWorksetManagementLedger({
       dbPath,
       afterGenericAdmit: async () => {
         if (!holdEnabled) return;

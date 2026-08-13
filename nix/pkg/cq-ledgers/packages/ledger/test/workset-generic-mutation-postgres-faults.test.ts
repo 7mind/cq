@@ -10,7 +10,7 @@ import { afterAll, afterEach, describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { SQL } from "bun";
 import {
-  createPostgresWorksetGuardedLedger,
+  createPostgresWorksetManagementLedger,
   ensureSchema,
   openPgPool,
   PostgresLedgerStore,
@@ -75,10 +75,10 @@ if (PG_URL === undefined || PG_URL.length === 0) {
     projectKey: string,
     opts: {
       afterGenericAdmit?: () => Promise<void> | void;
-      hooks?: Parameters<typeof createPostgresWorksetGuardedLedger>[0]["hooks"];
+      hooks?: Parameters<typeof createPostgresWorksetManagementLedger>[0]["hooks"];
     } = {},
   ): Promise<WorksetGuardedLedger> {
-    const ledger = await createPostgresWorksetGuardedLedger({
+    const ledger = await createPostgresWorksetManagementLedger({
       pool: openNarrowPool(dsn),
       projectKey,
       displayName: projectKey,

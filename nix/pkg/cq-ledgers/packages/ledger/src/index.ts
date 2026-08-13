@@ -210,8 +210,11 @@ export {
   createInMemoryWorksetGuardedLedger,
   createInMemoryWorksetManagementLedger,
   createFsWorksetGuardedLedger,
+  createFsWorksetManagementLedger,
   createGitObjectWorksetGuardedLedger,
+  createGitObjectWorksetManagementLedger,
   createSqliteWorksetGuardedLedger,
+  createSqliteWorksetManagementLedger,
   assertGenericMutationAdmissionNotCallerMinted,
   inventoriedLedgerStoreMutationMethods,
   inventoriedSealedOwnershipFields,
@@ -566,7 +569,10 @@ export type {
   DurableWorksetAdmissionRow,
   PostgresWorksetStore,
 } from "./store/postgres/worksetStore.js";
-export { createPostgresWorksetGuardedLedger } from "./store/postgres/worksetGuardedLedger.js";
+export {
+  createPostgresWorksetGuardedLedger,
+  createPostgresWorksetManagementLedger,
+} from "./store/postgres/worksetGuardedLedger.js";
 export type { CreatePostgresWorksetGuardedLedgerOptions } from "./store/postgres/worksetGuardedLedger.js";
 export { resolvePostgresDsn, PostgresDsnResolutionError } from "./store/postgres/dsn.js";
 export { resolveDisplayName } from "./store/postgres/displayName.js";

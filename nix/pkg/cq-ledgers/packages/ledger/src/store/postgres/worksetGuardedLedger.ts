@@ -23,6 +23,10 @@ import {
 } from "../../worksetGenericMutation.js";
 import { closeWorkset } from "../../worksetGraph.js";
 import type { WorksetAdmissionCoordinatorHooks } from "../../worksetEffectAdmission.js";
+import {
+  createTrustedWorksetManagementAuthority,
+  type WorksetInvocationAuthority,
+} from "../../worksetInvocationAuthority.js";
 import type { OnMutation } from "../LedgerStore.js";
 import { PostgresLedgerStore } from "./PostgresLedgerStore.js";
 import {
@@ -48,6 +52,7 @@ export interface CreatePostgresWorksetGuardedLedgerOptions {
    * ledger-mutation admission is still held (set∥mutation linearization).
    */
   readonly afterGenericAdmit?: () => Promise<void> | void;
+  readonly invocationAuthority?: WorksetInvocationAuthority;
   /**
    * Extra durable-workset options forwarded to {@link createPostgresWorksetStore}
    * (fault injection: heartbeat, holder liveness, host id).
@@ -130,6 +135,9 @@ export async function createPostgresWorksetGuardedLedger(
   const surface = createWorksetGuardedLedger({
     rawStore,
     worksetStore,
+    ...(options.invocationAuthority !== undefined
+      ? { invocationAuthority: options.invocationAuthority }
+      : {}),
     ...(options.afterGenericAdmit !== undefined
       ? { afterGenericAdmit: options.afterGenericAdmit }
       : {}),
@@ -168,4 +176,14 @@ export async function createPostgresWorksetGuardedLedger(
     snapshotRoots: () => surface.snapshotRoots(),
     activeAdmissionCount: () => surface.activeAdmissionCount(),
   };
+}
+
+/** PostgreSQL trusted-host management surface for direct administration and contracts. */
+export async function createPostgresWorksetManagementLedger(
+  options: Omit<CreatePostgresWorksetGuardedLedgerOptions, "invocationAuthority">,
+): Promise<WorksetGuardedLedger> {
+  return createPostgresWorksetGuardedLedger({
+    ...options,
+    invocationAuthority: createTrustedWorksetManagementAuthority(),
+  });
 }
