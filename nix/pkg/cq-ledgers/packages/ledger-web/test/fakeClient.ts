@@ -714,7 +714,7 @@ export class FakeClient implements WorksetCapableLedgerClient {
     if (!d.schema.statusValues.includes(init.status)) throw new Error(`Invalid status "${init.status}"`);
     this.itemCounter += 1;
     const item: Item = {
-      id: `${d.schema.idPrefix ?? "X"}${this.itemCounter}`,
+      id: init.id ?? `${d.schema.idPrefix ?? "X"}${this.itemCounter}`,
       milestoneId,
       status: init.status,
       fields: init.fields,

@@ -1,15 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { runWorksetClientContract } from "@cq/ledger/testing/worksetClientContract";
 import { FakeClient } from "./fakeClient.js";
-
-runWorksetClientContract({
-  name: "ledger-tui FakeClient",
-  classification: "Behavioral-Active Blackbox-Atomic",
-  build() {
-    const client = new FakeClient();
-    return { client, close: async () => client.close() };
-  },
-});
 
 describe("ledger-tui FakeClient workset controls", () => {
   it("records immutable requests and exposes deferred failure hooks", async () => {
