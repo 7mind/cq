@@ -16,12 +16,19 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { FsLedgerStore, NON_DISPATCH_LEDGER_TOOL_NAMES } from "@cq/ledger";
-import { serveHttp, attachMcpHttp, MCP_HTTP_PATH } from "../src/main.js";
+import {
+  serveHttp,
+  attachMcpHttp,
+  buildServerInstructions,
+  MCP_HTTP_PATH,
+} from "../src/main.js";
 
 let tmpRoot: string;
 let store: FsLedgerStore;
 let server: ReturnType<typeof Bun.serve>;
 let baseUrl: URL;
+
+const EXPECTED_HTTP_INSTRUCTIONS = `Project: test-project\n\n${buildServerInstructions("")}`;
 
 beforeAll(async () => {
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-http-"));
@@ -75,18 +82,8 @@ describe("ledger-mcp Streamable HTTP", () => {
   it("advertises usage instructions on initialize", async () => {
     await withClient(async (client) => {
       const instr = client.getInstructions() ?? "";
-      expect(instr).toContain("Project: test-project");
-      expect(instr).toContain("Typed milestone DAG; items attach.");
-      expect(instr).toContain(
-        "compact.fields ⊎ complement.fields = full.fields",
-      );
-      expect(instr).toContain("fetch_ledger: paginate until nextOffset=null");
-      expect(instr).toContain(
-        "terminal items stay active until archive_milestone sweeps a fully terminal milestone",
-      );
-      expect(instr).toContain(
-        "Preserve IDs and dispatch/plan capability/generation/fence/recovery/idempotency.",
-      );
+      expect(instr).toBe(EXPECTED_HTTP_INSTRUCTIONS);
+      expect(instr).toContain("snapshot/derive_predicates: CQ state.");
     });
   });
 
