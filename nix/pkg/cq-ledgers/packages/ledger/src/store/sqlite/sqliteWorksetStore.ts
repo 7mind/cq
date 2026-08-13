@@ -586,6 +586,21 @@ export function createSqliteWorksetStore(
           ).run(registration.pgid, registration.leaderPid, granted.id);
         });
       },
+      shareWithGuardian(): void {
+        if (!open) {
+          throw new WorksetAdmissionError(
+            "admission-closed",
+            "cannot share a closed external-effect admission",
+          );
+        }
+        const row = loadAdmission(granted.id);
+        if (row === null || row.process_group_registered !== 1) {
+          throw new WorksetAdmissionError(
+            "admission-not-registered",
+            "cannot share admission before process-group registration",
+          );
+        }
+      },
       markSettled(): void {
         if (!open) {
           throw new WorksetAdmissionError(

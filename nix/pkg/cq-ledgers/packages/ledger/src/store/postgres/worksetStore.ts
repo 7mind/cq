@@ -914,6 +914,20 @@ export function createPostgresWorksetStore(
           // Durable before return (FS/SQLite write-sync parity).
           await publishProcessGroup(granted.id, registration);
         },
+        shareWithGuardian(): void {
+          if (!open) {
+            throw new WorksetAdmissionError(
+              "admission-closed",
+              "cannot share a closed external-effect admission",
+            );
+          }
+          if (processGroup === null) {
+            throw new WorksetAdmissionError(
+              "admission-not-registered",
+              "cannot share admission before process-group registration",
+            );
+          }
+        },
         async markSettled(): Promise<void> {
           if (!open) {
             throw new WorksetAdmissionError(

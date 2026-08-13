@@ -251,6 +251,8 @@ export interface WorksetExternalEffectAdmission {
   registerProcessGroup(
     registration: WorksetProcessGroupRegistration,
   ): void | Promise<void>;
+  /** Confirm that the registered bootstrap guardian shares this admission. */
+  shareWithGuardian(): void | Promise<void>;
   /** True once {@link registerProcessGroup} has succeeded. */
   readonly processGroupRegistered: boolean;
   /**
@@ -852,6 +854,20 @@ export function createInMemoryWorksetAdmissionCoordinator(
         };
         if (noteAdmissionProcessGroup !== undefined) {
           noteAdmissionProcessGroup(id, record.processGroup);
+        }
+      },
+      shareWithGuardian(): void {
+        if (!open) {
+          throw new WorksetAdmissionError(
+            "admission-closed",
+            "cannot share a closed external-effect admission",
+          );
+        }
+        if (record.processGroup === null) {
+          throw new WorksetAdmissionError(
+            "admission-not-registered",
+            "cannot share admission before process-group registration",
+          );
         }
       },
       markSettled(): void {

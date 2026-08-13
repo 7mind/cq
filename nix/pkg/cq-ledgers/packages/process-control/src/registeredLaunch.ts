@@ -74,6 +74,13 @@ export interface LaunchRegisteredProcessGroupOptions<TProcess, TExit, TStdio> {
   ) => RegisteredLaunchBootstrap<TProcess, TExit>;
   /** Publish the mandatory registration while the bootstrap leader is fenced. */
   readonly register: (registration: ProcessGroupRegistration) => Promise<void>;
+  /**
+   * Publish the admission's guardian share after registration and before the
+   * bootstrap receives its target-release record.
+   */
+  readonly shareLeaseWithGuardian?: (
+    registration: ProcessGroupRegistration,
+  ) => Promise<void>;
   /** Await adapter-owned settlement after target exit and before bootstrap release. */
   readonly onTargetExit?: (
     registration: ProcessGroupRegistration,
@@ -525,6 +532,14 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
     await options.register(registration);
     if (!(await isProcessIdentityAlive(registration.leader))) {
       throw new Error("@cq/process-control: registered-launch bootstrap exited before release");
+    }
+    if (options.shareLeaseWithGuardian !== undefined) {
+      await options.shareLeaseWithGuardian(registration);
+      if (!(await isProcessIdentityAlive(registration.leader))) {
+        throw new Error(
+          "@cq/process-control: registered-launch guardian exited before target release",
+        );
+      }
     }
     await writeJsonAtomic(releasePath, {
       nonce,

@@ -175,6 +175,15 @@ export class WorksetEffectBroker {
             pgid: candidate.pgid,
             leaderPid: candidate.leader.pid,
           });
+        },
+        shareLeaseWithGuardian: async (candidate) => {
+          if (registration?.pgid !== candidate.pgid) {
+            throw new WorksetEffectProtocolError(
+              "registration-required",
+              "registered-launch guardian identity changed before target release",
+            );
+          }
+          await session.shareWithGuardian();
           session.releaseTarget();
         },
         onTargetExit: async () => {
@@ -303,7 +312,12 @@ export function createStrictInMemoryWorksetEffectAdmissionProvider(): StrictInMe
             throw new Error("strict provider: process group leader must equal PGID");
           }
           state.registered = true;
-          history.push("process-group-registered", "guardian-shared");
+          history.push("process-group-registered");
+        },
+        shareWithGuardian(): void {
+          if (!state.open) throw new Error("strict provider: admission already closed");
+          if (!state.registered) throw new Error("strict provider: process group not registered");
+          history.push("guardian-shared");
         },
         markSettled(): void {
           if (!state.open) throw new Error("strict provider: admission already closed");

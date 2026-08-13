@@ -879,6 +879,20 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
         fsSync.writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, "utf8");
         fsSync.renameSync(tmp, docPath);
       },
+      shareWithGuardian(): void {
+        if (!open) {
+          throw new WorksetAdmissionError(
+            "admission-closed",
+            "cannot share a closed external-effect admission",
+          );
+        }
+        if (processGroup === null) {
+          throw new WorksetAdmissionError(
+            "admission-not-registered",
+            "cannot share admission before process-group registration",
+          );
+        }
+      },
       markSettled(): void {
         if (!open) {
           throw new WorksetAdmissionError(

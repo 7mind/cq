@@ -94,6 +94,8 @@ export interface WorksetBrokerAdmissionHandle {
   registerProcessGroup(
     registration: WorksetBrokerProcessGroupRegistration,
   ): void | Promise<void>;
+  /** Share the held admission with the already registered bootstrap guardian. */
+  readonly shareWithGuardian?: () => void | Promise<void>;
   markSettled(): void | Promise<void>;
   releaseAfterSettlement(): Promise<void>;
   /** Close an acquired admission when its fenced bootstrap never registered. */
@@ -155,6 +157,7 @@ export class WorksetEffectProtocolSession {
   private stageValue: WorksetEffectBrokerStage = "unacquired";
   private admission: WorksetBrokerAdmissionHandle | null = null;
   private registration: WorksetBrokerProcessGroupRegistration | null = null;
+  private guardianShared = false;
   private terminationReason: WorksetBrokerTerminationReason | null = null;
   private effectCount = 0;
 
@@ -240,6 +243,24 @@ export class WorksetEffectProtocolSession {
       leaderPid: registration.leaderPid,
     };
     this.stageValue = "process-group-registered";
+  }
+
+  async shareWithGuardian(): Promise<void> {
+    this.assertStage("process-group-registered", "shareWithGuardian");
+    if (this.admission === null || this.registration === null) {
+      throw new WorksetEffectProtocolError(
+        "registration-required",
+        "guardian sharing requires a registered process group",
+      );
+    }
+    if (this.guardianShared) {
+      throw new WorksetEffectProtocolError(
+        "multiple-effects",
+        "workset effect admission already has a guardian share",
+      );
+    }
+    await Promise.resolve(this.admission.shareWithGuardian?.());
+    this.guardianShared = true;
   }
 
   /**

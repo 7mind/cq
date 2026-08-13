@@ -38,6 +38,18 @@ function streamDrained(stream: NodeJS.ReadableStream | null): Promise<void> {
   });
 }
 
+function streamText(stream: NodeJS.ReadableStream): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let output = "";
+    stream.setEncoding("utf8");
+    stream.on("data", (chunk: string) => {
+      output += chunk;
+    });
+    stream.once("end", () => resolve(output));
+    stream.once("error", reject);
+  });
+}
+
 function nodeBootstrap(specification: RegisteredLaunchBootstrapSpecification<StdioOptions>) {
   const child = spawn(specification.argv[0], specification.argv.slice(1), {
     cwd: specification.cwd,
@@ -175,5 +187,75 @@ describe("workset effect broker [T1979]", () => {
     } finally {
       signalProcessGroup(launched.registration.pgid, "SIGKILL");
     }
+  });
+
+  test("timeout settles the registered group before releasing admission [Effectual-GoodCommunication]", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-workset-effect-timeout-"));
+    roots.push(root);
+    const strict = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const broker = new WorksetEffectBroker({
+      provider: strict,
+      settlement: { termGraceMs: 10, killGraceMs: 1_000, pollIntervalMs: 2 },
+    });
+    const launched = await broker.launch({
+      kind: "rebase",
+      targetRef: "tasks:T1979",
+      argv: [process.execPath, "-e", "setInterval(() => {}, 1000)"],
+      cwd: root,
+      env: process.env,
+      stdio: "ignore" as const,
+      launchBootstrap: nodeBootstrap,
+      timeoutMs: 20,
+    });
+
+    await launched.exited;
+    expect(launched.terminationReason).toBe("timeout");
+    expect(strict.activeAdmissionCount()).toBe(0);
+  });
+
+  test("keeps opaque admission material out of process metadata and output [BA]", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-workset-effect-opaque-"));
+    roots.push(root);
+    const capability = "cq-secret-admission-capability-T1979";
+    const strict = createStrictInMemoryWorksetEffectAdmissionProvider();
+    let specification: RegisteredLaunchBootstrapSpecification<StdioOptions> | undefined;
+    const pipedStdio: StdioOptions = ["ignore", "pipe", "pipe"];
+    const broker = new WorksetEffectBroker({
+      provider: {
+        acquire: async (input) => {
+          const admission = await strict.acquire(input);
+          return Object.freeze({ ...admission, id: capability });
+        },
+      },
+    });
+    const launched = await broker.launch({
+      kind: "branch-create",
+      targetRef: "tasks:T1979",
+      argv: [
+        process.execPath,
+        "-e",
+        "process.stdout.write(JSON.stringify({ argv: process.argv, env: process.env }))",
+      ],
+      cwd: root,
+      env: process.env,
+      stdio: pipedStdio,
+      launchBootstrap: (candidate) => {
+        specification = candidate;
+        return nodeBootstrap(candidate);
+      },
+    });
+    if (launched.process.stdout === null || launched.process.stderr === null) {
+      throw new Error("test bootstrap did not expose output pipes");
+    }
+    const stdout = streamText(launched.process.stdout);
+    const stderr = streamText(launched.process.stderr);
+    await launched.exited;
+
+    expect(specification?.argv.some((argument) => argument.includes(capability))).toBe(false);
+    expect(
+      Object.values(specification?.env ?? {}).some((value) => value?.includes(capability)),
+    ).toBe(false);
+    expect((await stdout).includes(capability)).toBe(false);
+    expect((await stderr).includes(capability)).toBe(false);
   });
 });
