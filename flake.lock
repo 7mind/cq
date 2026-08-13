@@ -22,11 +22,11 @@
     "codegraph": {
       "flake": false,
       "locked": {
-        "lastModified": 1784751556,
-        "narHash": "sha256-UHu8wi0BdkZ1ZvAxMAxMMb1ujPDCSfRH1ZFezcmaLeg=",
+        "lastModified": 1786157765,
+        "narHash": "sha256-RlA4VViOJR5w4yYoZlFE66WLaCTiCn55vePNUtnEneU=",
         "owner": "colbymchenry",
         "repo": "codegraph",
-        "rev": "572d22bfbe82602080e457bec655f72e3314f9ef",
+        "rev": "c6aaa20358cd6adcd04b87bdef8e5803ad146f3a",
         "type": "github"
       },
       "original": {
