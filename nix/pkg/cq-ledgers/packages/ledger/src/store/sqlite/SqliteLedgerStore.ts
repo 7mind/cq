@@ -178,6 +178,8 @@ import {
   type OperatorActionLifecycleMutation,
   type OperatorActionLifecycleMutationResult,
 } from "../operatorActionLifecycle.js";
+import { createOwnedWriteTransaction } from "../ownedWriteTransaction.js";
+import type { WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
 
 export interface SqliteLedgerStoreOpts {
   /** Concrete ledger database file path (created on init if absent). */
@@ -1544,6 +1546,34 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       this.fireMutation(ledgerId, "update");
     }
     return mutation.result;
+  }
+
+  /** Run one owned lifecycle operation in one BEGIN IMMEDIATE transaction. */
+  async runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T> {
+    this.assertInit();
+    const outcome = immediateWriteTransaction(this.db(), () => {
+      const state = this.loadPlanLifecycleState();
+      const archivedIds = state.archivedIds ?? new Map<string, Set<string>>();
+      const owned = createOwnedWriteTransaction({
+        ledgers: state.ledgers,
+        now: this.now,
+        archivedRefExists: (ledgerId, itemId) =>
+          archivedIds.get(ledgerId)?.has(itemId) ?? false,
+      });
+      const result = mutate(owned.tx);
+      const dirtyLedgers = [...owned.dirtyLedgers];
+      for (const ledgerId of dirtyLedgers) {
+        const ledger = state.ledgers.get(ledgerId);
+        if (ledger === undefined) throw new LedgerError(`ledger not found: ${ledgerId}`);
+        this.replaceActiveLedger(ledger);
+      }
+      return { result, dirtyLedgers };
+    });
+    for (const ledgerId of outcome.dirtyLedgers) {
+      this.rebuildLedgerIndexActive(ledgerId);
+      this.fireMutation(ledgerId, "update");
+    }
+    return outcome.result;
   }
 
   private reachPlanSerializationBoundary(contender: PlanLifecycleSerializationContender): void {

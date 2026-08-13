@@ -259,7 +259,7 @@ export interface WorksetOwnedGuardedLedger extends WorksetGuardedLedger {
  * transaction; durable adapters will bind the same surface to real TX/CAS.
  */
 export interface WorksetOwnedWriteHost extends WorksetGenericMutationGatewayHost {
-  runOwnedTransaction<T>(mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>): Promise<T>;
+  runOwnedTransaction<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T>;
   readonly afterOwnedAdmit?: () => Promise<void> | void;
 }
 

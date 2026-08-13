@@ -168,6 +168,7 @@ import { notifyProjectChanged, readTransaction, writeTransaction } from "./conne
 import { classifyCanonicalLedgers } from "./divergence.js";
 import {
   createPostgresWorksetStore,
+  type CreatePostgresWorksetStoreOptions,
   type PostgresWorksetStore,
 } from "./worksetStore.js";
 import { createObserveOnlyWorksetInvocationAuthority } from "../../worksetInvocationAuthority.js";
@@ -185,6 +186,8 @@ import {
   type OperatorActionLifecycleMutation,
   type OperatorActionLifecycleMutationResult,
 } from "../operatorActionLifecycle.js";
+import { createOwnedWriteTransaction } from "../ownedWriteTransaction.js";
+import type { WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
 
 export interface PostgresLedgerStoreOpts {
   /**
@@ -236,6 +239,8 @@ export interface PostgresLedgerStoreOpts {
   onSchemaDivergence?: "backup-reinit" | "abort";
   /** Runtime-only authority for destructive divergence reinitialization. */
   worksetAuthority?: unknown;
+  /** Options for this tenant's durable workset admission capability. */
+  workset?: Omit<CreatePostgresWorksetStoreOptions, "pool" | "projectKey">;
 }
 
 /** Lock key for the global milestones mutex (mirrors InMemoryLedgerStore). */
@@ -363,6 +368,10 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly onMutation: OnMutation | null;
   private readonly onSchemaDivergence: "backup-reinit" | "abort";
   private readonly worksetAuthority: unknown;
+  private readonly worksetOptions: Omit<
+    CreatePostgresWorksetStoreOptions,
+    "pool" | "projectKey"
+  >;
   private handle: SQL | null;
 
   /** In-memory materialized cache of this tenant's ACTIVE state (K102 read model). */
@@ -387,6 +396,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.onSchemaDivergence = opts.onSchemaDivergence ?? DEFAULT_ON_SCHEMA_DIVERGENCE;
     this.worksetAuthority =
       opts.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority();
+    this.worksetOptions = opts.workset ?? {};
   }
 
   // ---------------------------------------------------------------------------
@@ -896,6 +906,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.assertInit();
     if (this.workset === null) {
       this.workset = createPostgresWorksetStore({
+        ...this.worksetOptions,
         pool: this.pool(),
         projectKey: this.projectKey,
       });
@@ -1990,6 +2001,43 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     for (const ledgerId of dirty) this.fireHook(ledgerId, "update");
     await this.notify();
     return value;
+  }
+
+  /** Run one tenant-scoped owned lifecycle operation and notify after commit. */
+  async runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T> {
+    this.assertInit();
+    let result!: T;
+    let dirtyLedgers: readonly string[] = [];
+    let live!: LiveTenantState;
+    await writeTransaction(this.pool(), async (tx) => {
+      await this.lockTenantCounters(tx);
+      const tenant = await this.readLiveTenant(tx);
+      const archivedIds = new Map<string, Set<string>>();
+      for (const item of tenant.archived) {
+        let ids = archivedIds.get(item.ledger);
+        if (ids === undefined) {
+          ids = new Set();
+          archivedIds.set(item.ledger, ids);
+        }
+        ids.add(item.id);
+      }
+      const owned = createOwnedWriteTransaction({
+        ledgers: tenant.ledgers,
+        now: this.now,
+        archivedRefExists: (ledgerId, itemId) =>
+          archivedIds.get(ledgerId)?.has(itemId) ?? false,
+      });
+      result = mutate(owned.tx);
+      dirtyLedgers = [...owned.dirtyLedgers];
+      for (const ledgerId of dirtyLedgers) {
+        await this.persistLedgerState(tx, requireLiveLedger(tenant.ledgers, ledgerId));
+      }
+      live = tenant;
+    });
+    this.absorbLiveLedgers(live);
+    for (const ledgerId of dirtyLedgers) this.fireHook(ledgerId, "update");
+    if (dirtyLedgers.length > 0) await this.notify();
+    return result;
   }
 
   private async runOperatorActionLifecycleMutation(

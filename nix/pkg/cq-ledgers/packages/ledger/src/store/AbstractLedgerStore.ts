@@ -157,6 +157,8 @@ import {
   type OperatorActionLifecycleMutation,
   type OperatorActionLifecycleMutationResult,
 } from "./operatorActionLifecycle.js";
+import { createOwnedWriteTransaction } from "./ownedWriteTransaction.js";
+import type { WorksetOwnedWriteTx } from "../worksetOwnedLifecycle.js";
 
 // Moved to schemaCompat.ts (T527) so the sqlite backend's module graph stays
 // free of this file's parser/serialize funnel; re-exported for compatibility.
@@ -1388,6 +1390,48 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
       this.fireMutation(ledgerId, "update");
     }
     return mutation.result;
+  }
+
+  /**
+   * Run one owned lifecycle write or coordination bundle under the complete
+   * ordered lock set. FS persists the dirty ledgers through the rollback
+   * journal; Git persists them through one ref CAS.
+   */
+  async runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T> {
+    this.assertInit();
+    const ledgerIds = this.lockableLedgerIds();
+    const outcome = await this.withMilestonesLock(() =>
+      this.withLocksInOrder(ledgerIds, async () => {
+        await this.replayPlanLifecycleCommitUnderHeldLocks(ledgerIds);
+        const beforeLedgers = cloneMap(this.ledgers);
+        try {
+          const archivedIds = await this.loadArchivedIdSets();
+          const owned = createOwnedWriteTransaction({
+            ledgers: this.ledgers,
+            now: this.now,
+            archivedRefExists: (ledgerId, itemId) =>
+              archivedIds.get(ledgerId)?.has(itemId) ?? false,
+          });
+          const result = mutate(owned.tx);
+          const dirtyLedgers = [...owned.dirtyLedgers];
+          const sources: Record<string, string> = {};
+          for (const ledgerId of dirtyLedgers) {
+            sources[ledgerId] = serializeLedger(this.getLedger(ledgerId));
+          }
+          if (dirtyLedgers.length > 0) {
+            await this.commitArchiveSources({}, sources);
+          }
+          return { result, dirtyLedgers };
+        } catch (error) {
+          replaceMap(this.ledgers, beforeLedgers);
+          throw error;
+        }
+      }),
+    );
+    for (const ledgerId of outcome.dirtyLedgers) {
+      this.fireMutation(ledgerId, "update");
+    }
+    return outcome.result;
   }
 
   // ---------------------------------------------------------------------------
