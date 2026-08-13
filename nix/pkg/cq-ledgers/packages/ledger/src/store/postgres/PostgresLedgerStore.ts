@@ -141,6 +141,7 @@ import {
 } from "../core.js";
 import type { RefValidationContext, StatusChangePrecondition } from "../core.js";
 import { buildPrefixRegistry } from "../../refs.js";
+import { buildWorksetActiveState, closeWorkset } from "../../worksetGraph.js";
 import { cloneItem, materialiseFetchedLedger } from "../InMemoryLedgerStore.js";
 import { LedgerSearchIndex } from "../../search/LedgerSearchIndex.js";
 import { AsyncMutex } from "../mutex.js";
@@ -921,6 +922,28 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       });
     }
     return this.workset;
+  }
+
+  replaceWorksetRoots(roots: readonly string[]) {
+    const suppliedValidation = this.worksetOptions.validateReplacement;
+    let validatedLive: LiveTenantState | null = null;
+    return this.worksetStore().setValidatedRoots(roots, async (canonical, tx) => {
+      await this.lockAllGoalRows(tx);
+      await this.lockTenantCounters(tx);
+      const tenant = await this.readLiveTenant(tx);
+      validatedLive = tenant;
+      const state = buildWorksetActiveState(
+        [...tenant.ledgers].map(([ledger, value]) => ({
+          ledger,
+          items: value.milestones.flatMap((milestone) => milestone.items),
+        })),
+        buildPrefixRegistry(
+          [...tenant.ledgers].map(([name, ledger]) => ({ name, schema: ledger.schema })),
+        ),
+      );
+      const closed = closeWorkset(canonical, state, { validateLiveRoots: true }).roots;
+      return (await suppliedValidation?.(closed, tx)) ?? closed;
+    }, () => this.absorbLiveLedgers(validatedLive));
   }
 
   /**

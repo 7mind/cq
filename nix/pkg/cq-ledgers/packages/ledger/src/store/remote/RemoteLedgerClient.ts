@@ -74,6 +74,11 @@ import type {
   RecordOperatorActionEvidenceResult,
   RevisedOperatorAction,
 } from "../../operatorActions.js";
+import type {
+  WorksetObserveRequest,
+  WorksetRequest,
+  WorksetResult,
+} from "../../mcp/worksetTool.js";
 
 /**
  * Authenticated MCP initialize metadata used to label the project registry
@@ -163,6 +168,13 @@ export class RemoteLedgerClientConfigError extends RemoteLedgerClientError {
         "http(s) endpoint",
     );
     this.name = "RemoteLedgerClientConfigError";
+  }
+}
+
+export class RemoteManagementScopeError extends RemoteLedgerClientError {
+  constructor() {
+    super("workset set requires a management-bound remote session");
+    this.name = "RemoteManagementScopeError";
   }
 }
 
@@ -475,6 +487,15 @@ export class RemoteLedgerClient {
    */
   async callToolRaw(name: string, args: Record<string, unknown>): Promise<unknown> {
     return await this.call<unknown>(name, args);
+  }
+
+  async workset(request: WorksetObserveRequest): Promise<WorksetResult>;
+  async workset(request: WorksetRequest): Promise<WorksetResult>;
+  async workset(request: WorksetRequest): Promise<WorksetResult> {
+    if (request.op === "set" && this._scope !== "management") {
+      throw new RemoteManagementScopeError();
+    }
+    return await this.call<WorksetResult>("workset", { ...request });
   }
 
   // ---- Routine read families ---------------------------------------------

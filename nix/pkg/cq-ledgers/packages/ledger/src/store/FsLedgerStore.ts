@@ -46,12 +46,18 @@ import type { PlanLifecycleSerializationBoundaryHook } from "./planLifecycleSeri
 import {
   createFsWorksetStore,
   type CreateFsWorksetStoreOptions,
+  type FsWorksetStore,
 } from "./fsWorksetStore.js";
-import type { WorksetStore } from "../worksetStore.js";
+import type { WorksetAdmissionCoordinatorHooks } from "../worksetEffectAdmission.js";
 import { createObserveOnlyWorksetInvocationAuthority } from "../worksetInvocationAuthority.js";
 import { serializeWorksetRootsDocument } from "../worksetStoreGit.js";
 import { LEDGER_WORKSET_DIRNAME } from "./ledgerArtifacts.js";
 import { atomicWrite } from "./fsAtomic.js";
+import {
+  buildActiveStateFromLedgerStore,
+  closedGraphIsTargetAdmitted,
+} from "../worksetAccess.js";
+import { closeWorkset } from "../worksetGraph.js";
 
 /**
  * Result of {@link FsLedgerStore.reset}: the absolute path the prior on-disk
@@ -104,6 +110,8 @@ export interface FsLedgerStoreOpts {
   atomicWrite?: (filePath: string, text: string) => Promise<void>;
   /** Runtime-only authority for destructive divergence reinitialization. */
   worksetAuthority?: unknown;
+  /** Workset coordination hooks used by deterministic adapter tests. */
+  worksetHooks?: WorksetAdmissionCoordinatorHooks;
 }
 
 export class FsLedgerStore extends AbstractLedgerStore<FsPersistence> implements LedgerStore {
@@ -112,6 +120,8 @@ export class FsLedgerStore extends AbstractLedgerStore<FsPersistence> implements
   private readonly locksDir: string;
   private readonly lockfileOpts: LockfileOpts;
   private readonly worksetAuthority: unknown;
+  private readonly worksetHooks: WorksetAdmissionCoordinatorHooks | undefined;
+  private worksetHandle: FsWorksetStore | null = null;
 
   constructor(opts: FsLedgerStoreOpts) {
     const root = opts.root;
@@ -134,6 +144,7 @@ export class FsLedgerStore extends AbstractLedgerStore<FsPersistence> implements
     });
     this.worksetAuthority =
       opts.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority();
+    this.worksetHooks = opts.worksetHooks;
     // The seam's divergence backup must enumerate the store's CURRENT registry
     // (held in the base) to copy + unlink the non-canonical ledger files; bind
     // the accessor now that `super()` has run and `this` is available.
@@ -150,12 +161,34 @@ export class FsLedgerStore extends AbstractLedgerStore<FsPersistence> implements
    */
   createWorksetStore(
     options: Omit<CreateFsWorksetStoreOptions, "root" | "lockfile"> = {},
-  ): WorksetStore {
+  ): FsWorksetStore {
     return createFsWorksetStore({
       ...options,
       root: this.root,
       lockfile: this.lockfileOpts,
     });
+  }
+
+  worksetStore(): FsWorksetStore {
+    this.assertInit();
+    if (this.worksetHandle === null) {
+      this.worksetHandle = this.createWorksetStore({
+        ...(this.worksetHooks === undefined ? {} : { hooks: this.worksetHooks }),
+        isTargetAdmitted: closedGraphIsTargetAdmitted(this),
+      });
+    }
+    return this.worksetHandle;
+  }
+
+  replaceWorksetRoots(roots: readonly string[]) {
+    return this.worksetStore().setValidatedRoots(
+      roots,
+      (canonical) =>
+        closeWorkset(canonical, buildActiveStateFromLedgerStore(this), {
+          validateLiveRoots: true,
+        }).roots,
+      (operation) => this.runAtomicWorksetRootReplacement(operation),
+    );
   }
 
   /**

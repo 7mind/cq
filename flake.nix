@@ -1796,6 +1796,27 @@ PY
                   fi
                 done
 
+                worksetReplacementLog="$NIX_BUILD_TOP/t1980-live-workset-replacement.log"
+                if ! ${pkgs.bun}/bin/bun test \
+                  packages/ledger/test/workset-root-replacement-postgres.test.ts \
+                  > "$worksetReplacementLog" 2>&1; then
+                  cat "$worksetReplacementLog" >&2
+                  exit 1
+                fi
+                cat "$worksetReplacementLog"
+                if grep -Fq '(skip)' "$worksetReplacementLog"; then
+                  echo "T1980 live PostgreSQL workset replacement run skipped" >&2
+                  exit 1
+                fi
+                for expectedLeg in \
+                  'absorbs a peer-created root into cache and FTS before returning' \
+                  'rejects a root archived while replacement waits at the exclusive boundary'; do
+                  if ! grep -F '(pass)' "$worksetReplacementLog" | grep -Fq "$expectedLeg"; then
+                    echo "T1980 live PostgreSQL workset replacement run did not execute: $expectedLeg" >&2
+                    exit 1
+                  fi
+                done
+
                 coherenceLog="$NIX_BUILD_TOP/t1975-live-coherence.log"
                 if ! ${pkgs.bun}/bin/bun test \
                   packages/ledger/test/postgres-coherence-watcher.test.ts \

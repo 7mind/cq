@@ -58,6 +58,7 @@ import { measureUtf8JsonBytes, measureUtf8TextBytes } from "../usageStats.js";
 import {
   appendLedgerResponseDescription,
   ITEM_MUTATION_ACK_DESCRIPTION,
+  ITEM_PROJECTION_SCHEMA,
   ITEM_PROJECTION_DESCRIPTION,
   LEDGER_MUTATION_ACK_DESCRIPTION,
   produceWireDto,
@@ -115,6 +116,7 @@ import {
   createTrustedWorksetManagementAuthority,
   type WorksetInvocationAuthority,
 } from "../worksetInvocationAuthority.js";
+import { createWorksetOperation, worksetInputShape } from "./worksetTool.js";
 
 /** The compatibility profile: every capability-gated tool specification. */
 export const FULL_LEDGER_TOOL_PROFILE = "full";
@@ -242,6 +244,22 @@ export function ledgerToolInputJsonSchema(
         },
       },
     ];
+  } else if (specification.name === "workset" || specification.name.endsWith("_workset")) {
+    const operations = (schema["properties"] as { op: { enum: string[] } }).op.enum;
+    const fetchShape = { required: ["roots", "projection"] };
+    schema["allOf"] = [
+      {
+        if: { properties: { op: { const: "get" } } },
+        then: { required: ["projection"], properties: { roots: false } },
+        else: operations.includes("set")
+          ? {
+              if: { properties: { op: { const: "set" } } },
+              then: { required: ["roots"], properties: { projection: false } },
+              else: fetchShape,
+            }
+          : fetchShape,
+      },
+    ];
   }
   return schema;
 }
@@ -360,9 +378,7 @@ const fieldValueSchema = z.union([z.string(), z.array(z.string())]);
 
 const fieldsSchema = z.record(z.string(), fieldValueSchema);
 
-const projectionSchema = z
-  .enum(["compact", "full", "complement"])
-  .describe(ITEM_PROJECTION_DESCRIPTION);
+const projectionSchema = ITEM_PROJECTION_SCHEMA.describe(ITEM_PROJECTION_DESCRIPTION);
 
 /**
  * D-LED-01: caller-supplied milestone/item ids cannot contain `/`, `.`, or
@@ -427,6 +443,7 @@ export function createLedgerMcpToolSpecifications(
   listProjects?: ListProjectsCapability,
   dispatchCapability?: DispatchCapability,
   worktreeManage?: WorktreeManageCapability,
+  worksetAuthority: WorksetInvocationAuthority = createObserveOnlyWorksetInvocationAuthority(),
 ): LedgerToolSpecification[] {
   // ---- Item / ledger surface (9) -----------------------------------------
 
@@ -435,6 +452,14 @@ export function createLedgerMcpToolSpecifications(
     "List all known ledger names, plus a `counts` map of each ledger's active-item count.",
     {} as Record<string, never>,
     async () => jsonResult(computeLedgerSummaries(store)),
+  );
+
+  const invokeWorkset = createWorksetOperation(store, worksetAuthority);
+  const worksetTool = tool(
+    "workset",
+    "Graph; management sets roots.",
+    worksetInputShape(worksetAuthority),
+    async (args) => jsonResult(await invokeWorkset(args)),
   );
 
   const fetchLedger = tool(
@@ -1137,6 +1162,7 @@ export function createLedgerMcpToolSpecifications(
     archiveMilestone,
     listMilestoneItems,
     snapshotTool,
+    worksetTool,
     derivePredicatesTool,
     materializeOperatorActionTool,
     acknowledgeOperatorActionTool,
@@ -1167,7 +1193,7 @@ export function createLedgerMcpToolSpecifications(
       }
       return {
         ...ledgerTool,
-        description: COMPLETE_DESCRIPTION_TOOL_NAMES.has(toolName)
+        description: toolName === "workset" || COMPLETE_DESCRIPTION_TOOL_NAMES.has(toolName)
           ? ledgerTool.description
           : appendLedgerResponseDescription(toolName, ledgerTool.description),
       } as LedgerToolSpecification;
@@ -1274,6 +1300,7 @@ export function createLedgerMcpTools(
       listProjects,
       dispatchCapability,
       worktreeManage,
+      worksetAuthority,
     ),
     profileName,
   );

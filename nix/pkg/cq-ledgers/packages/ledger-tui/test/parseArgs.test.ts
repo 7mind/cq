@@ -5,7 +5,13 @@
 
 import { describe, it, expect, afterEach } from "bun:test";
 import * as path from "node:path";
-import { parseArgs, normalizeUrl, liveUrlFor } from "../src/main.js";
+import {
+  TUI_MANAGEMENT_TOKEN_ENV,
+  liveUrlFor,
+  normalizeUrl,
+  parseArgs,
+  resolveTuiManagementToken,
+} from "../src/main.js";
 
 const savedEnv = process.env["LEDGER_ROOT"];
 afterEach(() => {
@@ -14,6 +20,16 @@ afterEach(() => {
 });
 
 describe("ledger-tui parseArgs", () => {
+  it("reads the remote management bearer only from its environment carrier", () => {
+    expect(resolveTuiManagementToken({ [TUI_MANAGEMENT_TOKEN_ENV]: "  secret  " })).toBe(
+      "secret",
+    );
+    expect(resolveTuiManagementToken({ [TUI_MANAGEMENT_TOKEN_ENV]: "  " })).toBeUndefined();
+    expect(parseArgs(["--mcp-url", "http://host/mcp"]).mcpUrl).toBe(
+      "http://host/mcp",
+    );
+  });
+
   it("defaults to embedded (mcpUrl null) rooted at the process CWD", () => {
     delete process.env["LEDGER_ROOT"];
     const { mcpUrl, cwd } = parseArgs([]);

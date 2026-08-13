@@ -76,6 +76,42 @@ const gitObjectWorksetStoreFactory: WorksetStoreContractFactory = {
 runWorksetStoreContract(gitObjectWorksetStoreFactory);
 
 describe("workset store git-object [T1956]", () => {
+  it("serializes peer admission publication with a setter holding the project lock", async () => {
+    const dir = await seedRepo();
+    const setterReady = Promise.withResolvers<void>();
+    const resumeSetter = Promise.withResolvers<void>();
+    let pauseSetter = false;
+    const setter = await createGitObjectWorksetStore({
+      repoRoot: dir,
+      hooks: {
+        async afterExclusiveReady() {
+          if (!pauseSetter) return;
+          setterReady.resolve();
+          await resumeSetter.promise;
+        },
+      },
+    });
+    const peer = await createGitObjectWorksetStore({ repoRoot: dir });
+    await setter.setRoots(["tasks:T-old"]);
+
+    pauseSetter = true;
+    const replacement = setter.setRoots(["goals:G-new"]);
+    await setterReady.promise;
+    const admission = peer.admitLedgerMutation({
+      kind: "generic-write",
+      targets: ["tasks:T-old"],
+    });
+    const admissionWhileSetterPaused = await Promise.race([
+      admission.then(() => "settled" as const, () => "settled" as const),
+      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 100)),
+    ]);
+    expect(admissionWhileSetterPaused).toBe("pending");
+
+    resumeSetter.resolve();
+    await replacement;
+    await expect(admission).rejects.toMatchObject({ code: "revoked" });
+  });
+
   it("createGitObjectWorksetStore returns a WorksetStore at empty epoch 0", async () => {
     const dir = await seedRepo();
     const store: WorksetStore = await createGitObjectWorksetStore({ repoRoot: dir });

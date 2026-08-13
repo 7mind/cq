@@ -71,6 +71,21 @@ Use snapshot and derive_predicates for CQ flow state. Dispatch and plan-lifecycl
  */
 export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
   {
+    name: "workset",
+    description:
+      "Get the configured workset graph or fetch a graph for supplied live roots. Management sessions additionally expose atomic root replacement.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        op: { enum: ["get", "fetch"] },
+        roots: { type: "array", items: { type: "string" } },
+        projection: { enum: ["id", "compact", "full", "complement"] },
+      },
+      required: ["op"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "get_usage_stats",
     description:
       "Return the per-project MCP usage counters (I20/G155): per-endpoint { name, callCount, bytesIn, bytesOut } sorted by name, plus totals. Read-only telemetry.",

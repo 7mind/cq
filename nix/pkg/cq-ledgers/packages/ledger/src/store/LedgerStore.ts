@@ -56,6 +56,8 @@ import type {
   TaskAdoptionEligibilityResult,
   TaskAdoptionPublicationResult,
 } from "../taskAdoptionEligibility.js";
+import type { WorksetStore } from "../worksetStore.js";
+import type { WorksetRootsEpoch } from "../worksetEffectAdmission.js";
 
 export type { FtsSearchHit, FtsSearchOpts } from "../search/LedgerSearchIndex.js";
 
@@ -146,6 +148,11 @@ export interface FetchedMilestoneItem {
 
 export interface LedgerStore {
   init(): Promise<void>;
+
+  /** Stable project workset capability when the adapter supports worksets. */
+  worksetStore?(): WorksetStore;
+  /** Management-only live-validated replacement inside the adapter's native write boundary. */
+  replaceWorksetRoots?(roots: readonly string[]): Promise<WorksetRootsEpoch>;
 
   // --- reads (sync in-memory unless noted) -------------------------------
 

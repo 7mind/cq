@@ -9,12 +9,19 @@ async function startFixture(): Promise<{
   readonly handlers: McpHttpHandlers;
   readonly storeAccesses: () => number;
   readonly displayNameCalls: () => number;
+  readonly replacementCalls: () => number;
   close(): Promise<void>;
 }> {
   const store = new InMemoryLedgerStore();
   await store.init();
   let accesses = 0;
   let displayNameCalls = 0;
+  let replacementCalls = 0;
+  const originalReplacement = store.replaceWorksetRoots.bind(store);
+  store.replaceWorksetRoots = async (roots) => {
+    replacementCalls += 1;
+    return await originalReplacement(roots);
+  };
   const originalRecordUsage = store.recordMcpUsage.bind(store);
   store.recordMcpUsage = async (endpoint, bytesIn, bytesOut) => {
     accesses += 1;
@@ -40,6 +47,7 @@ async function startFixture(): Promise<{
     handlers,
     storeAccesses: () => accesses,
     displayNameCalls: () => displayNameCalls,
+    replacementCalls: () => replacementCalls,
     close: async () => {
       await store.dispose();
     },
@@ -101,6 +109,8 @@ async function rawToolCall(
   handlers: McpHttpHandlers,
   sessionId: string,
   token: string,
+  name = "enumerate_ledgers",
+  args: Record<string, unknown> = {},
 ): Promise<Response> {
   return await handlers.handle(new Request("http://localhost/mcp", {
     method: "POST",
@@ -114,12 +124,93 @@ async function rawToolCall(
       jsonrpc: "2.0",
       id: 9,
       method: "tools/call",
-      params: { name: "enumerate_ledgers", arguments: {} },
+      params: { name, arguments: args },
     }),
   }));
 }
 
+async function rawToolList(
+  handlers: McpHttpHandlers,
+  sessionId: string,
+  token: string,
+): Promise<Response> {
+  return await handlers.handle(new Request("http://localhost/mcp", {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/event-stream",
+      "content-type": "application/json",
+      "mcp-session-id": sessionId,
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 10, method: "tools/list", params: {} }),
+  }));
+}
+
+async function decodeRpc(response: Response): Promise<Record<string, unknown>> {
+  const text = await response.text();
+  const data = text
+    .split("\n")
+    .find((line) => line.startsWith("data:"))
+    ?.slice("data:".length)
+    .trim();
+  return JSON.parse(data ?? text) as Record<string, unknown>;
+}
+
 describe("HTTP workset authority session binding", () => {
+  test("shapes workset schemas per session and admits set only through management", async () => {
+    const fixture = await startFixture();
+    const ordinarySessionId = await initialize(fixture.handlers, ORDINARY_TOKEN);
+    const managementSessionId = await initialize(fixture.handlers, MANAGEMENT_TOKEN);
+    try {
+      const ordinaryList = await decodeRpc(
+        await rawToolList(fixture.handlers, ordinarySessionId, ORDINARY_TOKEN),
+      );
+      const managementList = await decodeRpc(
+        await rawToolList(fixture.handlers, managementSessionId, MANAGEMENT_TOKEN),
+      );
+      const operations = (message: Record<string, unknown>): readonly string[] => {
+        const result = message["result"] as { tools: Array<Record<string, unknown>> };
+        const tool = result.tools.find((candidate) => candidate["name"] === "workset");
+        const schema = tool?.["inputSchema"] as {
+          properties: { op: { enum: readonly string[] } };
+        };
+        return schema.properties.op.enum;
+      };
+      expect(operations(ordinaryList)).toEqual(["get", "fetch"]);
+      expect(operations(managementList)).toEqual(["get", "fetch", "set"]);
+
+      const denied = await decodeRpc(
+        await rawToolCall(
+          fixture.handlers,
+          ordinarySessionId,
+          ORDINARY_TOKEN,
+          "workset",
+          { op: "set", roots: [] },
+        ),
+      );
+      expect(JSON.stringify(denied)).toContain("set");
+      expect(fixture.replacementCalls()).toBe(0);
+
+      const accepted = await decodeRpc(
+        await rawToolCall(
+          fixture.handlers,
+          managementSessionId,
+          MANAGEMENT_TOKEN,
+          "workset",
+          { op: "set", roots: [] },
+        ),
+      );
+      expect(JSON.stringify(accepted)).toContain(
+        '\\"acknowledgement\\":{\\"roots\\":[],\\"epoch\\":1}',
+      );
+      expect(fixture.replacementCalls()).toBe(1);
+    } finally {
+      await closeSession(fixture.handlers, ordinarySessionId, ORDINARY_TOKEN);
+      await closeSession(fixture.handlers, managementSessionId, MANAGEMENT_TOKEN);
+      await fixture.close();
+    }
+  });
+
   test("rejects credentials substituted across ordinary and management sessions before store access", async () => {
     const fixture = await startFixture();
     const ordinarySessionId = await initialize(fixture.handlers, ORDINARY_TOKEN);

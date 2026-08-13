@@ -102,7 +102,8 @@ export interface CreateFsWorksetStoreOptions {
   /** Project root (server --cwd). State lives under `<root>/.cq/workset/`. */
   readonly root: string;
   readonly hooks?: WorksetAdmissionCoordinatorHooks;
-  readonly validateReplacement?: (roots: readonly string[]) => void;
+  readonly validateReplacement?: (roots: readonly string[]) => readonly string[] | void;
+  readonly replacementBoundary?: <T>(operation: () => Promise<T>) => Promise<T>;
   readonly isTargetAdmitted?: (
     target: string,
     roots: readonly string[],
@@ -118,6 +119,14 @@ export interface CreateFsWorksetStoreOptions {
   readonly pollIntervalMs?: number;
   readonly now?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
+}
+
+export interface FsWorksetStore extends WorksetStore {
+  setValidatedRoots(
+    roots: readonly string[],
+    validateReplacement: (roots: readonly string[]) => readonly string[] | void,
+    replacementBoundary: <T>(operation: () => Promise<T>) => Promise<T>,
+  ): Promise<WorksetRootsEpoch>;
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +196,7 @@ function emptyRootsDocument(): DurableRootsDocument {
 /**
  * Create a filesystem {@link WorksetStore} bound to `<root>/.cq/workset/`.
  */
-export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): WorksetStore {
+export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): FsWorksetStore {
   const root = options.root;
   if (typeof root !== "string" || root.length === 0) {
     throw new Error("createFsWorksetStore: root is required");
@@ -199,6 +208,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
   const hooks = options.hooks ?? {};
   const isTargetAdmitted = options.isTargetAdmitted ?? defaultIsTargetAdmitted;
   const validateReplacement = options.validateReplacement;
+  const replacementBoundary = options.replacementBoundary;
   const writeAtomic = options.atomicWrite ?? defaultAtomicWrite;
   const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
   const isProcessGroupAlive = options.isProcessGroupAlive ?? defaultIsProcessGroupAlive;
@@ -984,27 +994,44 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
     return handle;
   }
 
-  async function setRoots(nextRoots: readonly string[]): Promise<WorksetRootsEpoch> {
+  async function replaceRoots(
+    nextRoots: readonly string[],
+    replacementValidation: typeof validateReplacement,
+    nativeBoundary: typeof replacementBoundary,
+  ): Promise<WorksetRootsEpoch> {
     return runExclusive("exclusive-set", async () => {
-      const canonical = canonicalizeWorksetRootReplacement(nextRoots);
-      if (validateReplacement !== undefined) {
-        validateReplacement(canonical);
-      }
-      if (hooks.beforeCommit !== undefined) {
-        await hooks.beforeCommit();
-      }
-      return withStoreMutex(async () => {
-        const current = await readRoots();
-        const next: DurableRootsDocument = {
-          version: ROOTS_FORMAT_VERSION,
-          roots: canonical,
-          epoch: current.epoch + 1,
-          admitGeneration: current.admitGeneration + 1,
-        };
-        await writeRootsDocument(next);
-        return { roots: next.roots.slice(), epoch: next.epoch };
-      });
+      const replace = async (): Promise<WorksetRootsEpoch> => {
+        let canonical = canonicalizeWorksetRootReplacement(nextRoots);
+        if (replacementValidation !== undefined) {
+          canonical = [...(replacementValidation(canonical) ?? canonical)];
+        }
+        if (hooks.beforeCommit !== undefined) await hooks.beforeCommit();
+        return withStoreMutex(async () => {
+          const current = await readRoots();
+          const next: DurableRootsDocument = {
+            version: ROOTS_FORMAT_VERSION,
+            roots: canonical,
+            epoch: current.epoch + 1,
+            admitGeneration: current.admitGeneration + 1,
+          };
+          await writeRootsDocument(next);
+          return { roots: next.roots.slice(), epoch: next.epoch };
+        });
+      };
+      return nativeBoundary === undefined ? replace() : nativeBoundary(replace);
     });
+  }
+
+  async function setRoots(nextRoots: readonly string[]): Promise<WorksetRootsEpoch> {
+    return replaceRoots(nextRoots, validateReplacement, replacementBoundary);
+  }
+
+  async function setValidatedRoots(
+    nextRoots: readonly string[],
+    replacementValidation: (roots: readonly string[]) => readonly string[] | void,
+    nativeBoundary: <T>(operation: () => Promise<T>) => Promise<T>,
+  ): Promise<WorksetRootsEpoch> {
+    return replaceRoots(nextRoots, replacementValidation, nativeBoundary);
   }
 
   async function runAdministrative(input: {
@@ -1045,6 +1072,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
   return {
     snapshot,
     setRoots,
+    setValidatedRoots,
     admitLedgerMutation,
     admitExternalEffect,
     runAdministrative,

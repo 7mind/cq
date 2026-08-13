@@ -6,7 +6,9 @@
 
 import { describe, expect, it } from "bun:test";
 import {
+  RemoteLedgerClient,
   RemoteLedgerClientConfigError,
+  RemoteManagementScopeError,
   remoteMcpUrl,
 } from "../src/index.js";
 import { runRemoteLedgerClientContract } from "./remoteLedgerClientContract.js";
@@ -41,6 +43,26 @@ describe("remoteMcpUrl (BA)", () => {
 
   it("rejects a non-absolute serverUrl (TypeError from new URL)", () => {
     expect(() => remoteMcpUrl("not-a-url", "p")).toThrow(TypeError);
+  });
+});
+
+describe("RemoteLedgerClient workset scope (Behavioral-Active Blackbox-Atomic)", () => {
+  it("rejects ordinary set locally without issuing a request", async () => {
+    let requests = 0;
+    const remote = Object.assign(Object.create(RemoteLedgerClient.prototype), {
+      _scope: "ordinary",
+      endpoint: "http://example.invalid/p/project/mcp",
+      client: {
+        callTool: async () => {
+          requests += 1;
+          throw new Error("must not issue a request");
+        },
+      },
+    }) as RemoteLedgerClient;
+    await expect(remote.workset({ op: "set", roots: [] })).rejects.toBeInstanceOf(
+      RemoteManagementScopeError,
+    );
+    expect(requests).toBe(0);
   });
 });
 

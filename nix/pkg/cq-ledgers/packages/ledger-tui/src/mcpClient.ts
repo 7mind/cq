@@ -14,8 +14,8 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
-  buildServer,
   createEmbeddedStore,
+  createManagementLedgerMcpServer,
   createSingleProjectDispatchRuntime,
   resolvePromptSurface,
   type DispatchRuntime,
@@ -109,8 +109,13 @@ export class McpLedgerClient implements LedgerClient {
   }
 
   /** Connect to a `ledger-mcp --http` server at `url` (e.g. http://127.0.0.1:7777/mcp). */
-  static async connect(url: string): Promise<McpLedgerClient> {
-    const transport = new StreamableHTTPClientTransport(new URL(url));
+  static async connect(url: string, managementToken?: string): Promise<McpLedgerClient> {
+    const transport = new StreamableHTTPClientTransport(
+      new URL(url),
+      managementToken === undefined
+        ? undefined
+        : { requestInit: { headers: { authorization: `Bearer ${managementToken}` } } },
+    );
     const client = new Client(
       { name: "ledger-tui", version: "0.0.1" },
       { capabilities: {} },
@@ -144,14 +149,16 @@ export class McpLedgerClient implements LedgerClient {
       ...(promptSurface === undefined ? {} : { promptArtifactStore: promptSurface.store }),
       environment: process.env,
     });
-    const server = buildServer(
+    const server = createManagementLedgerMcpServer({
       store,
-      path.basename(cwd),
-      resolved.configRoot,
-      resolved.projectKey,
-      promptSurface?.store,
-      dispatchRuntime.kind === "available" ? dispatchRuntime.capability : undefined,
-    );
+      displayName: path.basename(cwd),
+      configRoot: resolved.configRoot,
+      ...(resolved.projectKey === undefined ? {} : { projectKey: resolved.projectKey }),
+      ...(promptSurface?.store === undefined ? {} : { promptArtifactStore: promptSurface.store }),
+      ...(dispatchRuntime.kind === "available"
+        ? { dispatchCapability: dispatchRuntime.capability }
+        : {}),
+    });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     const client = new Client(

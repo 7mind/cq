@@ -314,11 +314,11 @@ export const TOP_LEVEL_USAGE = [
  * instructions (e.g. CLAUDE.md).
  */
 const SERVER_INSTRUCTIONS_TEMPLATE = [
-  "Markdown-backed typed ledgers. Milestones form dependency DAGs; other items attach to milestones. Discover schemas with enumerate_ledgers. Write schema-valid items with author/session provenance; recognized ledger references are canonicalized on write.",
+  "Typed milestone DAG; items attach. enumerate_ledgers: schemas. Writes: valid fields, author/session, recognized refs canonicalized.",
   "",
-  "Reads require compact, complement, or full projection. For one item identity, fields(full) = fields(compact) ∪ fields(complement), with disjoint field sets. Paginate fetch_ledger until nextOffset is null. fts_search spans active ledgers by default and accepts field qualifiers; terminal items remain active until archive_milestone sweeps a fully terminal milestone.",
+  "Projection compact|complement|full; compact.fields ⊎ complement.fields = full.fields. fetch_ledger: paginate until nextOffset=null. fts_search: active by default with field qualifiers; terminal items stay active until archive_milestone sweeps a fully terminal milestone.",
   "",
-  "Use snapshot and derive_predicates for CQ flow state. Dispatch and plan-lifecycle tools retain their capability, generation, fence, recovery, and idempotency contracts; preserve exact identifiers returned by those tools.",
+  "snapshot/derive_predicates: CQ state. Preserve IDs and dispatch/plan capability/generation/fence/recovery/idempotency.",
 ].join("\n");
 
 /** Escape a string for safe use as a literal inside a RegExp. */
@@ -350,7 +350,11 @@ export function buildServerInstructions(
   availableToolNames: readonly LedgerToolName[] = ledgerToolNamesForProfile(profileName),
 ): string {
   assertToolPrefix(toolPrefix);
-  if (profileName === FULL_LEDGER_TOOL_PROFILE) {
+  if (
+    profileName === FULL_LEDGER_TOOL_PROFILE ||
+    (availableToolNames.length === LEDGER_TOOL_NAMES.length &&
+      LEDGER_TOOL_NAMES.every((name) => availableToolNames.includes(name)))
+  ) {
     if (toolPrefix === "") return SERVER_INSTRUCTIONS_TEMPLATE;
     const names = [...LEDGER_TOOL_NAMES].sort((a, b) => b.length - a.length);
     let text = SERVER_INSTRUCTIONS_TEMPLATE;
@@ -645,6 +649,7 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
       listProjects,
       opts.dispatchCapability,
       worktreeManage,
+      opts.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority(),
     ),
     toolProfile,
   );
@@ -758,7 +763,7 @@ function assertMcpHttpCredentialSeparation(credentials: McpHttpCredentialConfig 
   }
 }
 
-type McpSessionScope = "observe" | "management";
+export type McpSessionScope = "observe" | "management";
 
 interface McpSessionBinding {
   readonly transport: WebStandardStreamableHTTPServerTransport;
@@ -782,8 +787,9 @@ export function worksetCredentialsMatch(provided: string, expected: string): boo
 function resolveInitialSessionScope(
   req: Request,
   credentials: McpHttpCredentialConfig | undefined,
+  defaultScope: McpSessionScope,
 ): McpSessionScope | null {
-  if (credentials === undefined) return "observe";
+  if (credentials === undefined) return defaultScope;
   const provided = extractBearerCredential(req);
   if (
     provided !== null &&
@@ -833,6 +839,7 @@ export function attachMcpHttp(
   toolProfile: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
   repositoryRoot?: string,
   credentials?: McpHttpCredentialConfig,
+  trustedDefaultScope: McpSessionScope = "observe",
 ): McpHttpHandlers {
   assertMcpHttpCredentialSeparation(credentials);
   const sessions = new Map<string, McpSessionBinding>();
@@ -867,7 +874,7 @@ export function attachMcpHttp(
       );
     }
 
-    const scope = resolveInitialSessionScope(req, credentials);
+    const scope = resolveInitialSessionScope(req, credentials, trustedDefaultScope);
     if (scope === null) return sessionUnauthorized();
 
     const sessionDisplayName =

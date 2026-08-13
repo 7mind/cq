@@ -92,7 +92,8 @@ export interface CreateInMemoryWorksetStoreOptions {
    * the batch without mutating roots or epoch. Graph/active-state checks belong
    * here (or in a higher layer that supplies this hook) — not inside the store.
    */
-  readonly validateReplacement?: (roots: readonly string[]) => void;
+  readonly validateReplacement?: (roots: readonly string[]) => readonly string[] | void;
+  readonly replacementBoundary?: <T>(operation: () => Promise<T>) => Promise<T>;
   /**
    * Decide whether a target is inside the admitted root set. Default: empty
    * roots are unrestricted; otherwise the target must equal a root or start
@@ -122,11 +123,14 @@ export async function readWorksetRootsEpoch(
  */
 export function createInMemoryWorksetStore(
   options: CreateInMemoryWorksetStoreOptions = {},
-): WorksetStore {
+): WorksetAdmissionCoordinator {
   const coordinatorOptions: CreateInMemoryWorksetAdmissionCoordinatorOptions = {
     ...(options.hooks !== undefined ? { hooks: options.hooks } : {}),
     ...(options.validateReplacement !== undefined
       ? { validateReplacement: options.validateReplacement }
+      : {}),
+    ...(options.replacementBoundary !== undefined
+      ? { replacementBoundary: options.replacementBoundary }
       : {}),
     ...(options.isTargetAdmitted !== undefined
       ? { isTargetAdmitted: options.isTargetAdmitted }

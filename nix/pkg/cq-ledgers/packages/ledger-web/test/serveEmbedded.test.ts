@@ -226,6 +226,17 @@ describe("ledger-web embedded MCP (same-origin /mcp, no upstream process)", () =
     try {
       const names = (await client.listTools()).tools.map((t) => t.name).sort();
       expect(names).toEqual([...LEDGER_TOOL_NAMES].sort());
+      const workset = (await client.listTools()).tools.find((tool) => tool.name === "workset");
+      expect(
+        (workset?.inputSchema.properties?.["op"] as { enum?: string[] } | undefined)?.enum,
+      ).toEqual(["get", "fetch", "set"]);
+      const setResult = await client.callTool({
+        name: "workset",
+        arguments: { op: "set", roots: [] },
+      });
+      expect(JSON.stringify(setResult)).toContain(
+        '\\"acknowledgement\\":{\\"roots\\":[],\\"epoch\\":1}',
+      );
 
       const promptResult = await client.callTool({
         name: "fetch_prompt",

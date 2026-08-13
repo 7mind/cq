@@ -1590,6 +1590,45 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     return outcome.result;
   }
 
+  /**
+   * Hold the authoritative registry + complete ledger lock set while a
+   * workset-root replacement validates and commits. The reload occurs after
+   * the locks are held, so a peer cannot retire a root between validation and
+   * the roots write.
+   */
+  async runAtomicWorksetRootReplacement<T>(operation: () => Promise<T>): Promise<T> {
+    this.assertInit();
+    return this.withRegistryLock(async () => {
+      const registryText = await this.persistence.readRegistrySource();
+      if (registryText === null) {
+        throw new LedgerError("ledger registry disappeared before workset replacement");
+      }
+      const authoritativeRegistry = parseRegistry(registryText);
+      const ledgerIds = authoritativeRegistry.ledgers
+        .map((entry) => entry.name)
+        .filter((ledgerId) => ledgerId !== MILESTONES_LEDGER)
+        .sort();
+      return this.withMilestonesLock(() =>
+        this.withLockKeysInOrder(ledgerIds, async () => {
+          await this.persistence.recoverArchiveCommit();
+          const authoritativeLedgers = new Map<string, Ledger>();
+          const priorLedgerIds = new Set(this.ledgers.keys());
+          for (const entry of authoritativeRegistry.ledgers) {
+            authoritativeLedgers.set(entry.name, await this.readLedgerFromDiskStrict(entry));
+          }
+          replaceMap(this.ledgers, authoritativeLedgers);
+          this.registry = authoritativeRegistry;
+          const authoritativeLedgerIds = new Set(authoritativeLedgers.keys());
+          for (const ledgerId of priorLedgerIds) {
+            if (!authoritativeLedgerIds.has(ledgerId)) this.searchIndex.removeLedger(ledgerId);
+          }
+          for (const ledgerId of authoritativeLedgerIds) await this.indexLedgerFull(ledgerId);
+          return operation();
+        }),
+      );
+    });
+  }
+
   /** Run one guarded plan operation under the complete durable lifecycle boundary. */
   async runAtomicWorksetPlanLifecycleMutation<T>(
     _goalId: string,

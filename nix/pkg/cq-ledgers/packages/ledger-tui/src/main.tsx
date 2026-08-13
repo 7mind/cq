@@ -50,6 +50,15 @@ export interface TuiArgs {
   cwd: string;
 }
 
+export const TUI_MANAGEMENT_TOKEN_ENV = "CQ_LEDGER_REMOTE_MANAGEMENT_TOKEN";
+
+export function resolveTuiManagementToken(
+  environment: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const token = environment[TUI_MANAGEMENT_TOKEN_ENV]?.trim();
+  return token === undefined || token === "" ? undefined : token;
+}
+
 export function parseArgs(argv: readonly string[]): TuiArgs {
   let url: string | undefined;
   let cwd: string | undefined;
@@ -106,11 +115,12 @@ export function liveUrlFor(mcpUrl: string): string {
  */
 export async function main(argv: readonly string[]): Promise<void> {
   const { mcpUrl, cwd } = parseArgs(argv);
+  const managementToken = resolveTuiManagementToken();
   let client: McpLedgerClient;
   let liveUrl: string | null;
   if (mcpUrl !== null) {
     try {
-      client = await McpLedgerClient.connect(mcpUrl);
+      client = await McpLedgerClient.connect(mcpUrl, managementToken);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(`ledger-tui: cannot connect to ${mcpUrl}: ${msg}\n`);
@@ -142,7 +152,13 @@ export async function main(argv: readonly string[]): Promise<void> {
         }
       : null;
   const app = render(
-    <App client={client} liveUrl={liveUrl} onSubscribe={onSubscribe} mcpUrl={mcpUrl} />,
+    <App
+      client={client}
+      liveUrl={liveUrl}
+      onSubscribe={onSubscribe}
+      mcpUrl={mcpUrl}
+      connect={(url) => McpLedgerClient.connect(url, managementToken)}
+    />,
     TUI_RENDER_OPTIONS,
   );
   await app.waitUntilExit();

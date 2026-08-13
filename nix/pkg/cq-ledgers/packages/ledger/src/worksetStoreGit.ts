@@ -80,6 +80,7 @@ export interface CreateGitObjectWorksetStoreOptions {
   /** Coordinator options (hooks, validators) — same surface as the dummy. */
   readonly hooks?: CreateInMemoryWorksetAdmissionCoordinatorOptions["hooks"];
   readonly validateReplacement?: CreateInMemoryWorksetAdmissionCoordinatorOptions["validateReplacement"];
+  readonly replacementBoundary?: CreateInMemoryWorksetAdmissionCoordinatorOptions["replacementBoundary"];
   readonly isTargetAdmitted?: CreateInMemoryWorksetAdmissionCoordinatorOptions["isTargetAdmitted"];
   /**
    * Fault-injection seam for tests: wrap/replace the CAS write. Defaults to the
@@ -99,6 +100,14 @@ export interface CreateGitObjectWorksetStoreOptions {
   readonly selfPid?: number;
   /** Override self hostname recorded on published leases. */
   readonly selfHostname?: string;
+}
+
+export interface GitObjectWorksetStore extends WorksetStore {
+  setValidatedRoots(
+    roots: readonly string[],
+    validateReplacement: (roots: readonly string[]) => readonly string[] | void,
+    replacementBoundary: <T>(operation: () => Promise<T>) => Promise<T>,
+  ): Promise<WorksetRootsEpoch>;
 }
 
 interface AdmissionLeaseFile {
@@ -216,7 +225,7 @@ function defaultIsProcessGroupAlive(pgid: number): boolean {
  */
 export async function createGitObjectWorksetStore(
   options: CreateGitObjectWorksetStoreOptions,
-): Promise<WorksetStore> {
+): Promise<GitObjectWorksetStore> {
   const repoRoot = options.repoRoot;
   const branch = options.ref ?? DEFAULT_BRANCH;
   const ref = `refs/heads/${branch}`;
@@ -338,27 +347,33 @@ export async function createGitObjectWorksetStore(
   async function publishAdmission(
     lease: WorksetPublishedAdmissionLease,
   ): Promise<void> {
-    await fs.mkdir(admissionsDir, { recursive: true });
-    const body: AdmissionLeaseFile = {
-      id: lease.id,
-      form: lease.form,
-      kind: lease.kind,
-      epoch: lease.epoch,
-      roots: lease.roots.slice(),
-      targets: lease.targets.slice(),
-      ...(lease.targetRef !== undefined ? { targetRef: lease.targetRef } : {}),
-      pid: selfPid,
-      hostname: selfHostname,
-      startedAt: Date.now(),
-    };
-    const filePath = path.join(admissionsDir, `${lease.id}.json`);
-    // Exclusive create — collision on id is a hard failure (ids are unique per store).
-    const handle = await fs.open(filePath, "wx");
+    const release = await lockfile.acquire(locksDir, WORKSET_LOCK_KEY);
     try {
-      await handle.writeFile(`${JSON.stringify(body)}\n`, "utf8");
-      await handle.sync();
+      await confirmAdmission(lease);
+      await fs.mkdir(admissionsDir, { recursive: true });
+      const body: AdmissionLeaseFile = {
+        id: lease.id,
+        form: lease.form,
+        kind: lease.kind,
+        epoch: lease.epoch,
+        roots: lease.roots.slice(),
+        targets: lease.targets.slice(),
+        ...(lease.targetRef !== undefined ? { targetRef: lease.targetRef } : {}),
+        pid: selfPid,
+        hostname: selfHostname,
+        startedAt: Date.now(),
+      };
+      const filePath = path.join(admissionsDir, `${lease.id}.json`);
+      // Exclusive create — collision on id is a hard failure (ids are unique per store).
+      const handle = await fs.open(filePath, "wx");
+      try {
+        await handle.writeFile(`${JSON.stringify(body)}\n`, "utf8");
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
     } finally {
-      await handle.close();
+      await release();
     }
   }
 
@@ -555,6 +570,9 @@ export async function createGitObjectWorksetStore(
     ...(options.validateReplacement !== undefined
       ? { validateReplacement: options.validateReplacement }
       : {}),
+    ...(options.replacementBoundary !== undefined
+      ? { replacementBoundary: options.replacementBoundary }
+      : {}),
     ...(options.isTargetAdmitted !== undefined
       ? { isTargetAdmitted: options.isTargetAdmitted }
       : {}),
@@ -574,7 +592,7 @@ export async function createGitObjectWorksetStore(
     }
   }
 
-  const store: WorksetStore = {
+  const store: GitObjectWorksetStore = {
     async snapshot(): Promise<WorksetRootsEpoch> {
       // Authoritative tip — peers may have advanced since this process's last set.
       // Local in-memory coordinator state is updated only on set/admit paths;
@@ -582,6 +600,8 @@ export async function createGitObjectWorksetStore(
       return loadRootsEpoch(git, ref);
     },
     setRoots: (roots) => withExclusiveLockRelease(() => coordinator.setRoots(roots)),
+    setValidatedRoots: (roots, validation, boundary) =>
+      withExclusiveLockRelease(() => coordinator.setValidatedRoots(roots, validation, boundary)),
     admitLedgerMutation: (input) => coordinator.admitLedgerMutation(input),
     admitExternalEffect: (input) => coordinator.admitExternalEffect(input),
     runAdministrative: (input) =>

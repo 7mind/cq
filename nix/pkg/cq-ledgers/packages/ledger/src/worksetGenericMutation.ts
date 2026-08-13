@@ -35,10 +35,8 @@ import {
   MILESTONES_LEDGER,
 } from "./constants.js";
 import {
-  buildWorksetActiveState,
   closeWorkset,
   defaultWorksetPrefixRegistry,
-  type WorksetActiveState,
   type WorksetGraph,
 } from "./worksetGraph.js";
 import {
@@ -62,7 +60,9 @@ import {
   createTrustedWorksetManagementAuthority,
   type WorksetInvocationAuthority,
 } from "./worksetInvocationAuthority.js";
-import { DEPENDENCY_REF_FIELDS, canonicalizeRef, buildPrefixRegistry } from "./refs.js";
+import { DEPENDENCY_REF_FIELDS, canonicalizeRef } from "./refs.js";
+import { closedGraphIsTargetAdmitted } from "./worksetAccess.js";
+export { buildActiveStateFromLedgerStore, closedGraphIsTargetAdmitted } from "./worksetAccess.js";
 import { InMemoryLedgerStore } from "./store/InMemoryLedgerStore.js";
 import type {
   ArchiveContent,
@@ -399,30 +399,6 @@ export function assertNoPublicRawWriteEscape(surface: object): void {
 // ---------------------------------------------------------------------------
 // Active-state / membership helpers
 // ---------------------------------------------------------------------------
-
-export function buildActiveStateFromLedgerStore(
-  store: Pick<LedgerStore, "enumerate" | "fetch">,
-): WorksetActiveState {
-  const groups: Array<{ ledger: string; items: Item[] }> = [];
-  for (const name of store.enumerate()) {
-    const fetched = store.fetch(name);
-    const items: Item[] = [];
-    for (const group of fetched.milestones) {
-      for (const item of group.items) items.push(item);
-    }
-    groups.push({ ledger: name, items });
-  }
-  const prefixRegistry = buildPrefixRegistry(
-    store.enumerate().map((name) => {
-      const fetched = store.fetch(name);
-      return { name, schema: fetched.schema };
-    }),
-  );
-  // Fall back to canonical defaults when the store is empty/uninitialised.
-  const registry =
-    prefixRegistry.size > 0 ? prefixRegistry : defaultWorksetPrefixRegistry();
-  return buildWorksetActiveState(groups, registry);
-}
 
 export function worksetMemberRefSet(graph: WorksetGraph): ReadonlySet<string> {
   return new Set(graph.nodes.map((n) => n.ref));
@@ -928,24 +904,6 @@ export function createWorksetManagementLedger(
  * empty roots admit everything; otherwise require closed-graph membership or
  * exact inactive-root equality against the live raw store.
  */
-export function closedGraphIsTargetAdmitted(
-  rawStore: LedgerStore,
-): (target: string, roots: readonly string[]) => boolean {
-  return (target, roots) => {
-    if (roots.length === 0) return true;
-    try {
-      const state = buildActiveStateFromLedgerStore(rawStore);
-      const graph = closeWorkset(roots, state);
-      if (worksetMemberRefSet(graph).has(target)) return true;
-      if (graph.inactiveRoots.includes(target)) return true;
-      return false;
-    } catch {
-      // Uninitialised store or malformed roots — fail closed.
-      return false;
-    }
-  };
-}
-
 // ---------------------------------------------------------------------------
 // In-memory Behavioral-Active dummy
 // ---------------------------------------------------------------------------

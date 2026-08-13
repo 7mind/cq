@@ -126,7 +126,9 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // expected_revision schemas while retaining concise response contracts.
     // 1188 -> 1310: complement adds its exact envelope and the compact /
     // complement partition invariant to every item-bearing read.
-    maximumRemainingG93AttributableTokens: 1310,
+    // 1310 -> 1294 under T1980: the shared projection description retains the
+    // partition invariant without repeating the projection field taxonomy.
+    maximumRemainingG93AttributableTokens: 1294,
     corpusMedianResponseSavingTokens: 1461,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,

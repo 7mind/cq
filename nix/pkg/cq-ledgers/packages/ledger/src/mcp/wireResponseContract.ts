@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { FieldValue, FetchedLedger, Item } from "../types.js";
 import type { FtsSearchHit } from "../search/LedgerSearchIndex.js";
 import type { FetchedMilestoneItem } from "../store/LedgerStore.js";
@@ -9,7 +10,8 @@ export type ProducedWireDto<T extends object> = T & {
   readonly [PRODUCED_WIRE_DTO]: true;
 };
 
-export type ItemProjection = "compact" | "full" | "complement";
+export const ITEM_PROJECTION_SCHEMA = z.enum(["compact", "full", "complement"]);
+export type ItemProjection = z.infer<typeof ITEM_PROJECTION_SCHEMA>;
 
 export const COMPACT_ITEM_FIELD_NAMES = [
   "headline",
@@ -27,7 +29,7 @@ export const COMPACT_ITEM_FIELD_NAMES = [
 ] as const;
 
 export const ITEM_PROJECTION_DESCRIPTION =
-  "required: compact metadata+allowlist; complement={id,fields:others}; full item; compact/complement fields partition full";
+  "required compact|full|complement; compact.fields ⊎ complement.fields = full.fields";
 
 export const ITEM_MUTATION_ACK_DESCRIPTION =
   "Returns fixed acknowledgement { item: { id, milestoneId, status, fields: { dependsOn?, blockedBy?, ledgerRefs? }, createdAt, updatedAt, author?, session? } }; narrative fields are not returned.";
@@ -242,6 +244,9 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   ),
   snapshot: purposeBuiltSmall(
     "`{ ledger: Record<ledgerId, Record<status, { count, items: [{ id, status, summary }] }>> }`.",
+  ),
+  workset: purposeBuiltSmall(
+    "Get/fetch: `{op,graph}`. Set: `{op:\"set\",acknowledgement:{roots,epoch}}`.",
   ),
   derive_predicates: purposeBuiltSmall(
     "Predicate verdicts `{ value, items }` for `pInvestigate`, `pSeed`, `pPlan`, `pResearch`, `pImplement`, `pOperatorAction`, `openQuestionGate`, `belowFloor`, `planBusy`, and `goalDrift`.",

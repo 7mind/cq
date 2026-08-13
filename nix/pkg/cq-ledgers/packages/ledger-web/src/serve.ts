@@ -66,6 +66,15 @@ export const WHOLE_STORE_DEFAULT_PORT = 5191;
  */
 const MAX_PORT_SCAN = 64;
 
+function isEmbeddedLoopbackHost(host: string): boolean {
+  if (host === "localhost" || host === "::1") return true;
+  const match = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  return (
+    match !== null &&
+    [match[1]!, match[2]!, match[3]!].every((octet) => Number(octet) <= 255)
+  );
+}
+
 const WEB_SRC = path.resolve(import.meta.dir, "main.tsx");
 /** Exported so hubServe.ts (`cq serve`, T586) can reuse the same bundle output dir. */
 export const DEFAULT_OUTDIR = path.resolve(import.meta.dir, "..", "dist");
@@ -343,6 +352,11 @@ async function serveEmbedded(
   opts: ServeOpts,
   indexPath: string,
 ): Promise<ReturnType<typeof Bun.serve>> {
+  if (!isEmbeddedLoopbackHost(opts.host)) {
+    throw new Error(
+      `ledger-web embedded management requires a loopback host, got ${opts.host}`,
+    );
+  }
   const promptSurface = resolvePromptSurface({
     promptSurface: undefined,
     promptRoot: undefined,
@@ -365,6 +379,10 @@ async function serveEmbedded(
     promptSurface?.store,
     undefined,
     dispatchRuntime.kind === "available" ? dispatchRuntime.capability : undefined,
+    "full",
+    opts.cwd,
+    undefined,
+    "management",
   );
 
   const server = scanForPort(opts.port, (p) =>

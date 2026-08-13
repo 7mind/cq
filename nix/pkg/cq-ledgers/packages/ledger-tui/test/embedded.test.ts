@@ -183,6 +183,19 @@ function decode<T>(result: unknown): T {
 }
 
 describe("McpLedgerClient.embedded (in-process, in-memory transport)", () => {
+  it("binds the embedded transport to trusted management without a secret carrier", async () => {
+    const sdk = (client as unknown as { readonly client: Client }).client;
+    const tool = (await sdk.listTools()).tools.find((candidate) => candidate.name === "workset");
+    expect(
+      (tool?.inputSchema.properties?.["op"] as { enum?: string[] } | undefined)?.enum,
+    ).toEqual(["get", "fetch", "set"]);
+    expect(
+      decode<{ op: string; acknowledgement: { roots: string[]; epoch: number } }>(
+        await sdk.callTool({ name: "workset", arguments: { op: "set", roots: [] } }),
+      ),
+    ).toEqual({ op: "set", acknowledgement: { roots: [], epoch: 1 } });
+  });
+
   it("preserves the T977 dispatch contract through the production embedded TUI construction", async () => {
     const embedded = client.embedded;
     if (embedded === null) throw new Error("expected embedded ledger context");

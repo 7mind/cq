@@ -126,8 +126,11 @@ import {
 } from "../planLifecycle.js";
 import {
   buildWorksetActiveState,
+  closeWorkset,
   type WorksetActiveState,
 } from "../worksetGraph.js";
+import { createInMemoryWorksetStore, type WorksetStore } from "../worksetStore.js";
+import type { WorksetAdmissionCoordinator } from "../worksetEffectAdmission.js";
 
 /**
  * T1962 — in-transaction ops for atomic owner-scoped writes / coordination
@@ -208,6 +211,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly planOperations = new Map<string, InMemoryPlanOperationRecord>();
   private readonly taskAdoptionFences = new TaskAdoptionFenceRegistry();
   private initialised = false;
+  private worksetHandle: WorksetAdmissionCoordinator | null = null;
   private readonly initialSeed: Array<{ name: string; schema: LedgerSchema }>;
 
   constructor(opts: InMemoryLedgerStoreOpts = {}) {
@@ -318,6 +322,46 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
       this.rebuildLedgerIndexActive(name);
       this.refreshLedgerIndexArchived(name);
     }
+  }
+
+  worksetStore(): WorksetStore {
+    this.assertInit();
+    if (this.worksetHandle === null) {
+      this.worksetHandle = createInMemoryWorksetStore({
+        isTargetAdmitted: (target, roots) => {
+          if (roots.length === 0) return true;
+          const graph = closeWorkset(roots, this.currentWorksetActiveState());
+          return graph.nodes.some((node) => node.ref === target) || graph.inactiveRoots.includes(target);
+        },
+      });
+    }
+    return this.worksetHandle;
+  }
+
+  replaceWorksetRoots(roots: readonly string[]) {
+    const workset = this.worksetStore();
+    const ledgerIds = [...this.ledgers.keys()]
+      .filter((ledgerId) => ledgerId !== MILESTONES_LEDGER)
+      .sort();
+    return (workset as WorksetAdmissionCoordinator).setValidatedRoots(
+      roots,
+      (canonical) =>
+        closeWorkset(canonical, this.currentWorksetActiveState(), {
+          validateLiveRoots: true,
+        }).roots,
+      (operation) => this.withMilestonesLock(() => this.withLocksInOrder(ledgerIds, operation)),
+    );
+  }
+
+  private currentWorksetActiveState(): WorksetActiveState {
+    const groups = [...this.ledgers].map(([ledger, value]) => ({
+      ledger,
+      items: value.milestones.flatMap((milestone) => milestone.items),
+    }));
+    const registry = buildPrefixRegistry(
+      [...this.ledgers].map(([name, ledger]) => ({ name, schema: ledger.schema })),
+    );
+    return buildWorksetActiveState(groups, registry);
   }
 
   /**

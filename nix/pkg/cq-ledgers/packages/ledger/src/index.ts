@@ -106,6 +106,21 @@ export {
   isRestrictiveInactiveWorkset,
   WorksetRootError,
 } from "./worksetGraph.js";
+export {
+  closedGraphIsTargetAdmitted,
+  requireWorksetStore,
+} from "./worksetAccess.js";
+export {
+  WORKSET_PROJECTION_SCHEMA,
+  createWorksetOperation,
+  worksetInputShape,
+} from "./mcp/worksetTool.js";
+export type {
+  WorksetObserveRequest,
+  WorksetProjectionRequest,
+  WorksetRequest,
+  WorksetResult,
+} from "./mcp/worksetTool.js";
 export type {
   WorksetProjection,
   WorksetEdgeKind,
@@ -654,6 +669,7 @@ export {
   RemoteToolError,
   RemoteDisplayNameError,
   RemoteLedgerClientConfigError,
+  RemoteManagementScopeError,
   remoteMcpUrl,
 } from "./store/remote/RemoteLedgerClient.js";
 export type {
@@ -722,6 +738,7 @@ export type { CreateLedgerSdkMcpServerOptions } from "./mcp/directLedgerTools.js
 export { createDispatchNarrativeSource } from "./mcp/dispatchNarrativeSource.js";
 export {
   COMPACT_ITEM_FIELD_NAMES,
+  ITEM_PROJECTION_SCHEMA,
   GET_PLANNERS_SECTION_RESPONSE_DESCRIPTION,
   GET_REVIEWERS_SECTION_RESPONSE_DESCRIPTION,
   ITEM_PROJECTION_DESCRIPTION,

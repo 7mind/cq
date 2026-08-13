@@ -93,6 +93,7 @@ export function registerLedgerStdioTools(
       listProjects,
       dispatchCapability,
       worktreeManage,
+      worksetAuthority,
     ),
     profileName,
   );

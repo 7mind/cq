@@ -35,9 +35,19 @@ import { GitPersistence } from "./GitPersistence.js";
 import type { ReadLogResult } from "../../mcp/readLog.js";
 import { DEFAULT_ON_SCHEMA_DIVERGENCE, LEDGER_STORAGE_DIRNAME } from "../../constants.js";
 import type { PlanLifecycleSerializationBoundaryHook } from "../planLifecycleSerialization.js";
-import { createGitObjectWorksetStore } from "../../worksetStoreGit.js";
+import {
+  createGitObjectWorksetStore,
+  type GitObjectWorksetStore,
+} from "../../worksetStoreGit.js";
 import { serializeWorksetRootsDocument } from "../../worksetStoreGit.js";
 import { createObserveOnlyWorksetInvocationAuthority } from "../../worksetInvocationAuthority.js";
+import type { WorksetStore } from "../../worksetStore.js";
+import {
+  buildActiveStateFromLedgerStore,
+  closedGraphIsTargetAdmitted,
+} from "../../worksetAccess.js";
+import { closeWorkset } from "../../worksetGraph.js";
+import type { WorksetAdmissionCoordinatorHooks } from "../../worksetEffectAdmission.js";
 
 /** Default orphan branch the ledger tree lives on (short name, no `refs/`). */
 const DEFAULT_BRANCH = "cq-ledger";
@@ -86,6 +96,8 @@ export interface GitObjectLedgerBackendOpts {
   onSchemaDivergence?: "backup-reinit" | "abort";
   /** Runtime-only authority for destructive divergence reinitialization. */
   worksetAuthority?: unknown;
+  /** Workset coordination hooks used by deterministic adapter tests. */
+  worksetHooks?: WorksetAdmissionCoordinatorHooks;
 }
 
 export class GitObjectLedgerBackend
@@ -99,6 +111,8 @@ export class GitObjectLedgerBackend
   private readonly gitPersistence: GitPersistence;
   private readonly git: GitPlumbing;
   private readonly worksetAuthority: unknown;
+  private readonly worksetHooks: WorksetAdmissionCoordinatorHooks | undefined;
+  private worksetHandle: GitObjectWorksetStore | null = null;
 
   constructor(opts: GitObjectLedgerBackendOpts) {
     const repoRoot = opts.repoRoot;
@@ -122,6 +136,7 @@ export class GitObjectLedgerBackend
     this.git = git;
     this.worksetAuthority =
       opts.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority();
+    this.worksetHooks = opts.worksetHooks;
   }
 
   /**
@@ -197,5 +212,38 @@ export class GitObjectLedgerBackend
   override async init(): Promise<void> {
     await this.gitPersistence.ensureRef();
     await super.init();
+    if (this.worksetHandle === null) {
+      this.worksetHandle = await createGitObjectWorksetStore({
+        repoRoot: this.repoRoot,
+        ref: this.branch,
+        git: this.git,
+        locksDir: this.locksDir,
+        ...(this.worksetHooks === undefined ? {} : { hooks: this.worksetHooks }),
+        isTargetAdmitted: closedGraphIsTargetAdmitted(this),
+      });
+    }
+  }
+
+  worksetStore(): WorksetStore {
+    this.assertInit();
+    if (this.worksetHandle === null) {
+      throw new Error("GitObjectLedgerBackend workset capability is not mounted");
+    }
+    return this.worksetHandle;
+  }
+
+  replaceWorksetRoots(roots: readonly string[]) {
+    const workset = this.worksetHandle;
+    if (workset === null) {
+      throw new Error("GitObjectLedgerBackend workset capability is not mounted");
+    }
+    return workset.setValidatedRoots(
+      roots,
+      (canonical) =>
+        closeWorkset(canonical, buildActiveStateFromLedgerStore(this), {
+          validateLiveRoots: true,
+        }).roots,
+      (operation) => this.runAtomicWorksetRootReplacement(operation),
+    );
   }
 }

@@ -306,7 +306,9 @@ export interface CreateInMemoryWorksetAdmissionCoordinatorOptions {
    * Validate a complete replacement before commit. Throwing rejects the
    * replacement without mutating roots or epoch.
    */
-  readonly validateReplacement?: (roots: readonly string[]) => void;
+  readonly validateReplacement?: (roots: readonly string[]) => readonly string[] | void;
+  /** Hold an adapter-native authoritative-state boundary through validation and commit. */
+  readonly replacementBoundary?: <T>(operation: () => Promise<T>) => Promise<T>;
   /**
    * Decide whether a target is inside the admitted root set. Default: empty
    * roots are unrestricted; otherwise the target must equal a root or start
@@ -404,6 +406,11 @@ export interface WorksetAdmissionCoordinator {
    * effects, then returns the new snapshot.
    */
   setRoots(roots: readonly string[]): Promise<WorksetRootsEpoch>;
+  setValidatedRoots(
+    roots: readonly string[],
+    validateReplacement: (roots: readonly string[]) => readonly string[] | void,
+    replacementBoundary?: <T>(operation: () => Promise<T>) => Promise<T>,
+  ): Promise<WorksetRootsEpoch>;
   /**
    * Exclusive administrative effect under trusted management authority.
    * Waits for every in-flight admission (and thus every registered process
@@ -500,6 +507,7 @@ export function createInMemoryWorksetAdmissionCoordinator(
   const hooks = options.hooks ?? {};
   const isTargetAdmitted = options.isTargetAdmitted ?? defaultIsTargetAdmitted;
   const validateReplacement = options.validateReplacement;
+  const replacementBoundary = options.replacementBoundary;
   const persistCommit = options.persistCommit;
   const reloadBeforeCommit = options.reloadBeforeCommit;
   const reloadBeforeAdmit = options.reloadBeforeAdmit;
@@ -945,39 +953,51 @@ export function createInMemoryWorksetAdmissionCoordinator(
     return handle;
   }
 
-  async function setRoots(nextRoots: readonly string[]): Promise<WorksetRootsEpoch> {
+  async function replaceRoots(
+    nextRoots: readonly string[],
+    replacementValidation: typeof validateReplacement,
+    nativeBoundary: typeof replacementBoundary,
+  ): Promise<WorksetRootsEpoch> {
     return runExclusive(async () => {
-      if (reloadBeforeCommit !== undefined) {
-        const loaded = await reloadBeforeCommit();
-        if (!Number.isInteger(loaded.epoch) || loaded.epoch < 0) {
-          throw new WorksetAdmissionError(
-            "invalid-replacement",
-            `workset reload epoch must be a non-negative integer, got ${String(loaded.epoch)}`,
-          );
+      const replace = async (): Promise<WorksetRootsEpoch> => {
+        if (reloadBeforeCommit !== undefined) {
+          const loaded = await reloadBeforeCommit();
+          if (!Number.isInteger(loaded.epoch) || loaded.epoch < 0) {
+            throw new WorksetAdmissionError(
+              "invalid-replacement",
+              `workset reload epoch must be a non-negative integer, got ${String(loaded.epoch)}`,
+            );
+          }
+          roots = canonicalizeWorksetRootReplacement(loaded.roots);
+          epoch = loaded.epoch;
         }
-        roots = canonicalizeWorksetRootReplacement(loaded.roots);
-        epoch = loaded.epoch;
-      }
-      const canonical = canonicalizeWorksetRootReplacement(nextRoots);
-      if (validateReplacement !== undefined) {
-        validateReplacement(canonical);
-      }
-      if (hooks.beforeCommit !== undefined) {
-        await hooks.beforeCommit();
-      }
-      const next: WorksetRootsEpoch = { roots: canonical, epoch: epoch + 1 };
-      if (persistCommit !== undefined) {
-        // Durable write BEFORE memory commit. Throw leaves memory + generation
-        // unchanged so the prior authoritative state survives.
-        await persistCommit(next);
-      }
-      // Atomic commit: roots + epoch together; revoke in-flight admits.
-      roots = canonical.slice();
-      epoch = next.epoch;
-      admitGeneration += 1;
-      notify();
-      return snapshot();
+        let canonical = canonicalizeWorksetRootReplacement(nextRoots);
+        if (replacementValidation !== undefined) {
+          canonical = [...(replacementValidation(canonical) ?? canonical)];
+        }
+        if (hooks.beforeCommit !== undefined) await hooks.beforeCommit();
+        const next: WorksetRootsEpoch = { roots: canonical, epoch: epoch + 1 };
+        if (persistCommit !== undefined) await persistCommit(next);
+        roots = canonical.slice();
+        epoch = next.epoch;
+        admitGeneration += 1;
+        notify();
+        return snapshot();
+      };
+      return nativeBoundary === undefined ? replace() : nativeBoundary(replace);
     });
+  }
+
+  async function setRoots(nextRoots: readonly string[]): Promise<WorksetRootsEpoch> {
+    return replaceRoots(nextRoots, validateReplacement, replacementBoundary);
+  }
+
+  async function setValidatedRoots(
+    nextRoots: readonly string[],
+    replacementValidation: (roots: readonly string[]) => readonly string[] | void,
+    nativeBoundary?: <T>(operation: () => Promise<T>) => Promise<T>,
+  ): Promise<WorksetRootsEpoch> {
+    return replaceRoots(nextRoots, replacementValidation, nativeBoundary);
   }
 
   async function runAdministrative(input: {
@@ -1017,6 +1037,7 @@ export function createInMemoryWorksetAdmissionCoordinator(
     admitLedgerMutation,
     admitExternalEffect,
     setRoots,
+    setValidatedRoots,
     runAdministrative,
     activeAdmissionCount,
     exclusiveHeld,

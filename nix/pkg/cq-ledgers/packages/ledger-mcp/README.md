@@ -226,6 +226,7 @@ measured savings without another batching schema.
 | `archive_milestone` | `purpose-built-small` | `{ pointer }` for the archived milestone. |
 | `list_milestone_items` | `mandatory-item-projection` | `{ items: Record<ledgerId, Item[]> }`; every item uses the requested projection. |
 | `snapshot` | `purpose-built-small` | `{ ledger: Record<ledgerId, Record<status, { count, items: [{ id, status, summary }] }>> }`. |
+| `workset` | `purpose-built-small` | Get/fetch: `{op,graph}`. Set: `{op:"set",acknowledgement:{roots,epoch}}`. |
 | `derive_predicates` | `purpose-built-small` | Predicate verdicts `{ value, items }` for `pInvestigate`, `pSeed`, `pPlan`, `pResearch`, `pImplement`, `pOperatorAction`, `openQuestionGate`, `belowFloor`, `planBusy`, and `goalDrift`. |
 | `materialize_operator_action` | `purpose-built-small` | `{ state: "created"\|"existing", action, handoff }` with revision 1. |
 | `acknowledge_operator_action` | `purpose-built-small` | `{ state: "acknowledged"\|"verified", action }` or identity-mismatch pending, revision-fenced. |
@@ -379,7 +380,7 @@ not sent as a tool argument.
 
 ## Client development and migration
 
-Treat response decoding as a closed 38-tool matrix, not as a generic
+Treat response decoding as a closed 39-tool matrix, not as a generic
 full-entity decoder. Require callers to choose a projection for the five
 item-bearing read tools, model the acknowledgement DTOs independently
 from full items, and retain pagination metadata until `nextOffset` becomes

@@ -115,6 +115,7 @@ import {
 } from "../core.js";
 import type { RefValidationContext, StatusChangePrecondition } from "../core.js";
 import { buildPrefixRegistry, normalizeStoredRefFields } from "../../refs.js";
+import { buildWorksetActiveState, closeWorkset } from "../../worksetGraph.js";
 import { cloneItem, materialiseFetchedLedger } from "../InMemoryLedgerStore.js";
 import { LedgerSearchIndex } from "../../search/LedgerSearchIndex.js";
 import { schemaCompatible, schemasEqual } from "../schemaCompat.js";
@@ -135,7 +136,7 @@ import {
 } from "../../constants.js";
 import { immediateWriteTransaction, openLedgerDb } from "./connection.js";
 import { ensureSchema, SCHEMA_VERSION } from "./schema.js";
-import { createSqliteWorksetStore } from "./sqliteWorksetStore.js";
+import { createSqliteWorksetStore, type SqliteWorksetStore } from "./sqliteWorksetStore.js";
 import type { CreateInMemoryWorksetStoreOptions, WorksetStore } from "../../worksetStore.js";
 import { createObserveOnlyWorksetInvocationAuthority } from "../../worksetInvocationAuthority.js";
 import { serializeWorksetRootsDocument } from "../../worksetStoreGit.js";
@@ -331,7 +332,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   private handle: Database | null = null;
   private initialised = false;
   /** T1957 project workset capability; created in {@link init}, cleared on dispose. */
-  private worksetHandle: WorksetStore | null = null;
+  private worksetHandle: SqliteWorksetStore | null = null;
   /**
    * Derived full-text index over the committed item rows (T528) — the SAME
    * `LedgerSearchIndex` the fs/in-memory stores use, so ftsSearch semantics
@@ -495,6 +496,33 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       throw new LedgerError("SqliteLedgerStore workset capability is not mounted");
     }
     return this.worksetHandle;
+  }
+
+  replaceWorksetRoots(roots: readonly string[]) {
+    this.assertInit();
+    if (this.worksetHandle === null) {
+      throw new LedgerError("SqliteLedgerStore workset capability is not mounted");
+    }
+    const suppliedValidation = this.worksetOptions.validateReplacement;
+    let validatedLedgers: readonly string[] = [];
+    return this.worksetHandle.setValidatedRoots(roots, (canonical) => {
+      const ledgers = this.enumerate().map((ledgerId) => this.loadLedger(ledgerId));
+      validatedLedgers = ledgers.map((ledger) => ledger.id);
+      const state = buildWorksetActiveState(
+        ledgers.map((ledger) => ({
+          ledger: ledger.id,
+          items: ledger.milestones.flatMap((milestone) => milestone.items),
+        })),
+        buildPrefixRegistry(ledgers.map((ledger) => ({ name: ledger.id, schema: ledger.schema }))),
+      );
+      const closed = closeWorkset(canonical, state, { validateLiveRoots: true }).roots;
+      return suppliedValidation?.(closed) ?? closed;
+    }, () => {
+      for (const ledgerId of validatedLedgers) {
+        this.rebuildLedgerIndexActive(ledgerId);
+        this.refreshLedgerIndexArchived(ledgerId);
+      }
+    });
   }
 
   /**

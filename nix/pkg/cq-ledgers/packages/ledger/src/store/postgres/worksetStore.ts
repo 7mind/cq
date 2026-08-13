@@ -81,7 +81,10 @@ export interface CreatePostgresWorksetStoreOptions {
   readonly pool: SQL;
   readonly projectKey: string;
   readonly hooks?: WorksetAdmissionCoordinatorHooks;
-  readonly validateReplacement?: (roots: readonly string[]) => void;
+  readonly validateReplacement?: (
+    roots: readonly string[],
+    tx: SQL,
+  ) => readonly string[] | void | Promise<readonly string[] | void>;
   readonly isTargetAdmitted?: (
     target: string,
     roots: readonly string[],
@@ -113,6 +116,14 @@ export interface CreatePostgresWorksetStoreOptions {
 }
 
 export interface PostgresWorksetStore extends WorksetStore {
+  setValidatedRoots(
+    roots: readonly string[],
+    validateReplacement: (
+      roots: readonly string[],
+      tx: SQL,
+    ) => readonly string[] | void | Promise<readonly string[] | void>,
+    afterCommit: () => Promise<void> | void,
+  ): Promise<WorksetRootsEpoch>;
   /** Stop heartbeat refresh. Safe to call multiple times. */
   close(): void;
   /** Observation: every durable admission row for this tenant. */
@@ -1052,16 +1063,18 @@ export function createPostgresWorksetStore(
     `;
   }
 
-  async function setRoots(nextRoots: readonly string[]): Promise<WorksetRootsEpoch> {
+  async function replaceRoots(
+    nextRoots: readonly string[],
+    replacementValidation: typeof validateReplacement,
+    afterValidatedCommit?: () => Promise<void> | void,
+  ): Promise<WorksetRootsEpoch> {
     return runExclusive("exclusive-set", "set-roots", async () => {
-      const canonical = canonicalizeWorksetRootReplacement(nextRoots);
-      if (validateReplacement !== undefined) {
-        validateReplacement(canonical);
-      }
+      const requested = canonicalizeWorksetRootReplacement(nextRoots);
       if (hooks.beforeCommit !== undefined) {
         await hooks.beforeCommit();
       }
       const committed = await writeTransaction(pool, async (tx) => {
+        const canonical = [...((await replacementValidation?.(requested, tx)) ?? requested)];
         const locked = await lockRoots(tx);
         const nextEpoch = locked.epoch + 1;
         const nextGen = locked.admitGeneration + 1;
@@ -1076,9 +1089,22 @@ export function createPostgresWorksetStore(
         `;
         return { roots: canonical.slice(), epoch: nextEpoch };
       });
+      await afterValidatedCommit?.();
       await onRootsCommitted(committed);
       return committed;
     });
+  }
+
+  async function setRoots(nextRoots: readonly string[]): Promise<WorksetRootsEpoch> {
+    return replaceRoots(nextRoots, validateReplacement);
+  }
+
+  async function setValidatedRoots(
+    nextRoots: readonly string[],
+    replacementValidation: NonNullable<typeof validateReplacement>,
+    afterCommit: () => Promise<void> | void,
+  ): Promise<WorksetRootsEpoch> {
+    return replaceRoots(nextRoots, replacementValidation, afterCommit);
   }
 
   async function runAdministrative(input: {
@@ -1173,6 +1199,7 @@ export function createPostgresWorksetStore(
   return {
     snapshot,
     setRoots,
+    setValidatedRoots,
     admitLedgerMutation,
     admitExternalEffect,
     runAdministrative,

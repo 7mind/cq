@@ -64,6 +64,7 @@ export function createLedgerSdkMcpServer(
       options.listProjects,
       options.dispatchCapability,
       options.worktreeManage,
+      options.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority(),
     ),
     profileName,
   );

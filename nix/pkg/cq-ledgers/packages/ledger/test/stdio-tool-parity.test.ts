@@ -738,6 +738,7 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
       },
     },
     { name: "snapshot", args: { include_archived: false } },
+    { name: "workset", args: { op: "get", projection: "id" } },
     { name: "derive_predicates", args: {} },
     {
       name: "materialize_operator_action",
@@ -1070,6 +1071,17 @@ function assertRepresentativeContracts(
       },
     },
   });
+  expect(responses.get("workset")).toEqual({
+    op: "get",
+    graph: {
+      roots: [],
+      inactiveRoots: [],
+      nodes: [],
+      edges: [],
+      restrictive: false,
+      projection: "id",
+    },
+  });
   const predicates = responses.get("derive_predicates") as Record<string, unknown>;
   expect(Object.keys(predicates).sort()).toEqual(
     [
@@ -1326,7 +1338,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 38 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 39 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);

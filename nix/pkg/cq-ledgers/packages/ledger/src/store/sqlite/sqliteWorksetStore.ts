@@ -63,6 +63,14 @@ export interface CreateSqliteWorksetStoreOptions extends CreateInMemoryWorksetSt
   readonly sleep?: (ms: number) => Promise<void>;
 }
 
+export interface SqliteWorksetStore extends WorksetStore {
+  setValidatedRoots(
+    roots: readonly string[],
+    validateReplacement: (roots: readonly string[]) => readonly string[] | void,
+    afterCommit: () => Promise<void> | void,
+  ): Promise<WorksetRootsEpoch>;
+}
+
 // ---------------------------------------------------------------------------
 // Row shapes
 // ---------------------------------------------------------------------------
@@ -160,7 +168,7 @@ function parseRootsJson(raw: string): string[] {
  */
 export function createSqliteWorksetStore(
   options: CreateSqliteWorksetStoreOptions,
-): WorksetStore {
+): SqliteWorksetStore {
   const db = options.db;
   const hooks: WorksetAdmissionCoordinatorHooks = options.hooks ?? {};
   const isTargetAdmitted = options.isTargetAdmitted ?? defaultIsTargetAdmitted;
@@ -711,16 +719,18 @@ export function createSqliteWorksetStore(
     return handle;
   }
 
-  async function setRoots(nextRoots: readonly string[]): Promise<WorksetRootsEpoch> {
+  async function replaceRoots(
+    nextRoots: readonly string[],
+    replacementValidation: typeof validateReplacement,
+    afterValidatedCommit?: () => Promise<void> | void,
+  ): Promise<WorksetRootsEpoch> {
     return runExclusive(async () => {
-      const canonical = canonicalizeWorksetRootReplacement(nextRoots);
-      if (validateReplacement !== undefined) {
-        validateReplacement(canonical);
-      }
+      const requested = canonicalizeWorksetRootReplacement(nextRoots);
       if (hooks.beforeCommit !== undefined) {
         await hooks.beforeCommit();
       }
       const committed = immediateWriteTransaction(db, () => {
+        const canonical = [...(replacementValidation?.(requested) ?? requested)];
         const state = readState();
         const nextEpoch = state.epoch + 1;
         const nextGen = state.admit_generation + 1;
@@ -729,9 +739,22 @@ export function createSqliteWorksetStore(
         ).run(nextEpoch, JSON.stringify(canonical), nextGen);
         return { roots: canonical.slice(), epoch: nextEpoch };
       });
+      await afterValidatedCommit?.();
       notify();
       return committed;
     });
+  }
+
+  async function setRoots(nextRoots: readonly string[]): Promise<WorksetRootsEpoch> {
+    return replaceRoots(nextRoots, validateReplacement);
+  }
+
+  async function setValidatedRoots(
+    nextRoots: readonly string[],
+    replacementValidation: (roots: readonly string[]) => readonly string[] | void,
+    afterCommit: () => Promise<void> | void,
+  ): Promise<WorksetRootsEpoch> {
+    return replaceRoots(nextRoots, replacementValidation, afterCommit);
   }
 
   async function runAdministrative(input: {
@@ -769,6 +792,7 @@ export function createSqliteWorksetStore(
   return {
     snapshot,
     setRoots,
+    setValidatedRoots,
     admitLedgerMutation,
     admitExternalEffect,
     runAdministrative,
