@@ -1965,6 +1965,15 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     }
   }
 
+  /** Lock every existing goal before tenant counters for cross-surface ordering. */
+  private async lockAllGoalRows(tx: SQL): Promise<void> {
+    await tx`
+      SELECT 1 FROM items
+      WHERE project_key = ${this.projectKey} AND ledger = ${GOALS_LEDGER}
+      ORDER BY id FOR UPDATE
+    `;
+  }
+
   /** Lock 2 — this tenant's `ledgers` rows (id-allocation counters). */
   private async lockTenantCounters(tx: SQL): Promise<void> {
     await tx`
@@ -2091,6 +2100,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     let archivedChanged = false;
     let live!: LiveTenantState;
     await writeTransaction(this.pool(), async (tx) => {
+      await this.lockAllGoalRows(tx);
       await this.lockTenantCounters(tx);
       const rootsRows = await tx<Array<{ roots_json: string; epoch: number }>>`
         SELECT roots_json, epoch FROM workset_roots
@@ -2099,7 +2109,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       `;
       const roots: WorksetRootsEpoch = {
         roots: JSON.parse(rootsRows[0]?.roots_json ?? "[]") as string[],
-        epoch: rootsRows[0]?.epoch ?? 0,
+        epoch: Number(rootsRows[0]?.epoch ?? 0),
       };
       const tenant = await this.readLiveTenant(tx);
       const archives = new Map<string, GenericArchiveEntry>();
@@ -2107,7 +2117,16 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         const key = genericArchiveKey(row.ledger, row.pointer_id);
         let entry = archives.get(key);
         if (entry === undefined) {
-          entry = { ledgerId: row.ledger, pointerId: row.pointer_id, items: [] };
+          const pointer = tenant.ledgers
+            .get(row.ledger)
+            ?.archivePointers.find((candidate) => candidate.id === row.pointer_id);
+          entry = {
+            ledgerId: row.ledger,
+            pointerId: row.pointer_id,
+            title: pointer?.title ?? "",
+            description: "",
+            items: [],
+          };
           archives.set(key, entry);
         }
         entry.items.push(rowToItem(row));

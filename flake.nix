@@ -1743,6 +1743,7 @@ PY
                 for expectedLeg in \
                   'workset generic-mutation contract [T1961] — postgres-durable' \
                   'allowed status update under restrictive roots persists across restart' \
+                  'post-commit NOTIFY publishes generic writes and a rolled-back denial stays silent' \
                   'cross-server: peer setRoots waits for holder generic mutation then observes result'; do
                   if ! grep -F '(pass)' "$genericMutationLog" | grep -Fq "$expectedLeg"; then
                     echo "T1975 live PostgreSQL generic-mutation run did not execute: $expectedLeg" >&2

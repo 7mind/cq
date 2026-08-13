@@ -1462,13 +1462,25 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
           for (const [ledgerId, ledger] of this.ledgers) {
             for (const pointer of ledger.archivePointers) {
               const source = await this.persistence.readArchive(pointer.path);
+              const milestoneItem =
+                ledgerId === MILESTONES_LEDGER ? parseMilestoneItemArchive(source) : undefined;
+              const group = ledgerId === MILESTONES_LEDGER ? undefined : parseArchive(source);
               archives.set(genericArchiveKey(ledgerId, pointer.id), {
                 ledgerId,
                 pointerId: pointer.id,
-                items:
-                  ledgerId === MILESTONES_LEDGER
-                    ? [parseMilestoneItemArchive(source)]
-                    : parseArchive(source).items,
+                title:
+                  milestoneItem !== undefined
+                    ? typeof milestoneItem.fields.title === "string"
+                      ? milestoneItem.fields.title
+                      : ""
+                    : (group as Milestone).title,
+                description:
+                  milestoneItem !== undefined
+                    ? typeof milestoneItem.fields.description === "string"
+                      ? milestoneItem.fields.description
+                      : ""
+                    : (group as Milestone).description,
+                items: milestoneItem !== undefined ? [milestoneItem] : (group as Milestone).items,
               });
             }
           }
@@ -1508,8 +1520,8 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
                     ? serializeMilestoneItemArchive(current.items[0] as Item)
                     : serializeArchiveImpl({
                         id: current.pointerId,
-                        title: "",
-                        description: "",
+                        title: current.title,
+                        description: current.description,
                         items: current.items,
                       });
             }

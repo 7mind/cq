@@ -18,12 +18,14 @@ import {
   ensureSchema,
   openPgPool,
   PostgresLedgerStore,
+  startPostgresCoherenceWatcher,
   TASKS_LEDGER,
   MILESTONES_LEDGER,
   WorksetGenericMutationError,
   type CreatePostgresWorksetGuardedLedgerOptions,
   type WorksetGuardedLedger,
 } from "../src/index.js";
+import type { ResolvedPostgresHandle } from "../src/store/createLedgerStore.js";
 import { runWorksetGenericMutationContract } from "./worksetGenericMutationContract.js";
 
 const PG_URL = process.env.CQ_TEST_PG_URL;
@@ -43,6 +45,15 @@ async function disposeAll(ledgers: WorksetGuardedLedger[]): Promise<void> {
       // Best-effort teardown.
     }
   }
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await Bun.sleep(20);
+  }
+  return predicate();
 }
 
 if (PG_URL === undefined || PG_URL.length === 0) {
@@ -262,12 +273,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
       expect(await b.snapshotRoots()).toEqual({ roots: [], epoch: 0 });
     });
 
-    it("onMutation fires only after committed generic writes (denied paths stay silent)", async () => {
-      // Post-commit hook ordering is the durable-side signal that afterCommit
-      // (index → onMutation → NOTIFY) ran. Full LISTEN/NOTIFY push is covered
-      // by postgres-coherence-watcher.test.ts (same acceptance selector); this
-      // case stays free of a parallel LISTEN so it cannot race that suite's
-      // pg_terminate_backend of listen backends.
+    it("post-commit NOTIFY publishes generic writes and a rolled-back denial stays silent", async () => {
       const projectKey = await prepareTenant();
       const ops: string[] = [];
       const writer = await buildGuarded({
@@ -279,44 +285,73 @@ if (PG_URL === undefined || PG_URL.length === 0) {
       await writer.init();
       expect(ops).toEqual([]);
 
-      const m = await writer.mutations.createMilestone({ title: "notify-m" });
-      expect(ops.some((e) => e.startsWith(`${MILESTONES_LEDGER}:`))).toBe(true);
-      const afterMilestone = ops.length;
-
-      const t = await writer.mutations.createItem(TASKS_LEDGER, m.id, {
-        status: "planned",
-        fields: { headline: "notify-t" },
-      });
-      expect(ops.length).toBeGreaterThan(afterMilestone);
-      expect(ops.some((e) => e.startsWith(`${TASKS_LEDGER}:`))).toBe(true);
-
-      await writer.setRoots([`${TASKS_LEDGER}:${t.id}`]);
-      const beforeDenied = ops.length;
-      try {
-        await writer.mutations.createItem(TASKS_LEDGER, m.id, {
-          status: "planned",
-          fields: { headline: "denied-silent" },
-        });
-        throw new Error("expected creation-denied");
-      } catch (error) {
-        expect(error).toBeInstanceOf(WorksetGenericMutationError);
-      }
-      // Denial must not reach afterCommit / onMutation.
-      expect(ops.length).toBe(beforeDenied);
-
-      // Peer observes the committed row via explicit invalidate (durability),
-      // not via LISTEN (covered elsewhere).
-      const peer = new PostgresLedgerStore({
-        pool: openNarrowPool(dsn),
+      const readerPool = new SQL({ url: dsn, max: 2 });
+      const reader = new PostgresLedgerStore({
+        pool: readerPool,
         projectKey,
         displayName: projectKey,
       });
-      await peer.init();
+      await reader.init();
+      let notifications = 0;
+      const handle: ResolvedPostgresHandle = { pool: readerPool, dsn, projectKey };
+      const watcher = startPostgresCoherenceWatcher(reader, handle, () => {
+        notifications += 1;
+      });
       try {
-        await peer.invalidate(TASKS_LEDGER);
-        expect(peer.fetchItem(TASKS_LEDGER, t.id).fields.headline).toBe("notify-t");
+        expect(await waitFor(() => notifications > 0)).toBe(true);
+        const beforeMilestone = notifications;
+
+        const m = await writer.mutations.createMilestone({ title: "notify-m" });
+        expect(ops.some((e) => e.startsWith(`${MILESTONES_LEDGER}:`))).toBe(true);
+        expect(
+          await waitFor(() => {
+            if (notifications <= beforeMilestone) return false;
+            try {
+              return reader.fetchItem(MILESTONES_LEDGER, m.id).fields.title === "notify-m";
+            } catch {
+              return false;
+            }
+          }),
+        ).toBe(true);
+        const afterMilestone = ops.length;
+
+        const beforeTask = notifications;
+        const t = await writer.mutations.createItem(TASKS_LEDGER, m.id, {
+          status: "planned",
+          fields: { headline: "notify-t" },
+        });
+        expect(ops.length).toBeGreaterThan(afterMilestone);
+        expect(ops.some((e) => e.startsWith(`${TASKS_LEDGER}:`))).toBe(true);
+        expect(
+          await waitFor(() => {
+            if (notifications <= beforeTask) return false;
+            try {
+              return reader.fetchItem(TASKS_LEDGER, t.id).fields.headline === "notify-t";
+            } catch {
+              return false;
+            }
+          }),
+        ).toBe(true);
+
+        await writer.setRoots([`${TASKS_LEDGER}:${t.id}`]);
+        await Bun.sleep(50);
+        const beforeDeniedOps = ops.length;
+        const beforeDeniedNotifications = notifications;
+        try {
+          await writer.mutations.createItem(TASKS_LEDGER, m.id, {
+            status: "planned",
+            fields: { headline: "denied-silent" },
+          });
+          throw new Error("expected creation-denied");
+        } catch (error) {
+          expect(error).toBeInstanceOf(WorksetGenericMutationError);
+        }
+        await Bun.sleep(100);
+        expect(ops.length).toBe(beforeDeniedOps);
+        expect(notifications).toBe(beforeDeniedNotifications);
       } finally {
-        await peer.dispose();
+        watcher.close();
+        await reader.dispose();
       }
     });
 

@@ -535,22 +535,6 @@ interface ValidationContext {
   readonly prefixRegistry: ReadonlyMap<string, string>;
 }
 
-function buildValidationContext(
-  store: Pick<LedgerStore, "enumerate" | "fetch">,
-  rootsEpoch: WorksetRootsEpoch,
-): ValidationContext {
-  const state = buildActiveStateFromLedgerStore(store);
-  const graph = closeWorkset(rootsEpoch.roots, state);
-  const prefixRegistry = state.prefixRegistry ?? defaultWorksetPrefixRegistry();
-  return {
-    restrictive: graph.restrictive,
-    roots: graph.roots,
-    graph,
-    members: worksetMemberRefSet(graph),
-    prefixRegistry,
-  };
-}
-
 function buildTransactionValidationContext(
   tx: WorksetGenericMutationTx,
   rootsEpoch: WorksetRootsEpoch,

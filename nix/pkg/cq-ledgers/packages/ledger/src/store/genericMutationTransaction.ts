@@ -42,8 +42,6 @@ import {
   type RefValidationContext,
   type StatusChangePrecondition,
 } from "./core.js";
-import { freshLedger } from "./AbstractLedgerStore.js";
-import { materialiseFetchedLedger } from "./InMemoryLedgerStore.js";
 import {
   assertManagedGoalTransitionAllowed,
   assertManagedTaskTransitionAllowed,
@@ -61,6 +59,8 @@ import {
 export interface GenericArchiveEntry {
   readonly ledgerId: string;
   readonly pointerId: string;
+  readonly title: string;
+  readonly description: string;
   readonly items: Item[];
 }
 
@@ -244,11 +244,23 @@ export function createGenericMutationTransaction(
           schema: ledger.schema,
         })),
       );
-      const ledger = freshLedger(name, schema);
+      const ledger: Ledger = {
+        id: name,
+        schema,
+        counters: { milestone: 0, item: 0 },
+        milestones: [],
+        archivePointers: [],
+      };
       state.ledgers.set(name, ledger);
       dirtyLedgers.add(name);
       changedRegistry = true;
-      return materialiseFetchedLedger(ledger, getLedger(MILESTONES_LEDGER));
+      return {
+        id: ledger.id,
+        schema: structuredClone(ledger.schema),
+        counters: { ...ledger.counters },
+        milestones: [],
+        archivePointers: [],
+      };
     },
     reopenItem: (ledgerId, itemId, toStatus) => {
       const ledger = getLedger(ledgerId);
@@ -340,6 +352,8 @@ export function createGenericMutationTransaction(
         state.archives.set(key, {
           ledgerId,
           pointerId: milestoneId,
+          title: detached.milestone.title,
+          description: detached.milestone.description,
           items: detached.milestone.items.map(cloneItem),
         });
         dirtyArchives.add(key);
@@ -358,6 +372,11 @@ export function createGenericMutationTransaction(
       state.archives.set(key, {
         ledgerId: MILESTONES_LEDGER,
         pointerId: milestoneId,
+        title,
+        description:
+          typeof detached.item.fields.description === "string"
+            ? detached.item.fields.description
+            : "",
         items: [cloneItem(detached.item)],
       });
       dirtyArchives.add(key);

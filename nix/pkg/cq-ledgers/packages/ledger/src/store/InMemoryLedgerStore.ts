@@ -87,7 +87,6 @@ import { serializePlanLifecycleDump } from "./planLifecycleDump.js";
 import type { LedgerSnapshot } from "../snapshot.js";
 import {
   createGenericMutationTransaction,
-  genericArchiveKey,
   type GenericArchiveEntry,
   type WorksetGenericMutationTx,
 } from "./genericMutationTransaction.js";
@@ -777,6 +776,8 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
           archives.set(key, {
             ledgerId: key.slice(0, slash),
             pointerId: key.slice(slash + 1),
+            title: group.title,
+            description: group.description,
             items: group.items.map((item) => structuredClone(item)),
           });
         }
@@ -784,6 +785,9 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
           archives.set(key, {
             ledgerId: MILESTONES_LEDGER,
             pointerId: key.slice(key.indexOf("/") + 1),
+            title: typeof item.fields.title === "string" ? item.fields.title : "",
+            description:
+              typeof item.fields.description === "string" ? item.fields.description : "",
             items: [structuredClone(item)],
           });
         }
@@ -805,8 +809,8 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
             } else {
               this.archives.set(key, {
                 id: entry.pointerId,
-                title: "",
-                description: "",
+                title: entry.title,
+                description: entry.description,
                 items: entry.items.map((item) => structuredClone(item)),
               });
             }

@@ -1636,7 +1636,16 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         const key = genericArchiveKey(row.ledger, row.pointer_id);
         let entry = archives.get(key);
         if (entry === undefined) {
-          entry = { ledgerId: row.ledger, pointerId: row.pointer_id, items: [] };
+          const pointer = ledgers
+            .get(row.ledger)
+            ?.archivePointers.find((candidate) => candidate.id === row.pointer_id);
+          entry = {
+            ledgerId: row.ledger,
+            pointerId: row.pointer_id,
+            title: pointer?.title ?? "",
+            description: "",
+            items: [],
+          };
           archives.set(key, entry);
         }
         entry.items.push(rowToItem(row));
@@ -1714,8 +1723,10 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         archivedChanged: transaction.dirtyArchives.size > 0,
       };
     });
-    for (const ledgerId of outcome.dirtyLedgers) {
+    for (const ledgerId of this.enumerate()) {
       this.rebuildLedgerIndexActive(ledgerId);
+    }
+    for (const ledgerId of outcome.dirtyLedgers) {
       if (outcome.archivedChanged) this.refreshLedgerIndexArchived(ledgerId);
       this.fireMutation(ledgerId, outcome.archivedChanged ? "archive" : "update");
     }

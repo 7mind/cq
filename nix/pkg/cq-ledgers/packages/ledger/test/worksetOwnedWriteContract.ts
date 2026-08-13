@@ -20,6 +20,7 @@ import {
   WorksetGenericMutationError,
   assertNoPublicRawWriteEscape,
   assertOwnedWriteAdmissionNotCallerMinted,
+  createTrustedWorksetManagementAuthority,
   closeWorkset,
   buildActiveStateFromLedgerStore,
   worksetMemberRefSet,
@@ -37,6 +38,7 @@ import {
   DECISIONS_LEDGER,
   HANDOFFS_LEDGER,
   MILESTONES_AMBIENT_ID,
+  MILESTONES_LEDGER,
   type WorksetOwnedGuardedLedger,
   type WorksetOwnedLifecycleErrorCode,
   type CreateInMemoryWorksetOwnedGuardedLedgerOptions,
@@ -390,6 +392,55 @@ export function runWorksetOwnedWriteContract(
 
       const members = memberRefsForRoot(ledger, `${IDEAS_LEDGER}:${ideaId}`);
       expect(members.has(`${GOALS_LEDGER}:${created.child.id}`)).toBe(true);
+    });
+
+    it("generic update, archive, and unarchive preserve sealed ownership", async () => {
+      const ledger = await factory.build({
+        invocationAuthority: createTrustedWorksetManagementAuthority(),
+      });
+      await ledger.init();
+      const idea = await ledger.owned.createOwnerless({
+        ledgerId: IDEAS_LEDGER,
+        status: "open",
+        fields: { title: "preservation-owner" },
+      });
+      const bootstrap = await ledger.bundles.bootstrapIdeaToGoal({
+        ideaId: idea.id,
+        goal: { title: "preservation-goal", description: "ownership host" },
+      });
+      const milestone = await ledger.mutations.createMilestone({
+        title: "preservation-milestone",
+      });
+      const review = await ledger.owned.createOwned({
+        owner: { ledgerId: GOALS_LEDGER, itemId: bootstrap.goal.id },
+        creationKind: "review",
+        child: {
+          ledgerId: REVIEWS_LEDGER,
+          milestoneId: milestone.id,
+          status: "go-ahead",
+          fields: { summary: "initial" },
+        },
+      });
+      const ownership = readCanonicalOwnership(review.child);
+
+      const updated = await ledger.mutations.updateItem(REVIEWS_LEDGER, review.child.id, {
+        fields: { summary: "updated" },
+      });
+      expect(readCanonicalOwnership(updated)).toEqual(ownership);
+
+      await ledger.mutations.updateMilestone(milestone.id, { status: "done" });
+      await ledger.setRoots([
+        `${MILESTONES_LEDGER}:${milestone.id}`,
+        `${REVIEWS_LEDGER}:${review.child.id}`,
+      ]);
+      await ledger.mutations.archiveMilestone(milestone.id, "ownership preservation");
+      await ledger.setRoots([`${REVIEWS_LEDGER}:${review.child.id}`]);
+      const restored = await ledger.mutations.unarchiveItem(
+        REVIEWS_LEDGER,
+        milestone.id,
+        review.child.id,
+      );
+      expect(readCanonicalOwnership(restored)).toEqual(ownership);
     });
 
     for (const cse of SINGLE_CHILD_CASES) {
