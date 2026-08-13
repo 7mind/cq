@@ -70,7 +70,7 @@ export function runWorksetCoordinationBundleContract(
   factory: WorksetCoordinationBundleContractFactory,
 ): void {
   describe(`workset coordination-bundle contract [T1962] — ${factory.name} (${factory.classification})`, () => {
-    it("bootstrapIdeaToGoal seals goal ownership and consumes the idea", async () => {
+    it("bootstrapIdeaToGoal seals ownership and preserves the default live branch", async () => {
       const ledger = await factory.build();
       await ledger.init();
       const idea = await ledger.owned.createOwnerless({
@@ -92,7 +92,7 @@ export function runWorksetCoordinationBundleContract(
       const members = memberRefsForRoot(ledger, `${IDEAS_LEDGER}:${idea.id}`);
       expect(members.has(`${GOALS_LEDGER}:${openBoot.goal.id}`)).toBe(true);
 
-      // Default consume marks the idea planned (terminal).
+      // Default behavior preserves the live owner branch in the workset.
       const idea2 = await ledger.owned.createOwnerless({
         ledgerId: IDEAS_LEDGER,
         status: "open",
@@ -102,8 +102,10 @@ export function runWorksetCoordinationBundleContract(
         ideaId: idea2.id,
         goal: { title: "boot-goal-consumed", description: "consume" },
       });
-      expect(consumed.idea.status).toBe("planned");
+      expect(consumed.idea.status).toBe("open");
       expect(readCanonicalOwnership(consumed.goal)?.edgeKind).toBe("idea-to-goal");
+      const defaultMembers = memberRefsForRoot(ledger, `${IDEAS_LEDGER}:${idea2.id}`);
+      expect(defaultMembers.has(`${GOALS_LEDGER}:${consumed.goal.id}`)).toBe(true);
     });
 
     it("bootstrapDefectToFixGoal seals fix-goal ownership", async () => {
@@ -324,6 +326,53 @@ export function runWorksetCoordinationBundleContract(
           expect(item.fields.title).not.toBe("partial-ms-2");
         }
       }
+    });
+
+    it("each coordination bundle holds exactly one owned-write admission", async () => {
+      const subject: { ledger: WorksetOwnedGuardedLedger | null } = { ledger: null };
+      const observedAdmissions: number[] = [];
+      const ledger = await factory.build({
+        afterOwnedAdmit: () => {
+          expect(subject.ledger).not.toBeNull();
+          observedAdmissions.push(subject.ledger!.activeAdmissionCount());
+        },
+      });
+      subject.ledger = ledger;
+      await ledger.init();
+
+      const idea = await ledger.owned.createOwnerless({
+        ledgerId: IDEAS_LEDGER,
+        status: "open",
+        fields: { title: "admission-idea" },
+      });
+      observedAdmissions.length = 0;
+      const { goal } = await ledger.bundles.bootstrapIdeaToGoal({
+        ideaId: idea.id,
+        goal: { title: "admission-goal", description: "one admission" },
+      });
+      expect(observedAdmissions).toEqual([1]);
+
+      const defect = await ledger.owned.createOwnerless({
+        ledgerId: DEFECTS_LEDGER,
+        status: "open",
+        fields: { headline: "admission-defect", severity: "low" },
+      });
+      observedAdmissions.length = 0;
+      await ledger.bundles.bootstrapDefectToFixGoal({
+        defectId: defect.id,
+        goal: { title: "admission-fix", description: "one admission" },
+      });
+      expect(observedAdmissions).toEqual([1]);
+
+      observedAdmissions.length = 0;
+      await ledger.bundles.publishOwnedDraft({
+        goalId: goal.id,
+        creationKind: "active-current-draft",
+        milestone: { title: "admission-draft" },
+        tasks: [{ headline: "admission-task" }],
+      });
+      expect(observedAdmissions).toEqual([1]);
+      expect(ledger.activeAdmissionCount()).toBe(0);
     });
   });
 }

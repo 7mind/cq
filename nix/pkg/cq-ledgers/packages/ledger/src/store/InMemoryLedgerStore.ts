@@ -119,12 +119,17 @@ import {
   PLAN_CURRENT_DRAFT_FIELD,
   PLAN_FINALIZED_MANIFEST_FIELD,
 } from "../planLifecycle.js";
+import {
+  buildWorksetActiveState,
+  type WorksetActiveState,
+} from "../worksetGraph.js";
 
 /**
  * T1962 — in-transaction ops for atomic owner-scoped writes / coordination
  * bundles. All mutations share one multi-ledger lock and roll back together.
  */
 export interface InMemoryOwnedWriteTx {
+  activeState(): WorksetActiveState;
   fetchItem(ledgerId: string, itemId: string): Item;
   createItemWithSealedOwnership(
     ledgerId: string,
@@ -589,6 +594,19 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
         const beforeLedgers = cloneLedgerMap(this.ledgers);
         const dirty = new Set<string>();
         const tx: InMemoryOwnedWriteTx = {
+          activeState: () =>
+            buildWorksetActiveState(
+              [...this.ledgers].map(([ledger, value]) => ({
+                ledger,
+                items: value.milestones.flatMap((group) => group.items),
+              })),
+              buildPrefixRegistry(
+                [...this.ledgers].map(([name, value]) => ({
+                  name,
+                  schema: value.schema,
+                })),
+              ),
+            ),
           fetchItem: (ledgerId, itemId) =>
             cloneItem(findItem(this.getLedger(ledgerId), itemId).item),
           createItemWithSealedOwnership: (ledgerId, milestoneId, init, sealedOwnership) => {

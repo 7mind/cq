@@ -523,6 +523,26 @@ export function runWorksetOwnedWriteContract(
       }
     });
 
+    it("ownerless intake holds exactly one owned-write admission", async () => {
+      const subject: { ledger: WorksetOwnedGuardedLedger | null } = { ledger: null };
+      const observedAdmissions: number[] = [];
+      const ledger = await factory.build({
+        afterOwnedAdmit: () => {
+          expect(subject.ledger).not.toBeNull();
+          observedAdmissions.push(subject.ledger!.activeAdmissionCount());
+        },
+      });
+      subject.ledger = ledger;
+      await ledger.init();
+      await ledger.owned.createOwnerless({
+        ledgerId: IDEAS_LEDGER,
+        status: "open",
+        fields: { title: "one-ownerless-admission" },
+      });
+      expect(observedAdmissions).toEqual([1]);
+      expect(ledger.activeAdmissionCount()).toBe(0);
+    });
+
     it("holds exactly one owned-write admission through commit (set waits)", async () => {
       // Hold only the post-seed owned-write critical section so setRoots observes
       // exactly one active admission and cannot finish until release.
@@ -589,6 +609,7 @@ export function runWorksetOwnedWriteContract(
       await ledger.bundles.bootstrapIdeaToGoal({
         ideaId: idea.id,
         goal: { title: "first", description: "consume" },
+        consumeIdea: true,
       });
       const planned = ledger.fetchItem(IDEAS_LEDGER, idea.id);
       expect(planned.status).toBe("planned");

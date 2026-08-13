@@ -136,6 +136,25 @@ interface DocBacking {
   archived: boolean;
 }
 
+function cloneBackingItem(item: Item): Item {
+  const clone: Item = {
+    id: item.id,
+    milestoneId: item.milestoneId,
+    status: item.status,
+    fields: Object.fromEntries(
+      Object.entries(item.fields).map(([key, value]) => [
+        key,
+        Array.isArray(value) ? [...value] : value,
+      ]),
+    ),
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
+  if (item.author !== undefined) clone.author = item.author;
+  if (item.session !== undefined) clone.session = item.session;
+  return clone;
+}
+
 export interface FtsSearchOpts {
   /** Restrict to a single ledger; cross-ledger when omitted. */
   ledger?: string;
@@ -462,7 +481,7 @@ export class LedgerSearchIndex {
         this.backing.delete(doc.docId);
       }
       this.mini.add(doc);
-      this.backing.set(doc.docId, { ledgerId, item, archived });
+      this.backing.set(doc.docId, { ledgerId, item: cloneBackingItem(item), archived });
       next.add(doc.docId);
     }
     tracker.set(ledgerId, next);
@@ -489,7 +508,7 @@ export class LedgerSearchIndex {
     } else {
       this.mini.add(doc);
     }
-    this.backing.set(doc.docId, { ledgerId, item, archived });
+    this.backing.set(doc.docId, { ledgerId, item: cloneBackingItem(item), archived });
     let ids = tracker.get(ledgerId);
     if (ids === undefined) {
       ids = new Set();

@@ -46,6 +46,7 @@ import {
 } from "./worksetGenericMutation.js";
 import {
   closeWorkset,
+  type WorksetActiveState,
   type WorksetGraph,
 } from "./worksetGraph.js";
 import {
@@ -71,7 +72,6 @@ import {
 import type {
   CreateItemInit,
   CreateMilestoneItemInit,
-  LedgerStore,
   UpdateItemPatch,
 } from "./store/LedgerStore.js";
 import type { FieldValue, Item, LedgerSchema } from "./types.js";
@@ -154,7 +154,7 @@ export interface IdeaToGoalBundleInput {
     readonly author?: string;
     readonly session?: string;
   };
-  /** When true (default), mark the idea `planned` after the goal seals. */
+  /** When true, mark the idea `planned` after the goal seals. Defaults false. */
   readonly consumeIdea?: boolean;
 }
 
@@ -264,6 +264,8 @@ export interface WorksetOwnedWriteHost extends WorksetGenericMutationGatewayHost
 }
 
 export interface WorksetOwnedWriteTx {
+  /** Fresh active state read under the same atomic boundary as the write. */
+  activeState(): WorksetActiveState;
   fetchItem(ledgerId: string, itemId: string): Item;
   createItemWithSealedOwnership(
     ledgerId: string,
@@ -321,7 +323,7 @@ function assertNoForgedOwnership(fields: Record<string, FieldValue> | undefined)
 }
 
 function buildOwnedValidationContext(
-  store: Pick<LedgerStore, "enumerate" | "fetch">,
+  state: WorksetActiveState,
   rootsEpoch: WorksetRootsEpoch,
 ): {
   readonly restrictive: boolean;
@@ -329,7 +331,6 @@ function buildOwnedValidationContext(
   readonly graph: WorksetGraph;
   readonly members: ReadonlySet<string>;
 } {
-  const state = buildActiveStateFromLedgerStore(store);
   const graph = closeWorkset(rootsEpoch.roots, state);
   return {
     restrictive: graph.restrictive,
@@ -390,14 +391,11 @@ function assertChildLedgerAllowed(
 export function createWorksetOwnedWriteGateway(
   host: WorksetOwnedWriteHost,
 ): WorksetOwnedWriteGateway {
-  const { rawStore, worksetStore, afterOwnedAdmit } = host;
+  const { worksetStore, afterOwnedAdmit } = host;
 
   async function withOwnedAdmission<T>(
     targets: readonly string[],
-    validateAndRun: (
-      admission: WorksetLedgerMutationAdmission,
-      ctx: ReturnType<typeof buildOwnedValidationContext>,
-    ) => Promise<T>,
+    validateAndRun: (admission: WorksetLedgerMutationAdmission) => Promise<T>,
   ): Promise<T> {
     let admission: WorksetLedgerMutationAdmission;
     try {
@@ -431,11 +429,7 @@ export function createWorksetOwnedWriteGateway(
           "workset epoch advanced before owned-write critical section",
         );
       }
-      const ctx = buildOwnedValidationContext(rawStore, {
-        roots: admission.roots,
-        epoch: admission.epoch,
-      });
-      return await validateAndRun(admission, ctx);
+      return await validateAndRun(admission);
     } finally {
       await admission.acknowledge();
     }
@@ -446,15 +440,28 @@ export function createWorksetOwnedWriteGateway(
 
     async createOwned(input) {
       assertNoForgedOwnership(input.child.fields);
+      if (
+        input.creationKind === "active-current-draft" ||
+        input.creationKind === "finalized-manifest"
+      ) {
+        throw new WorksetOwnedLifecycleError(
+          "bundle-incomplete",
+          `${input.creationKind} requires publishOwnedDraft so milestone, tasks, and manifest commit atomically`,
+        );
+      }
       const ownerRef = itemRef(input.owner.ledgerId, input.owner.itemId);
-      return withOwnedAdmission([ownerRef], async (_adm, ctx) => {
-        if (ctx.restrictive && !ctx.members.has(ownerRef)) {
-          throw new WorksetOwnedLifecycleError(
-            "owner-excluded",
-            `owner "${ownerRef}" is outside the admitted workset`,
-          );
-        }
+      return withOwnedAdmission([ownerRef], async (admission) => {
         return host.runOwnedTransaction((tx) => {
+          const ctx = buildOwnedValidationContext(tx.activeState(), {
+            roots: admission.roots,
+            epoch: admission.epoch,
+          });
+          if (ctx.restrictive && !ctx.members.has(ownerRef)) {
+            throw new WorksetOwnedLifecycleError(
+              "owner-excluded",
+              `owner "${ownerRef}" is outside the admitted workset`,
+            );
+          }
           let owner: Item;
           try {
             owner = tx.fetchItem(input.owner.ledgerId, input.owner.itemId);
@@ -560,14 +567,11 @@ export function createWorksetOwnedWriteGateway(
 export function createWorksetCoordinationBundleGateway(
   host: WorksetOwnedWriteHost,
 ): WorksetCoordinationBundleGateway {
-  const { rawStore, worksetStore, afterOwnedAdmit } = host;
+  const { worksetStore, afterOwnedAdmit } = host;
 
   async function withOwnedAdmission<T>(
     targets: readonly string[],
-    validateAndRun: (
-      admission: WorksetLedgerMutationAdmission,
-      ctx: ReturnType<typeof buildOwnedValidationContext>,
-    ) => Promise<T>,
+    validateAndRun: (admission: WorksetLedgerMutationAdmission) => Promise<T>,
   ): Promise<T> {
     let admission: WorksetLedgerMutationAdmission;
     try {
@@ -598,11 +602,7 @@ export function createWorksetCoordinationBundleGateway(
           "workset epoch advanced before coordination-bundle critical section",
         );
       }
-      const ctx = buildOwnedValidationContext(rawStore, {
-        roots: admission.roots,
-        epoch: admission.epoch,
-      });
-      return await validateAndRun(admission, ctx);
+      return await validateAndRun(admission);
     } finally {
       await admission.acknowledge();
     }
@@ -614,14 +614,18 @@ export function createWorksetCoordinationBundleGateway(
     async bootstrapIdeaToGoal(input) {
       assertNoForgedOwnership(input.goal.fields);
       const ownerRef = itemRef(IDEAS_LEDGER, input.ideaId);
-      return withOwnedAdmission([ownerRef], async (_adm, ctx) => {
-        if (ctx.restrictive && !ctx.members.has(ownerRef)) {
-          throw new WorksetOwnedLifecycleError(
-            "owner-excluded",
-            `owner "${ownerRef}" is outside the admitted workset`,
-          );
-        }
+      return withOwnedAdmission([ownerRef], async (admission) => {
         return host.runOwnedTransaction((tx) => {
+          const ctx = buildOwnedValidationContext(tx.activeState(), {
+            roots: admission.roots,
+            epoch: admission.epoch,
+          });
+          if (ctx.restrictive && !ctx.members.has(ownerRef)) {
+            throw new WorksetOwnedLifecycleError(
+              "owner-excluded",
+              `owner "${ownerRef}" is outside the admitted workset`,
+            );
+          }
           let idea: Item;
           try {
             idea = tx.fetchItem(IDEAS_LEDGER, input.ideaId);
@@ -651,7 +655,7 @@ export function createWorksetCoordinationBundleGateway(
             ownership,
           );
           let finalIdea = idea;
-          const consume = input.consumeIdea !== false;
+          const consume = input.consumeIdea === true;
           if (consume && idea.status !== "planned" && idea.status !== "discarded") {
             finalIdea = tx.updateItem(IDEAS_LEDGER, idea.id, { status: "planned" });
           }
@@ -663,14 +667,18 @@ export function createWorksetCoordinationBundleGateway(
     async bootstrapDefectToFixGoal(input) {
       assertNoForgedOwnership(input.goal.fields);
       const ownerRef = itemRef(DEFECTS_LEDGER, input.defectId);
-      return withOwnedAdmission([ownerRef], async (_adm, ctx) => {
-        if (ctx.restrictive && !ctx.members.has(ownerRef)) {
-          throw new WorksetOwnedLifecycleError(
-            "owner-excluded",
-            `owner "${ownerRef}" is outside the admitted workset`,
-          );
-        }
+      return withOwnedAdmission([ownerRef], async (admission) => {
         return host.runOwnedTransaction((tx) => {
+          const ctx = buildOwnedValidationContext(tx.activeState(), {
+            roots: admission.roots,
+            epoch: admission.epoch,
+          });
+          if (ctx.restrictive && !ctx.members.has(ownerRef)) {
+            throw new WorksetOwnedLifecycleError(
+              "owner-excluded",
+              `owner "${ownerRef}" is outside the admitted workset`,
+            );
+          }
           let defect: Item;
           try {
             defect = tx.fetchItem(DEFECTS_LEDGER, input.defectId);
@@ -712,14 +720,18 @@ export function createWorksetCoordinationBundleGateway(
         );
       }
       const ownerRef = itemRef(GOALS_LEDGER, input.goalId);
-      return withOwnedAdmission([ownerRef], async (_adm, ctx) => {
-        if (ctx.restrictive && !ctx.members.has(ownerRef)) {
-          throw new WorksetOwnedLifecycleError(
-            "owner-excluded",
-            `owner "${ownerRef}" is outside the admitted workset`,
-          );
-        }
+      return withOwnedAdmission([ownerRef], async (admission) => {
         return host.runOwnedTransaction((tx) => {
+          const ctx = buildOwnedValidationContext(tx.activeState(), {
+            roots: admission.roots,
+            epoch: admission.epoch,
+          });
+          if (ctx.restrictive && !ctx.members.has(ownerRef)) {
+            throw new WorksetOwnedLifecycleError(
+              "owner-excluded",
+              `owner "${ownerRef}" is outside the admitted workset`,
+            );
+          }
           let goal: Item;
           try {
             goal = tx.fetchItem(GOALS_LEDGER, input.goalId);
