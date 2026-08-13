@@ -186,5 +186,46 @@ if (dsn === undefined || dsn.length === 0) {
         watcher.close();
       }
     });
+
+    it("serializes same-tenant writers while preserving tenant isolation", async () => {
+      const sharedProject = `t1966-serialized-${randomUUID()}`;
+      const isolatedProject = `t1966-isolated-${randomUUID()}`;
+      const first = await open(sharedProject);
+      const second = await open(sharedProject);
+      const isolated = await open(isolatedProject);
+      const [left, right, other] = await Promise.all([
+        first.ledger.owned.createOwnerless({
+          ledgerId: IDEAS_LEDGER,
+          status: "open",
+          fields: { title: "pg-serialized-left" },
+        }),
+        second.ledger.owned.createOwnerless({
+          ledgerId: IDEAS_LEDGER,
+          status: "open",
+          fields: { title: "pg-serialized-right" },
+        }),
+        isolated.ledger.owned.createOwnerless({
+          ledgerId: IDEAS_LEDGER,
+          status: "open",
+          fields: { title: "pg-isolated-other" },
+        }),
+      ]);
+      expect(left.id).not.toBe(right.id);
+      expect(other.id).toBe("I1");
+
+      const sharedRestart = await open(sharedProject);
+      const isolatedRestart = await open(isolatedProject);
+      expect(sharedRestart.raw.fetchItem(IDEAS_LEDGER, left.id).fields.title).toBe(
+        "pg-serialized-left",
+      );
+      expect(sharedRestart.raw.fetchItem(IDEAS_LEDGER, right.id).fields.title).toBe(
+        "pg-serialized-right",
+      );
+      expect(sharedRestart.raw.search(IDEAS_LEDGER, "pg-isolated-other")).toEqual([]);
+      expect(isolatedRestart.raw.search(IDEAS_LEDGER, "pg-serialized")).toEqual([]);
+      expect(isolatedRestart.raw.fetchItem(IDEAS_LEDGER, other.id).fields.title).toBe(
+        "pg-isolated-other",
+      );
+    });
   });
 }

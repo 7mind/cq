@@ -26,6 +26,7 @@
  * Active reference used by latch-driven race fixtures.
  */
 
+import { randomUUID } from "node:crypto";
 import {
   createTrustedWorksetManagementAuthority,
   isTrustedWorksetManagementAuthority,
@@ -535,6 +536,7 @@ export function createInMemoryWorksetAdmissionCoordinator(
     settled: boolean;
   };
   const active = new Map<string, ActiveRecord>();
+  const admissionStoreNonce = randomUUID();
   let nextAdmissionId = 0;
 
   const waiters = new Set<() => void>();
@@ -647,8 +649,8 @@ export function createInMemoryWorksetAdmissionCoordinator(
       }
       const id =
         form === "ledger-mutation"
-          ? `lm-${++nextAdmissionId}`
-          : `ee-${++nextAdmissionId}`;
+          ? `lm-${admissionStoreNonce}-${++nextAdmissionId}`
+          : `ee-${admissionStoreNonce}-${++nextAdmissionId}`;
       const closed = deferred();
       const record: ActiveRecord = {
         id,

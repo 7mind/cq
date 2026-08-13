@@ -147,4 +147,31 @@ describe("workset coordination-bundle Git-object faults [T1964]", () => {
     expect(reader.raw.fetchItem(IDEAS_LEDGER, idea.id).fields.title).toBe("git-peer-visible");
     expect(mutations).toEqual([IDEAS_LEDGER]);
   });
+
+  it("competing object writers serialize without losing either ref update", async () => {
+    const repoRoot = await seedRepo();
+    const first = await open(repoRoot);
+    const second = await open(repoRoot);
+    const [left, right] = await Promise.all([
+      first.ledger.owned.createOwnerless({
+        ledgerId: IDEAS_LEDGER,
+        status: "open",
+        fields: { title: "git-race-left" },
+      }),
+      second.ledger.owned.createOwnerless({
+        ledgerId: IDEAS_LEDGER,
+        status: "open",
+        fields: { title: "git-race-right" },
+      }),
+    ]);
+    expect(left.id).not.toBe(right.id);
+
+    const restarted = await open(repoRoot);
+    expect(restarted.raw.fetchItem(IDEAS_LEDGER, left.id).fields.title).toBe(
+      "git-race-left",
+    );
+    expect(restarted.raw.fetchItem(IDEAS_LEDGER, right.id).fields.title).toBe(
+      "git-race-right",
+    );
+  });
 });

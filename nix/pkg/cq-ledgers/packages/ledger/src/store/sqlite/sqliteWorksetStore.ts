@@ -13,6 +13,7 @@
  * admit_generation; register → settle → release is enforced on handles.
  */
 
+import { randomUUID } from "node:crypto";
 import * as os from "node:os";
 import type { Database } from "bun:sqlite";
 import {
@@ -173,6 +174,7 @@ export function createSqliteWorksetStore(
   const nowMs = options.nowMs ?? (() => Date.now());
   const sleep = options.sleep ?? ((ms: number) => Bun.sleep(ms));
 
+  const admissionStoreNonce = randomUUID();
   let nextAdmissionId = 0;
   /** In-process exclusive flag (mirrors durable claim for same-process observers). */
   let localExclusiveHeld = false;
@@ -341,7 +343,7 @@ export function createSqliteWorksetStore(
     exclusiveTail = gate.promise;
     await prior;
 
-    const holderId = `ex-${selfPid}-${nowMs()}-${++nextAdmissionId}`;
+    const holderId = `ex-${selfPid}-${admissionStoreNonce}-${nowMs()}-${++nextAdmissionId}`;
     // Acquire durable exclusive claim (poll if held by a peer / prior op).
     for (;;) {
       if (tryClaimExclusive(holderId)) break;
@@ -402,8 +404,8 @@ export function createSqliteWorksetStore(
         // Include nowMs() for same-host PID-reuse safety (FS parity; D297).
         const id =
           form === "ledger-mutation"
-            ? `lm-${selfPid}-${++nextAdmissionId}-${nowMs()}`
-            : `ee-${selfPid}-${++nextAdmissionId}-${nowMs()}`;
+            ? `lm-${selfPid}-${admissionStoreNonce}-${++nextAdmissionId}-${nowMs()}`
+            : `ee-${selfPid}-${admissionStoreNonce}-${++nextAdmissionId}-${nowMs()}`;
         const roots = parseRootsJson(state.roots_json);
         db.query(
           `INSERT INTO workset_admissions (

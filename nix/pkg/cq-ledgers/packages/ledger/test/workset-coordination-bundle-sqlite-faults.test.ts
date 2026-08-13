@@ -132,4 +132,31 @@ describe("workset coordination-bundle SQLite faults [T1965]", () => {
       idea.id,
     ]);
   });
+
+  it("competing database writers serialize allocation without losing either row", async () => {
+    const dbPath = await freshDbPath();
+    const first = await open(dbPath);
+    const second = await open(dbPath);
+    const [left, right] = await Promise.all([
+      first.ledger.owned.createOwnerless({
+        ledgerId: IDEAS_LEDGER,
+        status: "open",
+        fields: { title: "sqlite-race-left" },
+      }),
+      second.ledger.owned.createOwnerless({
+        ledgerId: IDEAS_LEDGER,
+        status: "open",
+        fields: { title: "sqlite-race-right" },
+      }),
+    ]);
+    expect(left.id).not.toBe(right.id);
+
+    const restarted = await open(dbPath);
+    expect(restarted.raw.fetchItem(IDEAS_LEDGER, left.id).fields.title).toBe(
+      "sqlite-race-left",
+    );
+    expect(restarted.raw.fetchItem(IDEAS_LEDGER, right.id).fields.title).toBe(
+      "sqlite-race-right",
+    );
+  });
 });

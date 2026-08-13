@@ -684,8 +684,8 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
 
         const id =
           form === "ledger-mutation"
-            ? `lm-${selfPid}-${++nextAdmissionSeq}-${now()}`
-            : `ee-${selfPid}-${++nextAdmissionSeq}-${now()}`;
+            ? `lm-${selfPid}-${exclusiveStoreNonce}-${++nextAdmissionSeq}-${now()}`
+            : `ee-${selfPid}-${exclusiveStoreNonce}-${++nextAdmissionSeq}-${now()}`;
         const base = {
           id,
           epoch: current.epoch,
