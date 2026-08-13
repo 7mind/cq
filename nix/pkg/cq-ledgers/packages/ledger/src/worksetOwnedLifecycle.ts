@@ -57,14 +57,12 @@ import {
 import {
   isLiveWorksetAdmission,
   WorksetAdmissionError,
-  type WorksetAdmissionCoordinatorHooks,
   type WorksetLedgerMutationAdmission,
   type WorksetRootsEpoch,
 } from "./worksetEffectAdmission.js";
 import {
   createInMemoryWorksetStore,
   readWorksetRootsEpoch,
-  type WorksetStore,
 } from "./worksetStore.js";
 import {
   InMemoryLedgerStore,
@@ -744,7 +742,6 @@ export function createWorksetCoordinationBundleGateway(
           if (input.milestone.session !== undefined) mInit.session = input.milestone.session;
           const milestone = tx.createMilestoneWithSealedOwnership(mInit, ownership);
           const tasks: Item[] = [];
-          let taskIndex = 0;
           for (const taskInit of input.tasks) {
             const fields: Record<string, FieldValue> = {
               headline: taskInit.headline,
@@ -765,7 +762,6 @@ export function createWorksetCoordinationBundleGateway(
                 ownership,
               ),
             );
-            taskIndex += 1;
           }
           // Bind the phase manifest so T1952 closure admits sealed draft members.
           const revision = 1;
@@ -795,7 +791,6 @@ export function createWorksetCoordinationBundleGateway(
               manifestJson,
             );
           }
-          void taskIndex;
           return { goal, milestone, tasks, ownership };
         });
       });

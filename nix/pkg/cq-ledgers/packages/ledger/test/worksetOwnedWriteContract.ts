@@ -525,7 +525,7 @@ export function runWorksetOwnedWriteContract(
 
     it("holds exactly one owned-write admission through commit (set waits)", async () => {
       // Hold only the post-seed owned-write critical section so setRoots observes
-      // activeAdmissionCount > 0 and cannot finish until release.
+      // exactly one active admission and cannot finish until release.
       const admitted = deferred();
       const releaseHold = deferred();
       let holdEnabled = false;
@@ -556,7 +556,7 @@ export function runWorksetOwnedWriteContract(
         });
 
       await admitted.promise;
-      expect(ledger.activeAdmissionCount()).toBeGreaterThan(0);
+      expect(ledger.activeAdmissionCount()).toBe(1);
       expect(createDone).toBe(false);
 
       let setDone = false;
