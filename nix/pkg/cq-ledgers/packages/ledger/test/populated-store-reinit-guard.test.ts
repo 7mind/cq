@@ -159,6 +159,7 @@ describe("D170: backup-reinit refuses to destroy a POPULATED store", () => {
       dbPath,
       onSchemaDivergence: "backup-reinit",
       allowDestructiveReinitOfPopulatedStore: true,
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
     });
     await store.init();
     expect(await store.worksetStore().snapshot()).toEqual({ roots: [], epoch: 0 });

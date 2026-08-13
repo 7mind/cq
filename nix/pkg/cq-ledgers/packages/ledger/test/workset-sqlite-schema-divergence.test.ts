@@ -1,9 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
+import { BootstrapViolationError } from "../src/types.js";
 
 function injectDivergence(dbPath: string): void {
   const db = new Database(dbPath);
@@ -47,7 +48,10 @@ describe("workset roots across SQLite schema divergence [T1960]", () => {
       dbPath,
       onSchemaDivergence: "backup-reinit",
     });
-    await expect(reopened.init()).rejects.toThrow(/POPULATED|workset root/u);
+    const attemptedReinit = reopened.init();
+    await expect(attemptedReinit).rejects.toBeInstanceOf(BootstrapViolationError);
+    await expect(attemptedReinit).rejects.toThrow(/POPULATED|workset root/u);
     expect(readRoots(dbPath)).toEqual({ roots, epoch: 2 });
+    expect(readdirSync(dir).filter((name) => name.startsWith("ledger.backup-"))).toEqual([]);
   });
 });

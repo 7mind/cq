@@ -404,6 +404,9 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       // BEFORE any row is touched, emit the stderr WARNING naming that locator,
       // then wipe every row and reseed fresh canonical state under exclusive
       // administrative admission (T1959). Live roots become unrestricted empty.
+      // This read-only preflight preserves the substantive D170 refusal for
+      // ordinary callers; management repeats it under exclusion before mutation.
+      this.assertDivergenceReinitAllowed(db, divergent);
       const tempWorkset = createSqliteWorksetStore({ db, ...this.worksetOptions });
       try {
         await tempWorkset.runAdministrative({
@@ -414,21 +417,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
             // drains admitted mutations, before the backup or any destructive
             // write. A mutation that completed while exclusion was being
             // acquired therefore cannot slip past the population check.
-            const userRows = this.countUserRows(db);
-            if (userRows.total > 0 && !this.allowDestructiveReinitOfPopulatedStore) {
-              throw new BootstrapViolationError(
-                `refusing to reinitialise a POPULATED ledger: ${divergent.join(", ")} ledger(s) ` +
-                  `diverged from canon, and onSchemaDivergence='backup-reinit' would DESTROY ` +
-                  `${userRows.items} item(s), ${userRows.archivedItems} archived item(s) and ` +
-                  `${userRows.archivePointers} archive pointer(s), plus ` +
-                  `${userRows.worksetState} substantive workset root state at ${this.dbPath}. No data was ` +
-                  `touched. Either resolve the divergence (the usual cause is a build whose canon ` +
-                  `differs from the persisted schema — deploy/rebuild so they match), or, if you ` +
-                  `genuinely intend to erase this store, pass ` +
-                  `allowDestructiveReinitOfPopulatedStore: true. D170: this path destroyed the live ` +
-                  `ledger twice on 2026-07-27.`,
-              );
-            }
+            this.assertDivergenceReinitAllowed(db, divergent);
             const backupPath = this.backupDivergentState(db);
             process.stderr.write(
               `WARNING: LedgerStore divergence detected — prior state backed up to ${backupPath}\n`,
@@ -614,6 +603,23 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       worksetState,
       total: items + archivedItems + archivePointers + worksetState,
     };
+  }
+
+  private assertDivergenceReinitAllowed(db: Database, divergent: readonly string[]): void {
+    const userRows = this.countUserRows(db);
+    if (userRows.total === 0 || this.allowDestructiveReinitOfPopulatedStore) return;
+    throw new BootstrapViolationError(
+      `refusing to reinitialise a POPULATED ledger: ${divergent.join(", ")} ledger(s) ` +
+        `diverged from canon, and onSchemaDivergence='backup-reinit' would DESTROY ` +
+        `${userRows.items} item(s), ${userRows.archivedItems} archived item(s) and ` +
+        `${userRows.archivePointers} archive pointer(s), plus ` +
+        `${userRows.worksetState} substantive workset root state at ${this.dbPath}. No data was ` +
+        `touched. Either resolve the divergence (the usual cause is a build whose canon ` +
+        `differs from the persisted schema — deploy/rebuild so they match), or, if you ` +
+        `genuinely intend to erase this store, pass ` +
+        `allowDestructiveReinitOfPopulatedStore: true. D170: this path destroyed the live ` +
+        `ledger twice on 2026-07-27.`,
+    );
   }
 
   /**
