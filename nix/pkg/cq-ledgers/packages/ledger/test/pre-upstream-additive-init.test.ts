@@ -816,14 +816,23 @@ describe("pre-upstream lifecycle acceptance states", () => {
     expect(await readFile(path.join(summary.backupDir, `${UPSTREAM_LEDGER}.md`), "utf8")).toContain(
       "# upstream",
     );
-    const legacyArtifacts = [
+    const archivedArtifacts = [
       "archive/tasks/M42.md",
       "archive/milestones/M42.md",
+    ];
+    expect(await captureFiles(summary.backupDir, archivedArtifacts)).toBe(
+      await captureFiles(path.join(FS_FIXTURE_ROOT, ".cq"), archivedArtifacts),
+    );
+    await expect(stat(path.join(storageDir, "archive"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    const liveLogArtifacts = [
       "logs/20260724-legacy-session.md",
       "logs/raw/20260724-legacy-worker.jsonl",
     ];
-    expect(await captureFiles(storageDir, legacyArtifacts)).toBe(
-      await captureFiles(path.join(FS_FIXTURE_ROOT, ".cq"), legacyArtifacts),
+    expect(await captureFiles(storageDir, liveLogArtifacts)).toBe(
+      await captureFiles(path.join(FS_FIXTURE_ROOT, ".cq"), liveLogArtifacts),
     );
     const erased = await removeLedgerArtifacts(storageDir);
     expect(erased.removed.some((entry) => entry.endsWith(`${UPSTREAM_LEDGER}.md`))).toBe(true);

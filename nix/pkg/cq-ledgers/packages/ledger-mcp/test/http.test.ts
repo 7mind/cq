@@ -75,8 +75,18 @@ describe("ledger-mcp Streamable HTTP", () => {
   it("advertises usage instructions on initialize", async () => {
     await withClient(async (client) => {
       const instr = client.getInstructions() ?? "";
-      expect(instr).toContain("Markdown-backed typed ledgers");
-      expect(instr).toContain("derive_predicates");
+      expect(instr).toContain("Project: test-project");
+      expect(instr).toContain("Typed milestone DAG; items attach.");
+      expect(instr).toContain(
+        "compact.fields ⊎ complement.fields = full.fields",
+      );
+      expect(instr).toContain("fetch_ledger: paginate until nextOffset=null");
+      expect(instr).toContain(
+        "terminal items stay active until archive_milestone sweeps a fully terminal milestone",
+      );
+      expect(instr).toContain(
+        "Preserve IDs and dispatch/plan capability/generation/fence/recovery/idempotency.",
+      );
     });
   });
 
