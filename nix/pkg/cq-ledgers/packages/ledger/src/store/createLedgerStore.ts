@@ -57,6 +57,10 @@ import { LEDGER_STORAGE_DIRNAME } from "../constants.js";
 import { resolveProjectKey } from "../projectKey.js";
 import { resolveStateDir, resolveLogsDir, ensureStateDir } from "../stateDir.js";
 import { BackupScheduler, runBackupExport } from "./backupExporter.js";
+import {
+  createObserveOnlyWorksetInvocationAuthority,
+  createTrustedWorksetManagementAuthority,
+} from "../worksetInvocationAuthority.js";
 
 /**
  * The xdg backend's database filename within `<stateDir>` (T530). Exported so
@@ -316,7 +320,10 @@ export function assertGitWorkTree(root: string): void {
  *
  * The store is `init()`-ed before return (mirrors every historical call site).
  */
-export async function createLedgerStore(root: string): Promise<ResolvedLedgerStore> {
+async function createLedgerStoreWithAuthority(
+  root: string,
+  worksetAuthority: unknown,
+): Promise<ResolvedLedgerStore> {
   const { backend, branch, explicit } = resolveLedgerBackend(root);
 
   if (backend === "remote") {
@@ -325,11 +332,11 @@ export async function createLedgerStore(root: string): Promise<ResolvedLedgerSto
 
   if (backend === "fs" || backend === "git-object") {
     warnLegacyBackendDeprecated(backend, root);
-    return openLegacyLedgerStore(root, backend);
+    return openLegacyLedgerStore(root, backend, worksetAuthority);
   }
 
   if (backend === "postgres") {
-    return createPostgresLedgerStore(root, branch);
+    return createPostgresLedgerStore(root, branch, worksetAuthority);
   }
 
   if (!explicit && hasLegacyFsLedger(root)) {
@@ -363,6 +370,7 @@ export async function createLedgerStore(root: string): Promise<ResolvedLedgerSto
     dbPath,
     logsDir,
     onMutation: () => backup?.schedule(),
+    worksetAuthority,
   });
   await store.init();
   try {
@@ -393,6 +401,24 @@ export async function createLedgerStore(root: string): Promise<ResolvedLedgerSto
     return { store, configRoot: root, backend, branch, dbPath, logsDir, backup, projectKey };
   }
   return { store, configRoot: root, backend, branch, dbPath, logsDir, projectKey };
+}
+
+/** Ordinary embedded/CLI construction: observe-only workset authority. */
+export async function createLedgerStore(root: string): Promise<ResolvedLedgerStore> {
+  return await createLedgerStoreWithAuthority(
+    root,
+    createObserveOnlyWorksetInvocationAuthority(),
+  );
+}
+
+/** Dedicated trusted-host construction for direct administrative CLI paths. */
+export async function createManagementLedgerStore(
+  root: string,
+): Promise<ResolvedLedgerStore> {
+  return await createLedgerStoreWithAuthority(
+    root,
+    createTrustedWorksetManagementAuthority(),
+  );
 }
 
 /**
@@ -431,6 +457,7 @@ export async function createLedgerStore(root: string): Promise<ResolvedLedgerSto
 async function createPostgresLedgerStore(
   root: string,
   branch: string,
+  worksetAuthority: unknown,
 ): Promise<ResolvedLedgerStore> {
   const config = loadConfig(root);
   const ledgerConfig = config?.ledger;
@@ -471,6 +498,7 @@ async function createPostgresLedgerStore(
       projectKey,
       displayName,
       onMutation: () => backup?.schedule(),
+      worksetAuthority,
     });
     await store.init();
     if (backupTarget !== "none") {
@@ -521,6 +549,7 @@ async function createPostgresLedgerStore(
 export async function openLegacyLedgerStore(
   root: string,
   backendOverride?: "fs" | "git-object",
+  worksetAuthority: unknown = createObserveOnlyWorksetInvocationAuthority(),
 ): Promise<ResolvedLedgerStore> {
   const resolved = resolveLedgerBackend(root);
   const backend = backendOverride ?? resolved.backend;
@@ -533,7 +562,7 @@ export async function openLegacyLedgerStore(
     return { store, configRoot: root, backend, branch };
   }
   if (backend === "fs") {
-    const store = new FsLedgerStore({ root });
+    const store = new FsLedgerStore({ root, worksetAuthority });
     await store.init();
     return { store, configRoot: root, backend, branch };
   }

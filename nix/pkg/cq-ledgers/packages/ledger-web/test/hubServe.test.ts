@@ -31,6 +31,9 @@ import {
   parseHubArgs,
   resolveHubDsn,
   resolveHubToken,
+  resolveHubManagementToken,
+  assertHubCredentialSeparation,
+  HubCredentialSeparationError,
   HubDsnResolutionError,
   HUB_DEFAULT_HOST,
   HUB_DEFAULT_PORT,
@@ -81,6 +84,7 @@ describe("parseHubArgs", () => {
       port: HUB_DEFAULT_PORT,
       pgUrlArg: undefined,
       token: null,
+      managementToken: null,
     });
   });
 
@@ -94,12 +98,15 @@ describe("parseHubArgs", () => {
       "9999",
       "--token",
       "secret1",
+      "--management-token",
+      "management1",
     ]);
     expect(args).toEqual({
       host: "0.0.0.0",
       port: 9999,
       pgUrlArg: "postgres://u:p@h:5432/db",
       token: "secret1",
+      managementToken: "management1",
     });
   });
 
@@ -109,12 +116,14 @@ describe("parseHubArgs", () => {
       "--host=0.0.0.0",
       "--port=9999",
       "--token=secret1",
+      "--management-token=management1",
     ]);
     expect(args).toEqual({
       host: "0.0.0.0",
       port: 9999,
       pgUrlArg: "postgres://u:p@h:5432/db",
       token: "secret1",
+      managementToken: "management1",
     });
   });
 
@@ -191,6 +200,30 @@ describe("resolveHubToken", () => {
     expect(resolveHubToken("  ", { CQ_SERVE_TOKEN: "from-env" })).toBe("from-env");
     expect(resolveHubToken("  ", { CQ_SERVE_TOKEN: "  " })).toBeNull();
     expect(resolveHubToken(null, { CQ_SERVE_TOKEN: "" })).toBeNull();
+  });
+});
+
+describe("management token provisioning", () => {
+  it("resolves --management-token over CQ_SERVE_MANAGEMENT_TOKEN", () => {
+    expect(
+      resolveHubManagementToken("from-flag", {
+        CQ_SERVE_MANAGEMENT_TOKEN: "from-env",
+      }),
+    ).toBe("from-flag");
+    expect(
+      resolveHubManagementToken(null, {
+        CQ_SERVE_MANAGEMENT_TOKEN: "from-env",
+      }),
+    ).toBe("from-env");
+    expect(resolveHubManagementToken(null, {})).toBeNull();
+  });
+
+  it("requires management and ordinary credentials to differ", () => {
+    expect(() => assertHubCredentialSeparation("ordinary", "management")).not.toThrow();
+    expect(() => assertHubCredentialSeparation(null, "management")).not.toThrow();
+    expect(() => assertHubCredentialSeparation("same", "same")).toThrow(
+      HubCredentialSeparationError,
+    );
   });
 });
 

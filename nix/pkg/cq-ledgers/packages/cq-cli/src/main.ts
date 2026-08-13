@@ -25,6 +25,7 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   createLedgerStore,
+  createManagementLedgerStore,
   CANONICAL_LEDGERS,
   removeLedgerArtifacts,
   LEDGER_STORAGE_DIRNAME,
@@ -179,10 +180,12 @@ export const USAGE = [
   "  web         [--port <n>] [--host <h>] [--cwd <path>] [--mcp-url <url>]",
   "                                                  run the web UI (default port 5180)",
   "  serve       --pg-url <dsn> [--host <h>] [--port <n>] [--token <t>]",
+  "              [--management-token <t>]",
   "                                                  run the multi-tenant hub server (default port",
   "                                                  5190); NO --cwd/cq.toml — DSN resolves from",
   "                                                  --pg-url, else $CQ_LEDGER_PG_URL/$DATABASE_URL.",
   "                                                  --token is REQUIRED for a non-loopback --host",
+  "                                                  management token must differ from --token",
   "                                                  (Q273); once set, /mcp + the projects API need",
   "                                                  Authorization: Bearer <token>, /ws needs ?token=",
   "                                                  (the web UI reads/forwards it from its own URL).",
@@ -383,7 +386,7 @@ export async function runInit(args: SubcommandArgs, io: DispatchIo): Promise<Sub
   // pointing at [ledger].projectId (propagated to the caller; see main()'s
   // top-level `cq: fatal: <message>` handler). backend='fs' (still selectable via
   // an existing/explicit cq.toml) is byte-identical to the historical FsLedgerStore.init().
-  const { store } = await createLedgerStore(args.cwd);
+  const { store } = await createManagementLedgerStore(args.cwd);
   await store.dispose();
   const ledgerNames = CANONICAL_LEDGERS.map((c) => c.name).join(", ");
   io.out(`initialised ledgers at ${args.cwd} (${ledgerNames})`);
@@ -439,7 +442,7 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
   // Construct via the backend-selecting factory (T357). reset()'s backup→reinit
   // semantics (docs/.backup/) are FS-specific; a store that does not implement
   // reset is rejected with a clear error rather than a silent no-op.
-  const { store, backend } = await createLedgerStore(args.cwd);
+  const { store, backend } = await createManagementLedgerStore(args.cwd);
   try {
     if (!isResettable(store)) {
       io.err(
@@ -1071,7 +1074,7 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
     return runRestorePostgres(args, io, target, dump);
   }
 
-  const resolved = await createLedgerStore(args.cwd);
+  const resolved = await createManagementLedgerStore(args.cwd);
   const { dbPath, logsDir } = resolved;
   if (dbPath === undefined || logsDir === undefined) {
     await resolved.store.dispose();

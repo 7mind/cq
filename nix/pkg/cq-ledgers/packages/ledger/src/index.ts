@@ -160,6 +160,10 @@ export {
   createObserveOnlyWorksetInvocationAuthority,
   createTrustedWorksetManagementAuthority,
   isTrustedWorksetManagementAuthority,
+  bindWorksetInvocationAuthority,
+  invokeWorksetGet,
+  invokeWorksetFetch,
+  invokeWorksetSet,
 } from "./worksetInvocationAuthority.js";
 export type {
   WorksetInvocationAuthority,
@@ -528,6 +532,7 @@ export type { PostgresHubWatcherCallbacks } from "./store/postgres/coherenceWatc
 export { restoreDumpToPostgres, isPostgresTenantEmpty } from "./store/postgres/restoreImporter.js";
 export {
   createLedgerStore,
+  createManagementLedgerStore,
   openLegacyLedgerStore,
   resolveLedgerBackend,
   assertGitWorkTree,
@@ -588,6 +593,7 @@ export {
 } from "./store/remote/RemoteLedgerClient.js";
 export type {
   RemoteLedgerClientOpts,
+  RemoteLedgerManagementClientOpts,
   RemoteItemInit,
   RemoteItemPatch,
   RemoteMilestoneInit,
@@ -623,6 +629,7 @@ export type { LedgerArtifacts, RemoveLedgerArtifactsResult } from "./store/ledge
 export {
   createLedgerMcpToolSpecifications,
   createLedgerMcpTools,
+  createManagementLedgerMcpTools,
   DISPATCH_LIFECYCLE_TOOL_NAMES,
   FULL_LEDGER_TOOL_PROFILE,
   LEDGER_TOOL_NAMES,
@@ -642,7 +649,10 @@ export type {
   LedgerToolProfileName,
   LedgerToolSpecification,
 } from "./mcp/ledgerTools.js";
-export { createLedgerSdkMcpServer } from "./mcp/directLedgerTools.js";
+export {
+  createLedgerSdkMcpServer,
+  createManagementLedgerSdkMcpServer,
+} from "./mcp/directLedgerTools.js";
 export type { CreateLedgerSdkMcpServerOptions } from "./mcp/directLedgerTools.js";
 export { createDispatchNarrativeSource } from "./mcp/dispatchNarrativeSource.js";
 export {
@@ -694,6 +704,7 @@ export type {
 export {
   registerLedgerStdioToolSpecifications,
   registerLedgerStdioTools,
+  registerLedgerStdioManagementTools,
 } from "./mcp/stdioLedgerTools.js";
 export {
   PLAN_CLAIM_TOKEN_ECHO_PATH,

@@ -36,7 +36,7 @@
  */
 
 import * as path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { ServerWebSocket } from "bun";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -71,6 +71,10 @@ import {
   type WorktreeManageCapability,
   createGitLegacyWorktreeActivityFence,
   createWorktreeManageCapability,
+  createObserveOnlyWorksetInvocationAuthority,
+  createTrustedWorksetManagementAuthority,
+  bindWorksetInvocationAuthority,
+  type WorksetInvocationAuthority,
 } from "@cq/ledger";
 import { createConfigCapability } from "./configCapability.js";
 import {
@@ -564,6 +568,8 @@ export interface CreateLedgerMcpServerOptions {
    * to open the ledger store.
    */
   repositoryRoot?: string;
+  /** Runtime-only workset authority; never serialized into tool schemas. */
+  worksetAuthority?: WorksetInvocationAuthority;
 }
 
 /**
@@ -653,7 +659,20 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
     instructions,
   });
   registerLedgerStdioToolSpecifications(server, specifications, toolPrefix);
-  return server;
+  return bindWorksetInvocationAuthority(
+    server,
+    opts.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority(),
+  );
+}
+
+/** Dedicated trusted-host constructor for direct or stdio management surfaces. */
+export function createManagementLedgerMcpServer(
+  opts: Omit<CreateLedgerMcpServerOptions, "worksetAuthority">,
+): McpServer {
+  return createLedgerMcpServer({
+    ...opts,
+    worksetAuthority: createTrustedWorksetManagementAuthority(),
+  });
 }
 
 /**
@@ -714,6 +733,74 @@ export interface McpHttpHandlers {
   onWsMessage(ws: ServerWebSocket<undefined>, raw: string | Buffer): void;
 }
 
+export interface McpHttpCredentialConfig {
+  /** Ordinary credential, or null for backward-compatible open loopback. */
+  readonly ordinaryToken: string | null;
+  /** Distinct management credential; null disables HTTP management. */
+  readonly managementToken: string | null;
+}
+
+type McpSessionScope = "observe" | "management";
+
+interface McpSessionBinding {
+  readonly transport: WebStandardStreamableHTTPServerTransport;
+  readonly scope: McpSessionScope;
+}
+
+function extractBearerCredential(req: Request): string | null {
+  const header = req.headers.get("authorization");
+  if (header === null) return null;
+  const match = /^Bearer\s+(.+)$/.exec(header);
+  return match?.[1] ?? null;
+}
+
+/** Constant-time credential comparison over fixed-size SHA-256 digests. */
+export function worksetCredentialsMatch(provided: string, expected: string): boolean {
+  const providedDigest = createHash("sha256").update(provided).digest();
+  const expectedDigest = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(providedDigest, expectedDigest);
+}
+
+function resolveInitialSessionScope(
+  req: Request,
+  credentials: McpHttpCredentialConfig | undefined,
+): McpSessionScope | null {
+  if (credentials === undefined) return "observe";
+  const provided = extractBearerCredential(req);
+  if (
+    provided !== null &&
+    credentials.managementToken !== null &&
+    worksetCredentialsMatch(provided, credentials.managementToken)
+  ) {
+    return "management";
+  }
+  if (credentials.ordinaryToken === null) {
+    return provided === null ? "observe" : null;
+  }
+  return provided !== null && worksetCredentialsMatch(provided, credentials.ordinaryToken)
+    ? "observe"
+    : null;
+}
+
+function sessionCredentialMatches(
+  req: Request,
+  binding: McpSessionBinding,
+  credentials: McpHttpCredentialConfig | undefined,
+): boolean {
+  if (credentials === undefined) return true;
+  const expected =
+    binding.scope === "management"
+      ? credentials.managementToken
+      : credentials.ordinaryToken;
+  const provided = extractBearerCredential(req);
+  if (expected === null) return provided === null;
+  return provided !== null && worksetCredentialsMatch(provided, expected);
+}
+
+function sessionUnauthorized(): Response {
+  return new Response("unauthorized", { status: 401 });
+}
+
 export type McpSessionDisplayName = string | ((req: Request) => Promise<string> | string);
 
 export function attachMcpHttp(
@@ -727,14 +814,18 @@ export function attachMcpHttp(
   dispatchCapability?: DispatchCapability,
   toolProfile: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
   repositoryRoot?: string,
+  credentials?: McpHttpCredentialConfig,
 ): McpHttpHandlers {
-  const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
+  const sessions = new Map<string, McpSessionBinding>();
 
   async function handle(req: Request): Promise<Response> {
     const sessionId = req.headers.get("mcp-session-id") ?? undefined;
-    const existing = sessionId !== undefined ? transports.get(sessionId) : undefined;
+    const existing = sessionId !== undefined ? sessions.get(sessionId) : undefined;
     if (existing !== undefined) {
-      return existing.handleRequest(req);
+      if (!sessionCredentialMatches(req, existing, credentials)) {
+        return sessionUnauthorized();
+      }
+      return existing.transport.handleRequest(req);
     }
 
     // No existing session. Only a POST initialize may open one; anything
@@ -754,15 +845,18 @@ export function attachMcpHttp(
       );
     }
 
+    const scope = resolveInitialSessionScope(req, credentials);
+    if (scope === null) return sessionUnauthorized();
+
     const sessionDisplayName =
       typeof displayName === "string" ? displayName : await displayName(req);
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sid) => {
-        transports.set(sid, transport);
+        sessions.set(sid, { transport, scope });
       },
       onsessionclosed: (sid) => {
-        transports.delete(sid);
+        sessions.delete(sid);
       },
     });
     const server = createLedgerMcpServer({
@@ -775,6 +869,10 @@ export function attachMcpHttp(
       ...(listProjects !== undefined ? { listProjects } : {}),
       ...(dispatchCapability !== undefined ? { dispatchCapability } : {}),
       ...(repositoryRoot !== undefined ? { repositoryRoot } : {}),
+      worksetAuthority:
+        scope === "management"
+          ? createTrustedWorksetManagementAuthority()
+          : createObserveOnlyWorksetInvocationAuthority(),
       toolProfile,
     });
     await server.connect(transport);

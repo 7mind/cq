@@ -68,6 +68,7 @@ import {
   resolvePromptSurface,
   wsHeartbeat,
   type McpHttpHandlers,
+  type McpHttpCredentialConfig,
   type PromptArtifactStore,
   type DispatchRuntime,
 } from "@cq/ledger-mcp";
@@ -114,6 +115,8 @@ export interface HubServeArgs {
    * per-request gate. `null` when the flag is absent.
    */
   token: string | null;
+  /** `--management-token <secret>`; null when absent. */
+  managementToken: string | null;
 }
 
 /**
@@ -127,6 +130,7 @@ export function parseHubArgs(argv: readonly string[]): HubServeArgs {
   let port = HUB_DEFAULT_PORT;
   let pgUrlArg: string | undefined;
   let token: string | null = null;
+  let managementToken: string | null = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--host") host = argv[++i] ?? host;
@@ -137,11 +141,15 @@ export function parseHubArgs(argv: readonly string[]): HubServeArgs {
     else if (a?.startsWith("--pg-url=")) pgUrlArg = a.slice("--pg-url=".length);
     else if (a === "--token") token = argv[++i] ?? token;
     else if (a?.startsWith("--token=")) token = a.slice("--token=".length);
+    else if (a === "--management-token") managementToken = argv[++i] ?? managementToken;
+    else if (a?.startsWith("--management-token=")) {
+      managementToken = a.slice("--management-token=".length);
+    }
   }
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     throw new Error(`cq serve: --port must be 0..65535; got: ${String(port)}`);
   }
-  return { host, port, pgUrlArg, token };
+  return { host, port, pgUrlArg, token, managementToken };
 }
 
 /** Env vars consulted for the DSN when `--pg-url` is absent, in precedence order. */
@@ -184,6 +192,7 @@ export function resolveHubDsn(
 
 /** Env var consulted for the API token when `--token` is absent. */
 export const HUB_TOKEN_ENV_VAR = "CQ_SERVE_TOKEN" as const;
+export const HUB_MANAGEMENT_TOKEN_ENV_VAR = "CQ_SERVE_MANAGEMENT_TOKEN" as const;
 
 /**
  * Resolve the hub's API token: `--token` (explicit CLI flag, highest
@@ -202,6 +211,38 @@ export function resolveHubToken(
   const fromEnv = env[HUB_TOKEN_ENV_VAR];
   if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv;
   return null;
+}
+
+/** Resolve the distinct management credential from flag, env, or disabled. */
+export function resolveHubManagementToken(
+  tokenArg: string | null,
+  env: Readonly<Record<string, string | undefined>>,
+): string | null {
+  if (tokenArg !== null && tokenArg.trim() !== "") return tokenArg;
+  const fromEnv = env[HUB_MANAGEMENT_TOKEN_ENV_VAR];
+  if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv;
+  return null;
+}
+
+export class HubCredentialSeparationError extends Error {
+  constructor() {
+    super("cq serve: the management token must differ from the ordinary token");
+    this.name = "HubCredentialSeparationError";
+  }
+}
+
+/** Fail closed when the two configured credentials compare equal. */
+export function assertHubCredentialSeparation(
+  ordinaryToken: string | null,
+  managementToken: string | null,
+): void {
+  if (
+    ordinaryToken !== null &&
+    managementToken !== null &&
+    tokensMatch(ordinaryToken, managementToken)
+  ) {
+    throw new HubCredentialSeparationError();
+  }
 }
 
 /**
@@ -339,6 +380,8 @@ export interface HubServeOpts {
   port: number;
   /** Parsed from `--token`; `null` disables auth (only legal on a loopback bind — see the module doc). */
   token: string | null;
+  /** Distinct management credential; null leaves HTTP management disabled. */
+  managementToken: string | null;
   outdir: string;
 }
 
@@ -373,10 +416,18 @@ function unauthorized(): Response {
  * `token === null` means auth is off (loopback-only, per the startup gate) —
  * every request passes.
  */
-function checkBearerAuth(req: Request, token: string | null): boolean {
-  if (token === null) return true;
+function checkBearerAuth(
+  req: Request,
+  token: string | null,
+  managementToken: string | null,
+): boolean {
+  if (token === null && managementToken === null) return true;
   const provided = extractBearerToken(req);
-  return provided !== null && tokensMatch(provided, token);
+  if (provided === null) return token === null;
+  return (
+    (token !== null && tokensMatch(provided, token)) ||
+    (managementToken !== null && tokensMatch(provided, managementToken))
+  );
 }
 
 /**
@@ -385,10 +436,18 @@ function checkBearerAuth(req: Request, token: string | null): boolean {
  * mechanism the web client uses (see main.tsx's `liveWsUrl`). `token === null`
  * means auth is off; every upgrade passes.
  */
-function checkWsAuth(url: URL, token: string | null): boolean {
-  if (token === null) return true;
+function checkWsAuth(
+  url: URL,
+  token: string | null,
+  managementToken: string | null,
+): boolean {
+  if (token === null && managementToken === null) return true;
   const provided = url.searchParams.get("token");
-  return provided !== null && tokensMatch(provided, token);
+  if (provided === null) return token === null;
+  return (
+    (token !== null && tokensMatch(provided, token)) ||
+    (managementToken !== null && tokensMatch(provided, managementToken))
+  );
 }
 
 /**
@@ -520,6 +579,12 @@ export function serveHub(
         promptArtifactStore,
         undefined,
         dispatchRuntime.kind === "available" ? dispatchRuntime.capability : undefined,
+        undefined,
+        undefined,
+        {
+          ordinaryToken: opts.token,
+          managementToken: opts.managementToken,
+        } satisfies McpHttpCredentialConfig,
       );
       return { store, handlers, dispatchRuntime };
     })();
@@ -544,7 +609,7 @@ export function serveHub(
       async fetch(req, srv): Promise<Response | undefined> {
         const url = new URL(req.url);
         if (url.pathname === "/api/projects") {
-          if (!checkBearerAuth(req, opts.token)) return unauthorized();
+          if (!checkBearerAuth(req, opts.token, opts.managementToken)) return unauthorized();
           const projects = await fetchRegisteredProjects(pool);
           const body: ProjectsResponse = { projects };
           return new Response(JSON.stringify(body), {
@@ -564,8 +629,8 @@ export function serveHub(
           // unauthenticated caller gets a uniform 401 regardless of whether the
           // projectKey is even registered.
           if (route.leaf === "mcp") {
-            if (!checkBearerAuth(req, opts.token)) return unauthorized();
-          } else if (!checkWsAuth(url, opts.token)) {
+            if (!checkBearerAuth(req, opts.token, opts.managementToken)) return unauthorized();
+          } else if (!checkWsAuth(url, opts.token, opts.managementToken)) {
             return unauthorized();
           }
           let initializeDisplayName: string | undefined;
@@ -652,10 +717,12 @@ export async function main(argv: readonly string[]): Promise<void> {
   // Token resolves --token (CLI) > CQ_SERVE_TOKEN (env) > null, so the secret
   // can be injected out-of-band (env) instead of via a `ps`-visible flag.
   const token = resolveHubToken(args.token, process.env);
+  const managementToken = resolveHubManagementToken(args.managementToken, process.env);
   // Q273 startup gate: a non-loopback --host with no token is refused
   // BEFORE DSN resolution, so a misconfigured bind never touches Postgres.
   try {
     assertTokenIfNonLoopback(args.host, token);
+    assertHubCredentialSeparation(token, managementToken);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`cq: fatal: ${msg}\n`);
@@ -690,7 +757,13 @@ export async function main(argv: readonly string[]): Promise<void> {
   await prepare(outdir);
   const indexPath = path.join(outdir, "index.html");
 
-  const opts: HubServeOpts = { host: args.host, port: args.port, token, outdir };
+  const opts: HubServeOpts = {
+    host: args.host,
+    port: args.port,
+    token,
+    managementToken,
+    outdir,
+  };
   const runningServer = serveHub(opts, pool, indexPath, promptSurface?.store);
   server = runningServer;
 

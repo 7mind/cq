@@ -22,6 +22,12 @@ import type { ListProjectsCapability } from "./listProjects.js";
 import type { PromptCatalogCapability } from "./promptCatalogCapability.js";
 import type { ReadLogCapability } from "./readLog.js";
 import type { WorktreeManageCapability } from "./worktreeManageTools.js";
+import {
+  bindWorksetInvocationAuthority,
+  createObserveOnlyWorksetInvocationAuthority,
+  createTrustedWorksetManagementAuthority,
+  type WorksetInvocationAuthority,
+} from "../worksetInvocationAuthority.js";
 
 /**
  * Register an already-resolved specification set. Callers must profile and
@@ -76,6 +82,7 @@ export function registerLedgerStdioTools(
   dispatchCapability?: DispatchCapability,
   profileName: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
   worktreeManage?: WorktreeManageCapability,
+  worksetAuthority: WorksetInvocationAuthority = createObserveOnlyWorksetInvocationAuthority(),
 ): void {
   const specifications = selectLedgerMcpToolSpecifications(
     createLedgerMcpToolSpecifications(
@@ -90,4 +97,33 @@ export function registerLedgerStdioTools(
     profileName,
   );
   registerLedgerStdioToolSpecifications(server, specifications, toolPrefix);
+  bindWorksetInvocationAuthority(server, worksetAuthority);
+}
+
+/** Dedicated trusted-host registration for a stdio management surface. */
+export function registerLedgerStdioManagementTools(
+  server: McpServer,
+  store: LedgerStore,
+  readLog?: ReadLogCapability,
+  configCapability?: ConfigCapability,
+  promptCatalog?: PromptCatalogCapability,
+  toolPrefix: string = "",
+  listProjects?: ListProjectsCapability,
+  dispatchCapability?: DispatchCapability,
+  profileName: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
+  worktreeManage?: WorktreeManageCapability,
+): void {
+  registerLedgerStdioTools(
+    server,
+    store,
+    readLog,
+    configCapability,
+    promptCatalog,
+    toolPrefix,
+    listProjects,
+    dispatchCapability,
+    profileName,
+    worktreeManage,
+    createTrustedWorksetManagementAuthority(),
+  );
 }

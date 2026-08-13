@@ -60,7 +60,7 @@ import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 import {
   buildBackupDump,
-  createLedgerStore,
+  createManagementLedgerStore,
   createFsWorksetStore,
   createGitObjectWorksetStore,
   ensureSchema,
@@ -415,7 +415,7 @@ async function runMigrateXdgToPostgres(args: MigrateArgs, io: MigrateIo): Promis
   // for backend='xdg' — no need to re-derive stateDir/dbPath/logsDir by hand
   // (unlike leg 1, where cq.toml still names the legacy backend and the xdg
   // TARGET location has to be computed ahead of the flip).
-  const resolved = await createLedgerStore(args.cwd);
+  const resolved = await createManagementLedgerStore(args.cwd);
   let dump: BackupDumpFile[];
   const projectKey = resolved.projectKey;
   const dbPath = resolved.dbPath;

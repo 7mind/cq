@@ -235,6 +235,15 @@ export {
   resolveRemoteLedgerToken,
   resolveRemoteLedgerTokenFromProcess,
 } from "./remoteToken.js";
+export {
+  WORKSET_CREDENTIAL_ENV_NAMES,
+  withoutWorksetCredentials,
+  createWorksetManagementCommand,
+} from "./worksetManagementCommand.js";
+export type {
+  WorksetCredentialEnvName,
+  WorksetManagementCommand,
+} from "./worksetManagementCommand.js";
 export type { AgentRoleTier } from "./agentRoster.js";
 export { AGENT_ROLE_TIERS } from "./agentRoster.js";
 export type {

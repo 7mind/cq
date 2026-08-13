@@ -20,6 +20,12 @@ import type { ListProjectsCapability } from "./listProjects.js";
 import type { PromptCatalogCapability } from "./promptCatalogCapability.js";
 import type { ReadLogCapability } from "./readLog.js";
 import type { WorktreeManageCapability } from "./worktreeManageTools.js";
+import {
+  bindWorksetInvocationAuthority,
+  createObserveOnlyWorksetInvocationAuthority,
+  createTrustedWorksetManagementAuthority,
+  type WorksetInvocationAuthority,
+} from "../worksetInvocationAuthority.js";
 
 export interface CreateLedgerSdkMcpServerOptions {
   readonly name: string;
@@ -35,6 +41,7 @@ export interface CreateLedgerSdkMcpServerOptions {
   readonly dispatchCapability?: DispatchCapability;
   readonly profileName?: LedgerToolProfileName;
   readonly worktreeManage?: WorktreeManageCapability;
+  readonly worksetAuthority?: WorksetInvocationAuthority;
 }
 
 /**
@@ -74,5 +81,18 @@ export function createLedgerSdkMcpServer(
   server.instance.server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: ledgerToolListDefinitions(specifications, toolPrefix, options.alwaysLoad),
   }));
-  return server;
+  return bindWorksetInvocationAuthority(
+    server,
+    options.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority(),
+  );
+}
+
+/** Dedicated trusted-host constructor for an in-process management server. */
+export function createManagementLedgerSdkMcpServer(
+  options: Omit<CreateLedgerSdkMcpServerOptions, "worksetAuthority">,
+): McpSdkServerConfigWithInstance {
+  return createLedgerSdkMcpServer({
+    ...options,
+    worksetAuthority: createTrustedWorksetManagementAuthority(),
+  });
 }

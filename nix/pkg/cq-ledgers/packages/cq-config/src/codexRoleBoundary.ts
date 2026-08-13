@@ -33,6 +33,7 @@ import {
 } from "./codexSandboxPreflight.js";
 import { DISPATCHED_ROLE_IDS } from "./promptCatalogStore.js";
 import { exposedLedgerToolsForRole, type LedgerCapabilityToolName } from "./roleToolProfiles.js";
+import { withoutWorksetCredentials } from "./worksetManagementCommand.js";
 
 export const CODEX_ROLE_SANDBOX_MODES = [
   "read-only",
@@ -1023,7 +1024,7 @@ export async function executeCodexRoleBoundary(
         await runCodexSandboxPipeProbe({
           codexExecutable,
           cwd: plan.cwd,
-          env: process.env,
+          env: withoutWorksetCredentials(process.env),
           timeoutMs: CODEX_SANDBOX_PIPE_PROBE_TIMEOUT_MS,
         });
       } catch (error) {
@@ -1034,14 +1035,15 @@ export async function executeCodexRoleBoundary(
     }
     let launched;
     try {
-      const childEnvironment: NodeJS.ProcessEnv =
+      const childEnvironment: NodeJS.ProcessEnv = withoutWorksetCredentials(
         correlationId === undefined
           ? { ...process.env, ...environment }
           : {
               ...process.env,
               ...environment,
               CQ_CODEX_ROLE_CORRELATION_ID: correlationId,
-            };
+            },
+      );
       launched = await launchRegisteredProcessGroup({
         argv,
         cwd: plan.cwd,

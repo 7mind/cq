@@ -170,7 +170,7 @@ import {
   createPostgresWorksetStore,
   type PostgresWorksetStore,
 } from "./worksetStore.js";
-import { createTrustedWorksetManagementAuthority } from "../../worksetEffectAdmission.js";
+import { createObserveOnlyWorksetInvocationAuthority } from "../../worksetInvocationAuthority.js";
 import { serializeWorksetRootsDocument } from "../../worksetStoreGit.js";
 import {
   observeTaskAdoptionEligibility,
@@ -234,6 +234,8 @@ export interface PostgresLedgerStoreOpts {
    *   divergence is loud and operator-handled, with NO row touched.
    */
   onSchemaDivergence?: "backup-reinit" | "abort";
+  /** Runtime-only authority for destructive divergence reinitialization. */
+  worksetAuthority?: unknown;
 }
 
 /** Lock key for the global milestones mutex (mirrors InMemoryLedgerStore). */
@@ -360,6 +362,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly now: () => string;
   private readonly onMutation: OnMutation | null;
   private readonly onSchemaDivergence: "backup-reinit" | "abort";
+  private readonly worksetAuthority: unknown;
   private handle: SQL | null;
 
   /** In-memory materialized cache of this tenant's ACTIVE state (K102 read model). */
@@ -382,6 +385,8 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.now = opts.now ?? (() => new Date().toISOString());
     this.onMutation = opts.onMutation ?? null;
     this.onSchemaDivergence = opts.onSchemaDivergence ?? DEFAULT_ON_SCHEMA_DIVERGENCE;
+    this.worksetAuthority =
+      opts.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority();
   }
 
   // ---------------------------------------------------------------------------
@@ -566,7 +571,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     try {
       await workset.runAdministrative({
         kind: "divergence-reinitialization",
-        authority: createTrustedWorksetManagementAuthority(),
+        authority: this.worksetAuthority,
         destructivePhase: async () => {
           await this.backupAndReinitTenantBody(pk, shadowKey);
         },

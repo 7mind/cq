@@ -81,6 +81,7 @@ import type { DispatchPreLaunchRejection } from "./dispatchInputValidation.js";
 import { DISPATCH_HANDLE_SCHEMA } from "./compactDispatchProtocol.js";
 import type { JSONSchema } from "./promptCatalog.js";
 import { exposedLedgerToolsForRole } from "./roleToolProfiles.js";
+import { withoutWorksetCredentials } from "./worksetManagementCommand.js";
 import type {
   AbortedDispatchResult,
   DispatchAbortReason,
@@ -500,7 +501,7 @@ function claudePrintInvocation(
         args: [...options.storeServer.args, "--tool-profile", boundRoleId],
         cwd: options.storeServer.cwd,
         env: {
-          ...options.storeServer.env,
+          ...withoutWorksetCredentials(options.storeServer.env),
           [options.storeServer.capabilityEnv]: context.resultCapability.token,
         },
       },
@@ -617,6 +618,7 @@ export function launchClaudePrint(
     stdout: "pipe",
     stderr: "pipe",
     timeout: context.childWindowMs,
+    env: withoutWorksetCredentials(process.env),
   });
   return claudePrintLaunchReport(context, invocation.boundRoleId, {
     stdout: processResult.stdout.toString(),
@@ -637,6 +639,7 @@ export async function launchClaudePrintAsync(
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
+    env: withoutWorksetCredentials(process.env),
   });
   const stdout = new Response(child.stdout).text();
   const stderr = new Response(child.stderr).text();

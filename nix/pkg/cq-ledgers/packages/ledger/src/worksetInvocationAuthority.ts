@@ -25,6 +25,7 @@ export type WorksetManagementAuthority = WorksetInvocationAuthority;
 type WorksetInvocationScope = "observe" | "management";
 
 const authorityScopes = new WeakMap<object, WorksetInvocationScope>();
+const carrierAuthorities = new WeakMap<object, WorksetInvocationAuthority>();
 
 function scopeOf(value: unknown): WorksetInvocationScope | null {
   if (typeof value !== "object" || value === null) return null;
@@ -88,4 +89,49 @@ export function isTrustedWorksetManagementAuthority(
   value: unknown,
 ): value is WorksetManagementAuthority {
   return scopeOf(value) === "management";
+}
+
+/** Bind one runtime authority to a constructed surface without changing its schema. */
+export function bindWorksetInvocationAuthority<T extends object>(
+  carrier: T,
+  authority: WorksetInvocationAuthority,
+): T {
+  requireRuntimeAuthority(authority);
+  if (carrierAuthorities.has(carrier)) {
+    throw new WorksetInvocationAuthorityError(
+      "invalid-authority",
+      "workset invocation authority is already bound to this runtime surface",
+    );
+  }
+  carrierAuthorities.set(carrier, authority);
+  return carrier;
+}
+
+function authorityForCarrier(carrier: object): WorksetInvocationAuthority {
+  const authority = carrierAuthorities.get(carrier);
+  if (authority === undefined) {
+    throw new WorksetInvocationAuthorityError(
+      "invalid-authority",
+      "workset invocation surface has no bound runtime authority",
+    );
+  }
+  return authority;
+}
+
+export function invokeWorksetGet<T>(carrier: object, operation: () => T): T {
+  return authorityForCarrier(carrier).get(operation);
+}
+
+export async function invokeWorksetFetch<T>(
+  carrier: object,
+  operation: () => Promise<T> | T,
+): Promise<T> {
+  return await authorityForCarrier(carrier).fetch(operation);
+}
+
+export async function invokeWorksetSet<T>(
+  carrier: object,
+  operation: () => Promise<T> | T,
+): Promise<T> {
+  return await authorityForCarrier(carrier).set(operation);
 }

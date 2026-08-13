@@ -109,6 +109,12 @@ import {
   recordOperatorActionEvidence,
   reviseOperatorAction,
 } from "../operatorActions.js";
+import {
+  bindWorksetInvocationAuthority,
+  createObserveOnlyWorksetInvocationAuthority,
+  createTrustedWorksetManagementAuthority,
+  type WorksetInvocationAuthority,
+} from "../worksetInvocationAuthority.js";
 
 /** The compatibility profile: every capability-gated tool specification. */
 export const FULL_LEDGER_TOOL_PROFILE = "full";
@@ -1256,6 +1262,7 @@ export function createLedgerMcpTools(
   dispatchCapability?: DispatchCapability,
   profileName: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
   worktreeManage?: WorktreeManageCapability,
+  worksetAuthority: WorksetInvocationAuthority = createObserveOnlyWorksetInvocationAuthority(),
 ): AnyTool[] {
   assertToolPrefix(toolPrefix);
   const specifications = selectLedgerMcpToolSpecifications(
@@ -1270,11 +1277,40 @@ export function createLedgerMcpTools(
     ),
     profileName,
   );
-  if (toolPrefix === "") return specifications;
-  return specifications.map((specification) => ({
-    ...specification,
-    name: prefixToolName(toolPrefix, specification.name),
-  }));
+  const tools =
+    toolPrefix === ""
+      ? specifications
+      : specifications.map((specification) => ({
+          ...specification,
+          name: prefixToolName(toolPrefix, specification.name),
+        }));
+  return bindWorksetInvocationAuthority(tools, worksetAuthority);
+}
+
+/** Dedicated trusted-host direct tool constructor. */
+export function createManagementLedgerMcpTools(
+  store: LedgerStore,
+  readLog?: ReadLogCapability,
+  configCapability?: ConfigCapability,
+  promptCatalog?: PromptCatalogCapability,
+  toolPrefix: string = "",
+  listProjects?: ListProjectsCapability,
+  dispatchCapability?: DispatchCapability,
+  profileName: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
+  worktreeManage?: WorktreeManageCapability,
+): AnyTool[] {
+  return createLedgerMcpTools(
+    store,
+    readLog,
+    configCapability,
+    promptCatalog,
+    toolPrefix,
+    listProjects,
+    dispatchCapability,
+    profileName,
+    worktreeManage,
+    createTrustedWorksetManagementAuthority(),
+  );
 }
 
 // ---------------------------------------------------------------------------

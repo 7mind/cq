@@ -201,6 +201,25 @@ export interface RemoteLedgerClientOpts {
   readonly clientInfo?: { readonly name: string; readonly version: string };
 }
 
+/** Connection parameters for the distinct management-session constructor. */
+export interface RemoteLedgerManagementClientOpts {
+  readonly serverUrl: string;
+  readonly projectKey: string;
+  /** The management credential; ordinary `token` is intentionally not accepted. */
+  readonly managementToken: string;
+  readonly displayName?: string;
+  readonly clientInfo?: { readonly name: string; readonly version: string };
+}
+
+interface RemoteLedgerConnectionOpts {
+  readonly serverUrl: string;
+  readonly projectKey: string;
+  readonly credential: string;
+  readonly displayName?: string;
+  readonly clientInfo?: { readonly name: string; readonly version: string };
+  readonly scope: "ordinary" | "management";
+}
+
 /** `create_item` input (mirrors the tool schema). */
 export interface RemoteItemInit {
   readonly status: string;
@@ -312,6 +331,7 @@ export class RemoteLedgerClient {
     private readonly endpoint: string,
     private readonly _displayName: string,
     private readonly _protocolVersion: string,
+    private readonly _scope: "ordinary" | "management",
   ) {}
 
   /**
@@ -320,9 +340,36 @@ export class RemoteLedgerClient {
    * EVERY transport request (initialize included) is authenticated.
    */
   static async connect(opts: RemoteLedgerClientOpts): Promise<RemoteLedgerClient> {
+    return await RemoteLedgerClient.connectWithCredential({
+      serverUrl: opts.serverUrl,
+      projectKey: opts.projectKey,
+      credential: opts.token,
+      ...(opts.displayName === undefined ? {} : { displayName: opts.displayName }),
+      ...(opts.clientInfo === undefined ? {} : { clientInfo: opts.clientInfo }),
+      scope: "ordinary",
+    });
+  }
+
+  /** Connect a management-bound session using only the distinct management credential. */
+  static async connectManagement(
+    opts: RemoteLedgerManagementClientOpts,
+  ): Promise<RemoteLedgerClient> {
+    return await RemoteLedgerClient.connectWithCredential({
+      serverUrl: opts.serverUrl,
+      projectKey: opts.projectKey,
+      credential: opts.managementToken,
+      ...(opts.displayName === undefined ? {} : { displayName: opts.displayName }),
+      ...(opts.clientInfo === undefined ? {} : { clientInfo: opts.clientInfo }),
+      scope: "management",
+    });
+  }
+
+  private static async connectWithCredential(
+    opts: RemoteLedgerConnectionOpts,
+  ): Promise<RemoteLedgerClient> {
     const endpoint = remoteMcpUrl(opts.serverUrl, opts.projectKey);
     const headers: Record<string, string> = {
-      authorization: `Bearer ${opts.token}`,
+      authorization: `Bearer ${opts.credential}`,
     };
     const displayName = normalizeDisplayName(opts.displayName);
     if (displayName !== undefined) {
@@ -350,6 +397,7 @@ export class RemoteLedgerClient {
       endpoint,
       RemoteLedgerClient.resolveDisplayName(client),
       transport.protocolVersion ?? "",
+      opts.scope,
     );
   }
 
@@ -381,6 +429,11 @@ export class RemoteLedgerClient {
   /** The MCP protocol version negotiated at connect time. */
   protocolVersion(): string {
     return this._protocolVersion;
+  }
+
+  /** Runtime-observable connection scope; contains no credential material. */
+  connectionScope(): "ordinary" | "management" {
+    return this._scope;
   }
 
   /** The derived `/p/<projectKey>/mcp` endpoint this client is connected to. */

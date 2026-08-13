@@ -137,7 +137,7 @@ import { immediateWriteTransaction, openLedgerDb } from "./connection.js";
 import { ensureSchema, SCHEMA_VERSION } from "./schema.js";
 import { createSqliteWorksetStore } from "./sqliteWorksetStore.js";
 import type { CreateInMemoryWorksetStoreOptions, WorksetStore } from "../../worksetStore.js";
-import { createTrustedWorksetManagementAuthority } from "../../worksetEffectAdmission.js";
+import { createObserveOnlyWorksetInvocationAuthority } from "../../worksetInvocationAuthority.js";
 import { serializeWorksetRootsDocument } from "../../worksetStoreGit.js";
 import {
   claimInMemoryPlan,
@@ -243,6 +243,8 @@ export interface SqliteLedgerStoreOpts {
    * {@link SqliteLedgerStore.worksetStore}.
    */
   workset?: CreateInMemoryWorksetStoreOptions;
+  /** Runtime-only authority for destructive divergence reinitialization. */
+  worksetAuthority?: unknown;
 }
 
 // --- row shapes (mirror schema.ts DDL) --------------------------------------
@@ -314,6 +316,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   /** D170 destructive-intent gate — see {@link SqliteLedgerStoreOpts}. */
   private readonly allowDestructiveReinitOfPopulatedStore: boolean;
   private readonly worksetOptions: CreateInMemoryWorksetStoreOptions;
+  private readonly worksetAuthority: unknown;
   private handle: Database | null = null;
   private initialised = false;
   /** T1957 project workset capability; created in {@link init}, cleared on dispose. */
@@ -339,6 +342,8 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.allowDestructiveReinitOfPopulatedStore =
       opts.allowDestructiveReinitOfPopulatedStore ?? false;
     this.worksetOptions = opts.workset ?? {};
+    this.worksetAuthority =
+      opts.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority();
   }
 
   // ---------------------------------------------------------------------------
@@ -403,7 +408,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       try {
         await tempWorkset.runAdministrative({
           kind: "divergence-reinitialization",
-          authority: createTrustedWorksetManagementAuthority(),
+          authority: this.worksetAuthority,
           destructivePhase: () => {
             // D170 DESTRUCTIVE-INTENT GATE — re-evaluate only after exclusion
             // drains admitted mutations, before the backup or any destructive

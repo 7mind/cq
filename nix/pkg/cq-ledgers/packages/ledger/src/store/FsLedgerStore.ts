@@ -48,9 +48,7 @@ import {
   type CreateFsWorksetStoreOptions,
 } from "./fsWorksetStore.js";
 import type { WorksetStore } from "../worksetStore.js";
-import {
-  createTrustedWorksetManagementAuthority,
-} from "../worksetEffectAdmission.js";
+import { createObserveOnlyWorksetInvocationAuthority } from "../worksetInvocationAuthority.js";
 import { serializeWorksetRootsDocument } from "../worksetStoreGit.js";
 import { LEDGER_WORKSET_DIRNAME } from "./ledgerArtifacts.js";
 import { atomicWrite } from "./fsAtomic.js";
@@ -104,6 +102,8 @@ export interface FsLedgerStoreOpts {
   onSchemaDivergence?: "backup-reinit" | "abort";
   /** Override atomic persistence writes for deterministic fault-injection tests. */
   atomicWrite?: (filePath: string, text: string) => Promise<void>;
+  /** Runtime-only authority for destructive divergence reinitialization. */
+  worksetAuthority?: unknown;
 }
 
 export class FsLedgerStore extends AbstractLedgerStore<FsPersistence> implements LedgerStore {
@@ -111,6 +111,7 @@ export class FsLedgerStore extends AbstractLedgerStore<FsPersistence> implements
   private readonly logsDir: string;
   private readonly locksDir: string;
   private readonly lockfileOpts: LockfileOpts;
+  private readonly worksetAuthority: unknown;
 
   constructor(opts: FsLedgerStoreOpts) {
     const root = opts.root;
@@ -131,6 +132,8 @@ export class FsLedgerStore extends AbstractLedgerStore<FsPersistence> implements
       onSchemaDivergence: opts.onSchemaDivergence ?? DEFAULT_ON_SCHEMA_DIVERGENCE,
       planSerializationBoundaryHook: opts.planSerializationBoundaryHook ?? null,
     });
+    this.worksetAuthority =
+      opts.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority();
     // The seam's divergence backup must enumerate the store's CURRENT registry
     // (held in the base) to copy + unlink the non-canonical ledger files; bind
     // the accessor now that `super()` has run and `this` is available.
@@ -179,7 +182,7 @@ export class FsLedgerStore extends AbstractLedgerStore<FsPersistence> implements
     let backupDir = "";
     await workset.runAdministrative({
       kind,
-      authority: createTrustedWorksetManagementAuthority(),
+      authority: this.worksetAuthority,
       destructivePhase: async () => {
         backupDir = await super.backupAndReinit();
         await this.writeEmptyWorksetRoots();

@@ -80,6 +80,11 @@ let
       export CQ_SERVE_TOKEN
     ''}
 
+    ${lib.optionalString (cfg.managementTokenFile != null) ''
+      CQ_SERVE_MANAGEMENT_TOKEN="$(cat "$CREDENTIALS_DIRECTORY/management-token")"
+      export CQ_SERVE_MANAGEMENT_TOKEN
+    ''}
+
     export LEDGER_WEB_OUTDIR="$STATE_DIRECTORY/web"
     mkdir -p "$LEDGER_WEB_OUTDIR"
 
@@ -133,6 +138,17 @@ in
         `ps`-visible `--token` flag. REQUIRED when
         {option}`services.cq-server.host` is not a loopback address. Loaded via
         a systemd credential (not placed in the Nix store).
+      '';
+    };
+
+    managementTokenFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      example = "/run/secrets/cq-server-management-token";
+      description = ''
+        Path to the distinct workset management bearer token. Injected through
+        `CQ_SERVE_MANAGEMENT_TOKEN` using a systemd credential, never argv.
+        Leaving this null disables HTTP workset management.
       '';
     };
 
@@ -286,7 +302,10 @@ in
         RestartSec = 2;
         StateDirectory = "cq-server";
         StateDirectoryMode = "0700";
-        LoadCredential = lib.optional (cfg.tokenFile != null) "token:${toString cfg.tokenFile}";
+        LoadCredential =
+          lib.optional (cfg.tokenFile != null) "token:${toString cfg.tokenFile}"
+          ++ lib.optional (cfg.managementTokenFile != null)
+            "management-token:${toString cfg.managementTokenFile}";
 
         # Hardening — the hub only needs loopback (or outbound) TCP + its state dir.
         NoNewPrivileges = true;
