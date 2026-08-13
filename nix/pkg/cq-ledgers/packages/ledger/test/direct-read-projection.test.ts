@@ -204,7 +204,7 @@ const READ_SCHEMA_CASES = [
   { label: "search_items", tool: "search_items", args: { ledger_id: "xenos", query: "Needle" } },
   { label: "fts_search", tool: "fts_search", args: { query: "needle", ledger: "xenos" } },
   {
-    label: "fetch_milestone",
+    label: "milestones-via-fetch_item",
     tool: "fetch_item",
     args: { ledger_id: "milestones", item_id: "M1" },
   },
@@ -367,7 +367,7 @@ describe("createLedgerMcpTools mandatory read projections", () => {
           "fts_search",
           ftsResponse.results.map((result) => result.item),
         );
-        expectExactComplement("fetch_milestone", [milestoneResponse.item]);
+        expectExactComplement("milestones-via-fetch_item", [milestoneResponse.item]);
         expectExactComplement(
           "list_milestone_items",
           Object.values(milestoneItemsResponse.items).flat(),

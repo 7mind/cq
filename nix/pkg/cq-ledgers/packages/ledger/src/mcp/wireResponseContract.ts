@@ -27,7 +27,7 @@ export const COMPACT_ITEM_FIELD_NAMES = [
 ] as const;
 
 export const ITEM_PROJECTION_DESCRIPTION =
-  "required projection: compact retains id, milestoneId, status, createdAt, updatedAt, optional author/session, and only headline/title/question/answer/summary/severity/suggestedModel/tags/sourceRefs/dependsOn/blockedBy/ledgerRefs in fields; complement retains id plus fields containing ONLY keys outside the compact allowlist (no status/timestamps/provenance); full retains every item field; merge invariant: fields(full) = fields(compact) ∪ fields(complement) with disjoint field sets";
+  "required: compact metadata+allowlist; complement={id,fields:others}; full item; compact/complement fields partition full";
 
 export const ITEM_MUTATION_ACK_DESCRIPTION =
   "Returns fixed acknowledgement { item: { id, milestoneId, status, fields: { dependsOn?, blockedBy?, ledgerRefs? }, createdAt, updatedAt, author?, session? } }; narrative fields are not returned.";

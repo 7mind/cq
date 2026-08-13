@@ -64,28 +64,28 @@
       "toolCount": 38,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 766,
-        "tokens": 147,
-        "sha256": "b03f085cf0fa36b2dc273e3d1e4497e44c4eab265bed38dc3f1feb7833784862"
+        "utf8Bytes": 883,
+        "tokens": 175,
+        "sha256": "8cead6d50745540a36e3c53e5b8d2794ac1e02489dedf2d00fdc3e6f131d02a6"
       },
       "toolsList": {
-        "utf8Bytes": 48512,
-        "tokens": 11572,
-        "sha256": "af1ef7ab6821ab7c483f5a4c05c93496dff475c2245e1ecae9a6d6e40d6d7f55"
+        "utf8Bytes": 48421,
+        "tokens": 11576,
+        "sha256": "44cc109e3e18ffaf1efb83c333ff667545bc82fb0bb494e337f284656fdf15fb"
       },
-      "surfaceTokens": 11719,
+      "surfaceTokens": 11751,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -63,
+      "deltaTokens": -31,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
       "domainInputSchemaTokens": 4917,
       "responseContractCounterfactual": {
-        "projectionTokens": 107,
+        "projectionTokens": 229,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 976,
-        "allTokens": 1188,
+        "allTokens": 1310,
         "deltasAreAdditive": false
       }
     },
@@ -126,28 +126,28 @@
       "toolCount": 30,
       "baselineProfile": "non-dispatch",
       "initialize": {
-        "utf8Bytes": 766,
-        "tokens": 147,
-        "sha256": "b03f085cf0fa36b2dc273e3d1e4497e44c4eab265bed38dc3f1feb7833784862"
+        "utf8Bytes": 883,
+        "tokens": 175,
+        "sha256": "8cead6d50745540a36e3c53e5b8d2794ac1e02489dedf2d00fdc3e6f131d02a6"
       },
       "toolsList": {
-        "utf8Bytes": 36183,
-        "tokens": 8548,
-        "sha256": "b714a7b80a1a133f64301022a32f58ac2ab75e3d399cebbaae6606a4c57ae3b1"
+        "utf8Bytes": 36092,
+        "tokens": 8552,
+        "sha256": "508a9f91398184d8eb42a2f0f7153953e5fb74a562cd8fe14df9897e88a974ab"
       },
-      "surfaceTokens": 8695,
+      "surfaceTokens": 8727,
       "baselineSurfaceTokens": 10386,
-      "deltaTokens": -1691,
+      "deltaTokens": -1659,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
       "domainInputSchemaTokens": 4917,
       "responseContractCounterfactual": {
-        "projectionTokens": 107,
+        "projectionTokens": 229,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 785,
-        "allTokens": 997,
+        "allTokens": 1119,
         "deltasAreAdditive": false
       }
     },
@@ -201,23 +201,23 @@
         "sha256": "b1219cba730b414b92bdf84d0fe7991ef448d8db5fed35e168fce928b1fb486d"
       },
       "toolsList": {
-        "utf8Bytes": 48512,
-        "tokens": 11572,
-        "sha256": "af1ef7ab6821ab7c483f5a4c05c93496dff475c2245e1ecae9a6d6e40d6d7f55"
+        "utf8Bytes": 48421,
+        "tokens": 11576,
+        "sha256": "44cc109e3e18ffaf1efb83c333ff667545bc82fb0bb494e337f284656fdf15fb"
       },
-      "surfaceTokens": 11774,
+      "surfaceTokens": 11778,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -8,
+      "deltaTokens": -4,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
       "domainInputSchemaTokens": 4917,
       "responseContractCounterfactual": {
-        "projectionTokens": 107,
+        "projectionTokens": 229,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 976,
-        "allTokens": 1188,
+        "allTokens": 1310,
         "deltasAreAdditive": false
       }
     },
@@ -271,23 +271,23 @@
         "sha256": "2385405ff6d4189a5a2528b4c404bbe4135c5d3e43d6e89a645d4dfd581b008c"
       },
       "toolsList": {
-        "utf8Bytes": 48512,
-        "tokens": 11572,
-        "sha256": "af1ef7ab6821ab7c483f5a4c05c93496dff475c2245e1ecae9a6d6e40d6d7f55"
+        "utf8Bytes": 48421,
+        "tokens": 11576,
+        "sha256": "44cc109e3e18ffaf1efb83c333ff667545bc82fb0bb494e337f284656fdf15fb"
       },
-      "surfaceTokens": 11774,
+      "surfaceTokens": 11778,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -8,
+      "deltaTokens": -4,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
       "domainInputSchemaTokens": 4917,
       "responseContractCounterfactual": {
-        "projectionTokens": 107,
+        "projectionTokens": 229,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 976,
-        "allTokens": 1188,
+        "allTokens": 1310,
         "deltasAreAdditive": false
       }
     },
@@ -487,23 +487,23 @@
         "sha256": "54f3aca66e5e4af4cbe83397a82b55774ad4c1deedfcd70ea4fe463d5f171a1f"
       },
       "toolsList": {
-        "utf8Bytes": 48512,
-        "tokens": 11572,
-        "sha256": "af1ef7ab6821ab7c483f5a4c05c93496dff475c2245e1ecae9a6d6e40d6d7f55"
+        "utf8Bytes": 48421,
+        "tokens": 11576,
+        "sha256": "44cc109e3e18ffaf1efb83c333ff667545bc82fb0bb494e337f284656fdf15fb"
       },
-      "surfaceTokens": 11776,
+      "surfaceTokens": 11780,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -6,
+      "deltaTokens": -2,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
       "domainInputSchemaTokens": 4917,
       "responseContractCounterfactual": {
-        "projectionTokens": 107,
+        "projectionTokens": 229,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 976,
-        "allTokens": 1188,
+        "allTokens": 1310,
         "deltasAreAdditive": false
       }
     },
@@ -557,23 +557,23 @@
         "sha256": "694d17c8a0e007495812ec5cf94f0ba81bd8ae3b1b1d7ef1c2aa02d5766e7806"
       },
       "toolsList": {
-        "utf8Bytes": 48512,
-        "tokens": 11572,
-        "sha256": "af1ef7ab6821ab7c483f5a4c05c93496dff475c2245e1ecae9a6d6e40d6d7f55"
+        "utf8Bytes": 48421,
+        "tokens": 11576,
+        "sha256": "44cc109e3e18ffaf1efb83c333ff667545bc82fb0bb494e337f284656fdf15fb"
       },
-      "surfaceTokens": 11775,
+      "surfaceTokens": 11779,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -7,
+      "deltaTokens": -3,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
       "domainInputSchemaTokens": 4917,
       "responseContractCounterfactual": {
-        "projectionTokens": 107,
+        "projectionTokens": 229,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 976,
-        "allTokens": 1188,
+        "allTokens": 1310,
         "deltasAreAdditive": false
       }
     },
@@ -627,23 +627,23 @@
         "sha256": "8dd22ba73e9dd6afa787be52529040e612c6c7e2a2c4ac9382f83ad1aafd7bdb"
       },
       "toolsList": {
-        "utf8Bytes": 48512,
-        "tokens": 11572,
-        "sha256": "af1ef7ab6821ab7c483f5a4c05c93496dff475c2245e1ecae9a6d6e40d6d7f55"
+        "utf8Bytes": 48421,
+        "tokens": 11576,
+        "sha256": "44cc109e3e18ffaf1efb83c333ff667545bc82fb0bb494e337f284656fdf15fb"
       },
-      "surfaceTokens": 11775,
+      "surfaceTokens": 11779,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -7,
+      "deltaTokens": -3,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
       "domainInputSchemaTokens": 4917,
       "responseContractCounterfactual": {
-        "projectionTokens": 107,
+        "projectionTokens": 229,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 976,
-        "allTokens": 1188,
+        "allTokens": 1310,
         "deltasAreAdditive": false
       }
     },
@@ -771,23 +771,23 @@
         "sha256": "08ebb30350fd9acbb1f77fee676af8b6e72cca63f3301799e9cf750c848f67d4"
       },
       "toolsList": {
-        "utf8Bytes": 48512,
-        "tokens": 11572,
-        "sha256": "af1ef7ab6821ab7c483f5a4c05c93496dff475c2245e1ecae9a6d6e40d6d7f55"
+        "utf8Bytes": 48421,
+        "tokens": 11576,
+        "sha256": "44cc109e3e18ffaf1efb83c333ff667545bc82fb0bb494e337f284656fdf15fb"
       },
-      "surfaceTokens": 11777,
+      "surfaceTokens": 11781,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -5,
+      "deltaTokens": -1,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
       "domainInputSchemaTokens": 4917,
       "responseContractCounterfactual": {
-        "projectionTokens": 107,
+        "projectionTokens": 229,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 976,
-        "allTokens": 1188,
+        "allTokens": 1310,
         "deltasAreAdditive": false
       }
     },
@@ -841,23 +841,23 @@
         "sha256": "a5ec864260da79675faf81e1f01144b17cc87a3385053554e4fe6087cd5113bd"
       },
       "toolsList": {
-        "utf8Bytes": 48512,
-        "tokens": 11572,
-        "sha256": "af1ef7ab6821ab7c483f5a4c05c93496dff475c2245e1ecae9a6d6e40d6d7f55"
+        "utf8Bytes": 48421,
+        "tokens": 11576,
+        "sha256": "44cc109e3e18ffaf1efb83c333ff667545bc82fb0bb494e337f284656fdf15fb"
       },
-      "surfaceTokens": 11774,
+      "surfaceTokens": 11778,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -8,
+      "deltaTokens": -4,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
       "domainInputSchemaTokens": 4917,
       "responseContractCounterfactual": {
-        "projectionTokens": 107,
+        "projectionTokens": 229,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 976,
-        "allTokens": 1188,
+        "allTokens": 1310,
         "deltasAreAdditive": false
       }
     },
@@ -878,13 +878,13 @@
         "sha256": "14da64cb2f35ae50a2b39775480defcccd39d731ec9d78360f757db03b899ab3"
       },
       "toolsList": {
-        "utf8Bytes": 3731,
-        "tokens": 799,
-        "sha256": "b2d5bea27bed95d9d01e6ae628d3123b61964f160082426b09876cc51ec99ff3"
+        "utf8Bytes": 3686,
+        "tokens": 803,
+        "sha256": "45ab5b331f3b3e4e360802554dcaab74817b1235ea42879b8c1850649e12c677"
       },
-      "surfaceTokens": 846,
+      "surfaceTokens": 850,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -10936,
+      "deltaTokens": -10932,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_item",
@@ -896,10 +896,10 @@
       "zeroDomainCalls": false,
       "domainInputSchemaTokens": 216,
       "responseContractCounterfactual": {
-        "projectionTokens": 56,
+        "projectionTokens": 128,
         "acknowledgementSentenceTokens": 0,
         "authoritativeResponseTokens": 35,
-        "allTokens": 91,
+        "allTokens": 163,
         "deltasAreAdditive": false
       }
     },
@@ -952,13 +952,13 @@
         "sha256": "68145eb0176b564b5a0493a6bd4ce7c3f7b93672f5bde9633eb92b8a266d485a"
       },
       "toolsList": {
-        "utf8Bytes": 4962,
-        "tokens": 1083,
-        "sha256": "bd12c0b16c5017b3890dda3e31b31b2f88407972be24d78361b3f86868d59247"
+        "utf8Bytes": 4917,
+        "tokens": 1087,
+        "sha256": "f464f83aba2d887eb23fde822e5e8dd0339de1f5c7f0dc9e916698924bcd07bc"
       },
-      "surfaceTokens": 1134,
+      "surfaceTokens": 1138,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -10648,
+      "deltaTokens": -10644,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "create_item",
@@ -969,10 +969,10 @@
       "zeroDomainCalls": false,
       "domainInputSchemaTokens": 408,
       "responseContractCounterfactual": {
-        "projectionTokens": 56,
+        "projectionTokens": 128,
         "acknowledgementSentenceTokens": 0,
         "authoritativeResponseTokens": 35,
-        "allTokens": 91,
+        "allTokens": 163,
         "deltasAreAdditive": false
       }
     },
@@ -1026,23 +1026,23 @@
         "sha256": "b3ed097c061255e8f3b66a3294edd11981663020613d0d36b878fa92b513642a"
       },
       "toolsList": {
-        "utf8Bytes": 48512,
-        "tokens": 11572,
-        "sha256": "af1ef7ab6821ab7c483f5a4c05c93496dff475c2245e1ecae9a6d6e40d6d7f55"
+        "utf8Bytes": 48421,
+        "tokens": 11576,
+        "sha256": "44cc109e3e18ffaf1efb83c333ff667545bc82fb0bb494e337f284656fdf15fb"
       },
-      "surfaceTokens": 11776,
+      "surfaceTokens": 11780,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -6,
+      "deltaTokens": -2,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
       "domainInputSchemaTokens": 4917,
       "responseContractCounterfactual": {
-        "projectionTokens": 107,
+        "projectionTokens": 229,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 976,
-        "allTokens": 1188,
+        "allTokens": 1310,
         "deltasAreAdditive": false
       }
     },
@@ -1096,23 +1096,23 @@
         "sha256": "58f1ce221e3da5752adcfce8962aadfa26c2b2528224b74e6648c384c30ef358"
       },
       "toolsList": {
-        "utf8Bytes": 48512,
-        "tokens": 11572,
-        "sha256": "af1ef7ab6821ab7c483f5a4c05c93496dff475c2245e1ecae9a6d6e40d6d7f55"
+        "utf8Bytes": 48421,
+        "tokens": 11576,
+        "sha256": "44cc109e3e18ffaf1efb83c333ff667545bc82fb0bb494e337f284656fdf15fb"
       },
-      "surfaceTokens": 11777,
+      "surfaceTokens": 11781,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -5,
+      "deltaTokens": -1,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
       "domainInputSchemaTokens": 4917,
       "responseContractCounterfactual": {
-        "projectionTokens": 107,
+        "projectionTokens": 229,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 976,
-        "allTokens": 1188,
+        "allTokens": 1310,
         "deltasAreAdditive": false
       }
     },
@@ -1201,23 +1201,23 @@
         "sha256": "6f8244dfdcafb9174939bf82bd59cfad5c4fef8d7f12f8cc1d1487266c2308a7"
       },
       "toolsList": {
-        "utf8Bytes": 48512,
-        "tokens": 11572,
-        "sha256": "af1ef7ab6821ab7c483f5a4c05c93496dff475c2245e1ecae9a6d6e40d6d7f55"
+        "utf8Bytes": 48421,
+        "tokens": 11576,
+        "sha256": "44cc109e3e18ffaf1efb83c333ff667545bc82fb0bb494e337f284656fdf15fb"
       },
-      "surfaceTokens": 11774,
+      "surfaceTokens": 11778,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -8,
+      "deltaTokens": -4,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
       "domainInputSchemaTokens": 4917,
       "responseContractCounterfactual": {
-        "projectionTokens": 107,
+        "projectionTokens": 229,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 976,
-        "allTokens": 1188,
+        "allTokens": 1310,
         "deltasAreAdditive": false
       }
     },
@@ -1345,23 +1345,23 @@
         "sha256": "e4464c93b68994cc9c57e821e9c7fc81ad003737ad0f92877549c363b4fd40ab"
       },
       "toolsList": {
-        "utf8Bytes": 48512,
-        "tokens": 11572,
-        "sha256": "af1ef7ab6821ab7c483f5a4c05c93496dff475c2245e1ecae9a6d6e40d6d7f55"
+        "utf8Bytes": 48421,
+        "tokens": 11576,
+        "sha256": "44cc109e3e18ffaf1efb83c333ff667545bc82fb0bb494e337f284656fdf15fb"
       },
-      "surfaceTokens": 11776,
+      "surfaceTokens": 11780,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -6,
+      "deltaTokens": -2,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
       "domainInputSchemaTokens": 4917,
       "responseContractCounterfactual": {
-        "projectionTokens": 107,
+        "projectionTokens": 229,
         "acknowledgementSentenceTokens": 210,
         "authoritativeResponseTokens": 976,
-        "allTokens": 1188,
+        "allTokens": 1310,
         "deltasAreAdditive": false
       }
     },
@@ -2394,8 +2394,8 @@
       "name": "fts_search",
       "whole": {
         "baselineTokens": 1011,
-        "afterTokens": 227,
-        "deltaTokens": -784
+        "afterTokens": 231,
+        "deltaTokens": -780
       },
       "fields": {
         "name": {
@@ -2418,12 +2418,12 @@
             "marginalTokens": 774
           },
           "after": {
-            "serializedTokens": 118,
-            "marginalTokens": 119
+            "serializedTokens": 122,
+            "marginalTokens": 123
           },
           "delta": {
-            "serializedTokens": -655,
-            "marginalTokens": -655
+            "serializedTokens": -651,
+            "marginalTokens": -651
           }
         },
         "inputSchema": {
@@ -3542,19 +3542,19 @@
       {
         "roleId": "plan-advance",
         "transcripts": 51,
-        "currentTokensPerTranscript": 846,
+        "currentTokensPerTranscript": 850,
         "baselineTokensPerTranscript": 11782,
-        "savingTokensPerTranscript": 10936,
-        "currentWeightedTokens": 43146,
+        "savingTokensPerTranscript": 10932,
+        "currentWeightedTokens": 43350,
         "baselineWeightedTokens": 600882
       },
       {
         "roleId": "plan-reviewer",
         "transcripts": 42,
-        "currentTokensPerTranscript": 1134,
+        "currentTokensPerTranscript": 1138,
         "baselineTokensPerTranscript": 11782,
-        "savingTokensPerTranscript": 10648,
-        "currentWeightedTokens": 47628,
+        "savingTokensPerTranscript": 10644,
+        "currentWeightedTokens": 47796,
         "baselineWeightedTokens": 494844
       },
       {
@@ -3594,10 +3594,10 @@
         "baselineWeightedTokens": 23564
       }
     ],
-    "currentWeightedTokens": 261370,
+    "currentWeightedTokens": 261742,
     "baselineWeightedTokens": 4206174,
-    "savingWeightedTokens": 3944804,
-    "currentMeanTokensPerTranscript": 732.1288515406162,
+    "savingWeightedTokens": 3944432,
+    "currentMeanTokensPerTranscript": 733.1708683473389,
     "baselineMeanTokensPerTranscript": 11782
   },
   "transportOnlyOverhead": {
@@ -3802,19 +3802,19 @@
     "ledgerCallingProfiles": [
       {
         "profileName": "full",
-        "remainingG93AttributableTokens": 1188
+        "remainingG93AttributableTokens": 1310
       },
       {
         "profileName": "non-dispatch",
-        "remainingG93AttributableTokens": 997
+        "remainingG93AttributableTokens": 1119
       },
       {
         "profileName": "advance",
-        "remainingG93AttributableTokens": 1188
+        "remainingG93AttributableTokens": 1310
       },
       {
         "profileName": "begin",
-        "remainingG93AttributableTokens": 1188
+        "remainingG93AttributableTokens": 1310
       },
       {
         "profileName": "implement-conflict-resolver",
@@ -3830,15 +3830,15 @@
       },
       {
         "profileName": "implement/advance",
-        "remainingG93AttributableTokens": 1188
+        "remainingG93AttributableTokens": 1310
       },
       {
         "profileName": "implement/start",
-        "remainingG93AttributableTokens": 1188
+        "remainingG93AttributableTokens": 1310
       },
       {
         "profileName": "investigate",
-        "remainingG93AttributableTokens": 1188
+        "remainingG93AttributableTokens": 1310
       },
       {
         "profileName": "investigate-explorer",
@@ -3850,27 +3850,27 @@
       },
       {
         "profileName": "investigate/advance",
-        "remainingG93AttributableTokens": 1188
+        "remainingG93AttributableTokens": 1310
       },
       {
         "profileName": "plan",
-        "remainingG93AttributableTokens": 1188
+        "remainingG93AttributableTokens": 1310
       },
       {
         "profileName": "plan-advance",
-        "remainingG93AttributableTokens": 91
+        "remainingG93AttributableTokens": 163
       },
       {
         "profileName": "plan-reviewer",
-        "remainingG93AttributableTokens": 91
+        "remainingG93AttributableTokens": 163
       },
       {
         "profileName": "plan/advance",
-        "remainingG93AttributableTokens": 1188
+        "remainingG93AttributableTokens": 1310
       },
       {
         "profileName": "plan/follow-up",
-        "remainingG93AttributableTokens": 1188
+        "remainingG93AttributableTokens": 1310
       },
       {
         "profileName": "planners",
@@ -3878,7 +3878,7 @@
       },
       {
         "profileName": "research",
-        "remainingG93AttributableTokens": 1188
+        "remainingG93AttributableTokens": 1310
       },
       {
         "profileName": "research-experimenter",
@@ -3890,14 +3890,14 @@
       },
       {
         "profileName": "research/advance",
-        "remainingG93AttributableTokens": 1188
+        "remainingG93AttributableTokens": 1310
       },
       {
         "profileName": "reviewers",
         "remainingG93AttributableTokens": 19
       }
     ],
-    "maximumRemainingG93AttributableTokens": 1188
+    "maximumRemainingG93AttributableTokens": 1310
   },
   "budgets": {
     "tokenizerMatches": true,

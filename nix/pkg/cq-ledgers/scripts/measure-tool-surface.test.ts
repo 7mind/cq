@@ -124,7 +124,9 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // schemas and purpose-built response contracts to full-parent profiles.
     // 1177 -> 1188: revision fencing adds revise_operator_action and the
     // expected_revision schemas while retaining concise response contracts.
-    maximumRemainingG93AttributableTokens: 1188,
+    // 1188 -> 1310: complement adds its exact envelope and the compact /
+    // complement partition invariant to every item-bearing read.
+    maximumRemainingG93AttributableTokens: 1310,
     corpusMedianResponseSavingTokens: 1461,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,
