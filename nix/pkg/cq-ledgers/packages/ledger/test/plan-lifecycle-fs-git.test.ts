@@ -117,7 +117,6 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     const input = claimInput("recover-claim", "R".repeat(22));
     const first = await store.claimPlan(input);
     expect(first.ok).toBe(true);
-    const finalGoals = await fs.readFile(goalsPath, "utf8");
     const state = await fs.readFile(path.join(docs, "plan-lifecycle.json"), "utf8");
     expect(state).not.toContain(input.ownerFenceToken);
 
