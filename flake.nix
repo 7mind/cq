@@ -1514,6 +1514,7 @@ EOF
 
               nativeBuildInputs = [ pkgs.bun ];
               nativeCheckInputs = [
+                pkgs.git
                 pkgs.postgresql
                 pkgs.postgresqlTestHook
                 pkgs.python3
@@ -1630,6 +1631,31 @@ PY
                   'archive-versus-create/reopen/legacy-nonterminal-unarchive serializes in both winner orderings'; do
                   if ! grep -F "(pass)" "$storeLog" | grep -Fq "$expectedLeg"; then
                     echo "T1858 store-postgres run did not execute: $expectedLeg" >&2
+                    exit 1
+                  fi
+                done
+
+                migrationLog="$NIX_BUILD_TOP/t1960-migration.log"
+                if ! ${pkgs.bun}/bin/bun test \
+                  packages/ledger/test/workset-root-migration.test.ts \
+                  packages/ledger/test/workset-postgres-schema-divergence.test.ts \
+                  packages/cq-cli/test/migrate-postgres.test.ts \
+                  packages/ledger/test/postgres-tenant-bootstrap.test.ts \
+                  > "$migrationLog" 2>&1; then
+                  cat "$migrationLog" >&2
+                  exit 1
+                fi
+                cat "$migrationLog"
+                if grep -Fq '(skip)' "$migrationLog"; then
+                  echo "T1960 PostgreSQL migration/divergence run skipped" >&2
+                  exit 1
+                fi
+                for expectedLeg in \
+                  'treats a tenant carrying only roots as non-empty' \
+                  'migrates the xdg primary into postgres' \
+                  'preserves roots and epoch in the divergence shadow'; do
+                  if ! grep -F "(pass)" "$migrationLog" | grep -Fq "$expectedLeg"; then
+                    echo "T1960 PostgreSQL migration run did not execute: $expectedLeg" >&2
                     exit 1
                   fi
                 done

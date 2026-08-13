@@ -415,7 +415,8 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
                 `refusing to reinitialise a POPULATED ledger: ${divergent.join(", ")} ledger(s) ` +
                   `diverged from canon, and onSchemaDivergence='backup-reinit' would DESTROY ` +
                   `${userRows.items} item(s), ${userRows.archivedItems} archived item(s) and ` +
-                  `${userRows.archivePointers} archive pointer(s) at ${this.dbPath}. No data was ` +
+                  `${userRows.archivePointers} archive pointer(s), plus ` +
+                  `${userRows.worksetState} substantive workset root state at ${this.dbPath}. No data was ` +
                   `touched. Either resolve the divergence (the usual cause is a build whose canon ` +
                   `differs from the persisted schema — deploy/rebuild so they match), or, if you ` +
                   `genuinely intend to erase this store, pass ` +
@@ -436,9 +437,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
               db.exec("DELETE FROM items");
               db.exec("DELETE FROM groups");
               db.exec("DELETE FROM ledgers");
-              db.query(
-                "UPDATE workset_state SET epoch = 0, roots_json = ? WHERE id = 1",
-              ).run("[]");
+              db.query("UPDATE workset_state SET epoch = 0, roots_json = ? WHERE id = 1").run("[]");
             })();
             this.bootstrapCanonicalRows(
               db,
@@ -574,6 +573,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     items: number;
     archivedItems: number;
     archivePointers: number;
+    worksetState: number;
     total: number;
   } {
     const scalar = (sql: string): number => {
@@ -590,11 +590,22 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     const items = itemsRow === null ? 0 : itemsRow.c;
     const archivedItems = scalar("SELECT count(*) AS c FROM archived_items");
     const archivePointers = scalar("SELECT count(*) AS c FROM archive_pointers");
+    const worksetRow = db
+      .query<{ roots_json: string; epoch: number }, []>(
+        "SELECT roots_json, epoch FROM workset_state WHERE id = 1",
+      )
+      .get();
+    const worksetState =
+      worksetRow !== null &&
+      (worksetRow.epoch !== 0 || (JSON.parse(worksetRow.roots_json) as unknown[]).length !== 0)
+        ? 1
+        : 0;
     return {
       items,
       archivedItems,
       archivePointers,
-      total: items + archivedItems + archivePointers,
+      worksetState,
+      total: items + archivedItems + archivePointers + worksetState,
     };
   }
 
@@ -751,7 +762,12 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       .query(
         "SELECT endpoint, call_count, bytes_in, bytes_out FROM mcp_usage_stats ORDER BY endpoint",
       )
-      .all() as Array<{ endpoint: string; call_count: number; bytes_in: number; bytes_out: number }>;
+      .all() as Array<{
+      endpoint: string;
+      call_count: number;
+      bytes_in: number;
+      bytes_out: number;
+    }>;
     const endpoints = rows.map((row) => ({
       name: row.endpoint,
       callCount: row.call_count,
@@ -1013,9 +1029,10 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
    * non-terminal in their own ledger, as sorted `<ledger>:<id>` refs. */
   private nonTerminalChildren(milestoneId: string): string[] {
     const blockers: string[] = [];
-    const schemas = this.db()
-      .query("SELECT name, schema_json FROM ledgers")
-      .all() as Array<{ name: string; schema_json: string }>;
+    const schemas = this.db().query("SELECT name, schema_json FROM ledgers").all() as Array<{
+      name: string;
+      schema_json: string;
+    }>;
     const childQuery = this.db().query(
       "SELECT id, status FROM items WHERE ledger = ? AND milestone_id = ?",
     );
@@ -1041,13 +1058,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     const item = immediateWriteTransaction(this.db(), () => {
       if (contender !== null) this.reachPlanSerializationBoundary(contender);
       const shim = this.singleItemShim(ledgerId, itemId);
-      assertRawPlanUpdateAllowed(
-        (id) => this.loadLedger(id),
-        ledgerId,
-        shim,
-        itemId,
-        patch,
-      );
+      assertRawPlanUpdateAllowed((id) => this.loadLedger(id), ledgerId, shim, itemId, patch);
       const precondition = this.statusChangePrecondition(ledgerId, shim, itemId, patch);
       const x = applyUpdateItem(
         shim,
@@ -1146,11 +1157,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         assertManagedGoalTransitionAllowed(source, toStatus);
       }
       if (ledgerId === TASKS_LEDGER) {
-        assertManagedTaskTransitionAllowed(
-          (id) => this.loadLedger(id),
-          source,
-          toStatus,
-        );
+        assertManagedTaskTransitionAllowed((id) => this.loadLedger(id), source, toStatus);
       }
       const x = applyReopenItem(shim, itemId, toStatus, this.now());
       // D267/T1856: resurrection respects parent liveness.
@@ -1550,9 +1557,10 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     }
     // D283: archived existence for plan-publish G80 parity with applyCreateItem.
     const archivedIds = new Map<string, Set<string>>();
-    const archivedRows = this.db()
-      .query("SELECT ledger, id FROM archived_items")
-      .all() as Array<{ ledger: string; id: string }>;
+    const archivedRows = this.db().query("SELECT ledger, id FROM archived_items").all() as Array<{
+      ledger: string;
+      id: string;
+    }>;
     for (const row of archivedRows) {
       let set = archivedIds.get(row.ledger);
       if (set === undefined) {
@@ -2074,11 +2082,11 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       // FILES — T529 materialises ArchiveContent from archived_items rows —
       // but the ArchivePointer shape carries the fs-convention locator.
       archivePointers: pointerRows.map((p): ArchivePointer => ({
-          id: p.id,
-          path: `./archive/${name}/${p.id}.md`,
-          summary: p.summary,
-          title: p.title,
-          status: p.status,
+        id: p.id,
+        path: `./archive/${name}/${p.id}.md`,
+        summary: p.summary,
+        title: p.title,
+        status: p.status,
       })),
     };
   }

@@ -25,6 +25,8 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 import {
   createLedgerStore,
+  createFsWorksetStore,
+  createGitObjectWorksetStore,
   openLegacyLedgerStore,
   ledgerTreePaths,
   resolveLedgerBackend,
@@ -36,6 +38,7 @@ import {
   MILESTONES_LEDGER,
   TASKS_LEDGER,
   XDG_DB_FILENAME,
+  readWorksetRootsEpoch,
   type ArchiveContent,
   type Item,
 } from "@cq/ledger";
@@ -45,7 +48,9 @@ import { EXIT_REFUSED } from "../src/confirm.js";
 const exec = promisify(execFile);
 const dirs: string[] = [];
 afterAll(async () => {
-  await Promise.all(dirs.map((d) => fs.rm(d, { recursive: true, force: true }).catch(() => undefined)));
+  await Promise.all(
+    dirs.map((d) => fs.rm(d, { recursive: true, force: true }).catch(() => undefined)),
+  );
 });
 
 const silentConfirm: ConfirmIo = {
@@ -94,6 +99,8 @@ interface SeededState {
   archivedMilestoneId: string;
   tasksArchive: ArchiveContent;
   milestonesArchive: ArchiveContent;
+  roots: string[];
+  rootEpoch: number;
 }
 
 /**
@@ -126,12 +133,25 @@ async function seedLegacy(root: string, backend?: "fs" | "git-object"): Promise<
 
     const tasksArchive = await seeded.store.fetchArchive(TASKS_LEDGER, doneMilestone.id);
     const milestonesArchive = await seeded.store.fetchArchive(MILESTONES_LEDGER, doneMilestone.id);
+    const resolvedBackend = backend ?? resolveLedgerBackend(root).backend;
+    const workset =
+      resolvedBackend === "git-object"
+        ? await createGitObjectWorksetStore({
+            repoRoot: root,
+            ref: resolveLedgerBackend(root).branch,
+          })
+        : createFsWorksetStore({ root });
+    const roots = ["tasks:T-seeded", "goals:G-seeded"];
+    await workset.setRoots(roots);
+    const rootState = await workset.setRoots(roots);
     return {
       milestone,
       item,
       archivedMilestoneId: doneMilestone.id,
       tasksArchive,
       milestonesArchive,
+      roots,
+      rootEpoch: rootState.epoch,
     };
   } finally {
     await seeded.store.dispose();
@@ -170,6 +190,13 @@ async function assertMigratedParity(root: string, seed: SeededState): Promise<vo
     expect(await migrated.store.fetchArchive(MILESTONES_LEDGER, seed.archivedMilestoneId)).toEqual(
       seed.milestonesArchive,
     );
+    const workset = migrated.store as typeof migrated.store & {
+      worksetStore(): ReturnType<SqliteLedgerStore["worksetStore"]>;
+    };
+    expect(await readWorksetRootsEpoch(workset.worksetStore())).toEqual({
+      roots: seed.roots,
+      epoch: seed.rootEpoch,
+    });
 
     // read_log parity — logsDir is resolved the SAME way `read_log` resolves
     // it (resolveLogsDir(projectKey)); a bare probe store reads it directly
@@ -277,9 +304,7 @@ describe("cq migrate (T504)", () => {
     expect(second.exitCode).toBe(EXIT_USAGE);
   });
 
-  it(
-    "git-object backend: migrates state + logs, leaves the orphan ref byte-identical, second run refuses",
-    async () => {
+  it("git-object backend: migrates state + logs, leaves the orphan ref byte-identical, second run refuses", async () => {
     const root = await gitRepo("cq-migrate-git-");
     await fs.writeFile(
       path.join(root, "cq.toml"),
@@ -312,9 +337,7 @@ describe("cq migrate (T504)", () => {
     // A second run without --yes refuses (the backend is already xdg).
     const second = await dispatch(["migrate", "--cwd", root], recordingIo());
     expect(second.exitCode).toBe(EXIT_USAGE);
-  },
-    30_000,
-  );
+  }, 30_000);
 
   it("refuses to clobber a non-empty xdg target without --yes, writing nothing; --yes proceeds", async () => {
     const root = await gitRepo("cq-migrate-nonempty-");

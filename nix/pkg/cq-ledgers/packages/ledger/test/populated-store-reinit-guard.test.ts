@@ -29,7 +29,9 @@ import { MILESTONES_AMBIENT_ID } from "../src/constants.js";
 /** Make one canonical ledger's persisted schema diverge from canon. */
 function injectDivergence(dbPath: string): void {
   const db = new Database(dbPath);
-  const row = db.query<{ schema_json: string }, []>("SELECT schema_json FROM ledgers WHERE name = 'tasks'").get();
+  const row = db
+    .query<{ schema_json: string }, []>("SELECT schema_json FROM ledgers WHERE name = 'tasks'")
+    .get();
   if (row === null) throw new Error("fixture: tasks ledger missing");
   const schema = JSON.parse(row.schema_json) as { statusValues?: string[] };
   schema.statusValues = [...(schema.statusValues ?? []), "a-status-canon-does-not-know"];
@@ -116,6 +118,25 @@ describe("D170: backup-reinit refuses to destroy a POPULATED store", () => {
     await store.dispose();
   });
 
+  it("explicit consent backs up root-only state before resetting it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "d170-gate-root-consent-"));
+    const dbPath = join(dir, "ledger.db");
+    const seed = new SqliteLedgerStore({ dbPath });
+    await seed.init();
+    await seed.worksetStore().setRoots(["tasks:T-root"]);
+    await seed.dispose();
+    injectDivergence(dbPath);
+
+    const store = new SqliteLedgerStore({
+      dbPath,
+      onSchemaDivergence: "backup-reinit",
+      allowDestructiveReinitOfPopulatedStore: true,
+    });
+    await store.init();
+    expect(await store.worksetStore().snapshot()).toEqual({ roots: [], epoch: 0 });
+    await store.dispose();
+  });
+
   it("rechecks population after administrative exclusion before destructive reinit", async () => {
     const dir = mkdtempSync(join(tmpdir(), "d170-gate-concurrent-"));
     const dbPath = join(dir, "ledger.db");
@@ -160,7 +181,9 @@ describe("D170: backup-reinit refuses to destroy a POPULATED store", () => {
 
     // Default policy — must still be the schema-divergence abort, not the new gate.
     const store = new SqliteLedgerStore({ dbPath });
-    await expect(store.init()).rejects.toThrow(/different schema than their canonical bootstrap schema/);
+    await expect(store.init()).rejects.toThrow(
+      /different schema than their canonical bootstrap schema/,
+    );
     expect(countItems(dbPath)).toBe(before);
   });
 });

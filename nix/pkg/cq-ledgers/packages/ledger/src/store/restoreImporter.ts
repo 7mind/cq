@@ -48,9 +48,7 @@ import {
   type PlanLifecycleDumpState,
 } from "./planLifecycleDump.js";
 import { WORKSET_ROOTS_FILENAME } from "./ledgerArtifacts.js";
-import {
-  parseWorksetRootsDocument,
-} from "../worksetStoreGit.js";
+import { parseWorksetRootsDocument } from "../worksetStoreGit.js";
 import {
   WorksetAdmissionError,
   isTrustedWorksetManagementAuthority,
@@ -202,8 +200,7 @@ export function parseBackupDump(dump: readonly BackupDumpFile[]): ParsedDump {
     planLifecycleSrc === undefined ? null : parsePlanLifecycleDump(planLifecycleSrc);
 
   const worksetSrc = byPath.get(WORKSET_ROOTS_FILENAME);
-  const worksetRoots =
-    worksetSrc === undefined ? null : parseWorksetRootsDocument(worksetSrc);
+  const worksetRoots = worksetSrc === undefined ? null : parseWorksetRootsDocument(worksetSrc);
 
   return { registry, ledgers, archives, logs, planLifecycle, worksetRoots };
 }
@@ -377,9 +374,10 @@ export async function restoreDumpToXdg(opts: {
           // unrestricted empty roots at epoch 0. Keep the singleton row (do not
           // DELETE) so the surrounding exclusive hold's admit_generation bump
           // still has a target.
-          db.query(
-            "UPDATE workset_state SET epoch = ?, roots_json = ? WHERE id = 1",
-          ).run(restoredRoots.epoch, JSON.stringify(restoredRoots.roots.slice()));
+          db.query("UPDATE workset_state SET epoch = ?, roots_json = ? WHERE id = 1").run(
+            restoredRoots.epoch,
+            JSON.stringify(restoredRoots.roots.slice()),
+          );
         });
         if (opts.logsDir !== null) {
           const logsPrefix = `${LEDGER_LOGS_DIRNAME}/`;
@@ -411,7 +409,14 @@ export async function restoreDumpToXdg(opts: {
  * consults. Backend-agnostic (reads only the public `LedgerStore` surface),
  * even though restore itself only targets the xdg backend.
  */
-export function isXdgPrimaryEmpty(store: LedgerStore): boolean {
+export async function isXdgPrimaryEmpty(store: LedgerStore): Promise<boolean> {
+  const rootsExporter = store as LedgerStore & {
+    exportWorksetRootsState?: () => string | Promise<string>;
+  };
+  if (rootsExporter.exportWorksetRootsState !== undefined) {
+    const roots = parseWorksetRootsDocument(await rootsExporter.exportWorksetRootsState());
+    if (roots.epoch !== 0 || roots.roots.length !== 0) return false;
+  }
   const names = store.enumerate();
   if (names.length > CANONICAL_LEDGERS.length) return false;
 

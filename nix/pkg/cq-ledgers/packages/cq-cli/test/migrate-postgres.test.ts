@@ -7,8 +7,8 @@
  *   - the postgres tenant carries identical items (fetch/archive parity) and
  *     the log round-trips via readLog;
  *   - cq.toml now says `[ledger] backend = "postgres"`;
- *   - the original xdg `ledger.db` is byte-identical before and after
- *     (read-only source);
+ *   - the original xdg data is logically identical after the durable
+ *     administrative admission closes;
  *   - re-running refuses (the tenant is now non-empty).
  *
  * PLUS an offline refusal test (`--to postgres` with backend != 'xdg') that
@@ -33,10 +33,13 @@ import {
   PostgresLedgerStore,
   resolveDisplayName,
   resolveLedgerBackend,
+  resolveLogsDir,
   resolveProjectKey,
   resolveStateDir,
+  SqliteLedgerStore,
   TASKS_LEDGER,
   XDG_DB_FILENAME,
+  readWorksetRootsEpoch,
   type ArchiveContent,
   type Item,
 } from "@cq/ledger";
@@ -47,7 +50,9 @@ const PG_URL = process.env.CQ_TEST_PG_URL;
 
 const dirs: string[] = [];
 afterAll(async () => {
-  await Promise.all(dirs.map((d) => fs.rm(d, { recursive: true, force: true }).catch(() => undefined)));
+  await Promise.all(
+    dirs.map((d) => fs.rm(d, { recursive: true, force: true }).catch(() => undefined)),
+  );
 });
 
 const silentConfirm: ConfirmIo = {
@@ -127,6 +132,8 @@ interface SeededState {
   archivedMilestoneId: string;
   tasksArchive: ArchiveContent;
   milestonesArchive: ArchiveContent;
+  roots: string[];
+  rootEpoch: number;
 }
 
 /**
@@ -157,13 +164,24 @@ async function seedXdg(root: string): Promise<SeededState> {
     await resolved.store.archiveMilestone(doneMilestone.id, "finished for T581 test");
 
     const tasksArchive = await resolved.store.fetchArchive(TASKS_LEDGER, doneMilestone.id);
-    const milestonesArchive = await resolved.store.fetchArchive(MILESTONES_LEDGER, doneMilestone.id);
+    const milestonesArchive = await resolved.store.fetchArchive(
+      MILESTONES_LEDGER,
+      doneMilestone.id,
+    );
+    const workset = resolved.store as typeof resolved.store & {
+      worksetStore(): ReturnType<PostgresLedgerStore["worksetStore"]>;
+    };
+    const roots = ["ideas:I-seeded", "goals:G-seeded"];
+    await workset.worksetStore().setRoots(roots);
+    const rootState = await workset.worksetStore().setRoots(roots);
     return {
       milestone,
       item,
       archivedMilestoneId: doneMilestone.id,
       tasksArchive,
       milestonesArchive,
+      roots,
+      rootEpoch: rootState.epoch,
     };
   } finally {
     await resolved.store.dispose();
@@ -217,84 +235,102 @@ describe.skipIf(!PG_URL)("cq migrate --to postgres (T581) — live", () => {
     await pool?.close();
   });
 
-  it(
-    "migrates the xdg primary into postgres: item/archive/log parity, cq.toml flips, xdg ledger.db untouched, re-run refuses",
-    async () => {
-      const root = await gitRepo("cq-migrate-pg-");
-      const seed = await seedXdg(root);
-      await seedLogs(root);
+  it("migrates the xdg primary into postgres: item/archive/log parity, cq.toml flips, xdg source data intact, re-run refuses", async () => {
+    const root = await gitRepo("cq-migrate-pg-");
+    const seed = await seedXdg(root);
+    await seedLogs(root);
 
-      const projectKey = await resolveProjectKey({ repoRoot: root, projectId: null });
-      const dbPath = path.join(resolveStateDir(projectKey), XDG_DB_FILENAME);
-      const dbBytesBefore = await fs.readFile(dbPath);
+    const projectKey = await resolveProjectKey({ repoRoot: root, projectId: null });
+    const dbPath = path.join(resolveStateDir(projectKey), XDG_DB_FILENAME);
+    const io = recordingIo();
+    const outcome = await dispatch(["migrate", "--cwd", root, "--to", "postgres"], io);
+    expect(outcome.exitCode).toBe(0);
+    expect(io.errs).toEqual([]);
+    expect(io.outs.join("\n")).toContain("INTACT");
 
-      const io = recordingIo();
-      const outcome = await dispatch(["migrate", "--cwd", root, "--to", "postgres"], io);
-      expect(outcome.exitCode).toBe(0);
-      expect(io.errs).toEqual([]);
-      expect(io.outs.join("\n")).toContain("UNTOUCHED");
+    // cq.toml flipped.
+    expect(resolveLedgerBackend(root).backend).toBe("postgres");
 
-      // cq.toml flipped.
-      expect(resolveLedgerBackend(root).backend).toBe("postgres");
-
-      // The xdg source ledger.db is byte-identical before/after (read-only source).
-      const dbBytesAfter = await fs.readFile(dbPath);
-      expect(dbBytesAfter.equals(dbBytesBefore)).toBe(true);
-
-      // Item / archive / log parity on the postgres tenant.
-      const displayName = resolveDisplayName({
-        projectName: null,
-        projectId: null,
-        repoBasename: path.basename(root),
-        projectKey,
+    // Durable admission may change SQLite's physical bytes. The source's
+    // logical data remains exact and no admission survives migration.
+    const source = new SqliteLedgerStore({ dbPath, logsDir: resolveLogsDir(projectKey) });
+    await source.init();
+    try {
+      expect(source.fetchItem(TASKS_LEDGER, seed.item.id)).toEqual(seed.item);
+      expect(source.fetchMilestone(seed.milestone.id).milestone).toEqual(seed.milestone);
+      expect(await source.fetchArchive(TASKS_LEDGER, seed.archivedMilestoneId)).toEqual(
+        seed.tasksArchive,
+      );
+      expect(await source.fetchArchive(MILESTONES_LEDGER, seed.archivedMilestoneId)).toEqual(
+        seed.milestonesArchive,
+      );
+      expect(await readWorksetRootsEpoch(source.worksetStore())).toEqual({
+        roots: seed.roots,
+        epoch: seed.rootEpoch,
       });
-      const migrated = new PostgresLedgerStore({
-        pool: openPgPool(PG_URL!),
-        projectKey,
-        displayName,
+      expect(source.worksetStore().activeAdmissionCount()).toBe(0);
+      expect((await source.readLog(SESSION_LOG_REL)).content).toBe(SESSION_LOG_BODY);
+      expect((await source.readLog(RAW_LOG_REL)).content).toBe(RAW_LOG_BODY);
+    } finally {
+      await source.dispose();
+    }
+
+    // Item / archive / log parity on the postgres tenant.
+    const displayName = resolveDisplayName({
+      projectName: null,
+      projectId: null,
+      repoBasename: path.basename(root),
+      projectKey,
+    });
+    const migrated = new PostgresLedgerStore({
+      pool: openPgPool(PG_URL!),
+      projectKey,
+      displayName,
+    });
+    await migrated.init();
+    try {
+      expect(migrated.fetchItem(TASKS_LEDGER, seed.item.id)).toEqual(seed.item);
+      expect(migrated.fetchMilestone(seed.milestone.id).milestone).toEqual(seed.milestone);
+      expect(await migrated.fetchArchive(TASKS_LEDGER, seed.archivedMilestoneId)).toEqual(
+        seed.tasksArchive,
+      );
+      expect(await migrated.fetchArchive(MILESTONES_LEDGER, seed.archivedMilestoneId)).toEqual(
+        seed.milestonesArchive,
+      );
+      expect(await readWorksetRootsEpoch(migrated.worksetStore())).toEqual({
+        roots: seed.roots,
+        epoch: seed.rootEpoch,
       });
-      await migrated.init();
-      try {
-        expect(migrated.fetchItem(TASKS_LEDGER, seed.item.id)).toEqual(seed.item);
-        expect(migrated.fetchMilestone(seed.milestone.id).milestone).toEqual(seed.milestone);
-        expect(await migrated.fetchArchive(TASKS_LEDGER, seed.archivedMilestoneId)).toEqual(
-          seed.tasksArchive,
-        );
-        expect(await migrated.fetchArchive(MILESTONES_LEDGER, seed.archivedMilestoneId)).toEqual(
-          seed.milestonesArchive,
-        );
 
-        const md = await migrated.readLog(SESSION_LOG_REL);
-        expect(md.content).toBe(SESSION_LOG_BODY);
-        const raw = await migrated.readLog(RAW_LOG_REL);
-        expect(raw.content).toBe(RAW_LOG_BODY);
+      const md = await migrated.readLog(SESSION_LOG_REL);
+      expect(md.content).toBe(SESSION_LOG_BODY);
+      const raw = await migrated.readLog(RAW_LOG_REL);
+      expect(raw.content).toBe(RAW_LOG_BODY);
 
-        // Counters continue without collision: the next createItem must
-        // allocate T3 (T1/T2 already used by the xdg seed), not collide.
-        const next = await migrated.createItem(TASKS_LEDGER, seed.milestone.id, {
-          status: "planned",
-          fields: { headline: "post-migrate task" },
-        });
-        expect(next.id).toBe("T3");
-      } finally {
-        await migrated.dispose();
-      }
+      // Counters continue without collision: the next createItem must
+      // allocate T3 (T1/T2 already used by the xdg seed), not collide.
+      const next = await migrated.createItem(TASKS_LEDGER, seed.milestone.id, {
+        status: "planned",
+        fields: { headline: "post-migrate task" },
+      });
+      expect(next.id).toBe("T3");
+    } finally {
+      await migrated.dispose();
+    }
 
-      // Re-running refuses because the TENANT is non-empty (not merely
-      // because cq.toml no longer names 'xdg'): revert cq.toml to 'xdg' —
-      // the xdg source is still on disk, untouched — to isolate the
-      // non-empty-tenant refusal from the earlier "backend must be xdg"
-      // guard, then attempt the postgres leg again against the SAME
-      // (now non-empty) tenant.
-      await fs.writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "xdg"\n');
-      const secondIo = recordingIo();
-      const second = await dispatch(["migrate", "--cwd", root, "--to", "postgres"], secondIo);
-      expect(second.exitCode).toBe(EXIT_USAGE);
-      expect(secondIo.errs.join("\n")).toContain("non-empty");
-      // The refusal reverted nothing further and wrote nothing: cq.toml
-      // still names 'xdg' (the refusal never reaches setLedgerBackend).
-      expect(resolveLedgerBackend(root).backend).toBe("xdg");
-    },
-    30_000,
-  );
+    // Re-running refuses because the TENANT is non-empty (not merely
+    // because cq.toml no longer names 'xdg'): revert cq.toml to 'xdg' —
+    // the xdg source data is still on disk — to isolate the
+    // non-empty-tenant refusal from the earlier "backend must be xdg"
+    // guard, then attempt the postgres leg again against the SAME
+    // (now non-empty) tenant.
+    await fs.writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "xdg"\n');
+    const secondIo = recordingIo();
+    const second = await dispatch(["migrate", "--cwd", root, "--to", "postgres"], secondIo);
+    expect(second.exitCode).toBe(EXIT_USAGE);
+    expect(secondIo.errs.join("\n")).toContain("non-empty");
+    // The refusal reverted nothing further and wrote nothing: cq.toml
+    // still names 'xdg' (the refusal never reaches setLedgerBackend).
+    expect(resolveLedgerBackend(root).backend).toBe("xdg");
+  }, 30_000);
 });

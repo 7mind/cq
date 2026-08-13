@@ -35,9 +35,9 @@
  *    `xdg` at read time — `resolvePostgresDsn` only reads `.url` + env, never
  *    `.backend`.
  *
- * Either leg's source is LEFT IN PLACE UNTOUCHED — read-only access throughout
- * (the `.cq/` files / orphan ref / xdg `ledger.db` are byte-identical before
- * and after); the user deletes the old primary manually once confident.
+ * Either leg's source data remains in place so recovery remains possible. The
+ * workset records the durable administrative admission used for exclusion;
+ * the user deletes the old primary manually once confident.
  *
  * Safety:
  *   - leg 1: `backend = 'xdg'` already (and no `--to postgres`) → refuse (no
@@ -61,6 +61,8 @@ import * as path from "node:path";
 import {
   buildBackupDump,
   createLedgerStore,
+  createFsWorksetStore,
+  createGitObjectWorksetStore,
   ensureSchema,
   ensureStateDir,
   GitPlumbing,
@@ -83,6 +85,7 @@ import {
   SqliteLedgerStore,
   XDG_DB_FILENAME,
   type BackupDumpFile,
+  type WorksetStore,
 } from "@cq/ledger";
 import { loadConfig } from "@cq/config";
 import { confirmDestructive, type ConfirmIo } from "./confirm.js";
@@ -116,6 +119,24 @@ export interface MigrateArgs {
    * default legacy -> xdg leg. `null` (the flag absent) is the default leg.
    */
   to: "postgres" | null;
+}
+
+async function runUnderMigrationAdmission<T>(
+  workset: WorksetStore,
+  body: () => Promise<T>,
+): Promise<T> {
+  let result: T | undefined;
+  let completed = false;
+  await workset.runAdministrative({
+    kind: "backend-migration",
+    authority: mintWorksetManagementAuthority(),
+    destructivePhase: async () => {
+      result = await body();
+      completed = true;
+    },
+  });
+  if (!completed) throw new Error("backend migration admission completed without a result");
+  return result as T;
 }
 
 /**
@@ -252,90 +273,96 @@ async function runMigrateLegacyToXdg(args: MigrateArgs, io: MigrateIo): Promise<
     }
   }
 
-  // --- Read the ENTIRE legacy source (state + logs) before any target write.
-  // openLegacyLedgerStore (the legacy read path, T505/K117) constructs +
-  // init()s the legacy store (fs reads the tracked .cq/ tree; git-object
-  // reads the orphan ref) — init() is the same idempotent load every server
-  // start performed; it never rewrites existing content. buildBackupDump
-  // reads via the PUBLIC store surface only. The resolved source backend is
-  // passed explicitly: for the cq.toml-less case above, resolution alone
-  // would yield the K117 'xdg' default, not the fs source.
-  const legacy = await openLegacyLedgerStore(
-    args.cwd,
-    backend === "fs" || backend === "git-object" ? backend : undefined,
-  );
-  let dump: BackupDumpFile[];
-  try {
-    const fsLogsDir =
-      backend === "fs"
-        ? path.join(args.cwd, LEDGER_STORAGE_DIRNAME, LEDGER_LOGS_DIRNAME)
-        : null;
-    dump = await buildBackupDump(legacy.store, fsLogsDir);
-    if (backend === "git-object") {
-      dump.push(...(await readGitObjectLogs(args.cwd, branch)));
-    }
-  } finally {
-    await legacy.store.dispose();
-  }
-
-  // --- Resolve the xdg TARGET the flipped backend will use — the same
-  // projectKey -> stateDir/logsDir derivation as createLedgerStore's xdg
-  // branch (which is unusable here: cq.toml still names the legacy backend).
-  // A ProjectKeyResolutionError propagates as the fail-fast (Q246).
-  const config = loadConfig(args.cwd);
-  const projectId = config?.ledger?.projectId ?? null;
-  const projectKey = await resolveProjectKey({ repoRoot: args.cwd, projectId });
-  const stateDir = resolveStateDir(projectKey);
-  await ensureStateDir(stateDir);
-  const dbPath = path.join(stateDir, XDG_DB_FILENAME);
-  const logsDir = resolveLogsDir(projectKey);
-
-  // --- Refuse to clobber a NON-EMPTY target without confirmation. The probe
-  // store's init() is the same idempotent bootstrap the xdg backend runs on
-  // every start; isXdgPrimaryEmpty treats that canonical state as empty.
-  const probe = new SqliteLedgerStore({ dbPath, logsDir });
-  await probe.init();
-  const targetEmpty = isXdgPrimaryEmpty(probe);
-  await probe.dispose();
-  if (!targetEmpty) {
-    const decision = await confirmDestructive(
-      args.yes,
-      `Migrate will OVERWRITE the non-empty xdg primary at ${dbPath}? [y/N] `,
-      `cq migrate: refusing to overwrite the non-empty xdg primary at ${dbPath} without ` +
-        `confirmation; re-run with --yes to migrate non-interactively.`,
-      io.confirm,
+  const sourceWorkset =
+    backend === "git-object"
+      ? await createGitObjectWorksetStore({ repoRoot: args.cwd, ref: branch })
+      : createFsWorksetStore({ root: args.cwd });
+  return runUnderMigrationAdmission(sourceWorkset, async () => {
+    // --- Read the ENTIRE legacy source (state + logs) before any target write.
+    // openLegacyLedgerStore (the legacy read path, T505/K117) constructs +
+    // init()s the legacy store (fs reads the tracked .cq/ tree; git-object
+    // reads the orphan ref) — init() is the same idempotent load every server
+    // start performed; it never rewrites existing content. buildBackupDump
+    // reads via the PUBLIC store surface only. The resolved source backend is
+    // passed explicitly: for the cq.toml-less case above, resolution alone
+    // would yield the K117 'xdg' default, not the fs source.
+    const legacy = await openLegacyLedgerStore(
+      args.cwd,
+      backend === "fs" || backend === "git-object" ? backend : undefined,
     );
-    if (!decision.proceed) {
-      return { exitCode: decision.exitCode };
+    let dump: BackupDumpFile[];
+    try {
+      const fsLogsDir =
+        backend === "fs" ? path.join(args.cwd, LEDGER_STORAGE_DIRNAME, LEDGER_LOGS_DIRNAME) : null;
+      dump = await buildBackupDump(legacy.store, fsLogsDir);
+      if (backend === "git-object") {
+        dump.push(...(await readGitObjectLogs(args.cwd, branch)));
+      }
+    } finally {
+      await legacy.store.dispose();
     }
-  }
 
-  // --- Import, then flip the backend. The legacy source is never written.
-  const summary = await restoreDumpToXdg({
-    dbPath,
-    logsDir,
-    dump,
-    authority: mintWorksetManagementAuthority(),
-    administrativeKind: "backend-migration",
+    // --- Resolve the xdg TARGET the flipped backend will use — the same
+    // projectKey -> stateDir/logsDir derivation as createLedgerStore's xdg
+    // branch (which is unusable here: cq.toml still names the legacy backend).
+    // A ProjectKeyResolutionError propagates as the fail-fast (Q246).
+    const config = loadConfig(args.cwd);
+    const projectId = config?.ledger?.projectId ?? null;
+    const projectKey = await resolveProjectKey({ repoRoot: args.cwd, projectId });
+    const stateDir = resolveStateDir(projectKey);
+    await ensureStateDir(stateDir);
+    const dbPath = path.join(stateDir, XDG_DB_FILENAME);
+    const logsDir = resolveLogsDir(projectKey);
+
+    // --- Refuse to clobber a NON-EMPTY target without confirmation. The probe
+    // store's init() is the same idempotent bootstrap the xdg backend runs on
+    // every start; isXdgPrimaryEmpty treats that canonical state as empty.
+    const probe = new SqliteLedgerStore({ dbPath, logsDir });
+    await probe.init();
+    const targetEmpty = await isXdgPrimaryEmpty(probe);
+    await probe.dispose();
+    if (!targetEmpty) {
+      const decision = await confirmDestructive(
+        args.yes,
+        `Migrate will OVERWRITE the non-empty xdg primary at ${dbPath}? [y/N] `,
+        `cq migrate: refusing to overwrite the non-empty xdg primary at ${dbPath} without ` +
+          `confirmation; re-run with --yes to migrate non-interactively.`,
+        io.confirm,
+      );
+      if (!decision.proceed) {
+        return { exitCode: decision.exitCode };
+      }
+    }
+
+    // --- Import, then flip the backend. The legacy source is never written.
+    const summary = await restoreDumpToXdg({
+      dbPath,
+      logsDir,
+      dump,
+      authority: mintWorksetManagementAuthority(),
+      administrativeKind: "backend-migration",
+    });
+    await setLedgerBackend(args.cwd, "xdg");
+
+    const legacyLocation =
+      backend === "fs"
+        ? `${path.join(args.cwd, LEDGER_STORAGE_DIRNAME)}${path.sep} (the tracked files)`
+        : `the orphan ref refs/heads/${branch}`;
+    io.out(
+      `cq migrate: migrated the legacy '${backend}' ledger at ${args.cwd} into the out-of-tree xdg primary`,
+    );
+    io.out(
+      `  ledgers:  ${summary.ledgerCount} (items + archives, ${summary.fileCount} dump file(s))`,
+    );
+    io.out(`  logs:     ${summary.logCount} artifact(s)`);
+    io.out(`  state:    ${dbPath}`);
+    io.out(`  logs dir: ${logsDir}`);
+    io.out(`  ${CQ_CONFIG_FILENAME}:  [ledger] backend = "xdg"`);
+    io.out(
+      `  legacy data left UNTOUCHED at ${legacyLocation} — delete it manually once confident.`,
+    );
+    return { exitCode: 0 };
   });
-  await setLedgerBackend(args.cwd, "xdg");
-
-  const legacyLocation =
-    backend === "fs"
-      ? `${path.join(args.cwd, LEDGER_STORAGE_DIRNAME)}${path.sep} (the tracked files)`
-      : `the orphan ref refs/heads/${branch}`;
-  io.out(
-    `cq migrate: migrated the legacy '${backend}' ledger at ${args.cwd} into the out-of-tree xdg primary`,
-  );
-  io.out(`  ledgers:  ${summary.ledgerCount} (items + archives, ${summary.fileCount} dump file(s))`);
-  io.out(`  logs:     ${summary.logCount} artifact(s)`);
-  io.out(`  state:    ${dbPath}`);
-  io.out(`  logs dir: ${logsDir}`);
-  io.out(`  ${CQ_CONFIG_FILENAME}:  [ledger] backend = "xdg"`);
-  io.out(
-    `  legacy data left UNTOUCHED at ${legacyLocation} — delete it manually once confident.`,
-  );
-  return { exitCode: 0 };
 }
 
 /**
@@ -389,76 +416,83 @@ async function runMigrateXdgToPostgres(args: MigrateArgs, io: MigrateIo): Promis
         `a projectKey/dbPath/logsDir (backend='${resolved.backend}').`,
     );
   }
+  const sourceWorkset = (
+    resolved.store as typeof resolved.store & { worksetStore(): WorksetStore }
+  ).worksetStore();
   try {
-    dump = await buildBackupDump(resolved.store, logsDir);
+    return await runUnderMigrationAdmission(sourceWorkset, async () => {
+      dump = await buildBackupDump(resolved.store, logsDir);
+
+      // --- Resolve the postgres TARGET connection. cq.toml still names 'xdg' at
+      // this point (the flip happens only after a successful import) —
+      // resolvePostgresDsn only reads `.url` + env, never `.backend`, so this is
+      // safe to call before the flip. A ProjectKeyResolutionError already
+      // propagated above (via createLedgerStore); PostgresDsnResolutionError
+      // propagates here the same fail-fast way.
+      const config = loadConfig(args.cwd);
+      if (config === null || config.ledger === null) {
+        // Unreachable: the explicit-xdg guard above already required a cq.toml
+        // with a [ledger].backend key (a DEFAULT-resolved xdg refuses with
+        // EXIT_USAGE, K117) — cq.toml would have had to change concurrently
+        // between the two reads.
+        throw new Error(
+          `cq migrate --to postgres: [ledger] backend='xdg' resolved at ${args.cwd}, but reloading ` +
+            `cq.toml found no [ledger] table — cq.toml may have changed concurrently; re-run.`,
+        );
+      }
+      const ledgerConfig = config.ledger;
+      const resolution = resolvePostgresDsn(ledgerConfig, process.env);
+      const dsn = resolution.kind === "dsn" ? resolution.dsn : "";
+      const displayName = resolveDisplayName({
+        projectName: config.project?.name,
+        projectId: ledgerConfig.projectId,
+        repoBasename: path.basename(args.cwd),
+        projectKey,
+      });
+
+      const pool = openPgPool(dsn);
+      try {
+        await ensureSchema(pool);
+
+        // --- Refuse to clobber a NON-EMPTY tenant — UNCONDITIONALLY (no --yes
+        // override), mirroring restoreDumpToPostgres's own no-merge contract.
+        const targetEmpty = await isPostgresTenantEmpty(pool, projectKey);
+        if (!targetEmpty) {
+          io.err(
+            `cq migrate --to postgres: refusing — the postgres tenant "${displayName}" ` +
+              `(project_key ${projectKey}) already holds data beyond the canonical bootstrap state; ` +
+              `migrate never merges into a non-empty target.`,
+          );
+          return { exitCode: EXIT_USAGE };
+        }
+
+        // --- Import, then flip the backend. The xdg source is never written.
+        const summary = await restoreDumpToPostgres({
+          pool,
+          projectKey,
+          displayName,
+          dump,
+          authority: mintWorksetManagementAuthority(),
+          administrativeKind: "backend-migration",
+        });
+        await setLedgerBackend(args.cwd, "postgres");
+
+        io.out(
+          `cq migrate: migrated the xdg primary at ${args.cwd} into postgres tenant "${displayName}" ` +
+            `(project_key ${projectKey})`,
+        );
+        io.out(
+          `  ledgers:  ${summary.ledgerCount} (items + archives, ${summary.fileCount} dump file(s))`,
+        );
+        io.out(`  logs:     ${summary.logCount} artifact(s)`);
+        io.out(`  ${CQ_CONFIG_FILENAME}:  [ledger] backend = "postgres"`);
+        io.out(`  xdg primary data left INTACT at ${dbPath} — delete it manually once confident.`);
+        return { exitCode: 0 };
+      } finally {
+        await pool.close();
+      }
+    });
   } finally {
     await resolved.store.dispose();
-  }
-
-  // --- Resolve the postgres TARGET connection. cq.toml still names 'xdg' at
-  // this point (the flip happens only after a successful import) —
-  // resolvePostgresDsn only reads `.url` + env, never `.backend`, so this is
-  // safe to call before the flip. A ProjectKeyResolutionError already
-  // propagated above (via createLedgerStore); PostgresDsnResolutionError
-  // propagates here the same fail-fast way.
-  const config = loadConfig(args.cwd);
-  if (config === null || config.ledger === null) {
-    // Unreachable: the explicit-xdg guard above already required a cq.toml
-    // with a [ledger].backend key (a DEFAULT-resolved xdg refuses with
-    // EXIT_USAGE, K117) — cq.toml would have had to change concurrently
-    // between the two reads.
-    throw new Error(
-      `cq migrate --to postgres: [ledger] backend='xdg' resolved at ${args.cwd}, but reloading ` +
-        `cq.toml found no [ledger] table — cq.toml may have changed concurrently; re-run.`,
-    );
-  }
-  const ledgerConfig = config.ledger;
-  const resolution = resolvePostgresDsn(ledgerConfig, process.env);
-  const dsn = resolution.kind === "dsn" ? resolution.dsn : "";
-  const displayName = resolveDisplayName({
-    projectName: config.project?.name,
-    projectId: ledgerConfig.projectId,
-    repoBasename: path.basename(args.cwd),
-    projectKey,
-  });
-
-  const pool = openPgPool(dsn);
-  try {
-    await ensureSchema(pool);
-
-    // --- Refuse to clobber a NON-EMPTY tenant — UNCONDITIONALLY (no --yes
-    // override), mirroring restoreDumpToPostgres's own no-merge contract.
-    const targetEmpty = await isPostgresTenantEmpty(pool, projectKey);
-    if (!targetEmpty) {
-      io.err(
-        `cq migrate --to postgres: refusing — the postgres tenant "${displayName}" ` +
-          `(project_key ${projectKey}) already holds data beyond the canonical bootstrap state; ` +
-          `migrate never merges into a non-empty target.`,
-      );
-      return { exitCode: EXIT_USAGE };
-    }
-
-    // --- Import, then flip the backend. The xdg source is never written.
-    const summary = await restoreDumpToPostgres({
-      pool,
-      projectKey,
-      displayName,
-      dump,
-      authority: mintWorksetManagementAuthority(),
-      administrativeKind: "backend-migration",
-    });
-    await setLedgerBackend(args.cwd, "postgres");
-
-    io.out(
-      `cq migrate: migrated the xdg primary at ${args.cwd} into postgres tenant "${displayName}" ` +
-        `(project_key ${projectKey})`,
-    );
-    io.out(`  ledgers:  ${summary.ledgerCount} (items + archives, ${summary.fileCount} dump file(s))`);
-    io.out(`  logs:     ${summary.logCount} artifact(s)`);
-    io.out(`  ${CQ_CONFIG_FILENAME}:  [ledger] backend = "postgres"`);
-    io.out(`  xdg primary left UNTOUCHED at ${dbPath} — delete it manually once confident.`);
-    return { exitCode: 0 };
-  } finally {
-    await pool.close();
   }
 }

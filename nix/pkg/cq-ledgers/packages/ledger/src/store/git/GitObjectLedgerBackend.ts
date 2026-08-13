@@ -35,6 +35,8 @@ import { GitPersistence } from "./GitPersistence.js";
 import type { ReadLogResult } from "../../mcp/readLog.js";
 import { DEFAULT_ON_SCHEMA_DIVERGENCE, LEDGER_STORAGE_DIRNAME } from "../../constants.js";
 import type { PlanLifecycleSerializationBoundaryHook } from "../planLifecycleSerialization.js";
+import { createGitObjectWorksetStore } from "../../worksetStoreGit.js";
+import { serializeWorksetRootsDocument } from "../../worksetStoreGit.js";
 
 /** Default orphan branch the ledger tree lives on (short name, no `refs/`). */
 const DEFAULT_BRANCH = "cq-ledger";
@@ -88,6 +90,7 @@ export class GitObjectLedgerBackend
   implements LedgerStore
 {
   private readonly repoRoot: string;
+  private readonly branch: string;
   private readonly locksDir: string;
   /** The seam, retained so init() can seed the orphan ref before super.init(). */
   private readonly gitPersistence: GitPersistence;
@@ -108,6 +111,7 @@ export class GitObjectLedgerBackend
       planSerializationBoundaryHook: opts.planSerializationBoundaryHook ?? null,
     });
     this.repoRoot = repoRoot;
+    this.branch = branch;
     this.locksDir = path.join(repoRoot, LEDGER_STORAGE_DIRNAME, ".locks");
     this.gitPersistence = persistence;
   }
@@ -132,6 +136,15 @@ export class GitObjectLedgerBackend
    */
   async readLog(relPath: string): Promise<ReadLogResult> {
     return this.gitPersistence.readLog(relPath);
+  }
+
+  /** Emit the workset roots/epoch stored on this backend's orphan ref. */
+  async exportWorksetRootsState(): Promise<string> {
+    const workset = await createGitObjectWorksetStore({
+      repoRoot: this.repoRoot,
+      ref: this.branch,
+    });
+    return serializeWorksetRootsDocument(await workset.snapshot());
   }
 
   // ---------------------------------------------------------------------------

@@ -75,6 +75,13 @@ import { createPostgresWorksetStore } from "./worksetStore.js";
  * empty too (zero `ledgers` rows).
  */
 export async function isPostgresTenantEmpty(pool: SQL, projectKey: string): Promise<boolean> {
+  const worksetRows = await pool<Array<{ roots_json: string; epoch: number }>>`
+    SELECT roots_json, epoch FROM workset_roots WHERE project_key = ${projectKey}
+  `;
+  for (const row of worksetRows) {
+    const roots = JSON.parse(row.roots_json) as unknown[];
+    if (row.epoch !== 0 || roots.length !== 0) return false;
+  }
   const ledgerRows = await pool<Array<{ name: string }>>`
     SELECT name FROM ledgers WHERE project_key = ${projectKey}
   `;
@@ -311,7 +318,11 @@ export async function restoreDumpToPostgres(opts: {
   // Peer invalidation: NOTIFY after the exclusive administrative restore commits.
   await notifyProjectChanged(pool, pk);
 
-  return { fileCount: opts.dump.length, ledgerCount: parsed.ledgers.size, logCount: parsed.logs.length };
+  return {
+    fileCount: opts.dump.length,
+    ledgerCount: parsed.ledgers.size,
+    logCount: parsed.logs.length,
+  };
 }
 
 /** Insert one active item row (used by the groups loop above). */
