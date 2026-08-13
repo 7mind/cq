@@ -13,6 +13,7 @@ import {
   type AttestationNamespace,
 } from "@cq/config";
 import {
+  nodeSupervisedWorkerGateRunner,
   prepareManagedWorktree,
   type SupervisedWorkerGateRunRequest,
   type SupervisedWorkerGateRunResult,
@@ -570,5 +571,83 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     await expect(first).resolves.toMatchObject({ state: "result-stored" });
     await expect(second).rejects.toThrow("live prepared dispatch");
     expect(runner.requests).toHaveLength(1);
+  });
+
+  // Regression D326: host-gate admission belongs to the supervisor, not the child budget.
+  test("D326 lets a second real gate wait beyond its child budget and run once after the first [Behavioral-Active, Effectual-GoodCommunication]", async () => {
+    const root = await fs.mkdtemp(path.join(tmpdir(), "t2082-gate-admission-"));
+    roots.push(root);
+    const bin = path.join(root, "bin");
+    const lock = path.join(root, "exclusive-gate");
+    const releaseFirst = path.join(root, "release-first");
+    await fs.mkdir(bin, { recursive: true });
+    const cq = path.join(bin, "cq");
+    await fs.writeFile(
+      cq,
+      [
+        "#!/bin/sh",
+        "set -eu",
+        'while ! mkdir "$CQ_T2082_GATE_LOCK" 2>/dev/null; do sleep 0.01; done',
+        'trap \'rmdir "$CQ_T2082_GATE_LOCK" 2>/dev/null || true\' EXIT INT TERM',
+        'while test "$#" -gt 0; do',
+        '  if test "$1" = --command-cwd; then cd "$2"; break; fi',
+        "  shift",
+        "done",
+        "bun run check",
+        "",
+      ].join("\n"),
+    );
+    await fs.chmod(cq, 0o700);
+    const makeWorker = async (name: "a" | "b") => {
+      const worktreePath = path.join(root, name);
+      const commandCwd = path.join(worktreePath, "nix", "pkg", "cq-ledgers");
+      await fs.mkdir(commandCwd, { recursive: true });
+      await git(worktreePath, ["init", "-q"]);
+      await fs.writeFile(
+        path.join(commandCwd, "package.json"),
+        `${JSON.stringify({ private: true, scripts: { check: "./gate.sh" } }, null, 2)}\n`,
+      );
+      const started = path.join(root, `${name}-started`);
+      const gate = path.join(commandCwd, "gate.sh");
+      await fs.writeFile(
+        gate,
+        name === "a"
+          ? `#!/bin/sh\nprintf x >> ${JSON.stringify(started)}\nwhile test ! -e ${JSON.stringify(releaseFirst)}; do sleep 0.01; done\nprintf '1 pass\\n0 fail\\n'\n`
+          : `#!/bin/sh\nprintf x >> ${JSON.stringify(started)}\nprintf '1 pass\\n0 fail\\n'\n`,
+      );
+      await fs.chmod(gate, 0o700);
+      return { worktreePath, started };
+    };
+    const first = await makeWorker("a");
+    const second = await makeWorker("b");
+    const priorPath = process.env["PATH"];
+    const priorLock = process.env["CQ_T2082_GATE_LOCK"];
+    process.env["PATH"] = `${bin}${path.delimiter}${priorPath ?? ""}`;
+    process.env["CQ_T2082_GATE_LOCK"] = lock;
+    try {
+      const firstRun = nodeSupervisedWorkerGateRunner.run({
+        worktreePath: first.worktreePath,
+        childCancelAt: new Date(Date.now() + 5_000).toISOString(),
+      });
+      while (!(await Bun.file(first.started).exists())) await Bun.sleep(5);
+      const secondRun = nodeSupervisedWorkerGateRunner.run({
+        worktreePath: second.worktreePath,
+        childCancelAt: new Date(Date.now() + 100).toISOString(),
+      });
+      await Bun.sleep(150);
+      expect(await Bun.file(second.started).exists()).toBe(false);
+      await fs.writeFile(releaseFirst, "release\n");
+      await expect(Promise.all([firstRun, secondRun])).resolves.toMatchObject([
+        { gateExitCode: 0, passCount: 1, failCount: 0 },
+        { gateExitCode: 0, passCount: 1, failCount: 0 },
+      ]);
+      expect(await fs.readFile(first.started, "utf8")).toBe("x");
+      expect(await fs.readFile(second.started, "utf8")).toBe("x");
+    } finally {
+      if (priorPath === undefined) delete process.env["PATH"];
+      else process.env["PATH"] = priorPath;
+      if (priorLock === undefined) delete process.env["CQ_T2082_GATE_LOCK"];
+      else process.env["CQ_T2082_GATE_LOCK"] = priorLock;
+    }
   });
 });

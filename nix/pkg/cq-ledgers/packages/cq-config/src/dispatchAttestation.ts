@@ -850,6 +850,7 @@ export interface AuthorizedSupervisedWorkerGateContext extends AuthorizedDispatc
   readonly roleId: "implement-worker";
   readonly surface: "codex";
   readonly promptProvenance: DispatchPromptProvenance;
+  readonly dispatchBaseCommit: string;
   readonly startingCommit: string;
 }
 
@@ -2015,6 +2016,15 @@ export function supervisedWorkerGateContextForResultCapability(
   if (row.input === null || typeof row.input !== "object" || Array.isArray(row.input)) {
     throw new AttestationContractError("row.input", "implement-worker input must be an object");
   }
+  const dispatchBaseCommit = (row.input as Readonly<Record<string, DispatchJSONValue>>)[
+    "baseCommit"
+  ];
+  if (typeof dispatchBaseCommit !== "string" || !/^[0-9a-f]{40}$/.test(dispatchBaseCommit)) {
+    throw new AttestationContractError(
+      "row.input.baseCommit",
+      "Codex implement-worker supervision requires a full dispatch base commit",
+    );
+  }
   const startingCommit = (row.input as Readonly<Record<string, DispatchJSONValue>>)[
     "startingCommit"
   ];
@@ -2029,6 +2039,7 @@ export function supervisedWorkerGateContextForResultCapability(
     roleId: "implement-worker" as const,
     surface: "codex" as const,
     promptProvenance: row.promptProvenance,
+    dispatchBaseCommit,
     startingCommit,
   });
 }

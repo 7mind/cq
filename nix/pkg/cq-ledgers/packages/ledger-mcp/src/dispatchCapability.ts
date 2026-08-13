@@ -574,6 +574,18 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         gateContext ?? (await resolveDispatchGitEffectBindingOn(options.backend, input));
       const store = async () => {
         let output = input.output;
+        // An unbound dispatch has no trusted parent that could have minted this evidence.
+        if (
+          gateContext === undefined &&
+          output !== null &&
+          typeof output === "object" &&
+          !Array.isArray(output) &&
+          Object.hasOwn(output, "supervisedGateEvidence")
+        ) {
+          throw new Error(
+            "caller-minted supervised gate evidence requires a runner-owned Git/gate binding",
+          );
+        }
         if (binding?.roleId === "implement-worker") {
           const evidence = brokerResultEvidence(output);
           if (evidence !== undefined) {
@@ -604,13 +616,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                   : { runner: options.supervisedWorkerGateRunner }),
               },
             );
-          } else if (
-            output !== null &&
-            typeof output === "object" &&
-            !Array.isArray(output) &&
-            Object.hasOwn(output, "supervisedGateEvidence")
-          ) {
-            throw new Error("caller-minted supervised gate evidence is forbidden");
           }
         } else if (binding?.roleId === "implement-conflict-resolver") {
           const evidence = conflictResultEvidence(output);

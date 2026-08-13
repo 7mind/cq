@@ -422,6 +422,96 @@ describe("dispatch-bound Git change capability", () => {
     );
   });
 
+  // Regression D316: a lost pre-store report stranded its durable broker receipts.
+  test("D316 reprepares with an exact immutable prior-generation receipt chain [Behavioral-Active, Effectual-GoodCommunication]", async () => {
+    const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), "t2082-reprepare-receipts-"));
+    roots.push(repositoryRoot);
+    await git(repositoryRoot, ["init", "-q"]);
+    await fs.writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
+    await git(repositoryRoot, ["add", "file.txt"]);
+    await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
+    const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+    const stateDir = path.join(repositoryRoot, ".manager-state");
+    const managed = await prepareManagedWorktree(
+      { repositoryRoot, taskId: "T2082", baseCommit },
+      { stateDir, skipInstall: true, bunWorkspaceRoot: repositoryRoot },
+    );
+    if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
+    const capability = createDispatchCapability({
+      backend: new InMemoryAttestationBackend(new InMemoryAttestationStore(NAMESPACE)),
+      promptArtifactStore: artifactStore("codex"),
+      repositoryRoot,
+      worktreeStateDir: stateDir,
+      now: () => "2026-08-13T09:00:00.000Z",
+      randomBytes: sequentialDispatchRandomBytes(96),
+    });
+    const workerInput = (round: number, startingCommit: string) => ({
+      taskId: "T2082",
+      headline: "recover a lost broker report",
+      description: "inherit prior-generation receipts without synthetic Git effects",
+      acceptance: "the retry receives the exact durable receipt chain",
+      worktreePath: managed.handle.absolutePath,
+      branch: managed.handle.branch,
+      baseCommit,
+      round,
+      startingCommit,
+      ...(round === 0 ? {} : { priorResultCommit: startingCommit }),
+    });
+    const first = await capability.prepare({
+      roleId: "implement-worker",
+      input: workerInput(0, baseCommit),
+      idempotencyKey: "T2082-lost-report-r0",
+      timeoutMs: 600_000,
+      expectedChild: { childId: "lost-r0", runId: "lost-r0" },
+    });
+    if (!first.accepted || first.prepared.gitChangeCapability === undefined) {
+      throw new Error("first worker did not receive a Git capability");
+    }
+    await capability.fetchInput({
+      ...first.handle,
+      inputCapability: first.prepared.inputCapability,
+    });
+    await fs.writeFile(path.join(managed.handle.absolutePath, "file.txt"), "recovered\n");
+    if (capability.gitCommit === undefined) throw new Error("git_commit was not wired");
+    const receipt = await capability.gitCommit({
+      ...first.handle,
+      gitChangeCapability: first.prepared.gitChangeCapability,
+      operationId: "T2082-lost-r0-change",
+      expectedHead: baseCommit,
+      message: "durable change before lost report",
+      changes: [
+        {
+          kind: "modify",
+          path: "file.txt",
+          oldState: { mode: "100644", digest: sha256("before\n") },
+          newState: { mode: "100644", digest: sha256("recovered\n") },
+        },
+      ],
+    });
+    await capability.abort({ ...first.handle, reason: "parent-lost" });
+
+    const second = await capability.prepare({
+      roleId: "implement-worker",
+      input: workerInput(1, receipt.newHead),
+      idempotencyKey: "T2082-lost-report-r1",
+      timeoutMs: 600_000,
+      expectedChild: { childId: "lost-r1", runId: "lost-r1" },
+      reprepareOf: first.handle,
+    });
+    if (!second.accepted) throw new Error(second.detail);
+    expect(second.handle).toEqual({
+      attestationId: first.handle.attestationId,
+      generation: first.handle.generation + 1,
+    });
+    const materialized = await capability.fetchInput({
+      ...second.handle,
+      inputCapability: second.prepared.inputCapability,
+    });
+    expect((materialized.input as Record<string, unknown>)["inheritedGitReceipts"]).toEqual([
+      receipt,
+    ]);
+  });
+
   test("serializes broker commits against result storage, abort, and guarded release in peer processes", async () => {
     for (const contender of ["store-result", "abort", "release"] as const) {
       const fixture = await durableDispatch(contender);

@@ -279,7 +279,8 @@ export async function superviseImplementWorkerGate(
     throw new Error(`supervised gate requires a clean result tree: ${status}`);
   }
   for (const [label, ancestor] of [
-    ["base", context.baseCommit],
+    ["managed base", context.baseCommit],
+    ["dispatch base", context.dispatchBaseCommit],
     ["starting", context.startingCommit],
   ] as const) {
     const ancestry = await git(context.worktreePath, [
@@ -295,7 +296,7 @@ export async function superviseImplementWorkerGate(
   const baseVerification = record(output["baseVerification"] ?? null, "baseVerification");
   if (
     baseVerification["status"] !== "verified" ||
-    baseVerification["baseCommit"] !== context.baseCommit ||
+    baseVerification["baseCommit"] !== context.dispatchBaseCommit ||
     baseVerification["headCommit"] !== resultCommit
   ) {
     throw new Error("worker baseVerification does not match the exact supervised tip");
@@ -345,7 +346,7 @@ export async function superviseImplementWorkerGate(
     taskId: context.taskId,
     worktreePath: context.worktreePath,
     branch: context.branch,
-    baseCommit: context.baseCommit,
+    baseCommit: context.dispatchBaseCommit,
     startingCommit: context.startingCommit,
     resultCommit,
     clean: true,

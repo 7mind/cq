@@ -50,6 +50,35 @@ const REVIEW_TOOLS = [
 ] as const;
 const PLUMBING_TOOLS = ["fetch_dispatch_input", "store_result"] as const;
 
+function trustedStoredStream(finalMessage: string): string {
+  const acknowledgement = {
+    state: "result-stored",
+    result: {
+      state: "result-stored",
+      ...HANDLE,
+      storedAt: "2026-08-13T09:00:00.000Z",
+      outputDigest: "sha256:trusted-store-observation",
+    },
+  } as const;
+  return [
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "mcp_tool_call",
+        server: "ledger",
+        tool: "store_result",
+        result: {
+          content: [{ type: "text", text: JSON.stringify(acknowledgement) }],
+        },
+      },
+    }),
+    JSON.stringify({
+      type: "item.completed",
+      item: { type: "agent_message", text: finalMessage },
+    }),
+  ].join("\n");
+}
+
 describe("T1330 Codex role process boundary", () => {
   test("delivers the worker Git capability only in the private stdin envelope", () => {
     const plan = createCodexRoleBoundaryPlan({
@@ -167,16 +196,7 @@ describe("T1330 Codex role process boundary", () => {
         resultCapability?: typeof RESULT_CAPABILITY;
       };
       const intercepted = interceptCodexRoleBoundaryResult(
-        [
-          JSON.stringify({ type: "thread.started", thread_id: "child-thread" }),
-          JSON.stringify({
-            type: "item.completed",
-            item: {
-              type: "agent_message",
-              text: JSON.stringify(HANDLE),
-            },
-          }),
-        ].join("\n"),
+        trustedStoredStream(JSON.stringify(HANDLE)),
         HANDLE,
       );
       return {
@@ -335,13 +355,7 @@ describe("T1330 Codex role process boundary", () => {
 
     expect(
       interceptCodexRoleBoundaryResult(
-        JSON.stringify({
-          type: "item.completed",
-          item: {
-            type: "agent_message",
-            text: JSON.stringify(acknowledgement),
-          },
-        }),
+        trustedStoredStream(JSON.stringify(acknowledgement)),
         HANDLE,
       ),
     ).toEqual(HANDLE);
@@ -373,21 +387,17 @@ describe("T1330 Codex role process boundary", () => {
   test("D228 projects the exact nested result-stored acknowledgement to the dispatch handle", () => {
     expect(
       interceptCodexRoleBoundaryResult(
-        JSON.stringify({
-          type: "item.completed",
-          item: {
-            type: "agent_message",
-            text: JSON.stringify({
+        trustedStoredStream(
+          JSON.stringify({
+            state: "result-stored",
+            result: {
               state: "result-stored",
-              result: {
-                state: "result-stored",
-                ...HANDLE,
-                storedAt: "2026-07-31T16:55:00.000Z",
-                outputDigest: "sha256:d228",
-              },
-            }),
-          },
-        }),
+              ...HANDLE,
+              storedAt: "2026-07-31T16:55:00.000Z",
+              outputDigest: "sha256:d228",
+            },
+          }),
+        ),
         HANDLE,
       ),
     ).toEqual(HANDLE);
@@ -497,13 +507,50 @@ describe("T1330 Codex role process boundary", () => {
     ).toThrow(/handle-only contract/);
   });
 
+  // Regression D305: a bare child handle used to escape after store_result had aborted.
+  test("D305 requires a matching trusted result-stored observation before releasing a handle [BG]", () => {
+    const abort = {
+      state: "aborted",
+      result: {
+        state: "aborted",
+        ...HANDLE,
+        abortedAt: "2026-08-13T09:00:00.000Z",
+        reason: "invalid-output",
+        details: {
+          roleId: "implement-worker",
+          version: 7,
+          errors: [{ path: "/gitReceipts", message: "expected array" }],
+          summary: "/gitReceipts expected array",
+        },
+      },
+    } as const;
+    const stream = [
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          type: "mcp_tool_call",
+          server: "ledger",
+          tool: "store_result",
+          result: {
+            content: [{ type: "text", text: JSON.stringify(abort) }],
+          },
+        },
+      }),
+      JSON.stringify({
+        type: "item.completed",
+        item: { type: "agent_message", text: JSON.stringify(HANDLE) },
+      }),
+    ].join("\n");
+
+    expect(() => interceptCodexRoleBoundaryResult(stream, HANDLE)).toThrow(
+      /matching trusted result-stored observation/,
+    );
+  });
+
   test("T1536 projects only the exact bare prepared attestation id to its handle", () => {
     expect(
       interceptCodexRoleBoundaryResult(
-        JSON.stringify({
-          type: "item.completed",
-          item: { type: "agent_message", text: HANDLE.attestationId },
-        }),
+        trustedStoredStream(HANDLE.attestationId),
         HANDLE,
       ),
     ).toEqual(HANDLE);

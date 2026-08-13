@@ -856,6 +856,11 @@ export function interceptCodexRoleBoundaryResult(
   }
   const storedAcknowledgement = resultStoredAcknowledgementHandle(finalMessage, expectedHandle);
   if (storedAcknowledgement !== undefined) {
+    if (!observation.matchingResultStoredAcknowledgementPresent) {
+      throw new CodexRoleBoundaryError(
+        "child final message lacks a matching trusted result-stored observation",
+      );
+    }
     return storedAcknowledgement;
   }
   const abortedAcknowledgement = abortedDispatchAcknowledgement(finalMessage, expectedHandle);
@@ -869,6 +874,11 @@ export function interceptCodexRoleBoundaryResult(
     throw new CodexRoleBoundaryError(
       `child final message failed the handle-only contract (${verdict.verdict})`,
       boundaryDiagnostic(observation, verdict.verdict, diagnosticDetailCode(verdict)),
+    );
+  }
+  if (!observation.matchingResultStoredAcknowledgementPresent) {
+    throw new CodexRoleBoundaryError(
+      "child final message lacks a matching trusted result-stored observation",
     );
   }
   return verdict.handle;
