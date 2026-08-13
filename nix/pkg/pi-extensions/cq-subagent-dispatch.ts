@@ -1445,7 +1445,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "implement-worker": {
-    version: 7,
+    version: 8,
     input: [
       {
         required: [
@@ -1462,6 +1462,7 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
           branch: ["string"],
           description: ["string"],
           headline: ["string"],
+          inheritedGitReceipts: ["array"],
           priorCriticism: ["array"],
           priorResultCommit: ["null", "string"],
           resolvedModel: ["string"],
