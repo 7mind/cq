@@ -1,6 +1,16 @@
 import { writeFile } from "node:fs/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import {
+  FsAttestationBackend,
+  exposedLedgerToolsForRole,
+  fetchDispatchInputOn,
+  storeDispatchResultOn,
+} from "@cq/config";
+import {
+  fsAttestationProductionRoot,
+  resolveSingleProjectAttestationNamespace,
+} from "@cq/ledger";
 
 export {};
 
@@ -65,23 +75,38 @@ if (
   throw new Error("Codex reviewer launch lost or widened its scoped capabilities");
 }
 
-const transport = new StdioClientTransport({
-  command: ledgerCommand,
-  args: ledgerArgs,
-  cwd: codexCwd,
-  env: Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined,
+let client: Client | undefined;
+let directBackend: FsAttestationBackend | undefined;
+const listedTools = [...exposedLedgerToolsForRole("implement-reviewer")].sort();
+if (expectedMode === "sandboxed") {
+  const namespace = await resolveSingleProjectAttestationNamespace({
+    construction: "direct",
+    backend: "fs",
+    repoRoot: expectedLedgerRoot,
+    projectId: null,
+  });
+  directBackend = new FsAttestationBackend({
+    namespace,
+    root: fsAttestationProductionRoot(expectedLedgerRoot),
+  });
+} else {
+  const transport = new StdioClientTransport({
+    command: ledgerCommand,
+    args: ledgerArgs,
+    cwd: codexCwd,
+    env: Object.fromEntries(
+      Object.entries(process.env).filter(
+        (entry): entry is [string, string] => entry[1] !== undefined,
+      ),
     ),
-  ),
-  stderr: "pipe",
-});
-const client = new Client(
-  { name: "t2081-packaged-codex-reviewer", version: "0.0.1" },
-  { capabilities: {} },
-);
-await client.connect(transport);
-const listedTools = (await client.listTools()).tools.map(({ name }) => name).sort();
+    stderr: "pipe",
+  });
+  client = new Client(
+    { name: "t2081-packaged-codex-reviewer", version: "0.0.1" },
+    { capabilities: {} },
+  );
+  await client.connect(transport);
+}
 if (listedTools.join(",") !== "fetch_dispatch_input,store_result") {
   throw new Error(`packaged reviewer saw unexpected tools: ${listedTools.join(",")}`);
 }
@@ -96,6 +121,26 @@ function decode(result: unknown): Record<string, unknown> {
 }
 
 async function call(name: string, body: unknown): Promise<Record<string, unknown>> {
+  if (directBackend !== undefined) {
+    const namespace = directBackend.namespace;
+    const now = () => new Date().toISOString();
+    if (name === "fetch_dispatch_input") {
+      return (await fetchDispatchInputOn(
+        directBackend,
+        { namespace, ...(body as Record<string, unknown>) } as never,
+        { now },
+      )) as unknown as Record<string, unknown>;
+    }
+    if (name === "store_result") {
+      return (await storeDispatchResultOn(
+        directBackend,
+        { namespace, ...(body as Record<string, unknown>) } as never,
+        { now },
+      )) as unknown as Record<string, unknown>;
+    }
+    throw new Error(`unsupported direct reviewer operation ${name}`);
+  }
+  if (client === undefined) throw new Error("reviewer MCP client was not initialized");
   const response = await client.callTool({ name, arguments: body as Record<string, unknown> });
   if ((response as { isError?: boolean }).isError === true) {
     throw new Error(`reviewer probe ${name} failed: ${JSON.stringify(response)}`);
@@ -140,6 +185,25 @@ const evidence = input["supervisedGateEvidence"] as Record<string, unknown> | un
 const parentGateAttestation = input["parentGateAttestation"];
 const canonicalGate =
   'cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check';
+const sandboxProbeRef = "refs/heads/t2082-reviewer-sandbox-probe";
+const sandboxProbe = await command(
+  process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git",
+  ["update-ref", sandboxProbeRef, resultCommit],
+  String(expectedWorktree),
+);
+if (sandboxProbe.exitCode === 0) {
+  await command(
+    process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git",
+    ["update-ref", "-d", sandboxProbeRef],
+    String(expectedWorktree),
+  );
+  if (expectedMode === "sandboxed") {
+    throw new Error("sandboxed reviewer unexpectedly received Git metadata write authority");
+  }
+} else if (expectedMode === "non-sandboxed") {
+  throw new Error(`non-sandboxed reviewer control could not update Git metadata: ${sandboxProbe.stderr}`);
+}
+const directGitDenied = sandboxProbe.exitCode !== 0;
 if ((await checkedGit(["rev-parse", "--verify", branch])) !== resultCommit) {
   throw new Error("reviewer did not observe the exact worker branch tip");
 }
@@ -236,18 +300,11 @@ const output = {
   ...(expectedMode === "sandboxed" ? { gateReRanReason: "sandbox-denied-primitives" } : {}),
   actualWorktreePath: expectedWorktree,
 };
-const storeResult = await client.callTool({
-  name: "store_result",
-  arguments: { resultCapability, output },
-});
-if ((storeResult as { isError?: boolean }).isError === true) {
-  throw new Error(`reviewer store_result failed: ${JSON.stringify(storeResult)}`);
-}
-const acknowledgement = decode(storeResult);
+const acknowledgement = await call("store_result", { resultCapability, output });
 await writeFile(
   capturePath,
   JSON.stringify({
-    boundary: { codexCwd, ledgerCwd, listedTools, sandboxMode },
+    boundary: { codexCwd, ledgerCwd, listedTools, sandboxMode, directGitDenied },
     inputEvidence: {
       supervised: evidence !== undefined,
       parent: parentGateAttestation !== undefined,
@@ -256,7 +313,8 @@ await writeFile(
     output,
   }),
 );
-await client.close();
+if (client !== undefined) await client.close();
+if (directBackend !== undefined) await directBackend.close();
 process.stdout.write(
   [
     JSON.stringify({ type: "thread.started", thread_id: "t2081-packaged-reviewer" }),
@@ -266,7 +324,7 @@ process.stdout.write(
         type: "mcp_tool_call",
         server: "ledger",
         tool: "store_result",
-        result: storeResult,
+        result: { content: [{ type: "text", text: JSON.stringify(acknowledgement) }] },
       },
     }),
     JSON.stringify({

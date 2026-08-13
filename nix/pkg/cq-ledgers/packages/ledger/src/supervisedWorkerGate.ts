@@ -36,6 +36,7 @@ function requiresMutationEvidence(entryPath: string): boolean {
 
 export interface SupervisedWorkerGateRunRequest {
   readonly worktreePath: string;
+  readonly admissionTimeoutMs: number;
   readonly executionTimeoutMs: number;
 }
 
@@ -132,13 +133,48 @@ function tail(output: string, lineCount = 20): string {
   return output.trimEnd().split("\n").slice(-lineCount).join("\n");
 }
 
-/** Real host adapter: fixed command, registered process group, absolute deadline, full settlement. */
-export const nodeSupervisedWorkerGateRunner: SupervisedWorkerGateRunner = Object.freeze({
-  async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
+function createNodeSupervisedWorkerGateRunner(): SupervisedWorkerGateRunner {
+  let admissionTail: Promise<void> = Promise.resolve();
+  return Object.freeze({
+    async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
+      if (!Number.isInteger(request.admissionTimeoutMs) || request.admissionTimeoutMs <= 0) {
+        throw new Error("supervised worker gate admissionTimeoutMs must be a positive integer");
+      }
+      if (!Number.isInteger(request.executionTimeoutMs) || request.executionTimeoutMs <= 0) {
+        throw new Error("supervised worker gate executionTimeoutMs must be a positive integer");
+      }
+      const predecessor = admissionTail;
+      let releaseAdmission!: () => void;
+      const held = new Promise<void>((resolve) => {
+        releaseAdmission = resolve;
+      });
+      admissionTail = predecessor.then(() => held, () => held);
+      let admissionTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          predecessor,
+          new Promise<never>((_resolve, reject) => {
+            admissionTimer = setTimeout(
+              () => reject(new Error("supervised worker gate exceeded its host admission deadline")),
+              request.admissionTimeoutMs,
+            );
+          }),
+        ]);
+        if (admissionTimer !== undefined) clearTimeout(admissionTimer);
+        return await runAdmittedNodeSupervisedWorkerGate(request);
+      } finally {
+        if (admissionTimer !== undefined) clearTimeout(admissionTimer);
+        releaseAdmission();
+      }
+    },
+  });
+}
+
+/** Real host adapter: serialized admission, fixed command, execution deadline, full settlement. */
+async function runAdmittedNodeSupervisedWorkerGate(
+  request: SupervisedWorkerGateRunRequest,
+): Promise<SupervisedWorkerGateRunResult> {
     const startedAt = Date.now();
-    if (!Number.isInteger(request.executionTimeoutMs) || request.executionTimeoutMs <= 0) {
-      throw new Error("supervised worker gate executionTimeoutMs must be a positive integer");
-    }
     let registration: ProcessGroupRegistration | undefined;
     let capturedStdout: Promise<string> | undefined;
     let capturedStderr: Promise<string> | undefined;
@@ -235,8 +271,10 @@ export const nodeSupervisedWorkerGateRunner: SupervisedWorkerGateRunner = Object
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }
-  },
-});
+}
+
+export const nodeSupervisedWorkerGateRunner: SupervisedWorkerGateRunner =
+  createNodeSupervisedWorkerGateRunner();
 
 /**
  * Validate the exact manager-bound result tip, run the fixed host gate, and
@@ -318,6 +356,7 @@ export async function superviseImplementWorkerGate(
 
   const run = await (deps.runner ?? nodeSupervisedWorkerGateRunner).run({
     worktreePath: context.worktreePath,
+    admissionTimeoutMs: SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
     executionTimeoutMs: SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
   });
   if (run.gateExitCode !== 0 || run.failCount !== 0 || run.passCount <= 0) {

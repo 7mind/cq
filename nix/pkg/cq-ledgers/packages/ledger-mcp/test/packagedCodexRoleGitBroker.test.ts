@@ -231,9 +231,51 @@ async function runPackagedReviewer(input: {
   const fakeCodex = path.join(fixtureRoot, "fake-codex");
   const capturePath = path.join(fixtureRoot, `review-${workerRoute}-${reviewerMode}-capture.json`);
   const reviewerStderrPath = path.join(fixtureRoot, "reviewer.stderr");
+  const sandboxStdoutPath = path.join(fixtureRoot, "sandbox.stdout");
+  const sandboxStderrPath = path.join(fixtureRoot, "sandbox.stderr");
+  const sandboxCapture = path.join(fixtureRoot, "sandbox-capture");
+  await writeFile(
+    sandboxCapture,
+    '#!/bin/sh\n"$@" >"$CQ_T2081_SANDBOX_STDOUT" 2>"$CQ_T2081_SANDBOX_STDERR"\n',
+  );
+  await chmod(sandboxCapture, 0o700);
+  const sandboxProfile =
+    `permissions.t2081={description="T2081 installed reviewer fixture",filesystem={` +
+    `":minimal"="read","/tmp"="write",${JSON.stringify(repositoryRoot)}="read",` +
+    `${JSON.stringify(path.join(repositoryRoot, ".cq", "attestations"))}="write",` +
+    `${JSON.stringify(fixtureRoot)}="write"}}`;
   await writeFile(
     fakeCodex,
-    `#!/bin/sh\nif test "$1" = sandbox; then while test "$1" != --; do shift; done; shift; exec "$@"; fi\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(REVIEWER_FIXTURE)} "$@" 2>"$CQ_T2081_REVIEW_STDERR"\n`,
+    [
+      "#!/bin/sh",
+      "set -u",
+      `export CQ_T2081_INSTALLED_CODEX=${JSON.stringify(INSTALLED_CODEX)}`,
+      `export CQ_T2081_REVIEW_MODE=${JSON.stringify(reviewerMode)}`,
+      `export CQ_T2081_REVIEW_WORKTREE=${JSON.stringify(managedHandle.absolutePath)}`,
+      `export CQ_T2081_SANDBOX_PROFILE=${JSON.stringify(sandboxProfile)}`,
+      `export CQ_T2081_SANDBOX_CAPTURE=${JSON.stringify(sandboxCapture)}`,
+      `export CQ_T2081_SANDBOX_STDOUT=${JSON.stringify(sandboxStdoutPath)}`,
+      `export CQ_T2081_SANDBOX_STDERR=${JSON.stringify(sandboxStderrPath)}`,
+      "run_sandbox() {",
+      '  rm -f "$CQ_T2081_SANDBOX_STDOUT" "$CQ_T2081_SANDBOX_STDERR"',
+      '  "$CQ_T2081_INSTALLED_CODEX" -c \'default_permissions="t2081"\' -c "$CQ_T2081_SANDBOX_PROFILE" sandbox -P t2081 -C "$CQ_T2081_REVIEW_WORKTREE" -- "$CQ_T2081_SANDBOX_CAPTURE" "$@"',
+      "  status=$?",
+      '  test ! -e "$CQ_T2081_SANDBOX_STDOUT" || cat "$CQ_T2081_SANDBOX_STDOUT"',
+      '  test ! -e "$CQ_T2081_SANDBOX_STDERR" || cat "$CQ_T2081_SANDBOX_STDERR" >&2',
+      "  return $status",
+      "}",
+      'if test "$1" = sandbox; then',
+      '  while test "$1" != --; do shift; done',
+      "  shift",
+      '  exec "$@"',
+      "fi",
+      'if test "$CQ_T2081_REVIEW_MODE" = sandboxed; then',
+      `  run_sandbox ${JSON.stringify(process.execPath)} run ${JSON.stringify(REVIEWER_FIXTURE)} "$@"`,
+      "  exit $?",
+      "fi",
+      `exec ${JSON.stringify(process.execPath)} run ${JSON.stringify(REVIEWER_FIXTURE)} "$@" 2>"$CQ_T2081_REVIEW_STDERR"`,
+      "",
+    ].join("\n"),
   );
   await chmod(fakeCodex, 0o700);
   const ledgerCommand = path.join(path.dirname(INSTALLED_ROLE), "cq");
@@ -263,6 +305,11 @@ async function runPackagedReviewer(input: {
     CQ_T2081_REVIEW_WORKTREE: managedHandle.absolutePath,
     CQ_T2081_REVIEW_LEDGER_ROOT: repositoryRoot,
     CQ_T2081_REVIEW_STDERR: reviewerStderrPath,
+    CQ_T2081_INSTALLED_CODEX: INSTALLED_CODEX,
+    CQ_T2081_SANDBOX_PROFILE: sandboxProfile,
+    CQ_T2081_SANDBOX_CAPTURE: sandboxCapture,
+    CQ_T2081_SANDBOX_STDOUT: sandboxStdoutPath,
+    CQ_T2081_SANDBOX_STDERR: sandboxStderrPath,
   };
   try {
     await executeCodexRoleBoundary(
@@ -303,7 +350,7 @@ async function runPackagedReviewer(input: {
   const fetched = await capability.fetch(handle);
   if (fetched.state !== "consumed") throw new Error(`unexpected reviewer state ${fetched.state}`);
   const capture = JSON.parse(await readFile(capturePath, "utf8")) as {
-    boundary: { listedTools: string[]; sandboxMode: string };
+    boundary: { listedTools: string[]; sandboxMode: string; directGitDenied: boolean };
     inputEvidence: { supervised: boolean; parent: boolean };
     gate: { gateExitCode: number; passCount: number; failCount: number; gateReRan: boolean };
     output: Record<string, unknown>;
@@ -311,6 +358,7 @@ async function runPackagedReviewer(input: {
   expect(capture.boundary).toMatchObject({
     listedTools: ["fetch_dispatch_input", "store_result"],
     sandboxMode: reviewerMode === "sandboxed" ? "read-only" : "workspace-write",
+    directGitDenied: reviewerMode === "sandboxed",
   });
   expect(capture.inputEvidence).toEqual({
     supervised: reviewerMode === "sandboxed",
@@ -624,12 +672,14 @@ describe("packaged cq-codex-role Git broker", () => {
         await expect(
           nodeSupervisedWorkerGateRunner.run({
             worktreePath,
+            admissionTimeoutMs: 5_000,
             executionTimeoutMs: 1,
           }),
         ).rejects.toThrow("host execution deadline");
         await expect(
           nodeSupervisedWorkerGateRunner.run({
             worktreePath,
+            admissionTimeoutMs: 5_000,
             executionTimeoutMs: 1_500,
           }),
         ).rejects.toThrow("host execution deadline");
@@ -640,6 +690,7 @@ describe("packaged cq-codex-role Git broker", () => {
         await expect(
           nodeSupervisedWorkerGateRunner.run({
             worktreePath,
+            admissionTimeoutMs: 5_000,
             executionTimeoutMs: 5_000,
           }),
         ).resolves.toMatchObject({ gateExitCode: 0, passCount: 1, failCount: 0 });

@@ -312,6 +312,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     expect(runner.requests).toEqual([
       {
         worktreePath: subject.managed.handle.absolutePath,
+        admissionTimeoutMs: 3_600_000,
         executionTimeoutMs: SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
       },
     ]);
@@ -613,7 +614,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
   });
 
   // Regression D326: host-gate admission belongs to the supervisor, not the child budget.
-  test("D326 lets a second real gate wait beyond its child budget and run once after the first [Behavioral-Active, Effectual-GoodCommunication]", async () => {
+  test("D326 lets a second terminal store wait beyond its gate execution budget before admission [Behavioral-Active, Effectual-GoodCommunication]", async () => {
     const root = await fs.mkdtemp(path.join(tmpdir(), "t2082-gate-admission-"));
     roots.push(root);
     const bin = path.join(root, "bin");
@@ -628,65 +629,81 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
         "set -eu",
         'while ! mkdir "$CQ_T2082_GATE_LOCK" 2>/dev/null; do sleep 0.01; done',
         "trap 'rmdir \"$CQ_T2082_GATE_LOCK\" 2>/dev/null || true' EXIT INT TERM",
+        'worktree=""',
         'while test "$#" -gt 0; do',
-        '  if test "$1" = --command-cwd; then cd "$2"; break; fi',
+        '  if test "$1" = --worktree; then worktree="$2"; shift 2; continue; fi',
         "  shift",
         "done",
-        "bun run check",
+        'if test "$worktree" = "$CQ_T2082_FIRST_WORKTREE"; then',
+        '  : > "$CQ_T2082_FIRST_STARTED"',
+        '  while test ! -e "$CQ_T2082_RELEASE_FIRST"; do sleep 0.01; done',
+        "fi",
+        "printf '1 pass\\n0 fail\\n'",
         "",
       ].join("\n"),
     );
     await fs.chmod(cq, 0o700);
-    const makeWorker = async (name: "a" | "b") => {
-      const worktreePath = path.join(root, name);
-      const commandCwd = path.join(worktreePath, "nix", "pkg", "cq-ledgers");
-      await fs.mkdir(commandCwd, { recursive: true });
-      await git(worktreePath, ["init", "-q"]);
-      await fs.writeFile(
-        path.join(commandCwd, "package.json"),
-        `${JSON.stringify({ private: true, scripts: { check: "./gate.sh" } }, null, 2)}\n`,
-      );
-      const started = path.join(root, `${name}-started`);
-      const gate = path.join(commandCwd, "gate.sh");
-      await fs.writeFile(
-        gate,
-        name === "a"
-          ? `#!/bin/sh\nprintf x >> ${JSON.stringify(started)}\nwhile test ! -e ${JSON.stringify(releaseFirst)}; do sleep 0.01; done\nprintf '1 pass\\n0 fail\\n'\n`
-          : `#!/bin/sh\nprintf x >> ${JSON.stringify(started)}\nprintf '1 pass\\n0 fail\\n'\n`,
-      );
-      await fs.chmod(gate, 0o700);
-      return { worktreePath, started };
+    let heldWorktreePath = "";
+    const phaseBoundRunner: SupervisedWorkerGateRunner = {
+      run: async (request) =>
+        await nodeSupervisedWorkerGateRunner.run({
+          ...request,
+          admissionTimeoutMs: 1_000,
+          executionTimeoutMs: request.worktreePath === heldWorktreePath ? 1_000 : 100,
+        }),
     };
-    const first = await makeWorker("a");
-    const second = await makeWorker("b");
+    const first = await fixture(phaseBoundRunner);
+    heldWorktreePath = first.managed.handle.absolutePath;
+    const second = await fixture(phaseBoundRunner);
+    const firstStarted = path.join(root, "first-started");
     const priorPath = process.env["PATH"];
     const priorLock = process.env["CQ_T2082_GATE_LOCK"];
+    const priorFirstWorktree = process.env["CQ_T2082_FIRST_WORKTREE"];
+    const priorFirstStarted = process.env["CQ_T2082_FIRST_STARTED"];
+    const priorReleaseFirst = process.env["CQ_T2082_RELEASE_FIRST"];
     process.env["PATH"] = `${bin}${path.delimiter}${priorPath ?? ""}`;
     process.env["CQ_T2082_GATE_LOCK"] = lock;
+    process.env["CQ_T2082_FIRST_WORKTREE"] = first.managed.handle.absolutePath;
+    process.env["CQ_T2082_FIRST_STARTED"] = firstStarted;
+    process.env["CQ_T2082_RELEASE_FIRST"] = releaseFirst;
+    let firstStore: Promise<unknown> | undefined;
+    let secondStore: Promise<unknown> | undefined;
     try {
-      const firstRun = nodeSupervisedWorkerGateRunner.run({
-        worktreePath: first.worktreePath,
-        executionTimeoutMs: 5_000,
+      firstStore = first.capability.storeResult({
+        resultCapability: first.prepared.resultCapability,
+        output: first.output,
       });
-      while (!(await Bun.file(first.started).exists())) await Bun.sleep(5);
-      const secondRun = nodeSupervisedWorkerGateRunner.run({
-        worktreePath: second.worktreePath,
-        executionTimeoutMs: 5_000,
+      while (!(await Bun.file(firstStarted).exists())) await Bun.sleep(5);
+      secondStore = second.capability.storeResult({
+        resultCapability: second.prepared.resultCapability,
+        output: second.output,
       });
-      await Bun.sleep(150);
-      expect(await Bun.file(second.started).exists()).toBe(false);
+      await Bun.sleep(200);
+      expect(second.store.rows()).toMatchObject([{ state: "prepared" }]);
       await fs.writeFile(releaseFirst, "release\n");
-      await expect(Promise.all([firstRun, secondRun])).resolves.toMatchObject([
-        { gateExitCode: 0, passCount: 1, failCount: 0 },
-        { gateExitCode: 0, passCount: 1, failCount: 0 },
+      await expect(Promise.all([firstStore, secondStore])).resolves.toMatchObject([
+        { state: "result-stored" },
+        { state: "result-stored" },
       ]);
-      expect(await fs.readFile(first.started, "utf8")).toBe("x");
-      expect(await fs.readFile(second.started, "utf8")).toBe("x");
+      expect(first.store.rows()).toHaveLength(1);
+      expect(second.store.rows()).toHaveLength(1);
     } finally {
+      await fs.writeFile(releaseFirst, "release\n").catch(() => undefined);
+      await Promise.allSettled(
+        [firstStore, secondStore].filter(
+          (pending): pending is Promise<unknown> => pending !== undefined,
+        ),
+      );
       if (priorPath === undefined) delete process.env["PATH"];
       else process.env["PATH"] = priorPath;
       if (priorLock === undefined) delete process.env["CQ_T2082_GATE_LOCK"];
       else process.env["CQ_T2082_GATE_LOCK"] = priorLock;
+      if (priorFirstWorktree === undefined) delete process.env["CQ_T2082_FIRST_WORKTREE"];
+      else process.env["CQ_T2082_FIRST_WORKTREE"] = priorFirstWorktree;
+      if (priorFirstStarted === undefined) delete process.env["CQ_T2082_FIRST_STARTED"];
+      else process.env["CQ_T2082_FIRST_STARTED"] = priorFirstStarted;
+      if (priorReleaseFirst === undefined) delete process.env["CQ_T2082_RELEASE_FIRST"];
+      else process.env["CQ_T2082_RELEASE_FIRST"] = priorReleaseFirst;
     }
   });
 });

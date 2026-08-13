@@ -675,7 +675,14 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             await validateGitChangeBrokerResultEvidence(
               binding,
               evidence,
-              options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+              {
+                ...(options.worktreeStateDir === undefined
+                  ? {}
+                  : { stateDir: options.worktreeStateDir }),
+                ...(gateContext === undefined
+                  ? {}
+                  : { diffBaseCommit: gateContext.dispatchBaseCommit }),
+              },
             );
           }
           if (gateContext !== undefined) {

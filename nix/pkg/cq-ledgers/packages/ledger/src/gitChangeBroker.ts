@@ -97,7 +97,10 @@ export interface GitChangeBrokerDeps extends Pick<ManagedWorktreeDeps, "stateDir
   readonly now?: () => Date;
 }
 
-export type GitChangeBrokerEvidenceDeps = Pick<ManagedWorktreeDeps, "stateDir">;
+export type GitChangeBrokerEvidenceDeps = Pick<ManagedWorktreeDeps, "stateDir"> & {
+  /** Dispatch-round base used to prove every surviving result path was reported. */
+  readonly diffBaseCommit?: string;
+};
 
 export type GitChangeReceiptLineageBinding = Omit<
   DispatchBoundGitAuthorization,
@@ -1227,10 +1230,14 @@ export async function validateGitChangeBrokerResultEvidence(
   }
 
   const first = evidence.gitReceipts[0]!;
+  const diffBaseCommit = deps.diffBaseCommit ?? authorization.baseCommit;
+  if (!FULL_OID.test(diffBaseCommit)) {
+    throw new Error("broker result diff base is not a full Git oid");
+  }
   const baseAncestry = await runGit(authorization.worktreePath, [
     "merge-base",
     "--is-ancestor",
-    authorization.baseCommit,
+    diffBaseCommit,
     first.oldHead,
   ]);
   if (baseAncestry.code !== 0) {
@@ -1241,6 +1248,24 @@ export async function validateGitChangeBrokerResultEvidence(
   }
   if (canonical([...receiptPaths].sort()) !== canonical(touched)) {
     throw new Error("broker receipt paths do not match filesTouched");
+  }
+  const actualResultPaths = (
+    await checkedGit(authorization.worktreePath, [
+      "diff",
+      "--name-only",
+      "--no-renames",
+      "-z",
+      diffBaseCommit,
+      evidence.resultCommit,
+      "--",
+    ])
+  )
+    .toString()
+    .split("\0")
+    .filter(Boolean)
+    .sort();
+  if (actualResultPaths.some((entryPath) => !receiptPaths.has(entryPath))) {
+    throw new Error("broker base-to-result diff contains paths absent from filesTouched");
   }
   if ((await currentHead(authorization)) !== evidence.resultCommit) {
     throw new Error("broker receipt resultCommit does not match the manager-bound branch tip");
