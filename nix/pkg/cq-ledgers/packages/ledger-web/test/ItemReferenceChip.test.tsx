@@ -108,6 +108,48 @@ describe("ItemReferenceChip", () => {
     expect(document.body.querySelector(".lw-ref-preview")?.textContent).toContain("not found");
   });
 
+  it("ignores a lookup completion after the rendered reference changes", async () => {
+    let releaseOld: ((value: ReferencePreviewResult) => void) | null = null;
+    const navigated: string[] = [];
+    const resolve = (reference: { ledger: string; id: string }): Promise<ReferencePreviewResult> => {
+      if (reference.id === "T1") {
+        return new Promise((done) => { releaseOld = done; });
+      }
+      return Promise.resolve({
+        kind: "found",
+        ledger: "reviews",
+        id: "R2",
+        status: "open",
+        summary: "current review",
+      });
+    };
+    await act(async () => {
+      root.render(createElement(ItemReferenceChip, {
+        text: "T1",
+        reference: { ledger: "tasks", id: "T1" },
+        resolve,
+        onNavigate: (ledger: string, id: string) => navigated.push(`${ledger}:${id}`),
+      }));
+    });
+    act(() => chip().click());
+    await act(async () => {
+      root.render(createElement(ItemReferenceChip, {
+        text: "R2",
+        reference: { ledger: "reviews", id: "R2" },
+        resolve,
+        onNavigate: (ledger: string, id: string) => navigated.push(`${ledger}:${id}`),
+      }));
+    });
+    await act(async () => { releaseOld?.(found); });
+    expect(document.body.textContent).not.toContain("resolved task");
+    expect(navigated).toEqual([]);
+
+    act(() => chip().click());
+    await flush();
+    expect(document.body.querySelector(".lw-ref-preview")?.textContent).toContain("current review");
+    expect(navigated).toEqual(["reviews:R2"]);
+  });
+
   it("clamps fixed popup placement at viewport edges and dismisses on blur", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 320 });
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 200 });

@@ -11,8 +11,10 @@ export type ItemReferenceSpan =
   | { kind: "reference"; text: string; reference: ItemReference };
 
 const PREFIX_REGISTRY = buildPrefixRegistry(CANONICAL_LEDGERS);
-const CANDIDATE_RE = /[a-z][a-z0-9_-]*:[A-Za-z][A-Za-z0-9_-]*|[A-Z]+\d+/g;
+const CANONICAL_LEDGER_NAMES = new Set(CANONICAL_LEDGERS.map(({ name }) => name));
+const CANDIDATE_RE = /[A-Za-z][A-Za-z0-9_-]*:[A-Za-z][A-Za-z0-9_-]*|[A-Z]+\d+/g;
 const TOKEN_CHAR_RE = /[A-Za-z0-9_/-]/;
+const PREFIXED_ID_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
 function isTokenBoundary(text: string, start: number, end: number): boolean {
   const before = start === 0 ? undefined : text[start - 1];
@@ -22,12 +24,20 @@ function isTokenBoundary(text: string, start: number, end: number): boolean {
 }
 
 export function parseItemReference(raw: string): ItemReference | null {
+  const separator = raw.indexOf(":");
+  if (separator !== -1) {
+    const ledger = raw.slice(0, separator);
+    const id = raw.slice(separator + 1);
+    return CANONICAL_LEDGER_NAMES.has(ledger) && PREFIXED_ID_RE.test(id)
+      ? { ledger, id }
+      : null;
+  }
   try {
     const canonical = canonicalizeRef(raw, PREFIX_REGISTRY);
-    const separator = canonical.indexOf(":");
+    const canonicalSeparator = canonical.indexOf(":");
     return {
-      ledger: canonical.slice(0, separator),
-      id: canonical.slice(separator + 1),
+      ledger: canonical.slice(0, canonicalSeparator),
+      id: canonical.slice(canonicalSeparator + 1),
     };
   } catch {
     return null;

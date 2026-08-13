@@ -41,10 +41,14 @@ export function ItemReferenceChip({
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<PreviewPosition>({ left: VIEWPORT_GAP, top: VIEWPORT_GAP });
   const [result, setResult] = useState<ReferencePreviewResult | null>(null);
+  const requestGenerationRef = useRef(0);
+  const mountedRef = useRef(true);
 
   const load = async (): Promise<ReferencePreviewResult | null> => {
     if (resolve === undefined) return null;
+    const generation = requestGenerationRef.current;
     const resolved = await resolve(reference);
+    if (!mountedRef.current || requestGenerationRef.current !== generation) return null;
     setResult(resolved);
     return resolved;
   };
@@ -63,9 +67,15 @@ export function ItemReferenceChip({
   };
 
   useEffect(() => {
+    requestGenerationRef.current += 1;
     setOpen(false);
     setResult(null);
   }, [reference.ledger, reference.id]);
+
+  useEffect(() => () => {
+    mountedRef.current = false;
+    requestGenerationRef.current += 1;
+  }, []);
 
   const preview = open && resolve !== undefined
     ? createPortal(

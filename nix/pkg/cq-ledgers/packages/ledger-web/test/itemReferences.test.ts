@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { CANONICAL_LEDGERS } from "@cq/ledger/constants";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { scanItemReferences } from "../src/itemReferences.js";
@@ -15,6 +16,26 @@ describe("scanItemReferences", () => {
       { kind: "reference", text: "HO7", reference: { ledger: "handoffs", id: "HO7" } },
       { kind: "text", text: " " },
       { kind: "reference", text: "OA12", reference: { ledger: "operatorActions", id: "OA12" } },
+    ]);
+  });
+
+  it("recognizes every canonical ledger name, including camelCase names", () => {
+    const text = CANONICAL_LEDGERS
+      .map(({ name, schema }) => `${name}:${schema.idPrefix}12`)
+      .join(" ");
+    expect(scanItemReferences(text).filter((span) => span.kind === "reference")).toEqual(
+      CANONICAL_LEDGERS.map(({ name, schema }) => ({
+        kind: "reference",
+        text: `${name}:${schema.idPrefix}12`,
+        reference: { ledger: name, id: `${schema.idPrefix}12` },
+      })),
+    );
+    expect(scanItemReferences("operatorActions:OA12")).toEqual([
+      {
+        kind: "reference",
+        text: "operatorActions:OA12",
+        reference: { ledger: "operatorActions", id: "OA12" },
+      },
     ]);
   });
 
