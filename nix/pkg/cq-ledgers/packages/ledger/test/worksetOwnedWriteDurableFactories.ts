@@ -27,8 +27,6 @@ import type { WorksetOwnedWriteContractFactory } from "./worksetOwnedWriteContra
 const exec = promisify(execFile);
 const tempRoots: string[] = [];
 const openLedgers: WorksetOwnedGuardedLedger[] = [];
-let postgresSchemaReady: Promise<void> | null = null;
-let postgresPool: ReturnType<typeof openPgPool> | null = null;
 
 afterAll(async () => {
   for (const ledger of openLedgers.splice(0)) {
@@ -156,30 +154,41 @@ export const sqliteOwnedWriteFactory: WorksetOwnedWriteContractFactory = {
   },
 };
 
-async function ensurePostgres(dsn: string): Promise<void> {
-  if (postgresSchemaReady === null) {
-    postgresPool = openPgPool(dsn);
-    postgresSchemaReady = ensureSchema(postgresPool);
-  }
-  await postgresSchemaReady;
-}
-
-function sharedPostgresPool(): ReturnType<typeof openPgPool> {
-  if (postgresPool === null) throw new Error("PostgreSQL owned-write fixture is not ready");
-  return postgresPool;
+function withoutPoolOwnership(
+  pool: ReturnType<typeof openPgPool>,
+): ReturnType<typeof openPgPool> {
+  return new Proxy(pool, {
+    apply: (target, _thisArgument, argumentsList) =>
+      Reflect.apply(
+        target as unknown as (...args: unknown[]) => unknown,
+        target,
+        argumentsList,
+      ),
+    get: (target, property) => {
+      if (property === "close") return async () => undefined;
+      const value = Reflect.get(target, property, target) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
 }
 
 export function postgresOwnedWriteFactory(
   dsn: string,
 ): WorksetOwnedWriteContractFactory {
+  const ownedPool = openPgPool(dsn);
+  const sharedPool = withoutPoolOwnership(ownedPool);
+  const schemaReady = ensureSchema(ownedPool);
+  afterAll(async () => {
+    await ownedPool.close();
+  });
   return {
     name: "PostgresLedgerStore",
     classification: "Behavioral-Active Blackbox-GoodCommunication",
     async build(options?: CreateInMemoryWorksetOwnedGuardedLedgerOptions) {
-      await ensurePostgres(dsn);
+      await schemaReady;
       const projectKey = `t1966-owned-${randomUUID()}`;
       const rawStore: PostgresLedgerStore = new PostgresLedgerStore({
-        pool: sharedPostgresPool(),
+        pool: sharedPool,
         projectKey,
         displayName: projectKey,
         ...(options?.now !== undefined ? { now: options.now } : {}),
