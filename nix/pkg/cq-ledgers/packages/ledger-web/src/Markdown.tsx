@@ -10,9 +10,12 @@
  */
 
 import React from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
+import { ItemReferenceChip } from "./ItemReferenceChip.js";
+import { scanItemReferences, type ItemReference } from "./itemReferences.js";
+import type { ReferencePreviewResult } from "./referenceLookup.js";
 
 // ---------------------------------------------------------------------------
 // JSON tokenizer — emits React spans with lw-json-* classes
@@ -163,15 +166,67 @@ function CodeBlock({ className, children, ...rest }: CodeProps): React.ReactElem
 // Exported component
 // ---------------------------------------------------------------------------
 
-const MD_COMPONENTS = { code: CodeBlock } as const;
+export interface MarkdownProps {
+  text: string;
+  resolveReference?: (reference: ItemReference) => Promise<ReferencePreviewResult>;
+  onNavigateReference?: (ledger: string, id: string) => void;
+}
 
-export function Markdown({ text }: { text: string }): React.ReactElement {
+function linkifyText(text: string, props: Omit<MarkdownProps, "text">): React.ReactNode[] {
+  return scanItemReferences(text).map((span, index) => span.kind === "text"
+    ? span.text
+    : (
+        <ItemReferenceChip
+          key={`${span.reference.ledger}:${span.reference.id}:${index}`}
+          text={span.text}
+          reference={span.reference}
+          {...(props.resolveReference !== undefined ? { resolve: props.resolveReference } : {})}
+          {...(props.onNavigateReference !== undefined ? { onNavigate: props.onNavigateReference } : {})}
+        />
+      ));
+}
+
+function linkifyChildren(node: React.ReactNode, props: Omit<MarkdownProps, "text">): React.ReactNode {
+  if (typeof node === "string") return linkifyText(node, props);
+  if (Array.isArray(node)) return node.map((child) => linkifyChildren(child, props));
+  if (!React.isValidElement<{ children?: React.ReactNode }>(node)) return node;
+  if (node.type === "code" || node.type === "pre" || node.type === "a" || node.type === CodeBlock || node.type === ItemReferenceChip) {
+    return node;
+  }
+  return React.cloneElement(node, {}, linkifyChildren(node.props.children, props));
+}
+
+function proseComponents(props: Omit<MarkdownProps, "text">): Components {
+  const component = (tag: keyof React.JSX.IntrinsicElements) => {
+    return ({ children, node: _node, ...elementProps }: React.HTMLAttributes<HTMLElement> & { node?: unknown }) =>
+      React.createElement(tag, elementProps, linkifyChildren(children, props));
+  };
+  return {
+    code: CodeBlock,
+    p: component("p"),
+    li: component("li"),
+    td: component("td"),
+    th: component("th"),
+    h1: component("h1"),
+    h2: component("h2"),
+    h3: component("h3"),
+    h4: component("h4"),
+    h5: component("h5"),
+    h6: component("h6"),
+  } as Components;
+}
+
+export function Markdown({ text, resolveReference, onNavigateReference }: MarkdownProps): React.ReactElement {
+  const components = proseComponents({
+    ...(resolveReference !== undefined ? { resolveReference } : {}),
+    ...(onNavigateReference !== undefined ? { onNavigateReference } : {}),
+  });
   return (
     <div className="lw-md">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeSanitize]}
-        components={MD_COMPONENTS}
+        components={components}
       >
         {text}
       </ReactMarkdown>

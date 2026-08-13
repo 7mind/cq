@@ -39,6 +39,9 @@ import { HoldButton, type HoldClock } from "./HoldButton.js";
 import { useBackdropDismiss } from "./useBackdropDismiss.js";
 import { WorksetManager } from "./WorksetManager.js";
 import { isSafeProjectKeySegment } from "./projectRoutes.js";
+import { ItemReferenceChip } from "./ItemReferenceChip.js";
+import { parseItemReference, type ItemReference } from "./itemReferences.js";
+import { ItemReferenceLookup, type ReferencePreviewResult } from "./referenceLookup.js";
 // Browser-safe JSONL transcript parser (T412): turns the raw `.jsonl` content
 // returned by `onReadLog` into the structured conversation model the
 // RawLogViewer renders (T414). Node-free leaf module.
@@ -322,12 +325,34 @@ export function wsTokenOf(wsUrl: string | null): string | null {
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
-function renderListField(items: string[]): React.ReactElement {
+const REFERENCE_LIST_FIELDS = new Set(["dependsOn", "blockedBy", "sourceRefs", "ledgerRefs", GOAL_MILESTONES_FIELD]);
+
+interface ReferenceRenderProps {
+  fieldName: string;
+  resolveReference?: (reference: ItemReference) => Promise<ReferencePreviewResult>;
+  onNavigateReference?: (ledger: string, id: string) => void;
+}
+
+function renderListField(items: string[], referenceProps?: ReferenceRenderProps): React.ReactElement {
   return (
     <ul className="lw-field-list">
-      {items.map((item, i) => (
-        <li key={i}>{item}</li>
-      ))}
+      {items.map((item, i) => {
+        const reference = referenceProps !== undefined && REFERENCE_LIST_FIELDS.has(referenceProps.fieldName)
+          ? parseItemReference(item)
+          : null;
+        return (
+          <li key={i}>
+            {reference === null || referenceProps === undefined ? item : (
+              <ItemReferenceChip
+                text={item}
+                reference={reference}
+                {...(referenceProps.resolveReference !== undefined ? { resolve: referenceProps.resolveReference } : {})}
+                {...(referenceProps.onNavigateReference !== undefined ? { onNavigate: referenceProps.onNavigateReference } : {})}
+              />
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -538,6 +563,7 @@ export function App({
   // Auxiliary items for cross-ledger relationship panels. Lazily fetched when
   // a defects or hypothesis item is selected; keyed by ledger name.
   const [auxItems, setAuxItems] = useState<Record<string, Item[]>>({});
+  const referenceLookup = useMemo(() => client === null ? null : new ItemReferenceLookup(client), [client]);
   // Latest-callback ref: the live connection lives across ledger changes, so
   // its onChanged must call the freshest refresh closure, not a stale one.
   const refreshRef = useRef<() => void>(() => {});
@@ -1278,6 +1304,32 @@ export function App({
   const allCurrentItems = useMemo<Item[]>(
     () => (view === null ? [] : view.milestones.flatMap((g) => g.items)),
     [view],
+  );
+
+  useEffect(() => {
+    if (referenceLookup === null) return;
+    const localItems = ledger === null
+      ? []
+      : allCurrentItems.map((item) => ({ ledger, item }));
+    for (const [auxLedger, items] of Object.entries(auxItems)) {
+      localItems.push(...items.map((item) => ({ ledger: auxLedger, item })));
+    }
+    referenceLookup.replaceLocalItems(localItems);
+  }, [referenceLookup, ledger, allCurrentItems, auxItems]);
+
+  const resolveReference = useCallback(
+    (reference: ItemReference): Promise<ReferencePreviewResult> => {
+      if (referenceLookup === null) {
+        return Promise.resolve({
+          kind: "error",
+          ledger: reference.ledger,
+          id: reference.id,
+          message: "not connected",
+        });
+      }
+      return referenceLookup.resolve(reference);
+    },
+    [referenceLookup],
   );
 
   // The item rows currently visible (ledger rows after status + milestone filter).
@@ -2041,6 +2093,7 @@ export function App({
                     allCurrentItems={allCurrentItems}
                     auxItems={auxItems}
                     onNavigateToItem={(targetLedger, itemId) => void navigateToItem(targetLedger, itemId)}
+                    resolveReference={resolveReference}
                     holdClock={holdClock}
                     {...(client !== null ? { onReadLog: (p: string) => client.readLog(p) } : {})}
                   />
@@ -4014,6 +4067,7 @@ function DetailPanel({
   allCurrentItems,
   auxItems,
   onNavigateToItem,
+  resolveReference,
   holdClock,
   onReadLog,
 }: {
@@ -4041,6 +4095,8 @@ function DetailPanel({
   auxItems?: Record<string, Item[]>;
   /** Navigate to a specific item in a (possibly different) ledger. */
   onNavigateToItem?: (targetLedger: string, itemId: string) => void;
+  /** Resolve a compact item for reference previews. */
+  resolveReference?: (reference: ItemReference) => Promise<ReferencePreviewResult>;
   /** Injectable HoldClock for tests; defaults to the real browser clock. */
   holdClock?: HoldClock | undefined;
   /** Callback to read a log file via the read_log MCP tool. */
@@ -4291,6 +4347,23 @@ function DetailPanel({
     : typeof goalMilestonesRaw === "string" && goalMilestonesRaw.length > 0
       ? [goalMilestonesRaw]
       : [];
+  const navigateReference = onNavigateToItem === undefined
+    ? undefined
+    : (targetLedger: string, itemId: string): void => onNavigateToItem(targetLedger, itemId);
+  const renderReferenceValue = (fieldName: string, value: FieldValue): React.ReactNode =>
+    Array.isArray(value)
+      ? renderListField(value, {
+          fieldName,
+          ...(resolveReference !== undefined ? { resolveReference } : {}),
+          ...(navigateReference !== undefined ? { onNavigateReference: navigateReference } : {}),
+        })
+      : (
+          <Markdown
+            text={value}
+            {...(resolveReference !== undefined ? { resolveReference } : {})}
+            {...(navigateReference !== undefined ? { onNavigateReference: navigateReference } : {})}
+          />
+        );
   const answerWith = (answer: string): void => {
     if (onSave === undefined) return;
     onSave(ANSWERED_STATUS, {
@@ -4349,8 +4422,8 @@ function DetailPanel({
       </React.Fragment>
     );
     const valueOf = (k: string): FieldValue | undefined => row.item.fields[k];
-    const renderVal = (v: FieldValue): React.ReactNode =>
-      Array.isArray(v) ? renderListField(v) : <Markdown text={v} />;
+    const renderVal = (fieldName: string, value: FieldValue): React.ReactNode =>
+      renderReferenceValue(fieldName, value);
     const recVal = valueOf(RECOMMENDATION_FIELD);
     const ansVal = valueOf(ANSWER_FIELD);
     const hasBy = row.item.author !== undefined || row.item.session !== undefined;
@@ -4374,12 +4447,12 @@ function DetailPanel({
             </dd>
           </>
         )}
-        {extraMetadata.map(([k, v]) => fieldDtDd(k, renderVal(v)))}
+        {extraMetadata.map(([k, v]) => fieldDtDd(k, renderVal(k, v)))}
         {/* narrative: question → context → suggestions → recommendation → answer */}
         {valueOf(QUESTION_FIELD) !== undefined &&
-          fieldDtDd(QUESTION_FIELD, renderVal(valueOf(QUESTION_FIELD)!))}
+          fieldDtDd(QUESTION_FIELD, renderVal(QUESTION_FIELD, valueOf(QUESTION_FIELD)!))}
         {valueOf(CONTEXT_FIELD) !== undefined &&
-          fieldDtDd(CONTEXT_FIELD, renderVal(valueOf(CONTEXT_FIELD)!))}
+          fieldDtDd(CONTEXT_FIELD, renderVal(CONTEXT_FIELD, valueOf(CONTEXT_FIELD)!))}
         {valueOf(SUGGESTIONS_FIELD) !== undefined &&
           fieldDtDd(
             SUGGESTIONS_FIELD,
@@ -4413,14 +4486,14 @@ function DetailPanel({
             <dt>{RECOMMENDATION_FIELD}</dt>
             <dd data-testid={`detail-field-${RECOMMENDATION_FIELD}`}>
               <div className="lw-recommendation" data-testid="recommendation">
-                {renderVal(recVal)}
+                {renderVal(RECOMMENDATION_FIELD, recVal)}
               </div>
             </dd>
           </React.Fragment>
         )}
         {answerable
           ? fieldDtDd(ANSWER_FIELD, answerBox)
-          : ansVal !== undefined && fieldDtDd(ANSWER_FIELD, renderVal(ansVal))}
+          : ansVal !== undefined && fieldDtDd(ANSWER_FIELD, renderVal(ANSWER_FIELD, ansVal))}
         {transitionTargets.length > 0 && onSave !== undefined && !isArchived && (
           <>
             <dt>transition to</dt>
@@ -4497,7 +4570,7 @@ function DetailPanel({
                 <React.Fragment key={k}>
                   <dt>{k}</dt>
                   <dd data-testid={`detail-field-${k}`}>
-                    {Array.isArray(v) ? renderListField(v) : <Markdown text={v} />}
+                    {renderReferenceValue(k, v)}
                   </dd>
                 </React.Fragment>
               ))}
@@ -4508,7 +4581,11 @@ function DetailPanel({
                 <dt>milestones</dt>
                 <dd data-testid="detail-goal-milestones">
                   {goalMilestones.length > 0 ? (
-                    renderListField(goalMilestones)
+                    renderListField(goalMilestones, {
+                      fieldName: GOAL_MILESTONES_FIELD,
+                      ...(resolveReference !== undefined ? { resolveReference } : {}),
+                      ...(navigateReference !== undefined ? { onNavigateReference: navigateReference } : {}),
+                    })
                   ) : (
                     <span className="lw-dim">(none)</span>
                   )}
