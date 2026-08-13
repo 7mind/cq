@@ -5,6 +5,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   createInMemoryWorksetOwnedGuardedLedger,
+  createTrustedWorksetManagementAuthority,
   WorksetOwnedLifecycleError,
   readCanonicalOwnership,
   IDEAS_LEDGER,
@@ -77,7 +78,9 @@ describe("workset coordination-bundle in-memory focused [T1962]", () => {
   });
 
   it("draft bundle under restrictive goal root succeeds", async () => {
-    const ledger = createInMemoryWorksetOwnedGuardedLedger();
+    const ledger = createInMemoryWorksetOwnedGuardedLedger({
+      invocationAuthority: createTrustedWorksetManagementAuthority(),
+    });
     await ledger.init();
     const idea = await ledger.owned.createOwnerless({
       ledgerId: IDEAS_LEDGER,

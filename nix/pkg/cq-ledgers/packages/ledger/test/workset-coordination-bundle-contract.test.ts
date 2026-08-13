@@ -3,13 +3,20 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { createInMemoryWorksetOwnedGuardedLedger } from "../src/index.js";
+import {
+  createInMemoryWorksetOwnedGuardedLedger,
+  createTrustedWorksetManagementAuthority,
+} from "../src/index.js";
 import { runWorksetCoordinationBundleContract } from "./worksetCoordinationBundleContract.js";
 
 runWorksetCoordinationBundleContract({
   name: "in-memory-dummy",
   classification: "Behavioral-Active Blackbox-Atomic",
-  build: (options) => createInMemoryWorksetOwnedGuardedLedger(options),
+  build: (options) =>
+    createInMemoryWorksetOwnedGuardedLedger({
+      ...options,
+      invocationAuthority: createTrustedWorksetManagementAuthority(),
+    }),
 });
 
 describe("workset coordination-bundle contract module [T1962]", () => {

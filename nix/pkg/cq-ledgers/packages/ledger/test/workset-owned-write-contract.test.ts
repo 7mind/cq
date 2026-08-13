@@ -9,6 +9,7 @@ import {
   defaultChildLedgerForCreationKind,
   PLANNING_LIFECYCLE_CREATION_KINDS,
   IMPLEMENTATION_LIFECYCLE_CREATION_KINDS,
+  createTrustedWorksetManagementAuthority,
 } from "../src/index.js";
 import { runWorksetOwnedWriteContract } from "./worksetOwnedWriteContract.js";
 import { createInMemoryWorksetOwnedGuardedLedger } from "../src/index.js";
@@ -16,7 +17,11 @@ import { createInMemoryWorksetOwnedGuardedLedger } from "../src/index.js";
 runWorksetOwnedWriteContract({
   name: "in-memory-dummy",
   classification: "Behavioral-Active Blackbox-Atomic",
-  build: (options) => createInMemoryWorksetOwnedGuardedLedger(options),
+  build: (options) =>
+    createInMemoryWorksetOwnedGuardedLedger({
+      ...options,
+      invocationAuthority: createTrustedWorksetManagementAuthority(),
+    }),
 });
 
 describe("workset owned-write contract module [T1962]", () => {

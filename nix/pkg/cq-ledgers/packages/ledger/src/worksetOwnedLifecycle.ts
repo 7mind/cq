@@ -891,6 +891,9 @@ export function createInMemoryWorksetOwnedGuardedLedger(
   const host: WorksetOwnedWriteHost = {
     rawStore,
     worksetStore,
+    ...(options.invocationAuthority !== undefined
+      ? { invocationAuthority: options.invocationAuthority }
+      : {}),
     ...(options.afterGenericAdmit !== undefined
       ? { afterGenericAdmit: options.afterGenericAdmit }
       : {}),
