@@ -313,25 +313,44 @@ describe("architecture guard self-check", () => {
 });
 
 describe("explicit XDG catalog HTTP/WS host", () => {
-  test("rejects trusted XDG management on a non-loopback host before opening a runtime", async () => {
+  test("boots trusted XDG management on a non-loopback host", async () => {
     const fixture = await makeHostFixture();
+    await seedProject(fixture.projectsRoot, "alpha");
     const catalog = createStaticXdgHostCatalog([
       { key: "alpha", displayName: "Alpha" },
     ]);
-    let opens = 0;
-    expect(() => serveXdgCatalog({
-      host: "0.0.0.0",
-      port: 0,
-      projectsRoot: fixture.projectsRoot,
-      outdir: fixture.outdir,
-      aliasProjectKey: "alpha",
-      catalog,
-      runtimeOpener: async () => {
-        opens += 1;
-        throw new Error("non-loopback host reached runtime construction");
+    const server = serveXdgCatalog(
+      {
+        host: "0.0.0.0",
+        port: 0,
+        projectsRoot: fixture.projectsRoot,
+        outdir: fixture.outdir,
+        aliasProjectKey: "alpha",
+        catalog,
+        runtimeOpener: observeRuntimes().opener,
       },
-    }, fixture.indexPath)).toThrow(/loopback/);
-    expect(opens).toBe(0);
+      fixture.indexPath,
+    );
+    servers.push(server);
+    const client = await connectMcp(
+      `http://127.0.0.1:${String(server.port)}`,
+      "/p/alpha/mcp",
+      "xdg-non-loopback-management",
+    );
+    try {
+      const definition = (await client.listTools()).tools.find(
+        (tool) => tool.name === "workset",
+      );
+      expect(
+        (definition?.inputSchema.properties?.["op"] as { enum?: string[] } | undefined)?.enum,
+      ).toEqual(["get", "fetch", "set"]);
+      expect(textOf(await client.callTool({
+        name: "workset",
+        arguments: { op: "set", roots: [] },
+      }))).toBe('{"op":"set","acknowledgement":{"roots":[],"epoch":1}}');
+    } finally {
+      await client.close();
+    }
   });
 
   test("binds loopback XDG MCP sessions to trusted workset management", async () => {

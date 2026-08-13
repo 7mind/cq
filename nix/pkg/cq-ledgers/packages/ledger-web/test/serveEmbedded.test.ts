@@ -155,7 +155,17 @@ beforeAll(async () => {
   webPort = await freePort();
   // No --mcp-url ⇒ embedded MCP rooted at --cwd.
   web = bunSpawn({
-    cmd: [process.execPath, "run", webMain, "--cwd", tmpRoot, "--port", String(webPort)],
+    cmd: [
+      process.execPath,
+      "run",
+      webMain,
+      "--cwd",
+      tmpRoot,
+      "--host",
+      "0.0.0.0",
+      "--port",
+      String(webPort),
+    ],
     env: {
       ...process.env,
       LEDGER_WEB_OUTDIR: outdir,
@@ -163,9 +173,14 @@ beforeAll(async () => {
       CQ_PROMPT_ROOT: promptRoot,
     },
     stdout: "ignore",
-    stderr: "ignore",
+    stderr: "inherit",
   });
-  await waitForPort(webPort);
+  await Promise.race([
+    waitForPort(webPort),
+    web.exited.then((exitCode) => {
+      throw new Error(`non-loopback embedded web exited before binding: ${String(exitCode)}`);
+    }),
+  ]);
 });
 
 afterAll(async () => {
@@ -181,7 +196,7 @@ afterAll(async () => {
 
 const base = (): string => `http://127.0.0.1:${webPort}`;
 
-describe("ledger-web embedded MCP (same-origin /mcp, no upstream process)", () => {
+describe("ledger-web embedded MCP on a non-loopback bind (same-origin /mcp)", () => {
   it("preserves the T977 dispatch contract through the production embedded web construction", async () => {
     const namespace = await resolveSingleProjectAttestationNamespace({
       construction: "embedded",
@@ -219,7 +234,7 @@ describe("ledger-web embedded MCP (same-origin /mcp, no upstream process)", () =
     expect(html).toContain('window.__LEDGER_MCP_URL__ = "/mcp"');
   });
 
-  it("hosts the MCP protocol in-process: a same-origin client round-trips", async () => {
+  it("hosts trusted management MCP in-process while listening on 0.0.0.0", async () => {
     const transport = new StreamableHTTPClientTransport(new URL(`${base()}/mcp`));
     const client = new Client({ name: "embedded-test", version: "0.0.1" }, { capabilities: {} });
     await client.connect(transport as unknown as Transport);
