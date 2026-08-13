@@ -209,12 +209,6 @@ export {
   createWorksetManagementLedger,
   createInMemoryWorksetGuardedLedger,
   createInMemoryWorksetManagementLedger,
-  createFsWorksetGuardedLedger,
-  createFsWorksetManagementLedger,
-  createGitObjectWorksetGuardedLedger,
-  createGitObjectWorksetManagementLedger,
-  createSqliteWorksetGuardedLedger,
-  createSqliteWorksetManagementLedger,
   assertGenericMutationAdmissionNotCallerMinted,
   inventoriedLedgerStoreMutationMethods,
   inventoriedSealedOwnershipFields,
@@ -233,10 +227,22 @@ export type {
   WorksetGuardedLedger,
   WorksetGenericMutationGatewayHost,
   CreateInMemoryWorksetGuardedLedgerOptions,
-  CreateFsWorksetGuardedLedgerOptions,
-  CreateGitObjectWorksetGuardedLedgerOptions,
-  CreateSqliteWorksetGuardedLedgerOptions,
 } from "./worksetGenericMutation.js";
+export {
+  createFsWorksetGuardedLedger,
+  createFsWorksetManagementLedger,
+} from "./store/fsWorksetGuardedLedger.js";
+export type { CreateFsWorksetGuardedLedgerOptions } from "./store/fsWorksetGuardedLedger.js";
+export {
+  createGitObjectWorksetGuardedLedger,
+  createGitObjectWorksetManagementLedger,
+} from "./store/git/worksetGuardedLedger.js";
+export type { CreateGitObjectWorksetGuardedLedgerOptions } from "./store/git/worksetGuardedLedger.js";
+export {
+  createSqliteWorksetGuardedLedger,
+  createSqliteWorksetManagementLedger,
+} from "./store/sqlite/worksetGuardedLedger.js";
+export type { CreateSqliteWorksetGuardedLedgerOptions } from "./store/sqlite/worksetGuardedLedger.js";
 export {
   WorksetOwnedLifecycleError,
   createWorksetOwnedWriteGateway,

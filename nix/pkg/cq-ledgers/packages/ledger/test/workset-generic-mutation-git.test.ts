@@ -371,14 +371,16 @@ describe("workset generic-mutation git-object focused [T1973]", () => {
           epoch: 1,
         });
 
-        const u1 = await a.mutations.updateItem(TASKS_LEDGER, t1.id, {
-          status: "wip",
-          fields: { headline: "t1-a" },
-        });
-        const u2 = await b.mutations.updateItem(TASKS_LEDGER, t2.id, {
-          status: "wip",
-          fields: { headline: "t2-b" },
-        });
+        const [u1, u2] = await Promise.all([
+          a.mutations.updateItem(TASKS_LEDGER, t1.id, {
+            status: "wip",
+            fields: { headline: "t1-a" },
+          }),
+          b.mutations.updateItem(TASKS_LEDGER, t2.id, {
+            status: "wip",
+            fields: { headline: "t2-b" },
+          }),
+        ]);
         expect(u1.fields.headline).toBe("t1-a");
         expect(u2.fields.headline).toBe("t2-b");
 

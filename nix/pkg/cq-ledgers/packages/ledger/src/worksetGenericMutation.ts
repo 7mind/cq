@@ -64,16 +64,6 @@ import {
 } from "./worksetInvocationAuthority.js";
 import { DEPENDENCY_REF_FIELDS, canonicalizeRef, buildPrefixRegistry } from "./refs.js";
 import { InMemoryLedgerStore } from "./store/InMemoryLedgerStore.js";
-import { FsLedgerStore, type FsLedgerStoreOpts } from "./store/FsLedgerStore.js";
-import {
-  createFsWorksetStore,
-  type CreateFsWorksetStoreOptions,
-} from "./store/fsWorksetStore.js";
-import {
-  GitObjectLedgerBackend,
-  type GitObjectLedgerBackendOpts,
-} from "./store/git/GitObjectLedgerBackend.js";
-import { SqliteLedgerStore } from "./store/sqlite/SqliteLedgerStore.js";
 import type {
   ArchiveContent,
   CreateItemInit,
@@ -82,16 +72,9 @@ import type {
   FtsSearchHit,
   FtsSearchOpts,
   LedgerStore,
-  OnMutation,
   UpdateItemPatch,
   UpdateMilestoneItemPatch,
 } from "./store/LedgerStore.js";
-import type { LockfileOpts } from "./store/lockfile.js";
-import {
-  createGitObjectWorksetStore,
-  type CreateGitObjectWorksetStoreOptions,
-} from "./worksetStoreGit.js";
-import type { GitPlumbing } from "./store/git/GitPlumbing.js";
 import type {
   ArchivePointer,
   FetchedLedger,
@@ -945,7 +928,7 @@ export function createWorksetManagementLedger(
  * empty roots admit everything; otherwise require closed-graph membership or
  * exact inactive-root equality against the live raw store.
  */
-function closedGraphIsTargetAdmitted(
+export function closedGraphIsTargetAdmitted(
   rawStore: LedgerStore,
 ): (target: string, roots: readonly string[]) => boolean {
   return (target, roots) => {
@@ -1016,215 +999,6 @@ export function createInMemoryWorksetGuardedLedger(
   });
 }
 
-// ---------------------------------------------------------------------------
-// Git-object durable leg (T1973)
-// ---------------------------------------------------------------------------
-
-export interface CreateGitObjectWorksetGuardedLedgerOptions {
-  /** Absolute host repo root the orphan ref + lockfiles live under. */
-  readonly repoRoot: string;
-  /** Short branch name for the orphan ledger/workset ref (default `cq-ledger`). */
-  readonly ref?: string;
-  readonly now?: () => string;
-  readonly hooks?: WorksetAdmissionCoordinatorHooks;
-  readonly afterGenericAdmit?: () => Promise<void> | void;
-  readonly invocationAuthority?: WorksetInvocationAuthority;
-  /** Lockfile injection points for tests. */
-  readonly lockfile?: LockfileOpts;
-  /** Injected plumbing (tests drive a throwaway repo / fault injection). */
-  readonly git?: GitPlumbing;
-  /** Cross-process cache invalidation hook (watcher / peer coherence). */
-  readonly onMutation?: OnMutation;
-  /** Schema-divergence policy forwarded to {@link GitObjectLedgerBackend}. */
-  readonly onSchemaDivergence?: GitObjectLedgerBackendOpts["onSchemaDivergence"];
-  /** Workset-store fault-injection seam (roots CAS). */
-  readonly commitRoots?: CreateGitObjectWorksetStoreOptions["commitRoots"];
-  readonly sleep?: CreateGitObjectWorksetStoreOptions["sleep"];
-  readonly isPidAlive?: CreateGitObjectWorksetStoreOptions["isPidAlive"];
-  readonly isProcessGroupAlive?: CreateGitObjectWorksetStoreOptions["isProcessGroupAlive"];
-  readonly locksDir?: CreateGitObjectWorksetStoreOptions["locksDir"];
-  readonly validateReplacement?: CreateGitObjectWorksetStoreOptions["validateReplacement"];
-}
-
-/**
- * Durable Git-object guarded ledger: {@link GitObjectLedgerBackend} for the
- * canonical object graph + {@link createGitObjectWorksetStore} for roots/
- * admission, exposed only through {@link WorksetGuardedLedger}.
- *
- * Every successful gateway mutation is one admitted write path on the raw
- * backend (which advances the orphan ref by one CAS commit). Failures leave
- * the prior ref tip authoritative. Target admission uses closed-graph
- * membership against the live raw store (plus exact inactive roots).
- */
-export async function createGitObjectWorksetGuardedLedger(
-  options: CreateGitObjectWorksetGuardedLedgerOptions,
-): Promise<WorksetGuardedLedger> {
-  const rawStore = new GitObjectLedgerBackend({
-    repoRoot: options.repoRoot,
-    ...(options.ref !== undefined ? { ref: options.ref } : {}),
-    ...(options.now !== undefined ? { now: options.now } : {}),
-    ...(options.lockfile !== undefined ? { lockfile: options.lockfile } : {}),
-    ...(options.git !== undefined ? { git: options.git } : {}),
-    ...(options.onMutation !== undefined ? { onMutation: options.onMutation } : {}),
-    ...(options.onSchemaDivergence !== undefined
-      ? { onSchemaDivergence: options.onSchemaDivergence }
-      : {}),
-  });
-
-  const worksetStore = await createGitObjectWorksetStore({
-    repoRoot: options.repoRoot,
-    ...(options.ref !== undefined ? { ref: options.ref } : {}),
-    ...(options.git !== undefined ? { git: options.git } : {}),
-    ...(options.lockfile !== undefined ? { lockfile: options.lockfile } : {}),
-    ...(options.locksDir !== undefined ? { locksDir: options.locksDir } : {}),
-    ...(options.hooks !== undefined ? { hooks: options.hooks } : {}),
-    ...(options.commitRoots !== undefined ? { commitRoots: options.commitRoots } : {}),
-    ...(options.sleep !== undefined ? { sleep: options.sleep } : {}),
-    ...(options.isPidAlive !== undefined ? { isPidAlive: options.isPidAlive } : {}),
-    ...(options.isProcessGroupAlive !== undefined
-      ? { isProcessGroupAlive: options.isProcessGroupAlive }
-      : {}),
-    ...(options.validateReplacement !== undefined
-      ? { validateReplacement: options.validateReplacement }
-      : {}),
-    isTargetAdmitted: (target, roots) => {
-      if (roots.length === 0) return true;
-      try {
-        const state = buildActiveStateFromLedgerStore(rawStore);
-        const graph = closeWorkset(roots, state);
-        if (worksetMemberRefSet(graph).has(target)) return true;
-        if (graph.inactiveRoots.includes(target)) return true;
-        return false;
-      } catch {
-        return false;
-      }
-    },
-  });
-
-  return createWorksetGuardedLedger({
-    rawStore,
-    worksetStore,
-    runGenericTransaction: (mutate) =>
-      rawStore.runAtomicGenericMutation(
-        mutate,
-        () => readWorksetRootsEpoch(worksetStore),
-      ),
-    ...(options.invocationAuthority !== undefined
-      ? { invocationAuthority: options.invocationAuthority }
-      : {}),
-    ...(options.afterGenericAdmit !== undefined
-      ? { afterGenericAdmit: options.afterGenericAdmit }
-      : {}),
-  });
-}
-
-/** Git-object trusted-host management surface for direct administration and contracts. */
-export async function createGitObjectWorksetManagementLedger(
-  options: Omit<CreateGitObjectWorksetGuardedLedgerOptions, "invocationAuthority">,
-): Promise<WorksetGuardedLedger> {
-  return createGitObjectWorksetGuardedLedger({
-    ...options,
-    invocationAuthority: createTrustedWorksetManagementAuthority(),
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Filesystem Behavioral-Active Good-Communication factory (T1972)
-// ---------------------------------------------------------------------------
-
-export interface CreateFsWorksetGuardedLedgerOptions {
-  /** Project root (server --cwd). Ledgers + workset live under `<root>/.cq/`. */
-  readonly root: string;
-  readonly now?: () => string;
-  readonly hooks?: WorksetAdmissionCoordinatorHooks;
-  readonly afterGenericAdmit?: () => Promise<void> | void;
-  readonly invocationAuthority?: WorksetInvocationAuthority;
-  readonly lockfile?: FsLedgerStoreOpts["lockfile"];
-  readonly onMutation?: FsLedgerStoreOpts["onMutation"];
-  /** Injected into FsLedgerStore persistence writes (ledger/archive/registry). */
-  readonly ledgerAtomicWrite?: (filePath: string, text: string) => Promise<void>;
-  /** Injected into createFsWorksetStore roots writes. */
-  readonly worksetAtomicWrite?: (filePath: string, text: string) => Promise<void>;
-  readonly isPidAlive?: CreateFsWorksetStoreOptions["isPidAlive"];
-  readonly isProcessGroupAlive?: CreateFsWorksetStoreOptions["isProcessGroupAlive"];
-  readonly selfPid?: number;
-  readonly selfHostname?: string;
-  readonly pollIntervalMs?: number;
-}
-
-/**
- * Filesystem guarded ledger: {@link FsLedgerStore} + {@link createFsWorksetStore}
- * exposed only through {@link WorksetGuardedLedger}.
- *
- * Uses the same closed-graph admission probe as the in-memory dummy so the
- * shared Blackbox contract is backend-agnostic. Raw FS write primitives stay
- * inside the adapters (global + ordered per-ledger locks, atomic writes).
- */
-export function createFsWorksetGuardedLedger(
-  options: CreateFsWorksetGuardedLedgerOptions,
-): WorksetGuardedLedger {
-  if (typeof options.root !== "string" || options.root.length === 0) {
-    throw new Error("createFsWorksetGuardedLedger: root is required");
-  }
-
-  const rawStore = new FsLedgerStore({
-    root: options.root,
-    ...(options.now !== undefined ? { now: options.now } : {}),
-    ...(options.lockfile !== undefined ? { lockfile: options.lockfile } : {}),
-    ...(options.onMutation !== undefined ? { onMutation: options.onMutation } : {}),
-    ...(options.ledgerAtomicWrite !== undefined
-      ? { atomicWrite: options.ledgerAtomicWrite }
-      : {}),
-  });
-
-  const worksetStore = createFsWorksetStore({
-    root: options.root,
-    ...(options.hooks !== undefined ? { hooks: options.hooks } : {}),
-    ...(options.lockfile !== undefined ? { lockfile: options.lockfile } : {}),
-    ...(options.worksetAtomicWrite !== undefined
-      ? { atomicWrite: options.worksetAtomicWrite }
-      : {}),
-    ...(options.isPidAlive !== undefined ? { isPidAlive: options.isPidAlive } : {}),
-    ...(options.isProcessGroupAlive !== undefined
-      ? { isProcessGroupAlive: options.isProcessGroupAlive }
-      : {}),
-    ...(options.selfPid !== undefined ? { selfPid: options.selfPid } : {}),
-    ...(options.selfHostname !== undefined
-      ? { selfHostname: options.selfHostname }
-      : {}),
-    ...(options.pollIntervalMs !== undefined
-      ? { pollIntervalMs: options.pollIntervalMs }
-      : {}),
-    isTargetAdmitted: closedGraphIsTargetAdmitted(rawStore),
-  });
-
-  return createWorksetGuardedLedger({
-    rawStore,
-    worksetStore,
-    runGenericTransaction: (mutate) =>
-      rawStore.runAtomicGenericMutation(
-        mutate,
-        () => readWorksetRootsEpoch(worksetStore),
-      ),
-    ...(options.invocationAuthority !== undefined
-      ? { invocationAuthority: options.invocationAuthority }
-      : {}),
-    ...(options.afterGenericAdmit !== undefined
-      ? { afterGenericAdmit: options.afterGenericAdmit }
-      : {}),
-  });
-}
-
-/** Filesystem trusted-host management surface for direct administration and contracts. */
-export function createFsWorksetManagementLedger(
-  options: Omit<CreateFsWorksetGuardedLedgerOptions, "invocationAuthority">,
-): WorksetGuardedLedger {
-  return createFsWorksetGuardedLedger({
-    ...options,
-    invocationAuthority: createTrustedWorksetManagementAuthority(),
-  });
-}
-
 /** In-memory trusted-host management surface for direct administration and contracts. */
 export function createInMemoryWorksetManagementLedger(
   options: Omit<CreateInMemoryWorksetGuardedLedgerOptions, "invocationAuthority"> = {},
@@ -1272,100 +1046,4 @@ export function inventoriedSealedOwnershipFields(): readonly string[] {
 /** Canonical ledger count (for inventory stability checks). */
 export function canonicalLedgerCount(): number {
   return CANONICAL_LEDGERS.length;
-}
-
-// ---------------------------------------------------------------------------
-// SQLite durable leg (T1974)
-// ---------------------------------------------------------------------------
-
-export interface CreateSqliteWorksetGuardedLedgerOptions {
-  /** Concrete ledger database file path (created on init if absent). */
-  readonly dbPath: string;
-  readonly now?: () => string;
-  /** Optional out-of-tree logs directory for `readLog`. */
-  readonly logsDir?: string;
-  readonly hooks?: WorksetAdmissionCoordinatorHooks;
-  readonly afterGenericAdmit?: () => Promise<void> | void;
-  readonly invocationAuthority?: WorksetInvocationAuthority;
-}
-
-/**
- * Lazy {@link WorksetStore} facade: SqliteLedgerStore mounts the durable
- * workset capability during {@link SqliteLedgerStore.init}, so gateway
- * construction must not force init. Every method re-resolves the live handle.
- */
-function lazySqliteWorksetStore(get: () => WorksetStore): WorksetStore {
-  return {
-    snapshot: () => get().snapshot(),
-    setRoots: (roots) => get().setRoots(roots),
-    admitLedgerMutation: (input) => get().admitLedgerMutation(input),
-    admitExternalEffect: (input) => get().admitExternalEffect(input),
-    runAdministrative: (input) => get().runAdministrative(input),
-    activeAdmissionCount: () => get().activeAdmissionCount(),
-    exclusiveHeld: () => get().exclusiveHeld(),
-  };
-}
-
-/**
- * T1974 — durable SQLite leg of the guarded generic-mutation dual-test pair.
- *
- * Wires the T1961 gateway over {@link SqliteLedgerStore} + the T1957
- * {@link createSqliteWorksetStore} mounted on the same connection. Closed-graph
- * membership (plus exact inactive roots) drives ledger-mutation target
- * admission so gateway validation and t3 admits agree. Each ordinary mutation
- * still runs as one admitted {@code BEGIN IMMEDIATE} write on the raw store;
- * raw SQL helpers remain internal to the adapter.
- */
-export function createSqliteWorksetGuardedLedger(
-  options: CreateSqliteWorksetGuardedLedgerOptions,
-): WorksetGuardedLedger {
-  // Box so isTargetAdmitted can close over the live raw store once constructed
-  // (and after init has mounted rows) without a reassigned binding.
-  const box: { raw: SqliteLedgerStore | null } = { raw: null };
-  const rawStore = new SqliteLedgerStore({
-    dbPath: options.dbPath,
-    ...(options.now !== undefined ? { now: options.now } : {}),
-    ...(options.logsDir !== undefined ? { logsDir: options.logsDir } : {}),
-    workset: {
-      ...(options.hooks !== undefined ? { hooks: options.hooks } : {}),
-      isTargetAdmitted: (target, roots) => {
-        if (roots.length === 0) return true;
-        const live = box.raw;
-        if (live === null) return false;
-        try {
-          const state = buildActiveStateFromLedgerStore(live);
-          const graph = closeWorkset(roots, state);
-          if (worksetMemberRefSet(graph).has(target)) return true;
-          if (graph.inactiveRoots.includes(target)) return true;
-          return false;
-        } catch {
-          // Uninitialised store or malformed roots — fail closed.
-          return false;
-        }
-      },
-    },
-  });
-  box.raw = rawStore;
-
-  return createWorksetGuardedLedger({
-    rawStore,
-    worksetStore: lazySqliteWorksetStore(() => rawStore.worksetStore()),
-    runGenericTransaction: (mutate) => rawStore.runAtomicGenericMutation(mutate),
-    ...(options.invocationAuthority !== undefined
-      ? { invocationAuthority: options.invocationAuthority }
-      : {}),
-    ...(options.afterGenericAdmit !== undefined
-      ? { afterGenericAdmit: options.afterGenericAdmit }
-      : {}),
-  });
-}
-
-/** SQLite trusted-host management surface for direct administration and contracts. */
-export function createSqliteWorksetManagementLedger(
-  options: Omit<CreateSqliteWorksetGuardedLedgerOptions, "invocationAuthority">,
-): WorksetGuardedLedger {
-  return createSqliteWorksetGuardedLedger({
-    ...options,
-    invocationAuthority: createTrustedWorksetManagementAuthority(),
-  });
 }
