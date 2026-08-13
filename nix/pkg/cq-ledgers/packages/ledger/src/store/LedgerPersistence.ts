@@ -136,11 +136,11 @@ export interface LedgerPersistence {
    * with no pending stage return `false` unconditionally.
    */
   hasPendingPlanLifecycleCommit(): Promise<boolean>;
-  /** Recover an interrupted filesystem lifecycle commit; atomic backends no-op. */
+  /** Roll back an interrupted filesystem lifecycle commit; atomic backends no-op. */
   recoverPlanLifecycleCommit(): Promise<void>;
   /** Read verifier/replay state, never exposed through ledger items. */
   readPlanLifecycleState(): Promise<string | null>;
-  /** Commit private state and all changed ledgers as one recoverable decision. */
+  /** Commit private state and all changed ledgers as one rollback-recoverable decision. */
   commitPlanLifecycle(commit: PlanLifecyclePersistenceCommit): Promise<void>;
 
   // ---------------------------------------------------------------------------

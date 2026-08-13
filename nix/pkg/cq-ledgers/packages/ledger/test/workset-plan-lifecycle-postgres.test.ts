@@ -1,0 +1,17 @@
+import { describe, it } from "bun:test";
+import { registerWorksetPlanLifecycleContract } from "./worksetPlanLifecycleContract.js";
+import { postgresPlanLifecycleFactory } from "./worksetPlanLifecycleDurableFactories.js";
+
+const dsn = process.env.CQ_TEST_PG_URL;
+if (dsn === undefined || dsn.length === 0) {
+  if (process.env.CQ_TEST_REQUIRE_PG === "1") {
+    throw new Error(
+      "CQ_TEST_REQUIRE_PG=1 requires CQ_TEST_PG_URL to contain a PostgreSQL DSN",
+    );
+  }
+  describe.skip("PostgresLedgerStore workset-guarded plan lifecycle [BA]", () => {
+    it("requires CQ_TEST_PG_URL", () => {});
+  });
+} else {
+  registerWorksetPlanLifecycleContract(postgresPlanLifecycleFactory(dsn));
+}

@@ -180,6 +180,8 @@ import {
 } from "../operatorActionLifecycle.js";
 import { createOwnedWriteTransaction } from "../ownedWriteTransaction.js";
 import type { WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
+import type { WorksetPlanLifecycleTx } from "../../worksetPlanLifecycle.js";
+import { createWorksetPlanLifecycleTransaction } from "../worksetPlanLifecycleTransaction.js";
 
 export interface SqliteLedgerStoreOpts {
   /** Concrete ledger database file path (created on init if absent). */
@@ -1535,8 +1537,10 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         }
         this.replaceActiveLedger(ledger);
       }
-      this.persistPlanRecords("plan_claims", state.claims);
-      this.persistPlanRecords("plan_operations", state.operations);
+      if (dirtyLedgers.length > 0) {
+        this.persistPlanRecords("plan_claims", state.claims);
+        this.persistPlanRecords("plan_operations", state.operations);
+      }
       return result;
     });
     for (const ledgerId of this.enumerate()) {
@@ -1567,6 +1571,32 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         if (ledger === undefined) throw new LedgerError(`ledger not found: ${ledgerId}`);
         this.replaceActiveLedger(ledger);
       }
+      return { result, dirtyLedgers };
+    });
+    for (const ledgerId of outcome.dirtyLedgers) {
+      this.rebuildLedgerIndexActive(ledgerId);
+      this.fireMutation(ledgerId, "update");
+    }
+    return outcome.result;
+  }
+
+  /** Run one guarded plan operation inside one BEGIN IMMEDIATE transaction. */
+  async runAtomicWorksetPlanLifecycleMutation<T>(
+    mutate: (tx: WorksetPlanLifecycleTx) => T,
+  ): Promise<T> {
+    this.assertInit();
+    const outcome = immediateWriteTransaction(this.db(), () => {
+      const state = this.loadPlanLifecycleState();
+      const lifecycle = createWorksetPlanLifecycleTransaction(state);
+      const result = mutate(lifecycle.tx);
+      const dirtyLedgers = [...lifecycle.dirtyLedgers];
+      for (const ledgerId of dirtyLedgers) {
+        const ledger = state.ledgers.get(ledgerId);
+        if (ledger === undefined) throw new LedgerError(`ledger not found: ${ledgerId}`);
+        this.replaceActiveLedger(ledger);
+      }
+      this.persistPlanRecords("plan_claims", state.claims);
+      this.persistPlanRecords("plan_operations", state.operations);
       return { result, dirtyLedgers };
     });
     for (const ledgerId of outcome.dirtyLedgers) {

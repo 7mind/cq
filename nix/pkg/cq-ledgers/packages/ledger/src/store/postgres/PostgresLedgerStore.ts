@@ -188,6 +188,8 @@ import {
 } from "../operatorActionLifecycle.js";
 import { createOwnedWriteTransaction } from "../ownedWriteTransaction.js";
 import type { WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
+import type { WorksetPlanLifecycleTx } from "../../worksetPlanLifecycle.js";
+import { createWorksetPlanLifecycleTransaction } from "../worksetPlanLifecycleTransaction.js";
 
 export interface PostgresLedgerStoreOpts {
   /**
@@ -1988,8 +1990,10 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       for (const ledgerId of new Set(mutation.dirtyLedgers)) {
         await this.persistLedgerState(tx, requireLiveLedger(state.ledgers, ledgerId));
       }
-      await this.persistPlanRecords(tx, "plan_claims", state.claims);
-      await this.persistPlanRecords(tx, "plan_operations", state.operations);
+      if (dirtyLedgers.length > 0) {
+        await this.persistPlanRecords(tx, "plan_claims", state.claims);
+        await this.persistPlanRecords(tx, "plan_operations", state.operations);
+      }
       value = mutation.result;
       dirty = [...new Set(mutation.dirtyLedgers)];
       live = tenant;
@@ -2032,6 +2036,34 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       for (const ledgerId of dirtyLedgers) {
         await this.persistLedgerState(tx, requireLiveLedger(tenant.ledgers, ledgerId));
       }
+      live = tenant;
+    });
+    this.absorbLiveLedgers(live);
+    for (const ledgerId of dirtyLedgers) this.fireHook(ledgerId, "update");
+    if (dirtyLedgers.length > 0) await this.notify();
+    return result;
+  }
+
+  /** Run one tenant-scoped guarded plan operation and notify only after commit. */
+  async runAtomicWorksetPlanLifecycleMutation<T>(
+    mutate: (tx: WorksetPlanLifecycleTx) => T,
+  ): Promise<T> {
+    this.assertInit();
+    let result!: T;
+    let dirtyLedgers: readonly string[] = [];
+    let live!: LiveTenantState;
+    await writeTransaction(this.pool(), async (tx) => {
+      await this.lockTenantCounters(tx);
+      const tenant = await this.readLiveTenant(tx);
+      const state = await this.loadPlanLifecycleState(tx, tenant.ledgers);
+      const lifecycle = createWorksetPlanLifecycleTransaction(state);
+      result = mutate(lifecycle.tx);
+      dirtyLedgers = [...lifecycle.dirtyLedgers];
+      for (const ledgerId of dirtyLedgers) {
+        await this.persistLedgerState(tx, requireLiveLedger(state.ledgers, ledgerId));
+      }
+      await this.persistPlanRecords(tx, "plan_claims", state.claims);
+      await this.persistPlanRecords(tx, "plan_operations", state.operations);
       live = tenant;
     });
     this.absorbLiveLedgers(live);

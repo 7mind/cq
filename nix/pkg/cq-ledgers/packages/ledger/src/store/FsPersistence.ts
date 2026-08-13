@@ -198,8 +198,8 @@ export class FsPersistence implements LedgerPersistence {
   async recoverPlanLifecycleCommit(): Promise<void> {
     const pending = await readMaybe(this.planPendingPath);
     if (pending === null) return;
-    const commit = parsePlanLifecycleCommit(pending);
-    await this.applyPlanLifecycleCommit(commit);
+    await this.restorePlanLifecyclePreState(parsePlanLifecycleRollback(pending));
+    await fs.rm(this.planPendingPath, { force: true });
   }
 
   async readPlanLifecycleState(): Promise<string | null> {
@@ -207,18 +207,53 @@ export class FsPersistence implements LedgerPersistence {
   }
 
   async commitPlanLifecycle(commit: PlanLifecyclePersistenceCommit): Promise<void> {
-    await this.writeAtomic(this.planPendingPath, JSON.stringify(commit));
-    await this.applyPlanLifecycleCommit(commit);
+    const rollback = await this.capturePlanLifecyclePreState(commit);
+    await this.writeAtomic(this.planPendingPath, JSON.stringify(rollback));
+    try {
+      await this.applyPlanLifecycleCommit(commit);
+      await fs.rm(this.planPendingPath, { force: true });
+    } catch (error) {
+      try {
+        await this.restorePlanLifecyclePreState(rollback);
+        await fs.rm(this.planPendingPath, { force: true });
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          "plan lifecycle commit failed and its pre-state rollback did not complete",
+        );
+      }
+      throw error;
+    }
   }
 
-  private async applyPlanLifecycleCommit(
+  private async capturePlanLifecyclePreState(
     commit: PlanLifecyclePersistenceCommit,
+  ): Promise<PlanLifecycleRollback> {
+    const ledgers: Record<string, string | null> = {};
+    for (const name of Object.keys(commit.ledgers)) {
+      ledgers[name] = await readMaybe(this.ledgerPath(name));
+    }
+    return {
+      version: 1,
+      state: await readMaybe(this.planStatePath),
+      ledgers,
+    };
+  }
+
+  private async restorePlanLifecyclePreState(
+    rollback: PlanLifecycleRollback,
   ): Promise<void> {
+    for (const [name, source] of Object.entries(rollback.ledgers)) {
+      await this.restoreSource(this.ledgerPath(name), source);
+    }
+    await this.restoreSource(this.planStatePath, rollback.state);
+  }
+
+  private async applyPlanLifecycleCommit(commit: PlanLifecyclePersistenceCommit): Promise<void> {
     for (const [name, source] of Object.entries(commit.ledgers)) {
       await this.writeAtomic(this.ledgerPath(name), source);
     }
     await this.writeAtomic(this.planStatePath, commit.state);
-    await fs.rm(this.planPendingPath, { force: true });
   }
 
   /**
@@ -418,7 +453,13 @@ function isNullableStringRecord(
   );
 }
 
-function parsePlanLifecycleCommit(text: string): PlanLifecyclePersistenceCommit {
+interface PlanLifecycleRollback {
+  readonly version: 1;
+  readonly state: string | null;
+  readonly ledgers: Readonly<Record<string, string | null>>;
+}
+
+function parsePlanLifecycleRollback(text: string): PlanLifecycleRollback {
   // A truncated pending marker (the exact artifact an interrupted writer can
   // leave) must surface as a LedgerError like every malformed-shape branch
   // below, not a raw SyntaxError out of init().
@@ -433,21 +474,20 @@ function parsePlanLifecycleCommit(text: string): PlanLifecyclePersistenceCommit 
   }
   const record = value as Record<string, unknown>;
   if (
-    typeof record["state"] !== "string" ||
-    typeof record["ledgers"] !== "object" ||
-    record["ledgers"] === null ||
-    Array.isArray(record["ledgers"])
+    record["version"] !== 1 ||
+    (record["state"] !== null && typeof record["state"] !== "string") ||
+    !isLedgerSourceRecord(record["ledgers"])
   ) {
     throw new LedgerError("invalid pending plan lifecycle commit");
   }
-  const ledgers: Record<string, string> = {};
+  const ledgers: Record<string, string | null> = {};
   for (const [name, source] of Object.entries(record["ledgers"])) {
-    if (!/^[A-Za-z0-9_-]+$/.test(name) || typeof source !== "string") {
+    if (!/^[A-Za-z0-9_-]+$/.test(name)) {
       throw new LedgerError("invalid pending plan lifecycle ledger source");
     }
     ledgers[name] = source;
   }
-  return { state: record["state"], ledgers };
+  return { version: 1, state: record["state"], ledgers };
 }
 
 /** Read a UTF-8 file, mapping ENOENT to `null`. */

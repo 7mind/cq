@@ -106,7 +106,7 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     });
   }
 
-  it("recovers a decided filesystem claim and its acknowledgement after partial apply", async () => {
+  it("rolls back a partially applied filesystem claim before retrying it as new", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-fs-recovery-"));
     const docs = path.join(root, ".cq");
     const store = new FsLedgerStore({ root });
@@ -121,13 +121,12 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     const state = await fs.readFile(path.join(docs, "plan-lifecycle.json"), "utf8");
     expect(state).not.toContain(input.ownerFenceToken);
 
-    await fs.writeFile(goalsPath, beforeGoals, "utf8");
-    await fs.rm(path.join(docs, "plan-lifecycle.json"));
     await fs.writeFile(
       path.join(docs, "plan-lifecycle.pending.json"),
       JSON.stringify({
-        state,
-        ledgers: { [GOALS_LEDGER]: finalGoals },
+        version: 1,
+        state: null,
+        ledgers: { [GOALS_LEDGER]: beforeGoals },
       }),
       "utf8",
     );
@@ -138,8 +137,18 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     const replay = await recovered.claimPlan(input);
     expect(replay.ok).toBe(true);
     if (!first.ok || !replay.ok) throw new Error("expected claim success");
-    expect(replay.replayed).toBe(true);
+    expect(replay.replayed).toBe(false);
     expect(replay.acknowledgement).toEqual(first.acknowledgement);
+    expect(
+      JSON.parse(
+        recovered.fetchItem(GOALS_LEDGER, "G1").fields["planActiveClaim"] as string,
+      ),
+    ).toEqual({
+      goalId: first.acknowledgement.goalId,
+      claimId: first.acknowledgement.claimId,
+      generation: first.acknowledgement.generation,
+      purpose: first.acknowledgement.purpose,
+    });
     await expect(
       fs.stat(path.join(docs, "plan-lifecycle.pending.json")),
     ).rejects.toThrow();
@@ -147,7 +156,7 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     await fs.rm(root, { recursive: true, force: true });
   }, ORCHESTRATION_WAIT_MS);
 
-  it("recovers one research pause and review-defect batch after partial multi-ledger apply", async () => {
+  it("rolls back one partial research pause and retries its complete batch as new", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-fs-pause-recovery-"));
     const docs = path.join(root, ".cq");
     const ledgerIds = [
@@ -209,10 +218,6 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     if (!first.ok || first.acknowledgement.kind !== "researches") {
       throw new Error("expected research pause success");
     }
-    const finalState = await fs.readFile(
-      path.join(docs, "plan-lifecycle.json"),
-      "utf8",
-    );
     const finalLedgers = Object.fromEntries(
       await Promise.all(
         ledgerIds.map(async (ledgerId) => [
@@ -240,14 +245,14 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     }
     await fs.writeFile(
       path.join(docs, "plan-lifecycle.pending.json"),
-      JSON.stringify({ state: finalState, ledgers: finalLedgers }),
+      JSON.stringify({ version: 1, state: beforeState, ledgers: beforeLedgers }),
       "utf8",
     );
 
     const recovered = new FsLedgerStore({ root });
     await recovered.init();
     const replay = await recovered.releasePlanClaim(input);
-    expect(replay).toEqual({ ...first, replayed: true });
+    expect(replay).toEqual({ ...first, replayed: false });
     if (!replay.ok || replay.acknowledgement.kind !== "researches") {
       throw new Error("expected exact research pause replay");
     }
@@ -280,7 +285,7 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     ]);
     expect(
       JSON.stringify(await recovered.releasePlanClaim(input)),
-    ).toBe(JSON.stringify(replay));
+    ).toBe(JSON.stringify({ ...replay, replayed: true }));
     expect(
       await fs.readFile(path.join(docs, "plan-lifecycle.json"), "utf8"),
     ).not.toContain(input.ownerFenceToken);
@@ -291,7 +296,7 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     await fs.rm(root, { recursive: true, force: true });
   }, ORCHESTRATION_WAIT_MS);
 
-  it("recovers one finalize decision and defect batch before the marker after partial apply", async () => {
+  it("rolls back one partial finalize batch and retries the complete batch as new", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-fs-finalize-recovery-"));
     const docs = path.join(root, ".cq");
     const ledgerIds = [
@@ -380,10 +385,6 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     };
     const first = await store.finalizePlan(input);
     if (!first.ok) throw new Error("expected finalize success");
-    const finalState = await fs.readFile(
-      path.join(docs, "plan-lifecycle.json"),
-      "utf8",
-    );
     const finalLedgers = Object.fromEntries(
       await Promise.all(
         ledgerIds.map(async (ledgerId) => [
@@ -415,14 +416,14 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     }
     await fs.writeFile(
       path.join(docs, "plan-lifecycle.pending.json"),
-      JSON.stringify({ state: finalState, ledgers: finalLedgers }),
+      JSON.stringify({ version: 1, state: beforeState, ledgers: beforeLedgers }),
       "utf8",
     );
 
     const recovered = new FsLedgerStore({ root });
     await recovered.init();
     const replay = await recovered.finalizePlan(input);
-    expect(replay).toEqual({ ...first, replayed: true });
+    expect(replay).toEqual({ ...first, replayed: false });
     if (!replay.ok) throw new Error("expected exact finalize replay");
     // ONE decision — the retry REUSES the recovered one, never duplicates it.
     expect(replay.acknowledgement.decisionId).toBe(first.acknowledgement.decisionId);
@@ -450,7 +451,7 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     expect(JSON.parse(goal.fields["planFinalizedDraft"] as string)).toEqual(draft);
     // A second retry stays a pure replay.
     expect(JSON.stringify(await recovered.finalizePlan(input))).toBe(
-      JSON.stringify(replay),
+      JSON.stringify({ ...replay, replayed: true }),
     );
     await expect(
       fs.stat(path.join(docs, "plan-lifecycle.pending.json")),
@@ -587,7 +588,7 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     await fs.rm(root, { recursive: true, force: true });
   }, ORCHESTRATION_WAIT_MS);
 
-  it("replays an interrupted commit at init inside the ordered lock set", async () => {
+  it("rolls back an interrupted commit at init inside the ordered lock set", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-fs-locked-recovery-"));
     const docs = path.join(root, ".cq");
     const goalsPath = path.join(docs, "goals.md");
@@ -600,20 +601,22 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     const input = claimInput("locked-recovery", "L".repeat(22));
     expect((await store.claimPlan(input)).ok).toBe(true);
     const finalGoals = await fs.readFile(goalsPath, "utf8");
-    const state = await fs.readFile(statePath, "utf8");
     await store.dispose();
 
-    // Roll the durable bytes back to the pre-commit state and leave the pending
-    // marker an interrupted writer would have left behind.
-    await fs.writeFile(goalsPath, beforeGoals, "utf8");
+    // Leave one partially applied ledger behind with the rollback marker an
+    // interrupted writer would have created before publishing any new bytes.
     await fs.rm(statePath);
     await fs.writeFile(
       pendingPath,
-      JSON.stringify({ state, ledgers: { [GOALS_LEDGER]: finalGoals } }),
+      JSON.stringify({
+        version: 1,
+        state: null,
+        ledgers: { [GOALS_LEDGER]: beforeGoals },
+      }),
       "utf8",
     );
 
-    // A peer holds the goals lock. Init-time recovery replays a commit that
+    // A peer holds the goals lock. Init-time recovery rolls back a commit that
     // rewrites goals.md, so it MUST wait for that lock exactly as
     // runPlanLifecycleMutation does — otherwise it can overwrite a newer
     // committed state with the superseded pending payload.
@@ -629,17 +632,17 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     await Bun.sleep(LOCK_HELD_OBSERVE_MS);
     expect(settled).toBe(false);
     expect(await fs.readFile(pendingPath, "utf8")).toContain(GOALS_LEDGER);
-    expect(await fs.readFile(goalsPath, "utf8")).toBe(beforeGoals);
+    expect(await fs.readFile(goalsPath, "utf8")).toBe(finalGoals);
 
     await release();
     await initialising;
     expect(settled).toBe(true);
     await expect(fs.stat(pendingPath)).rejects.toThrow();
-    expect(await fs.readFile(goalsPath, "utf8")).toBe(finalGoals);
+    expect(await fs.readFile(goalsPath, "utf8")).toBe(beforeGoals);
     const replay = await recovered.claimPlan(input);
     expect(replay.ok).toBe(true);
     if (!replay.ok) throw new Error("expected claim success");
-    expect(replay.replayed).toBe(true);
+    expect(replay.replayed).toBe(false);
     await recovered.dispose();
     await fs.rm(root, { recursive: true, force: true });
   }, ORCHESTRATION_WAIT_MS);
