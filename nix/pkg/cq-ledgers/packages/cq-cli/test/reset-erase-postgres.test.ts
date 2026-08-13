@@ -18,7 +18,23 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { openPgPool, ensureSchema, CANONICAL_LEDGERS, MILESTONES_AMBIENT_ID } from "@cq/ledger";
+import {
+  openPgPool,
+  ensureSchema,
+  CANONICAL_LEDGERS,
+  MILESTONES_AMBIENT_ID,
+  PostgresLedgerStore,
+  TASKS_LEDGER,
+  createLedgerStore,
+  createTrustedWorksetManagementAuthority,
+  createWorksetGuardedPlanLifecycleStore,
+  parseBackupDump,
+  parseWorksetRootsDocument,
+  readDumpInTree,
+  readCanonicalOwnership,
+  startPostgresCoherenceWatcher,
+  type ResolvedPostgresHandle,
+} from "@cq/ledger";
 import { dispatch, type ConfirmIo, type DispatchIo } from "../src/main.js";
 
 const exec = promisify(execFile);
@@ -30,7 +46,7 @@ afterAll(async () => {
 });
 
 /** A throwaway initialised git repo (for a stable projectKey) with cq.toml selecting postgres. */
-async function postgresRepo(): Promise<string> {
+async function postgresRepo(backup: "none" | "in-tree" = "none"): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), "cq-reset-erase-pg-"));
   dirs.push(dir);
   await exec("git", ["init", "-q"], { cwd: dir });
@@ -41,7 +57,11 @@ async function postgresRepo(): Promise<string> {
   await writeFile(path.join(dir, "README.md"), `# repo ${randomUUID()}\n`);
   await exec("git", ["add", "README.md"], { cwd: dir });
   await exec("git", ["commit", "-q", "-m", "init"], { cwd: dir });
-  await writeFile(path.join(dir, "cq.toml"), '[ledger]\nbackend = "postgres"\nbackup = "none"\n', "utf8");
+  await writeFile(
+    path.join(dir, "cq.toml"),
+    `[ledger]\nbackend = "postgres"\nbackup = "${backup}"\n`,
+    "utf8",
+  );
   return dir;
 }
 
@@ -64,6 +84,15 @@ function recordingIo(isTty: boolean, answer = ""): DispatchIo & { outs: string[]
     prompt: async () => answer,
   };
   return { outs, errs, out: (l) => outs.push(l), err: (l) => errs.push(l), confirm };
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await Bun.sleep(20);
+  }
+  return predicate();
 }
 
 interface TenantSnapshot {
@@ -133,6 +162,11 @@ describe.skipIf(!PG_URL)("cq reset / cq erase — postgres tenant scoping (T583)
     const outcome = await dispatch(["init", "--cwd", root], io);
     expect(outcome.exitCode).toBe(0);
     const projectKey = await projectKeyOf(root);
+    await pool!`
+      INSERT INTO groups (project_key, ledger, id, title, description)
+      VALUES (${projectKey}, 'tasks', ${MILESTONES_AMBIENT_ID}, 'seed', '')
+      ON CONFLICT DO NOTHING
+    `;
     await pool!`
       INSERT INTO items (project_key, ledger, id, milestone_id, status, fields_json, created_at, updated_at)
       VALUES (${projectKey}, 'tasks', ${`T-seed-${randomUUID().slice(0, 8)}`}, ${MILESTONES_AMBIENT_ID},
@@ -215,6 +249,143 @@ describe.skipIf(!PG_URL)("cq reset / cq erase — postgres tenant scoping (T583)
 
     const afterB = await snapshotTenant(pool!, pkB);
     expect(afterB).toEqual(beforeB);
+  });
+
+  it("configured backup completes before one-transaction reset and one notify refreshes a live peer", async () => {
+    const root = await postgresRepo("in-tree");
+    const projectKey = await projectKeyOf(root);
+    const seeded = await createLedgerStore(root);
+    const raw = seeded.store as PostgresLedgerStore;
+    const guarded = createWorksetGuardedPlanLifecycleStore({
+      rawStore: raw,
+      worksetStore: raw.worksetStore(),
+      invocationAuthority: createTrustedWorksetManagementAuthority(),
+      runOwnedTransaction: (mutate) => raw.runAtomicOwnedMutation(mutate),
+      runPlanLifecycleTransaction: (goalId, mutate) =>
+        raw.runAtomicWorksetPlanLifecycleMutation(goalId, mutate),
+    });
+    await guarded.owned.createOwnerless({
+      ledgerId: "goals",
+      milestoneId: MILESTONES_AMBIENT_ID,
+      id: "G1",
+      status: "clarifying",
+      fields: { title: "Reset backup", description: "Real guarded lifecycle" },
+      author: "T1976",
+    });
+    const claimed = await guarded.claimPlan({
+      goalId: "G1",
+      purpose: "initial",
+      claimRequestId: "reset-backup-claim",
+      ownerFenceToken: "aaaaaaaaaaaaaaaaaaaaaa",
+      expectedGeneration: null,
+      author: "T1976",
+    });
+    if (!claimed.ok) throw new Error(`claim failed: ${claimed.conflict.code}`);
+    const published = await guarded.publishPlanDraft({
+      goalId: "G1",
+      claimId: claimed.acknowledgement.claimId,
+      generation: claimed.acknowledgement.generation,
+      operationId: "reset-backup-publish",
+      ownerFenceToken: claimed.acknowledgement.ownerFenceToken,
+      manifest: {
+        milestones: [{ key: "delivery", title: "Reset backup" }],
+        tasks: [{ key: "task", milestoneKey: "delivery", headline: "survives in reset backup" }],
+      },
+      author: "T1976",
+    });
+    if (!published.ok) throw new Error(`publish failed: ${published.conflict.code}`);
+    const taskId = published.acknowledgement.manifest.tasks[0]?.id;
+    if (taskId === undefined) throw new Error("published task missing");
+    const task = guarded.fetchItem(TASKS_LEDGER, taskId);
+    const roots = ["goals:G1"];
+    await guarded.setRoots(roots);
+    seeded.backup?.close();
+    await guarded.dispose();
+
+    const peerPool = openPgPool(PG_URL!);
+    const peer = new PostgresLedgerStore({
+      pool: peerPool,
+      projectKey,
+      displayName: projectKey,
+    });
+    await peer.init();
+    let changes = 0;
+    const watcher = startPostgresCoherenceWatcher(
+      peer,
+      { pool: peerPool, dsn: PG_URL!, projectKey } satisfies ResolvedPostgresHandle,
+      () => {
+        changes += 1;
+      },
+    );
+    await waitFor(() => changes > 0);
+    const beforeResetChanges = changes;
+    try {
+      const io = recordingIo(false);
+      const outcome = await dispatch(["reset", "--cwd", root, "--yes"], io);
+      expect(outcome.exitCode).toBe(0);
+      expect(io.outs.join("\n")).toContain("backup:");
+
+      const backed = parseBackupDump(await readDumpInTree(root));
+      const backedTask = backed.ledgers
+        .get(TASKS_LEDGER)
+        ?.milestones.flatMap(({ items }) => items)
+        .find(({ id }) => id === task.id);
+      expect(backedTask).toEqual(task);
+      expect(readCanonicalOwnership(backedTask!)).toEqual({
+        ownerRef: "goals:G1",
+        edgeKind: "active-current-draft",
+      });
+      expect(backed.worksetRoots).not.toBeNull();
+      const rootFile = (await readDumpInTree(root)).find(({ path }) => path === "workset-roots.json");
+      expect(rootFile).toBeDefined();
+      expect(parseWorksetRootsDocument(rootFile!.content)).toEqual({ roots, epoch: 1 });
+
+      expect(
+        await waitFor(() => {
+          if (changes <= beforeResetChanges) return false;
+          try {
+            peer.fetchItem(TASKS_LEDGER, task.id);
+            return false;
+          } catch {
+            return true;
+          }
+        }),
+      ).toBe(true);
+      expect(peer.enumerate().sort()).toEqual(CANONICAL_LEDGERS.map(({ name }) => name).sort());
+    } finally {
+      watcher.close();
+      await peer.dispose();
+    }
+  });
+
+  it("a reseed statement failure rolls back wipe, reseed, and empty roots together", async () => {
+    const root = await postgresRepo();
+    const projectKey = await seedTenant(root);
+    const before = await snapshotTenant(pool!, projectKey);
+    const suffix = randomUUID().replaceAll("-", "");
+    const functionName = `fail_reset_reseed_${suffix}`;
+    const triggerName = `fail_reset_reseed_trigger_${suffix}`;
+    await pool!.unsafe(`
+      CREATE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.project_key = '${projectKey}' THEN
+          RAISE EXCEPTION 'injected reset reseed failure';
+        END IF;
+        RETURN NEW;
+      END
+      $$;
+      CREATE TRIGGER ${triggerName}
+      BEFORE INSERT ON ledgers FOR EACH ROW EXECUTE FUNCTION ${functionName}();
+    `);
+    try {
+      await expect(
+        dispatch(["reset", "--cwd", root, "--yes"], recordingIo(false)),
+      ).rejects.toThrow("injected reset reseed failure");
+    } finally {
+      await pool!.unsafe(`DROP TRIGGER ${triggerName} ON ledgers`);
+      await pool!.unsafe(`DROP FUNCTION ${functionName}()`);
+    }
+    expect(await snapshotTenant(pool!, projectKey)).toEqual(before);
   });
 
   it("erase refuses without confirmation (non-TTY, no --yes): exit 2, nothing touched", async () => {
@@ -319,4 +490,3 @@ describe("cq erase — D102 postgres connection failure fails loud", () => {
     }
   });
 });
-

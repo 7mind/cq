@@ -316,8 +316,16 @@ export {
   RestoreTargetChangedError,
   isXdgPrimaryEmpty,
   parseBackupDump,
+  prepareImportedOwnershipDump,
+  reconcileImportedOwnershipDump,
 } from "./store/restoreImporter.js";
-export type { RestoreSummary, ParsedDump } from "./store/restoreImporter.js";
+export type {
+  RestoreSummary,
+  ParsedDump,
+  PreparedImportedOwnershipDump,
+} from "./store/restoreImporter.js";
+export { reconcileImportedOwnership } from "./importedOwnership.js";
+export type { ImportedOwnershipMode } from "./importedOwnership.js";
 export { atomicWrite } from "./store/fsAtomic.js";
 export {
   GitPlumbing,
@@ -597,7 +605,6 @@ export {
   hasLegacyFsLedger,
   GitEnvironmentError,
   RemoteLedgerClientNotWiredError,
-  PostgresBackupNotWiredError,
   startXdgCoherenceWatcher,
   XDG_DB_FILENAME,
 } from "./store/createLedgerStore.js";

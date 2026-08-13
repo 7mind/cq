@@ -41,7 +41,7 @@ import { existsSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { SQL } from "bun";
-import { loadConfig, type LedgerBackend, type LedgerBackupMode } from "@cq/config";
+import { loadConfig, type LedgerBackend } from "@cq/config";
 import type { LedgerStore } from "./LedgerStore.js";
 import { FsLedgerStore } from "./FsLedgerStore.js";
 import { GitObjectLedgerBackend } from "./git/GitObjectLedgerBackend.js";
@@ -221,34 +221,6 @@ export class RemoteLedgerClientNotWiredError extends Error {
         `is not wired yet; refusing to fall through to local persistence.`,
     );
     this.name = "RemoteLedgerClientNotWiredError";
-  }
-}
-
-/**
- * Thrown by `cq reset`'s postgres branch (`runResetPostgres`, main.ts / T583)
- * when `[ledger].backup != 'none'`: unlike the fs backend's `reset()` (which
- * atomically snapshots-then-reinitialises), the postgres reset path does not
- * (yet) take its OWN pre-wipe backup snapshot before deleting a tenant's rows.
- *
- * This is now a NARROW gap, not a general one: T582 wired `cq backup`/`cq
- * restore` and the debounced post-mutation exporter for `backend = 'postgres'`
- * (via {@link runBackupExport}'s store-agnostic dump builder + T575's
- * `listLogs` duck-type) — {@link createLedgerStore} below no longer throws
- * this error. Only `cq reset`'s specific "snapshot immediately before
- * wiping" safety net remains unimplemented; run `cq backup` yourself right
- * before `cq reset` in the meantime.
- */
-export class PostgresBackupNotWiredError extends Error {
-  constructor(backupTarget: LedgerBackupMode, root: string) {
-    super(
-      `[ledger] backend = 'postgres' at ${root} is configured with [ledger].backup = ` +
-        `'${backupTarget}'; \`cq reset\` does not yet take a pre-wipe backup snapshot for the ` +
-        `postgres backend (the general backup mechanism — \`cq backup\`/\`cq restore\` + the ` +
-        `debounced auto-export — is wired; this is only reset's own safety net). Run ` +
-        `\`cq backup\` immediately before \`cq reset\`, or set [ledger].backup = "none" to skip ` +
-        `this guard.`,
-    );
-    this.name = "PostgresBackupNotWiredError";
   }
 }
 

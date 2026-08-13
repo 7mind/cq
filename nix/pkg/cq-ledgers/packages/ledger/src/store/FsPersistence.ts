@@ -370,10 +370,26 @@ export class FsPersistence implements LedgerPersistence {
       }
     }
 
+    // T1976: archive pointers in the backed-up ledger documents remain
+    // structurally meaningful only when their archive payloads travel with
+    // them. Copy the complete archive tree before clearing any live payload.
+    try {
+      await fs.cp(this.archiveDir, path.join(backupDir, "archive"), {
+        recursive: true,
+      });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
+
     // T1959: capture FS workset roots into the portable dump name so divergence
     // / reset backups retain ordered roots + epoch even though live state sits
     // under `.cq/workset/roots.json`.
     await this.backupWorksetRoots(backupDir);
+
+    // A completed backup now owns every archive payload referenced by its
+    // ledger documents. Only after all backup copies succeed may reset/reinit
+    // discard the corresponding live archive tree.
+    await fs.rm(this.archiveDir, { recursive: true, force: true });
 
     // Remove non-canonical ledger files so they don't survive as orphans.
     for (const name of nonCanonicalNames) {

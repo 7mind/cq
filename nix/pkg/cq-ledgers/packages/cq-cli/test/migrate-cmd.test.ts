@@ -28,6 +28,13 @@ import {
   createLedgerStore,
   createFsWorksetStore,
   createGitObjectWorksetStore,
+  CANONICAL_LEDGERS,
+  GitPlumbing,
+  GOALS_LEDGER,
+  MILESTONES_AMBIENT_ID,
+  PLAN_CURRENT_DRAFT_FIELD,
+  WORKSET_OWNER_EDGE_KIND_FIELD,
+  WORKSET_OWNER_REF_FIELD,
   openLegacyLedgerStore,
   ledgerTreePaths,
   resolveLedgerBackend,
@@ -40,6 +47,9 @@ import {
   TASKS_LEDGER,
   XDG_DB_FILENAME,
   readWorksetRootsEpoch,
+  readCanonicalOwnership,
+  parseLedger,
+  serializeLedger,
   type ArchiveContent,
   type Item,
 } from "@cq/ledger";
@@ -97,6 +107,7 @@ const RAW_LOG_BODY = '{"type":"turn","n":1}\n';
 interface SeededState {
   milestone: Item;
   item: Item;
+  goal: Item;
   archivedMilestoneId: string;
   tasksArchive: ArchiveContent;
   milestonesArchive: ArchiveContent;
@@ -121,6 +132,10 @@ async function seedLegacy(root: string, backend?: "fs" | "git-object"): Promise<
       fields: { headline: "seeded task" },
       author: "tester[1m]",
       session: "sess-1",
+    });
+    const goal = await seeded.store.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
+      status: "planning",
+      fields: { title: "legacy goal", description: "exact manifest owner" },
     });
 
     const doneMilestone = await seeded.store.createMilestone({ title: "finished work" });
@@ -148,6 +163,7 @@ async function seedLegacy(root: string, backend?: "fs" | "git-object"): Promise<
     return {
       milestone,
       item,
+      goal,
       archivedMilestoneId: doneMilestone.id,
       tasksArchive,
       milestonesArchive,
@@ -157,6 +173,58 @@ async function seedLegacy(root: string, backend?: "fs" | "git-object"): Promise<
   } finally {
     await seeded.store.dispose();
   }
+}
+
+async function addLegacyManifestEvidence(
+  root: string,
+  backend: "fs" | "git-object",
+  seed: SeededState,
+): Promise<void> {
+  const goalsSchema = CANONICAL_LEDGERS.find(({ name }) => name === GOALS_LEDGER)?.schema;
+  if (goalsSchema === undefined) throw new Error("canonical goals schema missing");
+  const update = (source: string): string => {
+    const ledger = parseLedger(source, { schema: goalsSchema, isMilestonesLedger: false });
+    const goal = ledger.milestones
+      .flatMap(({ items }) => items)
+      .find(({ id }) => id === seed.goal.id);
+    if (goal === undefined) throw new Error("legacy goal missing");
+    goal.fields[PLAN_CURRENT_DRAFT_FIELD] = JSON.stringify({
+      identity: {
+        goalId: seed.goal.id,
+        claimId: "legacy-claim",
+        generation: 1,
+        revision: 1,
+      },
+      manifest: {
+        revision: 1,
+        milestones: [{ key: "delivery", id: seed.milestone.id }],
+        tasks: [{ key: "task", id: seed.item.id }],
+      },
+    });
+    return serializeLedger(ledger);
+  };
+
+  const goalPath =
+    backend === "fs" ? `${LEDGER_STORAGE_DIRNAME}/${GOALS_LEDGER}.md` : `${GOALS_LEDGER}.md`;
+  if (backend === "fs") {
+    const absolute = path.join(root, goalPath);
+    await fs.writeFile(absolute, update(await fs.readFile(absolute, "utf8")), "utf8");
+    return;
+  }
+  const branch = resolveLedgerBackend(root).branch;
+  const ref = `refs/heads/${branch}`;
+  const git = GitPlumbing.withCwd(root);
+  const parent = await git.readRef(ref);
+  if (parent === null) throw new Error("legacy git ref missing");
+  const entries = await git.lsTreeEntries(ref);
+  const updatedBlob = await git.hashObject(update(await git.catFile(ref, goalPath)));
+  const tree = await git.writeTree(
+    entries.map((entry) =>
+      entry.path === goalPath ? { ...entry, sha: updatedBlob } : entry,
+    ),
+  );
+  const commit = await git.commitTree(tree, parent, "legacy manifest ownership fixture");
+  await git.updateRef(ref, commit, parent);
 }
 
 /** Seed both log artifacts through `cq log put` (backend-routed). */
@@ -457,6 +525,71 @@ describe("cq migrate (T504)", () => {
     const second = await dispatch(["migrate", "--cwd", root], recordingIo());
     expect(second.exitCode).toBe(EXIT_USAGE);
   }, 30_000);
+
+  for (const backend of ["fs", "git-object"] as const) {
+    it(`${backend} legacy migration infers only the exact manifest ownership`, async () => {
+      const root = await gitRepo(`cq-migrate-owner-${backend}-`);
+      await fs.writeFile(
+        path.join(root, "cq.toml"),
+        backend === "fs"
+          ? '[ledger]\nbackend = "fs"\n'
+          : '[ledger]\nbackend = "git-object"\nbranch = "cq-owner-source"\n',
+      );
+      const seed = await seedLegacy(root);
+      await addLegacyManifestEvidence(root, backend, seed);
+      const beforeRoots = { roots: seed.roots, epoch: seed.rootEpoch };
+
+      expect((await dispatch(["migrate", "--cwd", root], recordingIo())).exitCode).toBe(0);
+      const migrated = await createLedgerStore(root);
+      try {
+        for (const [ledgerId, itemId] of [
+          [MILESTONES_LEDGER, seed.milestone.id],
+          [TASKS_LEDGER, seed.item.id],
+        ] as const) {
+          expect(readCanonicalOwnership(migrated.store.fetchItem(ledgerId, itemId))).toEqual({
+            ownerRef: `goals:${seed.goal.id}`,
+            edgeKind: "active-current-draft",
+          });
+        }
+        const workset = migrated.store as typeof migrated.store & {
+          worksetStore(): ReturnType<SqliteLedgerStore["worksetStore"]>;
+        };
+        expect(await readWorksetRootsEpoch(workset.worksetStore())).toEqual(beforeRoots);
+      } finally {
+        await migrated.store.dispose();
+      }
+    }, 30_000);
+  }
+
+  it("rejects sealed/evidence conflict before xdg target access or config flip", async () => {
+    const root = await gitRepo("cq-migrate-owner-conflict-");
+    await fs.writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+    const seed = await seedLegacy(root);
+    await addLegacyManifestEvidence(root, "fs", seed);
+
+    const taskSchema = CANONICAL_LEDGERS.find(({ name }) => name === TASKS_LEDGER)?.schema;
+    if (taskSchema === undefined) throw new Error("canonical tasks schema missing");
+    const tasksPath = path.join(root, LEDGER_STORAGE_DIRNAME, `${TASKS_LEDGER}.md`);
+    const tasks = parseLedger(await fs.readFile(tasksPath, "utf8"), {
+      schema: taskSchema,
+      isMilestonesLedger: false,
+    });
+    const task = tasks.milestones
+      .flatMap(({ items }) => items)
+      .find(({ id }) => id === seed.item.id);
+    if (task === undefined) throw new Error("legacy task missing");
+    task.fields[WORKSET_OWNER_REF_FIELD] = `goals:${seed.goal.id}`;
+    task.fields[WORKSET_OWNER_EDGE_KIND_FIELD] = "finalized-manifest";
+    await fs.writeFile(tasksPath, serializeLedger(tasks), "utf8");
+
+    const projectKey = await resolveProjectKey({ repoRoot: root, projectId: null });
+    const dbPath = path.join(resolveStateDir(projectKey), XDG_DB_FILENAME);
+    await expect(dispatch(["migrate", "--cwd", root], recordingIo())).rejects.toThrow(
+      /conflicting sealed ownership and imported evidence/,
+    );
+    expect(resolveLedgerBackend(root).backend).toBe("fs");
+    await expect(fs.stat(dbPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
 
   it("refuses to clobber a non-empty xdg target without --yes, writing nothing; --yes proceeds", async () => {
     const root = await gitRepo("cq-migrate-nonempty-");

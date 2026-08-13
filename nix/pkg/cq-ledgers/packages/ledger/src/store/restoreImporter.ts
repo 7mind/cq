@@ -56,6 +56,11 @@ import {
   type WorksetRootsEpoch,
 } from "../worksetEffectAdmission.js";
 import { createSqliteWorksetStore } from "./sqlite/sqliteWorksetStore.js";
+import {
+  reconcileImportedOwnership,
+  serializeReconciledOwnershipDump,
+  type ImportedOwnershipMode,
+} from "../importedOwnership.js";
 
 export class RestoreTargetChangedError extends LedgerError {
   constructor(target: string) {
@@ -241,6 +246,28 @@ export function parseBackupDump(dump: readonly BackupDumpFile[]): ParsedDump {
   return { registry, ledgers, archives, logs, planLifecycle, worksetRoots };
 }
 
+/** One pure contextual reconciliation result, reusable by a later importer. */
+export interface PreparedImportedOwnershipDump {
+  readonly dump: BackupDumpFile[];
+  readonly parsed: ParsedDump;
+}
+
+/** Pure parse/reconcile/re-serialize boundary used before migration target access. */
+export function prepareImportedOwnershipDump(
+  dump: readonly BackupDumpFile[],
+  mode: ImportedOwnershipMode,
+): PreparedImportedOwnershipDump {
+  const parsed = reconcileImportedOwnership(parseBackupDump(dump), mode);
+  return { dump: serializeReconciledOwnershipDump(parsed, dump), parsed };
+}
+
+export function reconcileImportedOwnershipDump(
+  dump: readonly BackupDumpFile[],
+  mode: ImportedOwnershipMode,
+): BackupDumpFile[] {
+  return prepareImportedOwnershipDump(dump, mode).dump;
+}
+
 /**
  * Write a parsed dump's rows DIRECTLY to the xdg primary's SQLite database at
  * `dbPath`, wiping every existing row first (disaster recovery — no merge),
@@ -257,7 +284,6 @@ export function parseBackupDump(dump: readonly BackupDumpFile[]): ParsedDump {
 export async function restoreDumpToXdg(opts: {
   dbPath: string;
   logsDir: string | null;
-  dump: readonly BackupDumpFile[];
   /**
    * Trusted management authority (t18). Required BEFORE any store open so a
    * guarded-context denial performs zero store access (T1959).
@@ -267,7 +293,14 @@ export async function restoreDumpToXdg(opts: {
   overwriteAuthorized: boolean;
   /** Administrative kind under exclusive admission (default `restore`). */
   administrativeKind?: WorksetAdministrativeEffectKind;
-}): Promise<RestoreSummary> {
+} & (
+  | { dump: readonly BackupDumpFile[]; preparedOwnership?: never }
+  | {
+      dump?: never;
+      /** A migration's already-reconciled result, prepared before target access. */
+      preparedOwnership: PreparedImportedOwnershipDump;
+    }
+)): Promise<RestoreSummary> {
   // Authority check precedes every store open / file write.
   if (!isTrustedWorksetManagementAuthority(opts.authority)) {
     throw new WorksetAdmissionError(
@@ -276,7 +309,11 @@ export async function restoreDumpToXdg(opts: {
     );
   }
   const kind: WorksetAdministrativeEffectKind = opts.administrativeKind ?? "restore";
-  const parsed = parseBackupDump(opts.dump);
+  const prepared =
+    opts.preparedOwnership === undefined
+      ? prepareImportedOwnershipDump(opts.dump, "preserve")
+      : opts.preparedOwnership;
+  const parsed = prepared.parsed;
   const restoredAt = new Date().toISOString();
   const restoredRoots: WorksetRootsEpoch = parsed.worksetRoots ?? { roots: [], epoch: 0 };
   let logCount = 0;
@@ -437,7 +474,7 @@ export async function restoreDumpToXdg(opts: {
     db.close();
   }
 
-  return { fileCount: opts.dump.length, ledgerCount: parsed.ledgers.size, logCount };
+  return { fileCount: prepared.dump.length, ledgerCount: parsed.ledgers.size, logCount };
 }
 
 /**

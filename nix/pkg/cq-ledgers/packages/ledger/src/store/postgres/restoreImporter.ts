@@ -40,8 +40,9 @@ import type { SQL } from "bun";
 import type { FieldValue, Item } from "../../types.js";
 import type { BackupDumpFile } from "../backupExporter.js";
 import {
-  parseBackupDump,
+  prepareImportedOwnershipDump,
   RestoreTargetChangedError,
+  type PreparedImportedOwnershipDump,
   type RestoreSummary,
 } from "../restoreImporter.js";
 import { buildPrefixRegistry, normalizeStoredRefFields } from "../../refs.js";
@@ -141,7 +142,6 @@ export async function restoreDumpToPostgres(opts: {
   projectKey: string;
   /** `projects.display_name` to UPSERT; defaults to `projectKey` itself. */
   displayName?: string;
-  dump: readonly BackupDumpFile[];
   /**
    * Trusted management authority (t18). Required BEFORE any store open so a
    * guarded-context denial performs zero store access (T1959).
@@ -151,7 +151,14 @@ export async function restoreDumpToPostgres(opts: {
   overwriteAuthorized: boolean;
   /** Administrative kind under exclusive admission (default `restore`). */
   administrativeKind?: WorksetAdministrativeEffectKind;
-}): Promise<RestoreSummary> {
+} & (
+  | { dump: readonly BackupDumpFile[]; preparedOwnership?: never }
+  | {
+      dump?: never;
+      /** A migration's already-reconciled result, prepared before target access. */
+      preparedOwnership: PreparedImportedOwnershipDump;
+    }
+)): Promise<RestoreSummary> {
   // Authority check precedes every store open / row write.
   if (!isTrustedWorksetManagementAuthority(opts.authority)) {
     throw new WorksetAdmissionError(
@@ -162,7 +169,11 @@ export async function restoreDumpToPostgres(opts: {
   const kind: WorksetAdministrativeEffectKind = opts.administrativeKind ?? "restore";
   const pool = opts.pool;
   const pk = opts.projectKey;
-  const parsed = parseBackupDump(opts.dump);
+  const prepared =
+    opts.preparedOwnership === undefined
+      ? prepareImportedOwnershipDump(opts.dump, "preserve")
+      : opts.preparedOwnership;
+  const parsed = prepared.parsed;
   const restoredAt = new Date().toISOString();
   const restoredRoots: WorksetRootsEpoch = parsed.worksetRoots ?? { roots: [], epoch: 0 };
 
@@ -324,7 +335,7 @@ export async function restoreDumpToPostgres(opts: {
   await notifyProjectChanged(pool, pk);
 
   return {
-    fileCount: opts.dump.length,
+    fileCount: prepared.dump.length,
     ledgerCount: parsed.ledgers.size,
     logCount: parsed.logs.length,
   };

@@ -44,9 +44,9 @@ import {
   createPostgresWorksetStore,
   createSqliteWorksetStore,
   openExistingLedgerDb,
+  PostgresLedgerStore,
   XDG_DB_FILENAME,
   RemoteLedgerClientNotWiredError,
-  PostgresBackupNotWiredError,
   PostgresDsnResolutionError,
   type LedgerStore,
   type ResetSummary,
@@ -70,7 +70,6 @@ import {
   resolvePostgresTenant,
   countTenantActiveItems,
   wipeTenantRows,
-  reseedCanonicalTenant,
   type PostgresTenantHandle,
 } from "./postgresTenant.js";
 
@@ -469,19 +468,13 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
  * uses) + re-inits the canonical ledger set — never touching any OTHER
  * tenant's rows in the shared database.
  *
- * Unlike the fs backend's `reset()` (which atomically snapshots-then-reinits),
- * this postgres path does NOT (yet) take its own pre-wipe backup snapshot: a
- * configured `[ledger].backup != 'none'` fails fast with
- * {@link PostgresBackupNotWiredError} instead (that error's doc explains the
- * narrower remaining gap — `cq backup`/`cq restore` and the debounced
- * auto-export themselves ARE wired for postgres, T582/Q275).
- *
  * Resolves the tenant (project_key + display name) via
  * {@link resolvePostgresTenant} BEFORE confirming, so the prompt names the
  * blast radius, then wipes + reseeds on the SAME pool/projectKey.
  */
 async function runResetPostgres(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
   const tenant = await resolvePostgresTenant(args.cwd);
+  let store: PostgresLedgerStore | null = null;
   try {
     const displayName = tenant.registeredDisplayName ?? tenant.candidateDisplayName;
     const decision = await confirmDestructive(
@@ -496,41 +489,53 @@ async function runResetPostgres(args: SubcommandArgs, io: DispatchIo): Promise<S
       return { exitCode: decision.exitCode };
     }
 
-    if (tenant.backup !== "none") {
-      throw new PostgresBackupNotWiredError(tenant.backup, args.cwd);
-    }
-
     const before = await countTenantActiveItems(tenant.pool, tenant.projectKey);
-    // T1959: exclusive administrative admission; live roots become unrestricted empty.
-    const workset = createPostgresWorksetStore({
+    const authority = createTrustedWorksetManagementAuthority();
+    store = new PostgresLedgerStore({
       pool: tenant.pool,
       projectKey: tenant.projectKey,
+      displayName,
+      worksetAuthority: authority,
     });
-    try {
-      await workset.runAdministrative({
-        kind: "reset",
-        authority: createTrustedWorksetManagementAuthority(),
-        destructivePhase: async () => {
-          await wipeTenantRows(tenant.pool, tenant.projectKey, false, true);
-          await reseedCanonicalTenant(tenant.pool, tenant.projectKey, displayName);
-        },
-      });
-    } finally {
-      workset.close();
-    }
+    const resetStore = store;
+    await resetStore.init();
+    const { branch } = resolveLedgerBackend(args.cwd);
+    const backupTarget = tenant.backup;
+    let backupLine = `none ([ledger].backup = "none" — run \`cq backup\` before reset for a pre-wipe dump)`;
+    await resetStore.resetTenant({
+      authority,
+      ...(backupTarget === "none"
+        ? {}
+        : {
+            beforeReset: async () => {
+              const fileCount = await runBackupExport({
+                store: resetStore,
+                root: args.cwd,
+                target: backupTarget,
+                branch,
+                logsDir: null,
+              });
+              backupLine =
+                backupTarget === "in-tree"
+                  ? `${fileCount} file(s) at ${path.join(args.cwd, LEDGER_STORAGE_DIRNAME)}`
+                  : `${fileCount} file(s) at refs/heads/${branch}`;
+            },
+          }),
+    });
 
     io.out(
       `cq reset: reset postgres tenant "${displayName}" (project_key ${tenant.projectKey}) at ${args.cwd}`,
     );
     io.out(
-      `  backup: none ([ledger].backup = "none" — run \`cq backup\` before reset for a pre-wipe dump)`,
+      `  backup: ${backupLine}`,
     );
     for (const { name, itemCount } of before) {
       io.out(`  ${name}: ${itemCount} item(s) wiped, reinitialised empty`);
     }
     return { exitCode: 0 };
   } finally {
-    await tenant.pool.close();
+    if (store === null) await tenant.pool.close();
+    else await store.dispose();
   }
 }
 

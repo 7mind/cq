@@ -79,6 +79,7 @@ import {
   resolvePostgresDsn,
   resolveProjectKey,
   resolveStateDir,
+  prepareImportedOwnershipDump,
   restoreDumpToPostgres,
   restoreDumpToXdg,
   RestoreTargetChangedError,
@@ -302,6 +303,10 @@ async function runMigrateLegacyToXdg(args: MigrateArgs, io: MigrateIo): Promise<
     } finally {
       await legacy.store.dispose();
     }
+    // T1977: contextual legacy inference is pure and completes before the xdg
+    // destination path is resolved or opened. A conflicting sealed/evidence
+    // relation therefore cannot observe, create, or mutate the target.
+    const preparedOwnership = prepareImportedOwnershipDump(dump, "infer-unambiguous-legacy");
 
     // --- Resolve the xdg TARGET the flipped backend will use — the same
     // projectKey -> stateDir/logsDir derivation as createLedgerStore's xdg
@@ -343,7 +348,7 @@ async function runMigrateLegacyToXdg(args: MigrateArgs, io: MigrateIo): Promise<
       summary = await restoreDumpToXdg({
         dbPath,
         logsDir,
-        dump,
+        preparedOwnership,
         authority: createTrustedWorksetManagementAuthority(),
         overwriteAuthorized,
         administrativeKind: "backend-migration",
@@ -436,6 +441,9 @@ async function runMigrateXdgToPostgres(args: MigrateArgs, io: MigrateIo): Promis
   try {
     return await runUnderMigrationAdmission(sourceWorkset, async () => {
       dump = await buildBackupDump(resolved.store, logsDir);
+      // T1977: same pure pre-target boundary as the legacy leg. PostgreSQL is
+      // not connected until every imported relation has reconciled.
+      const preparedOwnership = prepareImportedOwnershipDump(dump, "infer-unambiguous-legacy");
 
       // --- Resolve the postgres TARGET connection. cq.toml still names 'xdg' at
       // this point (the flip happens only after a successful import) —
@@ -488,7 +496,7 @@ async function runMigrateXdgToPostgres(args: MigrateArgs, io: MigrateIo): Promis
             pool,
             projectKey,
             displayName,
-            dump,
+            preparedOwnership,
             authority: createTrustedWorksetManagementAuthority(),
             overwriteAuthorized: false,
             administrativeKind: "backend-migration",

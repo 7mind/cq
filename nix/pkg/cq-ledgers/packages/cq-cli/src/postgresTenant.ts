@@ -28,7 +28,6 @@ import {
   resolvePostgresDsn,
   resolveDisplayName,
   resolveProjectKey,
-  PostgresLedgerStore,
 } from "@cq/ledger";
 
 /** A resolved connection to the tenant `root`'s cq.toml names, PRE any registry mutation. */
@@ -107,11 +106,7 @@ export async function countTenantActiveItems(
 
 /**
  * DELETE every row `projectKey` owns, children-first (FK order) — the same
- * wipe order {@link PostgresLedgerStore.backupAndReinitTenant} uses, minus its
- * shadow-copy step (no backup here: `cq reset` enforces `[ledger].backup ===
- * 'none'` before calling this — its own pre-wipe snapshot is not yet wired,
- * see `PostgresBackupNotWiredError`; the general `cq backup`/`cq restore`
- * parity IS wired, T582). `includeProjectRow` also drops the
+ * wipe order the Postgres store uses. `includeProjectRow` also drops the
  * `projects` registry row (erase only; reset keeps it so the tenant stays
  * registered through the reinit).
  */
@@ -145,22 +140,4 @@ export async function wipeTenantRows(
       await tx`DELETE FROM projects WHERE project_key = ${projectKey}`;
     }
   });
-}
-
-/**
- * Re-seed the full canonical ledger set for `projectKey` fresh (reset only) —
- * constructs a THROWAWAY {@link PostgresLedgerStore} on the SAME pool +
- * projectKey and runs its normal `init()` bootstrap (every canonical ledger
- * classifies as missing right after {@link wipeTenantRows}, so `init()`'s
- * Pass 2 provisions everything) rather than duplicating its private
- * `runBootstrapWrites` DDL here. Does NOT dispose/close the pool — the caller
- * owns the pool's lifecycle across the whole reset operation.
- */
-export async function reseedCanonicalTenant(
-  pool: SQL,
-  projectKey: string,
-  displayName: string,
-): Promise<void> {
-  const store = new PostgresLedgerStore({ pool, projectKey, displayName });
-  await store.init();
 }

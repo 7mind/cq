@@ -21,6 +21,7 @@
 
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { execFile } from "node:child_process";
+import { Database } from "bun:sqlite";
 import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -28,7 +29,10 @@ import { promisify } from "node:util";
 import {
   createLedgerStore,
   ensureSchema,
+  GOALS_LEDGER,
+  MILESTONES_AMBIENT_ID,
   MILESTONES_LEDGER,
+  PLAN_CURRENT_DRAFT_FIELD,
   openPgPool,
   PostgresLedgerStore,
   resolveDisplayName,
@@ -40,8 +44,11 @@ import {
   TASKS_LEDGER,
   XDG_DB_FILENAME,
   readWorksetRootsEpoch,
+  readCanonicalOwnership,
+  startPostgresCoherenceWatcher,
   type ArchiveContent,
   type Item,
+  type ResolvedPostgresHandle,
 } from "@cq/ledger";
 import { dispatch, EXIT_USAGE, type ConfirmIo, type DispatchIo } from "../src/main.js";
 
@@ -73,6 +80,15 @@ function recordingIo(stdin = ""): DispatchIo & { outs: string[]; errs: string[] 
     confirm: silentConfirm,
     readStdin: async () => stdin,
   };
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await Bun.sleep(20);
+  }
+  return predicate();
 }
 
 /** A throwaway initialised git repo with one commit (the xdg/postgres identity key). */
@@ -332,5 +348,103 @@ describe.skipIf(!PG_URL)("cq migrate --to postgres (T581) — live", () => {
     // The refusal reverted nothing further and wrote nothing: cq.toml
     // still names 'xdg' (the refusal never reaches setLedgerBackend).
     expect(resolveLedgerBackend(root).backend).toBe("xdg");
+  }, 30_000);
+
+  it("infers exact legacy manifest ownership before target mutation and notifies an open peer", async () => {
+    const root = await gitRepo("cq-migrate-owner-pg-");
+    await fs.writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "xdg"\n');
+    const source = await createLedgerStore(root);
+    const projectKey = source.projectKey!;
+    const dbPath = source.dbPath!;
+    const milestone = await source.store.createMilestone({ title: "owned legacy manifest" });
+    const task = await source.store.createItem(TASKS_LEDGER, milestone.id, {
+      status: "planned",
+      fields: { headline: "infer on migration" },
+    });
+    const goal = await source.store.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
+      status: "planning",
+      fields: { title: "Legacy goal", description: "Exact manifest evidence" },
+    });
+    const sourceRoots = [`goals:${goal.id}`];
+    const sourceWorkset = source.store as typeof source.store & {
+      worksetStore(): ReturnType<PostgresLedgerStore["worksetStore"]>;
+    };
+    const rootsBefore = await sourceWorkset.worksetStore().setRoots(sourceRoots);
+    await source.store.dispose();
+
+    // Legacy fixture: exact plan manifest exists, sealed ownership fields do
+    // not. Direct row setup represents a pre-T1951 primary.
+    const db = new Database(dbPath);
+    const goalRow = db
+      .query<{ fields_json: string }, [string]>(
+        "SELECT fields_json FROM items WHERE ledger = 'goals' AND id = ?",
+      )
+      .get(goal.id);
+    if (goalRow === null) throw new Error("legacy goal row missing");
+    const fields = JSON.parse(goalRow.fields_json) as Record<string, unknown>;
+    fields[PLAN_CURRENT_DRAFT_FIELD] = JSON.stringify({
+      identity: { goalId: goal.id, claimId: "legacy-claim", generation: 1, revision: 1 },
+      manifest: {
+        revision: 1,
+        milestones: [{ key: "delivery", id: milestone.id }],
+        tasks: [{ key: "task", id: task.id }],
+      },
+    });
+    db.query("UPDATE items SET fields_json = ? WHERE ledger = 'goals' AND id = ?").run(
+      JSON.stringify(fields),
+      goal.id,
+    );
+    db.close();
+
+    const peerPool = openPgPool(PG_URL!);
+    const peer = new PostgresLedgerStore({
+      pool: peerPool,
+      projectKey,
+      displayName: projectKey,
+    });
+    await peer.init();
+    let changes = 0;
+    const watcher = startPostgresCoherenceWatcher(
+      peer,
+      { pool: peerPool, dsn: PG_URL!, projectKey } satisfies ResolvedPostgresHandle,
+      () => {
+        changes += 1;
+      },
+    );
+    await waitFor(() => changes > 0);
+    const beforeMigrationChanges = changes;
+    try {
+      const outcome = await dispatch(
+        ["migrate", "--cwd", root, "--to", "postgres"],
+        recordingIo(),
+      );
+      expect(outcome.exitCode).toBe(0);
+      expect(resolveLedgerBackend(root).backend).toBe("postgres");
+      expect(
+        await waitFor(() => {
+          if (changes <= beforeMigrationChanges) return false;
+          try {
+            return readCanonicalOwnership(peer.fetchItem(TASKS_LEDGER, task.id)) !== null;
+          } catch {
+            return false;
+          }
+        }),
+      ).toBe(true);
+      expect(readCanonicalOwnership(peer.fetchItem(TASKS_LEDGER, task.id))).toEqual({
+        ownerRef: `goals:${goal.id}`,
+        edgeKind: "active-current-draft",
+      });
+      expect(readCanonicalOwnership(peer.fetchItem(MILESTONES_LEDGER, milestone.id))).toEqual({
+        ownerRef: `goals:${goal.id}`,
+        edgeKind: "active-current-draft",
+      });
+      expect(await readWorksetRootsEpoch(peer.worksetStore())).toEqual({
+        roots: sourceRoots,
+        epoch: rootsBefore.epoch,
+      });
+    } finally {
+      watcher.close();
+      await peer.dispose();
+    }
   }, 30_000);
 });

@@ -931,6 +931,67 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     return serializeWorksetRootsDocument(snap);
   }
 
+  /**
+   * T1976 — reset this tenant under one exclusive administrative admission.
+   * The optional backup callback runs after the admission drain and a fresh
+   * cache load, before the single wipe/reseed/empty-roots transaction.
+   */
+  async resetTenant(opts: {
+    readonly authority: unknown;
+    readonly beforeReset?: () => Promise<void>;
+  }): Promise<void> {
+    this.assertInit();
+    const workset = this.worksetStore();
+    const staleLedgerIds = [...this.ledgers.keys()];
+    await workset.runAdministrative({
+      kind: "reset",
+      authority: opts.authority,
+      destructivePhase: async () => {
+        // The store may have waited for an in-flight writer while acquiring
+        // exclusivity; refresh so the backup observes that committed write.
+        await this.loadCache();
+        if (opts.beforeReset !== undefined) await opts.beforeReset();
+        await writeTransaction(this.pool(), async (tx) => {
+          await tx`
+            DELETE FROM workset_admissions
+            WHERE project_key = ${this.projectKey}
+              AND form NOT IN ('exclusive-set', 'exclusive-administrative')
+          `;
+          await tx`DELETE FROM workset_roots WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM plan_operations WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM plan_claims WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM archived_items WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM archive_pointers WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM items WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM groups WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM ledgers WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM logs WHERE project_key = ${this.projectKey}`;
+          await this.runBootstrapWrites(
+            tx,
+            CANONICAL_LEDGERS.map(({ name }) => name),
+            [],
+          );
+          await tx`
+            INSERT INTO workset_roots (project_key, roots_json, epoch, admit_generation)
+            VALUES (${this.projectKey}, ${"[]"}, ${0}, ${0})
+          `;
+        });
+      },
+    });
+
+    await this.loadCache();
+    for (const ledgerId of new Set([...staleLedgerIds, ...this.ledgers.keys()])) {
+      this.searchIndex.removeLedger(ledgerId);
+    }
+    for (const ledgerId of this.ledgers.keys()) {
+      this.rebuildLedgerIndexActive(ledgerId);
+      this.refreshLedgerIndexArchived(ledgerId);
+    }
+    // Exactly one peer invalidation, after both the reset transaction and the
+    // surrounding administrative generation advance have committed.
+    await this.notify();
+  }
+
   async dispose(): Promise<void> {
     // D148: drain per-ledger mutexes BEFORE closing the pool so an in-flight
     // coherence invalidate/reloadLedger (parked on `await prior` or mid-query)
