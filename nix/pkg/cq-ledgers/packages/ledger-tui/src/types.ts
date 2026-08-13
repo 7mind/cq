@@ -21,6 +21,10 @@ import type {
   ItemProjection,
   MilestoneMutationAckDto,
   UsageStatsSnapshot,
+  WorksetOperationClient,
+  WorksetRequest,
+  WorksetResult,
+  WorksetResultFor,
 } from "@cq/ledger";
 import type { ArchiveContent, ArchivePointer } from "@cq/ledger";
 
@@ -40,6 +44,9 @@ export type {
   ItemProjection,
   MilestoneMutationAckDto,
   UsageStatsSnapshot,
+  WorksetRequest,
+  WorksetResult,
+  WorksetResultFor,
 };
 
 /** A single `fts_search` hit. */
@@ -149,3 +156,6 @@ export interface LedgerClient {
   getUsageStats(): Promise<UsageStatsSnapshot>;
   close(): Promise<void>;
 }
+
+/** Ledger UI client with the additive workset operation. */
+export interface WorksetCapableLedgerClient extends LedgerClient, WorksetOperationClient {}

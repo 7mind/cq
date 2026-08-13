@@ -122,6 +122,7 @@ export type {
   WorksetResult,
   WorksetResultFor,
 } from "./mcp/worksetTool.js";
+export type { WorksetOperationClient } from "./mcp/worksetOperationClient.js";
 export type {
   WorksetProjection,
   WorksetEdgeKind,

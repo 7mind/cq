@@ -15,13 +15,20 @@ import type {
   ItemMutationAckDto,
   ItemPatch,
   ItemProjection,
-  LedgerClient,
   LedgerSchema,
   LedgerSummary,
   MilestonePatch,
   MilestoneMutationAckDto,
   UsageStatsSnapshot,
+  WorksetCapableLedgerClient,
+  WorksetRequest,
+  WorksetResult,
+  WorksetResultFor,
 } from "../src/types.js";
+import type {
+  WorksetProjectedGraph,
+  WorksetProjectionRequest,
+} from "@cq/ledger";
 
 const TS = "2026-01-01T00:00:00.000Z";
 
@@ -159,11 +166,16 @@ const reviewsSchema: LedgerSchema = {
   },
 };
 
-export class FakeClient implements LedgerClient {
+export class FakeClient implements WorksetCapableLedgerClient {
   closed = false;
+  readonly worksetCalls: WorksetRequest[] = [];
+  worksetDeferred: Promise<void> | null = null;
+  worksetFailure: Error | null = null;
   private readonly _displayName: string;
   private msCounter = 1;
   private itemCounter = 2;
+  private worksetRoots: string[] = [];
+  private worksetEpoch = 0;
 
   constructor(displayName = "cq1") {
     this._displayName = displayName;
@@ -278,6 +290,165 @@ export class FakeClient implements LedgerClient {
       if (it !== undefined) return it;
     }
     throw new Error(`Item not found: ${itemId}`);
+  }
+
+  private worksetItems(): Map<string, Item> {
+    const items = new Map<string, Item>();
+    for (const [ledgerId, ledger] of Object.entries(this.data)) {
+      for (const group of ledger.groups) {
+        for (const item of group.items) items.set(`${ledgerId}:${item.id}`, item);
+      }
+    }
+    return items;
+  }
+
+  private canonicalWorksetRef(raw: string): string {
+    if (raw.includes(":")) return raw;
+    for (const [ledgerId, ledger] of Object.entries(this.data)) {
+      if (ledger.schema.idPrefix !== undefined && raw.startsWith(ledger.schema.idPrefix)) {
+        return `${ledgerId}:${raw}`;
+      }
+    }
+    return raw;
+  }
+
+  private canonicalWorksetRoots(
+    roots: readonly string[],
+    items: ReadonlyMap<string, Item>,
+    validate: boolean,
+  ): { roots: string[]; inactiveRoots: string[] } {
+    const canonical: string[] = [];
+    const inactiveRoots: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of roots) {
+      const ref = this.canonicalWorksetRef(raw);
+      if (seen.has(ref)) continue;
+      seen.add(ref);
+      canonical.push(ref);
+      if (!items.has(ref)) {
+        if (validate) throw new Error(`workset root "${ref}" is inactive`);
+        inactiveRoots.push(ref);
+      }
+    }
+    return { roots: canonical, inactiveRoots };
+  }
+
+  private worksetItemProjection(item: Item, projection: WorksetProjectionRequest) {
+    if (projection === "full") return { ...item, fields: { ...item.fields } };
+    if (projection === "complement") {
+      return {
+        id: item.id,
+        fields: Object.fromEntries(
+          Object.entries(item.fields).filter(([name]) => !COMPACT_FIELDS.has(name)),
+        ),
+      };
+    }
+    return projectItem(item, "compact");
+  }
+
+  private routeWorksetGraph(
+    requestedRoots: readonly string[],
+    projection: WorksetProjectionRequest,
+    validate: boolean,
+  ): WorksetProjectedGraph {
+    const items = this.worksetItems();
+    const { roots, inactiveRoots } = this.canonicalWorksetRoots(
+      requestedRoots,
+      items,
+      validate,
+    );
+    const queued = roots.filter((ref) => items.has(ref));
+    const visited = new Set<string>();
+    const edges: WorksetProjectedGraph["edges"][number][] = [];
+    const edgeKeys = new Set<string>();
+
+    for (const root of roots) {
+      if (!root.startsWith("milestones:")) continue;
+      const milestoneId = root.slice("milestones:".length);
+      const tasks = this.data["tasks"];
+      const group = tasks?.groups.find(({ id }) => id === milestoneId);
+      for (const item of group?.items ?? []) {
+        if (["planned", "wip", "blocked"].includes(item.status)) {
+          queued.push(`tasks:${item.id}`);
+        }
+      }
+    }
+
+    for (let index = 0; index < queued.length; index += 1) {
+      const ref = queued[index];
+      if (ref === undefined || visited.has(ref)) continue;
+      const item = items.get(ref);
+      if (item === undefined) continue;
+      visited.add(ref);
+      for (const fieldName of ["dependsOn", "blockedBy"] as const) {
+        const dependencies = item.fields[fieldName];
+        if (!Array.isArray(dependencies)) continue;
+        for (const raw of dependencies) {
+          if (typeof raw !== "string") continue;
+          const target = this.canonicalWorksetRef(raw);
+          if (!items.has(target)) continue;
+          const edgeKey = `${ref}\0${target}`;
+          if (!edgeKeys.has(edgeKey)) {
+            edgeKeys.add(edgeKey);
+            edges.push({ from: ref, to: target, kind: "prerequisite" });
+          }
+          queued.push(target);
+        }
+      }
+    }
+
+    return {
+      roots,
+      inactiveRoots,
+      nodes: [...visited].map((ref) => {
+        const item = items.get(ref);
+        if (item === undefined) throw new Error(`missing workset item: ${ref}`);
+        return projection === "id"
+          ? { ref }
+          : { ref, item: this.worksetItemProjection(item, projection) };
+      }),
+      edges,
+      restrictive: roots.length > 0,
+      projection,
+    };
+  }
+
+  async workset<R extends WorksetRequest>(request: R): Promise<WorksetResultFor<R>> {
+    this.worksetCalls.push(
+      request.op === "get"
+        ? { ...request }
+        : { ...request, roots: [...request.roots] },
+    );
+    if (this.worksetDeferred !== null) await this.worksetDeferred;
+    if (this.worksetFailure !== null) throw this.worksetFailure;
+
+    let result: WorksetResult;
+    switch (request.op) {
+      case "get":
+        result = {
+          op: "get",
+          graph: this.routeWorksetGraph(this.worksetRoots, request.projection, false),
+        };
+        break;
+      case "fetch":
+        result = {
+          op: "fetch",
+          graph: this.routeWorksetGraph(request.roots, request.projection, true),
+        };
+        break;
+      case "set": {
+        const items = this.worksetItems();
+        const replacement = this.canonicalWorksetRoots(request.roots, items, true).roots;
+        this.worksetRoots = replacement;
+        this.worksetEpoch += 1;
+        result = {
+          op: "set",
+          acknowledgement: { roots: [...replacement], epoch: this.worksetEpoch },
+        };
+        break;
+      }
+    }
+    return result as WorksetResultFor<R>;
   }
 
   async fetchItem(

@@ -33,12 +33,14 @@ import type {
   ItemMutationAckDto,
   ItemPatch,
   ItemProjection,
-  LedgerClient,
   LedgerSummary,
   MilestonePatch,
   MilestoneMutationAckDto,
   ProjectEntry,
   UsageStatsSnapshot,
+  WorksetCapableLedgerClient,
+  WorksetRequest,
+  WorksetResultFor,
 } from "./types.js";
 
 export class LedgerToolError extends Error {
@@ -71,7 +73,7 @@ export interface EmbeddedContext {
   readonly dispatchRuntime: DispatchRuntime;
 }
 
-export class McpLedgerClient implements LedgerClient {
+export class McpLedgerClient implements WorksetCapableLedgerClient {
   private readonly _displayName: string;
 
   constructor(
@@ -349,6 +351,10 @@ export class McpLedgerClient implements LedgerClient {
 
   async getUsageStats(): Promise<UsageStatsSnapshot> {
     return await this.call<UsageStatsSnapshot>("get_usage_stats", {});
+  }
+
+  async workset<R extends WorksetRequest>(request: R): Promise<WorksetResultFor<R>> {
+    return await this.call<WorksetResultFor<R>>("workset", { ...request });
   }
 
   async close(): Promise<void> {

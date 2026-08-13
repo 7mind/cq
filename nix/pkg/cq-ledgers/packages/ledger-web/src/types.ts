@@ -25,6 +25,10 @@ import type {
   PredicateVerdict,
   FetchPromptResult,
   UsageStatsSnapshot,
+  WorksetOperationClient,
+  WorksetRequest,
+  WorksetResult,
+  WorksetResultFor,
 } from "@cq/ledger";
 import type { ArchiveContent } from "@cq/ledger";
 
@@ -50,6 +54,9 @@ export type {
   PredicateVerdict,
   FetchPromptResult,
   UsageStatsSnapshot,
+  WorksetRequest,
+  WorksetResult,
+  WorksetResultFor,
 };
 
 export interface FtsHit {
@@ -163,3 +170,6 @@ export interface LedgerClient {
   getUsageStats(): Promise<UsageStatsSnapshot>;
   close(): Promise<void>;
 }
+
+/** Ledger UI client with the additive workset operation. */
+export interface WorksetCapableLedgerClient extends LedgerClient, WorksetOperationClient {}

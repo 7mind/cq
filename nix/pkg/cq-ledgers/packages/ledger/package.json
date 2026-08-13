@@ -38,6 +38,10 @@
       "import": "./src/testing/killHarness.ts",
       "types": "./src/testing/killHarness.ts"
     },
+    "./testing/worksetClientContract": {
+      "import": "./src/testing/worksetClientContract.ts",
+      "types": "./src/testing/worksetClientContract.ts"
+    },
     "./finalize": {
       "import": "./src/finalize.ts",
       "types": "./src/finalize.ts"
