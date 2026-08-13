@@ -1264,8 +1264,11 @@ export async function validateGitChangeBrokerResultEvidence(
     .split("\0")
     .filter(Boolean)
     .sort();
-  if (actualResultPaths.some((entryPath) => !receiptPaths.has(entryPath))) {
-    throw new Error("broker base-to-result diff contains paths absent from filesTouched");
+  if (
+    actualResultPaths.length !== touched.length ||
+    actualResultPaths.some((entryPath, index) => entryPath !== touched[index])
+  ) {
+    throw new Error("broker filesTouched does not equal the actual base-to-result diff");
   }
   if ((await currentHead(authorization)) !== evidence.resultCommit) {
     throw new Error("broker receipt resultCommit does not match the manager-bound branch tip");

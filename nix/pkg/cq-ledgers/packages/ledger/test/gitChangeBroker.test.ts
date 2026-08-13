@@ -215,6 +215,62 @@ describe("commitManagedWorktreeChanges", () => {
     ).rejects.toThrow(/base.*result diff|filesTouched/u);
   });
 
+  test("rejects receipt paths that net back to the dispatch-base tree", async () => {
+    const fixture = await seed();
+    const beforeModify = await fs.readFile(path.join(fixture.worktreePath, "modify.txt"));
+    await fs.writeFile(path.join(fixture.worktreePath, "modify.txt"), "temporary\n");
+    const changed = await commitManagedWorktreeChanges(
+      {
+        authorization: fixture.authorization,
+        operationId: "T2082-temporary-change",
+        expectedHead: fixture.head,
+        message: "temporary change",
+        changes: [
+          {
+            kind: "modify",
+            path: "modify.txt",
+            oldState: { mode: "100644", digest: digest(beforeModify) },
+            newState: { mode: "100644", digest: digest("temporary\n") },
+          },
+        ],
+      },
+      { stateDir: fixture.stateDir, authorize: () => undefined },
+    );
+    await fs.writeFile(path.join(fixture.worktreePath, "modify.txt"), beforeModify);
+    const restored = await commitManagedWorktreeChanges(
+      {
+        authorization: fixture.authorization,
+        operationId: "T2082-restore-base-bytes",
+        expectedHead: changed.newHead,
+        message: "restore base bytes",
+        changes: [
+          {
+            kind: "modify",
+            path: "modify.txt",
+            oldState: { mode: "100644", digest: digest("temporary\n") },
+            newState: { mode: "100644", digest: digest(beforeModify) },
+          },
+        ],
+      },
+      { stateDir: fixture.stateDir, authorize: () => undefined },
+    );
+
+    await expect(
+      validateGitChangeBrokerResultEvidence(
+        fixture.authorization,
+        {
+          taskId: fixture.authorization.taskId,
+          resultCommit: restored.newHead,
+          branch: fixture.authorization.branch,
+          actualWorktreePath: fixture.worktreePath,
+          filesTouched: ["modify.txt"],
+          gitReceipts: [changed, restored],
+        },
+        { stateDir: fixture.stateDir },
+      ),
+    ).rejects.toThrow(/base.*result diff|filesTouched/u);
+  });
+
   test("admits only the requested tree from Git's batch-object boundary", () => {
     const emptyTree = Buffer.alloc(0);
     const tree = objectId("tree", emptyTree);
