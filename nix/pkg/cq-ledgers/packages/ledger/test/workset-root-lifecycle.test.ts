@@ -483,6 +483,7 @@ describe("workset root lifecycle [T1959]", () => {
       dbPath,
       now: () => timestamp,
       onSchemaDivergence: "backup-reinit",
+      allowDestructiveReinitOfPopulatedStore: true,
       workset: {
         hooks: {
           beforeAdministrativeDestructive: async () => {
