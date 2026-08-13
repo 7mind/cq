@@ -95,7 +95,7 @@ export interface WorksetBrokerAdmissionHandle {
     registration: WorksetBrokerProcessGroupRegistration,
   ): void | Promise<void>;
   /** Share the held admission with the already registered bootstrap guardian. */
-  shareWithGuardian(): void | Promise<void>;
+  shareWithGuardian(guardian: WorksetBrokerProcessGroupRegistration): void | Promise<void>;
   markSettled(): void | Promise<void>;
   releaseAfterSettlement(): Promise<void>;
   /** Close an acquired admission when its fenced bootstrap never registered. */
@@ -253,7 +253,7 @@ export class WorksetEffectProtocolSession {
         "workset effect admission already has a guardian share",
       );
     }
-    await Promise.resolve(this.admission.shareWithGuardian());
+    await Promise.resolve(this.admission.shareWithGuardian(this.registration));
     this.guardianShared = true;
   }
 

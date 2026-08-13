@@ -52,6 +52,8 @@ export interface CreateSqliteWorksetStoreOptions extends CreateInMemoryWorksetSt
   readonly selfHostname?: string;
   /** Override liveness probe (tests). Defaults to `process.kill(pid, 0)`. */
   readonly isPidAlive?: (pid: number) => boolean;
+  /** Override process-group liveness probe (tests). */
+  readonly isProcessGroupAlive?: (pgid: number) => boolean;
   /** Cross-process / drain poll interval. Default 5ms. */
   readonly pollIntervalMs?: number;
   /** Wall-clock for started_at fences. Defaults to `Date.now`. */
@@ -116,6 +118,15 @@ function defaultIsPidAlive(pid: number): boolean {
   }
 }
 
+function defaultIsProcessGroupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 function deferred(): {
   promise: Promise<void>;
   resolve: () => void;
@@ -156,6 +167,8 @@ export function createSqliteWorksetStore(
   const selfPid = options.selfPid ?? process.pid;
   const selfHostname = options.selfHostname ?? os.hostname();
   const isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
+  const isProcessGroupAlive =
+    options.isProcessGroupAlive ?? defaultIsProcessGroupAlive;
   const pollIntervalMs = options.pollIntervalMs ?? 5;
   const nowMs = options.nowMs ?? (() => Date.now());
   const sleep = options.sleep ?? ((ms: number) => Bun.sleep(ms));
@@ -277,8 +290,7 @@ export function createSqliteWorksetStore(
           staleIds.push(row.id);
           continue;
         }
-        const leader = row.leader_pid ?? row.pgid;
-        if (leader !== null && !isPidAlive(leader)) {
+        if (row.pgid !== null && !isProcessGroupAlive(row.pgid)) {
           staleIds.push(row.id);
         }
         // Otherwise leave the row — setRoots blocks (fail closed).
@@ -586,7 +598,7 @@ export function createSqliteWorksetStore(
           ).run(registration.pgid, registration.leaderPid, granted.id);
         });
       },
-      shareWithGuardian(): void {
+      shareWithGuardian(guardian: WorksetProcessGroupRegistration): void {
         if (!open) {
           throw new WorksetAdmissionError(
             "admission-closed",
@@ -600,6 +612,18 @@ export function createSqliteWorksetStore(
             "cannot share admission before process-group registration",
           );
         }
+        if (row.pgid !== guardian.pgid || row.leader_pid !== guardian.leaderPid) {
+          throw new WorksetAdmissionError(
+            "invalid-replacement",
+            "guardian identity must equal the registered process-group leader",
+          );
+        }
+        immediateWriteTransaction(db, () => {
+          db.query("UPDATE workset_admissions SET pid = ? WHERE id = ?").run(
+            guardian.leaderPid,
+            granted.id,
+          );
+        });
       },
       markSettled(): void {
         if (!open) {

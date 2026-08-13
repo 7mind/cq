@@ -251,8 +251,8 @@ export interface WorksetExternalEffectAdmission {
   registerProcessGroup(
     registration: WorksetProcessGroupRegistration,
   ): void | Promise<void>;
-  /** Confirm that the registered bootstrap guardian shares this admission. */
-  shareWithGuardian(): void | Promise<void>;
+  /** Transfer durable admission ownership to the registered bootstrap guardian. */
+  shareWithGuardian(guardian: WorksetProcessGroupRegistration): void | Promise<void>;
   /** True once {@link registerProcessGroup} has succeeded. */
   readonly processGroupRegistered: boolean;
   /**
@@ -856,7 +856,7 @@ export function createInMemoryWorksetAdmissionCoordinator(
           noteAdmissionProcessGroup(id, record.processGroup);
         }
       },
-      shareWithGuardian(): void {
+      shareWithGuardian(guardian: WorksetProcessGroupRegistration): void {
         if (!open) {
           throw new WorksetAdmissionError(
             "admission-closed",
@@ -867,6 +867,15 @@ export function createInMemoryWorksetAdmissionCoordinator(
           throw new WorksetAdmissionError(
             "admission-not-registered",
             "cannot share admission before process-group registration",
+          );
+        }
+        if (
+          guardian.pgid !== record.processGroup.pgid ||
+          guardian.leaderPid !== record.processGroup.leaderPid
+        ) {
+          throw new WorksetAdmissionError(
+            "invalid-replacement",
+            "guardian identity must equal the registered process-group leader",
           );
         }
       },

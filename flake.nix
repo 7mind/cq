@@ -1660,6 +1660,22 @@ PY
                   fi
                 done
 
+                brokerLog="$NIX_BUILD_TOP/t1979-live-postgres-broker.log"
+                if ! ${pkgs.bun}/bin/bun test \
+                  packages/ledger/test/workset-postgres-disconnect.test.ts \
+                  --test-name-pattern 'broker disconnect retains the row until its guardian settles descendants' \
+                  > "$brokerLog" 2>&1; then
+                  cat "$brokerLog" >&2
+                  exit 1
+                fi
+                cat "$brokerLog"
+                if ! grep -Fq \
+                  '(pass) workset postgres disconnect [T1958] > broker disconnect retains the row until its guardian settles descendants' \
+                  "$brokerLog" || grep -Fq '(skip)' "$brokerLog"; then
+                  echo "T1979 live PostgreSQL broker-disconnect leg did not execute" >&2
+                  exit 1
+                fi
+
                 runHook postCheck
               '';
 

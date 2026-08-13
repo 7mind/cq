@@ -65,9 +65,10 @@ function createRecordingProvider(): WorksetEffectAdmissionProvider & {
           }
           registered = true;
         },
-        shareWithGuardian() {
+        shareWithGuardian(guardian) {
           if (closed) throw new Error("closed");
           if (!registered) throw new Error("not registered");
+          if (guardian.pgid !== guardian.leaderPid) throw new Error("leader mismatch");
           guardianShared = true;
         },
         async abandonBeforeRegistration() {

@@ -24,6 +24,9 @@ import { atomicWrite } from "../src/store/fsAtomic.js";
 
 const dirs: string[] = [];
 const PEER_FIXTURE = fileURLToPath(new URL("./worksetFsStorePeer.ts", import.meta.url));
+const BROKER_FIXTURE = fileURLToPath(
+  new URL("./worksetEffectBrokerFsChild.ts", import.meta.url),
+);
 const PEER_WAIT_TIMEOUT_MS = 5_000;
 
 afterAll(async () => {
@@ -266,6 +269,79 @@ describe("workset effect admission filesystem [T1955]", () => {
     const snap = await setPromise;
     expect(snap).toEqual({ roots: ["goals:G-after-death"], epoch: 1 });
     expect(store.activeAdmissionCount()).toBe(0);
+  });
+
+  it("guardian sharing transfers the durable holder away from the broker", async () => {
+    const root = await freshRoot();
+    const brokerPid = 9_100_001;
+    const guardianPid = 9_100_002;
+    const store = openStore(root, { selfPid: brokerPid });
+    const admission = await store.admitExternalEffect({
+      kind: "child-dispatch",
+      targetRef: "tasks:T1979",
+    });
+    admission.registerProcessGroup({ pgid: guardianPid, leaderPid: guardianPid });
+    await Promise.resolve(
+      admission.shareWithGuardian({ pgid: guardianPid, leaderPid: guardianPid }),
+    );
+
+    const admissionPath = path.join(
+      root,
+      ".cq",
+      "workset",
+      "admissions",
+      `${admission.id}.json`,
+    );
+    const durable = JSON.parse(await fs.readFile(admissionPath, "utf8")) as {
+      readonly pid: number;
+    };
+    expect(durable.pid).toBe(guardianPid);
+
+    admission.markSettled();
+    await admission.releaseAfterSettlement();
+  });
+
+  it("broker death leaves replacement fenced until the guardian settles descendants", async () => {
+    const root = await freshRoot();
+    const statePath = path.join(root, "broker-state.json");
+    const descendantPidPath = path.join(root, "descendant-pid");
+    const broker = Bun.spawn(
+      [process.execPath, "run", BROKER_FIXTURE, root, statePath, descendantPidPath],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    try {
+      await waitForFile(statePath);
+      await waitForFile(descendantPidPath);
+      const state = JSON.parse(await fs.readFile(statePath, "utf8")) as {
+        readonly pgid: number;
+        readonly leaderPid: number;
+      };
+      const descendantPid = Number(await fs.readFile(descendantPidPath, "utf8"));
+      const peer = openStore(root);
+      expect(peer.activeAdmissionCount()).toBe(1);
+
+      let replacementCommitted = false;
+      const replacement = peer.setRoots(["goals:G-after-broker-death"]).then((snapshot) => {
+        replacementCommitted = true;
+        return snapshot;
+      });
+      await Bun.sleep(40);
+      expect(replacementCommitted).toBe(false);
+
+      broker.kill("SIGKILL");
+      expect(await broker.exited).not.toBe(0);
+
+      expect(await replacement).toEqual({
+        roots: ["goals:G-after-broker-death"],
+        epoch: 1,
+      });
+      expect(defaultPidAlive(state.leaderPid)).toBe(false);
+      expect(defaultPidAlive(descendantPid)).toBe(false);
+      expect(peer.activeAdmissionCount()).toBe(0);
+    } finally {
+      broker.kill("SIGKILL");
+      await broker.exited;
+    }
   });
 
   it("dead broker without process group is reclaimed immediately", async () => {

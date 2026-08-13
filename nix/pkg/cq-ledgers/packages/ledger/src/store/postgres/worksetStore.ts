@@ -426,7 +426,11 @@ export function createPostgresWorksetStore(
       row.hostId,
     );
     const heartbeatFresh = now() - row.heartbeatAtMs <= heartbeatTtlMs;
-    if (holderAlive && heartbeatFresh) return "live";
+    // Same-host process identity is authoritative even after a broker has
+    // transferred ownership to a guardian that does not emit heartbeats.
+    // Foreign-host liveness cannot be observed locally, so its lease still
+    // requires a fresh heartbeat.
+    if (holderAlive && (row.hostId === hostId || heartbeatFresh)) return "live";
 
     // Foreign host: we cannot observe or signal a remote process group. An
     // unsettled registered external-effect must fail closed (stuck) rather than
@@ -914,7 +918,7 @@ export function createPostgresWorksetStore(
           // Durable before return (FS/SQLite write-sync parity).
           await publishProcessGroup(granted.id, registration);
         },
-        shareWithGuardian(): void {
+        async shareWithGuardian(guardian: WorksetProcessGroupRegistration): Promise<void> {
           if (!open) {
             throw new WorksetAdmissionError(
               "admission-closed",
@@ -927,6 +931,29 @@ export function createPostgresWorksetStore(
               "cannot share admission before process-group registration",
             );
           }
+          if (
+            guardian.pgid !== processGroup.pgid ||
+            guardian.leaderPid !== processGroup.leaderPid
+          ) {
+            throw new WorksetAdmissionError(
+              "invalid-replacement",
+              "guardian identity must equal the registered process-group leader",
+            );
+          }
+          const identity = await readProcessIdentity(guardian.leaderPid);
+          if (identity === null) {
+            throw new WorksetAdmissionError(
+              "invalid-replacement",
+              "registered guardian identity disappeared before ownership transfer",
+            );
+          }
+          await pool`
+            UPDATE workset_admissions
+            SET holder_pid = ${identity.pid},
+                holder_start_time = ${identity.startTime},
+                heartbeat_at_ms = ${now()}
+            WHERE project_key = ${projectKey} AND admission_id = ${granted.id}
+          `;
         },
         async markSettled(): Promise<void> {
           if (!open) {

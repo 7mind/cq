@@ -4,10 +4,13 @@
 
 import { afterAll, describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createPostgresWorksetStore,
   ensureSchema,
-  createTrustedWorksetManagementAuthority,
   openPgPool,
   readWorksetRootsEpoch,
   WorksetAdmissionError,
@@ -15,6 +18,17 @@ import {
 } from "../src/index.js";
 
 const PG_URL = process.env.CQ_TEST_PG_URL;
+const BROKER_FIXTURE = fileURLToPath(
+  new URL("./worksetEffectBrokerPostgresChild.ts", import.meta.url),
+);
+
+async function waitForFile(path: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (!(await Bun.file(path).exists())) {
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${path}`);
+    await Bun.sleep(5);
+  }
+}
 
 if (PG_URL === undefined || PG_URL.length === 0) {
   describe.skip("workset postgres disconnect [T1958]", () => {
@@ -40,38 +54,35 @@ if (PG_URL === undefined || PG_URL.length === 0) {
   }
 
   describe("workset postgres disconnect [T1958]", () => {
-    it("killed holder leaves admission row observable until release/settlement", async () => {
+    it("broker disconnect retains the row until its guardian settles descendants", async () => {
       const projectKey = await prepareTenant();
-      // Separate pools simulate two server instances.
-      const holderPool = openPgPool(PG_URL);
+      const root = await mkdtemp(join(tmpdir(), "cq-postgres-broker-disconnect-"));
+      const statePath = join(root, "broker-state.json");
+      const descendantPidPath = join(root, "descendant-pid");
+      const broker = Bun.spawn(
+        [process.execPath, "run", BROKER_FIXTURE, projectKey, statePath, descendantPidPath],
+        { stdout: "pipe", stderr: "pipe", env: process.env },
+      );
       const observerPool = openPgPool(PG_URL);
-      const holder = createPostgresWorksetStore({ pool: holderPool, projectKey });
-      const observer = createPostgresWorksetStore({ pool: observerPool, projectKey });
-      openStores.push(holder, observer);
+      const observer = createPostgresWorksetStore({
+        pool: observerPool,
+        projectKey,
+        now: () => Date.now() + 60_000,
+      });
+      openStores.push(observer);
 
       try {
-        const admission = await holder.admitExternalEffect({
-          kind: "worktree-create",
-          targetRef: "tasks:T-hold",
-        });
-        await Promise.resolve(admission.registerProcessGroup({ pgid: 7001, leaderPid: 7001 }));
-        await Promise.resolve(admission.shareWithGuardian());
-        // Flush durable register.
-        await Bun.sleep(30);
+        await waitForFile(statePath);
+        await waitForFile(descendantPidPath);
+        const state = JSON.parse(await readFile(statePath, "utf8")) as {
+          readonly leaderPid: number;
+        };
 
         const before = await observer.listDurableAdmissions();
         expect(before).toHaveLength(1);
-        expect(before[0]!.admissionId).toBe(admission.id);
+        expect(before[0]!.holderPid).toBe(state.leaderPid);
 
-        // Connection loss without release.
-        holder.close();
-        await holderPool.close();
-
-        const afterDisconnect = await observer.listDurableAdmissions();
-        expect(afterDisconnect).toHaveLength(1);
-        expect(afterDisconnect[0]!.admissionId).toBe(admission.id);
-
-        const setPromise = observer.setRoots(["goals:G-blocked"]);
+        const setPromise = observer.setRoots(["goals:G-after-disconnect"]);
         let finished = false;
         void setPromise.then(() => {
           finished = true;
@@ -79,17 +90,18 @@ if (PG_URL === undefined || PG_URL.length === 0) {
         await Bun.sleep(80);
         expect(finished).toBe(false);
 
-        await observer.forceSettleAdmission({
-          admissionId: admission.id,
-          authority: createTrustedWorksetManagementAuthority(),
-          reason: "holder connection lost; process group attested settled",
-        });
+        broker.kill("SIGKILL");
+        expect(await broker.exited).not.toBe(0);
         const snap = await setPromise;
-        expect(snap).toEqual({ roots: ["goals:G-blocked"], epoch: 1 });
+        expect(snap).toEqual({ roots: ["goals:G-after-disconnect"], epoch: 1 });
         expect(finished).toBe(true);
+        expect(await observer.listDurableAdmissions()).toEqual([]);
       } finally {
+        broker.kill("SIGKILL");
+        await broker.exited;
         observer.close();
         await observerPool.close().catch(() => undefined);
+        await rm(root, { recursive: true, force: true });
       }
     });
 

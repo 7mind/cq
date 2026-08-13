@@ -8,17 +8,20 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
+import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import * as os from "node:os";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  createSqliteWorksetStore,
   readWorksetRootsEpoch,
   SqliteLedgerStore,
   WorksetAdmissionError,
 } from "../src/index.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
+import { ensureSchema } from "../src/store/sqlite/schema.js";
 
 const dirs: string[] = [];
 const liveLedgers: SqliteLedgerStore[] = [];
@@ -149,53 +152,105 @@ describe("workset effect admission sqlite [T1957]", () => {
     const dbPath = await freshDbPath();
     const store = await openStore(dbPath);
     const db = openLedgerDb(dbPath);
-    const livePid = process.pid;
+    const guardian = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    await new Promise<void>((resolve, reject) => {
+      guardian.once("spawn", resolve);
+      guardian.once("error", reject);
+    });
+    const livePid = guardian.pid;
+    if (livePid === undefined) throw new Error("test guardian returned no PID");
+    const guardianExited = new Promise<void>((resolve) => {
+      guardian.once("exit", () => resolve());
+    });
+    try {
+      try {
+        db.query(
+          `INSERT INTO workset_admissions (
+           id, form, kind, epoch, roots_json, targets_json, target_ref,
+           host, pid, started_at, pgid, leader_pid, settled, process_group_registered
+         ) VALUES (?, 'external-effect', 'merge', 0, '[]', ?, ?,
+                   ?, ?, ?, ?, ?, 0, 1)`,
+        ).run(
+          "ee-orphan-group",
+          JSON.stringify(["tasks:T-live"]),
+          "tasks:T-live",
+          os.hostname(),
+          2_147_483_645, // dead holder
+          Date.now(),
+          livePid,
+          livePid,
+        );
+      } finally {
+        db.close();
+      }
+
+      expect(store.worksetStore().activeAdmissionCount()).toBe(1);
+
+      // setRoots must not commit through the unsettled registered group.
+      let committed = false;
+      const setP = store
+        .worksetStore()
+        .setRoots(["goals:G-blocked"])
+        .then((s) => {
+          committed = true;
+          return s;
+        });
+      await Bun.sleep(40);
+      expect(committed).toBe(false);
+
+      // Settle the row as a crash-cleanup would after process-group death proof.
+      const fix = openLedgerDb(dbPath);
+      try {
+        fix
+          .query("UPDATE workset_admissions SET settled = 1 WHERE id = ?")
+          .run("ee-orphan-group");
+      } finally {
+        fix.close();
+      }
+      const snap = await setP;
+      expect(snap).toEqual({ roots: ["goals:G-blocked"], epoch: 1 });
+    } finally {
+      try {
+        process.kill(-livePid, "SIGKILL");
+      } catch {
+        // The group may already have exited after a failed assertion.
+      }
+      await guardianExited;
+    }
+  });
+
+  it("does not reclaim a dead guardian row while its process group still lives", async () => {
+    const db = openLedgerDb(await freshDbPath());
+    ensureSchema(db);
     try {
       db.query(
         `INSERT INTO workset_admissions (
            id, form, kind, epoch, roots_json, targets_json, target_ref,
            host, pid, started_at, pgid, leader_pid, settled, process_group_registered
-         ) VALUES (?, 'external-effect', 'merge', 0, '[]', ?, ?,
+         ) VALUES (?, 'external-effect', 'child-dispatch', 0, '[]', ?, ?,
                    ?, ?, ?, ?, ?, 0, 1)`,
       ).run(
-        "ee-orphan-group",
-        JSON.stringify(["tasks:T-live"]),
-        "tasks:T-live",
+        "ee-dead-guardian-live-group",
+        JSON.stringify(["tasks:T1979"]),
+        "tasks:T1979",
         os.hostname(),
-        2_147_483_645, // dead holder
+        2_147_483_640,
         Date.now(),
-        livePid, // registered group leader still this process
-        livePid,
+        73_001,
+        73_001,
       );
+      const store = createSqliteWorksetStore({
+        db,
+        isPidAlive: () => false,
+        isProcessGroupAlive: (pgid) => pgid === 73_001,
+      });
+      expect(store.activeAdmissionCount()).toBe(1);
     } finally {
       db.close();
     }
-
-    expect(store.worksetStore().activeAdmissionCount()).toBe(1);
-
-    // setRoots must not commit through the unsettled registered group.
-    let committed = false;
-    const setP = store
-      .worksetStore()
-      .setRoots(["goals:G-blocked"])
-      .then((s) => {
-        committed = true;
-        return s;
-      });
-    await Bun.sleep(40);
-    expect(committed).toBe(false);
-
-    // Settle the row as a crash-cleanup would after process-group death proof.
-    const fix = openLedgerDb(dbPath);
-    try {
-      fix
-        .query("UPDATE workset_admissions SET settled = 1 WHERE id = ?")
-        .run("ee-orphan-group");
-    } finally {
-      fix.close();
-    }
-    const snap = await setP;
-    expect(snap).toEqual({ roots: ["goals:G-blocked"], epoch: 1 });
   });
 
   it("cross-process child: holder admits, parent set waits, child release unblocks", async () => {

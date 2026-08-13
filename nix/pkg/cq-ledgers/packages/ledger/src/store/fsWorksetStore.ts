@@ -879,7 +879,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
         fsSync.writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, "utf8");
         fsSync.renameSync(tmp, docPath);
       },
-      shareWithGuardian(): void {
+      shareWithGuardian(guardian: WorksetProcessGroupRegistration): void {
         if (!open) {
           throw new WorksetAdmissionError(
             "admission-closed",
@@ -892,6 +892,21 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
             "cannot share admission before process-group registration",
           );
         }
+        if (
+          guardian.pgid !== processGroup.pgid ||
+          guardian.leaderPid !== processGroup.leaderPid
+        ) {
+          throw new WorksetAdmissionError(
+            "invalid-replacement",
+            "guardian identity must equal the registered process-group leader",
+          );
+        }
+        const docPath = admissionPath(granted.id);
+        const existing = JSON.parse(fsSync.readFileSync(docPath, "utf8")) as AdmissionDocument;
+        const next: AdmissionDocument = { ...existing, pid: guardian.leaderPid };
+        const tmp = `${docPath}.tmp-${selfPid}-${now()}`;
+        fsSync.writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+        fsSync.renameSync(tmp, docPath);
       },
       markSettled(): void {
         if (!open) {

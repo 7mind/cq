@@ -144,6 +144,55 @@ describe("workset effect broker [T1979]", () => {
     expect(strict.activeAdmissionCount()).toBe(0);
   });
 
+  test("awaits durable registration and guardian share before target execution [BA]", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-workset-effect-register-latch-"));
+    roots.push(root);
+    const targetMarker = join(root, "target-ran");
+    const registerEntered = deferred();
+    const permitRegister = deferred();
+    const strict = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const broker = new WorksetEffectBroker({
+      provider: {
+        acquire: async (input) => {
+          const admission = await strict.acquire(input);
+          return {
+            ...admission,
+            registerProcessGroup: async (registration) => {
+              registerEntered.resolve();
+              await permitRegister.promise;
+              await Promise.resolve(admission.registerProcessGroup(registration));
+            },
+          };
+        },
+      },
+    });
+
+    const launch = broker.launch({
+      kind: "child-dispatch",
+      targetRef: "tasks:T1979",
+      argv: [
+        process.execPath,
+        "-e",
+        `require('node:fs').writeFileSync(${JSON.stringify(targetMarker)}, 'ran')`,
+      ],
+      cwd: root,
+      env: process.env,
+      stdio: "ignore" as const,
+      launchBootstrap: nodeBootstrap,
+    });
+    await registerEntered.promise;
+    expect(await Bun.file(targetMarker).exists()).toBe(false);
+    permitRegister.resolve();
+    const launched = await launch;
+    await launched.exited;
+    expect(await Bun.file(targetMarker).exists()).toBe(true);
+    expect(strict.events().slice(0, 3)).toEqual([
+      "admission-acquired",
+      "process-group-registered",
+      "guardian-shared",
+    ]);
+  });
+
   test("cancel settles a same-group descendant before releasing admission [Effectual-GoodCommunication]", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-workset-effect-cancel-"));
     roots.push(root);
@@ -189,6 +238,41 @@ describe("workset effect broker [T1979]", () => {
     }
   });
 
+  test("normal target exit settles a surviving same-group descendant [Effectual-GoodCommunication]", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-workset-effect-normal-descendant-"));
+    roots.push(root);
+    const descendantPidPath = join(root, "descendant-pid");
+    const descendant = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)";
+    const target = [
+      "const { spawn } = require('node:child_process');",
+      "const { writeFileSync } = require('node:fs');",
+      `const child = spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], { detached: false, stdio: 'ignore' });`,
+      `writeFileSync(${JSON.stringify(descendantPidPath)}, String(child.pid));`,
+      "child.unref();",
+    ].join("\n");
+    const strict = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const broker = new WorksetEffectBroker({
+      provider: strict,
+      settlement: { termGraceMs: 10, killGraceMs: 1_000, pollIntervalMs: 2 },
+    });
+    const launched = await broker.launch({
+      kind: "branch-remove",
+      targetRef: "tasks:T1979",
+      argv: [process.execPath, "-e", target],
+      cwd: root,
+      env: process.env,
+      stdio: "ignore" as const,
+      launchBootstrap: nodeBootstrap,
+    });
+    await waitForFile(descendantPidPath);
+    const descendantPid = Number(await readFile(descendantPidPath, "utf8"));
+
+    await launched.exited;
+    await waitForIdentityToDisappear(descendantPid);
+    expect(launched.terminationReason).toBe("normal");
+    expect(strict.activeAdmissionCount()).toBe(0);
+  });
+
   test("timeout settles the registered group before releasing admission [Effectual-GoodCommunication]", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-workset-effect-timeout-"));
     roots.push(root);
@@ -197,32 +281,87 @@ describe("workset effect broker [T1979]", () => {
       provider: strict,
       settlement: { termGraceMs: 10, killGraceMs: 1_000, pollIntervalMs: 2 },
     });
+    const descendantPidPath = join(root, "descendant-pid");
+    const descendant = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)";
+    const target = [
+      "const { spawn } = require('node:child_process');",
+      "const { writeFileSync } = require('node:fs');",
+      `const child = spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], { detached: false, stdio: 'ignore' });`,
+      `writeFileSync(${JSON.stringify(descendantPidPath)}, String(child.pid));`,
+      "setInterval(() => {}, 1000);",
+    ].join("\n");
     const launched = await broker.launch({
       kind: "rebase",
       targetRef: "tasks:T1979",
-      argv: [process.execPath, "-e", "setInterval(() => {}, 1000)"],
+      argv: [process.execPath, "-e", target],
       cwd: root,
       env: process.env,
       stdio: "ignore" as const,
       launchBootstrap: nodeBootstrap,
-      timeoutMs: 20,
+      timeoutMs: 1_000,
     });
 
+    await waitForFile(descendantPidPath);
+    const descendantPid = Number(await readFile(descendantPidPath, "utf8"));
     await launched.exited;
     expect(launched.terminationReason).toBe("timeout");
+    await waitForIdentityToDisappear(descendantPid);
     expect(strict.activeAdmissionCount()).toBe(0);
   });
 
-  test("keeps opaque admission material out of process metadata and output [BA]", async () => {
+  test("holds admission until inherited output drains after normal settlement [Effectual-GoodCommunication]", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-workset-effect-output-drain-"));
+    roots.push(root);
+    const releaseOutput = join(root, "release-output");
+    const detached = [
+      `const { existsSync } = require('node:fs');`,
+      `const marker = ${JSON.stringify(releaseOutput)};`,
+      "const timer = setInterval(() => { if (existsSync(marker)) { clearInterval(timer); process.stdout.write('drained'); } }, 2);",
+    ].join("\n");
+    const target = [
+      "const { spawn } = require('node:child_process');",
+      `const child = spawn(process.execPath, ['-e', ${JSON.stringify(detached)}], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] });`,
+      "child.unref();",
+    ].join("\n");
+    const strict = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const broker = new WorksetEffectBroker({ provider: strict });
+    const launched = await broker.launch({
+      kind: "merge",
+      targetRef: "tasks:T1979",
+      argv: [process.execPath, "-e", target],
+      cwd: root,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"] as StdioOptions,
+      launchBootstrap: nodeBootstrap,
+    });
+    let completed = false;
+    void launched.exited.then(() => {
+      completed = true;
+    });
+    for (let attempt = 0; attempt < 1_000; attempt += 1) {
+      if (strict.events().includes("process-group-settled")) break;
+      await Bun.sleep(2);
+    }
+    expect(completed).toBe(false);
+    expect(strict.activeAdmissionCount()).toBe(1);
+    await Bun.write(releaseOutput, "release");
+    await launched.exited;
+    expect(strict.activeAdmissionCount()).toBe(0);
+  });
+
+  test("keeps opaque admission material out of process metadata, payloads, output, and logs [BA]", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-workset-effect-opaque-"));
     roots.push(root);
     const capability = "cq-secret-admission-capability-T1979";
     const strict = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const serializedBoundaryPayloads: string[] = [];
+    const capturedLogs: string[] = [];
     let specification: RegisteredLaunchBootstrapSpecification<StdioOptions> | undefined;
     const pipedStdio: StdioOptions = ["ignore", "pipe", "pipe"];
     const broker = new WorksetEffectBroker({
       provider: {
         acquire: async (input) => {
+          serializedBoundaryPayloads.push(JSON.stringify(input));
           const admission = await strict.acquire(input);
           return Object.freeze({ ...admission, id: capability });
         },
@@ -251,11 +390,47 @@ describe("workset effect broker [T1979]", () => {
     const stderr = streamText(launched.process.stderr);
     await launched.exited;
 
+    const publicResultPayload = JSON.stringify({
+      registration: launched.registration,
+      terminationReason: launched.terminationReason,
+    });
+    capturedLogs.push(`workset effect result ${publicResultPayload}`);
+
     expect(specification?.argv.some((argument) => argument.includes(capability))).toBe(false);
     expect(
       Object.values(specification?.env ?? {}).some((value) => value?.includes(capability)),
     ).toBe(false);
     expect((await stdout).includes(capability)).toBe(false);
     expect((await stderr).includes(capability)).toBe(false);
+    expect(serializedBoundaryPayloads.join("\n").includes(capability)).toBe(false);
+    expect(publicResultPayload.includes(capability)).toBe(false);
+    expect(capturedLogs.join("\n").includes(capability)).toBe(false);
+  });
+
+  test("closes admission after the registered launch result rejects [BA]", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-workset-effect-rejected-exit-"));
+    roots.push(root);
+    const strict = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const broker = new WorksetEffectBroker({ provider: strict });
+    const launched = await broker.launch({
+      kind: "child-dispatch",
+      targetRef: "tasks:T1979",
+      argv: [process.execPath, "-e", ""],
+      cwd: root,
+      env: process.env,
+      stdio: "ignore" as const,
+      launchBootstrap: (specification) => {
+        const bootstrap = nodeBootstrap(specification);
+        return {
+          ...bootstrap,
+          exited: bootstrap.exited.then(() => {
+            throw new Error("synthetic registered-launch result rejection");
+          }),
+        };
+      },
+    });
+
+    await expect(launched.exited).rejects.toThrow("synthetic registered-launch result rejection");
+    expect(strict.activeAdmissionCount()).toBe(0);
   });
 });

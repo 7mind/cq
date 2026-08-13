@@ -232,6 +232,7 @@ export class WorksetEffectBroker {
       } catch (launchError) {
         try {
           await settle("broker-death");
+          await session.closeAdmission();
         } catch (cleanupError) {
           throw new AggregateError(
             [launchError, cleanupError],
@@ -314,9 +315,12 @@ export function createStrictInMemoryWorksetEffectAdmissionProvider(): StrictInMe
           state.registered = true;
           history.push("process-group-registered");
         },
-        shareWithGuardian(): void {
+        shareWithGuardian(guardian): void {
           if (!state.open) throw new Error("strict provider: admission already closed");
           if (!state.registered) throw new Error("strict provider: process group not registered");
+          if (guardian.pgid !== guardian.leaderPid) {
+            throw new Error("strict provider: guardian must be the registered group leader");
+          }
           history.push("guardian-shared");
         },
         markSettled(): void {
