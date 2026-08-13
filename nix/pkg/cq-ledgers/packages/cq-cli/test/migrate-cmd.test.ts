@@ -284,6 +284,31 @@ describe("cq migrate (T504)", () => {
     expect(second.exitCode).toBe(EXIT_USAGE);
   });
 
+  it("waits for an in-flight source mutation before migration", async () => {
+    const root = await gitRepo("cq-migrate-source-admission-");
+    await fs.writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+    await seedLegacy(root);
+
+    const sourceWorkset = createFsWorksetStore({ root });
+    const mutation = await sourceWorkset.admitLedgerMutation({
+      kind: "generic-write",
+      targets: ["tasks:T-seeded"],
+    });
+    const migration = dispatch(["migrate", "--cwd", root], recordingIo());
+    let settled = false;
+    void migration.then(() => {
+      settled = true;
+    });
+
+    await Bun.sleep(50);
+    expect(settled).toBe(false);
+    expect(resolveLedgerBackend(root).backend).toBe("fs");
+
+    await mutation.acknowledge();
+    expect((await migration).exitCode).toBe(0);
+    expect(resolveLedgerBackend(root).backend).toBe("xdg");
+  });
+
   it("K117: a cq.toml-less legacy tree migrates as an fs source (default resolution is xdg, but the in-tree ledger is detected)", async () => {
     const root = await gitRepo("cq-migrate-noconfig-");
     // NO cq.toml at all — pre-K117 this root resolved to the fs default; now
