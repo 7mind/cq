@@ -9,7 +9,7 @@ import {
   InMemoryLedgerStore,
   isPostgresTenantEmpty,
   isXdgPrimaryEmpty,
-  mintWorksetManagementAuthority,
+  createTrustedWorksetManagementAuthority,
   openPgPool,
   restoreDumpToPostgres,
   RestoreTargetChangedError,
@@ -91,7 +91,7 @@ describe.skipIf(pgPool === undefined)(
         pool: pgPool,
         projectKey,
         dump,
-        authority: mintWorksetManagementAuthority(),
+        authority: createTrustedWorksetManagementAuthority(),
         overwriteAuthorized: false,
         administrativeKind: "backend-migration",
       });

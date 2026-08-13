@@ -97,7 +97,6 @@ export class GitObjectLedgerBackend
   private readonly locksDir: string;
   /** The seam, retained so init() can seed the orphan ref before super.init(). */
   private readonly gitPersistence: GitPersistence;
-  private readonly branch: string;
   private readonly git: GitPlumbing;
   private readonly worksetAuthority: unknown;
 
@@ -120,7 +119,6 @@ export class GitObjectLedgerBackend
     this.branch = branch;
     this.locksDir = path.join(repoRoot, LEDGER_STORAGE_DIRNAME, ".locks");
     this.gitPersistence = persistence;
-    this.branch = branch;
     this.git = git;
     this.worksetAuthority =
       opts.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority();
