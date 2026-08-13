@@ -329,6 +329,79 @@ describe("workset generic-mutation git-object faults [T1973]", () => {
     ORCHESTRATION_WAIT_MS,
   );
 
+  for (const operation of ["updateItem", "archiveMilestone"] as const) {
+    it(
+      `injected update-ref failure during guarded ${operation} preserves ref and caches`,
+      async () => {
+        const dir = await seedRepo();
+        const seed = await buildGitGuarded({ repoRoot: dir });
+        await seed.init();
+        const m = await seed.mutations.createMilestone({ title: `ref-${operation}` });
+        const t = await seed.mutations.createItem(TASKS_LEDGER, m.id, {
+          status: operation === "archiveMilestone" ? "done" : "planned",
+          fields: { headline: `ref-${operation}` },
+        });
+        if (operation === "archiveMilestone") {
+          await seed.mutations.updateMilestone(m.id, { status: "done" });
+        }
+        await seed.setRoots([
+          `${MILESTONES_LEDGER}:${m.id}`,
+          `${TASKS_LEDGER}:${t.id}`,
+        ]);
+        await seed.dispose();
+
+        const baseRunner = nodeGitRunner(dir);
+        let failUpdateRef = false;
+        const runner: GitRunner = async (args, opts) => {
+          if (failUpdateRef && args[0] === "update-ref") {
+            return { code: 1, stdout: "", stderr: "injected update-ref failure" };
+          }
+          return baseRunner(args, opts);
+        };
+        const sabotaged = new GitPlumbing({
+          runner,
+          scratchDir: path.join(dir, ".git"),
+        });
+        const broken = await buildGitGuarded({ repoRoot: dir, git: sabotaged });
+        await broken.init();
+        const tipBefore = await readRefSha(dir);
+        const tasksBefore = broken.fetch(TASKS_LEDGER);
+        const milestonesBefore = broken.fetch(MILESTONES_LEDGER);
+        const rootsBefore = await broken.snapshotRoots();
+
+        try {
+          failUpdateRef = true;
+          const mutation =
+            operation === "updateItem"
+              ? broken.mutations.updateItem(TASKS_LEDGER, t.id, { status: "wip" })
+              : broken.mutations.archiveMilestone(m.id, "must-roll-back");
+          await expect(mutation).rejects.toThrow("injected update-ref failure");
+          failUpdateRef = false;
+
+          expect(await readRefSha(dir)).toBe(tipBefore);
+          expect(broken.fetch(TASKS_LEDGER)).toEqual(tasksBefore);
+          expect(broken.fetch(MILESTONES_LEDGER)).toEqual(milestonesBefore);
+          expect(await broken.snapshotRoots()).toEqual(rootsBefore);
+          expect(broken.activeAdmissionCount()).toBe(0);
+
+          const reader = await buildGitGuarded({ repoRoot: dir });
+          await reader.init();
+          try {
+            expect(reader.fetch(TASKS_LEDGER)).toEqual(tasksBefore);
+            expect(reader.fetch(MILESTONES_LEDGER)).toEqual(milestonesBefore);
+            expect(await reader.snapshotRoots()).toEqual(rootsBefore);
+          } finally {
+            await reader.dispose();
+          }
+        } finally {
+          failUpdateRef = false;
+          await broken.dispose();
+        }
+      },
+      ORCHESTRATION_WAIT_MS,
+    );
+  }
+
   it(
     "raw write methods remain absent on the public surface after durable init",
     async () => {

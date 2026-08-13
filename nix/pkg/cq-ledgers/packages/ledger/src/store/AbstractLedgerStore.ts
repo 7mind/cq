@@ -1172,6 +1172,19 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     this.ledgers.set(entry.name, ledger);
   }
 
+  private async readLedgerFromDiskStrict(entry: LedgerRegistryEntry): Promise<Ledger> {
+    const text = await this.persistence.readLedgerSource(entry.name);
+    if (text === null) {
+      throw new LedgerError(
+        `ledger source disappeared before generic mutation: ${entry.name}`,
+      );
+    }
+    return parseLedger(text, {
+      schema: entry.schema,
+      isMilestonesLedger: entry.name === MILESTONES_LEDGER,
+    });
+  }
+
   private planLifecycleState(
     archivedIds: ReadonlyMap<string, ReadonlySet<string>>,
   ): InMemoryPlanLifecycleState {
@@ -1449,13 +1462,33 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     readRoots: () => Promise<WorksetRootsEpoch>,
   ): Promise<T> {
     this.assertInit();
-    const ledgerIds = this.lockableLedgerIds();
-    const outcome = await this.withRegistryLock(() =>
-      this.withMilestonesLock(() =>
-        this.withLocksInOrder(ledgerIds, async () => {
+    const outcome = await this.withRegistryLock(async () => {
+      const registryText = await this.persistence.readRegistrySource();
+      if (registryText === null) {
+        throw new LedgerError("ledger registry disappeared before generic mutation");
+      }
+      const authoritativeRegistry = parseRegistry(registryText);
+      const priorLedgerIds = new Set(this.ledgers.keys());
+      const ledgerIds = authoritativeRegistry.ledgers
+        .map((entry) => entry.name)
+        .filter((ledgerId) => ledgerId !== MILESTONES_LEDGER)
+        .sort();
+      return this.withMilestonesLock(() =>
+        this.withLockKeysInOrder(ledgerIds, async () => {
           await this.persistence.recoverArchiveCommit();
-          await this.reloadLedgerFromDisk(MILESTONES_LEDGER);
-          for (const ledgerId of ledgerIds) await this.reloadLedgerFromDisk(ledgerId);
+          const authoritativeLedgers = new Map<string, Ledger>();
+          for (const entry of authoritativeRegistry.ledgers) {
+            authoritativeLedgers.set(entry.name, await this.readLedgerFromDiskStrict(entry));
+          }
+          replaceMap(this.ledgers, authoritativeLedgers);
+          this.registry = authoritativeRegistry;
+          const authoritativeLedgerIds = new Set(authoritativeLedgers.keys());
+          for (const ledgerId of priorLedgerIds) {
+            if (!authoritativeLedgerIds.has(ledgerId)) this.searchIndex.removeLedger(ledgerId);
+          }
+          for (const ledgerId of authoritativeLedgerIds) {
+            if (!priorLedgerIds.has(ledgerId)) await this.indexLedgerFull(ledgerId);
+          }
           const beforeLedgers = cloneMap(this.ledgers);
           const beforeRegistry = structuredClone(this.registry);
           const archives = new Map<string, GenericArchiveEntry>();
@@ -1547,9 +1580,10 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
             throw error;
           }
         }),
-      ),
-    );
-    for (const ledgerId of outcome.dirtyLedgers) this.fireMutation(ledgerId, "update");
+      );
+    });
+    const mutationOp = outcome.archivedChanged ? "archive" : "update";
+    for (const ledgerId of outcome.dirtyLedgers) this.fireMutation(ledgerId, mutationOp);
     if (outcome.archivedChanged) {
       for (const ledgerId of outcome.dirtyLedgers) {
         await this.refreshLedgerIndexArchived(ledgerId);
@@ -1757,6 +1791,10 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     if (!this.ledgers.has(ledgerId)) {
       throw new LedgerNotFoundError(ledgerId);
     }
+    return this.withLockKey(ledgerId, fn);
+  }
+
+  private async withLockKey<T>(ledgerId: string, fn: () => Promise<T>): Promise<T> {
     const mutex = this.mutexFor(ledgerId);
     return mutex.run(async () => {
       const release = await this.lockfile.acquire(this.locksRoot(), ledgerId);
@@ -1797,6 +1835,13 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     const [head, ...tail] = ledgerIds;
     if (head === undefined) return fn();
     return this.withLock(head, () => this.withLocksInOrder(tail, fn));
+  }
+
+  private async withLockKeysInOrder<T>(ledgerIds: string[], fn: () => Promise<T>): Promise<T> {
+    if (ledgerIds.length === 0) return fn();
+    const [head, ...tail] = ledgerIds;
+    if (head === undefined) return fn();
+    return this.withLockKey(head, () => this.withLockKeysInOrder(tail, fn));
   }
 
   private mutexFor(key: string): AsyncMutex {

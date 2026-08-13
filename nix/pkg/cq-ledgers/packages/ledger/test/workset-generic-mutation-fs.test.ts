@@ -19,10 +19,13 @@ import {
   TASKS_LEDGER,
   MILESTONES_LEDGER,
   LEDGER_STORAGE_DIRNAME,
+  FsLedgerStore,
+  createTrustedWorksetManagementAuthority,
   type CreateInMemoryWorksetGuardedLedgerOptions,
   type WorksetGuardedLedger,
 } from "../src/index.js";
 import { runWorksetGenericMutationContract } from "./worksetGenericMutationContract.js";
+import { runGenericCreateLedgerPeerContract } from "./worksetGenericMutationCreateLedgerPeerContract.js";
 
 const dirs: string[] = [];
 
@@ -54,6 +57,18 @@ runWorksetGenericMutationContract({
   name: "filesystem",
   classification: "Behavioral-Active Blackbox-GoodCommunication",
   build: (options) => buildFsLedger(options),
+});
+
+runGenericCreateLedgerPeerContract({
+  name: "filesystem",
+  async build() {
+    const root = await freshRoot();
+    return {
+      first: createFsWorksetManagementLedger({ root }),
+      second: createFsWorksetManagementLedger({ root }),
+      openReader: async () => createFsWorksetManagementLedger({ root }),
+    };
+  },
 });
 
 describe("workset generic-mutation filesystem focused [T1972]", () => {
@@ -209,13 +224,13 @@ describe("workset generic-mutation filesystem focused [T1972]", () => {
         fields: { headline: "peer-1" },
       });
       // Peer must observe A's create via fresh read path / invalidate.
-      b.invalidate(TASKS_LEDGER);
-      b.invalidate(MILESTONES_LEDGER);
+      await b.invalidate(TASKS_LEDGER);
+      await b.invalidate(MILESTONES_LEDGER);
       const t2 = await b.mutations.createItem(TASKS_LEDGER, m.id, {
         status: "planned",
         fields: { headline: "peer-2" },
       });
-      a.invalidate(TASKS_LEDGER);
+      await a.invalidate(TASKS_LEDGER);
 
       const results = await Promise.all([
         a.setRoots([`${TASKS_LEDGER}:${t1.id}`]),
@@ -369,7 +384,11 @@ describe("workset generic-mutation filesystem focused [T1972]", () => {
 
   it("full-sweep archive commits durably under explicit admitted roots", async () => {
     const root = await freshRoot();
-    const ledger = createFsWorksetManagementLedger({ root });
+    const operations: string[] = [];
+    const ledger = createFsWorksetManagementLedger({
+      root,
+      onMutation: (ledgerId, op) => operations.push(`${ledgerId}:${op}`),
+    });
     await ledger.init();
     let milestoneId: string;
     let taskA: string;
@@ -393,8 +412,16 @@ describe("workset generic-mutation filesystem focused [T1972]", () => {
         `${TASKS_LEDGER}:${a.id}`,
         `${TASKS_LEDGER}:${b.id}`,
       ]);
+      operations.length = 0;
       const ptr = await ledger.mutations.archiveMilestone(m.id, "full-sweep");
       expect(ptr.id).toBe(m.id);
+      expect(operations).toEqual(
+        expect.arrayContaining([
+          `${MILESTONES_LEDGER}:archive`,
+          `${TASKS_LEDGER}:archive`,
+        ]),
+      );
+      expect(operations.every((operation) => operation.endsWith(":archive"))).toBe(true);
       expect(() => ledger.fetchItem(MILESTONES_LEDGER, m.id)).toThrow();
     } finally {
       await ledger.dispose();
@@ -413,6 +440,67 @@ describe("workset generic-mutation filesystem focused [T1972]", () => {
       }
     } finally {
       await reader.dispose();
+    }
+  });
+
+  it("fails closed when the authoritative registry names a missing ledger source", async () => {
+    const root = await freshRoot();
+    const writer = createFsWorksetManagementLedger({ root });
+    const stale = createFsWorksetManagementLedger({ root });
+    await writer.init();
+    await stale.init();
+    try {
+      await writer.mutations.createLedger("xenos", {
+        idPrefix: "X",
+        statusValues: ["open", "done"],
+        terminalStatuses: ["done"],
+        fields: { title: { type: "string", required: true } },
+      });
+      await fs.rm(path.join(root, LEDGER_STORAGE_DIRNAME, "xenos.md"));
+
+      await expect(
+        stale.mutations.createMilestone({ title: "must not commit" }),
+      ).rejects.toThrow("ledger source disappeared before generic mutation: xenos");
+      expect(stale.activeAdmissionCount()).toBe(0);
+      expect(stale.enumerate()).not.toContain("xenos");
+    } finally {
+      await writer.dispose();
+      await stale.dispose();
+    }
+  });
+
+  it("removes a stale custom ledger after an authoritative peer reset", async () => {
+    const root = await freshRoot();
+    const writer = createFsWorksetManagementLedger({ root });
+    const stale = createFsWorksetManagementLedger({ root });
+    await writer.init();
+    await stale.init();
+    const admin = new FsLedgerStore({
+      root,
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
+    });
+    try {
+      await writer.mutations.createLedger("xenos", {
+        idPrefix: "X",
+        statusValues: ["open", "done"],
+        terminalStatuses: ["done"],
+        fields: { title: { type: "string", required: true } },
+      });
+      await stale.invalidate("xenos");
+      expect(stale.enumerate()).toContain("xenos");
+
+      await admin.init();
+      await admin.reset();
+
+      const milestone = await stale.mutations.createMilestone({
+        title: "after peer reset",
+      });
+      expect(milestone.id).toBe("M1");
+      expect(stale.enumerate()).not.toContain("xenos");
+    } finally {
+      await admin.dispose();
+      await writer.dispose();
+      await stale.dispose();
     }
   });
 });

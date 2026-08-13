@@ -355,6 +355,102 @@ if (PG_URL === undefined || PG_URL.length === 0) {
       }
     });
 
+    it("late archive SQL failure rolls back active/archive state without hook or NOTIFY", async () => {
+      const projectKey = await prepareTenant();
+      const ops: string[] = [];
+      const writer = await buildGuarded({
+        projectKey,
+        onMutation: (ledgerId, op) => {
+          ops.push(`${ledgerId}:${op}`);
+        },
+      });
+      await writer.init();
+      const m = await writer.mutations.createMilestone({ title: "late-rollback" });
+      const first = await writer.mutations.createItem(TASKS_LEDGER, m.id, {
+        status: "done",
+        fields: { headline: "late-first" },
+      });
+      const second = await writer.mutations.createItem(TASKS_LEDGER, m.id, {
+        status: "done",
+        fields: { headline: "late-second" },
+      });
+      await writer.mutations.updateMilestone(m.id, { status: "done" });
+      await writer.setRoots([
+        `${MILESTONES_LEDGER}:${m.id}`,
+        `${TASKS_LEDGER}:${first.id}`,
+        `${TASKS_LEDGER}:${second.id}`,
+      ]);
+
+      const readerPool = new SQL({ url: dsn, max: 2 });
+      const reader = new PostgresLedgerStore({
+        pool: readerPool,
+        projectKey,
+        displayName: projectKey,
+      });
+      await reader.init();
+      let notifications = 0;
+      const handle: ResolvedPostgresHandle = { pool: readerPool, dsn, projectKey };
+      const watcher = startPostgresCoherenceWatcher(reader, handle, () => {
+        notifications += 1;
+      });
+      try {
+        expect(await waitFor(() => notifications > 0)).toBe(true);
+        await Bun.sleep(50);
+        const notificationsBefore = notifications;
+        const tasksBefore = writer.fetch(TASKS_LEDGER);
+        const milestonesBefore = writer.fetch(MILESTONES_LEDGER);
+        const rootsBefore = await writer.snapshotRoots();
+        ops.length = 0;
+
+        const suffix = randomUUID().replaceAll("-", "");
+        const functionName = `fail_generic_archive_${suffix}`;
+        const triggerName = `fail_generic_archive_trigger_${suffix}`;
+        await setupPool.unsafe(`
+          CREATE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN
+            IF NEW.project_key = '${projectKey}' AND NEW.ledger = 'milestones'
+               AND NEW.id = '${m.id}' THEN
+              RAISE EXCEPTION 'injected late generic archive failure';
+            END IF;
+            RETURN NEW;
+          END
+          $$;
+          CREATE TRIGGER ${triggerName}
+          BEFORE INSERT ON archive_pointers
+          FOR EACH ROW EXECUTE FUNCTION ${functionName}();
+        `);
+        try {
+          await expect(
+            writer.mutations.archiveMilestone(m.id, "must-roll-back"),
+          ).rejects.toThrow("injected late generic archive failure");
+        } finally {
+          await setupPool.unsafe(`DROP TRIGGER ${triggerName} ON archive_pointers`);
+          await setupPool.unsafe(`DROP FUNCTION ${functionName}()`);
+        }
+
+        await Bun.sleep(100);
+        expect(ops).toEqual([]);
+        expect(notifications).toBe(notificationsBefore);
+        expect(writer.fetch(TASKS_LEDGER)).toEqual(tasksBefore);
+        expect(writer.fetch(MILESTONES_LEDGER)).toEqual(milestonesBefore);
+        expect(await writer.snapshotRoots()).toEqual(rootsBefore);
+        await expect(writer.fetchArchive(TASKS_LEDGER, m.id)).rejects.toThrow();
+        await expect(writer.fetchArchive(MILESTONES_LEDGER, m.id)).rejects.toThrow();
+        expect(writer.activeAdmissionCount()).toBe(0);
+
+        const fresh = await buildGuarded({ projectKey });
+        await fresh.init();
+        expect(fresh.fetch(TASKS_LEDGER)).toEqual(tasksBefore);
+        expect(fresh.fetch(MILESTONES_LEDGER)).toEqual(milestonesBefore);
+        expect(await fresh.snapshotRoots()).toEqual(rootsBefore);
+        await expect(fresh.fetchArchive(TASKS_LEDGER, m.id)).rejects.toThrow();
+        await expect(fresh.fetchArchive(MILESTONES_LEDGER, m.id)).rejects.toThrow();
+      } finally {
+        watcher.close();
+        await reader.dispose();
+      }
+    });
+
     it("dependsOn update to an admitted member persists", async () => {
       const ledger = await buildGuarded();
       await ledger.init();

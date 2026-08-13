@@ -24,6 +24,7 @@ import {
   type WorksetGuardedLedger,
 } from "../src/index.js";
 import { runWorksetGenericMutationContract } from "./worksetGenericMutationContract.js";
+import { runGenericCreateLedgerPeerContract } from "./worksetGenericMutationCreateLedgerPeerContract.js";
 
 const exec = promisify(execFile);
 const BRANCH = "cq-ledger";
@@ -92,6 +93,18 @@ runWorksetGenericMutationContract({
       ...(options?.hooks !== undefined ? { hooks: options.hooks } : {}),
       ...(options?.now !== undefined ? { now: options.now } : {}),
     }),
+});
+
+runGenericCreateLedgerPeerContract({
+  name: "git-object",
+  async build() {
+    const repoRoot = await seedRepo();
+    return {
+      first: await buildGitGuarded({ repoRoot }),
+      second: await buildGitGuarded({ repoRoot }),
+      openReader: () => buildGitGuarded({ repoRoot }),
+    };
+  },
 });
 
 describe("workset generic-mutation git-object focused [T1973]", () => {
@@ -298,7 +311,11 @@ describe("workset generic-mutation git-object focused [T1973]", () => {
     "archive sweep incomplete fails before tip advance; full sweep commits one admitted state",
     async () => {
       const dir = await seedRepo();
-      const ledger = await buildGitGuarded({ repoRoot: dir });
+      const operations: string[] = [];
+      const ledger = await buildGitGuarded({
+        repoRoot: dir,
+        onMutation: (ledgerId, op) => operations.push(`${ledgerId}:${op}`),
+      });
       await ledger.init();
       try {
         const m = await ledger.mutations.createMilestone({ title: "sweep-m" });
@@ -332,8 +349,16 @@ describe("workset generic-mutation git-object focused [T1973]", () => {
           `${TASKS_LEDGER}:${taskIn.id}`,
           `${TASKS_LEDGER}:${taskOut.id}`,
         ]);
+        operations.length = 0;
         const ptr = await ledger.mutations.archiveMilestone(m.id, "ok");
         expect(ptr.id).toBe(m.id);
+        expect(operations).toEqual(
+          expect.arrayContaining([
+            `${MILESTONES_LEDGER}:archive`,
+            `${TASKS_LEDGER}:archive`,
+          ]),
+        );
+        expect(operations.every((operation) => operation.endsWith(":archive"))).toBe(true);
         expect(await readRefSha(dir)).not.toBe(tipBefore);
       } finally {
         await ledger.dispose();
