@@ -17,6 +17,7 @@ import {
   executeCodexRoleBoundary,
   executeInstalledCodexRoleBoundary,
   implementConflictResolverSidecar,
+  implementReviewerSidecar,
   qualifyCodexNativeAdapter,
   sequentialDispatchRandomBytes,
   type CodexInstalledIdentity,
@@ -32,6 +33,7 @@ import {
   releaseManagedWorktree,
   resolveManagedWorktreeDispatchBinding,
   resolveSingleProjectAttestationNamespace,
+  nodeSupervisedWorkerGateRunner,
   type DispatchBoundGitAuthorization,
   type ManagedWorktreeHandle,
 } from "@cq/ledger";
@@ -48,6 +50,7 @@ const installedGateTest =
     : test;
 const WORKER_FIXTURE = fileURLToPath(new URL("./fixtures/codexBrokerWorker.ts", import.meta.url));
 const RESOLVER_FIXTURE = fileURLToPath(new URL("./fixtures/codexBrokerResolver.ts", import.meta.url));
+const REVIEWER_FIXTURE = fileURLToPath(new URL("./fixtures/codexBrokerReviewer.ts", import.meta.url));
 
 function rejected(action: () => unknown): boolean {
   try {
@@ -91,7 +94,7 @@ async function git(cwd: string, args: readonly string[]): Promise<string> {
 }
 
 function artifactStore(
-  roleId: "implement-worker" | "implement-conflict-resolver",
+  roleId: "implement-worker" | "implement-conflict-resolver" | "implement-reviewer",
 ): PromptArtifactStore {
   const bytes =
     INSTALLED_ROLE === undefined
@@ -110,7 +113,12 @@ function artifactStore(
     sidecarSchemaRoleId: roleId,
     promptSurface: "codex" as const,
     promptDigest: createHash("sha256").update(bytes).digest("hex"),
-    schemaVersion: roleId === "implement-worker" ? 7 : implementConflictResolverSidecar.version,
+    schemaVersion:
+      roleId === "implement-worker"
+        ? 7
+        : roleId === "implement-reviewer"
+          ? implementReviewerSidecar.version
+          : implementConflictResolverSidecar.version,
   };
   return {
     readManifest: () => ({
@@ -130,6 +138,217 @@ async function selectedExecutableSelfIdentity(
     storePath: path.dirname(path.dirname(executable)),
     executablePath: executable,
     executableDigest: createHash("sha256").update(await readFile(executable)).digest("hex"),
+  };
+}
+
+type PackagedWorkerRoute = "native" | "process";
+type PackagedReviewerMode = "sandboxed" | "non-sandboxed";
+
+interface PackagedReviewerMatrixRow {
+  readonly workerRoute: PackagedWorkerRoute;
+  readonly reviewerMode: PackagedReviewerMode;
+  readonly verdict: "approve";
+  readonly gateReRan: boolean;
+  readonly evidenceForwarded: boolean;
+  readonly fastForwardEligible: true;
+}
+
+async function runPackagedReviewer(input: {
+  readonly repositoryRoot: string;
+  readonly managedHandle: ManagedWorktreeHandle;
+  readonly baseCommit: string;
+  readonly backend: FsAttestationBackend;
+  readonly randomBytes: (count: number) => Uint8Array;
+  readonly workerRoute: PackagedWorkerRoute;
+  readonly reviewerMode: PackagedReviewerMode;
+  readonly workerResult: ConsumedDispatchResult;
+}): Promise<PackagedReviewerMatrixRow> {
+  if (INSTALLED_ROLE === undefined || INSTALLED_CODEX === undefined) {
+    throw new Error("installed reviewer gate was not selected");
+  }
+  const {
+    repositoryRoot,
+    managedHandle,
+    baseCommit,
+    backend,
+    randomBytes,
+    workerRoute,
+    reviewerMode,
+    workerResult,
+  } = input;
+  if (
+    workerResult.output === null ||
+    typeof workerResult.output !== "object" ||
+    Array.isArray(workerResult.output)
+  ) {
+    throw new Error("consumed worker result is not an object");
+  }
+  const workerOutput = workerResult.output as Record<string, unknown>;
+  const resultCommit = String(workerOutput["resultCommit"]);
+  const supervisedGateEvidence = workerOutput["supervisedGateEvidence"];
+  if (supervisedGateEvidence === undefined) {
+    throw new Error("consumed worker result lacks runner-owned evidence");
+  }
+  const dispatchNow = new Date().toISOString();
+  const capability = createDispatchCapability({
+    backend,
+    promptArtifactStore: artifactStore("implement-reviewer"),
+    now: () => dispatchNow,
+    randomBytes,
+  });
+  const expectedChild = {
+    childId: `t2081-review-${workerRoute}-${reviewerMode}-child`,
+    runId: `t2081-review-${workerRoute}-${reviewerMode}-run`,
+  };
+  const prepared = await capability.prepare({
+    roleId: "implement-reviewer",
+    input: JSON.parse(
+      JSON.stringify({
+        taskId: managedHandle.taskId,
+        headline: "installed worker and reviewer matrix",
+        description: "review one consumed exact-tip worker result",
+        acceptance: "only a green exact-tip worker result receives approval",
+        worktreePath: managedHandle.absolutePath,
+        branch: managedHandle.branch,
+        baseCommit,
+        workerResult: workerOutput,
+        round: 1,
+        ...(reviewerMode === "sandboxed" ? { supervisedGateEvidence } : {}),
+      }),
+    ),
+    idempotencyKey: `T2081-review-${workerRoute}-${reviewerMode}`,
+    timeoutMs: 600_000,
+    expectedChild,
+  });
+  if (!prepared.accepted) throw new Error("packaged reviewer dispatch was rejected");
+
+  const fixtureRoot = await mkdtemp(path.join(tmpdir(), "t2081-packaged-reviewer-fake-"));
+  roots.push(fixtureRoot);
+  const fakeCodex = path.join(fixtureRoot, "fake-codex");
+  const capturePath = path.join(fixtureRoot, `review-${workerRoute}-${reviewerMode}-capture.json`);
+  const reviewerStderrPath = path.join(fixtureRoot, "reviewer.stderr");
+  await writeFile(
+    fakeCodex,
+    `#!/bin/sh\nif test "$1" = sandbox; then exec ${JSON.stringify(INSTALLED_CODEX)} "$@"; fi\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(REVIEWER_FIXTURE)} "$@" 2>"$CQ_T2081_REVIEW_STDERR"\n`,
+  );
+  await chmod(fakeCodex, 0o700);
+  const ledgerCommand = path.join(path.dirname(INSTALLED_ROLE), "cq");
+  const handle = {
+    attestationId: prepared.prepared.attestationId,
+    generation: prepared.prepared.generation,
+  };
+  const invocation = {
+    roleId: "implement-reviewer",
+    handle,
+    inputCapability: prepared.prepared.inputCapability,
+    resultCapability: prepared.prepared.resultCapability,
+    cwd: managedHandle.absolutePath,
+    ledgerCwd: repositoryRoot,
+    model: "test-model",
+    reasoningEffort: "high",
+    sandboxMode:
+      reviewerMode === "sandboxed" ? ("read-only" as const) : ("workspace-write" as const),
+    timeoutMs: 30_000,
+  };
+  const environment = {
+    ...process.env,
+    CQ_CODEX_EXECUTABLE: fakeCodex,
+    CQ_CODEX_LEDGER_COMMAND: ledgerCommand,
+    CQ_T2081_REVIEW_CAPTURE: capturePath,
+    CQ_T2081_REVIEW_MODE: reviewerMode,
+    CQ_T2081_REVIEW_WORKTREE: managedHandle.absolutePath,
+    CQ_T2081_REVIEW_LEDGER_ROOT: repositoryRoot,
+    CQ_T2081_REVIEW_STDERR: reviewerStderrPath,
+  };
+  try {
+    await executeCodexRoleBoundary(
+      createCodexRoleBoundaryPlan({
+        ...invocation,
+        roleInstructions: await readFile(
+          path.join(
+            path.dirname(path.dirname(INSTALLED_ROLE)),
+            "share/cq/prompt-surfaces/codex/roles/implement-reviewer.md",
+          ),
+          "utf8",
+        ),
+        promptRoot: path.join(
+          path.dirname(path.dirname(INSTALLED_ROLE)),
+          "share/cq/prompt-surfaces/codex",
+        ),
+        ledgerCommand,
+        codexExecutable: fakeCodex,
+      }),
+      `t2081-review-${workerRoute}-${reviewerMode}`,
+      environment,
+    );
+  } catch (error) {
+    const fixtureStderr = await readFile(reviewerStderrPath, "utf8").catch(() => "");
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\n${fixtureStderr}`);
+  }
+  const confirmed = await capability.confirmCompletion({
+    ...handle,
+    nativeCompletion: {
+      kind: "native-completion",
+      actor: "trusted-parent",
+      ...expectedChild,
+      completedAt: dispatchNow,
+    },
+    expectedProvenance: prepared.prepared.promptProvenance,
+  });
+  expect(confirmed.state).toBe("consumed");
+  const fetched = await capability.fetch(handle);
+  if (fetched.state !== "consumed") throw new Error(`unexpected reviewer state ${fetched.state}`);
+  const capture = JSON.parse(await readFile(capturePath, "utf8")) as {
+    boundary: { listedTools: string[]; sandboxMode: string };
+    inputEvidence: { supervised: boolean; parent: boolean };
+    gate: { gateExitCode: number; passCount: number; failCount: number; gateReRan: boolean };
+    output: Record<string, unknown>;
+  };
+  expect(capture.boundary).toMatchObject({
+    listedTools: ["fetch_dispatch_input", "store_result"],
+    sandboxMode: reviewerMode === "sandboxed" ? "read-only" : "workspace-write",
+  });
+  expect(capture.inputEvidence).toEqual({
+    supervised: reviewerMode === "sandboxed",
+    parent: false,
+  });
+  expect(capture.gate).toMatchObject({
+    gateExitCode: 0,
+    passCount: 1,
+    failCount: 0,
+    gateReRan: reviewerMode === "non-sandboxed",
+  });
+  expect(capture.output).toMatchObject({
+    taskId: managedHandle.taskId,
+    verdict: "approve",
+    criticism: [],
+    questions: [],
+    gateReRan: reviewerMode === "non-sandboxed",
+    resultCommitVerified: true,
+    resultCommitEvidence: {
+      status: "verified",
+      resultCommit,
+      branchTip: resultCommit,
+    },
+    baseAncestry: {
+      status: "verified",
+      baseCommit,
+      resultCommit,
+      mergeBase: baseCommit,
+    },
+  });
+  expect(JSON.stringify(fetched.output)).toBe(JSON.stringify(capture.output));
+  expect(
+    await git(managedHandle.absolutePath, ["rev-parse", "--verify", managedHandle.branch]),
+  ).toBe(resultCommit);
+  await git(managedHandle.absolutePath, ["merge-base", "--is-ancestor", baseCommit, resultCommit]);
+  return {
+    workerRoute,
+    reviewerMode,
+    verdict: "approve",
+    gateReRan: reviewerMode === "non-sandboxed",
+    evidenceForwarded: reviewerMode === "sandboxed",
+    fastForwardEligible: true,
   };
 }
 
@@ -352,6 +571,8 @@ describe("packaged cq-codex-role Git broker", () => {
     expect(source).not.toMatch(new RegExp(["ROLE", "SCRIPT"].join("_")));
     expect(source).toContain("codexBrokerWorker.ts");
     expect(source).toContain("codexBrokerResolver.ts");
+    expect(source).toContain("codexBrokerReviewer.ts");
+    expect(source).toContain("reviewerMatrix");
     expect(source).toContain('roleId: "implement-conflict-resolver"');
     expect(source).toContain("priorCriticism");
     expect(source).toContain("nativeExecution");
@@ -360,6 +581,10 @@ describe("packaged cq-codex-role Git broker", () => {
     expect(workerFixture).toContain('"update-ref"');
     expect(workerFixture).toContain("trusted result-storage boundary");
     expect(workerFixture).not.toContain("gateDurationMs:");
+    const reviewerFixture = await readFile(REVIEWER_FIXTURE, "utf8");
+    expect(reviewerFixture).toContain('expectedMode === "sandboxed"');
+    expect(reviewerFixture).toContain('expectedMode !== "non-sandboxed"');
+    expect(reviewerFixture).not.toContain("danger-full-access");
     const workspacePackage = JSON.parse(
       await readFile(fileURLToPath(new URL("../../../package.json", import.meta.url)), "utf8"),
     ) as { scripts?: Record<string, string> };
@@ -367,7 +592,67 @@ describe("packaged cq-codex-role Git broker", () => {
     expect(workspacePackage.scripts?.["check"]).toContain("check:codex-installed-gate");
   });
 
-  installedGateTest("authenticates installed worker and resolver gates before codex:native registration [Effectual-GoodCommunication, Blackbox-Group]", async () => {
+  installedGateTest(
+    "real supervised gate runner cancels, terminates, settles, and admits a successor",
+    async () => {
+      const worktreePath = await mkdtemp(path.join(tmpdir(), "t2081-real-gate-runner-"));
+      roots.push(worktreePath);
+      const commandCwd = path.join(worktreePath, "nix", "pkg", "cq-ledgers");
+      await mkdir(commandCwd, { recursive: true });
+      await git(worktreePath, ["init", "-q"]);
+      const startedPath = path.join(worktreePath, "gate-started");
+      const terminatedPath = path.join(worktreePath, "gate-terminated");
+      await writeFile(
+        path.join(commandCwd, "package.json"),
+        `${JSON.stringify({ private: true, scripts: { check: "./gate.sh" } }, null, 2)}\n`,
+      );
+      const gateScript = path.join(commandCwd, "gate.sh");
+      await writeFile(
+        gateScript,
+        `#!/bin/sh\nif test "$CQ_T2081_GATE_MODE" = timeout; then\n  trap 'touch "$CQ_T2081_GATE_TERMINATED"; exit 143' TERM\n  touch "$CQ_T2081_GATE_STARTED"\n  while :; do sleep 0.02; done\nfi\nprintf '1 pass\\n0 fail\\n'\n`,
+      );
+      await chmod(gateScript, 0o700);
+      const priorMode = process.env["CQ_T2081_GATE_MODE"];
+      const priorStarted = process.env["CQ_T2081_GATE_STARTED"];
+      const priorTerminated = process.env["CQ_T2081_GATE_TERMINATED"];
+      process.env["CQ_T2081_GATE_MODE"] = "timeout";
+      process.env["CQ_T2081_GATE_STARTED"] = startedPath;
+      process.env["CQ_T2081_GATE_TERMINATED"] = terminatedPath;
+      try {
+        await expect(
+          nodeSupervisedWorkerGateRunner.run({
+            worktreePath,
+            childCancelAt: new Date(Date.now() - 1).toISOString(),
+          }),
+        ).rejects.toThrow("deadline elapsed before launch");
+        await expect(
+          nodeSupervisedWorkerGateRunner.run({
+            worktreePath,
+            childCancelAt: new Date(Date.now() + 1_500).toISOString(),
+          }),
+        ).rejects.toThrow("exceeded childCancelAt");
+        expect(await readFile(startedPath, "utf8")).toBe("");
+        expect(await readFile(terminatedPath, "utf8")).toBe("");
+
+        process.env["CQ_T2081_GATE_MODE"] = "green";
+        await expect(
+          nodeSupervisedWorkerGateRunner.run({
+            worktreePath,
+            childCancelAt: new Date(Date.now() + 5_000).toISOString(),
+          }),
+        ).resolves.toMatchObject({ gateExitCode: 0, passCount: 1, failCount: 0 });
+      } finally {
+        if (priorMode === undefined) delete process.env["CQ_T2081_GATE_MODE"];
+        else process.env["CQ_T2081_GATE_MODE"] = priorMode;
+        if (priorStarted === undefined) delete process.env["CQ_T2081_GATE_STARTED"];
+        else process.env["CQ_T2081_GATE_STARTED"] = priorStarted;
+        if (priorTerminated === undefined) delete process.env["CQ_T2081_GATE_TERMINATED"];
+        else process.env["CQ_T2081_GATE_TERMINATED"] = priorTerminated;
+      }
+    },
+  );
+
+  installedGateTest("authenticates installed worker, reviewer, and resolver gates before codex:native registration [Effectual-GoodCommunication, Blackbox-Group]", async () => {
     if (
       INSTALLED_ROLE === undefined ||
       SUBSTITUTED_ROLE === undefined ||
@@ -654,6 +939,21 @@ describe("packaged cq-codex-role Git broker", () => {
       },
     });
     expect(await capability.fetch(handle)).toMatchObject({ state: "output-already-materialized" });
+    const reviewerMatrix: PackagedReviewerMatrixRow[] = [];
+    for (const reviewerMode of ["sandboxed", "non-sandboxed"] as const) {
+      reviewerMatrix.push(
+        await runPackagedReviewer({
+          repositoryRoot,
+          managedHandle: managed.handle,
+          baseCommit,
+          backend,
+          randomBytes: dispatchRandomBytes,
+          workerRoute: "native",
+          reviewerMode,
+          workerResult: consumed,
+        }),
+      );
+    }
 
     await backend.close();
     backend = new FsAttestationBackend({
@@ -795,6 +1095,54 @@ describe("packaged cq-codex-role Git broker", () => {
     expect(await capability.fetch(retryHandle)).toMatchObject({
       state: "output-already-materialized",
     });
+    for (const reviewerMode of ["sandboxed", "non-sandboxed"] as const) {
+      reviewerMatrix.push(
+        await runPackagedReviewer({
+          repositoryRoot,
+          managedHandle: managed.handle,
+          baseCommit,
+          backend,
+          randomBytes: dispatchRandomBytes,
+          workerRoute: "process",
+          reviewerMode,
+          workerResult: retryConsumed,
+        }),
+      );
+    }
+    expect(reviewerMatrix).toEqual([
+      {
+        workerRoute: "native",
+        reviewerMode: "sandboxed",
+        verdict: "approve",
+        gateReRan: false,
+        evidenceForwarded: true,
+        fastForwardEligible: true,
+      },
+      {
+        workerRoute: "native",
+        reviewerMode: "non-sandboxed",
+        verdict: "approve",
+        gateReRan: true,
+        evidenceForwarded: false,
+        fastForwardEligible: true,
+      },
+      {
+        workerRoute: "process",
+        reviewerMode: "sandboxed",
+        verdict: "approve",
+        gateReRan: false,
+        evidenceForwarded: true,
+        fastForwardEligible: true,
+      },
+      {
+        workerRoute: "process",
+        reviewerMode: "non-sandboxed",
+        verdict: "approve",
+        gateReRan: true,
+        evidenceForwarded: false,
+        fastForwardEligible: true,
+      },
+    ]);
 
     const controlInput = {
       taskId: managed.handle.taskId,

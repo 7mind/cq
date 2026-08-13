@@ -153,7 +153,12 @@ class BlockingGateDummy implements SupervisedWorkerGateRunner {
   }
 }
 
-async function fixture(runner: SupervisedWorkerGateRunner = new GateDummy()) {
+type DispatchBaseMode = "managed" | "descendant";
+
+async function fixtureWithDispatchBase(
+  runner: SupervisedWorkerGateRunner,
+  dispatchBaseMode: DispatchBaseMode,
+) {
   sequence += 1;
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2081-gate-${sequence}-`));
   roots.push(repositoryRoot);
@@ -171,6 +176,13 @@ async function fixture(runner: SupervisedWorkerGateRunner = new GateDummy()) {
     { stateDir, skipInstall: true, bunWorkspaceRoot: repositoryRoot },
   );
   if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
+  let dispatchBaseCommit = baseCommit;
+  if (dispatchBaseMode === "descendant") {
+    await fs.writeFile(path.join(managed.handle.absolutePath, "round-base.txt"), "round base\n");
+    await git(managed.handle.absolutePath, ["add", "round-base.txt"]);
+    await git(managed.handle.absolutePath, ["commit", "-q", "-m", "correction-round base"]);
+    dispatchBaseCommit = await git(managed.handle.absolutePath, ["rev-parse", "HEAD"]);
+  }
   const namespace: AttestationNamespace = {
     backend: "xdg",
     projectKey: `t2081-${sequence}`,
@@ -194,9 +206,9 @@ async function fixture(runner: SupervisedWorkerGateRunner = new GateDummy()) {
       acceptance: "only a green exact tip becomes consumable",
       worktreePath: managed.handle.absolutePath,
       branch: managed.handle.branch,
-      baseCommit,
+      baseCommit: dispatchBaseCommit,
       round: 0,
-      startingCommit: baseCommit,
+      startingCommit: dispatchBaseCommit,
     },
     idempotencyKey: `T2081-${sequence}`,
     timeoutMs: 600_000,
@@ -217,7 +229,7 @@ async function fixture(runner: SupervisedWorkerGateRunner = new GateDummy()) {
     generation: prepared.prepared.generation,
     gitChangeCapability: prepared.prepared.gitChangeCapability,
     operationId: `T2081-${sequence}-commit`,
-    expectedHead: baseCommit,
+    expectedHead: dispatchBaseCommit,
     message: "supervised result",
     changes: [
       {
@@ -243,11 +255,24 @@ async function fixture(runner: SupervisedWorkerGateRunner = new GateDummy()) {
     baseVerification: {
       status: "verified",
       relation: "descendant",
-      baseCommit,
+      baseCommit: dispatchBaseCommit,
       headCommit: receipt.newHead,
     },
   };
-  return { capability, managed, prepared: prepared.prepared, receipt, output, store, runner };
+  return {
+    capability,
+    managed,
+    prepared: prepared.prepared,
+    receipt,
+    output,
+    store,
+    runner,
+    dispatchBaseCommit,
+  };
+}
+
+async function fixture(runner: SupervisedWorkerGateRunner = new GateDummy()) {
+  return await fixtureWithDispatchBase(runner, "managed");
 }
 
 afterAll(async () => {
@@ -314,6 +339,25 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
         },
       },
     });
+  });
+
+  test("accepts correction-round verification against a descendant dispatch base", async () => {
+    const subject = await fixtureWithDispatchBase(new GateDummy(), "descendant");
+    expect(subject.dispatchBaseCommit).not.toBe(subject.managed.handle.baseCommit);
+    await expect(
+      subject.capability.storeResult({
+        resultCapability: subject.prepared.resultCapability,
+        output: subject.output,
+      }),
+    ).resolves.toMatchObject({ state: "result-stored" });
+    expect(subject.store.rows()).toMatchObject([
+      {
+        state: "result-stored",
+        output: {
+          supervisedGateEvidence: { baseCommit: subject.dispatchBaseCommit },
+        },
+      },
+    ]);
   });
 
   test("rejects caller-minted, red, zero-pass, and nonzero-fail evidence", async () => {
@@ -395,6 +439,117 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       ).rejects.toThrow(message);
       expect(runner.requests).toHaveLength(1);
     }
+  });
+
+  // Regression: an unbound process worker could store fabricated supervised evidence.
+  test("rejects fabricated supervised evidence without a runner-owned Git binding", async () => {
+    sequence += 1;
+    const namespace: AttestationNamespace = {
+      backend: "xdg",
+      projectKey: `t2081-unbound-${sequence}`,
+    };
+    const capability = createDispatchCapability({
+      backend: new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace)),
+      promptArtifactStore: artifactStore(),
+      now: () => "2026-08-12T20:00:00.000Z",
+      randomBytes: sequentialDispatchRandomBytes(sequence * 32),
+    });
+    const baseCommit = "a".repeat(40);
+    const resultCommit = "b".repeat(40);
+    const digest = "c".repeat(64);
+    const worktreePath = "/tmp/unbound/.claude/worktrees/T2081";
+    const prepared = await capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: "T2081",
+        headline: "reject unbound evidence",
+        description: "forbid a worker pass without the runner-owned Git and gate binding",
+        acceptance: "caller-minted evidence never becomes consumable",
+        worktreePath,
+        branch: "implement/T2081",
+        baseCommit,
+        round: 0,
+        startingCommit: baseCommit,
+      },
+      idempotencyKey: `T2081-unbound-${sequence}`,
+      timeoutMs: 600_000,
+      expectedChild: { childId: `child-${sequence}`, runId: `run-${sequence}` },
+    });
+    if (!prepared.accepted) throw new Error("unbound worker dispatch was rejected before storage");
+    await capability.fetchInput({
+      attestationId: prepared.prepared.attestationId,
+      generation: prepared.prepared.generation,
+      inputCapability: prepared.prepared.inputCapability,
+    });
+    const output = {
+      taskId: "T2081",
+      status: "pass",
+      resultCommit,
+      branch: "implement/T2081",
+      actualWorktreePath: worktreePath,
+      filesTouched: ["file.txt"],
+      gitReceipts: [
+        {
+          kind: "cq-git-change-receipt",
+          version: 1,
+          attestationId: prepared.prepared.attestationId,
+          generation: prepared.prepared.generation,
+          taskId: "T2081",
+          operationId: "fabricated",
+          requestDigest: digest,
+          oldHead: baseCommit,
+          newHead: resultCommit,
+          tree: resultCommit,
+          objectOids: [resultCommit],
+          paths: ["file.txt"],
+          committedAt: "2026-08-12T19:59:00.000Z",
+        },
+      ],
+      checkSummary: "fabricated supervised gate evidence",
+      baseVerification: {
+        status: "verified",
+        relation: "descendant",
+        baseCommit,
+        headCommit: resultCommit,
+      },
+      summary: "must not be stored",
+      supervisedGateEvidence: {
+        kind: "cq-supervised-gate-evidence",
+        version: 1,
+        attestationId: prepared.prepared.attestationId,
+        generation: prepared.prepared.generation,
+        roleId: "implement-worker",
+        roleVersion: prepared.prepared.promptProvenance.version,
+        surface: "codex",
+        promptDigest: prepared.prepared.promptProvenance.promptDigest,
+        catalogHash: prepared.prepared.promptProvenance.catalogHash,
+        inputDigest: prepared.prepared.promptProvenance.inputDigest,
+        taskId: "T2081",
+        worktreePath,
+        branch: "implement/T2081",
+        baseCommit,
+        startingCommit: baseCommit,
+        resultCommit,
+        clean: true,
+        command:
+          'cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check',
+        gateExitCode: 0,
+        passCount: 17,
+        failCount: 0,
+        gateDurationMs: 123,
+        capturedAt: "2026-08-12T20:00:01.000Z",
+        filesTouchedDigest: digest,
+        gitReceiptsDigest: digest,
+        mutationTableDigest: digest,
+      },
+    };
+
+    await expect(
+      capability.storeResult({
+        resultCapability: prepared.prepared.resultCapability,
+        output,
+      }),
+    ).rejects.toThrow("runner-owned Git/gate binding");
   });
 
   test("serializes concurrent stores into one active gate attempt", async () => {
