@@ -417,7 +417,7 @@
           outputHashAlgo = "sha256";
           outputHash = {
             "x86_64-linux" = "sha256-RHjGMWvQqdI+bfxc7j62IDwgVF649xt99BweB1OpWzc=";
-            "aarch64-darwin" = "sha256-xoPqllqrZ7pI1XK5Wow9uYzO8WuB5z33EFq6EldKNzA=";
+            "aarch64-darwin" = "sha256-wqvpEiSKkd4dFjmJeXoFDaOge+eFS1JZoWVavDqhAzE=";
           }.${system} or (throw "pi-extensions-node-modules: no FOD hash pinned for ${system}");
         };
 
