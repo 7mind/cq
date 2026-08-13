@@ -1660,6 +1660,51 @@ PY
                   fi
                 done
 
+                ownerLifecycleLog="$NIX_BUILD_TOP/t1976-owner-lifecycle.log"
+                if ! ${pkgs.bun}/bin/bun test \
+                  packages/ledger/test/workset-owner-lifecycle.test.ts \
+                  packages/cq-cli/test/backup-restore-postgres.test.ts \
+                  > "$ownerLifecycleLog" 2>&1; then
+                  cat "$ownerLifecycleLog" >&2
+                  exit 1
+                fi
+                cat "$ownerLifecycleLog"
+                if grep -Fq '(skip)' "$ownerLifecycleLog"; then
+                  echo "T1976 live PostgreSQL owner lifecycle/backup run skipped" >&2
+                  exit 1
+                fi
+                for expectedLeg in \
+                  'PostgresLedgerStore canonical owner lifecycle [BA]' \
+                  'round-trips items + a milestone + logs through backup'; do
+                  if ! grep -F '(pass)' "$ownerLifecycleLog" | grep -Fq "$expectedLeg"; then
+                    echo "T1976 live PostgreSQL owner lifecycle run did not execute: $expectedLeg" >&2
+                    exit 1
+                  fi
+                done
+
+                resetLifecycleLog="$NIX_BUILD_TOP/t1976-reset-lifecycle.log"
+                if ! ${pkgs.bun}/bin/bun test \
+                  packages/cq-cli/test/reset-erase-postgres.test.ts \
+                  --test-name-pattern 'cq reset / cq erase — postgres tenant scoping' \
+                  > "$resetLifecycleLog" 2>&1; then
+                  cat "$resetLifecycleLog" >&2
+                  exit 1
+                fi
+                cat "$resetLifecycleLog"
+                if grep -Fq '(skip)' "$resetLifecycleLog"; then
+                  echo "T1976 live PostgreSQL reset run skipped" >&2
+                  exit 1
+                fi
+                for expectedLeg in \
+                  'configured backup completes before one-transaction reset and one notify refreshes a live peer' \
+                  'reset refreshes after an admitted stale-cache peer write, backs it up, then notifies once' \
+                  'a reseed statement failure rolls back wipe, reseed, and empty roots together'; do
+                  if ! grep -F '(pass)' "$resetLifecycleLog" | grep -Fq "$expectedLeg"; then
+                    echo "T1976 live PostgreSQL reset run did not execute: $expectedLeg" >&2
+                    exit 1
+                  fi
+                done
+
                 brokerLog="$NIX_BUILD_TOP/t1979-live-postgres-broker.log"
                 if ! ${pkgs.bun}/bin/bun test \
                   packages/ledger/test/workset-postgres-disconnect.test.ts \

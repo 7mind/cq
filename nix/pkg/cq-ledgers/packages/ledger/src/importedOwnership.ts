@@ -40,6 +40,7 @@ export type ImportedOwnershipMode = "preserve" | "infer-unambiguous-legacy";
 interface LocatedItem {
   readonly ledgerId: string;
   readonly item: Item;
+  readonly active: boolean;
 }
 
 function ref(ledgerId: string, itemId: string): string {
@@ -56,12 +57,14 @@ function allItems(parsed: ParsedDump): LocatedItem[] {
   const items: LocatedItem[] = [];
   for (const [ledgerId, ledger] of parsed.ledgers) {
     for (const group of ledger.milestones) {
-      for (const item of group.items) items.push({ ledgerId, item });
+      for (const item of group.items) items.push({ ledgerId, item, active: true });
     }
     for (const content of parsed.archives.get(ledgerId)?.values() ?? []) {
-      if (content.kind === "item") items.push({ ledgerId, item: content.item });
+      if (content.kind === "item") items.push({ ledgerId, item: content.item, active: false });
       else {
-        for (const item of content.milestone.items) items.push({ ledgerId, item });
+        for (const item of content.milestone.items) {
+          items.push({ ledgerId, item, active: false });
+        }
       }
     }
   }
@@ -268,6 +271,7 @@ function validateInferredOwnership(
   if (
     parsedRef === null ||
     owner === undefined ||
+    !owner.active ||
     !LIFECYCLE_CREATION_KIND_SET.has(ownership.edgeKind)
   ) {
     return false;

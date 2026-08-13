@@ -21,7 +21,9 @@ import { promisify } from "node:util";
 import {
   openPgPool,
   ensureSchema,
+  buildBackupDump,
   CANONICAL_LEDGERS,
+  GOALS_LEDGER,
   MILESTONES_AMBIENT_ID,
   PostgresLedgerStore,
   TASKS_LEDGER,
@@ -34,6 +36,7 @@ import {
   readCanonicalOwnership,
   startPostgresCoherenceWatcher,
   type ResolvedPostgresHandle,
+  type WorksetLedgerMutationAdmission,
 } from "@cq/ledger";
 import { dispatch, type ConfirmIo, type DispatchIo } from "../src/main.js";
 
@@ -239,12 +242,11 @@ describe.skipIf(!PG_URL)("cq reset / cq erase — postgres tenant scoping (T583)
     expect(afterA.logs).toHaveLength(0);
     // Registry entry SURVIVES reset (unlike erase).
     expect(afterA.project).toHaveLength(1);
-    // T1959: live roots become unrestricted empty (row may be absent or empty).
-    if (afterA.worksetRoots.length > 0) {
-      const row = afterA.worksetRoots[0] as { roots_json: string; epoch: number | string };
-      expect(JSON.parse(row.roots_json)).toEqual([]);
-      expect(Number(row.epoch)).toBe(0);
-    }
+    // T1959/T1976: reset always materialises the exact unrestricted root state.
+    expect(afterA.worksetRoots).toHaveLength(1);
+    const row = afterA.worksetRoots[0] as { roots_json: string; epoch: number | string };
+    expect(JSON.parse(row.roots_json)).toEqual([]);
+    expect(Number(row.epoch)).toBe(0);
     expect(afterA.worksetAdmissions).toHaveLength(0);
 
     const afterB = await snapshotTenant(pool!, pkB);
@@ -351,6 +353,8 @@ describe.skipIf(!PG_URL)("cq reset / cq erase — postgres tenant scoping (T583)
           }
         }),
       ).toBe(true);
+      await Bun.sleep(100);
+      expect(changes).toBe(beforeResetChanges + 1);
       expect(peer.enumerate().sort()).toEqual(CANONICAL_LEDGERS.map(({ name }) => name).sort());
     } finally {
       watcher.close();
@@ -358,34 +362,166 @@ describe.skipIf(!PG_URL)("cq reset / cq erase — postgres tenant scoping (T583)
     }
   });
 
+  it("reset refreshes after an admitted stale-cache peer write, backs it up, then notifies once", async () => {
+    const root = await postgresRepo();
+    const projectKey = await projectKeyOf(root);
+    const authority = createTrustedWorksetManagementAuthority();
+    const resetStore = new PostgresLedgerStore({
+      pool: openPgPool(PG_URL!),
+      projectKey,
+      displayName: projectKey,
+      worksetAuthority: authority,
+    });
+    await resetStore.init();
+
+    const writer = new PostgresLedgerStore({
+      pool: openPgPool(PG_URL!),
+      projectKey,
+      displayName: projectKey,
+      worksetAuthority: authority,
+    });
+    await writer.init();
+    const observerPool = openPgPool(PG_URL!);
+    const observer = new PostgresLedgerStore({
+      pool: observerPool,
+      projectKey,
+      displayName: projectKey,
+    });
+    await observer.init();
+    let changes = 0;
+    const watcher = startPostgresCoherenceWatcher(
+      observer,
+      { pool: observerPool, dsn: PG_URL!, projectKey } satisfies ResolvedPostgresHandle,
+      () => {
+        changes += 1;
+      },
+    );
+    await waitFor(() => changes > 0);
+
+    let admission: WorksetLedgerMutationAdmission | null = await writer
+      .worksetStore()
+      .admitLedgerMutation({
+        kind: "owned-write",
+        targets: [`${GOALS_LEDGER}:G99`],
+      });
+    let backedDump: Awaited<ReturnType<typeof buildBackupDump>> | null = null;
+    const reset = resetStore.resetTenant({
+      authority,
+      beforeReset: async () => {
+        backedDump = await buildBackupDump(resetStore, null);
+      },
+    });
+    try {
+      await Bun.sleep(100);
+      expect(backedDump).toBeNull();
+      await writer.runAtomicOwnedMutation((tx) =>
+        tx.createItemOwnerless(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
+          id: "G99",
+          status: "clarifying",
+          fields: { title: "Late admitted write", description: "Must enter reset backup" },
+          author: "T1976",
+        }),
+      );
+      expect(
+        await waitFor(() => {
+          try {
+            observer.fetchItem(GOALS_LEDGER, "G99");
+            return true;
+          } catch {
+            return false;
+          }
+        }),
+      ).toBe(true);
+      const beforeResetChanges = changes;
+      await admission.acknowledge();
+      admission = null;
+      await reset;
+
+      if (backedDump === null) throw new Error("reset backup callback did not run");
+      const backedGoal = parseBackupDump(backedDump).ledgers
+        .get(GOALS_LEDGER)
+        ?.milestones.flatMap(({ items }) => items)
+        .find(({ id }) => id === "G99");
+      expect(backedGoal?.fields.title).toBe("Late admitted write");
+      expect(
+        await waitFor(() => {
+          if (changes <= beforeResetChanges) return false;
+          try {
+            observer.fetchItem(GOALS_LEDGER, "G99");
+            return false;
+          } catch {
+            return true;
+          }
+        }),
+      ).toBe(true);
+      await Bun.sleep(100);
+      expect(changes).toBe(beforeResetChanges + 1);
+      const rootsRows = await pool!<Array<{ roots_json: string; epoch: number }>>`
+        SELECT roots_json, epoch FROM workset_roots WHERE project_key = ${projectKey}
+      `;
+      expect(rootsRows).toHaveLength(1);
+      expect(JSON.parse(rootsRows[0]!.roots_json)).toEqual([]);
+      expect(Number(rootsRows[0]!.epoch)).toBe(0);
+    } finally {
+      if (admission !== null) await admission.acknowledge().catch(() => undefined);
+      await reset.catch(() => undefined);
+      watcher.close();
+      await Promise.all([resetStore.dispose(), writer.dispose(), observer.dispose()]);
+    }
+  });
+
   it("a reseed statement failure rolls back wipe, reseed, and empty roots together", async () => {
     const root = await postgresRepo();
     const projectKey = await seedTenant(root);
+    const observerPool = openPgPool(PG_URL!);
+    const observer = new PostgresLedgerStore({
+      pool: observerPool,
+      projectKey,
+      displayName: projectKey,
+    });
+    await observer.init();
+    let changes = 0;
+    const watcher = startPostgresCoherenceWatcher(
+      observer,
+      { pool: observerPool, dsn: PG_URL!, projectKey } satisfies ResolvedPostgresHandle,
+      () => {
+        changes += 1;
+      },
+    );
+    await waitFor(() => changes > 0);
+    const beforeFailureChanges = changes;
     const before = await snapshotTenant(pool!, projectKey);
-    const suffix = randomUUID().replaceAll("-", "");
-    const functionName = `fail_reset_reseed_${suffix}`;
-    const triggerName = `fail_reset_reseed_trigger_${suffix}`;
-    await pool!.unsafe(`
-      CREATE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$
-      BEGIN
-        IF NEW.project_key = '${projectKey}' THEN
-          RAISE EXCEPTION 'injected reset reseed failure';
-        END IF;
-        RETURN NEW;
-      END
-      $$;
-      CREATE TRIGGER ${triggerName}
-      BEFORE INSERT ON ledgers FOR EACH ROW EXECUTE FUNCTION ${functionName}();
-    `);
     try {
-      await expect(
-        dispatch(["reset", "--cwd", root, "--yes"], recordingIo(false)),
-      ).rejects.toThrow("injected reset reseed failure");
+      const suffix = randomUUID().replaceAll("-", "");
+      const functionName = `fail_reset_reseed_${suffix}`;
+      const triggerName = `fail_reset_reseed_trigger_${suffix}`;
+      await pool!.unsafe(`
+        CREATE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.project_key = '${projectKey}' THEN
+            RAISE EXCEPTION 'injected reset reseed failure';
+          END IF;
+          RETURN NEW;
+        END
+        $$;
+        CREATE TRIGGER ${triggerName}
+        BEFORE INSERT ON ledgers FOR EACH ROW EXECUTE FUNCTION ${functionName}();
+      `);
+      try {
+        await expect(
+          dispatch(["reset", "--cwd", root, "--yes"], recordingIo(false)),
+        ).rejects.toThrow("injected reset reseed failure");
+      } finally {
+        await pool!.unsafe(`DROP TRIGGER ${triggerName} ON ledgers`);
+        await pool!.unsafe(`DROP FUNCTION ${functionName}()`);
+      }
+      expect(await snapshotTenant(pool!, projectKey)).toEqual(before);
+      await Bun.sleep(100);
+      expect(changes).toBe(beforeFailureChanges);
     } finally {
-      await pool!.unsafe(`DROP TRIGGER ${triggerName} ON ledgers`);
-      await pool!.unsafe(`DROP FUNCTION ${functionName}()`);
+      watcher.close();
+      await observer.dispose();
     }
-    expect(await snapshotTenant(pool!, projectKey)).toEqual(before);
   });
 
   it("erase refuses without confirmation (non-TTY, no --yes): exit 2, nothing touched", async () => {

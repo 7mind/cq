@@ -73,7 +73,11 @@ export function parsePlanLifecycleDump(text: string): PlanLifecycleDumpState {
   const claims = new Map<string, PlanPrivateClaimRecord>();
   for (const raw of record["claims"]) {
     const entry = PlanPrivateClaimRecordSchema.parse(raw);
-    claims.set(claimScopeKey(entry.goalId, entry.claimRequestId), entry);
+    const scope = claimScopeKey(entry.goalId, entry.claimRequestId);
+    if (claims.has(scope)) {
+      throw new LedgerError("duplicate persisted plan lifecycle claim scope");
+    }
+    claims.set(scope, entry);
   }
 
   const operations = new Map<string, InMemoryPlanOperationRecord>();
@@ -83,16 +87,17 @@ export function parsePlanLifecycleDump(text: string): PlanLifecycleDumpState {
     }
     const operation = raw as Record<string, unknown>;
     const replay = PlanOperationReplayRecordSchema.parse(operation["replay"]);
-    operations.set(
-      operationScopeKey(
-        replay.goalId,
-        replay.claimId,
-        replay.generation,
-        replay.operation,
-        replay.operationId,
-      ),
-      { replay, acknowledgement: operation["acknowledgement"] },
+    const scope = operationScopeKey(
+      replay.goalId,
+      replay.claimId,
+      replay.generation,
+      replay.operation,
+      replay.operationId,
     );
+    if (operations.has(scope)) {
+      throw new LedgerError("duplicate persisted plan lifecycle operation scope");
+    }
+    operations.set(scope, { replay, acknowledgement: operation["acknowledgement"] });
   }
 
   return { claims, operations };
