@@ -16,7 +16,7 @@ import {
   type PlanClaimInput,
   type PlanLifecycleStore,
   type PlanReleaseInput,
-  mintWorksetManagementAuthority,
+  createTrustedWorksetManagementAuthority,
 } from "../src/index.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
 
@@ -265,7 +265,7 @@ describe("T850 SQLite lifecycle persistence", () => {
       dbPath: file,
       logsDir: null,
       dump,
-      authority: mintWorksetManagementAuthority(),
+      authority: createTrustedWorksetManagementAuthority(),
       overwriteAuthorized: true,
     });
 

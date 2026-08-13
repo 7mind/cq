@@ -39,7 +39,7 @@ import {
   isXdgPrimaryEmpty,
   restoreDumpToPostgres,
   isPostgresTenantEmpty,
-  mintWorksetManagementAuthority,
+  createTrustedWorksetManagementAuthority,
   createPostgresWorksetStore,
   createSqliteWorksetStore,
   openExistingLedgerDb,
@@ -506,7 +506,7 @@ async function runResetPostgres(args: SubcommandArgs, io: DispatchIo): Promise<S
     try {
       await workset.runAdministrative({
         kind: "reset",
-        authority: mintWorksetManagementAuthority(),
+        authority: createTrustedWorksetManagementAuthority(),
         destructivePhase: async () => {
           await wipeTenantRows(tenant.pool, tenant.projectKey, false, true);
           await reseedCanonicalTenant(tenant.pool, tenant.projectKey, displayName);
@@ -732,7 +732,7 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
         try {
           await workset.runAdministrative({
             kind: "erase",
-            authority: mintWorksetManagementAuthority(),
+            authority: createTrustedWorksetManagementAuthority(),
             destructivePhase: async () => {
               await fs.rename(xdgProjectDir, quarantineDir);
             },
@@ -769,7 +769,7 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
     try {
       await workset.runAdministrative({
         kind: "erase",
-        authority: mintWorksetManagementAuthority(),
+        authority: createTrustedWorksetManagementAuthority(),
         destructivePhase: async () => {
           await wipeTenantRows(postgresTenant.pool, postgresTenant.projectKey, true, false);
         },
@@ -1104,7 +1104,7 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
       dbPath,
       logsDir,
       dump,
-      authority: mintWorksetManagementAuthority(),
+      authority: createTrustedWorksetManagementAuthority(),
       overwriteAuthorized,
     });
   } catch (error) {
@@ -1164,7 +1164,7 @@ async function runRestorePostgres(
         projectKey: tenant.projectKey,
         displayName,
         dump,
-        authority: mintWorksetManagementAuthority(),
+        authority: createTrustedWorksetManagementAuthority(),
         overwriteAuthorized,
       });
     } catch (error) {

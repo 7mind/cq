@@ -49,7 +49,7 @@ import {
 } from "./fsWorksetStore.js";
 import type { WorksetStore } from "../worksetStore.js";
 import {
-  mintWorksetManagementAuthority,
+  createTrustedWorksetManagementAuthority,
 } from "../worksetEffectAdmission.js";
 import { serializeWorksetRootsDocument } from "../worksetStoreGit.js";
 import { LEDGER_WORKSET_DIRNAME } from "./ledgerArtifacts.js";
@@ -179,7 +179,7 @@ export class FsLedgerStore extends AbstractLedgerStore<FsPersistence> implements
     let backupDir = "";
     await workset.runAdministrative({
       kind,
-      authority: mintWorksetManagementAuthority(),
+      authority: createTrustedWorksetManagementAuthority(),
       destructivePhase: async () => {
         backupDir = await super.backupAndReinit();
         await this.writeEmptyWorksetRoots();

@@ -57,6 +57,11 @@ import {
   type WorksetLedgerMutationAdmission,
   type WorksetRootsEpoch,
 } from "./worksetEffectAdmission.js";
+import {
+  createObserveOnlyWorksetInvocationAuthority,
+  createTrustedWorksetManagementAuthority,
+  type WorksetInvocationAuthority,
+} from "./worksetInvocationAuthority.js";
 import { DEPENDENCY_REF_FIELDS, canonicalizeRef, buildPrefixRegistry } from "./refs.js";
 import { InMemoryLedgerStore } from "./store/InMemoryLedgerStore.js";
 import type {
@@ -577,6 +582,8 @@ export interface WorksetGenericMutationGatewayHost {
   readonly rawStore: LedgerStore;
   /** Workset roots + t3 admission coordinator. */
   readonly worksetStore: WorksetStore;
+  /** Runtime authority carried outside invocation arguments. */
+  readonly invocationAuthority?: WorksetInvocationAuthority;
   /**
    * Test/instrumentation latch: runs after admit and before validation/write,
    * while the ledger-mutation admission is still held. Used to prove setRoots
@@ -860,6 +867,8 @@ export function createWorksetGuardedLedger(
   host: WorksetGenericMutationGatewayHost,
 ): WorksetGuardedLedger {
   const { rawStore, worksetStore } = host;
+  const invocationAuthority =
+    host.invocationAuthority ?? createObserveOnlyWorksetInvocationAuthority();
   const mutations = createWorksetGenericMutationGateway(host);
 
   const surface: WorksetGuardedLedger = {
@@ -879,13 +888,23 @@ export function createWorksetGuardedLedger(
     fetchMcpUsageStats: () => rawStore.fetchMcpUsageStats(),
     dispose: () => rawStore.dispose(),
     mutations,
-    setRoots: (roots) => worksetStore.setRoots(roots),
+    setRoots: (roots) => invocationAuthority.set(() => worksetStore.setRoots(roots)),
     snapshotRoots: () => worksetStore.snapshot(),
     activeAdmissionCount: () => worksetStore.activeAdmissionCount(),
   };
 
   assertNoPublicRawWriteEscape(surface);
   return surface;
+}
+
+/** Construct the direct trusted-host management surface. */
+export function createWorksetManagementLedger(
+  host: Omit<WorksetGenericMutationGatewayHost, "invocationAuthority">,
+): WorksetGuardedLedger {
+  return createWorksetGuardedLedger({
+    ...host,
+    invocationAuthority: createTrustedWorksetManagementAuthority(),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -897,6 +916,7 @@ export interface CreateInMemoryWorksetGuardedLedgerOptions {
   readonly seed?: Array<{ name: string; schema: LedgerSchema }>;
   readonly hooks?: WorksetAdmissionCoordinatorHooks;
   readonly afterGenericAdmit?: () => Promise<void> | void;
+  readonly invocationAuthority?: WorksetInvocationAuthority;
 }
 
 /**
@@ -939,9 +959,22 @@ export function createInMemoryWorksetGuardedLedger(
   return createWorksetGuardedLedger({
     rawStore,
     worksetStore,
+    ...(options.invocationAuthority !== undefined
+      ? { invocationAuthority: options.invocationAuthority }
+      : {}),
     ...(options.afterGenericAdmit !== undefined
       ? { afterGenericAdmit: options.afterGenericAdmit }
       : {}),
+  });
+}
+
+/** In-memory trusted-host management surface for direct administration and contracts. */
+export function createInMemoryWorksetManagementLedger(
+  options: Omit<CreateInMemoryWorksetGuardedLedgerOptions, "invocationAuthority"> = {},
+): WorksetGuardedLedger {
+  return createInMemoryWorksetGuardedLedger({
+    ...options,
+    invocationAuthority: createTrustedWorksetManagementAuthority(),
   });
 }
 

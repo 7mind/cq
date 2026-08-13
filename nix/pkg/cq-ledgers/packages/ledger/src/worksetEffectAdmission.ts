@@ -26,6 +26,16 @@
  * Active reference used by latch-driven race fixtures.
  */
 
+import {
+  createTrustedWorksetManagementAuthority,
+  isTrustedWorksetManagementAuthority,
+} from "./worksetInvocationAuthority.js";
+
+export {
+  createTrustedWorksetManagementAuthority,
+  isTrustedWorksetManagementAuthority,
+};
+
 // ---------------------------------------------------------------------------
 // Effect-kind inventory
 // ---------------------------------------------------------------------------
@@ -161,36 +171,6 @@ export function admissionFormForEffectKind(
     "invalid-replacement",
     `unknown workset effect kind: ${String(kind)}`,
   );
-}
-
-// ---------------------------------------------------------------------------
-// Management authority (opaque; full credential model is t18 / T1978)
-// ---------------------------------------------------------------------------
-
-/**
- * Opaque trusted management authority. Only {@link mintWorksetManagementAuthority}
- * produces a value the coordinator accepts; structural lookalikes fail. Trust is
- * membership in an unexported WeakSet — a forged plain object never qualifies.
- */
-export type WorksetManagementAuthority = {
-  readonly __worksetManagementAuthority: true;
-};
-
-const trustedManagementAuthorities = new WeakSet<object>();
-
-/** Trusted host / test mint. Callers cannot forge a trusted token. */
-export function mintWorksetManagementAuthority(): WorksetManagementAuthority {
-  const token: WorksetManagementAuthority = {
-    __worksetManagementAuthority: true,
-  };
-  trustedManagementAuthorities.add(token);
-  return token;
-}
-
-export function isTrustedWorksetManagementAuthority(
-  value: unknown,
-): value is WorksetManagementAuthority {
-  return typeof value === "object" && value !== null && trustedManagementAuthorities.has(value);
 }
 
 // ---------------------------------------------------------------------------

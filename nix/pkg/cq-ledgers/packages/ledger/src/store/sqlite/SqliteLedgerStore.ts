@@ -137,7 +137,7 @@ import { immediateWriteTransaction, openLedgerDb } from "./connection.js";
 import { ensureSchema, SCHEMA_VERSION } from "./schema.js";
 import { createSqliteWorksetStore } from "./sqliteWorksetStore.js";
 import type { CreateInMemoryWorksetStoreOptions, WorksetStore } from "../../worksetStore.js";
-import { mintWorksetManagementAuthority } from "../../worksetEffectAdmission.js";
+import { createTrustedWorksetManagementAuthority } from "../../worksetEffectAdmission.js";
 import { serializeWorksetRootsDocument } from "../../worksetStoreGit.js";
 import {
   claimInMemoryPlan,
@@ -403,7 +403,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       try {
         await tempWorkset.runAdministrative({
           kind: "divergence-reinitialization",
-          authority: mintWorksetManagementAuthority(),
+          authority: createTrustedWorksetManagementAuthority(),
           destructivePhase: () => {
             // D170 DESTRUCTIVE-INTENT GATE — re-evaluate only after exclusion
             // drains admitted mutations, before the backup or any destructive

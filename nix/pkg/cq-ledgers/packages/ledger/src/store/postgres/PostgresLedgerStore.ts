@@ -170,7 +170,7 @@ import {
   createPostgresWorksetStore,
   type PostgresWorksetStore,
 } from "./worksetStore.js";
-import { mintWorksetManagementAuthority } from "../../worksetEffectAdmission.js";
+import { createTrustedWorksetManagementAuthority } from "../../worksetEffectAdmission.js";
 import { serializeWorksetRootsDocument } from "../../worksetStoreGit.js";
 import {
   observeTaskAdoptionEligibility,
@@ -566,7 +566,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     try {
       await workset.runAdministrative({
         kind: "divergence-reinitialization",
-        authority: mintWorksetManagementAuthority(),
+        authority: createTrustedWorksetManagementAuthority(),
         destructivePhase: async () => {
           await this.backupAndReinitTenantBody(pk, shadowKey);
         },

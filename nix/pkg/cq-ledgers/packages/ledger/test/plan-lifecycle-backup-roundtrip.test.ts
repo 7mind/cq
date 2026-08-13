@@ -31,7 +31,7 @@ import {
   TASKS_LEDGER,
   type PlanClaimInput,
   type PlanLifecycleStore,
-  mintWorksetManagementAuthority,
+  createTrustedWorksetManagementAuthority,
 } from "../src/index.js";
 import { FsPersistence } from "../src/store/FsPersistence.js";
 import {
@@ -142,7 +142,7 @@ describe("D139 plan-lifecycle BackupDump round-trip", () => {
       dbPath: targetDb,
       logsDir: null,
       dump,
-      authority: mintWorksetManagementAuthority(),
+      authority: createTrustedWorksetManagementAuthority(),
       overwriteAuthorized: false,
     });
 

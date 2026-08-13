@@ -127,8 +127,6 @@ export {
   WORKSET_FORBIDDEN_ADMISSION_PATTERNS,
   WORKSET_EFFECT_TERMINATION_REASONS,
   admissionFormForEffectKind,
-  mintWorksetManagementAuthority,
-  isTrustedWorksetManagementAuthority,
   WorksetAdmissionError,
   canonicalizeWorksetRootReplacement,
   createInMemoryWorksetAdmissionCoordinator,
@@ -147,7 +145,6 @@ export type {
   WorksetAdmissionForm,
   WorksetForbiddenAdmissionPattern,
   WorksetEffectTerminationReason,
-  WorksetManagementAuthority,
   WorksetAdmissionErrorCode,
   WorksetRootsEpoch,
   WorksetProcessGroupRegistration,
@@ -158,6 +155,17 @@ export type {
   WorksetAdmissionCoordinator,
   WorksetPublishedAdmissionLease,
 } from "./worksetEffectAdmission.js";
+export {
+  WorksetInvocationAuthorityError,
+  createObserveOnlyWorksetInvocationAuthority,
+  createTrustedWorksetManagementAuthority,
+  isTrustedWorksetManagementAuthority,
+} from "./worksetInvocationAuthority.js";
+export type {
+  WorksetInvocationAuthority,
+  WorksetInvocationAuthorityErrorCode,
+  WorksetManagementAuthority,
+} from "./worksetInvocationAuthority.js";
 export {
   createInMemoryWorksetStore,
   readWorksetRootsEpoch,
@@ -188,7 +196,9 @@ export {
   introducedClosureRefs,
   createWorksetGenericMutationGateway,
   createWorksetGuardedLedger,
+  createWorksetManagementLedger,
   createInMemoryWorksetGuardedLedger,
+  createInMemoryWorksetManagementLedger,
   assertGenericMutationAdmissionNotCallerMinted,
   inventoriedLedgerStoreMutationMethods,
   inventoriedSealedOwnershipFields,

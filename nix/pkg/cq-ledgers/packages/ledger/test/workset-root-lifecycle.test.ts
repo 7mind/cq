@@ -26,7 +26,7 @@ import {
   WORKSET_ROOTS_FILENAME,
   buildBackupDump,
   createInMemoryWorksetStore,
-  mintWorksetManagementAuthority,
+  createTrustedWorksetManagementAuthority,
   parseBackupDump,
   parseWorksetRootsDocument,
   restoreDumpToXdg,
@@ -112,7 +112,7 @@ describe("workset root lifecycle [T1959]", () => {
       dbPath: dstPath,
       logsDir: null,
       dump,
-      authority: mintWorksetManagementAuthority(),
+      authority: createTrustedWorksetManagementAuthority(),
       overwriteAuthorized: false,
     });
     const dst = new SqliteLedgerStore({ dbPath: dstPath });
@@ -131,7 +131,7 @@ describe("workset root lifecycle [T1959]", () => {
       dbPath: legacyDst,
       logsDir: null,
       dump: legacy,
-      authority: mintWorksetManagementAuthority(),
+      authority: createTrustedWorksetManagementAuthority(),
       overwriteAuthorized: false,
     });
     const legacyStore = new SqliteLedgerStore({ dbPath: legacyDst });
@@ -204,7 +204,7 @@ describe("workset root lifecycle [T1959]", () => {
           dbPath,
           logsDir: null,
           dump: dumpEmptyRoots,
-          authority: mintWorksetManagementAuthority(),
+          authority: createTrustedWorksetManagementAuthority(),
           overwriteAuthorized: true,
         });
         destructiveRan = true;
@@ -249,7 +249,7 @@ describe("workset root lifecycle [T1959]", () => {
         dbPath,
         logsDir,
         dump,
-        authority: mintWorksetManagementAuthority(),
+        authority: createTrustedWorksetManagementAuthority(),
         overwriteAuthorized: false,
       });
       await Bun.sleep(50);
@@ -301,7 +301,7 @@ describe("workset root lifecycle [T1959]", () => {
 
       const resetPromise = ws.runAdministrative({
         kind: "reset",
-        authority: mintWorksetManagementAuthority(),
+        authority: createTrustedWorksetManagementAuthority(),
         destructivePhase: async () => {
           entered.resolve();
           await release.promise;

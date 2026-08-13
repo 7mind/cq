@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import {
   createPostgresWorksetStore,
   ensureSchema,
-  mintWorksetManagementAuthority,
+  createTrustedWorksetManagementAuthority,
   openPgPool,
   PostgresLedgerStore,
   readWorksetRootsEpoch,
@@ -81,7 +81,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
 
       await store.runAdministrative({
         kind: "erase",
-        authority: mintWorksetManagementAuthority(),
+        authority: createTrustedWorksetManagementAuthority(),
         destructivePhase: async () => {
           await sharedPool.begin(async (tx) => {
             await tx`DELETE FROM workset_admissions WHERE project_key = ${projectKey}`;
@@ -216,7 +216,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
 
       await peer.forceSettleAdmission({
         admissionId: stuckId,
-        authority: mintWorksetManagementAuthority(),
+        authority: createTrustedWorksetManagementAuthority(),
         reason: "operator attested process group terminated out-of-band",
       });
       const snap = await peer.setRoots(["goals:G-new"]);

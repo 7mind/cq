@@ -10,7 +10,7 @@ import { describe, expect, it } from "bun:test";
 import {
   WORKSET_GENERIC_MUTATION_OPERATION_CLAUSES,
   WORKSET_GENERIC_MUTATION_FIELD_CLAUSES,
-  createInMemoryWorksetGuardedLedger,
+  createInMemoryWorksetManagementLedger,
 } from "../src/index.js";
 import {
   runWorksetGenericMutationContract,
@@ -27,7 +27,7 @@ describe("workset generic-mutation contract module [T1961]", () => {
     const factory: WorksetGenericMutationContractFactory = {
       name: "in-memory-smoke",
       classification: "Behavioral-Active Blackbox-Atomic",
-      build: () => createInMemoryWorksetGuardedLedger(),
+      build: () => createInMemoryWorksetManagementLedger(),
     };
     const ledger = await factory.build();
     await ledger.init();
@@ -42,5 +42,5 @@ describe("workset generic-mutation contract module [T1961]", () => {
 runWorksetGenericMutationContract({
   name: "in-memory",
   classification: "Behavioral-Active Blackbox-Atomic",
-  build: (options) => createInMemoryWorksetGuardedLedger(options),
+  build: (options) => createInMemoryWorksetManagementLedger(options),
 });

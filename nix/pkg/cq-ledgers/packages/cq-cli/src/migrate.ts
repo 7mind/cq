@@ -82,7 +82,7 @@ import {
   restoreDumpToPostgres,
   restoreDumpToXdg,
   RestoreTargetChangedError,
-  mintWorksetManagementAuthority,
+  createTrustedWorksetManagementAuthority,
   SqliteLedgerStore,
   XDG_DB_FILENAME,
   type BackupDumpFile,
@@ -130,7 +130,7 @@ async function runUnderMigrationAdmission<T>(
   let completed = false;
   await workset.runAdministrative({
     kind: "backend-migration",
-    authority: mintWorksetManagementAuthority(),
+    authority: createTrustedWorksetManagementAuthority(),
     destructivePhase: async () => {
       result = await body();
       completed = true;
@@ -344,7 +344,7 @@ async function runMigrateLegacyToXdg(args: MigrateArgs, io: MigrateIo): Promise<
         dbPath,
         logsDir,
         dump,
-        authority: mintWorksetManagementAuthority(),
+        authority: createTrustedWorksetManagementAuthority(),
         overwriteAuthorized,
         administrativeKind: "backend-migration",
       });
@@ -489,7 +489,7 @@ async function runMigrateXdgToPostgres(args: MigrateArgs, io: MigrateIo): Promis
             projectKey,
             displayName,
             dump,
-            authority: mintWorksetManagementAuthority(),
+            authority: createTrustedWorksetManagementAuthority(),
             overwriteAuthorized: false,
             administrativeKind: "backend-migration",
           });

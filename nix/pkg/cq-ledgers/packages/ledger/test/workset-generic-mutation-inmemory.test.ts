@@ -2,13 +2,13 @@
  * T1961 — in-memory dummy leg of the guarded generic-mutation dual-test pair.
  *
  * Runs the shared Behavioral-Active Blackbox contract against
- * {@link createInMemoryWorksetGuardedLedger}. Future durable legs bind the
+ * {@link createInMemoryWorksetManagementLedger}. Future durable legs bind the
  * same `runWorksetGenericMutationContract` factory without changing assertions.
  */
 
 import { describe, expect, it } from "bun:test";
 import {
-  createInMemoryWorksetGuardedLedger,
+  createInMemoryWorksetManagementLedger,
   assertNoPublicRawWriteEscape,
   WorksetGenericMutationError,
   TASKS_LEDGER,
@@ -19,12 +19,12 @@ import { runWorksetGenericMutationContract } from "./worksetGenericMutationContr
 runWorksetGenericMutationContract({
   name: "in-memory-dummy",
   classification: "Behavioral-Active Blackbox-Atomic",
-  build: (options) => createInMemoryWorksetGuardedLedger(options),
+  build: (options) => createInMemoryWorksetManagementLedger(options),
 });
 
 describe("workset generic-mutation in-memory focused [T1961]", () => {
   it("public surface freezes the gateway form and hides raw writes", async () => {
-    const ledger = createInMemoryWorksetGuardedLedger();
+    const ledger = createInMemoryWorksetManagementLedger();
     await ledger.init();
     assertNoPublicRawWriteEscape(ledger);
     expect(Object.isFrozen(ledger.mutations)).toBe(true);
@@ -32,7 +32,7 @@ describe("workset generic-mutation in-memory focused [T1961]", () => {
   });
 
   it("create under empty roots then restrictive deny leaves counters unchanged", async () => {
-    const ledger = createInMemoryWorksetGuardedLedger();
+    const ledger = createInMemoryWorksetManagementLedger();
     await ledger.init();
     const m = await ledger.mutations.createMilestone({ title: "counter-m" });
     const t = await ledger.mutations.createItem(TASKS_LEDGER, m.id, {

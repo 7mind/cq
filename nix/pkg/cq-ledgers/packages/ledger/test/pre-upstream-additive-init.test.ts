@@ -46,7 +46,7 @@ import {
   type Ledger,
   type LedgerSchema,
   type LedgerStore,
-  mintWorksetManagementAuthority,
+  createTrustedWorksetManagementAuthority,
 } from "../src/index.js";
 import { openPgPool } from "../src/store/postgres/connection.js";
 import { ensureSchema as ensurePostgresSchema } from "../src/store/postgres/schema.js";
@@ -761,7 +761,7 @@ describe("pre-upstream lifecycle acceptance states", () => {
       dbPath,
       logsDir,
       dump,
-      authority: mintWorksetManagementAuthority(),
+      authority: createTrustedWorksetManagementAuthority(),
       overwriteAuthorized: false,
     });
     const restored = new SqliteLedgerStore({ dbPath, logsDir, now });

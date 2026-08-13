@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import {
   createPostgresWorksetStore,
   ensureSchema,
-  mintWorksetManagementAuthority,
+  createTrustedWorksetManagementAuthority,
   openPgPool,
   readWorksetRootsEpoch,
   WorksetAdmissionError,
@@ -80,7 +80,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
 
         await observer.forceSettleAdmission({
           admissionId: admission.id,
-          authority: mintWorksetManagementAuthority(),
+          authority: createTrustedWorksetManagementAuthority(),
           reason: "holder connection lost; process group attested settled",
         });
         const snap = await setPromise;

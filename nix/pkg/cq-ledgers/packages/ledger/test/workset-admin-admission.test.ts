@@ -13,7 +13,7 @@ import {
   WorksetAdmissionError,
   WORKSET_ADMINISTRATIVE_EFFECT_KINDS,
   createInMemoryWorksetAdmissionCoordinator,
-  mintWorksetManagementAuthority,
+  createTrustedWorksetManagementAuthority,
   isTrustedWorksetManagementAuthority,
   type WorksetAdministrativeEffectKind,
   type WorksetAdmissionErrorCode,
@@ -45,7 +45,7 @@ async function expectCode(
 
 describe("workset administrative admission [T1953]", () => {
   it("mints trusted management authority and rejects structural lookalikes", () => {
-    const authority = mintWorksetManagementAuthority();
+    const authority = createTrustedWorksetManagementAuthority();
     expect(isTrustedWorksetManagementAuthority(authority)).toBe(true);
     expect(isTrustedWorksetManagementAuthority({ brand: true })).toBe(false);
     expect(isTrustedWorksetManagementAuthority(null)).toBe(false);
@@ -81,7 +81,7 @@ describe("workset administrative admission [T1953]", () => {
           },
         },
       });
-      const authority = mintWorksetManagementAuthority();
+      const authority = createTrustedWorksetManagementAuthority();
 
       const effect = await c.admitExternalEffect({
         kind: "child-dispatch",
@@ -126,7 +126,7 @@ describe("workset administrative admission [T1953]", () => {
     const releaseDestructive = deferred();
     const enteredDestructive = deferred();
     const c = createInMemoryWorksetAdmissionCoordinator();
-    const authority = mintWorksetManagementAuthority();
+    const authority = createTrustedWorksetManagementAuthority();
 
     const adminPromise = c.runAdministrative({
       kind: "reset",
@@ -194,7 +194,7 @@ describe("workset administrative admission [T1953]", () => {
 
   it("trusted administrative path holds exclusive admission through completion", async () => {
     const c = createInMemoryWorksetAdmissionCoordinator();
-    const authority = mintWorksetManagementAuthority();
+    const authority = createTrustedWorksetManagementAuthority();
     const order: string[] = [];
 
     await c.runAdministrative({
