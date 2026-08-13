@@ -18,6 +18,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Box, Text, useApp, useInput } from "ink";
 import { SelectList } from "./components/SelectList.js";
 import { TextPrompt } from "./components/TextPrompt.js";
+import {
+  WorksetOverlay,
+  type WorksetReplacementOutcome,
+} from "./components/WorksetOverlay.js";
 import { Markdown, markdownLines } from "./markdownText.js";
 import { useTermSize } from "./useTermSize.js";
 import { McpLedgerClient, projectMcpUrl, projectLiveUrl } from "./mcpClient.js";
@@ -38,7 +42,7 @@ import {
   isQuestion,
   type StatusFilter,
 } from "./status.js";
-import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema, LedgerSummary, ProjectEntry, UsageStatsSnapshot } from "./types.js";
+import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema, LedgerSummary, ProjectEntry, UsageStatsSnapshot, WorksetCapableLedgerClient } from "./types.js";
 import {
   defectFixTaskIds,
   hypothesisRelationships,
@@ -55,6 +59,7 @@ import {
 MILESTONES_SCHEMA,
   FINALIZE_PRESENTATION,
   describeFinalizeEmptyPlan,
+  type WorksetProjectedGraph,
 } from "@cq/ledger";
 import {
   buildFinalizeSnapshot,
@@ -126,6 +131,12 @@ const clampRatio = (r: number): number => Math.max(PANEL_MIN_RATIO, Math.min(PAN
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+function worksetClientOf(client: LedgerClient): WorksetCapableLedgerClient | null {
+  const candidate = client as Partial<WorksetCapableLedgerClient>;
+  return typeof candidate.workset === "function"
+    ? (client as WorksetCapableLedgerClient)
+    : null;
 }
 function fieldToString(v: FieldValue | undefined): string {
   if (v === undefined) return "";
@@ -374,6 +385,7 @@ type FinalizeStep =
 
 type Overlay =
   | { t: "search" }
+  | { t: "workset" }
   | { t: "status"; row: Row }
   | { t: "answer"; row: Row }
   | { t: "pickField"; row: Row }
@@ -453,6 +465,11 @@ export function App({
   // single entry so the indicator always has something to show.
   const [projects, setProjects] = useState<ProjectEntry[]>([]);
   const [projectKey, setProjectKey] = useState<string>("");
+  const projectSwitchGenRef = useRef(0);
+  const [worksetGraph, setWorksetGraph] = useState<WorksetProjectedGraph | null>(null);
+  const [worksetLoading, setWorksetLoading] = useState(false);
+  const [worksetError, setWorksetError] = useState("");
+  const worksetRequestGenRef = useRef(0);
   const [stack, setStack] = useState<Frame[]>([{ kind: "ledgers", cursor: 0 }]);
   // Overlay generation token (D120): every setOverlay bumps the counter so
   // in-flight async openers/mutators can drop a stale post-await write when
@@ -542,6 +559,97 @@ export function App({
     };
   }, [client]);
 
+  const loadWorksetFor = useCallback(async (
+    sourceClient: LedgerClient,
+    generation: number,
+  ): Promise<WorksetProjectedGraph | null> => {
+    const worksetClient = worksetClientOf(sourceClient);
+    if (worksetClient === null) {
+      if (worksetRequestGenRef.current === generation) {
+        setWorksetGraph(null);
+        setWorksetError("");
+        setWorksetLoading(false);
+      }
+      return null;
+    }
+    try {
+      const result = await worksetClient.workset({ op: "get", projection: "id" });
+      if (worksetRequestGenRef.current !== generation) return null;
+      setWorksetGraph(result.graph);
+      return result.graph;
+    } catch (cause) {
+      if (worksetRequestGenRef.current !== generation) return null;
+      setWorksetError(errMsg(cause));
+      return null;
+    } finally {
+      if (worksetRequestGenRef.current === generation) setWorksetLoading(false);
+    }
+  }, []);
+
+  const beginWorksetLoad = useCallback((sourceClient: LedgerClient): void => {
+    const generation = ++worksetRequestGenRef.current;
+    setWorksetGraph(null);
+    setWorksetError("");
+    setWorksetLoading(true);
+    void loadWorksetFor(sourceClient, generation);
+  }, [loadWorksetFor]);
+
+  const invalidateWorkset = useCallback((): void => {
+    worksetRequestGenRef.current += 1;
+    setWorksetGraph(null);
+    setWorksetError("");
+    setWorksetLoading(false);
+  }, []);
+
+  const openWorkset = useCallback((): void => {
+    if (worksetClientOf(client) === null) {
+      setFlash("workset operation is unavailable");
+      return;
+    }
+    beginWorksetLoad(client);
+    setOverlay({ t: "workset" });
+  }, [beginWorksetLoad, client, setOverlay]);
+
+  const closeWorkset = useCallback((): void => {
+    invalidateWorkset();
+    setOverlay(null);
+  }, [invalidateWorkset, setOverlay]);
+
+  const replaceWorkset = useCallback(
+    async (roots: readonly string[]): Promise<WorksetReplacementOutcome | null> => {
+      const worksetClient = worksetClientOf(client);
+      if (worksetClient === null) throw new Error("workset operation is unavailable");
+      const generation = ++worksetRequestGenRef.current;
+      setWorksetLoading(true);
+      try {
+        const setResult = await worksetClient.workset({ op: "set", roots: [...roots] });
+        if (worksetRequestGenRef.current !== generation) return null;
+        setWorksetGraph(null);
+        setWorksetError("");
+        try {
+          const getResult = await worksetClient.workset({ op: "get", projection: "id" });
+          if (worksetRequestGenRef.current !== generation) return null;
+          setWorksetGraph(getResult.graph);
+          return {
+            acknowledgement: setResult.acknowledgement,
+            graph: getResult.graph,
+            refreshError: "",
+          };
+        } catch (cause) {
+          if (worksetRequestGenRef.current !== generation) return null;
+          return {
+            acknowledgement: setResult.acknowledgement,
+            graph: null,
+            refreshError: errMsg(cause),
+          };
+        }
+      } finally {
+        if (worksetRequestGenRef.current === generation) setWorksetLoading(false);
+      }
+    },
+    [client],
+  );
+
   const top = stack[stack.length - 1]!;
   const patchTop = useCallback((patch: Partial<Frame>): void => {
     setStack((s) => {
@@ -565,12 +673,20 @@ export function App({
    */
   const selectProject = useCallback(
     async (entry: ProjectEntry) => {
+      const switchGeneration = ++projectSwitchGenRef.current;
+      invalidateWorkset();
       setOverlay(null);
       if (mcpUrl === null || entry.key === projectKey) return;
       setFlash(`switching to ${entry.displayName || entry.key}…`);
       try {
         const newClient = await connect(projectMcpUrl(mcpUrl, entry.key));
+        if (projectSwitchGenRef.current !== switchGeneration) {
+          if (newClient !== client) void newClient.close().catch(() => {});
+          return;
+        }
         const prevClient = client;
+        invalidateWorkset();
+        setOverlay(null);
         setClient(newClient);
         setLiveUrl(projectLiveUrl(mcpUrl, entry.key));
         setProjectKey(entry.key);
@@ -578,12 +694,13 @@ export function App({
         setFilter({ kind: "all" });
         setCrossItems(new Map());
         setFlash(`switched to ${entry.displayName || entry.key}`);
-        void prevClient.close().catch(() => {});
+        if (prevClient !== newClient) void prevClient.close().catch(() => {});
       } catch (e) {
+        if (projectSwitchGenRef.current !== switchGeneration) return;
         setFlash(errMsg(e));
       }
     },
-    [client, mcpUrl, connect, projectKey],
+    [client, connect, invalidateWorkset, mcpUrl, projectKey, setOverlay],
   );
 
   // Effective extra columns for a ledger: the session selection if the user
@@ -1077,6 +1194,10 @@ export function App({
         setOverlay({ t: "projects" });
         return;
       }
+      if (input === "w") {
+        openWorkset();
+        return;
+      }
       // Usage stats (T1515): keybound read-only overlay, available from
       // anywhere (both frames, either focus) — mirrors p above.
       if (input === "u") {
@@ -1231,7 +1352,7 @@ export function App({
 
   if (top.kind === "ledgers") {
     pathStr = "all ledgers";
-    hints = "↑↓ move · Enter open · / search · o/[ ] panes · p project · u usage · q quit";
+    hints = "↑↓ move · Enter open · / search · o/[ ] panes · p project · w workset · u usage · q quit";
     // Right-align the per-ledger item count: pad the name out to fill the row
     // (less the cursor prefix and a scrollbar column when one is shown).
     const showBar = ledgers.length > listInnerH;
@@ -1378,6 +1499,8 @@ export function App({
       );
   }
 
+  const activeWorksetClient = worksetClientOf(client);
+
   return (
     <Box flexDirection="column" width={cols} height={rows}>
       <Box>
@@ -1402,9 +1525,24 @@ export function App({
         )}
       </Box>
 
-      {/* body: a full-screen overlay (batch-answer) takes the whole body when
-          active; otherwise the usual list | content split. */}
-      {overlay !== null && overlay.t === "batchAnswer" ? (
+      {/* body: global workset and batch-answer overlays take the whole body;
+          otherwise render the usual list | content split. */}
+      {overlay !== null && overlay.t === "workset" ? (
+        <Box flexGrow={1} flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1}>
+          {activeWorksetClient === null ? (
+            <Text color="red">workset operation is unavailable</Text>
+          ) : (
+            <WorksetOverlay
+              client={activeWorksetClient}
+              currentGraph={worksetGraph}
+              currentLoading={worksetLoading}
+              currentError={worksetError}
+              replace={replaceWorkset}
+              onCancel={closeWorkset}
+            />
+          )}
+        </Box>
+      ) : overlay !== null && overlay.t === "batchAnswer" ? (
         <Box flexGrow={1} flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1}>
           <BatchAnswerOverlay
             overlay={overlay}
@@ -2282,6 +2420,8 @@ function Overlays({
   onCancel: () => void;
 }): React.ReactElement {
   switch (overlay.t) {
+    case "workset":
+      return <></>;
     case "filter": {
       const opts: StatusFilter[] = [
         { kind: "all" },
