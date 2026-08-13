@@ -53,7 +53,7 @@ import { eligibleColumnFields, defaultColumns } from "@cq/ledger/columns";
 import { summarize, fieldToString } from "@cq/ledger/summarize";
 // Leaf subpath: constants.ts is data-only (no Node.js builtins). Importing
 // MILESTONES_SCHEMA from here avoids the duplicated local copy (D6).
-import { MILESTONES_SCHEMA, IDEAS_LEDGER } from "@cq/ledger/constants";
+import { MILESTONES_SCHEMA, IDEAS_LEDGER, MEMORIES_LEDGER } from "@cq/ledger/constants";
 // Leaf subpath (browser-safe like ./constants above): the shared finalize
 // predicates + executor (G83, T614/T615). The web modal (T620) mirrors the
 // TUI's finalize overlay (T621) for Q292 parity — same snapshot fan-out, same
@@ -126,7 +126,7 @@ const UI_AUTHOR = "user";
  * sits — currently group 0 with ideas).
  */
 const SIDEBAR_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
-  ["ideas", "questions"],
+  ["ideas", "memories", "questions"],
   ["goals", "milestones"],
   ["defects", "tasks", "upstream", "researches"],
   ["handoffs", "reviews", "decisions", "hypothesis"],
@@ -1796,16 +1796,18 @@ export function App({
           ) : view !== null ? (
             <>
               <div className="lw-toolbar">
-                <button
-                  type="button"
-                  data-testid="new-item-or-milestone"
-                  onClick={() => {
-                    setSelected(null);
-                    setCreating(isMilestones ? "milestone" : "item");
-                  }}
-                >
-                  {isMilestones ? "+ milestone" : "+ item"}
-                </button>
+                {ledger !== MEMORIES_LEDGER && (
+                  <button
+                    type="button"
+                    data-testid="new-item-or-milestone"
+                    onClick={() => {
+                      setSelected(null);
+                      setCreating(isMilestones ? "milestone" : "item");
+                    }}
+                  >
+                    {isMilestones ? "+ milestone" : "+ item"}
+                  </button>
+                )}
                 {(isMilestones || ledger === GOALS_LEDGER) && (
                   <FinalizeControl
                     scope={isMilestones ? "global" : "goals"}
@@ -1914,7 +1916,11 @@ export function App({
                 groups={view.milestones}
                 schema={view.schema}
                 isMilestones={isMilestones}
-                isGoals={ledger === GOALS_LEDGER || ledger === IDEAS_LEDGER}
+                isFlat={
+                  ledger === GOALS_LEDGER ||
+                  ledger === IDEAS_LEDGER ||
+                  ledger === MEMORIES_LEDGER
+                }
                 statusFilter={filter}
                 milestoneFilter={milestoneFilter}
                 extraColumns={
@@ -3612,16 +3618,15 @@ function MilestoneSubsection({
  *   status, in fetch_ledger order); the per-row milestone column is omitted.
  * - milestones (isMilestones): flat table with the milestone column — sub-
  *   grouping by milestone is not meaningful there.
- * - goals (isGoals; T83 / Q48, user-deviated): FLAT list, no coordination-
- *   milestone subsections and no milestone column — a goal's work-milestone ids
- *   live in fields.milestones and show in the detail panel. Reuses
- *   SubsectionItemTable so row structure/classes match the other ledgers.
+ * - flat ledgers (isFlat): no coordination-milestone subsections and no
+ *   milestone column. Reuses SubsectionItemTable so row structure/classes
+ *   match the other ledgers.
  */
 function ItemTable({
   groups,
   schema,
   isMilestones,
-  isGoals,
+  isFlat,
   statusFilter,
   milestoneFilter,
   extraColumns,
@@ -3634,7 +3639,7 @@ function ItemTable({
   groups: FetchedMilestoneGroup[];
   schema: FetchedLedger["schema"];
   isMilestones: boolean;
-  isGoals: boolean;
+  isFlat: boolean;
   statusFilter: StatusFilter;
   milestoneFilter: string;
   /** Extra column field names (after id/status/summary), already filtered to
@@ -3660,8 +3665,8 @@ function ItemTable({
     });
   };
 
-  if (isGoals) {
-    // Goals (T83 / Q48): FLAT list, no subsection grouping, no milestone column.
+  if (isFlat) {
+    // Flat list, no subsection grouping or milestone column.
     // Honour both the status filter and the milestone filter (the milestone-
     // filter select is still offered for non-milestones ledgers), flattening
     // across coordination groups while preserving fetch_ledger order.

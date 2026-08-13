@@ -539,6 +539,30 @@ export const IDEAS_SCHEMA: LedgerSchema = {
 };
 
 /**
+ * Durable project memories (Q376). Memories always attach to M-AMBIENT; the
+ * store enforces that invariant independently of caller and transport.
+ */
+export const MEMORIES_LEDGER = "memories" as const;
+
+export const MEMORIES_SCHEMA: LedgerSchema = {
+  statusValues: ["active", "superseded", "forgotten"],
+  terminalStatuses: ["superseded", "forgotten"],
+  idPrefix: "MEM",
+  transitions: {
+    active: ["superseded", "forgotten"],
+    superseded: [],
+    forgotten: [],
+  },
+  fields: {
+    title: { type: "string", required: true },
+    content: { type: "string", required: true },
+    tags: { type: "string[]", required: false },
+    sourceRefs: { type: "string[]", required: false },
+    ...WORKSET_OWNERSHIP_SCHEMA_FIELDS,
+  },
+};
+
+/**
  * G80/M246 — researches ledger (Q261 design, Q266 satisfies-lock). idPrefix
  * `RS` — a distinct two-letter prefix from `R` (reviews); the refs.ts
  * exact-alpha resolution (`BARE_ID_RE`'s full-leading-alpha-run match) keeps
@@ -668,6 +692,7 @@ export const CANONICAL_LEDGERS: ReadonlyArray<{ name: string; schema: LedgerSche
   { name: HANDOFFS_LEDGER, schema: HANDOFFS_SCHEMA },
   { name: OPERATOR_ACTIONS_LEDGER, schema: OPERATOR_ACTIONS_SCHEMA },
   { name: IDEAS_LEDGER, schema: IDEAS_SCHEMA },
+  { name: MEMORIES_LEDGER, schema: MEMORIES_SCHEMA },
   { name: RESEARCHES_LEDGER, schema: RESEARCHES_SCHEMA },
   { name: UPSTREAM_LEDGER, schema: UPSTREAM_SCHEMA },
 ];

@@ -318,6 +318,8 @@ const SERVER_INSTRUCTIONS_TEMPLATE = [
   "",
   "Projection compact|complement|full; compact.fields ⊎ complement.fields = full.fields. fetch_ledger: paginate until nextOffset=null. fts_search: active by default with field qualifiers; terminal items stay active until archive_milestone sweeps a fully terminal milestone.",
   "",
+  "Before planning/implementation, fts_search relevant active memories with ledger/status filters; fetch_item full matches as needed. Write only confirmed durable project facts: create_item in memories under M-AMBIENT with author/session and useful sourceRefs. Exclude transient reasoning, session notes, and unconfirmed preferences.",
+  "",
   "snapshot/derive_predicates: CQ state. Preserve IDs and dispatch/plan capability/generation/fence/recovery/idempotency.",
 ].join("\n");
 

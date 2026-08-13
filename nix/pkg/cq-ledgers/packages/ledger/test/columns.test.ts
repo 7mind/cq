@@ -17,6 +17,7 @@ import {
   QUESTIONS_SCHEMA,
   DECISIONS_SCHEMA,
   UPSTREAM_SCHEMA,
+  MEMORIES_SCHEMA,
 } from "../src/index.js";
 
 describe("eligibleColumnFields", () => {
@@ -67,6 +68,10 @@ describe("eligibleColumnFields", () => {
     expect(eligibleColumnFields(TASKS_SCHEMA)).toContain("suggestedModel");
     expect(eligibleColumnFields(DEFECTS_SCHEMA)).toContain("severity");
     expect(eligibleColumnFields(HYPOTHESIS_SCHEMA)).toContain("parentHypothesis");
+  });
+
+  it("excludes memory content from table-column choices", () => {
+    expect(eligibleColumnFields(MEMORIES_SCHEMA)).toEqual(["tags", "sourceRefs"]);
   });
 
   it("keeps compact upstream fields eligible and excludes narrative, evidence, and log fields", () => {
@@ -202,6 +207,7 @@ describe("eligibleColumnFields", () => {
         "ledgerRefs",
       ],
       ideas: ["ledgerRefs"],
+      memories: ["tags", "sourceRefs"],
       researches: [
         "scope",
         "findings",

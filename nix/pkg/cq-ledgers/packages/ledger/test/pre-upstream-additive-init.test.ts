@@ -28,6 +28,7 @@ import {
   IDEAS_LEDGER,
   InMemoryLedgerStore,
   LEDGER_STORAGE_DIRNAME,
+  MEMORIES_LEDGER,
   OPERATOR_ACTIONS_LEDGER,
   parseRegistry,
   PLAN_MANAGED_GOAL_FIELD_NAMES,
@@ -75,15 +76,17 @@ afterAll(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-const PRE_UPSTREAM_NAMES = CANONICAL_LEDGERS.filter(({ name }) => name !== UPSTREAM_LEDGER)
-  .filter(({ name }) => name !== OPERATOR_ACTIONS_LEDGER)
-  .map(({ name }) => name)
-  .sort();
-const CURRENT_NAMES = CANONICAL_LEDGERS.map(({ name }) => name).sort();
 const POST_FIXTURE_LEDGER_NAMES: ReadonlySet<string> = new Set([
+  MEMORIES_LEDGER,
   OPERATOR_ACTIONS_LEDGER,
   UPSTREAM_LEDGER,
 ]);
+const PRE_UPSTREAM_NAMES = CANONICAL_LEDGERS.filter(
+  ({ name }) => !POST_FIXTURE_LEDGER_NAMES.has(name),
+)
+  .map(({ name }) => name)
+  .sort();
+const CURRENT_NAMES = CANONICAL_LEDGERS.map(({ name }) => name).sort();
 const POST_FIXTURE_CANONICAL_LEDGERS = CANONICAL_LEDGERS.filter(({ name }) =>
   POST_FIXTURE_LEDGER_NAMES.has(name),
 );
@@ -429,9 +432,9 @@ async function captureSqliteState(
           .all()
       : db
           .query(
-            "SELECT name, schema_json, milestone_counter, item_counter FROM ledgers WHERE name NOT IN (?, ?) ORDER BY rowid",
+            "SELECT name, schema_json, milestone_counter, item_counter FROM ledgers WHERE name NOT IN (?, ?, ?) ORDER BY rowid",
           )
-          .all(UPSTREAM_LEDGER, OPERATOR_ACTIONS_LEDGER);
+          .all(UPSTREAM_LEDGER, OPERATOR_ACTIONS_LEDGER, MEMORIES_LEDGER);
     const ledgers = includeUpstream
       ? ledgerRows
       : withoutPlanLifecycleSchemaRows(
@@ -505,6 +508,7 @@ async function capturePostgresState(
         WHERE project_key = ${projectKey}
           AND name <> ${UPSTREAM_LEDGER}
           AND name <> ${OPERATOR_ACTIONS_LEDGER}
+          AND name <> ${MEMORIES_LEDGER}
         ORDER BY name
       `;
   const ledgers = includeUpstream

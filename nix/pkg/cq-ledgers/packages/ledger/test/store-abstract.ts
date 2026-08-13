@@ -20,6 +20,7 @@ import {
   MILESTONES_ACTIVE_GROUP_ID,
   MILESTONES_AMBIENT_ID,
   CANONICAL_LEDGERS,
+  WORKSET_OWNERSHIP_SCHEMA_FIELDS,
   acknowledgeOperatorAction,
   completeOperatorActionTask,
   isIsoTimestamp,
@@ -58,6 +59,25 @@ export interface AbstractStoreFactory {
 // does not collide with any bootstrapped canonical prefix.
 const WIDGETS = "widgets";
 const NOTES = "notes";
+const MEMORIES = "memories";
+
+const memoriesSchema: LedgerSchema = {
+  statusValues: ["active", "superseded", "forgotten"],
+  terminalStatuses: ["superseded", "forgotten"],
+  idPrefix: "MEM",
+  transitions: {
+    active: ["superseded", "forgotten"],
+    superseded: [],
+    forgotten: [],
+  },
+  fields: {
+    title: { type: "string", required: true },
+    content: { type: "string", required: true },
+    tags: { type: "string[]", required: false },
+    sourceRefs: { type: "string[]", required: false },
+    ...WORKSET_OWNERSHIP_SCHEMA_FIELDS,
+  },
+};
 
 const widgetsSchema: LedgerSchema = {
   statusValues: ["open", "in-progress", "resolved", "abandoned"],
@@ -93,6 +113,53 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
       try {
         // All canonical ledgers are bootstrapped on init() (§8, B).
         expect(store.enumerate()).toEqual([...BOOTSTRAPPED, WIDGETS, NOTES].sort());
+      } finally {
+        await factory.teardown?.(store);
+      }
+    }, TIMEOUT);
+
+    it("bootstraps canonical ambient memories with MEM allocation and terminal lifecycle", async () => {
+      const store = await factory.build([]);
+      try {
+        expect(store.fetch(MEMORIES).schema).toEqual(memoriesSchema);
+        const beforeRejectedCreate = store.fetch(MEMORIES);
+        const userMilestone = await store.createMilestone({ title: "not ambient" });
+        await expect(
+          store.createItem(MEMORIES, userMilestone.id, {
+            status: "active",
+            fields: { title: "Rejected", content: "Must remain ambient" },
+          }),
+        ).rejects.toThrow(/M-AMBIENT/);
+        expect(store.fetch(MEMORIES)).toEqual(beforeRejectedCreate);
+
+        const superseded = await store.createItem(MEMORIES, MILESTONES_AMBIENT_ID, {
+          status: "active",
+          fields: {
+            title: "Durable fact",
+            content: "The project uses canonical memories.",
+            tags: ["architecture"],
+            sourceRefs: ["decisions:K189"],
+          },
+        });
+        expect(superseded.id).toBe("MEM1");
+        expect(
+          (await store.updateItem(MEMORIES, superseded.id, { status: "superseded" })).status,
+        ).toBe("superseded");
+        await expect(
+          store.updateItem(MEMORIES, superseded.id, { status: "active" }),
+        ).rejects.toThrow(/transition/);
+
+        const forgotten = await store.createItem(MEMORIES, MILESTONES_AMBIENT_ID, {
+          status: "active",
+          fields: { title: "Obsolete fact", content: "Forget this fact." },
+        });
+        expect(forgotten.id).toBe("MEM2");
+        expect(
+          (await store.updateItem(MEMORIES, forgotten.id, { status: "forgotten" })).status,
+        ).toBe("forgotten");
+        await expect(
+          store.updateItem(MEMORIES, forgotten.id, { status: "superseded" }),
+        ).rejects.toThrow(/transition/);
       } finally {
         await factory.teardown?.(store);
       }

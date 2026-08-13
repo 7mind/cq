@@ -40,6 +40,7 @@ export const LONG_FIELD_DENYLIST: ReadonlySet<string> = new Set([
   "rootCause",
   "suggestedFix",
   "fix",
+  "content",
 ]);
 
 // Upstream-specific scalar names stay scoped to U so shared fields retain

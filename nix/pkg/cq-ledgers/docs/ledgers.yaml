@@ -699,6 +699,41 @@ ledgers:
         discarded: []
       satisfiesDependencyStatuses:
         - planned
+  - name: memories
+    schema:
+      statusValues:
+        - active
+        - superseded
+        - forgotten
+      terminalStatuses:
+        - superseded
+        - forgotten
+      fields:
+        title:
+          type: string
+          required: true
+        content:
+          type: string
+          required: true
+        tags:
+          type: string[]
+          required: false
+        sourceRefs:
+          type: string[]
+          required: false
+        worksetOwnerRef:
+          type: string
+          required: false
+        worksetOwnerEdgeKind:
+          type: string
+          required: false
+      idPrefix: MEM
+      transitions:
+        active:
+          - superseded
+          - forgotten
+        superseded: []
+        forgotten: []
   - name: researches
     schema:
       statusValues:

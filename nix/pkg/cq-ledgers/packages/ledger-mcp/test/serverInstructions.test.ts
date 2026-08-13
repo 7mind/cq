@@ -15,6 +15,8 @@ const ORIGINAL_SERVER_INSTRUCTIONS = [
   "",
   "Projection compact|complement|full; compact.fields ⊎ complement.fields = full.fields. fetch_ledger: paginate until nextOffset=null. fts_search: active by default with field qualifiers; terminal items stay active until archive_milestone sweeps a fully terminal milestone.",
   "",
+  "Before planning/implementation, fts_search relevant active memories with ledger/status filters; fetch_item full matches as needed. Write only confirmed durable project facts: create_item in memories under M-AMBIENT with author/session and useful sourceRefs. Exclude transient reasoning, session notes, and unconfirmed preferences.",
+  "",
   "snapshot/derive_predicates: CQ state. Preserve IDs and dispatch/plan capability/generation/fence/recovery/idempotency.",
 ].join("\n");
 
@@ -26,7 +28,23 @@ describe("buildServerInstructions", () => {
   test("prefixed output names tools in their prefixed form", () => {
     const text = buildServerInstructions("myproj");
     expect(text).toContain("myproj_enumerate_ledgers");
+    expect(text).toContain("myproj_fts_search relevant active memories");
+    expect(text).toContain("myproj_fetch_item full matches");
+    expect(text).toContain("myproj_create_item in memories");
     expect(text).toContain("myproj_snapshot");
+  });
+
+  test("canonical memory policy is explicit on the unprefixed surface", () => {
+    const text = buildServerInstructions("");
+    expect(text).toContain(
+      "Before planning/implementation, fts_search relevant active memories with ledger/status filters; fetch_item full matches as needed.",
+    );
+    expect(text).toContain(
+      "Write only confirmed durable project facts: create_item in memories under M-AMBIENT with author/session and useful sourceRefs.",
+    );
+    expect(text).toContain(
+      "Exclude transient reasoning, session notes, and unconfirmed preferences.",
+    );
   });
 
   test("prefixed output contains no bare whole-word tool token", () => {

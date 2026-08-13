@@ -42,6 +42,7 @@ import {
   MILESTONES_ACTIVE_GROUP_ID,
   MILESTONES_AMBIENT_ID,
   MILESTONES_LEDGER,
+  MEMORIES_LEDGER,
   OPERATOR_ACTIONS_LEDGER,
   TASKS_LEDGER,
 } from "../constants.js";
@@ -538,6 +539,11 @@ export function applyCreateItem(
 ): Item {
   if (ledger.id === OPERATOR_ACTIONS_LEDGER && !isAuthorizedOperatorActionMutation(init)) {
     throw new LedgerError("operatorActions may be created only through the typed lifecycle");
+  }
+  if (ledger.id === MEMORIES_LEDGER && milestoneId !== MILESTONES_AMBIENT_ID) {
+    throw new BootstrapViolationError(
+      `memories items must attach to ${MILESTONES_AMBIENT_ID}`,
+    );
   }
   let milestone: Milestone;
   const existing = ledger.milestones.find((m) => m.id === milestoneId);

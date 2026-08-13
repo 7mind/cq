@@ -33,7 +33,11 @@ import {
   type DispatchCapability,
   type LedgerStore,
 } from "@cq/ledger";
-import { createLedgerMcpServer, InMemoryPromptArtifactStore } from "../src/main.js";
+import {
+  buildServerInstructions,
+  createLedgerMcpServer,
+  InMemoryPromptArtifactStore,
+} from "../src/main.js";
 
 const encoder = new TextEncoder();
 const exec = promisify(execFile);
@@ -146,6 +150,27 @@ async function registeredNames(toolPrefix?: string, toolProfile?: string): Promi
 }
 
 describe("createLedgerMcpServer — public builder", () => {
+  it("carries the canonical memory policy through initialize instructions", async () => {
+    const store = await buildStore();
+    const server = createLedgerMcpServer({ store, displayName: "demo" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client(
+      { name: "create-server-instructions-test-client", version: "0.0.1" },
+      { capabilities: {} },
+    );
+    await client.connect(clientTransport);
+    try {
+      expect(client.getInstructions()).toContain(buildServerInstructions(""));
+      expect(client.getInstructions()).toContain(
+        "Write only confirmed durable project facts: create_item in memories under M-AMBIENT with author/session and useful sourceRefs.",
+      );
+    } finally {
+      await client.close();
+      await store.dispose();
+    }
+  });
+
   it("adopts a legacy worktree through the default repository capability", async () => {
     const fixture = await seedDefaultAdoptionFixture();
     const store = new InMemoryLedgerStore();
