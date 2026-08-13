@@ -740,6 +740,24 @@ export interface McpHttpCredentialConfig {
   readonly managementToken: string | null;
 }
 
+export class McpHttpCredentialSeparationError extends Error {
+  constructor() {
+    super("MCP management credential must differ from the ordinary credential");
+    this.name = "McpHttpCredentialSeparationError";
+  }
+}
+
+function assertMcpHttpCredentialSeparation(credentials: McpHttpCredentialConfig | undefined): void {
+  if (
+    credentials?.ordinaryToken !== null &&
+    credentials?.ordinaryToken !== undefined &&
+    credentials.managementToken !== null &&
+    worksetCredentialsMatch(credentials.ordinaryToken, credentials.managementToken)
+  ) {
+    throw new McpHttpCredentialSeparationError();
+  }
+}
+
 type McpSessionScope = "observe" | "management";
 
 interface McpSessionBinding {
@@ -816,6 +834,7 @@ export function attachMcpHttp(
   repositoryRoot?: string,
   credentials?: McpHttpCredentialConfig,
 ): McpHttpHandlers {
+  assertMcpHttpCredentialSeparation(credentials);
   const sessions = new Map<string, McpSessionBinding>();
 
   async function handle(req: Request): Promise<Response> {
@@ -826,6 +845,9 @@ export function attachMcpHttp(
         return sessionUnauthorized();
       }
       return existing.transport.handleRequest(req);
+    }
+    if (sessionId !== undefined) {
+      return new Response("invalid or expired MCP session", { status: 400 });
     }
 
     // No existing session. Only a POST initialize may open one; anything

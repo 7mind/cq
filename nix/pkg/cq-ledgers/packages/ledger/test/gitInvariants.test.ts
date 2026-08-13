@@ -38,6 +38,7 @@ import {
   GitObjectLedgerBackend,
   GitPlumbing,
   StaleRefError,
+  createTrustedWorksetManagementAuthority,
   serializeRegistry,
   type LedgerSchema,
 } from "../src/index.js";
@@ -391,6 +392,7 @@ describe("git invariant 5 — backup-tag before reinit", () => {
       const store = new GitObjectLedgerBackend({
         repoRoot: dir,
         onSchemaDivergence: "backup-reinit",
+        worksetAuthority: createTrustedWorksetManagementAuthority(),
       });
       await store.init(); // divergence → backup tag, then reinit advances the ref
 

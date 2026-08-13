@@ -185,6 +185,7 @@ export interface CodexProviderSandboxControl {
   readonly deniedSandboxExitStatus: number;
   readonly deniedSandboxStderrDigest: string;
   readonly deniedSandboxRefAbsent: true;
+  readonly credentialEnvironmentAbsent: true;
 }
 
 export interface CodexProviderSandboxControlRequest {
@@ -1237,12 +1238,12 @@ async function runInstalledRoleProcess(input: {
   try {
     const child = Bun.spawn([input.executable], {
       cwd: input.cwd,
-      env: {
+      env: withoutWorksetCredentials({
         ...process.env,
         ...input.environment,
         CQ_CODEX_ROLE_CORRELATION_ID: input.correlationId,
         [CODEX_PRETURN_OBSERVATION_PATH_ENV]: observationPath,
-      },
+      }),
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
@@ -1440,14 +1441,14 @@ async function runControlCommand(
 ): Promise<{ readonly exitStatus: number; readonly stdout: string; readonly stderr: string }> {
   const child = Bun.spawn([executable, ...args], {
     cwd,
-    env: {
+    env: withoutWorksetCredentials({
       ...process.env,
       GIT_AUTHOR_NAME: "cq-codex-sandbox-control",
       GIT_AUTHOR_EMAIL: "cq-codex-sandbox-control@example.invalid",
       GIT_COMMITTER_NAME: "cq-codex-sandbox-control",
       GIT_COMMITTER_EMAIL: "cq-codex-sandbox-control@example.invalid",
       GIT_TERMINAL_PROMPT: "0",
-    },
+    }),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -1522,7 +1523,32 @@ export async function executeCodexProviderSandboxControl(
     refName,
     managedHead,
   ];
+  const credentialProbeArguments = [
+    "-c",
+    'default_permissions="qualification"',
+    "-c",
+    'permissions.qualification.filesystem={":minimal"="read"}',
+    "sandbox",
+    "-P",
+    "qualification",
+    "-C",
+    request.managedHandle.absolutePath,
+    "--",
+    "/bin/sh",
+    "-c",
+    'test -z "$CQ_SERVE_TOKEN$CQ_SERVE_MANAGEMENT_TOKEN$CQ_LEDGER_REMOTE_TOKEN"',
+  ] as const;
   try {
+    const credentialProbe = await runControlCommand(
+      codexExecutable,
+      credentialProbeArguments,
+      request.managedHandle.absolutePath,
+    );
+    if (credentialProbe.exitStatus !== 0) {
+      throw new CodexRoleBoundaryError(
+        `Codex ${request.roleId}/${request.route} sandbox control inherited ledger credentials`,
+      );
+    }
     const before = await runControlCommand(
       gitExecutable,
       ["show-ref", "--verify", "--quiet", refName],
@@ -1595,6 +1621,7 @@ export async function executeCodexProviderSandboxControl(
       deniedSandboxExitStatus: deniedSandbox.exitStatus,
       deniedSandboxStderrDigest: createHash("sha256").update(deniedSandbox.stderr).digest("hex"),
       deniedSandboxRefAbsent: true as const,
+      credentialEnvironmentAbsent: true as const,
     });
     RUNNER_OWNED_SANDBOX_CONTROLS.add(result);
     return result;

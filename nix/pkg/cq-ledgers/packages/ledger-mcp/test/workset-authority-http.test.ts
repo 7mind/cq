@@ -57,6 +57,30 @@ async function probeConnection(input: {
 }
 
 describe("HTTP workset management authority", () => {
+  test("rejects equal ordinary and management credentials at construction", async () => {
+    const store = new InMemoryLedgerStore();
+    await store.init();
+    try {
+      expect(() =>
+        attachMcpHttp(
+          store,
+          "authority-http-test",
+          "",
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { ordinaryToken: "same-secret", managementToken: "same-secret" },
+        )
+      ).toThrow(/management.*ordinary|ordinary.*management/);
+    } finally {
+      await store.dispose();
+    }
+  });
+
   test("keeps open loopback observe access and ordinary-token compatibility", async () => {
     const open = await probeConnection({
       ordinaryToken: null,

@@ -33,6 +33,7 @@ import {
   resolveHubToken,
   resolveHubManagementToken,
   assertHubCredentialSeparation,
+  serveHub,
   HubCredentialSeparationError,
   HubDsnResolutionError,
   HUB_DEFAULT_HOST,
@@ -135,6 +136,40 @@ describe("parseHubArgs", () => {
     expect(() => parseHubArgs(["--port", "-1"])).toThrow(/--port must be 0..65535/);
     expect(() => parseHubArgs(["--port", "70000"])).toThrow(/--port must be 0..65535/);
     expect(() => parseHubArgs(["--port", "abc"])).toThrow(/--port must be 0..65535/);
+  });
+});
+
+describe("serveHub credential construction", () => {
+  it("rejects equal ordinary and management credentials before serving", async () => {
+    const outdir = await fs.mkdtemp(path.join(os.tmpdir(), "cq-equal-hub-token-"));
+    const indexPath = path.join(outdir, "index.html");
+    await fs.writeFile(indexPath, "<!doctype html>\n", "utf8");
+    const pool = Object.assign(async () => [], {
+      close: async () => undefined,
+    }) as unknown as ReturnType<typeof openPgPool>;
+    let server: ReturnType<typeof Bun.serve> | null = null;
+    let thrown: unknown;
+    try {
+      try {
+        server = serveHub(
+          {
+            host: "127.0.0.1",
+            port: 0,
+            token: "same-secret",
+            managementToken: "same-secret",
+            outdir,
+          },
+          pool,
+          indexPath,
+        );
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(HubCredentialSeparationError);
+    } finally {
+      if (server !== null) await server.stop(true);
+      await fs.rm(outdir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -9,6 +9,7 @@ import {
   createCodexRoleBoundaryPlan,
   executeCodexRoleBoundary,
   formatCodexRoleBoundaryDiagnostic,
+  WORKSET_CREDENTIAL_ENV_NAMES,
   type CodexRoleBoundaryDiagnostic,
   type CodexRoleBoundaryInvocation,
 } from "../src/index.js";
@@ -39,6 +40,12 @@ function boundaryDiagnosticFromError(
 }
 
 export async function main(): Promise<void> {
+  const inheritedCredential = WORKSET_CREDENTIAL_ENV_NAMES.find(
+    (name) => process.env[name] !== undefined,
+  );
+  if (inheritedCredential !== undefined) {
+    throw new Error("codex-role-dispatch: inherited ledger credentials");
+  }
   const request = await readOneBoundedNewlineTerminatedRequest(process.stdin);
   let parsed: unknown;
   try {

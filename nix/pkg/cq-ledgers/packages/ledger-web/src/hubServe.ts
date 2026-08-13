@@ -520,6 +520,7 @@ export function serveHub(
   indexPath: string,
   promptArtifactStore?: PromptArtifactStore,
 ): ReturnType<typeof Bun.serve> {
+  assertHubCredentialSeparation(opts.token, opts.managementToken);
   // Lazily-constructed per-tenant runtimes, keyed by projectKey. Stored as a
   // PROMISE so two concurrent first-requests for the same tenant share ONE
   // construction (no double-construct racing the same pool). A failed or

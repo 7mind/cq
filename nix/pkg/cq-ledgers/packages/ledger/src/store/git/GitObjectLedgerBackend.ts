@@ -37,6 +37,7 @@ import { DEFAULT_ON_SCHEMA_DIVERGENCE, LEDGER_STORAGE_DIRNAME } from "../../cons
 import type { PlanLifecycleSerializationBoundaryHook } from "../planLifecycleSerialization.js";
 import { createGitObjectWorksetStore } from "../../worksetStoreGit.js";
 import { serializeWorksetRootsDocument } from "../../worksetStoreGit.js";
+import { createObserveOnlyWorksetInvocationAuthority } from "../../worksetInvocationAuthority.js";
 
 /** Default orphan branch the ledger tree lives on (short name, no `refs/`). */
 const DEFAULT_BRANCH = "cq-ledger";
@@ -83,6 +84,8 @@ export interface GitObjectLedgerBackendOpts {
    *  - `'backup-reinit'`: tag the ref head, then reinit canonical.
    */
   onSchemaDivergence?: "backup-reinit" | "abort";
+  /** Runtime-only authority for destructive divergence reinitialization. */
+  worksetAuthority?: unknown;
 }
 
 export class GitObjectLedgerBackend
@@ -94,6 +97,9 @@ export class GitObjectLedgerBackend
   private readonly locksDir: string;
   /** The seam, retained so init() can seed the orphan ref before super.init(). */
   private readonly gitPersistence: GitPersistence;
+  private readonly branch: string;
+  private readonly git: GitPlumbing;
+  private readonly worksetAuthority: unknown;
 
   constructor(opts: GitObjectLedgerBackendOpts) {
     const repoRoot = opts.repoRoot;
@@ -114,6 +120,10 @@ export class GitObjectLedgerBackend
     this.branch = branch;
     this.locksDir = path.join(repoRoot, LEDGER_STORAGE_DIRNAME, ".locks");
     this.gitPersistence = persistence;
+    this.branch = branch;
+    this.git = git;
+    this.worksetAuthority =
+      opts.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority();
   }
 
   /**
@@ -157,6 +167,24 @@ export class GitObjectLedgerBackend
    */
   protected locksRoot(): string {
     return this.locksDir;
+  }
+
+  protected override async backupAndReinit(): Promise<string> {
+    const workset = await createGitObjectWorksetStore({
+      repoRoot: this.repoRoot,
+      ref: this.branch,
+      git: this.git,
+      locksDir: this.locksDir,
+    });
+    let backupTag = "";
+    await workset.runAdministrative({
+      kind: "divergence-reinitialization",
+      authority: this.worksetAuthority,
+      destructivePhase: async () => {
+        backupTag = await super.backupAndReinit();
+      },
+    });
+    return backupTag;
   }
 
   // ---------------------------------------------------------------------------

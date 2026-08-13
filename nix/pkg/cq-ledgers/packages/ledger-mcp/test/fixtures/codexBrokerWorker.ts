@@ -415,6 +415,11 @@ await writeFile(
   capturePath,
   JSON.stringify({
     boundary: { codexCwd, ledgerCommand, ledgerArgs, ledgerCwd, listedTools },
+    inheritedWorksetCredentials: [
+      "CQ_SERVE_TOKEN",
+      "CQ_SERVE_MANAGEMENT_TOKEN",
+      "CQ_LEDGER_REMOTE_TOKEN",
+    ].filter((name) => process.env[name] !== undefined),
     denied,
     directGit: {
       attempted: true,

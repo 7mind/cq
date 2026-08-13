@@ -8,11 +8,13 @@ const MANAGEMENT_TOKEN = "management-session-token";
 async function startFixture(): Promise<{
   readonly handlers: McpHttpHandlers;
   readonly storeAccesses: () => number;
+  readonly displayNameCalls: () => number;
   close(): Promise<void>;
 }> {
   const store = new InMemoryLedgerStore();
   await store.init();
   let accesses = 0;
+  let displayNameCalls = 0;
   const originalRecordUsage = store.recordMcpUsage.bind(store);
   store.recordMcpUsage = async (endpoint, bytesIn, bytesOut) => {
     accesses += 1;
@@ -20,7 +22,10 @@ async function startFixture(): Promise<{
   };
   const handlers = attachMcpHttp(
     store,
-    "authority-session-test",
+    () => {
+      displayNameCalls += 1;
+      return "authority-session-test";
+    },
     "",
     undefined,
     undefined,
@@ -34,20 +39,27 @@ async function startFixture(): Promise<{
   return {
     handlers,
     storeAccesses: () => accesses,
+    displayNameCalls: () => displayNameCalls,
     close: async () => {
       await store.dispose();
     },
   };
 }
 
-async function initialize(handlers: McpHttpHandlers, token: string): Promise<string> {
-  const response = await handlers.handle(new Request("http://localhost/mcp", {
+async function initializeRequest(
+  handlers: McpHttpHandlers,
+  token: string,
+  sessionId?: string,
+): Promise<Response> {
+  const headers: Record<string, string> = {
+    accept: "application/json, text/event-stream",
+    "content-type": "application/json",
+    authorization: `Bearer ${token}`,
+  };
+  if (sessionId !== undefined) headers["mcp-session-id"] = sessionId;
+  return await handlers.handle(new Request("http://localhost/mcp", {
     method: "POST",
-    headers: {
-      accept: "application/json, text/event-stream",
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`,
-    },
+    headers,
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
@@ -59,6 +71,10 @@ async function initialize(handlers: McpHttpHandlers, token: string): Promise<str
       },
     }),
   }));
+}
+
+async function initialize(handlers: McpHttpHandlers, token: string): Promise<string> {
+  const response = await initializeRequest(handlers, token);
   expect(response.status).toBe(200);
   const sessionId = response.headers.get("mcp-session-id");
   if (sessionId === null) throw new Error("expected initialized MCP session id");
@@ -147,6 +163,23 @@ describe("HTTP workset authority session binding", () => {
 
     const reused = await rawToolCall(fixture.handlers, sessionId, MANAGEMENT_TOKEN);
     expect(reused.status).toBe(400);
+    expect(fixture.storeAccesses()).toBe(0);
+    await fixture.close();
+  });
+
+  test("a deleted session id cannot reopen through initialize or invoke display resolution", async () => {
+    const fixture = await startFixture();
+    const sessionId = await initialize(fixture.handlers, MANAGEMENT_TOKEN);
+    expect(fixture.displayNameCalls()).toBe(1);
+    expect((await closeSession(fixture.handlers, sessionId, MANAGEMENT_TOKEN)).status).toBe(200);
+
+    const replay = await initializeRequest(
+      fixture.handlers,
+      MANAGEMENT_TOKEN,
+      sessionId,
+    );
+    expect(replay.status).toBe(400);
+    expect(fixture.displayNameCalls()).toBe(1);
     expect(fixture.storeAccesses()).toBe(0);
     await fixture.close();
   });

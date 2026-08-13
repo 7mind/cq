@@ -1102,6 +1102,9 @@ describe("packaged cq-codex-role Git broker", () => {
         correlationId: "t2042-installed-worker-retry",
         environment: {
           ...process.env,
+          CQ_SERVE_TOKEN: "must-not-reach-installed-worker",
+          CQ_SERVE_MANAGEMENT_TOKEN: "must-not-reach-installed-worker",
+          CQ_LEDGER_REMOTE_TOKEN: "must-not-reach-installed-worker",
           CQ_CODEX_EXECUTABLE: fakeCodex,
           CQ_CODEX_LEDGER_COMMAND: ledgerCommand,
           CQ_T2042_BROKER_CAPTURE: retryCapturePath,
@@ -1117,6 +1120,7 @@ describe("packaged cq-codex-role Git broker", () => {
           listedTools: string[];
         };
         denied: string[];
+        inheritedWorksetCredentials: string[];
         directGit: { attempted: boolean; exitStatus: number; stderrDigest: string };
         failureControls: string[];
         output: Record<string, unknown>;
@@ -1129,6 +1133,7 @@ describe("packaged cq-codex-role Git broker", () => {
         listedTools: ["fetch_dispatch_input", "git_commit", "store_result"],
       });
       expect(retryCapture.denied).toEqual(expect.arrayContaining(["git-metadata", "refs"]));
+      expect(retryCapture.inheritedWorksetCredentials).toEqual([]);
       expect(retryReceipts[0]?.["oldHead"]).toBe(firstResultCommit);
       await git(managed.handle.absolutePath, [
         "merge-base",
@@ -1278,17 +1283,31 @@ describe("packaged cq-codex-role Git broker", () => {
       });
       if (deadline.state !== "aborted") throw new Error("deadline control did not abort");
       const sandboxControls = [];
-      for (const roleId of ["implement-worker", "implement-conflict-resolver"] as const) {
-        for (const route of ["native", "process"] as const) {
-          sandboxControls.push(
-            await executeCodexProviderSandboxControl({
-              codexExecutable: INSTALLED_CODEX,
-              gitExecutable: process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git",
-              managedHandle: resumed.handle,
-              roleId,
-              route,
-            }),
-          );
+      const credentialNames = [
+        "CQ_SERVE_TOKEN",
+        "CQ_SERVE_MANAGEMENT_TOKEN",
+        "CQ_LEDGER_REMOTE_TOKEN",
+      ] as const;
+      const priorCredentials = credentialNames.map((name) => [name, process.env[name]] as const);
+      for (const name of credentialNames) process.env[name] = "must-not-reach-provider-control";
+      try {
+        for (const roleId of ["implement-worker", "implement-conflict-resolver"] as const) {
+          for (const route of ["native", "process"] as const) {
+            sandboxControls.push(
+              await executeCodexProviderSandboxControl({
+                codexExecutable: INSTALLED_CODEX,
+                gitExecutable: process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git",
+                managedHandle: resumed.handle,
+                roleId,
+                route,
+              }),
+            );
+          }
+        }
+      } finally {
+        for (const [name, value] of priorCredentials) {
+          if (value === undefined) delete process.env[name];
+          else process.env[name] = value;
         }
       }
       const released = await releaseManagedWorktree({
@@ -1453,7 +1472,8 @@ describe("packaged cq-codex-role Git broker", () => {
           return (
             observed["writableSandboxExitStatus"] === 0 &&
             observed["writableSandboxRefMatches"] === true &&
-            observed["deniedSandboxRefAbsent"] === true
+            observed["deniedSandboxRefAbsent"] === true &&
+            observed["credentialEnvironmentAbsent"] === true
           );
         }),
       }).toEqual({

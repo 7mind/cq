@@ -334,6 +334,7 @@ function deriveInstalledGateEvidence(input: CodexProviderGateAuthenticationInput
       !/^[0-9a-f]{64}$/.test(control.writableSandboxStdoutDigest) ||
       control.deniedSandboxExitStatus === 0 ||
       control.deniedSandboxRefAbsent !== true ||
+      control.credentialEnvironmentAbsent !== true ||
       !/^[0-9a-f]{64}$/.test(control.deniedSandboxStderrDigest)
     ) {
       throw new Error("Codex installed gate lacks a runner-owned discriminating sandbox control");

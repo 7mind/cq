@@ -557,7 +557,11 @@ export async function openLegacyLedgerStore(
 
   if (backend === "git-object") {
     assertGitWorkTree(root);
-    const store = new GitObjectLedgerBackend({ repoRoot: root, ref: branch });
+    const store = new GitObjectLedgerBackend({
+      repoRoot: root,
+      ref: branch,
+      worksetAuthority,
+    });
     await store.init();
     return { store, configRoot: root, backend, branch };
   }

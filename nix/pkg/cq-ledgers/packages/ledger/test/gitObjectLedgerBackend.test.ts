@@ -29,6 +29,7 @@ import {
   serializeRegistry,
   MAX_READ_LOG_BYTES,
   LEDGER_LOGS_RELATIVE_PREFIX,
+  createTrustedWorksetManagementAuthority,
   type LedgerSchema,
   type LedgerStore,
 } from "../src/index.js";
@@ -279,6 +280,7 @@ describe("GitObjectLedgerBackend — orphan-ref invariants", () => {
     const store = new GitObjectLedgerBackend({
       repoRoot: dir,
       onSchemaDivergence: "backup-reinit",
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
     });
     await store.init(); // divergence → backupCanonicalState tags, then reinit
 
@@ -291,6 +293,32 @@ describe("GitObjectLedgerBackend — orphan-ref invariants", () => {
     const fetched = store.fetch("tasks");
     expect(fetched.schema.statusValues).not.toEqual(["weird", "states"]);
 
+    await store.dispose();
+  }, ORCHESTRATION_WAIT_MS);
+
+  it("ordinary divergence reinit denies before changing the ledger ref or backup tags", async () => {
+    const dir = await seedRepo();
+    await seedRegistry(dir, [
+      {
+        name: "tasks",
+        schema: {
+          statusValues: ["weird", "states"],
+          terminalStatuses: ["states"],
+          fields: { bogus: { type: "string", required: true } },
+        },
+      },
+    ]);
+    const priorHead = await git(dir, "rev-parse", REF);
+    const store = new GitObjectLedgerBackend({
+      repoRoot: dir,
+      onSchemaDivergence: "backup-reinit",
+    });
+
+    await expect(store.init()).rejects.toMatchObject({
+      code: "management-authority-required",
+    });
+    expect(await git(dir, "rev-parse", REF)).toBe(priorHead);
+    expect(await git(dir, "tag", "--list", "cq-ledger-backup-*")).toBe("");
     await store.dispose();
   }, ORCHESTRATION_WAIT_MS);
 
