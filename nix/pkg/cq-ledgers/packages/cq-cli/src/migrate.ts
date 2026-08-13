@@ -322,7 +322,7 @@ async function runMigrateLegacyToXdg(args: MigrateArgs, io: MigrateIo): Promise<
     await probe.init();
     const targetEmpty = await isXdgPrimaryEmpty(probe);
     await probe.dispose();
-    let overwriteAuthorized = false;
+    let overwriteAuthorized = args.yes;
     if (!targetEmpty) {
       const decision = await confirmDestructive(
         args.yes,

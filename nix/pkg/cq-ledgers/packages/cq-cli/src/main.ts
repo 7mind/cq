@@ -80,32 +80,13 @@ import {
  */
 export const CQ_CONFIG_FILENAME = "cq.toml";
 
-export {
-  type ConfirmIo,
-  type ConfirmOutcome,
-  defaultConfirmIo,
-  confirmDestructive,
-} from "./confirm.js";
+export { type ConfirmIo, type ConfirmOutcome, defaultConfirmIo, confirmDestructive } from "./confirm.js";
 
 /** Exit code for an unknown/absent subcommand (usage error). */
 export const EXIT_USAGE = 2;
 
 /** The subcommands the dispatcher routes to. */
-export const SUBCOMMANDS = [
-  "init",
-  "reset",
-  "erase",
-  "move-ledger",
-  "advance-gate",
-  "predicates",
-  "counts",
-  "stats",
-  "log",
-  "backup",
-  "restore",
-  "migrate",
-  "gate",
-] as const;
+export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "counts", "stats", "log", "backup", "restore", "migrate", "gate"] as const;
 export type Subcommand = (typeof SUBCOMMANDS)[number];
 
 function isSubcommand(s: string): s is Subcommand {
@@ -661,7 +642,9 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
     } catch (err) {
       if (backend === "postgres" && !(err instanceof PostgresDsnResolutionError)) {
         const detail = err instanceof Error ? err.message : String(err);
-        io.err(`cq erase: postgres tenant NOT erased — could not reach the database: ${detail}`);
+        io.err(
+          `cq erase: postgres tenant NOT erased — could not reach the database: ${detail}`,
+        );
         return { exitCode: EXIT_USAGE };
       }
       xdgProjectDir = undefined;
@@ -773,7 +756,8 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
   // postgres (T583): DELETE exactly this tenant's rows — items, groups,
   // ledgers, logs, AND the projects registry entry — never another tenant's.
   let postgresWipeSummary:
-    { projectKey: string; items: Array<{ name: string; itemCount: number }> } | undefined;
+    | { projectKey: string; items: Array<{ name: string; itemCount: number }> }
+    | undefined;
   if (postgresTenant !== undefined) {
     const items = await countTenantActiveItems(postgresTenant.pool, postgresTenant.projectKey);
     // T1959: exclusive administrative admission for erase; the final tenant
@@ -849,7 +833,10 @@ export async function runAdvanceGateCmd(
   args: SubcommandArgs,
   io: DispatchIo,
 ): Promise<SubcommandOutcome> {
-  return runAdvanceGate({ cwd: args.cwd, session: args.session }, { out: io.out, err: io.err });
+  return runAdvanceGate(
+    { cwd: args.cwd, session: args.session },
+    { out: io.out, err: io.err },
+  );
 }
 
 /**
@@ -1076,9 +1063,7 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
         ? await readDumpInTree(args.cwd)
         : await readDumpOrphanBranch(args.cwd, branch);
   } catch (e) {
-    io.err(
-      `cq restore: failed to read the ${target} dump: ${e instanceof Error ? e.message : String(e)}`,
-    );
+    io.err(`cq restore: failed to read the ${target} dump: ${e instanceof Error ? e.message : String(e)}`);
     return { exitCode: EXIT_USAGE };
   }
 
@@ -1094,7 +1079,7 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
     return { exitCode: EXIT_USAGE };
   }
 
-  let overwriteAuthorized = false;
+  let overwriteAuthorized = args.yes;
   if (!(await isXdgPrimaryEmpty(resolved.store))) {
     const decision = await confirmDestructive(
       args.yes,
@@ -1155,7 +1140,7 @@ async function runRestorePostgres(
   const displayName = tenant.registeredDisplayName ?? tenant.candidateDisplayName;
   try {
     const empty = await isPostgresTenantEmpty(tenant.pool, tenant.projectKey);
-    let overwriteAuthorized = false;
+    let overwriteAuthorized = args.yes;
     if (!empty) {
       const decision = await confirmDestructive(
         args.yes,
@@ -1260,10 +1245,7 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
-const HANDLERS: Record<
-  Subcommand,
-  (args: SubcommandArgs, io: DispatchIo) => Promise<SubcommandOutcome>
-> = {
+const HANDLERS: Record<Subcommand, (args: SubcommandArgs, io: DispatchIo) => Promise<SubcommandOutcome>> = {
   init: runInit,
   reset: runReset,
   erase: runErase,

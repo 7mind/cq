@@ -357,6 +357,52 @@ describe("cq migrate (T504)", () => {
     await target.store.dispose();
   });
 
+  it("--yes authorizes a target mutation that commits after the initial emptiness check", async () => {
+    const root = await gitRepo("cq-migrate-target-admission-yes-");
+    await fs.writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "xdg"\n');
+    const target = await createLedgerStore(root);
+    if (target.dbPath === undefined) throw new Error("fixture: xdg dbPath missing");
+    const targetWorkset = target.store as typeof target.store & {
+      worksetStore(): ReturnType<SqliteLedgerStore["worksetStore"]>;
+    };
+    const taskSchema = target.store.fetch(TASKS_LEDGER).schema;
+
+    await fs.writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+    const seed = await seedLegacy(root);
+    await seedLogs(root);
+    const mutation = await targetWorkset.worksetStore().admitLedgerMutation({
+      kind: "generic-write",
+      targets: [],
+    });
+    const migration = dispatch(["migrate", "--cwd", root, "--yes"], recordingIo());
+    let outcome: Awaited<typeof migration> | undefined;
+    void migration.then((value) => {
+      outcome = value;
+    });
+
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if (targetWorkset.worksetStore().exclusiveHeld()) break;
+      if (outcome !== undefined) throw new Error("migration settled before acquiring target exclusion");
+      await Bun.sleep(5);
+    }
+    expect(targetWorkset.worksetStore().exclusiveHeld()).toBe(true);
+
+    const db = new Database(target.dbPath);
+    db.query(
+      "INSERT INTO ledgers (name, schema_json, milestone_counter, item_counter) VALUES (?, ?, 0, 0)",
+    ).run("late_target", JSON.stringify(taskSchema));
+    db.close();
+    await mutation.acknowledge();
+
+    expect((await migration).exitCode).toBe(0);
+    expect(resolveLedgerBackend(root).backend).toBe("xdg");
+    await target.store.dispose();
+    await assertMigratedParity(root, seed);
+    const restored = await createLedgerStore(root);
+    expect(restored.store.enumerate()).not.toContain("late_target");
+    await restored.store.dispose();
+  });
+
   it("K117: a cq.toml-less legacy tree migrates as an fs source (default resolution is xdg, but the in-tree ledger is detected)", async () => {
     const root = await gitRepo("cq-migrate-noconfig-");
     // NO cq.toml at all — pre-K117 this root resolved to the fs default; now
