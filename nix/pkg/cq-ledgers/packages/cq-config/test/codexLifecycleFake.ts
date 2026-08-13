@@ -14,6 +14,34 @@ interface LaunchEnvelope {
   readonly generation: number;
 }
 
+function storedResultToolEvent(launch: LaunchEnvelope): string {
+  return JSON.stringify({
+    type: "item.completed",
+    item: {
+      type: "mcp_tool_call",
+      server: "ledger",
+      tool: "store_result",
+      result: {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              state: "result-stored",
+              result: {
+                state: "result-stored",
+                attestationId: launch.attestationId,
+                generation: launch.generation,
+                storedAt: "2026-08-13T09:00:00.000Z",
+                outputDigest: "sha256:fake-codex-result",
+              },
+            }),
+          },
+        ],
+      },
+    },
+  });
+}
+
 function publishFileSync(path: string, content: string): void {
   const publicationPath = `${path}.pending-${String(process.pid)}`;
   writeFileSync(publicationPath, content, "utf8");
@@ -102,21 +130,22 @@ publishFileSync(
 
 if (mode === "success") {
   process.stdout.write(
-    `${JSON.stringify({ type: "diagnostic", secret: "raw-child-output" })}\n`,
-  );
-  process.stdout.write(
-    `${JSON.stringify({
-      type: "item.completed",
-      item: {
-        type: "agent_message",
-        text: JSON.stringify({
-          state: "result-stored",
-          attestationId: launch.attestationId,
-          generation: launch.generation,
-          outputDigest: "sha256:fake-codex-result",
-        }),
-      },
-    })}\n`,
+    `${[
+      JSON.stringify({ type: "diagnostic", secret: "raw-child-output" }),
+      storedResultToolEvent(launch),
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          type: "agent_message",
+          text: JSON.stringify({
+            state: "result-stored",
+            attestationId: launch.attestationId,
+            generation: launch.generation,
+            outputDigest: "sha256:fake-codex-result",
+          }),
+        },
+      }),
+    ].join("\n")}\n`,
   );
 } else if (mode === "invalid-result") {
   if (releasePath === undefined) {

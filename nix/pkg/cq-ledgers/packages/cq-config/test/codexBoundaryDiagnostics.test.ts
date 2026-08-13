@@ -186,8 +186,12 @@ describe("T1628 Codex boundary diagnostics", () => {
   });
 
   test("preserves the valid one-line handle contract without a diagnostic", () => {
-    expect(interceptCodexRoleBoundaryResult(completedAgentMessage(HANDLE.attestationId), HANDLE))
-      .toEqual(HANDLE);
+    expect(
+      interceptCodexRoleBoundaryResult(
+        [storedResultToolEvent(), completedAgentMessage(HANDLE.attestationId)].join("\n"),
+        HANDLE,
+      ),
+    ).toEqual(HANDLE);
   });
 
   test("cq-codex-role emits exactly one canonical machine-readable diagnostic line", async () => {

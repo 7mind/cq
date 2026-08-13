@@ -349,6 +349,7 @@ describe("the assembled-narrative field set is DERIVED from the role sidecars", 
       "acceptance",
       "description",
       "headline",
+      "inheritedGitReceipts",
       "priorCriticism",
     ]);
     for (const field of REFS_SUPPLIED_INPUT_FIELDS) {
@@ -373,6 +374,7 @@ describe("the assembled-narrative field set is DERIVED from the role sidecars", 
       "acceptance",
       "description",
       "headline",
+      "inheritedGitReceipts",
       "priorCriticism",
     ]);
   });
