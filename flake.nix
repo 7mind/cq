@@ -1727,6 +1727,59 @@ PY
                   fi
                 done
 
+                genericMutationLog="$NIX_BUILD_TOP/t1975-live-generic-mutation.log"
+                if ! ${pkgs.bun}/bin/bun test \
+                  packages/ledger/test/workset-generic-mutation-postgres.test.ts \
+                  packages/ledger/test/workset-generic-mutation-postgres-faults.test.ts \
+                  > "$genericMutationLog" 2>&1; then
+                  cat "$genericMutationLog" >&2
+                  exit 1
+                fi
+                cat "$genericMutationLog"
+                if grep -Fq '(skip)' "$genericMutationLog"; then
+                  echo "T1975 live PostgreSQL generic-mutation run skipped" >&2
+                  exit 1
+                fi
+                for expectedLeg in \
+                  'workset generic-mutation contract [T1961] — postgres-durable' \
+                  'allowed status update under restrictive roots persists across restart' \
+                  'cross-server: peer setRoots waits for holder generic mutation then observes result'; do
+                  if ! grep -F '(pass)' "$genericMutationLog" | grep -Fq "$expectedLeg"; then
+                    echo "T1975 live PostgreSQL generic-mutation run did not execute: $expectedLeg" >&2
+                    exit 1
+                  fi
+                done
+
+                coherenceLog="$NIX_BUILD_TOP/t1975-live-coherence.log"
+                if ! ${pkgs.bun}/bin/bun test \
+                  packages/ledger/test/postgres-coherence-watcher.test.ts \
+                  > "$coherenceLog" 2>&1; then
+                  cat "$coherenceLog" >&2
+                  exit 1
+                fi
+                cat "$coherenceLog"
+                if grep -Fq '(skip)' "$coherenceLog" || \
+                   ! grep -F '(pass)' "$coherenceLog" | grep -Fq \
+                     "pushes A's writes to B, isolates other tenants, and reconverges after a LISTEN drop"; then
+                  echo "T1975 live PostgreSQL coherence watcher did not execute" >&2
+                  exit 1
+                fi
+
+                stressLog="$NIX_BUILD_TOP/t1975-live-multi-writer-stress.log"
+                if ! ${pkgs.bun}/bin/bun test \
+                  packages/ledger/test/multi-writer-stress-postgres.test.ts \
+                  > "$stressLog" 2>&1; then
+                  cat "$stressLog" >&2
+                  exit 1
+                fi
+                cat "$stressLog"
+                if grep -Fq '(skip)' "$stressLog" || \
+                   ! grep -F '(pass)' "$stressLog" | grep -Fq \
+                     'zero lost updates, zero parse/read failures'; then
+                  echo "T1975 live PostgreSQL multi-writer stress did not execute" >&2
+                  exit 1
+                fi
+
                 runHook postCheck
               '';
 
