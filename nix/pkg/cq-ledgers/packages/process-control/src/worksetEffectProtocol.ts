@@ -96,6 +96,8 @@ export interface WorksetBrokerAdmissionHandle {
   ): void | Promise<void>;
   markSettled(): void | Promise<void>;
   releaseAfterSettlement(): Promise<void>;
+  /** Close an acquired admission when its fenced bootstrap never registered. */
+  readonly abandonBeforeRegistration?: () => Promise<void>;
 }
 
 export interface WorksetEffectAdmissionProvider {
@@ -196,6 +198,24 @@ export class WorksetEffectProtocolSession {
     });
     this.admission = handle;
     this.stageValue = "admission-held";
+  }
+
+  async abandonBeforeRegistration(): Promise<void> {
+    this.assertStage("admission-held", "abandonBeforeRegistration");
+    if (this.admission === null) {
+      throw new WorksetEffectProtocolError(
+        "admission-required",
+        "abandonBeforeRegistration requires a held admission",
+      );
+    }
+    if (this.admission.abandonBeforeRegistration === undefined) {
+      throw new WorksetEffectProtocolError(
+        "settlement-required",
+        "the admission provider cannot close an unregistered fenced launch",
+      );
+    }
+    await this.admission.abandonBeforeRegistration();
+    this.stageValue = "admission-closed";
   }
 
   async registerProcessGroup(

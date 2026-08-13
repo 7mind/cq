@@ -77,6 +77,14 @@ export interface WorksetStore {
   exclusiveHeld(): boolean;
 }
 
+/** Opaque host-facing subset injected into `@cq/process-control`. */
+export interface WorksetEffectAdmissionProvider {
+  acquire(input: {
+    readonly kind: WorksetExternalEffectKind;
+    readonly targetRef: string;
+  }): Promise<WorksetExternalEffectAdmission>;
+}
+
 export interface CreateInMemoryWorksetStoreOptions {
   readonly hooks?: WorksetAdmissionCoordinatorHooks;
   /**
@@ -138,4 +146,16 @@ export function worksetStoreFromCoordinator(
   coordinator: WorksetAdmissionCoordinator,
 ): WorksetStore {
   return coordinator;
+}
+
+/**
+ * Hide store internals behind the one-method effect-broker provider. Neither
+ * the store nor an admission handle crosses the spawned-process boundary.
+ */
+export function worksetEffectAdmissionProviderFromStore(
+  store: WorksetStore,
+): WorksetEffectAdmissionProvider {
+  return {
+    acquire: async (input) => await store.admitExternalEffect(input),
+  };
 }

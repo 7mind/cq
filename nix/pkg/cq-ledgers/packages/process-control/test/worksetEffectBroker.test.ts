@@ -57,7 +57,9 @@ function nodeBootstrap(specification: RegisteredLaunchBootstrapSpecification<Std
       readonly exitCode: number | null;
       readonly signal: NodeJS.Signals | null;
     }) => outcome,
-    terminate: (signal: NodeJS.Signals) => child.kill(signal),
+    terminate: (signal: NodeJS.Signals) => {
+      child.kill(signal);
+    },
   };
 }
 

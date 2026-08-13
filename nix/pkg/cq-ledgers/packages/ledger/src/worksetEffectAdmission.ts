@@ -260,6 +260,11 @@ export interface WorksetExternalEffectAdmission {
   markSettled(): void | Promise<void>;
   readonly settled: boolean;
   /**
+   * Close an admission whose fenced bootstrap failed before registration.
+   * This operation becomes illegal as soon as a process group is registered.
+   */
+  abandonBeforeRegistration(): Promise<void>;
+  /**
    * Close admission only after registration + settlement. Enforces
    * cleanup-before-release for every termination reason.
    */
@@ -866,6 +871,23 @@ export function createInMemoryWorksetAdmissionCoordinator(
         if (noteAdmissionSettled !== undefined) {
           noteAdmissionSettled(id);
         }
+      },
+      async abandonBeforeRegistration(): Promise<void> {
+        if (!open) {
+          throw new WorksetAdmissionError(
+            "admission-closed",
+            "external-effect admission already released",
+          );
+        }
+        if (record.processGroup !== null) {
+          throw new WorksetAdmissionError(
+            "process-group-already-registered",
+            "registered external-effect admission requires settlement",
+          );
+        }
+        open = false;
+        liveAdmissions.delete(handle);
+        await closeActiveAndRetract(id);
       },
       async releaseAfterSettlement(): Promise<void> {
         if (!open) {

@@ -610,6 +610,30 @@ export function createSqliteWorksetStore(
           db.query("UPDATE workset_admissions SET settled = 1 WHERE id = ?").run(granted.id);
         });
       },
+      async abandonBeforeRegistration(): Promise<void> {
+        if (!open) {
+          throw new WorksetAdmissionError(
+            "admission-closed",
+            "external-effect admission already released",
+          );
+        }
+        const row = loadAdmission(granted.id);
+        if (row === null) {
+          throw new WorksetAdmissionError(
+            "admission-closed",
+            "external-effect admission already released",
+          );
+        }
+        if (row.process_group_registered === 1) {
+          throw new WorksetAdmissionError(
+            "process-group-already-registered",
+            "registered external-effect admission requires settlement",
+          );
+        }
+        open = false;
+        unregisterLiveWorksetAdmission(handle);
+        deleteAdmission(granted.id);
+      },
       async releaseAfterSettlement(): Promise<void> {
         if (!open) {
           throw new WorksetAdmissionError(

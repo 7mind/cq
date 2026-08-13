@@ -934,6 +934,25 @@ export function createPostgresWorksetStore(
             WHERE project_key = ${projectKey} AND admission_id = ${granted.id}
           `;
         },
+        async abandonBeforeRegistration(): Promise<void> {
+          if (!open) {
+            throw new WorksetAdmissionError(
+              "admission-closed",
+              "external-effect admission already released",
+            );
+          }
+          if (processGroup !== null) {
+            throw new WorksetAdmissionError(
+              "process-group-already-registered",
+              "registered external-effect admission requires settlement",
+            );
+          }
+          open = false;
+          unregisterLiveWorksetAdmission(handle);
+          localActive.delete(granted.id);
+          await flushDurable(granted.id);
+          await deleteAdmission(granted.id);
+        },
         async releaseAfterSettlement(): Promise<void> {
           if (!open) {
             throw new WorksetAdmissionError(

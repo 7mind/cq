@@ -905,6 +905,25 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): Work
         fsSync.writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, "utf8");
         fsSync.renameSync(tmp, docPath);
       },
+      async abandonBeforeRegistration(): Promise<void> {
+        if (!open) {
+          throw new WorksetAdmissionError(
+            "admission-closed",
+            "external-effect admission already released",
+          );
+        }
+        if (processGroup !== null) {
+          throw new WorksetAdmissionError(
+            "process-group-already-registered",
+            "registered external-effect admission requires settlement",
+          );
+        }
+        open = false;
+        unregisterLiveWorksetAdmission(handle);
+        await withStoreMutex(async () => {
+          await deleteAdmissionDocument(granted.id);
+        });
+      },
       async releaseAfterSettlement(): Promise<void> {
         if (!open) {
           throw new WorksetAdmissionError(

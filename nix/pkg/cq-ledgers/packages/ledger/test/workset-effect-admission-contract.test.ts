@@ -250,6 +250,29 @@ describe("workset effect admission contract [T1953]", () => {
     expect(c.activeAdmissionCount()).toBe(0);
   });
 
+  it("abandons only a bootstrap-fenced admission that never registered", async () => {
+    const c = createInMemoryWorksetAdmissionCoordinator();
+    const unregistered = await c.admitExternalEffect({
+      kind: "child-dispatch",
+      targetRef: "tasks:T-fenced-launch-failure",
+    });
+    await unregistered.abandonBeforeRegistration();
+    expect(c.activeAdmissionCount()).toBe(0);
+    await expectRejection(unregistered.abandonBeforeRegistration(), "admission-closed");
+
+    const registered = await c.admitExternalEffect({
+      kind: "child-dispatch",
+      targetRef: "tasks:T-registered",
+    });
+    registered.registerProcessGroup({ pgid: 10, leaderPid: 10 });
+    await expectRejection(
+      registered.abandonBeforeRegistration(),
+      "process-group-already-registered",
+    );
+    registered.markSettled();
+    await registered.releaseAfterSettlement();
+  });
+
   it("cleanup-before-release holds for every termination reason", async () => {
     const c = createInMemoryWorksetAdmissionCoordinator();
     for (const reason of WORKSET_EFFECT_TERMINATION_REASONS) {
