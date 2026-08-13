@@ -126,7 +126,9 @@ in
             --set CQ_PROMPT_ROOT ${claudePromptRoot}
         '';
       };
-      plugins = lib.optionals cfg.openaiCodexPlugin.enable [ "${codexPluginCc}/plugins/codex" ];
+      plugins = lib.mkIf cfg.openaiCodexPlugin.enable {
+        codex = "${codexPluginCc}/plugins/codex";
+      };
       settings = {
         alwaysThinkingEnabled = true;
         theme = "dark";
