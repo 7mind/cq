@@ -21,6 +21,7 @@ import { randomUUID } from "node:crypto";
 import {
   BootstrapViolationError,
   CANONICAL_LEDGERS,
+  createTrustedWorksetManagementAuthority,
   GOALS_LEDGER,
   GOALS_SCHEMA,
   REVIEWS_LEDGER,
@@ -258,6 +259,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
         projectKey,
         displayName: projectKey,
         onSchemaDivergence: "backup-reinit",
+        worksetAuthority: createTrustedWorksetManagementAuthority(),
       });
       await expect(store.init()).resolves.toBeUndefined();
       try {

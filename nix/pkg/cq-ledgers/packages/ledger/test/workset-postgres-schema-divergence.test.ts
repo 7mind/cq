@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { GOALS_LEDGER, GOALS_SCHEMA } from "../src/index.js";
+import {
+  createTrustedWorksetManagementAuthority,
+  GOALS_LEDGER,
+  GOALS_SCHEMA,
+} from "../src/index.js";
 import { openPgPool } from "../src/store/postgres/connection.js";
 import { PostgresLedgerStore } from "../src/store/postgres/PostgresLedgerStore.js";
 import { ensureSchema } from "../src/store/postgres/schema.js";
@@ -47,6 +51,7 @@ describe.skipIf(setupPool === undefined)(
         projectKey,
         displayName: projectKey,
         onSchemaDivergence: "backup-reinit",
+        worksetAuthority: createTrustedWorksetManagementAuthority(),
       });
       await store.init();
       await store.dispose();
