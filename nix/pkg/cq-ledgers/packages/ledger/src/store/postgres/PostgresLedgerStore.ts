@@ -2044,6 +2044,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   /** Run one tenant-scoped guarded plan operation and notify only after commit. */
   async runAtomicWorksetPlanLifecycleMutation<T>(
+    goalId: string,
     mutate: (tx: WorksetPlanLifecycleTx) => T,
   ): Promise<T> {
     this.assertInit();
@@ -2051,6 +2052,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     let dirtyLedgers: readonly string[] = [];
     let live!: LiveTenantState;
     await writeTransaction(this.pool(), async (tx) => {
+      await this.lockGoalRows(tx, [goalId]);
       await this.lockTenantCounters(tx);
       const tenant = await this.readLiveTenant(tx);
       const state = await this.loadPlanLifecycleState(tx, tenant.ledgers);

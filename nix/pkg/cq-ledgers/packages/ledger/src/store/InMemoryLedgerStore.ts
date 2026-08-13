@@ -750,6 +750,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
    * holding the same all-ledger lock that protects the plan state transition.
    */
   async runAtomicWorksetPlanLifecycleMutation<T>(
+    _goalId: string,
     mutate: (tx: InMemoryWorksetPlanLifecycleTx) => T,
   ): Promise<T> {
     this.assertInit();

@@ -45,7 +45,8 @@ async function open(
     worksetStore,
     invocationAuthority: createTrustedWorksetManagementAuthority(),
     runOwnedTransaction: (mutate) => rawStore.runAtomicOwnedMutation(mutate),
-    runPlanLifecycleTransaction: (mutate) => rawStore.runAtomicWorksetPlanLifecycleMutation(mutate),
+    runPlanLifecycleTransaction: (goalId, mutate) =>
+      rawStore.runAtomicWorksetPlanLifecycleMutation(goalId, mutate),
   });
   await store.init();
   stores.push(store);

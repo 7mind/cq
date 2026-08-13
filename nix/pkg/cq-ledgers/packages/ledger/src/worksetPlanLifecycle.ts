@@ -107,6 +107,7 @@ export interface WorksetPlanLifecycleTx {
 
 export interface WorksetPlanLifecycleHost extends WorksetOwnedWriteHost {
   runPlanLifecycleTransaction<T>(
+    goalId: string,
     mutate: (tx: WorksetPlanLifecycleTx) => T,
   ): Promise<T>;
   readonly afterPlanAdmit?: () => Promise<void> | void;
@@ -397,7 +398,7 @@ export function createWorksetGuardedPlanLifecycleStore(
         );
       }
       try {
-        return await host.runPlanLifecycleTransaction((tx) => {
+        return await host.runPlanLifecycleTransaction(input.goalId, (tx) => {
           const beforeState = tx.activeState();
           const selectedMembers = selectedMembersForOperation(
             beforeState,
@@ -480,8 +481,9 @@ export function createInMemoryWorksetGuardedPlanLifecycleStore(
       : {}),
     runOwnedTransaction: (mutate) =>
       rawStore.runAtomicOwnedMutation((tx: InMemoryOwnedWriteTx) => mutate(tx)),
-    runPlanLifecycleTransaction: (mutate) =>
+    runPlanLifecycleTransaction: (goalId, mutate) =>
       rawStore.runAtomicWorksetPlanLifecycleMutation(
+        goalId,
         (tx: InMemoryWorksetPlanLifecycleTx) => mutate(tx),
       ),
   };

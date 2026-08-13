@@ -58,8 +58,8 @@ async function open(
     worksetStore: raw.worksetStore(),
     invocationAuthority: createTrustedWorksetManagementAuthority(),
     runOwnedTransaction: (mutate) => raw.runAtomicOwnedMutation(mutate),
-    runPlanLifecycleTransaction: (mutate) =>
-      raw.runAtomicWorksetPlanLifecycleMutation(mutate),
+    runPlanLifecycleTransaction: (goalId, mutate) =>
+      raw.runAtomicWorksetPlanLifecycleMutation(goalId, mutate),
   });
   stores.push(store);
   return { raw, store };
@@ -109,6 +109,29 @@ function publishInput(
 }
 
 describe("workset plan lifecycle SQLite faults [T1970]", () => {
+  it("an exact replay refreshes a stale peer's active search index", async () => {
+    const dbPath = await freshDbPath();
+    const writer = await open(dbPath);
+    const stalePeer = await open(dbPath);
+    const claim = await seedClaim(writer.store, "sqlite-replay-refresh-claim");
+    const input = publishInput(
+      claim,
+      "sqlite-replay-refresh-publish",
+      "sqlite-replay-refresh",
+    );
+    const published = await writer.store.publishPlanDraft(input);
+    expect(published).toMatchObject({ ok: true, replayed: false });
+    expect(await stalePeer.store.ftsSearch("sqlite-replay-refresh")).toEqual([]);
+
+    const replay = await stalePeer.store.publishPlanDraft(input);
+    expect(replay).toMatchObject({ ok: true, replayed: true });
+    expect(
+      (await stalePeer.store.ftsSearch("sqlite-replay-refresh")).map(
+        ({ item }) => item.fields.headline,
+      ),
+    ).toContain("sqlite-replay-refresh");
+  });
+
   it("statement failure rolls back lifecycle rows, effects, and restart state", async () => {
     const dbPath = await freshDbPath();
     const mutations: string[] = [];

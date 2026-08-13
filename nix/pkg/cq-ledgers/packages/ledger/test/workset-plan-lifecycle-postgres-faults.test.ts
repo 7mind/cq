@@ -92,8 +92,8 @@ if (dsn === undefined || dsn.length === 0) {
       worksetStore: raw.worksetStore(),
       invocationAuthority: createTrustedWorksetManagementAuthority(),
       runOwnedTransaction: (mutate) => raw.runAtomicOwnedMutation(mutate),
-      runPlanLifecycleTransaction: (mutate) =>
-        raw.runAtomicWorksetPlanLifecycleMutation(mutate),
+      runPlanLifecycleTransaction: (goalId, mutate) =>
+        raw.runAtomicWorksetPlanLifecycleMutation(goalId, mutate),
     });
     stores.push(store);
     return { raw, store, pool };
@@ -154,7 +154,79 @@ if (dsn === undefined || dsn.length === 0) {
     return predicate();
   }
 
+  async function settleWithoutDeadlock<T>(promise: Promise<T>): Promise<T> {
+    return Promise.race([
+      promise,
+      Bun.sleep(3_000).then(() => {
+        throw new Error("guarded/raw same-goal writers did not settle");
+      }),
+    ]);
+  }
+
   describe("workset plan lifecycle PostgreSQL faults [T1971]", () => {
+    it("serializes guarded and raw same-goal writes in both lock orders", async () => {
+      for (const order of ["raw-first", "guarded-first"] as const) {
+        const projectKey = `t1971-goal-race-${order}-${randomUUID()}`;
+        const writer = await open(projectKey);
+        const claim = await seedClaim(writer.store, `pg-goal-race-claim-${order}`);
+        const input = publishInput(
+          claim,
+          `pg-goal-race-publish-${order}`,
+          `pg-goal-race-task-${order}`,
+        );
+        const marker = `pg-goal-race-marker-${order}`;
+        const suffix = randomUUID().replaceAll("-", "");
+        const functionName = `pause_goal_race_${suffix}`;
+        const triggerName = `pause_goal_race_trigger_${suffix}`;
+        const triggerCondition =
+          order === "raw-first"
+            ? `NEW.fields_json LIKE '%${marker}%'`
+            : `NEW.fields_json LIKE '%planCurrentDraft%' AND NEW.fields_json NOT LIKE '%${marker}%'`;
+        await setupPool.unsafe(`
+          CREATE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN
+            IF NEW.project_key = '${projectKey}' AND NEW.ledger = 'goals'
+               AND NEW.id = 'G1' AND ${triggerCondition} THEN
+              PERFORM pg_sleep(0.25);
+            END IF;
+            RETURN NEW;
+          END
+          $$;
+          CREATE TRIGGER ${triggerName}
+          BEFORE UPDATE ON items FOR EACH ROW EXECUTE FUNCTION ${functionName}();
+        `);
+        try {
+          const rawWrite = () =>
+            writer.raw.updateItem(GOALS_LEDGER, "G1", {
+              fields: { description: marker },
+            });
+          let first: Promise<unknown>;
+          let second: Promise<unknown>;
+          if (order === "raw-first") {
+            first = rawWrite();
+            await Bun.sleep(50);
+            second = writer.store.publishPlanDraft(input);
+          } else {
+            first = writer.store.publishPlanDraft(input);
+            await Bun.sleep(50);
+            second = rawWrite();
+          }
+          await settleWithoutDeadlock(Promise.all([first, second]));
+        } finally {
+          await setupPool.unsafe(`DROP TRIGGER ${triggerName} ON items`);
+          await setupPool.unsafe(`DROP FUNCTION ${functionName}()`);
+        }
+
+        const restarted = await open(projectKey);
+        expect(restarted.store.fetchItem(GOALS_LEDGER, "G1").fields.description).toBe(
+          marker,
+        );
+        expect(
+          restarted.store.search(TASKS_LEDGER, `pg-goal-race-task-${order}`),
+        ).toHaveLength(1);
+      }
+    });
+
     it("statement failure rolls back tenant rows and restart retries as new", async () => {
       const projectKey = `t1971-fault-${randomUUID()}`;
       const mutations: string[] = [];

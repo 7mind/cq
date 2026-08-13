@@ -1438,6 +1438,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
 
   /** Run one guarded plan operation under the complete durable lifecycle boundary. */
   async runAtomicWorksetPlanLifecycleMutation<T>(
+    _goalId: string,
     mutate: (tx: WorksetPlanLifecycleTx) => T,
   ): Promise<T> {
     this.assertInit();

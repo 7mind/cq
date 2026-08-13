@@ -78,6 +78,7 @@ async function seedGitRepo(): Promise<string> {
 type DurablePlanStore = LedgerStore & {
   runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T>;
   runAtomicWorksetPlanLifecycleMutation<T>(
+    goalId: string,
     mutate: (tx: WorksetPlanLifecycleTx) => T,
   ): Promise<T>;
 };
@@ -96,8 +97,8 @@ function surface(
         ? { afterPlanAdmit: options.afterPlanAdmit }
         : {}),
       runOwnedTransaction: (mutate) => rawStore.runAtomicOwnedMutation(mutate),
-      runPlanLifecycleTransaction: (mutate) =>
-        rawStore.runAtomicWorksetPlanLifecycleMutation(mutate),
+      runPlanLifecycleTransaction: (goalId, mutate) =>
+        rawStore.runAtomicWorksetPlanLifecycleMutation(goalId, mutate),
     }),
   );
 }

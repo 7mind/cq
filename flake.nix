@@ -1716,6 +1716,7 @@ PY
                 fi
                 for expectedLeg in \
                   'PostgresLedgerStore workset-guarded plan lifecycle [BA]' \
+                  'serializes guarded and raw same-goal writes in both lock orders' \
                   'statement failure rolls back tenant rows and restart retries as new' \
                   'backend disconnect aborts the transaction without a replay row' \
                   'post-commit NOTIFY reveals the complete lifecycle graph to a peer' \

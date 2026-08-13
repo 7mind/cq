@@ -1580,6 +1580,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   /** Run one guarded plan operation inside one BEGIN IMMEDIATE transaction. */
   async runAtomicWorksetPlanLifecycleMutation<T>(
+    _goalId: string,
     mutate: (tx: WorksetPlanLifecycleTx) => T,
   ): Promise<T> {
     this.assertInit();
@@ -1599,8 +1600,10 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       }
       return { result, dirtyLedgers };
     });
-    for (const ledgerId of outcome.dirtyLedgers) {
+    for (const ledgerId of this.enumerate()) {
       this.rebuildLedgerIndexActive(ledgerId);
+    }
+    for (const ledgerId of outcome.dirtyLedgers) {
       this.fireMutation(ledgerId, "update");
     }
     return outcome.result;
