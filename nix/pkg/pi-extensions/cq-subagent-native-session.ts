@@ -79,7 +79,10 @@ export interface PiNativeCreateAgentSessionOptions {
 export interface PiNativeSessionDependencies {
   readonly createAgentSession: (options: PiNativeCreateAgentSessionOptions) => Promise<{
     session: {
-      prompt: (text: string, options?: { signal?: AbortSignal }) => Promise<void>;
+      /** Pi 0.84.1 AgentSession.prompt takes PromptOptions (no AbortSignal). */
+      prompt: (text: string) => Promise<void>;
+      /** Pi 0.84.1 abort path; PromptOptions no longer carries signal. */
+      abort?: () => Promise<void> | void;
       agent: { waitForIdle: () => Promise<void>; state?: { messages?: unknown[] } };
       /** Observed model id after session open (optional; tests may set). */
       model?: { id?: string; provider?: string } | null;
@@ -185,8 +188,30 @@ export async function runPiNativeSession(
       request.systemPrompt === undefined || request.systemPrompt.trim() === ""
         ? request.prompt
         : `${request.systemPrompt}\n\n${request.prompt}`;
-    await session.prompt(promptText, request.signal === undefined ? undefined : { signal: request.signal });
-    await session.agent.waitForIdle();
+    const abortSession = async (): Promise<void> => {
+      if (session.abort !== undefined) {
+        await session.abort();
+      }
+    };
+    if (request.signal !== undefined) {
+      if (request.signal.aborted) {
+        await abortSession();
+        throw request.signal.reason ?? new Error("aborted");
+      }
+      const onAbort = (): void => {
+        void abortSession();
+      };
+      request.signal.addEventListener("abort", onAbort, { once: true });
+      try {
+        await session.prompt(promptText);
+        await session.agent.waitForIdle();
+      } finally {
+        request.signal.removeEventListener("abort", onAbort);
+      }
+    } else {
+      await session.prompt(promptText);
+      await session.agent.waitForIdle();
+    }
     const messages = session.agent.state?.messages ?? [];
     return {
       finalText: extractFinalAssistantText(messages),

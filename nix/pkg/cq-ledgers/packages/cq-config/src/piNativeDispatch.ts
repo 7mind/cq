@@ -119,7 +119,9 @@ function handleOf(context: DispatchAdapterLaunchContext): DispatchHandle {
 export function createPiNativeDispatchAdapter(
   options: CreatePiNativeDispatchAdapterOptions,
 ): DispatchTransportAdapter {
-  const launch: DispatchAdapterLauncher = async (context) => {
+  const launch: DispatchAdapterLauncher = async (
+    context,
+  ): Promise<DispatchAdapterLaunchResult> => {
     const binding = await options.resolve(context);
 
     // worktree_manage bind preflight (mirror claudeNativeWorktree): when the

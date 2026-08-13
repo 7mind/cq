@@ -416,7 +416,7 @@
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
           outputHash = {
-            "x86_64-linux" = "sha256-03RGIEh/k4p/MhSw7foaGgezF3Oh371+trMU2oo8UaU=";
+            "x86_64-linux" = "sha256-RHjGMWvQqdI+bfxc7j62IDwgVF649xt99BweB1OpWzc=";
             "aarch64-darwin" = "sha256-xoPqllqrZ7pI1XK5Wow9uYzO8WuB5z33EFq6EldKNzA=";
           }.${system} or (throw "pi-extensions-node-modules: no FOD hash pinned for ${system}");
         };
@@ -1098,8 +1098,8 @@ EOF
                 while IFS= read -r testPath; do
                   set -- "$@" "$testPath"
                 done < "$testManifest"
-                if [ "$#" -ne 9 ]; then
-                  echo "expected nine Pi extension test arguments, got $#" >&2
+                if [ "$#" -ne 10 ]; then
+                  echo "expected ten Pi extension test arguments, got $#" >&2
                   exit 1
                 fi
                 set -x

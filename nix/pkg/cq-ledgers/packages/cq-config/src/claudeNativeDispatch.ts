@@ -119,7 +119,9 @@ function asQualificationHandle(
 export function createClaudeNativeDispatchAdapter(
   options: CreateClaudeNativeDispatchAdapterOptions,
 ): DispatchTransportAdapter {
-  const launch: DispatchAdapterLauncher = async (context) => {
+  const launch: DispatchAdapterLauncher = async (
+    context,
+  ): Promise<DispatchAdapterLaunchResult> => {
     const binding = await options.resolve(context);
     const wt = binding.worktree;
 
