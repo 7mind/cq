@@ -36,6 +36,19 @@ if (dsn === undefined || dsn.length === 0) {
 } else {
   const pgDsn: string = dsn;
   const setupPool = openPgPool(pgDsn);
+  const sharedPool = new Proxy(setupPool, {
+    apply: (target, _thisArgument, argumentsList) =>
+      Reflect.apply(
+        target as unknown as (...args: unknown[]) => unknown,
+        target,
+        argumentsList,
+      ),
+    get: (target, property) => {
+      if (property === "close") return async () => undefined;
+      const value = Reflect.get(target, property, target) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
   const schemaReady = ensureSchema(setupPool);
   const stores: WorksetGuardedPlanLifecycleStore[] = [];
 
@@ -53,7 +66,7 @@ if (dsn === undefined || dsn.length === 0) {
     pool: ReturnType<typeof openPgPool>;
   }> {
     await schemaReady;
-    const pool = openPgPool(pgDsn);
+    const pool = sharedPool;
     const raw = new PostgresLedgerStore({
       pool,
       projectKey,
