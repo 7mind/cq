@@ -6,6 +6,7 @@ import {
   type FieldValue,
   type FetchedMilestoneItem,
   type Item,
+  type ItemDto,
   type ItemProjection,
   type LedgerSchema,
   type PromptCatalogCapability,
@@ -128,22 +129,35 @@ function decode<T = unknown>(result: ToolResult): T {
   return JSON.parse(first.text) as T;
 }
 
-function expectedItem(item: Item, projection: ItemProjection): Item {
+const EXPECTED_COMPACT_FIELD_NAMES = [
+  "headline",
+  "title",
+  "question",
+  "answer",
+  "summary",
+  "severity",
+  "suggestedModel",
+  "tags",
+  "sourceRefs",
+  "dependsOn",
+  "blockedBy",
+  "ledgerRefs",
+] as const;
+
+const EXPECTED_COMPACT_FIELD_NAME_SET = new Set<string>(EXPECTED_COMPACT_FIELD_NAMES);
+
+function expectedItem(item: Item, projection: ItemProjection): ItemDto {
   if (projection === "full") return item;
   const fields: Record<string, FieldValue> = {};
-  for (const fieldName of [
-    "headline",
-    "title",
-    "question",
-    "summary",
-    "severity",
-    "suggestedModel",
-    "tags",
-    "sourceRefs",
-    "dependsOn",
-    "blockedBy",
-    "ledgerRefs",
-  ]) {
+  if (projection === "complement") {
+    for (const [fieldName, value] of Object.entries(item.fields)) {
+      if (!EXPECTED_COMPACT_FIELD_NAME_SET.has(fieldName) && value !== undefined) {
+        fields[fieldName] = value;
+      }
+    }
+    return { id: item.id, fields };
+  }
+  for (const fieldName of EXPECTED_COMPACT_FIELD_NAMES) {
     const value = item.fields[fieldName];
     if (value !== undefined) fields[fieldName] = value;
   }
@@ -160,41 +174,71 @@ function expectedItem(item: Item, projection: ItemProjection): Item {
   return compact;
 }
 
-function expectNoteOmitted(toolName: string, items: Item[]): void {
+function expectNoteOmitted(toolName: string, items: ItemDto[]): void {
   expect(items.length, `${toolName}: fixture items`).toBeGreaterThan(0);
   for (const item of items) {
     expect(item.fields, `${toolName}: ${item.id}`).not.toHaveProperty("note");
   }
 }
 
-const READ_INPUTS = {
-  fetch_ledger: { ledger_id: "xenos" },
-  fetch_item: { ledger_id: "xenos", item_id: "X1" },
-  search_items: { ledger_id: "xenos", query: "Needle" },
-  fts_search: { query: "needle", ledger: "xenos" },
-  list_milestone_items: { milestone_id: "M1" },
-} as const;
+function expectExactComplement(toolName: string, items: ItemDto[]): void {
+  expect(items.length, `${toolName}: fixture items`).toBeGreaterThan(0);
+  for (const item of items) {
+    expect(Object.keys(item).sort(), `${toolName}: ${item.id} envelope`).toEqual([
+      "fields",
+      "id",
+    ]);
+    expect(item.fields, `${toolName}: ${item.id} narrative`).toHaveProperty("description");
+    expect(item.fields, `${toolName}: ${item.id} note`).toHaveProperty("note");
+    for (const fieldName of EXPECTED_COMPACT_FIELD_NAMES) {
+      expect(item.fields, `${toolName}: ${item.id} compact field ${fieldName}`).not.toHaveProperty(
+        fieldName,
+      );
+    }
+  }
+}
+
+const READ_SCHEMA_CASES = [
+  { label: "fetch_ledger", tool: "fetch_ledger", args: { ledger_id: "xenos" } },
+  { label: "fetch_item", tool: "fetch_item", args: { ledger_id: "xenos", item_id: "X1" } },
+  { label: "search_items", tool: "search_items", args: { ledger_id: "xenos", query: "Needle" } },
+  { label: "fts_search", tool: "fts_search", args: { query: "needle", ledger: "xenos" } },
+  {
+    label: "fetch_milestone",
+    tool: "fetch_item",
+    args: { ledger_id: "milestones", item_id: "M1" },
+  },
+  {
+    label: "list_milestone_items",
+    tool: "list_milestone_items",
+    args: { milestone_id: "M1" },
+  },
+] as const;
 
 describe("createLedgerMcpTools mandatory read projections", () => {
-  it("rejects omitted and invalid projections for all five item-bearing reads", async () => {
+  it("parses complement and rejects omitted/invalid projections for all six read paths", async () => {
     const { tools } = await buildFixture();
 
-    for (const [name, args] of Object.entries(READ_INPUTS)) {
-      const tool = findTool(tools, name);
+    for (const { label, tool: toolName, args } of READ_SCHEMA_CASES) {
+      const tool = findTool(tools, toolName);
       const input = z.object(tool.inputSchema);
-      expect(input.safeParse(args).success, `${name}: omitted`).toBe(false);
-      expect(input.safeParse({ ...args, projection: "summary" }).success, `${name}: invalid`).toBe(
+      expect(input.safeParse(args).success, `${label}: omitted`).toBe(false);
+      expect(input.safeParse({ ...args, projection: "summary" }).success, `${label}: invalid`).toBe(
         false,
       );
-      expect(input.safeParse({ ...args, projection: "compact" }).success, `${name}: compact`).toBe(
+      expect(input.safeParse({ ...args, projection: "compact" }).success, `${label}: compact`).toBe(
         true,
       );
-      expect(input.safeParse({ ...args, projection: "full" }).success, `${name}: full`).toBe(true);
-      expect("compact" in tool.inputSchema, `${name}: obsolete compact`).toBe(false);
+      expect(input.safeParse({ ...args, projection: "full" }).success, `${label}: full`).toBe(true);
+      expect(
+        input.safeParse({ ...args, projection: "complement" }).success,
+        `${label}: complement`,
+      ).toBe(true);
+      expect("compact" in tool.inputSchema, `${label}: obsolete compact`).toBe(false);
     }
   });
 
-  for (const projection of ["compact", "full"] as const) {
+  for (const projection of ["compact", "full", "complement"] as const) {
     it(`emits exact ${projection} envelopes for every eligible read`, async () => {
       const fixture = await buildFixture();
       const { store, tools, milestone, first } = fixture;
@@ -217,7 +261,7 @@ describe("createLedgerMcpTools mandatory read projections", () => {
         ledger: expectedLedger,
       });
 
-      const itemResponse = decode<{ item: Item }>(
+      const itemResponse = decode<{ item: ItemDto }>(
         await callTool(tools, "fetch_item", {
           ledger_id: "xenos",
           item_id: first.id,
@@ -228,7 +272,7 @@ describe("createLedgerMcpTools mandatory read projections", () => {
         item: expectedItem(first, projection),
       });
 
-      const searchResponse = decode<{ items: Item[] }>(
+      const searchResponse = decode<{ items: ItemDto[] }>(
         await callTool(tools, "search_items", {
           ledger_id: "xenos",
           query: "Needle",
@@ -242,7 +286,7 @@ describe("createLedgerMcpTools mandatory read projections", () => {
       const authoritativeHits = await store.ftsSearch("needle", {
         ledger: "xenos",
       });
-      const ftsResponse = decode<{ results: Array<{ item: Item }> }>(
+      const ftsResponse = decode<{ results: Array<{ item: ItemDto }> }>(
         await callTool(tools, "fts_search", {
           query: "needle",
           ledger: "xenos",
@@ -261,7 +305,7 @@ describe("createLedgerMcpTools mandatory read projections", () => {
         MILESTONE_NOTE,
       );
       const milestoneResponse = decode<{
-        item: Item;
+        item: ItemDto;
         resolved: typeof fetchedMilestone.resolved;
         references: typeof fetchedMilestone.references;
       }>(
@@ -279,7 +323,7 @@ describe("createLedgerMcpTools mandatory read projections", () => {
 
       const milestoneItems = store.listMilestoneItems(milestone.id);
       const milestoneItemsResponse = decode<{
-        items: Record<string, Item[]>;
+        items: Record<string, ItemDto[]>;
       }>(
         await callTool(tools, "list_milestone_items", {
           milestone_id: milestone.id,
@@ -308,6 +352,23 @@ describe("createLedgerMcpTools mandatory read projections", () => {
         );
         expectNoteOmitted("root fetch", [milestoneResponse.item]);
         expectNoteOmitted(
+          "list_milestone_items",
+          Object.values(milestoneItemsResponse.items).flat(),
+        );
+      }
+      if (projection === "complement") {
+        expectExactComplement(
+          "fetch_ledger",
+          ledgerResponse.ledger.milestones.flatMap((group) => group.items),
+        );
+        expectExactComplement("fetch_item", [itemResponse.item]);
+        expectExactComplement("search_items", searchResponse.items);
+        expectExactComplement(
+          "fts_search",
+          ftsResponse.results.map((result) => result.item),
+        );
+        expectExactComplement("fetch_milestone", [milestoneResponse.item]);
+        expectExactComplement(
           "list_milestone_items",
           Object.values(milestoneItemsResponse.items).flat(),
         );
@@ -352,6 +413,23 @@ describe("createLedgerMcpTools mandatory read projections", () => {
       offset: 1,
       limit: 1,
       nextOffset: null,
+    });
+
+    const complementPage = decode(
+      await callTool(tools, "fetch_ledger", {
+        ledger_id: "xenos",
+        projection: "complement",
+        offset: 0,
+        limit: 1,
+      }),
+    );
+    expect(complementPage).toEqual({
+      ledger,
+      items: [expectedItem(first, "complement")],
+      total: 2,
+      offset: 0,
+      limit: 1,
+      nextOffset: 1,
     });
   });
 

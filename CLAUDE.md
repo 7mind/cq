@@ -86,9 +86,12 @@ work, instead of inline TODOs or scratch files.
 
 - Item-bearing reads (`fetch_ledger`, `fetch_item`, `search_items`,
   `fts_search`, `list_milestone_items`) require an explicit
-  `projection: "compact"` or `projection: "full"`; there is no default.
+  `projection: "compact"`, `projection: "complement"`, or
+  `projection: "full"`; there is no default.
   Use compact for discovery/status/reference work. Use full only when the next
   operation needs narrative or another field outside the compact allowlist.
+  Complement returns only `id` plus non-compact fields; for one item identity,
+  `fields(full) = fields(compact) ∪ fields(complement)` with disjoint field sets.
 - Compact items retain `id`, `milestoneId`, `status`, `createdAt`, `updatedAt`,
   optional `author`/`session`, and only `headline`, `title`, `question`,
   `answer`, `summary`, `severity`, `suggestedModel`, `tags`, `sourceRefs`,

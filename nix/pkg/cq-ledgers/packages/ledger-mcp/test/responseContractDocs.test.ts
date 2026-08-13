@@ -7,6 +7,7 @@ import {
   COMPACT_ITEM_FIELD_NAMES,
   createLedgerMcpTools,
   InMemoryLedgerStore,
+  ITEM_PROJECTION_DESCRIPTION,
   LEDGER_RESPONSE_CONTRACTS,
   LEDGER_TOOL_NAMES,
   type DispatchCapability,
@@ -137,6 +138,9 @@ describe("public MCP response-contract documentation", () => {
       (match) => match[1],
     );
     expect(compactFields).toEqual([...COMPACT_ITEM_FIELD_NAMES]);
+    expect(readme).toContain('projection: "complement"');
+    expect(readme).toContain("fields(full) = fields(compact) ∪ fields(complement)");
+    expect(readme).toContain("After a `compact` read");
   });
 
   // Regression: T678 review round 2 — field-level documentation drift must fail.
@@ -166,6 +170,7 @@ describe("public MCP response-contract documentation", () => {
     ]);
 
     expect(rootReadme).toContain("38-tool ledger surface");
+    expect(rootReadme).toContain("compact/complement/full projection");
     expect(readme).toContain("single breaking cutover");
     expect(readme).toContain("No legacy peer is supported");
     expect(readme).toContain("There is no compatibility flag");
@@ -176,6 +181,8 @@ describe("public MCP response-contract documentation", () => {
     expect(readme).not.toContain("Milestone acknowledgement");
     expect(projectGuidance).toContain('projection: "compact"');
     expect(projectGuidance).toContain('projection: "full"');
+    expect(projectGuidance).toContain('projection: "complement"');
+    expect(projectGuidance).toContain("fields(full) = fields(compact) ∪ fields(complement)");
     expect(projectGuidance).toContain("mutation acknowledgement");
   });
 
@@ -235,17 +242,23 @@ describe("public MCP response-contract documentation", () => {
         }
         if (contract.kind === "mandatory-item-projection") {
           expect(tool?.inputSchema.required).toContain("projection");
+          expect(tool?.description).toContain(ITEM_PROJECTION_DESCRIPTION);
+          expect(tool?.description).not.toContain(
+            "projection is required: compact returns identity, status, timestamps, provenance, summary fields, and references; full returns every item field",
+          );
         }
       }
 
-      for (const example of documentedExamples(await packageReadme())) {
+      const examples = documentedExamples(await packageReadme());
+      expect(examples.map((example) => example.arguments["projection"])).toContain("complement");
+      for (const example of examples) {
         if (!Object.hasOwn(LEDGER_RESPONSE_CONTRACTS, example.tool)) {
           throw new Error(`unknown documented tool ${example.tool}`);
         }
         const toolName = example.tool as keyof typeof LEDGER_RESPONSE_CONTRACTS;
         const contract = LEDGER_RESPONSE_CONTRACTS[toolName];
         if (contract.kind === "mandatory-item-projection") {
-          expect(example.arguments["projection"]).toMatch(/^(compact|full)$/);
+          expect(example.arguments["projection"]).toMatch(/^(compact|full|complement)$/);
         }
         if (contract.kind === "fixed-acknowledgement") {
           expect(example.consume).toBeDefined();

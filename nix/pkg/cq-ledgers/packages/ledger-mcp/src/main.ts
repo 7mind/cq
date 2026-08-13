@@ -316,7 +316,7 @@ export const TOP_LEVEL_USAGE = [
 const SERVER_INSTRUCTIONS_TEMPLATE = [
   "Markdown-backed typed ledgers. Milestones form dependency DAGs; other items attach to milestones. Discover schemas with enumerate_ledgers. Write schema-valid items with author/session provenance; recognized ledger references are canonicalized on write.",
   "",
-  "Reads require compact or full projection. Paginate fetch_ledger until nextOffset is null. fts_search spans active ledgers by default and accepts field qualifiers; terminal items remain active until archive_milestone sweeps a fully terminal milestone.",
+  "Reads require compact, complement, or full projection. For one item identity, fields(full) = fields(compact) ∪ fields(complement), with disjoint field sets. Paginate fetch_ledger until nextOffset is null. fts_search spans active ledgers by default and accepts field qualifiers; terminal items remain active until archive_milestone sweeps a fully terminal milestone.",
   "",
   "Use snapshot and derive_predicates for CQ flow state. Dispatch and plan-lifecycle tools retain their capability, generation, fence, recovery, and idempotency contracts; preserve exact identifiers returned by those tools.",
 ].join("\n");

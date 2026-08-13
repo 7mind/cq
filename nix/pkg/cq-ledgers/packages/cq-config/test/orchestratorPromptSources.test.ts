@@ -46,7 +46,7 @@ const LEDGER_RESPONSE_CONTRACT_ROLES = new Set([
   "research/advance",
 ]);
 const LEDGER_RESPONSE_CONTRACT =
-  'Item reads require an explicit projection: use `projection: "compact"` for discovery, status, and reference work, and `projection: "full"` only when narrative fields are required. Mutations return fixed acknowledgements, never full entities; issue an explicit full read only when later reasoning needs omitted narrative.';
+  'Item reads require an explicit projection: use `projection: "compact"` for discovery, status, and reference work; use `projection: "complement"` to retrieve only non-compact fields for an item already read compactly; and use `projection: "full"` when every field is required. For one item identity, `fields(full) = fields(compact) ∪ fields(complement)` with disjoint field sets. Mutations return fixed acknowledgements, never full entities; issue an explicit full read only when later reasoning needs omitted narrative.';
 
 interface CatalogRole {
   readonly roleId: string;

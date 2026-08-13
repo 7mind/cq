@@ -439,7 +439,7 @@ export function createLedgerMcpToolSpecifications(
 
   const fetchLedger = tool(
     "fetch_ledger",
-    "Fetch a ledger's schema, active milestone groups with resolved milestone metadata, and archive pointers. projection is required: compact returns identity, status, timestamps, provenance, summary fields, and references; full returns every item field. Without pagination returns grouped {ledger}; offset/limit returns flattened {ledger,items,total,offset,limit,nextOffset}. Follow nextOffset until null.",
+    `Fetch a ledger's schema, active milestone groups with resolved milestone metadata, and archive pointers. ${ITEM_PROJECTION_DESCRIPTION}. Without pagination returns grouped {ledger}; offset/limit returns flattened {ledger,items,total,offset,limit,nextOffset}. Follow nextOffset until null.`,
     {
       ledger_id: z.string(),
       projection: projectionSchema,
@@ -494,7 +494,7 @@ export function createLedgerMcpToolSpecifications(
 
   const fetchItem = tool(
     "fetch_item",
-    "Fetch one active item. For ledger_id=milestones, item_id is the milestone id and the response is {item,resolved,references}, preserving resolved metadata and per-ledger active reference counts; other ledgers return {item}. projection is required: compact returns identity, status, timestamps, provenance, summary fields, and references; full returns every item field.",
+    `Fetch one active item. For ledger_id=milestones, item_id is the milestone id and the response is {item,resolved,references}, preserving resolved metadata and per-ledger active reference counts; other ledgers return {item}. ${ITEM_PROJECTION_DESCRIPTION}.`,
     {
       ledger_id: z.string(),
       item_id: z.string(),
@@ -630,7 +630,7 @@ export function createLedgerMcpToolSpecifications(
 
   const searchItems = tool(
     "search_items",
-    "Substring-search status and fields within one ledger. projection is required: compact returns identity, status, timestamps, provenance, summary fields, and references; full returns every item field. Returns {items}.",
+    `Substring-search status and fields within one ledger. ${ITEM_PROJECTION_DESCRIPTION}. Returns {items}.`,
     {
       ledger_id: z.string(),
       query: z.string(),
@@ -648,7 +648,7 @@ export function createLedgerMcpToolSpecifications(
 
   const ftsSearch = tool(
     "fts_search",
-    "Ranked cross-ledger search with optional ledger/status prefilters, archived coverage, fuzzy matching, and prefixes. query accepts free text; field:value qualifiers for status, ledger, milestone, author, session, and item fields; quoted values; implicit AND; uppercase OR; NOT or leading -; and parentheses. The status prefilter composes with query. Terminal items remain active until archive_milestone. Returns ranked {ledgerId,item,score,matchedFields} results; compact returns identity, status, timestamps, provenance, summary fields, and references; full returns every item field.",
+    `Ranked cross-ledger search with optional ledger/status prefilters, archived coverage, fuzzy matching, and prefixes. query accepts free text; field:value qualifiers for status, ledger, milestone, author, session, and item fields; quoted values; implicit AND; uppercase OR; NOT or leading -; and parentheses. The status prefilter composes with query. Terminal items remain active until archive_milestone. Returns ranked {ledgerId,item,score,matchedFields} results. ${ITEM_PROJECTION_DESCRIPTION}.`,
     {
       query: z.string(),
       projection: projectionSchema,
@@ -708,7 +708,7 @@ export function createLedgerMcpToolSpecifications(
 
   const listMilestoneItems = tool(
     "list_milestone_items",
-    "Return active items grouped by ledger that reference one milestone. projection is required: compact returns identity, status, timestamps, provenance, summary fields, and references; full returns every item field.",
+    `Return active items grouped by ledger that reference one milestone. ${ITEM_PROJECTION_DESCRIPTION}.`,
     {
       milestone_id: safeIdSchema,
       projection: projectionSchema,

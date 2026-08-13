@@ -920,6 +920,6 @@ const invalidLedgerAckProduction: ReturnType<typeof projectLedgerMutationAckDto>
   widenedFetchedLedger;
 void invalidLedgerAckProduction;
 
-// @ts-expect-error mandatory item reads accept only compact or full
+// @ts-expect-error mandatory item reads accept only compact, full, or complement
 const invalidProjection: ItemProjection = "summary";
 void invalidProjection;

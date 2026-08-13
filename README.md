@@ -79,7 +79,7 @@ omits the six names during registration, exposing the remaining 29 tools
 instead of advertising handlers that can only fail.
 
 The 38-tool ledger surface uses a single breaking wire-response contract:
-item-bearing reads require an explicit compact/full projection and eligible
+item-bearing reads require an explicit compact/complement/full projection and eligible
 mutations return acknowledgements rather than full entities. See the
 [`@cq/ledger-mcp` response matrix](nix/pkg/cq-ledgers/packages/ledger-mcp/README.md#wire-response-contract)
 for every tool, retained field, pagination rule, and schema-checked example.

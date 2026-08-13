@@ -42,7 +42,7 @@ import {
   type ItemDto,
 } from "../src/index.js";
 
-/** Read one field off an ItemDto regardless of its projection (full vs compact). */
+/** Read one field off an ItemDto regardless of its projection. */
 function fieldOf(item: ItemDto, name: string): FieldValue | undefined {
   return (item.fields as Record<string, FieldValue | undefined>)[name];
 }
@@ -156,10 +156,11 @@ async function seedTask(
 ): Promise<{ milestoneId: string; taskId: string }> {
   const milestone = await client.createMilestone({
     title: "Remote contract milestone",
+    description: "Remote contract milestone narrative",
   });
   const task = await client.createItem("tasks", milestone.id, {
     status: "planned",
-    fields: { headline },
+    fields: { headline, description: "Remote contract task narrative" },
   });
   return { milestoneId: milestone.id, taskId: task.id };
 }
@@ -877,6 +878,37 @@ export function runRemoteLedgerClientContract(factory: RemoteLedgerClientContrac
               const full = await client.fetchItem("tasks", taskId, "full");
               expect(full.milestoneId).toBe(milestoneId);
               expect(full.fields["headline"]).toBe(headline);
+
+              // complement is passed through every item-bearing client read
+              // and carries no compact/intrinsic fields.
+              const complementLedger = await client.fetchLedger("tasks", "complement");
+              expect(complementLedger.milestones[0]?.items).toEqual([
+                {
+                  id: taskId,
+                  fields: { description: "Remote contract task narrative" },
+                },
+              ]);
+              const complement = await client.fetchItem("tasks", taskId, "complement");
+              expect(complement).toEqual({
+                id: taskId,
+                fields: { description: "Remote contract task narrative" },
+              });
+              expect(await client.searchItems("tasks", "quixotic", "complement")).toEqual([
+                complement,
+              ]);
+              const complementFts = await client.ftsSearch("quixotic", "complement");
+              expect(complementFts[0]?.item).toEqual(complement);
+              const complementMilestone = await client.fetchMilestone(
+                milestoneId,
+                "complement",
+              );
+              expect(complementMilestone.milestone).toEqual({
+                id: milestoneId,
+                fields: { description: "Remote contract milestone narrative" },
+              });
+              expect(await client.listMilestoneItems(milestoneId, "complement")).toEqual({
+                tasks: [complement],
+              });
 
               // search_items: hit + miss.
               const hits = await client.searchItems("tasks", "quixotic", "compact");

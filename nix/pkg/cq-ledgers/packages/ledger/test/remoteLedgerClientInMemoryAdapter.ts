@@ -340,7 +340,15 @@ function optStr(args: Record<string, unknown>, name: string): string | undefined
 }
 
 function projectionOf(args: Record<string, unknown>): ItemProjection {
-  return str(args, "projection") === "full" ? "full" : "compact";
+  const projection = str(args, "projection");
+  switch (projection) {
+    case "compact":
+    case "full":
+    case "complement":
+      return projection;
+    default:
+      throw new DummyToolError(`invalid projection: ${projection}`);
+  }
 }
 
 function fieldsOf(args: Record<string, unknown>): Record<string, FieldValue> {

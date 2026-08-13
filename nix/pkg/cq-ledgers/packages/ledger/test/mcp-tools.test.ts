@@ -18,6 +18,7 @@ import {
   type DerivedPredicates,
   type DispatchCapability,
   type Item,
+  type ItemProjection,
   type LedgerSchema,
   type PromptCatalogCapability,
 } from "../src/index.js";
@@ -106,7 +107,7 @@ function updateRoot(
 
 function fetchRoot(
   tools: ReturnType<typeof createLedgerMcpTools>,
-  input: { milestone_id: string; projection: "compact" | "full" },
+  input: { milestone_id: string; projection: ItemProjection },
 ) {
   return callTool(tools, "fetch_item", {
     ledger_id: "milestones",

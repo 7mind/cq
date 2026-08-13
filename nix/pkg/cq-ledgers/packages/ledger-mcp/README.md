@@ -156,7 +156,8 @@ This contract landed as a single breaking cutover. No legacy peer is supported:
 clients and servers must upgrade together. There is no compatibility flag, dual
 response mode, or legacy handler. There is no default projection.
 
-Item-bearing reads require `projection: "compact"` or `projection: "full"`:
+Item-bearing reads require `projection: "compact"`, `projection: "complement"`,
+or `projection: "full"`:
 
 - `compact` retains the intrinsic item fields `id`, `milestoneId`, `status`,
   `createdAt`, `updatedAt`, optional `author`/`session`, and only this field
@@ -169,9 +170,17 @@ Item-bearing reads require `projection: "compact"` or `projection: "full"`:
 
 - `full` retains the same intrinsic fields and every schema-defined entry in
   `fields`.
+- `complement` retains only `id` plus entries in `fields` whose keys fall
+  outside the compact allowlist. It omits status, timestamps, provenance, and
+  every compact-allowlisted field.
+- For one item identity, the projections have the merge invariant
+  `fields(full) = fields(compact) ∪ fields(complement)`, and the compact and
+  complement field sets are disjoint.
 - Choose `compact` for discovery, status/reference checks, lists, and routing.
   Choose `full` only when the caller needs narrative or another field excluded
-  from the compact allowlist. Omitting `projection` fails input validation.
+  from the compact allowlist. After a `compact` read, choose `complement` to
+  retrieve only the missing fields and merge them into the compact fields.
+  Omitting `projection` fails input validation.
 - `fetch_item` returns `{ item }` for ordinary ledgers. For the `milestones`
   ledger it returns `{ item, resolved, references }`, with `item` projected as
   requested.
@@ -305,7 +314,7 @@ not sent as a tool argument.
     "arguments": {
       "ledger_id": "tasks",
       "query": "Documented",
-      "projection": "compact"
+      "projection": "complement"
     }
   },
   {
