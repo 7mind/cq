@@ -16,7 +16,7 @@ import { delimiter, isAbsolute, join } from "node:path";
 import { tmpdir } from "node:os";
 
 export const MAX_WRAPPER_DEPTH = 16;
-export const PINNED_NODE_VERSION = "v24.18.0";
+export const PINNED_NODE_VERSION = "v24.19.0";
 
 export interface PinnedNodeResolution {
   readonly piPath: string;

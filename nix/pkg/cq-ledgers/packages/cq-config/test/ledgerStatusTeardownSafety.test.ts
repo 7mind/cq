@@ -43,6 +43,11 @@ interface LedgerStatusModule {
 }
 
 interface PinnedNodeModule {
+  readonly PINNED_NODE_VERSION: string;
+  resolveNodeFromExecutable(startPath: string): {
+    readonly nodePath: string;
+    readonly version: string;
+  };
   resolvePinnedNode(environment?: NodeJS.ProcessEnv): {
     readonly nodePath: string;
     readonly version: string;
@@ -358,5 +363,19 @@ describe("ledger-status teardown safety Arm B: pinned-node process boundary", ()
         CQ_TEST_PINNED_NODE: nonexistent,
       }),
     ).toThrow(`CQ_TEST_PINNED_NODE: cannot use executable ${nonexistent}`);
+  });
+
+  test("an executable with a version other than the exact pin fails loudly", async () => {
+    const { PINNED_NODE_VERSION, resolveNodeFromExecutable } = (await import(
+      PINNED_NODE_PATH
+    )) as PinnedNodeModule;
+    const versionProbe = spawnSync(process.execPath, ["--version"], { encoding: "utf8" });
+    if (versionProbe.error !== undefined) throw versionProbe.error;
+    expect(versionProbe.status).toBe(0);
+    const unpinnedVersion = versionProbe.stdout.trim();
+    expect(unpinnedVersion).not.toBe(PINNED_NODE_VERSION);
+    expect(() => resolveNodeFromExecutable(process.execPath)).toThrow(
+      `CQ_TEST_PINNED_NODE: expected ${PINNED_NODE_VERSION}, got ${unpinnedVersion} from `,
+    );
   });
 });

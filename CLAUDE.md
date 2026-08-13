@@ -18,7 +18,7 @@ under `nix/` (see `nix/hm/dev-llm.nix`, `nix/pkg/{yolo,codex,claude-code,…}`).
   `nix/pkg/cq-ledgers/packages/cq-config/test/ledgerStatusTeardownSafety.test.ts`.
 - `decisions:K172` — the guard's process arm recursively resolves the pinned
   Node from `CQ_TEST_PINNED_NODE` (or `pi` on `PATH`); the gate requires the
-  chain to end at Node v24.18.0, and resolution failures are fatal.
+  chain to end at Node v24.19.0, and resolution failures are fatal.
 - Nix products (from the repo root): `nix build .#cq`.
 - After changing dependencies / `bun.lock`: refresh the FOD hash in
   `flake.nix` — set `outputHash` to 52 `A`s, `nix build .#node-modules`, paste
