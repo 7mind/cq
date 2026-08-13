@@ -408,11 +408,22 @@ describe("workset generic-mutation filesystem faults [T1972]", () => {
       `${MILESTONES_LEDGER}:${m.id}`,
       `${TASKS_LEDGER}:${task.id}`,
     ]);
+    const storageRoot = path.join(root, LEDGER_STORAGE_DIRNAME);
+    const milestonesPath = path.join(storageRoot, `${MILESTONES_LEDGER}.md`);
+    const tasksPath = path.join(storageRoot, `${TASKS_LEDGER}.md`);
+    const beforeMilestones = await fs.readFile(milestonesPath, "utf8");
+    const beforeTasks = await fs.readFile(tasksPath, "utf8");
 
     injectFailure = true;
     await expect(
       ledger.mutations.archiveMilestone(m.id, "must recover"),
     ).rejects.toThrow(/archive commit failed.*rollback did not complete/);
+    expect(() => ledger.fetchItem(MILESTONES_LEDGER, m.id)).toThrow(
+      /requires restart to recover an interrupted archive commit/,
+    );
+    await expect(
+      ledger.mutations.updateItem(TASKS_LEDGER, task.id, { status: "wip" }),
+    ).rejects.toThrow(/outside the admitted workset|requires restart/);
     await ledger.dispose();
 
     const recovered = createFsWorksetManagementLedger({ root });
@@ -420,8 +431,16 @@ describe("workset generic-mutation filesystem faults [T1972]", () => {
     try {
       expect(recovered.fetchItem(MILESTONES_LEDGER, m.id).id).toBe(m.id);
       expect(recovered.fetchItem(TASKS_LEDGER, task.id).id).toBe(task.id);
+      expect(await fs.readFile(milestonesPath, "utf8")).toBe(beforeMilestones);
+      expect(await fs.readFile(tasksPath, "utf8")).toBe(beforeTasks);
       await expect(
-        fs.stat(path.join(root, LEDGER_STORAGE_DIRNAME, "archive-commit.pending.json")),
+        fs.stat(path.join(storageRoot, "archive-commit.pending.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(
+        fs.stat(path.join(storageRoot, "archive", TASKS_LEDGER, `${m.id}.md`)),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(
+        fs.stat(path.join(storageRoot, "archive", MILESTONES_LEDGER, `${m.id}.md`)),
       ).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await recovered.dispose();

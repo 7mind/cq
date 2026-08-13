@@ -1530,13 +1530,11 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
               Object.keys(archiveSources).length > 0 ||
               transaction.registryChanged()
             ) {
-              await this.persistence.commitArchive({
-                archives: archiveSources,
-                ledgers: ledgerSources,
-                ...(transaction.registryChanged()
-                  ? { registry: serializeRegistry(this.registry) }
-                  : {}),
-              });
+              await this.commitArchiveSources(
+                archiveSources,
+                ledgerSources,
+                transaction.registryChanged() ? serializeRegistry(this.registry) : undefined,
+              );
             }
             return {
               result,
@@ -1738,9 +1736,14 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
   private async commitArchiveSources(
     archives: Readonly<Record<string, string | null>>,
     ledgerSources: Readonly<Record<string, string>>,
+    registry?: string,
   ): Promise<void> {
     try {
-      await this.persistence.commitArchive({ archives, ledgers: ledgerSources });
+      await this.persistence.commitArchive({
+        archives,
+        ledgers: ledgerSources,
+        ...(registry !== undefined ? { registry } : {}),
+      });
     } catch (error) {
       this.archiveRecoveryRequired = await this.persistence.hasPendingArchiveCommit();
       for (const name of Object.keys(ledgerSources)) {
