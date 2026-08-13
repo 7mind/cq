@@ -8,7 +8,11 @@ export {};
 const capturePath = process.env["CQ_T2042_BROKER_CAPTURE"];
 const expectedWorktree = process.env["CQ_T2042_WORKTREE"];
 const expectedLedgerRoot = process.env["CQ_T2042_LEDGER_ROOT"];
-if (capturePath === undefined || expectedWorktree === undefined || expectedLedgerRoot === undefined) {
+if (
+  capturePath === undefined ||
+  expectedWorktree === undefined ||
+  expectedLedgerRoot === undefined
+) {
   throw new Error("capture path and repository boundary are required");
 }
 
@@ -58,7 +62,9 @@ const transport = new StdioClientTransport({
   args: ledgerArgs,
   cwd: codexCwd,
   env: Object.fromEntries(
-    Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
   ),
   stderr: "pipe",
 });
@@ -89,7 +95,9 @@ async function call(
   const response = await client.callTool({ name, arguments: body as Record<string, unknown> });
   const isError = (response as { isError?: boolean }).isError === true;
   if (isError === expectedOk) {
-    throw new Error(`broker probe ${name} returned unexpected MCP result: ${JSON.stringify(response)}`);
+    throw new Error(
+      `broker probe ${name} returned unexpected MCP result: ${JSON.stringify(response)}`,
+    );
   }
   if (!expectedOk) return {};
   return decode(response);
@@ -107,7 +115,16 @@ const startingCommit = String(input["startingCommit"]);
 const taskId = String(input["taskId"]);
 const branch = String(input["branch"]);
 const round = Number(input["round"]);
-if (round !== 0 && round !== 1) throw new Error(`unexpected packaged worker round ${String(round)}`);
+const inheritedGitReceipts = input["inheritedGitReceipts"];
+if (
+  inheritedGitReceipts !== undefined &&
+  (!Array.isArray(inheritedGitReceipts) || inheritedGitReceipts.length === 0)
+) {
+  throw new Error("packaged worker received a malformed inherited receipt prefix");
+}
+const inheritedReceipts = (inheritedGitReceipts ?? []) as Record<string, unknown>[];
+if (round !== 0 && round !== 1)
+  throw new Error(`unexpected packaged worker round ${String(round)}`);
 const roundContent =
   round === 0
     ? { before: "before\n", first: "first\n", second: "second\n" }
@@ -359,8 +376,13 @@ const output = {
   resultCommit: second["newHead"],
   branch,
   actualWorktreePath: worktreePath,
-  filesTouched: ["file.txt"],
-  gitReceipts: [first, second],
+  filesTouched: [
+    ...new Set([
+      ...inheritedReceipts.flatMap((receipt) => receipt["paths"] as string[]),
+      "file.txt",
+    ]),
+  ].sort(),
+  gitReceipts: [...inheritedReceipts, first, second],
   checkSummary: "canonical gate delegated to trusted result-storage boundary",
   baseVerification: {
     status: "verified",

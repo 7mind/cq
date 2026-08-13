@@ -184,10 +184,9 @@ describe("T1307 implement-worker round + baseVerification [BA]", () => {
         },
       });
       delete payload.gateDurationMs;
-      expect(
-        validateAgainstSchema(implementWorkerSidecar.outputSchema, payload).ok,
-        reason,
-      ).toBe(true);
+      expect(validateAgainstSchema(implementWorkerSidecar.outputSchema, payload).ok, reason).toBe(
+        true,
+      );
     }
     const fabricated = workerPass({
       status: "fail",
@@ -205,7 +204,7 @@ describe("T1307 implement-worker round + baseVerification [BA]", () => {
   });
 
   test("sidecar version advanced for the T1307 contract mutation", () => {
-    expect(implementWorkerSidecar.version).toBe(7);
+    expect(implementWorkerSidecar.version).toBe(8);
   });
 });
 

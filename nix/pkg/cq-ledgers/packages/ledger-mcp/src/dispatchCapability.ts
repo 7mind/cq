@@ -52,8 +52,10 @@ import {
   validateGitConflictContinuationResultEvidence,
   validateGitChangeBrokerResultEvidence,
   resolveManagedWorktreeDispatchBinding,
+  resolveInheritedGitChangeReceipts,
   withManagedWorktreeEffectLock,
   superviseImplementWorkerGate,
+  SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
   resolveSingleProjectAttestationNamespace,
   type DispatchCapability,
   type GitChangeBrokerResultEvidence,
@@ -80,7 +82,9 @@ export interface DispatchCapabilityOptions {
   readonly supervisedWorkerGateRunner?: SupervisedWorkerGateRunner;
 }
 
-function brokerResultEvidence(output: DispatchJSONValue): GitChangeBrokerResultEvidence | undefined {
+function brokerResultEvidence(
+  output: DispatchJSONValue,
+): GitChangeBrokerResultEvidence | undefined {
   if (output === null || typeof output !== "object" || Array.isArray(output)) {
     throw new Error("broker-capable worker result must be an object carrying receipt evidence");
   }
@@ -107,9 +111,7 @@ function brokerResultEvidence(output: DispatchJSONValue): GitChangeBrokerResultE
   };
 }
 
-function conflictResultEvidence(
-  output: DispatchJSONValue,
-): GitConflictContinuationResultEvidence {
+function conflictResultEvidence(output: DispatchJSONValue): GitConflictContinuationResultEvidence {
   if (output === null || typeof output !== "object" || Array.isArray(output)) {
     throw new Error("broker-capable resolver result must carry conflict receipt evidence");
   }
@@ -135,8 +137,9 @@ function conflictResultEvidence(
     branch: result["branch"],
     actualWorktreePath: result["actualWorktreePath"],
     filesResolved: result["filesResolved"] as string[],
-    conflictReceipts:
-      result["conflictReceipts"] as unknown as GitConflictContinuationResultEvidence["conflictReceipts"],
+    conflictReceipts: result[
+      "conflictReceipts"
+    ] as unknown as GitConflictContinuationResultEvidence["conflictReceipts"],
   };
 }
 
@@ -336,6 +339,19 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         dispatchInput = input.input;
       }
 
+      if (
+        roleId === "implement-worker" &&
+        typeof dispatchInput === "object" &&
+        dispatchInput !== null &&
+        !Array.isArray(dispatchInput) &&
+        Object.hasOwn(dispatchInput, "inheritedGitReceipts")
+      ) {
+        return rejectLaunch(
+          "input.inheritedGitReceipts",
+          "caller must omit server-bound inherited Git receipts",
+        );
+      }
+
       if (roleId === "implement-reviewer") {
         if (input.timeoutMs < IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS) {
           return rejectLaunch(
@@ -449,7 +465,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         }
         if (
           roleId === "implement-conflict-resolver" &&
-          (conflictState === null || typeof conflictState !== "object" || Array.isArray(conflictState))
+          (conflictState === null ||
+            typeof conflictState !== "object" ||
+            Array.isArray(conflictState))
         ) {
           return rejectLaunch(
             "input.conflictState",
@@ -475,7 +493,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         if (roleId === "implement-conflict-resolver") {
           const resolverState = conflictState as unknown as GitRebaseConflictState;
           const conflictingFiles = dispatchRecord["conflictingFiles"];
-          const observedPaths = [...new Set(resolverState.conflicts.map((stage) => stage.path))].sort();
+          const observedPaths = [
+            ...new Set(resolverState.conflicts.map((stage) => stage.path)),
+          ].sort();
           if (
             dispatchRecord["baseCommit"] !== resolvedGitEffectBinding.baseCommit ||
             resolverState.baseCommit !== resolvedGitEffectBinding.baseCommit
@@ -502,15 +522,77 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             );
           }
         }
-        gitEffectBinding =
-          roleId === "implement-conflict-resolver"
-            ? {
-                ...resolvedGitEffectBinding,
-                conflictStateDigest: gitRebaseConflictStateDigest(
-                  conflictState as unknown as GitRebaseConflictState,
-                ),
-              }
-            : resolvedGitEffectBinding;
+        if (roleId === "implement-conflict-resolver") {
+          gitEffectBinding = {
+            ...resolvedGitEffectBinding,
+            conflictStateDigest: gitRebaseConflictStateDigest(
+              conflictState as unknown as GitRebaseConflictState,
+            ),
+          };
+        } else if (input.reprepareOf === undefined || manifestSurface !== "codex") {
+          gitEffectBinding = resolvedGitEffectBinding;
+        } else {
+          const priorBinding = await resolveDispatchGitEffectBindingForHandleOn(
+            options.backend,
+            input.reprepareOf,
+          );
+          if (priorBinding === undefined) {
+            return rejectLaunch(
+              "reprepareOf",
+              "brokered worker reprepare requires a prior Git effect binding",
+            );
+          }
+          for (const field of [
+            "taskId",
+            "handleToken",
+            "handleFingerprint",
+            "repositoryRoot",
+            "repositoryId",
+            "commonDir",
+            "worktreePath",
+            "branch",
+            "ref",
+            "baseCommit",
+          ] as const) {
+            if (priorBinding[field] !== resolvedGitEffectBinding[field]) {
+              return rejectLaunch(
+                "reprepareOf",
+                `prior-generation Git binding changed at ${field}`,
+              );
+            }
+          }
+          const startingCommit = dispatchRecord["startingCommit"];
+          if (typeof startingCommit !== "string") {
+            return rejectLaunch("input.startingCommit", "worker reprepare requires startingCommit");
+          }
+          let inheritedGitReceipts;
+          try {
+            inheritedGitReceipts = await resolveInheritedGitChangeReceipts(
+              {
+                ...priorBinding,
+                attestationId: input.reprepareOf.attestationId,
+                generation: input.reprepareOf.generation,
+              },
+              startingCommit,
+              options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+            );
+          } catch (error) {
+            return rejectLaunch(
+              "input.startingCommit",
+              `prior-generation receipt inheritance failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+          gitEffectBinding =
+            inheritedGitReceipts.length === 0
+              ? resolvedGitEffectBinding
+              : { ...resolvedGitEffectBinding, inheritedGitReceipts };
+          if (inheritedGitReceipts.length > 0) {
+            dispatchInput = {
+              ...dispatchRecord,
+              inheritedGitReceipts: inheritedGitReceipts as unknown as DispatchJSONValue,
+            };
+          }
+        }
       }
       const request = {
         namespace,
@@ -569,6 +651,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     },
     fetchInput: (input) => fetchDispatchInputOn(options.backend, { namespace, ...input }, { now }),
     storeResult: async (input) => {
+      const submittedAt = now();
       const gateContext = await resolveSupervisedWorkerGateContextOn(options.backend, input);
       const binding =
         gateContext ?? (await resolveDispatchGitEffectBindingOn(options.backend, input));
@@ -592,9 +675,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             await validateGitChangeBrokerResultEvidence(
               binding,
               evidence,
-              options.worktreeStateDir === undefined
-                ? {}
-                : { stateDir: options.worktreeStateDir },
+              options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
             );
           }
           if (gateContext !== undefined) {
@@ -622,19 +703,28 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           await validateGitConflictContinuationResultEvidence(
             binding,
             evidence,
-            options.worktreeStateDir === undefined
-              ? {}
-              : { stateDir: options.worktreeStateDir },
+            options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
           );
         }
-        return await storeDispatchResultOn(options.backend, { ...input, output }, { now });
+        return await storeDispatchResultOn(
+          options.backend,
+          { ...input, output },
+          { now: gateContext === undefined ? now : () => submittedAt },
+        );
       };
       const outcome =
         binding === undefined
           ? await store()
           : await withManagedWorktreeEffectLock(
               binding,
-              options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+              {
+                ...(options.worktreeStateDir === undefined
+                  ? {}
+                  : { stateDir: options.worktreeStateDir }),
+                ...(gateContext === undefined
+                  ? {}
+                  : { effectLockTimeoutMs: SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS }),
+              },
               store,
             );
       if (outcome.state === "aborted") {
@@ -704,9 +794,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           changes: input.changes,
         },
         {
-          ...(options.worktreeStateDir === undefined
-            ? {}
-            : { stateDir: options.worktreeStateDir }),
+          ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
           now: () => new Date(now()),
           authorize: async (expected) => {
             const observed = await authorize();
@@ -757,9 +845,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           resolutions: input.resolutions,
         },
         {
-          ...(options.worktreeStateDir === undefined
-            ? {}
-            : { stateDir: options.worktreeStateDir }),
+          ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
           now: () => new Date(now()),
           authorize: async (expected) => {
             const observed = await authorize();

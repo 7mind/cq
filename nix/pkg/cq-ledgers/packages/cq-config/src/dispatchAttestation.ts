@@ -822,6 +822,23 @@ export interface DispatchProvenanceBinding {
   readonly inputDigest: string;
 }
 
+/** Immutable broker receipt trusted across a terminal dispatch reprepare. */
+export interface DispatchGitChangeReceipt {
+  readonly kind: "cq-git-change-receipt";
+  readonly version: 1;
+  readonly attestationId: string;
+  readonly generation: number;
+  readonly taskId: string;
+  readonly operationId: string;
+  readonly requestDigest: string;
+  readonly oldHead: string;
+  readonly newHead: string;
+  readonly tree: string;
+  readonly objectOids: readonly string[];
+  readonly paths: readonly string[];
+  readonly committedAt: string;
+}
+
 /** Trusted resolver output for a live worktree_manage handle; never child-authored. */
 export interface DispatchGitEffectBinding {
   readonly taskId: string;
@@ -835,6 +852,8 @@ export interface DispatchGitEffectBinding {
   readonly ref: string;
   readonly baseCommit: string;
   readonly conflictStateDigest?: string;
+  /** Exact durable prefix inherited from prior terminal generations. */
+  readonly inheritedGitReceipts?: readonly DispatchGitChangeReceipt[];
 }
 
 export interface AuthorizedDispatchGitEffect extends DispatchGitEffectBinding {
@@ -869,6 +888,11 @@ function gitEffectBindingPayload(binding: DispatchGitEffectBinding): DispatchJSO
     ...(binding.conflictStateDigest === undefined
       ? {}
       : { conflictStateDigest: binding.conflictStateDigest }),
+    ...(binding.inheritedGitReceipts === undefined
+      ? {}
+      : {
+          inheritedGitReceipts: binding.inheritedGitReceipts as unknown as DispatchJSONValue,
+        }),
   };
 }
 
@@ -1227,7 +1251,10 @@ function assertGitEffectBinding(
     "baseCommit",
   ] as const) {
     if (typeof binding[field] !== "string" || binding[field].trim() === "") {
-      throw new AttestationContractError(`gitEffectBinding.${field}`, "expected a non-empty string");
+      throw new AttestationContractError(
+        `gitEffectBinding.${field}`,
+        "expected a non-empty string",
+      );
     }
   }
   for (const field of ["handleFingerprint", "repositoryId"] as const) {
@@ -1247,7 +1274,49 @@ function assertGitEffectBinding(
       "implement-worker cannot carry a conflict state digest",
     );
   }
-  return Object.freeze({ ...binding });
+  const inheritedGitReceipts = binding.inheritedGitReceipts;
+  if (inheritedGitReceipts !== undefined) {
+    if (roleId !== "implement-worker" || inheritedGitReceipts.length === 0) {
+      throw new AttestationContractError(
+        "gitEffectBinding.inheritedGitReceipts",
+        "only implement-worker may carry a non-empty inherited receipt chain",
+      );
+    }
+    for (const [index, receipt] of inheritedGitReceipts.entries()) {
+      const path = `gitEffectBinding.inheritedGitReceipts[${String(index)}]`;
+      if (receipt.kind !== "cq-git-change-receipt" || receipt.version !== 1) {
+        throw new AttestationContractError(path, "expected a version-1 Git change receipt");
+      }
+      for (const field of ["attestationId", "taskId", "operationId", "committedAt"] as const) {
+        if (typeof receipt[field] !== "string" || receipt[field].trim() === "") {
+          throw new AttestationContractError(`${path}.${field}`, "expected a non-empty string");
+        }
+      }
+      if (!Number.isInteger(receipt.generation) || receipt.generation < 1) {
+        throw new AttestationContractError(`${path}.generation`, "expected a positive integer");
+      }
+      assertDigest(receipt.requestDigest, `${path}.requestDigest`);
+      for (const field of ["oldHead", "newHead", "tree"] as const) {
+        if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(receipt[field])) {
+          throw new AttestationContractError(`${path}.${field}`, "expected a full Git object id");
+        }
+      }
+      if (
+        !Array.isArray(receipt.objectOids) ||
+        !receipt.objectOids.every((oid) => /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(oid)) ||
+        !Array.isArray(receipt.paths) ||
+        !receipt.paths.every((entry) => typeof entry === "string" && entry.length > 0)
+      ) {
+        throw new AttestationContractError(path, "receipt objectOids or paths are malformed");
+      }
+    }
+  }
+  return Object.freeze({
+    ...binding,
+    ...(inheritedGitReceipts === undefined
+      ? {}
+      : { inheritedGitReceipts: Object.freeze([...inheritedGitReceipts]) }),
+  });
 }
 
 /**
@@ -1695,7 +1764,10 @@ export function authorizeDispatchGitEffect(
     throw new DispatchStateConflictError("git_commit", row.state, "Git change capability expired");
   }
   if (row.promptProvenance.roleId !== "implement-worker" || row.gitEffectBinding === undefined) {
-    throw new DispatchAuthorizationError("git_commit", "dispatch has no implement-worker Git binding");
+    throw new DispatchAuthorizationError(
+      "git_commit",
+      "dispatch has no implement-worker Git binding",
+    );
   }
   return Object.freeze({
     ...row.gitEffectBinding,
@@ -1726,7 +1798,10 @@ export function authorizeDispatchGitConflict(
     );
   }
   if (typeof capability.token !== "string" || !GIT_CONFLICT_CAPABILITY_RE.test(capability.token)) {
-    throw new DispatchAuthorizationError("git_resolve_continue", "malformed Git conflict capability");
+    throw new DispatchAuthorizationError(
+      "git_resolve_continue",
+      "malformed Git conflict capability",
+    );
   }
   const row = requireRow(request, deps);
   if (

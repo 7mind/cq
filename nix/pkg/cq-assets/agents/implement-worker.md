@@ -10,7 +10,7 @@ description: Implement exactly one task in an isolated worktree, prove its guard
 
 ```yaml
 inputs:
-  - "task specification, optional advisory worktreePath, branch, verified full-SHA base, required round, authoritative starting commit, optional priorResultCommit, optional prior criticism"
+  - "task specification, optional advisory worktreePath, branch, verified full-SHA base, required round, authoritative starting commit, optional priorResultCommit, optional prior criticism, optional server-bound inherited Git receipts"
 outputs:
   - "one verified task commit, parent-verifiable git receipts, actualWorktreePath, required baseVerification evidence, green legacy or trusted supervised gate evidence, stored structured result, and handle-only final reply"
 ioSchema:
@@ -35,6 +35,14 @@ Treat the resolved task headline, description, and acceptance as the
 specification. Address every supplied prior criticism. `round` is required on
 every dispatch (zero-based). Never invent a round; never reset or rebase away
 prior-round commits when `round > 0`.
+
+When fetched input carries `inheritedGitReceipts`, treat that non-empty array as
+an immutable server-bound prefix from terminal prior generations. Initialize
+the result's `gitReceipts` with those exact entries, require its last `newHead`
+to equal `startingCommit`, and append only receipts returned by this generation's
+`git_commit` calls. Do not replay or synthesize a Git effect merely to replace
+an inherited receipt. `filesTouched` must equal the sorted union of paths from
+the complete inherited-plus-current receipt chain.
 
 ## Procedure
 

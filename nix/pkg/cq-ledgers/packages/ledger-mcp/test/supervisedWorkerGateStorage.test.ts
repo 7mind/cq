@@ -13,6 +13,7 @@ import {
   type AttestationNamespace,
 } from "@cq/config";
 import {
+  SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
   nodeSupervisedWorkerGateRunner,
   prepareManagedWorktree,
   type SupervisedWorkerGateRunRequest,
@@ -56,7 +57,7 @@ function artifactStore(): PromptArtifactStore {
     sidecarSchemaRoleId: "implement-worker",
     promptSurface: "codex" as const,
     promptDigest: "a".repeat(64),
-    schemaVersion: 7,
+    schemaVersion: 8,
   };
   return {
     readManifest: () => ({
@@ -154,11 +155,31 @@ class BlockingGateDummy implements SupervisedWorkerGateRunner {
   }
 }
 
+class ClockAdvancingGateDummy implements SupervisedWorkerGateRunner {
+  readonly requests: SupervisedWorkerGateRunRequest[] = [];
+
+  constructor(private readonly advance: () => void) {}
+
+  async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
+    this.requests.push(request);
+    this.advance();
+    return {
+      gateExitCode: 0,
+      passCount: 17,
+      failCount: 0,
+      gateDurationMs: 600_001,
+      capturedAt: "2026-08-12T20:10:01.000Z",
+      outputTail: "17 pass\n0 fail",
+    };
+  }
+}
+
 type DispatchBaseMode = "managed" | "descendant";
 
 async function fixtureWithDispatchBase(
   runner: SupervisedWorkerGateRunner,
   dispatchBaseMode: DispatchBaseMode,
+  now: () => string = () => "2026-08-12T20:00:00.000Z",
 ) {
   sequence += 1;
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2081-gate-${sequence}-`));
@@ -195,7 +216,7 @@ async function fixtureWithDispatchBase(
     repositoryRoot,
     worktreeStateDir: stateDir,
     supervisedWorkerGateRunner: runner,
-    now: () => "2026-08-12T20:00:00.000Z",
+    now,
     randomBytes: sequentialDispatchRandomBytes(sequence * 32),
   });
   const prepared = await capability.prepare({
@@ -248,9 +269,7 @@ async function fixtureWithDispatchBase(
     branch: managed.handle.branch,
     actualWorktreePath: managed.handle.absolutePath,
     filesTouched: ["file.txt"],
-    gitReceipts: [
-      { ...receipt, objectOids: [...receipt.objectOids], paths: [...receipt.paths] },
-    ],
+    gitReceipts: [{ ...receipt, objectOids: [...receipt.objectOids], paths: [...receipt.paths] }],
     checkSummary: "runner-supervised gate requested",
     summary: "candidate exact tip",
     baseVerification: {
@@ -293,7 +312,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     expect(runner.requests).toEqual([
       {
         worktreePath: subject.managed.handle.absolutePath,
-        childCancelAt: subject.prepared.childCancelAt,
+        executionTimeoutMs: SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
       },
     ]);
     const confirmation = await subject.capability.confirmCompletion({
@@ -329,7 +348,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
           attestationId: subject.prepared.attestationId,
           generation: subject.prepared.generation,
           roleId: "implement-worker",
-          roleVersion: 7,
+          roleVersion: 8,
           surface: "codex",
           taskId: "T2081",
           resultCommit: subject.receipt.newHead,
@@ -429,7 +448,10 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
   });
 
   test("fails closed when the trusted runner times out or is cancelled", async () => {
-    for (const message of ["supervised worker gate timed out", "supervised worker gate cancelled"]) {
+    for (const message of [
+      "supervised worker gate timed out",
+      "supervised worker gate cancelled",
+    ]) {
       const runner = new ThrowingGateDummy(message);
       const subject = await fixture(runner);
       await expect(
@@ -573,6 +595,23 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     expect(runner.requests).toHaveLength(1);
   });
 
+  test("D326 settles an admitted result after the child deadline using the submission instant [BG]", async () => {
+    let current = Date.parse("2026-08-12T20:00:00.000Z");
+    const runner = new ClockAdvancingGateDummy(() => {
+      current += 600_001;
+    });
+    const subject = await fixtureWithDispatchBase(runner, "managed", () =>
+      new Date(current).toISOString(),
+    );
+    await expect(
+      subject.capability.storeResult({
+        resultCapability: subject.prepared.resultCapability,
+        output: subject.output,
+      }),
+    ).resolves.toMatchObject({ state: "result-stored" });
+    expect(runner.requests).toHaveLength(1);
+  });
+
   // Regression D326: host-gate admission belongs to the supervisor, not the child budget.
   test("D326 lets a second real gate wait beyond its child budget and run once after the first [Behavioral-Active, Effectual-GoodCommunication]", async () => {
     const root = await fs.mkdtemp(path.join(tmpdir(), "t2082-gate-admission-"));
@@ -588,7 +627,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
         "#!/bin/sh",
         "set -eu",
         'while ! mkdir "$CQ_T2082_GATE_LOCK" 2>/dev/null; do sleep 0.01; done',
-        'trap \'rmdir "$CQ_T2082_GATE_LOCK" 2>/dev/null || true\' EXIT INT TERM',
+        "trap 'rmdir \"$CQ_T2082_GATE_LOCK\" 2>/dev/null || true' EXIT INT TERM",
         'while test "$#" -gt 0; do',
         '  if test "$1" = --command-cwd; then cd "$2"; break; fi',
         "  shift",
@@ -627,12 +666,12 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     try {
       const firstRun = nodeSupervisedWorkerGateRunner.run({
         worktreePath: first.worktreePath,
-        childCancelAt: new Date(Date.now() + 5_000).toISOString(),
+        executionTimeoutMs: 5_000,
       });
       while (!(await Bun.file(first.started).exists())) await Bun.sleep(5);
       const secondRun = nodeSupervisedWorkerGateRunner.run({
         worktreePath: second.worktreePath,
-        childCancelAt: new Date(Date.now() + 100).toISOString(),
+        executionTimeoutMs: 5_000,
       });
       await Bun.sleep(150);
       expect(await Bun.file(second.started).exists()).toBe(false);

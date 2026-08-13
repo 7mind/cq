@@ -19,6 +19,10 @@ const FULL_SHA = /^[0-9a-f]{40}$/;
 const PASS_COUNT = /(?:^|\n)\s*([0-9]+)\s+pass\b/gu;
 const FAIL_COUNT = /(?:^|\n)\s*([0-9]+)\s+fail\b/gu;
 
+/** Host-owned bounds begin only after the child has submitted its result. */
+export const SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS = 60 * 60 * 1_000;
+export const SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS = 30 * 60 * 1_000;
+
 function requiresMutationEvidence(entryPath: string): boolean {
   const basename = entryPath.split("/").at(-1) ?? entryPath;
   return (
@@ -32,7 +36,7 @@ function requiresMutationEvidence(entryPath: string): boolean {
 
 export interface SupervisedWorkerGateRunRequest {
   readonly worktreePath: string;
-  readonly childCancelAt: string;
+  readonly executionTimeoutMs: number;
 }
 
 export interface SupervisedWorkerGateRunResult {
@@ -111,7 +115,9 @@ async function git(
 async function checkedGit(cwd: string, args: readonly string[]): Promise<string> {
   const result = await git(cwd, args);
   if (result.exitCode !== 0) {
-    throw new Error(`git ${args[0] ?? ""} failed (${String(result.exitCode)}): ${result.stderr.trim()}`);
+    throw new Error(
+      `git ${args[0] ?? ""} failed (${String(result.exitCode)}): ${result.stderr.trim()}`,
+    );
   }
   return result.stdout.trim();
 }
@@ -130,9 +136,8 @@ function tail(output: string, lineCount = 20): string {
 export const nodeSupervisedWorkerGateRunner: SupervisedWorkerGateRunner = Object.freeze({
   async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
     const startedAt = Date.now();
-    const deadlineMs = Date.parse(request.childCancelAt);
-    if (!Number.isFinite(deadlineMs) || startedAt >= deadlineMs) {
-      throw new Error("supervised worker gate deadline elapsed before launch");
+    if (!Number.isInteger(request.executionTimeoutMs) || request.executionTimeoutMs <= 0) {
+      throw new Error("supervised worker gate executionTimeoutMs must be a positive integer");
     }
     let registration: ProcessGroupRegistration | undefined;
     let capturedStdout: Promise<string> | undefined;
@@ -188,17 +193,15 @@ export const nodeSupervisedWorkerGateRunner: SupervisedWorkerGateRunner = Object
     if (capturedStdout === undefined || capturedStderr === undefined) {
       throw new Error("supervised worker gate produced no output capture");
     }
-    const processResult = Promise.all([
-      launched.exited,
-      capturedStdout,
-      capturedStderr,
-    ]).then(([gateExitCode, stdout, stderr]) => ({ gateExitCode, stdout, stderr }));
+    const processResult = Promise.all([launched.exited, capturedStdout, capturedStderr]).then(
+      ([gateExitCode, stdout, stderr]) => ({ gateExitCode, stdout, stderr }),
+    );
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const timeout = new Promise<never>((_resolve, reject) => {
         timer = setTimeout(
-          () => reject(new Error("supervised worker gate exceeded childCancelAt")),
-          Math.max(0, deadlineMs - Date.now()),
+          () => reject(new Error("supervised worker gate exceeded its host execution deadline")),
+          request.executionTimeoutMs,
         );
       });
       const result = await Promise.race([processResult, timeout]);
@@ -315,14 +318,17 @@ export async function superviseImplementWorkerGate(
 
   const run = await (deps.runner ?? nodeSupervisedWorkerGateRunner).run({
     worktreePath: context.worktreePath,
-    childCancelAt: context.childCancelAt,
+    executionTimeoutMs: SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
   });
   if (run.gateExitCode !== 0 || run.failCount !== 0 || run.passCount <= 0) {
     throw new Error(
       `supervised worker gate rejected exit=${String(run.gateExitCode)} pass=${String(run.passCount)} fail=${String(run.failCount)}\n${run.outputTail}`,
     );
   }
-  if ((await checkedGit(context.worktreePath, ["rev-parse", "--verify", context.ref])) !== resultCommit) {
+  if (
+    (await checkedGit(context.worktreePath, ["rev-parse", "--verify", context.ref])) !==
+    resultCommit
+  ) {
     throw new Error("supervised worker branch tip moved during the gate");
   }
   if (

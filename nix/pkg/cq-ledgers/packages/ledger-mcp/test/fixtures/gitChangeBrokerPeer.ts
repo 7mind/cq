@@ -43,7 +43,7 @@ function artifactStore(): PromptArtifactStore {
     sidecarSchemaRoleId: "implement-worker",
     promptSurface: "codex" as const,
     promptDigest: "a".repeat(64),
-    schemaVersion: 7,
+    schemaVersion: 8,
   };
   return {
     readManifest: () => ({
@@ -103,11 +103,14 @@ async function main(): Promise<void> {
       await backend.close();
     }
   }
-  if (request.completedFile !== undefined) await writeFile(request.completedFile, request.operation);
+  if (request.completedFile !== undefined)
+    await writeFile(request.completedFile, request.operation);
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
 await main().catch((error: unknown) => {
-  process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+  process.stderr.write(
+    `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+  );
   process.exit(1);
 });

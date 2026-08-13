@@ -78,7 +78,12 @@ export type ImplementWorkerBaseUnresolvableReason =
  * a named export so a consumer (e.g. a future non-schema classifier) can
  * reuse the exact same list the JSON-Schema `if`/`then` below compiles from.
  */
-export const TEST_GUARD_GLOBS = ["**/test/**", "**/*.test.ts", "**/*guard*", "**/*invariant*"] as const;
+export const TEST_GUARD_GLOBS = [
+  "**/test/**",
+  "**/*.test.ts",
+  "**/*guard*",
+  "**/*invariant*",
+] as const;
 
 /**
  * {@link TEST_GUARD_GLOBS}, translated to a single alternation regex usable as
@@ -107,6 +112,44 @@ const fullShaOrNull = {
 const sha256String = {
   type: "string",
   pattern: "^[0-9a-f]{64}$",
+} as const;
+
+const gitChangeReceiptSchema = {
+  type: "object",
+  properties: {
+    kind: { type: "string", const: "cq-git-change-receipt" },
+    version: { type: "integer", const: 1 },
+    attestationId: { type: "string", minLength: 1 },
+    generation: { type: "integer", minimum: 1 },
+    taskId: { type: "string", pattern: "^T[0-9]+$" },
+    operationId: { type: "string", minLength: 1 },
+    requestDigest: { type: "string", pattern: "^[0-9a-f]{64}$" },
+    oldHead: { type: "string", pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+    newHead: { type: "string", pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+    tree: { type: "string", pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+    objectOids: {
+      type: "array",
+      items: { type: "string", pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+    },
+    paths: { type: "array", items: { type: "string", minLength: 1 } },
+    committedAt: { type: "string", minLength: 1 },
+  },
+  required: [
+    "kind",
+    "version",
+    "attestationId",
+    "generation",
+    "taskId",
+    "operationId",
+    "requestDigest",
+    "oldHead",
+    "newHead",
+    "tree",
+    "objectOids",
+    "paths",
+    "committedAt",
+  ],
+  additionalProperties: false,
 } as const;
 
 /**
@@ -141,8 +184,7 @@ export const implementWorkerSupervisedGateEvidenceSchema = {
     gateDurationMs: { type: "integer", minimum: 0 },
     capturedAt: {
       type: "string",
-      pattern:
-        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$",
+      pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$",
     },
     filesTouchedDigest: sha256String,
     gitReceiptsDigest: sha256String,
@@ -312,19 +354,19 @@ const inputSchema = {
       items: { type: "string" },
       description: "Prior-round reviewer criticism[] on a re-dispatch after review.",
     },
+    inheritedGitReceipts: {
+      type: "array",
+      minItems: 1,
+      items: gitChangeReceiptSchema,
+      description:
+        "Server-bound immutable receipt prefix from terminal prior generations. Callers must omit it; a brokered retry prepends it unchanged to the final receipt chain without replaying Git effects.",
+    },
     resolvedModel: {
       type: "string",
       description: "The resolved model class (informational).",
     },
   },
-  required: [
-    "taskId",
-    "acceptance",
-    "branch",
-    "baseCommit",
-    "round",
-    "startingCommit",
-  ],
+  required: ["taskId", "acceptance", "branch", "baseCommit", "round", "startingCommit"],
   additionalProperties: false,
 } as const;
 
@@ -376,41 +418,7 @@ const outputSchema = {
       description:
         "Durable dispatch-bound broker receipts retained when the worker performed brokered commits.",
       items: {
-        type: "object",
-        properties: {
-          kind: { type: "string", const: "cq-git-change-receipt" },
-          version: { type: "integer", const: 1 },
-          attestationId: { type: "string", minLength: 1 },
-          generation: { type: "integer", minimum: 1 },
-          taskId: { type: "string", pattern: "^T[0-9]+$" },
-          operationId: { type: "string", minLength: 1 },
-          requestDigest: { type: "string", pattern: "^[0-9a-f]{64}$" },
-          oldHead: { type: "string", pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
-          newHead: { type: "string", pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
-          tree: { type: "string", pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
-          objectOids: {
-            type: "array",
-            items: { type: "string", pattern: "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
-          },
-          paths: { type: "array", items: { type: "string", minLength: 1 } },
-          committedAt: { type: "string", minLength: 1 },
-        },
-        required: [
-          "kind",
-          "version",
-          "attestationId",
-          "generation",
-          "taskId",
-          "operationId",
-          "requestDigest",
-          "oldHead",
-          "newHead",
-          "tree",
-          "objectOids",
-          "paths",
-          "committedAt",
-        ],
-        additionalProperties: false,
+        ...gitChangeReceiptSchema,
       },
     },
     checkSummary: { type: "string" },
@@ -424,7 +432,7 @@ const outputSchema = {
     gateDurationMs: {
       type: "integer",
       minimum: 0,
-      description: "Wall-clock milliseconds `bun run check` took. Required when status is \"pass\".",
+      description: 'Wall-clock milliseconds `bun run check` took. Required when status is "pass".',
     },
     supervisedGateEvidence: {
       ...implementWorkerSupervisedGateEvidenceSchema,
@@ -516,15 +524,15 @@ const outputSchema = {
 
 /**
  * The implement-worker per-role schema sidecar (storage-format decision 3).
- * `version: 7` (bumped from 6, T2081): Codex broker-capable workers may carry
- * runner-owned exact-tip supervised-gate evidence instead of an in-child gate.
- * A stale deployed root rendered against the v6 contract must not be mistaken for this
+ * `version: 8` (bumped from 7, T2082): Codex broker-capable retries may receive
+ * a server-bound immutable prior-generation receipt prefix. A stale deployed
+ * root rendered against the v7 contract must not be mistaken for this
  * one. DISPATCHED_ROLE_VERSIONS derives this automatically; it is not
  * hand-edited.
  */
 export const implementWorkerSidecar: RoleSchemaSidecar = {
   id: "implement-worker",
-  version: 7,
+  version: 8,
   inputSchema,
   outputSchema,
 };

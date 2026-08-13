@@ -209,8 +209,9 @@ describe("T1330 Codex role process boundary", () => {
           !profile.zeroDomainCalls ||
           plan.ledgerMcp.enabledTools.every((tool) => !domainTools.has(tool)),
         serverProfileArgv: plan.ledgerMcp.args.slice(-2),
-        roleInstructionsNative:
-          plan.argv.includes(`developer_instructions=${JSON.stringify(`instructions:${roleId}`)}`),
+        roleInstructionsNative: plan.argv.includes(
+          `developer_instructions=${JSON.stringify(`instructions:${roleId}`)}`,
+        ),
         modelSelected:
           plan.argv.includes("frontier-model") &&
           plan.argv.includes(`model_reasoning_effort=${JSON.stringify("high")}`),
@@ -246,18 +247,11 @@ describe("T1330 Codex role process boundary", () => {
     expect({
       roleIds: records.map(({ roleId }) => roleId),
       tools: Object.fromEntries(records.map(({ roleId, tools }) => [roleId, tools])),
-      invariants: records.map(
-        ({
-          roleId,
-          tools: _tools,
-          serverProfileArgv,
-          ...invariants
-        }) => ({
-          roleId,
-          serverProfileArgv,
-          ...invariants,
-        }),
-      ),
+      invariants: records.map(({ roleId, tools: _tools, serverProfileArgv, ...invariants }) => ({
+        roleId,
+        serverProfileArgv,
+        ...invariants,
+      })),
       unknownRoleRejected,
       echoedBodyRejected,
     }).toEqual({
@@ -518,7 +512,7 @@ describe("T1330 Codex role process boundary", () => {
         reason: "invalid-output",
         details: {
           roleId: "implement-worker",
-          version: 7,
+          version: 8,
           errors: [{ path: "/gitReceipts", message: "expected array" }],
           summary: "/gitReceipts expected array",
         },
@@ -549,10 +543,7 @@ describe("T1330 Codex role process boundary", () => {
 
   test("T1536 projects only the exact bare prepared attestation id to its handle", () => {
     expect(
-      interceptCodexRoleBoundaryResult(
-        trustedStoredStream(HANDLE.attestationId),
-        HANDLE,
-      ),
+      interceptCodexRoleBoundaryResult(trustedStoredStream(HANDLE.attestationId), HANDLE),
     ).toEqual(HANDLE);
 
     for (const rejected of [

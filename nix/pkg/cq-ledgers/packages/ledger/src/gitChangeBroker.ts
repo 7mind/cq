@@ -55,6 +55,7 @@ export interface DispatchBoundGitAuthorization extends ManagedWorktreeDispatchBi
   readonly conflictStateDigest?: string;
   readonly surface: string;
   readonly childCancelAt: string;
+  readonly inheritedGitReceipts?: readonly GitChangeBrokerReceipt[];
 }
 
 export interface GitChangeBrokerRequest {
@@ -97,6 +98,13 @@ export interface GitChangeBrokerDeps extends Pick<ManagedWorktreeDeps, "stateDir
 }
 
 export type GitChangeBrokerEvidenceDeps = Pick<ManagedWorktreeDeps, "stateDir">;
+
+export type GitChangeReceiptLineageBinding = Omit<
+  DispatchBoundGitAuthorization,
+  "roleId" | "surface" | "childCancelAt"
+> & {
+  readonly inheritedGitReceipts?: readonly GitChangeBrokerReceipt[];
+};
 
 interface BrokerJournal {
   readonly version: 1;
@@ -243,7 +251,7 @@ function brokerRoot(binding: ManagedWorktreeDispatchBinding, stateDir?: string):
 }
 
 function operationRoot(
-  binding: DispatchBoundGitAuthorization,
+  binding: GitChangeReceiptLineageBinding,
   operationId: string,
   stateDir?: string,
 ): string {
@@ -265,7 +273,7 @@ async function readJournal(file: string): Promise<BrokerJournal | null> {
 }
 
 async function committedDispatchReceipts(
-  authorization: DispatchBoundGitAuthorization,
+  authorization: GitChangeReceiptLineageBinding,
   resultCommit: string,
   deps: GitChangeBrokerEvidenceDeps,
 ): Promise<readonly GitChangeBrokerReceipt[]> {
@@ -294,13 +302,19 @@ async function committedDispatchReceipts(
       operationDirectory.name !==
       basename(operationRoot(authorization, receipt.operationId, deps.stateDir))
     ) {
-      throw new Error(`durable broker receipt ${receipt.operationId} has a substituted operationId`);
+      throw new Error(
+        `durable broker receipt ${receipt.operationId} has a substituted operationId`,
+      );
     }
     if (receipt.requestDigest !== journal.requestDigest) {
-      throw new Error(`durable broker receipt ${receipt.operationId} has a substituted requestDigest`);
+      throw new Error(
+        `durable broker receipt ${receipt.operationId} has a substituted requestDigest`,
+      );
     }
     if (receipt.committedAt !== journal.createdAt) {
-      throw new Error(`durable broker receipt ${receipt.operationId} has a substituted committedAt`);
+      throw new Error(
+        `durable broker receipt ${receipt.operationId} has a substituted committedAt`,
+      );
     }
     const ancestry = await runGit(authorization.worktreePath, [
       "merge-base",
@@ -344,6 +358,32 @@ async function committedDispatchReceipts(
     throw new Error("durable broker receipts do not form one complete commit chain");
   }
   return Object.freeze(reversed.reverse());
+}
+
+/** Resolve the exact durable prefix a terminal generation contributes to its retry. */
+export async function resolveInheritedGitChangeReceipts(
+  authorization: GitChangeReceiptLineageBinding,
+  resultCommit: string,
+  deps: GitChangeBrokerEvidenceDeps = {},
+): Promise<readonly GitChangeBrokerReceipt[]> {
+  if (!FULL_OID.test(resultCommit)) throw new Error("inherited receipt tip must be a full Git oid");
+  const inherited = authorization.inheritedGitReceipts ?? [];
+  const current = await committedDispatchReceipts(authorization, resultCommit, deps);
+  const combined = [...inherited, ...current];
+  if (combined.length === 0) return Object.freeze([]);
+  for (const [index, receipt] of combined.entries()) {
+    if (receipt.taskId !== authorization.taskId) {
+      throw new Error(`inherited receipt chain entry ${index} has a foreign task identity`);
+    }
+    const preceding = combined[index - 1];
+    if (preceding !== undefined && receipt.oldHead !== preceding.newHead) {
+      throw new Error(`inherited receipt chain diverges at entry ${index}`);
+    }
+  }
+  if (combined.at(-1)?.newHead !== resultCommit) {
+    throw new Error("inherited receipt chain is stale relative to startingCommit");
+  }
+  return Object.freeze(combined.map((receipt) => Object.freeze({ ...receipt })));
 }
 
 async function writeJournal(file: string, journal: BrokerJournal): Promise<void> {
@@ -453,7 +493,9 @@ async function assertExactDirtyPaths(
   binding: DispatchBoundGitAuthorization,
   expected: readonly string[],
 ): Promise<void> {
-  const tracked = (await checkedGit(binding.worktreePath, ["diff", "--name-only", "-z", "HEAD", "--"]))
+  const tracked = (
+    await checkedGit(binding.worktreePath, ["diff", "--name-only", "-z", "HEAD", "--"])
+  )
     .toString()
     .split("\0")
     .filter(Boolean);
@@ -463,9 +505,7 @@ async function assertExactDirtyPaths(
     .toString()
     .split("\0")
     .filter(Boolean);
-  const staged = (
-    await checkedGit(binding.worktreePath, ["diff", "--cached", "--name-only", "-z"])
-  )
+  const staged = (await checkedGit(binding.worktreePath, ["diff", "--cached", "--name-only", "-z"]))
     .toString()
     .split("\0")
     .filter(Boolean);
@@ -493,7 +533,8 @@ async function treeEntry(
   if (output.length === 0) return null;
   const line = output.toString().replace(/\0$/, "");
   const match = /^(\d+) ([^ ]+) ([0-9a-f]+)\t(.+)$/.exec(line);
-  if (match === null || match[4] !== entryPath) throw new Error(`ambiguous tree entry ${entryPath}`);
+  if (match === null || match[4] !== entryPath)
+    throw new Error(`ambiguous tree entry ${entryPath}`);
   if (match[2] !== "blob" || !REGULAR_MODES.has(match[1] as GitRegularMode)) {
     throw new Error(`unsupported symlink or gitlink at ${entryPath}`);
   }
@@ -520,7 +561,8 @@ async function snapshotRegularFile(
   }
   const components = entryPath.split("/").slice(0, -1);
   let parent = resolve(root);
-  const parentIdentities: { readonly path: string; readonly dev: number; readonly ino: number }[] = [];
+  const parentIdentities: { readonly path: string; readonly dev: number; readonly ino: number }[] =
+    [];
   for (const component of components) {
     parent = join(parent, component);
     const stat = await fs.lstat(parent);
@@ -540,7 +582,8 @@ async function snapshotRegularFile(
   }
   try {
     const before = await handle.stat();
-    if (!before.isFile()) throw new Error(`path ${entryPath} must be a regular file, not a symlink`);
+    if (!before.isFile())
+      throw new Error(`path ${entryPath} must be a regular file, not a symlink`);
     const bytes = await handle.readFile();
     const after = await handle.stat();
     const pathStat = await fs.lstat(absolute);
@@ -690,7 +733,8 @@ async function materializeExistingTree(
       )
         .toString()
         .trim();
-      if (written !== tree) throw new Error("materialized tree oid does not match write-tree output");
+      if (written !== tree)
+        throw new Error("materialized tree oid does not match write-tree output");
     }
   }
   const isolatedBatch = await checkedGit(
@@ -716,7 +760,11 @@ async function constructPrivateCommit(
   await fs.mkdir(join(quarantine, "pack"), { recursive: true });
   await fs.rm(privateIndex, { force: true });
   const environment = gitEnvironment(request.authorization, privateIndex, quarantine, committedAt);
-  await checkedGit(request.authorization.worktreePath, ["read-tree", request.expectedHead], environment);
+  await checkedGit(
+    request.authorization.worktreePath,
+    ["read-tree", request.expectedHead],
+    environment,
+  );
   for (const change of request.changes) {
     if (change.kind === "delete") {
       await checkedGit(
@@ -746,7 +794,12 @@ async function constructPrivateCommit(
         .trim();
       await checkedGit(
         request.authorization.worktreePath,
-        ["update-index", "--add", "--cacheinfo", `${change.newState.mode},${oid},${change.newPath}`],
+        [
+          "update-index",
+          "--add",
+          "--cacheinfo",
+          `${change.newState.mode},${oid},${change.newPath}`,
+        ],
         environment,
       );
       continue;
@@ -769,9 +822,7 @@ async function constructPrivateCommit(
       environment,
     );
   }
-  const tree = (
-    await checkedGit(request.authorization.worktreePath, ["write-tree"], environment)
-  )
+  const tree = (await checkedGit(request.authorization.worktreePath, ["write-tree"], environment))
     .toString()
     .trim();
   const changedPaths = (
@@ -889,7 +940,12 @@ async function installIndex(
   privateIndex: string,
 ): Promise<void> {
   const raw = (
-    await checkedGit(binding.worktreePath, ["rev-parse", "--path-format=absolute", "--git-path", "index"])
+    await checkedGit(binding.worktreePath, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-path",
+      "index",
+    ])
   )
     .toString()
     .trim();
@@ -1001,7 +1057,8 @@ export async function commitManagedWorktreeChanges(
         throw new Error(`operationId ${request.operationId} was reused with a different request`);
       }
       if (journal.state === "completed") {
-        if (journal.receipt === undefined) throw new Error("completed broker journal lacks receipt");
+        if (journal.receipt === undefined)
+          throw new Error("completed broker journal lacks receipt");
         return journal.receipt;
       }
       if (journal.state !== "intent") {
@@ -1057,11 +1114,13 @@ export async function validateGitChangeBrokerResultEvidence(
     throw new Error("broker-capable worker result requires a non-empty receipt chain");
   }
 
-  const durableReceipts = await committedDispatchReceipts(
+  const inheritedReceipts = authorization.inheritedGitReceipts ?? [];
+  const currentReceipts = await committedDispatchReceipts(
     authorization,
     evidence.resultCommit,
     deps,
   );
+  const durableReceipts = [...inheritedReceipts, ...currentReceipts];
   if (durableReceipts.length !== evidence.gitReceipts.length) {
     throw new Error("broker receipt chain omits or invents a durable operation");
   }
@@ -1071,9 +1130,13 @@ export async function validateGitChangeBrokerResultEvidence(
     }
   }
 
-  const touched = [...new Set(evidence.filesTouched.map((entryPath, index) =>
-    assertPath(entryPath, `filesTouched[${index}]`),
-  ))].sort();
+  const touched = [
+    ...new Set(
+      evidence.filesTouched.map((entryPath, index) =>
+        assertPath(entryPath, `filesTouched[${index}]`),
+      ),
+    ),
+  ].sort();
   if (touched.length !== evidence.filesTouched.length) {
     throw new Error("broker result filesTouched contains duplicate paths");
   }
@@ -1083,14 +1146,20 @@ export async function validateGitChangeBrokerResultEvidence(
     if (receipt.kind !== "cq-git-change-receipt" || receipt.version !== 1) {
       throw new Error(`broker receipt chain entry ${index} has an unsupported kind or version`);
     }
+    const inherited = inheritedReceipts[index];
     if (
-      receipt.attestationId !== authorization.attestationId ||
-      receipt.generation !== authorization.generation ||
-      receipt.taskId !== authorization.taskId
+      inherited === undefined &&
+      (receipt.attestationId !== authorization.attestationId ||
+        receipt.generation !== authorization.generation ||
+        receipt.taskId !== authorization.taskId)
     ) {
       throw new Error(`broker receipt chain entry ${index} does not match the dispatch identity`);
     }
-    if (!FULL_OID.test(receipt.oldHead) || !FULL_OID.test(receipt.newHead) || !FULL_OID.test(receipt.tree)) {
+    if (
+      !FULL_OID.test(receipt.oldHead) ||
+      !FULL_OID.test(receipt.newHead) ||
+      !FULL_OID.test(receipt.tree)
+    ) {
       throw new Error(`broker receipt chain entry ${index} contains a malformed Git oid`);
     }
     if (previousHead !== undefined && receipt.oldHead !== previousHead) {
@@ -1104,13 +1173,21 @@ export async function validateGitChangeBrokerResultEvidence(
     }
     const parent = (
       await checkedGit(authorization.worktreePath, ["rev-parse", "--verify", `${receipt.newHead}^`])
-    ).toString().trim();
+    )
+      .toString()
+      .trim();
     if (parent !== receipt.oldHead) {
       throw new Error(`broker receipt chain entry ${index} oldHead is not the commit parent`);
     }
     const tree = (
-      await checkedGit(authorization.worktreePath, ["rev-parse", "--verify", `${receipt.newHead}^{tree}`])
-    ).toString().trim();
+      await checkedGit(authorization.worktreePath, [
+        "rev-parse",
+        "--verify",
+        `${receipt.newHead}^{tree}`,
+      ])
+    )
+      .toString()
+      .trim();
     if (tree !== receipt.tree) {
       throw new Error(`broker receipt chain entry ${index} tree does not match newHead`);
     }
@@ -1125,7 +1202,11 @@ export async function validateGitChangeBrokerResultEvidence(
         receipt.newHead,
         "--",
       ])
-    ).toString().split("\0").filter(Boolean).sort();
+    )
+      .toString()
+      .split("\0")
+      .filter(Boolean)
+      .sort();
     if (canonical(changedPaths) !== canonical(paths)) {
       throw new Error(`broker receipt chain entry ${index} paths do not match its commit diff`);
     }
@@ -1135,7 +1216,10 @@ export async function validateGitChangeBrokerResultEvidence(
       }
       await checkedGit(authorization.worktreePath, ["cat-file", "-e", oid]);
     }
-    if (!receipt.objectOids.includes(receipt.newHead) || !receipt.objectOids.includes(receipt.tree)) {
+    if (
+      !receipt.objectOids.includes(receipt.newHead) ||
+      !receipt.objectOids.includes(receipt.tree)
+    ) {
       throw new Error(`broker receipt chain entry ${index} omits its commit or tree object`);
     }
     for (const entryPath of paths) receiptPaths.add(entryPath);

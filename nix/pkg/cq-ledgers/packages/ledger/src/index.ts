@@ -163,10 +163,7 @@ export {
   readWorksetRootsEpoch,
   worksetStoreFromCoordinator,
 } from "./worksetStore.js";
-export type {
-  WorksetStore,
-  CreateInMemoryWorksetStoreOptions,
-} from "./worksetStore.js";
+export type { WorksetStore, CreateInMemoryWorksetStoreOptions } from "./worksetStore.js";
 export {
   createGitObjectWorksetStore,
   parseWorksetRootsDocument,
@@ -349,9 +346,13 @@ export type {
 } from "./managedWorktree.js";
 export {
   commitManagedWorktreeChanges,
+  resolveInheritedGitChangeReceipts,
   validateGitChangeBrokerResultEvidence,
 } from "./gitChangeBroker.js";
+export type { GitChangeReceiptLineageBinding } from "./gitChangeBroker.js";
 export {
+  SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
+  SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
   nodeSupervisedWorkerGateRunner,
   superviseImplementWorkerGate,
 } from "./supervisedWorkerGate.js";

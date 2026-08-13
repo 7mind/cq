@@ -15,6 +15,7 @@ import {
   FsAttestationBackend,
   sequentialDispatchRandomBytes,
   type AttestationNamespace,
+  type DispatchJSONValue,
 } from "@cq/config";
 import { fsAttestationProductionRoot, prepareManagedWorktree } from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
@@ -54,7 +55,7 @@ function artifactStore(surface: "claude" | "codex" = "claude"): PromptArtifactSt
     sidecarSchemaRoleId: "implement-worker",
     promptSurface: surface,
     promptDigest: "a".repeat(64),
-    schemaVersion: 7,
+    schemaVersion: 8,
   };
   return {
     readManifest: () => ({
@@ -147,7 +148,7 @@ async function blockingGit(
       "fi",
       'if [ "$matched" = yes ]; then',
       '  : > "$CQ_PEER_GIT_READY"',
-      '  owner=$PPID',
+      "  owner=$PPID",
       '  while [ ! -e "$CQ_PEER_GIT_RELEASE" ]; do',
       '    kill -0 "$owner" 2>/dev/null || exit 143',
       "    sleep 0.01",
@@ -437,6 +438,7 @@ describe("dispatch-bound Git change capability", () => {
       { stateDir, skipInstall: true, bunWorkspaceRoot: repositoryRoot },
     );
     if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
+    let gateRuns = 0;
     const capability = createDispatchCapability({
       backend: new InMemoryAttestationBackend(new InMemoryAttestationStore(NAMESPACE)),
       promptArtifactStore: artifactStore("codex"),
@@ -444,6 +446,19 @@ describe("dispatch-bound Git change capability", () => {
       worktreeStateDir: stateDir,
       now: () => "2026-08-13T09:00:00.000Z",
       randomBytes: sequentialDispatchRandomBytes(96),
+      supervisedWorkerGateRunner: {
+        run: async () => {
+          gateRuns += 1;
+          return {
+            gateExitCode: 0,
+            passCount: 1,
+            failCount: 0,
+            gateDurationMs: 10,
+            capturedAt: "2026-08-13T09:00:01.000Z",
+            outputTail: "1 pass\n0 fail",
+          };
+        },
+      },
     });
     const workerInput = (round: number, startingCommit: string) => ({
       taskId: "T2082",
@@ -490,6 +505,32 @@ describe("dispatch-bound Git change capability", () => {
     });
     await capability.abort({ ...first.handle, reason: "parent-lost" });
 
+    const callerForged = await capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        ...workerInput(1, receipt.newHead),
+        inheritedGitReceipts: [receipt] as unknown as DispatchJSONValue,
+      },
+      idempotencyKey: "T2082-lost-report-forged-input",
+      timeoutMs: 600_000,
+      expectedChild: { childId: "lost-forged", runId: "lost-forged" },
+      reprepareOf: first.handle,
+    });
+    expect(callerForged).toMatchObject({
+      accepted: false,
+      path: "input.inheritedGitReceipts",
+    });
+
+    const stale = await capability.prepare({
+      roleId: "implement-worker",
+      input: workerInput(1, baseCommit),
+      idempotencyKey: "T2082-lost-report-stale-tip",
+      timeoutMs: 600_000,
+      expectedChild: { childId: "lost-stale", runId: "lost-stale" },
+      reprepareOf: first.handle,
+    });
+    expect(stale).toMatchObject({ accepted: false, path: "input.startingCommit" });
+
     const second = await capability.prepare({
       roleId: "implement-worker",
       input: workerInput(1, receipt.newHead),
@@ -510,6 +551,52 @@ describe("dispatch-bound Git change capability", () => {
     expect((materialized.input as Record<string, unknown>)["inheritedGitReceipts"]).toEqual([
       receipt,
     ]);
+    const output = {
+      taskId: "T2082",
+      status: "pass" as const,
+      resultCommit: receipt.newHead,
+      branch: managed.handle.branch,
+      actualWorktreePath: managed.handle.absolutePath,
+      filesTouched: ["file.txt"],
+      gitReceipts: [receipt],
+      checkSummary: "trusted gate delegated to result storage",
+      baseVerification: {
+        status: "verified" as const,
+        relation: "descendant" as const,
+        baseCommit,
+        headCommit: receipt.newHead,
+      },
+      summary: "recovered without a synthetic Git effect",
+    };
+    for (const altered of [
+      { ...receipt, requestDigest: "f".repeat(64) },
+      { ...receipt, attestationId: `${receipt.attestationId}-foreign` },
+      { ...receipt, oldHead: receipt.newHead },
+      { ...receipt, newHead: baseCommit },
+    ]) {
+      await expect(
+        capability.storeResult({
+          resultCapability: second.prepared.resultCapability,
+          output: { ...output, gitReceipts: [altered] } as unknown as DispatchJSONValue,
+        }),
+      ).rejects.toThrow(/receipt/);
+    }
+    await expect(
+      capability.storeResult({
+        resultCapability: second.prepared.resultCapability,
+        output: { ...output, filesTouched: [] } as unknown as DispatchJSONValue,
+      }),
+    ).rejects.toThrow(/filesTouched|receipt paths/);
+    expect(gateRuns).toBe(0);
+    await expect(
+      capability.storeResult({
+        resultCapability: second.prepared.resultCapability,
+        output: output as unknown as DispatchJSONValue,
+      }),
+    ).resolves.toMatchObject({ state: "result-stored" });
+    expect(gateRuns).toBe(1);
+    expect(await git(managed.handle.absolutePath, ["rev-parse", "HEAD"])).toBe(receipt.newHead);
+    expect(receipt.generation).toBe(first.handle.generation);
   });
 
   test("serializes broker commits against result storage, abort, and guarded release in peer processes", async () => {
@@ -579,10 +666,7 @@ describe("dispatch-bound Git change capability", () => {
         await git(fixture.repositoryRoot, ["rev-parse", fixture.managed.handle.branch]),
       );
       expect(await Bun.file(completedFile).exists(), contender).toBe(true);
-      expect(
-        contender === "release" ? peerResult["status"] : peerResult["state"],
-        contender,
-      ).toBe(
+      expect(contender === "release" ? peerResult["status"] : peerResult["state"], contender).toBe(
         contender === "store-result"
           ? "result-stored"
           : contender === "abort"
@@ -605,15 +689,13 @@ describe("dispatch-bound Git change capability", () => {
       },
     ] as const) {
       const label =
-        "crashBoundary" in boundary ? `${boundary.state}-${boundary.crashBoundary}` : boundary.state;
+        "crashBoundary" in boundary
+          ? `${boundary.state}-${boundary.crashBoundary}`
+          : boundary.state;
       const fixture = await durableDispatch(label);
       const content = `${label}\n`;
       await fs.writeFile(path.join(fixture.managed.handle.absolutePath, "file.txt"), content);
-      const request = commitPeerRequest(
-        fixture,
-        `T2042-restart-${label}`,
-        content,
-      );
+      const request = commitPeerRequest(fixture, `T2042-restart-${label}`, content);
       const blocker =
         "trigger" in boundary
           ? await blockingGit(fixture.repositoryRoot, boundary.trigger)
@@ -645,14 +727,17 @@ describe("dispatch-bound Git change capability", () => {
       };
       expect(journal.state, label).toBe(boundary.state);
       if ("indexInstalled" in boundary) {
-        if (journal.privateIndex === undefined) throw new Error("broker journal lacks private index");
+        if (journal.privateIndex === undefined)
+          throw new Error("broker journal lacks private index");
         const indexPath = await git(fixture.managed.handle.absolutePath, [
           "rev-parse",
           "--path-format=absolute",
           "--git-path",
           "index",
         ]);
-        expect(await fs.readFile(indexPath), label).toEqual(await fs.readFile(journal.privateIndex));
+        expect(await fs.readFile(indexPath), label).toEqual(
+          await fs.readFile(journal.privateIndex),
+        );
       }
       if (blocker !== undefined) {
         interrupted.child.kill("SIGKILL");
@@ -664,10 +749,9 @@ describe("dispatch-bound Git change capability", () => {
       expect(recovered["newHead"], label).toBe(
         await git(fixture.managed.handle.absolutePath, ["rev-parse", "HEAD"]),
       );
-      expect(
-        await git(fixture.managed.handle.absolutePath, ["status", "--porcelain"]),
-        label,
-      ).toBe("");
+      expect(await git(fixture.managed.handle.absolutePath, ["status", "--porcelain"]), label).toBe(
+        "",
+      );
       expect(await spawnPeer(request).result(), label).toEqual(recovered);
     }
   }, 30_000);
@@ -708,180 +792,184 @@ describe("dispatch-bound Git change capability", () => {
     );
   });
 
-  test("broker-capable result storage rejects missing or substituted receipt chains", async () => {
-    let attempt = 0;
-    async function storeCandidate(
-      mutate: (output: Record<string, unknown>) => void,
-    ): Promise<void> {
-      attempt += 1;
-      const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2042-receipt-${attempt}-`));
-      roots.push(repositoryRoot);
-      await git(repositoryRoot, ["init", "-q"]);
-      await fs.writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
-      await git(repositoryRoot, ["add", "file.txt"]);
-      await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
-      const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
-      const stateDir = path.join(repositoryRoot, ".manager-state");
-      const managed = await prepareManagedWorktree(
-        { repositoryRoot, taskId: "T2042", baseCommit },
-        { stateDir, skipInstall: true, bunWorkspaceRoot: repositoryRoot },
-      );
-      if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
-      const store = new InMemoryAttestationStore(NAMESPACE);
-      const capability = createDispatchCapability({
-        backend: new InMemoryAttestationBackend(store),
-        promptArtifactStore: artifactStore(),
-        repositoryRoot,
-        worktreeStateDir: stateDir,
-        now: () => "2026-08-10T12:00:00.000Z",
-        randomBytes: sequentialDispatchRandomBytes(attempt * 16),
-      });
-      const prepared = await capability.prepare({
-        roleId: "implement-worker",
-        input: {
+  test(
+    "broker-capable result storage rejects missing or substituted receipt chains",
+    async () => {
+      let attempt = 0;
+      async function storeCandidate(
+        mutate: (output: Record<string, unknown>) => void,
+      ): Promise<void> {
+        attempt += 1;
+        const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2042-receipt-${attempt}-`));
+        roots.push(repositoryRoot);
+        await git(repositoryRoot, ["init", "-q"]);
+        await fs.writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
+        await git(repositoryRoot, ["add", "file.txt"]);
+        await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
+        const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+        const stateDir = path.join(repositoryRoot, ".manager-state");
+        const managed = await prepareManagedWorktree(
+          { repositoryRoot, taskId: "T2042", baseCommit },
+          { stateDir, skipInstall: true, bunWorkspaceRoot: repositoryRoot },
+        );
+        if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
+        const store = new InMemoryAttestationStore(NAMESPACE);
+        const capability = createDispatchCapability({
+          backend: new InMemoryAttestationBackend(store),
+          promptArtifactStore: artifactStore(),
+          repositoryRoot,
+          worktreeStateDir: stateDir,
+          now: () => "2026-08-10T12:00:00.000Z",
+          randomBytes: sequentialDispatchRandomBytes(attempt * 16),
+        });
+        const prepared = await capability.prepare({
+          roleId: "implement-worker",
+          input: {
+            taskId: "T2042",
+            headline: "verify receipt chain",
+            description: "reject substituted receipt evidence",
+            acceptance: "receipt chain matches Git",
+            worktreePath: managed.handle.absolutePath,
+            branch: managed.handle.branch,
+            baseCommit,
+            round: 0,
+            startingCommit: baseCommit,
+          },
+          idempotencyKey: `T2042-receipt-attempt-${attempt}`,
+          timeoutMs: 600_000,
+          expectedChild: { childId: `child-${attempt}`, runId: `run-${attempt}` },
+        });
+        if (!prepared.accepted || prepared.prepared.gitChangeCapability === undefined) {
+          throw new Error("worker dispatch did not receive a Git change capability");
+        }
+        await capability.fetchInput({
+          attestationId: prepared.prepared.attestationId,
+          generation: prepared.prepared.generation,
+          inputCapability: prepared.prepared.inputCapability,
+        });
+        if (capability.gitCommit === undefined) throw new Error("git_commit was not wired");
+        await fs.writeFile(path.join(managed.handle.absolutePath, "file.txt"), "first\n");
+        const first = await capability.gitCommit({
+          attestationId: prepared.prepared.attestationId,
+          generation: prepared.prepared.generation,
+          gitChangeCapability: prepared.prepared.gitChangeCapability,
+          operationId: `T2042-receipt-${attempt}-1`,
+          expectedHead: baseCommit,
+          message: "first receipt",
+          changes: [
+            {
+              kind: "modify",
+              path: "file.txt",
+              oldState: { mode: "100644", digest: sha256("before\n") },
+              newState: { mode: "100644", digest: sha256("first\n") },
+            },
+          ],
+        });
+        await fs.writeFile(path.join(managed.handle.absolutePath, "file.txt"), "second\n");
+        const second = await capability.gitCommit({
+          attestationId: prepared.prepared.attestationId,
+          generation: prepared.prepared.generation,
+          gitChangeCapability: prepared.prepared.gitChangeCapability,
+          operationId: `T2042-receipt-${attempt}-2`,
+          expectedHead: first.newHead,
+          message: "second receipt",
+          changes: [
+            {
+              kind: "modify",
+              path: "file.txt",
+              oldState: { mode: "100644", digest: sha256("first\n") },
+              newState: { mode: "100644", digest: sha256("second\n") },
+            },
+          ],
+        });
+        const output: Record<string, unknown> = {
           taskId: "T2042",
-          headline: "verify receipt chain",
-          description: "reject substituted receipt evidence",
-          acceptance: "receipt chain matches Git",
-          worktreePath: managed.handle.absolutePath,
+          status: "pass",
+          resultCommit: second.newHead,
           branch: managed.handle.branch,
-          baseCommit,
-          round: 0,
-          startingCommit: baseCommit,
-        },
-        idempotencyKey: `T2042-receipt-attempt-${attempt}`,
-        timeoutMs: 600_000,
-        expectedChild: { childId: `child-${attempt}`, runId: `run-${attempt}` },
-      });
-      if (!prepared.accepted || prepared.prepared.gitChangeCapability === undefined) {
-        throw new Error("worker dispatch did not receive a Git change capability");
+          actualWorktreePath: managed.handle.absolutePath,
+          filesTouched: ["file.txt"],
+          gitReceipts: [
+            { ...first, objectOids: [...first.objectOids], paths: [...first.paths] },
+            { ...second, objectOids: [...second.objectOids], paths: [...second.paths] },
+          ],
+          checkSummary: "REAL_CHECK_EXIT=0",
+          summary: "receipt verification candidate",
+          gateDurationMs: 1,
+          baseVerification: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit,
+            headCommit: second.newHead,
+          },
+        };
+        mutate(output);
+        await expect(
+          capability.storeResult({
+            resultCapability: prepared.prepared.resultCapability,
+            output: output as never,
+          }),
+        ).rejects.toThrow(/receipt/i);
       }
-      await capability.fetchInput({
-        attestationId: prepared.prepared.attestationId,
-        generation: prepared.prepared.generation,
-        inputCapability: prepared.prepared.inputCapability,
-      });
-      if (capability.gitCommit === undefined) throw new Error("git_commit was not wired");
-      await fs.writeFile(path.join(managed.handle.absolutePath, "file.txt"), "first\n");
-      const first = await capability.gitCommit({
-        attestationId: prepared.prepared.attestationId,
-        generation: prepared.prepared.generation,
-        gitChangeCapability: prepared.prepared.gitChangeCapability,
-        operationId: `T2042-receipt-${attempt}-1`,
-        expectedHead: baseCommit,
-        message: "first receipt",
-        changes: [
-          {
-            kind: "modify",
-            path: "file.txt",
-            oldState: { mode: "100644", digest: sha256("before\n") },
-            newState: { mode: "100644", digest: sha256("first\n") },
-          },
-        ],
-      });
-      await fs.writeFile(path.join(managed.handle.absolutePath, "file.txt"), "second\n");
-      const second = await capability.gitCommit({
-        attestationId: prepared.prepared.attestationId,
-        generation: prepared.prepared.generation,
-        gitChangeCapability: prepared.prepared.gitChangeCapability,
-        operationId: `T2042-receipt-${attempt}-2`,
-        expectedHead: first.newHead,
-        message: "second receipt",
-        changes: [
-          {
-            kind: "modify",
-            path: "file.txt",
-            oldState: { mode: "100644", digest: sha256("first\n") },
-            newState: { mode: "100644", digest: sha256("second\n") },
-          },
-        ],
-      });
-      const output: Record<string, unknown> = {
-        taskId: "T2042",
-        status: "pass",
-        resultCommit: second.newHead,
-        branch: managed.handle.branch,
-        actualWorktreePath: managed.handle.absolutePath,
-        filesTouched: ["file.txt"],
-        gitReceipts: [
-          { ...first, objectOids: [...first.objectOids], paths: [...first.paths] },
-          { ...second, objectOids: [...second.objectOids], paths: [...second.paths] },
-        ],
-        checkSummary: "REAL_CHECK_EXIT=0",
-        summary: "receipt verification candidate",
-        gateDurationMs: 1,
-        baseVerification: {
-          status: "verified",
-          relation: "descendant",
-          baseCommit,
-          headCommit: second.newHead,
-        },
-      };
-      mutate(output);
-      await expect(
-        capability.storeResult({
-          resultCapability: prepared.prepared.resultCapability,
-          output: output as never,
-        }),
-      ).rejects.toThrow(/receipt/i);
-    }
 
-    await storeCandidate((output) => {
-      delete output["gitReceipts"];
-    });
-    await storeCandidate((output) => {
-      const receipts = output["gitReceipts"] as Record<string, unknown>[];
-      receipts.shift();
-    });
-    await storeCandidate((output) => {
-      const receipts = output["gitReceipts"] as Record<string, unknown>[];
-      receipts[0] = { ...receipts[0], operationId: "substituted-operation" };
-    });
-    await storeCandidate((output) => {
-      const receipts = output["gitReceipts"] as Record<string, unknown>[];
-      receipts[0] = { ...receipts[0], requestDigest: "f".repeat(64) };
-    });
-    await storeCandidate((output) => {
-      const receipts = output["gitReceipts"] as Record<string, unknown>[];
-      receipts[0] = { ...receipts[0], committedAt: "2099-01-01T00:00:00.000Z" };
-    });
-    await storeCandidate((output) => {
-      const receipts = output["gitReceipts"] as Record<string, unknown>[];
-      const first = receipts[0]!;
-      receipts[0] = {
-        ...first,
-        objectOids: [first["newHead"], first["tree"]],
-      };
-    });
-    await storeCandidate((output) => {
-      const receipts = output["gitReceipts"] as Record<string, unknown>[];
-      const first = receipts[0]!;
-      const second = receipts[1]!;
-      receipts[0] = {
-        ...first,
-        objectOids: [...(first["objectOids"] as string[]), second["newHead"]],
-      };
-    });
-    await storeCandidate((output) => {
-      const receipts = output["gitReceipts"] as Record<string, unknown>[];
-      receipts[1] = { ...receipts[1], oldHead: "a".repeat(40) };
-    });
-    await storeCandidate((output) => {
-      const receipts = output["gitReceipts"] as Record<string, unknown>[];
-      receipts[1] = { ...receipts[1], tree: "a".repeat(40) };
-    });
-    await storeCandidate((output) => {
-      const receipts = output["gitReceipts"] as Record<string, unknown>[];
-      receipts[1] = { ...receipts[1], paths: ["other.txt"] };
-    });
-    await storeCandidate((output) => {
-      const receipts = output["gitReceipts"] as Record<string, unknown>[];
-      const first = receipts[0]!;
-      output["resultCommit"] = first["newHead"];
-      output["baseVerification"] = {
-        ...(output["baseVerification"] as Record<string, unknown>),
-        headCommit: first["newHead"],
-      };
-    });
-  }, RECEIPT_CHAIN_MATRIX_TIMEOUT_MS);
+      await storeCandidate((output) => {
+        delete output["gitReceipts"];
+      });
+      await storeCandidate((output) => {
+        const receipts = output["gitReceipts"] as Record<string, unknown>[];
+        receipts.shift();
+      });
+      await storeCandidate((output) => {
+        const receipts = output["gitReceipts"] as Record<string, unknown>[];
+        receipts[0] = { ...receipts[0], operationId: "substituted-operation" };
+      });
+      await storeCandidate((output) => {
+        const receipts = output["gitReceipts"] as Record<string, unknown>[];
+        receipts[0] = { ...receipts[0], requestDigest: "f".repeat(64) };
+      });
+      await storeCandidate((output) => {
+        const receipts = output["gitReceipts"] as Record<string, unknown>[];
+        receipts[0] = { ...receipts[0], committedAt: "2099-01-01T00:00:00.000Z" };
+      });
+      await storeCandidate((output) => {
+        const receipts = output["gitReceipts"] as Record<string, unknown>[];
+        const first = receipts[0]!;
+        receipts[0] = {
+          ...first,
+          objectOids: [first["newHead"], first["tree"]],
+        };
+      });
+      await storeCandidate((output) => {
+        const receipts = output["gitReceipts"] as Record<string, unknown>[];
+        const first = receipts[0]!;
+        const second = receipts[1]!;
+        receipts[0] = {
+          ...first,
+          objectOids: [...(first["objectOids"] as string[]), second["newHead"]],
+        };
+      });
+      await storeCandidate((output) => {
+        const receipts = output["gitReceipts"] as Record<string, unknown>[];
+        receipts[1] = { ...receipts[1], oldHead: "a".repeat(40) };
+      });
+      await storeCandidate((output) => {
+        const receipts = output["gitReceipts"] as Record<string, unknown>[];
+        receipts[1] = { ...receipts[1], tree: "a".repeat(40) };
+      });
+      await storeCandidate((output) => {
+        const receipts = output["gitReceipts"] as Record<string, unknown>[];
+        receipts[1] = { ...receipts[1], paths: ["other.txt"] };
+      });
+      await storeCandidate((output) => {
+        const receipts = output["gitReceipts"] as Record<string, unknown>[];
+        const first = receipts[0]!;
+        output["resultCommit"] = first["newHead"];
+        output["baseVerification"] = {
+          ...(output["baseVerification"] as Record<string, unknown>),
+          headCommit: first["newHead"],
+        };
+      });
+    },
+    RECEIPT_CHAIN_MATRIX_TIMEOUT_MS,
+  );
 });
