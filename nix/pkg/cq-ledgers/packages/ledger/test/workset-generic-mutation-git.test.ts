@@ -95,6 +95,58 @@ runWorksetGenericMutationContract({
 });
 
 describe("workset generic-mutation git-object focused [T1973]", () => {
+  it("rejects a target whose closure membership a peer revokes before the ref CAS", async () => {
+    const repoRoot = await seedRepo();
+    const admitted = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    let pause = false;
+    const writer = await buildGitGuarded({
+      repoRoot,
+      afterGenericAdmit: async () => {
+        if (!pause) return;
+        admitted.resolve();
+        await resume.promise;
+      },
+    });
+    const peer = await buildGitGuarded({ repoRoot });
+    await writer.init();
+    await peer.init();
+    try {
+      const milestone = await writer.mutations.createMilestone({ title: "revocation" });
+      const root = await writer.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "planned",
+        fields: { headline: "root" },
+      });
+      const dependent = await writer.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "planned",
+        fields: { headline: "dependent" },
+      });
+      await writer.mutations.updateItem(TASKS_LEDGER, root.id, {
+        fields: { dependsOn: [`${TASKS_LEDGER}:${dependent.id}`] },
+      });
+      await writer.setRoots([`${TASKS_LEDGER}:${root.id}`]);
+      await peer.invalidate(TASKS_LEDGER);
+
+      pause = true;
+      const contested = writer.mutations.updateItem(TASKS_LEDGER, dependent.id, {
+        status: "wip",
+      });
+      await admitted.promise;
+      await peer.mutations.updateItem(TASKS_LEDGER, root.id, {
+        fields: { dependsOn: [] },
+      });
+      resume.resolve();
+
+      await expect(contested).rejects.toMatchObject({ code: "mixed-or-excluded-targets" });
+      await writer.invalidate(TASKS_LEDGER);
+      expect(writer.fetchItem(TASKS_LEDGER, dependent.id).status).toBe("planned");
+    } finally {
+      resume.resolve();
+      await writer.dispose();
+      await peer.dispose();
+    }
+  });
+
   it(
     "public surface freezes the gateway form and hides raw writes",
     async () => {

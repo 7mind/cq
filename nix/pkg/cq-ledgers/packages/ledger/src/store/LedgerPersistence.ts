@@ -111,6 +111,7 @@ export interface PlanLifecyclePersistenceCommit {
 export interface ArchivePersistenceCommit {
   readonly archives: Readonly<Record<string, string | null>>;
   readonly ledgers: Readonly<Record<string, string>>;
+  readonly registry?: string;
 }
 
 export interface LedgerPersistence {

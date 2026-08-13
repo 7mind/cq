@@ -57,6 +57,62 @@ runWorksetGenericMutationContract({
 });
 
 describe("workset generic-mutation filesystem focused [T1972]", () => {
+  it("rejects a target whose closure membership a peer revokes before the native commit", async () => {
+    const root = await freshRoot();
+    const admitted = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    let pause = false;
+    const writer = createFsWorksetManagementLedger({
+      root,
+      afterGenericAdmit: async () => {
+        if (!pause) return;
+        admitted.resolve();
+        await resume.promise;
+      },
+    });
+    const peer = createFsWorksetManagementLedger({ root });
+    await writer.init();
+    await peer.init();
+    try {
+      const milestone = await writer.mutations.createMilestone({ title: "revocation" });
+      const rootTask = await writer.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "planned",
+        fields: { headline: "root" },
+      });
+      const dependent = await writer.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "planned",
+        fields: { headline: "dependent" },
+      });
+      await writer.mutations.updateItem(TASKS_LEDGER, rootTask.id, {
+        fields: { dependsOn: [`${TASKS_LEDGER}:${dependent.id}`] },
+      });
+      await writer.setRoots([`${TASKS_LEDGER}:${rootTask.id}`]);
+      await peer.invalidate(TASKS_LEDGER);
+
+      pause = true;
+      const contested = writer.mutations.updateItem(TASKS_LEDGER, dependent.id, {
+        status: "wip",
+      });
+      await admitted.promise;
+      await peer.mutations.updateItem(TASKS_LEDGER, rootTask.id, {
+        fields: { dependsOn: [] },
+      });
+      resume.resolve();
+
+      await expect(contested).rejects.toMatchObject({ code: "mixed-or-excluded-targets" });
+      await writer.invalidate(TASKS_LEDGER);
+      expect(writer.fetchItem(TASKS_LEDGER, dependent.id).status).toBe("planned");
+      expect(await writer.snapshotRoots()).toEqual({
+        roots: [`${TASKS_LEDGER}:${rootTask.id}`],
+        epoch: 1,
+      });
+    } finally {
+      resume.resolve();
+      await writer.dispose();
+      await peer.dispose();
+    }
+  });
+
   it("createFsWorksetGuardedLedger requires a non-empty root", () => {
     expect(() => createFsWorksetGuardedLedger({ root: "" })).toThrow(
       /createFsWorksetGuardedLedger: root is required/,

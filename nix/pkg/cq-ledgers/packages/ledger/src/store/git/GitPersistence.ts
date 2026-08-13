@@ -164,6 +164,9 @@ export class GitPersistence implements LedgerPersistence {
     for (const [name, source] of Object.entries(commit.ledgers)) {
       replacements[this.ledgerTreePath(name)] = source;
     }
+    if (commit.registry !== undefined) {
+      replacements[REGISTRY_PATH] = commit.registry;
+    }
     await this.advanceMany(replacements, "ledger: archive milestone");
   }
   /** The current ref sha, or null when the ref is absent. */

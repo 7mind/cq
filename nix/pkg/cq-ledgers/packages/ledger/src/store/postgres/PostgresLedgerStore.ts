@@ -190,6 +190,13 @@ import { createOwnedWriteTransaction } from "../ownedWriteTransaction.js";
 import type { WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
 import type { WorksetPlanLifecycleTx } from "../../worksetPlanLifecycle.js";
 import { createWorksetPlanLifecycleTransaction } from "../worksetPlanLifecycleTransaction.js";
+import {
+  createGenericMutationTransaction,
+  genericArchiveKey,
+  type GenericArchiveEntry,
+  type WorksetGenericMutationTx,
+} from "../genericMutationTransaction.js";
+import type { WorksetRootsEpoch } from "../../worksetEffectAdmission.js";
 
 export interface PostgresLedgerStoreOpts {
   /**
@@ -2071,6 +2078,91 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.absorbLiveLedgers(live);
     for (const ledgerId of dirtyLedgers) this.fireHook(ledgerId, "update");
     if (dirtyLedgers.length > 0) await this.notify();
+    return result;
+  }
+
+  /** Run one generic mutation in one tenant-scoped PostgreSQL transaction. */
+  async runAtomicGenericMutation<T>(
+    mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
+  ): Promise<T> {
+    this.assertInit();
+    let result!: T;
+    let dirtyLedgers: readonly string[] = [];
+    let archivedChanged = false;
+    let live!: LiveTenantState;
+    await writeTransaction(this.pool(), async (tx) => {
+      await this.lockTenantCounters(tx);
+      const rootsRows = await tx<Array<{ roots_json: string; epoch: number }>>`
+        SELECT roots_json, epoch FROM workset_roots
+        WHERE project_key = ${this.projectKey}
+        FOR UPDATE
+      `;
+      const roots: WorksetRootsEpoch = {
+        roots: JSON.parse(rootsRows[0]?.roots_json ?? "[]") as string[],
+        epoch: rootsRows[0]?.epoch ?? 0,
+      };
+      const tenant = await this.readLiveTenant(tx);
+      const archives = new Map<string, GenericArchiveEntry>();
+      for (const row of tenant.archived) {
+        const key = genericArchiveKey(row.ledger, row.pointer_id);
+        let entry = archives.get(key);
+        if (entry === undefined) {
+          entry = { ledgerId: row.ledger, pointerId: row.pointer_id, items: [] };
+          archives.set(key, entry);
+        }
+        entry.items.push(rowToItem(row));
+      }
+      const transaction = createGenericMutationTransaction({
+        ledgers: tenant.ledgers,
+        archives,
+        now: this.now,
+      });
+      result = mutate(transaction.tx, roots);
+      dirtyLedgers = [...transaction.dirtyLedgers];
+      for (const ledgerId of dirtyLedgers) {
+        const ledger = requireLiveLedger(tenant.ledgers, ledgerId);
+        await tx`
+          INSERT INTO ledgers (project_key, name, schema_json, milestone_counter, item_counter)
+          VALUES (${this.projectKey}, ${ledgerId}, ${JSON.stringify(ledger.schema)}, ${ledger.counters.milestone}, ${ledger.counters.item})
+          ON CONFLICT (project_key, name) DO NOTHING
+        `;
+        await this.persistLedgerState(tx, ledger);
+      }
+      for (const key of transaction.dirtyArchives) {
+        archivedChanged = true;
+        const current = archives.get(key);
+        const slash = key.indexOf("/");
+        const ledgerId = current?.ledgerId ?? key.slice(0, slash);
+        const pointerId = current?.pointerId ?? key.slice(slash + 1);
+        await tx`
+          DELETE FROM archived_items
+          WHERE project_key = ${this.projectKey} AND ledger = ${ledgerId} AND pointer_id = ${pointerId}
+        `;
+        await tx`
+          DELETE FROM archive_pointers
+          WHERE project_key = ${this.projectKey} AND ledger = ${ledgerId} AND id = ${pointerId}
+        `;
+        if (current === undefined) continue;
+        const pointer = requireLiveLedger(tenant.ledgers, ledgerId).archivePointers.find(
+          (candidate) => candidate.id === pointerId,
+        );
+        if (pointer === undefined) throw new LedgerError(`missing archive pointer ${key}`);
+        await tx`
+          INSERT INTO archive_pointers (project_key, ledger, id, summary, title, status, archived_at)
+          VALUES (${this.projectKey}, ${ledgerId}, ${pointerId}, ${pointer.summary}, ${pointer.title}, ${pointer.status}, ${this.now()})
+        `;
+        for (const item of current.items) {
+          await this.insertArchivedRow(tx, ledgerId, pointerId, item);
+        }
+      }
+      live = {
+        ledgers: tenant.ledgers,
+        archived: await this.readArchivedRows(tx),
+      };
+    });
+    this.absorbLiveLedgers(live);
+    for (const ledgerId of dirtyLedgers) this.fireHook(ledgerId, archivedChanged ? "archive" : "update");
+    if (dirtyLedgers.length > 0 || archivedChanged) await this.notify();
     return result;
   }
 

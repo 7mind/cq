@@ -182,6 +182,13 @@ import { createOwnedWriteTransaction } from "../ownedWriteTransaction.js";
 import type { WorksetOwnedWriteTx } from "../../worksetOwnedLifecycle.js";
 import type { WorksetPlanLifecycleTx } from "../../worksetPlanLifecycle.js";
 import { createWorksetPlanLifecycleTransaction } from "../worksetPlanLifecycleTransaction.js";
+import {
+  createGenericMutationTransaction,
+  genericArchiveKey,
+  type GenericArchiveEntry,
+  type WorksetGenericMutationTx,
+} from "../genericMutationTransaction.js";
+import type { WorksetRootsEpoch } from "../../worksetEffectAdmission.js";
 
 export interface SqliteLedgerStoreOpts {
   /** Concrete ledger database file path (created on init if absent). */
@@ -1605,6 +1612,112 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     }
     for (const ledgerId of outcome.dirtyLedgers) {
       this.fireMutation(ledgerId, "update");
+    }
+    return outcome.result;
+  }
+
+  /** Run one generic mutation in one BEGIN IMMEDIATE transaction. */
+  async runAtomicGenericMutation<T>(
+    mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
+  ): Promise<T> {
+    this.assertInit();
+    const outcome = immediateWriteTransaction(this.db(), () => {
+      const db = this.db();
+      const ledgers = new Map(
+        this.enumerate().map((ledgerId) => [ledgerId, this.loadLedger(ledgerId)]),
+      );
+      const archives = new Map<string, GenericArchiveEntry>();
+      const archivedRows = db
+        .query(
+          "SELECT ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session FROM archived_items ORDER BY rowid",
+        )
+        .all() as Array<ItemRow & { ledger: string; pointer_id: string }>;
+      for (const row of archivedRows) {
+        const key = genericArchiveKey(row.ledger, row.pointer_id);
+        let entry = archives.get(key);
+        if (entry === undefined) {
+          entry = { ledgerId: row.ledger, pointerId: row.pointer_id, items: [] };
+          archives.set(key, entry);
+        }
+        entry.items.push(rowToItem(row));
+      }
+      const rootsRow = db
+        .query("SELECT epoch, roots_json FROM workset_state WHERE id = 1")
+        .get() as { epoch: number; roots_json: string } | null;
+      const roots: WorksetRootsEpoch =
+        rootsRow === null
+          ? { roots: [], epoch: 0 }
+          : {
+              roots: JSON.parse(rootsRow.roots_json) as string[],
+              epoch: rootsRow.epoch,
+            };
+      const transaction = createGenericMutationTransaction({
+        ledgers,
+        archives,
+        now: this.now,
+      });
+      const result = mutate(transaction.tx, roots);
+      for (const ledgerId of transaction.dirtyLedgers) {
+        const ledger = ledgers.get(ledgerId);
+        if (ledger === undefined) throw new LedgerNotFoundError(ledgerId);
+        const exists = db.query("SELECT 1 FROM ledgers WHERE name = ?").get(ledgerId);
+        if (exists === null) {
+          db.query(
+            "INSERT INTO ledgers (name, schema_json, milestone_counter, item_counter) VALUES (?, ?, 0, 0)",
+          ).run(ledgerId, JSON.stringify(ledger.schema));
+        }
+        this.replaceActiveLedger(ledger);
+      }
+      for (const key of transaction.dirtyArchives) {
+        const current = archives.get(key);
+        const slash = key.indexOf("/");
+        const ledgerId = current?.ledgerId ?? key.slice(0, slash);
+        const pointerId = current?.pointerId ?? key.slice(slash + 1);
+        db.query("DELETE FROM archived_items WHERE ledger = ? AND pointer_id = ?").run(
+          ledgerId,
+          pointerId,
+        );
+        db.query("DELETE FROM archive_pointers WHERE ledger = ? AND id = ?").run(
+          ledgerId,
+          pointerId,
+        );
+        if (current === undefined) continue;
+        const pointer = ledgers
+          .get(ledgerId)
+          ?.archivePointers.find((candidate) => candidate.id === pointerId);
+        if (pointer === undefined) throw new LedgerError(`missing archive pointer ${key}`);
+        db.query(
+          "INSERT INTO archive_pointers (ledger, id, summary, title, status, archived_at) VALUES (?, ?, ?, ?, ?, ?)",
+        ).run(ledgerId, pointerId, pointer.summary, pointer.title, pointer.status, this.now());
+        const insert = db.query(
+          `INSERT INTO archived_items (ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        );
+        for (const item of current.items) {
+          insert.run(
+            ledgerId,
+            pointerId,
+            item.id,
+            item.milestoneId,
+            item.status,
+            JSON.stringify(item.fields),
+            item.createdAt,
+            item.updatedAt,
+            item.author ?? null,
+            item.session ?? null,
+          );
+        }
+      }
+      return {
+        result,
+        dirtyLedgers: [...transaction.dirtyLedgers],
+        archivedChanged: transaction.dirtyArchives.size > 0,
+      };
+    });
+    for (const ledgerId of outcome.dirtyLedgers) {
+      this.rebuildLedgerIndexActive(ledgerId);
+      if (outcome.archivedChanged) this.refreshLedgerIndexArchived(ledgerId);
+      this.fireMutation(ledgerId, outcome.archivedChanged ? "archive" : "update");
     }
     return outcome.result;
   }

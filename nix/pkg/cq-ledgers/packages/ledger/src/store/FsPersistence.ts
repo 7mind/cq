@@ -139,6 +139,9 @@ export class FsPersistence implements LedgerPersistence {
       for (const [name, source] of Object.entries(commit.ledgers)) {
         await this.writeAtomic(this.ledgerPath(name), source);
       }
+      if (commit.registry !== undefined) {
+        await this.writeAtomic(this.registryPath, commit.registry);
+      }
     } catch (error) {
       try {
         await this.restoreArchivePreState(rollback);
@@ -165,7 +168,14 @@ export class FsPersistence implements LedgerPersistence {
     for (const name of Object.keys(commit.ledgers)) {
       ledgers[name] = await readMaybe(this.ledgerPath(name));
     }
-    return { version: 1, archives, ledgers };
+    return {
+      version: 1,
+      archives,
+      ledgers,
+      ...(commit.registry !== undefined
+        ? { registry: await readMaybe(this.registryPath) }
+        : {}),
+    };
   }
 
   private async restoreArchivePreState(rollback: ArchiveRollback): Promise<void> {
@@ -174,6 +184,9 @@ export class FsPersistence implements LedgerPersistence {
     }
     for (const [name, source] of Object.entries(rollback.ledgers)) {
       await this.restoreSource(this.ledgerPath(name), source);
+    }
+    if (rollback.registry !== undefined) {
+      await this.restoreSource(this.registryPath, rollback.registry);
     }
   }
 
@@ -406,6 +419,7 @@ interface ArchiveRollback {
   readonly version: 1;
   readonly archives: Readonly<Record<string, string | null>>;
   readonly ledgers: Readonly<Record<string, string | null>>;
+  readonly registry?: string | null;
 }
 
 function parseArchiveRollback(text: string): ArchiveRollback {
@@ -422,7 +436,10 @@ function parseArchiveRollback(text: string): ArchiveRollback {
   if (
     record["version"] !== 1 ||
     !isNullableStringRecord(record["archives"]) ||
-    !isLedgerSourceRecord(record["ledgers"])
+    !isLedgerSourceRecord(record["ledgers"]) ||
+    !(record["registry"] === undefined ||
+      record["registry"] === null ||
+      typeof record["registry"] === "string")
   ) {
     throw new LedgerError("invalid pending archive commit");
   }
@@ -430,6 +447,9 @@ function parseArchiveRollback(text: string): ArchiveRollback {
     version: 1,
     archives: record["archives"],
     ledgers: record["ledgers"],
+    ...(record["registry"] !== undefined
+      ? { registry: record["registry"] as string | null }
+      : {}),
   };
 }
 

@@ -107,6 +107,55 @@ if (PG_URL === undefined || PG_URL.length === 0) {
   });
 
   describe("workset generic-mutation postgres focused [T1975]", () => {
+    it("rejects a target whose closure membership a peer revokes before the tenant transaction", async () => {
+      const projectKey = await prepareTenant();
+      const admitted = Promise.withResolvers<void>();
+      const resume = Promise.withResolvers<void>();
+      let pause = false;
+      const writer = await buildGuarded({
+        projectKey,
+        afterGenericAdmit: async () => {
+          if (!pause) return;
+          admitted.resolve();
+          await resume.promise;
+        },
+      });
+      const peer = await buildGuarded({ projectKey });
+      await writer.init();
+      await peer.init();
+      try {
+        const milestone = await writer.mutations.createMilestone({ title: "revocation" });
+        const root = await writer.mutations.createItem(TASKS_LEDGER, milestone.id, {
+          status: "planned",
+          fields: { headline: "root" },
+        });
+        const dependent = await writer.mutations.createItem(TASKS_LEDGER, milestone.id, {
+          status: "planned",
+          fields: { headline: "dependent" },
+        });
+        await writer.mutations.updateItem(TASKS_LEDGER, root.id, {
+          fields: { dependsOn: [`${TASKS_LEDGER}:${dependent.id}`] },
+        });
+        await writer.setRoots([`${TASKS_LEDGER}:${root.id}`]);
+
+        pause = true;
+        const contested = writer.mutations.updateItem(TASKS_LEDGER, dependent.id, {
+          status: "wip",
+        });
+        await admitted.promise;
+        await peer.mutations.updateItem(TASKS_LEDGER, root.id, {
+          fields: { dependsOn: [] },
+        });
+        resume.resolve();
+
+        await expect(contested).rejects.toMatchObject({ code: "mixed-or-excluded-targets" });
+        await writer.invalidate(TASKS_LEDGER);
+        expect(writer.fetchItem(TASKS_LEDGER, dependent.id).status).toBe("planned");
+      } finally {
+        resume.resolve();
+      }
+    });
+
     it("allowed status update under restrictive roots persists across restart", async () => {
       const projectKey = await prepareTenant();
       const first = await buildGuarded({ projectKey });

@@ -85,6 +85,12 @@ import {
 } from "./planLifecycleSerialization.js";
 import { serializePlanLifecycleDump } from "./planLifecycleDump.js";
 import type { LedgerSnapshot } from "../snapshot.js";
+import {
+  createGenericMutationTransaction,
+  genericArchiveKey,
+  type GenericArchiveEntry,
+  type WorksetGenericMutationTx,
+} from "./genericMutationTransaction.js";
 import { buildSnapshot } from "../snapshot.js";
 import { LedgerSearchIndex } from "../search/LedgerSearchIndex.js";
 import type { FetchedLedger, FetchedMilestoneGroup, ResolvedMilestone } from "../types.js";
@@ -741,6 +747,85 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     );
     for (const ledgerId of outcome.dirtyLedgers) {
       this.fireMutation(ledgerId, "create");
+    }
+    return outcome.result;
+  }
+
+  async runAtomicGenericMutation<T>(
+    mutate: (
+      tx: WorksetGenericMutationTx,
+      roots: import("../worksetEffectAdmission.js").WorksetRootsEpoch,
+    ) => T,
+    readRoots: () => Promise<import("../worksetEffectAdmission.js").WorksetRootsEpoch>,
+  ): Promise<T> {
+    this.assertInit();
+    const ledgerIds = [...this.ledgers.keys()]
+      .filter((id) => id !== MILESTONES_LEDGER)
+      .sort();
+    const outcome = await this.withMilestonesLock(() =>
+      this.withLocksInOrder(ledgerIds, async () => {
+        const beforeLedgers = cloneLedgerMap(this.ledgers);
+        const beforeArchives = new Map(
+          [...this.archives].map(([key, value]) => [key, structuredClone(value)]),
+        );
+        const beforeItemArchives = new Map(
+          [...this.itemArchives].map(([key, value]) => [key, structuredClone(value)]),
+        );
+        const archives = new Map<string, GenericArchiveEntry>();
+        for (const [key, group] of this.archives) {
+          const slash = key.indexOf("/");
+          archives.set(key, {
+            ledgerId: key.slice(0, slash),
+            pointerId: key.slice(slash + 1),
+            items: group.items.map((item) => structuredClone(item)),
+          });
+        }
+        for (const [key, item] of this.itemArchives) {
+          archives.set(key, {
+            ledgerId: MILESTONES_LEDGER,
+            pointerId: key.slice(key.indexOf("/") + 1),
+            items: [structuredClone(item)],
+          });
+        }
+        try {
+          const transaction = createGenericMutationTransaction({
+            ledgers: this.ledgers,
+            archives,
+            now: this.now,
+          });
+          const roots = await readRoots();
+          const result = mutate(transaction.tx, roots);
+          for (const key of transaction.dirtyArchives) {
+            const entry = archives.get(key);
+            if (entry === undefined) {
+              this.archives.delete(key);
+              this.itemArchives.delete(key);
+            } else if (entry.ledgerId === MILESTONES_LEDGER) {
+              this.itemArchives.set(key, structuredClone(entry.items[0] as Item));
+            } else {
+              this.archives.set(key, {
+                id: entry.pointerId,
+                title: "",
+                description: "",
+                items: entry.items.map((item) => structuredClone(item)),
+              });
+            }
+          }
+          return {
+            result,
+            dirtyLedgers: [...transaction.dirtyLedgers],
+            archivedChanged: transaction.dirtyArchives.size > 0,
+          };
+        } catch (error) {
+          replaceMap(this.ledgers, beforeLedgers);
+          replaceMap(this.archives, beforeArchives);
+          replaceMap(this.itemArchives, beforeItemArchives);
+          throw error;
+        }
+      }),
+    );
+    for (const ledgerId of outcome.dirtyLedgers) {
+      this.fireMutation(ledgerId, outcome.archivedChanged ? "archive" : "update");
     }
     return outcome.result;
   }

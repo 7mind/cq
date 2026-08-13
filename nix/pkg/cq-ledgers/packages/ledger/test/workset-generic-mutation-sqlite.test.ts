@@ -63,6 +63,57 @@ runWorksetGenericMutationContract({
 });
 
 describe("workset generic-mutation sqlite focused [T1974]", () => {
+  it("rejects a target whose closure membership a peer revokes before BEGIN IMMEDIATE", async () => {
+    const dbPath = await freshDbPath();
+    const admitted = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    let pause = false;
+    const writer = createSqliteWorksetManagementLedger({
+      dbPath,
+      afterGenericAdmit: async () => {
+        if (!pause) return;
+        admitted.resolve();
+        await resume.promise;
+      },
+    });
+    const peer = createSqliteWorksetManagementLedger({ dbPath });
+    await writer.init();
+    await peer.init();
+    try {
+      const milestone = await writer.mutations.createMilestone({ title: "revocation" });
+      const root = await writer.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "planned",
+        fields: { headline: "root" },
+      });
+      const dependent = await writer.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "planned",
+        fields: { headline: "dependent" },
+      });
+      await writer.mutations.updateItem(TASKS_LEDGER, root.id, {
+        fields: { dependsOn: [`${TASKS_LEDGER}:${dependent.id}`] },
+      });
+      await writer.setRoots([`${TASKS_LEDGER}:${root.id}`]);
+
+      pause = true;
+      const contested = writer.mutations.updateItem(TASKS_LEDGER, dependent.id, {
+        status: "wip",
+      });
+      await admitted.promise;
+      await peer.mutations.updateItem(TASKS_LEDGER, root.id, {
+        fields: { dependsOn: [] },
+      });
+      resume.resolve();
+
+      await expect(contested).rejects.toMatchObject({ code: "mixed-or-excluded-targets" });
+      await writer.invalidate(TASKS_LEDGER);
+      expect(writer.fetchItem(TASKS_LEDGER, dependent.id).status).toBe("planned");
+    } finally {
+      resume.resolve();
+      await writer.dispose();
+      await peer.dispose();
+    }
+  });
+
   it("status and dependsOn updates persist under restrictive roots", async () => {
     const ledger = await buildSqliteGuarded();
     await ledger.init();

@@ -161,6 +161,13 @@ import { createOwnedWriteTransaction } from "./ownedWriteTransaction.js";
 import type { WorksetOwnedWriteTx } from "../worksetOwnedLifecycle.js";
 import type { WorksetPlanLifecycleTx } from "../worksetPlanLifecycle.js";
 import { createWorksetPlanLifecycleTransaction } from "./worksetPlanLifecycleTransaction.js";
+import {
+  createGenericMutationTransaction,
+  genericArchiveKey,
+  type GenericArchiveEntry,
+  type WorksetGenericMutationTx,
+} from "./genericMutationTransaction.js";
+import type { WorksetRootsEpoch } from "../worksetEffectAdmission.js";
 
 // Moved to schemaCompat.ts (T527) so the sqlite backend's module graph stays
 // free of this file's parser/serialize funnel; re-exported for compatibility.
@@ -1432,6 +1439,111 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     );
     for (const ledgerId of outcome.dirtyLedgers) {
       this.fireMutation(ledgerId, "update");
+    }
+    return outcome.result;
+  }
+
+  /** Run one generic mutation under registry + milestones + all-ledger locks. */
+  async runAtomicGenericMutation<T>(
+    mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
+    readRoots: () => Promise<WorksetRootsEpoch>,
+  ): Promise<T> {
+    this.assertInit();
+    const ledgerIds = this.lockableLedgerIds();
+    const outcome = await this.withRegistryLock(() =>
+      this.withMilestonesLock(() =>
+        this.withLocksInOrder(ledgerIds, async () => {
+          await this.persistence.recoverArchiveCommit();
+          await this.reloadLedgerFromDisk(MILESTONES_LEDGER);
+          for (const ledgerId of ledgerIds) await this.reloadLedgerFromDisk(ledgerId);
+          const beforeLedgers = cloneMap(this.ledgers);
+          const beforeRegistry = structuredClone(this.registry);
+          const archives = new Map<string, GenericArchiveEntry>();
+          for (const [ledgerId, ledger] of this.ledgers) {
+            for (const pointer of ledger.archivePointers) {
+              const source = await this.persistence.readArchive(pointer.path);
+              archives.set(genericArchiveKey(ledgerId, pointer.id), {
+                ledgerId,
+                pointerId: pointer.id,
+                items:
+                  ledgerId === MILESTONES_LEDGER
+                    ? [parseMilestoneItemArchive(source)]
+                    : parseArchive(source).items,
+              });
+            }
+          }
+          const beforeArchives = cloneMap(archives);
+          try {
+            const transaction = createGenericMutationTransaction({
+              ledgers: this.ledgers,
+              archives,
+              now: this.now,
+            });
+            const roots = await readRoots();
+            const result = mutate(transaction.tx, roots);
+            if (transaction.registryChanged()) {
+              this.registry = {
+                version: 1,
+                ledgers: [...this.ledgers].map(([name, ledger]) => ({
+                  name,
+                  schema: ledger.schema,
+                })),
+              };
+            }
+            const ledgerSources: Record<string, string> = {};
+            for (const ledgerId of transaction.dirtyLedgers) {
+              ledgerSources[ledgerId] = serializeLedger(this.getLedger(ledgerId));
+            }
+            const archiveSources: Record<string, string | null> = {};
+            for (const key of transaction.dirtyArchives) {
+              const current = archives.get(key);
+              const previous = beforeArchives.get(key);
+              const entry = current ?? previous;
+              if (entry === undefined) throw new LedgerError(`missing archive state for ${key}`);
+              const locator = `./archive/${entry.ledgerId}/${entry.pointerId}.md`;
+              archiveSources[locator] =
+                current === undefined
+                  ? null
+                  : current.ledgerId === MILESTONES_LEDGER
+                    ? serializeMilestoneItemArchive(current.items[0] as Item)
+                    : serializeArchiveImpl({
+                        id: current.pointerId,
+                        title: "",
+                        description: "",
+                        items: current.items,
+                      });
+            }
+            if (
+              Object.keys(ledgerSources).length > 0 ||
+              Object.keys(archiveSources).length > 0 ||
+              transaction.registryChanged()
+            ) {
+              await this.persistence.commitArchive({
+                archives: archiveSources,
+                ledgers: ledgerSources,
+                ...(transaction.registryChanged()
+                  ? { registry: serializeRegistry(this.registry) }
+                  : {}),
+              });
+            }
+            return {
+              result,
+              dirtyLedgers: [...transaction.dirtyLedgers],
+              archivedChanged: transaction.dirtyArchives.size > 0,
+            };
+          } catch (error) {
+            replaceMap(this.ledgers, beforeLedgers);
+            this.registry = beforeRegistry;
+            throw error;
+          }
+        }),
+      ),
+    );
+    for (const ledgerId of outcome.dirtyLedgers) this.fireMutation(ledgerId, "update");
+    if (outcome.archivedChanged) {
+      for (const ledgerId of outcome.dirtyLedgers) {
+        await this.refreshLedgerIndexArchived(ledgerId);
+      }
     }
     return outcome.result;
   }

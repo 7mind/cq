@@ -102,6 +102,7 @@ import type {
 import { LedgerError } from "./types.js";
 import type { LedgerSnapshot } from "./snapshot.js";
 import type { UsageStatsSnapshot } from "./usageStats.js";
+import type { WorksetGenericMutationTx } from "./store/genericMutationTransaction.js";
 import { CANONICAL_LEDGERS } from "./constants.js";
 
 // ---------------------------------------------------------------------------
@@ -550,6 +551,22 @@ function buildValidationContext(
   };
 }
 
+function buildTransactionValidationContext(
+  tx: WorksetGenericMutationTx,
+  rootsEpoch: WorksetRootsEpoch,
+): ValidationContext {
+  const state = tx.activeState();
+  const graph = closeWorkset(rootsEpoch.roots, state);
+  const prefixRegistry = state.prefixRegistry ?? defaultWorksetPrefixRegistry();
+  return {
+    restrictive: graph.restrictive,
+    roots: graph.roots,
+    graph,
+    members: worksetMemberRefSet(graph),
+    prefixRegistry,
+  };
+}
+
 function assertTargetInGraph(ctx: ValidationContext, ref: string): void {
   if (!ctx.restrictive) return;
   if (!ctx.members.has(ref)) {
@@ -601,6 +618,9 @@ export interface WorksetGenericMutationGatewayHost {
   readonly worksetStore: WorksetStore;
   /** Runtime authority carried outside invocation arguments. */
   readonly invocationAuthority?: WorksetInvocationAuthority;
+  readonly runGenericTransaction?: <T>(
+    mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
+  ) => Promise<T>;
   /**
    * Test/instrumentation latch: runs after admit and before validation/write,
    * while the ledger-mutation admission is still held. Used to prove setRoots
@@ -617,13 +637,24 @@ export function createWorksetGenericMutationGateway(
   host: WorksetGenericMutationGatewayHost,
 ): WorksetGenericMutationGateway {
   const { rawStore, worksetStore, afterGenericAdmit } = host;
+  const atomicStore = rawStore as LedgerStore & {
+    runAtomicGenericMutation<T>(
+      mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
+      readRoots?: () => Promise<WorksetRootsEpoch>,
+    ): Promise<T>;
+  };
+  const runGenericTransaction =
+    host.runGenericTransaction ??
+    (<T>(mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T) =>
+      atomicStore.runAtomicGenericMutation(mutate, () => readWorksetRootsEpoch(worksetStore)));
 
   async function withGenericAdmission<T>(
     targets: readonly string[],
     validateAndRun: (
+      tx: WorksetGenericMutationTx,
       admission: WorksetLedgerMutationAdmission,
       ctx: ValidationContext,
-    ) => Promise<T>,
+    ) => T,
     options: {
       /** Map coordinator target-excluded into a gateway-specific code. */
       readonly onTargetExcluded?: (
@@ -656,32 +687,29 @@ export function createWorksetGenericMutationGateway(
       if (afterGenericAdmit !== undefined) {
         await afterGenericAdmit();
       }
-      const snap = await readWorksetRootsEpoch(worksetStore);
-      if (snap.epoch !== admission.epoch) {
-        throw new WorksetAdmissionError(
-          "stale-epoch",
-          "workset epoch advanced before generic mutation critical section",
-        );
-      }
-      const ctx = buildValidationContext(rawStore, {
-        roots: admission.roots,
-        epoch: admission.epoch,
-      });
-      // Reject mixed/excluded targets atomically before any write.
-      if (ctx.restrictive && targets.length > 0) {
-        const excluded = targets.filter((t) => {
-          if (ctx.members.has(t)) return false;
-          if (ctx.graph.inactiveRoots.includes(t)) return false;
-          return true;
-        });
-        if (excluded.length > 0) {
-          throw new WorksetGenericMutationError(
-            "mixed-or-excluded-targets",
-            `generic mutation rejects excluded target(s): ${excluded.join(", ")}`,
+      return await runGenericTransaction((tx, snap) => {
+        if (snap.epoch !== admission.epoch) {
+          throw new WorksetAdmissionError(
+            "stale-epoch",
+            "workset epoch advanced before generic mutation critical section",
           );
         }
-      }
-      return await validateAndRun(admission, ctx);
+        const ctx = buildTransactionValidationContext(tx, snap);
+        if (ctx.restrictive && targets.length > 0) {
+          const excluded = targets.filter((t) => {
+            if (ctx.members.has(t)) return false;
+            if (ctx.graph.inactiveRoots.includes(t)) return false;
+            return true;
+          });
+          if (excluded.length > 0) {
+            throw new WorksetGenericMutationError(
+              "mixed-or-excluded-targets",
+              `generic mutation rejects excluded target(s): ${excluded.join(", ")}`,
+            );
+          }
+        }
+        return validateAndRun(tx, admission, ctx);
+      });
     } finally {
       await admission.acknowledge();
     }
@@ -698,11 +726,11 @@ export function createWorksetGenericMutationGateway(
       if (patch.blockedBy !== undefined) fieldBag.blockedBy = patch.blockedBy;
       if (patch.dependsOn !== undefined) fieldBag.dependsOn = patch.dependsOn;
 
-      return withGenericAdmission([ref], async (_adm, ctx) => {
+      return withGenericAdmission([ref], (tx, _adm, ctx) => {
         assertTargetInGraph(ctx, ref);
         let existing: Item | undefined;
         try {
-          existing = rawStore.fetchItem(MILESTONES_LEDGER, milestoneId);
+          existing = tx.fetchItem(MILESTONES_LEDGER, milestoneId);
         } catch {
           existing = undefined;
         }
@@ -720,17 +748,17 @@ export function createWorksetGenericMutationGateway(
             "update-milestone rejects mixed admitted/excluded closure refs",
           );
         }
-        return rawStore.updateMilestone(milestoneId, patch);
+        return tx.updateMilestone(milestoneId, patch);
       });
     },
 
     async updateItem(ledgerId, itemId, patch) {
       const ref = itemRef(ledgerId, itemId);
-      return withGenericAdmission([ref], async (_adm, ctx) => {
+      return withGenericAdmission([ref], (tx, _adm, ctx) => {
         assertTargetInGraph(ctx, ref);
         let existing: Item | undefined;
         try {
-          existing = rawStore.fetchItem(ledgerId, itemId);
+          existing = tx.fetchItem(ledgerId, itemId);
         } catch {
           existing = undefined;
         }
@@ -752,7 +780,7 @@ export function createWorksetGenericMutationGateway(
             );
           }
         }
-        return rawStore.updateItem(ledgerId, itemId, patch);
+        return tx.updateItem(ledgerId, itemId, patch);
       });
     },
 
@@ -761,7 +789,7 @@ export function createWorksetGenericMutationGateway(
       // (not a pre-admit read) so concurrent setRoots cannot TOCTOU create.
       // Sealed-ownership is checked after creation-denied so the deny code is
       // stable under restrictive roots.
-      return withGenericAdmission([], async (adm) => {
+      return withGenericAdmission([], (tx, adm) => {
         if (adm.roots.length > 0) {
           throw new WorksetGenericMutationError(
             "creation-denied",
@@ -769,7 +797,7 @@ export function createWorksetGenericMutationGateway(
           );
         }
         assertSealedOwnershipAbsent(init.fields);
-        return rawStore.createItem(ledgerId, milestoneId, init);
+        return tx.createItem(ledgerId, milestoneId, init);
       });
     },
 
@@ -778,7 +806,7 @@ export function createWorksetGenericMutationGateway(
       if (init.description !== undefined) fields.description = init.description;
       if (init.blockedBy !== undefined) fields.blockedBy = init.blockedBy;
       if (init.dependsOn !== undefined) fields.dependsOn = init.dependsOn;
-      return withGenericAdmission([], async (adm) => {
+      return withGenericAdmission([], (tx, adm) => {
         if (adm.roots.length > 0) {
           throw new WorksetGenericMutationError(
             "creation-denied",
@@ -786,27 +814,27 @@ export function createWorksetGenericMutationGateway(
           );
         }
         assertSealedOwnershipAbsent(fields);
-        return rawStore.createMilestone(init);
+        return tx.createMilestone(init);
       });
     },
 
     async createLedger(name, schema) {
-      return withGenericAdmission([], async (adm) => {
+      return withGenericAdmission([], (tx, adm) => {
         if (adm.roots.length > 0) {
           throw new WorksetGenericMutationError(
             "create-ledger-denied",
             "createLedger is denied under non-empty workset roots",
           );
         }
-        return rawStore.createLedger(name, schema);
+        return tx.createLedger(name, schema);
       });
     },
 
     async reopenItem(ledgerId, itemId, toStatus) {
       const ref = itemRef(ledgerId, itemId);
-      return withGenericAdmission([ref], async (_adm, ctx) => {
+      return withGenericAdmission([ref], (tx, _adm, ctx) => {
         assertTargetInGraph(ctx, ref);
-        return rawStore.reopenItem(ledgerId, itemId, toStatus);
+        return tx.reopenItem(ledgerId, itemId, toStatus);
       });
     },
 
@@ -814,7 +842,7 @@ export function createWorksetGenericMutationGateway(
       const ref = itemRef(ledgerId, itemId);
       return withGenericAdmission(
         [ref],
-        async (_adm, ctx) => {
+        (tx, _adm, ctx) => {
           if (ctx.restrictive) {
             if (!ctx.graph.inactiveRoots.includes(ref)) {
               throw new WorksetGenericMutationError(
@@ -823,7 +851,7 @@ export function createWorksetGenericMutationGateway(
               );
             }
           }
-          return rawStore.unarchiveItem(ledgerId, milestoneId, itemId);
+          return tx.unarchiveItem(ledgerId, milestoneId, itemId);
         },
         {
           onTargetExcluded: (cause) =>
@@ -845,8 +873,8 @@ export function createWorksetGenericMutationGateway(
           : [itemRef(MILESTONES_LEDGER, milestoneId)];
       return withGenericAdmission(
         admitTargets,
-        async (_adm, ctx) => {
-          const sweep = collectArchiveSweepRefs(rawStore, milestoneId);
+        (tx, _adm, ctx) => {
+          const sweep = tx.collectArchiveSweepRefs(milestoneId);
           if (ctx.restrictive) {
             const missing = sweep.filter((ref) => !ctx.members.has(ref));
             if (missing.length > 0) {
@@ -859,7 +887,7 @@ export function createWorksetGenericMutationGateway(
               assertTargetInGraph(ctx, itemRef(MILESTONES_LEDGER, milestoneId));
             }
           }
-          return rawStore.archiveMilestone(milestoneId, summary);
+          return tx.archiveMilestone(milestoneId, summary);
         },
         {
           onTargetExcluded: (cause) =>
@@ -990,6 +1018,11 @@ export function createInMemoryWorksetGuardedLedger(
   return createWorksetGuardedLedger({
     rawStore,
     worksetStore,
+    runGenericTransaction: (mutate) =>
+      rawStore.runAtomicGenericMutation(
+        mutate,
+        () => readWorksetRootsEpoch(worksetStore),
+      ),
     ...(options.invocationAuthority !== undefined
       ? { invocationAuthority: options.invocationAuthority }
       : {}),
@@ -1087,6 +1120,11 @@ export async function createGitObjectWorksetGuardedLedger(
   return createWorksetGuardedLedger({
     rawStore,
     worksetStore,
+    runGenericTransaction: (mutate) =>
+      rawStore.runAtomicGenericMutation(
+        mutate,
+        () => readWorksetRootsEpoch(worksetStore),
+      ),
     ...(options.invocationAuthority !== undefined
       ? { invocationAuthority: options.invocationAuthority }
       : {}),
@@ -1179,6 +1217,11 @@ export function createFsWorksetGuardedLedger(
   return createWorksetGuardedLedger({
     rawStore,
     worksetStore,
+    runGenericTransaction: (mutate) =>
+      rawStore.runAtomicGenericMutation(
+        mutate,
+        () => readWorksetRootsEpoch(worksetStore),
+      ),
     ...(options.invocationAuthority !== undefined
       ? { invocationAuthority: options.invocationAuthority }
       : {}),
@@ -1323,6 +1366,7 @@ export function createSqliteWorksetGuardedLedger(
   return createWorksetGuardedLedger({
     rawStore,
     worksetStore: lazySqliteWorksetStore(() => rawStore.worksetStore()),
+    runGenericTransaction: (mutate) => rawStore.runAtomicGenericMutation(mutate),
     ...(options.invocationAuthority !== undefined
       ? { invocationAuthority: options.invocationAuthority }
       : {}),
