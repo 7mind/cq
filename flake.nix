@@ -1701,6 +1701,31 @@ PY
                   fi
                 done
 
+                planWorksetLog="$NIX_BUILD_TOP/t1971-live-plan-workset.log"
+                if ! ${pkgs.bun}/bin/bun test \
+                  packages/ledger/test/workset-plan-lifecycle-postgres.test.ts \
+                  packages/ledger/test/workset-plan-lifecycle-postgres-faults.test.ts \
+                  > "$planWorksetLog" 2>&1; then
+                  cat "$planWorksetLog" >&2
+                  exit 1
+                fi
+                cat "$planWorksetLog"
+                if grep -Fq '(skip)' "$planWorksetLog"; then
+                  echo "T1971 live PostgreSQL workset plan-lifecycle run skipped" >&2
+                  exit 1
+                fi
+                for expectedLeg in \
+                  'PostgresLedgerStore workset-guarded plan lifecycle [BA]' \
+                  'statement failure rolls back tenant rows and restart retries as new' \
+                  'backend disconnect aborts the transaction without a replay row' \
+                  'post-commit NOTIFY reveals the complete lifecycle graph to a peer' \
+                  'serializes same-tenant replacements while preserving tenant isolation'; do
+                  if ! grep -F '(pass)' "$planWorksetLog" | grep -Fq "$expectedLeg"; then
+                    echo "T1971 live PostgreSQL workset plan-lifecycle run did not execute: $expectedLeg" >&2
+                    exit 1
+                  fi
+                done
+
                 runHook postCheck
               '';
 
