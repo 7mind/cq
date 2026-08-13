@@ -334,7 +334,7 @@ async function runMigrateLegacyToXdg(args: MigrateArgs, io: MigrateIo): Promise<
       }
     }
 
-    // --- Import, then flip the backend. The legacy source is never written.
+    // --- Import, then flip the backend. The legacy ledger data is not rewritten.
     const summary = await restoreDumpToXdg({
       dbPath,
       logsDir,
@@ -466,7 +466,8 @@ async function runMigrateXdgToPostgres(args: MigrateArgs, io: MigrateIo): Promis
           return { exitCode: EXIT_USAGE };
         }
 
-        // --- Import, then flip the backend. The xdg source is never written.
+        // --- Import, then flip the backend. Source user data remains intact;
+        // only the durable administrative admission is created and closed.
         const summary = await restoreDumpToPostgres({
           pool,
           projectKey,
