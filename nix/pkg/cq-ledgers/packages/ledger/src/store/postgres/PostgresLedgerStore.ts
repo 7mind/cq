@@ -1990,10 +1990,8 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       for (const ledgerId of new Set(mutation.dirtyLedgers)) {
         await this.persistLedgerState(tx, requireLiveLedger(state.ledgers, ledgerId));
       }
-      if (dirtyLedgers.length > 0) {
-        await this.persistPlanRecords(tx, "plan_claims", state.claims);
-        await this.persistPlanRecords(tx, "plan_operations", state.operations);
-      }
+      await this.persistPlanRecords(tx, "plan_claims", state.claims);
+      await this.persistPlanRecords(tx, "plan_operations", state.operations);
       value = mutation.result;
       dirty = [...new Set(mutation.dirtyLedgers)];
       live = tenant;
@@ -2062,8 +2060,10 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       for (const ledgerId of dirtyLedgers) {
         await this.persistLedgerState(tx, requireLiveLedger(state.ledgers, ledgerId));
       }
-      await this.persistPlanRecords(tx, "plan_claims", state.claims);
-      await this.persistPlanRecords(tx, "plan_operations", state.operations);
+      if (dirtyLedgers.length > 0) {
+        await this.persistPlanRecords(tx, "plan_claims", state.claims);
+        await this.persistPlanRecords(tx, "plan_operations", state.operations);
+      }
       live = tenant;
     });
     this.absorbLiveLedgers(live);

@@ -1537,10 +1537,8 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         }
         this.replaceActiveLedger(ledger);
       }
-      if (dirtyLedgers.length > 0) {
-        this.persistPlanRecords("plan_claims", state.claims);
-        this.persistPlanRecords("plan_operations", state.operations);
-      }
+      this.persistPlanRecords("plan_claims", state.claims);
+      this.persistPlanRecords("plan_operations", state.operations);
       return result;
     });
     for (const ledgerId of this.enumerate()) {
@@ -1595,8 +1593,10 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         if (ledger === undefined) throw new LedgerError(`ledger not found: ${ledgerId}`);
         this.replaceActiveLedger(ledger);
       }
-      this.persistPlanRecords("plan_claims", state.claims);
-      this.persistPlanRecords("plan_operations", state.operations);
+      if (dirtyLedgers.length > 0) {
+        this.persistPlanRecords("plan_claims", state.claims);
+        this.persistPlanRecords("plan_operations", state.operations);
+      }
       return { result, dirtyLedgers };
     });
     for (const ledgerId of outcome.dirtyLedgers) {
