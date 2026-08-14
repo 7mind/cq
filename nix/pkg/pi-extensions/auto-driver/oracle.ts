@@ -39,10 +39,9 @@
 //   non-deterministic child LLM turn that would itself need the MCP adapter to
 //   reach the tool.
 //
-// Like the rest of pi-extensions/auto-driver, this module imports NOTHING from
-// `@cq/*` (standalone store-path file outside the cq-ledgers bun workspace); the
-// `DerivedPredicates` contract is imported from the sibling `./decision` module
-// (itself a copy of @cq/ledger's predicates.ts shape).
+// Like the rest of pi-extensions/auto-driver, this module has no `@cq/*` value
+// import. The sibling `./decision` module re-exports the canonical
+// `@cq/ledger` predicate types through a type-only boundary.
 
 import { execFile } from "node:child_process";
 import { DERIVED_PREDICATE_KEYS, type DerivedPredicates, type PredicateVerdict } from "./decision";
@@ -64,9 +63,7 @@ const PREDICATES_ARGS = ["predicates"];
 /**
  * The predicate keys, in the canonical order of `DerivedPredicates` — the
  * SHARED list from ./decision.ts (DERIVED_PREDICATE_KEYS), so the parser's
- * key set can never drift from the copied interface: the compile-time tie in
- * decision.ts pins list<->interface, and the oracle.test.ts drift guard pins
- * the list against the CANONICAL @cq/ledger predicates.ts.
+ * key set cannot drift from the canonical imported interface.
  */
 const PREDICATE_KEYS = DERIVED_PREDICATE_KEYS;
 type PredicateKey = (typeof PREDICATE_KEYS)[number];
@@ -156,7 +153,7 @@ export function parsePredicatesOutput(stdout: string): DerivedPredicates {
 /**
  * Obtain the derived flow-detection predicates at runtime via the pinned
  * `cq predicates` channel. Runs the CLI in `ctx.cwd` and parses its
- * `predicates` object into the copied `DerivedPredicates` type.
+ * `predicates` object into the canonical `DerivedPredicates` type.
  */
 export async function getPredicates(ctx: OracleContext): Promise<DerivedPredicates> {
   const stdout = await runPredicates(ctx.cwd);

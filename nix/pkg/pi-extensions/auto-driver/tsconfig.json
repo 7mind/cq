@@ -9,7 +9,8 @@
     "types": ["node", "bun-types"],
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true
   },
   "include": ["*.ts"],
   "exclude": ["demo/**/*.ts"]

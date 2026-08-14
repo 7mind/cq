@@ -5,59 +5,17 @@
 // establishes the typed vocabulary that later tasks consume — T462 implements
 // `decideNextAction` over this contract, T464 wires the package.json + tests.
 //
-// This module is DELIBERATELY pure and unit-testable: it imports NOTHING from
-// `@earendil-works/pi-*` and NOTHING from `@cq/*`. It is a standalone
-// store-path file OUTSIDE the cq-ledgers bun workspace, so — exactly like the
-// other pi-extensions files — it follows the copy-not-import discipline of
-// cq-subagent-dispatch.ts: types it needs from @cq/ledger are COPIED here, not
-// imported, with a pointer back to the source to keep in sync.
+// This module is DELIBERATELY pure and unit-testable. Its only package import is
+// a type-only link to @cq/ledger's canonical predicate contract; runtime
+// delivery remains a bare store-path directory with local value imports only.
 
 // ---------------------------------------------------------------------------
-// Base oracle — the ledger-MCP `derive_predicates` shape (Q233 + Q236; P-seed
-// + belowFloor added T543 / G77 / M240, KEEP IN SYNC with predicates.ts).
+// Base oracle — the canonical ledger-MCP `derive_predicates` shape.
 // ---------------------------------------------------------------------------
-//
-// COPIED VERBATIM from the @cq/ledger source of truth:
-//   nix/pkg/cq-ledgers/packages/ledger/src/store/predicates.ts
-// (interfaces `PredicateVerdict` and `DerivedPredicates`). This module CANNOT
-// import @cq/ledger (standalone store-path extension), so the shape is
-// duplicated. KEEP IN SYNC with predicates.ts when that contract changes.
 
-/**
- * One detection predicate's verdict: its boolean `value` plus the ids of the
- * items that make it TRUE-and-unblocked, so a caller can NAME them in a report.
- * When `value` is false, `items` is empty.
- */
-export interface PredicateVerdict {
-  value: boolean;
-  items: string[];
-}
+import type { DerivedPredicates, PredicateVerdict } from "@cq/ledger";
 
-/**
- * The flow-detection verdicts derived from one store snapshot. `pInvestigate`,
- * `pSeed`, `pPlan`, `pResearch`, `pImplement`, and `pOperatorAction` mirror the
- * `/cq:advance` cycle stages (in flow order); `openQuestionGate` enumerates the
- * open questions that gate any of them; `belowFloor` is an INFORMATIONAL companion to `pSeed`
- * (root-caused, unowned, un-gated defects below the severity floor) that gates
- * NOTHING; `planBusy` (G99/D134, T853) is the REPORT-ONLY busy signal (goals
- * carrying an ACTIVE plan claim — a planner already owns their planning round)
- * that NEVER participates in any stop condition; `goalDrift` (G84/D113) is the
- * REPORT-ONLY phase-drift signal (goals still `planned` whose owned tasks are
- * already wip/done) that likewise gates NOTHING.
- */
-export interface DerivedPredicates {
-  pInvestigate: PredicateVerdict;
-  pSeed: PredicateVerdict;
-  pPlan: PredicateVerdict;
-  pResearch: PredicateVerdict;
-  pImplement: PredicateVerdict;
-  /** Parent-executed operator gates; these items never enter `pImplement`. */
-  pOperatorAction: PredicateVerdict;
-  openQuestionGate: PredicateVerdict;
-  belowFloor: PredicateVerdict;
-  planBusy: PredicateVerdict;
-  goalDrift: PredicateVerdict;
-}
+export type { DerivedPredicates, PredicateVerdict };
 
 /**
  * The `DerivedPredicates` member keys, in canonical interface order — the
