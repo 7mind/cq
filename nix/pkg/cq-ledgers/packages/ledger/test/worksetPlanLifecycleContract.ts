@@ -316,7 +316,7 @@ export function registerWorksetPlanLifecycleContract(
       });
     }
 
-    it("runs claim, publish, release, and finalize under restrictive roots with canonical effects", async () => {
+    it("runs claim and release under restrictive roots with canonical effects", async () => {
       const releaseStore = await factory.build();
       await releaseStore.init();
       await seedGoal(releaseStore, "G1");
@@ -374,7 +374,9 @@ export function registerWorksetPlanLifecycleContract(
       if (researchId === undefined) throw new Error("research id missing");
       expectOwnership(releaseStore, "researches", researchId, "G1", "research");
       expect(releaseStore.activeAdmissionCount()).toBe(0);
+    });
 
+    it("runs claim, publish, and finalize under restrictive roots with canonical effects", async () => {
       const finalizeStore = await factory.build();
       await finalizeStore.init();
       await seedGoal(finalizeStore, "G2");
