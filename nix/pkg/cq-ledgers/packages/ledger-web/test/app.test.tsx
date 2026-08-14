@@ -1619,6 +1619,7 @@ describe("ledger-web editor survives same-id live reload (D219)", () => {
     // Editor must still be open with the in-progress draft intact.
     expect(testid("edit-form")).not.toBeNull();
     expect((testid("edit-field-headline") as HTMLInputElement | null)?.value).toBe("in-progress edit");
+    expect(text()).not.toContain("is no longer available");
   });
 
   it("closes with an explicit unsaved-draft notice when the selected item disappears", async () => {

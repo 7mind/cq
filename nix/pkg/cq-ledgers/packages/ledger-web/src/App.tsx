@@ -943,6 +943,7 @@ export function App({
         if (cur === null) return null;
         for (const g of v.milestones)
           for (const it of g.items) if (it.id === cur.item.id) return { item: it, milestoneId: g.id };
+        setFlash(`Item ${cur.item.id} is no longer available. Unsaved edits were not saved.`);
         return null;
       });
     } catch (e) {
