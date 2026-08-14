@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
+  CqConfigError,
   loadConfig,
   parseConfig,
   parseReviewerToken,
@@ -54,6 +55,9 @@ global = "claude:global-model"
 
 [tiers]
 standard = "global"
+
+[dispatch]
+forceShellout = true
 `;
 
 const LOCAL_ONLY = `
@@ -68,7 +72,7 @@ standard = "local"
 `;
 
 describe("loadConfig global discovery and precedence [BG]", () => {
-  it.failing("loads a global-only cq.toml when the local file is absent", () => {
+  it("loads a global-only cq.toml when the local file is absent", () => {
     writeGlobal(GLOBAL_ONLY);
 
     expect(loadConfig(localRoot, "pi")).toEqual(parseConfig(GLOBAL_ONLY, "pi"));
@@ -80,7 +84,7 @@ describe("loadConfig global discovery and precedence [BG]", () => {
     expect(loadConfig(localRoot, "pi")).toEqual(parseConfig(LOCAL_ONLY, "pi"));
   });
 
-  it.failing("merges global and local sections with local precedence", () => {
+  it("merges global and local sections with local precedence", () => {
     writeGlobal(`
 reviewers = ["globalReviewer"]
 planners = ["globalPlanner"]
@@ -107,6 +111,9 @@ sharedAgent = "low"
 [webui]
 host = "global.example"
 port = 7000
+
+[dispatch]
+forceShellout = true
 
 [harness.pi]
 reviewers = ["globalHarnessReviewer"]
@@ -192,6 +199,7 @@ planners = ["localPlanner"]
       localAgent: "medium",
     });
     expect(shared!.webui).toEqual({ host: null, port: 8814 });
+    expect(shared!.dispatch).toEqual({ forceShellout: true });
     expect(shared!.ledger).toBeNull();
     expect(shared!.project).toBeNull();
 
@@ -251,16 +259,39 @@ name = "Local project"
     expect(loadConfig(localRoot, "pi")).toBeNull();
   });
 
-  it.failing("names the malformed global file's absolute path", () => {
+  it("names the malformed global file's absolute path", () => {
     const globalFile = writeGlobal("[aliases\ninvalid = true");
 
     expect(() => loadConfig(localRoot, "pi")).toThrow(globalFile);
   });
 
-  it.failing("names the malformed local file's absolute path", () => {
+  it("names the malformed local file's absolute path", () => {
     writeGlobal(GLOBAL_ONLY);
     const localFile = writeLocal("[aliases\ninvalid = true");
 
     expect(() => loadConfig(localRoot, "pi")).toThrow(localFile);
+  });
+
+  it("names both source paths when their merged schema is invalid", () => {
+    const globalFile = writeGlobal(`
+reviewers = ["shared"]
+
+[aliases]
+shared = "claude:global-model"
+`);
+    const localFile = writeLocal(`
+[aliases]
+shared = "unknown:local-model"
+`);
+
+    let failure: unknown;
+    try {
+      loadConfig(localRoot, "pi");
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(CqConfigError);
+    expect((failure as Error).message).toContain(globalFile);
+    expect((failure as Error).message).toContain(localFile);
   });
 });

@@ -23,10 +23,12 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import * as path from "node:path";
 import {
   parseToml,
   type RawHarnessOverride,
+  type RawToml,
   type RawWebui,
   type RawProject,
 } from "./toml.js";
@@ -498,7 +500,10 @@ export function parseConfig(
   activeHarness: ActiveHarness = DEFAULT_HARNESS,
 ): CqConfig {
   const raw = parseToml(source);
+  return parseConfigFromRaw(raw, activeHarness);
+}
 
+function parseConfigFromRaw(raw: RawToml, activeHarness: ActiveHarness): CqConfig {
   const aliases: Record<string, ReviewerToken> = {};
   for (const [name, token] of Object.entries(raw.aliases)) {
     aliases[name] = parseReviewerToken(token);
@@ -553,6 +558,90 @@ export function parseConfig(
     dispatch,
     dispatchViolation,
   };
+}
+
+function mergeOptionalRecord<T>(
+  globalValue: Record<string, T> | null,
+  localValue: Record<string, T> | null,
+): Record<string, T> | null {
+  if (globalValue === null) return localValue;
+  if (localValue === null) return globalValue;
+  return { ...globalValue, ...localValue };
+}
+
+function mergeHarnessOverrides(
+  globalValue: Record<string, RawHarnessOverride> | null,
+  localValue: Record<string, RawHarnessOverride> | null,
+): Record<string, RawHarnessOverride> | null {
+  if (globalValue === null) return localValue;
+  if (localValue === null) return globalValue;
+
+  const merged: Record<string, RawHarnessOverride> = { ...globalValue };
+  for (const [harness, localOverride] of Object.entries(localValue)) {
+    const globalOverride = globalValue[harness];
+    merged[harness] =
+      globalOverride === undefined
+        ? localOverride
+        : {
+            reviewers: localOverride.reviewers ?? globalOverride.reviewers,
+            planners: localOverride.planners ?? globalOverride.planners,
+            tiers: localOverride.tiers ?? globalOverride.tiers,
+          };
+  }
+  return merged;
+}
+
+function mergeGlobalAndLocalConfig(globalConfig: RawToml, localConfig: RawToml): RawToml {
+  return {
+    aliases: { ...globalConfig.aliases, ...localConfig.aliases },
+    reviewers: localConfig.reviewers ?? globalConfig.reviewers,
+    planners: localConfig.planners ?? globalConfig.planners,
+    webui: localConfig.webui ?? globalConfig.webui,
+    tiers: mergeOptionalRecord(globalConfig.tiers, localConfig.tiers),
+    agentTiers: mergeOptionalRecord(globalConfig.agentTiers, localConfig.agentTiers),
+    agentEfforts: mergeOptionalRecord(
+      globalConfig.agentEfforts,
+      localConfig.agentEfforts,
+    ),
+    harnessOverrides: mergeHarnessOverrides(
+      globalConfig.harnessOverrides,
+      localConfig.harnessOverrides,
+    ),
+    dispatch: localConfig.dispatch ?? globalConfig.dispatch,
+    // Project identity and storage selection are local-only. A global
+    // projectId/name would collapse unrelated repositories onto one project;
+    // a global backend/URL edit would relocate every repository at once, and
+    // per-key ledger merging could violate backend-specific cross-key rules.
+    ledger: localConfig.ledger,
+    project: localConfig.project,
+  };
+}
+
+function withoutGlobalProjectStorage(globalConfig: RawToml): RawToml {
+  return { ...globalConfig, ledger: null, project: null };
+}
+
+function rethrowWithConfigPaths(error: unknown, files: readonly string[]): never {
+  const context = files.join(" + ");
+  if (error instanceof CqConfigError) {
+    const message = error.message.replace(/^cq\.toml:\s*/, "");
+    throw new CqConfigError(`${context}: ${message}`);
+  }
+  if (error instanceof Error) {
+    const wrapped = new Error(`${context}: ${error.message}`);
+    wrapped.name = error.name;
+    throw wrapped;
+  }
+  throw new Error(`${context}: ${String(error)}`);
+}
+
+function readRawConfig(file: string): RawToml | null {
+  if (!existsSync(file)) return null;
+  try {
+    return parseToml(readFileSync(file, "utf8"));
+  } catch (error) {
+    rethrowWithConfigPaths(error, [file]);
+  }
 }
 
 /**
@@ -1029,16 +1118,32 @@ export function loadConfig(
   repoRoot: string,
   harness: ActiveHarness = resolveActiveHarnessFromProcess(),
 ): CqConfig | null {
-  const file = path.join(repoRoot, CQ_CONFIG_FILENAME);
-  if (!existsSync(file)) {
-    return null;
+  const globalFile = resolveGlobalConfigPath(process.env, homedir());
+  const localFile = path.resolve(repoRoot, CQ_CONFIG_FILENAME);
+  const globalConfig = readRawConfig(globalFile);
+  const localConfig = readRawConfig(localFile);
+  if (globalConfig === null && localConfig === null) return null;
+
+  const files = [
+    ...(globalConfig === null ? [] : [globalFile]),
+    ...(localConfig === null ? [] : [localFile]),
+  ];
+  const raw =
+    globalConfig === null
+      ? localConfig!
+      : localConfig === null
+        ? withoutGlobalProjectStorage(globalConfig)
+        : mergeGlobalAndLocalConfig(globalConfig, localConfig);
+
+  try {
+    const config = parseConfigFromRaw(raw, harness);
+    // Eagerly resolve so a dangling alias is reported at load time, not later.
+    // Via resolveAliasList, NOT resolveReviewers/resolvePlanners: the codex
+    // fail-closed gate must not fire for a shared-only reader (see above).
+    resolveAliasList(config, config.reviewers, "reviewers");
+    resolveAliasList(config, config.planners, "planners");
+    return config;
+  } catch (error) {
+    rethrowWithConfigPaths(error, files);
   }
-  const source = readFileSync(file, "utf8");
-  const config = parseConfig(source, harness);
-  // Eagerly resolve so a dangling alias is reported at load time, not later.
-  // Via resolveAliasList, NOT resolveReviewers/resolvePlanners: the codex
-  // fail-closed gate must not fire for a shared-only reader (see above).
-  resolveAliasList(config, config.reviewers, "reviewers");
-  resolveAliasList(config, config.planners, "planners");
-  return config;
 }
