@@ -1,12 +1,10 @@
 // ledger-status: parse `cq counts` (T533) stdout and format a compact status
 // line (T534, G76, decision Q257).
 //
-// COPY-NOT-IMPORT discipline (hard rule for pi-extensions): this module is
-// standalone (store-path file outside the cq-ledgers bun workspace) and
-// imports NOTHING from the ledger workspace scope or the pi coding-agent
-// extension scope — the `cq counts` payload shape below is a hand-copied
-// description of the ledger's computeLedgerSummaries output, not an import
-// of it.
+// The consumed `cq counts` fields are linked through a type-only import from
+// @cq/ledger's canonical `LedgerSummariesResult`. Runtime delivery remains a
+// bare store-path file with node/local value imports only; parsing stays
+// defensive at the unknown JSON boundary.
 //
 // `cq counts` prints `{ ledgers, counts, ledgerSummaries }`, where
 // `ledgerSummaries` is an array of `{ name, itemCount, statusCounts,
@@ -26,10 +24,15 @@
 // payload (new top-level members, new LedgerSummary fields, new ledgers)
 // cannot change the rendered output, and a RENAMED/REMOVED field fails fast
 // in parseLedgerCounts (which throws on a missing/mistyped completedCount /
-// progressTotal / name rather than defaulting). Unlike the predicates copy in
-// auto-driver (whose key set must enumerate the canonical interface), there
-// is nothing here to keep in sync: the two consumed field names ARE the
-// entire contract.
+// progressTotal / name rather than defaulting). The type projection below
+// makes a canonical rename/removal a compile-time failure.
+
+import type { LedgerSummariesResult } from "@cq/ledger";
+
+type CanonicalLedgerSummary = LedgerSummariesResult["ledgerSummaries"][number];
+type ConsumedLedgerSummary = Required<
+  Pick<CanonicalLedgerSummary, "name" | "completedCount" | "progressTotal">
+>;
 
 /** One ledger's done/total counters, extracted from its ledgerSummaries entry. */
 export interface LedgerCounts {
@@ -60,7 +63,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * defensive style of auto-driver/oracle.ts `parseVerdict` — throw on a
  * malformed field, never silently default it.
  */
-function parseLedgerCounts(raw: unknown, name: string): LedgerCounts {
+function parseLedgerCounts(raw: unknown, name: ConsumedLedgerSummary["name"]): LedgerCounts {
   if (!isRecord(raw)) {
     throw new Error(`ledgerSummaries entry "${name}" is not an object: ${JSON.stringify(raw)}`);
   }
@@ -75,7 +78,8 @@ function parseLedgerCounts(raw: unknown, name: string): LedgerCounts {
       `ledgerSummaries entry "${name}".progressTotal is not a number: ${JSON.stringify(progressTotal)}`,
     );
   }
-  return { done: completedCount, total: progressTotal };
+  const consumed: ConsumedLedgerSummary = { name, completedCount, progressTotal };
+  return { done: consumed.completedCount, total: consumed.progressTotal };
 }
 
 /**
