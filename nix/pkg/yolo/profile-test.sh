@@ -112,6 +112,30 @@ assert_contains \
   "$OUT" \
   $'--ro\n'"$GLOBAL_CONFIG_HOME/cq"
 
+PROFILE_CODEX_CONFIG="$FAKE_HOME/.config/yolo/foo/codex/home/config.toml"
+assert_contains \
+  "named profile seeds its codex config from the main profile" \
+  "$(cat "$PROFILE_CODEX_CONFIG")" \
+  "x"
+assert_contains \
+  "named profile trusts the launch directory" \
+  "$(cat "$PROFILE_CODEX_CONFIG")" \
+  "[projects.\"$PROJECT_DIR\"]"
+
+# A profile launched once into a directory it already trusts must still pick up
+# later changes to the main config.
+printf 'x\nmain-profile-edit\n' > "$FAKE_HOME/.codex/config.toml"
+OUT="$(run_profile_yolo "$GLOBAL_CONFIG_HOME")"
+assert_contains \
+  "relaunch re-syncs the profile codex config with the main profile" \
+  "$(cat "$PROFILE_CODEX_CONFIG")" \
+  "main-profile-edit"
+assert_contains \
+  "relaunch keeps trusting the launch directory" \
+  "$(cat "$PROFILE_CODEX_CONFIG")" \
+  "[projects.\"$PROJECT_DIR\"]"
+printf 'x\n' > "$FAKE_HOME/.codex/config.toml"
+
 mkdir -p "$FAKE_HOME/.config/cq"
 printf 'reviewers = []\n' > "$FAKE_HOME/.config/cq/cq.toml"
 OUT="$(run_profile_yolo relative-config-home)"

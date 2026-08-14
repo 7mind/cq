@@ -522,6 +522,22 @@ assert_eq "reshare: pi skills copied as a real dir" "yes" "$(_is_real_dir "$RESH
 assert_eq "reshare: copied content matches the source" "x" "$(cat "$RESHARE_PROF/codex/AGENTS.md")"
 assert_eq "reshare: copied Codex prompt content matches the source" "x" "$(cat "$RESHARE_PROF/codex/prompts/cq:plan.md" 2>/dev/null)"
 assert_contains "cmd launch materializes Codex profile config" "$(cat "$RESHARE_PROF/codex/config.toml" 2>/dev/null)" 'model = "test"'
+assert_contains "cmd launch trusts the launch directory" "$(cat "$RESHARE_PROF/codex/config.toml" 2>/dev/null)" "[projects.\"$PROJECT_DIR\"]"
+
+# A profile launched once into a directory it already trusts must still pick up
+# later changes to the main config.
+printf 'model = "test"\nmain-profile-edit = true\n' > "$RESHARE_HOME/.codex/config.toml"
+OUT="$(run_profile_sync)"
+STATUS=$?
+assert_zero "relaunch into a trusted directory succeeds" "$STATUS"
+assert_contains "relaunch re-syncs the Codex profile config with the main profile" \
+  "$(cat "$RESHARE_PROF/codex/config.toml" 2>/dev/null)" 'main-profile-edit = true'
+assert_contains "relaunch keeps trusting the launch directory" \
+  "$(cat "$RESHARE_PROF/codex/config.toml" 2>/dev/null)" "[projects.\"$PROJECT_DIR\"]"
+assert_contains "relaunch keeps the file-backed CLI credential store" \
+  "$(cat "$RESHARE_PROF/codex/config.toml" 2>/dev/null)" 'cli_auth_credentials_store = "file"'
+assert_contains "relaunch keeps the file-backed MCP credential store" \
+  "$(cat "$RESHARE_PROF/codex/config.toml" 2>/dev/null)" 'mcp_oauth_credentials_store = "file"'
 assert_eq "reshare: initial copy does not create a backup" "absent" "$(if [[ -e "$RESHARE_PROF/claude/settings.json.yolobak-1" ]]; then echo present; else echo absent; fi)"
 
 echo sentinel > "$RESHARE_PROF/claude/settings.json"

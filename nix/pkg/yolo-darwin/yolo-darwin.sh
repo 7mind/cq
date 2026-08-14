@@ -430,13 +430,13 @@ ensure_codex_config() {
   local trust_header tmp
   trust_header="[projects.\"${trusted_dir}\"]"
 
-  if [[ -f "$out_file" && ! -L "$out_file" ]] \
-    && grep -qF "$trust_header" "$out_file" \
-    && grep -q '^cli_auth_credentials_store[[:space:]]*=[[:space:]]*"file"' "$out_file" \
-    && grep -q '^mcp_oauth_credentials_store[[:space:]]*=[[:space:]]*"file"' "$out_file"; then
-    return 0
-  fi
-
+  # Regenerated on every launch, deliberately: an earlier revision skipped the
+  # rewrite once out_file already carried the trust table and both credential
+  # keys, which froze a named profile's config at whatever the base held the
+  # first time that profile entered the directory. Copying forward each launch
+  # keeps the profile tracking ~/.codex/config.toml, which a home-manager
+  # activation restores to the declarative content by re-creating the store
+  # symlink.
   mkdir -p "$(dirname "$out_file")"
   tmp="$(mktemp)"
   # Read through the HM symlink before replacing an in-place base file.

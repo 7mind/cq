@@ -820,12 +820,12 @@ ensure_codex_config() {
   local header tmp
   header="[projects.\"${trusted_dir}\"]"
 
-  # Idempotent: a real (non-symlink) out_file that already trusts $PWD is done —
-  # avoids rewriting on every launch into an already-trusted directory.
-  if [[ -f "$out_file" && ! -L "$out_file" ]] && grep -qF "$header" "$out_file"; then
-    return 0
-  fi
-
+  # Regenerated on every launch, deliberately: an earlier revision skipped the
+  # rewrite once out_file already trusted $PWD, which froze a named profile's
+  # config at whatever the base held the first time that profile entered the
+  # directory. Copying forward each launch keeps the profile tracking
+  # ~/.codex/config.toml, which a home-manager activation restores to the
+  # declarative content by re-creating the store symlink.
   mkdir -p "$(dirname "$out_file")"
   tmp="$(mktemp)"
   # Capture the base config (cat follows the HM store symlink) before any
