@@ -4,11 +4,11 @@
 // `predicates` object. EXACTLY ONE channel is implemented — no prefer/fallback
 // branching remains.
 //
-// EVIDENCE for the channel decision (STEP 1, verified against the ACTUAL
-// installed Pi v0.82.1 typings, not assumptions):
+// EVIDENCE for the channel decision (verified against the Nix-provided Pi
+// typings, not assumptions):
 //   The Pi ExtensionAPI CANNOT invoke an MCP tool from extension code. The
 //   `ExtensionAPI` interface (dist/core/extensions/types.d.ts L849-1010 of
-//   @earendil-works/pi-coding-agent 0.82.1) exposes registerTool / getAllTools /
+//   @earendil-works/pi-coding-agent) exposes registerTool / getAllTools /
 //   getActiveTools / setActiveTools / `exec(cmd,args)` / sendUserMessage / … but
 //   NO callTool / invokeTool / runTool / mcp() member; neither do
 //   ExtensionContext / ExtensionCommandContext (same file, L208+). A grep of

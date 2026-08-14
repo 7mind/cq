@@ -13,34 +13,11 @@
 // `statusTextForPhase`). All setStatus calls are gated on ctx.hasUI (the Pi
 // flag that is false in print/RPC mode). The status key is 'cq-auto'.
 //
-// Pi-typing discipline (mirrors decision.ts / oracle.ts / cq-subagent-dispatch):
-// this is a STANDALONE store-path file OUTSIDE the cq-ledgers bun workspace, and
-// its tsconfig only carries `@types/node` — it CANNOT and MUST NOT import
-// `@earendil-works/pi-coding-agent`. The pieces of the Pi ExtensionAPI /
-// ExtensionCommandContext this loop needs are therefore declared as LOCAL
-// STRUCTURAL interfaces, copied from the ACTUAL installed Pi v0.82.1 typings
-// (read from the real store path, not assumed):
-//   pi-coding-agent-0.82.1/lib/node_modules/pi-monorepo/dist/core/extensions/types.d.ts:
-//     - registerCommand(name, { description?, handler })             L886
-//     - handler: (args: string, ctx: ExtensionCommandContext) => …  L839
-//     - ExtensionCommandContext.waitForIdle(): Promise<void>         L252
-//     - ExtensionContext.isIdle(): boolean                           L226
-//     - ExtensionAPI.sendUserMessage(content, options?): void        L913
-//       (the prompt-injection API: "Send a user message to the agent. Always
-//        triggers a turn." — this is how the wrapped command / corrective
-//        re-prompt is launched into the live session. options carries ONLY
-//        `deliverAs?: "steer" | "followUp"` in 0.82.1.)
-//     - ExtensionContext.getContextUsage(): ContextUsage | undefined L238
-//       ContextUsage = { tokens: number|null, contextWindow: number, percent: number|null }
-//     - ExtensionContext.compact(options?: CompactOptions): void      L240
-//       CompactOptions = { customInstructions?, onComplete?, onError? }
-//     - ExtensionAPI.on("after_provider_response", handler)          L864 (T466 quota detection)
-//       AfterProviderResponseEvent = { type, status: number, headers: Record<string,string> }
-//     - ExtensionAPI.on("agent_end", handler)                        L867 (await reconciliation)
-//     - ExtensionContext.ui: ExtensionUIContext                       L210 (T467 status bar)
-//       ExtensionUIContext.setStatus(key, text|undefined): void      L79
-//     - ExtensionContext.hasUI: boolean                              L214 (T467 guard)
-// KEEP IN SYNC with those typings. NO `@cq/*` imports.
+// Pi host types are type-only imports resolved by the Nix-wired check against
+// packages.pi-coding-agent, the single type source of truth. Runtime delivery
+// remains a bare store-path directory with only local value imports.
+
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 
 import {
   AutoAction,
@@ -57,7 +34,7 @@ import {
 import { getPredicates as defaultGetPredicates, type OracleContext } from "./oracle";
 
 // ---------------------------------------------------------------------------
-// Local structural Pi surface (copy-not-import — see header).
+// Narrow host-input seams derived from the real Pi exports.
 // ---------------------------------------------------------------------------
 
 /**
@@ -66,18 +43,14 @@ import { getPredicates as defaultGetPredicates, type OracleContext } from "./ora
  * compaction, before the next LLM response). `tokens` is null for the same
  * reason. The driver only reads `percent`.
  */
-export interface DriverContextUsage {
-  tokens: number | null;
-  contextWindow: number;
-  percent: number | null;
-}
+export type DriverContextUsage = NonNullable<ReturnType<ExtensionContext["getContextUsage"]>>;
 
 /**
  * Subset of Pi's `AfterProviderResponseEvent` (types.d.ts L512) used for
  * quota/rate-limit detection. `status` is the HTTP response status code;
  * `headers` carries the raw response headers (e.g. `retry-after`).
  *
- * IMPORTANT — quota detection is BEST-EFFORT and APPROXIMATE: Pi v0.82.1
+ * IMPORTANT — quota detection is BEST-EFFORT and APPROXIMATE: Pi
  * exposes NO typed quota event. The `after_provider_response` event is the
  * only available surface to observe HTTP-level errors. A 429 status is the
  * conventional signal for "rate-limited / quota exhausted", but:
@@ -102,103 +75,52 @@ export interface QuotaHitRef {
 }
 
 /**
- * Structural subset of Pi's `ExtensionUIContext` the driver needs (types.d.ts
- * L67–L191). Only the status-bar method is required by the auto-driver;
- * declared locally to avoid importing `@earendil-works/pi-coding-agent`.
+ * Narrow view of Pi's `ExtensionUIContext`; only the status-bar method is
+ * required by the auto-driver.
  *
  * T467: `setStatus(key, text)` — set a status-bar slot (L79). Pass `undefined`
  * as `text` to clear the slot. The key `'cq-auto'` is the stable identifier
  * the driver uses for all its status updates.
  */
-export interface DriverUIContext {
-  /** Set status text in the footer/status bar. Pass undefined to clear. */
-  setStatus(key: string, text: string | undefined): void;
-}
+export type DriverUIContext = Pick<ExtensionUIContext, "setStatus">;
 
 /**
- * The structural subset of Pi's `ExtensionCommandContext` the driver loop uses.
+ * The narrow Pick-composed Pi context the driver loop uses.
  * Carries `cwd` (so the oracle resolves the right ledger root), the idle
- * guard/await pair, and the T466 compaction/usage seams. Declared locally to
- * keep this module Pi-typing-free and unit-testable with a fake ctx.
+ * guard/await pair, and the T466 compaction/usage seams. The Pick composition
+ * keeps the module unit-testable with a narrow fake context.
  *
  * T467 additions:
  *   - `ui: DriverUIContext` — the status-bar API (ExtensionContext.ui, L210).
  *   - `hasUI: boolean` — whether UI is available; false in print/RPC mode
  *     (ExtensionContext.hasUI, L214). All setStatus calls MUST be gated on this.
  */
-export interface DriverContext extends OracleContext {
-  /** Synchronous idle guard (ExtensionContext.isIdle, L226). */
-  isIdle(): boolean;
-  /** Await the agent finishing the current stream (ExtensionCommandContext.waitForIdle, L252). */
-  waitForIdle(): Promise<void>;
-  /** Current context usage; T466 reads `.percent` for the compaction signal (L238). */
-  getContextUsage(): DriverContextUsage | undefined;
-  /**
-   * Trigger compaction (L240). T466 awaits completion via `options.onComplete`
-   * (Pi `CompactOptions`, types.d.ts L199: `{ customInstructions?, onComplete?,
-   * onError? }`).
-   */
-  compact(options?: {
-    customInstructions?: string;
-    onComplete?: (result: unknown) => void;
-    onError?: (error: Error) => void;
-  }): void;
-  /**
-   * UI context for status-bar access (ExtensionContext.ui, L210).
-   * Use ctx.ui.setStatus('cq-auto', text) gated on ctx.hasUI.
-   */
-  ui: DriverUIContext;
-  /**
-   * Whether UI is available (ExtensionContext.hasUI, L214).
-   * False in print/RPC mode — gate ALL setStatus calls on this.
-   */
-  hasUI: boolean;
-}
+export type DriverContext = OracleContext &
+  Pick<ExtensionContext, "hasUI" | "isIdle" | "getContextUsage" | "compact"> &
+  Pick<ExtensionCommandContext, "waitForIdle"> & {
+    readonly ui: DriverUIContext;
+  };
 
 /**
- * The structural subset of Pi's `ExtensionAPI` the driver needs: the
+ * The narrow Pi API seam the driver needs: the
  * prompt-injection API used to launch the wrapped command and emit corrective
  * re-prompts into the live session, plus the event subscription for quota
  * detection.
  */
-export interface DriverApi {
-  /**
-   * Inject a user message that triggers a turn (ExtensionAPI sendUserMessage).
-   * This is the prompt-injection mechanism: the driver emits the wrapped slash
-   * command to start the underlying cq command, and the `composeRedrivePrompt`
-   * text to re-drive it.
-   *
-   * The queue-behavior option is REQUIRED when the agent is already processing
-   * (the :auto command handler is itself an active turn) — Pi otherwise throws
-   * "Agent is already processing." `"followUp"` queues the message to run as the
-   * next turn (what the driver wants); `"steer"` merges it into the in-flight
-   * turn.
-   *
-   * KEY SET (Pi 0.82.1, D213): the deployed 0.82.1 typings accept ONLY
-   * `deliverAs` here (types.d.ts L913), and the 0.82.1 runtime maps it onto
-   * the internal `streamingBehavior` prompt option itself
-   * (agent-session.js: sendUserMessage passes `streamingBehavior:
-   * options?.deliverAs` to prompt()). The `streamingBehavior` key this
-   * interface used to carry alongside was a vestige of the 0.81.1 typing/
-   * runtime name mismatch and is GONE — kimi-401-retry.ts already uses the
-   * deliverAs-only form.
-   */
-  sendUserMessage(
-    content: string,
-    options?: { deliverAs?: "steer" | "followUp" },
-  ): void;
-
-  /**
-   * Subscribe to the `after_provider_response` lifecycle event (ExtensionAPI
-   * on, L797). Used by T466 quota detection to observe HTTP 429 responses.
-   * The overload is narrowed to this specific event name to avoid importing Pi
-   * types while still being structurally compatible with ExtensionAPI.
-   */
+interface DriverProviderResponseRegistration {
   on(
     event: "after_provider_response",
     handler: (event: DriverAfterProviderResponseEvent) => void,
   ): void;
 }
+
+type AssertTrue<T extends true> = T;
+type _RealPiOnSupportsProviderResponse = AssertTrue<
+  Pick<ExtensionAPI, "on"> extends DriverProviderResponseRegistration ? true : false
+>;
+
+export type DriverApi =
+  Pick<ExtensionAPI, "sendUserMessage"> & DriverProviderResponseRegistration;
 
 // ---------------------------------------------------------------------------
 // Loop wiring inputs.
@@ -258,8 +180,8 @@ export interface DriverResult {
  * sendUserMessage L909-916) and then block until the agent has finished the
  * resulting stream.
  *
- * The await reconciles the two completion mechanisms the Pi v0.82.1 typings
- * expose (per the T465 spec's "reconcile the two so the await is reliable"):
+ * The await reconciles the two completion mechanisms exposed by the
+ * Nix-provided Pi types:
  *
  *   1. `ctx.isIdle()` (L226) — a SYNCHRONOUS guard. `sendUserMessage` is
  *      `void` (fire-and-forget) and the turn it triggers may not have started
@@ -278,21 +200,20 @@ export interface DriverResult {
  * command-handler-native, promise-shaped equivalent and is preferred here
  * because it needs no subscribe/unsubscribe bookkeeping inside the loop and
  * cannot miss an event that fired between injection and subscription. The
- * event path is reserved for hosts where `waitForIdle` is absent (it is present
- * in v0.82.1, so it is used).
+ * event path is reserved for hosts where `waitForIdle` is absent; the checked
+ * host type includes it.
  */
 export async function launchAndAwait(
   ctx: DriverContext,
   api: DriverApi,
   prompt: string,
 ): Promise<void> {
-  // "followUp": queue the wrapped command as the next turn. REQUIRED on Pi
-  // 0.82.1 when the agent is already processing (the :auto command handler is
+  // "followUp": queue the wrapped command as the next turn. Required when the
+  // agent is already processing (the :auto command handler is
   // itself an active turn when it injects the wrapped command) — without it Pi
   // throws "Agent is already processing." When idle it just starts the turn.
-  // Send ONLY deliverAs (D213): the 0.82.1 sendUserMessage typing accepts no
-  // other option key, and the runtime maps deliverAs onto the internal
-  // streamingBehavior itself (see DriverApi.sendUserMessage).
+  // Send only deliverAs (D213). The public type exposes this key; the runtime
+  // maps it onto the separate internal prompt streamingBehavior option.
   api.sendUserMessage(prompt, { deliverAs: "followUp" });
   await ctx.waitForIdle();
 }
@@ -314,13 +235,13 @@ export async function launchAndAwait(
  *     resets the cell after reading it so a single transient 429 does not
  *     permanently block subsequent cycles.
  *
- * QUOTA DETECTION IS BEST-EFFORT: Pi v0.82.1 exposes NO typed quota event.
+ * QUOTA DETECTION IS BEST-EFFORT: Pi exposes no dedicated quota event.
  * `after_provider_response` is the only available surface. See
  * `DriverAfterProviderResponseEvent` for the full caveat.
  */
 export function sampleSignals(ctx: DriverContext, quotaHitRef: QuotaHitRef): AutoSignals {
   const rawPercent = ctx.getContextUsage()?.percent ?? null;
-  // Pi v0.82.1 reports `ContextUsage.percent` on a 0..100 scale (types.d.ts L196
+  // Pi reports `ContextUsage.percent` on a 0..100 scale
   // JSDoc: "Context usage as percentage of context window"; agent-session.js:2567
   // computes `(tokens / contextWindow) * 100`). The decision core (decide.ts
   // COMPACT_THRESHOLD = 0.8) and all AutoSignals consumers expect a 0..1 fraction,
@@ -526,8 +447,8 @@ export async function runAutoDriver(deps: DriverDeps): Promise<DriverResult> {
     if (action === AutoAction.COMPACT_THEN_REDRIVE) {
       // T467: show "compacting" while context compaction is in progress.
       setAutoStatus(ctx, statusTextForPhase({ kind: "compacting" }));
-      // Await compaction via the `onComplete` callback (Pi v0.82.1 CompactOptions
-      // types.d.ts L199). The context window usage will be null right after
+      // Await compaction via the checked `CompactOptions.onComplete` callback.
+      // The context window usage will be null right after
       // compaction and until the next LLM response; the decision core's null-guard
       // on contextPercent prevents a spurious second compaction.
       await new Promise<void>((resolve, reject) => {
@@ -550,23 +471,9 @@ export async function runAutoDriver(deps: DriverDeps): Promise<DriverResult> {
 // ---------------------------------------------------------------------------
 
 /**
- * The structural subset of Pi's `ExtensionAPI` needed to REGISTER the driver
- * command: `registerCommand` plus the prompt-injection `sendUserMessage` and
- * event subscription (DriverApi). Declared locally (copy-not-import).
+ * Narrow view of Pi's `ExtensionAPI` needed to register the driver command.
  */
-export interface DriverRegistrationApi extends DriverApi {
-  /**
-   * Register a custom command (ExtensionAPI.registerCommand, L886). The handler
-   * receives the raw args string and the command-handler context.
-   */
-  registerCommand(
-    name: string,
-    options: {
-      description?: string;
-      handler: (args: string, ctx: DriverContext) => Promise<void>;
-    },
-  ): void;
-}
+export type DriverRegistrationApi = DriverApi & Pick<ExtensionAPI, "registerCommand">;
 
 /**
  * Register a `<command>:auto` command that runs `runAutoDriver` for `preset`.
@@ -583,7 +490,7 @@ export interface DriverRegistrationApi extends DriverApi {
  * cycle and resets it afterward). One cell is enough per registration because
  * only one `:auto` run is active at a time.
  *
- * QUOTA DETECTION IS BEST-EFFORT: Pi 0.82.1 exposes no typed quota event.
+ * QUOTA DETECTION IS BEST-EFFORT: Pi exposes no dedicated quota event.
  * `after_provider_response` with `status === 429` is the only available
  * surface. See `DriverAfterProviderResponseEvent` for the full caveat.
  *

@@ -16,9 +16,8 @@
 //   cq:research:auto     — drains research-flow     (wraps /cq:research:advance)
 //   cq:implement:auto    — drains implement-flow    (wraps /cq:implement:advance)
 //
-// Pi-typing discipline: this module is a STANDALONE store-path file OUTSIDE the
-// cq-ledgers bun workspace; it follows the copy-not-import discipline of
-// cq-subagent-dispatch.ts. It MUST NOT import @cq/* or @earendil-works/pi-*.
+// Pi host types enter through driver.ts as type-only root-package imports.
+// Runtime delivery remains a bare store-path directory.
 
 import {
   advanceAutoPreset,
