@@ -37,6 +37,7 @@ import {
   assertMilestoneActive,
   assertPrefixUnique,
   assertQuestionAnswerPrecondition,
+  collectNonTerminalChildren,
   findItem,
   validateSchema,
   type RefValidationContext,
@@ -180,6 +181,7 @@ export function createGenericMutationTransaction(
         patch,
         state.now(),
         refsFor(state),
+        collectNonTerminalChildren(state.ledgers, milestoneId),
       );
       dirtyLedgers.add(MILESTONES_LEDGER);
       return cloneItem(item);
