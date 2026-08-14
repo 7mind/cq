@@ -142,6 +142,7 @@
           lib = pkgs.lib;
           inherit pkgs piPromptRoot;
         };
+        piCodingAgent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
 
         packagedPromptSurfaceVerifierSource =
           let
@@ -445,6 +446,21 @@
             ./nix/pkg/cq-ledgers/packages/process-control
             ./nix/pkg/cq-ledgers/packages/ledger
           ];
+        };
+        piExtensionsTypecheckSource = pkgs.lib.fileset.toSource {
+          root = ./nix/pkg/pi-extensions;
+          fileset = pkgs.lib.fileset.unions [
+            ./nix/pkg/pi-extensions/auto-driver
+            ./nix/pkg/pi-extensions/ledger-status
+          ];
+        };
+        piExtensionsTypecheck = import ./nix/pkg/pi-extensions/typecheck.nix {
+          inherit
+            pkgs
+            piCodingAgent
+            piExtensionsNodeModules
+            ;
+          source = piExtensionsTypecheckSource;
         };
 
         # Shell fragment: wire @cq/config as a RUNTIME dep of @cq/ledger. Since
@@ -964,7 +980,7 @@ EOF
             '';
           claude-code = pkgs.callPackage ./nix/pkg/claude-code/package.nix { };
           codex = codexPackage;
-          pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
+          pi-coding-agent = piCodingAgent;
           claude-prompt-root = claudePromptRoot;
           codex-prompt-root = codexPromptRoot;
           pi-prompt-root = piPromptRoot;
@@ -1131,6 +1147,7 @@ EOF
                 touch "$out"
               '';
             };
+            pi-extensions-typecheck = piExtensionsTypecheck;
             yolo-profile =
               pkgs.runCommand "yolo-profile"
                 {
