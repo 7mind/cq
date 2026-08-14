@@ -14,6 +14,7 @@ const ORIGINAL_SERVER_INSTRUCTIONS = [
   "Typed milestone/item DAG. enumerate_ledgers schemas. Writes valid fields+author/session+canonical refs.",
   "Reads compact|complement|full; compact.fields ⊎ complement.fields = full.fields. fetch_ledger: paginate until nextOffset=null. fts_search defaults active+filters; terminal stays until fully-terminal archive_milestone.",
   "Plan/build: fts_search relevant active memories by ledger/status; fetch_item full matches. create_item only confirmed durable project facts in memories/M-AMBIENT with useful sourceRefs; exclude transient reasoning/session notes/unconfirmed preferences.",
+  "Ideas omit milestone_id→M-AMBIENT; no work milestone/archive; ledgerRefs independent.",
   "CQ snapshot/derive_predicates; preserve IDs and dispatch/plan capability/generation/fence/recovery/idempotency.",
 ].join(" ");
 
@@ -27,6 +28,7 @@ const REQUIRED_INSTRUCTION_FACTS = [
   "terminal stays until fully-terminal archive_milestone",
   "Plan/build: fts_search relevant active memories by ledger/status; fetch_item full matches",
   "create_item only confirmed durable project facts in memories/M-AMBIENT with useful sourceRefs",
+  "Ideas omit milestone_id→M-AMBIENT; no work milestone/archive; ledgerRefs independent",
   "exclude transient reasoning/session notes/unconfirmed preferences",
   "CQ snapshot/derive_predicates",
   "dispatch/plan capability/generation/fence/recovery/idempotency",
@@ -65,6 +67,12 @@ describe("buildServerInstructions", () => {
     );
     expect(text).toContain(
       "create_item only confirmed durable project facts in memories/M-AMBIENT with useful sourceRefs; exclude transient reasoning/session notes/unconfirmed preferences.",
+    );
+  });
+
+  test("canonical idea attachment policy is explicit on the unprefixed surface", () => {
+    expect(buildServerInstructions("")).toContain(
+      "Ideas omit milestone_id→M-AMBIENT; no work milestone/archive; ledgerRefs independent.",
     );
   });
 

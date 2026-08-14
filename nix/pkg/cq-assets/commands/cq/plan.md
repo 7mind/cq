@@ -42,6 +42,10 @@ For free text:
 2. Create a `clarifying` goal beneath it with a short title and the complete
    description.
 
+Create or update each idea without `milestone_id`; the server attaches it to `M-AMBIENT`.
+Ideas never attach to work milestones and are not archived with them.
+`ledgerRefs` linking remains independent of milestone attachment.
+
 For each idea id:
 
 1. Fetch the full idea; report and skip missing ids.

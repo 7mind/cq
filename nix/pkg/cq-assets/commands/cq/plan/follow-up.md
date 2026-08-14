@@ -66,6 +66,10 @@ Append each scope to the existing description without replacing history:
 <scope>
 ```
 
+Create or update each idea without `milestone_id`; the server attaches it to `M-AMBIENT`.
+Ideas never attach to work milestones and are not archived with them.
+`ledgerRefs` linking remains independent of milestone attachment.
+
 For each idea, merge `ideas:<ideaId>` into the goal's `fields.sourceRefs` and
 `goals:<goalId>` into the idea's `fields.ledgerRefs`, preserving all entries
 already stored in both arrays; then set the idea `planned`.

@@ -128,7 +128,9 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // complement partition invariant to every item-bearing read.
     // 1310 -> 1294 under T1980: the shared projection description retains the
     // partition invariant without repeating the projection field taxonomy.
-    maximumRemainingG93AttributableTokens: 1294,
+    // 1294 -> 1277 under T1532: create_ledger no longer repeats its fixed
+    // acknowledgement before the authoritative response carrying the same DTO.
+    maximumRemainingG93AttributableTokens: 1277,
     corpusMedianResponseSavingTokens: 1461,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,

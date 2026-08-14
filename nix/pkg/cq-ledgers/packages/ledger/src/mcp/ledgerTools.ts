@@ -60,7 +60,6 @@ import {
   ITEM_MUTATION_ACK_DESCRIPTION,
   ITEM_PROJECTION_SCHEMA,
   ITEM_PROJECTION_DESCRIPTION,
-  LEDGER_MUTATION_ACK_DESCRIPTION,
   produceWireDto,
   projectFetchedLedgerDto,
   projectFetchedMilestoneDto,
@@ -651,7 +650,7 @@ export function createLedgerMcpToolSpecifications(
 
   const createLedger = tool(
     "create_ledger",
-    `Create a new ledger. Schema specifies allowed statuses, which subset is terminal, and the typed fields each item carries. The name \`milestones\` is reserved. ${LEDGER_MUTATION_ACK_DESCRIPTION}`,
+    "Create a new ledger. Schema specifies allowed statuses, which subset is terminal, and the typed fields each item carries. The name `milestones` is reserved.",
     {
       name: z.string(),
       schema: schemaSchema,
