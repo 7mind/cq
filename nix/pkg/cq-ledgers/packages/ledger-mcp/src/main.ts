@@ -77,6 +77,7 @@ import {
   type WorksetInvocationAuthority,
 } from "@cq/ledger";
 import { createConfigCapability } from "./configCapability.js";
+export { computeConfig } from "./configCapability.js";
 import {
   createSingleProjectDispatchRuntime,
   type DispatchRuntime,

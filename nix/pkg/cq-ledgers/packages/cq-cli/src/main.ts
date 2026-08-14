@@ -64,6 +64,7 @@ import { runMigrate } from "./migrate.js";
 import { runAdvanceGate } from "./advanceGate.js";
 import { runPredicates } from "./predicates.js";
 import { runCounts } from "./counts.js";
+import { runConfig } from "./config.js";
 import { runStats } from "./stats.js";
 import { runGateRun } from "./gateRun.js";
 import { parseLogPutArgs, runLogPut, EXIT_USAGE as LOG_PUT_EXIT_USAGE } from "./logPut.js";
@@ -82,7 +83,7 @@ export { type ConfirmIo, type ConfirmOutcome, defaultConfirmIo, confirmDestructi
 export const EXIT_USAGE = 2;
 
 /** The subcommands the dispatcher routes to. */
-export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "counts", "stats", "log", "backup", "restore", "migrate", "gate"] as const;
+export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "counts", "config", "stats", "log", "backup", "restore", "migrate", "gate"] as const;
 export type Subcommand = (typeof SUBCOMMANDS)[number];
 
 function isSubcommand(s: string): s is Subcommand {
@@ -207,6 +208,10 @@ export const USAGE = [
   "                                                  ({ ledgers, counts, ledgerSummaries })",
   "                                                  to stdout UNCONDITIONALLY;",
   "                                                  no session/marker, always exit 0.",
+  "  config      [--cwd <path>]                      emit the merged get_config(all) JSON",
+  "                                                  for the active harness; exit 0 with",
+  "                                                  configured:false when no config exists,",
+  "                                                  exit 1 on invalid or unreadable config.",
   "  stats       [--cwd <path>]                      emit the MCP usage-counters JSON",
   "                                                  ({ endpoints, totals }) to stdout",
   "                                                  UNCONDITIONALLY; no session/marker,",
@@ -1282,6 +1287,7 @@ const HANDLERS: Record<Subcommand, (args: SubcommandArgs, io: DispatchIo) => Pro
   "advance-gate": runAdvanceGateCmd,
   predicates: runPredicatesCmd,
   counts: runCountsCmd,
+  config: runConfig,
   stats: runStatsCmd,
   // `log` is a namespace subcommand: the handler placeholder is never invoked
   // directly — the dispatch() function intercepts it and delegates to runLogCmd
