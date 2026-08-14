@@ -29,6 +29,18 @@ const DISPATCHED_ROLE_SCHEMAS: Readonly<Record<string, string>> = Object.freeze(
   ),
 );
 
+const EXPECTED_BUILT_IN_EXCLUSIONS: Readonly<Record<string, readonly string[]>> = {
+  "plan-advance": ["dispatch_agent", "write", "edit", "bash"],
+  "plan-reviewer": ["dispatch_agent", "write", "edit", "bash"],
+  "implement-worker": ["dispatch_agent"],
+  "implement-reviewer": ["dispatch_agent", "write", "edit"],
+  "implement-conflict-resolver": ["dispatch_agent"],
+  "investigate-explorer": ["dispatch_agent", "write", "edit", "bash"],
+  "investigate-prober": ["dispatch_agent"],
+  "research-explorer": ["dispatch_agent", "write", "edit", "bash"],
+  "research-experimenter": ["dispatch_agent"],
+};
+
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..", "..", "..");
 const ASSETS_ROOT = path.join(REPO_ROOT, "nix", "pkg", "cq-assets");
 const PI_CONTEXT = path.join(REPO_ROOT, "nix", "pkg", "llm-contexts", "pi-context.md");
@@ -65,6 +77,14 @@ interface RegisteredTool {
     readonly content: readonly { readonly type: string; readonly text: string }[];
     readonly details: Readonly<Record<string, unknown>>;
   }>;
+}
+
+interface DispatchRuntime {
+  readonly output: string;
+  readonly directory: string;
+  readonly capturePath: string;
+  readonly registered: RegisteredTool;
+  readonly setParentActiveLedgerTools: (tools: readonly string[]) => void;
 }
 
 async function loadDispatchExtension(): Promise<(api: Readonly<Record<string, unknown>>) => void> {
@@ -138,6 +158,167 @@ function directPiTree(catalogJson: string): ReturnType<typeof renderPromptSurfac
     roleSchemas: DISPATCHED_ROLE_SCHEMAS,
     roleToolProfilesJson: serializePiRoleToolProfileManifest(),
   });
+}
+
+async function prepareDispatchRuntime(): Promise<DispatchRuntime> {
+  const output = buildPiPromptRoot();
+  const directory = path.join(tmpdir(), `cq-pi-runtime-${process.pid}-${crypto.randomUUID()}`);
+  tempDirectories.push(directory);
+  mkdirSync(directory, { recursive: true });
+  const capturePath = path.join(directory, "child-args.json");
+  const captureExtension = path.join(directory, "capture-tools.ts");
+  const configuredPiDir = originalPiCodingAgentDir ?? path.join(homedir(), ".pi", "agent");
+  const mcpAdapter = path.join(
+    configuredPiDir,
+    "npm",
+    "node_modules",
+    "pi-mcp-adapter",
+    "index.ts",
+  );
+  if (!existsSync(mcpAdapter)) {
+    throw new Error(`installed pi-mcp-adapter unavailable: ${mcpAdapter}`);
+  }
+  writeFileSync(
+    captureExtension,
+    [
+      'import { writeFileSync } from "node:fs";',
+      "export default function captureTools(pi) {",
+      "  let sessionStart;",
+      '  pi.on("session_start", (event) => { sessionStart = event; });',
+      '  pi.on("resources_discover", () => {',
+      `    writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify({ sessionStart, activeTools: pi.getActiveTools(), registeredTools: pi.getAllTools().map(({ name }) => name) }));`,
+      '    throw new Error("CQ_CAPTURE_COMPLETE");',
+      "  });",
+      "}",
+    ].join("\n"),
+  );
+  const piAgentDir = path.join(directory, "pi-agent");
+  mkdirSync(piAgentDir, { recursive: true });
+  writeFileSync(
+    path.join(piAgentDir, "settings.json"),
+    JSON.stringify({ extensions: [mcpAdapter, captureExtension] }),
+  );
+  const projectPiDir = path.join(directory, ".pi");
+  mkdirSync(projectPiDir, { recursive: true });
+  writeFileSync(path.join(directory, "cq.toml"), '[ledger]\nprojectId = "pi-role-profile-test"\n');
+  writeFileSync(
+    path.join(projectPiDir, "mcp.json"),
+    JSON.stringify({
+      mcpServers: {
+        ledger: {
+          type: "stdio",
+          command: "bun",
+          args: [
+            path.join(
+              REPO_ROOT,
+              "nix",
+              "pkg",
+              "cq-ledgers",
+              "packages",
+              "ledger-mcp",
+              "src",
+              "main.ts",
+            ),
+            "--cwd",
+            directory,
+          ],
+          env: {
+            XDG_STATE_HOME: path.join(directory, "state"),
+            // Isolate from the ambient host CQ_PROMPT_ROOT (D190 surface shape).
+            CQ_PROMPT_ROOT: output,
+            CQ_PROMPT_SURFACE: "pi",
+          },
+          lifecycle: "keep-alive",
+          directTools: true,
+        },
+      },
+    }),
+  );
+
+  process.argv[1] = "";
+  process.env.CQ_AGENTS_DIR = path.join(output, "roles");
+  process.env.PI_CODING_AGENT_DIR = piAgentDir;
+  process.env.MCP_DIRECT_TOOLS = "ledger";
+  process.env.PI_OFFLINE = "1";
+  // This test proves the PROCESS child's exclude-tools denylist via a capture
+  // extension loaded by `pi -p`. T1699 same-harness native uses
+  // createAgentSession({cwd}) instead; force the process seam here so the
+  // deny-list capture remains the measured surface.
+  process.env.CQ_DISPATCH_FORCE_SHELLOUT = "true";
+  let parentActiveLedgerTools: readonly string[] = LEDGER_CAPABILITY_TOOL_NAMES.map(
+    (tool) => `ledger_${tool}`,
+  );
+  let registered: RegisteredTool | undefined;
+  const cqSubagentDispatch = await loadDispatchExtension();
+  cqSubagentDispatch({
+    registerTool(tool: RegisteredTool) {
+      registered = tool;
+    },
+    getActiveTools() {
+      return parentActiveLedgerTools;
+    },
+  } as never);
+  if (registered === undefined) {
+    throw new Error("cq-subagent-dispatch did not register dispatch_agent");
+  }
+  return {
+    output,
+    directory,
+    capturePath,
+    registered,
+    setParentActiveLedgerTools(tools) {
+      parentActiveLedgerTools = tools;
+    },
+  };
+}
+
+async function assertRoleDispatch(runtime: DispatchRuntime, agent: string): Promise<void> {
+  const builtInExclusions = EXPECTED_BUILT_IN_EXCLUSIONS[agent];
+  if (builtInExclusions === undefined) {
+    throw new Error(`missing built-in exclusion fixture for ${agent}`);
+  }
+  const exclusions = [
+    ...builtInExclusions,
+    ...excludedLedgerToolsForRole(agent).map((tool) => `ledger_${tool}`),
+  ];
+  const result = await runtime.registered.execute(
+    `call-${agent}`,
+    { agent, task: `runtime argument for ${agent}`, isolation: "worktree" },
+    undefined,
+    undefined,
+    {
+      cwd: runtime.directory,
+      model: { id: "gpt-5.6-sol", provider: "openai-codex" },
+    },
+  );
+  const capture = JSON.parse(readFileSync(runtime.capturePath, "utf8")) as {
+    readonly sessionStart: { readonly reason: string };
+    readonly activeTools: readonly string[];
+    readonly registeredTools: readonly string[];
+  };
+
+  expect(result.details.exitCode).toBe(1);
+  expect(result.details.stderr).toContain("CQ_CAPTURE_COMPLETE");
+  expect(result.details.isolation).toBe("worktree");
+  expect(result.details.isolationNote).toContain("does not allocate a tree");
+  expect(result.details.isolationNote).toContain("worktree_manage");
+  expect(capture.sessionStart.reason).toBe("startup");
+  const expectedRegisteredLedgerTools = exposedLedgerToolsForRole(agent)
+    .map((tool) => `ledger_${tool}`)
+    .sort();
+  expect(capture.registeredTools.filter((tool) => tool.startsWith("ledger_")).sort()).toEqual(
+    expectedRegisteredLedgerTools,
+  );
+  expect(capture.activeTools.filter((tool) => tool.startsWith("ledger_")).sort()).toEqual(
+    expectedRegisteredLedgerTools,
+  );
+  expect(result.details.excludedTools).toEqual(exclusions);
+  expect(result.details.roleTools).toEqual(
+    exposedLedgerToolsForRole(agent).filter(
+      (tool) => !DISPATCH_RESULT_PLUMBING_TOOL_NAMES.includes(tool as never),
+    ),
+  );
+  expect(result.details.transportTools).toEqual(DISPATCH_RESULT_PLUMBING_TOOL_NAMES);
 }
 
 afterEach(() => {
@@ -312,106 +493,10 @@ describe("packaged Pi prompt root", () => {
 
   // Regression origin: tasks:T1329 acceptance (2026-07-31).
   test("dispatches rendered roles with exact Pi deny lists and no child re-dispatch", async () => {
-    const output = buildPiPromptRoot();
-    const directory = path.join(tmpdir(), `cq-pi-runtime-${process.pid}-${crypto.randomUUID()}`);
-    tempDirectories.push(directory);
-    mkdirSync(directory, { recursive: true });
-    const capturePath = path.join(directory, "child-args.json");
-    const captureExtension = path.join(directory, "capture-tools.ts");
-    const configuredPiDir =
-      originalPiCodingAgentDir ?? path.join(homedir(), ".pi", "agent");
-    const mcpAdapter = path.join(
-      configuredPiDir,
-      "npm",
-      "node_modules",
-      "pi-mcp-adapter",
-      "index.ts",
-    );
-    if (!existsSync(mcpAdapter)) {
-      throw new Error(`installed pi-mcp-adapter unavailable: ${mcpAdapter}`);
-    }
-    writeFileSync(
-      captureExtension,
-      [
-        'import { writeFileSync } from "node:fs";',
-        "export default function captureTools(pi) {",
-        "  let sessionStart;",
-        '  pi.on("session_start", (event) => { sessionStart = event; });',
-        '  pi.on("resources_discover", () => {',
-        `    writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify({ sessionStart, activeTools: pi.getActiveTools(), registeredTools: pi.getAllTools().map(({ name }) => name) }));`,
-        '    throw new Error("CQ_CAPTURE_COMPLETE");',
-        "  });",
-        "}",
-      ].join("\n"),
-    );
-    const piAgentDir = path.join(directory, "pi-agent");
-    mkdirSync(piAgentDir, { recursive: true });
-    writeFileSync(
-      path.join(piAgentDir, "settings.json"),
-      JSON.stringify({ extensions: [mcpAdapter, captureExtension] }),
-    );
-    const projectPiDir = path.join(directory, ".pi");
-    mkdirSync(projectPiDir, { recursive: true });
-    writeFileSync(path.join(directory, "cq.toml"), '[ledger]\nprojectId = "pi-role-profile-test"\n');
-    writeFileSync(
-      path.join(projectPiDir, "mcp.json"),
-      JSON.stringify({
-        mcpServers: {
-          ledger: {
-            type: "stdio",
-            command: "bun",
-            args: [
-              path.join(REPO_ROOT, "nix", "pkg", "cq-ledgers", "packages", "ledger-mcp", "src", "main.ts"),
-              "--cwd",
-              directory,
-            ],
-            env: {
-              XDG_STATE_HOME: path.join(directory, "state"),
-              // Isolate from the ambient host CQ_PROMPT_ROOT (D190 surface shape).
-              CQ_PROMPT_ROOT: output,
-              CQ_PROMPT_SURFACE: "pi",
-            },
-            lifecycle: "keep-alive",
-            directTools: true,
-          },
-        },
-      }),
-    );
+    const runtime = await prepareDispatchRuntime();
+    const { capturePath, directory, output, registered } = runtime;
 
-    process.argv[1] = "";
-    process.env.CQ_AGENTS_DIR = path.join(output, "roles");
-    process.env.PI_CODING_AGENT_DIR = piAgentDir;
-    process.env.MCP_DIRECT_TOOLS = "ledger";
-    process.env.PI_OFFLINE = "1";
-    // This test proves the PROCESS child's exclude-tools denylist via a capture
-    // extension loaded by `pi -p`. T1699 same-harness native uses
-    // createAgentSession({cwd}) instead; force the process seam here so the
-    // deny-list capture remains the measured surface.
-    process.env.CQ_DISPATCH_FORCE_SHELLOUT = "true";
-    let parentActiveLedgerTools = LEDGER_CAPABILITY_TOOL_NAMES.map((tool) => `ledger_${tool}`);
-    let registered: RegisteredTool | undefined;
-    const cqSubagentDispatch = await loadDispatchExtension();
-    cqSubagentDispatch({
-      registerTool(tool: RegisteredTool) {
-        registered = tool;
-      },
-      getActiveTools() {
-        return parentActiveLedgerTools;
-      },
-    } as never);
-
-    expect(registered?.name).toBe("dispatch_agent");
-    const expectedBuiltInExclusions: Readonly<Record<string, readonly string[]>> = {
-      "plan-advance": ["dispatch_agent", "write", "edit", "bash"],
-      "plan-reviewer": ["dispatch_agent", "write", "edit", "bash"],
-      "implement-worker": ["dispatch_agent"],
-      "implement-reviewer": ["dispatch_agent", "write", "edit"],
-      "implement-conflict-resolver": ["dispatch_agent"],
-      "investigate-explorer": ["dispatch_agent", "write", "edit", "bash"],
-      "investigate-prober": ["dispatch_agent"],
-      "research-explorer": ["dispatch_agent", "write", "edit", "bash"],
-      "research-experimenter": ["dispatch_agent"],
-    };
+    expect(registered.name).toBe("dispatch_agent");
 
     for (const role of ["investigate-explorer", "research-explorer"] as const) {
       const explorer = readFileSync(path.join(output, "roles", `${role}.md`), "utf8").replace(
@@ -426,54 +511,20 @@ describe("packaged Pi prompt root", () => {
       );
     }
 
-    for (const [agent, builtInExclusions] of Object.entries(expectedBuiltInExclusions)) {
-      const exclusions = [
-        ...builtInExclusions,
-        ...excludedLedgerToolsForRole(agent).map((tool) => `ledger_${tool}`),
-      ];
-      const task = `runtime argument for ${agent}`;
-      const result = await registered!.execute(
-        `call-${agent}`,
-        { agent, task, isolation: "worktree" },
-        undefined,
-        undefined,
-        {
-          cwd: directory,
-          model: { id: "gpt-5.6-sol", provider: "openai-codex" },
-        },
-      );
-      const capture = JSON.parse(readFileSync(capturePath, "utf8")) as {
-        readonly sessionStart: { readonly reason: string };
-        readonly activeTools: readonly string[];
-        readonly registeredTools: readonly string[];
-      };
-
-      expect(result.details.exitCode).toBe(1);
-      expect(result.details.stderr).toContain("CQ_CAPTURE_COMPLETE");
-      expect(result.details.isolation).toBe("worktree");
-      expect(result.details.isolationNote).toContain("does not allocate a tree");
-      expect(result.details.isolationNote).toContain("worktree_manage");
-      expect(capture.sessionStart.reason).toBe("startup");
-      const expectedRegisteredLedgerTools = exposedLedgerToolsForRole(agent)
-        .map((tool) => `ledger_${tool}`)
-        .sort();
-      expect(capture.registeredTools.filter((tool) => tool.startsWith("ledger_")).sort()).toEqual(
-        expectedRegisteredLedgerTools,
-      );
-      expect(capture.activeTools.filter((tool) => tool.startsWith("ledger_")).sort()).toEqual(
-        expectedRegisteredLedgerTools,
-      );
-      expect(result.details.excludedTools).toEqual(exclusions);
-      expect(result.details.roleTools).toEqual(
-        exposedLedgerToolsForRole(agent).filter(
-          (tool) => !DISPATCH_RESULT_PLUMBING_TOOL_NAMES.includes(tool as never),
-        ),
-      );
-      expect(result.details.transportTools).toEqual(DISPATCH_RESULT_PLUMBING_TOOL_NAMES);
+    for (const agent of [
+      "plan-advance",
+      "plan-reviewer",
+      "investigate-explorer",
+      "research-explorer",
+    ]) {
+      await assertRoleDispatch(runtime, agent);
     }
 
     const staleRegisteredTool = ["ledger", "create", "milestone"].join("_");
-    parentActiveLedgerTools = [...parentActiveLedgerTools, staleRegisteredTool];
+    runtime.setParentActiveLedgerTools([
+      ...LEDGER_CAPABILITY_TOOL_NAMES.map((tool) => `ledger_${tool}`),
+      staleRegisteredTool,
+    ]);
     rmSync(capturePath);
     await expect(
       registered!.execute(
@@ -493,7 +544,9 @@ describe("packaged Pi prompt root", () => {
       `active registered ledger tool "${staleRegisteredTool}" lacks a profile decision`,
     );
     expect(existsSync(capturePath)).toBe(false);
-    parentActiveLedgerTools = LEDGER_CAPABILITY_TOOL_NAMES.map((tool) => `ledger_${tool}`);
+    runtime.setParentActiveLedgerTools(
+      LEDGER_CAPABILITY_TOOL_NAMES.map((tool) => `ledger_${tool}`),
+    );
 
     const invalidRoot = path.join(directory, "invalid-profile-root");
     const invalidRoles = path.join(invalidRoot, "roles");
@@ -534,5 +587,19 @@ describe("packaged Pi prompt root", () => {
         },
       ),
     ).rejects.toThrow('tool "enumerate_ledgers" lacks a profile decision');
+  }, 30_000);
+
+  test("dispatches mutation-capable roles with exact Pi deny lists", async () => {
+    const runtime = await prepareDispatchRuntime();
+    expect(runtime.registered.name).toBe("dispatch_agent");
+    for (const agent of [
+      "implement-worker",
+      "implement-reviewer",
+      "implement-conflict-resolver",
+      "investigate-prober",
+      "research-experimenter",
+    ]) {
+      await assertRoleDispatch(runtime, agent);
+    }
   }, 30_000);
 });
