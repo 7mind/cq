@@ -78,6 +78,16 @@ import type {
   WorksetRequest,
   WorksetResultFor,
 } from "../../mcp/worksetTool.js";
+import type {
+  PlanClaimInput,
+  PlanClaimResult,
+  PlanFinalizeInput,
+  PlanFinalizeResult,
+  PlanPublishDraftInput,
+  PlanPublishDraftResult,
+  PlanReleaseInput,
+  PlanReleaseResult,
+} from "../../planLifecycle.js";
 
 /**
  * Authenticated MCP initialize metadata used to label the project registry
@@ -493,6 +503,22 @@ export class RemoteLedgerClient {
       throw new RemoteManagementScopeError();
     }
     return await this.call<WorksetResultFor<R>>("workset", { ...request });
+  }
+
+  async claimPlan(input: PlanClaimInput): Promise<PlanClaimResult> {
+    return await this.call<PlanClaimResult>("claim_plan", { ...input });
+  }
+
+  async publishPlanDraft(input: PlanPublishDraftInput): Promise<PlanPublishDraftResult> {
+    return await this.call<PlanPublishDraftResult>("publish_plan_draft", { ...input });
+  }
+
+  async releasePlanClaim(input: PlanReleaseInput): Promise<PlanReleaseResult> {
+    return await this.call<PlanReleaseResult>("release_plan_claim", { ...input });
+  }
+
+  async finalizePlan(input: PlanFinalizeInput): Promise<PlanFinalizeResult> {
+    return await this.call<PlanFinalizeResult>("finalize_plan", { ...input });
   }
 
   // ---- Routine read families ---------------------------------------------

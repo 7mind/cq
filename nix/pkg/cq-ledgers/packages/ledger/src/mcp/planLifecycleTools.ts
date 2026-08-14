@@ -43,6 +43,12 @@ import {
   type PlanLifecycleStore,
 } from "../planLifecycle.js";
 import type { LedgerStore } from "../store/LedgerStore.js";
+import type { WorksetOwnedWriteTx } from "../worksetOwnedLifecycle.js";
+import {
+  createWorksetGuardedPlanLifecycleStore,
+  type WorksetPlanLifecycleTx,
+} from "../worksetPlanLifecycle.js";
+import type { WorksetStore } from "../worksetStore.js";
 import { produceWireDto, type ProducedWireDto } from "./wireResponseContract.js";
 
 export const PLAN_LIFECYCLE_TOOL_NAMES = [
@@ -90,10 +96,33 @@ function requireLifecycle(
   store: LedgerStore,
   toolName: PlanLifecycleToolName,
 ): PlanLifecycleStore {
-  if (!isPlanLifecycleStore(store)) {
+  const candidate = store as LedgerStore & {
+    worksetStore?: unknown;
+    runAtomicOwnedMutation?: unknown;
+    runAtomicWorksetPlanLifecycleMutation?: unknown;
+  };
+  if (
+    typeof candidate.worksetStore !== "function" ||
+    typeof candidate.runAtomicOwnedMutation !== "function" ||
+    typeof candidate.runAtomicWorksetPlanLifecycleMutation !== "function"
+  ) {
     throw new PlanLifecycleNotImplementedError(toolName);
   }
-  return store;
+  const worksetStore = (candidate.worksetStore as () => WorksetStore).call(store);
+  const capable = candidate as LedgerStore & {
+    runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T>;
+    runAtomicWorksetPlanLifecycleMutation<T>(
+      goalId: string,
+      mutate: (tx: WorksetPlanLifecycleTx) => T,
+    ): Promise<T>;
+  };
+  return createWorksetGuardedPlanLifecycleStore({
+    rawStore: store,
+    worksetStore,
+    runOwnedTransaction: (mutate) => capable.runAtomicOwnedMutation(mutate),
+    runPlanLifecycleTransaction: (goalId, mutate) =>
+      capable.runAtomicWorksetPlanLifecycleMutation(goalId, mutate),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -303,8 +332,8 @@ export const PLAN_LIFECYCLE_TOOL_SPECS: readonly PlanLifecycleToolSpec[] = [
     description: CLAIM_DESCRIPTION,
     inputSchema: claimShape,
     run: async (store, args) => {
-      const lifecycle = requireLifecycle(store, "claim_plan");
       const input = PlanClaimInputSchema.parse(args);
+      const lifecycle = requireLifecycle(store, "claim_plan");
       return planResult("claim_plan", await lifecycle.claimPlan(input));
     },
   },
@@ -313,8 +342,8 @@ export const PLAN_LIFECYCLE_TOOL_SPECS: readonly PlanLifecycleToolSpec[] = [
     description: PUBLISH_DESCRIPTION,
     inputSchema: publishShape,
     run: async (store, args) => {
-      const lifecycle = requireLifecycle(store, "publish_plan_draft");
       const input = PlanPublishDraftInputSchema.parse(args);
+      const lifecycle = requireLifecycle(store, "publish_plan_draft");
       return planResult(
         "publish_plan_draft",
         await lifecycle.publishPlanDraft(input),
@@ -326,13 +355,13 @@ export const PLAN_LIFECYCLE_TOOL_SPECS: readonly PlanLifecycleToolSpec[] = [
     description: RELEASE_DESCRIPTION,
     inputSchema: releaseShape,
     run: async (store, args) => {
-      const lifecycle = requireLifecycle(store, "release_plan_claim");
-      const flat = z.object(releaseShape).parse(args);
+      const flat = z.object(releaseShape).strict().parse(args);
       const raw = flat as unknown as Record<string, unknown>;
       const input = PlanReleaseInputSchema.parse({
         kind: flat.kind,
         ...definedEntries(raw, RELEASE_MEMBER_KEYS),
       });
+      const lifecycle = requireLifecycle(store, "release_plan_claim");
       return planResult(
         "release_plan_claim",
         await lifecycle.releasePlanClaim(input),
@@ -344,8 +373,8 @@ export const PLAN_LIFECYCLE_TOOL_SPECS: readonly PlanLifecycleToolSpec[] = [
     description: FINALIZE_DESCRIPTION,
     inputSchema: finalizeShape,
     run: async (store, args) => {
-      const lifecycle = requireLifecycle(store, "finalize_plan");
       const input = PlanFinalizeInputSchema.parse(args);
+      const lifecycle = requireLifecycle(store, "finalize_plan");
       return planResult("finalize_plan", await lifecycle.finalizePlan(input));
     },
   },

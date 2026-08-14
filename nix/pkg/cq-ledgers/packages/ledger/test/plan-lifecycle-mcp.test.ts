@@ -40,6 +40,7 @@ import {
   TASKS_LEDGER,
   type LedgerStore,
   type LedgerToolName,
+  type WorksetPlanLifecycleTx,
 } from "../src/index.js";
 import { InMemoryPlanLifecycleFixture } from "./planLifecycleInMemoryAdapter.js";
 
@@ -889,15 +890,14 @@ describe("assertPlanLifecycleTokenExposure", () => {
  * remove the guard call and they fail.
  */
 describe("the owner-token guard is enforced at the wire boundary", () => {
-  /** Guarded-mutation stubs, keyed by `PlanLifecycleStore` method name. */
-  type LifecycleStub = Readonly<Record<string, () => Promise<unknown>>>;
+  /** Guarded transaction stubs, keyed by `PlanLifecycleStore` method name. */
+  type LifecycleStub = Readonly<Record<string, () => unknown>>;
 
   /**
-   * `base` with the named guarded mutations replaced by leaking stubs. Every
-   * other member still resolves to the real store (bound to it, so private
-   * state keeps working), which is what lets both transport factories accept
-   * this as an ordinary `LedgerStore` and what keeps `isPlanLifecycleStore`
-   * satisfied.
+   * `base` with the named guarded transaction mutations replaced by leaking
+   * stubs. The public tools no longer call raw PlanLifecycleStore methods;
+   * intercepting the transaction object keeps this control on the production
+   * admission path.
    */
   function withLeakingLifecycle(
     base: LedgerStore,
@@ -905,7 +905,29 @@ describe("the owner-token guard is enforced at the wire boundary", () => {
   ): LedgerStore {
     return new Proxy(base, {
       get(target, prop, receiver): unknown {
-        if (typeof prop === "string" && prop in stub) return stub[prop];
+        if (prop === "runAtomicWorksetPlanLifecycleMutation") {
+          const run = Reflect.get(target, prop, receiver) as (
+            goalId: string,
+            mutate: (tx: WorksetPlanLifecycleTx) => unknown,
+          ) => Promise<unknown>;
+          return (
+            goalId: string,
+            mutate: (tx: WorksetPlanLifecycleTx) => unknown,
+          ): Promise<unknown> =>
+            run.call(target, goalId, (tx) =>
+              mutate(
+                new Proxy(tx, {
+                  get(txTarget, txProp, txReceiver): unknown {
+                    if (typeof txProp === "string" && txProp in stub) return stub[txProp];
+                    const value: unknown = Reflect.get(txTarget, txProp, txReceiver);
+                    return typeof value === "function"
+                      ? (value as (...args: unknown[]) => unknown).bind(txTarget)
+                      : value;
+                  },
+                }),
+              ),
+            );
+        }
         const value: unknown = Reflect.get(target, prop, receiver);
         return typeof value === "function"
           ? (value as (...args: unknown[]) => unknown).bind(target)
@@ -968,11 +990,10 @@ describe("the owner-token guard is enforced at the wire boundary", () => {
     expectRefused(
       await bothTransports(
         {
-          claimPlan: () =>
-            Promise.resolve({
-              ok: false,
-              conflict: { code: "claim-active", ownerFenceToken: OWNER_A },
-            }),
+          claimPlan: () => ({
+            ok: false,
+            conflict: { code: "claim-active", ownerFenceToken: OWNER_A },
+          }),
         },
         "claim_plan",
         claimArgs("request_1", OWNER_A, null),
@@ -988,8 +1009,20 @@ describe("the owner-token guard is enforced at the wire boundary", () => {
     expectRefused(
       await bothTransports(
         {
-          publishPlanDraft: () =>
-            Promise.resolve({ ok: true, replayed: false, acknowledgement: claim }),
+          publishPlanDraft: () => ({
+            ok: true,
+            replayed: false,
+            acknowledgement: {
+              goalId: GOAL_ID,
+              claimId: claim.claimId,
+              generation: claim.generation,
+              operationId: "publish_1",
+              manifest: { revision: 1, milestones: [], tasks: [] },
+              replacedManifest: null,
+              reviewDefects: [],
+              ownerFenceToken: OWNER_A,
+            },
+          }),
         },
         "publish_plan_draft",
         { ...ownerArgs(claim, "publish_1"), manifest: MANIFEST },
@@ -1004,12 +1037,11 @@ describe("the owner-token guard is enforced at the wire boundary", () => {
     expectRefused(
       await bothTransports(
         {
-          claimPlan: () =>
-            Promise.resolve({
-              ok: true,
-              replayed: false,
-              acknowledgement: { claimId: "claim_G1_1", generation: 1 },
-            }),
+          claimPlan: () => ({
+            ok: true,
+            replayed: false,
+            acknowledgement: { claimId: "claim_G1_1", generation: 1 },
+          }),
         },
         "claim_plan",
         claimArgs("request_1", OWNER_A, null),
