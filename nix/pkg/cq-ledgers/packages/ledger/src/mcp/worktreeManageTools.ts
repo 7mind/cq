@@ -33,6 +33,7 @@ import {
   type ReleaseManagedWorktreeResult,
 } from "../managedWorktree.js";
 import { observeManagedWorktreeConflictState } from "../gitConflictContinuation.js";
+import { createManagedWorktreeGitEffectRunner } from "../worksetGitEffects.js";
 import type { Item } from "../types.js";
 import type { LedgerStore } from "../store/LedgerStore.js";
 import { produceWireDto, type ProducedWireDto } from "./wireResponseContract.js";
@@ -419,6 +420,13 @@ export const WORKTREE_MANAGE_TOOL_SPEC: WorktreeManageToolSpec = {
       };
       const result = await prepareFn(request, {
         ...deps,
+        git:
+          deps.git ??
+          createManagedWorktreeGitEffectRunner({
+            store,
+            taskId,
+            repositoryRoot: capability.repositoryRoot,
+          }),
         taskAdoptionAuthority: store,
       });
       return produceWireDto(result as object);
@@ -450,7 +458,17 @@ export const WORKTREE_MANAGE_TOOL_SPEC: WorktreeManageToolSpec = {
       return produceWireDto({ status: "conflict-observed", conflictState });
     }
 
-    const result = await releaseFn(parsed.release!, deps);
+    const release = parsed.release!;
+    const result = await releaseFn(release, {
+      ...deps,
+      git:
+        deps.git ??
+        createManagedWorktreeGitEffectRunner({
+          store,
+          taskId: release.handle.taskId,
+          repositoryRoot: capability.repositoryRoot,
+        }),
+    });
     return produceWireDto(result as object);
   },
 };

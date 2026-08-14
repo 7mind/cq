@@ -368,6 +368,13 @@ increment criticism/no-files counters. If the tip changes under rebase, the old
 worker result loses authority: redispatch the worker on the rebased tree (same
 handle), rerun its gate and review, and repeat the success checks.
 
+Run the rebase only through the task-bound broker, using the exact current main
+commit already verified above:
+
+```sh
+cq gate git-effect --operation rebase --cwd <repositoryRoot> --task-id <taskId> --commit <currentMainCommit>
+```
+
 On conflict, call `worktree_manage` with `operation: "observe-conflict"` and the
 manager handle. Supply its exact `conflictState` (original tip, onto, dispatch
 base, current HEAD and ancestry, sequencer identity/todo/current command, and
@@ -383,7 +390,7 @@ skip its dependants.
 After the final checks, merge the exact object:
 
 ```sh
-git merge --ff-only <resultCommit>
+cq gate git-effect --operation merge --cwd <repositoryRoot> --task-id <taskId> --commit <resultCommit>
 ```
 
 Then mark the task `done` with `resultCommit`, completion summary, and all

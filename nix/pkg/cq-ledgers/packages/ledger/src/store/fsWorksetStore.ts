@@ -359,7 +359,11 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): FsWo
   }
 
   async function deleteAdmissionDocument(id: string): Promise<void> {
-    await fs.unlink(admissionPath(id)).catch(() => undefined);
+    try {
+      await fs.unlink(admissionPath(id));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
     if (localActiveIds.delete(id)) notify();
   }
 
@@ -795,11 +799,11 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): FsWo
             "ledger mutation admission already acknowledged",
           );
         }
-        open = false;
-        unregisterLiveWorksetAdmission(handle);
         await withStoreMutex(async () => {
           await deleteAdmissionDocument(granted.id);
         });
+        open = false;
+        unregisterLiveWorksetAdmission(handle);
       },
     };
     registerLiveWorksetAdmission(handle);
@@ -931,9 +935,17 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): FsWo
             "cannot settle before process-group registration",
           );
         }
-        settled = true;
         const docPath = admissionPath(granted.id);
-        const existingText = fsSync.readFileSync(docPath, "utf8");
+        let existingText: string;
+        try {
+          existingText = fsSync.readFileSync(docPath, "utf8");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            settled = true;
+            return;
+          }
+          throw error;
+        }
         const existing = JSON.parse(existingText) as AdmissionDocument;
         const next: AdmissionDocument = {
           ...existing,
@@ -943,6 +955,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): FsWo
         const tmp = `${docPath}.tmp-${selfPid}-${now()}`;
         fsSync.writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, "utf8");
         fsSync.renameSync(tmp, docPath);
+        settled = true;
       },
       async abandonBeforeRegistration(): Promise<void> {
         if (!open) {
@@ -957,11 +970,11 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): FsWo
             "registered external-effect admission requires settlement",
           );
         }
-        open = false;
-        unregisterLiveWorksetAdmission(handle);
         await withStoreMutex(async () => {
           await deleteAdmissionDocument(granted.id);
         });
+        open = false;
+        unregisterLiveWorksetAdmission(handle);
       },
       async releaseAfterSettlement(): Promise<void> {
         if (!open) {
@@ -982,11 +995,11 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): FsWo
             "external-effect admission requires process-group settlement before release",
           );
         }
-        open = false;
-        unregisterLiveWorksetAdmission(handle);
         await withStoreMutex(async () => {
           await deleteAdmissionDocument(granted.id);
         });
+        open = false;
+        unregisterLiveWorksetAdmission(handle);
       },
     };
     registerLiveWorksetAdmission(handle);

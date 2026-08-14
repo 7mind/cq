@@ -258,6 +258,9 @@ export const USAGE = [
   "  gate run --worktree <path> --command-cwd <path> [--deadline <ISO-8601>] -- <command...>",
   "                                                  run one bounded process group under the",
   "                                                  canonical Git-worktree exclusive gate.",
+  "  gate git-effect --operation <rebase|merge> --cwd <repo> --task-id <Tn> --commit <full-sha>",
+  "                                                  run one task-bound Git mutation through",
+  "                                                  the workset effect broker.",
   "",
   "ledger root: --cwd > $LEDGER_ROOT > current working directory",
 ].join("\n");

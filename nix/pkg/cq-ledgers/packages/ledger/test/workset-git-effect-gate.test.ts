@@ -1,0 +1,245 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { execFile } from "node:child_process";
+import { chmod, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import {
+  readProcessIdentity,
+  runWorksetGitEffectGate,
+  type WorksetGitEffectBinding,
+} from "@cq/process-control";
+import {
+  InMemoryLedgerStore,
+  WorksetAdmissionError,
+  createManagedWorktreeGitEffectRunner,
+  createFsWorksetStore,
+  requireWorksetStore,
+  worksetEffectAdmissionProviderFromStore,
+} from "../src/index.js";
+
+const exec = promisify(execFile);
+const roots: string[] = [];
+const BROKER_FIXTURE = fileURLToPath(
+  new URL("./worksetGitEffectBrokerChild.ts", import.meta.url),
+);
+
+function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+async function git(cwd: string, args: readonly string[]): Promise<string> {
+  const result = await exec("git", [...args], { cwd, encoding: "utf8" });
+  return result.stdout.trim();
+}
+
+async function waitForFile(path: string): Promise<void> {
+  for (let attempt = 0; attempt < 2_000; attempt += 1) {
+    if (await Bun.file(path).exists()) return;
+    await Bun.sleep(2);
+  }
+  throw new Error(`timed out waiting for ${path}`);
+}
+
+async function repository(): Promise<{ readonly root: string; readonly head: string }> {
+  const root = await mkdtemp(join(tmpdir(), "cq-workset-git-order-"));
+  roots.push(root);
+  await git(root, ["init", "--quiet"]);
+  await git(root, ["config", "user.email", "cq@example.invalid"]);
+  await git(root, ["config", "user.name", "CQ Test"]);
+  await Bun.write(join(root, "tracked.txt"), "base\n");
+  await git(root, ["add", "tracked.txt"]);
+  await git(root, ["commit", "--quiet", "-m", "base"]);
+  return { root, head: await git(root, ["rev-parse", "HEAD"]) };
+}
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+describe("T1984 durable Git effect replacement ordering", () => {
+  test("the managed-worktree adapter brokers combined create and guarded release mutations [Behavioral-Active Blackbox-GoodCommunication]", async () => {
+    const repo = await repository();
+    const store = new InMemoryLedgerStore();
+    await store.init();
+    await store.createMilestone({ id: "M1984", title: "Git effect fixture" });
+    await store.createItem("tasks", "M1984", {
+      id: "T1984",
+      status: "planned",
+      fields: { headline: "Broker managed worktree Git" },
+    });
+    await requireWorksetStore(store).setRoots(["tasks:T1984"]);
+    const runner = createManagedWorktreeGitEffectRunner({
+      store,
+      taskId: "T1984",
+      repositoryRoot: repo.root,
+    });
+    const worktreePath = join(repo.root, ".claude", "worktrees", "managed-effect");
+    try {
+      expect(
+        (
+          await runner(repo.root, [
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            "implement/T1984",
+            worktreePath,
+            repo.head,
+          ])
+        ).code,
+      ).toBe(0);
+      expect(await git(worktreePath, ["rev-parse", "HEAD"])).toBe(repo.head);
+      expect((await runner(repo.root, ["worktree", "remove", "--force", worktreePath])).code).toBe(0);
+      expect((await runner(repo.root, ["branch", "-D", "implement/T1984"])).code).toBe(0);
+    } finally {
+      await store.dispose();
+    }
+  });
+
+  test("an acquired effect makes replacement wait through registered Git completion [Behavioral-Active Blackbox-GoodCommunication]", async () => {
+    const repo = await repository();
+    const holder = createFsWorksetStore({ root: repo.root });
+    const peer = createFsWorksetStore({ root: repo.root });
+    await holder.setRoots(["tasks:T1984"]);
+    const beforeLaunch = deferred();
+    const permitLaunch = deferred();
+    const binding: WorksetGitEffectBinding = {
+      kind: "branch-create",
+      targetRef: "tasks:T1984",
+      repositoryRoot: repo.root,
+      branch: "implement/T1984",
+      commit: repo.head,
+    };
+    let resolutions = 0;
+    const effect = runWorksetGitEffectGate({
+      expected: binding,
+      resolve: async () => {
+        resolutions += 1;
+        if (resolutions === 2) {
+          beforeLaunch.resolve();
+          await permitLaunch.promise;
+        }
+        return binding;
+      },
+      provider: worksetEffectAdmissionProviderFromStore(holder),
+    });
+    await beforeLaunch.promise;
+    let replaced = false;
+    const replacement = peer.setRoots(["tasks:T-revoked"]).then((value) => {
+      replaced = true;
+      return value;
+    });
+    await Bun.sleep(40);
+    expect(replaced).toBe(false);
+    permitLaunch.resolve();
+    expect((await effect).code).toBe(0);
+    expect((await replacement).roots).toEqual(["tasks:T-revoked"]);
+  });
+
+  test("broker death settles the registered Git group before replacement commits [Behavioral-Active Blackbox-GoodCommunication]", async () => {
+    const repo = await repository();
+    const worktreePath = join(repo.root, ".claude", "worktrees", "crash-rebase");
+    const branch = "implement/T1984";
+    await git(repo.root, ["branch", branch, repo.head]);
+    await git(repo.root, ["worktree", "add", "--quiet", worktreePath, branch]);
+    await Bun.write(join(worktreePath, "feature.txt"), "feature\n");
+    await git(worktreePath, ["add", "feature.txt"]);
+    await git(worktreePath, ["commit", "--quiet", "-m", "feature"]);
+    const featureTip = await git(worktreePath, ["rev-parse", "HEAD"]);
+    await Bun.write(join(repo.root, "main.txt"), "main\n");
+    await git(repo.root, ["add", "main.txt"]);
+    await git(repo.root, ["commit", "--quiet", "-m", "main"]);
+    const ontoCommit = await git(repo.root, ["rev-parse", "HEAD"]);
+    const marker = join(repo.root, "crash-hook-pids");
+    const hook = join(repo.root, ".git", "hooks", "pre-rebase");
+    await Bun.write(
+      hook,
+      `#!/bin/sh\ntrap '' TERM\nsleep 30 &\necho "$$ $!" > ${JSON.stringify(marker)}\nwait\n`,
+    );
+    await chmod(hook, 0o755);
+
+    const peer = createFsWorksetStore({ root: repo.root });
+    await peer.setRoots(["tasks:T1984"]);
+    const broker = Bun.spawn(
+      [process.execPath, "run", BROKER_FIXTURE, repo.root, worktreePath, ontoCommit],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    let pids: number[] = [];
+    try {
+      await waitForFile(marker);
+      pids = (await readFile(marker, "utf8")).trim().split(" ").map(Number);
+      expect(peer.activeAdmissionCount()).toBe(1);
+
+      let replaced = false;
+      const replacement = peer.setRoots(["tasks:T-revoked"]).then((snapshot) => {
+        replaced = true;
+        return snapshot;
+      });
+      await Bun.sleep(40);
+      expect(replaced).toBe(false);
+
+      broker.kill("SIGKILL");
+      expect(await broker.exited).not.toBe(0);
+      expect((await replacement).roots).toEqual(["tasks:T-revoked"]);
+      expect(await git(worktreePath, ["rev-parse", "HEAD"])).toBe(featureTip);
+      for (const pid of pids) expect(await readProcessIdentity(pid)).toBeNull();
+      expect(peer.activeAdmissionCount()).toBe(0);
+    } finally {
+      broker.kill("SIGKILL");
+      await broker.exited;
+      for (const pid of pids) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // The registered group normally exits before cleanup reaches this fallback.
+        }
+      }
+    }
+  }, 10_000);
+
+  test("a replacement that wins first revokes the effect before Git launch [Behavioral-Active Blackbox-GoodCommunication]", async () => {
+    const repo = await repository();
+    const exclusiveReady = deferred();
+    const permitReplacement = deferred();
+    const setter = createFsWorksetStore({
+      root: repo.root,
+      hooks: {
+        afterExclusiveReady: async () => {
+          exclusiveReady.resolve();
+          await permitReplacement.promise;
+        },
+      },
+    });
+    const holder = createFsWorksetStore({ root: repo.root });
+    await holder.setRoots(["tasks:T1984"]);
+    const replacement = setter.setRoots(["tasks:T-revoked"]);
+    await exclusiveReady.promise;
+    const binding: WorksetGitEffectBinding = {
+      kind: "branch-create",
+      targetRef: "tasks:T1984",
+      repositoryRoot: repo.root,
+      branch: "implement/T1984",
+      commit: repo.head,
+    };
+    let effectSettled = false;
+    const effect = runWorksetGitEffectGate({
+      expected: binding,
+      resolve: async () => binding,
+      provider: worksetEffectAdmissionProviderFromStore(holder),
+    }).finally(() => {
+      effectSettled = true;
+    });
+    await Bun.sleep(40);
+    expect(effectSettled).toBe(false);
+    permitReplacement.resolve();
+    await replacement;
+    await expect(effect).rejects.toBeInstanceOf(WorksetAdmissionError);
+    expect(await git(repo.root, ["branch", "--list", "implement/T1984"])).toBe("");
+  });
+});

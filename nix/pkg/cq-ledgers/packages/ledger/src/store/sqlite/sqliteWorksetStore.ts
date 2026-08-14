@@ -521,9 +521,9 @@ export function createSqliteWorksetStore(
             "ledger mutation admission already acknowledged",
           );
         }
+        deleteAdmission(granted.id);
         open = false;
         unregisterLiveWorksetAdmission(handle);
-        deleteAdmission(granted.id);
       },
     };
     registerLiveWorksetAdmission(handle);
@@ -561,6 +561,8 @@ export function createSqliteWorksetStore(
     });
 
     let open = true;
+    let processGroup: WorksetProcessGroupRegistration | null = null;
+    let locallySettled = false;
     const handle: WorksetExternalEffectAdmission = {
       form: "external-effect",
       id: granted.id,
@@ -569,12 +571,10 @@ export function createSqliteWorksetStore(
       roots: granted.roots.slice(),
       targetRef: input.targetRef,
       get processGroupRegistered(): boolean {
-        const row = loadAdmission(granted.id);
-        return row !== null && row.process_group_registered === 1;
+        return processGroup !== null;
       },
       get settled(): boolean {
-        const row = loadAdmission(granted.id);
-        return row !== null && row.settled === 1;
+        return locallySettled;
       },
       registerProcessGroup(registration: WorksetProcessGroupRegistration): void {
         if (!open) {
@@ -606,6 +606,7 @@ export function createSqliteWorksetStore(
           db.query(
             "UPDATE workset_admissions SET pgid = ?, leader_pid = ?, process_group_registered = 1 WHERE id = ?",
           ).run(registration.pgid, registration.leaderPid, granted.id);
+          processGroup = registration;
         });
       },
       shareWithGuardian(guardian: WorksetProcessGroupRegistration): void {
@@ -645,6 +646,10 @@ export function createSqliteWorksetStore(
         immediateWriteTransaction(db, () => {
           const row = loadAdmission(granted.id);
           if (row === null) {
+            if (processGroup !== null) {
+              locallySettled = true;
+              return;
+            }
             throw new WorksetAdmissionError(
               "admission-closed",
               "cannot settle a closed external-effect admission",
@@ -657,6 +662,7 @@ export function createSqliteWorksetStore(
             );
           }
           db.query("UPDATE workset_admissions SET settled = 1 WHERE id = ?").run(granted.id);
+          locallySettled = true;
         });
       },
       async abandonBeforeRegistration(): Promise<void> {
@@ -679,9 +685,9 @@ export function createSqliteWorksetStore(
             "registered external-effect admission requires settlement",
           );
         }
+        deleteAdmission(granted.id);
         open = false;
         unregisterLiveWorksetAdmission(handle);
-        deleteAdmission(granted.id);
       },
       async releaseAfterSettlement(): Promise<void> {
         if (!open) {
@@ -692,6 +698,11 @@ export function createSqliteWorksetStore(
         }
         const row = loadAdmission(granted.id);
         if (row === null) {
+          if (processGroup !== null && locallySettled) {
+            open = false;
+            unregisterLiveWorksetAdmission(handle);
+            return;
+          }
           throw new WorksetAdmissionError(
             "admission-closed",
             "external-effect admission already released",
@@ -709,9 +720,9 @@ export function createSqliteWorksetStore(
             "external-effect admission requires process-group settlement before release",
           );
         }
+        deleteAdmission(granted.id);
         open = false;
         unregisterLiveWorksetAdmission(handle);
-        deleteAdmission(granted.id);
       },
     };
     registerLiveWorksetAdmission(handle);

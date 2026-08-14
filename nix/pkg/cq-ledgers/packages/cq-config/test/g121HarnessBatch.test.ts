@@ -364,7 +364,7 @@ describe("T1309 orchestrator managed prepare/release [BG]", () => {
     expect(body).toContain('operation: "release"');
     expect(body).toContain("resume-required");
     expect(body).toContain("Retain the opaque handle");
-    expect(body).toContain("git merge --ff-only <resultCommit>");
+    expect(body).toContain("cq gate git-effect --operation merge");
     expect(body).not.toContain("git worktree add ");
     expect(body).not.toContain("git worktree remove");
     expect(body).not.toContain("git worktree prune");
@@ -379,7 +379,7 @@ describe("T1309 orchestrator managed prepare/release [BG]", () => {
     expect(body).toContain(
       "Fabricated, missing, non-tip, stale-base, or non-ancestor result commits never",
     );
-    expect(body).toContain("git merge --ff-only <resultCommit>");
+    expect(body).toContain("cq gate git-effect --operation merge");
     // Dependency-absent evidence blocks both dispatch and merge.
     expect(body).toMatch(/Missing or\s+unresolvable dependency/);
     expect(body).toContain("missing/unresolvable dependency evidence forbids");

@@ -35,6 +35,8 @@ export interface LaunchWorksetEffectOptions<TProcess, TExit, TStdio> {
   readonly launchBootstrap: (
     specification: RegisteredLaunchBootstrapSpecification<TStdio>,
   ) => RegisteredLaunchBootstrap<TProcess, TExit>;
+  /** Revalidate trusted effect coordinates while admission remains held. */
+  readonly beforeLaunch?: () => Promise<void>;
   /** Settle dispatcher-owned nested groups before the registered root releases admission. */
   readonly settleRegisteredDescendants?: () => Promise<void>;
   readonly signal?: AbortSignal;
@@ -183,6 +185,11 @@ export class WorksetEffectBroker {
 
     let launched: LaunchedRegisteredProcessGroup<TProcess, TExit>;
     try {
+      if (signalAborted(options.signal)) {
+        await abandonAdmission(session);
+        throw options.signal?.reason ?? new Error("@cq/process-control: workset effect cancelled");
+      }
+      await options.beforeLaunch?.();
       if (signalAborted(options.signal)) {
         await abandonAdmission(session);
         throw options.signal?.reason ?? new Error("@cq/process-control: workset effect cancelled");

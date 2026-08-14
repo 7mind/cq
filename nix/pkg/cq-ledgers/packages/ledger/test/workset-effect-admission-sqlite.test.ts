@@ -92,6 +92,35 @@ describe("workset effect admission sqlite [T1957]", () => {
     expect(b.worksetStore().activeAdmissionCount()).toBe(0);
   });
 
+  it("releases locally after a peer reclaims an already-exited registered group [Behavioral-Active Blackbox-GoodCommunication]", async () => {
+    const dbPath = await freshDbPath();
+    const holder = await openStore(dbPath);
+    const peer = await openStore(dbPath);
+    const guardian = spawn(process.execPath, ["-e", "setTimeout(() => {}, 25)"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    await new Promise<void>((resolve, reject) => {
+      guardian.once("spawn", resolve);
+      guardian.once("error", reject);
+    });
+    const guardianPid = guardian.pid;
+    if (guardianPid === undefined) throw new Error("test guardian returned no PID");
+
+    const admission = await holder.worksetStore().admitExternalEffect({
+      kind: "merge",
+      targetRef: "tasks:T1984",
+    });
+    admission.registerProcessGroup({ pgid: guardianPid, leaderPid: guardianPid });
+    admission.shareWithGuardian({ pgid: guardianPid, leaderPid: guardianPid });
+    await new Promise<void>((resolve) => guardian.once("exit", () => resolve()));
+
+    expect(peer.worksetStore().activeAdmissionCount()).toBe(0);
+    admission.markSettled();
+    await expect(admission.releaseAfterSettlement()).resolves.toBeUndefined();
+    expect(holder.worksetStore().activeAdmissionCount()).toBe(0);
+  });
+
   it("setRoots on a peer waits for a live durable admission then commits", async () => {
     const dbPath = await freshDbPath();
     const holder = await openStore(dbPath);

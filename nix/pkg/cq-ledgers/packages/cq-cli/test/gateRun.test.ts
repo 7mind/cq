@@ -281,3 +281,66 @@ describe("cq gate run absolute phase deadline [BA]", () => {
     }
   });
 });
+
+describe("cq gate git-effect [T1984]", () => {
+  test("routes only one typed task-bound rebase or merge request [Behavioral-Active Blackbox-Atomic]", async () => {
+    const requests: unknown[] = [];
+    const outcome = await runGateRun(
+      [
+        "git-effect",
+        "--operation",
+        "merge",
+        "--cwd",
+        "/tmp/cq-repository",
+        "--task-id",
+        "T1984",
+        "--commit",
+        "a".repeat(40),
+      ],
+      { err: () => undefined },
+      {
+        gitEffect: async (request) => {
+          requests.push(request);
+          return { exitCode: 17 };
+        },
+      },
+    );
+
+    expect(outcome).toEqual({ exitCode: 17 });
+    expect(requests).toEqual([
+      {
+        operation: "merge",
+        cwd: "/tmp/cq-repository",
+        taskId: "T1984",
+        commit: "a".repeat(40),
+      },
+    ]);
+  });
+
+  test("rejects untyped operations before invoking the trusted runner [Behavioral-Active Blackbox-Atomic]", async () => {
+    let calls = 0;
+    await expect(
+      runGateRun(
+        [
+          "git-effect",
+          "--operation",
+          "reset",
+          "--cwd",
+          "/tmp/cq-repository",
+          "--task-id",
+          "T1984",
+          "--commit",
+          "a".repeat(40),
+        ],
+        { err: () => undefined },
+        {
+          gitEffect: async () => {
+            calls += 1;
+            return { exitCode: 0 };
+          },
+        },
+      ),
+    ).rejects.toThrow("--operation must be rebase or merge");
+    expect(calls).toBe(0);
+  });
+});

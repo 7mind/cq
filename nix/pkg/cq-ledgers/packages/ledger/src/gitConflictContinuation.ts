@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
+import type { RebaseContinueEffectBinding } from "@cq/process-control";
 import type { GitPathState, GitRegularMode, DispatchBoundGitAuthorization } from "./gitChangeBroker.js";
 import {
   assertManagedWorktreeConflictDispatchBindingLive,
@@ -91,6 +92,11 @@ export interface GitConflictContinuationDeps
   extends Pick<ManagedWorktreeDeps, "stateDir" | "lockfile"> {
   readonly authorize: (authorization: DispatchBoundGitAuthorization) => void | Promise<void>;
   readonly now?: () => Date;
+  readonly runRebaseContinue?: (
+    expected: RebaseContinueEffectBinding,
+    resolveBinding: () => Promise<RebaseContinueEffectBinding>,
+    environment: NodeJS.ProcessEnv,
+  ) => Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }>;
 }
 
 export type GitConflictContinuationEvidenceDeps = Pick<ManagedWorktreeDeps, "stateDir">;
@@ -906,13 +912,36 @@ async function runAuthorizedContinue(
   request: GitConflictContinuationRequest,
   privateIndex: string,
   quarantine: string,
+  deps: GitConflictContinuationDeps,
 ): Promise<void> {
-  const result = await runGit(request.authorization.worktreePath, ["rebase", "--continue"], {
+  const environment = {
     ...trustedGitEnvironment(),
     GIT_INDEX_FILE: privateIndex,
     GIT_OBJECT_DIRECTORY: quarantine,
     GIT_ALTERNATE_OBJECT_DIRECTORIES: join(request.authorization.commonDir, "objects"),
-  });
+  };
+  const expected: RebaseContinueEffectBinding = {
+    kind: "rebase",
+    targetRef: `tasks:${request.authorization.taskId}`,
+    repositoryRoot: request.authorization.repositoryRoot,
+    worktreePath: request.authorization.worktreePath,
+    continueAtHead: request.expectedState.currentHead,
+  };
+  const resolveBinding = async (): Promise<RebaseContinueEffectBinding> => {
+    await deps.authorize(request.authorization);
+    await assertManagedWorktreeConflictDispatchBindingLive(request.authorization, deps);
+    if (
+      canonical(await observeConflictUnchecked(request.authorization)) !==
+      canonical(request.expectedState)
+    ) {
+      throw new Error("rebase transaction changed before brokered continuation launch");
+    }
+    return expected;
+  };
+  const result =
+    deps.runRebaseContinue === undefined
+      ? await runGit(request.authorization.worktreePath, ["rebase", "--continue"], environment)
+      : await deps.runRebaseContinue(expected, resolveBinding, environment);
   if (result.code === 0) return;
   const unresolved = await checkedGit(
     request.authorization.worktreePath,
@@ -1056,6 +1085,7 @@ async function completePrepared(
   journalFile: string,
   journal: ConflictJournal,
   paths: readonly string[],
+  deps: GitConflictContinuationDeps,
 ): Promise<GitConflictContinuationReceipt> {
   const privateIndex = journal.privateIndex;
   const privateIndexDigest = journal.privateIndexDigest;
@@ -1089,7 +1119,7 @@ async function completePrepared(
       if (!gitMayHaveRun) throw error;
     }
     if (stillAtExpected && !gitMayHaveRun) {
-      await runAuthorizedContinue(request, privateIndex, quarantine);
+      await runAuthorizedContinue(request, privateIndex, quarantine, deps);
     }
     state = "git-finished";
     await writeJournal(journalFile, { ...journal, state });
@@ -1160,7 +1190,7 @@ export async function continueManagedWorktreeRebase(
         return journal.receipt;
       }
       if (journal.state !== "intent") {
-        return await completePrepared(request, journalFile, journal, paths);
+        return await completePrepared(request, journalFile, journal, paths, deps);
       }
     }
     const expectedDigest = gitRebaseConflictStateDigest(request.expectedState);
@@ -1200,7 +1230,7 @@ export async function continueManagedWorktreeRebase(
     if (canonical(await observeConflictUnchecked(request.authorization)) !== canonical(request.expectedState)) {
       throw new Error("rebase transaction changed after private index construction");
     }
-    return await completePrepared(request, journalFile, journal, paths);
+    return await completePrepared(request, journalFile, journal, paths, deps);
   });
 }
 

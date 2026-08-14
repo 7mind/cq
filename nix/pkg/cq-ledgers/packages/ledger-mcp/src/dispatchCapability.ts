@@ -53,6 +53,7 @@ import {
   validateGitChangeBrokerResultEvidence,
   resolveManagedWorktreeDispatchBinding,
   resolveInheritedGitChangeReceipts,
+  runLedgerWorksetGitEffect,
   withManagedWorktreeEffectLock,
   superviseImplementWorkerGate,
   SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
@@ -77,6 +78,7 @@ export interface DispatchCapabilityOptions {
   readonly randomBytes?: (count: number) => Uint8Array;
   /** Enables the implement-worker Git broker for a local project repository. */
   readonly repositoryRoot?: string;
+  readonly ledgerStore?: LedgerStore;
   readonly worktreeStateDir?: string;
   /** Host-owned gate adapter; tests inject a deterministic contract dummy. */
   readonly supervisedWorkerGateRunner?: SupervisedWorkerGateRunner;
@@ -844,6 +846,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           { now },
         );
       const authorization = await authorize();
+      const ledgerStore = options.ledgerStore;
       return await continueManagedWorktreeRebase(
         {
           authorization,
@@ -854,6 +857,17 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         {
           ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
           now: () => new Date(now()),
+          ...(ledgerStore === undefined
+            ? {}
+            : {
+                runRebaseContinue: async (expected, resolveBinding, environment) =>
+                  await runLedgerWorksetGitEffect({
+                    store: ledgerStore,
+                    expected,
+                    resolve: resolveBinding,
+                    environment,
+                  }),
+              }),
           authorize: async (expected) => {
             const observed = await authorize();
             for (const field of [
@@ -928,6 +942,7 @@ function available(
   promptArtifactStore: PromptArtifactStore,
   narrativeSource?: DispatchNarrativeSource,
   repositoryRoot?: string,
+  ledgerStore?: LedgerStore,
 ): DispatchRuntime {
   return Object.freeze({
     kind: "available" as const,
@@ -936,6 +951,7 @@ function available(
       promptArtifactStore,
       ...(narrativeSource === undefined ? {} : { narrativeSource }),
       ...(repositoryRoot === undefined ? {} : { repositoryRoot }),
+      ...(ledgerStore === undefined ? {} : { ledgerStore }),
     }),
     close: async (): Promise<void> => backend.close(),
   });
@@ -1013,6 +1029,7 @@ export async function createSingleProjectDispatchRuntime(
     options.promptArtifactStore,
     createDispatchNarrativeSource(options.resolved.store, namespace.projectKey),
     options.resolved.configRoot,
+    options.resolved.store,
   );
 }
 

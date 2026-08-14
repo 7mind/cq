@@ -279,8 +279,10 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
     expect(mergeGate).toContain("`git cat-file -t <resultCommit>`");
     expect(mergeGate).toContain("require the worker branch tip to equal `resultCommit`");
     expect(mergeGate).toContain("Any failure is a contract breach and forbids merge-back");
-    expect(mergeGate).toContain("git merge --ff-only <resultCommit>");
-    expect(mergeGate).not.toContain("git merge --ff-only implement/<taskId>");
+    expect(mergeGate).toContain(
+      "cq gate git-effect --operation merge --cwd <repositoryRoot> --task-id <taskId> --commit <resultCommit>",
+    );
+    expect(mergeGate).not.toContain("git merge --ff-only");
   });
 
   it("T900 treats implausible worker gate duration as a blocking tripwire", () => {

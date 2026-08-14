@@ -415,6 +415,14 @@ export {
   assertManagedWorktreeConflictDispatchBindingLive,
   withManagedWorktreeEffectLock,
 } from "./managedWorktree.js";
+export {
+  createManagedWorktreeGitEffectRunner,
+  runLedgerWorksetGitEffect,
+} from "./worksetGitEffects.js";
+export type {
+  ManagedWorktreeGitEffectRunnerOptions,
+  RunLedgerWorksetGitEffectOptions,
+} from "./worksetGitEffects.js";
 export type {
   ManagedWorktreeDispatchBinding,
   ManagedWorktreeDeps,

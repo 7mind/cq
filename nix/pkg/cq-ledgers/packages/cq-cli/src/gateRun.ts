@@ -6,6 +6,10 @@ import {
   type WorktreeGateLease,
 } from "@cq/process-control";
 import { DISPATCH_UTC_TIMESTAMP_PATTERN } from "@cq/config";
+import {
+  runGateGitEffect,
+  type GateGitEffectRequest,
+} from "./gateGitEffect.js";
 
 export interface GateRunIo {
   err(line: string): void;
@@ -20,6 +24,10 @@ interface ParsedGateRun {
   readonly commandCwd: string;
   readonly deadlineMs?: number;
   readonly command: readonly string[];
+}
+
+export interface GateRunDependencies {
+  readonly gitEffect?: (request: GateGitEffectRequest) => Promise<GateRunOutcome>;
 }
 
 export const GATE_DEADLINE_EXIT_CODE = 124;
@@ -74,6 +82,45 @@ function parseGateRun(argv: readonly string[]): ParsedGateRun {
   return { worktree, commandCwd, ...(deadlineMs === undefined ? {} : { deadlineMs }), command };
 }
 
+function parseGateGitEffect(argv: readonly string[]): GateGitEffectRequest {
+  let operation: GateGitEffectRequest["operation"] | undefined;
+  let cwd: string | undefined;
+  let taskId: string | undefined;
+  let commit: string | undefined;
+  for (let index = 1; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (
+      argument === "--operation" ||
+      argument === "--cwd" ||
+      argument === "--task-id" ||
+      argument === "--commit"
+    ) {
+      const value = argv[index + 1];
+      if (value === undefined) throw new Error(`cq gate git-effect: ${argument} requires a value`);
+      if (argument === "--operation") {
+        if (value !== "rebase" && value !== "merge") {
+          throw new Error("cq gate git-effect: --operation must be rebase or merge");
+        }
+        operation = value;
+      } else if (argument === "--cwd") cwd = value;
+      else if (argument === "--task-id") taskId = value;
+      else commit = value;
+      index += 1;
+      continue;
+    }
+    throw new Error(`cq gate git-effect: unknown option ${String(argument)}`);
+  }
+  if (operation === undefined) throw new Error("cq gate git-effect: --operation is required");
+  if (cwd === undefined || cwd === "") throw new Error("cq gate git-effect: --cwd is required");
+  if (taskId === undefined || taskId === "") {
+    throw new Error("cq gate git-effect: --task-id is required");
+  }
+  if (commit === undefined || commit === "") {
+    throw new Error("cq gate git-effect: --commit is required");
+  }
+  return { operation, cwd, taskId, commit };
+}
+
 function parseDeadline(value: string): number {
   const deadlineMs = Date.parse(value);
   if (!DISPATCH_UTC_TIMESTAMP.test(value) || !Number.isFinite(deadlineMs)) {
@@ -88,7 +135,15 @@ function deadlineReached(deadlineMs: number | undefined): boolean {
   return deadlineMs !== undefined && Date.now() >= deadlineMs;
 }
 
-export async function runGateRun(argv: readonly string[], _io: GateRunIo): Promise<GateRunOutcome> {
+export async function runGateRun(
+  argv: readonly string[],
+  _io: GateRunIo,
+  dependencies: GateRunDependencies = {},
+): Promise<GateRunOutcome> {
+  if (argv[0] === "git-effect") {
+    const request = parseGateGitEffect(argv);
+    return await (dependencies.gitEffect ?? runGateGitEffect)(request);
+  }
   const parsed = parseGateRun(argv);
   let lease: WorktreeGateLease | null = await acquireWorktreeGate({
     worktree: parsed.worktree,

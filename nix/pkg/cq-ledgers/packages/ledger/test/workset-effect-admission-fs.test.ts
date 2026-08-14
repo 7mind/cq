@@ -301,6 +301,53 @@ describe("workset effect admission filesystem [T1955]", () => {
     await admission.releaseAfterSettlement();
   });
 
+  it("a failed durable settlement cannot make the local handle releasable [Behavioral-Active Whitebox-Atomic]", async () => {
+    const root = await freshRoot();
+    const store = openStore(root);
+    const admission = await store.admitExternalEffect({
+      kind: "merge",
+      targetRef: "tasks:T1984",
+    });
+    admission.registerProcessGroup({ pgid: 42_424, leaderPid: 42_424 });
+    const admissionPath = path.join(
+      root,
+      ".cq",
+      "workset",
+      "admissions",
+      `${admission.id}.json`,
+    );
+    await fs.writeFile(admissionPath, "{", "utf8");
+
+    expect(() => admission.markSettled()).toThrow();
+    await expect(admission.releaseAfterSettlement()).rejects.toMatchObject({
+      code: "process-group-not-settled",
+    });
+  });
+
+  it("a failed durable release keeps the local handle retryable [Behavioral-Active Whitebox-Atomic]", async () => {
+    const root = await freshRoot();
+    const store = openStore(root);
+    const admission = await store.admitExternalEffect({
+      kind: "merge",
+      targetRef: "tasks:T1984",
+    });
+    admission.registerProcessGroup({ pgid: 42_425, leaderPid: 42_425 });
+    admission.markSettled();
+    const admissionPath = path.join(
+      root,
+      ".cq",
+      "workset",
+      "admissions",
+      `${admission.id}.json`,
+    );
+    await fs.unlink(admissionPath);
+    await fs.mkdir(admissionPath);
+
+    await expect(admission.releaseAfterSettlement()).rejects.toThrow();
+    await fs.rm(admissionPath, { recursive: true });
+    await expect(admission.releaseAfterSettlement()).resolves.toBeUndefined();
+  });
+
   it("broker death leaves replacement fenced until the guardian settles descendants", async () => {
     const root = await freshRoot();
     const statePath = path.join(root, "broker-state.json");
