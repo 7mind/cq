@@ -1,9 +1,19 @@
 import { IDEAS_LEDGER, MILESTONES_AMBIENT_ID } from "./constants.js";
 import type { Ledger, Milestone } from "./types.js";
 
+/** Whether a loaded ideas ledger contains active items outside M-AMBIENT. */
+export function hasLegacyIdeasOutsideAmbient(ledger: Ledger): boolean {
+  return (
+    ledger.id === IDEAS_LEDGER &&
+    ledger.milestones.some(
+      (group) => group.id !== MILESTONES_AMBIENT_ID && group.items.length > 0,
+    )
+  );
+}
+
 /** Relocate active legacy ideas to the sole supported ambient group. */
 export function relocateActiveIdeasToAmbient(ledger: Ledger): boolean {
-  if (ledger.id !== IDEAS_LEDGER) return false;
+  if (!hasLegacyIdeasOutsideAmbient(ledger)) return false;
 
   const strayGroups = ledger.milestones.filter(
     (group) => group.id !== MILESTONES_AMBIENT_ID && group.items.length > 0,

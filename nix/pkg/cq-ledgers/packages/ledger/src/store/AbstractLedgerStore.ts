@@ -111,7 +111,10 @@ import {
   QUESTIONS_LEDGER,
   TASKS_LEDGER,
 } from "../constants.js";
-import { relocateActiveIdeasToAmbient } from "../ideasAmbientMigration.js";
+import {
+  hasLegacyIdeasOutsideAmbient,
+  relocateActiveIdeasToAmbient,
+} from "../ideasAmbientMigration.js";
 import { schemaCompatible, schemasEqual } from "./schemaCompat.js";
 import {
   PlanPrivateClaimRecordSchema,
@@ -470,13 +473,16 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     // replay re-reads every ledger from the recovered durable bytes, which
     // would otherwise discard the backfill's in-memory pointer edits.
     await this.recoverPendingPersistenceCommitsUnderLocks();
-    await this.withLock(IDEAS_LEDGER, async () => {
-      await this.reloadLedgerFromDisk(IDEAS_LEDGER);
-      const ideas = this.ledgers.get(IDEAS_LEDGER);
-      if (ideas !== undefined && relocateActiveIdeasToAmbient(ideas)) {
-        await this.writeLedgerFile(ideas);
-      }
-    });
+    const loadedIdeas = this.ledgers.get(IDEAS_LEDGER);
+    if (loadedIdeas !== undefined && hasLegacyIdeasOutsideAmbient(loadedIdeas)) {
+      await this.withLock(IDEAS_LEDGER, async () => {
+        await this.reloadLedgerFromDisk(IDEAS_LEDGER);
+        const ideas = this.ledgers.get(IDEAS_LEDGER);
+        if (ideas !== undefined && relocateActiveIdeasToAmbient(ideas)) {
+          await this.writeLedgerFile(ideas);
+        }
+      });
+    }
     // Backfill title+status on legacy ArchivePointers (pre-T91). NOTE: the
     // milestones ledger must be processed FIRST (it appears first in
     // CANONICAL_LEDGERS, and `this.ledgers` preserves that insertion order
