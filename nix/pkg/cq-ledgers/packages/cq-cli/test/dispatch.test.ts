@@ -201,20 +201,21 @@ describe("parseSubcommandArgs", () => {
     const prev = process.env["LEDGER_ROOT"];
     delete process.env["LEDGER_ROOT"];
     try {
-      expect(parseSubcommandArgs(["--cwd=/a", "--yes"])).toEqual({ cwd: "/a", yes: true, force: false, session: null, to: null });
-      expect(parseSubcommandArgs(["-y", "--cwd", "/b"])).toEqual({ cwd: "/b", yes: true, force: false, session: null, to: null });
-      expect(parseSubcommandArgs(["--force"])).toEqual({ cwd: process.cwd(), yes: false, force: true, session: null, to: null });
-      expect(parseSubcommandArgs([])).toEqual({ cwd: process.cwd(), yes: false, force: false, session: null, to: null });
-      expect(parseSubcommandArgs(["--session", "s1"])).toEqual({ cwd: process.cwd(), yes: false, force: false, session: "s1", to: null });
-      expect(parseSubcommandArgs(["--session=s2"])).toEqual({ cwd: process.cwd(), yes: false, force: false, session: "s2", to: null });
-      expect(parseSubcommandArgs(["--to", "postgres"])).toEqual({ cwd: process.cwd(), yes: false, force: false, session: null, to: "postgres" });
-      expect(parseSubcommandArgs(["--to=postgres"])).toEqual({ cwd: process.cwd(), yes: false, force: false, session: null, to: "postgres" });
+      expect(parseSubcommandArgs(["--cwd=/a", "--yes"])).toEqual({ cwd: "/a", yes: true, force: false, global: false, session: null, to: null });
+      expect(parseSubcommandArgs(["-y", "--cwd", "/b"])).toEqual({ cwd: "/b", yes: true, force: false, global: false, session: null, to: null });
+      expect(parseSubcommandArgs(["--force"])).toEqual({ cwd: process.cwd(), yes: false, force: true, global: false, session: null, to: null });
+      expect(parseSubcommandArgs(["--global"])).toEqual({ cwd: process.cwd(), yes: false, force: false, global: true, session: null, to: null });
+      expect(parseSubcommandArgs([])).toEqual({ cwd: process.cwd(), yes: false, force: false, global: false, session: null, to: null });
+      expect(parseSubcommandArgs(["--session", "s1"])).toEqual({ cwd: process.cwd(), yes: false, force: false, global: false, session: "s1", to: null });
+      expect(parseSubcommandArgs(["--session=s2"])).toEqual({ cwd: process.cwd(), yes: false, force: false, global: false, session: "s2", to: null });
+      expect(parseSubcommandArgs(["--to", "postgres"])).toEqual({ cwd: process.cwd(), yes: false, force: false, global: false, session: null, to: "postgres" });
+      expect(parseSubcommandArgs(["--to=postgres"])).toEqual({ cwd: process.cwd(), yes: false, force: false, global: false, session: null, to: "postgres" });
       // --to stays UNVALIDATED at this shared-parser level (leniency, like
       // --session) — retired subcommands (e.g. move-ledger) recognise other
       // --to values that must keep parsing without throwing; only
       // runMigrateCmd validates against "postgres".
-      expect(parseSubcommandArgs(["--to", "git"])).toEqual({ cwd: process.cwd(), yes: false, force: false, session: null, to: "git" });
-      expect(parseSubcommandArgs(["--to=local"])).toEqual({ cwd: process.cwd(), yes: false, force: false, session: null, to: "local" });
+      expect(parseSubcommandArgs(["--to", "git"])).toEqual({ cwd: process.cwd(), yes: false, force: false, global: false, session: null, to: "git" });
+      expect(parseSubcommandArgs(["--to=local"])).toEqual({ cwd: process.cwd(), yes: false, force: false, global: false, session: null, to: "local" });
     } finally {
       if (prev !== undefined) process.env["LEDGER_ROOT"] = prev;
     }

@@ -44,6 +44,7 @@
 export const CQ_TOML_TEMPLATE: string = `\
 # cq.toml — cq review orchestrator config.
 # Full schema and the flat backward-compatible layout: see cq.toml.example.
+# Global harness/model defaults may instead live in the XDG config file cq/cq.toml.
 
 # alias -> "<harness>:<model>" token. Definitions only — an alias does nothing
 # until a panel (reviewers/planners) or a [harness.<h>.tiers] entry references it.
@@ -177,4 +178,21 @@ export const CQ_TOML_TEMPLATE: string = `\
 # No credentials belong here either.
 # [project]
 #   name = "my-project"
+`;
+
+function globalHarnessSettings(projectTemplate: string): string {
+  const firstHarnessSetting = projectTemplate.indexOf("# alias ->");
+  const firstLocalSetting = projectTemplate.indexOf("# Ledger storage backend");
+  if (firstHarnessSetting < 0 || firstLocalSetting <= firstHarnessSetting) {
+    throw new Error("CQ_TOML_TEMPLATE global harness boundaries are missing or out of order");
+  }
+  return projectTemplate.slice(firstHarnessSetting, firstLocalSetting).trimEnd();
+}
+
+export const CQ_TOML_GLOBAL_TEMPLATE: string = `\
+# cq.toml — global cq review orchestrator config.
+# [ledger] and [project] are LOCAL-ONLY and ignored in this global file.
+# Put backend, projectId, and project name in each repository's cq.toml.
+
+${globalHarnessSettings(CQ_TOML_TEMPLATE)}
 `;

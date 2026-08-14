@@ -23,6 +23,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
 import {
   createLedgerStore,
   createManagementLedgerStore,
@@ -51,14 +52,14 @@ import {
   type LedgerStore,
   type ResetSummary,
 } from "@cq/ledger";
-import { loadConfig } from "@cq/config";
+import { CQ_CONFIG_FILENAME, loadConfig, resolveGlobalConfigPath } from "@cq/config";
 import {
   EXIT_REFUSED,
   type ConfirmIo,
   defaultConfirmIo,
   confirmDestructive,
 } from "./confirm.js";
-import { CQ_TOML_TEMPLATE } from "./cqTomlTemplate.js";
+import { CQ_TOML_GLOBAL_TEMPLATE, CQ_TOML_TEMPLATE } from "./cqTomlTemplate.js";
 import { runMigrate } from "./migrate.js";
 import { runAdvanceGate } from "./advanceGate.js";
 import { runPredicates } from "./predicates.js";
@@ -73,12 +74,7 @@ import {
   type PostgresTenantHandle,
 } from "./postgresTenant.js";
 
-/**
- * The `cq.toml` config filename, resolved relative to the ledger root. Kept as
- * a local constant (rather than importing @cq/config's `CQ_CONFIG_FILENAME`) so
- * `@cq/cli` need not depend on `@cq/config` — both agree on the literal name.
- */
-export const CQ_CONFIG_FILENAME = "cq.toml";
+export { CQ_CONFIG_FILENAME };
 
 export { type ConfirmIo, type ConfirmOutcome, defaultConfirmIo, confirmDestructive } from "./confirm.js";
 
@@ -152,6 +148,8 @@ export interface SubcommandArgs {
   yes: boolean;
   /** `--force`: overwrite an existing cq.toml when running `cq init`. */
   force: boolean;
+  /** `--global`: scaffold the XDG global cq.toml without opening a project store. */
+  global: boolean;
   /**
    * `--session <id>`: the `advance-gate` session id whose advance marker is
    * consulted. `null` when the flag is absent (the handler then falls back to
@@ -190,7 +188,8 @@ export const USAGE = [
   "                                                  (the web UI reads/forwards it from its own URL).",
   "",
   "commands:",
-  "  init        [--cwd <path>] [--force]            initialise the canonical ledger set",
+  "  init        [--cwd <path>] [--force] [--global] initialise the canonical ledger set",
+  "                                                  --global scaffolds only the XDG global cq.toml",
   "  reset       [--cwd <path>] [--yes|-y]           backup + reinitialise the ledgers (destructive)",
   "  erase       [--cwd <path>] [--yes|-y]           remove the ledger tree (destructive)",
   "  move-ledger                                     RETIRED (T505): the fs<->git-object transplant",
@@ -276,6 +275,7 @@ export function parseSubcommandArgs(argv: readonly string[]): SubcommandArgs {
   let cwd: string | undefined;
   let yes = false;
   let force = false;
+  let global = false;
   let session: string | null = null;
   let to: string | null = null;
   for (let i = 0; i < argv.length; i++) {
@@ -284,6 +284,8 @@ export function parseSubcommandArgs(argv: readonly string[]): SubcommandArgs {
       yes = true;
     } else if (a === "--force") {
       force = true;
+    } else if (a === "--global") {
+      global = true;
     } else if (a === "--cwd") {
       i += 1;
       const v = argv[i];
@@ -313,7 +315,7 @@ export function parseSubcommandArgs(argv: readonly string[]): SubcommandArgs {
       to = a.slice("--to=".length);
     }
   }
-  return { cwd: resolveRoot(cwd), yes, force, session, to };
+  return { cwd: resolveRoot(cwd), yes, force, global, session, to };
 }
 
 /**
@@ -362,6 +364,26 @@ function defaultDispatchIo(): DispatchIo {
 // --- Subcommand handlers -----------------------------------------------------
 
 export async function runInit(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
+  if (args.global) {
+    const globalConfigPath = resolveGlobalConfigPath(process.env, homedir());
+    const configExists = await pathExists(globalConfigPath);
+    if (!configExists || args.force) {
+      await fs.mkdir(path.dirname(globalConfigPath), { recursive: true });
+      await fs.writeFile(globalConfigPath, CQ_TOML_GLOBAL_TEMPLATE, "utf8");
+    }
+
+    if (configExists && !args.force) {
+      io.out(
+        `cq init --global: ${CQ_CONFIG_FILENAME} already exists at ${globalConfigPath}; re-run with --force to overwrite`,
+      );
+    } else if (configExists) {
+      io.out(`cq init --global: overwrote ${CQ_CONFIG_FILENAME} at ${globalConfigPath}`);
+    } else {
+      io.out(`cq init --global: wrote ${CQ_CONFIG_FILENAME} at ${globalConfigPath}`);
+    }
+    return { exitCode: 0 };
+  }
+
   // Write cq.toml BEFORE constructing the store (T501): a FRESH init (no
   // pre-existing cq.toml, or --force) writes CQ_TOML_TEMPLATE here so the
   // backend-selecting factory below reads the template's default backend
