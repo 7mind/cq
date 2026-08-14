@@ -22,6 +22,7 @@ import type {
   CreateItemInit,
   CreateMilestoneItemInit,
   UpdateItemPatch,
+  UpdateMilestoneItemPatch,
 } from "./LedgerStore.js";
 import {
   applyCreateItem,
@@ -37,7 +38,6 @@ import {
   assertPrefixUnique,
   assertQuestionAnswerPrecondition,
   findItem,
-  validateMilestoneItemPatch,
   validateSchema,
   type RefValidationContext,
   type StatusChangePrecondition,
@@ -73,7 +73,7 @@ export interface GenericMutationTransactionState {
 export interface WorksetGenericMutationTx {
   activeState(): WorksetActiveState;
   fetchItem(ledgerId: string, itemId: string): Item;
-  updateMilestone(milestoneId: string, patch: UpdateItemPatch): Item;
+  updateMilestone(milestoneId: string, patch: UpdateMilestoneItemPatch): Item;
   updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Item;
   createItem(ledgerId: string, milestoneId: string, init: CreateItemInit): Item;
   createMilestone(init: CreateMilestoneItemInit): Item;
@@ -177,7 +177,7 @@ export function createGenericMutationTransaction(
       const item = applyUpdateMilestoneItem(
         getLedger(MILESTONES_LEDGER),
         milestoneId,
-        validateMilestoneItemPatch(patch),
+        patch,
         state.now(),
         refsFor(state),
       );

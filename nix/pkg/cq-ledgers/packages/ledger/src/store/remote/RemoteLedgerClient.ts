@@ -45,7 +45,7 @@ import {
 } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
-import type { ArchivePointer, FieldValue, Item } from "../../types.js";
+import type { ArchivePointer, FieldValue, Item, LedgerSchema } from "../../types.js";
 import type { ArchiveContent } from "../LedgerStore.js";
 import type {
   CompactItemDto,
@@ -57,6 +57,7 @@ import type {
   ItemDto,
   ItemMutationAckDto,
   ItemProjection,
+  LedgerMutationAckDto,
   MilestoneItemGroupsDto,
   MilestoneMutationAckDto,
   PaginatedLedgerDto,
@@ -756,6 +757,18 @@ export class RemoteLedgerClient {
     return (await this.call<{ item: ItemMutationAckDto }>("update_item", args)).item;
   }
 
+  async createLedger(
+    name: string,
+    schema: LedgerSchema,
+  ): Promise<LedgerMutationAckDto> {
+    return (
+      await this.call<{ ledger: LedgerMutationAckDto }>("create_ledger", {
+        name,
+        schema,
+      })
+    ).ledger;
+  }
+
   async archiveMilestone(
     milestoneId: string,
     summary: string,
@@ -766,6 +779,34 @@ export class RemoteLedgerClient {
         summary,
       })
     ).pointer;
+  }
+
+  async reopenItem(
+    ledgerId: string,
+    itemId: string,
+    toStatus: string,
+  ): Promise<ItemMutationAckDto> {
+    return (
+      await this.call<{ item: ItemMutationAckDto }>("reopen_item", {
+        ledger_id: ledgerId,
+        item_id: itemId,
+        to_status: toStatus,
+      })
+    ).item;
+  }
+
+  async unarchiveItem(
+    ledgerId: string,
+    milestoneId: string,
+    itemId: string,
+  ): Promise<ItemMutationAckDto> {
+    return (
+      await this.call<{ item: ItemMutationAckDto }>("unarchive_item", {
+        ledger_id: ledgerId,
+        milestone_id: milestoneId,
+        item_id: itemId,
+      })
+    ).item;
   }
 
   async materializeOperatorAction(input: {

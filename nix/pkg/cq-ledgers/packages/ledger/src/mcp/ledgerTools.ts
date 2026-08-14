@@ -116,6 +116,11 @@ import {
   type WorksetInvocationAuthority,
 } from "../worksetInvocationAuthority.js";
 import { createWorksetOperation, worksetInputShape } from "./worksetTool.js";
+import {
+  createWorksetGenericMutationGateway,
+  type WorksetGenericMutationGateway,
+} from "../worksetGenericMutation.js";
+import type { WorksetStore } from "../worksetStore.js";
 
 /** The compatibility profile: every capability-gated tool specification. */
 export const FULL_LEDGER_TOOL_PROFILE = "full";
@@ -437,6 +442,40 @@ function assertOnlyMilestoneFields(fields: Record<string, FieldValue>): void {
   }
 }
 
+function assertOnlyToolArguments(
+  toolName: LedgerToolName,
+  args: object,
+  allowed: readonly string[],
+): void {
+  const allowedNames = new Set(allowed);
+  const unexpected = Object.keys(args).find((name) => !allowedNames.has(name));
+  if (unexpected !== undefined) {
+    throw new LedgerError(`${toolName} received unknown argument "${unexpected}"`);
+  }
+}
+
+function requireGenericMutations(
+  store: LedgerStore,
+  toolName: LedgerToolName,
+): WorksetGenericMutationGateway {
+  const candidate = store as LedgerStore & {
+    worksetStore?: unknown;
+    runAtomicGenericMutation?: unknown;
+  };
+  if (
+    typeof candidate.worksetStore !== "function" ||
+    typeof candidate.runAtomicGenericMutation !== "function"
+  ) {
+    throw new LedgerError(
+      `${toolName} requires a workset-guarded generic mutation capability`,
+    );
+  }
+  return createWorksetGenericMutationGateway({
+    rawStore: store,
+    worksetStore: (candidate.worksetStore as () => WorksetStore).call(store),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Tool builders
 // ---------------------------------------------------------------------------
@@ -451,6 +490,12 @@ export function createLedgerMcpToolSpecifications(
   worktreeManage?: WorktreeManageCapability,
   worksetAuthority: WorksetInvocationAuthority = createObserveOnlyWorksetInvocationAuthority(),
 ): LedgerToolSpecification[] {
+  let genericMutations: WorksetGenericMutationGateway | null = null;
+  const mutationsFor = (toolName: LedgerToolName): WorksetGenericMutationGateway => {
+    genericMutations ??= requireGenericMutations(store, toolName);
+    return genericMutations;
+  };
+
   // ---- Item / ledger surface (9) -----------------------------------------
 
   const enumerateLedgers = tool(
@@ -565,6 +610,14 @@ export function createLedgerMcpToolSpecifications(
       session: sessionParam,
     } as const,
     async (args) => {
+      assertOnlyToolArguments("update_item", args, [
+        "ledger_id",
+        "item_id",
+        "status",
+        "fields",
+        "author",
+        "session",
+      ]);
       if (args.ledger_id === MILESTONES_LEDGER) {
         const fields = (args.fields ?? {}) as Record<string, FieldValue>;
         assertOnlyMilestoneFields(fields);
@@ -580,7 +633,10 @@ export function createLedgerMcpToolSpecifications(
         if (dependsOn !== undefined) patch.dependsOn = dependsOn;
         if (args.author !== undefined) patch.author = args.author;
         if (args.session !== undefined) patch.session = args.session;
-        const milestone = await store.updateMilestone(args.item_id, patch);
+        const milestone = await mutationsFor("update_item").updateMilestone(
+          args.item_id,
+          patch,
+        );
         return wireResult(produceWireDto({ item: projectItemMutationAckDto(milestone) }));
       }
       const patch: UpdateItemPatch = {};
@@ -588,7 +644,11 @@ export function createLedgerMcpToolSpecifications(
       if (args.fields !== undefined) patch.fields = args.fields as Record<string, FieldValue>;
       if (args.author !== undefined) patch.author = args.author;
       if (args.session !== undefined) patch.session = args.session;
-      const item = await store.updateItem(args.ledger_id, args.item_id, patch);
+      const item = await mutationsFor("update_item").updateItem(
+        args.ledger_id,
+        args.item_id,
+        patch,
+      );
       return wireResult(produceWireDto({ item: projectItemMutationAckDto(item) }));
     },
   );
@@ -606,6 +666,15 @@ export function createLedgerMcpToolSpecifications(
       session: sessionParam,
     } as const,
     async (args) => {
+      assertOnlyToolArguments("create_item", args, [
+        "ledger_id",
+        "milestone_id",
+        "status",
+        "fields",
+        "id",
+        "author",
+        "session",
+      ]);
       if (args.ledger_id === MILESTONES_LEDGER) {
         if (args.milestone_id !== undefined) {
           throw new LedgerError("milestone_id must be omitted for the milestones ledger");
@@ -627,7 +696,7 @@ export function createLedgerMcpToolSpecifications(
         if (args.id !== undefined) init.id = args.id;
         if (args.author !== undefined) init.author = args.author;
         if (args.session !== undefined) init.session = args.session;
-        const milestone = await store.createMilestone(init);
+        const milestone = await mutationsFor("create_item").createMilestone(init);
         return wireResult(produceWireDto({ item: projectItemMutationAckDto(milestone) }));
       }
       const milestoneId =
@@ -643,7 +712,11 @@ export function createLedgerMcpToolSpecifications(
       if (args.id !== undefined) init.id = args.id;
       if (args.author !== undefined) init.author = args.author;
       if (args.session !== undefined) init.session = args.session;
-      const item = await store.createItem(args.ledger_id, milestoneId, init);
+      const item = await mutationsFor("create_item").createItem(
+        args.ledger_id,
+        milestoneId,
+        init,
+      );
       return wireResult(produceWireDto({ item: projectItemMutationAckDto(item) }));
     },
   );
@@ -656,8 +729,9 @@ export function createLedgerMcpToolSpecifications(
       schema: schemaSchema,
     } as const,
     async (args) => {
+      assertOnlyToolArguments("create_ledger", args, ["name", "schema"]);
       const schema = args.schema as LedgerSchema;
-      const ledger = await store.createLedger(args.name, schema);
+      const ledger = await mutationsFor("create_ledger").createLedger(args.name, schema);
       return wireResult(produceWireDto({ ledger: projectLedgerMutationAckDto(ledger) }));
     },
   );
@@ -735,7 +809,11 @@ export function createLedgerMcpToolSpecifications(
       summary: z.string(),
     } as const,
     async (args) => {
-      const pointer = await store.archiveMilestone(args.milestone_id, args.summary);
+      assertOnlyToolArguments("archive_milestone", args, ["milestone_id", "summary"]);
+      const pointer = await mutationsFor("archive_milestone").archiveMilestone(
+        args.milestone_id,
+        args.summary,
+      );
       return jsonResult({ pointer });
     },
   );
@@ -769,7 +847,12 @@ export function createLedgerMcpToolSpecifications(
       to_status: z.string(),
     } as const,
     async (args) => {
-      const item = await store.reopenItem(args.ledger_id, args.item_id, args.to_status);
+      assertOnlyToolArguments("reopen_item", args, ["ledger_id", "item_id", "to_status"]);
+      const item = await mutationsFor("reopen_item").reopenItem(
+        args.ledger_id,
+        args.item_id,
+        args.to_status,
+      );
       return wireResult(produceWireDto({ item: projectItemMutationAckDto(item) }));
     },
   );
@@ -783,7 +866,16 @@ export function createLedgerMcpToolSpecifications(
       item_id: z.string(),
     } as const,
     async (args) => {
-      const item = await store.unarchiveItem(args.ledger_id, args.milestone_id, args.item_id);
+      assertOnlyToolArguments("unarchive_item", args, [
+        "ledger_id",
+        "milestone_id",
+        "item_id",
+      ]);
+      const item = await mutationsFor("unarchive_item").unarchiveItem(
+        args.ledger_id,
+        args.milestone_id,
+        args.item_id,
+      );
       return wireResult(produceWireDto({ item: projectItemMutationAckDto(item) }));
     },
   );
