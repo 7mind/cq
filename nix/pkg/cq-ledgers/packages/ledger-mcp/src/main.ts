@@ -315,9 +315,9 @@ export const TOP_LEVEL_USAGE = [
  */
 const SERVER_INSTRUCTIONS_TEMPLATE = [
   "Typed milestone/item DAG. enumerate_ledgers schemas. Writes valid fields+author/session+canonical refs.",
-  "Reads compact|complement|full; compact+complement=full. Paginate fetch_ledger. fts_search defaults active+filters; terminal stays until fully-terminal archive_milestone.",
-  "Plan/build: fts_search relevant memories by ledger/status; fetch_item full. create_item confirmed durable project facts in memories/M-AMBIENT with sourceRefs; exclude transient reasoning/session notes/unconfirmed preferences.",
-  "CQ snapshot/derive_predicates; preserve IDs+lifecycle contracts.",
+  "Reads compact|complement|full; compact.fields ⊎ complement.fields = full.fields. fetch_ledger: paginate until nextOffset=null. fts_search defaults active+filters; terminal stays until fully-terminal archive_milestone.",
+  "Plan/build: fts_search relevant active memories by ledger/status; fetch_item full matches. create_item only confirmed durable project facts in memories/M-AMBIENT with useful sourceRefs; exclude transient reasoning/session notes/unconfirmed preferences.",
+  "CQ snapshot/derive_predicates; preserve IDs and dispatch/plan capability/generation/fence/recovery/idempotency.",
 ].join(" ");
 
 /** Escape a string for safe use as a literal inside a RegExp. */

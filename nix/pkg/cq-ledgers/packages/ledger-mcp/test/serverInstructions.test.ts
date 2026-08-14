@@ -12,10 +12,31 @@ import { buildServerInstructions } from "../src/main.js";
  */
 const ORIGINAL_SERVER_INSTRUCTIONS = [
   "Typed milestone/item DAG. enumerate_ledgers schemas. Writes valid fields+author/session+canonical refs.",
-  "Reads compact|complement|full; compact+complement=full. Paginate fetch_ledger. fts_search defaults active+filters; terminal stays until fully-terminal archive_milestone.",
-  "Plan/build: fts_search relevant memories by ledger/status; fetch_item full. create_item confirmed durable project facts in memories/M-AMBIENT with sourceRefs; exclude transient reasoning/session notes/unconfirmed preferences.",
-  "CQ snapshot/derive_predicates; preserve IDs+lifecycle contracts.",
+  "Reads compact|complement|full; compact.fields ⊎ complement.fields = full.fields. fetch_ledger: paginate until nextOffset=null. fts_search defaults active+filters; terminal stays until fully-terminal archive_milestone.",
+  "Plan/build: fts_search relevant active memories by ledger/status; fetch_item full matches. create_item only confirmed durable project facts in memories/M-AMBIENT with useful sourceRefs; exclude transient reasoning/session notes/unconfirmed preferences.",
+  "CQ snapshot/derive_predicates; preserve IDs and dispatch/plan capability/generation/fence/recovery/idempotency.",
 ].join(" ");
+
+const REQUIRED_INSTRUCTION_FACTS = [
+  "Typed milestone/item DAG",
+  "enumerate_ledgers schemas",
+  "Writes valid fields+author/session+canonical refs",
+  "compact.fields ⊎ complement.fields = full.fields",
+  "fetch_ledger: paginate until nextOffset=null",
+  "fts_search defaults active+filters",
+  "terminal stays until fully-terminal archive_milestone",
+  "Plan/build: fts_search relevant active memories by ledger/status; fetch_item full matches",
+  "create_item only confirmed durable project facts in memories/M-AMBIENT with useful sourceRefs",
+  "exclude transient reasoning/session notes/unconfirmed preferences",
+  "CQ snapshot/derive_predicates",
+  "dispatch/plan capability/generation/fence/recovery/idempotency",
+] as const;
+
+function assertInstructionSemantics(text: string): void {
+  for (const fact of REQUIRED_INSTRUCTION_FACTS) {
+    if (!text.includes(fact)) throw new Error(`missing instruction fact: ${fact}`);
+  }
+}
 
 describe("buildServerInstructions", () => {
   test("empty prefix is byte-identical to the original SERVER_INSTRUCTIONS text", () => {
@@ -25,9 +46,9 @@ describe("buildServerInstructions", () => {
   test("prefixed output names tools in their prefixed form", () => {
     const text = buildServerInstructions("myproj");
     expect(text).toContain("myproj_enumerate_ledgers");
-    expect(text).toContain("myproj_fts_search relevant memories");
-    expect(text).toContain("myproj_fetch_item full");
-    expect(text).toContain("myproj_create_item confirmed durable project facts");
+    expect(text).toContain("myproj_fts_search relevant active memories");
+    expect(text).toContain("myproj_fetch_item full matches");
+    expect(text).toContain("myproj_create_item only confirmed durable project facts");
     expect(text).toContain("myproj_snapshot");
   });
 
@@ -40,11 +61,27 @@ describe("buildServerInstructions", () => {
       "Writes valid fields+author/session+canonical refs.",
     );
     expect(text).toContain(
-      "Plan/build: fts_search relevant memories by ledger/status; fetch_item full.",
+      "Plan/build: fts_search relevant active memories by ledger/status; fetch_item full matches.",
     );
     expect(text).toContain(
-      "create_item confirmed durable project facts in memories/M-AMBIENT with sourceRefs; exclude transient reasoning/session notes/unconfirmed preferences.",
+      "create_item only confirmed durable project facts in memories/M-AMBIENT with useful sourceRefs; exclude transient reasoning/session notes/unconfirmed preferences.",
     );
+  });
+
+  test("compact wording retains projection, pagination, and lifecycle invariants", () => {
+    const text = buildServerInstructions("");
+    expect(() => assertInstructionSemantics(text)).not.toThrow();
+  });
+
+  test("semantic guard rejects removal of every required instruction fact", () => {
+    const text = buildServerInstructions("");
+    for (const fact of REQUIRED_INSTRUCTION_FACTS) {
+      const mutated = text.replace(fact, "");
+      expect(mutated).not.toBe(text);
+      expect(() => assertInstructionSemantics(mutated)).toThrow(
+        `missing instruction fact: ${fact}`,
+      );
+    }
   });
 
   test("prefixed output contains no bare whole-word tool token", () => {

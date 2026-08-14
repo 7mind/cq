@@ -464,7 +464,7 @@ export function createLedgerMcpToolSpecifications(
 
   const fetchLedger = tool(
     "fetch_ledger",
-    `Fetch a ledger's schema, active milestone groups with resolved milestone metadata, and archive pointers. ${ITEM_PROJECTION_DESCRIPTION}. Without pagination returns grouped {ledger}; offset/limit returns flattened {ledger,items,total,offset,limit,nextOffset}. Follow nextOffset until null.`,
+    `Fetch schema, active groups/resolved milestones, archive pointers. ${ITEM_PROJECTION_DESCRIPTION}. offset/limit pages; follow nextOffset until null.`,
     {
       ledger_id: z.string(),
       projection: projectionSchema,
