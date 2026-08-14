@@ -123,6 +123,7 @@ import {
   CANONICAL_LEDGERS,
   DECISIONS_LEDGER,
   GOALS_LEDGER,
+  IDEAS_LEDGER,
   MILESTONES_ACTIVE_GROUP_ID,
   MILESTONES_ACTIVE_GROUP_TITLE,
   MILESTONES_AMBIENT_ID,
@@ -134,6 +135,7 @@ import {
   LEDGER_LOGS_RELATIVE_PREFIX,
   DEFAULT_ON_SCHEMA_DIVERGENCE,
 } from "../../constants.js";
+import { relocateActiveIdeasToAmbient } from "../../ideasAmbientMigration.js";
 import { immediateWriteTransaction, openLedgerDb } from "./connection.js";
 import { ensureSchema, SCHEMA_VERSION } from "./schema.js";
 import { createSqliteWorksetStore, type SqliteWorksetStore } from "./sqliteWorksetStore.js";
@@ -465,6 +467,11 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
       // seedBootstrapGroup + applyEnsureAmbientMilestone).
       this.bootstrapCanonicalRows(db, missing, widened);
     }
+
+    immediateWriteTransaction(db, () => {
+      const ideas = this.loadLedgerFrom(db, IDEAS_LEDGER);
+      if (relocateActiveIdeasToAmbient(ideas)) this.replaceActiveLedgerIn(db, ideas);
+    });
 
     this.handle = db;
     this.initialised = true;
@@ -1817,7 +1824,10 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   private replaceActiveLedger(ledger: Ledger): void {
-    const db = this.db();
+    this.replaceActiveLedgerIn(this.db(), ledger);
+  }
+
+  private replaceActiveLedgerIn(db: Database, ledger: Ledger): void {
     db.query("DELETE FROM items WHERE ledger = ?").run(ledger.id);
     db.query("DELETE FROM groups WHERE ledger = ?").run(ledger.id);
     db.query("UPDATE ledgers SET milestone_counter = ?, item_counter = ? WHERE name = ?").run(
@@ -2260,7 +2270,10 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   /** Materialise the domain `Ledger` for `name` from its normalized rows. */
   private loadLedger(name: string): Ledger {
-    const db = this.db();
+    return this.loadLedgerFrom(this.db(), name);
+  }
+
+  private loadLedgerFrom(db: Database, name: string): Ledger {
     const row = db
       .query(
         "SELECT name, schema_json, milestone_counter, item_counter FROM ledgers WHERE name = ?",

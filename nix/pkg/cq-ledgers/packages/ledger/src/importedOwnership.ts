@@ -34,6 +34,7 @@ import {
 } from "./parser/serialize.js";
 import type { BackupDumpFile } from "./store/backupExporter.js";
 import type { ParsedDump } from "./store/restoreImporter.js";
+import { relocateActiveIdeasToAmbient } from "./ideasAmbientMigration.js";
 
 export type ImportedOwnershipMode = "preserve" | "infer-unambiguous-legacy";
 
@@ -290,6 +291,7 @@ export function reconcileImportedOwnership(
   mode: ImportedOwnershipMode,
 ): ParsedDump {
   const parsed = structuredClone(input) as ParsedDump;
+  for (const ledger of parsed.ledgers.values()) relocateActiveIdeasToAmbient(ledger);
   const located = allItems(parsed);
   const owners = new Map<string, LocatedItem>();
   for (const entry of located) {

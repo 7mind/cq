@@ -149,6 +149,7 @@ import {
   CANONICAL_LEDGERS,
   DECISIONS_LEDGER,
   GOALS_LEDGER,
+  IDEAS_LEDGER,
   LEDGER_LOGS_RELATIVE_PREFIX,
   LEDGER_LOGS_STRIP_RE,
   MILESTONES_ACTIVE_GROUP_ID,
@@ -160,6 +161,7 @@ import {
   TASKS_LEDGER,
   DEFAULT_ON_SCHEMA_DIVERGENCE,
 } from "../../constants.js";
+import { relocateActiveIdeasToAmbient } from "../../ideasAmbientMigration.js";
 import {
   MAX_READ_LOG_BYTES,
   type ReadLogResult,
@@ -470,6 +472,29 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       // guarantee — parity with SqliteLedgerStore's unconditional Pass 2.
       await this.bootstrapCanonicalRows(missing, widened);
     }
+
+    const relocatedIdeas = await writeTransaction(pool, async (tx) => {
+      await tx`
+        SELECT 1 FROM ledgers
+        WHERE project_key = ${pk} AND name = ${IDEAS_LEDGER}
+        FOR UPDATE
+      `;
+      await tx`
+        SELECT 1 FROM groups
+        WHERE project_key = ${pk} AND ledger = ${IDEAS_LEDGER}
+        ORDER BY id FOR UPDATE
+      `;
+      await tx`
+        SELECT 1 FROM items
+        WHERE project_key = ${pk} AND ledger = ${IDEAS_LEDGER}
+        ORDER BY id FOR UPDATE
+      `;
+      const ideas = (await this.readActiveLedgers(tx)).get(IDEAS_LEDGER);
+      if (ideas === undefined || !relocateActiveIdeasToAmbient(ideas)) return false;
+      await this.persistLedgerState(tx, ideas);
+      return true;
+    });
+    if (relocatedIdeas) await notifyProjectChanged(pool, pk);
 
     await this.loadCache();
     this.initialised = true;

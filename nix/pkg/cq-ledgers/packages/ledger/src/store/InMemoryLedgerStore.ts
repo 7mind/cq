@@ -64,6 +64,7 @@ import type {
   PlanReleaseInput,
   PlanReleaseResult,
 } from "../planLifecycle.js";
+import { relocateActiveIdeasToAmbient } from "../ideasAmbientMigration.js";
 import {
   claimInMemoryPlan,
   finalizeInMemoryPlan,
@@ -316,6 +317,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     // writes already arrive canonical through the T551 write gate, so this is
     // the load-time counterpart that keeps directly-materialized state settled.
     this.normalizeStoredRefs();
+    for (const ledger of this.ledgers.values()) relocateActiveIdeasToAmbient(ledger);
     this.initialised = true;
     // Build the FTS index for every ledger present after bootstrap + seed.
     for (const name of this.ledgers.keys()) {

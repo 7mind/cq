@@ -1677,6 +1677,7 @@ PY
                 if ! ${pkgs.bun}/bin/bun test \
                   packages/ledger/test/workset-root-migration.test.ts \
                   packages/ledger/test/workset-postgres-schema-divergence.test.ts \
+                  packages/ledger/test/ideas-ambient-migration.test.ts \
                   packages/cq-cli/test/migrate-postgres.test.ts \
                   packages/ledger/test/postgres-tenant-bootstrap.test.ts \
                   > "$migrationLog" 2>&1; then
@@ -1690,6 +1691,7 @@ PY
                 fi
                 for expectedLeg in \
                   'treats a tenant carrying only roots as non-empty' \
+                  'relocates durable tenant rows and remains idempotent' \
                   'migrates the xdg primary into postgres' \
                   'preserves roots and epoch in the divergence shadow'; do
                   if ! grep -F "(pass)" "$migrationLog" | grep -Fq "$expectedLeg"; then
