@@ -56,7 +56,9 @@ import {
   HYPOTHESIS_LEDGER,
   RESEARCHES_LEDGER,
   GOALS_LEDGER,
-MILESTONES_SCHEMA,
+  IDEAS_LEDGER,
+  MILESTONES_AMBIENT_ID,
+  MILESTONES_SCHEMA,
   FINALIZE_PRESENTATION,
   describeFinalizeEmptyPlan,
   type WorksetProjectedGraph,
@@ -1051,6 +1053,10 @@ export function App({
       setOverlay({ t: "createMilestone" });
       return;
     }
+    if (top.ledger === IDEAS_LEDGER) {
+      setOverlay({ t: "createItem", milestones: [] });
+      return;
+    }
     const gen = overlayGenRef.current;
     try {
       const ms = await client.fetchLedger(MILESTONES, "compact");
@@ -1898,6 +1904,7 @@ function ContentPane({
   // leading metadata. The `milestones` field is therefore lifted out of the
   // generic field list so it is not rendered twice.
   const isGoal = ledger === GOALS_LEDGER;
+  const isIdea = ledger === IDEAS_LEDGER;
   const goalMilestones = isGoal
     ? (() => {
         const v = f[GOAL_MILESTONES_FIELD];
@@ -1999,6 +2006,12 @@ function ContentPane({
         <Text bold color="gray">milestones: </Text>
         {goalMilestones.length > 0 ? goalMilestones.join(", ") : <Text dimColor>(none)</Text>}
       </>,
+    );
+    if (hasProvenance) push(byLine(), { dimColor: true });
+  } else if (isIdea) {
+    push(
+      `created ${row.item.createdAt.slice(0, 10)} · updated ${row.item.updatedAt.slice(0, 10)}`,
+      { dimColor: true },
     );
     if (hasProvenance) push(byLine(), { dimColor: true });
   } else {
@@ -3030,11 +3043,14 @@ function CreateItemForm({
   onSubmit: (milestoneId: string, status: string, fields: Record<string, FieldValue>) => void;
   onCancel: () => void;
 }): React.ReactElement {
+  const ambientOnly = view?.id === IDEAS_LEDGER;
   type Step =
     | { t: "ms" }
     | { t: "status"; milestoneId: string }
     | { t: "field"; milestoneId: string; status: string; idx: number; acc: Record<string, FieldValue> };
-  const [step, setStep] = useState<Step>({ t: "ms" });
+  const [step, setStep] = useState<Step>(
+    ambientOnly ? { t: "status", milestoneId: MILESTONES_AMBIENT_ID } : { t: "ms" },
+  );
   const fieldNames = view !== null ? Object.keys(view.schema.fields) : [];
 
   if (step.t === "ms") {

@@ -56,7 +56,12 @@ import { eligibleColumnFields, defaultColumns } from "@cq/ledger/columns";
 import { summarize, fieldToString } from "@cq/ledger/summarize";
 // Leaf subpath: constants.ts is data-only (no Node.js builtins). Importing
 // MILESTONES_SCHEMA from here avoids the duplicated local copy (D6).
-import { MILESTONES_SCHEMA, IDEAS_LEDGER, MEMORIES_LEDGER } from "@cq/ledger/constants";
+import {
+  MILESTONES_AMBIENT_ID,
+  MILESTONES_SCHEMA,
+  IDEAS_LEDGER,
+  MEMORIES_LEDGER,
+} from "@cq/ledger/constants";
 // Leaf subpath (browser-safe like ./constants above): the shared finalize
 // predicates + executor (G83, T614/T615). The web modal (T620) mirrors the
 // TUI's finalize overlay (T621) for Q292 parity — same snapshot fan-out, same
@@ -1349,6 +1354,10 @@ export function App({
   // shows a milestone selector in create mode).
   useEffect(() => {
     if (creating !== "item" || client === null) return;
+    if (ledger === IDEAS_LEDGER) {
+      setDraftMilestones([]);
+      return;
+    }
     let alive = true;
     void client.fetchLedger(MILESTONES, "compact").then((ms) => {
       if (alive) setDraftMilestones(ms.milestones.flatMap((g) => g.items));
@@ -1356,7 +1365,7 @@ export function App({
     return () => {
       alive = false;
     };
-  }, [creating, client]);
+  }, [creating, client, ledger]);
 
   // When a defects item is selected, lazily fetch the tasks ledger so the
   // fix-tasks relationship panel can resolve both link directions.
@@ -1887,7 +1896,7 @@ export function App({
                     </option>
                   ))}
                 </select>
-                {!isMilestones && (
+                {!isMilestones && ledger !== IDEAS_LEDGER && (
                   <select
                     className="lw-filter"
                     data-testid="milestone-filter"
@@ -4102,10 +4111,13 @@ function DetailPanel({
   onReadLog?: (path: string) => Promise<import("./types.js").ReadLogResult>;
 }): React.ReactElement {
   const isDraft = draftMilestones !== undefined;
+  const ambientOnly = ledger === IDEAS_LEDGER;
   const fieldNames = Object.keys(schema.fields);
   const [editing, setEditing] = useState(isDraft);
   const [status, setStatus] = useState(row.item.status);
-  const [milestoneId, setMilestoneId] = useState(draftMilestones?.[0]?.id ?? "");
+  const [milestoneId, setMilestoneId] = useState(
+    ambientOnly ? MILESTONES_AMBIENT_ID : draftMilestones?.[0]?.id ?? "",
+  );
   const fieldRefs = useRef<Record<string, HTMLInputElement | HTMLTextAreaElement | null>>({});
   // Snapshot of status + field string values at the moment edit mode opened.
   // Save compares the form against this baseline and ships ONLY dirty keys
@@ -4150,10 +4162,10 @@ function DetailPanel({
 
   // Default the milestone selection once the options arrive.
   useEffect(() => {
-    if (isDraft && milestoneId === "" && draftMilestones && draftMilestones.length > 0) {
+    if (!ambientOnly && isDraft && milestoneId === "" && draftMilestones && draftMilestones.length > 0) {
       setMilestoneId(draftMilestones[0]!.id);
     }
-  }, [isDraft, draftMilestones, milestoneId]);
+  }, [ambientOnly, isDraft, draftMilestones, milestoneId]);
 
   const beginEdit = (): void => {
     captureEditBaseline(row);
@@ -4172,8 +4184,9 @@ function DetailPanel({
           built[name] = parseFieldValue(raw, schema.fields[name]!.type);
         }
       }
-      if (milestoneId.length === 0) return; // need a milestone to attach to
-      onCreate?.(milestoneId, status, built);
+      const attachmentId = ambientOnly ? MILESTONES_AMBIENT_ID : milestoneId;
+      if (attachmentId.length === 0) return; // need a milestone to attach to
+      onCreate?.(attachmentId, status, built);
       return;
     }
     // D282 dirty-only patch: compare form values to the open-edit baseline so
@@ -4256,7 +4269,7 @@ function DetailPanel({
             save();
           }}
         >
-          {isDraft && !isMilestones && (
+          {isDraft && !isMilestones && !ambientOnly && (
             <label className="lw-field">
               <span>milestone</span>
               <select
@@ -4590,7 +4603,7 @@ function DetailPanel({
                   )}
                 </dd>
               </>
-            ) : (
+            ) : ambientOnly ? null : (
               <>
                 <dt>milestone</dt>
                 <dd>{row.milestoneId}</dd>

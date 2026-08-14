@@ -22,6 +22,7 @@ import type {
   FetchedLedger,
   FtsHit,
   Item,
+  ItemInit,
   ItemMutationAckDto,
   ItemPatch,
   ItemProjection,
@@ -90,12 +91,14 @@ const goalsSchema: LedgerSchema = {
 };
 
 type UpdateItemArgs = { ledger: string; id: string; patch: ItemPatch };
+type CreateItemArgs = { ledger: string; milestoneId: string; init: ItemInit };
 
 class IdeasClient implements LedgerClient {
   async getUsageStats(): Promise<import("../src/types.js").UsageStatsSnapshot> {
     throw new Error("not used");
   }
   updateItemCalls: UpdateItemArgs[] = [];
+  createItemCalls: CreateItemArgs[] = [];
 
   displayName(): string { return "cq1"; }
   async enumerateLedgers(): Promise<LedgerSummary[]> {
@@ -161,11 +164,49 @@ class IdeasClient implements LedgerClient {
         archivePointers: [],
       };
     }
+    if (id === "milestones") {
+      return {
+        id: "milestones",
+        schema: {
+          statusValues: ["open", "done"],
+          terminalStatuses: ["done"],
+          fields: { title: { type: "string", required: true } },
+        },
+        counters: { milestone: 1, item: 1 },
+        milestones: [
+          {
+            id: "active",
+            milestone: { id: "active", status: "open", title: "", description: "" },
+            items: [
+              {
+                id: "M1",
+                milestoneId: "active",
+                status: "open",
+                fields: { title: "Wave 1" },
+                createdAt: TS,
+                updatedAt: TS,
+              },
+            ],
+          },
+        ],
+        archivePointers: [],
+      };
+    }
     throw new Error(`Ledger not found: ${id}`);
   }
   async fetchLedgerArchive(): Promise<ArchiveContent> { throw new Error("not used"); }
   async fetchItem(_ledger: string, _id: string, _projection: ItemProjection): Promise<Item> { throw new Error("not used"); }
-  async createItem(): Promise<ItemMutationAckDto> { throw new Error("not used"); }
+  async createItem(ledger: string, milestoneId: string, init: ItemInit): Promise<ItemMutationAckDto> {
+    this.createItemCalls.push({ ledger, milestoneId, init });
+    return {
+      id: "I3",
+      milestoneId,
+      status: init.status,
+      fields: {},
+      createdAt: TS,
+      updatedAt: TS,
+    };
+  }
   async updateItem(ledger: string, id: string, patch: ItemPatch): Promise<ItemMutationAckDto> {
     this.updateItemCalls.push({ ledger, id, patch });
     return {
@@ -283,6 +324,38 @@ describe("T339 — ideas ledger sidebar + flat list + detail panel", () => {
       container.querySelectorAll("table.lw-table thead th"),
     ).map((th) => th.textContent);
     expect(headers).toEqual(["id", "status", "summary"]);
+    expect(testid("milestone-filter")).toBeNull();
+  });
+
+  it("creates and displays ideas without work-milestone controls", async () => {
+    await mount();
+    await openLedger("ideas");
+
+    click(testid("item-I1"));
+    await flush();
+    const detailLabels = Array.from(container.querySelectorAll("[data-testid=\"detail\"] dt"))
+      .map((node) => node.textContent);
+    expect(detailLabels).not.toContain("milestone");
+    expect(testid("detail")?.textContent).not.toContain("M-AMBIENT");
+
+    click(testid("detail-close"));
+    click(testid("new-item-or-milestone"));
+    await flush();
+    expect(testid("edit-milestone")).toBeNull();
+    setValue(testid("edit-field-title"), "third idea");
+    await holdFull(testid("save"));
+
+    expect(fakeClient.createItemCalls).toEqual([
+      {
+        ledger: "ideas",
+        milestoneId: "M-AMBIENT",
+        init: {
+          status: "open",
+          fields: { title: "third idea" },
+          author: "user",
+        },
+      },
+    ]);
   });
 
   it("an idea's detail panel edits title/description/status via updateItem", async () => {
