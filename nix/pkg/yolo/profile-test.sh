@@ -252,6 +252,43 @@ OUT="$(run_yolo --help)"
 assert_contains "usage documents --enable" "$OUT" "--enable=TAG"
 assert_contains "usage documents dynamic gpu passthrough" "$OUT" "dyngpu"
 
+# Ad-hoc CLI binds must be appended after every built-in bind: bwrap applies
+# mounts in argv order, so the last bind covering a path wins.
+CLI_RO="$WORKDIR/cli-ro"
+CLI_RW="$WORKDIR/cli-rw"
+DECL_RO="$WORKDIR/decl-ro"
+DECL_RW="$WORKDIR/decl-rw"
+mkdir -p "$CLI_RO" "$CLI_RW" "$DECL_RO" "$DECL_RW"
+
+arg_index() {
+  printf '%s\n' "$1" | grep -n -x -F -- "$2" | tail -1 | cut -d: -f1
+}
+
+assert_after() {
+  local desc="$1" haystack="$2" later="$3" earlier="$4"
+  local later_idx earlier_idx
+  later_idx="$(arg_index "$haystack" "$later")"
+  earlier_idx="$(arg_index "$haystack" "$earlier")"
+  TESTS_RUN=$((TESTS_RUN + 1))
+  if [[ -z "$later_idx" || -z "$earlier_idx" || "$later_idx" -le "$earlier_idx" ]]; then
+    echo "FAIL: $desc -- expected [$later] ($later_idx) after [$earlier] ($earlier_idx)"
+    FAILURES=$((FAILURES + 1))
+  fi
+}
+
+OUT="$(YOLO_EXTRA_RO_PATHS="$DECL_RO" YOLO_EXTRA_RW_PATHS="$DECL_RW" \
+  run_yolo --profile foo --ro "$CLI_RO" --rw "$CLI_RW" cmd true)"
+assert_after "CLI --ro follows the declarative read-only binds" "$OUT" "$CLI_RO" "$DECL_RO"
+assert_after "CLI --ro follows the declarative read-write binds" "$OUT" "$CLI_RO" "$DECL_RW"
+assert_after "CLI --ro follows the built-in \$PWD bind" "$OUT" "$CLI_RO" "$PROJECT_DIR"
+assert_after "CLI --ro follows the built-in agents-registry bind" "$OUT" "$CLI_RO" "$FAKE_HOME/.agents"
+assert_after "CLI --ro follows the profile claude binds" "$OUT" \
+  "$CLI_RO" "$FAKE_HOME/.config/yolo/foo/claude/home,$FAKE_HOME/.claude"
+assert_after "CLI --ro follows the profile pi binds" "$OUT" \
+  "$CLI_RO" "$FAKE_HOME/.pi/agent/mcp.json,$FAKE_HOME/.pi/agent/mcp.json"
+assert_after "CLI --rw follows the CLI --ro that preceded it" "$OUT" "$CLI_RW" "$CLI_RO"
+assert_after "the sandbox command separator still follows the CLI binds" "$OUT" "--" "$CLI_RW"
+
 if [[ $FAILURES -ne 0 ]]; then
   echo "$FAILURES of $TESTS_RUN tests failed"
   exit 1

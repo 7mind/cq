@@ -45,6 +45,24 @@ assert_contains \
   "$OUT" \
   $'--dir\n/var\n--symlink\n/run\n/var/run'
 
+# Bind precedence: bwrap applies mounts in argv order, so the caller's own
+# ordering must survive verbatim — a later --ro/--rw/--bind must be able to
+# override an earlier one regardless of which flavour each one used.
+ORDER_DIR="$WORKDIR/order"
+mkdir -p "$ORDER_DIR/a" "$ORDER_DIR/b" "$ORDER_DIR/c" "$ORDER_DIR/d"
+ORDER_OUT="$(PATH="$FAKE_BIN:$PATH" bash "$SCRIPT" \
+  --rw "$ORDER_DIR/a" \
+  --ro-bind "$ORDER_DIR/b,$ORDER_DIR/b" \
+  --ro "$ORDER_DIR/c" \
+  --bind "$ORDER_DIR/d,$ORDER_DIR/d" \
+  --ro "$ORDER_DIR/a" \
+  -- true 2>/dev/null)"
+ORDER_SEEN="$(printf '%s\n' "$ORDER_OUT" | grep -F -- "$ORDER_DIR" | tr '\n' ' ')"
+assert_eq \
+  "bind flavours are emitted in the order they were given" \
+  "$ORDER_DIR/a $ORDER_DIR/a $ORDER_DIR/b $ORDER_DIR/b $ORDER_DIR/c $ORDER_DIR/c $ORDER_DIR/d $ORDER_DIR/d $ORDER_DIR/a $ORDER_DIR/a " \
+  "$ORDER_SEEN"
+
 if [[ $FAILURES -ne 0 ]]; then
   echo "$FAILURES of $TESTS_RUN tests failed"
   echo "$OUT"

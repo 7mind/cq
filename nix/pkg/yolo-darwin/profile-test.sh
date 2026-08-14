@@ -196,6 +196,29 @@ assert_contains "CLI read-write path receives write operations" "$RENDERED_PATHS
 assert_contains "declared SSH-key symlink receives read access" "$RENDERED_PATHS" "(literal \"$SSH_LINK\")"
 assert_contains "declared SSH-key target receives read access" "$RENDERED_PATHS" "(literal \"$SSH_TARGET\")"
 
+# Seatbelt is last-match-wins, so ad-hoc CLI grants must render after every
+# declarative grant — including declarative read-write ones.
+grant_line() {
+  printf '%s\n' "$RENDERED_PATHS" | grep -n -F -- ";; Explicit $1 grant: $2" | tail -1 | cut -d: -f1
+}
+assert_grant_after() {
+  local desc="$1" later_access="$2" later_path="$3" earlier_access="$4" earlier_path="$5"
+  local later_idx earlier_idx
+  later_idx="$(grant_line "$later_access" "$later_path")"
+  earlier_idx="$(grant_line "$earlier_access" "$earlier_path")"
+  TESTS_RUN=$((TESTS_RUN + 1))
+  if [[ -z "$later_idx" || -z "$earlier_idx" || "$later_idx" -le "$earlier_idx" ]]; then
+    echo "FAIL: $desc -- expected $later_access $later_path ($later_idx) after $earlier_access $earlier_path ($earlier_idx)"
+    FAILURES=$((FAILURES + 1))
+  fi
+}
+assert_grant_after "CLI read-only grant follows the declarative read-only grant" \
+  ro "$CLI_RO" ro "$DECL_RO"
+assert_grant_after "CLI read-only grant follows the declarative read-write grant" \
+  ro "$CLI_RO" rw "$DECL_RW"
+assert_grant_after "CLI read-write grant follows the CLI read-only grant that preceded it" \
+  rw "$CLI_RW" ro "$CLI_RO"
+
 # Named profiles override any upstream grants to native agent homes.
 assert_contains "named: denies real ~/.claude" "$RENDERED" '(subpath (string-append (param "HOME_DIR") "/.claude"))'
 assert_contains "named: denies real ~/.claude.json" "$RENDERED" '(literal (string-append (param "HOME_DIR") "/.claude.json"))'

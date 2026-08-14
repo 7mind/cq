@@ -22,6 +22,9 @@ SANDBOX_PACKAGE_ENV_PAIRS=()
 SOCKET_ENV_PAIRS=()
 EXTRA_RO_PATHS=("${HOME}/.agents")
 EXTRA_RW_PATHS=()
+# Ad-hoc `--ro PATH` / `--rw PATH` grants given on the CLI, kept in submission
+# order and rendered after every declarative grant: Seatbelt is last-match-wins.
+CLI_PATH_GRANTS=()
 CLEANUP_FILES=()
 # Feature suppression: --disable=TAG is repeatable and comma-separated.
 # shellcheck disable=SC2034
@@ -123,16 +126,11 @@ while [[ $# -gt 0 ]]; do
       IFS=',' read -ra _etags <<< "${1#*=}"
       ENABLE_TAGS+=("${_etags[@]}")
       shift ;;
-    --ro)
+    --ro|--rw)
       if [[ $# -lt 2 || -z "$2" ]]; then
         echo "Error: $1 requires a path" >&2; exit 1
       fi
-      EXTRA_RO_PATHS+=("$2"); shift 2 ;;
-    --rw)
-      if [[ $# -lt 2 || -z "$2" ]]; then
-        echo "Error: $1 requires a path" >&2; exit 1
-      fi
-      EXTRA_RW_PATHS+=("$2"); shift 2 ;;
+      CLI_PATH_GRANTS+=("${1#--}"$'\t'"$2"); shift 2 ;;
     --unsafe-share-home) UNSAFE_SHARE_HOME=1; shift ;;
     --env)
       if [[ $# -lt 2 || -z "$2" ]]; then
@@ -289,8 +287,20 @@ _render_path_grant() {
   printf '    (subpath "%s"))\n' "$esc_path"
 }
 
+_render_one_path_grant() {
+  local access="$1" raw="$2" logical canonical
+  [[ -e "$raw" ]] || return 0
+  logical="$(_logical_absolute_path "$raw")"
+  canonical="$(realpath "$logical" 2>/dev/null || printf '%s' "$logical")"
+  printf '\n;; Explicit %s grant: %s\n' "$access" "$logical"
+  _render_path_grant "$access" "$logical"
+  if [[ "$canonical" != "$logical" ]]; then
+    _render_path_grant "$access" "$canonical"
+  fi
+}
+
 _render_configured_path_grants() {
-  local access raw logical canonical
+  local access raw grant
   for access in ro rw; do
     if [[ "$access" == ro ]]; then
       set -- "${EXTRA_RO_PATHS[@]}"
@@ -298,15 +308,11 @@ _render_configured_path_grants() {
       set -- "${EXTRA_RW_PATHS[@]}"
     fi
     for raw in "$@"; do
-      [[ -e "$raw" ]] || continue
-      logical="$(_logical_absolute_path "$raw")"
-      canonical="$(realpath "$logical" 2>/dev/null || printf '%s' "$logical")"
-      printf '\n;; Explicit %s grant: %s\n' "$access" "$logical"
-      _render_path_grant "$access" "$logical"
-      if [[ "$canonical" != "$logical" ]]; then
-        _render_path_grant "$access" "$canonical"
-      fi
+      _render_one_path_grant "$access" "$raw"
     done
+  done
+  for grant in "${CLI_PATH_GRANTS[@]}"; do
+    _render_one_path_grant "${grant%%$'\t'*}" "${grant#*$'\t'}"
   done
 }
 

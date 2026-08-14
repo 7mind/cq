@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RW_PATHS=()
-RO_PATHS=()
-BINDS=()
-RO_BINDS=()
-DEV_BINDS=()
+BIND_SPECS=()
 ENVS=()
 CONFINE_SOCKET=""
 
@@ -35,24 +31,8 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --rw)
-      RW_PATHS+=("$2")
-      shift 2
-      ;;
-    --ro)
-      RO_PATHS+=("$2")
-      shift 2
-      ;;
-    --bind)
-      BINDS+=("$2")
-      shift 2
-      ;;
-    --ro-bind)
-      RO_BINDS+=("$2")
-      shift 2
-      ;;
-    --dev-bind)
-      DEV_BINDS+=("$2")
+    --rw|--ro|--bind|--ro-bind|--dev-bind)
+      BIND_SPECS+=("${1#--}"$'\t'"$2")
       shift 2
       ;;
     --confine-socket)
@@ -130,39 +110,30 @@ for path in "${SYSTEM_RO_PATHS[@]}"; do
   fi
 done
 
-# User-provided RO paths (filter out /nix/* as already bound)
-for path in "${RO_PATHS[@]}"; do
-  if [[ -e "$path" ]] && [[ "$path" != /nix/* ]]; then
-    BWRAP_ARGS+=(--ro-bind "$path" "$path")
-  fi
-done
-
-# User-provided RW paths
-for path in "${RW_PATHS[@]}"; do
-  if [[ -e "$path" ]]; then
-    BWRAP_ARGS+=(--bind "$path" "$path")
-  fi
-done
-
-for bind in "${BINDS[@]}"; do
-  IFS=',' read -r src dst <<< "$bind"
-  if [[ -e "$src" ]]; then
-    BWRAP_ARGS+=(--bind "$src" "$dst")
-  fi
-done
-
-for bind in "${RO_BINDS[@]}"; do
-  IFS=',' read -r src dst <<< "$bind"
-  if [[ -e "$src" ]]; then
-    BWRAP_ARGS+=(--ro-bind "$src" "$dst")
-  fi
-done
-
-for bind in "${DEV_BINDS[@]}"; do
-  IFS=',' read -r src dst <<< "$bind"
-  if [[ -e "$src" ]]; then
-    BWRAP_ARGS+=(--dev-bind "$src" "$dst")
-  fi
+# Caller-provided binds, emitted in the order they were given so a later bind
+# overrides an earlier one covering the same path (bwrap mounts in argv order).
+# RO paths filter out /nix/* as already bound.
+for spec in "${BIND_SPECS[@]}"; do
+  kind="${spec%%$'\t'*}"
+  value="${spec#*$'\t'}"
+  case "$kind" in
+    ro)
+      if [[ -e "$value" ]] && [[ "$value" != /nix/* ]]; then
+        BWRAP_ARGS+=(--ro-bind "$value" "$value")
+      fi
+      ;;
+    rw)
+      if [[ -e "$value" ]]; then
+        BWRAP_ARGS+=(--bind "$value" "$value")
+      fi
+      ;;
+    *)
+      IFS=',' read -r src dst <<< "$value"
+      if [[ -e "$src" ]]; then
+        BWRAP_ARGS+=("--$kind" "$src" "$dst")
+      fi
+      ;;
+  esac
 done
 
 for env in "${ENVS[@]}"; do

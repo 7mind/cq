@@ -65,6 +65,8 @@ ENV_ARGS=()
 # Unlike the Nix-configured YOLO_EXTRA_{RO,RW}_PATHS these are per-invocation;
 # both funnel through the same llm-sandbox `--ro`/`--rw` handling, which binds
 # each path at its own location (src == dst) and silently skips it if missing.
+# They are appended after every built-in bind (BASE_ARGS + EXTRA_ARGS) because
+# bwrap applies mounts in argv order: the last bind covering a path wins.
 ADHOC_BIND_ARGS=()
 
 print_help() {
@@ -628,7 +630,6 @@ BASE_ARGS=(
   --rw "${HOME}/.cache"
   --rw "${HOME}/.ivy2"
   --rw "${_cq_state_dir}"
-  "${ADHOC_BIND_ARGS[@]}"
   "${SOCKET_ARGS[@]}"
   "${TMUX_BIND_ARGS[@]}"
   "${DYNGPU_ARGS[@]}"
@@ -975,11 +976,13 @@ if [[ -n "$SECRET_TMPFILE" || -n "$SANDBOX_HOOKS_TMPFILE" || -n "$SSH_CONFIG_TMP
     "$_yolo_sandbox" \
       "${BASE_ARGS[@]}" \
       "${EXTRA_ARGS[@]}" \
+      "${ADHOC_BIND_ARGS[@]}" \
       -- "$_yolo_entrypoint" "${EXEC_CMD[@]}" <&0 &
   else
     "$_yolo_sandbox" \
       "${BASE_ARGS[@]}" \
       "${EXTRA_ARGS[@]}" \
+      "${ADHOC_BIND_ARGS[@]}" \
       -- "${EXEC_CMD[@]}" <&0 &
   fi
   _yolo_sandbox_pid=$!
@@ -990,4 +993,5 @@ fi
 exec "$_yolo_sandbox" \
   "${BASE_ARGS[@]}" \
   "${EXTRA_ARGS[@]}" \
+  "${ADHOC_BIND_ARGS[@]}" \
   -- "${EXEC_CMD[@]}"
