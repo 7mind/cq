@@ -86,6 +86,7 @@ export type LedgerMutationOp = "create" | "update" | "archive";
  */
 export type OnMutation = (ledgerId: string, op: LedgerMutationOp) => void;
 
+/** Item milestone attachment is immutable; this patch cannot re-home an item. */
 export interface UpdateItemPatch {
   status?: string;
   fields?: Record<string, FieldValue>;

@@ -220,6 +220,7 @@ const CASES: LedgerCase[] = [
     update: { status: "discarded", fields: { description: "superseded by an existing goal" } },
     searchNeedle: "cross-nav",
     terminalStatus: "discarded",
+    milestoneId: MILESTONES_AMBIENT_ID,
     // open → discarded is a legal direct edge; `open` is the first status.
   },
   {

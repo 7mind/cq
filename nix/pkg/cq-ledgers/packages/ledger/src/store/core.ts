@@ -38,6 +38,7 @@ import { canonicalizeRef, DEPENDENCY_REF_FIELDS, parseRef } from "../refs.js";
 import {
   GOALS_LEDGER,
   HANDOFFS_LEDGER,
+  IDEAS_LEDGER,
   isIsoTimestamp,
   MILESTONES_ACTIVE_GROUP_ID,
   MILESTONES_AMBIENT_ID,
@@ -70,6 +71,16 @@ import type {
  * Keeps `^<idPrefix>\d+$` unambiguous.
  */
 const ID_PREFIX_RE = /^[A-Za-z][A-Za-z0-9]*$/;
+
+const AMBIENT_ONLY_LEDGERS: readonly string[] = [IDEAS_LEDGER, MEMORIES_LEDGER];
+
+function assertAmbientAttachment(ledgerId: string, milestoneId: string): void {
+  if (AMBIENT_ONLY_LEDGERS.includes(ledgerId) && milestoneId !== MILESTONES_AMBIENT_ID) {
+    throw new BootstrapViolationError(
+      `${ledgerId} items must attach to ${MILESTONES_AMBIENT_ID}`,
+    );
+  }
+}
 
 /**
  * The effective item-id prefix for a ledger: explicit `schema.idPrefix`
@@ -540,11 +551,7 @@ export function applyCreateItem(
   if (ledger.id === OPERATOR_ACTIONS_LEDGER && !isAuthorizedOperatorActionMutation(init)) {
     throw new LedgerError("operatorActions may be created only through the typed lifecycle");
   }
-  if (ledger.id === MEMORIES_LEDGER && milestoneId !== MILESTONES_AMBIENT_ID) {
-    throw new BootstrapViolationError(
-      `memories items must attach to ${MILESTONES_AMBIENT_ID}`,
-    );
-  }
+  assertAmbientAttachment(ledger.id, milestoneId);
   let milestone: Milestone;
   const existing = ledger.milestones.find((m) => m.id === milestoneId);
   if (existing !== undefined) {
@@ -975,6 +982,7 @@ export function applyReattachItem(
   item: Item,
   now: string,
 ): Item {
+  assertAmbientAttachment(ledger.id, milestoneId);
   if (itemIdExists(ledger, item.id)) {
     throw new DuplicateIdError("item", item.id);
   }

@@ -1033,13 +1033,9 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
         // archived status is read authoritatively in this critical section).
         assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), milestoneId);
       }
-      const [extracted] = group.items.splice(idx, 1);
-      if (extracted === undefined) {
-        throw new LedgerError(
-          `archived group ${milestoneId} in ledger ${ledgerId} has no item ${itemId}`,
-        );
-      }
+      const extracted = group.items[idx]!;
       const out = applyReattachItem(ledger, milestoneId, extracted, this.now());
+      group.items.splice(idx, 1);
       if (group.items.length === 0) {
         // Last item removed — drop the whole group archive + its pointer.
         this.archives.delete(key);

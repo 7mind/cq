@@ -514,8 +514,9 @@ export const OPERATOR_ACTIONS_SCHEMA: LedgerSchema = {
  * `description` (optional), and optional advisory `ledgerRefs` for cross-item
  * links (for example, `goals:<G>` from `/cq:plan` and `/cq:plan/follow-up`).
  * `ledgerRefs` remains unvalidated/advisory (not `DEPENDENCY_REF_FIELDS`), and
- * the ambient milestone attachment is supplied by the store, not by a schema
- * field.
+ * the ambient milestone attachment is supplied and enforced by the store, not
+ * by a schema field. `UpdateItemPatch` exposes no milestone id, so an update
+ * cannot re-home an idea after creation or restoration.
  */
 export const IDEAS_SCHEMA: LedgerSchema = {
   statusValues: ["open", "planned", "discarded", "postponed"],
