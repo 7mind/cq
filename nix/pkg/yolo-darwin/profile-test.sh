@@ -128,6 +128,10 @@ assert_contains "usage mentions --enable" "$OUT" "--enable=TAG"
 RENDERED="$(render_profile foo /tmp/x)"
 GOLDEN="$(cat "$GOLDEN_FILE" 2>/dev/null || true)"
 assert_eq "rendered foo profile matches testdata/profile-foo.sb" "$GOLDEN" "$RENDERED"
+mkdir -p "$FAKE_HOME/.agents"
+RENDERED_AGENTS="$(render_profile foo /tmp/x)"
+assert_contains "allows ~/.agents read-only" "$RENDERED_AGENTS" \
+  $'(allow file-read* file-read-metadata\n    (literal "'"$FAKE_HOME/.agents"$'")\n    (subpath "'"$FAKE_HOME/.agents"$'"))'
 assert_contains "allows read+write to \$PWD (/tmp/x)" "$RENDERED" '(subpath "/tmp/x")'
 assert_contains "allows ~/.cache" "$RENDERED" '(subpath (string-append (param "HOME_DIR") "/.cache"))'
 # Regression: cq's default XDG primary lives here and must remain reachable

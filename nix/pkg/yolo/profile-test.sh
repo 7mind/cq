@@ -16,6 +16,7 @@ _bash_path="$(command -v bash)"
 mkdir -p \
   "$PROJECT_DIR" \
   "$FAKE_BIN" \
+  "$FAKE_HOME/.agents" \
   "$FAKE_HOME/.claude" \
   "$FAKE_HOME/.codex/prompts" \
   "$FAKE_HOME/.codex/skills" \
@@ -77,6 +78,10 @@ OUT="$({
 STATUS=$?
 
 assert_eq "named profile launch succeeds" "0" "$STATUS"
+assert_contains \
+  "named profile shares the agents registry read-only" \
+  "$OUT" \
+  $'--ro\n'"$FAKE_HOME/.agents"
 assert_contains \
   "named profile re-shares Codex prompts read-only" \
   "$OUT" \

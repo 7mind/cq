@@ -643,6 +643,7 @@ BASE_ARGS=(
   --ro "${HOME}/.config/direnv"
   --ro "${HOME}/.local/share/direnv"
   --ro "${HOME}/.direnvrc"
+  --ro "${HOME}/.agents"
   --ro-bind "${YOLO_NIX_LD},/lib64/ld-linux-x86-64.so.2"
   --env SMIND_SANDBOXED=1
   "${SANDBOX_PKG_ARGS[@]}"
