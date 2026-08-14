@@ -163,7 +163,7 @@ describe("createLedgerMcpServer — public builder", () => {
     try {
       expect(client.getInstructions()).toContain(buildServerInstructions(""));
       expect(client.getInstructions()).toContain(
-        "Write only confirmed durable project facts: create_item in memories under M-AMBIENT with author/session and useful sourceRefs.",
+        "create_item confirmed durable project facts in memories/M-AMBIENT with sourceRefs",
       );
     } finally {
       await client.close();

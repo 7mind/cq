@@ -11,14 +11,11 @@ import { buildServerInstructions } from "../src/main.js";
  * point: `buildServerInstructions('')` MUST stay byte-identical to this text.
  */
 const ORIGINAL_SERVER_INSTRUCTIONS = [
-  "Typed milestone DAG; items attach. enumerate_ledgers: schemas. Writes: valid fields, author/session, recognized refs canonicalized.",
-  "",
-  "Projection compact|complement|full; compact.fields ⊎ complement.fields = full.fields. fetch_ledger: paginate until nextOffset=null. fts_search: active by default with field qualifiers; terminal items stay active until archive_milestone sweeps a fully terminal milestone.",
-  "",
-  "Before planning/implementation, fts_search relevant active memories with ledger/status filters; fetch_item full matches as needed. Write only confirmed durable project facts: create_item in memories under M-AMBIENT with author/session and useful sourceRefs. Exclude transient reasoning, session notes, and unconfirmed preferences.",
-  "",
-  "snapshot/derive_predicates: CQ state. Preserve IDs and dispatch/plan capability/generation/fence/recovery/idempotency.",
-].join("\n");
+  "Typed milestone/item DAG. enumerate_ledgers schemas. Writes valid fields+author/session+canonical refs.",
+  "Reads compact|complement|full; compact+complement=full. Paginate fetch_ledger. fts_search defaults active+filters; terminal stays until fully-terminal archive_milestone.",
+  "Plan/build: fts_search relevant memories by ledger/status; fetch_item full. create_item confirmed durable project facts in memories/M-AMBIENT with sourceRefs; exclude transient reasoning/session notes/unconfirmed preferences.",
+  "CQ snapshot/derive_predicates; preserve IDs+lifecycle contracts.",
+].join(" ");
 
 describe("buildServerInstructions", () => {
   test("empty prefix is byte-identical to the original SERVER_INSTRUCTIONS text", () => {
@@ -28,22 +25,25 @@ describe("buildServerInstructions", () => {
   test("prefixed output names tools in their prefixed form", () => {
     const text = buildServerInstructions("myproj");
     expect(text).toContain("myproj_enumerate_ledgers");
-    expect(text).toContain("myproj_fts_search relevant active memories");
-    expect(text).toContain("myproj_fetch_item full matches");
-    expect(text).toContain("myproj_create_item in memories");
+    expect(text).toContain("myproj_fts_search relevant memories");
+    expect(text).toContain("myproj_fetch_item full");
+    expect(text).toContain("myproj_create_item confirmed durable project facts");
     expect(text).toContain("myproj_snapshot");
   });
 
   test("canonical memory policy is explicit on the unprefixed surface", () => {
     const text = buildServerInstructions("");
     expect(text).toContain(
-      "Before planning/implementation, fts_search relevant active memories with ledger/status filters; fetch_item full matches as needed.",
+      "fts_search defaults active+filters",
     );
     expect(text).toContain(
-      "Write only confirmed durable project facts: create_item in memories under M-AMBIENT with author/session and useful sourceRefs.",
+      "Writes valid fields+author/session+canonical refs.",
     );
     expect(text).toContain(
-      "Exclude transient reasoning, session notes, and unconfirmed preferences.",
+      "Plan/build: fts_search relevant memories by ledger/status; fetch_item full.",
+    );
+    expect(text).toContain(
+      "create_item confirmed durable project facts in memories/M-AMBIENT with sourceRefs; exclude transient reasoning/session notes/unconfirmed preferences.",
     );
   });
 
