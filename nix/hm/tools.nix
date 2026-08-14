@@ -78,6 +78,18 @@ in
   options = {
     smind.hm.dev.llm.enable = lib.mkEnableOption "LLM development environment variables";
 
+    smind.hm.dev.llm.cq.globalConfig = lib.mkOption {
+      type = lib.types.nullOr lib.types.lines;
+      default = null;
+      description = ''
+        Optional global cq.toml content installed through
+        xdg.configFile."cq/cq.toml". The yolo sandbox exposes this file
+        read-only. The [ledger] and [project] tables are local-only and are
+        ignored in the global file; configure their backend, projectId, and
+        name values in each repository's cq.toml instead.
+      '';
+    };
+
     # Read-only views of the merged asset bundles, exposed so sibling modules
     # can reuse the same skill set and memory text without re-folding
     # `assetBundles`/`memorySections`.
@@ -234,6 +246,11 @@ in
         }
       );
     }
+    (lib.mkIf (
+      config.smind.hm.dev.llm.enable && config.smind.hm.dev.llm.cq.globalConfig != null
+    ) {
+      xdg.configFile."cq/cq.toml".text = config.smind.hm.dev.llm.cq.globalConfig;
+    })
     (lib.mkIf config.smind.hm.dev.llm.enable {
       # commandKeyToStem ("/"→":") is injective only while no two bundle keys
       # share a stem. Fail-fast if a future bundle introduces a collision

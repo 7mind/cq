@@ -125,6 +125,14 @@
           inherit pkgs claudePromptRoot;
           claudeModule = import ./nix/hm/claude.nix { inherit inputs self; };
         };
+        globalCqConfigHomeTest = import ./nix/lib/global-cq-config-home-test.nix {
+          lib = pkgs.lib;
+          inherit
+            pkgs
+            inputs
+            self
+            ;
+        };
         piPromptRoot = import ./nix/pkg/cq-assets/render-prompt-surface.nix {
           inherit pkgs;
           lib = pkgs.lib;
@@ -989,6 +997,9 @@ EOF
         # outside the Nix builder; see docs/macos-home-manager.md.
         checks =
           {
+            global-cq-config-home =
+              assert globalCqConfigHomeTest.passed;
+              pkgs.runCommand "global-cq-config-home" { } "touch $out";
             cq-node-gyp-runtime = pkgs.runCommand "cq-node-gyp-runtime" {
               nativeBuildInputs = [ pkgs.bun pkgs.nodejs_22 ];
             } ''
