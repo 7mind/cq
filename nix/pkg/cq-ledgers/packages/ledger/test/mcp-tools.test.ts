@@ -8,18 +8,24 @@
 
 import { describe, it, expect } from "bun:test";
 import { z } from "zod";
+import { validateAgainstSchema } from "@cq/config";
 import {
+  BootstrapViolationError,
   InMemoryLedgerStore,
+  IDEAS_LEDGER,
   LEDGER_TOOL_NAMES,
+  MILESTONES_AMBIENT_ID,
   NON_DISPATCH_LEDGER_TOOL_NAMES,
   CANONICAL_LEDGERS,
   createLedgerMcpTools,
   derivePredicates,
+  ledgerToolInputJsonSchema,
   type DerivedPredicates,
   type DispatchCapability,
   type Item,
   type ItemProjection,
   type LedgerSchema,
+  type LedgerToolSpecification,
   type PromptCatalogCapability,
 } from "../src/index.js";
 
@@ -123,6 +129,55 @@ function decode<T>(result: { content: Array<{ type: string; text: string }> }): 
   }
   return JSON.parse(first.text) as T;
 }
+
+it("create_item defaults an omitted milestone only for ideas", async () => {
+  const store = await buildStore();
+  try {
+    const tools = createLedgerMcpTools(store);
+    const createItem = tools.find((candidate) => candidate.name === "create_item");
+    if (createItem === undefined) throw new Error("create_item tool not found");
+    const inputSchema = ledgerToolInputJsonSchema(
+      createItem as LedgerToolSpecification,
+    ) as Parameters<typeof validateAgainstSchema>[0];
+    const ideaInput = {
+      ledger_id: IDEAS_LEDGER,
+      status: "open",
+      fields: { title: "Ambient by omission" },
+    };
+
+    expect(validateAgainstSchema(inputSchema, ideaInput).ok).toBe(true);
+    expect(
+      validateAgainstSchema(inputSchema, {
+        ledger_id: "tasks",
+        status: "planned",
+        fields: { headline: "Missing milestone" },
+      }).ok,
+    ).toBe(false);
+    expect(createItem.description).toContain("ideas: omission uses M-AMBIENT");
+
+    const created = decode<{ item: { id: string; milestoneId: string } }>(
+      await callTool(tools, "create_item", ideaInput),
+    );
+    expect(created.item.milestoneId).toBe(MILESTONES_AMBIENT_ID);
+
+    await createRoot(tools, { id: "M900", title: "Work milestone" });
+    await expect(
+      callTool(tools, "create_item", {
+        ...ideaInput,
+        milestone_id: "M900",
+      }),
+    ).rejects.toBeInstanceOf(BootstrapViolationError);
+    await expect(
+      callTool(tools, "create_item", {
+        ledger_id: "tasks",
+        status: "planned",
+        fields: { headline: "Missing milestone" },
+      }),
+    ).rejects.toThrow("milestone_id is required outside the milestones ledger");
+  } finally {
+    await store.dispose();
+  }
+});
 
 function expectedItemAcknowledgement(item: Item): Record<string, unknown> {
   const fields: Record<string, string[]> = {};

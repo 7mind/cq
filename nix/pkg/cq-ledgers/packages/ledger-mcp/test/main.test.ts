@@ -27,7 +27,9 @@ import { serializePromptSurfaceManifest } from "@cq/config";
 import {
   createLedgerStore,
   CANONICAL_LEDGERS,
+  IDEAS_LEDGER,
   LEDGER_TOOL_NAMES,
+  MILESTONES_AMBIENT_ID,
   NON_DISPATCH_LEDGER_TOOL_NAMES,
 } from "@cq/ledger";
 import { buildServer, projectInstructionLine } from "../src/main.js";
@@ -307,6 +309,7 @@ describe("ledger-mcp stdio binary", () => {
   });
 
   it("supports ack, compact, and full round-trips that persist", async () => {
+    let ideaId = "";
     await withClient(async (client) => {
       const ms = decode<{ item: { id: string } }>(
         await client.callTool({
@@ -320,6 +323,19 @@ describe("ledger-mcp stdio binary", () => {
         }),
       );
       expect(ms.item.id).toBe("M9");
+
+      const idea = decode<{ item: { id: string; milestoneId: string } }>(
+        await client.callTool({
+          name: "create_item",
+          arguments: {
+            ledger_id: IDEAS_LEDGER,
+            status: "open",
+            fields: { title: "Ambient idea over stdio" },
+          },
+        }),
+      );
+      ideaId = idea.item.id;
+      expect(idea.item.milestoneId).toBe(MILESTONES_AMBIENT_ID);
 
       const created = decode<{
         item: { id: string; status: string; fields: Record<string, never> };
@@ -393,6 +409,7 @@ describe("ledger-mcp stdio binary", () => {
     const { store: verify } = await createLedgerStore(tmpRoot);
     const view = verify.fetchMilestone("M9");
     expect(view.resolved.title).toBe("ledger-mcp round-trip");
+    expect(verify.fetchItem(IDEAS_LEDGER, ideaId).milestoneId).toBe(MILESTONES_AMBIENT_ID);
     await verify.dispose();
   });
 });

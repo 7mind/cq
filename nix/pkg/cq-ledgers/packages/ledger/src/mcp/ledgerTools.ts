@@ -48,7 +48,7 @@ import type {
   UpdateItemPatch,
   UpdateMilestoneItemPatch,
 } from "../store/LedgerStore.js";
-import { MILESTONES_LEDGER } from "../constants.js";
+import { IDEAS_LEDGER, MILESTONES_AMBIENT_ID, MILESTONES_LEDGER } from "../constants.js";
 import type { FieldValue, LedgerSchema } from "../types.js";
 import { LedgerError } from "../types.js";
 import { paginate } from "../projection.js";
@@ -227,7 +227,14 @@ export function ledgerToolInputJsonSchema(
             fields: { required: ["title"] },
           },
         },
-        else: { required: ["milestone_id"] },
+        else: {
+          if: {
+            properties: { ledger_id: { const: IDEAS_LEDGER } },
+            required: ["ledger_id"],
+          },
+          then: {},
+          else: { required: ["milestone_id"] },
+        },
       },
     ];
   } else if (specification.name === "update_item" || specification.name.endsWith("_update_item")) {
@@ -589,7 +596,7 @@ export function createLedgerMcpToolSpecifications(
 
   const createItem = tool(
     "create_item",
-    "Create an item. For ledger_id=milestones, omit milestone_id, require status=open and fields.title, allocate the root M<n> counter, validate dependency-DAG fields, and return the generic item acknowledgement. Every other ledger requires an active nonterminal milestone_id. All writes validate the ledger schema, canonicalize recognized references, reject newly added dangling known-ledger refs, and record optional author/session provenance.",
+    "milestones: no milestone_id, status=open, title required; allocates M<n>; validates dependency DAG. ideas: omission uses M-AMBIENT. others: active nonterminal milestone_id required. Validates schema, canonicalizes refs, rejects new dangling known refs; records provenance.",
     {
       ledger_id: z.string(),
       milestone_id: safeIdSchema.optional(),
@@ -624,7 +631,10 @@ export function createLedgerMcpToolSpecifications(
         const milestone = await store.createMilestone(init);
         return wireResult(produceWireDto({ item: projectItemMutationAckDto(milestone) }));
       }
-      if (args.milestone_id === undefined) {
+      const milestoneId =
+        args.milestone_id ??
+        (args.ledger_id === IDEAS_LEDGER ? MILESTONES_AMBIENT_ID : undefined);
+      if (milestoneId === undefined) {
         throw new LedgerError("milestone_id is required outside the milestones ledger");
       }
       const init: CreateItemInit = {
@@ -634,7 +644,7 @@ export function createLedgerMcpToolSpecifications(
       if (args.id !== undefined) init.id = args.id;
       if (args.author !== undefined) init.author = args.author;
       if (args.session !== undefined) init.session = args.session;
-      const item = await store.createItem(args.ledger_id, args.milestone_id, init);
+      const item = await store.createItem(args.ledger_id, milestoneId, init);
       return wireResult(produceWireDto({ item: projectItemMutationAckDto(item) }));
     },
   );

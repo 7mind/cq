@@ -1329,7 +1329,14 @@ describe("stdio/direct ledger tool differential contract", () => {
                 fields: { required: ["title"] },
               },
             },
-            else: { required: ["milestone_id"] },
+            else: {
+              if: {
+                properties: { ledger_id: { const: "ideas" } },
+                required: ["ledger_id"],
+              },
+              then: {},
+              else: { required: ["milestone_id"] },
+            },
           },
         ],
       });
