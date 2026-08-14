@@ -83,7 +83,6 @@ describe("ledger-mcp Streamable HTTP", () => {
     await withClient(async (client) => {
       const instr = client.getInstructions() ?? "";
       expect(instr).toBe(EXPECTED_HTTP_INSTRUCTIONS);
-      expect(instr).toContain("snapshot/derive_predicates: CQ state.");
     });
   });
 
