@@ -27,6 +27,8 @@ import {
   resolveAgentTier,
   tierModel,
   resolveAgentModel,
+  resolveConfigHome,
+  resolveGlobalConfigPath,
   parseConfig,
   parseReviewerToken,
   reviewerTokensEqual,
@@ -56,6 +58,31 @@ afterEach(() => {
 function writeCqToml(contents: string): void {
   writeFileSync(path.join(dir, "cq.toml"), contents, "utf8");
 }
+
+describe("global config path resolution [BA]", () => {
+  it("uses an absolute XDG_CONFIG_HOME", () => {
+    const environment = { XDG_CONFIG_HOME: "/config-root" };
+
+    expect(resolveConfigHome(environment, "/home/tester")).toBe("/config-root/cq");
+    expect(resolveGlobalConfigPath(environment, "/home/tester")).toBe(
+      "/config-root/cq/cq.toml",
+    );
+  });
+
+  it("falls back for unset, empty, and relative XDG_CONFIG_HOME", () => {
+    const expectedHome = "/home/tester/.config/cq";
+    const expectedFile = "/home/tester/.config/cq/cq.toml";
+
+    for (const environment of [
+      {},
+      { XDG_CONFIG_HOME: "" },
+      { XDG_CONFIG_HOME: "relative/config" },
+    ]) {
+      expect(resolveConfigHome(environment, "/home/tester")).toBe(expectedHome);
+      expect(resolveGlobalConfigPath(environment, "/home/tester")).toBe(expectedFile);
+    }
+  });
+});
 
 const VALID_TOML = `
 reviewers = ["codex", "grok", "opus"]

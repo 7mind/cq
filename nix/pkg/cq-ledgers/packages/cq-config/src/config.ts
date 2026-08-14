@@ -62,6 +62,30 @@ import {
 /** The cq.toml filename, resolved relative to a repo root. */
 export const CQ_CONFIG_FILENAME = "cq.toml";
 
+/** Resolve the XDG directory containing cq's global configuration. */
+export function resolveConfigHome(
+  environment: Readonly<Record<string, string | undefined>>,
+  homeDirectory: string,
+): string {
+  const xdgConfigHome = environment["XDG_CONFIG_HOME"];
+  const baseDirectory =
+    xdgConfigHome !== undefined &&
+    xdgConfigHome.trim() !== "" &&
+    path.isAbsolute(xdgConfigHome)
+      ? xdgConfigHome
+      : path.join(homeDirectory, ".config");
+
+  return path.join(baseDirectory, "cq");
+}
+
+/** Resolve the global cq.toml path without accessing the filesystem. */
+export function resolveGlobalConfigPath(
+  environment: Readonly<Record<string, string | undefined>>,
+  homeDirectory: string,
+): string {
+  return path.join(resolveConfigHome(environment, homeDirectory), CQ_CONFIG_FILENAME);
+}
+
 /**
  * D153: built-in single-reviewer fallback panel. Grammar-valid and dispatchable
  * (`claude` harness, bare model, no effort). Served by `get_reviewers` when
