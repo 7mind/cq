@@ -228,6 +228,16 @@ assert_grant_after "CLI read-only grant follows the declarative read-write grant
 assert_grant_after "CLI read-write grant follows the CLI read-only grant that preceded it" \
   rw "$CLI_RW" ro "$CLI_RO"
 
+# Declarative grants outrank the profile-specific re-grants they may overlap.
+PROFILE_REGRANT_LINE="$(printf '%s\n' "$RENDERED_PATHS" \
+  | grep -n -F -- '(subpath (string-append (param "HOME_DIR") "/.config/yolo/foo/pi")))' | tail -1 | cut -d: -f1)"
+DECL_RO_LINE="$(grant_line ro "$DECL_RO")"
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -z "$PROFILE_REGRANT_LINE" || -z "$DECL_RO_LINE" || "$DECL_RO_LINE" -le "$PROFILE_REGRANT_LINE" ]]; then
+  echo "FAIL: declarative grant follows the active-profile re-grant -- expected declarative ($DECL_RO_LINE) after profile ($PROFILE_REGRANT_LINE)"
+  FAILURES=$((FAILURES + 1))
+fi
+
 # Named profiles override any upstream grants to native agent homes.
 assert_contains "named: denies real ~/.claude" "$RENDERED" '(subpath (string-append (param "HOME_DIR") "/.claude"))'
 assert_contains "named: denies real ~/.claude.json" "$RENDERED" '(literal (string-append (param "HOME_DIR") "/.claude.json"))'

@@ -69,8 +69,9 @@ ENV_ARGS=()
 # Unlike the Nix-configured YOLO_EXTRA_{RO,RW}_PATHS these are per-invocation;
 # both funnel through the same llm-sandbox `--ro`/`--rw` handling, which binds
 # each path at its own location (src == dst) and silently skips it if missing.
-# They are appended after every built-in bind (BASE_ARGS + EXTRA_ARGS) because
-# bwrap applies mounts in argv order: the last bind covering a path wins.
+# They are appended last — after every built-in bind (BASE_ARGS + the
+# profile-specific EXTRA_ARGS) and after the declarative EXTRA_PATH_ARGS —
+# because bwrap applies mounts in argv order: the last bind covering a path wins.
 ADHOC_BIND_ARGS=()
 
 print_help() {
@@ -395,7 +396,9 @@ fi
 
 # Per-host extra bind paths (configured via Nix). The underlying llm-sandbox
 # wrapper already filters non-existent paths, so a host that doesn't have
-# the path simply contributes nothing.
+# the path simply contributes nothing. Appended after every built-in bind
+# (BASE_ARGS + the profile-specific EXTRA_ARGS) but before the ad-hoc CLI
+# binds, so a declarative extra overrides a built-in and the CLI overrides both.
 EXTRA_PATH_ARGS=()
 if [[ -n "${YOLO_EXTRA_RO_PATHS:-}" ]]; then
   while IFS= read -r _p; do
@@ -651,7 +654,6 @@ BASE_ARGS=(
   "${DEV_ARGS[@]}"
   "${AUDIO_ARGS[@]}"
   "${DISPLAY_ARGS[@]}"
-  "${EXTRA_PATH_ARGS[@]}"
   "${SECRET_FILE_ARGS[@]}"
   "${SANDBOX_HOOK_ARGS[@]}"
   "${SSH_CONFIG_ARGS[@]}"
@@ -991,12 +993,14 @@ if [[ -n "$SECRET_TMPFILE" || -n "$SANDBOX_HOOKS_TMPFILE" || -n "$SSH_CONFIG_TMP
     "$_yolo_sandbox" \
       "${BASE_ARGS[@]}" \
       "${EXTRA_ARGS[@]}" \
+      "${EXTRA_PATH_ARGS[@]}" \
       "${ADHOC_BIND_ARGS[@]}" \
       -- "$_yolo_entrypoint" "${EXEC_CMD[@]}" <&0 &
   else
     "$_yolo_sandbox" \
       "${BASE_ARGS[@]}" \
       "${EXTRA_ARGS[@]}" \
+      "${EXTRA_PATH_ARGS[@]}" \
       "${ADHOC_BIND_ARGS[@]}" \
       -- "${EXEC_CMD[@]}" <&0 &
   fi
@@ -1008,5 +1012,6 @@ fi
 exec "$_yolo_sandbox" \
   "${BASE_ARGS[@]}" \
   "${EXTRA_ARGS[@]}" \
+  "${EXTRA_PATH_ARGS[@]}" \
   "${ADHOC_BIND_ARGS[@]}" \
   -- "${EXEC_CMD[@]}"

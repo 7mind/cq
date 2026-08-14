@@ -334,6 +334,16 @@ assert_after "CLI --ro follows the profile pi binds" "$OUT" \
 assert_after "CLI --rw follows the CLI --ro that preceded it" "$OUT" "$CLI_RW" "$CLI_RO"
 assert_after "the sandbox command separator still follows the CLI binds" "$OUT" "--" "$CLI_RW"
 
+# Declarative (home-manager) extras sit between the two: after every built-in
+# bind including the profile-specific ones, but still under the CLI binds.
+assert_after "declarative --ro follows the built-in agents-registry bind" "$OUT" \
+  "$DECL_RO" "$FAKE_HOME/.agents"
+assert_after "declarative --ro follows the profile claude re-shares" "$OUT" \
+  "$DECL_RO" "$FAKE_HOME/.claude/settings.json,$FAKE_HOME/.claude/settings.json"
+assert_after "declarative --rw follows the profile pi binds" "$OUT" \
+  "$DECL_RW" "$FAKE_HOME/.pi/agent/mcp.json,$FAKE_HOME/.pi/agent/mcp.json"
+assert_after "CLI --ro follows the declarative extras" "$OUT" "$CLI_RO" "$DECL_RW"
+
 if [[ $FAILURES -ne 0 ]]; then
   echo "$FAILURES of $TESTS_RUN tests failed"
   exit 1
