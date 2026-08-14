@@ -339,6 +339,48 @@ describe("single-flight", () => {
 // ---------------------------------------------------------------------------
 
 describe("failure path", () => {
+  test("[BA] stale hasUI cannot escape refresh and shutdown prevents poll reuse", async () => {
+    const statusCalls: StatusCall[] = [];
+    const errors: Array<"counts" | "paint" | "terminal"> = [];
+    const api = makeFakeApi();
+    const timer = makeFakeTimer();
+    let countCalls = 0;
+    const staleCtx: StatusContext = {
+      cwd: "/fake/repo",
+      get hasUI(): boolean {
+        throw new Error(
+          "This extension ctx is stale after session replacement or reload. Do not use a captured ctx.",
+        );
+      },
+      ui: {
+        setStatus(key: string, text: string | undefined): void {
+          statusCalls.push({ key, text });
+        },
+      },
+    };
+    registerLedgerStatus(api, {
+      runCounts: async () => {
+        countCalls += 1;
+        return FULL_QTD_STDOUT;
+      },
+      onError: (_error, phase) => errors.push(phase),
+      ...timer.opts,
+    });
+
+    expect(() => api.fire("turn_end", staleCtx)).not.toThrow();
+    await flush();
+    expect(countCalls).toBe(1);
+    expect(errors).toEqual([]);
+    expect(statusCalls).toEqual([]);
+
+    api.fire("session_shutdown", staleCtx);
+    timer.tick();
+    await flush();
+    expect(timer.cleared()).toBe(true);
+    expect(countCalls).toBe(1);
+    expect(statusCalls).toEqual([]);
+  });
+
   test("a rejected runCounts paints the short marker and does not throw", async () => {
     const statusCalls: StatusCall[] = [];
     const api = makeFakeApi();
