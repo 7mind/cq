@@ -41,6 +41,35 @@ import {
 const REPO_ROOT = path.resolve(import.meta.dir, "../../../../../../");
 const EXAMPLE_PATH = path.join(REPO_ROOT, "cq.toml.example");
 
+describe("cq.toml.example — global configuration contract", () => {
+  it("documents resolution, merge precedence, local-only tables, and sandbox visibility", () => {
+    const contents = readFileSync(EXAMPLE_PATH, "utf8");
+    const normalized = contents
+      .split("\n")
+      .map((line) => line.replace(/^# ?/, ""))
+      .join(" ")
+      .replace(/\s+/g, " ");
+    for (const fact of [
+      "GLOBAL CONFIG",
+      "$XDG_CONFIG_HOME/cq/cq.toml",
+      "non-empty absolute path",
+      "~/.config/cq/cq.toml",
+      "cq init --global",
+      "[aliases], [tiers], [agent_tiers], and [agent_efforts] merge per key",
+      "reviewers and planners replace their global arrays wholesale",
+      "[webui] is replaced wholesale",
+      "[harness.<name>] merges per field",
+      "[ledger] and [project] are LOCAL-ONLY whole tables",
+      "Project identity and storage selection belong to one repository",
+      "global backend edit could silently relocate every repository's store",
+      "partial [ledger] merges could compose an invalid backend configuration",
+      "read-only inside the yolo sandbox",
+    ]) {
+      expect(normalized).toContain(fact);
+    }
+  });
+});
+
 // T274: Regression guard — the example file must parse cleanly with no CqConfigError.
 describe("cq.toml.example — T274 regression guard: no CqConfigError", () => {
   it("parseConfig on cq.toml.example does not throw CqConfigError", () => {

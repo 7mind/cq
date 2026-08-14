@@ -4,6 +4,25 @@
 # cq review flows. Absence of cq.toml means only the native Claude reviewer
 # (feature off).
 #
+# GLOBAL CONFIG
+#
+# The global file resolves to $XDG_CONFIG_HOME/cq/cq.toml when
+# XDG_CONFIG_HOME is a non-empty absolute path; otherwise it resolves to
+# ~/.config/cq/cq.toml. Run `cq init --global` to scaffold it. The repository's
+# cq.toml takes precedence over the global file section by section:
+#
+#   - [aliases], [tiers], [agent_tiers], and [agent_efforts] merge per key.
+#   - reviewers and planners replace their global arrays wholesale.
+#   - [webui] is replaced wholesale when the repository defines that table.
+#   - [harness.<name>] merges per field; each local field replaces its global field.
+#
+# [ledger] and [project] are LOCAL-ONLY whole tables: both are ignored in full
+# when they appear in the global file. Project identity and storage selection
+# belong to one repository. A global backend edit could silently relocate every
+# repository's store, while partial [ledger] merges could compose an invalid
+# backend configuration. The resolved global path is visible read-only inside
+# the yolo sandbox.
+#
 # Schema:
 #   [aliases]        — table mapping alias names to reviewer tokens
 #   reviewers = [...] — top-level array of alias names to activate as reviewers
