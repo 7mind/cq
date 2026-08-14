@@ -5,7 +5,8 @@
   "description": "Pure auto-driver decision logic (standalone, NOT part of the cq-ledgers bun workspace)",
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
