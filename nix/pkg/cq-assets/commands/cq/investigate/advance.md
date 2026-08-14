@@ -68,8 +68,8 @@ Dispatch one `investigate-explorer` per selected node. Independent roots may run
 in parallel; descendants of one branch run serially because later framing
 depends on earlier evidence.
 
-The input must contain the hypothesis id and statement, defect/branch context,
-known sibling or parent findings, and focused leads. The child returns numbered
+The input must contain the canonical `defectId`, hypothesis id and statement,
+defect/branch context, known sibling or parent findings, and focused leads. The child returns numbered
 evidence with a precise citation, a three-to-five-line verbatim excerpt, a
 relevance statement, and a non-binding lean.
 

@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createStrictInMemoryWorksetEffectAdmissionProvider } from "@cq/process-control";
 import {
   CODEX_READ_ONLY_SANDBOX_TMPDIR,
   CodexOperationalAbstentionError,
@@ -40,6 +41,13 @@ const BOUNDARY_TEST_TIMEOUT_MS = 60_000;
 // The healthy fixture runs the real node probe against the host /dev/shm;
 // only Linux provides it.
 const DEV_SHM_AVAILABLE = existsSync("/dev/shm");
+
+function worksetEffect() {
+  return {
+    provider: createStrictInMemoryWorksetEffectAdmissionProvider(),
+    targetRef: "tasks:T1983",
+  } as const;
+}
 
 interface SandboxFixture {
   readonly root: string;
@@ -266,7 +274,10 @@ describe("T1999 Codex sandbox pipe pre-flight (D266)", () => {
       const fixture = await createSandboxFixture("healthy");
       try {
         const handle = await withFixtureEnvironment(fixture, () =>
-          executeCodexRoleBoundary(reviewerPlan(fixture, "implement-reviewer", "read-only")),
+          executeCodexRoleBoundary(
+            reviewerPlan(fixture, "implement-reviewer", "read-only"),
+            worksetEffect(),
+          ),
         );
         expect(handle).toEqual(HANDLE);
         const argvs = await loggedArgvs(fixture);
@@ -295,7 +306,10 @@ describe("T1999 Codex sandbox pipe pre-flight (D266)", () => {
         let thrown: unknown;
         try {
           await withFixtureEnvironment(fixture, () =>
-            executeCodexRoleBoundary(reviewerPlan(fixture, "implement-reviewer", "read-only")),
+            executeCodexRoleBoundary(
+              reviewerPlan(fixture, "implement-reviewer", "read-only"),
+              worksetEffect(),
+            ),
           );
         } catch (error) {
           thrown = error;
@@ -323,7 +337,10 @@ describe("T1999 Codex sandbox pipe pre-flight (D266)", () => {
       const fixture = await createSandboxFixture("broken");
       try {
         const handle = await withFixtureEnvironment(fixture, () =>
-          executeCodexRoleBoundary(reviewerPlan(fixture, "plan-advance", "read-only")),
+          executeCodexRoleBoundary(
+            reviewerPlan(fixture, "plan-advance", "read-only"),
+            worksetEffect(),
+          ),
         );
         expect(handle).toEqual(HANDLE);
         const argvs = await loggedArgvs(fixture);
@@ -343,7 +360,10 @@ describe("T1999 Codex sandbox pipe pre-flight (D266)", () => {
       const fixture = await createSandboxFixture("broken");
       try {
         const handle = await withFixtureEnvironment(fixture, () =>
-          executeCodexRoleBoundary(reviewerPlan(fixture, "implement-reviewer", "danger-full-access")),
+          executeCodexRoleBoundary(
+            reviewerPlan(fixture, "implement-reviewer", "danger-full-access"),
+            worksetEffect(),
+          ),
         );
         expect(handle).toEqual(HANDLE);
         const argvs = await loggedArgvs(fixture);

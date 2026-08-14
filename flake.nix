@@ -780,9 +780,10 @@ EOF
             roleCwd=$TMPDIR/role-cwd
             ledgerCwd=$TMPDIR/ledger-cwd
             mkdir -p "$roleCwd" "$ledgerCwd"
+            printf '%s\n' '[ledger]' 'backend = "fs"' > "$ledgerCwd/cq.toml"
             ${pkgs.git}/bin/git init -q "$roleCwd"
             roleStdout=$TMPDIR/cq-codex-role.stdout
-            if ! printf '%s\n' '{"roleId":"implement-worker","handle":{"attestationId":"att_packaged_role_acknowledgement","generation":7},"inputCapability":{"scope":"fetch-input","token":"cq_input_packaged_role_acknowledgement"},"resultCapability":{"scope":"store-result","token":"cq_result_packaged_role_acknowledgement"},"gitChangeCapability":{"scope":"git-change","token":"cq_git_packaged_role_acknowledgement"},"cwd":"'"$roleCwd"'","ledgerCwd":"'"$ledgerCwd"'","model":"test-model","reasoningEffort":"high","sandboxMode":"read-only","timeoutMs":30000}' | \
+            if ! printf '%s\n' '{"roleId":"implement-worker","handle":{"attestationId":"att_packaged_role_acknowledgement","generation":7},"inputCapability":{"scope":"fetch-input","token":"cq_input_packaged_role_acknowledgement"},"resultCapability":{"scope":"store-result","token":"cq_result_packaged_role_acknowledgement"},"gitChangeCapability":{"scope":"git-change","token":"cq_git_packaged_role_acknowledgement"},"effectTargetRef":"tasks:T1983","cwd":"'"$roleCwd"'","ledgerCwd":"'"$ledgerCwd"'","model":"test-model","reasoningEffort":"high","sandboxMode":"read-only","timeoutMs":30000}' | \
               HOME=$TMPDIR \
               CQ_CODEX_EXECUTABLE="$fakeCodex" \
               $out/bin/cq-codex-role > "$roleStdout"; then
@@ -814,7 +815,7 @@ EOF
                   "$TMPDIR/cq-codex-role.typescript" \
                   < "$rolePtyInput" > "$rolePtyStdout" 2> "$rolePtyStderr" &
               rolePtyPid=$!
-              printf '%s\n' '{"roleId":"implement-worker","handle":{"attestationId":"att_packaged_role_acknowledgement","generation":7},"inputCapability":{"scope":"fetch-input","token":"cq_input_packaged_role_acknowledgement"},"resultCapability":{"scope":"store-result","token":"cq_result_packaged_role_acknowledgement"},"gitChangeCapability":{"scope":"git-change","token":"cq_git_packaged_role_acknowledgement"},"cwd":"'"$roleCwd"'","ledgerCwd":"'"$ledgerCwd"'","model":"test-model","reasoningEffort":"high","sandboxMode":"read-only","timeoutMs":30000}' >&9
+              printf '%s\n' '{"roleId":"implement-worker","handle":{"attestationId":"att_packaged_role_acknowledgement","generation":7},"inputCapability":{"scope":"fetch-input","token":"cq_input_packaged_role_acknowledgement"},"resultCapability":{"scope":"store-result","token":"cq_result_packaged_role_acknowledgement"},"gitChangeCapability":{"scope":"git-change","token":"cq_git_packaged_role_acknowledgement"},"effectTargetRef":"tasks:T1983","cwd":"'"$roleCwd"'","ledgerCwd":"'"$ledgerCwd"'","model":"test-model","reasoningEffort":"high","sandboxMode":"read-only","timeoutMs":30000}' >&9
               set +e
               wait "$rolePtyPid"
               rolePtyStatus=$?

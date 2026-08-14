@@ -2242,5 +2242,8 @@ describe("D122: Pi executes nested cq commands through the prompt catalog", () =
     for (const mapping of mappings) expect(text).toContain(mapping);
     expect(text).toContain("returned `promptTemplate` INLINE");
     expect(text).toContain("Do NOT infer or re-implement the nested command");
+    expect(text).toContain(
+      'dispatch_agent({ agent: "<name>", task: "<the task>", targetRef: "<canonical-ref>" })',
+    );
   });
 });

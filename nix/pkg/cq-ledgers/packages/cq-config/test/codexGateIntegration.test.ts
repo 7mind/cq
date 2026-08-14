@@ -25,6 +25,9 @@ const HANDLE = {
 const DISPATCH_SCRIPT = fileURLToPath(
   new URL("../scripts/codex-role-dispatch.ts", import.meta.url),
 );
+const CQ_CLI_SOURCE = fileURLToPath(
+  new URL("../../cq-cli/src/main.ts", import.meta.url),
+);
 const INSTALLED_DISPATCH = process.env["CQ_TEST_CODEX_ROLE_EXECUTABLE"];
 const GIT_EXECUTABLE = process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git";
 const FAKE_CODEX_SOURCE = fileURLToPath(new URL("./codexLifecycleFake.ts", import.meta.url));
@@ -71,6 +74,7 @@ interface LifecycleFixture {
   readonly worktree: string;
   readonly promptRoot: string;
   readonly fakeCodex: string;
+  readonly ledgerCommand: string;
   readonly codexReady: string;
   readonly codexGroup: string;
   readonly codexSignals: string;
@@ -90,7 +94,9 @@ async function createLifecycleFixture(): Promise<LifecycleFixture> {
   const worktree = join(root, "worktree");
   const promptRoot = join(root, "prompts");
   const fakeCodex = join(root, "fake-codex");
+  const ledgerCommand = join(root, "cq");
   await mkdir(worktree);
+  await writeFile(join(worktree, "cq.toml"), '[ledger]\nbackend = "fs"\n');
   const git = spawnSync(GIT_EXECUTABLE, ["init", "--quiet", worktree], {
     encoding: "utf8",
   });
@@ -102,11 +108,17 @@ async function createLifecycleFixture(): Promise<LifecycleFixture> {
     `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(FAKE_CODEX_SOURCE)}\n`,
   );
   await chmod(fakeCodex, 0o700);
+  await writeFile(
+    ledgerCommand,
+    `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(CQ_CLI_SOURCE)} "$@"\n`,
+  );
+  await chmod(ledgerCommand, 0o700);
   return {
     root,
     worktree,
     promptRoot,
     fakeCodex,
+    ledgerCommand,
     codexReady: join(root, "codex.ready"),
     codexGroup: join(root, "codex.group.json"),
     codexSignals: join(root, "codex.signals"),
@@ -132,6 +144,7 @@ function invocation(fixture: LifecycleFixture, timeoutMs: number): string {
       scope: "git-change",
       token: "cq_git_0123456789abcdefghijklmnopqrstuvwxyz",
     },
+    effectTargetRef: "tasks:T1983",
     cwd: fixture.worktree,
     ledgerCwd: fixture.worktree,
     model: "fake-model",
@@ -156,7 +169,7 @@ function launchDispatch(
       ...process.env,
       CQ_PROMPT_ROOT: fixture.promptRoot,
       CQ_CODEX_EXECUTABLE: fixture.fakeCodex,
-      CQ_CODEX_LEDGER_COMMAND: "cq-not-invoked-by-fake",
+      CQ_CODEX_LEDGER_COMMAND: fixture.ledgerCommand,
       CQ_TEST_CODEX_MODE: mode,
       CQ_TEST_CODEX_READY: fixture.codexReady,
       CQ_TEST_CODEX_GROUP: fixture.codexGroup,

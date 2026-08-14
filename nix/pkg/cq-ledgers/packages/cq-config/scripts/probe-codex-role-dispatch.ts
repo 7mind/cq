@@ -13,6 +13,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { createProcessWorksetEffectAdmissionProvider } from "@cq/process-control";
 import {
   createCodexRoleBoundaryPlan,
   executeCodexRoleBoundary,
@@ -886,7 +887,19 @@ async function main(): Promise<void> {
           CQ_HARNESS: "codex",
           [MODEL_API_KEY_ENV]: "t1493-local-model-key",
         },
-        () => executeCodexRoleBoundary(boundaryPlan),
+        () =>
+          executeCodexRoleBoundary(boundaryPlan, {
+            provider: createProcessWorksetEffectAdmissionProvider({
+              command: cqExecutable,
+              args: ["__workset-effect-provider", "--cwd", parentProject],
+              cwd: parentProject,
+              env: {
+                ...process.env,
+                XDG_STATE_HOME: xdgStateHome,
+              },
+            }),
+            targetRef: "goals:G1493",
+          }),
       );
     } catch (error: unknown) {
       boundaryFailure = error instanceof Error ? error : new Error(String(error));

@@ -2,6 +2,7 @@ import {
   settleProcessGroups,
   type ProcessGroupRegistration,
   type SettleProcessGroupsOptions,
+  type SettleProcessGroupsResult,
 } from "./processGroup.ts";
 import {
   launchRegisteredProcessGroup,
@@ -34,6 +35,8 @@ export interface LaunchWorksetEffectOptions<TProcess, TExit, TStdio> {
   readonly launchBootstrap: (
     specification: RegisteredLaunchBootstrapSpecification<TStdio>,
   ) => RegisteredLaunchBootstrap<TProcess, TExit>;
+  /** Settle dispatcher-owned nested groups before the registered root releases admission. */
+  readonly settleRegisteredDescendants?: () => Promise<void>;
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
 }
@@ -146,7 +149,28 @@ export class WorksetEffectBroker {
           );
         }
         session.beginTermination(reason);
-        const result = await settleProcessGroups([registration], this.settlement);
+        let descendantError: unknown;
+        try {
+          await options.settleRegisteredDescendants?.();
+        } catch (error) {
+          descendantError = error;
+        }
+        let result: SettleProcessGroupsResult | undefined;
+        let rootError: unknown;
+        try {
+          result = await settleProcessGroups([registration], this.settlement);
+        } catch (error) {
+          rootError = error;
+        }
+        if (descendantError !== undefined || rootError !== undefined) {
+          throw new AggregateError(
+            [descendantError, rootError].filter((error) => error !== undefined),
+            "@cq/process-control: workset effect could not settle every registered process group",
+          );
+        }
+        if (result === undefined) {
+          throw new Error("@cq/process-control: workset effect root settlement returned no result");
+        }
         if (result.survivors.length > 0) {
           throw new Error(
             `@cq/process-control: workset effect process group did not settle: ${result.survivors.join(", ")}`,

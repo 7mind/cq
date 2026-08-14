@@ -9,7 +9,7 @@ description: Execute one requested investigative probe in an isolated worktree a
 ## Catalogue
 ```yaml
 inputs:
-  - "hypothesis, exact probe request, branch context, worktree, and base commit"
+  - "owning defect id, hypothesis, exact probe request, branch context, worktree, and base commit"
 outputs:
   - "structured evidence result"
 ioSchema:

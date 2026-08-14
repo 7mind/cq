@@ -9,7 +9,7 @@ description: Read-only researcher that gathers cited repository and external evi
 ## Catalogue
 ```yaml
 inputs:
-  - "hypothesis id, statement, research/branch context, and optional leads"
+  - "owning research id, hypothesis id, statement, research/branch context, and optional leads"
 outputs:
   - "structured evidence result"
 ioSchema:

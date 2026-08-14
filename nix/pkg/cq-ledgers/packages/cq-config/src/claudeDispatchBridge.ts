@@ -82,6 +82,10 @@ import { DISPATCH_HANDLE_SCHEMA } from "./compactDispatchProtocol.js";
 import type { JSONSchema } from "./promptCatalog.js";
 import { exposedLedgerToolsForRole } from "./roleToolProfiles.js";
 import { withoutWorksetCredentials } from "./worksetManagementCommand.js";
+import {
+  WorksetEffectBroker,
+  type WorksetEffectAdmissionProvider,
+} from "@cq/process-control";
 import type {
   AbortedDispatchResult,
   DispatchAbortReason,
@@ -394,6 +398,11 @@ export interface ClaudePrintLaunchOptions {
   /** Generated role instructions selected by `envelope.subagent_type`. */
   readonly rolePrompt: string;
   readonly storeServer: ClaudePrintStoreServer;
+  readonly worksetEffect: {
+    readonly provider: WorksetEffectAdmissionProvider;
+    readonly targetRef: string;
+    readonly signal?: AbortSignal;
+  };
 }
 
 function boundClaudePrintRole(context: ClaudeNativeLaunchContext, rolePrompt: string): string {
@@ -610,22 +619,8 @@ function claudePrintLaunchReport(
 export function launchClaudePrint(
   context: ClaudeNativeLaunchContext,
   options: ClaudePrintLaunchOptions,
-): ClaudeNativeLaunchReport {
-  const invocation = claudePrintInvocation(context, options);
-  const processResult = Bun.spawnSync([...invocation.argv], {
-    cwd: options.cwd,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: context.childWindowMs,
-    env: withoutWorksetCredentials(process.env),
-  });
-  return claudePrintLaunchReport(context, invocation.boundRoleId, {
-    stdout: processResult.stdout.toString(),
-    stderr: processResult.stderr.toString(),
-    exitCode: processResult.exitCode,
-    cancelled: Boolean(processResult.signalCode),
-  });
+): Promise<ClaudeNativeLaunchReport> {
+  return launchClaudePrintAsync(context, options);
 }
 
 /** Async form used when the scoped child endpoint is hosted by this process. */
@@ -634,34 +629,52 @@ export async function launchClaudePrintAsync(
   options: ClaudePrintLaunchOptions,
 ): Promise<ClaudeNativeLaunchReport> {
   const invocation = claudePrintInvocation(context, options);
-  const child = Bun.spawn([...invocation.argv], {
+  const broker = new WorksetEffectBroker({ provider: options.worksetEffect.provider });
+  const launched = await broker.launch({
+    kind: "child-dispatch",
+    targetRef: options.worksetEffect.targetRef,
+    argv: invocation.argv,
     cwd: options.cwd,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
     env: withoutWorksetCredentials(process.env),
+    stdio: { stdin: "ignore", stdout: "pipe", stderr: "pipe" } as const,
+    timeoutMs: context.childWindowMs,
+    ...(options.worksetEffect.signal === undefined
+      ? {}
+      : { signal: options.worksetEffect.signal }),
+    launchBootstrap: (specification) => {
+      const child = Bun.spawn([...specification.argv], {
+        cwd: specification.cwd,
+        detached: specification.detached,
+        env: specification.env,
+        stdin: specification.stdio.stdin,
+        stdout: specification.stdio.stdout,
+        stderr: specification.stdio.stderr,
+      });
+      const stdout = new Response(child.stdout).text();
+      const stderr = new Response(child.stderr).text();
+      return {
+        process: { child, stdout, stderr },
+        pid: child.pid,
+        exited: child.exited,
+        outputDrained: Promise.all([stdout, stderr]).then(() => undefined),
+        resultFromTargetOutcome: (outcome) => outcome.exitCode ?? 1,
+        terminate: (signal: NodeJS.Signals) => child.kill(signal),
+      };
+    },
   });
-  const stdout = new Response(child.stdout).text();
-  const stderr = new Response(child.stderr).text();
-  let timedOut = false;
-  let forceKill: ReturnType<typeof setTimeout> | undefined;
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    child.kill("SIGTERM");
-    forceKill = setTimeout(() => child.kill("SIGKILL"), 1_000);
-  }, context.childWindowMs);
+  const { stdout, stderr } = launched.process;
   const [exitCode, completedStdout, completedStderr] = await Promise.all([
-    child.exited,
+    launched.exited,
     stdout,
     stderr,
   ]);
-  clearTimeout(timeout);
-  if (forceKill !== undefined) clearTimeout(forceKill);
   return claudePrintLaunchReport(context, invocation.boundRoleId, {
     stdout: completedStdout,
     stderr: completedStderr,
     exitCode,
-    cancelled: timedOut || child.signalCode !== null,
+    cancelled:
+      launched.terminationReason === "timeout" ||
+      launched.terminationReason === "cancel",
   });
 }
 

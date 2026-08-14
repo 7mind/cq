@@ -21,7 +21,7 @@
  * up, so neither side is written down here.
  *
  * ORDERING IS THE POINT (defects:D186 suggestedFix step 1). On main today the
- * `{agent, task}` extension MATCHES the fragment, so this guard is GREEN on
+ * `{agent, task, targetRef}` extension MATCHES the fragment, so this guard is GREEN on
  * arrival. It turns RED the moment tasks:T693's ref-first extension merges
  * without the fragment migration — converting an invisible latent break into a
  * failing gate. It is deliberately additive to T979's text assertion and
@@ -652,7 +652,7 @@ describe("pi dispatch cross-artifact coupling (T1145 / defects:D186)", () => {
     expect(accepted.optional.every((name) => !advertised.params.includes(name))).toBe(true);
   });
 
-  it("detects real T693 {roleId,input} bytes diverging from the fragment's {agent,task}", () => {
+  it("detects real T693 {roleId,input} bytes diverging from the fragment's {agent,task,targetRef}", () => {
     const fragment = readFragment();
     const divergent = readT693ExtensionSources();
     const extensionFiles = divergent.files;
@@ -660,7 +660,7 @@ describe("pi dispatch cross-artifact coupling (T1145 / defects:D186)", () => {
     const accepted = extractAcceptedCallShape(extensionFiles);
     const divergence = compareCallShapes(advertised, accepted);
 
-    expect(divergence.advertisedButRefused).toEqual(["agent", "task"]);
+    expect(divergence.advertisedButRefused).toEqual(["agent", "task", "targetRef"]);
     expect(divergence.acceptedButUnadvertised).toEqual(["roleId", "input"]);
     expect(divergence.advertisedButOptional).toEqual([]);
 
@@ -686,7 +686,7 @@ describe("pi dispatch cross-artifact coupling (T1145 / defects:D186)", () => {
     expect(fallback.origin).toBe("committed-fixture");
     expect(fallback.sourceCommit).toBe("2b497f375df004bc289dcb5f99e36663bf52cd35");
     expect(compareCallShapes(advertised, accepted)).toEqual({
-      advertisedButRefused: ["agent", "task"],
+      advertisedButRefused: ["agent", "task", "targetRef"],
       acceptedButUnadvertised: ["roleId", "input"],
       advertisedButOptional: [],
     });
@@ -777,7 +777,7 @@ describe("pi dispatch cross-artifact coupling (T1145 / defects:D186)", () => {
         const childOutput = `${child.stdout}\n${child.stderr}`;
         expect(child.status, childOutput).toBe(0);
         expect(childOutput).toContain(
-          "detects real T693 {roleId,input} bytes diverging from the fragment's {agent,task}",
+          "detects real T693 {roleId,input} bytes diverging from the fragment's {agent,task,targetRef}",
         );
       } finally {
         rmSync(isolatedRoot, { recursive: true, force: true });

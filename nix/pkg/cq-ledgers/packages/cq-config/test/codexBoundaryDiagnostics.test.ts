@@ -19,6 +19,9 @@ const HANDLE = {
 const DISPATCH_SCRIPT = fileURLToPath(
   new URL("../scripts/codex-role-dispatch.ts", import.meta.url),
 );
+const CQ_CLI_SOURCE = fileURLToPath(
+  new URL("../../cq-cli/src/main.ts", import.meta.url),
+);
 const FINAL_NARRATIVE_SENTINEL = "FINAL_NARRATIVE_SENTINEL";
 const RESULT_BODY_SENTINEL = "RESULT_BODY_SENTINEL";
 const CAPABILITY_SENTINEL = "CAPABILITY_SENTINEL";
@@ -200,7 +203,9 @@ describe("T1628 Codex boundary diagnostics", () => {
       const worktree = join(root, "worktree");
       const promptRoot = join(root, "prompts");
       const fakeCodex = join(root, "fake-codex");
+      const ledgerCommand = join(root, "cq");
       await mkdir(worktree);
+      await writeFile(join(worktree, "cq.toml"), '[ledger]\nbackend = "fs"\n');
       await mkdir(join(promptRoot, "roles"), { recursive: true });
       const git = spawnSync("git", ["init", "--quiet", worktree], { encoding: "utf8" });
       if (git.status !== 0) throw new Error(`git init failed: ${git.stderr}`);
@@ -210,13 +215,18 @@ describe("T1628 Codex boundary diagnostics", () => {
         `#!/bin/sh\nprintf '%s\\n' 'null' '${completedAgentMessage(FINAL_NARRATIVE_SENTINEL)}'\n`,
       );
       await chmod(fakeCodex, 0o700);
+      await writeFile(
+        ledgerCommand,
+        `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(CQ_CLI_SOURCE)} "$@"\n`,
+      );
+      await chmod(ledgerCommand, 0o700);
       const child = Bun.spawn([process.execPath, "run", DISPATCH_SCRIPT], {
         cwd: worktree,
         env: {
           ...process.env,
           CQ_PROMPT_ROOT: promptRoot,
           CQ_CODEX_EXECUTABLE: fakeCodex,
-          CQ_CODEX_LEDGER_COMMAND: "cq-not-invoked-by-fake",
+          CQ_CODEX_LEDGER_COMMAND: ledgerCommand,
         },
         stdin: "pipe",
         stdout: "pipe",
@@ -227,6 +237,7 @@ describe("T1628 Codex boundary diagnostics", () => {
         handle: HANDLE,
         inputCapability: { scope: "fetch-input", token: CAPABILITY_SENTINEL },
         resultCapability: { scope: "store-result", token: CAPABILITY_SENTINEL },
+        effectTargetRef: "tasks:T1983",
         cwd: worktree,
         ledgerCwd: worktree,
         model: "fake-model",

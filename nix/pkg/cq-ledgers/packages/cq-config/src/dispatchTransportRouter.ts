@@ -1,3 +1,4 @@
+import type { WorksetEffectAdmissionProvider } from "@cq/process-control";
 import {
   AttestationBindingError,
   AttestationContractError,
@@ -6,6 +7,7 @@ import {
   confirmDispatchCompletion,
   fetchDispatchInput,
   fetchDispatchResult,
+  isAttestationTombstone,
   provenanceBindingOf,
   storeDispatchResult,
   type DispatchServiceDeps,
@@ -99,6 +101,8 @@ export interface DispatchAdapterChildPort {
 export interface DispatchAdapterLaunchContext {
   readonly route: DispatchTransportRoute;
   readonly prepared: DispatchPrepared;
+  /** Trusted canonical ledger ref derived from the persisted prepared input. */
+  readonly effectTargetRef: string;
   readonly child: DispatchAdapterChildPort;
 }
 
@@ -152,7 +156,7 @@ export interface ClaudeProcessAdapterBinding {
   readonly correlation: ClaudeChildCorrelation;
   readonly model: string;
   readonly now: () => string;
-  readonly launchOptions: ClaudePrintLaunchOptions;
+  readonly launchOptions: Omit<ClaudePrintLaunchOptions, "worksetEffect">;
 }
 
 export type ClaudeProcessAdapterBindingResolver = (
@@ -160,6 +164,7 @@ export type ClaudeProcessAdapterBindingResolver = (
 ) => ClaudeProcessAdapterBinding;
 
 export function createClaudeProcessDispatchAdapter(
+  effectAdmissionProvider: WorksetEffectAdmissionProvider,
   resolve: ClaudeProcessAdapterBindingResolver,
 ): DispatchTransportAdapter {
   return createAdapter("claude", "process", async (context) => {
@@ -186,7 +191,13 @@ export function createClaudeProcessDispatchAdapter(
         resultCapability: context.prepared.resultCapability,
         childWindowMs: gate.childWindowMs,
       },
-      binding.launchOptions,
+      {
+        ...binding.launchOptions,
+        worksetEffect: {
+          provider: effectAdmissionProvider,
+          targetRef: context.effectTargetRef,
+        },
+      },
     );
     if (report.submission?.state === "aborted") {
       return {
@@ -247,6 +258,7 @@ export type CodexProcessAdapterBindingResolver = (
 ) => CodexProcessAdapterBinding;
 
 export function createCodexProcessDispatchAdapter(
+  effectAdmissionProvider: WorksetEffectAdmissionProvider,
   resolve: CodexProcessAdapterBindingResolver,
 ): DispatchTransportAdapter {
   return createAdapter("codex", "process", async (context) => {
@@ -285,7 +297,15 @@ export function createCodexProcessDispatchAdapter(
     };
     const plan = createCodexRoleBoundaryPlan(request);
     try {
-      const observed = await executeCodexRoleBoundary(plan, binding.correlation.correlationId);
+      const observed = await executeCodexRoleBoundary(
+        plan,
+        binding.correlation.correlationId,
+        undefined,
+        {
+          provider: effectAdmissionProvider,
+          targetRef: context.effectTargetRef,
+        },
+      );
       const observedAt = binding.now();
       const decision = decideCodexCompletion({
         handle,
@@ -516,6 +536,42 @@ export class DispatchTransportAbort extends Error {
 export interface RunPreparedDispatchRequest extends DispatchTransportRouteRequest {
   readonly namespace: AttestationNamespace;
   readonly prepared: DispatchPrepared;
+}
+
+const DISPATCH_EFFECT_TARGET_FIELDS = [
+  { field: "taskId", ledger: "tasks", pattern: /^T[0-9]+$/ },
+  { field: "goalId", ledger: "goals", pattern: /^G[0-9]+$/ },
+  { field: "defectId", ledger: "defects", pattern: /^D[0-9]+$/ },
+  { field: "researchId", ledger: "researches", pattern: /^RS[0-9]+$/ },
+] as const;
+
+/** Resolve one dispatch's process-effect target from its validated prepared input. */
+export function dispatchEffectTargetRef(input: DispatchJSONValue): string {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new DispatchTransportRoutingError(
+      "prepared dispatch input must be an object carrying one effect target id",
+    );
+  }
+  const record = input as Readonly<Record<string, DispatchJSONValue>>;
+  const present = DISPATCH_EFFECT_TARGET_FIELDS.filter(({ field }) =>
+    Object.hasOwn(record, field),
+  );
+  if (present.length !== 1) {
+    throw new DispatchTransportRoutingError(
+      `prepared dispatch input must carry exactly one effect target id, found ${present.length}`,
+    );
+  }
+  const target = present[0];
+  if (target === undefined) {
+    throw new DispatchTransportRoutingError("prepared dispatch effect target disappeared");
+  }
+  const id = record[target.field];
+  if (typeof id !== "string" || !target.pattern.test(id)) {
+    throw new DispatchTransportRoutingError(
+      `prepared dispatch input ${target.field} is not a canonical ${target.ledger} id`,
+    );
+  }
+  return `${target.ledger}:${id}`;
 }
 
 export interface RoutedDispatchConsumed {
@@ -749,6 +805,13 @@ export async function runPreparedDispatch(
   }
   const adapter = registry.resolve(route);
   const handle = handleOf(request.prepared);
+  const row = deps.store.read(handle);
+  if (row === undefined || isAttestationTombstone(row)) {
+    throw new DispatchTransportRoutingError(
+      `prepared dispatch ${handle.attestationId}/${handle.generation} has no live envelope`,
+    );
+  }
+  const effectTargetRef = dispatchEffectTargetRef(row.input);
   const child: DispatchAdapterChildPort = Object.freeze({
     materializeInput: () =>
       fetchDispatchInput(
@@ -765,7 +828,9 @@ export async function runPreparedDispatch(
 
   let result: DispatchAdapterLaunchResult;
   try {
-    result = await adapter.launch(Object.freeze({ route, prepared: request.prepared, child }));
+    result = await adapter.launch(
+      Object.freeze({ route, prepared: request.prepared, effectTargetRef, child }),
+    );
     assertAdapterLaunchResult(result);
     if (result.outcome === "aborted") {
       return adapterAbort(request, route, adapter, handle, result.reason, result.details, deps);

@@ -7,7 +7,7 @@ description: Execute one research probe in a discardable worktree, with network 
 ## Catalogue
 ```yaml
 inputs:
-  - "hypothesis, exact probe request, branch context, worktree, and base commit"
+  - "owning research id, hypothesis, exact probe request, branch context, worktree, and base commit"
 outputs:
   - "structured evidence result"
 ioSchema:

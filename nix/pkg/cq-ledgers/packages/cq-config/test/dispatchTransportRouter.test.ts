@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   acquireWorktreeGate,
   closeWorktreeGate,
+  createStrictInMemoryWorksetEffectAdmissionProvider,
   isRegisteredProcessGroupAlive,
   launchRegisteredGateCommand,
   type WorktreeGateLease,
@@ -26,6 +27,7 @@ import {
   createPiProcessDispatchAdapter,
   claudeExpectedChild,
   codexExpectedChild,
+  dispatchEffectTargetRef,
   fetchDispatchResult,
   prepareDispatch,
   routeDispatchTransport,
@@ -409,7 +411,7 @@ function successfulLaunch(
 function claudeRecordingResolver(
   endpoint: RecordedCapabilityEndpoint,
   extraArgs: readonly string[] = [],
-): Parameters<typeof createClaudeProcessDispatchAdapter>[0] {
+): Parameters<typeof createClaudeProcessDispatchAdapter>[1] {
   return (context) => {
     endpoint.bind(context);
     return {
@@ -444,7 +446,7 @@ function codexRecordingResolver(
     readonly cwd?: string;
     readonly now?: string;
   },
-): Parameters<typeof createCodexProcessDispatchAdapter>[0] {
+): Parameters<typeof createCodexProcessDispatchAdapter>[1] {
   return (context) => {
     fixture.endpoint.bind(context);
     return {
@@ -515,6 +517,66 @@ describe("T1631 shared three-harness transport router", () => {
       "pi->pi:false:native:pi:native",
       "pi->pi:true:process:pi:process",
     ]);
+  });
+
+  test("binds the exact prepared task ref into the trusted launch context [BA]", async () => {
+    const fixture = preparedFixture("codex", 61);
+    const observedTargets: Array<string | undefined> = [];
+    const registry = new DispatchTransportAdapterRegistry([
+      createNativeDispatchAdapter("codex", (context) => {
+        observedTargets.push(context.effectTargetRef);
+        context.child.materializeInput();
+        const stored = context.child.storeResult(OUTPUT);
+        if (stored.state === "aborted") {
+          return { outcome: "aborted", reason: stored.result.reason };
+        }
+        return {
+          outcome: "completed",
+          handle: handleOf(context.prepared),
+          nativeCompletion: fixture.expectedCompletion,
+          handleOnlyEnforcement: "prompt-best-effort",
+        };
+      }),
+    ]);
+
+    const result = await runPreparedDispatch(
+      {
+        namespace: NAMESPACE,
+        prepared: fixture.prepared,
+        activeHarness: "codex",
+        targetHarness: "codex",
+        forceShellout: false,
+      },
+      registry,
+      fixture.deps,
+    );
+
+    expect(result.outcome).toBe("consumed");
+    expect(observedTargets).toEqual(["tasks:T1631"]);
+  });
+
+  test("derives one canonical flow target and rejects absent, ambiguous, or malformed ids [BA]", () => {
+    expect(
+      [
+        { taskId: "T7" },
+        { goalId: "G8" },
+        { defectId: "D9" },
+        { researchId: "RS10" },
+      ].map((input) => dispatchEffectTargetRef(input)),
+    ).toEqual(["tasks:T7", "goals:G8", "defects:D9", "researches:RS10"]);
+    expect(
+      dispatchEffectTargetRef({ defectId: "D9", hypothesisId: "H11" }),
+    ).toBe("defects:D9");
+    expect(() => dispatchEffectTargetRef({ hypothesisId: "H11" })).toThrow(
+      /exactly one effect target id, found 0/,
+    );
+    expect(() => dispatchEffectTargetRef({})).toThrow(/exactly one effect target id, found 0/);
+    expect(() => dispatchEffectTargetRef({ taskId: "T7", goalId: "G8" })).toThrow(
+      /exactly one effect target id, found 2/,
+    );
+    expect(() => dispatchEffectTargetRef({ researchId: "R10" })).toThrow(
+      /researchId is not a canonical researches id/,
+    );
   });
 
   test("all native and process transports consume the fetched absolute reviewer deadlines [BG]", async () => {
@@ -721,7 +783,10 @@ describe("T1631 shared three-harness transport router", () => {
     });
     try {
       const registry = new DispatchTransportAdapterRegistry([
-        createClaudeProcessDispatchAdapter(claudeRecordingResolver(endpoint)),
+        createClaudeProcessDispatchAdapter(
+          createStrictInMemoryWorksetEffectAdmissionProvider(),
+          claudeRecordingResolver(endpoint),
+        ),
       ]);
       const result = await runPreparedDispatch(
         {
@@ -760,6 +825,7 @@ describe("T1631 shared three-harness transport router", () => {
     try {
       const registry = new DispatchTransportAdapterRegistry([
         createClaudeProcessDispatchAdapter(
+          createStrictInMemoryWorksetEffectAdmissionProvider(),
           claudeRecordingResolver(endpoint, ["--skip-capabilities"]),
         ),
       ]);
@@ -783,13 +849,14 @@ describe("T1631 shared three-harness transport router", () => {
 
   test("Codex process adapter launches and records the production boundary plan", async () => {
     const processFixture = createCodexRecordingFixture("success");
+    const provider = createStrictInMemoryWorksetEffectAdmissionProvider();
     try {
       const fixture = preparedFixture("codex", 21, {
         expectedChild: codexExpectedChild(CODEX_CORRELATION),
         promptDigest: promptDigestOf(CLAUDE_ROLE_PROMPT),
       });
       const registry = new DispatchTransportAdapterRegistry([
-        createCodexProcessDispatchAdapter(codexRecordingResolver(processFixture)),
+        createCodexProcessDispatchAdapter(provider, codexRecordingResolver(processFixture)),
       ]);
       const result = await runPreparedDispatch(
         {
@@ -817,6 +884,14 @@ describe("T1631 shared three-harness transport router", () => {
       expect(capture.argv).toContain("--ignore-user-config");
       expect(capture.argv).toContain("--strict-config");
       expect(capture.correlationId).toBe(CODEX_CORRELATION.correlationId);
+      expect(provider.events()).toEqual([
+        "admission-acquired",
+        "process-group-registered",
+        "guardian-shared",
+        "process-group-settled",
+        "guardian-released",
+        "admission-released",
+      ]);
       expect(capture.launch).toEqual({
         attestationId: fixture.prepared.attestationId,
         generation: fixture.prepared.generation,
@@ -880,6 +955,7 @@ describe("T1631 shared three-harness transport router", () => {
       });
       const registry = new DispatchTransportAdapterRegistry([
         createCodexProcessDispatchAdapter(
+          createStrictInMemoryWorksetEffectAdmissionProvider(),
           codexRecordingResolver(processFixture, { cwd: ownedWorktree }),
         ),
       ]);
@@ -933,7 +1009,10 @@ describe("T1631 shared three-harness transport router", () => {
           promptDigest: promptDigestOf(CLAUDE_ROLE_PROMPT),
         });
         const registry = new DispatchTransportAdapterRegistry([
-          createCodexProcessDispatchAdapter(codexRecordingResolver(processFixture)),
+          createCodexProcessDispatchAdapter(
+            createStrictInMemoryWorksetEffectAdmissionProvider(),
+            codexRecordingResolver(processFixture),
+          ),
         ]);
         const result = await runPreparedDispatch(
           {
@@ -962,7 +1041,10 @@ describe("T1631 shared three-harness transport router", () => {
         promptDigest: promptDigestOf(CLAUDE_ROLE_PROMPT),
       });
       const registry = new DispatchTransportAdapterRegistry([
-        createCodexProcessDispatchAdapter(codexRecordingResolver(processFixture)),
+        createCodexProcessDispatchAdapter(
+          createStrictInMemoryWorksetEffectAdmissionProvider(),
+          codexRecordingResolver(processFixture),
+        ),
       ]);
       const result = await runPreparedDispatch(
         {
@@ -991,7 +1073,10 @@ describe("T1631 shared three-harness transport router", () => {
           promptDigest: promptDigestOf(CLAUDE_ROLE_PROMPT),
         });
         const registry = new DispatchTransportAdapterRegistry([
-          createCodexProcessDispatchAdapter(codexRecordingResolver(processFixture)),
+          createCodexProcessDispatchAdapter(
+            createStrictInMemoryWorksetEffectAdmissionProvider(),
+            codexRecordingResolver(processFixture),
+          ),
         ]);
         const result = await runPreparedDispatch(
           {
@@ -1028,6 +1113,7 @@ describe("T1631 shared three-harness transport router", () => {
       };
       const registry = new DispatchTransportAdapterRegistry([
         createCodexProcessDispatchAdapter(
+          createStrictInMemoryWorksetEffectAdmissionProvider(),
           codexRecordingResolver(processFixture, { correlation: wrongCorrelation }),
         ),
       ]);
@@ -1061,6 +1147,7 @@ describe("T1631 shared three-harness transport router", () => {
       ).toISOString();
       const registry = new DispatchTransportAdapterRegistry([
         createCodexProcessDispatchAdapter(
+          createStrictInMemoryWorksetEffectAdmissionProvider(),
           codexRecordingResolver(processFixture, { now: launchAt }),
         ),
       ]);

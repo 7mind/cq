@@ -78,6 +78,7 @@ Dispatch `research-explorer` for each frontier node with:
 
 ```json
 {
+  "researchId": "<RS id>",
   "hypothesisId": "<id>",
   "statement": "<verbatim hypothesis>",
   "branchContext": "<research question, ancestry, validated sibling evidence, and adjudication target>",

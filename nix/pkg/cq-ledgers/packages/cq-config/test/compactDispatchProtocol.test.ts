@@ -95,22 +95,26 @@ const ROLE_INPUTS = {
     conflictState: TEST_GIT_CONFLICT_STATE,
   },
   "investigate-explorer": {
+    defectId: "D1",
     hypothesisId: "H1",
     statement: "The observed failure follows the candidate root cause.",
     branchContext: "Defect D1 on main.",
   },
   "investigate-prober": {
+    defectId: "D1",
     hypothesisId: "H1",
     statement: "The observed failure follows the candidate root cause.",
     probeRequest: { what: "Run the focused test.", why: "Static evidence cannot settle it." },
     branchContext: "Defect D1 on main.",
   },
   "research-explorer": {
+    researchId: "RS4",
     hypothesisId: "H2",
     statement: "The candidate answer matches the evidence.",
     branchContext: "Research RS4.",
   },
   "research-experimenter": {
+    researchId: "RS4",
     hypothesisId: "H2",
     statement: "The candidate answer matches the evidence.",
     probeRequest: { what: "Run the measurement.", why: "A measurement supplies the answer." },
@@ -186,6 +190,24 @@ describe("compact dispatched-subagent launch contract", () => {
       idempotencyKey: "dispatch-implement-reviewer",
       timeoutMs: 150_000,
     });
+  });
+
+  test("requires the owning defect or research ref beside a child hypothesis", () => {
+    for (const [roleId, ownerField] of [
+      ["investigate-explorer", "defectId"],
+      ["investigate-prober", "defectId"],
+      ["research-explorer", "researchId"],
+      ["research-experimenter", "researchId"],
+    ] as const) {
+      const input = { ...ROLE_INPUTS[roleId] } as Record<string, DispatchJSONValue>;
+      delete input[ownerField];
+      rejects(COMPACT_DISPATCH_LAUNCH_SCHEMA, {
+        roleId,
+        input,
+        idempotencyKey: `dispatch-${roleId}`,
+        timeoutMs: 120_000,
+      });
+    }
   });
 });
 

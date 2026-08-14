@@ -2,7 +2,9 @@
 
 import { appendFile, readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
+import { createProcessWorksetEffectAdmissionProvider } from "@cq/process-control";
 import {
+  assertCodexBoundaryEffectTargetRef,
   assertCodexDispatchedRoleId,
   CODEX_PRETURN_OBSERVATION_PATH_ENV,
   CodexRoleBoundaryError,
@@ -56,7 +58,9 @@ export async function main(): Promise<void> {
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("codex-role-dispatch: request must contain one valid JSON object");
   }
-  const invocation = parsed as CodexRoleBoundaryInvocation;
+  const wireInvocation = parsed as CodexRoleBoundaryInvocation;
+  const { effectTargetRef: untrustedEffectTargetRef, ...invocation } = wireInvocation;
+  const effectTargetRef = assertCodexBoundaryEffectTargetRef(untrustedEffectTargetRef);
   const roleId = assertCodexDispatchedRoleId(invocation.roleId);
   const promptRoot = requiredEnvironment(PROMPT_ROOT_ENV);
   const roleInstructions = await readFile(
@@ -82,10 +86,19 @@ export async function main(): Promise<void> {
   if (observationPath !== undefined && (correlationId === undefined || correlationId.trim() === "")) {
     throw new Error("codex-role-dispatch: runner observation requires a correlation id");
   }
+  const worksetEffect = {
+    provider: createProcessWorksetEffectAdmissionProvider({
+      command: process.env[LEDGER_COMMAND_ENV] ?? "cq",
+      args: ["__workset-effect-provider", "--cwd", invocation.ledgerCwd],
+      cwd: invocation.ledgerCwd,
+      env: process.env,
+    }),
+    targetRef: effectTargetRef,
+  };
   const execution =
     correlationId === undefined
-      ? await executeCodexRoleBoundary(plan)
-      : await executeCodexRoleBoundary(plan, correlationId);
+      ? await executeCodexRoleBoundary(plan, worksetEffect)
+      : await executeCodexRoleBoundary(plan, correlationId, undefined, worksetEffect);
   const handle = "observation" in execution ? execution.handle : execution;
   if (observationPath !== undefined && "observation" in execution) {
     await appendFile(

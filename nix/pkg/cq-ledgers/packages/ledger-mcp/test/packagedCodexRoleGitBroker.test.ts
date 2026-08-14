@@ -27,12 +27,14 @@ import {
 } from "@cq/config";
 import {
   createLedgerStore,
+  createInMemoryWorksetStore,
   fsAttestationProductionRoot,
   observeManagedRebaseConflict,
   prepareManagedWorktree,
   releaseManagedWorktree,
   resolveManagedWorktreeDispatchBinding,
   resolveSingleProjectAttestationNamespace,
+  worksetEffectAdmissionProviderFromStore,
   nodeSupervisedWorkerGateRunner,
   type DispatchBoundGitAuthorization,
   type ManagedWorktreeHandle,
@@ -48,6 +50,13 @@ const installedGateTest =
   INSTALLED_ROLE === undefined || SUBSTITUTED_ROLE === undefined || INSTALLED_CODEX === undefined
     ? test.skip
     : test;
+
+function codexWorksetEffect(targetRef: string) {
+  return {
+    provider: worksetEffectAdmissionProviderFromStore(createInMemoryWorksetStore()),
+    targetRef,
+  } as const;
+}
 const WORKER_FIXTURE = fileURLToPath(new URL("./fixtures/codexBrokerWorker.ts", import.meta.url));
 const RESOLVER_FIXTURE = fileURLToPath(
   new URL("./fixtures/codexBrokerResolver.ts", import.meta.url),
@@ -331,6 +340,7 @@ async function runPackagedReviewer(input: {
       }),
       `t2081-review-${workerRoute}-${reviewerMode}`,
       environment,
+      codexWorksetEffect("tasks:T2081"),
     );
   } catch (error) {
     const fixtureStderr = await readFile(reviewerStderrPath, "utf8").catch(() => "");
@@ -550,6 +560,7 @@ async function runPackagedResolverGate<R extends "native" | "process">(input: {
             }),
             "t2044-native-resolver",
             environment,
+            codexWorksetEffect("tasks:T2044"),
           )
         : await executeInstalledCodexRoleBoundary({
             executable: INSTALLED_ROLE,
@@ -867,6 +878,7 @@ describe("packaged cq-codex-role Git broker", () => {
             CQ_T2042_WORKTREE: managed.handle.absolutePath,
             CQ_T2042_LEDGER_ROOT: repositoryRoot,
           },
+          codexWorksetEffect("tasks:T2042"),
         );
       } catch (error) {
         const fixtureStderr = await readFile(workerStderrPath, "utf8").catch(() => "");

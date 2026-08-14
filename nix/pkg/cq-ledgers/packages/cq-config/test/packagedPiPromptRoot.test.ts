@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import * as path from "node:path";
 import {
@@ -50,6 +50,8 @@ const originalAgentsDir = process.env.CQ_AGENTS_DIR;
 const originalPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
 const originalMcpDirectTools = process.env.MCP_DIRECT_TOOLS;
 const originalPiOffline = process.env.PI_OFFLINE;
+const originalXdgStateHome = process.env.XDG_STATE_HOME;
+const originalWorksetProviderCommand = process.env.CQ_WORKSET_EFFECT_PROVIDER_COMMAND;
 
 interface CatalogRole {
   readonly roleId: string;
@@ -166,6 +168,12 @@ async function prepareDispatchRuntime(): Promise<DispatchRuntime> {
   tempDirectories.push(directory);
   mkdirSync(directory, { recursive: true });
   const capturePath = path.join(directory, "child-args.json");
+  const worksetProviderCommand = path.join(directory, "cq-workset-provider");
+  writeFileSync(
+    worksetProviderCommand,
+    `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(path.join(REPO_ROOT, "nix", "pkg", "cq-ledgers", "packages", "cq-cli", "src", "main.ts"))} "$@"\n`,
+  );
+  chmodSync(worksetProviderCommand, 0o700);
   const captureExtension = path.join(directory, "capture-tools.ts");
   const configuredPiDir = originalPiCodingAgentDir ?? path.join(homedir(), ".pi", "agent");
   const mcpAdapter = path.join(
@@ -240,6 +248,8 @@ async function prepareDispatchRuntime(): Promise<DispatchRuntime> {
   process.env.PI_CODING_AGENT_DIR = piAgentDir;
   process.env.MCP_DIRECT_TOOLS = "ledger";
   process.env.PI_OFFLINE = "1";
+  process.env.XDG_STATE_HOME = path.join(directory, "state");
+  process.env.CQ_WORKSET_EFFECT_PROVIDER_COMMAND = worksetProviderCommand;
   // This test proves the PROCESS child's exclude-tools denylist via a capture
   // extension loaded by `pi -p`. T1699 same-harness native uses
   // createAgentSession({cwd}) instead; force the process seam here so the
@@ -283,7 +293,12 @@ async function assertRoleDispatch(runtime: DispatchRuntime, agent: string): Prom
   ];
   const result = await runtime.registered.execute(
     `call-${agent}`,
-    { agent, task: `runtime argument for ${agent}`, isolation: "worktree" },
+    {
+      agent,
+      task: `runtime argument for ${agent}`,
+      targetRef: "tasks:T1983",
+      isolation: "worktree",
+    },
     undefined,
     undefined,
     {
@@ -342,6 +357,16 @@ afterEach(() => {
     delete process.env.PI_OFFLINE;
   } else {
     process.env.PI_OFFLINE = originalPiOffline;
+  }
+  if (originalXdgStateHome === undefined) {
+    delete process.env.XDG_STATE_HOME;
+  } else {
+    process.env.XDG_STATE_HOME = originalXdgStateHome;
+  }
+  if (originalWorksetProviderCommand === undefined) {
+    delete process.env.CQ_WORKSET_EFFECT_PROVIDER_COMMAND;
+  } else {
+    process.env.CQ_WORKSET_EFFECT_PROVIDER_COMMAND = originalWorksetProviderCommand;
   }
   for (const directory of tempDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
@@ -420,7 +445,7 @@ describe("packaged Pi prompt root", () => {
     expect(roles.get("begin")).toContain('fetch_prompt("<path>")');
     expect(roles.get("begin")).toContain("CQ::advance");
     expect(roles.get("plan/advance")).toContain(
-      'dispatch_agent(agent: "<role>", task: "<complete prompt>")',
+      'dispatch_agent(agent: "<role>", task: "<complete prompt>", targetRef: "<canonical-ref>")',
     );
     for (const call of [
       "derive_predicates({})",

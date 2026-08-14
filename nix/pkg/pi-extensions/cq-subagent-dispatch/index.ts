@@ -6,9 +6,11 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { createProcessWorksetEffectAdmissionProvider } from "@cq/process-control";
 import {
   launchPiChild,
   type LaunchedPiChild,
+  type PiChildWorksetEffect,
 } from "./cq-subagent-process-lifecycle.ts";
 import {
   PI_NATIVE_SESSION_SEAM,
@@ -90,6 +92,7 @@ type LaunchPiChildFn = (
   cwd: string,
   env: NodeJS.ProcessEnv,
   signal: AbortSignal | undefined,
+  worksetEffect: PiChildWorksetEffect,
 ) => Promise<LaunchedPiChild>;
 
 let launchPiChildOverride: LaunchPiChildFn | null = null;
@@ -104,9 +107,10 @@ function launchPiChildSeam(
   cwd: string,
   env: NodeJS.ProcessEnv,
   signal: AbortSignal | undefined,
+  worksetEffect: PiChildWorksetEffect,
 ): Promise<LaunchedPiChild> {
   const impl = launchPiChildOverride ?? launchPiChild;
-  return impl(argv, cwd, env, signal);
+  return impl(argv, cwd, env, signal, worksetEffect);
 }
 
 /**
@@ -292,6 +296,11 @@ export interface DispatchDetails {
 const DispatchParams = Type.Object({
   agent: Type.String({ description: "Name of the cq agent to dispatch (matches the agent markdown filename / frontmatter name)." }),
   task: Type.String({ description: "The task to delegate to the agent — becomes the child turn's prompt." }),
+  targetRef: Type.String({
+    pattern: "^(?:tasks:T[0-9]+|goals:G[0-9]+|defects:D[0-9]+|researches:RS[0-9]+)$",
+    description:
+      "Canonical workset target for the dispatched item; never forwarded to the child.",
+  }),
   model: Type.Optional(
     Type.String({
       description:
@@ -309,6 +318,7 @@ const DispatchParams = Type.Object({
 type DispatchArgs = {
   agent: string;
   task: string;
+  targetRef: string;
   model?: string;
   isolation?: "worktree";
 };
@@ -1228,6 +1238,19 @@ function textResult(text: string, details: DispatchDetails): AgentToolResult<Dis
 
 export interface CqSubagentDispatchOptions {
   readonly configDependencies: DispatchConfigDependencies;
+  readonly worksetEffectAdmissionProvider?: PiChildWorksetEffect["provider"];
+}
+
+const PI_DISPATCH_TARGET_REF_RE =
+  /^(?:tasks:T[0-9]+|goals:G[0-9]+|defects:D[0-9]+|researches:RS[0-9]+)$/;
+
+export function assertPiDispatchTargetRef(targetRef: string | undefined): string {
+  if (targetRef === undefined || !PI_DISPATCH_TARGET_REF_RE.test(targetRef)) {
+    throw new Error(
+      "Pi process dispatch requires one canonical tasks/goals/defects/researches targetRef",
+    );
+  }
+  return targetRef;
 }
 
 export function registerCqSubagentDispatch(
@@ -1240,7 +1263,7 @@ export function registerCqSubagentDispatch(
     description: [
       "Dispatch a named cq subagent with a task, running it as an isolated child pi turn",
       "with a filtered toolset. The child cannot itself re-dispatch. Returns the child's",
-      "final output as text. Args: { agent, task, isolation? }.",
+      "final output as text. Args: { agent, task, targetRef, isolation? }.",
     ].join(" "),
     parameters: DispatchParams,
 
@@ -1409,11 +1432,28 @@ export function registerCqSubagentDispatch(
             const childEnv = { ...process.env };
             delete childEnv.CODEX_COMPANION_SESSION_ID;
             delete childEnv.CLAUDE_PLUGIN_DATA;
+            const targetRef = assertPiDispatchTargetRef(args.targetRef);
+            const providerEnvironment = { ...process.env };
+            delete providerEnvironment.CQ_SERVE_TOKEN;
+            delete providerEnvironment.CQ_SERVE_MANAGEMENT_TOKEN;
+            delete providerEnvironment.CQ_LEDGER_REMOTE_TOKEN;
+            const effectAdmissionProvider =
+              options.worksetEffectAdmissionProvider ??
+              createProcessWorksetEffectAdmissionProvider({
+                command: process.env.CQ_WORKSET_EFFECT_PROVIDER_COMMAND ?? "cq",
+                args: ["__workset-effect-provider", "--cwd", ctx.cwd],
+                cwd: ctx.cwd,
+                env: providerEnvironment,
+              });
             return launchPiChildSeam(
               [invocation.command, ...invocation.args],
               ctx.cwd,
               childEnv,
               signal,
+              {
+                provider: effectAdmissionProvider,
+                targetRef,
+              },
             );
           },
         });
@@ -1839,12 +1879,13 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "investigate-explorer": {
-    version: 1,
+    version: 2,
     input: [
       {
-        required: ["branchContext", "hypothesisId", "statement"],
+        required: ["branchContext", "defectId", "hypothesisId", "statement"],
         kinds: {
           branchContext: ["string"],
+          defectId: ["string"],
           hypothesisId: ["string"],
           leads: ["array"],
           statement: ["string"],
@@ -1867,12 +1908,13 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "investigate-prober": {
-    version: 1,
+    version: 2,
     input: [
       {
-        required: ["branchContext", "hypothesisId", "probeRequest", "statement"],
+        required: ["branchContext", "defectId", "hypothesisId", "probeRequest", "statement"],
         kinds: {
           branchContext: ["string"],
+          defectId: ["string"],
           hypothesisId: ["string"],
           leads: ["array"],
           probeRequest: ["object"],
@@ -1895,14 +1937,15 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "research-explorer": {
-    version: 1,
+    version: 2,
     input: [
       {
-        required: ["branchContext", "hypothesisId", "statement"],
+        required: ["branchContext", "hypothesisId", "researchId", "statement"],
         kinds: {
           branchContext: ["string"],
           hypothesisId: ["string"],
           leads: ["array"],
+          researchId: ["string"],
           statement: ["string"],
         },
         closed: true,
@@ -1923,15 +1966,16 @@ export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProj
     ],
   },
   "research-experimenter": {
-    version: 1,
+    version: 2,
     input: [
       {
-        required: ["branchContext", "hypothesisId", "probeRequest", "statement"],
+        required: ["branchContext", "hypothesisId", "probeRequest", "researchId", "statement"],
         kinds: {
           branchContext: ["string"],
           hypothesisId: ["string"],
           leads: ["array"],
           probeRequest: ["object"],
+          researchId: ["string"],
           statement: ["string"],
         },
         closed: true,

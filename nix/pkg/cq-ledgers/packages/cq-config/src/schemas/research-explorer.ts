@@ -7,7 +7,7 @@
  * Authored DIRECTLY from `cq-assets/agents/research-explorer.md` — its
  * `## Catalogue` block:
  *
- * - **Input** — the hypothesis id `H` and its statement (verbatim), the branch
+ * - **Input** — the owning research id `RS`, hypothesis id `H`, and its statement (verbatim), the branch
  *   context (research question, parent hypothesis, sibling findings,
  *   confirm/rule-out intent), and optional specific leads. SAME shape as
  *   investigate-explorer's input.
@@ -34,6 +34,11 @@ const inputSchema = {
   title: "research-explorer input",
   type: "object",
   properties: {
+    researchId: {
+      type: "string",
+      description: "The canonical owning research id (e.g. RS4).",
+      pattern: "^RS[0-9]+$",
+    },
     hypothesisId: {
       type: "string",
       description: "The hypothesis id H passed in the dispatch prompt (e.g. H7).",
@@ -56,7 +61,7 @@ const inputSchema = {
       description: "Optional specific leads to chase (files, symbols, search terms, URLs).",
     },
   },
-  required: ["hypothesisId", "statement", "branchContext"],
+  required: ["researchId", "hypothesisId", "statement", "branchContext"],
   additionalProperties: false,
 } as const;
 
@@ -108,7 +113,7 @@ const outputSchema = {
 /** The research-explorer per-role schema sidecar (storage-format decision 3). */
 export const researchExplorerSidecar: RoleSchemaSidecar = {
   id: "research-explorer",
-  version: 1,
+  version: 2,
   inputSchema,
   outputSchema,
 };

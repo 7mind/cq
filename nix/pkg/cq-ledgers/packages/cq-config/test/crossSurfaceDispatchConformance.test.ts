@@ -691,7 +691,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     const expectations: Readonly<Record<PromptSurface, string>> = {
       claude: 'CQ_SUBAGENT(role: "<role>", handle: <dispatch-handle>, model: <model>)',
       codex: "`spawn_agent` transport",
-      pi: 'dispatch_agent(agent: "<role>", task: "<complete prompt>")',
+      pi: 'dispatch_agent(agent: "<role>", task: "<complete prompt>", targetRef: "<canonical-ref>")',
     };
     for (const surface of PROMPT_SURFACES) {
       const fragment = readFileSync(

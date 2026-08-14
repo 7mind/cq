@@ -6,7 +6,7 @@
  * Authored DIRECTLY from `cq-assets/agents/investigate-prober.md` — its
  * `## Catalogue` block:
  *
- * - **Input** — the hypothesis id `H` and statement (verbatim), the
+ * - **Input** — the owning defect id `D`, hypothesis id `H`, and statement (verbatim), the
  *   `probeRequest { what, why }` the explorer raised (what to run and why it
  *   settles H), the branch context (incl. the base commit/branch for the
  *   throwaway worktree), and optional specific leads.
@@ -31,6 +31,11 @@ const inputSchema = {
   title: "investigate-prober input",
   type: "object",
   properties: {
+    defectId: {
+      type: "string",
+      description: "The canonical owning defect id (e.g. D3).",
+      pattern: "^D[0-9]+$",
+    },
     hypothesisId: { type: "string", pattern: "^H[0-9]+$" },
     statement: {
       type: "string",
@@ -59,7 +64,7 @@ const inputSchema = {
       description: "Optional specific leads to chase (files, symbols, commands).",
     },
   },
-  required: ["hypothesisId", "statement", "probeRequest", "branchContext"],
+  required: ["defectId", "hypothesisId", "statement", "probeRequest", "branchContext"],
   additionalProperties: false,
 } as const;
 
@@ -85,7 +90,7 @@ const outputSchema = {
 /** The investigate-prober per-role schema sidecar (storage-format decision 3). */
 export const investigateProberSidecar: RoleSchemaSidecar = {
   id: "investigate-prober",
-  version: 1,
+  version: 2,
   inputSchema,
   outputSchema,
 };

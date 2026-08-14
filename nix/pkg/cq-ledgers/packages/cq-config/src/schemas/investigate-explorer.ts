@@ -6,7 +6,7 @@
  * Authored DIRECTLY from `cq-assets/agents/investigate-explorer.md` — its
  * `## Catalogue` block:
  *
- * - **Input** — the hypothesis id `H` and its statement (verbatim), the branch
+ * - **Input** — the owning defect id `D`, hypothesis id `H`, and its statement (verbatim), the branch
  *   context (defect, parent hypothesis, sibling findings, confirm/rule-out
  *   intent), and optional specific leads.
  *
@@ -33,6 +33,11 @@ const inputSchema = {
   title: "investigate-explorer input",
   type: "object",
   properties: {
+    defectId: {
+      type: "string",
+      description: "The canonical owning defect id (e.g. D3).",
+      pattern: "^D[0-9]+$",
+    },
     hypothesisId: {
       type: "string",
       description: "The hypothesis id H passed in the dispatch prompt (e.g. H7).",
@@ -55,7 +60,7 @@ const inputSchema = {
       description: "Optional specific leads to chase (files, symbols, error messages, URLs).",
     },
   },
-  required: ["hypothesisId", "statement", "branchContext"],
+  required: ["defectId", "hypothesisId", "statement", "branchContext"],
   additionalProperties: false,
 } as const;
 
@@ -106,7 +111,7 @@ const outputSchema = {
 /** The investigate-explorer per-role schema sidecar (storage-format decision 3). */
 export const investigateExplorerSidecar: RoleSchemaSidecar = {
   id: "investigate-explorer",
-  version: 1,
+  version: 2,
   inputSchema,
   outputSchema,
 };

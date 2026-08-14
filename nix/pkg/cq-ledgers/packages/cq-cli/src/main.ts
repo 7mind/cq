@@ -67,6 +67,10 @@ import { runCounts } from "./counts.js";
 import { runConfig } from "./config.js";
 import { runStats } from "./stats.js";
 import { runGateRun } from "./gateRun.js";
+import {
+  runWorksetEffectProviderControl,
+  WORKSET_EFFECT_PROVIDER_CONTROL_MODE,
+} from "./worksetEffectProviderControl.js";
 import { parseLogPutArgs, runLogPut, EXIT_USAGE as LOG_PUT_EXIT_USAGE } from "./logPut.js";
 import {
   resolvePostgresTenant,
@@ -1350,6 +1354,15 @@ export async function dispatch(
 }
 
 export async function main(argv: readonly string[]): Promise<void> {
+  if (argv[0] === WORKSET_EFFECT_PROVIDER_CONTROL_MODE) {
+    const args = parseSubcommandArgs(argv.slice(1));
+    await runWorksetEffectProviderControl({
+      cwd: args.cwd,
+      input: process.stdin,
+      output: process.stdout,
+    });
+    return;
+  }
   const { exitCode, longRunning } = await dispatch(argv);
   // Long-running modes (mcp/tui/web) govern their own process lifetime via the
   // delegate's stdio transport / Ink render / web server keeping the event loop

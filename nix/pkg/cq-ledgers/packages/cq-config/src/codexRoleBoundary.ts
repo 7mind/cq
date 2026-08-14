@@ -4,11 +4,10 @@ import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
-  launchRegisteredProcessGroup,
-  settleProcessGroups,
+  WorksetEffectBroker,
   settleWorktreeGateCommands,
-  type ProcessGroupRegistration,
   type SettleProcessGroupsResult,
+  type WorksetEffectAdmissionProvider,
 } from "@cq/process-control";
 import type {
   DispatchHandle,
@@ -64,10 +63,14 @@ export interface CodexRoleBoundaryRequest {
   readonly codexExecutable: string;
 }
 
-export type CodexRoleBoundaryInvocation = Omit<
-  CodexRoleBoundaryRequest,
-  "roleInstructions" | "promptRoot" | "ledgerCommand" | "codexExecutable"
->;
+export interface CodexRoleBoundaryInvocation
+  extends Omit<
+    CodexRoleBoundaryRequest,
+    "roleInstructions" | "promptRoot" | "ledgerCommand" | "codexExecutable"
+  > {
+  /** Canonical admitted dispatch target; identity only, never an admission capability. */
+  readonly effectTargetRef: string;
+}
 
 export interface CodexRoleLedgerMcpConfiguration {
   readonly command: string;
@@ -107,6 +110,12 @@ export interface CodexRoleBoundaryExecutionResult {
     /** Actual registered target exit status; corroborating evidence only. */
     readonly exitStatus: number;
   };
+}
+
+export interface CodexRoleBoundaryWorksetEffect {
+  readonly provider: WorksetEffectAdmissionProvider;
+  readonly targetRef: string;
+  readonly signal?: AbortSignal;
 }
 
 export interface CodexEffectivePreturn {
@@ -162,7 +171,7 @@ export interface CodexInstalledRoleBoundaryExecution {
 
 export interface CodexInstalledRoleBoundaryRequest {
   readonly executable: string;
-  readonly invocation: CodexRoleBoundaryInvocation;
+  readonly invocation: Omit<CodexRoleBoundaryInvocation, "effectTargetRef">;
   readonly managedHandle: ManagedWorktreeHandle;
   readonly expectedChild: { readonly childId: string; readonly runId: string };
   readonly expectedPromptProvenance: DispatchPromptProvenance;
@@ -202,6 +211,18 @@ const RUNNER_OWNED_SANDBOX_CONTROLS = new WeakSet<object>();
 
 export const CODEX_PRETURN_OBSERVATION_PATH_ENV =
   "CQ_CODEX_PRETURN_OBSERVATION_PATH" as const;
+
+const CODEX_BOUNDARY_EFFECT_TARGET_RE =
+  /^(?:tasks:T|goals:G|defects:D|researches:RS)\d+$/u;
+
+export function assertCodexBoundaryEffectTargetRef(value: unknown): string {
+  if (typeof value !== "string" || !CODEX_BOUNDARY_EFFECT_TARGET_RE.test(value)) {
+    throw new CodexRoleBoundaryError(
+      "boundary invocation requires one canonical tasks/goals/defects/researches effect target",
+    );
+  }
+  return value;
+}
 
 export function isRunnerOwnedCodexInstalledRoleBoundaryExecution(
   value: unknown,
@@ -927,86 +948,45 @@ function boundaryDiagnostic(
  * a valid stored-result handle wins even when Codex exits non-zero during
  * teardown, matching the compact dispatch protocol's completion semantics.
  */
-export function executeCodexRoleBoundary(plan: CodexRoleBoundaryPlan): Promise<DispatchHandle>;
+export function executeCodexRoleBoundary(
+  plan: CodexRoleBoundaryPlan,
+  worksetEffect: CodexRoleBoundaryWorksetEffect,
+): Promise<DispatchHandle>;
 export function executeCodexRoleBoundary(
   plan: CodexRoleBoundaryPlan,
   correlationId: string,
-  environment?: NodeJS.ProcessEnv,
+  environment: NodeJS.ProcessEnv | undefined,
+  worksetEffect: CodexRoleBoundaryWorksetEffect,
 ): Promise<CodexRoleBoundaryExecutionResult>;
 export async function executeCodexRoleBoundary(
   plan: CodexRoleBoundaryPlan,
-  correlationId?: string,
+  correlationOrEffect: string | CodexRoleBoundaryWorksetEffect,
   environment?: NodeJS.ProcessEnv,
+  correlatedWorksetEffect?: CodexRoleBoundaryWorksetEffect,
 ): Promise<DispatchHandle | CodexRoleBoundaryExecutionResult> {
-  type StopCause = "SIGINT" | "SIGTERM" | "timeout";
-  let stop: ((cause: StopCause) => void) | undefined;
+  type StopCause = "SIGINT" | "SIGTERM" | "abort";
+  const correlationId =
+    typeof correlationOrEffect === "string" ? correlationOrEffect : undefined;
+  const worksetEffect =
+    typeof correlationOrEffect === "string" ? correlatedWorksetEffect : correlationOrEffect;
+  if (worksetEffect === undefined) {
+    throw new CodexRoleBoundaryError("boundary execution requires a workset effect admission");
+  }
+  const abortController = new AbortController();
   let requestedStop: StopCause | undefined;
-  const stopRequested = new Promise<StopCause>((resolve) => {
-    stop = (cause) => {
-      if (requestedStop !== undefined) return;
-      requestedStop = cause;
-      resolve(cause);
-    };
-  });
   const requestStop = (cause: StopCause): void => {
-    if (stop === undefined) throw new Error("Codex role boundary stop channel was not initialized");
-    stop(cause);
+    if (requestedStop !== undefined) return;
+    requestedStop = cause;
+    abortController.abort(new CodexRoleBoundaryError(`wrapper received ${cause}`));
   };
   const onSigint = (): void => requestStop("SIGINT");
   const onSigterm = (): void => requestStop("SIGTERM");
+  const onAbort = (): void => requestStop("abort");
   process.on("SIGINT", onSigint);
   process.on("SIGTERM", onSigterm);
-  const timeout = setTimeout(() => requestStop("timeout"), plan.timeoutMs);
-
-  let rootRegistration: ProcessGroupRegistration | undefined;
-  let settlement:
-    | Promise<{
-        readonly gate: SettleProcessGroupsResult;
-        readonly root: SettleProcessGroupsResult;
-      }>
-    | undefined;
-  const settle = (): Promise<{
-    readonly gate: SettleProcessGroupsResult;
-    readonly root: SettleProcessGroupsResult;
-  }> => {
-    settlement ??= (async () => {
-      let gateResult: SettleProcessGroupsResult | undefined;
-      let gateError: unknown;
-      try {
-        gateResult = await settleWorktreeGateCommands({ worktree: plan.cwd });
-      } catch (error) {
-        gateError = error;
-      }
-
-      let rootResult: SettleProcessGroupsResult = { signaled: [], survivors: [] };
-      let rootError: unknown;
-      try {
-        if (rootRegistration !== undefined) {
-          rootResult = await settleProcessGroups([rootRegistration]);
-        }
-      } catch (error) {
-        rootError = error;
-      }
-
-      const survivors = [...(gateResult?.survivors ?? []), ...rootResult.survivors];
-      if (gateError !== undefined || rootError !== undefined) {
-        throw new AggregateError(
-          [gateError, rootError].filter((error) => error !== undefined),
-          "Codex role boundary could not settle every owned process group",
-        );
-      }
-      if (survivors.length > 0) {
-        throw new CodexRoleBoundaryError(
-          `process-group settlement left survivors ${survivors.join(", ")}`,
-        );
-      }
-      return {
-        gate: gateResult ?? { signaled: [], survivors: [] },
-        root: rootResult,
-      };
-    })();
-    return settlement;
-  };
+  worksetEffect.signal?.addEventListener("abort", onAbort, { once: true });
+  if (worksetEffect.signal?.aborted === true) onAbort();
+  let gateSettlement: SettleProcessGroupsResult | undefined;
 
   try {
     // D266: a read-only reviewer dispatch first proves, inside the same codex
@@ -1034,26 +1014,33 @@ export async function executeCodexRoleBoundary(
       }
       argv = argvWithSandboxTmpdir(plan.argv, CODEX_READ_ONLY_SANDBOX_TMPDIR);
     }
+    const broker = new WorksetEffectBroker({ provider: worksetEffect.provider });
+    const childEnvironment: NodeJS.ProcessEnv = withoutWorksetCredentials(
+      correlationId === undefined
+        ? { ...process.env, ...environment }
+        : {
+            ...process.env,
+            ...environment,
+            CQ_CODEX_ROLE_CORRELATION_ID: correlationId,
+          },
+    );
     let launched;
     try {
-      const childEnvironment: NodeJS.ProcessEnv = withoutWorksetCredentials(
-        correlationId === undefined
-          ? { ...process.env, ...environment }
-          : {
-              ...process.env,
-              ...environment,
-              CQ_CODEX_ROLE_CORRELATION_ID: correlationId,
-            },
-      );
-      launched = await launchRegisteredProcessGroup({
+      launched = await broker.launch({
+        kind: "child-dispatch",
+        targetRef: worksetEffect.targetRef,
         argv,
         cwd: plan.cwd,
         env: childEnvironment,
         stdio: { stdin: "pipe", stdout: "pipe", stderr: "pipe" } as const,
-        register: async (registration) => {
-          rootRegistration = registration;
-          if (requestedStop !== undefined) {
-            throw new CodexRoleBoundaryError(`wrapper received ${requestedStop}`);
+        signal: abortController.signal,
+        timeoutMs: plan.timeoutMs,
+        settleRegisteredDescendants: async () => {
+          gateSettlement = await settleWorktreeGateCommands({ worktree: plan.cwd });
+          if (gateSettlement.survivors.length > 0) {
+            throw new CodexRoleBoundaryError(
+              `process-group settlement left survivors ${gateSettlement.survivors.join(", ")}`,
+            );
           }
         },
         launchBootstrap: (specification) => {
@@ -1085,65 +1072,51 @@ export async function executeCodexRoleBoundary(
       });
     } catch (error) {
       if (requestedStop === undefined) throw error;
-      if (requestedStop === "timeout") {
-        throw new CodexRoleBoundaryError(`child exceeded its ${String(plan.timeoutMs)} ms window`);
-      }
       throw new CodexRoleBoundaryError(`wrapper received ${requestedStop}`);
     }
 
-    const { child, stdout, stderr } = launched.process;
-    child.stdin.write(plan.stdin);
-    child.stdin.end();
-    const execution = Promise.all([launched.exited, stdout, stderr]).then(
-      ([exitStatus, completedStdout]) => ({
-        kind: "completed" as const,
-        stdout: completedStdout,
-        exitStatus,
-      }),
-      (error: unknown) => ({ kind: "failed" as const, error }),
-    );
-    const outcome = await Promise.race([
-      execution,
-      stopRequested.then((cause) => ({ kind: "stopped" as const, cause })),
-    ]);
-    if (outcome.kind === "stopped") {
-      if (outcome.cause === "timeout") {
+    try {
+      const { child, stdout, stderr } = launched.process;
+      child.stdin.write(plan.stdin);
+      child.stdin.end();
+      const [exitStatus, completedStdout] = await Promise.all([launched.exited, stdout, stderr]);
+      if (launched.terminationReason === "timeout") {
         throw new CodexRoleBoundaryError(`child exceeded its ${String(plan.timeoutMs)} ms window`);
       }
-      throw new CodexRoleBoundaryError(`wrapper received ${outcome.cause}`);
+      if (requestedStop !== undefined) {
+        throw new CodexRoleBoundaryError(`wrapper received ${requestedStop}`);
+      }
+      const result =
+        correlationId !== undefined
+          ? observedCodexRoleBoundaryResult(completedStdout, plan, correlationId, exitStatus)
+          : interceptCodexRoleBoundaryResult(completedStdout, plan.expectedHandle);
+      if (correlationId !== undefined) RUNNER_OWNED_NATIVE_EXECUTIONS.add(result);
+      if ((gateSettlement?.signaled.length ?? 0) > 0) {
+        throw new CodexRoleBoundaryError(
+          "live registered gate at child completion",
+          boundaryDiagnostic(
+            observeCodexRoleBoundaryStream(completedStdout, plan.expectedHandle),
+            "live-gate-at-completion",
+            "unsettled-full-gate-at-completion",
+          ),
+        );
+      }
+      return result;
+    } catch (error) {
+      try {
+        await launched.cancel();
+      } catch (settlementError) {
+        throw new AggregateError(
+          [error, settlementError],
+          "Codex role boundary failed and process-group settlement failed",
+        );
+      }
+      throw error;
     }
-    if (outcome.kind === "failed") throw outcome.error;
-    const result =
-      correlationId !== undefined
-        ? observedCodexRoleBoundaryResult(outcome.stdout, plan, correlationId, outcome.exitStatus)
-        : interceptCodexRoleBoundaryResult(outcome.stdout, plan.expectedHandle);
-    if (correlationId !== undefined) RUNNER_OWNED_NATIVE_EXECUTIONS.add(result);
-    const ownedSettlement = await settle();
-    if (ownedSettlement.gate.signaled.length > 0) {
-      throw new CodexRoleBoundaryError(
-        "live registered gate at child completion",
-        boundaryDiagnostic(
-          observeCodexRoleBoundaryStream(outcome.stdout, plan.expectedHandle),
-          "live-gate-at-completion",
-          "unsettled-full-gate-at-completion",
-        ),
-      );
-    }
-    return result;
-  } catch (error) {
-    try {
-      await settle();
-    } catch (settlementError) {
-      throw new AggregateError(
-        [error, settlementError],
-        "Codex role boundary failed and process-group settlement failed",
-      );
-    }
-    throw error;
   } finally {
-    clearTimeout(timeout);
     process.off("SIGINT", onSigint);
     process.off("SIGTERM", onSigterm);
+    worksetEffect.signal?.removeEventListener("abort", onAbort);
   }
 }
 
@@ -1373,7 +1346,10 @@ export async function executeInstalledCodexRoleBoundary(
     );
   }
 
-  const invocationJson = JSON.stringify(request.invocation);
+  const invocationJson = JSON.stringify({
+    ...request.invocation,
+    effectTargetRef: `tasks:${request.managedHandle.taskId}`,
+  } satisfies CodexRoleBoundaryInvocation);
   const { exitStatus, stdout, stderr, effectivePreturn, observedFailureControls } =
     await runInstalledRoleProcess({
     executable,

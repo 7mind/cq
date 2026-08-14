@@ -87,16 +87,19 @@ task: …", "launch the plan-reviewer subagent", or "subagent_type:
 plan-reviewer" — CALL the `dispatch_agent` tool rather than answering in
 prose:
 
-    dispatch_agent({ agent: "<name>", task: "<the task>" })
+    dispatch_agent({ agent: "<name>", task: "<the task>", targetRef: "<canonical-ref>" })
 
 and add `isolation: "worktree"` when the prompt asks for worktree isolation:
 
-    dispatch_agent({ agent: "<name>", task: "<the task>", isolation: "worktree" })
+    dispatch_agent({ agent: "<name>", task: "<the task>", targetRef: "<canonical-ref>", isolation: "worktree" })
 
 Rules:
 - `agent` is the cq agent name / `subagent_type` named in the prompt (e.g.
   `investigate-explorer`, `plan-reviewer`); `task` is the task text the prompt
-  hands you. `isolation` is optional and only `"worktree"` is recognized.
+  hands you. `targetRef` is the exact canonical ledger item being dispatched:
+  `tasks:T<n>`, `goals:G<n>`, `defects:D<n>`, or `researches:RS<n>`; use the
+  owning flow item, never a child hypothesis id.
+  `isolation` is optional and only `"worktree"` is recognized.
 - Emit the tool CALL — do not describe, paraphrase, or simulate the dispatch
   in prose. The whole point of the convention is that you actually fire the
   tool.

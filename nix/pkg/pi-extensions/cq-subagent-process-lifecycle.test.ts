@@ -4,10 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  createStrictInMemoryWorksetEffectAdmissionProvider,
   readProcessIdentity,
-  settleProcessGroups,
-  type ProcessGroupRegistration,
-  type SettleProcessGroupsResult,
 } from "@cq/process-control";
 import {
   launchPiChild,
@@ -38,11 +36,42 @@ async function waitForIdentityToDisappear(pid: number): Promise<void> {
   throw new Error(`test process ${pid} did not exit`);
 }
 
-describe("Pi child process lifecycle [BA]", () => {
+describe("Pi child process lifecycle [Behavioral-Active Blackbox Good-Communication]", () => {
+  test("a replacement refusal prevents the Pi process from being created", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-pi-child-workset-refusal-"));
+    const marker = join(root, "target-ran");
+    try {
+      await expect(
+        launchPiChild(
+          [
+            process.execPath,
+            "-e",
+            `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`,
+          ],
+          root,
+          process.env,
+          undefined,
+          {
+            provider: {
+              acquire: async () => {
+                throw new Error("replacement committed before Pi admission");
+              },
+            },
+            targetRef: "tasks:T1983",
+          },
+        ),
+      ).rejects.toThrow("replacement committed before Pi admission");
+      expect(await Bun.file(marker).exists()).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("an immediate target exit cannot hide its same-group descendant from ownership", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-pi-child-immediate-exit-"));
     const marker = join(root, "descendant-pid");
-    const registrations: ProcessGroupRegistration[] = [];
+    let registrations = 0;
+    const strict = createStrictInMemoryWorksetEffectAdmissionProvider();
 
     try {
       const launched = await launchPiChildWithDependencies(
@@ -51,20 +80,29 @@ describe("Pi child process lifecycle [BA]", () => {
         process.env,
         undefined,
         {
-          publishRegistration: async (registration) => {
-            registrations.push(registration);
-            await Bun.sleep(75);
+          targetRef: "tasks:T1983",
+          provider: {
+            acquire: async (input) => {
+              const handle = await strict.acquire(input);
+              return {
+                ...handle,
+                registerProcessGroup: async (registration) => {
+                  registrations += 1;
+                  await Bun.sleep(75);
+                  await handle.registerProcessGroup(registration);
+                },
+              };
+            },
           },
-          settleGroups: settleProcessGroups,
         },
       );
       await launched.exited;
       await waitForFile(marker);
       const descendantPid = Number.parseInt((await readFile(marker, "utf8")).trim(), 10);
 
-      expect(registrations).toHaveLength(1);
-      expect(registrations[0]!.leader.startTime).not.toBe("");
-      await waitForIdentityToDisappear(registrations[0]!.leader.pid);
+      expect(registrations).toBe(1);
+      expect(launched.registration.leader.startTime).not.toBe("");
+      await waitForIdentityToDisappear(launched.registration.leader.pid);
       await waitForIdentityToDisappear(descendantPid);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -75,6 +113,7 @@ describe("Pi child process lifecycle [BA]", () => {
     const root = await mkdtemp(join(tmpdir(), "cq-pi-child-abort-"));
     const marker = join(root, "descendant-pid");
     const controller = new AbortController();
+    const provider = createStrictInMemoryWorksetEffectAdmissionProvider();
 
     try {
       const launched = await launchPiChild(
@@ -82,14 +121,30 @@ describe("Pi child process lifecycle [BA]", () => {
         root,
         process.env,
         controller.signal,
+        { provider, targetRef: "tasks:T1983" },
       );
       await waitForFile(marker);
       const descendantPid = Number.parseInt((await readFile(marker, "utf8")).trim(), 10);
+      let replacementAcknowledged = false;
+      const replacement = provider.waitForIdle().then(() => {
+        replacementAcknowledged = true;
+      });
+      await Bun.sleep(25);
+      expect(replacementAcknowledged).toBe(false);
       controller.abort();
 
       expect(await launched.exited).toBe(0);
+      await replacement;
       await waitForIdentityToDisappear(launched.process.pid!);
       await waitForIdentityToDisappear(descendantPid);
+      expect(provider.events()).toEqual([
+        "admission-acquired",
+        "process-group-registered",
+        "guardian-shared",
+        "process-group-settled",
+        "guardian-released",
+        "admission-released",
+      ]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -99,9 +154,10 @@ describe("Pi child process lifecycle [BA]", () => {
     const root = await mkdtemp(join(tmpdir(), "cq-pi-child-settlement-"));
     const controller = new AbortController();
     let settlements = 0;
-    let finishSettlement: (result: SettleProcessGroupsResult) => void = () => {
+    let finishSettlement: () => void = () => {
       throw new Error("settlement did not start");
     };
+    const provider = createStrictInMemoryWorksetEffectAdmissionProvider();
 
     try {
       const launched = await launchPiChildWithDependencies(
@@ -110,11 +166,12 @@ describe("Pi child process lifecycle [BA]", () => {
         process.env,
         controller.signal,
         {
-          publishRegistration: async () => {},
-          settleGroups: async () => {
+          provider,
+          targetRef: "tasks:T1983",
+          settleRegisteredDescendants: async () => {
             settlements += 1;
             return new Promise((resolve) => {
-              finishSettlement = resolve;
+              finishSettlement = () => resolve();
             });
           },
         },
@@ -128,7 +185,7 @@ describe("Pi child process lifecycle [BA]", () => {
       await Bun.sleep(75);
       expect(settlements).toBe(1);
       expect(completed).toBe(false);
-      finishSettlement({ signaled: [launched.process.pid!], survivors: [] });
+      finishSettlement();
 
       expect(await launched.exited).toBe(0);
       expect(settlements).toBe(1);
@@ -140,7 +197,8 @@ describe("Pi child process lifecycle [BA]", () => {
   test("registration failure prevents target execution and settles the fenced group", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-pi-child-registration-failure-"));
     const marker = join(root, "target-ran");
-    let registration: ProcessGroupRegistration | undefined;
+    let leaderPid: number | undefined;
+    const strict = createStrictInMemoryWorksetEffectAdmissionProvider();
 
     try {
       await expect(
@@ -154,16 +212,24 @@ describe("Pi child process lifecycle [BA]", () => {
           process.env,
           undefined,
           {
-            publishRegistration: async (candidate) => {
-              registration = candidate;
-              throw new Error("controlled Pi registration refusal");
+            targetRef: "tasks:T1983",
+            provider: {
+              acquire: async (input) => {
+                const handle = await strict.acquire(input);
+                return {
+                  ...handle,
+                  registerProcessGroup: (candidate) => {
+                    leaderPid = candidate.leaderPid;
+                    throw new Error("controlled Pi registration refusal");
+                  },
+                };
+              },
             },
-            settleGroups: settleProcessGroups,
           },
         ),
       ).rejects.toThrow("controlled Pi registration refusal");
-      if (registration === undefined) throw new Error("registration failure was not observed");
-      await waitForIdentityToDisappear(registration.leader.pid);
+      if (leaderPid === undefined) throw new Error("registration failure was not observed");
+      await waitForIdentityToDisappear(leaderPid);
       expect(await Bun.file(marker).exists()).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -179,6 +245,10 @@ describe("Pi child process lifecycle [BA]", () => {
           root,
           process.env,
           undefined,
+          {
+            provider: createStrictInMemoryWorksetEffectAdmissionProvider(),
+            targetRef: "tasks:T1983",
+          },
         ),
       ).rejects.toThrow("target launch failed");
     } finally {

@@ -9,7 +9,7 @@ description: Read-only investigator that gathers cited evidence for one causal h
 ## Catalogue
 ```yaml
 inputs:
-  - "hypothesis id, verbatim statement, defect/branch context, and optional leads"
+  - "owning defect id, hypothesis id, verbatim statement, defect/branch context, and optional leads"
 outputs:
   - "structured evidence result"
 ioSchema:

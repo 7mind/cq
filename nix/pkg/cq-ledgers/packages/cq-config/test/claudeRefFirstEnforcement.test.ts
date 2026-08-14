@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { createStrictInMemoryWorksetEffectAdmissionProvider } from "@cq/process-control";
 import {
   AttestationBindingError,
   AttestationContractError,
@@ -393,7 +394,7 @@ describe("T689 settlement trust boundaries", () => {
 });
 
 describe("T689 recorded and opt-in live Claude process boundaries", () => {
-  test("the recorded process observes generated role policy, one scoped tool, run, and model", () => {
+  test("the recorded process observes generated role policy, one scoped tool, run, and model", async () => {
     const h = harness({ seed: 73 });
     const sessionId = "1dea1c87-a984-448b-b038-d0078741a669";
     const prepared = prepare(h, sessionId, "T689-recorded-process", {
@@ -408,7 +409,7 @@ describe("T689 recorded and opt-in live Claude process boundaries", () => {
     });
     const launchCorrelation = correlation(sessionId);
     expect(launch.prompt).not.toContain(prepared.resultCapability.token);
-    const launchReport = launchClaudePrint(
+    const launchReport = await launchClaudePrint(
       {
         envelope: launch,
         preparedProvenance: provenanceBindingOf(prepared),
@@ -431,6 +432,10 @@ describe("T689 recorded and opt-in live Claude process boundaries", () => {
           env: { T689_SCOPE: "one-dispatch" },
           capabilityEnv: "T688_CAPABILITY",
         },
+        worksetEffect: {
+          provider: createStrictInMemoryWorksetEffectAdmissionProvider(),
+          targetRef: "tasks:T689",
+        },
       },
     );
     expect(launchReport.terminal).toEqual({
@@ -446,13 +451,14 @@ describe("T689 recorded and opt-in live Claude process boundaries", () => {
     expect(launchReport.resolvedModel).toBe(`recorded-${MODEL}`);
   });
 
-  test("a prompt override is rejected before an executable can start", () => {
+  test("a prompt override is rejected before an executable can start", async () => {
     const h = harness({ seed: 79 });
     const sessionId = "1dea1c87-a984-448b-b038-d0078741a669";
     const prepared = prepare(h, sessionId, "T689-prompt-override", {
       promptDigest: promptDigestOf(RECORDED_ROLE_PROMPT),
     });
-    expect(() =>
+    const provider = createStrictInMemoryWorksetEffectAdmissionProvider();
+    await expect(
       launchClaudePrint(
         {
           envelope: buildClaudeCompactNativeLaunch({
@@ -479,12 +485,14 @@ describe("T689 recorded and opt-in live Claude process boundaries", () => {
             env: {},
             capabilityEnv: "T688_CAPABILITY",
           },
+          worksetEffect: { provider, targetRef: "tasks:T689" },
         },
       ),
-    ).toThrow(/not the prepared digest/);
+    ).rejects.toThrow(/not the prepared digest/);
+    expect(provider.events()).toEqual([]);
   });
 
-  liveClaudeTest("ON-DEMAND: live process records role/model/agent and telemetry availability", () => {
+  liveClaudeTest("ON-DEMAND: live process records role/model/agent and telemetry availability", async () => {
     const scratch = mkdtempSync(path.join(tmpdir(), "cq-t689-live-"));
     try {
       const sessionId = crypto.randomUUID();
@@ -499,7 +507,7 @@ describe("T689 recorded and opt-in live Claude process boundaries", () => {
       const handle = handleOf(prepared);
       const capturePath = path.join(scratch, "store-result.json");
       const model = process.env["CQ_T689_LIVE_MODEL"] ?? "haiku";
-      const launchReport = launchClaudePrint(
+      const launchReport = await launchClaudePrint(
         {
           envelope: buildClaudeCompactNativeLaunch({
             roleId: ROLE_ID,
@@ -527,6 +535,10 @@ describe("T689 recorded and opt-in live Claude process boundaries", () => {
               T688_CAPTURE_PATH: capturePath,
             },
             capabilityEnv: "T688_CAPABILITY",
+          },
+          worksetEffect: {
+            provider: createStrictInMemoryWorksetEffectAdmissionProvider(),
+            targetRef: "tasks:T689",
           },
         },
       );

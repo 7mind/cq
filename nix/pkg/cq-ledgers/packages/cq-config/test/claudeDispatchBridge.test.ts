@@ -19,6 +19,10 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
+  createStrictInMemoryWorksetEffectAdmissionProvider,
+  readProcessIdentity,
+} from "@cq/process-control";
+import {
   AttestationContractError,
   AttestationStorageError,
   CLAUDE_ARTIFACT_INSPECTION_TOKEN,
@@ -34,7 +38,6 @@ import {
   CLAUDE_NATIVE_ISOLATION_ARGUMENT,
   CLAUDE_NATIVE_RUN_IN_BACKGROUND_ARGUMENT,
   CLAUDE_REF_FIRST_ARTIFACTS,
-  DISPATCH_HANDLE_SCHEMA,
   ClaudeUnsupportedModeError,
   DISPATCH_OVERLAY_REGISTRY,
   FakeDispatchClock,
@@ -372,62 +375,173 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
     );
   });
 
-  test("the production claude -p launcher binds role, handle, scoped store, run, and model", () => {
+  test("the production claude -p launcher holds replacement through descendant settlement", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "cq-claude-workset-launch-"));
+    const marker = path.join(root, "descendant-pid");
+    const release = path.join(root, "release");
+    const capture = path.join(root, "child-metadata.json");
+    const secretAdmission = "claude-secret-admission-t1983";
+    const strict = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const provider = {
+      acquire: async (input: Parameters<typeof strict.acquire>[0]) => ({
+        ...(await strict.acquire(input)),
+        id: secretAdmission,
+      }),
+    };
     const dispatch = prepared();
     const handle = handleOf(dispatch);
-    expect(DISPATCH_HANDLE_SCHEMA.$schema).toBe(
-      "https://json-schema.org/draft/2020-12/schema",
-    );
     const correlation: ClaudeChildCorrelation = {
       roleId: ROLE_ID,
       launchNonce: SESSION_ID,
       sessionId: SESSION_ID,
     };
-    const report = launchClaudePrint(
-      {
-        envelope: launchOf(dispatch),
-        preparedProvenance: provenanceBindingOf(dispatch),
-        expectedCorrelation: correlation,
-        resultCapability: dispatch.resultCapability,
-        childWindowMs: 30_000,
-      },
-      {
-        claudeExecutable: "bun",
-        claudeArgsPrefix: [path.join(import.meta.dir, "fixtures", "claude-print-recording.ts")],
-        cwd: import.meta.dir,
-        rolePrompt: ROLE_PROMPT,
-        storeServer: {
-          name: "t688store",
-          command: "cq",
-          args: ["mcp", "--dispatch-store"],
-          cwd: import.meta.dir,
-          env: { T688_SCOPE: "one-dispatch" },
-          capabilityEnv: "T688_CAPABILITY",
-        },
-      },
-    );
-    expect(report.terminal).toEqual({
+    const terminal = JSON.stringify({
+      type: "result",
       subtype: "success",
-      isError: false,
-      terminalReason: "completed",
-      exitStatus: 0,
+      is_error: false,
+      terminal_reason: "completed",
+      session_id: SESSION_ID,
+      uuid: "recorded-tool-use-t688",
+      result: JSON.stringify(handle),
+      modelUsage: { [MODEL]: { canonicalModel: `recorded-${MODEL}` } },
     });
-    expect(report.finalMessage).toBe(JSON.stringify(handle));
-    expect(report.correlation).toEqual(correlation);
-    expect(report.agentId).toBe(SESSION_ID);
-    expect(report.parentToolUseId).toBe("recorded-tool-use-t688");
-    expect(report.resolvedModel).toBe(`recorded-${MODEL}`);
+    const script = [
+      "const {spawn}=require('node:child_process');",
+      "const fs=require('node:fs');",
+      "const descendant=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});",
+      "descendant.unref();",
+      `fs.writeFileSync(${JSON.stringify(marker)},String(descendant.pid));`,
+      `fs.writeFileSync(${JSON.stringify(capture)},JSON.stringify({argv:process.argv,env:process.env}));`,
+      `const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(release)})){clearInterval(timer);process.stdout.write(${JSON.stringify(terminal)});}},5);`,
+    ].join("");
+    try {
+      const execution = launchClaudePrint(
+        {
+          envelope: launchOf(dispatch),
+          preparedProvenance: provenanceBindingOf(dispatch),
+          expectedCorrelation: correlation,
+          resultCapability: dispatch.resultCapability,
+          childWindowMs: 30_000,
+        },
+        {
+          claudeExecutable: process.execPath,
+          claudeArgsPrefix: ["-e", script, "--"],
+          cwd: root,
+          rolePrompt: ROLE_PROMPT,
+          storeServer: {
+            name: "t688store",
+            command: "cq",
+            args: ["mcp", "--dispatch-store"],
+            cwd: root,
+            env: { T688_SCOPE: "one-dispatch" },
+            capabilityEnv: "T688_CAPABILITY",
+          },
+          worksetEffect: { provider, targetRef: "tasks:T1983" },
+        },
+      );
+      for (let attempt = 0; !(await Bun.file(marker).exists()); attempt += 1) {
+        if (attempt === 999) throw new Error("Claude child did not publish its descendant");
+        await Bun.sleep(2);
+      }
+      const descendantPid = Number.parseInt(await Bun.file(marker).text(), 10);
+      let replacementAcknowledged = false;
+      const replacement = strict.waitForIdle().then(() => {
+        replacementAcknowledged = true;
+      });
+      await Bun.sleep(25);
+      expect(replacementAcknowledged).toBe(false);
+      await Bun.write(release, "release");
+
+      const report = await execution;
+      await replacement;
+      expect(await readProcessIdentity(descendantPid)).toBeNull();
+      expect(report.terminal).toEqual({
+        subtype: "success",
+        isError: false,
+        terminalReason: "completed",
+        exitStatus: 0,
+      });
+      expect(report.finalMessage).toBe(JSON.stringify(handle));
+      expect(report.correlation).toEqual(correlation);
+      expect(report.agentId).toBe(SESSION_ID);
+      expect(report.parentToolUseId).toBe("recorded-tool-use-t688");
+      expect(report.resolvedModel).toBe(`recorded-${MODEL}`);
+      expect(await Bun.file(capture).text()).not.toContain(secretAdmission);
+      expect(JSON.stringify(report)).not.toContain(secretAdmission);
+      expect(strict.events()).toEqual([
+        "admission-acquired",
+        "process-group-registered",
+        "guardian-shared",
+        "process-group-settled",
+        "guardian-released",
+        "admission-released",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
-  test("NEGATIVE CONTROL: a generated prompt for the wrong role is refused before launch", () => {
+  test("a replacement refusal prevents the Claude process from being created", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "cq-claude-workset-refusal-"));
+    const marker = path.join(root, "target-ran");
+    const dispatch = prepared();
+    try {
+      await expect(
+        launchClaudePrint(
+          {
+            envelope: launchOf(dispatch),
+            preparedProvenance: provenanceBindingOf(dispatch),
+            expectedCorrelation: {
+              roleId: ROLE_ID,
+              launchNonce: SESSION_ID,
+              sessionId: SESSION_ID,
+            },
+            resultCapability: dispatch.resultCapability,
+            childWindowMs: 30_000,
+          },
+          {
+            claudeExecutable: process.execPath,
+            claudeArgsPrefix: [
+              "-e",
+              `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`,
+            ],
+            cwd: root,
+            rolePrompt: ROLE_PROMPT,
+            storeServer: {
+              name: "t688store",
+              command: "cq",
+              args: ["mcp", "--dispatch-store"],
+              cwd: root,
+              env: {},
+              capabilityEnv: "T688_CAPABILITY",
+            },
+            worksetEffect: {
+              provider: {
+                acquire: async () => {
+                  throw new Error("replacement committed before Claude admission");
+                },
+              },
+              targetRef: "tasks:T1983",
+            },
+          },
+        ),
+      ).rejects.toThrow("replacement committed before Claude admission");
+      expect(await Bun.file(marker).exists()).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("NEGATIVE CONTROL: a generated prompt for the wrong role is refused before launch", async () => {
     const dispatch = preparedReviewer();
+    const provider = createStrictInMemoryWorksetEffectAdmissionProvider();
     const handle = handleOf(dispatch);
     const correlation: ClaudeChildCorrelation = {
       roleId: REVIEWER_ROLE_ID,
       launchNonce: SESSION_ID,
       sessionId: SESSION_ID,
     };
-    expect(() =>
+    await expect(
       launchClaudePrint(
         {
           envelope: buildClaudeCompactNativeLaunch({
@@ -454,16 +568,19 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
             env: { T688_SCOPE: "one-dispatch" },
             capabilityEnv: "T688_CAPABILITY",
           },
+          worksetEffect: { provider, targetRef: "tasks:T1983" },
         },
       ),
-    ).toThrow(
+    ).rejects.toThrow(
       /generated role prompt for "implement-reviewer" has digest .* not the prepared digest/,
     );
+    expect(provider.events()).toEqual([]);
   });
 
-  test("a malformed claude -p terminal result becomes a typed transport failure", () => {
+  test("a malformed claude -p terminal result becomes a typed transport failure", async () => {
     const dispatch = prepared();
-    const report = launchClaudePrint(
+    const provider = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const report = await launchClaudePrint(
       {
         envelope: launchOf(dispatch),
         preparedProvenance: provenanceBindingOf(dispatch),
@@ -491,6 +608,7 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
           env: { T688_SCOPE: "one-dispatch" },
           capabilityEnv: "T688_CAPABILITY",
         },
+        worksetEffect: { provider, targetRef: "tasks:T1983" },
       },
     );
     expect(report.terminal.isError).toBe(true);
@@ -498,7 +616,7 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
     expect(report.finalMessage).toBe("");
   });
 
-  liveClaudeTest("ON-DEMAND: real claude -p submits through the scoped endpoint", () => {
+  liveClaudeTest("ON-DEMAND: real claude -p submits through the scoped endpoint", async () => {
     const scratch = mkdtempSync(path.join(tmpdir(), "cq-t688-live-"));
     try {
       const liveRolePrompt =
@@ -509,7 +627,7 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
       const handle = handleOf(dispatch);
       const capturePath = path.join(scratch, "store-result.json");
       const model = process.env["CQ_T688_LIVE_MODEL"] ?? "haiku";
-      const report = launchClaudePrint(
+      const report = await launchClaudePrint(
         {
           envelope: launchOf(dispatch, ROLE_ID, model),
           preparedProvenance: provenanceBindingOf(dispatch),
@@ -536,6 +654,10 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
               T688_CAPTURE_PATH: capturePath,
             },
             capabilityEnv: "T688_CAPABILITY",
+          },
+          worksetEffect: {
+            provider: createStrictInMemoryWorksetEffectAdmissionProvider(),
+            targetRef: "tasks:T1983",
           },
         },
       );

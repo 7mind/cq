@@ -1,11 +1,20 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
+import {
+  createStrictInMemoryWorksetEffectAdmissionProvider,
+  readProcessIdentity,
+} from "@cq/process-control";
 import {
   DISPATCHED_ROLE_IDS,
   DOMAIN_LEDGER_TOOL_NAMES,
   ROLE_TOOL_CAPABILITY_MATRIX,
   createCodexRoleBoundaryPlan,
+  executeCodexRoleBoundary,
   interceptCodexRoleBoundaryResult,
+  type CodexRoleBoundaryPlan,
 } from "@cq/config";
 
 const HANDLE = {
@@ -562,6 +571,161 @@ describe("T1330 Codex role process boundary", () => {
           HANDLE,
         ),
       ).toThrow("handle-only contract");
+    }
+  });
+
+  test("holds Codex replacement through descendant settlement [Behavioral-Active Blackbox Good-Communication]", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cq-codex-workset-launch-"));
+    const initialized = Bun.spawnSync(["git", "init", "--quiet", root]);
+    if (initialized.exitCode !== 0) throw new Error("Codex latch fixture git init failed");
+    const marker = join(root, "descendant-pid");
+    const release = join(root, "release");
+    const capture = join(root, "child-metadata.json");
+    const secretAdmission = "codex-secret-admission-t1983";
+    const stream = trustedStoredStream(JSON.stringify(HANDLE));
+    const script = [
+      "const {spawn}=require('node:child_process');",
+      "const fs=require('node:fs');",
+      "const descendant=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});",
+      "descendant.unref();",
+      `fs.writeFileSync(${JSON.stringify(marker)},String(descendant.pid));`,
+      `fs.writeFileSync(${JSON.stringify(capture)},JSON.stringify({argv:process.argv,env:process.env}));`,
+      `const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(release)})){clearInterval(timer);process.stdout.write(${JSON.stringify(stream)});}},5);`,
+    ].join("");
+    const plan: CodexRoleBoundaryPlan = {
+      roleId: "implement-worker",
+      cwd: root,
+      sandboxMode: "danger-full-access",
+      argv: [process.execPath, "-e", script],
+      stdin: "",
+      timeoutMs: 30_000,
+      expectedHandle: HANDLE,
+      ledgerMcp: {
+        command: "cq-not-launched",
+        args: [],
+        env: {},
+        enabledTools: [],
+        defaultToolsApprovalMode: "approve",
+        required: true,
+      },
+      effectivePreturn: {
+        kind: "cq-codex-effective-preturn",
+        version: 1,
+        roleId: "implement-worker",
+        cwd: root,
+        ledgerCwd: root,
+        handle: HANDLE,
+        effectCapabilityScope: null,
+        receiptExpectation: null,
+        rolePromptDigest: "0".repeat(64),
+        enabledTools: [],
+        model: "recording",
+        reasoningEffort: "medium",
+        sandboxMode: "danger-full-access",
+        skillsPolicy: "role-instructions",
+        multiAgent: false,
+      },
+      interceptStdout: true,
+    };
+    const strict = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const provider = {
+      acquire: async (input: Parameters<typeof strict.acquire>[0]) => ({
+        ...(await strict.acquire(input)),
+        id: secretAdmission,
+      }),
+    };
+    try {
+      const execution = executeCodexRoleBoundary(plan, {
+        provider,
+        targetRef: "tasks:T1983",
+      });
+      for (let attempt = 0; !(await Bun.file(marker).exists()); attempt += 1) {
+        if (attempt === 999) throw new Error("Codex child did not publish its descendant");
+        await Bun.sleep(2);
+      }
+      const descendantPid = Number.parseInt(await Bun.file(marker).text(), 10);
+      let replacementAcknowledged = false;
+      const replacement = strict.waitForIdle().then(() => {
+        replacementAcknowledged = true;
+      });
+      await Bun.sleep(25);
+      expect(replacementAcknowledged).toBe(false);
+      await Bun.write(release, "release");
+
+      expect(await execution).toEqual(HANDLE);
+      await replacement;
+      expect(await readProcessIdentity(descendantPid)).toBeNull();
+      expect(await Bun.file(capture).text()).not.toContain(secretAdmission);
+      expect(JSON.stringify(HANDLE)).not.toContain(secretAdmission);
+      expect(strict.events()).toEqual([
+        "admission-acquired",
+        "process-group-registered",
+        "guardian-shared",
+        "process-group-settled",
+        "guardian-released",
+        "admission-released",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a replacement refusal prevents the Codex process from being created", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cq-codex-workset-refusal-"));
+    const marker = join(root, "target-ran");
+    const plan: CodexRoleBoundaryPlan = {
+      roleId: "implement-worker",
+      cwd: root,
+      sandboxMode: "danger-full-access",
+      argv: [
+        process.execPath,
+        "-e",
+        `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`,
+      ],
+      stdin: "",
+      timeoutMs: 30_000,
+      expectedHandle: HANDLE,
+      ledgerMcp: {
+        command: "cq-not-launched",
+        args: [],
+        env: {},
+        enabledTools: [],
+        defaultToolsApprovalMode: "approve",
+        required: true,
+      },
+      effectivePreturn: {
+        kind: "cq-codex-effective-preturn",
+        version: 1,
+        roleId: "implement-worker",
+        cwd: root,
+        ledgerCwd: root,
+        handle: HANDLE,
+        effectCapabilityScope: null,
+        receiptExpectation: null,
+        rolePromptDigest: "0".repeat(64),
+        enabledTools: [],
+        model: "recording",
+        reasoningEffort: "medium",
+        sandboxMode: "danger-full-access",
+        skillsPolicy: "role-instructions",
+        multiAgent: false,
+      },
+      interceptStdout: true,
+    };
+    try {
+      await expect(
+        executeCodexRoleBoundary(plan, {
+          provider: {
+            acquire: async () => {
+              throw new Error("replacement committed before Codex admission");
+            },
+          },
+          targetRef: "tasks:T1983",
+        }),
+      ).rejects.toThrow("replacement committed before Codex admission");
+      expect(await Bun.file(marker).exists()).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

@@ -7,7 +7,7 @@
  * Authored DIRECTLY from `cq-assets/agents/research-experimenter.md` — its
  * `## Catalogue` block:
  *
- * - **Input** — the hypothesis id `H` and statement (verbatim), the
+ * - **Input** — the owning research id `RS`, hypothesis id `H`, and statement (verbatim), the
  *   `probeRequest { what, why }` the research-explorer raised (what to run and
  *   why it settles H), the branch context (incl. the base commit/branch for the
  *   throwaway worktree), and optional specific leads. SAME shape as
@@ -35,6 +35,11 @@ const inputSchema = {
   title: "research-experimenter input",
   type: "object",
   properties: {
+    researchId: {
+      type: "string",
+      description: "The canonical owning research id (e.g. RS4).",
+      pattern: "^RS[0-9]+$",
+    },
     hypothesisId: { type: "string", pattern: "^H[0-9]+$" },
     statement: {
       type: "string",
@@ -63,7 +68,7 @@ const inputSchema = {
       description: "Optional specific leads to chase (files, symbols, commands, packages, URLs).",
     },
   },
-  required: ["hypothesisId", "statement", "probeRequest", "branchContext"],
+  required: ["researchId", "hypothesisId", "statement", "probeRequest", "branchContext"],
   additionalProperties: false,
 } as const;
 
@@ -90,7 +95,7 @@ const outputSchema = {
 /** The research-experimenter per-role schema sidecar (storage-format decision 3). */
 export const researchExperimenterSidecar: RoleSchemaSidecar = {
   id: "research-experimenter",
-  version: 1,
+  version: 2,
   inputSchema,
   outputSchema,
 };

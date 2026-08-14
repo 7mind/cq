@@ -75,20 +75,20 @@ const SCHEMA_PINS_JSON = String.raw`{
     "digest": "76c063c0261e551260ac2d0ef2d2cebd47ddf51a693ad4100e9bab46e0f1a0d8"
   },
   "investigate-explorer": {
-    "version": 1,
-    "digest": "f2ac0996a0ab6fda0f83879a41100a6e19a66c96b598c49aa2378905d18bd2c5"
+    "version": 2,
+    "digest": "c4867ea4775c731ea029c64b495ca6beb64a08c778b0edd9a64cb48d1663e375"
   },
   "investigate-prober": {
-    "version": 1,
-    "digest": "000cef13be932fa861d9f5a81cb4ea8889534a94f3f4abdf1e4f2b6297eaae90"
+    "version": 2,
+    "digest": "1892868b1177dfa6b659d7ae3c9a0996a560201f4a0dd90b57c117cc1b7ae798"
   },
   "research-explorer": {
-    "version": 1,
-    "digest": "f42f986bd9b0e890c9b46d56b162f595192a4c028dc21f4b42dbe69eb956ea35"
+    "version": 2,
+    "digest": "bfdaee783bd6d32feda92ff649d0a8b1799d90fd73306e7f6410c21889cd7f25"
   },
   "research-experimenter": {
-    "version": 1,
-    "digest": "08daa39c4ad2941d1fbc411bdafcb86c1a6f0b967b13ef7b9720ddf385154224"
+    "version": 2,
+    "digest": "02d947a7d8ba203e14ed53374bca9f9a849e95e72d022f33e2f52f82ad668d9d"
   }
 }`;
 
