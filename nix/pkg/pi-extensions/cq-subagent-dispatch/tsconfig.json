@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@cq/process-control": ["../../cq-ledgers/packages/process-control/src/index.ts"],
+      "@cq/config": ["../../cq-ledgers/packages/cq-config/src/index.ts"]
+    },
+    "target": "es2022",
+    "lib": ["es2022"],
+    "types": ["node", "bun-types"],
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": ["*.ts"]
+}

@@ -1,15 +1,23 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseConfig, resolveAgentModel, type ReviewerToken } from "@cq/config";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   getFinalOutput,
   parseChildJsonEvent,
   parseFlatToml,
   resolveAgentToken,
   resolveDispatchConfig,
+  resolveDispatchModel,
+  registerCqSubagentDispatch,
+  setPiNativeSessionDependenciesForTests,
   type CqToken,
-} from "./cq-subagent-dispatch/index.ts";
+  type DispatchDetails,
+} from "./index.ts";
 
 describe("Pi subagent JSON output [BA]", () => {
   test("preserves message_end assistant text as the final output", () => {
@@ -44,7 +52,7 @@ describe("Pi subagent JSON output [BA]", () => {
 
   test("delegates cancellation to process-control without ChildProcess.killed or timers", async () => {
     const source = await readFile(
-      fileURLToPath(new URL("./cq-subagent-dispatch/index.ts", import.meta.url)),
+      fileURLToPath(new URL("./index.ts", import.meta.url)),
       "utf8",
     );
     // Process seam remains for forceShellout / cross-harness (T1699).
@@ -62,7 +70,7 @@ describe("Pi subagent JSON output [BA]", () => {
 describe("cq config dispatch boundary [SA]", () => {
   test("uses the merged cq config command before the single-file fallback", async () => {
     const source = await readFile(
-      fileURLToPath(new URL("./cq-subagent-dispatch/index.ts", import.meta.url)),
+      fileURLToPath(new URL("./index.ts", import.meta.url)),
       "utf8",
     );
 
@@ -145,7 +153,14 @@ describe("merged dispatch config resolution [BA]", () => {
   test.each([
     ["unconfigured", async () => JSON.stringify({ configured: false })],
     ["malformed JSON", async () => "not-json"],
-    ["command failure", async () => Promise.reject(new Error("cq config exited 1"))],
+    [
+      "non-zero command with valid stdout",
+      async () => {
+        const failure = new Error("cq config exited 1") as Error & { stdout: string };
+        failure.stdout = cliPayload;
+        throw failure;
+      },
+    ],
   ])("falls back to the pinned file when CLI config is %s", async (_name, runCqConfig) => {
     const result = await resolveDispatchConfig("/repo", "/explicit/cq.toml", "implement-worker", "pi", {
       runCqConfig,
@@ -185,6 +200,262 @@ describe("merged dispatch config resolution [BA]", () => {
       },
     });
     expect(result).toEqual({ configSource: "none", resolvedTier: null, token: null });
+  });
+});
+
+describe("dispatch model selection [BA]", () => {
+  const parent = {
+    cwd: "/repo",
+    configPath: "/repo/cq.toml",
+    agentName: "implement-worker",
+    activeHarness: "pi",
+    explicitModel: null,
+    parentModel: "parent-model",
+    parentProvider: "parent-provider",
+  } as const;
+  const cliValue = {
+    configured: true,
+    tiers: {
+      standard: {
+        harness: "pi",
+        model: "child-model",
+        provider: "child-provider",
+        effort: "high",
+      },
+      frontier: {
+        harness: "claude",
+        model: "opus-4.8[1m]",
+        provider: null,
+        effort: "xhigh",
+      },
+    },
+    agentTiers: { "implement-worker": "standard", "plan-reviewer": "frontier" },
+    agentEfforts: { "implement-worker": "low" },
+  } as const;
+
+  test("maps the CLI pi tier to the emitted provider/model effort", async () => {
+    const result = await resolveDispatchModel(parent, {
+      runCqConfig: async () => JSON.stringify(cliValue),
+      readConfigFile: () => {
+        throw new Error("must not read file");
+      },
+    });
+    expect(result).toEqual({
+      model: "child-model",
+      provider: "child-provider",
+      modelSource: "tier",
+      configSource: "cli",
+      childEffort: "low",
+      emittedEffort: "low",
+      resolvedTier: "standard",
+    });
+  });
+
+  test("keeps a claude tier on the parent model with inert effort", async () => {
+    const result = await resolveDispatchModel(
+      { ...parent, agentName: "plan-reviewer" },
+      {
+        runCqConfig: async () => JSON.stringify(cliValue),
+        readConfigFile: () => {
+          throw new Error("must not read file");
+        },
+      },
+    );
+    expect(result).toEqual({
+      model: "parent-model",
+      provider: "parent-provider",
+      modelSource: "parent",
+      configSource: "cli",
+      childEffort: "xhigh",
+      emittedEffort: null,
+      resolvedTier: "frontier",
+    });
+  });
+
+  test("lets an explicit model win without touching either config boundary", async () => {
+    let configCalls = 0;
+    const result = await resolveDispatchModel(
+      { ...parent, explicitModel: "pi:explicit-provider/explicit-model:max" },
+      {
+        runCqConfig: async () => {
+          configCalls += 1;
+          return "";
+        },
+        readConfigFile: () => {
+          configCalls += 1;
+          return "";
+        },
+      },
+    );
+    expect(result).toEqual({
+      model: "explicit-model",
+      provider: "explicit-provider",
+      modelSource: "explicit",
+      configSource: "none",
+      childEffort: "max",
+      emittedEffort: "max",
+      resolvedTier: null,
+    });
+    expect(configCalls).toBe(0);
+  });
+
+  test("maps an unknown agent tier to standard", async () => {
+    const result = await resolveDispatchModel(parent, {
+      runCqConfig: async () =>
+        JSON.stringify({
+          ...cliValue,
+          agentTiers: { "implement-worker": "unknown" },
+        }),
+      readConfigFile: () => {
+        throw new Error("must not read file");
+      },
+    });
+    expect(result.resolvedTier).toBe("standard");
+    expect(result.model).toBe("child-model");
+  });
+
+  test("maps an invalid effort override to the parent without rejecting", async () => {
+    const result = await resolveDispatchModel(parent, {
+      runCqConfig: async () =>
+        JSON.stringify({
+          ...cliValue,
+          agentEfforts: { "implement-worker": "invalid" },
+        }),
+      readConfigFile: () => {
+        throw new Error("must not read file");
+      },
+    });
+    expect(result).toEqual({
+      model: "parent-model",
+      provider: "parent-provider",
+      modelSource: "parent",
+      configSource: "cli",
+      childEffort: null,
+      emittedEffort: null,
+      resolvedTier: "standard",
+    });
+  });
+});
+
+describe("registered dispatch config observability [BA]", () => {
+  interface CapturedTool {
+    execute: (
+      toolCallId: string,
+      params: Readonly<Record<string, unknown>>,
+      signal: AbortSignal | undefined,
+      onUpdate: unknown,
+      context: Readonly<Record<string, unknown>>,
+    ) => Promise<{ readonly details: DispatchDetails }>;
+  }
+
+  test("records CLI source and hands the resolved provider/model/effort to the native child", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "cq-dispatch-config-"));
+    const agentsDir = path.join(root, "cq-agents");
+    const previousAgentsDir = process.env.CQ_AGENTS_DIR;
+    const previousHarness = process.env.CQ_HARNESS;
+    let capturedTool: CapturedTool | null = null;
+    let nativeOptions: {
+      readonly cwd: string;
+      readonly model?: string;
+      readonly provider?: string;
+      readonly effort?: string;
+    } | null = null;
+    try {
+      mkdirSync(agentsDir);
+      writeFileSync(
+        path.join(agentsDir, "implement-worker.md"),
+        ["---", "name: implement-worker", "---", "Implement the assigned task."].join("\n"),
+      );
+      writeFileSync(
+        path.join(root, "role-tool-profiles.json"),
+        JSON.stringify({
+          schemaVersion: 1,
+          ledgerToolNames: [],
+          roles: {
+            "implement-worker": { roleTools: [], transportTools: [], excludedTools: [] },
+          },
+        }),
+      );
+      process.env.CQ_AGENTS_DIR = agentsDir;
+      process.env.CQ_HARNESS = "pi";
+      setPiNativeSessionDependenciesForTests({
+        createAgentSession: async (options) => {
+          nativeOptions = { ...options };
+          return {
+            session: {
+              prompt: async () => {},
+              agent: {
+                waitForIdle: async () => {},
+                state: {
+                  messages: [{ role: "assistant", content: [{ type: "text", text: "done" }] }],
+                },
+              },
+            },
+          };
+        },
+        idFactory: () => "config-child",
+        now: () => new Date("2026-08-14T00:00:00.000Z"),
+      });
+      const api = {
+        getActiveTools: (): string[] => [],
+        registerTool: (tool: unknown): void => {
+          capturedTool = tool as CapturedTool;
+        },
+      } as unknown as ExtensionAPI;
+      registerCqSubagentDispatch(api, {
+        configDependencies: {
+          runCqConfig: async () =>
+            JSON.stringify({
+              configured: true,
+              tiers: {
+                standard: {
+                  harness: "pi",
+                  model: "child-model",
+                  provider: "child-provider",
+                  effort: "high",
+                },
+              },
+              agentTiers: { "implement-worker": "standard" },
+              agentEfforts: { "implement-worker": "low" },
+            }),
+          readConfigFile: () => {
+            throw new Error("CLI result is authoritative");
+          },
+        },
+      });
+      const tool = capturedTool as unknown as CapturedTool | null;
+      if (tool === null) throw new Error("dispatch tool was not registered");
+
+      const result = await tool.execute(
+        "call-1",
+        { agent: "implement-worker", task: "do it" },
+        undefined,
+        undefined,
+        { cwd: root, model: { id: "parent-model", provider: "parent-provider" } },
+      );
+
+      expect(result.details).toMatchObject({
+        model: "child-model",
+        provider: "child-provider",
+        modelSource: "tier",
+        configSource: "cli",
+        childEffort: "low",
+        resolvedTier: "standard",
+      });
+      expect(nativeOptions).toMatchObject({
+        cwd: root,
+        model: "child-model",
+        provider: "child-provider",
+        effort: "low",
+      });
+    } finally {
+      setPiNativeSessionDependenciesForTests(null);
+      if (previousAgentsDir === undefined) delete process.env.CQ_AGENTS_DIR;
+      else process.env.CQ_AGENTS_DIR = previousAgentsDir;
+      if (previousHarness === undefined) delete process.env.CQ_HARNESS;
+      else process.env.CQ_HARNESS = previousHarness;
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

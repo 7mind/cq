@@ -244,7 +244,7 @@ interface RoleToolProfileManifest {
   >;
 }
 
-interface DispatchDetails {
+export interface DispatchDetails {
   agent: string;
   agentFile: string | null;
   /**
@@ -831,6 +831,86 @@ function tokenToChildModel(token: CqToken): { provider: string | null; model: st
   return { provider, model, effort: token.effort };
 }
 
+export interface DispatchModelResolution {
+  readonly model: string | null;
+  readonly provider: string | null;
+  readonly modelSource: "explicit" | "tier" | "parent";
+  readonly configSource: DispatchConfigSource;
+  readonly childEffort: string | null;
+  readonly emittedEffort: string | null;
+  readonly resolvedTier: string | null;
+}
+
+/** Resolve explicit/model-tier precedence without launching a child. */
+export async function resolveDispatchModel(
+  input: {
+    readonly cwd: string;
+    readonly configPath: string;
+    readonly agentName: string;
+    readonly activeHarness: string;
+    readonly explicitModel: string | null;
+    readonly parentModel: string | null;
+    readonly parentProvider: string | null;
+  },
+  dependencies: DispatchConfigDependencies,
+): Promise<DispatchModelResolution> {
+  if (input.explicitModel !== null) {
+    const token = parseCqToken(input.explicitModel);
+    const child = token
+      ? tokenToChildModel(token)
+      : { provider: null, model: input.explicitModel, effort: null };
+    if (child !== null) {
+      return {
+        model: child.model,
+        provider: child.provider,
+        modelSource: "explicit",
+        configSource: "none",
+        childEffort: child.effort,
+        emittedEffort: child.effort,
+        resolvedTier: null,
+      };
+    }
+    return {
+      model: input.parentModel,
+      provider: input.parentProvider,
+      modelSource: "parent",
+      configSource: "none",
+      childEffort: token?.effort ?? null,
+      emittedEffort: null,
+      resolvedTier: null,
+    };
+  }
+
+  const resolution = await resolveDispatchConfig(
+    input.cwd,
+    input.configPath,
+    input.agentName,
+    input.activeHarness,
+    dependencies,
+  );
+  const child = resolution.token ? tokenToChildModel(resolution.token) : null;
+  if (child !== null) {
+    return {
+      model: child.model,
+      provider: child.provider,
+      modelSource: "tier",
+      configSource: resolution.configSource,
+      childEffort: child.effort,
+      emittedEffort: child.effort,
+      resolvedTier: resolution.resolvedTier,
+    };
+  }
+  return {
+    model: input.parentModel,
+    provider: input.parentProvider,
+    modelSource: "parent",
+    configSource: resolution.configSource,
+    childEffort: resolution.token?.effort ?? null,
+    emittedEffort: null,
+    resolvedTier: resolution.resolvedTier,
+  };
+}
+
 /** Read + parse the named agent markdown from the cq-agents directory. */
 // Lenient line-based frontmatter parser for the cq agent markdowns.
 //
@@ -1146,7 +1226,14 @@ function textResult(text: string, details: DispatchDetails): AgentToolResult<Dis
   return { content: [{ type: "text", text }], details };
 }
 
-export default function cqSubagentDispatch(pi: ExtensionAPI): void {
+export interface CqSubagentDispatchOptions {
+  readonly configDependencies: DispatchConfigDependencies;
+}
+
+export function registerCqSubagentDispatch(
+  pi: ExtensionAPI,
+  options: CqSubagentDispatchOptions,
+): void {
   pi.registerTool<typeof DispatchParams, DispatchDetails>({
     name: DISPATCH_TOOL_NAME,
     label: "Dispatch cq agent",
@@ -1214,66 +1301,28 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
       // frontmatter (which stays byte-identical per Q126/K44).
       const parentModel = ctx.model?.id ?? null;
       const parentProvider = ctx.model?.provider ?? null;
-
-      let model: string | null = parentModel;
-      let provider: string | null = parentProvider;
-      let modelSource: "explicit" | "tier" | "parent" = "parent";
-      let configSource: DispatchConfigSource = "none";
-      let resolvedTier: string | null = null;
-      // R342: the resolved effort recorded on the details (observable). For a
-      // pi child it ALSO rides on --model as the `<provider>/<model>:<effort>`
-      // shorthand; for a claude token (parent fallback) it is recorded here
-      // inertly and NOT passed to the child.
-      let childEffort: string | null = null;
-      // The effort to actually APPEND to the child --model. Distinct from the
-      // inert `childEffort`: it is set ONLY on the pi path (a real child model
-      // resolved from a pi token), never on the claude parent-fallback path.
-      let emittedEffort: string | null = null;
-
       const explicit = args.model && args.model.trim().length > 0 ? args.model.trim() : null;
-      if (explicit !== null) {
-        // An explicit override may be a "<harness>:<model>[:<effort>]" token or
-        // a bare pi --model pattern (a non-token string with no ':').
-        // tokenToChildModel REFUSES (→null) a claude: token (can't drive a child
-        // pi process) AND a bare/empty-half pi: token (must be
-        // "pi:<provider>/<model>", mirror of @cq/config); a null child keeps the
-        // parent-model fallback. A claude token's effort is still recorded
-        // inertly below.
-        const token = parseCqToken(explicit);
-        const child = token ? tokenToChildModel(token) : { provider: null, model: explicit, effort: null };
-        if (child !== null) {
-          model = child.model;
-          provider = child.provider;
-          childEffort = child.effort;
-          emittedEffort = child.effort;
-          modelSource = "explicit";
-        } else if (token !== null) {
-          // claude: override -> keep the parent-model fallback, but record the
-          // requested effort INERTLY (observable, never passed to the child).
-          childEffort = token.effort;
-        }
-      } else {
-        const resolution = await resolveDispatchConfig(
-          ctx.cwd,
-          cqConfigPath,
-          agent.name,
-          resolveActiveHarness(),
-          PRODUCTION_CONFIG_DEPENDENCIES,
-        );
-        configSource = resolution.configSource;
-        resolvedTier = resolution.resolvedTier;
-        const child = resolution.token ? tokenToChildModel(resolution.token) : null;
-        if (child !== null) {
-          model = child.model;
-          provider = child.provider;
-          childEffort = child.effort;
-          emittedEffort = child.effort;
-          modelSource = "tier";
-        } else if (resolution.token !== null) {
-          // claude: tier -> parent-model fallback; record effort inertly.
-          childEffort = resolution.token.effort;
-        }
-      }
+      const modelResolution = await resolveDispatchModel(
+        {
+          cwd: ctx.cwd,
+          configPath: cqConfigPath,
+          agentName: agent.name,
+          activeHarness: resolveActiveHarness(),
+          explicitModel: explicit,
+          parentModel,
+          parentProvider,
+        },
+        options.configDependencies,
+      );
+      const {
+        model,
+        provider,
+        modelSource,
+        configSource,
+        childEffort,
+        emittedEffort,
+        resolvedTier,
+      } = modelResolution;
 
       // The child is a plain `pi -p` process launched WITHOUT
       // this dispatch extension. We do NOT pass `--no-extensions`
@@ -1432,6 +1481,12 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
         }
       }
     },
+  });
+}
+
+export default function cqSubagentDispatch(pi: ExtensionAPI): void {
+  registerCqSubagentDispatch(pi, {
+    configDependencies: PRODUCTION_CONFIG_DEPENDENCIES,
   });
 }
 
