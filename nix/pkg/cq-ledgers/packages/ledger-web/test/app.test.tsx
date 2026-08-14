@@ -1525,6 +1525,25 @@ class DeferredOpenClient extends FakeClient {
   }
 }
 
+class DisappearingItemClient extends FakeClient {
+  hideSelectedItem = false;
+
+  override async fetchLedger(
+    ledgerId: string,
+    projection: ItemProjection,
+  ): Promise<import("../src/types.js").FetchedLedger> {
+    const ledger = await super.fetchLedger(ledgerId, projection);
+    if (!this.hideSelectedItem || ledgerId !== "bugs") return ledger;
+    return {
+      ...ledger,
+      milestones: ledger.milestones.map((group) => ({
+        ...group,
+        items: group.items.filter((item) => item.id !== "D1"),
+      })),
+    };
+  }
+}
+
 describe("ledger-web editor survives same-id live reload (D219)", () => {
   it("keeps editing=true when a live refresh reallocates the selected row for the same id", async () => {
     class LiveFakeWS {
@@ -1600,6 +1619,42 @@ describe("ledger-web editor survives same-id live reload (D219)", () => {
     // Editor must still be open with the in-progress draft intact.
     expect(testid("edit-form")).not.toBeNull();
     expect((testid("edit-field-headline") as HTMLInputElement | null)?.value).toBe("in-progress edit");
+  });
+
+  it("closes with an explicit unsaved-draft notice when the selected item disappears", async () => {
+    FakeWS.instances = [];
+    const disappearing = new DisappearingItemClient();
+    fake = disappearing;
+    await act(async () => {
+      root.render(
+        createElement(App, {
+          connect: async () => fake,
+          initialUrl: "http://x/mcp",
+          liveUrl: "ws://x/ws",
+          liveWsCtor: FakeWS as unknown as { new (url: string): WebSocket },
+          holdClock,
+        }),
+      );
+    });
+    await flush();
+    const ws = FakeWS.instances[0]!;
+    act(() => ws.open());
+    await flush();
+
+    click(testid("ledger-bugs"));
+    await flush();
+    click(testid("item-D1"));
+    await flush();
+    click(testid("edit"));
+    await flush();
+    setValue(testid("edit-field-headline"), "unsaved local draft");
+
+    disappearing.hideSelectedItem = true;
+    act(() => ws.push({ type: "changed", ledger: "bugs" }));
+    await flush();
+
+    expect(testid("edit-form")).toBeNull();
+    expect(text()).toContain("Item D1 is no longer available. Unsaved edits were not saved.");
   });
 });
 
