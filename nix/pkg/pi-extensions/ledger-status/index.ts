@@ -7,68 +7,60 @@
 // lives in ./counts (T534, extended T560 for the researches `R` segment);
 // this module is the imperative Pi wiring on top.
 //
-// Pi-typing discipline (mirrors auto-driver/driver.ts, oracle.ts,
-// cq-subagent-dispatch): this is a STANDALONE store-path file OUTSIDE the
-// cq-ledgers bun workspace; its tsconfig only carries `@types/node` and it
-// CANNOT/​MUST NOT import `@earendil-works/pi-*` or `@cq/*`. The pieces of the
-// Pi ExtensionAPI / ExtensionContext this extension needs are therefore
-// declared as LOCAL STRUCTURAL interfaces, copied from the ACTUAL installed Pi
-// v0.82.1 typings (read from the real store path, not assumed):
-//   pi-coding-agent-0.82.1/lib/node_modules/pi-monorepo/dist/core/extensions/types.d.ts
-//     - ExtensionUIContext.setStatus(key, text|undefined): void            L79
-//     - ExtensionContext.ui: ExtensionUIContext                            L210
-//     - ExtensionContext.hasUI: boolean (false in print/RPC mode)          L214
-//     - ExtensionContext.cwd: string                                       L216
-//     - ExtensionAPI.on("session_start",   ExtensionHandler<…>)            L852
-//     - ExtensionAPI.on("turn_end",        ExtensionHandler<…>)            L870
-//     - ExtensionAPI.on("tool_execution_end", ExtensionHandler<…>)         L876
-//     - ExtensionAPI.on("session_shutdown", ExtensionHandler<…>)           L858
-//     - ExtensionHandler<E> = (event, ctx: ExtensionContext) => …          L845
-//     - ExtensionFactory = (pi: ExtensionAPI) => void|Promise<void>        L1078
-// KEEP IN SYNC with those typings. NO `@cq/*` / `@earendil-works/*` imports.
+// Pi host types are type-only imports resolved by the Nix-wired check against
+// packages.pi-coding-agent, the single type source of truth. Runtime delivery
+// remains a bare store-path directory with only node/local value imports.
 
 import { execFile } from "node:child_process";
+import type { ExtensionAPI, ExtensionContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { parseCounts, formatStatus } from "./counts";
 
 // ---------------------------------------------------------------------------
-// Local structural Pi surface (copy-not-import — see header).
+// Narrow host-input seams derived from the real Pi exports.
 // ---------------------------------------------------------------------------
 
 /**
- * Structural subset of Pi's `ExtensionUIContext` (types.d.ts L67-191). Only the
- * status-bar method is needed. `setStatus(key, text|undefined)` (L79) sets a
+ * Narrow view of Pi's `ExtensionUIContext`. Only the status-bar method is
+ * needed. `setStatus(key, text|undefined)` sets a
  * footer slot; pass `undefined` to clear it.
  */
-export interface StatusUIContext {
-  setStatus(key: string, text: string | undefined): void;
-}
+export type StatusUIContext = Pick<ExtensionUIContext, "setStatus">;
 
 /**
- * Structural subset of Pi's `ExtensionContext` (types.d.ts L208-243) delivered
+ * Narrow view of Pi's `ExtensionContext` delivered
  * to every event handler. Carries `cwd` (so `cq counts` resolves the right
  * ledger root), the status-bar `ui`, and the `hasUI` guard (false in
  * print/RPC mode — ALL setStatus calls are gated on it).
  */
-export interface StatusContext {
-  cwd: string;
-  hasUI: boolean;
-  ui: StatusUIContext;
-}
+export type StatusContext = Pick<ExtensionContext, "cwd" | "hasUI"> & {
+  readonly ui: StatusUIContext;
+};
 
 /**
- * Structural subset of Pi's `ExtensionAPI` (types.d.ts L849-1010) this extension
+ * Narrow registration seam over Pi's `ExtensionAPI`; this extension
  * registers against: only the `on(event, handler)` lifecycle subscription for
  * the four events we use. Overloads pinned to the exact event-name literals so
  * the real `ExtensionAPI` (which carries these among many) is assignable here.
  * The event payload is typed loosely (`{ type: string }`) because this
  * extension reads NOTHING from the event — only the ctx.
  */
+type StatusEventName =
+  | "session_start"
+  | "turn_end"
+  | "tool_execution_end"
+  | "session_shutdown";
+
 export interface StatusRegistrationApi {
-  on(event: "session_start", handler: (event: { type: string }, ctx: StatusContext) => void): void;
-  on(event: "turn_end", handler: (event: { type: string }, ctx: StatusContext) => void): void;
-  on(event: "tool_execution_end", handler: (event: { type: string }, ctx: StatusContext) => void): void;
-  on(event: "session_shutdown", handler: (event: { type: string }, ctx: StatusContext) => void): void;
+  on(
+    event: StatusEventName,
+    handler: (event: { type: string }, ctx: StatusContext) => void,
+  ): void;
 }
+
+type AssertTrue<T extends true> = T;
+type _RealPiOnSupportsStatusRegistration = AssertTrue<
+  Pick<ExtensionAPI, "on"> extends StatusRegistrationApi ? true : false
+>;
 
 // ---------------------------------------------------------------------------
 // Constants.
@@ -161,8 +153,7 @@ export interface LedgerStatusOptions {
 /**
  * Wire the ledger-status refresh pipeline into a live Pi session.
  *
- * Refresh triggers satisfy Q258's intent against the REAL pi 0.82.1 events
- * (verified in dist/core/extensions/types.d.ts — NOT assumed):
+ * Refresh triggers satisfy Q258's intent against the Nix-provided Pi events:
  *   (a) initial on-load paint  → `session_start`   (L852)
  *   (b) post-turn / post-tool  → `turn_end` (L870) + `tool_execution_end` (L876)
  *   (c) periodic poll          → setInterval(POLL_INTERVAL_MS)
@@ -231,9 +222,7 @@ export function registerLedgerStatus(api: StatusRegistrationApi, options?: Ledge
     }
   }
 
-  // Chosen event names — VERIFIED present in the installed pi 0.82.1 extension
-  // typings (dist/core/extensions/types.d.ts): session_start (L852), turn_end
-  // (L870), tool_execution_end (L876), session_shutdown (L858).
+  // These event names are checked against the installed ExtensionAPI.on map.
   api.on("session_start", (_event, ctx) => {
     if (!active) return;
     void refresh(ctx).catch((err: unknown) => onError?.(err, "terminal")); // (a) initial on-load paint
