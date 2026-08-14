@@ -435,7 +435,7 @@ async function createPostgresLedgerStore(
   const ledgerConfig = config?.ledger;
   if (ledgerConfig === null || ledgerConfig === undefined) {
     // Unreachable in practice: resolveLedgerBackend's no-`[ledger]`-table
-    // default resolves to 'fs', never 'postgres' — a second loadConfig here
+    // default resolves to 'xdg' (K117), never 'postgres' — a second loadConfig here
     // finding no `[ledger]` table would mean cq.toml changed between the two
     // reads. Fail loud rather than silently treat it as misconfigured.
     throw new Error(
