@@ -1754,6 +1754,46 @@ describe("ledger-web dirty-only save preserves concurrent external fields (D282)
 });
 
 describe("ledger-web openLedger generation guard (D220)", () => {
+  it("keeps tasks active when a slower earlier milestones fetch resolves last", async () => {
+    const client = new DeferredOpenClient();
+    client.defer = true;
+    holdClock = new FakeClock();
+    await act(async () => {
+      root.render(
+        createElement(App, {
+          connect: async () => client,
+          initialUrl: "http://x/mcp",
+          holdClock,
+        }),
+      );
+    });
+    await flush();
+
+    click(testid("ledger-milestones"));
+    await flush();
+    const endMs = Date.now() + 1500;
+    while (client.pending("milestones") === 0 && Date.now() < endMs) await flush();
+    expect(client.pending("milestones")).toBeGreaterThanOrEqual(1);
+
+    click(testid("ledger-tasks"));
+    await flush();
+    const endTasks = Date.now() + 1500;
+    while (client.pending("tasks") === 0 && Date.now() < endTasks) await flush();
+    expect(client.pending("tasks")).toBeGreaterThanOrEqual(1);
+
+    client.release("tasks");
+    await flush();
+    expect(testid("ledger-tasks")?.className).toContain("lw-ledger-active");
+    expect(testid("item-T1")).not.toBeNull();
+
+    client.release("milestones");
+    await flush();
+    expect(testid("ledger-tasks")?.className).toContain("lw-ledger-active");
+    expect(testid("ledger-milestones")?.className ?? "").not.toContain("lw-ledger-active");
+    expect(testid("item-T1")).not.toBeNull();
+    expect(testid("item-M1")).toBeNull();
+  });
+
   it("a superseded slower openLedger fetch does not paint over the later ledger", async () => {
     const client = new DeferredOpenClient();
     client.defer = true;
