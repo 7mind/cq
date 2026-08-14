@@ -91,11 +91,13 @@ let
   piPackage = evaluatedPiModule.config.programs.pi.package;
   piSettings = evaluatedPiModule.config.programs.pi.settings;
   dispatchExtension = lib.findFirst (
-    extension: lib.hasSuffix "cq-subagent-dispatch.ts" extension
+    extension:
+      lib.hasInfix "cq-pi-subagent-dispatch-extension" extension
+      && lib.hasSuffix "/index.ts" extension
   ) null piSettings.extensions;
   dispatchExtensionDir =
     if dispatchExtension == null then
-      throw "Pi settings do not install cq-subagent-dispatch.ts"
+      throw "Pi settings do not install cq-subagent-dispatch/index.ts"
     else
       builtins.dirOf dispatchExtension;
   command = files."/home/test/.pi/agent/prompts/cq:begin.md";

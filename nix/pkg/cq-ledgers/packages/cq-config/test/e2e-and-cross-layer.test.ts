@@ -542,7 +542,7 @@ describe("Q165 pi-extension effort mirror (T294, R342)", () => {
 const REPO_ROOT = path.resolve(import.meta.dir, "../../../../../../");
 const EXTENSION_PATH = path.join(
   REPO_ROOT,
-  "nix/pkg/pi-extensions/cq-subagent-dispatch.ts",
+  "nix/pkg/pi-extensions/cq-subagent-dispatch/index.ts",
 );
 
 /**

@@ -90,12 +90,13 @@ const CANDIDATE_ONLY_PROBE_ENV = "CQ_T1145_CANDIDATE_ONLY_PROBE";
 const EXTENSION_LAYOUTS: readonly { readonly label: string; readonly files: readonly string[] }[] = [
   { label: "single-file", files: ["cq-subagent-dispatch.ts"] },
   {
-    label: "directory",
+    label: "directory-ref-first",
     files: [
       path.join("cq-subagent-dispatch", "index.ts"),
       path.join("cq-subagent-dispatch", "dispatch.ts"),
     ],
   },
+  { label: "directory", files: [path.join("cq-subagent-dispatch", "index.ts")] },
 ];
 
 /** The tool the fragment advertises and the extension registers. */

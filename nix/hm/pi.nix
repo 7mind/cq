@@ -252,18 +252,15 @@ let
   # runtime, so the whole directory is copied to the store).
   ledgerStatusDir = ../pkg/pi-extensions/ledger-status;
 
+  cqSubagentDispatchDir = ../pkg/pi-extensions/cq-subagent-dispatch;
+
   # The dispatch extension imports @cq/process-control at runtime. Install it
   # as a directory closure so the package resolves beside the extension rather
   # than through Pi's ambient package aliases. Darwin additionally needs the
   # proc_pidinfo helper used to fence PID reuse.
   piDispatchExtensionDir = pkgs.runCommand "cq-pi-subagent-dispatch-extension" { } ''
     mkdir -p "$out/node_modules/@cq"
-    cp ${../pkg/pi-extensions/cq-subagent-dispatch.ts} \
-      "$out/cq-subagent-dispatch.ts"
-    cp ${../pkg/pi-extensions/cq-subagent-process-lifecycle.ts} \
-      "$out/cq-subagent-process-lifecycle.ts"
-    cp ${../pkg/pi-extensions/cq-subagent-native-session.ts} \
-      "$out/cq-subagent-native-session.ts"
+    cp -R ${cqSubagentDispatchDir}/. "$out/"
     ln -s ${../pkg/cq-ledgers/packages/process-control} \
       "$out/node_modules/@cq/process-control"
     ${lib.optionalString pkgs.stdenv.isDarwin ''
@@ -519,7 +516,7 @@ in
             # $CQ_AGENTS_DIR (T222) and runs it as an isolated, tool-filtered
             # child `pi -p` turn that cannot itself re-dispatch. See the
             # extension header for the Route-A subprocess mechanism (T221/T224).
-            "${piDispatchExtensionDir}/cq-subagent-dispatch.ts"
+            "${piDispatchExtensionDir}/index.ts"
             # D201 / earendil-works/pi#7319: bounded turn re-drive when Kimi
             # coding returns soft 401 authentication_error (core excludes 401
             # from both retry classifiers and does not refresh OAuth on 401).

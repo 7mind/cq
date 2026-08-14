@@ -12,7 +12,7 @@ import {
 import {
   launchPiChild,
   launchPiChildWithDependencies,
-} from "./cq-subagent-process-lifecycle.ts";
+} from "./cq-subagent-dispatch/cq-subagent-process-lifecycle.ts";
 
 const fixture = fileURLToPath(
   new URL("./cq-subagent-process-lifecycle-fixture.ts", import.meta.url),

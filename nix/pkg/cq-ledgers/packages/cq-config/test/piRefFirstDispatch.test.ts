@@ -41,7 +41,8 @@ const EXTENSION_FILE = path.join(
   "nix",
   "pkg",
   "pi-extensions",
-  "cq-subagent-dispatch.ts",
+  "cq-subagent-dispatch",
+  "index.ts",
 );
 
 type JSONSchemaLike = Readonly<Record<string, unknown>>;

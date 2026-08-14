@@ -70,7 +70,8 @@ const PI_DISPATCH_EXTENSION = path.join(
   "nix",
   "pkg",
   "pi-extensions",
-  "cq-subagent-dispatch.ts",
+  "cq-subagent-dispatch",
+  "index.ts",
 );
 const PROMPT_SURFACES = ["claude", "codex", "pi"] as const;
 type PromptSurface = (typeof PROMPT_SURFACES)[number];

@@ -1,4 +1,5 @@
 import * as crypto from "node:crypto";
+import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -38,8 +39,8 @@ import {
 //
 // Subagents-cannot-spawn-subagents is guarded by the `--exclude-tools` denylist
 // below, which ALWAYS contains DISPATCH_TOOL_NAME: the child is a plain
-// `pi -p` process that is NOT launched with `--extension
-// cq-subagent-dispatch.ts`, and even if the dispatch extension is discovered
+// `pi -p` process that is NOT launched with this extension's `index.ts`, and
+// even if the dispatch extension is discovered
 // via settings, its tool is filtered out of the child by the denylist — so the
 // child can never re-dispatch. (We do NOT pass `--no-extensions`, because the
 // provider-registering package extensions — e.g. pi-xai's grok-build — must
@@ -61,13 +62,12 @@ import {
 //      agent's tier slot is unconfigured, or the token resolves to a `claude:`
 //      harness (a Claude provider cannot be driven by a child `pi -p` process).
 //
-// The cq.toml read strategy is PINNED in decisions:K46: $CQ_CONFIG (default
-// $CQ_PROJECT_ROOT/cq.toml, fallback <cwd>/cq.toml), parsed with an INLINED
-// flat-table TOML reader + INLINED resolver that MIRRORS @cq/config's
-// resolveAgentTier/resolveTierToken/resolveAgentModel (T223,
-// packages/cq-config/src/{config,toml}.ts). It is COPIED, not imported: this is
-// a standalone store-path extension OUTSIDE the cq-ledgers bun workspace and
-// cannot import @cq/config.
+// Config resolution runs `cq config` once at the dispatch cwd so merged global
+// + local configuration and CQ_HARNESS=pi layering remain authoritative. Per
+// decisions:K46, an unavailable/unconfigured/malformed command falls back to
+// the single file at $CQ_CONFIG (default $CQ_PROJECT_ROOT/cq.toml, then
+// <cwd>/cq.toml), parsed by the inlined resolver below. No config failure aborts
+// dispatch; unresolved models retain the parent session model.
 
 const DISPATCH_TOOL_NAME = "dispatch_agent";
 
@@ -280,6 +280,7 @@ interface DispatchDetails {
   excludedTools: string[];
   roleTools: string[];
   transportTools: string[];
+  configSource: "cli" | "file" | "none";
   cqConfigPath: string;
   stderr: string;
   /** T1699: which child-delivery seam was used. */
@@ -544,15 +545,170 @@ function parseCqToken(token: string): CqToken | null {
   return { harness, model, effort };
 }
 
-/** Load + parse cq.toml from `configPath`; null if absent or unreadable. */
-function loadCqConfig(configPath: string): CqConfigSubset | null {
-  let source: string;
+export type DispatchConfigSource = "cli" | "file" | "none";
+
+export interface DispatchConfigDependencies {
+  readonly runCqConfig: (cwd: string) => Promise<string>;
+  readonly readConfigFile: (configPath: string) => string;
+}
+
+export interface DispatchConfigResolution {
+  readonly configSource: DispatchConfigSource;
+  readonly resolvedTier: string | null;
+  readonly token: CqToken | null;
+}
+
+interface CqConfigResolvedToken {
+  readonly harness: string;
+  readonly model: string;
+  readonly provider: string | null;
+  readonly effort: string | null;
+}
+
+interface CqConfigCliPayload {
+  readonly tiers: Readonly<Record<string, CqConfigResolvedToken>> | null;
+  readonly agentTiers: Readonly<Record<string, string>> | null;
+  readonly agentEfforts: Readonly<Record<string, string>>;
+}
+
+type ParsedCliPayload =
+  | { readonly configured: false }
+  | { readonly configured: true; readonly payload: CqConfigCliPayload | null };
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseStringRecord(value: unknown): Readonly<Record<string, string>> | null {
+  if (!isRecord(value)) return null;
+  const result: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry !== "string") return null;
+    result[key] = entry;
+  }
+  return result;
+}
+
+function parseResolvedToken(value: unknown): CqConfigResolvedToken | null {
+  if (!isRecord(value)) return null;
+  const { harness, model, provider, effort } = value;
+  if (
+    typeof harness !== "string" ||
+    typeof model !== "string" ||
+    model.length === 0 ||
+    (provider !== null && typeof provider !== "string") ||
+    (effort !== null && typeof effort !== "string")
+  ) {
+    return null;
+  }
+  return { harness, model, provider, effort };
+}
+
+function parseCliPayload(stdout: string): ParsedCliPayload | null {
+  let value: unknown;
   try {
-    source = fs.readFileSync(configPath, "utf-8");
+    value = JSON.parse(stdout) as unknown;
   } catch {
     return null;
   }
-  return parseFlatToml(source);
+  if (!isRecord(value) || typeof value.configured !== "boolean") return null;
+  if (value.configured === false) {
+    return { configured: false };
+  }
+  const agentEfforts = parseStringRecord(value.agentEfforts);
+  const agentTiers = value.agentTiers === null ? null : parseStringRecord(value.agentTiers);
+  if (agentEfforts === null || (value.agentTiers !== null && agentTiers === null)) {
+    return { configured: true, payload: null };
+  }
+  if (value.tiers === null) {
+    return { configured: true, payload: { tiers: null, agentTiers, agentEfforts } };
+  }
+  if (!isRecord(value.tiers)) return { configured: true, payload: null };
+  const tiers: Record<string, CqConfigResolvedToken> = {};
+  for (const [tier, candidate] of Object.entries(value.tiers)) {
+    const token = parseResolvedToken(candidate);
+    if (token === null) return { configured: true, payload: null };
+    tiers[tier] = token;
+  }
+  return { configured: true, payload: { tiers, agentTiers, agentEfforts } };
+}
+
+function resolveCliToken(payload: CqConfigCliPayload, agentName: string): DispatchConfigResolution {
+  const configuredTier = payload.agentTiers?.[agentName];
+  const resolvedTier =
+    configuredTier !== undefined && VALID_TIERS.has(configuredTier)
+      ? configuredTier
+      : DEFAULT_TIER;
+  const candidate = payload.tiers?.[resolvedTier];
+  if (
+    candidate === undefined ||
+    (candidate.harness !== "pi" && candidate.harness !== "claude") ||
+    (candidate.effort !== null && !isEffort(candidate.harness, candidate.effort))
+  ) {
+    return { configSource: "cli", resolvedTier, token: null };
+  }
+  const model = candidate.provider === null ? candidate.model : `${candidate.provider}/${candidate.model}`;
+  const override = payload.agentEfforts[agentName];
+  if (override !== undefined && !isEffort(candidate.harness, override)) {
+    return { configSource: "cli", resolvedTier, token: null };
+  }
+  return {
+    configSource: "cli",
+    resolvedTier,
+    token: {
+      harness: candidate.harness,
+      model,
+      effort: override ?? candidate.effort,
+    },
+  };
+}
+
+function runCqConfig(cwd: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile("cq", ["config"], { cwd, env: process.env, encoding: "utf8" }, (error, stdout) => {
+      if (error !== null) {
+        reject(error);
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+}
+
+const PRODUCTION_CONFIG_DEPENDENCIES: DispatchConfigDependencies = {
+  runCqConfig,
+  readConfigFile: (configPath) => fs.readFileSync(configPath, "utf8"),
+};
+
+/** Resolve merged CLI config first, then the pinned single-file compatibility path. */
+export async function resolveDispatchConfig(
+  cwd: string,
+  configPath: string,
+  agentName: string,
+  activeHarness: string,
+  dependencies: DispatchConfigDependencies,
+): Promise<DispatchConfigResolution> {
+  try {
+    const parsed = parseCliPayload(await dependencies.runCqConfig(cwd));
+    if (parsed?.configured === true) {
+      return parsed.payload === null
+        ? { configSource: "cli", resolvedTier: null, token: null }
+        : resolveCliToken(parsed.payload, agentName);
+    }
+  } catch {
+    // A failed CLI read falls through to the compatibility file read.
+  }
+
+  try {
+    const config = parseFlatToml(dependencies.readConfigFile(configPath));
+    return {
+      configSource: "file",
+      resolvedTier: resolveAgentTier(config, agentName),
+      token: resolveAgentToken(config, agentName, activeHarness),
+    };
+  } catch {
+    return { configSource: "none", resolvedTier: null, token: null };
+  }
 }
 
 /**
@@ -1028,6 +1184,7 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
         excludedTools: [],
         roleTools: [],
         transportTools: [],
+        configSource: "none",
         cqConfigPath,
         stderr: "",
         deliverySeam: null,
@@ -1061,6 +1218,7 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
       let model: string | null = parentModel;
       let provider: string | null = parentProvider;
       let modelSource: "explicit" | "tier" | "parent" = "parent";
+      let configSource: DispatchConfigSource = "none";
       let resolvedTier: string | null = null;
       // R342: the resolved effort recorded on the details (observable). For a
       // pi child it ALSO rides on --model as the `<provider>/<model>:<effort>`
@@ -1095,30 +1253,30 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
           childEffort = token.effort;
         }
       } else {
-        // Tier resolution from the agent NAME via cq.toml, using the active
-        // harness's [harness.<harness>.tiers] map (else the shared [tiers]).
-        const config = loadCqConfig(cqConfigPath);
-        if (config !== null) {
-          const activeHarness = resolveActiveHarness();
-          resolvedTier = resolveAgentTier(config, agent.name);
-          const token = resolveAgentToken(config, agent.name, activeHarness);
-          const child = token ? tokenToChildModel(token) : null;
-          if (child !== null) {
-            model = child.model;
-            provider = child.provider;
-            childEffort = child.effort;
-            emittedEffort = child.effort;
-            modelSource = "tier";
-          } else if (token !== null) {
-            // claude: tier -> parent-model fallback; record effort inertly.
-            childEffort = token.effort;
-          }
-          // else: no [tiers]/slot -> parent-model fallback.
+        const resolution = await resolveDispatchConfig(
+          ctx.cwd,
+          cqConfigPath,
+          agent.name,
+          resolveActiveHarness(),
+          PRODUCTION_CONFIG_DEPENDENCIES,
+        );
+        configSource = resolution.configSource;
+        resolvedTier = resolution.resolvedTier;
+        const child = resolution.token ? tokenToChildModel(resolution.token) : null;
+        if (child !== null) {
+          model = child.model;
+          provider = child.provider;
+          childEffort = child.effort;
+          emittedEffort = child.effort;
+          modelSource = "tier";
+        } else if (resolution.token !== null) {
+          // claude: tier -> parent-model fallback; record effort inertly.
+          childEffort = resolution.token.effort;
         }
       }
 
       // The child is a plain `pi -p` process launched WITHOUT
-      // `--extension cq-subagent-dispatch.ts`. We do NOT pass `--no-extensions`
+      // this dispatch extension. We do NOT pass `--no-extensions`
       // because the provider-registering package extensions (e.g. pi-xai's
       // grok-build) must still load for the child's model to resolve. The
       // re-dispatch guard is the `--exclude-tools` denylist below, which always
@@ -1154,6 +1312,7 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
         excludedTools: excludeTools,
         roleTools: agent.roleTools,
         transportTools: agent.transportTools,
+        configSource,
       };
 
       const messages: ChildMessage[] = [];

@@ -84,7 +84,8 @@ async function loadDispatchExtension(): Promise<(api: Readonly<Record<string, un
     "nix",
     "pkg",
     "pi-extensions",
-    "cq-subagent-dispatch.ts",
+    "cq-subagent-dispatch",
+    "index.ts",
   );
   const extension = (await import(extensionPath)) as {
     readonly default: (api: Readonly<Record<string, unknown>>) => void;

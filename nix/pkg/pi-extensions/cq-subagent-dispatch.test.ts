@@ -7,8 +7,9 @@ import {
   parseChildJsonEvent,
   parseFlatToml,
   resolveAgentToken,
+  resolveDispatchConfig,
   type CqToken,
-} from "./cq-subagent-dispatch.ts";
+} from "./cq-subagent-dispatch/index.ts";
 
 describe("Pi subagent JSON output [BA]", () => {
   test("preserves message_end assistant text as the final output", () => {
@@ -43,7 +44,7 @@ describe("Pi subagent JSON output [BA]", () => {
 
   test("delegates cancellation to process-control without ChildProcess.killed or timers", async () => {
     const source = await readFile(
-      fileURLToPath(new URL("./cq-subagent-dispatch.ts", import.meta.url)),
+      fileURLToPath(new URL("./cq-subagent-dispatch/index.ts", import.meta.url)),
       "utf8",
     );
     // Process seam remains for forceShellout / cross-harness (T1699).
@@ -55,6 +56,135 @@ describe("Pi subagent JSON output [BA]", () => {
     expect(source).not.toContain("proc.killed");
     expect(source).not.toContain("proc.kill(");
     expect(source).not.toContain("setTimeout(");
+  });
+});
+
+describe("cq config dispatch boundary [SA]", () => {
+  test("uses the merged cq config command before the single-file fallback", async () => {
+    const source = await readFile(
+      fileURLToPath(new URL("./cq-subagent-dispatch/index.ts", import.meta.url)),
+      "utf8",
+    );
+
+    expect(source).toContain('execFile("cq", ["config"]');
+    expect(source).toContain('configSource: "cli" | "file" | "none"');
+  });
+});
+
+describe("merged dispatch config resolution [BA]", () => {
+  const cliPayloadValue = {
+    configured: true,
+    tiers: {
+      standard: {
+        harness: "pi",
+        model: "grok-build",
+        provider: "grok-build",
+        effort: "high",
+      },
+      frontier: {
+        harness: "claude",
+        model: "opus-4.8[1m]",
+        provider: null,
+        effort: "xhigh",
+      },
+    },
+    agentTiers: { "implement-worker": "standard", "plan-reviewer": "frontier" },
+    agentEfforts: { "implement-worker": "low" },
+  } as const;
+  const cliPayload = JSON.stringify(cliPayloadValue);
+
+  test("uses the merged CLI payload and applies the per-agent effort", async () => {
+    let fileReads = 0;
+    const result = await resolveDispatchConfig("/repo", "/repo/cq.toml", "implement-worker", "pi", {
+      runCqConfig: async (cwd) => {
+        expect(cwd).toBe("/repo");
+        return cliPayload;
+      },
+      readConfigFile: () => {
+        fileReads += 1;
+        return "";
+      },
+    });
+
+    expect(result).toEqual({
+      configSource: "cli",
+      resolvedTier: "standard",
+      token: { harness: "pi", model: "grok-build/grok-build", effort: "low" },
+    });
+    expect(fileReads).toBe(0);
+  });
+
+  test("keeps configured:true authoritative when its tier cannot drive pi", async () => {
+    let fileReads = 0;
+    const result = await resolveDispatchConfig("/repo", "/repo/cq.toml", "missing-agent", "pi", {
+      runCqConfig: async () => JSON.stringify({ ...cliPayloadValue, tiers: null }),
+      readConfigFile: () => {
+        fileReads += 1;
+        return BASE;
+      },
+    });
+
+    expect(result).toEqual({ configSource: "cli", resolvedTier: "standard", token: null });
+    expect(fileReads).toBe(0);
+  });
+
+  test("keeps parseable configured:true authoritative when its payload is invalid", async () => {
+    let fileReads = 0;
+    const result = await resolveDispatchConfig("/repo", "/repo/cq.toml", "implement-worker", "pi", {
+      runCqConfig: async () => JSON.stringify({ configured: true, tiers: "invalid" }),
+      readConfigFile: () => {
+        fileReads += 1;
+        return BASE;
+      },
+    });
+
+    expect(result).toEqual({ configSource: "cli", resolvedTier: null, token: null });
+    expect(fileReads).toBe(0);
+  });
+
+  test.each([
+    ["unconfigured", async () => JSON.stringify({ configured: false })],
+    ["malformed JSON", async () => "not-json"],
+    ["command failure", async () => Promise.reject(new Error("cq config exited 1"))],
+  ])("falls back to the pinned file when CLI config is %s", async (_name, runCqConfig) => {
+    const result = await resolveDispatchConfig("/repo", "/explicit/cq.toml", "implement-worker", "pi", {
+      runCqConfig,
+      readConfigFile: (configPath) => {
+        expect(configPath).toBe("/explicit/cq.toml");
+        return BASE;
+      },
+    });
+
+    expect(result).toEqual({
+      configSource: "file",
+      resolvedTier: "standard",
+      token: { harness: "pi", model: "grok-build/grok-build", effort: "high" },
+    });
+  });
+
+  test("maps an invalid CLI effort to the parent fallback without reading the file", async () => {
+    const result = await resolveDispatchConfig("/repo", "/repo/cq.toml", "plan-reviewer", "pi", {
+      runCqConfig: async () =>
+        JSON.stringify({
+          ...cliPayloadValue,
+          agentEfforts: { "plan-reviewer": "off" },
+        }),
+      readConfigFile: () => {
+        throw new Error("authoritative CLI config must not fall back");
+      },
+    });
+
+    expect(result).toEqual({ configSource: "cli", resolvedTier: "frontier", token: null });
+  });
+
+  test("returns none when both config boundaries fail", async () => {
+    const result = await resolveDispatchConfig("/repo", "/repo/cq.toml", "implement-worker", "pi", {
+      runCqConfig: async () => Promise.reject(new Error("spawn failed")),
+      readConfigFile: () => {
+        throw new Error("missing file");
+      },
+    });
+    expect(result).toEqual({ configSource: "none", resolvedTier: null, token: null });
   });
 });
 

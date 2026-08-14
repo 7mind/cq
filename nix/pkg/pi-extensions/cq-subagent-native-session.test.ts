@@ -10,7 +10,7 @@ import {
   observePathEscapeCanary,
   runPiNativeSession,
   type PiNativeSessionDependencies,
-} from "./cq-subagent-native-session.ts";
+} from "./cq-subagent-dispatch/cq-subagent-native-session.ts";
 import {
   executePiChildDeliveryBranch,
   resolveForceShellout,
@@ -18,7 +18,7 @@ import {
   selectPiChildDeliverySeam,
   setLaunchPiChildForTests,
   setPiNativeSessionDependenciesForTests,
-} from "./cq-subagent-dispatch.ts";
+} from "./cq-subagent-dispatch/index.ts";
 
 afterEach(() => {
   setPiNativeSessionDependenciesForTests(null);
