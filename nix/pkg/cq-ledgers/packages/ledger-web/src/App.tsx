@@ -40,7 +40,7 @@ import { useBackdropDismiss } from "./useBackdropDismiss.js";
 import { WorksetManager } from "./WorksetManager.js";
 import { isSafeProjectKeySegment } from "./projectRoutes.js";
 import { ItemReferenceChip } from "./ItemReferenceChip.js";
-import { parseItemReference, type ItemReference } from "./itemReferences.js";
+import { parseReferenceListItem, type ItemReference } from "./itemReferences.js";
 import { ItemReferenceLookup, type ReferencePreviewResult } from "./referenceLookup.js";
 // Browser-safe JSONL transcript parser (T412): turns the raw `.jsonl` content
 // returned by `onReadLog` into the structured conversation model the
@@ -325,8 +325,6 @@ export function wsTokenOf(wsUrl: string | null): string | null {
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
-const REFERENCE_LIST_FIELDS = new Set(["dependsOn", "blockedBy", "sourceRefs", "ledgerRefs", GOAL_MILESTONES_FIELD]);
-
 interface ReferenceRenderProps {
   fieldName: string;
   resolveReference?: (reference: ItemReference) => Promise<ReferencePreviewResult>;
@@ -337,9 +335,9 @@ function renderListField(items: string[], referenceProps?: ReferenceRenderProps)
   return (
     <ul className="lw-field-list">
       {items.map((item, i) => {
-        const reference = referenceProps !== undefined && REFERENCE_LIST_FIELDS.has(referenceProps.fieldName)
-          ? parseItemReference(item)
-          : null;
+        const reference = referenceProps === undefined
+          ? null
+          : parseReferenceListItem(referenceProps.fieldName, item);
         return (
           <li key={i}>
             {reference === null || referenceProps === undefined ? item : (

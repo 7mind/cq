@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { CANONICAL_LEDGERS } from "@cq/ledger/constants";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { scanItemReferences } from "../src/itemReferences.js";
+import { parseReferenceListItem, scanItemReferences } from "../src/itemReferences.js";
 
 describe("scanItemReferences", () => {
   it("recognizes canonical, bare, and multi-letter-prefix references", () => {
@@ -47,6 +47,14 @@ describe("scanItemReferences", () => {
       "T1",
       "tasks:T6",
     ]);
+  });
+
+  it("parses references only for reference-bearing list fields", () => {
+    for (const fieldName of ["dependsOn", "blockedBy", "sourceRefs", "ledgerRefs", "milestones"]) {
+      expect(parseReferenceListItem(fieldName, "tasks:T49")).toEqual({ ledger: "tasks", id: "T49" });
+    }
+
+    expect(parseReferenceListItem("tags", "tasks:T49")).toBeNull();
   });
 
   it("imports browser-safe leaves rather than the ledger root barrel", () => {

@@ -12,6 +12,13 @@ export type ItemReferenceSpan =
 
 const PREFIX_REGISTRY = buildPrefixRegistry(CANONICAL_LEDGERS);
 const CANONICAL_LEDGER_NAMES = new Set(CANONICAL_LEDGERS.map(({ name }) => name));
+const REFERENCE_LIST_FIELDS: ReadonlySet<string> = new Set([
+  "dependsOn",
+  "blockedBy",
+  "sourceRefs",
+  "ledgerRefs",
+  "milestones",
+]);
 const CANDIDATE_RE = /[A-Za-z][A-Za-z0-9_-]*:[A-Za-z][A-Za-z0-9_-]*|[A-Z]+\d+/g;
 const TOKEN_CHAR_RE = /[A-Za-z0-9_/-]/;
 const PREFIXED_ID_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
@@ -42,6 +49,10 @@ export function parseItemReference(raw: string): ItemReference | null {
   } catch {
     return null;
   }
+}
+
+export function parseReferenceListItem(fieldName: string, raw: string): ItemReference | null {
+  return REFERENCE_LIST_FIELDS.has(fieldName) ? parseItemReference(raw) : null;
 }
 
 export function scanItemReferences(text: string): ItemReferenceSpan[] {
