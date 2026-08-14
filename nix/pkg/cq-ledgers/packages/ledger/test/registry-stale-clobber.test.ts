@@ -15,13 +15,10 @@
  *     'alpha' AND 'beta' survive with distinct prefixes. Today, 'alpha' is
  *     dropped, so the assertion fails.
  *
- * The test body is wrapped in bun `test.failing()` so that:
- *   - Today: the body throws (assertion fails on the missing registry entry for
- *     'alpha') — reported as EXPECTED FAILURE, suite stays GREEN.
- *   - After T428 lands the fix: the body passes — suite turns RED, prompting
- *     T428 to flip this to a regular `test()`.
+ * The T428 fix has LANDED: the body runs as a plain active regression and
+ * requires a fresh reader to retain both 'alpha' and 'beta'.
  *
- * Touches NO production code — reproduction only.
+ * Green regression test — touches NO production code.
  */
 
 import { describe, test, expect, afterAll } from "bun:test";
