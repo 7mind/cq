@@ -79,9 +79,9 @@ export interface PiNativeCreateAgentSessionOptions {
 export interface PiNativeSessionDependencies {
   readonly createAgentSession: (options: PiNativeCreateAgentSessionOptions) => Promise<{
     session: {
-      /** Pi 0.84.1 AgentSession.prompt takes PromptOptions (no AbortSignal). */
+      /** Pi 0.84.2 AgentSession.prompt takes PromptOptions (no AbortSignal). */
       prompt: (text: string) => Promise<void>;
-      /** Pi 0.84.1 abort path; PromptOptions no longer carries signal. */
+      /** Pi 0.84.2 abort path; PromptOptions no longer carries signal. */
       abort?: () => Promise<void> | void;
       agent: { waitForIdle: () => Promise<void>; state?: { messages?: unknown[] } };
       /** Observed model id after session open (optional; tests may set). */

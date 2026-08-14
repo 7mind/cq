@@ -2,7 +2,7 @@
  * kimi-401-retry — bounded turn re-drive when Kimi coding returns a soft 401.
  *
  * Context (D201 / earendil-works/pi#7319):
- *   Pi 0.84.1 excludes HTTP 401 from both retry classifiers, and kimi-coding
+ *   Pi 0.84.2 excludes HTTP 401 from both retry classifiers, and kimi-coding
  *   OAuth (~15m access tokens) is only refreshed on local expiry — not on a
  *   coding-API 401. The turn therefore stops on:
  *     Error: 401 {"error":{"type":"authentication_error",

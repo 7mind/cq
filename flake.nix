@@ -416,8 +416,8 @@
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
           outputHash = {
-            "x86_64-linux" = "sha256-RHjGMWvQqdI+bfxc7j62IDwgVF649xt99BweB1OpWzc=";
-            "aarch64-darwin" = "sha256-wqvpEiSKkd4dFjmJeXoFDaOge+eFS1JZoWVavDqhAzE=";
+            "x86_64-linux" = "sha256-ORbui1fC2T8R4/p5Xc2Lc8cbQ0wLbbP3nYS/ppLsTbE=";
+            "aarch64-darwin" = "sha256-PqvzZMmeFBj9qn2fAO3ze07hb1mAQ3DnUbsT2B43Doc=";
           }.${system} or (throw "pi-extensions-node-modules: no FOD hash pinned for ${system}");
         };
 

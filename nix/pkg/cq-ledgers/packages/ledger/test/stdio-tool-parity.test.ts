@@ -7,6 +7,7 @@ import { exposedLedgerToolsForRole } from "@cq/config";
 import {
   createLedgerMcpTools,
   createLedgerSdkMcpServer,
+  createManagementLedgerMcpTools,
   GOALS_LEDGER,
   InMemoryLedgerStore,
   LEDGER_TOOL_NAMES,
@@ -433,6 +434,27 @@ function refOnlyAllOfWrapperCount(value: unknown): number {
       0,
     )
   );
+}
+
+function booleanPropertySchemaPaths(value: unknown, path = "$"): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((nested, index) => booleanPropertySchemaPaths(nested, `${path}[${index}]`));
+  }
+  if (value === null || typeof value !== "object") return [];
+  const object = value as Record<string, unknown>;
+  const properties = object["properties"];
+  const current =
+    properties !== null && typeof properties === "object" && !Array.isArray(properties)
+      ? Object.entries(properties as Record<string, unknown>)
+          .filter(([, schema]) => typeof schema === "boolean")
+          .map(([name]) => `${path}.properties.${name}`)
+      : [];
+  return [
+    ...current,
+    ...Object.entries(object).flatMap(([name, nested]) =>
+      booleanPropertySchemaPaths(nested, `${path}.${name}`),
+    ),
+  ];
 }
 
 function schemaDescriptionAnnotationCount(
@@ -1243,11 +1265,53 @@ describe("stdio/direct ledger tool differential contract", () => {
   it("publishes minimal schemas with explicit generic-root conditions", async () => {
     const fixture = await buildFixture();
     try {
-      const definitions = directDefinitions(directTools(fixture.store, "", AVAILABLE_CAPABILITIES));
+      const observeDefinitions = directDefinitions(
+        directTools(fixture.store, "", AVAILABLE_CAPABILITIES),
+      );
+      const managementDefinitions = directDefinitions(
+        createManagementLedgerMcpTools(
+          fixture.store,
+          AVAILABLE_CAPABILITIES.readLog,
+          AVAILABLE_CAPABILITIES.config,
+          AVAILABLE_CAPABILITIES.promptCatalog,
+          "",
+          AVAILABLE_CAPABILITIES.listProjects,
+          AVAILABLE_CAPABILITIES.dispatch,
+          "full",
+          AVAILABLE_CAPABILITIES.worktreeManage,
+        ),
+      );
+      const definitions = [...observeDefinitions, ...managementDefinitions];
       const serializedSchemas = JSON.stringify(definitions.map(({ schema }) => schema));
       expect(serializedSchemas).not.toContain('"$schema"');
       expect(schemaDescriptionAnnotationCount(definitions.map(({ schema }) => schema))).toBe(0);
       expect(refOnlyAllOfWrapperCount(definitions.map(({ schema }) => schema))).toBe(0);
+      // Regression: D329 — Grok rejects boolean schemas beneath `properties`.
+      expect(
+        definitions.flatMap(({ name, schema }) =>
+          booleanPropertySchemaPaths(schema).map((path) => `${name}:${path}`),
+        ),
+      ).toEqual([]);
+
+      expect(observeDefinitions.find(({ name }) => name === "workset")?.schema).toMatchObject({
+        allOf: [
+          {
+            then: { required: ["projection"], not: { required: ["roots"] } },
+            else: { required: ["roots", "projection"] },
+          },
+        ],
+      });
+      expect(managementDefinitions.find(({ name }) => name === "workset")?.schema).toMatchObject({
+        allOf: [
+          {
+            then: { required: ["projection"], not: { required: ["roots"] } },
+            else: {
+              then: { required: ["roots"], not: { required: ["projection"] } },
+              else: { required: ["roots", "projection"] },
+            },
+          },
+        ],
+      });
 
       const createItem = definitions.find(({ name }) => name === "create_item");
       expect(createItem?.schema).toMatchObject({

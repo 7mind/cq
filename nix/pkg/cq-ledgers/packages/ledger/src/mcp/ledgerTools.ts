@@ -250,11 +250,11 @@ export function ledgerToolInputJsonSchema(
     schema["allOf"] = [
       {
         if: { properties: { op: { const: "get" } } },
-        then: { required: ["projection"], properties: { roots: false } },
+        then: { required: ["projection"], not: { required: ["roots"] } },
         else: operations.includes("set")
           ? {
               if: { properties: { op: { const: "set" } } },
-              then: { required: ["roots"], properties: { projection: false } },
+              then: { required: ["roots"], not: { required: ["projection"] } },
               else: fetchShape,
             }
           : fetchShape,

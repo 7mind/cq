@@ -71,17 +71,17 @@
       },
       "toolsList": {
         "utf8Bytes": 48594,
-        "tokens": 11633,
-        "sha256": "74ed9ee7d3aca36ec76e72c88069bc3f81f089a88052c10da04d5438b8706ec2"
+        "tokens": 11634,
+        "sha256": "c73cad6509c1d4047bc8eba9ce87874789e24e97d0e130249ad898d0d3e0df03"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11780,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -2,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5018,
+      "domainInputSchemaTokens": 5019,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 210,
@@ -134,17 +134,17 @@
       },
       "toolsList": {
         "utf8Bytes": 36265,
-        "tokens": 8609,
-        "sha256": "2b888024e491f0ac8a78f28f07c600180d9536ce487f430a32baacf2b33fb85b"
+        "tokens": 8610,
+        "sha256": "ef26dcd5cf4e85ce6b52db33803c4369c4faa2e30071dcf6b297ba39bac68e0d"
       },
-      "surfaceTokens": 8755,
+      "surfaceTokens": 8756,
       "baselineSurfaceTokens": 10386,
-      "deltaTokens": -1631,
+      "deltaTokens": -1630,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5018,
+      "domainInputSchemaTokens": 5019,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 210,
@@ -205,17 +205,17 @@
       },
       "toolsList": {
         "utf8Bytes": 48594,
-        "tokens": 11633,
-        "sha256": "74ed9ee7d3aca36ec76e72c88069bc3f81f089a88052c10da04d5438b8706ec2"
+        "tokens": 11634,
+        "sha256": "c73cad6509c1d4047bc8eba9ce87874789e24e97d0e130249ad898d0d3e0df03"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11780,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -2,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5018,
+      "domainInputSchemaTokens": 5019,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 210,
@@ -276,17 +276,17 @@
       },
       "toolsList": {
         "utf8Bytes": 48594,
-        "tokens": 11633,
-        "sha256": "74ed9ee7d3aca36ec76e72c88069bc3f81f089a88052c10da04d5438b8706ec2"
+        "tokens": 11634,
+        "sha256": "c73cad6509c1d4047bc8eba9ce87874789e24e97d0e130249ad898d0d3e0df03"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11780,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -2,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5018,
+      "domainInputSchemaTokens": 5019,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 210,
@@ -493,17 +493,17 @@
       },
       "toolsList": {
         "utf8Bytes": 48594,
-        "tokens": 11633,
-        "sha256": "74ed9ee7d3aca36ec76e72c88069bc3f81f089a88052c10da04d5438b8706ec2"
+        "tokens": 11634,
+        "sha256": "c73cad6509c1d4047bc8eba9ce87874789e24e97d0e130249ad898d0d3e0df03"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11780,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -2,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5018,
+      "domainInputSchemaTokens": 5019,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 210,
@@ -564,17 +564,17 @@
       },
       "toolsList": {
         "utf8Bytes": 48594,
-        "tokens": 11633,
-        "sha256": "74ed9ee7d3aca36ec76e72c88069bc3f81f089a88052c10da04d5438b8706ec2"
+        "tokens": 11634,
+        "sha256": "c73cad6509c1d4047bc8eba9ce87874789e24e97d0e130249ad898d0d3e0df03"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11780,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -2,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5018,
+      "domainInputSchemaTokens": 5019,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 210,
@@ -635,17 +635,17 @@
       },
       "toolsList": {
         "utf8Bytes": 48594,
-        "tokens": 11633,
-        "sha256": "74ed9ee7d3aca36ec76e72c88069bc3f81f089a88052c10da04d5438b8706ec2"
+        "tokens": 11634,
+        "sha256": "c73cad6509c1d4047bc8eba9ce87874789e24e97d0e130249ad898d0d3e0df03"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11780,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -2,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5018,
+      "domainInputSchemaTokens": 5019,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 210,
@@ -780,17 +780,17 @@
       },
       "toolsList": {
         "utf8Bytes": 48594,
-        "tokens": 11633,
-        "sha256": "74ed9ee7d3aca36ec76e72c88069bc3f81f089a88052c10da04d5438b8706ec2"
+        "tokens": 11634,
+        "sha256": "c73cad6509c1d4047bc8eba9ce87874789e24e97d0e130249ad898d0d3e0df03"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11780,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -2,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5018,
+      "domainInputSchemaTokens": 5019,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 210,
@@ -851,17 +851,17 @@
       },
       "toolsList": {
         "utf8Bytes": 48594,
-        "tokens": 11633,
-        "sha256": "74ed9ee7d3aca36ec76e72c88069bc3f81f089a88052c10da04d5438b8706ec2"
+        "tokens": 11634,
+        "sha256": "c73cad6509c1d4047bc8eba9ce87874789e24e97d0e130249ad898d0d3e0df03"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11780,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -2,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5018,
+      "domainInputSchemaTokens": 5019,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 210,
@@ -1037,17 +1037,17 @@
       },
       "toolsList": {
         "utf8Bytes": 48594,
-        "tokens": 11633,
-        "sha256": "74ed9ee7d3aca36ec76e72c88069bc3f81f089a88052c10da04d5438b8706ec2"
+        "tokens": 11634,
+        "sha256": "c73cad6509c1d4047bc8eba9ce87874789e24e97d0e130249ad898d0d3e0df03"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11780,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -2,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5018,
+      "domainInputSchemaTokens": 5019,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 210,
@@ -1108,17 +1108,17 @@
       },
       "toolsList": {
         "utf8Bytes": 48594,
-        "tokens": 11633,
-        "sha256": "74ed9ee7d3aca36ec76e72c88069bc3f81f089a88052c10da04d5438b8706ec2"
+        "tokens": 11634,
+        "sha256": "c73cad6509c1d4047bc8eba9ce87874789e24e97d0e130249ad898d0d3e0df03"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11780,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -2,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5018,
+      "domainInputSchemaTokens": 5019,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 210,
@@ -1214,17 +1214,17 @@
       },
       "toolsList": {
         "utf8Bytes": 48594,
-        "tokens": 11633,
-        "sha256": "74ed9ee7d3aca36ec76e72c88069bc3f81f089a88052c10da04d5438b8706ec2"
+        "tokens": 11634,
+        "sha256": "c73cad6509c1d4047bc8eba9ce87874789e24e97d0e130249ad898d0d3e0df03"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11780,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -2,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5018,
+      "domainInputSchemaTokens": 5019,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 210,
@@ -1359,17 +1359,17 @@
       },
       "toolsList": {
         "utf8Bytes": 48594,
-        "tokens": 11633,
-        "sha256": "74ed9ee7d3aca36ec76e72c88069bc3f81f089a88052c10da04d5438b8706ec2"
+        "tokens": 11634,
+        "sha256": "c73cad6509c1d4047bc8eba9ce87874789e24e97d0e130249ad898d0d3e0df03"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11780,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -2,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5018,
+      "domainInputSchemaTokens": 5019,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 210,
@@ -3499,8 +3499,8 @@
       "name": "workset",
       "whole": {
         "baselineTokens": 0,
-        "afterTokens": 118,
-        "deltaTokens": 118
+        "afterTokens": 119,
+        "deltaTokens": 119
       },
       "fields": {
         "name": {
@@ -3537,12 +3537,12 @@
             "marginalTokens": 0
           },
           "after": {
-            "serializedTokens": 101,
-            "marginalTokens": 103
+            "serializedTokens": 102,
+            "marginalTokens": 104
           },
           "delta": {
-            "serializedTokens": 101,
-            "marginalTokens": 103
+            "serializedTokens": 102,
+            "marginalTokens": 104
           }
         }
       }
