@@ -16,8 +16,12 @@
 //   cq:research:auto     — drains research-flow     (wraps /cq:research:advance)
 //   cq:implement:auto    — drains implement-flow    (wraps /cq:implement:advance)
 //
-// Pi host types enter through driver.ts as type-only root-package imports.
-// Runtime delivery remains a bare store-path directory.
+// Pi host types enter through driver.ts as type-only root-package imports,
+// resolved by the Nix check/local script against packages.pi-coding-agent as
+// the single source of truth. Runtime delivery remains a bare store-path
+// directory with only local value imports. By explicit user directive for
+// G136, this supersedes the gen-1 M585–M587/T1402–T1404 manual host-type refresh
+// and citation checks; host API drift now fails compilation.
 
 import {
   advanceAutoPreset,

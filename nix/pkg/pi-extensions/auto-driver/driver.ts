@@ -13,9 +13,12 @@
 // `statusTextForPhase`). All setStatus calls are gated on ctx.hasUI (the Pi
 // flag that is false in print/RPC mode). The status key is 'cq-auto'.
 //
-// Pi host types are type-only imports resolved by the Nix-wired check against
-// packages.pi-coding-agent, the single type source of truth. Runtime delivery
-// remains a bare store-path directory with only local value imports.
+// Pi host types are type-only imports resolved by the Nix-wired check/local
+// script against packages.pi-coding-agent, the single type source of truth.
+// Runtime delivery remains a bare store-path directory with only local value
+// imports. By explicit user directive for G136, this supersedes the gen-1
+// M585–M587/T1402–T1404 manual host-type refresh and citation checks; host API
+// drift now fails compilation.
 
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 

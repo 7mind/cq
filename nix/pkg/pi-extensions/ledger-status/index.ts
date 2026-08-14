@@ -7,9 +7,12 @@
 // lives in ./counts (T534, extended T560 for the researches `R` segment);
 // this module is the imperative Pi wiring on top.
 //
-// Pi host types are type-only imports resolved by the Nix-wired check against
-// packages.pi-coding-agent, the single type source of truth. Runtime delivery
-// remains a bare store-path directory with only node/local value imports.
+// Pi host types are type-only imports resolved by the Nix-wired check/local
+// script against packages.pi-coding-agent, the single type source of truth.
+// Runtime delivery remains a bare store-path directory with only node/local
+// value imports. By explicit user directive for G136, this supersedes the gen-1
+// M585–M587/T1402–T1404 manual host-type refresh and citation checks; host API
+// drift now fails compilation.
 
 import { execFile } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";

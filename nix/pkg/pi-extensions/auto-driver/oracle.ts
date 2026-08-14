@@ -4,6 +4,14 @@
 // `predicates` object. EXACTLY ONE channel is implemented — no prefer/fallback
 // branching remains.
 //
+// Pi host types, when needed by this package, enter through driver.ts as
+// type-only root-package imports resolved by the Nix check/local script against
+// packages.pi-coding-agent as the single source of truth. This adapter needs no
+// Pi import; runtime delivery remains a bare store-path directory with only
+// node/local value imports. By explicit user directive for G136, this
+// supersedes the gen-1 M585–M587/T1402–T1404 manual host-type refresh and
+// citation checks; host API drift now fails compilation.
+//
 // EVIDENCE for the channel decision (verified against the Nix-provided Pi
 // typings, not assumptions):
 //   The Pi ExtensionAPI CANNOT invoke an MCP tool from extension code. The
