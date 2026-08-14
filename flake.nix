@@ -454,12 +454,22 @@
             ./nix/pkg/pi-extensions/ledger-status
           ];
         };
+        cqShapeTypecheckSource = pkgs.lib.fileset.toSource {
+          root = ./nix/pkg/cq-ledgers;
+          fileset = pkgs.lib.fileset.unions [
+            ./nix/pkg/cq-ledgers/packages/cq-config
+            ./nix/pkg/cq-ledgers/packages/process-control
+            ./nix/pkg/cq-ledgers/packages/ledger
+          ];
+        };
         piExtensionsTypecheck = import ./nix/pkg/pi-extensions/typecheck.nix {
           inherit
             pkgs
+            bunNodeModules
             piCodingAgent
             piExtensionsNodeModules
             ;
+          cqLedgersSource = cqShapeTypecheckSource;
           source = piExtensionsTypecheckSource;
         };
 

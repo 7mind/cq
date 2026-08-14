@@ -19,8 +19,33 @@ if [[ ! -f "$pi_module/package.json" ]]; then
   exit 1
 fi
 
+refresh_symlink() {
+  local source="$1"
+  local link="$2"
+  if [[ -L "$link" ]]; then
+    unlink "$link"
+  elif [[ -e "$link" ]]; then
+    echo "refusing to replace non-symlink module at $link" >&2
+    exit 1
+  fi
+  mkdir -p "$(dirname "$link")"
+  ln -s "$source" "$link"
+}
+
+cq_workspace="$repository/nix/pkg/cq-ledgers"
+(
+  cd "$cq_workspace"
+  bun install --frozen-lockfile --no-progress --ignore-scripts
+)
+for package in ledger cq-config; do
+  refresh_symlink \
+    "$cq_workspace/packages/process-control" \
+    "$cq_workspace/packages/$package/node_modules/@cq/process-control"
+done
+
 # Each package's frozen lockfile supplies TypeScript, @types/node, and bun-types;
-# only the host package comes from the repository's Nix derivation.
+# the host package comes from the repository's Nix derivation, while @cq/ledger
+# resolves to the same workspace source tree used by the cq build.
 for project in auto-driver ledger-status; do
   project_dir="$script_dir/$project"
   (
@@ -28,15 +53,12 @@ for project in auto-driver ledger-status; do
     bun install --frozen-lockfile --no-progress --ignore-scripts
   )
 
-  link="$project_dir/node_modules/@earendil-works/pi-coding-agent"
-  if [[ -L "$link" ]]; then
-    unlink "$link"
-  elif [[ -e "$link" ]]; then
-    echo "refusing to replace non-symlink Pi module at $link" >&2
-    exit 1
-  fi
-  mkdir -p "$(dirname "$link")"
-  ln -s "$pi_module" "$link"
+  refresh_symlink \
+    "$pi_module" \
+    "$project_dir/node_modules/@earendil-works/pi-coding-agent"
+  refresh_symlink \
+    "$cq_workspace/packages/ledger" \
+    "$project_dir/node_modules/@cq/ledger"
 
   echo "typecheck: $project"
   (
