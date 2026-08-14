@@ -9,6 +9,10 @@
     (subpath (string-append (param "HOME_DIR") "/.local/state/cq"))
 )
 
+;; Grant the global cq configuration read-only.
+(allow file-read* file-read-metadata
+    (subpath (string-append (param "HOME_DIR") "/.config/cq")))
+
 ;; Deny every named profile before re-granting the active one.
 (deny file-read* file-write* file-write-create
     (subpath (string-append (param "HOME_DIR") "/.config/yolo")))

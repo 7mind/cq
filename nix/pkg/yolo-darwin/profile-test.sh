@@ -139,6 +139,15 @@ assert_contains "allows ~/.cache" "$RENDERED" '(subpath (string-append (param "H
 assert_contains "allows cq default XDG state" "$RENDERED" '(subpath (string-append (param "HOME_DIR") "/.local/state/cq"))'
 RENDERED_CUSTOM_XDG="$(XDG_STATE_HOME='/tmp/custom state' render_profile foo /tmp/x)"
 assert_contains "allows cq custom absolute XDG state" "$RENDERED_CUSTOM_XDG" '(subpath "/tmp/custom state/cq")'
+assert_contains "allows cq default global config read-only" "$RENDERED" \
+  $'(allow file-read* file-read-metadata\n    (subpath (string-append (param "HOME_DIR") "/.config/cq")))'
+RENDERED_CUSTOM_XDG_CONFIG="$(XDG_CONFIG_HOME='/tmp/custom config' render_profile foo /tmp/x)"
+assert_contains "allows cq custom absolute global config read-only" "$RENDERED_CUSTOM_XDG_CONFIG" \
+  $'(allow file-read* file-read-metadata\n    (subpath "/tmp/custom config/cq"))'
+RENDERED_RELATIVE_XDG_CONFIG="$(XDG_CONFIG_HOME='relative-config' render_profile foo /tmp/x)"
+assert_contains "relative XDG config home falls back to the home config directory" \
+  "$RENDERED_RELATIVE_XDG_CONFIG" \
+  $'(allow file-read* file-read-metadata\n    (subpath (string-append (param "HOME_DIR") "/.config/cq")))'
 assert_contains "allows /Users metadata traversal" "$RENDERED" '(literal "/Users")'
 assert_contains "allows home root metadata traversal" "$RENDERED" '(literal (param "HOME_DIR"))'
 assert_contains "allows named profile .config read traversal" "$RENDERED" '(literal (string-append (param "HOME_DIR") "/.config"))'

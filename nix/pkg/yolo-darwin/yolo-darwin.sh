@@ -333,12 +333,17 @@ _render_base() {
 # parameter while literal PWD keeps this fragment deterministic for testing.
 _render_yolo_rules() {
   local name="$1" pwd_dir="$2"
-  local esc_pwd esc_cq_state label
+  local esc_pwd esc_cq_state esc_cq_config label
   esc_pwd="$(_sb_escape "$pwd_dir")"
   if [[ -n "${XDG_STATE_HOME:-}" && "$XDG_STATE_HOME" == /* ]]; then
     esc_cq_state="$(_sb_escape "${XDG_STATE_HOME%/}/cq")"
   else
     esc_cq_state=""
+  fi
+  if [[ -n "${XDG_CONFIG_HOME:-}" && "$XDG_CONFIG_HOME" == /* ]]; then
+    esc_cq_config="$(_sb_escape "${XDG_CONFIG_HOME%/}/cq")"
+  else
+    esc_cq_config=""
   fi
   if [[ -n "$name" ]]; then label="$name"; else label="(default)"; fi
 
@@ -363,6 +368,14 @@ _render_yolo_rules() {
     printf '    (subpath (string-append (param "HOME_DIR") "/.pi"))\n'
   fi
   printf ')\n\n'
+
+  printf ';; Grant the global cq configuration read-only.\n'
+  printf '(allow file-read* file-read-metadata\n'
+  if [[ -n "$esc_cq_config" ]]; then
+    printf '    (subpath "%s"))\n\n' "$esc_cq_config"
+  else
+    printf '    (subpath (string-append (param "HOME_DIR") "/.config/cq")))\n\n'
+  fi
 
   printf ';; Deny every named profile before re-granting the active one.\n'
   printf '(deny file-read* file-write* file-write-create\n'
