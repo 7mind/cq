@@ -8,6 +8,10 @@
 #   YOLO_JQ                     - path to jq binary
 #   YOLO_CUSTOM_PROMPT          - path to the shared prompt-composition library
 #
+# Built-in cq binds:
+#   absolute $XDG_STATE_HOME/cq or $HOME/.local/state/cq  - read-write ledger state
+#   absolute $XDG_CONFIG_HOME/cq or $HOME/.config/cq      - read-only global configuration
+#
 # Optional env vars:
 #   YOLO_PODMAN_SOCKET_PATH - rootless podman socket path (enables container forwarding)
 #   YOLO_PODMAN_SOCKET_URI  - rootless podman socket URI
@@ -625,11 +629,22 @@ else
   _cq_state_dir="${HOME}/.local/state/cq"
 fi
 
+# cq's global configuration directory. Resolve the base exactly as @cq/config:
+# an absolute non-empty XDG_CONFIG_HOME wins; empty or relative values fall
+# back to ~/.config. The sandbox may consume global policy but cannot edit it.
+# llm-sandbox skips this bind when the directory is absent.
+if [[ -n "${XDG_CONFIG_HOME:-}" && "${XDG_CONFIG_HOME}" == /* ]]; then
+  _cq_config_dir="${XDG_CONFIG_HOME}/cq"
+else
+  _cq_config_dir="${HOME}/.config/cq"
+fi
+
 BASE_ARGS=(
   --rw "${PWD}"
   --rw "${HOME}/.cache"
   --rw "${HOME}/.ivy2"
   --rw "${_cq_state_dir}"
+  --ro "${_cq_config_dir}"
   "${SOCKET_ARGS[@]}"
   "${TMUX_BIND_ARGS[@]}"
   "${DYNGPU_ARGS[@]}"

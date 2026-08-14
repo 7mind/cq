@@ -65,16 +65,25 @@ assert_eq() {
   fi
 }
 
-OUT="$({
-  cd "$PROJECT_DIR" &&
-    HOME="$FAKE_HOME" \
-    YOLO_LLM_SANDBOX="$FAKE_BIN/record-sandbox" \
-    YOLO_SANDBOX_ENTRYPOINT="$(command -v true)" \
-    YOLO_NIX_LD="$(command -v true)" \
-    YOLO_JQ="$(command -v jq)" \
-    YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh" \
-    bash "$SCRIPT" --profile foo cmd true
-} 2>&1)"
+run_profile_yolo() {
+  local config_home="$1"
+  {
+    cd "$PROJECT_DIR" &&
+      HOME="$FAKE_HOME" \
+      XDG_CONFIG_HOME="$config_home" \
+      YOLO_LLM_SANDBOX="$FAKE_BIN/record-sandbox" \
+      YOLO_SANDBOX_ENTRYPOINT="$(command -v true)" \
+      YOLO_NIX_LD="$(command -v true)" \
+      YOLO_JQ="$(command -v jq)" \
+      YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh" \
+      bash "$SCRIPT" --profile foo cmd true
+  } 2>&1
+}
+
+GLOBAL_CONFIG_HOME="$WORKDIR/xdg-config"
+mkdir -p "$GLOBAL_CONFIG_HOME/cq"
+printf 'reviewers = []\n' > "$GLOBAL_CONFIG_HOME/cq/cq.toml"
+OUT="$(run_profile_yolo "$GLOBAL_CONFIG_HOME")"
 STATUS=$?
 
 assert_eq "named profile launch succeeds" "0" "$STATUS"
@@ -98,6 +107,18 @@ assert_contains \
   "named profile re-shares Pi appended system prompt read-only" \
   "$OUT" \
   "$FAKE_HOME/.pi/agent/APPEND_SYSTEM.md,$FAKE_HOME/.pi/agent/APPEND_SYSTEM.md"
+assert_contains \
+  "absolute XDG config home shares cq configuration read-only" \
+  "$OUT" \
+  $'--ro\n'"$GLOBAL_CONFIG_HOME/cq"
+
+mkdir -p "$FAKE_HOME/.config/cq"
+printf 'reviewers = []\n' > "$FAKE_HOME/.config/cq/cq.toml"
+OUT="$(run_profile_yolo relative-config-home)"
+assert_contains \
+  "relative XDG config home falls back to the home config directory" \
+  "$OUT" \
+  $'--ro\n'"$FAKE_HOME/.config/cq"
 
 # Tag gating: audio is on by default, display passthrough (Wayland + X11) is off
 # by default, and --disable beats --enable for the same tag.
