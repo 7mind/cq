@@ -34,14 +34,12 @@ describe("workset generic mutation role profiles", () => {
     }
   });
 
-  test("child profiles retain only their declared create-item fallback", () => {
+  test("child profiles expose no ordinary mutation tool", () => {
     for (const profile of Object.values(ROLE_TOOL_CAPABILITY_MATRIX)) {
       if (profile.capabilities.includes("full-parent-access")) continue;
       const exposed = exposedLedgerToolsForRole(profile.roleId);
       for (const tool of ORDINARY_MUTATION_TOOLS) {
-        expect(exposed.includes(tool), `${profile.roleId}:${tool}`).toBe(
-          tool === "create_item" && profile.capabilities.includes("fallback-review-writes"),
-        );
+        expect(exposed.includes(tool), `${profile.roleId}:${tool}`).toBe(false);
       }
     }
   });

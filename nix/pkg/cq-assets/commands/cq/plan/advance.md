@@ -160,10 +160,12 @@ override.
 #### Single-reviewer fallback
 
 Snapshot the highest goal-linked review id before dispatch. Dispatch
-`plan-reviewer` in fallback mode; it returns a structured verdict and writes
-exactly one review.
+`plan-reviewer` in fallback mode. The reviewer returns a structured verdict and writes nothing. The parent writes exactly one review
+linked to the goal with the verdict status and buckets through `create_item`,
+supplying `owner_ref: "goals:<G>"` and `creation_kind: "review"`, and stamps it
+with the exact current draft identity.
 
-After dispatch, require exactly one new goal-linked review above the snapshot.
+After the parent write, require exactly one new goal-linked review above the snapshot.
 Validate the complete returned and persisted verdicts, including canonical
 serialized defect objects, and require equality. Zero/multiple reviews,
 malformed data, or any mismatch fails the round before log attachment or

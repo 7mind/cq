@@ -946,37 +946,36 @@
     "plan-reviewer": {
       "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:plan-reviewer",
       "inventory": [
-        "create_item",
         "fetch_dispatch_input",
         "fetch_item",
         "fts_search",
         "list_milestone_items",
         "store_result"
       ],
-      "toolCount": 6,
+      "toolCount": 5,
       "baselineProfile": "full",
       "initialize": {
-        "utf8Bytes": 194,
-        "tokens": 51,
-        "sha256": "68145eb0176b564b5a0493a6bd4ce7c3f7b93672f5bde9633eb92b8a266d485a"
+        "utf8Bytes": 179,
+        "tokens": 47,
+        "sha256": "e2a31dd335cf34fe72327dc3d3138ccfc50bf09c42c26b2ec67846316f495e45"
       },
       "toolsList": {
-        "utf8Bytes": 5268,
-        "tokens": 1195,
-        "sha256": "a97d34d777dd89524f64961a26a9380bcae9db2e37788fb361839081da813edd"
+        "utf8Bytes": 3578,
+        "tokens": 782,
+        "sha256": "d81908df1370bc2a26491205c242294214cbe149e08ca5e0a0c441a61bc8bfc4"
       },
-      "surfaceTokens": 1246,
+      "surfaceTokens": 829,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -10536,
+      "deltaTokens": -10953,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
-        "create_item",
+        "fetch_item",
         "fetch_dispatch_input",
         "store_result"
       ],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 553,
+      "domainInputSchemaTokens": 216,
       "responseContractCounterfactual": {
         "projectionTokens": 107,
         "acknowledgementSentenceTokens": 0,
@@ -3616,10 +3615,10 @@
       {
         "roleId": "plan-reviewer",
         "transcripts": 42,
-        "currentTokensPerTranscript": 1246,
+        "currentTokensPerTranscript": 829,
         "baselineTokensPerTranscript": 11782,
-        "savingTokensPerTranscript": 10536,
-        "currentWeightedTokens": 52332,
+        "savingTokensPerTranscript": 10953,
+        "currentWeightedTokens": 34818,
         "baselineWeightedTokens": 494844
       },
       {
@@ -3659,10 +3658,10 @@
         "baselineWeightedTokens": 23564
       }
     ],
-    "currentWeightedTokens": 265207,
+    "currentWeightedTokens": 247693,
     "baselineWeightedTokens": 4206174,
-    "savingWeightedTokens": 3940967,
-    "currentMeanTokensPerTranscript": 742.8767507002801,
+    "savingWeightedTokens": 3958481,
+    "currentMeanTokensPerTranscript": 693.8179271708683,
     "baselineMeanTokensPerTranscript": 11782
   },
   "transportOnlyOverhead": {

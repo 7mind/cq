@@ -251,16 +251,17 @@ terminal token:
    - `noop` — nothing to do.
 2. **Review the plan** (only on `review-requested`) — spawn the `plan-reviewer`,
    which judges by the canonical `/cq:plan-review` rubric (Fine-grained? /
-   Sequenced? / Testable? / Grounded? / Complete?) and writes ONE `reviews`
-   item whose `status` IS the verdict (`go-ahead` | `revise`). The loop
-   continues so the next planner step consumes it.
+   Sequenced? / Testable? / Grounded? / Complete?) and returns a structured
+   verdict without writing. The parent writes the sole `reviews` item for both
+   the single-reviewer fallback and configured panel; its `status` IS the
+   verdict (`go-ahead` | `revise`). The loop continues so the next planner step
+   consumes it.
 
 The planner and reviewer steps are each **pluggable**: a single-agent fallback
-(the native subagent writes the ledger) or a configured multi-agent panel (the
-orchestrator launches all active planners/reviewers in parallel and is the sole
-writer — planners via generate-N-then-JUDGE+SYNTHESIS, reviewers via
-strictest-wins + tagged-union reconciliation). The state machine is identical
-either way.
+or a configured multi-agent panel. In both modes, dispatched children return
+structured results and the orchestrator is the sole writer — planners via
+generate-N-then-JUDGE+SYNTHESIS, reviewers via strictest-wins + tagged-union
+reconciliation. The state machine is identical either way.
 
 ### The `reviews` lifecycle (a sub-state machine)
 

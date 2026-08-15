@@ -51,7 +51,6 @@ const PLANNING_TOOLS = [
 ] as const;
 const REVIEW_TOOLS = [
   "fetch_item",
-  "create_item",
   "fts_search",
   "list_milestone_items",
   "fetch_dispatch_input",

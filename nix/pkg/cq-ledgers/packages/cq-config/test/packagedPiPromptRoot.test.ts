@@ -422,7 +422,6 @@ describe("packaged Pi prompt root", () => {
     ]);
     expect(profiles.roles["plan-reviewer"]?.roleTools).toEqual([
       "fetch_item",
-      "create_item",
       "fts_search",
       "list_milestone_items",
     ]);

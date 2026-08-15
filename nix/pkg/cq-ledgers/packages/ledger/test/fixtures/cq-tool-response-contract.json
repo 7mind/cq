@@ -14,9 +14,7 @@
     {
       "source": "agents/plan-reviewer.md",
       "family": "plan",
-      "calls": [
-        "Catalogue::create_item#1|ack"
-      ]
+      "calls": []
     },
     {
       "source": "commands/cq/advance.md",
@@ -65,7 +63,8 @@
       "family": "plan",
       "calls": [
         "Per-goal loop / 2. Resolve planners and dispatch::get_config#1|full-content",
-        "Per-goal loop / 3. Review a published draft::get_config#1|full-content"
+        "Per-goal loop / 3. Review a published draft::get_config#1|full-content",
+        "Per-goal loop / 3. Review a published draft / Single-reviewer fallback::create_item#1|ack"
       ]
     },
     {

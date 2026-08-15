@@ -208,7 +208,6 @@ describe("T1325 role tool capability matrix", () => {
     ]);
     expect(manifest.roles["plan-reviewer"]?.roleTools).toEqual([
       "fetch_item",
-      "create_item",
       "fts_search",
       "list_milestone_items",
     ]);

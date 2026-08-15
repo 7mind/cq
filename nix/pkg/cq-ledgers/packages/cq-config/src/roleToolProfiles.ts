@@ -82,7 +82,6 @@ export const DOMAIN_LEDGER_TOOL_NAMES = LEDGER_CAPABILITY_TOOL_NAMES.filter(
 export const ROLE_CAPABILITY_CLASSES = [
   "full-parent-access",
   "planning-reads",
-  "fallback-review-writes",
   "config-read",
   "dispatch-result-plumbing",
   "no-domain-ledger",
@@ -103,7 +102,6 @@ export const ROLE_CAPABILITY_TOOLS: Readonly<
 > = Object.freeze({
   "full-parent-access": LEDGER_CAPABILITY_TOOL_NAMES,
   "planning-reads": PLANNING_READ_TOOL_NAMES,
-  "fallback-review-writes": [...PLANNING_READ_TOOL_NAMES, "create_item"],
   "config-read": ["get_config"],
   "dispatch-result-plumbing": DISPATCH_RESULT_PLUMBING_TOOL_NAMES,
   "no-domain-ledger": [],
@@ -171,8 +169,8 @@ function profileForCatalogRole({
     return role(
       roleId,
       roleKind,
-      ["fallback-review-writes", "dispatch-result-plumbing"],
-      ["create_item", "fetch_dispatch_input", "store_result"],
+      ["planning-reads", "dispatch-result-plumbing"],
+      ["fetch_item", "fetch_dispatch_input", "store_result"],
       DISPATCH_CHILD_EVIDENCE,
     );
   }

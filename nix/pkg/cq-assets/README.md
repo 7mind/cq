@@ -22,7 +22,7 @@ Current assets:
 | `commands/cq/plan/advance.md`        | slash command — thin planner↔reviewer loop         |
 | `commands/cq/plan/follow-up.md`      | slash command — add scope to an existing goal, re-clarify |
 | `agents/plan-advance.md`          | subagent — the planner (one state step)            |
-| `agents/plan-reviewer.md`         | subagent — the adversarial reviewer (mode-gated write) |
+| `agents/plan-reviewer.md`         | subagent — the adversarial reviewer (write-free; parent persists) |
 | `commands/cq/plan-review.md`      | shared prompt — canonical plan-review rubric (Claude/Codex/Pi) |
 | `commands/cq/implement-review.md` | shared prompt — canonical implement-review rubric (Claude/Codex/Pi) |
 | `commands/cq/reviewers.md`        | session-only reviewer-set override command |
