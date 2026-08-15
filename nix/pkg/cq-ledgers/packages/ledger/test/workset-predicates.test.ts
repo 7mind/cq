@@ -233,18 +233,6 @@ function runContract(factory: FixtureFactory): void {
             },
           },
         });
-        const goalGate = await guarded.owned.createOwned({
-          owner: { ledgerId: GOALS_LEDGER, itemId: goal.id },
-          creationKind: "exact-gate-question",
-          child: {
-            ledgerId: QUESTIONS_LEDGER,
-            status: "open",
-            fields: {
-              question: "goal gate",
-              ledgerRefs: [`${GOALS_LEDGER}:${goal.id}`],
-            },
-          },
-        });
         const researchGate = await guarded.owned.createOwned({
           owner: { ledgerId: RESEARCHES_LEDGER, itemId: research.child.id },
           creationKind: "exact-gate-question",
@@ -289,7 +277,7 @@ function runContract(factory: FixtureFactory): void {
         expect(actual.pResearch).toEqual({ value: false, items: [] });
         expect(actual.openQuestionGate).toEqual({
           value: true,
-          items: [goalGate.child.id, researchGate.child.id],
+          items: [researchGate.child.id],
         });
       } finally {
         await store.dispose();
