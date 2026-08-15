@@ -1316,6 +1316,10 @@ describe("stdio/direct ledger tool differential contract", () => {
       const createItem = definitions.find(({ name }) => name === "create_item");
       expect(createItem?.schema).toMatchObject({
         required: ["ledger_id", "status", "fields"],
+        dependencies: {
+          owner_ref: ["creation_kind"],
+          creation_kind: ["owner_ref"],
+        },
         allOf: [
           {
             if: {
@@ -1331,11 +1335,24 @@ describe("stdio/direct ledger tool differential contract", () => {
             },
             else: {
               if: {
-                properties: { ledger_id: { const: "ideas" } },
-                required: ["ledger_id"],
+                properties: {
+                  creation_kind: { enum: ["idea-to-goal", "fix-goal"] },
+                },
+                required: ["creation_kind"],
               },
-              then: {},
-              else: { required: ["milestone_id"] },
+              then: {
+                not: {
+                  anyOf: [{ required: ["milestone_id"] }, { required: ["id"] }],
+                },
+              },
+              else: {
+                if: {
+                  properties: { ledger_id: { const: "ideas" } },
+                  required: ["ledger_id"],
+                },
+                then: {},
+                else: { required: ["milestone_id"] },
+              },
             },
           },
         ],

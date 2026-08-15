@@ -14,7 +14,9 @@
     {
       "source": "agents/plan-reviewer.md",
       "family": "plan",
-      "calls": []
+      "calls": [
+        "Catalogue::create_item#1|ack"
+      ]
     },
     {
       "source": "commands/cq/advance.md",

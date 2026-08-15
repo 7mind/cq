@@ -507,12 +507,15 @@ describe("CQ tool response-policy inventory", () => {
     );
 
     const stale = cloneInventory(inventory);
-    const staleSource = stale.sources.find((source) => source.calls.length > 0);
+    const staleSource = stale.sources.find((source) =>
+      source.calls.some((call) => call.includes("Shared rules")),
+    );
     expect(staleSource).toBeDefined();
     if (staleSource === undefined) throw new Error("Inventory has no call to stale");
-    staleSource.calls[0] = requiredAt(
+    const staleIndex = staleSource.calls.findIndex((call) => call.includes("Shared rules"));
+    staleSource.calls[staleIndex] = requiredAt(
       staleSource.calls,
-      0,
+      staleIndex,
       "inventory call",
     ).replace(
       "Shared rules",

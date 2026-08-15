@@ -38,6 +38,7 @@ describe("prompt fragment inventory closure", () => {
       "host-tool-vocabulary",
       "inline-command-recursion",
       "ledger-response-contract",
+      "workset-effect-discipline",
     ]);
     expect(begin!.dispatchEdges).toContainEqual({
       kind: "recursion",
@@ -94,15 +95,16 @@ describe("prompt fragment inventory closure", () => {
     expect(new Set(PROMPT_FRAGMENT_INVENTORY.map((entry) => entry.targetFragment))).toEqual(
       new Set(PROMPT_FRAGMENT_SLOTS),
     );
-    const sharedContract = PROMPT_FRAGMENT_SLOT_CONTRACTS.find(
-      (contract) => contract.fragment === "ledger-response-contract",
-    );
-    expect(sharedContract).toBeDefined();
-    expect(sharedContract).not.toHaveProperty("intentionalDifference");
+    const sharedContracts = new Set(["ledger-response-contract", "workset-effect-discipline"]);
+    for (const contract of PROMPT_FRAGMENT_SLOT_CONTRACTS.filter(({ fragment }) =>
+      sharedContracts.has(fragment),
+    )) {
+      expect(contract).not.toHaveProperty("intentionalDifference");
+    }
     for (const entry of PROMPT_FRAGMENT_INVENTORY) {
       expect(entry.supportedSurfaces).toEqual(["claude", "codex", "pi"]);
       expect(Object.keys(entry.forbiddenVocabulary)).toEqual(["claude", "codex", "pi"]);
-      if (entry.targetFragment === "ledger-response-contract") {
+      if (sharedContracts.has(entry.targetFragment)) {
         expect(entry).not.toHaveProperty("intentionalDifference");
       } else {
         expect(entry.intentionalDifference).toBeDefined();
