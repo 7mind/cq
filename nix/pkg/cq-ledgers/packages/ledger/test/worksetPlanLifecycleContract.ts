@@ -462,6 +462,69 @@ export function registerWorksetPlanLifecycleContract(
       expect(finalizeStore.activeAdmissionCount()).toBe(0);
     });
 
+    it("claims a follow-up after the prior finalized manifest has been archived", async () => {
+      const store = await factory.build();
+      await store.init();
+      await seedGoal(store, "G3");
+      await store.setRoots(["goals:G3"]);
+      const activeClaim = await claim(store, "G3", "archive-claim", null);
+      const manifest = await publish(store, "G3", activeClaim, "archive-publish");
+      const milestoneId = manifest.milestones[0]?.id;
+      const taskId = manifest.tasks[0]?.id;
+      if (milestoneId === undefined || taskId === undefined) {
+        throw new Error("published manifest allocation missing");
+      }
+      await store.owned.createOwned({
+        owner: { ledgerId: GOALS_LEDGER, itemId: "G3" },
+        creationKind: "review",
+        child: {
+          ledgerId: REVIEWS_LEDGER,
+          milestoneId: MILESTONES_AMBIENT_ID,
+          id: "R3",
+          status: "go-ahead",
+          fields: {
+            [PLAN_REVIEW_DRAFT_FIELD]: JSON.stringify({
+              goalId: "G3",
+              claimId: activeClaim.claimId,
+              generation: activeClaim.generation,
+              revision: manifest.revision,
+            }),
+          },
+          ...PROVENANCE,
+        },
+      });
+      const finalized = await store.finalizePlan({
+        goalId: "G3",
+        claimId: activeClaim.claimId,
+        generation: activeClaim.generation,
+        operationId: "archive-finalize",
+        ownerFenceToken: activeClaim.ownerFenceToken,
+        reviewId: "R3",
+        draftRevision: manifest.revision,
+        decision: { headline: "Proceed" },
+        ...PROVENANCE,
+      });
+      expect(finalized.ok).toBe(true);
+      await store.mutations.updateItem(TASKS_LEDGER, taskId, { status: "done" });
+      await store.mutations.updateMilestone(milestoneId, { status: "done" });
+      await store.mutations.archiveMilestone(milestoneId, "completed prior plan");
+
+      const followUp = await store.claimPlan({
+        goalId: "G3",
+        purpose: "follow-up",
+        claimRequestId: "archive-follow-up",
+        ownerFenceToken: OWNER,
+        expectedGeneration: activeClaim.generation,
+        ...PROVENANCE,
+      });
+      expect(followUp).toMatchObject({
+        ok: true,
+        acknowledgement: { goalId: "G3", generation: activeClaim.generation + 1 },
+      });
+      expect(store.fetchItem(GOALS_LEDGER, "G3").fields["milestones"]).toEqual([]);
+      expect(store.activeAdmissionCount()).toBe(0);
+    });
+
     it("rejects a mixed task pause and restores the exact pre-operation state", async () => {
       const store = await factory.build();
       await store.init();

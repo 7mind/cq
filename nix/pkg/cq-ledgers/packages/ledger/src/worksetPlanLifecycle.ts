@@ -183,6 +183,11 @@ function affectedRefs(
     const reviewRef = itemRef(REVIEWS_LEDGER, reviewId);
     if (operation.kind === "finalize-plan" || state.byRef.has(reviewRef)) refs.add(reviewRef);
   }
+  if (operation.kind === "claim-plan" && operation.input.purpose === "follow-up") {
+    for (const ref of refs) {
+      if (ref !== goalRef && !state.byRef.has(ref)) refs.delete(ref);
+    }
+  }
   return refs;
 }
 
