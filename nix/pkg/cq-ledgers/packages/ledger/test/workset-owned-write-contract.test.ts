@@ -105,20 +105,15 @@ describe("workset owned-write contract module [T1962]", () => {
       status: "planning",
       fields: { title: "owned-write rejection", description: "regression" },
     });
-    if (false) {
-      void ledger.owned.createOwned({
-        owner: { ledgerId: GOALS_LEDGER, itemId: goal.id },
-        // @ts-expect-error plan publication belongs exclusively to PlanLifecycleStore
-        creationKind: "active-current-draft",
-        child: { ledgerId: TASKS_LEDGER, status: "planned", fields: { headline: "x" } },
-      });
-      void ledger.owned.createOwned({
-        owner: { ledgerId: GOALS_LEDGER, itemId: goal.id },
-        // @ts-expect-error plan publication belongs exclusively to PlanLifecycleStore
-        creationKind: "finalized-manifest",
-        child: { ledgerId: TASKS_LEDGER, status: "planned", fields: { headline: "x" } },
-      });
-    }
+    type OwnedCreationKind = Parameters<
+      typeof ledger.owned.createOwned
+    >[0]["creationKind"];
+    // @ts-expect-error plan publication belongs exclusively to PlanLifecycleStore
+    const activeDraftKind: OwnedCreationKind = "active-current-draft";
+    // @ts-expect-error plan publication belongs exclusively to PlanLifecycleStore
+    const finalizedManifestKind: OwnedCreationKind = "finalized-manifest";
+    void activeDraftKind;
+    void finalizedManifestKind;
     const directCreate = ledger.owned.createOwned as unknown as (input: {
       owner: { ledgerId: string; itemId: string };
       creationKind: string;
