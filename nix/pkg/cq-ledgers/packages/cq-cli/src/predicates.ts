@@ -4,7 +4,7 @@
  *
  * Unlike `cq advance-gate` (advanceGate.ts), this subcommand has NO session
  * resolution and NO marker check: it ALWAYS reads the ledger via the shared
- * `derivePredicates(store)` engine and ALWAYS prints the TRUE predicates,
+ * `deriveWorksetPredicates(store)` engine and ALWAYS prints the TRUE predicates,
  * ALWAYS exiting 0. It exists so a harness with no per-session advance marker
  * (the "pi situation" — see advance-gate-false-drained.test.ts) can still read
  * the REAL ledger actionability rather than the gate's false-DRAINED verdict.
@@ -20,7 +20,7 @@
  * `runAdvanceGate`'s step 4 and `runInit`) and disposed in a `finally`.
  */
 
-import { createLedgerStore, derivePredicates, type DerivedPredicates } from "@cq/ledger";
+import { createLedgerStore, deriveWorksetPredicates, type DerivedPredicates } from "@cq/ledger";
 
 /** Exit code for `cq predicates` — ALWAYS success (it never blocks). */
 export const EXIT_PREDICATES = 0;
@@ -55,7 +55,7 @@ export interface PredicatesOutput {
 
 /**
  * `cq predicates`: build the fs-backed store in-process, derive the predicates
- * via the shared engine, dispose the store (try/finally), and print
+ * via the shared workset-aware engine, dispose the store (try/finally), and print
  * `{ predicates }` to stdout UNCONDITIONALLY. ALWAYS exits 0 — no session, no
  * marker, no block.
  */
@@ -66,7 +66,7 @@ export async function runPredicates(
   const { store } = await createLedgerStore(args.cwd);
   let predicates: DerivedPredicates;
   try {
-    predicates = derivePredicates(store);
+    predicates = await deriveWorksetPredicates(store);
   } finally {
     await store.dispose();
   }

@@ -122,6 +122,12 @@ import {
 import { buildPrefixRegistry, canonicalizeRef, parseRef } from "../refs.js";
 import type { LedgerStore } from "./LedgerStore.js";
 import { operatorActionDirectiveForTask } from "../operatorActions.js";
+import {
+  buildActiveStateFromLedgerStore,
+  requireWorksetStore,
+} from "../worksetAccess.js";
+import { closeWorkset } from "../worksetGraph.js";
+import { readWorksetRootsEpoch } from "../worksetStore.js";
 
 /**
  * One detection predicate's verdict: its boolean `value` plus the ids of the
@@ -222,7 +228,11 @@ const TASK_BLOCKED_STATUS = "blocked";
  */
 type PredicateStoreReader = Pick<LedgerStore, "enumerate" | "fetch">;
 
-function activeItems(store: PredicateStoreReader, ledgerId: string): Item[] {
+function activeItems(
+  store: PredicateStoreReader,
+  ledgerId: string,
+  eligibleRefs: ReadonlySet<string> | undefined,
+): Item[] {
   let fetched;
   try {
     fetched = store.fetch(ledgerId);
@@ -231,7 +241,11 @@ function activeItems(store: PredicateStoreReader, ledgerId: string): Item[] {
   }
   const out: Item[] = [];
   for (const group of fetched.milestones) {
-    for (const item of group.items) out.push(item);
+    for (const item of group.items) {
+      if (eligibleRefs === undefined || eligibleRefs.has(`${ledgerId}:${item.id}`)) {
+        out.push(item);
+      }
+    }
   }
   return out;
 }
@@ -372,7 +386,7 @@ function buildTaskDependencyReadiness(
   const satisfyingByLedger = new Map<string, Set<string>>();
   for (const name of ledgerNames) {
     const idIndex = new Map<string, Item>();
-    for (const item of activeItems(store, name)) idIndex.set(item.id, item);
+    for (const item of activeItems(store, name, undefined)) idIndex.set(item.id, item);
     activeItemsByLedger.set(name, idIndex);
     const schema = canonicalSchemaByName.get(name) ?? store.fetch(name).schema;
     satisfyingByLedger.set(
@@ -435,8 +449,8 @@ export function taskDependenciesSatisfied(
 ): boolean {
   return buildTaskDependencyReadiness(
     store,
-    activeItems(store, TASKS_LEDGER),
-    activeItems(store, MILESTONES_LEDGER),
+    activeItems(store, TASKS_LEDGER, undefined),
+    activeItems(store, MILESTONES_LEDGER, undefined),
   )(task);
 }
 
@@ -456,12 +470,19 @@ export function taskDependenciesSatisfied(
  * `belowFloor.items` lists sub-floor root-caused defects and gates NOTHING.
  */
 export function derivePredicates(store: LedgerStore): DerivedPredicates {
-  const defects = activeItems(store, DEFECTS_LEDGER);
-  const goals = activeItems(store, GOALS_LEDGER);
-  const tasks = activeItems(store, TASKS_LEDGER);
-  const questions = activeItems(store, QUESTIONS_LEDGER);
-  const milestones = activeItems(store, MILESTONES_LEDGER);
-  const researches = activeItems(store, RESEARCHES_LEDGER);
+  return deriveEligiblePredicates(store, undefined);
+}
+
+function deriveEligiblePredicates(
+  store: LedgerStore,
+  eligibleRefs: ReadonlySet<string> | undefined,
+): DerivedPredicates {
+  const defects = activeItems(store, DEFECTS_LEDGER, eligibleRefs);
+  const goals = activeItems(store, GOALS_LEDGER, eligibleRefs);
+  const tasks = activeItems(store, TASKS_LEDGER, eligibleRefs);
+  const questions = activeItems(store, QUESTIONS_LEDGER, eligibleRefs);
+  const milestones = activeItems(store, MILESTONES_LEDGER, eligibleRefs);
+  const researches = activeItems(store, RESEARCHES_LEDGER, eligibleRefs);
 
   // The open questions, indexed by the cross-ledger refs they carry, so a
   // single pass answers "is item X gated by an open question?".
@@ -695,4 +716,16 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
     planBusy: { value: busyGoalIds.length > 0, items: busyGoalIds },
     goalDrift: { value: goalDriftItems.length > 0, items: goalDriftItems },
   };
+}
+
+/**
+ * Project predicate inputs through the persisted closed workset. Empty roots
+ * retain the historical unfiltered result; configured roots remain restrictive
+ * even when every root is inactive and the closed graph has no active nodes.
+ */
+export async function deriveWorksetPredicates(store: LedgerStore): Promise<DerivedPredicates> {
+  const snapshot = await readWorksetRootsEpoch(requireWorksetStore(store));
+  if (snapshot.roots.length === 0) return derivePredicates(store);
+  const graph = closeWorkset(snapshot.roots, buildActiveStateFromLedgerStore(store));
+  return deriveEligiblePredicates(store, new Set(graph.nodes.map((node) => node.ref)));
 }

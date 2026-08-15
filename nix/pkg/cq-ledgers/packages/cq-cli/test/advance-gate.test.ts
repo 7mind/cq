@@ -38,6 +38,7 @@ import {
   GOALS_LEDGER,
   TASKS_LEDGER,
   RESEARCHES_LEDGER,
+  requireWorksetStore,
   type LedgerStore,
 } from "@cq/ledger";
 
@@ -148,6 +149,25 @@ async function seedInvestigateLedger(): Promise<string> {
   return root;
 }
 
+/** Seed two actionable defects while admitting only one through the workset. */
+async function seedRestrictiveInvestigateLedger(): Promise<{ root: string; includedId: string }> {
+  const root = await xdgRoot();
+  let includedId = "";
+  await seedStore(root, async (store) => {
+    const included = await store.createItem("defects", MILESTONES_AMBIENT_ID, {
+      status: "open",
+      fields: { headline: "included defect", severity: "high" },
+    });
+    includedId = included.id;
+    await store.createItem("defects", MILESTONES_AMBIENT_ID, {
+      status: "open",
+      fields: { headline: "unrelated defect", severity: "high" },
+    });
+    await requireWorksetStore(store).setRoots([`defects:${included.id}`]);
+  });
+  return { root, includedId };
+}
+
 /**
  * Seed a fresh ledger root making P-implement TRUE: a goal in `planned` with a
  * DAG-ready (non-terminal, no deps, no gating question) task linked to it.
@@ -252,6 +272,19 @@ describe("cq advance-gate — verdict + exit-code contract (T367)", () => {
     expect(verdict.reason).toContain("continue per D41");
     expect(verdict.predicates.pInvestigate.value).toBe(true);
     expect(verdict.predicates.pInvestigate.items.length).toBeGreaterThan(0);
+  });
+
+  it("(1a-workset) marker present names only the restrictive workset member", async () => {
+    const { root, includedId } = await seedRestrictiveInvestigateLedger();
+    await writeFile(markerFile(runtimeDir), "started\n", "utf8");
+
+    const { exitCode, verdict } = await runGate(root);
+
+    expect(exitCode).toBe(EXIT_BLOCK);
+    expect(verdict.predicates.pInvestigate).toEqual({
+      value: true,
+      items: [includedId],
+    });
   });
 
   it("(1b) marker present + P-implement TRUE → block=true, non-zero exit, reason names predicate + 'continue per D41'", async () => {

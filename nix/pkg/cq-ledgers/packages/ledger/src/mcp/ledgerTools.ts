@@ -52,7 +52,7 @@ import { IDEAS_LEDGER, MILESTONES_AMBIENT_ID, MILESTONES_LEDGER } from "../const
 import type { FieldValue, LedgerSchema } from "../types.js";
 import { LedgerError } from "../types.js";
 import { paginate } from "../projection.js";
-import { derivePredicates } from "../store/predicates.js";
+import { deriveWorksetPredicates } from "../store/predicates.js";
 import { computeLedgerSummaries } from "../summaries.js";
 import { measureUtf8JsonBytes, measureUtf8TextBytes } from "../usageStats.js";
 import {
@@ -898,7 +898,7 @@ export function createLedgerMcpToolSpecifications(
     "derive_predicates",
     "Return the authoritative /cq:advance verdicts pInvestigate, pSeed, pPlan, pResearch, pImplement, pOperatorAction, openQuestionGate, belowFloor, planBusy, and goalDrift as {value,items}. The first six are actionable flows; operator actions execute only in the parent; openQuestionGate suppresses gated work; belowFloor, planBusy, and goalDrift are informational.",
     {} as Record<string, never>,
-    async () => jsonResult(derivePredicates(store)),
+    async () => jsonResult(await deriveWorksetPredicates(store)),
   );
 
   const materializeOperatorActionTool = tool(

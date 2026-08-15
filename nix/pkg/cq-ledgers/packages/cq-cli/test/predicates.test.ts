@@ -3,7 +3,7 @@
  *
  * `cq predicates` differs from `cq advance-gate` in ONE decisive way: it has NO
  * session resolution and NO marker check — it ALWAYS reads the ledger via the
- * shared `derivePredicates` engine and ALWAYS prints the REAL predicates,
+ * shared `deriveWorksetPredicates` engine and ALWAYS prints the REAL predicates,
  * exiting 0. This is the fix for the "pi situation" (a harness with no advance
  * marker): advance-gate on the SAME root returns a false-DRAINED verdict (all
  * predicates false) because the marker is absent, whereas `cq predicates`
@@ -13,7 +13,7 @@
  * P-investigate TRUE) where advance-gate WITHOUT a marker would return
  * false-DRAINED, and asserts:
  *   1. `cq predicates` (via runPredicates) returns the REAL non-empty predicates
- *      that match `derivePredicates(store)` on the same root (P-investigate
+ *      that match `deriveWorksetPredicates(store)` on the same root (P-investigate
  *      TRUE with a non-empty items list), exit 0.
  *   2. The emitted stdout parses through the auto-driver oracle's parser SHAPE:
  *      `parsed.predicates` is an object carrying all four keys, each a
@@ -35,7 +35,8 @@ import {
   MILESTONES_AMBIENT_ID,
   RESEARCHES_LEDGER,
   createLedgerStore,
-  derivePredicates,
+  deriveWorksetPredicates,
+  requireWorksetStore,
 } from "@cq/ledger";
 
 /** The predicate keys the oracle's parser requires, in canonical order. */
@@ -115,12 +116,12 @@ describe("cq predicates — unconditional real-predicate emitter (T476)", () => 
     expect(outcome.exitCode).toBe(0);
     expect(io.outs.length).toBe(1);
 
-    // The emitted predicates MATCH derivePredicates(store) on the same root:
+    // The emitted predicates MATCH deriveWorksetPredicates(store) on the same root:
     // P-investigate is TRUE with a non-empty items list (the seeded defect).
     const { store } = await createLedgerStore(root);
     let expected;
     try {
-      expected = derivePredicates(store);
+      expected = await deriveWorksetPredicates(store);
     } finally {
       await store.dispose();
     }
@@ -131,6 +132,34 @@ describe("cq predicates — unconditional real-predicate emitter (T476)", () => 
     expect(parsed.predicates.pInvestigate.value).toBe(true);
     expect(parsed.predicates.pInvestigate.items).toEqual(expected.pInvestigate.items);
     expect(parsed.predicates).toEqual(expected);
+  });
+
+  it("emits only the restrictive workset's actionable members", async () => {
+    const root = await makeTmpDir("cq-predicates-workset-ledger-");
+    await writeFile(
+      path.join(root, "cq.toml"),
+      `[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(root)}"\n`,
+      "utf8",
+    );
+    const { store } = await createLedgerStore(root);
+    const included = await store.createItem("defects", MILESTONES_AMBIENT_ID, {
+      status: "open",
+      fields: { headline: "included", severity: "high" },
+    });
+    await store.createItem("defects", MILESTONES_AMBIENT_ID, {
+      status: "open",
+      fields: { headline: "unrelated", severity: "high" },
+    });
+    await requireWorksetStore(store).setRoots([`defects:${included.id}`]);
+    await store.dispose();
+
+    const io = recordingIo();
+    const outcome = await runPredicates({ cwd: root }, io);
+    expect(outcome.exitCode).toBe(0);
+    const parsed = JSON.parse(io.outs[0]!) as {
+      predicates: { pInvestigate: { value: boolean; items: string[] } };
+    };
+    expect(parsed.predicates.pInvestigate).toEqual({ value: true, items: [included.id] });
   });
 
   it("emits a P-seed store's real predicates: pSeed names the root-caused high defect, belowFloor names a medium one", async () => {

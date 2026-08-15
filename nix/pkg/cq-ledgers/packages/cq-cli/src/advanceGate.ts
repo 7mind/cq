@@ -4,7 +4,7 @@
  *
  * It answers ONE question: while a `/cq:advance` run is active, may the harness
  * pause its turn, or must the flow continue? The verdict is derived from the
- * SHARED `derivePredicates(store)` engine (the single source of truth in
+ * SHARED `deriveWorksetPredicates(store)` engine (the single source of truth in
  * `@cq/ledger`), so the CLI and the MCP server agree on actionability.
  *
  * ## Behaviour (LOCKED decisions Q199/Q200/Q201/Q202)
@@ -18,7 +18,7 @@
  *     line → ALLOW (block=false).
  *  4. Else construct the store IN-PROCESS via `createLedgerStore(cwd)`
  *     (exactly like `runInit` — NO MCP server), call
- *     `derivePredicates(store)`, dispose, and: if ANY of
+ *     `deriveWorksetPredicates(store)`, dispose, and: if ANY of
  *     pInvestigate/pSeed/pPlan/pResearch/pOperatorAction/pImplement is TRUE-and-unblocked →
  *     BLOCK (block=true), naming the FIRST such predicate in flow order
  *     (investigate → seed → plan → research → implement); else ALLOW.
@@ -37,7 +37,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import {
   createLedgerStore,
-  derivePredicates,
+  deriveWorksetPredicates,
   type DerivedPredicates,
 } from "@cq/ledger";
 
@@ -147,7 +147,7 @@ function hasExternalSignal(contents: string): boolean {
 
 /**
  * Compute the neutral verdict for `args`, reading the marker + (only when
- * needed) the ledger via the SHARED `derivePredicates`.
+ * needed) the ledger via the SHARED workset-aware predicate engine.
  */
 export async function computeVerdict(args: AdvanceGateArgs): Promise<AdvanceGateVerdict> {
   const sessionId = resolveSessionId(args);
@@ -168,7 +168,7 @@ export async function computeVerdict(args: AdvanceGateArgs): Promise<AdvanceGate
   const { store } = await createLedgerStore(args.cwd);
   let predicates: DerivedPredicates;
   try {
-    predicates = derivePredicates(store);
+    predicates = await deriveWorksetPredicates(store);
   } finally {
     await store.dispose();
   }

@@ -8,7 +8,8 @@
 // (docs/drafts/20260615-1915-pi-auto-driver-demo.md §3) recorded
 // `action=STOP_DRAINED, iterations=0` as a [PASS] when the auto-driver oracle
 // shelled `cq advance-gate`. That was a FALSE-PASS: against an ACTIONABLE ledger
-// (an open high-severity defect ⇒ pInvestigate TRUE) the marker-gated
+// (a restrictive workset containing one of two open high-severity defects)
+// the marker-gated
 // `cq advance-gate` returns ALL-FALSE predicates whenever the per-session advance
 // marker is ABSENT (the "pi situation" — see
 // cq-cli/test/advance-gate-false-drained.test.ts, T474). All-false ⇒
@@ -148,37 +149,48 @@ function xdgRoot(): string {
   return root;
 }
 
-// --- Fixture: an ACTIONABLE ledger (one open high-severity defect ⇒ pInvestigate) ---
+// --- Fixture: a restrictive ACTIONABLE workset --------------------------------
 
 /**
- * Seed a fresh xdg-backed ledger root with one open high-severity defect, so the
- * shared derivePredicates engine reports pInvestigate TRUE. Built by shelling a
+ * Seed two open high-severity defects while persisting only the first as a
+ * workset root, so the shared predicate engine must report exactly that member.
+ * Built by shelling a
  * throwaway script (written into the cq-cli package dir so `@cq/ledger` resolves)
  * — this package never imports @cq itself. Replicates T474's
  * `seedActionableLedger` shape via @cq/ledger's createLedgerStore (T547 / D95:
  * migrated off the deleted fs-backend runtime primary, T505/G67).
  */
-function seedActionableLedger(): string {
+function seedActionableLedger(): { root: string; includedId: string } {
   const root = xdgRoot();
   if (seedScriptPath === null) {
     seedScriptPath = path.join(CQ_CLI_PKG_DIR, "_t480-regression-seed.ts");
     writeFileSync(
       seedScriptPath,
       [
-        'import { createLedgerStore, MILESTONES_AMBIENT_ID } from "@cq/ledger";',
+        'import { createLedgerStore, MILESTONES_AMBIENT_ID, requireWorksetStore } from "@cq/ledger";',
         "const { store } = await createLedgerStore(process.argv[2]);",
+        'const included = await store.createItem("defects", MILESTONES_AMBIENT_ID, {',
+        '  status: "open",',
+        '  fields: { headline: "included actionable defect", severity: "high" },',
+        "});",
         'await store.createItem("defects", MILESTONES_AMBIENT_ID, {',
         '  status: "open",',
-        '  fields: { headline: "a real, actionable defect", severity: "high" },',
+        '  fields: { headline: "unrelated actionable defect", severity: "high" },',
         "});",
+        "await requireWorksetStore(store).setRoots([`defects:${included.id}`]);",
         "await store.dispose();",
+        "process.stdout.write(JSON.stringify({ includedId: included.id }));",
         "",
       ].join("\n"),
       "utf8",
     );
   }
-  execFileSync("bun", [seedScriptPath, root], { cwd: CQ_CLI_PKG_DIR, encoding: "utf8" });
-  return root;
+  const output = execFileSync("bun", [seedScriptPath, root], {
+    cwd: CQ_CLI_PKG_DIR,
+    encoding: "utf8",
+  });
+  const parsed = JSON.parse(output) as { includedId: string };
+  return { root, includedId: parsed.includedId };
 }
 
 // --- Channel invocations against the SOURCE CLI ---------------------------------
@@ -250,7 +262,7 @@ afterEach(() => {
 
 describe("auto-driver false-DRAINED regression (T480)", () => {
   test("OLD channel (advance-gate, marker absent) => all-false => STOP_DRAINED on cycle 0", () => {
-    const root = seedActionableLedger();
+    const { root } = seedActionableLedger();
     const predicates = advanceGateChannel(root);
 
     // The documented-wrong outcome: a marker-less gate sees nothing.
@@ -263,13 +275,13 @@ describe("auto-driver false-DRAINED regression (T480)", () => {
   }, COLD_SHELLOUT_TIMEOUT_MS);
 
   test("NEW channel (cq predicates) => real pInvestigate TRUE => NOT STOP_DRAINED on cycle 0", () => {
-    const root = seedActionableLedger();
+    const { root, includedId } = seedActionableLedger();
     const predicates = predicatesChannel(root);
 
-    // The REAL ledger actionability: the open high-severity defect drives
-    // pInvestigate TRUE with the defect id named.
+    // The REAL ledger actionability: only the configured open defect drives
+    // pInvestigate even though an unrelated actionable peer exists.
     expect(predicates.pInvestigate.value).toBe(true);
-    expect(predicates.pInvestigate.items.length).toBeGreaterThan(0);
+    expect(predicates.pInvestigate.items).toEqual([includedId]);
 
     // The fix's payoff: the driver must NOT drain a run that still has work.
     // A revert to advance-gate (marker absent) would make pInvestigate FALSE
@@ -278,7 +290,7 @@ describe("auto-driver false-DRAINED regression (T480)", () => {
   }, COLD_SHELLOUT_TIMEOUT_MS);
 
   test("the two channels DIVERGE on the same seeded ledger (the false-DRAINED gap)", () => {
-    const root = seedActionableLedger();
+    const { root, includedId } = seedActionableLedger();
     const gatePredicates = advanceGateChannel(root);
     const realPredicates = predicatesChannel(root);
 
@@ -286,6 +298,7 @@ describe("auto-driver false-DRAINED regression (T480)", () => {
     // the T478 oracle re-point closes.
     expect(gatePredicates.pInvestigate.value).toBe(false);
     expect(realPredicates.pInvestigate.value).toBe(true);
+    expect(realPredicates.pInvestigate.items).toEqual([includedId]);
 
     expect(cycle0Decision(gatePredicates)).toBe(AutoAction.STOP_DRAINED);
     expect(cycle0Decision(realPredicates)).not.toBe(AutoAction.STOP_DRAINED);

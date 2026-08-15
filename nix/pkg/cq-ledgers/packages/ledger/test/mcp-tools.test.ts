@@ -19,7 +19,9 @@ import {
   CANONICAL_LEDGERS,
   createLedgerMcpTools,
   derivePredicates,
+  deriveWorksetPredicates,
   ledgerToolInputJsonSchema,
+  requireWorksetStore,
   type DerivedPredicates,
   type DispatchCapability,
   type Item,
@@ -1265,6 +1267,29 @@ describe("ledger MCP tools", () => {
     // And the seeded research makes pResearch TRUE, naming that research id.
     expect(actual.pResearch.value).toBe(true);
     expect(actual.pResearch.items).toEqual([research.item.id]);
+  });
+
+  it("derive_predicates returns only closed workset members when roots are restrictive", async () => {
+    const store = await buildStore();
+    try {
+      const tools = createLedgerMcpTools(store);
+      const milestone = await store.createMilestone({ title: "workset MCP predicates" });
+      const included = await store.createItem("defects", milestone.id, {
+        status: "open",
+        fields: { headline: "included", severity: "high" },
+      });
+      await store.createItem("defects", milestone.id, {
+        status: "open",
+        fields: { headline: "unrelated", severity: "high" },
+      });
+      await requireWorksetStore(store).setRoots([`defects:${included.id}`]);
+
+      const actual = decode<DerivedPredicates>(await callTool(tools, "derive_predicates", {}));
+      expect(actual).toEqual(await deriveWorksetPredicates(store));
+      expect(actual.pInvestigate).toEqual({ value: true, items: [included.id] });
+    } finally {
+      await store.dispose();
+    }
   });
 
   it("reopen_item moves a terminal item to a non-terminal status", async () => {
