@@ -789,7 +789,7 @@ export function assertOwnedWriteAdmissionNotCallerMinted(value: unknown): void {
   }
 }
 
-/** Creation kinds the owned-write gateway must cover (union of both inventories). */
+/** Single-child and bootstrap creation kinds supported by the owned-write gateway. */
 export const WORKSET_OWNED_WRITE_CREATION_KINDS = [
   "idea-to-goal",
   "exact-gate-question",
