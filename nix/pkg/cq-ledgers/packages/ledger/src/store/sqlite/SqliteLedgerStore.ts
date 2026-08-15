@@ -192,6 +192,7 @@ import {
   type WorksetGenericMutationTx,
 } from "../genericMutationTransaction.js";
 import type { WorksetRootsEpoch } from "../../worksetEffectAdmission.js";
+import { closedGraphIsTargetAdmitted } from "../../worksetAccess.js";
 
 export interface SqliteLedgerStoreOpts {
   /** Concrete ledger database file path (created on init if absent). */
@@ -480,6 +481,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     // peer commits are visible without a separate invalidate path.
     this.worksetHandle = createSqliteWorksetStore({
       db,
+      isTargetAdmitted: closedGraphIsTargetAdmitted(this),
       ...this.worksetOptions,
     });
 

@@ -48,6 +48,25 @@ afterEach(async () => {
 });
 
 describe("workset effect admission sqlite [T1957]", () => {
+  it("admits a mutation target reached through the configured root closure", async () => {
+    const dbPath = await freshDbPath();
+    const store = await openStore(dbPath);
+    const milestone = await store.createMilestone({ title: "closure admission" });
+    const task = await store.createItem("tasks", milestone.id, {
+      status: "planned",
+      fields: { headline: "closure member" },
+    });
+    await store.worksetStore().setRoots([`milestones:${milestone.id}`]);
+
+    const admission = await store.worksetStore().admitLedgerMutation({
+      kind: "generic-write",
+      targets: [`tasks:${task.id}`],
+    });
+    await admission.acknowledge();
+
+    expect(store.worksetStore().activeAdmissionCount()).toBe(0);
+  });
+
   it("broker admission rows are durable and visible to a peer connection", async () => {
     const dbPath = await freshDbPath();
     const a = await openStore(dbPath);
