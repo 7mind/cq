@@ -84,6 +84,13 @@ mutations return acknowledgements rather than full entities. See the
 [`@cq/ledger-mcp` response matrix](nix/pkg/cq-ledgers/packages/ledger-mcp/README.md#wire-response-contract)
 for every tool, retained field, pagination rule, and schema-checked example.
 
+The persisted workset stores canonical roots and closes them over the active ownership,
+dependency, milestone, and plan graph. Management sessions may replace those roots;
+ordinary sessions may only get the configured graph or fetch a non-mutating preview.
+That closed graph bounds guarded mutations and external effects. UI visibility never
+expands workset authority. In the workset manager, `ideas:I25` and `goals:G159` remain
+visually excluded unless the configured roots close over them.
+
 Anthropic SDK in-process hosts use `createLedgerSdkMcpServer` from
 `@cq/ledger`. It retains Zod handler validation while publishing the same
 compact `tools/list` definitions as stdio. `createLedgerMcpTools` remains the
