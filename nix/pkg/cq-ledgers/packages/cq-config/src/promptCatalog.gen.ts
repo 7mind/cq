@@ -1470,6 +1470,20 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "workset-effect-discipline",
+          "sourceBlock": "shared workset membership, admission, and effect-boundary discipline",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -1688,6 +1702,20 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "workset-effect-discipline",
+          "sourceBlock": "shared workset membership, admission, and effect-boundary discipline",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -1897,6 +1925,20 @@ export const PROMPT_CATALOG_PROJECTION = {
           },
           "fragment": "ledger-response-contract",
           "sourceBlock": "ledger item-read projection and mutation response contract",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "workset-effect-discipline",
+          "sourceBlock": "shared workset membership, admission, and effect-boundary discipline",
           "supportedSurfaces": [
             "claude",
             "codex",
@@ -2142,6 +2184,20 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "workset-effect-discipline",
+          "sourceBlock": "shared workset membership, admission, and effect-boundary discipline",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -2342,6 +2398,20 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "workset-effect-discipline",
+          "sourceBlock": "shared workset membership, admission, and effect-boundary discipline",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -2494,6 +2564,20 @@ export const PROMPT_CATALOG_PROJECTION = {
             ]
           },
           "sourceBlock": "inline chained-command execution instructions",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "workset-effect-discipline",
+          "sourceBlock": "shared workset membership, admission, and effect-boundary discipline",
           "supportedSurfaces": [
             "claude",
             "codex",
@@ -2681,6 +2765,20 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "workset-effect-discipline",
+          "sourceBlock": "shared workset membership, admission, and effect-boundary discipline",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -2847,6 +2945,20 @@ export const PROMPT_CATALOG_PROJECTION = {
           },
           "fragment": "ledger-response-contract",
           "sourceBlock": "ledger item-read projection and mutation response contract",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "workset-effect-discipline",
+          "sourceBlock": "shared workset membership, admission, and effect-boundary discipline",
           "supportedSurfaces": [
             "claude",
             "codex",
@@ -3043,6 +3155,20 @@ export const PROMPT_CATALOG_PROJECTION = {
           },
           "fragment": "ledger-response-contract",
           "sourceBlock": "ledger item-read projection and mutation response contract",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "workset-effect-discipline",
+          "sourceBlock": "shared workset membership, admission, and effect-boundary discipline",
           "supportedSurfaces": [
             "claude",
             "codex",
@@ -3817,7 +3943,7 @@ export const PROMPT_CATALOG_PROJECTION = {
       ]
     }
   ],
-  "catalogMetadataHash": "c3d16e7301441861136f17a76f875aecdac336ebaba8324a38b1b74ded7d3eb8",
+  "catalogMetadataHash": "41fb4d3473c41ae08f2fc7613d67046481824d90fed081fb6ef50726de10f851",
   "fragmentContracts": [
     {
       "forbiddenVocabulary": {
@@ -4115,6 +4241,19 @@ export const PROMPT_CATALOG_PROJECTION = {
         "pi": []
       },
       "fragment": "ledger-response-contract",
+      "supportedSurfaces": [
+        "claude",
+        "codex",
+        "pi"
+      ]
+    },
+    {
+      "forbiddenVocabulary": {
+        "claude": [],
+        "codex": [],
+        "pi": []
+      },
+      "fragment": "workset-effect-discipline",
       "supportedSurfaces": [
         "claude",
         "codex",

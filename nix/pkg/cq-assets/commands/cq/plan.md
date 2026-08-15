@@ -8,6 +8,9 @@ argument-hint: <goal description> | <ideaId> [<ideaId> ...]
 {{cq:fragment:inline-command-recursion}}
 {{cq:fragment:subagent-dispatch}}
 {{cq:fragment:ledger-response-contract}}
+Effect-boundary authority follows this shared contract:
+
+{{cq:fragment:workset-effect-discipline}}
 
 ## Catalogue
 ```yaml

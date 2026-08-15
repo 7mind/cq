@@ -7,6 +7,9 @@ argument-hint: <defectId>
 {{cq:fragment:cq-command-invocation}}
 {{cq:fragment:operational-tool-vocabulary}}
 {{cq:fragment:subagent-dispatch}}
+Effect-boundary authority follows this shared contract:
+
+{{cq:fragment:workset-effect-discipline}}
 
 ## Catalogue
 ```yaml

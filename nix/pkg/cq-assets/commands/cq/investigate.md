@@ -6,6 +6,9 @@ argument-hint: <defect description | defectId>
 
 {{cq:fragment:cq-command-invocation}}
 {{cq:fragment:inline-command-recursion}}
+Effect-boundary authority follows this shared contract:
+
+{{cq:fragment:workset-effect-discipline}}
 
 ## Catalogue
 ```yaml

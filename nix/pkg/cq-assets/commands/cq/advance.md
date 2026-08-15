@@ -8,6 +8,9 @@ argument-hint:
 {{cq:fragment:operational-tool-vocabulary}}
 {{cq:fragment:inline-command-recursion}}
 {{cq:fragment:advance-run-guard}}
+Effect-boundary authority follows this shared contract:
+
+{{cq:fragment:workset-effect-discipline}}
 
 ## Catalogue
 ```yaml

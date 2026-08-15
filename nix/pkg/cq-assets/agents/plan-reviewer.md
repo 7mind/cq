@@ -52,8 +52,9 @@ least one. `defects` never controls the verdict.
 
 In configured panel mode, return the verdict without creating a review item. In
 unconfigured single-reviewer mode, write exactly one goal-linked `reviews`
-item with the verdict status and buckets, then return the identical structured
-object. Persist each defect as compact canonical JSON with property order
+item with the verdict status and buckets through `create_item`, supplying
+`owner_ref: "goals:<G>"` and `creation_kind: "review"`; then return the
+identical structured object. Persist each defect as compact canonical JSON with property order
 `headline`, `severity`, optional `rootCause`, optional `suggestedFix`; keep the
 returned objects structured. Never return a review-id pointer instead of the
 object.

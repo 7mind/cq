@@ -253,6 +253,15 @@ let
         pi = [ ];
       };
     }
+    {
+      fragment = "workset-effect-discipline";
+      supportedSurfaces = promptSurfaces;
+      forbiddenVocabulary = {
+        claude = [ ];
+        codex = [ ];
+        pi = [ ];
+      };
+    }
   ];
 
   sourceBlockByFragment = {
@@ -267,6 +276,7 @@ let
     explorer-static-inspection = "explorer-only static repository inspection policy";
     operational-tool-vocabulary = "body-level mapping from canonical operational tokens to callable host tools";
     ledger-response-contract = "ledger item-read projection and mutation response contract";
+    workset-effect-discipline = "shared workset membership, admission, and effect-boundary discipline";
   };
   sharedSourceBlock = {
     sourceBlock = "all prose outside the classified surface-sensitive blocks";
@@ -422,6 +432,7 @@ let
   S = "explorer-static-inspection";
   O = "operational-tool-vocabulary";
   C = "ledger-response-contract";
+  E = "workset-effect-discipline";
 
   authoredCatalog = [
     (mkAgent "plan-advance" [ I T Y ])
@@ -433,43 +444,43 @@ let
     (mkAgent "investigate-prober" [ I T Y ])
     (mkAgent "research-explorer" [ I T S Y ])
     (mkAgent "research-experimenter" [ T Y ])
-    (mkCommand "begin" [ I T R C ] [
+    (mkCommand "begin" [ I T R C E ] [
       (recursion "plan")
       (recursion "plan/follow-up")
       (recursion "investigate")
       (recursion "research")
       (recursion "advance")
     ])
-    (mkCommand "advance" [ I T O R A ] [
+    (mkCommand "advance" [ I T O R A E ] [
       (recursion "investigate/advance")
       (recursion "plan/advance")
       (recursion "research/advance")
       (recursion "implement/advance")
     ])
-    (mkCommand "plan" [ I T D R C ] [
+    (mkCommand "plan" [ I T D R C E ] [
       (dispatch "plan-advance")
       (recursion "investigate/advance")
     ])
-    (mkCommand "plan/advance" [ I T O D R C ] [
+    (mkCommand "plan/advance" [ I T O D R C E ] [
       (dispatch "plan-advance")
       (dispatch "plan-reviewer")
       (recursion "investigate/advance")
     ])
-    (mkCommand "plan/follow-up" [ I T D R ] [
+    (mkCommand "plan/follow-up" [ I T D R E ] [
       (dispatch "plan-advance")
       (recursion "investigate/advance")
     ])
-    (mkCommand "investigate" [ I T R ] [
+    (mkCommand "investigate" [ I T R E ] [
       (recursion "investigate/advance")
     ])
-    (mkCommand "investigate/advance" [ I T O D ] [
+    (mkCommand "investigate/advance" [ I T O D E ] [
       (dispatch "investigate-explorer")
       (dispatch "investigate-prober")
     ])
-    (mkCommand "research" [ I T R C ] [
+    (mkCommand "research" [ I T R C E ] [
       (recursion "research/advance")
     ])
-    (mkCommand "research/advance" [ I T O D C ] [
+    (mkCommand "research/advance" [ I T O D C E ] [
       (dispatch "research-explorer")
       (dispatch "research-experimenter")
     ])
@@ -662,7 +673,7 @@ let
   catalogMetadataHash = builtins.hashString "sha256" catalogJson;
   promptFragmentSource =
     surface: role: binding:
-    if binding.fragment == C then
+    if binding.fragment == C || binding.fragment == E then
       "fragments/${binding.fragment}.md"
     else if binding.fragment == X then
       "fragments/${surface}/agents/${role.roleId}/${binding.fragment}.md"

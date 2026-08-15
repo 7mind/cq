@@ -48,7 +48,13 @@ import type {
   UpdateItemPatch,
   UpdateMilestoneItemPatch,
 } from "../store/LedgerStore.js";
-import { IDEAS_LEDGER, MILESTONES_AMBIENT_ID, MILESTONES_LEDGER } from "../constants.js";
+import {
+  DEFECTS_LEDGER,
+  GOALS_LEDGER,
+  IDEAS_LEDGER,
+  MILESTONES_AMBIENT_ID,
+  MILESTONES_LEDGER,
+} from "../constants.js";
 import type { FieldValue, LedgerSchema } from "../types.js";
 import { LedgerError } from "../types.js";
 import { paginate } from "../projection.js";
@@ -120,7 +126,34 @@ import {
   createWorksetGenericMutationGateway,
   type WorksetGenericMutationGateway,
 } from "../worksetGenericMutation.js";
+import {
+  WORKSET_OWNED_WRITE_CREATION_KINDS,
+  createWorksetCoordinationBundleGateway,
+  createWorksetOwnedWriteGateway,
+  type WorksetCoordinationBundleGateway,
+  type WorksetOwnedWriteGateway,
+  type WorksetOwnedWriteTx,
+} from "../worksetOwnedLifecycle.js";
+import { parseRef } from "../refs.js";
 import type { WorksetStore } from "../worksetStore.js";
+
+const CREATE_ITEM_OWNED_CREATION_KINDS = [
+  "idea-to-goal",
+  "exact-gate-question",
+  "review",
+  "review-filed-defect",
+  "implementation-defect",
+  "research",
+  "hypothesis",
+  "decision",
+  "fix-goal",
+  "handoff",
+] as const satisfies readonly (typeof WORKSET_OWNED_WRITE_CREATION_KINDS)[number][];
+
+const CREATE_ITEM_COORDINATION_BUNDLE_KINDS = [
+  "idea-to-goal",
+  "fix-goal",
+] as const satisfies readonly (typeof CREATE_ITEM_OWNED_CREATION_KINDS)[number][];
 
 /** The compatibility profile: every capability-gated tool specification. */
 export const FULL_LEDGER_TOOL_PROFILE = "full";
@@ -218,6 +251,10 @@ export function ledgerToolInputJsonSchema(
   );
   const schema = simplifyInputSchemaNode(converted) as Record<string, unknown>;
   if (specification.name === "create_item" || specification.name.endsWith("_create_item")) {
+    schema["dependencies"] = {
+      owner_ref: ["creation_kind"],
+      creation_kind: ["owner_ref"],
+    };
     schema["allOf"] = [
       {
         if: {
@@ -233,11 +270,24 @@ export function ledgerToolInputJsonSchema(
         },
         else: {
           if: {
-            properties: { ledger_id: { const: IDEAS_LEDGER } },
-            required: ["ledger_id"],
+            properties: {
+              creation_kind: { enum: CREATE_ITEM_COORDINATION_BUNDLE_KINDS },
+            },
+            required: ["creation_kind"],
           },
-          then: {},
-          else: { required: ["milestone_id"] },
+          then: {
+            not: {
+              anyOf: [{ required: ["milestone_id"] }, { required: ["id"] }],
+            },
+          },
+          else: {
+            if: {
+              properties: { ledger_id: { const: IDEAS_LEDGER } },
+              required: ["ledger_id"],
+            },
+            then: {},
+            else: { required: ["milestone_id"] },
+          },
         },
       },
     ];
@@ -476,6 +526,51 @@ function requireGenericMutations(
   });
 }
 
+interface OwnedLifecycleMutations {
+  readonly owned: WorksetOwnedWriteGateway;
+  readonly bundles: WorksetCoordinationBundleGateway;
+}
+
+function requireOwnedLifecycleMutations(
+  store: LedgerStore,
+  toolName: LedgerToolName,
+): OwnedLifecycleMutations {
+  const candidate = store as LedgerStore & {
+    worksetStore?: unknown;
+    runAtomicOwnedMutation?: unknown;
+  };
+  if (
+    typeof candidate.worksetStore !== "function" ||
+    typeof candidate.runAtomicOwnedMutation !== "function"
+  ) {
+    throw new LedgerError(
+      `${toolName} requires a workset-guarded owned lifecycle capability`,
+    );
+  }
+  const host = {
+    rawStore: store,
+    worksetStore: (candidate.worksetStore as () => WorksetStore).call(store),
+    runOwnedTransaction: <T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T> =>
+      (
+        candidate.runAtomicOwnedMutation as (
+          mutate: (tx: WorksetOwnedWriteTx) => T,
+        ) => Promise<T>
+      ).call(store, mutate),
+  };
+  return {
+    owned: createWorksetOwnedWriteGateway(host),
+    bundles: createWorksetCoordinationBundleGateway(host),
+  };
+}
+
+function parseCanonicalOwnerRef(raw: string): { ledgerId: string; itemId: string } {
+  const parsed = parseRef(raw);
+  if (parsed.kind !== "prefixed") {
+    throw new LedgerError("create_item owner_ref must use canonical <ledger>:<id> form");
+  }
+  return { ledgerId: parsed.ledger, itemId: parsed.id };
+}
+
 // ---------------------------------------------------------------------------
 // Tool builders
 // ---------------------------------------------------------------------------
@@ -494,6 +589,11 @@ export function createLedgerMcpToolSpecifications(
   const mutationsFor = (toolName: LedgerToolName): WorksetGenericMutationGateway => {
     genericMutations ??= requireGenericMutations(store, toolName);
     return genericMutations;
+  };
+  let ownedLifecycleMutations: OwnedLifecycleMutations | null = null;
+  const ownedMutationsFor = (toolName: LedgerToolName): OwnedLifecycleMutations => {
+    ownedLifecycleMutations ??= requireOwnedLifecycleMutations(store, toolName);
+    return ownedLifecycleMutations;
   };
 
   // ---- Item / ledger surface (9) -----------------------------------------
@@ -600,7 +700,7 @@ export function createLedgerMcpToolSpecifications(
 
   const updateItem = tool(
     "update_item",
-    "Update one item while preserving omitted values. For ledger_id=milestones, item_id is the milestone id and milestone status plus dependency-DAG invariants remain explicit. All writes validate the ledger schema, canonicalize recognized references, reject newly added dangling known-ledger refs, and record optional author/session provenance. Returns the generic item acknowledgement.",
+    "Update item; omitted values persist. Milestones use item_id and preserve status/dependency-DAG invariants. Validates schema, canonicalizes refs, rejects new dangling known-ledger refs, records optional author/session; returns item acknowledgement.",
     {
       ledger_id: z.string(),
       item_id: z.string(),
@@ -655,13 +755,15 @@ export function createLedgerMcpToolSpecifications(
 
   const createItem = tool(
     "create_item",
-    "milestones: no milestone_id, status=open, title required; allocates M<n>; validates dependency DAG. ideas: omission uses M-AMBIENT. others: active nonterminal milestone_id required. Validates schema, canonicalizes refs, rejects new dangling known refs; records provenance.",
+    "Create milestone (status=open, title, no milestone_id; allocates M<n>; validates dependency DAG) or item (active nonterminal milestone_id); ideas: omission uses M-AMBIENT. owner_ref+creation_kind makes owned creation atomic. Validates schema, canonicalizes refs, rejects new dangling known refs, records provenance.",
     {
       ledger_id: z.string(),
       milestone_id: safeIdSchema.optional(),
       status: z.string(),
       fields: fieldsSchema,
       id: safeIdSchema.optional(),
+      owner_ref: z.string().optional(),
+      creation_kind: z.enum(CREATE_ITEM_OWNED_CREATION_KINDS).optional(),
       author: authorParam,
       session: sessionParam,
     } as const,
@@ -672,9 +774,92 @@ export function createLedgerMcpToolSpecifications(
         "status",
         "fields",
         "id",
+        "owner_ref",
+        "creation_kind",
         "author",
         "session",
       ]);
+      if ((args.owner_ref === undefined) !== (args.creation_kind === undefined)) {
+        throw new LedgerError(
+          "create_item owner_ref and creation_kind must be supplied together",
+        );
+      }
+      if (args.owner_ref !== undefined && args.creation_kind !== undefined) {
+        const owner = parseCanonicalOwnerRef(args.owner_ref);
+        const fields = args.fields as Record<string, FieldValue>;
+        const owned = ownedMutationsFor("create_item");
+        if (args.creation_kind === "idea-to-goal") {
+          if (owner.ledgerId !== IDEAS_LEDGER || args.ledger_id !== GOALS_LEDGER) {
+            throw new LedgerError("idea-to-goal requires an ideas owner and goals child");
+          }
+          if (args.milestone_id !== undefined) {
+            throw new LedgerError("idea-to-goal derives its ambient milestone atomically");
+          }
+          if (args.id !== undefined) {
+            throw new LedgerError("idea-to-goal does not accept an explicit id");
+          }
+          const title = fields.title;
+          const description = fields.description;
+          if (typeof title !== "string" || typeof description !== "string") {
+            throw new LedgerError("idea-to-goal requires string title and description fields");
+          }
+          const result = await owned.bundles.bootstrapIdeaToGoal({
+            ideaId: owner.itemId,
+            goal: {
+              title,
+              description,
+              status: args.status,
+              fields,
+              ...(args.author === undefined ? {} : { author: args.author }),
+              ...(args.session === undefined ? {} : { session: args.session }),
+            },
+            consumeIdea: true,
+          });
+          return wireResult(produceWireDto({ item: projectItemMutationAckDto(result.goal) }));
+        }
+        if (args.creation_kind === "fix-goal") {
+          if (owner.ledgerId !== DEFECTS_LEDGER || args.ledger_id !== GOALS_LEDGER) {
+            throw new LedgerError("fix-goal requires a defects owner and goals child");
+          }
+          if (args.milestone_id !== undefined) {
+            throw new LedgerError("fix-goal derives its ambient milestone atomically");
+          }
+          if (args.id !== undefined) {
+            throw new LedgerError("fix-goal does not accept an explicit id");
+          }
+          const title = fields.title;
+          const description = fields.description;
+          if (typeof title !== "string" || typeof description !== "string") {
+            throw new LedgerError("fix-goal requires string title and description fields");
+          }
+          const result = await owned.bundles.bootstrapDefectToFixGoal({
+            defectId: owner.itemId,
+            goal: {
+              title,
+              description,
+              status: args.status,
+              fields,
+              ...(args.author === undefined ? {} : { author: args.author }),
+              ...(args.session === undefined ? {} : { session: args.session }),
+            },
+          });
+          return wireResult(produceWireDto({ item: projectItemMutationAckDto(result.goal) }));
+        }
+        const result = await owned.owned.createOwned({
+          owner,
+          creationKind: args.creation_kind,
+          child: {
+            ledgerId: args.ledger_id,
+            ...(args.milestone_id === undefined ? {} : { milestoneId: args.milestone_id }),
+            status: args.status,
+            fields,
+            ...(args.id === undefined ? {} : { id: args.id }),
+            ...(args.author === undefined ? {} : { author: args.author }),
+            ...(args.session === undefined ? {} : { session: args.session }),
+          },
+        });
+        return wireResult(produceWireDto({ item: projectItemMutationAckDto(result.child) }));
+      }
       if (args.ledger_id === MILESTONES_LEDGER) {
         if (args.milestone_id !== undefined) {
           throw new LedgerError("milestone_id must be omitted for the milestones ledger");
@@ -723,7 +908,7 @@ export function createLedgerMcpToolSpecifications(
 
   const createLedger = tool(
     "create_ledger",
-    "Create a new ledger. Schema specifies allowed statuses, which subset is terminal, and the typed fields each item carries. The name `milestones` is reserved.",
+    "Create ledger from statuses, terminal subset, and typed item fields; milestones is reserved.",
     {
       name: z.string(),
       schema: schemaSchema,
@@ -803,7 +988,7 @@ export function createLedgerMcpToolSpecifications(
 
   const archiveMilestone = tool(
     "archive_milestone",
-    "Archive a milestone globally (2-level): sweeps every ledger's group with this id into ./archive/<ledger>/<id>.md, then moves the milestone-item itself to ./archive/milestones/<id>.md. Refused if any item in any ledger is non-terminal.",
+    "Archive a milestone only when every member is terminal: move all ledger groups and the milestone item to ./archive/<ledger>/<id>.md.",
     {
       milestone_id: safeIdSchema,
       summary: z.string(),
@@ -1169,21 +1354,15 @@ export function createLedgerMcpToolSpecifications(
 
   const fetchPrompt = tool(
     "fetch_prompt",
-    "Fetch a role's typed prompt-catalog entry. projection selects the response: " +
-      "\"full\" (the default, deliberate full-detail projection) returns { roleId, kind, " +
-      "dispatched, promptTemplate, promptSurface?, renderer?, sourcePath?, " +
-      "workflowDependencies?, requiredCapabilities?, intentionalDifferences?, version?, " +
-      "inputSchema?, outputSchema? }; \"schema\" returns exactly { roleId, version?, " +
-      "inputSchema?, outputSchema? } with no promptTemplate or other role metadata. " +
-      "Built prompt roots return the additive surface-build metadata; " +
-      "requiredCapabilities is the ordered catalog renderer-fragment capability list. " +
-      "A dispatched-subagent " +
-      "role returns both JSON Schemas (draft 2020-12); an orchestrator-command role " +
-      "carries no schema: under \"full\" it returns prompt + metadata with " +
-      "inputSchema/outputSchema ABSENT, and under \"schema\" it returns { roleId } alone " +
-      "(the version/inputSchema/outputSchema keys are ABSENT, never null). Fails fast on an " +
-      "unknown roleId. Only available when the server has an asset-capable catalog root; " +
-      "otherwise returns a not-implemented error.",
+    "Fetch a prompt-catalog role. full (default) returns prompt+metadata: " +
+      "{roleId,kind,dispatched,promptTemplate,promptSurface?,renderer?,sourcePath?," +
+      "workflowDependencies?,requiredCapabilities?,intentionalDifferences?,version?," +
+      "inputSchema?,outputSchema?}; built roots add surface metadata; requiredCapabilities " +
+      "preserves renderer-fragment order. schema returns exactly " +
+      "{roleId,version?,inputSchema?,outputSchema?}, never prompt/metadata. Dispatched roles " +
+      "return both draft-2020-12 schemas. Orchestrator roles carry no schema: full omits " +
+      "inputSchema/outputSchema; schema returns {roleId} only (absent, never null). Unknown " +
+      "role fails; without an asset-capable root, not implemented.",
     {
       roleId: z.string(),
       projection: z

@@ -28,4 +28,28 @@ describe("T1984 workset effect boundary inventory", () => {
       expect(broker).toContain(`case "${kind}"`);
     }
   });
+
+  test("T1986 binds every child effect to one canonical prepared target and strips management credentials", () => {
+    const router = source("cq-config", "src", "dispatchTransportRouter.ts");
+    const codex = source("cq-config", "src", "codexRoleBoundary.ts");
+    const claude = source("cq-config", "src", "claudeDispatchBridge.ts");
+    const management = source("cq-config", "src", "worksetManagementCommand.ts");
+
+    for (const field of ["taskId", "goalId", "defectId", "researchId"]) {
+      expect(router).toContain(`field: "${field}"`);
+    }
+    expect(router).toContain("present.length !== 1");
+    expect(router).toContain("targetRef: context.effectTargetRef");
+    expect(codex).toContain("new WorksetEffectBroker");
+    expect(claude).toContain("new WorksetEffectBroker");
+    expect(codex).toContain("withoutWorksetCredentials");
+    expect(claude).toContain("withoutWorksetCredentials");
+    for (const credential of [
+      "CQ_SERVE_TOKEN",
+      "CQ_SERVE_MANAGEMENT_TOKEN",
+      "CQ_LEDGER_REMOTE_TOKEN",
+    ]) {
+      expect(management).toContain(credential);
+    }
+  });
 });

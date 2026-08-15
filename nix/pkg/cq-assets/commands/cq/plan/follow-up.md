@@ -7,6 +7,9 @@ argument-hint: <goalId> <follow-up request> | <goalId> <ideaId> [<ideaId> ...]
 {{cq:fragment:cq-command-invocation}}
 {{cq:fragment:inline-command-recursion}}
 {{cq:fragment:subagent-dispatch}}
+Effect-boundary authority follows this shared contract:
+
+{{cq:fragment:workset-effect-discipline}}
 
 ## Catalogue
 ```yaml

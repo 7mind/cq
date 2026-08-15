@@ -28,6 +28,9 @@ the hypothesis tree, citation validation, adjudication, and ledger writes.
 Children only gather evidence; they never adjudicate or mutate the ledger.
 
 {{cq:fragment:subagent-dispatch}}
+Effect-boundary authority follows this shared contract:
+
+{{cq:fragment:workset-effect-discipline}}
 
 ## Invariants
 

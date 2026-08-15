@@ -7,6 +7,9 @@ argument-hint: "<mixed request>"
 {{cq:fragment:cq-command-invocation}}
 {{cq:fragment:inline-command-recursion}}
 {{cq:fragment:ledger-response-contract}}
+Effect-boundary authority follows this shared contract:
+
+{{cq:fragment:workset-effect-discipline}}
 
 ## Catalogue
 ```yaml

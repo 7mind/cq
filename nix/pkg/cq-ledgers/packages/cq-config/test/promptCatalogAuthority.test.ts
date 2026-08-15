@@ -394,6 +394,36 @@ describe("assets.nix prompt-catalog authority", () => {
     expect(fresh).toBe(committed);
   });
 
+  test("binds the shared workset effect discipline only to effectful parent commands", () => {
+    const projection = evaluateProjection();
+    const guarded = new Set([
+      "advance",
+      "begin",
+      "plan",
+      "plan/advance",
+      "plan/follow-up",
+      "investigate",
+      "investigate/advance",
+      "research",
+      "research/advance",
+    ]);
+    const contract = projection.fragmentContracts.find(
+      (candidate) =>
+        typeof candidate === "object" &&
+        candidate !== null &&
+        (candidate as { fragment?: unknown }).fragment === "workset-effect-discipline",
+    );
+    expect(contract).toBeDefined();
+    for (const role of projection.catalog as readonly (CatalogEntry & {
+      readonly fragmentBindings: readonly FragmentBinding[];
+    })[]) {
+      const carries = role.fragmentBindings.some(
+        ({ fragment }) => fragment === "workset-effect-discipline",
+      );
+      expect(carries, role.roleId).toBe(guarded.has(role.roleId));
+    }
+  });
+
   test(
     "the centralized verifier accepts real packaged and atomically published roots",
     async () => {

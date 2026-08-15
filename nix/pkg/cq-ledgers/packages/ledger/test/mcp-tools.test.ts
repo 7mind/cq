@@ -146,8 +146,41 @@ it("create_item defaults an omitted milestone only for ideas", async () => {
       status: "open",
       fields: { title: "Ambient by omission" },
     };
+    const ownedIdeaGoalInput = {
+      ledger_id: "goals",
+      status: "clarifying",
+      fields: { title: "Owned goal", description: "Atomic bundle" },
+      owner_ref: "ideas:I1",
+      creation_kind: "idea-to-goal",
+    };
 
     expect(validateAgainstSchema(inputSchema, ideaInput).ok).toBe(true);
+    expect(validateAgainstSchema(inputSchema, ownedIdeaGoalInput).ok).toBe(true);
+    expect(
+      validateAgainstSchema(inputSchema, {
+        ...ownedIdeaGoalInput,
+        milestone_id: "M900",
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateAgainstSchema(inputSchema, { ...ownedIdeaGoalInput, id: "G900" }).ok,
+    ).toBe(false);
+    expect(
+      validateAgainstSchema(inputSchema, {
+        ledger_id: "goals",
+        status: "clarifying",
+        fields: ownedIdeaGoalInput.fields,
+        owner_ref: "ideas:I1",
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateAgainstSchema(inputSchema, {
+        ledger_id: "goals",
+        status: "clarifying",
+        fields: ownedIdeaGoalInput.fields,
+        creation_kind: "idea-to-goal",
+      }).ok,
+    ).toBe(false);
     expect(
       validateAgainstSchema(inputSchema, {
         ledger_id: "tasks",

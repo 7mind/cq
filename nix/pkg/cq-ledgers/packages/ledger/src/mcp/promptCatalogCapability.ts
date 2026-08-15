@@ -49,7 +49,8 @@ export type PromptRendererCapability =
   | "explorer-static-inspection"
   | "operational-tool-vocabulary"
   | "advance-run-guard"
-  | "ledger-response-contract";
+  | "ledger-response-contract"
+  | "workset-effect-discipline";
 
 export type PromptIntentionalDifferenceKind =
   | "invocation-syntax"
