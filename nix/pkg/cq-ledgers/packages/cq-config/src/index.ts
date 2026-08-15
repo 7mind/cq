@@ -745,6 +745,7 @@ export {
 } from "./codexDispatchProtocol.js";
 export type {
   CodexRoleSandboxMode,
+  CodexRoleSandboxPolicyResolution,
   CodexRoleBoundaryRequest,
   CodexRoleBoundaryInvocation,
   CodexRoleLedgerMcpConfiguration,
@@ -773,6 +774,7 @@ export {
   formatCodexRoleBoundaryDiagnostic,
   assertCodexBoundaryEffectTargetRef,
   assertCodexDispatchedRoleId,
+  resolveCodexRoleSandboxPolicy,
   createCodexRoleBoundaryPlan,
   interceptCodexRoleBoundaryResult,
   executeCodexRoleBoundary,

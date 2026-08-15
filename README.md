@@ -268,9 +268,13 @@ complete schema. Model tokens use exactly one executable prefix:
 `codex:gpt-5.6-sol:ultra` selects the Codex executable. The packaged Codex
 vocabulary accepts `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`.
 
-`[dispatch]` has one global boolean, `forceShellout`, which defaults to
-`false`. It applies identically under the `claude`, `codex`, and `pi` active
-harnesses; `[harness.*]` blocks cannot override it.
+`[dispatch]` has two global booleans. `forceShellout` defaults to `false`.
+`unsafeDisableCodexReadOnlySandbox` also defaults to `false`; when enabled, a
+Codex role that requested `read-only` instead runs with
+`danger-full-access`. This temporary compatibility switch removes Codex's OS
+sandbox, but does not widen the role's ledger tool profile. Both settings
+apply identically under the `claude`, `codex`, and `pi` active harnesses;
+`[harness.*]` blocks cannot override them.
 
 Dispatch uses one 18-cell matrix: active harness × target harness ×
 `forceShellout`. A same-harness, unforced cell uses that harness's qualified

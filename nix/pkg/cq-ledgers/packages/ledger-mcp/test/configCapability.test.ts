@@ -159,12 +159,16 @@ describe("T1630: get_config projects Codex mappings and the global dispatch poli
       "",
       "[dispatch]",
       "  forceShellout = true",
+      "  unsafeDisableCodexReadOnlySandbox = true",
       "",
     ].join("\n"));
 
     const config = computeConfig(dir);
     expect(computeSection(dir, "all")).toEqual(config);
-    expect(config.dispatch).toEqual({ forceShellout: true });
+    expect(config.dispatch).toEqual({
+      forceShellout: true,
+      unsafeDisableCodexReadOnlySandbox: true,
+    });
 
     const worker = agentEntry(computeAgentModels(dir), "implement-worker");
     expect(worker.modelMappings.codex).toEqual(["gpt-5.6-sol:ultra"]);

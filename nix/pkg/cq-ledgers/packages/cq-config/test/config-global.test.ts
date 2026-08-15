@@ -199,7 +199,10 @@ planners = ["localPlanner"]
       localAgent: "medium",
     });
     expect(shared!.webui).toEqual({ host: null, port: 8814 });
-    expect(shared!.dispatch).toEqual({ forceShellout: true });
+    expect(shared!.dispatch).toEqual({
+      forceShellout: true,
+      unsafeDisableCodexReadOnlySandbox: false,
+    });
     expect(shared!.ledger).toBeNull();
     expect(shared!.project).toBeNull();
 

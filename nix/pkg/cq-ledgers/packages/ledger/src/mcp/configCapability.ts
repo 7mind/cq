@@ -137,7 +137,10 @@ export interface GetConfigResult {
    */
   readonly agentEfforts: Record<string, string>;
   /** Global dispatch policy, independent of the active harness. */
-  readonly dispatch: { readonly forceShellout: boolean };
+  readonly dispatch: {
+    readonly forceShellout: boolean;
+    readonly unsafeDisableCodexReadOnlySandbox: boolean;
+  };
 }
 
 /**

@@ -133,7 +133,10 @@ export function computeConfig(repoRoot: string): GetConfigResult {
       tiers: null,
       agentTiers: null,
       agentEfforts: {},
-      dispatch: { forceShellout: false },
+      dispatch: {
+        forceShellout: false,
+        unsafeDisableCodexReadOnlySandbox: false,
+      },
     };
   }
   assertDispatchable(config);

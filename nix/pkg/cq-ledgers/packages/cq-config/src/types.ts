@@ -376,6 +376,7 @@ export interface ProjectConfig {
 /** Global dispatch policy, deliberately shared by every active harness. */
 export interface DispatchConfig {
   readonly forceShellout: boolean;
+  readonly unsafeDisableCodexReadOnlySandbox: boolean;
 }
 
 /**

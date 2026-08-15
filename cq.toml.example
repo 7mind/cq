@@ -30,7 +30,8 @@
 #   [tiers]          — MAP: each tier (fast|standard|frontier) -> ONE model
 #   [agent_tiers]    — maps agent-name -> tier name (default: "standard")
 #   [agent_efforts]  — maps agent-name -> reasoning-effort override (optional)
-#   [dispatch]       — global dispatch policy (`forceShellout`; default false)
+#   [dispatch]       — global dispatch policy (`forceShellout` and the unsafe
+#                      Codex read-only sandbox override; both default false)
 #   [ledger]         — ledger storage backend (backend, branch, remote, backup,
 #                      projectId, serverUrl; default: backend="xdg",
 #                      backup="none")
@@ -195,6 +196,9 @@ planners = ["opus"]
 # It cannot be overridden under [harness.<name>].
 [dispatch]
   forceShellout = false
+  # UNSAFE: a Codex role requesting read-only runs with danger-full-access.
+  # Use only as a temporary compatibility switch for a verified sandbox defect.
+  unsafeDisableCodexReadOnlySandbox = false
 
 # [ledger] — Ledger storage backend configuration (T349, T494, G81, K117).
 # Absence of this block (or of cq.toml entirely) defaults to backend="xdg"
@@ -288,7 +292,8 @@ planners = ["opus"]
 #   [ledger]         — storage backend (fs / git-object)
 #   [agent_tiers]    — agent-name -> tier class map
 #   [agent_efforts]  — agent-name -> reasoning-effort override map
-#   [dispatch]       — global dispatch policy (`forceShellout = false` by default),
+#   [dispatch]       — global dispatch policy (`forceShellout = false` and
+#                        `unsafeDisableCodexReadOnlySandbox = false` by default),
 #                        never per-harness
 #
 # PER-HARNESS OVERRIDABLE (present in [harness.<name>]):

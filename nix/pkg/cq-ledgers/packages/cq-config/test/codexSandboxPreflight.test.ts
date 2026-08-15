@@ -15,7 +15,9 @@ import {
   executeCodexRoleBoundary,
   renderSandboxTmpdirOverride,
   requiresCodexSandboxPreflight,
+  resolveCodexRoleSandboxPolicy,
   runCodexSandboxPipeProbe,
+  WORKSET_CREDENTIAL_ENV_NAMES,
   type CodexRoleSandboxMode,
 } from "@cq/config";
 
@@ -35,6 +37,15 @@ const CAPABILITY = {
 } as const;
 const FIXTURE = fileURLToPath(
   new URL("./fixtures/codex-sandbox-preflight.ts", import.meta.url),
+);
+const DISPATCH_SCRIPT = fileURLToPath(
+  new URL("../scripts/codex-role-dispatch.ts", import.meta.url),
+);
+const PROVIDER_FIXTURE = fileURLToPath(
+  new URL(
+    "../../process-control/test/processWorksetEffectAdmissionProviderFixture.ts",
+    import.meta.url,
+  ),
 );
 const PROBE_TIMEOUT_MS = 30_000;
 const BOUNDARY_TEST_TIMEOUT_MS = 60_000;
@@ -160,6 +171,16 @@ describe("T1999 Codex sandbox pipe pre-flight (D266)", () => {
     expect(requiresCodexSandboxPreflight("plan-advance", "read-only")).toBe(false);
     expect(requiresCodexSandboxPreflight("investigate-prober", "read-only")).toBe(false);
     expect(requiresCodexSandboxPreflight("implement-worker", "danger-full-access")).toBe(false);
+    expect(resolveCodexRoleSandboxPolicy("read-only", true)).toEqual({
+      requestedMode: "read-only",
+      effectiveMode: "danger-full-access",
+      readOnlySandboxSuppressed: true,
+    });
+    expect(resolveCodexRoleSandboxPolicy("workspace-write", true)).toEqual({
+      requestedMode: "workspace-write",
+      effectiveMode: "workspace-write",
+      readOnlySandboxSuppressed: false,
+    });
   });
 
   test("splices the TMPDIR override ahead of the trailing stdin marker", () => {
@@ -369,6 +390,82 @@ describe("T1999 Codex sandbox pipe pre-flight (D266)", () => {
         const argvs = await loggedArgvs(fixture);
         expect(argvs).toHaveLength(1);
         expect(argvs[0]?.[0]).toBe("exec");
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    },
+    BOUNDARY_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "the installed role entrypoint applies the configured override and emits an unsafe warning",
+    async () => {
+      const fixture = await createSandboxFixture("broken");
+      const promptRoot = join(fixture.root, "prompts");
+      const ledgerCommand = join(fixture.root, "cq-provider");
+      const providerTranscript = join(fixture.root, "provider.jsonl");
+      try {
+        await writeFile(
+          join(fixture.worktree, "cq.toml"),
+          "[dispatch]\nunsafeDisableCodexReadOnlySandbox = true\n",
+        );
+        await mkdir(join(promptRoot, "roles"), { recursive: true });
+        await writeFile(
+          join(promptRoot, "roles", "implement-reviewer.md"),
+          "Review without writing.\n",
+        );
+        await writeFile(
+          ledgerCommand,
+          `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(PROVIDER_FIXTURE)}\n`,
+        );
+        await chmod(ledgerCommand, 0o700);
+        const env: NodeJS.ProcessEnv = {
+          ...fixture.env,
+          CQ_PROMPT_ROOT: promptRoot,
+          CQ_CODEX_EXECUTABLE: fixture.fakeCodex,
+          CQ_CODEX_LEDGER_COMMAND: ledgerCommand,
+          CQ_TEST_PROVIDER_TRANSCRIPT: providerTranscript,
+        };
+        for (const name of WORKSET_CREDENTIAL_ENV_NAMES) delete env[name];
+        const child = Bun.spawn([process.execPath, "run", DISPATCH_SCRIPT], {
+          cwd: fixture.worktree,
+          env,
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        child.stdin.write(
+          `${JSON.stringify({
+            roleId: "implement-reviewer",
+            handle: HANDLE,
+            ...CAPABILITY,
+            effectTargetRef: "tasks:T1983",
+            cwd: fixture.worktree,
+            ledgerCwd: fixture.worktree,
+            model: "fake-model",
+            reasoningEffort: "high",
+            sandboxMode: "read-only",
+            timeoutMs: 30_000,
+          })}\n`,
+        );
+        child.stdin.end();
+        const [exitCode, stdout, stderr] = await Promise.all([
+          child.exited,
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+        ]);
+
+        expect(exitCode).toBe(0);
+        expect(stdout).toBe(`${JSON.stringify(HANDLE)}\n`);
+        expect(stderr).toBe(
+          "codex-role-dispatch: warning: [dispatch] " +
+            "unsafeDisableCodexReadOnlySandbox=true; implement-reviewer requested read-only " +
+            "but will run with danger-full-access\n",
+        );
+        const argvs = await loggedArgvs(fixture);
+        expect(argvs).toHaveLength(1);
+        expect(argvs[0]?.[0]).toBe("exec");
+        expect(argvs[0]).toContain("danger-full-access");
       } finally {
         await rm(fixture.root, { recursive: true, force: true });
       }

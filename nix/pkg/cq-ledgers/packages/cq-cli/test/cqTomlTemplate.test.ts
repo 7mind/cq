@@ -214,6 +214,13 @@ describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
     expect(formatReviewerToken(workerToken)).toBe(EXPECTED_SONNET);
   });
 
+  it("keeps the unsafe Codex read-only sandbox override disabled", () => {
+    expect(parseConfig(CQ_TOML_TEMPLATE).dispatch).toEqual({
+      forceShellout: false,
+      unsafeDisableCodexReadOnlySandbox: false,
+    });
+  });
+
   it("no pi model token appears in the active reviewer panel", () => {
     const config = parseConfig(CQ_TOML_TEMPLATE);
     const reviewerTokens = resolveReviewers(config);
@@ -395,6 +402,7 @@ describe("ledger-mcp T865 fixture equals the CQ_TOML_TEMPLATE dispatch surface",
         return token === undefined ? null : formatReviewerToken(token);
       }),
       agentTiers: config.agentTiers,
+      dispatch: config.dispatch,
     };
   }
 

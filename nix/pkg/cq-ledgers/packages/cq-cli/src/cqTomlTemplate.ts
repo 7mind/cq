@@ -93,6 +93,10 @@ export const CQ_TOML_TEMPLATE: string = `\
 # it cannot be placed in a [harness.<name>] block.
 [dispatch]
   forceShellout = false
+  # UNSAFE compatibility switch for Codex sandbox defects. A Codex role that
+  # requests read-only runs with danger-full-access while enabled. Remove or
+  # reset to false after the upstream defect is fixed.
+  unsafeDisableCodexReadOnlySandbox = false
 
 # Panels + tier->model map for the default (claude) harness. Tiers are
 # harness-specific — there is no shared [tiers]. This map is what makes a model

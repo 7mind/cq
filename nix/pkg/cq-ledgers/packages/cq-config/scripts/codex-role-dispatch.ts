@@ -11,6 +11,8 @@ import {
   createCodexRoleBoundaryPlan,
   executeCodexRoleBoundary,
   formatCodexRoleBoundaryDiagnostic,
+  loadConfig,
+  resolveCodexRoleSandboxPolicy,
   WORKSET_CREDENTIAL_ENV_NAMES,
   type CodexRoleBoundaryDiagnostic,
   type CodexRoleBoundaryInvocation,
@@ -67,14 +69,32 @@ export async function main(): Promise<void> {
     path.join(promptRoot, "roles", `${roleId}.md`),
     "utf8",
   );
-  const plan = createCodexRoleBoundaryPlan({
+  const boundaryRequest = {
     ...invocation,
     roleId,
     roleInstructions,
     promptRoot,
     ledgerCommand: process.env[LEDGER_COMMAND_ENV] ?? "cq",
     codexExecutable: process.env[CODEX_EXECUTABLE_ENV] ?? "codex",
-  });
+  };
+  const requestedPlan = createCodexRoleBoundaryPlan(boundaryRequest);
+  const config = loadConfig(requestedPlan.effectivePreturn.ledgerCwd);
+  const sandboxPolicy = resolveCodexRoleSandboxPolicy(
+    requestedPlan.sandboxMode,
+    config?.dispatch.unsafeDisableCodexReadOnlySandbox ?? false,
+  );
+  const plan = sandboxPolicy.readOnlySandboxSuppressed
+    ? createCodexRoleBoundaryPlan({
+        ...boundaryRequest,
+        sandboxMode: sandboxPolicy.effectiveMode,
+      })
+    : requestedPlan;
+  if (sandboxPolicy.readOnlySandboxSuppressed) {
+    process.stderr.write(
+      "codex-role-dispatch: warning: [dispatch] unsafeDisableCodexReadOnlySandbox=true; " +
+        `${roleId} requested read-only but will run with danger-full-access\n`,
+    );
+  }
   const observationPath = process.env[CODEX_PRETURN_OBSERVATION_PATH_ENV];
   if (observationPath !== undefined) {
     await writeFile(observationPath, `${JSON.stringify(plan.effectivePreturn)}\n`, {

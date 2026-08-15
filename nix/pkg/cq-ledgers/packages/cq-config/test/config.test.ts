@@ -128,15 +128,25 @@ describe("codex token and global dispatch configuration", () => {
     expect(() => parseReviewerToken("codex:gpt-5.6-sol:unknown")).toThrow(CqConfigError);
   });
 
-  it("defaults forceShellout to false and resolves the same global setting under every active harness", () => {
-    expect(parseConfig("[aliases]\n").dispatch).toEqual({ forceShellout: false });
-    const source = "[dispatch]\nforceShellout = true\n";
+  it("defaults dispatch policy to safe values and resolves it identically under every active harness", () => {
+    expect(parseConfig("[aliases]\n").dispatch).toEqual({
+      forceShellout: false,
+      unsafeDisableCodexReadOnlySandbox: false,
+    });
+    const source =
+      "[dispatch]\nforceShellout = true\nunsafeDisableCodexReadOnlySandbox = true\n";
     for (const harness of ["claude", "codex", "pi"] as const) {
-      expect(parseConfig(source, harness).dispatch).toEqual({ forceShellout: true });
+      expect(parseConfig(source, harness).dispatch).toEqual({
+        forceShellout: true,
+        unsafeDisableCodexReadOnlySandbox: true,
+      });
       expect(() => parseConfig(`[harness.${harness}]\nforceShellout = false\n`)).toThrow(
         /forceShellout/,
       );
     }
+    expect(() =>
+      parseConfig("[dispatch]\nunsafeDisableCodexReadOnlySandbox = \"yes\"\n"),
+    ).toThrow(/unsafeDisableCodexReadOnlySandbox must be a boolean/);
   });
 });
 

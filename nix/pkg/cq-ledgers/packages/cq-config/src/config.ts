@@ -436,11 +436,22 @@ function parseProject(raw: RawProject): ProjectConfig {
 }
 
 function parseDispatch(raw: import("./toml.js").RawDispatch | null): DispatchConfig {
-  if (raw === null || raw.forceShellout === undefined) return { forceShellout: false };
-  if (typeof raw.forceShellout !== "boolean") {
+  if (raw?.forceShellout !== undefined && typeof raw.forceShellout !== "boolean") {
     throw new CqConfigError("[dispatch] forceShellout must be a boolean");
   }
-  return { forceShellout: raw.forceShellout };
+  if (
+    raw?.unsafeDisableCodexReadOnlySandbox !== undefined &&
+    typeof raw.unsafeDisableCodexReadOnlySandbox !== "boolean"
+  ) {
+    throw new CqConfigError(
+      "[dispatch] unsafeDisableCodexReadOnlySandbox must be a boolean",
+    );
+  }
+  return {
+    forceShellout: raw?.forceShellout ?? false,
+    unsafeDisableCodexReadOnlySandbox:
+      raw?.unsafeDisableCodexReadOnlySandbox ?? false,
+  };
 }
 
 /**

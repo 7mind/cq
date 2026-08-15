@@ -70,6 +70,7 @@ export interface RawProject {
 /** The one global dispatch policy; it never participates in harness layering. */
 export interface RawDispatch {
   readonly forceShellout: unknown;
+  readonly unsafeDisableCodexReadOnlySandbox: unknown;
 }
 
 /**
@@ -283,9 +284,14 @@ function parseProjectRaw(value: unknown): RawProject {
 function parseDispatchRaw(value: unknown): RawDispatch {
   if (!isTable(value)) throw new TomlSyntaxError("[dispatch] must be a table");
   for (const key of Object.keys(value)) {
-    if (key !== "forceShellout") throw new TomlSyntaxError(`unexpected key "${key}" in [dispatch]`);
+    if (key !== "forceShellout" && key !== "unsafeDisableCodexReadOnlySandbox") {
+      throw new TomlSyntaxError(`unexpected key "${key}" in [dispatch]`);
+    }
   }
-  return { forceShellout: value.forceShellout };
+  return {
+    forceShellout: value.forceShellout,
+    unsafeDisableCodexReadOnlySandbox: value.unsafeDisableCodexReadOnlySandbox,
+  };
 }
 
 /**

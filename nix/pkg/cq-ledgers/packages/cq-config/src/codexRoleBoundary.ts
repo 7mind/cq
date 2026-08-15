@@ -42,6 +42,25 @@ export const CODEX_ROLE_SANDBOX_MODES = [
 
 export type CodexRoleSandboxMode = (typeof CODEX_ROLE_SANDBOX_MODES)[number];
 
+export interface CodexRoleSandboxPolicyResolution {
+  readonly requestedMode: CodexRoleSandboxMode;
+  readonly effectiveMode: CodexRoleSandboxMode;
+  readonly readOnlySandboxSuppressed: boolean;
+}
+
+export function resolveCodexRoleSandboxPolicy(
+  requestedMode: CodexRoleSandboxMode,
+  unsafeDisableCodexReadOnlySandbox: boolean,
+): CodexRoleSandboxPolicyResolution {
+  const readOnlySandboxSuppressed =
+    unsafeDisableCodexReadOnlySandbox && requestedMode === "read-only";
+  return Object.freeze({
+    requestedMode,
+    effectiveMode: readOnlySandboxSuppressed ? "danger-full-access" : requestedMode,
+    readOnlySandboxSuppressed,
+  });
+}
+
 export interface CodexRoleBoundaryRequest {
   readonly roleId: string;
   readonly roleInstructions: string;
