@@ -16,6 +16,10 @@ ioSchema:
 
 Review one implementation against the actual diff and task acceptance. Verify:
 
+The supplied `taskId` is the only prepared target. Do not select, fetch, or
+substitute another ledger target; this portable reviewer has no ledger write
+authority.
+
 - acceptance through its named command, output, or invariant;
 - **result-commit evidence:** `git cat-file -t <resultCommit>` is
   `commit`, and `git rev-parse --verify <branch>` full SHA equals

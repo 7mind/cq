@@ -484,10 +484,10 @@ let
       (dispatch "research-explorer")
       (dispatch "research-experimenter")
     ])
-    (mkCommand "implement/start" [ I T R ] [
+    (mkCommand "implement/start" [ I T R E ] [
       (recursion "implement/advance")
     ])
-    (mkCommand "implement/advance" [ I T O D W ] [
+    (mkCommand "implement/advance" [ I T O D W E ] [
       (dispatch "implement-worker")
       (dispatch "implement-reviewer")
       (dispatch "implement-conflict-resolver")

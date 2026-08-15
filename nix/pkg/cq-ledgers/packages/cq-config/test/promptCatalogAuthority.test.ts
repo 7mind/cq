@@ -406,6 +406,8 @@ describe("assets.nix prompt-catalog authority", () => {
       "investigate/advance",
       "research",
       "research/advance",
+      "implement/start",
+      "implement/advance",
     ]);
     const contract = projection.fragmentContracts.find(
       (candidate) =>

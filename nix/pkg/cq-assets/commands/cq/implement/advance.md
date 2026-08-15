@@ -7,11 +7,15 @@ argument-hint: [milestoneId ...]
 {{cq:fragment:cq-command-invocation}}
 {{cq:fragment:operational-tool-vocabulary}}
 
+Effect-boundary authority follows this shared contract:
+
+{{cq:fragment:workset-effect-discipline}}
+
 ## Catalogue
 
 ```yaml
 inputs:
-  - "optional milestone ids; empty resumes all active milestones with non-terminal tasks"
+  - "optional milestone ids; empty resumes eligible finalized-manifest work"
   - "full task state, dependencies, linked questions, worktrees, and reviewer configuration"
 outputs:
   - "task transitions, one terminal review per task, verified fast-forward merges, defect closure, and milestone archival"
@@ -25,6 +29,14 @@ ioSchema:
 You orchestrate implementation. Children never mutate the ledger or merge.
 Re-derive state on every invocation. A pass must dispatch a child, mutate the
 ledger, or merge; stop after two consecutive read-only passes.
+
+Canonicalize and validate an explicit milestone batch before its first effect.
+With configured roots, select only active graph members belonging to each
+milestone's exact finalized manifest; without explicit ids, resume only
+eligible finalized-manifest work. Empty roots retain unrestricted historical
+selection. Preserve the selected finalized manifest exactly through dispatch,
+review, correction, rebase, merge, and terminal writes; re-read the workset at
+the effect boundaries required by the shared contract.
 
 {{cq:fragment:subagent-dispatch}}
 {{cq:fragment:implement-dispatch-workflow}}
@@ -286,8 +298,10 @@ Reconcile surviving reviews in configured order:
 - `disapprove` requires at least one criticism or question.
 
 File each out-of-scope or pre-existing `defects[]` entry once as an open defect
-linked to the task and owning goal. Such defects do not block the current task
-and never become user disposition questions.
+linked to the task and owning goal. Under restrictive roots, create it through
+the task owner using `owner_ref: "tasks:<T>"` and
+`creation_kind: "implementation-defect"`. Such defects do not block the
+current task and never become user disposition questions.
 
 ## 5. Correct or park
 
@@ -304,8 +318,10 @@ Park the task when:
 - the same criticism repeats without shrinking across consecutive rounds;
 - the same gate failure signature repeats.
 
-Create linked open questions with the round history, set the task `blocked`,
-and preserve its worktree + handle. Do not ask the user to decide whether a
+Create linked open questions with the round history. Under restrictive roots,
+create each through `owner_ref: "tasks:<T>"` and
+`creation_kind: "exact-gate-question"`. Then set the task `blocked` and
+preserve its worktree + handle. Do not ask the user to decide whether a
 confirmed fault deserves a fix.
 
 ## 6. Success authority

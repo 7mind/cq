@@ -7,20 +7,29 @@ argument-hint: [milestoneId ...]
 {{cq:fragment:cq-command-invocation}}
 {{cq:fragment:inline-command-recursion}}
 
+Effect-boundary authority follows this shared contract:
+
+{{cq:fragment:workset-effect-discipline}}
+
 ## Catalogue
 ```yaml
 inputs:
-  - "optional milestone ids; empty selects every active milestone with non-terminal tasks"
+  - "optional milestone ids; empty selects eligible finalized-manifest work"
 outputs:
   - "scope/ready-set report, inline implementation run, and one outer handoff"
 ioSchema:
   - "bootstrap only; implement advance owns execution and suppresses its nested handoff"
 ```
 
-With explicit ids, validate that every milestone exists and is active. Without
-ids, select all active milestones containing non-terminal tasks. Do not ask for
-scope, branch, or cadence confirmation; the current branch is the integration
-target and the run continues until drained or genuinely blocked.
+With explicit ids, canonicalize and validate the complete batch before its
+first effect: every milestone must exist, remain active in the current workset
+graph when roots are configured, and contribute only tasks from its exact
+finalized manifest. Without ids, configured roots select only eligible
+finalized-manifest work in the current graph; empty roots retain the historical
+unrestricted selection of all active milestones containing non-terminal tasks.
+Do not ask for scope, branch, or cadence confirmation; the current branch is
+the integration target and the run continues until drained or genuinely
+blocked.
 
 Read tasks, task dependencies, milestone dependencies, and linked questions.
 Report target ids, task counts, and the initial ready set. A target with no

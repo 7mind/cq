@@ -3331,6 +3331,20 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "workset-effect-discipline",
+          "sourceBlock": "shared workset membership, admission, and effect-boundary discipline",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -3542,6 +3556,20 @@ export const PROMPT_CATALOG_PROJECTION = {
             ]
           },
           "sourceBlock": "implement worker, reviewer, and conflict-resolver catalog dispatch procedure",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "workset-effect-discipline",
+          "sourceBlock": "shared workset membership, admission, and effect-boundary discipline",
           "supportedSurfaces": [
             "claude",
             "codex",
@@ -3943,7 +3971,7 @@ export const PROMPT_CATALOG_PROJECTION = {
       ]
     }
   ],
-  "catalogMetadataHash": "41fb4d3473c41ae08f2fc7613d67046481824d90fed081fb6ef50726de10f851",
+  "catalogMetadataHash": "fb25b59c9a6298b161ea26ec65a2aec2a43d440e9223c8b5bf58b9c051280233",
   "fragmentContracts": [
     {
       "forbiddenVocabulary": {
