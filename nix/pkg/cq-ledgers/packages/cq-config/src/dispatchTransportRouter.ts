@@ -49,7 +49,7 @@ import {
   decideCodexCompletion,
   type CodexChildCorrelation,
 } from "./codexDispatchProtocol.js";
-import type { ActiveHarness, Harness } from "./types.js";
+import { isEffort, type ActiveHarness, type Harness, type ReviewerToken } from "./types.js";
 import {
   NativeAdapterIncompatibilityError,
   isAuthenticatedCodexNativeQualification,
@@ -80,7 +80,9 @@ export function routeDispatchTransport(
       ? "native"
       : "process";
   return Object.freeze({
-    ...request,
+    activeHarness: request.activeHarness,
+    targetHarness: request.targetHarness,
+    forceShellout: request.forceShellout,
     transport,
     adapterId: `${request.targetHarness}:${transport}`,
   });
@@ -101,6 +103,8 @@ export interface DispatchAdapterChildPort {
 export interface DispatchAdapterLaunchContext {
   readonly route: DispatchTransportRoute;
   readonly prepared: DispatchPrepared;
+  /** Exact per-role token resolved by cq.toml before transport selection. */
+  readonly resolvedModel: ReviewerToken;
   /** Trusted canonical ledger ref derived from the persisted prepared input. */
   readonly effectTargetRef: string;
   readonly child: DispatchAdapterChildPort;
@@ -169,6 +173,11 @@ export function createClaudeProcessDispatchAdapter(
 ): DispatchTransportAdapter {
   return createAdapter("claude", "process", async (context) => {
     const binding = resolve(context);
+    if (binding.model !== context.resolvedModel.model) {
+      throw new DispatchTransportRoutingError(
+        `Claude process model ${JSON.stringify(binding.model)} does not match resolved model ${JSON.stringify(context.resolvedModel.model)}`,
+      );
+    }
     const gate = claudeLaunchGate(context.prepared, binding.now());
     if (!gate.launch) {
       return {
@@ -263,6 +272,20 @@ export function createCodexProcessDispatchAdapter(
 ): DispatchTransportAdapter {
   return createAdapter("codex", "process", async (context) => {
     const binding = resolve(context);
+    if (binding.boundary.model !== context.resolvedModel.model) {
+      throw new DispatchTransportRoutingError(
+        `Codex process model ${JSON.stringify(binding.boundary.model)} does not match resolved model ${JSON.stringify(context.resolvedModel.model)}`,
+      );
+    }
+    if (
+      context.resolvedModel.effort !== undefined &&
+      context.resolvedModel.effort !== null &&
+      binding.boundary.reasoningEffort !== context.resolvedModel.effort
+    ) {
+      throw new DispatchTransportRoutingError(
+        `Codex process effort ${JSON.stringify(binding.boundary.reasoningEffort)} does not match resolved effort ${JSON.stringify(context.resolvedModel.effort)}`,
+      );
+    }
     const gate = codexLaunchGate(context.prepared, binding.now());
     if (!gate.launch) {
       return {
@@ -536,6 +559,37 @@ export class DispatchTransportAbort extends Error {
 export interface RunPreparedDispatchRequest extends DispatchTransportRouteRequest {
   readonly namespace: AttestationNamespace;
   readonly prepared: DispatchPrepared;
+  /** Exact per-role token resolved by cq.toml before transport selection. */
+  readonly resolvedModel: ReviewerToken;
+}
+
+function assertResolvedModelBinding(token: ReviewerToken, targetHarness: Harness): void {
+  if (token.harness !== targetHarness) {
+    throw new DispatchTransportRoutingError(
+      `resolved model harness ${JSON.stringify(token.harness)} does not match target ${JSON.stringify(targetHarness)}`,
+    );
+  }
+  if (typeof token.model !== "string" || token.model.trim() === "") {
+    throw new DispatchTransportRoutingError("resolved model must name a non-empty model");
+  }
+  if (targetHarness === "pi") {
+    if (typeof token.provider !== "string" || token.provider.trim() === "") {
+      throw new DispatchTransportRoutingError("resolved Pi model must name a non-empty provider");
+    }
+  } else if (token.provider !== null) {
+    throw new DispatchTransportRoutingError(
+      `resolved ${targetHarness} model must not carry a provider`,
+    );
+  }
+  if (
+    token.effort !== undefined &&
+    token.effort !== null &&
+    !isEffort(targetHarness, token.effort)
+  ) {
+    throw new DispatchTransportRoutingError(
+      `resolved effort ${JSON.stringify(token.effort)} is not valid for target ${JSON.stringify(targetHarness)}`,
+    );
+  }
 }
 
 const DISPATCH_EFFECT_TARGET_FIELDS = [
@@ -797,6 +851,7 @@ export async function runPreparedDispatch(
   deps: DispatchServiceDeps,
 ): Promise<RoutedDispatchResult> {
   const route = routeDispatchTransport(request);
+  assertResolvedModelBinding(request.resolvedModel, request.targetHarness);
   if (request.prepared.promptProvenance.surface !== request.targetHarness) {
     throw new DispatchTransportRoutingError(
       `prepared surface ${JSON.stringify(request.prepared.promptProvenance.surface)} does not ` +
@@ -829,7 +884,13 @@ export async function runPreparedDispatch(
   let result: DispatchAdapterLaunchResult;
   try {
     result = await adapter.launch(
-      Object.freeze({ route, prepared: request.prepared, effectTargetRef, child }),
+      Object.freeze({
+        route,
+        prepared: request.prepared,
+        resolvedModel: Object.freeze({ ...request.resolvedModel }),
+        effectTargetRef,
+        child,
+      }),
     );
     assertAdapterLaunchResult(result);
     if (result.outcome === "aborted") {

@@ -945,6 +945,9 @@ EOF
             fi
             touch "$TMPDIR/gate-release"
             wait "$firstGate"
+            ${pkgs.bun}/bin/bun test \
+              "$WORKSPACE/packages/cq-config/test/dispatchTransportRouter.test.ts" \
+              --test-name-pattern T2045
             PATH=$out/bin:${pkgs.lib.makeBinPath ([ pkgs.bun pkgs.nodejs_22 pkgs.git ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.procps ])}:$PATH \
               CQ_TEST_CODEX_ROLE_EXECUTABLE=$out/bin/cq-codex-role \
               CQ_TEST_SUBSTITUTED_CODEX_ROLE_EXECUTABLE=${substitutedCodexRole}/bin/cq-codex-role \

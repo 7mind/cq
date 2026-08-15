@@ -2,8 +2,8 @@
 > `cq-codex-role` process boundary, never the native `spawn_agent` transport.
 > Write one JSON request to its stdin:
 > `{ roleId, handle:{attestationId,generation}, inputCapability,
-> resultCapability, gitChangeCapability?, cwd, ledgerCwd, model, reasoningEffort, sandboxMode,
-> timeoutMs }`, where `cwd` is the child execution worktree and `ledgerCwd` is
+> resultCapability, gitChangeCapability?, gitConflictCapability?, cwd, ledgerCwd,
+> model, reasoningEffort, sandboxMode, timeoutMs }`, where `cwd` is the child execution worktree and `ledgerCwd` is
 > the parent project that owns the prepared dispatch. Keep capabilities off
 > argv.
 > The adapter supplies the packaged role body as native developer instructions,

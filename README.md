@@ -272,6 +272,23 @@ vocabulary accepts `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`.
 `false`. It applies identically under the `claude`, `codex`, and `pi` active
 harnesses; `[harness.*]` blocks cannot override it.
 
+Dispatch uses one 18-cell matrix: active harness × target harness ×
+`forceShellout`. A same-harness, unforced cell uses that harness's qualified
+native adapter; every cross-harness or forced cell uses the target harness's
+process adapter. The resolved per-role token must name the target harness, so
+`pi:openai-codex/...` remains a Pi process/provider route rather than becoming
+a Codex route. Every adapter receives the same prepared handle, canonical
+effect target, resolved model/effort, and one-shot fetch → store → confirm →
+consume lifecycle; the public route contains only its five routing fields.
+
+Codex repository mutation remains brokered. `implement-worker` can receive
+only `gitChangeCapability` and use it only for `git_commit`, returning the
+durable `gitReceipts` chain. `implement-conflict-resolver` can receive only
+`gitConflictCapability` and use it only for `git_resolve_continue`, returning
+the durable `conflictReceipts` chain. Capabilities never enter argv, prompts,
+result bodies, or route metadata; the parent releases the managed worktree
+only after consuming and verifying the bound result.
+
 ---
 
 ## Development (ledger workspace)

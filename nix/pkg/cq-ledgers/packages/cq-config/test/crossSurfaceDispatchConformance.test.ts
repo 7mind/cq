@@ -593,6 +593,29 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     }
   });
 
+  it("T2045 binds each Codex Git role to its sole broker operation and receipt family", () => {
+    const dispatch = readFileSync(
+      path.join(ASSETS_ROOT, "fragments", "codex", "subagent-dispatch.md"),
+      "utf8",
+    );
+    expect(dispatch).toContain("gitChangeCapability?");
+    expect(dispatch).toContain("gitConflictCapability?");
+
+    const worker = renderedOf("codex", "implement-worker");
+    expect(worker).toContain("gitChangeCapability");
+    expect(worker).toContain("git_commit");
+    expect(worker).toContain("gitReceipts");
+    expect(worker).not.toContain("gitConflictCapability");
+    expect(worker).not.toContain("git_resolve_continue");
+
+    const resolver = renderedOf("codex", "implement-conflict-resolver");
+    expect(resolver).toContain("gitConflictCapability");
+    expect(resolver).toContain("git_resolve_continue");
+    expect(resolver).toContain("conflictReceipts");
+    expect(resolver).not.toContain("gitChangeCapability");
+    expect(resolver).not.toContain("git_commit");
+  });
+
   it("T1492 gives every dispatched Codex role one complete result-delivery contract", () => {
     expect(DISPATCHED_ROLES.map(({ roleId }) => roleId)).toHaveLength(9);
     for (const { roleId } of DISPATCHED_ROLES) {

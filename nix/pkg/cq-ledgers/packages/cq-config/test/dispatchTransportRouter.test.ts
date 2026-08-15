@@ -31,7 +31,7 @@ import {
   fetchDispatchResult,
   prepareDispatch,
   routeDispatchTransport,
-  runPreparedDispatch,
+  runPreparedDispatch as runPreparedDispatchBound,
   sequentialDispatchRandomBytes,
   type AttestationNamespace,
   type AttestationRow,
@@ -46,6 +46,7 @@ import {
   type DispatchTransportAdapter,
   type Harness,
   type NativeCompletionProof,
+  type ReviewerToken,
 } from "@cq/config";
 
 const NAMESPACE: AttestationNamespace = { backend: "xdg", projectKey: "T1631-router" };
@@ -68,6 +69,16 @@ const CODEX_CORRELATION: CodexChildCorrelation = {
   correlationId: "T1631CodexCorrelation0123456789abcd",
   threadId: "parent-controlled-codex-run",
 };
+const RESOLVED_MODELS: Readonly<Record<Harness, ReviewerToken>> = Object.freeze({
+  claude: { harness: "claude", model: "recorded-claude-model", provider: null, effort: "high" },
+  codex: { harness: "codex", model: "recorded-codex-model", provider: null, effort: "high" },
+  pi: {
+    harness: "pi",
+    model: "gpt-5.6-sol",
+    provider: "openai-codex",
+    effort: "xhigh",
+  },
+});
 const promptDigestOf = (prompt: string): string =>
   new Bun.CryptoHasher("sha256").update(prompt).digest("hex");
 const OUTPUT: DispatchJSONValue = {
@@ -380,6 +391,18 @@ function handleOf(prepared: DispatchPrepared): DispatchHandle {
   return { attestationId: prepared.attestationId, generation: prepared.generation };
 }
 
+function runPreparedDispatch(
+  request: Omit<Parameters<typeof runPreparedDispatchBound>[0], "resolvedModel">,
+  registry: Parameters<typeof runPreparedDispatchBound>[1],
+  deps: Parameters<typeof runPreparedDispatchBound>[2],
+): ReturnType<typeof runPreparedDispatchBound> {
+  return runPreparedDispatchBound(
+    { ...request, resolvedModel: RESOLVED_MODELS[request.targetHarness] },
+    registry,
+    deps,
+  );
+}
+
 function successfulLaunch(
   completion: NativeCompletionProof,
   counts: { input: number; store: number },
@@ -517,6 +540,192 @@ describe("T1631 shared three-harness transport router", () => {
       "pi->pi:false:native:pi:native",
       "pi->pi:true:process:pi:process",
     ]);
+  });
+
+  test("T2045 binds the resolved model and effort through every one of the 18 lifecycle cells [BA]", async () => {
+    const counts = { input: 0, store: 0 };
+    const adapters: DispatchTransportAdapter[] = HARNESSES.flatMap((targetHarness) =>
+      (["native", "process"] as const).map((transport) => ({
+        id: `${targetHarness}:${transport}`,
+        targetHarness,
+        transport,
+        launch: (context: DispatchAdapterLaunchContext): DispatchAdapterLaunchResult => {
+          expect(context.resolvedModel).toEqual(RESOLVED_MODELS[targetHarness]);
+          expect(Object.keys(context.route).sort()).toEqual([
+            "activeHarness",
+            "adapterId",
+            "forceShellout",
+            "targetHarness",
+            "transport",
+          ]);
+          expect(context.prepared.promptProvenance).toMatchObject({
+            roleId: "implement-worker",
+            surface: targetHarness,
+          });
+          expect(context.effectTargetRef).toBe("tasks:T1631");
+          expect(Date.parse(context.prepared.launchDeadline)).toBeGreaterThan(Date.parse(T0));
+          counts.input += 1;
+          const materialized = context.child.materializeInput();
+          expect(materialized).toMatchObject({
+            attestationId: context.prepared.attestationId,
+            generation: context.prepared.generation,
+            state: "input-materialized",
+            input: {
+              taskId: "T1631",
+              worktreePath: "/tmp/T1631",
+              branch: "implement/T1631",
+            },
+          });
+          counts.store += 1;
+          const stored = context.child.storeResult(OUTPUT);
+          if (stored.state === "aborted") {
+            return { outcome: "aborted", reason: stored.result.reason };
+          }
+          return {
+            outcome: "completed",
+            handle: handleOf(context.prepared),
+            nativeCompletion: {
+              kind: "native-completion",
+              actor:
+                context.route.transport === "process" || context.route.targetHarness === "pi"
+                  ? "trusted-extension"
+                  : "trusted-parent",
+              childId: `${targetHarness}-child`,
+              runId: `${targetHarness}-run`,
+              completedAt: T0,
+            },
+            handleOnlyEnforcement:
+              context.route.transport === "process" ? "structural" : "prompt-best-effort",
+          };
+        },
+      })),
+    );
+    const registry = new DispatchTransportAdapterRegistry(adapters);
+    let sequence = 200;
+
+    for (const activeHarness of HARNESSES) {
+      for (const targetHarness of HARNESSES) {
+        for (const forceShellout of [false, true] as const) {
+          const fixture = preparedFixture(targetHarness, sequence++);
+          const result = await runPreparedDispatchBound(
+            {
+              namespace: NAMESPACE,
+              prepared: fixture.prepared,
+              activeHarness,
+              targetHarness,
+              forceShellout,
+              resolvedModel: RESOLVED_MODELS[targetHarness],
+            },
+            registry,
+            fixture.deps,
+          );
+          expect(result.outcome).toBe("consumed");
+          expect(result.route).toEqual(
+            routeDispatchTransport({ activeHarness, targetHarness, forceShellout }),
+          );
+          expect(result).toMatchObject({
+            adapterId: `${targetHarness}:${result.route.transport}`,
+            handle: handleOf(fixture.prepared),
+            output: OUTPUT,
+          });
+        }
+      }
+    }
+
+    expect(counts).toEqual({ input: 18, store: 18 });
+  });
+
+  test("rejects a model bound to another harness before adapter or capability access [BA]", async () => {
+    const fixture = preparedFixture("codex", 219);
+    let launches = 0;
+    const registry = new DispatchTransportAdapterRegistry([
+      createNativeDispatchAdapter("codex", () => {
+        launches += 1;
+        throw new Error("mismatched model reached adapter");
+      }),
+    ]);
+
+    await expect(
+      runPreparedDispatchBound(
+        {
+          namespace: NAMESPACE,
+          prepared: fixture.prepared,
+          activeHarness: "codex",
+          targetHarness: "codex",
+          forceShellout: false,
+          resolvedModel: RESOLVED_MODELS.claude,
+        },
+        registry,
+        fixture.deps,
+      ),
+    ).rejects.toThrow('resolved model harness "claude" does not match target "codex"');
+    expect(launches).toBe(0);
+    expect(rowState(fixture.store.read(handleOf(fixture.prepared))!)).toBe("prepared");
+  });
+
+  test("rejects a divergent process model before launching the child [BA]", async () => {
+    const fixture = preparedFixture("claude", 220);
+    const endpoint = createRecordedCapabilityEndpoint();
+    const registry = new DispatchTransportAdapterRegistry([
+      createClaudeProcessDispatchAdapter(
+        createStrictInMemoryWorksetEffectAdmissionProvider(),
+        claudeRecordingResolver(endpoint),
+      ),
+    ]);
+    try {
+      await expect(
+        runPreparedDispatchBound(
+          {
+            namespace: NAMESPACE,
+            prepared: fixture.prepared,
+            activeHarness: "pi",
+            targetHarness: "claude",
+            forceShellout: false,
+            resolvedModel: {
+              ...RESOLVED_MODELS.claude,
+              model: "different-claude-model",
+            },
+          },
+          registry,
+          fixture.deps,
+        ),
+      ).rejects.toThrow("does not match resolved model");
+      expect(endpoint.counts).toEqual({ input: 0, store: 0 });
+      expect(rowState(fixture.store.read(handleOf(fixture.prepared))!)).toBe("prepared");
+    } finally {
+      endpoint.stop();
+    }
+  });
+
+  test("rejects a divergent Codex process effort before launching the child [BA]", async () => {
+    const fixture = preparedFixture("codex", 221);
+    const processFixture = createCodexRecordingFixture("success");
+    const registry = new DispatchTransportAdapterRegistry([
+      createCodexProcessDispatchAdapter(
+        createStrictInMemoryWorksetEffectAdmissionProvider(),
+        codexRecordingResolver(processFixture),
+      ),
+    ]);
+    try {
+      await expect(
+        runPreparedDispatchBound(
+          {
+            namespace: NAMESPACE,
+            prepared: fixture.prepared,
+            activeHarness: "claude",
+            targetHarness: "codex",
+            forceShellout: false,
+            resolvedModel: { ...RESOLVED_MODELS.codex, effort: "ultra" },
+          },
+          registry,
+          fixture.deps,
+        ),
+      ).rejects.toThrow("does not match resolved effort");
+      expect(processFixture.endpoint.counts).toEqual({ input: 0, store: 0 });
+      expect(rowState(fixture.store.read(handleOf(fixture.prepared))!)).toBe("prepared");
+    } finally {
+      removeCodexRecordingFixture(processFixture);
+    }
   });
 
   test("binds the exact prepared task ref into the trusted launch context [BA]", async () => {
