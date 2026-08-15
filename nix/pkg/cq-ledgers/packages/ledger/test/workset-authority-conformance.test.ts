@@ -9,7 +9,6 @@ import {
   HYPOTHESIS_LEDGER,
   IDEAS_LEDGER,
   MILESTONES_AMBIENT_ID,
-  MILESTONES_LEDGER,
   QUESTIONS_LEDGER,
   RESEARCHES_LEDGER,
   REVIEWS_LEDGER,
@@ -46,8 +45,6 @@ describe("T1988 owner and deny authority matrix [Behavioral-Active Blackbox-Atom
       ),
     ).toEqual({
       "idea-to-goal": GOALS_LEDGER,
-      "active-current-draft": [MILESTONES_LEDGER, TASKS_LEDGER],
-      "finalized-manifest": [MILESTONES_LEDGER, TASKS_LEDGER],
       "exact-gate-question": QUESTIONS_LEDGER,
       review: REVIEWS_LEDGER,
       "review-filed-defect": DEFECTS_LEDGER,

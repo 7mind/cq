@@ -6,14 +6,10 @@ import {
   createTrustedWorksetManagementAuthority,
   createWorksetOwnedGuardedLedger,
   ensureSchema,
-  GOALS_LEDGER,
   IDEAS_LEDGER,
-  MILESTONES_LEDGER,
   openPgPool,
-  PLAN_CURRENT_DRAFT_FIELD,
   PostgresLedgerStore,
   startPostgresCoherenceWatcher,
-  TASKS_LEDGER,
   worksetMemberRefSet,
   type WorksetOwnedGuardedLedger,
 } from "../src/index.js";
@@ -92,65 +88,6 @@ if (dsn === undefined || dsn.length === 0) {
   }
 
   describe("workset coordination-bundle PostgreSQL faults [T1966]", () => {
-    it("statement failure rolls back the tenant and emits no post-commit hook", async () => {
-      const projectKey = `t1966-fault-${randomUUID()}`;
-      const mutations: string[] = [];
-      const { ledger } = await open(projectKey, (ledgerId) => mutations.push(ledgerId));
-      const idea = await ledger.owned.createOwnerless({
-        ledgerId: IDEAS_LEDGER,
-        status: "open",
-        fields: { title: "pg-fault-idea" },
-      });
-      const { goal } = await ledger.bundles.bootstrapIdeaToGoal({
-        ideaId: idea.id,
-        goal: { title: "pg-fault-goal", description: "pre-state" },
-      });
-      mutations.length = 0;
-      const beforeMilestones = ledger.fetch(MILESTONES_LEDGER).counters.item;
-      const beforeTasks = ledger.fetch(TASKS_LEDGER).counters.item;
-      const suffix = randomUUID().replaceAll("-", "");
-      const functionName = `fail_owned_task_${suffix}`;
-      const triggerName = `fail_owned_task_trigger_${suffix}`;
-      await setupPool.unsafe(`
-        CREATE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$
-        BEGIN
-          IF NEW.project_key = '${projectKey}' AND NEW.ledger = 'tasks'
-             AND NEW.fields_json LIKE '%pg-must-rollback%' THEN
-            RAISE EXCEPTION 'injected owned task statement failure';
-          END IF;
-          RETURN NEW;
-        END
-        $$;
-        CREATE TRIGGER ${triggerName}
-        BEFORE INSERT ON items FOR EACH ROW EXECUTE FUNCTION ${functionName}();
-      `);
-      try {
-        await expect(
-          ledger.bundles.publishOwnedDraft({
-            goalId: goal.id,
-            creationKind: "active-current-draft",
-            milestone: { title: "pg-must-rollback" },
-            tasks: [{ headline: "pg-must-rollback" }],
-          }),
-        ).rejects.toThrow("injected owned task statement failure");
-      } finally {
-        await setupPool.unsafe(`DROP TRIGGER ${triggerName} ON items`);
-        await setupPool.unsafe(`DROP FUNCTION ${functionName}()`);
-      }
-      expect(mutations).toEqual([]);
-      expect(ledger.fetch(MILESTONES_LEDGER).counters.item).toBe(beforeMilestones);
-      expect(ledger.fetch(TASKS_LEDGER).counters.item).toBe(beforeTasks);
-      expect(
-        ledger.fetchItem(GOALS_LEDGER, goal.id).fields[PLAN_CURRENT_DRAFT_FIELD],
-      ).toBeUndefined();
-
-      const restarted = await open(projectKey);
-      expect(restarted.ledger.fetch(MILESTONES_LEDGER).counters.item).toBe(
-        beforeMilestones,
-      );
-      expect(restarted.ledger.search(TASKS_LEDGER, "pg-must-rollback")).toEqual([]);
-    });
-
     it("post-commit NOTIFY invalidates a peer after the complete owned write", async () => {
       const projectKey = `t1966-notify-${randomUUID()}`;
       const writer = await open(projectKey);

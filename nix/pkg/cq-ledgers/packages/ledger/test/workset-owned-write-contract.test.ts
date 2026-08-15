@@ -10,6 +10,7 @@ import {
   PLANNING_LIFECYCLE_CREATION_KINDS,
   IMPLEMENTATION_LIFECYCLE_CREATION_KINDS,
   GOALS_LEDGER,
+  TASKS_LEDGER,
   PLAN_CURRENT_DRAFT_FIELD,
   PLAN_FINALIZED_MANIFEST_FIELD,
   createTrustedWorksetManagementAuthority,
@@ -81,16 +82,64 @@ describe("workset owned-write contract module [T1962]", () => {
     expect(publishedFields).toEqual([]);
   });
 
-  it("inventories every planning + implementation creation kind", () => {
+  it("limits owned writes to single-child and bootstrap creation kinds", () => {
     const covered = new Set<string>(WORKSET_OWNED_WRITE_CREATION_KINDS);
-    for (const k of PLANNING_LIFECYCLE_CREATION_KINDS) {
-      expect(covered.has(k)).toBe(true);
-    }
-    for (const k of IMPLEMENTATION_LIFECYCLE_CREATION_KINDS) {
-      expect(covered.has(k)).toBe(true);
-    }
+    const lifecycleKinds = new Set<string>([
+      ...PLANNING_LIFECYCLE_CREATION_KINDS,
+      ...IMPLEMENTATION_LIFECYCLE_CREATION_KINDS,
+    ]);
+    expect(covered.has("active-current-draft")).toBe(false);
+    expect(covered.has("finalized-manifest")).toBe(false);
+    expect(lifecycleKinds.has("active-current-draft")).toBe(true);
+    expect(lifecycleKinds.has("finalized-manifest")).toBe(true);
     for (const k of WORKSET_OWNED_WRITE_CREATION_KINDS) {
       expect(defaultChildLedgerForCreationKind(k)).toBeDefined();
     }
+  });
+
+  it("rejects both manifest creation kinds through the owned-write gateway", async () => {
+    const ledger = createInMemoryWorksetOwnedGuardedLedger();
+    await ledger.init();
+    const goal = await ledger.owned.createOwnerless({
+      ledgerId: GOALS_LEDGER,
+      status: "planning",
+      fields: { title: "owned-write rejection", description: "regression" },
+    });
+    if (false) {
+      void ledger.owned.createOwned({
+        owner: { ledgerId: GOALS_LEDGER, itemId: goal.id },
+        // @ts-expect-error plan publication belongs exclusively to PlanLifecycleStore
+        creationKind: "active-current-draft",
+        child: { ledgerId: TASKS_LEDGER, status: "planned", fields: { headline: "x" } },
+      });
+      void ledger.owned.createOwned({
+        owner: { ledgerId: GOALS_LEDGER, itemId: goal.id },
+        // @ts-expect-error plan publication belongs exclusively to PlanLifecycleStore
+        creationKind: "finalized-manifest",
+        child: { ledgerId: TASKS_LEDGER, status: "planned", fields: { headline: "x" } },
+      });
+    }
+    const directCreate = ledger.owned.createOwned as unknown as (input: {
+      owner: { ledgerId: string; itemId: string };
+      creationKind: string;
+      child: { ledgerId: string; status: string; fields: { headline: string } };
+    }) => Promise<unknown>;
+    for (const creationKind of [
+      "active-current-draft",
+      "finalized-manifest",
+    ] as const) {
+      await expect(
+        directCreate({
+          owner: { ledgerId: GOALS_LEDGER, itemId: goal.id },
+          creationKind,
+          child: {
+            ledgerId: TASKS_LEDGER,
+            status: "planned",
+            fields: { headline: `rejected ${creationKind}` },
+          },
+        }),
+      ).rejects.toMatchObject({ code: "owner-policy-denied" });
+    }
+    expect(ledger.fetch(TASKS_LEDGER).counters.item).toBe(0);
   });
 });

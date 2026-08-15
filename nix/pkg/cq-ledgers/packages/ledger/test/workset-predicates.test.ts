@@ -16,27 +16,37 @@ import {
   IDEAS_LEDGER,
   InMemoryLedgerStore,
   LEDGER_STORAGE_DIRNAME,
+  MILESTONES_AMBIENT_ID,
+  PLAN_REVIEW_DRAFT_FIELD,
   QUESTIONS_LEDGER,
   RESEARCHES_LEDGER,
+  REVIEWS_LEDGER,
   TASKS_LEDGER,
   createTrustedWorksetManagementAuthority,
-  createWorksetOwnedGuardedLedger,
+  createWorksetGuardedPlanLifecycleStore,
   derivePredicates,
   deriveWorksetPredicates,
   requireWorksetStore,
   serializeRegistry,
   type LedgerStore,
-  type WorksetOwnedGuardedLedger,
+  type PlanClaimAcknowledgement,
+  type PlanPublishedManifest,
+  type WorksetGuardedPlanLifecycleStore,
   type WorksetOwnedWriteTx,
+  type WorksetPlanLifecycleTx,
 } from "../src/index.js";
 
 type AtomicOwnedStore = LedgerStore & {
   runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T>;
+  runAtomicWorksetPlanLifecycleMutation<T>(
+    goalId: string,
+    mutate: (tx: WorksetPlanLifecycleTx) => T,
+  ): Promise<T>;
 };
 
 interface Fixture {
   readonly store: AtomicOwnedStore;
-  readonly guarded: WorksetOwnedGuardedLedger;
+  readonly guarded: WorksetGuardedPlanLifecycleStore;
 }
 
 interface FixtureFactory {
@@ -53,13 +63,64 @@ afterAll(async () => {
   }
 });
 
-function bindGuarded(store: AtomicOwnedStore): WorksetOwnedGuardedLedger {
-  return createWorksetOwnedGuardedLedger({
+function bindGuarded(store: AtomicOwnedStore): WorksetGuardedPlanLifecycleStore {
+  return createWorksetGuardedPlanLifecycleStore({
     rawStore: store,
     worksetStore: requireWorksetStore(store),
     invocationAuthority: createTrustedWorksetManagementAuthority(),
     runOwnedTransaction: (mutate) => store.runAtomicOwnedMutation(mutate),
+    runPlanLifecycleTransaction: (goalId, mutate) =>
+      store.runAtomicWorksetPlanLifecycleMutation(goalId, mutate),
   });
+}
+
+const PLAN_OWNER = "aaaaaaaaaaaaaaaaaaaaaa";
+const PLAN_PROVENANCE = { author: "T2096", session: "T2096-predicates" } as const;
+
+async function claimPlan(
+  store: WorksetGuardedPlanLifecycleStore,
+  goalId: string,
+  requestId: string,
+): Promise<PlanClaimAcknowledgement> {
+  const result = await store.claimPlan({
+    goalId,
+    purpose: "initial",
+    claimRequestId: requestId,
+    ownerFenceToken: PLAN_OWNER,
+    expectedGeneration: null,
+    ...PLAN_PROVENANCE,
+  });
+  if (!result.ok) throw new Error(`claim failed: ${result.conflict.code}`);
+  return result.acknowledgement;
+}
+
+async function publishDraft(
+  store: WorksetGuardedPlanLifecycleStore,
+  goalId: string,
+  claim: PlanClaimAcknowledgement,
+  operationId: string,
+  milestoneTitle: string,
+  taskHeadline: string,
+): Promise<PlanPublishedManifest> {
+  const result = await store.publishPlanDraft({
+    goalId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    operationId,
+    ownerFenceToken: claim.ownerFenceToken,
+    ...PLAN_PROVENANCE,
+    manifest: {
+      milestones: [{ key: "delivery", title: milestoneTitle }],
+      tasks: [{
+        key: "task",
+        milestoneKey: "delivery",
+        headline: taskHeadline,
+        ledgerRefs: [`${GOALS_LEDGER}:${goalId}`],
+      }],
+    },
+  });
+  if (!result.ok) throw new Error(`publish failed: ${result.conflict.code}`);
+  return result.acknowledgement.manifest;
 }
 
 const inMemoryFactory: FixtureFactory = {
@@ -151,14 +212,15 @@ function runContract(factory: FixtureFactory): void {
           ideaId: idea.id,
           goal: { title: "included goal", description: "planning" },
         });
-        const draft = await guarded.bundles.publishOwnedDraft({
-          goalId: goal.id,
-          creationKind: "active-current-draft",
-          milestone: { title: "current draft" },
-          tasks: [
-            { headline: "draft task", fields: { ledgerRefs: [`${GOALS_LEDGER}:${goal.id}`] } },
-          ],
-        });
+        const planClaim = await claimPlan(guarded, goal.id, "t2096-current-claim");
+        const draft = await publishDraft(
+          guarded,
+          goal.id,
+          planClaim,
+          "t2096-current-publish",
+          "current draft",
+          "draft task",
+        );
         const research = await guarded.owned.createOwned({
           owner: { ledgerId: GOALS_LEDGER, itemId: goal.id },
           creationKind: "research",
@@ -208,11 +270,11 @@ function runContract(factory: FixtureFactory): void {
             },
           },
         });
-        await store.createItem(DEFECTS_LEDGER, draft.milestone.id, {
+        await store.createItem(DEFECTS_LEDGER, draft.milestones[0]!.id, {
           status: "open",
           fields: { headline: "unrelated defect", severity: "high" },
         });
-        await store.createItem(RESEARCHES_LEDGER, draft.milestone.id, {
+        await store.createItem(RESEARCHES_LEDGER, draft.milestones[0]!.id, {
           status: "open",
           fields: { question: "unrelated research" },
         });
@@ -244,20 +306,50 @@ function runContract(factory: FixtureFactory): void {
         });
         const { goal } = await guarded.bundles.bootstrapIdeaToGoal({
           ideaId: idea.id,
-          goal: { title: "finalized goal", description: "ready", status: "planned" },
+          goal: { title: "finalized goal", description: "ready" },
         });
-        const draft = await guarded.bundles.publishOwnedDraft({
-          goalId: goal.id,
-          creationKind: "finalized-manifest",
-          milestone: { title: "finalized milestone" },
-          tasks: [
-            {
-              headline: "finalized task",
-              fields: { ledgerRefs: [`${GOALS_LEDGER}:${goal.id}`] },
+        const planClaim = await claimPlan(guarded, goal.id, "t2096-final-claim");
+        const draft = await publishDraft(
+          guarded,
+          goal.id,
+          planClaim,
+          "t2096-final-publish",
+          "finalized milestone",
+          "finalized task",
+        );
+        await guarded.owned.createOwned({
+          owner: { ledgerId: GOALS_LEDGER, itemId: goal.id },
+          creationKind: "review",
+          child: {
+            ledgerId: REVIEWS_LEDGER,
+            milestoneId: MILESTONES_AMBIENT_ID,
+            id: "R2096",
+            status: "go-ahead",
+            fields: {
+              [PLAN_REVIEW_DRAFT_FIELD]: JSON.stringify({
+                goalId: goal.id,
+                claimId: planClaim.claimId,
+                generation: planClaim.generation,
+                revision: draft.revision,
+              }),
             },
-          ],
+            ...PLAN_PROVENANCE,
+          },
         });
-        const task = draft.tasks[0]!;
+        const finalized = await guarded.finalizePlan({
+          goalId: goal.id,
+          claimId: planClaim.claimId,
+          generation: planClaim.generation,
+          operationId: "t2096-finalize",
+          ownerFenceToken: planClaim.ownerFenceToken,
+          reviewId: "R2096",
+          draftRevision: draft.revision,
+          decision: { headline: "Finalize predicate fixture" },
+          ...PLAN_PROVENANCE,
+        });
+        if (!finalized.ok) throw new Error(`finalize failed: ${finalized.conflict.code}`);
+        const manifest = finalized.acknowledgement.manifest;
+        const task = guarded.fetchItem(TASKS_LEDGER, manifest.tasks[0]!.id);
         const gate = await guarded.owned.createOwned({
           owner: { ledgerId: TASKS_LEDGER, itemId: task.id },
           creationKind: "exact-gate-question",
@@ -270,11 +362,11 @@ function runContract(factory: FixtureFactory): void {
             },
           },
         });
-        const unrelatedGoal = await store.createItem(GOALS_LEDGER, draft.milestone.id, {
+        const unrelatedGoal = await store.createItem(GOALS_LEDGER, manifest.milestones[0]!.id, {
           status: "building",
           fields: { title: "unrelated goal", description: "outside" },
         });
-        await store.createItem(TASKS_LEDGER, draft.milestone.id, {
+        await store.createItem(TASKS_LEDGER, manifest.milestones[0]!.id, {
           status: "planned",
           fields: {
             headline: "unrelated task",

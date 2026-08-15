@@ -11,8 +11,8 @@
  *
  * Ownerless intake remains legal only when persisted roots are exactly empty.
  *
- * Coordination bundles cover multi-item atomic bootstraps (idea→goal,
- * defect→fix-goal, goal draft/manifest milestone+tasks).
+ * Coordination bundles cover multi-item atomic bootstraps (idea→goal and
+ * defect→fix-goal).
  *
  * Backend legs (T1963+) implement the same public gateways over durable
  * adapters; the in-memory dummy below is the Behavioral-Active Blackbox
@@ -31,7 +31,6 @@ import {
   QUESTIONS_LEDGER,
   RESEARCHES_LEDGER,
   REVIEWS_LEDGER,
-  TASKS_LEDGER,
   WORKSET_OWNER_EDGE_KIND_FIELD,
   WORKSET_OWNER_REF_FIELD,
 } from "./constants.js";
@@ -124,7 +123,7 @@ export interface OwnedChildInit {
 
 export interface OwnedCreateInput {
   readonly owner: OwnedOwnerRef;
-  readonly creationKind: LifecycleCreationKind;
+  readonly creationKind: WorksetOwnedWriteCreationKind;
   readonly child: OwnedChildInit;
 }
 
@@ -182,37 +181,6 @@ export interface DefectToFixGoalBundleResult {
   readonly ownership: CanonicalOwnership;
 }
 
-export interface OwnedDraftTaskInit {
-  readonly headline: string;
-  readonly status?: string;
-  readonly fields?: Record<string, FieldValue>;
-  readonly author?: string;
-  readonly session?: string;
-}
-
-export interface OwnedDraftBundleInput {
-  readonly goalId: string;
-  /**
-   * Must match the goal phase: `active-current-draft` in clarifying/planning,
-   * `finalized-manifest` in planned/building.
-   */
-  readonly creationKind: "active-current-draft" | "finalized-manifest";
-  readonly milestone: {
-    readonly title: string;
-    readonly description?: string;
-    readonly author?: string;
-    readonly session?: string;
-  };
-  readonly tasks: readonly OwnedDraftTaskInit[];
-}
-
-export interface OwnedDraftBundleResult {
-  readonly goal: Item;
-  readonly milestone: Item;
-  readonly tasks: readonly Item[];
-  readonly ownership: CanonicalOwnership;
-}
-
 // ---------------------------------------------------------------------------
 // Gateways
 // ---------------------------------------------------------------------------
@@ -237,7 +205,6 @@ export interface WorksetCoordinationBundleGateway {
   bootstrapDefectToFixGoal(
     input: DefectToFixGoalBundleInput,
   ): Promise<DefectToFixGoalBundleResult>;
-  publishOwnedDraft(input: OwnedDraftBundleInput): Promise<OwnedDraftBundleResult>;
 }
 
 /**
@@ -285,17 +252,6 @@ export interface WorksetOwnedWriteTx {
   ): Item;
   createMilestoneOwnerless(init: CreateMilestoneItemInit): Item;
   updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Item;
-  /**
-   * Write plan draft/manifest bindings on a goal. Bypasses the raw-plan
-   * managed-field fence because owned draft bundles are a typed lifecycle path
-   * (parallel to PlanLifecycleStore publish).
-   */
-  writeGoalPhaseManifest(
-    goalId: string,
-    kind: "active-current-draft" | "finalized-manifest",
-    manifestJson: string,
-    draftEnvelopeJson?: string,
-  ): Item;
 }
 
 // ---------------------------------------------------------------------------
@@ -440,13 +396,14 @@ export function createWorksetOwnedWriteGateway(
 
     async createOwned(input) {
       assertNoForgedOwnership(input.child.fields);
+      const creationKind = input.creationKind as LifecycleCreationKind;
       if (
-        input.creationKind === "active-current-draft" ||
-        input.creationKind === "finalized-manifest"
+        creationKind === "active-current-draft" ||
+        creationKind === "finalized-manifest"
       ) {
         throw new WorksetOwnedLifecycleError(
-          "bundle-incomplete",
-          `${input.creationKind} requires publishOwnedDraft so milestone, tasks, and manifest commit atomically`,
+          "owner-policy-denied",
+          `${creationKind} requires the guarded PlanLifecycleStore publication path`,
         );
       }
       const ownerRef = itemRef(input.owner.ledgerId, input.owner.itemId);
@@ -474,12 +431,12 @@ export function createWorksetOwnedWriteGateway(
           const ownership = resolveAllowedOwnership(
             owner,
             input.owner.ledgerId,
-            input.creationKind,
+            creationKind,
           );
           assertChildLedgerAllowed(
             ownership,
             input.child.ledgerId,
-            input.creationKind,
+            creationKind,
             input.owner.ledgerId,
             owner.status,
           );
@@ -711,102 +668,6 @@ export function createWorksetCoordinationBundleGateway(
         });
       });
     },
-
-    async publishOwnedDraft(input) {
-      if (input.tasks.length === 0) {
-        throw new WorksetOwnedLifecycleError(
-          "bundle-incomplete",
-          "owned draft bundle requires at least one task",
-        );
-      }
-      const ownerRef = itemRef(GOALS_LEDGER, input.goalId);
-      return withOwnedAdmission([ownerRef], async (admission) => {
-        return host.runOwnedTransaction((tx) => {
-          const ctx = buildOwnedValidationContext(tx.activeState(), {
-            roots: admission.roots,
-            epoch: admission.epoch,
-          });
-          if (ctx.restrictive && !ctx.members.has(ownerRef)) {
-            throw new WorksetOwnedLifecycleError(
-              "owner-excluded",
-              `owner "${ownerRef}" is outside the admitted workset`,
-            );
-          }
-          let goal: Item;
-          try {
-            goal = tx.fetchItem(GOALS_LEDGER, input.goalId);
-          } catch {
-            throw new WorksetOwnedLifecycleError(
-              "owner-not-found",
-              `goal "${ownerRef}" does not exist`,
-            );
-          }
-          const ownership = resolveAllowedOwnership(
-            goal,
-            GOALS_LEDGER,
-            input.creationKind,
-          );
-          const mInit: CreateMilestoneItemInit = { title: input.milestone.title };
-          if (input.milestone.description !== undefined) {
-            mInit.description = input.milestone.description;
-          }
-          if (input.milestone.author !== undefined) mInit.author = input.milestone.author;
-          if (input.milestone.session !== undefined) mInit.session = input.milestone.session;
-          const milestone = tx.createMilestoneWithSealedOwnership(mInit, ownership);
-          const tasks: Item[] = [];
-          for (const taskInit of input.tasks) {
-            const fields: Record<string, FieldValue> = {
-              headline: taskInit.headline,
-              ...(taskInit.fields ?? {}),
-            };
-            assertNoForgedOwnership(fields);
-            const init: CreateItemInit = {
-              status: taskInit.status ?? "planned",
-              fields,
-            };
-            if (taskInit.author !== undefined) init.author = taskInit.author;
-            if (taskInit.session !== undefined) init.session = taskInit.session;
-            tasks.push(
-              tx.createItemWithSealedOwnership(
-                TASKS_LEDGER,
-                milestone.id,
-                init,
-                ownership,
-              ),
-            );
-          }
-          // Bind the phase manifest so T1952 closure admits sealed draft members.
-          const revision = 1;
-          const manifest = {
-            revision,
-            milestones: [{ key: `ms${milestone.id}`, id: milestone.id }],
-            tasks: tasks.map((t, i) => ({ key: `task${i}`, id: t.id })),
-          };
-          const manifestJson = JSON.stringify(manifest);
-          if (input.creationKind === "active-current-draft") {
-            const identity = {
-              goalId: goal.id,
-              claimId: `owned-draft-${goal.id}`,
-              generation: 1,
-              revision,
-            };
-            goal = tx.writeGoalPhaseManifest(
-              goal.id,
-              "active-current-draft",
-              manifestJson,
-              JSON.stringify({ identity, manifest }),
-            );
-          } else {
-            goal = tx.writeGoalPhaseManifest(
-              goal.id,
-              "finalized-manifest",
-              manifestJson,
-            );
-          }
-          return { goal, milestone, tasks, ownership };
-        });
-      });
-    },
   };
 
   Object.freeze(gateway);
@@ -931,8 +792,6 @@ export function assertOwnedWriteAdmissionNotCallerMinted(value: unknown): void {
 /** Creation kinds the owned-write gateway must cover (union of both inventories). */
 export const WORKSET_OWNED_WRITE_CREATION_KINDS = [
   "idea-to-goal",
-  "active-current-draft",
-  "finalized-manifest",
   "exact-gate-question",
   "review",
   "review-filed-defect",
@@ -949,15 +808,12 @@ export type WorksetOwnedWriteCreationKind =
 
 /** Default child ledger for single-child kinds (not multi-ledger draft kinds). */
 export function defaultChildLedgerForCreationKind(
-  kind: LifecycleCreationKind,
-): string | readonly string[] {
+  kind: WorksetOwnedWriteCreationKind,
+): string {
   switch (kind) {
     case "idea-to-goal":
     case "fix-goal":
       return GOALS_LEDGER;
-    case "active-current-draft":
-    case "finalized-manifest":
-      return [MILESTONES_LEDGER, TASKS_LEDGER];
     case "exact-gate-question":
       return QUESTIONS_LEDGER;
     case "review":

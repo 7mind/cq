@@ -42,7 +42,7 @@ import {
   type WorksetOwnedGuardedLedger,
   type WorksetOwnedLifecycleErrorCode,
   type CreateInMemoryWorksetOwnedGuardedLedgerOptions,
-  type LifecycleCreationKind,
+  type WorksetOwnedWriteCreationKind,
 } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
@@ -118,7 +118,7 @@ function memberRefsForRoot(
 }
 
 interface SingleChildCase {
-  readonly creationKind: LifecycleCreationKind;
+  readonly creationKind: WorksetOwnedWriteCreationKind;
   readonly ownerLedger: string;
   readonly ownerStatus: string;
   readonly seedOwner: (ledger: WorksetOwnedGuardedLedger) => Promise<string>;
@@ -285,27 +285,12 @@ const SINGLE_CHILD_CASES: readonly SingleChildCase[] = [
     ownerLedger: TASKS_LEDGER,
     ownerStatus: "planned",
     seedOwner: async (ledger) => {
-      const idea = await ledger.owned.createOwnerless({
-        ledgerId: IDEAS_LEDGER,
-        status: "open",
-        fields: { title: "t-owner-idea" },
+      const task = await ledger.owned.createOwnerless({
+        ledgerId: TASKS_LEDGER,
+        status: "planned",
+        fields: { headline: "impl-task" },
       });
-      const boot = await ledger.bundles.bootstrapIdeaToGoal({
-        ideaId: idea.id,
-        goal: {
-          title: "t-goal",
-          description: "for task owner",
-          status: "planned",
-        },
-      });
-      // Advance goal to planned already; publish finalized-manifest draft.
-      const draft = await ledger.bundles.publishOwnedDraft({
-        goalId: boot.goal.id,
-        creationKind: "finalized-manifest",
-        milestone: { title: "impl-ms" },
-        tasks: [{ headline: "impl-task" }],
-      });
-      return draft.tasks[0]!.id;
+      return task.id;
     },
     child: {
       ledgerId: DEFECTS_LEDGER,

@@ -5,13 +5,9 @@ import {
   QUESTIONS_ANSWER_FIELD,
   QUESTIONS_LEDGER,
 } from "../constants.js";
-import {
-  PLAN_CURRENT_DRAFT_FIELD,
-  PLAN_FINALIZED_MANIFEST_FIELD,
-} from "../planLifecycle.js";
 import { buildPrefixRegistry } from "../refs.js";
 import type { FieldValue, Item, Ledger } from "../types.js";
-import { BootstrapViolationError, LedgerError, LedgerNotFoundError } from "../types.js";
+import { BootstrapViolationError, LedgerNotFoundError } from "../types.js";
 import { buildWorksetActiveState } from "../worksetGraph.js";
 import type { WorksetOwnedWriteTx } from "../worksetOwnedLifecycle.js";
 import {
@@ -200,20 +196,6 @@ export function createOwnedWriteTransaction(
         refs,
       );
       dirtyLedgers.add(ledgerId);
-      return cloneItem(item);
-    },
-    writeGoalPhaseManifest: (goalId, kind, manifestJson, draftEnvelopeJson) => {
-      const { item } = findItem(getLedger(GOALS_LEDGER), goalId);
-      if (kind === "active-current-draft") {
-        if (draftEnvelopeJson === undefined) {
-          throw new LedgerError("active-current-draft binding requires draftEnvelopeJson");
-        }
-        item.fields[PLAN_CURRENT_DRAFT_FIELD] = draftEnvelopeJson;
-      } else {
-        item.fields[PLAN_FINALIZED_MANIFEST_FIELD] = manifestJson;
-      }
-      item.updatedAt = now();
-      dirtyLedgers.add(GOALS_LEDGER);
       return cloneItem(item);
     },
   };

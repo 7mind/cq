@@ -5,6 +5,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   createInMemoryWorksetOwnedGuardedLedger,
+  createInMemoryWorksetGuardedPlanLifecycleStore,
   createTrustedWorksetManagementAuthority,
   WorksetOwnedLifecycleError,
   readCanonicalOwnership,
@@ -77,8 +78,8 @@ describe("workset coordination-bundle in-memory focused [T1962]", () => {
     expect(ledger.fetch(GOALS_LEDGER).counters.item).toBe(before);
   });
 
-  it("draft bundle under restrictive goal root succeeds", async () => {
-    const ledger = createInMemoryWorksetOwnedGuardedLedger({
+  it("guarded draft lifecycle under restrictive goal root succeeds", async () => {
+    const ledger = createInMemoryWorksetGuardedPlanLifecycleStore({
       invocationAuthority: createTrustedWorksetManagementAuthority(),
     });
     await ledger.init();
@@ -92,18 +93,37 @@ describe("workset coordination-bundle in-memory focused [T1962]", () => {
       goal: { title: "root-goal", description: "x" },
     });
     await ledger.setRoots([`${GOALS_LEDGER}:${goal.id}`]);
-    const draft = await ledger.bundles.publishOwnedDraft({
+    const claim = await ledger.claimPlan({
       goalId: goal.id,
-      creationKind: "active-current-draft",
-      milestone: { title: "rooted-ms" },
-      tasks: [{ headline: "rooted-task" }],
+      purpose: "initial",
+      claimRequestId: "t2096-rooted-claim",
+      ownerFenceToken: "aaaaaaaaaaaaaaaaaaaaaa",
+      expectedGeneration: null,
+      author: "T2096",
+      session: "T2096-rooted-lifecycle",
     });
-    expect(draft.milestone.fields.title).toBe("rooted-ms");
-    expect(ledger.fetchItem(TASKS_LEDGER, draft.tasks[0]!.id).milestoneId).toBe(
-      draft.milestone.id,
+    if (!claim.ok) throw new Error(`claim failed: ${claim.conflict.code}`);
+    const draft = await ledger.publishPlanDraft({
+      goalId: goal.id,
+      claimId: claim.acknowledgement.claimId,
+      generation: claim.acknowledgement.generation,
+      operationId: "t2096-rooted-publish",
+      ownerFenceToken: claim.acknowledgement.ownerFenceToken,
+      author: "T2096",
+      session: "T2096-rooted-lifecycle",
+      manifest: {
+        milestones: [{ key: "rooted", title: "rooted-ms" }],
+        tasks: [{ key: "rooted-task", milestoneKey: "rooted", headline: "rooted-task" }],
+      },
+    });
+    if (!draft.ok) throw new Error(`publish failed: ${draft.conflict.code}`);
+    const milestoneId = draft.acknowledgement.manifest.milestones[0]!.id;
+    const taskId = draft.acknowledgement.manifest.tasks[0]!.id;
+    expect(ledger.fetchItem(TASKS_LEDGER, taskId).milestoneId).toBe(
+      milestoneId,
     );
-    expect(ledger.fetchItem(MILESTONES_LEDGER, draft.milestone.id).id).toBe(
-      draft.milestone.id,
+    expect(ledger.fetchItem(MILESTONES_LEDGER, milestoneId).fields.title).toBe(
+      "rooted-ms",
     );
   });
 });

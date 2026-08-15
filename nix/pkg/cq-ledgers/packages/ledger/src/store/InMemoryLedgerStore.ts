@@ -122,10 +122,6 @@ import {
 } from "./operatorActionLifecycle.js";
 import type { CanonicalOwnership } from "../worksetOwnerEdges.js";
 import {
-  PLAN_CURRENT_DRAFT_FIELD,
-  PLAN_FINALIZED_MANIFEST_FIELD,
-} from "../planLifecycle.js";
-import {
   buildWorksetActiveState,
   closeWorkset,
   type WorksetActiveState,
@@ -157,12 +153,6 @@ export interface InMemoryOwnedWriteTx {
   ): Item;
   createMilestoneOwnerless(init: CreateMilestoneItemInit): Item;
   updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Item;
-  writeGoalPhaseManifest(
-    goalId: string,
-    kind: "active-current-draft" | "finalized-manifest",
-    manifestJson: string,
-    draftEnvelopeJson?: string,
-  ): Item;
 }
 
 /**
@@ -762,23 +752,6 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
             );
             dirty.add(ledgerId);
             return cloneItem(updated);
-          },
-          writeGoalPhaseManifest: (goalId, kind, manifestJson, draftEnvelopeJson) => {
-            const ledger = this.getLedger(GOALS_LEDGER);
-            const { item } = findItem(ledger, goalId);
-            if (kind === "active-current-draft") {
-              if (draftEnvelopeJson === undefined) {
-                throw new LedgerError(
-                  "active-current-draft binding requires draftEnvelopeJson",
-                );
-              }
-              item.fields[PLAN_CURRENT_DRAFT_FIELD] = draftEnvelopeJson;
-            } else {
-              item.fields[PLAN_FINALIZED_MANIFEST_FIELD] = manifestJson;
-            }
-            item.updatedAt = this.now();
-            dirty.add(GOALS_LEDGER);
-            return cloneItem(item);
           },
         };
         try {

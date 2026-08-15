@@ -227,7 +227,7 @@ describe("workset owned-write in-memory focused [T1962]", () => {
     expect(await rawStore.ftsSearch("rolledbackterm")).toEqual([]);
   });
 
-  it("rejects bundle-only draft kinds on the single-child gateway", async () => {
+  it("rejects guarded-lifecycle draft kinds on the single-child gateway", async () => {
     for (const [status, creationKind] of [
       ["planning", "active-current-draft"],
       ["planned", "finalized-manifest"],
@@ -240,8 +240,17 @@ describe("workset owned-write in-memory focused [T1962]", () => {
         fields: { title: creationKind, description: "bundle required" },
       });
       const before = ledger.fetch(TASKS_LEDGER).counters.item;
+      const directCreate = ledger.owned.createOwned as unknown as (input: {
+        owner: { ledgerId: string; itemId: string };
+        creationKind: string;
+        child: {
+          ledgerId: string;
+          status: string;
+          fields: { headline: string };
+        };
+      }) => Promise<unknown>;
       await expect(
-        ledger.owned.createOwned({
+        directCreate({
           owner: { ledgerId: GOALS_LEDGER, itemId: goal.id },
           creationKind,
           child: {
@@ -250,7 +259,7 @@ describe("workset owned-write in-memory focused [T1962]", () => {
             fields: { headline: "incomplete draft" },
           },
         }),
-      ).rejects.toMatchObject({ code: "bundle-incomplete" });
+      ).rejects.toMatchObject({ code: "owner-policy-denied" });
       expect(ledger.fetch(TASKS_LEDGER).counters.item).toBe(before);
     }
   });
