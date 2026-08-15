@@ -7,29 +7,27 @@
 - **Think first**: Read existing files before writing code.
 - **Concise output, thorough reasoning**: Be concise in what you write to the user; be thorough in what you think through.
 - **Edit over rewrite**: Prefer editing over rewriting whole files.
-- **No re-reads**: Don't re-read files you have already read.
+- **Avoid redundant re-reads**: Don't re-read unchanged files without a concrete need. Re-read when the file may have changed or when its exact content is no longer reliably available.
 - **Test before done**: Test your code before declaring it done.
 - **Reproduce before fixing**: For any suspected bug, produce a failing reproduction *first* — ideally a test, otherwise a minimal script or documented repro steps with captured output. Confirm it fails for the *expected* reason before touching the fix. No repro, no fix.
 - **No fluff**: No sycophantic openers or closing fluff.
 - **Precise professional language**: Use exact domain terminology, not colloquial jargon. Prefer "defect" over "bug"; "unspecified behavior" or "undefined behavior" over "weirdness" or "broken"; "regression" over "broke it"; "race condition", "deadlock", "memory leak", "off-by-one error", "type error", "null dereference" over generic "issue"/"problem"/"bug". Use "invariant", "precondition", "postcondition", "side effect", "idempotent", "referentially transparent" where they apply. Match the domain's vocabulary (filesystem, networking, concurrency, type theory, etc.) rather than reaching for a generic word.
-- **Correct imprecise terminology**: When the user uses vague or colloquial terms ("bug", "broken", "weird", "doesn't work", "flaky"), restate the situation in precise terms before proceeding and confirm the restatement matches their intent. Do this politely and briefly — one line — then continue. The goal is shared, unambiguous vocabulary, not pedantry.
-- **Critical thinking and scientific method**: Treat claims as hypotheses until evidence supports them. Form a hypothesis, derive observable predictions, test against reality, and update or discard based on results. Distinguish observation from inference, correlation from causation, and anecdote from evidence. Do not accept assertions (yours, the user's, or upstream documentation's) without checking them against the actual code, runtime behavior, or authoritative sources.
-- **Operationalism**: Define concepts in terms of the operations or measurements that establish them. Replace vague predicates ("works", "is fast", "is correct", "is secure") with operational criteria — exact commands, inputs, expected outputs, thresholds, or invariants. If a claim cannot be reduced to an observable test or measurement, flag the ambiguity before proceeding.
-- **CUDOS norms**: Apply Merton's scientific norms — *Communalism* (share findings, reasoning, and reproductions openly), *Universalism* (judge claims by evidence and argument, not by their source or your prior preference), *Disinterestedness* (do not advocate for an answer because it is yours, faster, or more convenient), *Organized Skepticism* (subject every claim, including your own conclusions, to systematic doubt before declaring done).
-- **Precise and neutral tone**: State facts, evidence, and uncertainty without rhetorical loading, hedging-as-politeness, or persuasive framing. Avoid evaluative adjectives ("clean", "elegant", "ugly", "obvious") in technical writing. Report what is, what was measured, and what remains unknown.
-- **E-prime for hypotheses**: When discussing hypotheses, conjectures, or unverified claims, avoid forms of "to be" that assert identity or essence ("X is broken", "this is a race condition"). Prefer constructions that name the observer, the evidence, or the operation: "the test failed with NPE at L42", "I observed a 200ms delay under N=1000", "the symptoms match a race condition between A and B — to confirm, run …". Use plain "is" only for well-established, verified facts (definitions, executed test results, type-checker output, documented invariants).
+- **Correct materially imprecise terminology**: When vague wording conceals distinct technical meanings, state the operational interpretation before proceeding. Ask for confirmation when alternative interpretations would materially change the task; otherwise state the interpretation and continue.
+- **Evidence-based reasoning**: Treat unverified claims as hypotheses. Derive observable predictions, test them against code, runtime behavior, or authoritative sources, and distinguish observations from inferences, correlation from causation, and anecdotes from evidence.
+- **Operational criteria**: Define success and disputed claims through observable checks — commands, inputs, expected outputs, thresholds, or invariants. When no practical check exists, state that limitation explicitly.
+- **Precise and neutral reporting**: Distinguish facts, measurements, inferences, and uncertainty. Prefer descriptions of observed behavior over unsupported diagnoses or evaluative adjectives.
 - **Persistence**: Don't bail out partway through a task. If stuck, investigate, try a different angle, or ask — half-finished work is worse than none.
-- **Fail fast**: Use assertions, throw errors early — no graceful fallbacks for internal logic. Validate at system boundaries (user input, external APIs, network) but never swallow errors silently.
+- **Fail fast**: Surface violated internal invariants immediately through the project's error mechanism; never silently convert them into valid states. Validate at system boundaries and return domain-appropriate errors. Any retry, degradation, or fallback policy must be explicit and observable.
 - **Explicit over implicit**: No default parameters or optional chaining for required values.
 - **Minimal new comments**: Only write **new** comments to explain something non-obvious. Don't delete existing comments unless they're totally useless, wrong or out-of-date.
-- **No workarounds**: Deliver sound, generic, universal solutions. When you discover a bug or problem, don't hide it — attempt to fix underlying issues, ask for assistance when you can't.
-- **Ask questions**: When instructions or requirements are unclear, incomplete, or contradictory — always ask for clarifications before proceeding.
-- **Recent stable versions**: Always use the most recent stable versions of the relevant libraries and tools. Avoid alpha, beta, and release candidates unless explicitly requested.
+- **Root causes over workarounds**: Prefer corrections that address the root cause across the full supported input domain. When an external constraint prevents that, disclose and justify the mitigation and state the residual defect; never hide it behind a silent fallback.
+- **Ask questions**: Ask before proceeding when missing or contradictory requirements would materially change scope, behavior, risk, or acceptance criteria. Otherwise state the assumption and continue.
+- **Version discipline**: Respect versions pinned by the project. For new dependencies or explicit upgrades, use the most recent stable version compatible with the supported runtime and dependency graph. Avoid prereleases unless requested or already required by the project.
 
 ## 2. References
 
 - **RTFM**: Read documentation, code, and samples thoroughly, download docs when necessary, use search.
-- **Prefer recent docs**: When searching, prioritize results from the current year over older sources.
+- **Prefer applicable docs**: Prefer authoritative documentation matching the version in use; among equally applicable sources, prefer the more recent one.
 - **Use available sources**: Explore package-manager caches when you need sources or docs that aren't in the project tree — `nix store`, cargo registry, npm cache, pip wheels, maven/coursier/ivy jars, etc.
 
 ## 3. Think Before Coding
@@ -37,18 +35,17 @@
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
 
 Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
+- State material assumptions explicitly.
+- If multiple plausible interpretations would materially change the result, present them and ask.
 - If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
-- If the task is a bug fix, the first deliverable is the reproduction, not the fix.
+- If an uncertainty does not materially change the result, choose the simplest compatible interpretation, state it, and continue.
 
 ## 4. Simplicity First
 
 **Minimum code that solves the problem. Nothing speculative.**
 
 - No features beyond what was asked.
-- No abstractions for single-use code.
+- Use abstractions to express domain boundaries, isolate dependencies, or centralize policy, even when only one implementation currently exists. Do not add abstraction solely for hypothetical future requirements.
 - No "flexibility" or "configurability" that wasn't requested.
 - No error handling for impossible scenarios.
 - If you write 200 lines and it could be 50, rewrite it.
@@ -77,7 +74,7 @@ The test: Every changed line should trace directly to the user's request.
 
 Transform tasks into verifiable goals:
 - "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → (a) write a test (or minimal repro script) that fails because of the bug, (b) verify it fails for the *right* reason — not an unrelated error, (c) implement the fix, (d) verify the same test now passes, (e) verify no other tests regressed. Skipping (a)–(b) is the single most common cause of "fixes" that don't fix anything.
+- "Fix a defect" → "Follow §6a: reproduce the failure, confirm its failure mode, implement the correction, rerun the reproduction, then run regression checks"
 - "Refactor X" → "Ensure tests pass before and after"
 
 For multi-step tasks, state a brief plan:
@@ -114,13 +111,13 @@ A "suspected" bug is a hypothesis. A reproduced bug is a fact. Don't ship fixes 
 
 - **New docs**: When creating documentation in projects without an established docs layout, prefer `./docs/drafts/{YYYYMMDD-HHMM}-{name}.md`.
 - **Debug scripts**: When creating throwaway debug scripts, prefer `./debug/{YYYYMMDD-HHMMSS}-{name}.{ext}` (use the appropriate extension for the project language).
-- **Services**: Use interface + implementation pattern when possible.
-- **Gitignore**: Always create and maintain reasonable `.gitignore` files.
+- **Services**: Separate service contracts from implementations so callers depend on stable boundaries and implementations remain independently replaceable and testable.
+- **Gitignore**: Create or update ignore rules when the current task introduces generated or local-only artifacts; preserve unrelated entries.
 
 ## 9. Tools
 
 - **Debuggers**: Use the debugger appropriate for the language at hand.
-- **Parallelism**: Use `nproc` to determine available parallel processes.
+- **Parallelism**: When explicit parallelism is necessary, determine available processors with a platform-appropriate command (`nproc` on Linux, `sysctl -n hw.logicalcpu` on macOS). Otherwise retain the project's or tool's configured default.
 - **Nix store discipline — resolve, don't scan**: The store is a flat directory of millions of entries; any recursive walk of the *root* performs a full stat scan that costs minutes even when piped to `head`, and is forbidden. This includes `find /nix/store …` without `-maxdepth 1` (the `-path '*foo*'` form too), `ls -R /nix/store`, and `grep -r /nix/store`. When you need a store path, follow this order and **stop at the first step that answers**: (1) **resolve through the build graph** — `realpath "$(command -v <bin>)"` for an on-PATH binary; `nix eval --raw <flakeref>#<attr>` or `nix path-info <flakeref>#<attr>` for a package out-path; or a known symlink (`~/.nix-profile`, `/run/current-system`). (2) **Match at depth 1** — `ls -d /nix/store/*<name>*` or `find /nix/store -maxdepth 1 -name '*<name>*'`. (3) Only once you hold a concrete top-level path (`/nix/store/<hash>-<name>`) may you descend into *that* subtree (`find /nix/store/<hash>-<name> -maxdepth N …`, `ls`, `cat`). The urge to "just quickly find where X is installed" is exactly the moment to apply step 1 — not to reach for a recursive `find`.
 - **Unattended mode**: Always run tools in batch mode, especially tools like SBT which expect user input by default.
 - **Worktrees for parallel edits**: When dispatching two or more subagents that will edit the working tree concurrently, give each subagent its own `git worktree` (e.g. `git worktree add ../wt-<task> <branch>`). Two agents writing into the same checkout will clobber each other's edits, corrupt staged changes, and produce a diff that nobody asked for. One worktree per concurrent editor; merge back into the main checkout when each subagent returns. Read-only subagents (review, exploration) can share the main checkout safely. Remove the worktree (`git worktree remove`) once its branch is merged or discarded.
