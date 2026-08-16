@@ -625,9 +625,11 @@ describe("persisted row serialization", () => {
     mutateReceipt((storedReceipt) => {
       storedReceipt["objectOids"] = ["not-an-object-id"];
     });
-    mutateReceipt((storedReceipt) => {
-      storedReceipt["paths"] = [""];
-    });
+    for (const malformedPath of ["", "../outside", ".git/config", "nested//file"]) {
+      mutateReceipt((storedReceipt) => {
+        storedReceipt["paths"] = [malformedPath];
+      });
+    }
     mutateReceipt((storedReceipt) => {
       storedReceipt["requestDigest"] = "0".repeat(63);
     });

@@ -742,6 +742,12 @@ describe("dispatch-bound Git change capability", () => {
     expect((inherited.input as Record<string, unknown>)["inheritedGitReceipts"]).toEqual([
       firstReceipt,
     ]);
+    await expect(
+      capability.fetchInput({
+        ...second.handle,
+        inputCapability: second.prepared.inputCapability,
+      }),
+    ).rejects.toThrow(/intentionally wrong materialization error/);
 
     await fs.writeFile(path.join(managed.handle.absolutePath, "file.txt"), "generation two\n");
     if (capability.gitCommit === undefined) throw new Error("git_commit was not wired");
