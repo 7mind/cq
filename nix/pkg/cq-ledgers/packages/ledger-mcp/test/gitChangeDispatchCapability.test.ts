@@ -747,7 +747,7 @@ describe("dispatch-bound Git change capability", () => {
         ...second.handle,
         inputCapability: second.prepared.inputCapability,
       }),
-    ).rejects.toThrow(/intentionally wrong materialization error/);
+    ).rejects.toThrow(/already materialized/);
 
     await fs.writeFile(path.join(managed.handle.absolutePath, "file.txt"), "generation two\n");
     if (capability.gitCommit === undefined) throw new Error("git_commit was not wired");

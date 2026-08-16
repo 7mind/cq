@@ -1154,6 +1154,17 @@ const STORED_GIT_RECEIPT_FIELDS = [
   "committedAt",
 ] as const;
 
+function isStoredGitReceiptPath(value: unknown): value is string {
+  if (typeof value !== "string" || value.includes("\0") || value.includes("\\")) {
+    return false;
+  }
+  const segments = value.split("/");
+  return (
+    segments[0] !== ".git" &&
+    segments.every((segment) => segment.length > 0 && segment !== "." && segment !== "..")
+  );
+}
+
 function assertStoredInheritedGitReceipts(value: unknown): void {
   if (!Array.isArray(value) || value.length === 0) {
     throw new AttestationStorageError(
@@ -1193,9 +1204,7 @@ function assertStoredInheritedGitReceipts(value: unknown): void {
         (oid) => typeof oid === "string" && STORED_GIT_OBJECT_ID.test(oid),
       ) ||
       !Array.isArray(receiptRecord["paths"]) ||
-      !receiptRecord["paths"].every(
-        (entry) => typeof entry === "string" && entry.length > 0,
-      ) ||
+      !receiptRecord["paths"].every(isStoredGitReceiptPath) ||
       typeof receiptRecord["committedAt"] !== "string" ||
       receiptRecord["committedAt"].length === 0
     ) {
