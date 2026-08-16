@@ -548,6 +548,100 @@ describe("persisted row serialization", () => {
     ).toThrow(/both Git capability hash and effect binding/);
   });
 
+  test("a worker envelope strictly rehydrates one optional inherited receipt chain", () => {
+    const receipt = {
+      kind: "cq-git-change-receipt" as const,
+      version: 1 as const,
+      attestationId: ID_A,
+      generation: 1,
+      taskId: "T977",
+      operationId: "T977-generation-1",
+      requestDigest: "1".repeat(64),
+      oldHead: "2".repeat(40),
+      newHead: "3".repeat(40),
+      tree: "4".repeat(40),
+      objectOids: ["5".repeat(40)],
+      paths: ["file.txt"],
+      committedAt: "2026-08-16T09:00:00.000Z",
+    };
+    const binding = {
+      taskId: "T977",
+      handleToken: "server-held-token",
+      handleFingerprint: "8".repeat(64),
+      repositoryRoot: "/repo",
+      repositoryId: "9".repeat(64),
+      commonDir: "/repo/.git",
+      worktreePath: "/repo/.claude/worktrees/T977",
+      branch: "implement/T977",
+      ref: "refs/heads/implement/T977",
+      baseCommit: "a".repeat(40),
+      inheritedGitReceipts: [receipt],
+    };
+    const worker = envelope({
+      gitChangeCapabilityHash: "7".repeat(64),
+      gitEffectBinding: binding,
+    });
+    const persisted = persistAttestationRow(worker);
+    expect(rehydrateAttestationRow(NAMESPACE, persisted.body, persisted.rowDigest)).toEqual(worker);
+
+    const expectMalformedBinding = (
+      row: AttestationEnvelope,
+      mutate: (stored: Record<string, unknown>) => void,
+    ): void => {
+      const stored = JSON.parse(persistAttestationRow(row).body) as Record<string, unknown>;
+      mutate(stored);
+      expect(() =>
+        rehydrateAttestationRow(
+          NAMESPACE,
+          JSON.stringify(stored),
+          attestationRowDigest(stored as unknown as AttestationRow),
+        ),
+      ).toThrow(/malformed "gitEffectBinding"/);
+    };
+    const mutateReceipt = (
+      mutate: (storedReceipt: Record<string, unknown>) => void,
+    ): void => {
+      expectMalformedBinding(worker, (stored) => {
+        const storedBinding = stored["gitEffectBinding"] as Record<string, unknown>;
+        const receipts = storedBinding["inheritedGitReceipts"] as Record<string, unknown>[];
+        mutate(receipts[0] as Record<string, unknown>);
+      });
+    };
+
+    expectMalformedBinding(worker, (stored) => {
+      const storedBinding = stored["gitEffectBinding"] as Record<string, unknown>;
+      storedBinding["inheritedGitReceipts"] = [];
+    });
+    expectMalformedBinding(worker, (stored) => {
+      const storedBinding = stored["gitEffectBinding"] as Record<string, unknown>;
+      storedBinding["extra"] = true;
+    });
+    mutateReceipt((storedReceipt) => {
+      storedReceipt["extra"] = true;
+    });
+    mutateReceipt((storedReceipt) => {
+      storedReceipt["oldHead"] = "not-an-object-id";
+    });
+    mutateReceipt((storedReceipt) => {
+      storedReceipt["objectOids"] = ["not-an-object-id"];
+    });
+    mutateReceipt((storedReceipt) => {
+      storedReceipt["paths"] = [""];
+    });
+    mutateReceipt((storedReceipt) => {
+      storedReceipt["requestDigest"] = "0".repeat(63);
+    });
+
+    const resolver = envelope({
+      gitConflictCapabilityHash: "6".repeat(64),
+      gitEffectBinding: {
+        ...binding,
+        conflictStateDigest: "b".repeat(64),
+      },
+    });
+    expectMalformedBinding(resolver, () => {});
+  });
+
   test("a tombstone persists NO capability hash, so no capability can resolve it", () => {
     const terminal = envelope({
       state: "aborted",

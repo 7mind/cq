@@ -1137,6 +1137,74 @@ export function rehydrateAttestationRow(
 
 const STORED_ROW_KINDS: ReadonlySet<string> = new Set(["envelope", "tombstone"]);
 const STORED_SHA256_HEX = /^[0-9a-f]{64}$/;
+const STORED_GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const STORED_GIT_RECEIPT_FIELDS = [
+  "kind",
+  "version",
+  "attestationId",
+  "generation",
+  "taskId",
+  "operationId",
+  "requestDigest",
+  "oldHead",
+  "newHead",
+  "tree",
+  "objectOids",
+  "paths",
+  "committedAt",
+] as const;
+
+function assertStoredInheritedGitReceipts(value: unknown): void {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new AttestationStorageError(
+      'stored attestation envelope has malformed "gitEffectBinding"',
+    );
+  }
+  for (const receipt of value) {
+    if (typeof receipt !== "object" || receipt === null || Array.isArray(receipt)) {
+      throw new AttestationStorageError(
+        'stored attestation envelope has malformed "gitEffectBinding"',
+      );
+    }
+    const receiptRecord = receipt as Readonly<Record<string, unknown>>;
+    if (
+      Object.keys(receiptRecord).sort().join(",") !==
+        [...STORED_GIT_RECEIPT_FIELDS].sort().join(",") ||
+      receiptRecord["kind"] !== "cq-git-change-receipt" ||
+      receiptRecord["version"] !== 1 ||
+      typeof receiptRecord["attestationId"] !== "string" ||
+      receiptRecord["attestationId"].length === 0 ||
+      !Number.isInteger(receiptRecord["generation"]) ||
+      Number(receiptRecord["generation"]) < 1 ||
+      typeof receiptRecord["taskId"] !== "string" ||
+      !/^T[0-9]+$/.test(receiptRecord["taskId"]) ||
+      typeof receiptRecord["operationId"] !== "string" ||
+      receiptRecord["operationId"].length === 0 ||
+      typeof receiptRecord["requestDigest"] !== "string" ||
+      !STORED_SHA256_HEX.test(receiptRecord["requestDigest"]) ||
+      typeof receiptRecord["oldHead"] !== "string" ||
+      !STORED_GIT_OBJECT_ID.test(receiptRecord["oldHead"]) ||
+      typeof receiptRecord["newHead"] !== "string" ||
+      !STORED_GIT_OBJECT_ID.test(receiptRecord["newHead"]) ||
+      typeof receiptRecord["tree"] !== "string" ||
+      !STORED_GIT_OBJECT_ID.test(receiptRecord["tree"]) ||
+      !Array.isArray(receiptRecord["objectOids"]) ||
+      !receiptRecord["objectOids"].every(
+        (oid) => typeof oid === "string" && STORED_GIT_OBJECT_ID.test(oid),
+      ) ||
+      !Array.isArray(receiptRecord["paths"]) ||
+      !receiptRecord["paths"].every(
+        (entry) => typeof entry === "string" && entry.length > 0,
+      ) ||
+      typeof receiptRecord["committedAt"] !== "string" ||
+      receiptRecord["committedAt"].length === 0
+    ) {
+      throw new AttestationStorageError(
+        'stored attestation envelope has malformed "gitEffectBinding"',
+      );
+    }
+  }
+}
 
 /**
  * Field names a stored body may NEVER carry as an OWN property. `JSON.parse`
@@ -1252,7 +1320,12 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
         "ref",
         "baseCommit",
       ] as const;
-      const expectedFields = hasGitConflictHash ? [...fields, "conflictStateDigest"] : fields;
+      const hasInheritedGitReceipts = Object.hasOwn(bindingRecord, "inheritedGitReceipts");
+      const expectedFields = hasGitConflictHash
+        ? [...fields, "conflictStateDigest"]
+        : hasInheritedGitReceipts
+          ? [...fields, "inheritedGitReceipts"]
+          : fields;
       if (
         Object.keys(bindingRecord).sort().join(",") !== [...expectedFields].sort().join(",") ||
         fields.some(
@@ -1267,6 +1340,9 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
         throw new AttestationStorageError(
           'stored attestation envelope has malformed "gitEffectBinding"',
         );
+      }
+      if (hasInheritedGitReceipts) {
+        assertStoredInheritedGitReceipts(bindingRecord["inheritedGitReceipts"]);
       }
     }
   }
