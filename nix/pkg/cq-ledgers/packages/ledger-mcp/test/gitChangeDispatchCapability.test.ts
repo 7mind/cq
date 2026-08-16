@@ -774,7 +774,7 @@ describe("dispatch-bound Git change capability", () => {
     await expect(
       capability.storeResult({
         resultCapability: second.prepared.resultCapability,
-        output: secondOutput,
+        output: secondOutput as unknown as DispatchJSONValue,
       }),
     ).resolves.toMatchObject({ state: "result-stored" });
     await expect(
