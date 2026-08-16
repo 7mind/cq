@@ -599,6 +599,206 @@ describe("dispatch-bound Git change capability", () => {
     expect(receipt.generation).toBe(first.handle.generation);
   });
 
+  test("rehydrates a prepared worker's inherited receipt prefix after a broker restart", async () => {
+    const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), "t2119-inherited-reload-"));
+    roots.push(repositoryRoot);
+    await git(repositoryRoot, ["init", "-q"]);
+    await fs.writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
+    await git(repositoryRoot, ["add", "file.txt"]);
+    await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
+    const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+    const stateDir = path.join(repositoryRoot, ".manager-state");
+    const managed = await prepareManagedWorktree(
+      { repositoryRoot, taskId: "T2119", baseCommit },
+      { stateDir, skipInstall: true, bunWorkspaceRoot: repositoryRoot },
+    );
+    if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
+    const namespace: AttestationNamespace = {
+      backend: "fs",
+      projectKey: "t2119-inherited-reload",
+    };
+    const attestationRoot = fsAttestationProductionRoot(repositoryRoot);
+    const firstChild = { childId: "t2119-child-1", runId: "t2119-run-1" };
+    const supervisedWorkerGateRunner = {
+      run: async () => ({
+        gateExitCode: 0,
+        passCount: 1,
+        failCount: 0,
+        gateDurationMs: 10,
+        capturedAt: "2026-08-16T09:00:04.000Z",
+        outputTail: "1 pass\n0 fail",
+      }),
+    };
+    let backend = new FsAttestationBackend({ namespace, root: attestationRoot });
+    let capability = createDispatchCapability({
+      backend,
+      promptArtifactStore: artifactStore("codex"),
+      repositoryRoot,
+      worktreeStateDir: stateDir,
+      now: () => "2026-08-16T09:00:00.000Z",
+      randomBytes: sequentialDispatchRandomBytes(160),
+      supervisedWorkerGateRunner,
+    });
+    const first = await capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: "T2119",
+        headline: "persist generation one",
+        description: "complete one brokered generation before reprepare",
+        acceptance: "generation one contributes the immutable receipt prefix",
+        worktreePath: managed.handle.absolutePath,
+        branch: managed.handle.branch,
+        baseCommit,
+        round: 0,
+        startingCommit: baseCommit,
+      },
+      idempotencyKey: "T2119-inherited-reload-r0",
+      timeoutMs: 600_000,
+      expectedChild: firstChild,
+    });
+    if (!first.accepted || first.prepared.gitChangeCapability === undefined) {
+      throw new Error("first worker did not receive a Git capability");
+    }
+    await capability.fetchInput({
+      ...first.handle,
+      inputCapability: first.prepared.inputCapability,
+    });
+    await fs.writeFile(path.join(managed.handle.absolutePath, "file.txt"), "generation one\n");
+    if (capability.gitCommit === undefined) throw new Error("git_commit was not wired");
+    const firstReceipt = await capability.gitCommit({
+      ...first.handle,
+      gitChangeCapability: first.prepared.gitChangeCapability,
+      operationId: "T2119-generation-1",
+      expectedHead: baseCommit,
+      message: "generation one",
+      changes: [
+        {
+          kind: "modify",
+          path: "file.txt",
+          oldState: { mode: "100644", digest: sha256("before\n") },
+          newState: { mode: "100644", digest: sha256("generation one\n") },
+        },
+      ],
+    });
+    const firstOutput = {
+      taskId: "T2119",
+      status: "pass" as const,
+      resultCommit: firstReceipt.newHead,
+      branch: managed.handle.branch,
+      actualWorktreePath: managed.handle.absolutePath,
+      filesTouched: ["file.txt"],
+      gitReceipts: [firstReceipt],
+      checkSummary: "trusted gate delegated to result storage",
+      baseVerification: {
+        status: "verified" as const,
+        relation: "descendant" as const,
+        baseCommit,
+        headCommit: firstReceipt.newHead,
+      },
+      summary: "generation one completed",
+    };
+    await capability.abort({ ...first.handle, reason: "parent-lost" });
+
+    const secondChild = { childId: "t2119-child-2", runId: "t2119-run-2" };
+    const second = await capability.prepare({
+      roleId: "implement-worker",
+      input: {
+        taskId: "T2119",
+        headline: "persist generation two",
+        description: "reload a prepared inherited receipt binding",
+        acceptance: "the correction appends one receipt to the exact immutable prefix",
+        worktreePath: managed.handle.absolutePath,
+        branch: managed.handle.branch,
+        baseCommit,
+        round: 1,
+        startingCommit: firstReceipt.newHead,
+        priorResultCommit: firstReceipt.newHead,
+      },
+      idempotencyKey: "T2119-inherited-reload-r1",
+      timeoutMs: 600_000,
+      expectedChild: secondChild,
+      reprepareOf: first.handle,
+    });
+    if (!second.accepted || second.prepared.gitChangeCapability === undefined) {
+      throw new Error("second worker did not receive a Git capability");
+    }
+    expect(second.prepared.generation).toBe(first.prepared.generation + 1);
+
+    await backend.close();
+    backend = new FsAttestationBackend({ namespace, root: attestationRoot });
+    capability = createDispatchCapability({
+      backend,
+      promptArtifactStore: artifactStore("codex"),
+      repositoryRoot,
+      worktreeStateDir: stateDir,
+      now: () => "2026-08-16T09:00:02.000Z",
+      randomBytes: sequentialDispatchRandomBytes(224),
+      supervisedWorkerGateRunner,
+    });
+    const inherited = await capability.fetchInput({
+      ...second.handle,
+      inputCapability: second.prepared.inputCapability,
+    });
+    expect((inherited.input as Record<string, unknown>)["inheritedGitReceipts"]).toEqual([
+      firstReceipt,
+    ]);
+
+    await fs.writeFile(path.join(managed.handle.absolutePath, "file.txt"), "generation two\n");
+    if (capability.gitCommit === undefined) throw new Error("git_commit was not wired");
+    const secondReceipt = await capability.gitCommit({
+      ...second.handle,
+      gitChangeCapability: second.prepared.gitChangeCapability,
+      operationId: "T2119-generation-2",
+      expectedHead: firstReceipt.newHead,
+      message: "generation two correction",
+      changes: [
+        {
+          kind: "modify",
+          path: "file.txt",
+          oldState: { mode: "100644", digest: sha256("generation one\n") },
+          newState: { mode: "100644", digest: sha256("generation two\n") },
+        },
+      ],
+    });
+    expect(secondReceipt.newHead).not.toBe(firstReceipt.newHead);
+    const secondOutput = {
+      ...firstOutput,
+      resultCommit: secondReceipt.newHead,
+      gitReceipts: [firstReceipt, secondReceipt],
+      baseVerification: {
+        ...firstOutput.baseVerification,
+        headCommit: secondReceipt.newHead,
+      },
+      summary: "generation two correction completed after restart",
+    };
+    await expect(
+      capability.storeResult({
+        resultCapability: second.prepared.resultCapability,
+        output: secondOutput,
+      }),
+    ).resolves.toMatchObject({ state: "result-stored" });
+    await expect(
+      capability.confirmCompletion({
+        ...second.handle,
+        nativeCompletion: {
+          kind: "native-completion",
+          actor: "trusted-parent",
+          ...secondChild,
+          completedAt: "2026-08-16T09:00:03.000Z",
+        },
+        expectedProvenance: second.prepared.promptProvenance,
+      }),
+    ).resolves.toMatchObject({ state: "consumed" });
+    const consumed = await capability.fetch(second.handle);
+    expect(consumed).toMatchObject({ state: "consumed", output: secondOutput });
+    if (consumed.state !== "consumed") throw new Error(`unexpected state ${consumed.state}`);
+    expect((consumed.output as Record<string, unknown>)["gitReceipts"]).toEqual([
+      firstReceipt,
+      secondReceipt,
+    ]);
+    await backend.close();
+  });
+
   test("serializes broker commits against result storage, abort, and guarded release in peer processes", async () => {
     for (const contender of ["store-result", "abort", "release"] as const) {
       const fixture = await durableDispatch(contender);
