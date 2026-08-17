@@ -381,6 +381,91 @@ if (!state.committed) {
     }
   });
 
+  for (const phase of ["store-result", "post-store"] as const) {
+    test(`${phase} expiry cancels and drains the admitted child [Behavioral-Active Blackbox Good-Communication]`, async () => {
+      const root = mkdtempSync(join(tmpdir(), `cq-codex-${phase}-expiry-`));
+      const pidFile = join(root, "pid");
+      const base = createCodexRoleBoundaryPlan({
+        roleId: "implement-worker",
+        roleInstructions: "implement the task",
+        handle: HANDLE,
+        inputCapability: INPUT_CAPABILITY,
+        gitChangeCapability: GIT_CHANGE_CAPABILITY,
+        parentGateCapability: PARENT_GATE_CAPABILITY,
+        resultCapability: RESULT_CAPABILITY,
+        cwd: process.cwd(),
+        ledgerCwd: root,
+        model: "frontier-model",
+        reasoningEffort: "high",
+        sandboxMode: "workspace-write",
+        timeoutMs: 1_500,
+        promptRoot: root,
+        ledgerCommand: "cq-not-launched",
+        codexExecutable: process.execPath,
+      });
+      const started = JSON.stringify({
+        type: "item.started",
+        item: { type: "mcp_tool_call", server: "ledger", tool: "store_result" },
+      });
+      const stored = JSON.stringify({
+        type: "item.completed",
+        item: {
+          type: "mcp_tool_call",
+          server: "ledger",
+          tool: "store_result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  state: "gate-pending",
+                  result: {
+                    state: "gate-pending",
+                    ...HANDLE,
+                    submittedAt: "2026-08-17T12:00:00.000Z",
+                    outputDigest: "a".repeat(64),
+                  },
+                }),
+              },
+            ],
+          },
+        },
+      });
+      const events = phase === "store-result" ? `${started}\n` : `${started}\n${stored}\n`;
+      const plan: CodexRoleBoundaryPlan = {
+        ...base,
+        argv: [
+          process.execPath,
+          "-e",
+          `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));process.stdout.write(${JSON.stringify(events)});setInterval(()=>{},1000)`,
+        ],
+        stdin: "",
+        timeoutMs: 2_000,
+        childWorkTimeoutMs: 1_500,
+        effectivePreturn: {
+          ...base.effectivePreturn,
+          storeResultSubmissionBudgetMs: phase === "store-result" ? 250 : 1_500,
+          postStoreSubmissionFinalizationMs: phase === "post-store" ? 250 : 1_500,
+        } as unknown as CodexRoleBoundaryPlan["effectivePreturn"],
+      };
+      const provider = createStrictInMemoryWorksetEffectAdmissionProvider();
+      try {
+        await expect(
+          executeCodexRoleBoundary(plan, { provider, targetRef: "tasks:T2144" }),
+        ).rejects.toThrow(
+          phase === "store-result"
+            ? "store_result exceeded its 250 ms window"
+            : "post-store finalization exceeded its 250 ms window",
+        );
+        const pid = Number.parseInt(await Bun.file(pidFile).text(), 10);
+        expect(await readProcessIdentity(pid)).toBeNull();
+        expect(await provider.activeAdmissionCount()).toBe(0);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+
   test("delivers the resolver continuation capability only in the private stdin envelope", () => {
     const plan = createCodexRoleBoundaryPlan({
       roleId: "implement-conflict-resolver",

@@ -2318,6 +2318,13 @@ export function completeParentGate(
   const row = requireParentGateRow(request, deps);
   const outputDigest = dispatchPayloadDigest(request.output);
   if (row.state === "result-stored") {
+    if (row.gateEpoch !== request.gateEpoch) {
+      throw new DispatchStateConflictError(
+        STORE_RESULT,
+        row.state,
+        `parent gate epoch ${String(request.gateEpoch)} lost to ${String(row.gateEpoch)}`,
+      );
+    }
     if (row.outputDigest === outputDigest) return storedViewOf(row);
     throw new DispatchStateConflictError(
       STORE_RESULT,

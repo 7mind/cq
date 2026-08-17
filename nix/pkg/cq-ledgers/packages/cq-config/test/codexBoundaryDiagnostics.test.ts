@@ -1,4 +1,9 @@
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
 import {
   CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX,
@@ -14,6 +19,12 @@ const HANDLE = {
   attestationId: "att_0123456789abcdefghijklmnopqrstuvwxyz",
   generation: 3,
 } as const;
+const DISPATCH_SCRIPT = fileURLToPath(
+  new URL("../scripts/codex-role-dispatch.ts", import.meta.url),
+);
+const CQ_CLI_SOURCE = fileURLToPath(
+  new URL("../../cq-cli/src/main.ts", import.meta.url),
+);
 const FINAL_NARRATIVE_SENTINEL = "FINAL_NARRATIVE_SENTINEL";
 const RESULT_BODY_SENTINEL = "RESULT_BODY_SENTINEL";
 const CAPABILITY_SENTINEL = "CAPABILITY_SENTINEL";
@@ -187,6 +198,96 @@ describe("T1628 Codex boundary diagnostics", () => {
         HANDLE,
       ),
     ).toEqual(HANDLE);
+  });
+
+  test("cq-codex-role emits exactly one canonical machine-readable diagnostic line", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-codex-boundary-diagnostic-"));
+    try {
+      const worktree = join(root, "worktree");
+      const promptRoot = join(root, "prompts");
+      const fakeCodex = join(root, "fake-codex");
+      const ledgerCommand = join(root, "cq");
+      await mkdir(worktree);
+      await writeFile(join(worktree, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+      await mkdir(join(promptRoot, "roles"), { recursive: true });
+      const git = spawnSync("git", ["init", "--quiet", worktree], { encoding: "utf8" });
+      if (git.status !== 0) throw new Error(`git init failed: ${git.stderr}`);
+      await writeFile(join(promptRoot, "roles", "implement-worker.md"), "Store one result.\n");
+      await writeFile(
+        fakeCodex,
+        `#!/bin/sh\nprintf '%s\\n' 'null' '${completedAgentMessage(FINAL_NARRATIVE_SENTINEL)}'\n`,
+      );
+      await chmod(fakeCodex, 0o700);
+      await writeFile(
+        ledgerCommand,
+        `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(CQ_CLI_SOURCE)} "$@"\n`,
+      );
+      await chmod(ledgerCommand, 0o700);
+      const child = Bun.spawn([process.execPath, "run", DISPATCH_SCRIPT], {
+        cwd: worktree,
+        env: {
+          ...process.env,
+          CQ_PROMPT_ROOT: promptRoot,
+          CQ_CODEX_EXECUTABLE: fakeCodex,
+          CQ_CODEX_LEDGER_COMMAND: ledgerCommand,
+        },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      child.stdin.write(`${JSON.stringify({
+        roleId: "implement-worker",
+        handle: HANDLE,
+        inputCapability: { scope: "fetch-input", token: CAPABILITY_SENTINEL },
+        resultCapability: { scope: "store-result", token: CAPABILITY_SENTINEL },
+        effectTargetRef: "tasks:T1983",
+        cwd: worktree,
+        ledgerCwd: worktree,
+        model: "fake-model",
+        reasoningEffort: "high",
+        sandboxMode: "danger-full-access",
+        timeoutMs: 10_000,
+      })}\n`);
+      child.stdin.end();
+      const [exitCode, stdout, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+
+      expect(exitCode).toBe(1);
+      expect(stdout).toBe("");
+      const diagnosticLines = stderr
+        .split("\n")
+        .filter((line) => line.startsWith(CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX));
+      expect(diagnosticLines).toHaveLength(1);
+      const diagnostic = JSON.parse(
+        diagnosticLines[0]!.slice(CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX.length),
+      ) as CodexRoleBoundaryDiagnostic;
+      expect(Object.keys(diagnostic)).toEqual([
+        "version",
+        "verdict",
+        "detailCode",
+        "finalMessageByteLength",
+        "finalMessageSha256",
+        "completedAgentMessageCount",
+        "malformedJsonlCount",
+        "matchingResultStoredAcknowledgementPresent",
+      ]);
+      expect(diagnostic).toMatchObject({
+        version: 1,
+        verdict: "unparseable",
+        detailCode: "invalid-json",
+        completedAgentMessageCount: 1,
+        malformedJsonlCount: 1,
+        matchingResultStoredAcknowledgementPresent: false,
+      });
+      expect(stderr).not.toContain(FINAL_NARRATIVE_SENTINEL);
+      expect(stderr).not.toContain(CAPABILITY_SENTINEL);
+      expect(stderr).not.toContain(HANDLE.attestationId);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test(

@@ -588,6 +588,18 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
           },
           { now: clock.now },
         );
+        await expect(
+          completeParentGateOn(
+            afterCrash.backend,
+            {
+              ...handleOf(p),
+              parentGateCapability: p.parentGateCapability,
+              gateEpoch: first.gateEpoch,
+              output,
+            },
+            { now: clock.now },
+          ),
+        ).rejects.toThrow(DispatchStateConflictError);
         const replayed = await completeParentGateOn(
           afterCrash.backend,
           {
