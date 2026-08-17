@@ -590,24 +590,26 @@ yolo_exec_agent() {
     fi
   fi
 
+  local selected_sandbox_hooks_json=""
   case "$subcmd" in
-    claude|codex|pi)
-      if [[ -n "${YOLO_SANDBOX_HOOKS_JSON:-}" ]]; then
-        disabled_hooks="$("$YOLO_JQ" -nc "$disabled_filter" --args "${DISABLE_TAGS[@]}")"
-        composed_hooks="$(
-          printf '%s' "$YOLO_SANDBOX_HOOKS_JSON" \
-            | "$YOLO_JQ" -j --argjson dis "$disabled_hooks" "$sandbox_hook_filter"
-        )"
-        if [[ -n "$composed_hooks" ]]; then
-          sandbox_hooks_tmpfile="$(mktemp "${TMPDIR:-/tmp}/yolo-darwin-hooks.XXXXXX")"
-          chmod 600 "$sandbox_hooks_tmpfile"
-          printf '%s\n' "$composed_hooks" > "$sandbox_hooks_tmpfile"
-          CLEANUP_FILES+=("$sandbox_hooks_tmpfile")
-          entrypoint_env+=("YOLO_SANDBOX_HOOKS_FILE=$sandbox_hooks_tmpfile")
-        fi
-      fi
-      ;;
+    claude|codex|pi) selected_sandbox_hooks_json="${YOLO_SANDBOX_HOOKS_JSON:-}" ;;
+    shell) selected_sandbox_hooks_json="${YOLO_SHELL_HOOKS_JSON:-}" ;;
+    cmd) selected_sandbox_hooks_json="${YOLO_CMD_HOOKS_JSON:-}" ;;
   esac
+  if [[ -n "$selected_sandbox_hooks_json" ]]; then
+    disabled_hooks="$("$YOLO_JQ" -nc "$disabled_filter" --args "${DISABLE_TAGS[@]}")"
+    composed_hooks="$(
+      printf '%s' "$selected_sandbox_hooks_json" \
+        | "$YOLO_JQ" -j --argjson dis "$disabled_hooks" "$sandbox_hook_filter"
+    )"
+    if [[ -n "$composed_hooks" ]]; then
+      sandbox_hooks_tmpfile="$(mktemp "${TMPDIR:-/tmp}/yolo-darwin-hooks.XXXXXX")"
+      chmod 600 "$sandbox_hooks_tmpfile"
+      printf '%s\n' "$composed_hooks" > "$sandbox_hooks_tmpfile"
+      CLEANUP_FILES+=("$sandbox_hooks_tmpfile")
+      entrypoint_env+=("YOLO_SANDBOX_HOOKS_FILE=$sandbox_hooks_tmpfile")
+    fi
+  fi
 
   # Keep the generated policy private and remove it after the confined process.
   local yolo_sb_profile status sandbox_entrypoint bash_executable

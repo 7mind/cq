@@ -88,6 +88,8 @@ let
   # entrypoint) before the command. Both drop tags in the `--disable` set.
   prehooksJson = builtins.toJSON cfg.yolo.hooks.pre-start.host;
   sandboxHooksJson = builtins.toJSON cfg.yolo.hooks.pre-start.sandbox;
+  shellHooksJson = builtins.toJSON cfg.yolo.hooks.pre-start.shell;
+  cmdHooksJson = builtins.toJSON cfg.yolo.hooks.pre-start.cmd;
 
   # codegraph passed into the sandbox via the package set (no dedicated binary
   # env anymore); the per-project index bootstrap is a sandbox pre-start hook
@@ -113,7 +115,7 @@ let
     inherit promptJson;
     # Tagged pre-start hooks: host (before sandbox) + sandbox (inside, via the
     # entrypoint). See hooks.pre-start.{host,sandbox}.
-    inherit prehooksJson sandboxHooksJson;
+    inherit prehooksJson sandboxHooksJson shellHooksJson cmdHooksJson;
   };
 in
 {
@@ -379,6 +381,28 @@ in
         {option}`smind.hm.dev.llm.yolo.codegraph` is non-null.
       '';
     };
+
+    smind.hm.dev.llm.yolo.hooks.pre-start.shell = lib.mkOption {
+      type = lib.types.listOf hookType;
+      default = [ ];
+      description = ''
+        Commands run INSIDE the sandbox before the command, for the `shell`
+        subcommand only. Execution, ordering, environment inheritance, failure,
+        tag suppression, and module merging follow
+        {option}`smind.hm.dev.llm.yolo.hooks.pre-start.sandbox`.
+      '';
+    };
+
+    smind.hm.dev.llm.yolo.hooks.pre-start.cmd = lib.mkOption {
+      type = lib.types.listOf hookType;
+      default = [ ];
+      description = ''
+        Commands run INSIDE the sandbox before the command, for the `cmd`
+        subcommand only. Execution, ordering, environment inheritance, failure,
+        tag suppression, and module merging follow
+        {option}`smind.hm.dev.llm.yolo.hooks.pre-start.sandbox`.
+      '';
+    };
   };
 
   config = lib.mkMerge [
@@ -467,7 +491,7 @@ in
           sandboxPackages = cfg.yolo.packages ++ lib.optional codegraphSet cfg.yolo.codegraph;
           sessionVariables = cfg.yolo.sessionVariables;
           secretSessionVariables = cfg.yolo.secretSessionVariables;
-          inherit promptJson prehooksJson sandboxHooksJson;
+          inherit promptJson prehooksJson sandboxHooksJson shellHooksJson cmdHooksJson;
         })
       ];
     })

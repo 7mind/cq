@@ -461,23 +461,25 @@ fi
 SANDBOX_HOOK_ARGS=()
 SANDBOX_HOOKS_TMPFILE=""
 SANDBOX_HOOKS_PATH="/run/yolo-sandbox-prestart.sh"
+SELECTED_SANDBOX_HOOKS_JSON=""
 case "$SUBCMD" in
-  claude|codex|pi)
-    if [[ -n "${YOLO_SANDBOX_HOOKS_JSON:-}" ]]; then
-      _hdis="$("$YOLO_JQ" -nc '$ARGS.positional' --args "${DISABLE_TAGS[@]}")"
-      _hcomposed="$(
-        printf '%s' "$YOLO_SANDBOX_HOOKS_JSON" \
-          | "$YOLO_JQ" -j --argjson dis "$_hdis" '.[] | select((.tags - $dis) == .tags) | .command + "\n"'
-      )"
-      if [[ -n "$_hcomposed" ]]; then
-        SANDBOX_HOOKS_TMPFILE="$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/yolo-sandbox-hooks.XXXXXX")"
-        printf '%s' "$_hcomposed" > "$SANDBOX_HOOKS_TMPFILE"
-        SANDBOX_HOOK_ARGS+=(--ro-bind "$SANDBOX_HOOKS_TMPFILE,$SANDBOX_HOOKS_PATH")
-        SANDBOX_HOOK_ARGS+=(--env "YOLO_SANDBOX_HOOKS_FILE=$SANDBOX_HOOKS_PATH")
-      fi
-    fi
-    ;;
+  claude|codex|pi) SELECTED_SANDBOX_HOOKS_JSON="${YOLO_SANDBOX_HOOKS_JSON:-}" ;;
+  shell) SELECTED_SANDBOX_HOOKS_JSON="${YOLO_SHELL_HOOKS_JSON:-}" ;;
+  cmd) SELECTED_SANDBOX_HOOKS_JSON="${YOLO_CMD_HOOKS_JSON:-}" ;;
 esac
+if [[ -n "$SELECTED_SANDBOX_HOOKS_JSON" ]]; then
+  _hdis="$("$YOLO_JQ" -nc '$ARGS.positional' --args "${DISABLE_TAGS[@]}")"
+  _hcomposed="$(
+    printf '%s' "$SELECTED_SANDBOX_HOOKS_JSON" \
+      | "$YOLO_JQ" -j --argjson dis "$_hdis" '.[] | select((.tags - $dis) == .tags) | .command + "\n"'
+  )"
+  if [[ -n "$_hcomposed" ]]; then
+    SANDBOX_HOOKS_TMPFILE="$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/yolo-sandbox-hooks.XXXXXX")"
+    printf '%s' "$_hcomposed" > "$SANDBOX_HOOKS_TMPFILE"
+    SANDBOX_HOOK_ARGS+=(--ro-bind "$SANDBOX_HOOKS_TMPFILE,$SANDBOX_HOOKS_PATH")
+    SANDBOX_HOOK_ARGS+=(--env "YOLO_SANDBOX_HOOKS_FILE=$SANDBOX_HOOKS_PATH")
+  fi
+fi
 
 # Synthesized system ssh_config for the sandbox. NixOS's /etc/ssh/ssh_config
 # `Include`s root-owned files under /nix/store (libvirt / systemd ssh-proxy

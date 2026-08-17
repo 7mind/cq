@@ -12,6 +12,8 @@
 , promptJson ? "[]"
 , prehooksJson ? "[]"
 , sandboxHooksJson ? "[]"
+, shellHooksJson ? "[]"
+, cmdHooksJson ? "[]"
 , secretSessionVariables ? { }
 , sandboxPackages ? [ ]
 , sessionVariables ? { }
@@ -64,6 +66,12 @@ let
   sandboxHooksJsonExports = lib.optionalString (sandboxHooksJson != "[]") ''
     export YOLO_SANDBOX_HOOKS_JSON=${lib.escapeShellArg sandboxHooksJson}
   '';
+  shellHooksJsonExports = lib.optionalString (shellHooksJson != "[]") ''
+    export YOLO_SHELL_HOOKS_JSON=${lib.escapeShellArg shellHooksJson}
+  '';
+  cmdHooksJsonExports = lib.optionalString (cmdHooksJson != "[]") ''
+    export YOLO_CMD_HOOKS_JSON=${lib.escapeShellArg cmdHooksJson}
+  '';
   bin = writeShellScriptBin "yolo" ''
     export YOLO_SANDBOX_EXEC="${claude-code-sandbox}/bin/claude-sandbox"
     export YOLO_JQ="${jq}/bin/jq"
@@ -78,6 +86,8 @@ let
     ${promptJsonExports}
     ${prehooksJsonExports}
     ${sandboxHooksJsonExports}
+    ${shellHooksJsonExports}
+    ${cmdHooksJsonExports}
     exec bash ${yoloDarwinScript} "$@"
   '';
 in

@@ -11,6 +11,8 @@
   promptJson ? "[]",
   prehooksJson ? "[]",
   sandboxHooksJson ? "[]",
+  shellHooksJson ? "[]",
+  cmdHooksJson ? "[]",
   secretSessionVariables ? { },
   sandboxPackages ? [ ],
   sessionVariables ? { },
@@ -121,6 +123,12 @@ let
   sandboxHooksJsonExports = lib.optionalString (sandboxHooksJson != "[]") ''
     export YOLO_SANDBOX_HOOKS_JSON=${lib.escapeShellArg sandboxHooksJson}
   '';
+  shellHooksJsonExports = lib.optionalString (shellHooksJson != "[]") ''
+    export YOLO_SHELL_HOOKS_JSON=${lib.escapeShellArg shellHooksJson}
+  '';
+  cmdHooksJsonExports = lib.optionalString (cmdHooksJson != "[]") ''
+    export YOLO_CMD_HOOKS_JSON=${lib.escapeShellArg cmdHooksJson}
+  '';
 in
 pkgs.writeShellScriptBin "yolo" ''
   export YOLO_LLM_SANDBOX="${llmSandbox}/bin/llm-sandbox"
@@ -141,6 +149,8 @@ pkgs.writeShellScriptBin "yolo" ''
   ${promptJsonExports}
   ${prehooksJsonExports}
   ${sandboxHooksJsonExports}
+  ${shellHooksJsonExports}
+  ${cmdHooksJsonExports}
   exec bash ${yoloScript} "$@"
 ''
   # The checks (yolo-profile) drive the proxy's suites with the exact binary

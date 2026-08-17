@@ -35,6 +35,11 @@ printf 'x\n' > "$FAKE_HOME/.pi/agent/prompts/cq:plan.md"
 printf '%s\n' \
   "#!$_bash_path" \
   'printf "%s\n" "$@"' \
+  'previous=' \
+  'for arg in "$@"; do' \
+  '  if [[ "$previous" == "--ro-bind" && "$arg" == *,/run/yolo-sandbox-prestart.sh ]]; then cat "${arg%%,*}"; fi' \
+  '  previous="$arg"' \
+  'done' \
   > "$FAKE_BIN/record-sandbox"
 chmod +x "$FAKE_BIN/record-sandbox"
 
@@ -201,6 +206,25 @@ run_yolo() {
 }
 
 run_yolo_cmd() { run_yolo "$@" --profile foo cmd true; }
+
+AGENT_HOOKS='[{"command":"printf agent-hook","tags":[]}]'
+SHELL_HOOKS='[{"command":"printf shell-hook","tags":[]}]'
+CMD_HOOKS='[{"command":"printf cmd-hook","tags":[]}]'
+
+OUT="$(YOLO_SANDBOX_HOOKS_JSON="$AGENT_HOOKS" YOLO_SHELL_HOOKS_JSON="$SHELL_HOOKS" YOLO_CMD_HOOKS_JSON="$CMD_HOOKS" run_yolo --profile foo pi)"
+assert_contains "agent subcommand selects sandbox hooks" "$OUT" "agent-hook"
+assert_not_contains "agent subcommand excludes shell hooks" "$OUT" "shell-hook"
+assert_not_contains "agent subcommand excludes cmd hooks" "$OUT" "cmd-hook"
+
+OUT="$(YOLO_SANDBOX_HOOKS_JSON="$AGENT_HOOKS" YOLO_SHELL_HOOKS_JSON="$SHELL_HOOKS" YOLO_CMD_HOOKS_JSON="$CMD_HOOKS" run_yolo --profile foo shell)"
+assert_contains "shell subcommand selects shell hooks" "$OUT" "shell-hook"
+assert_not_contains "shell subcommand excludes sandbox hooks" "$OUT" "agent-hook"
+assert_not_contains "shell subcommand excludes cmd hooks" "$OUT" "cmd-hook"
+
+OUT="$(YOLO_SANDBOX_HOOKS_JSON="$AGENT_HOOKS" YOLO_SHELL_HOOKS_JSON="$SHELL_HOOKS" YOLO_CMD_HOOKS_JSON="$CMD_HOOKS" run_yolo --profile foo cmd true)"
+assert_contains "cmd subcommand selects cmd hooks" "$OUT" "cmd-hook"
+assert_not_contains "cmd subcommand excludes sandbox hooks" "$OUT" "agent-hook"
+assert_not_contains "cmd subcommand excludes shell hooks" "$OUT" "shell-hook"
 
 OUT="$(run_yolo_cmd)"
 assert_not_contains "wayland socket is not bound by default" "$OUT" "$WAYLAND_SOCKET"

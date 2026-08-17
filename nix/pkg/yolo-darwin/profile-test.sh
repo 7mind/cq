@@ -330,6 +330,8 @@ printf '%s\n' \
   'printf "ORDER=%s\n" "${ORDER:-<unset>}"' \
   'printf "SECRET_VALUE=%s\n" "${SECRET_VALUE:-<unset>}"' \
   'printf "SANDBOX_HOOK=%s\n" "${SANDBOX_HOOK:-<unset>}"' \
+  'printf "SHELL_HOOK=%s\n" "${SHELL_HOOK:-<unset>}"' \
+  'printf "CMD_HOOK=%s\n" "${CMD_HOOK:-<unset>}"' \
   'printf "DISABLED_HOOK=%s\n" "${DISABLED_HOOK:-<unset>}"' \
   'printf "DOCKER_HOST=%s\n" "${DOCKER_HOST:-<unset>}"' \
   'printf "CONTAINER_HOST=%s\n" "${CONTAINER_HOST:-<unset>}"' \
@@ -424,6 +426,8 @@ SANDBOX_HOOKS="$(
   "$_jq_path" -nc \
     '[{command:"export SANDBOX_HOOK=ran",tags:[]},{command:"export DISABLED_HOOK=ran",tags:["skip"]}]'
 )"
+SHELL_HOOKS='[{"command":"export SHELL_HOOK=ran","tags":[]}]'
+CMD_HOOKS='[{"command":"export CMD_HOOK=ran","tags":[]}]'
 OUT="$(
   cd "$PROJECT_DIR" &&
     unset DOCKER_HOST CONTAINER_HOST &&
@@ -440,6 +444,8 @@ OUT="$(
     YOLO_PODMAN_SOCKET_URI="$PODMAN_SOCKET_URI" \
     YOLO_PREHOOKS_JSON="$HOST_HOOKS" \
     YOLO_SANDBOX_HOOKS_JSON="$SANDBOX_HOOKS" \
+    YOLO_SHELL_HOOKS_JSON="$SHELL_HOOKS" \
+    YOLO_CMD_HOOKS_JSON="$CMD_HOOKS" \
     bash "$SCRIPT" --disable=skip --env ORDER=cli --env SECRET_VALUE=cli pi 2>&1
 )"
 STATUS=$?
@@ -448,6 +454,8 @@ assert_contains "declarative session variable reaches agent" "$OUT" "DECLARED=se
 assert_contains "explicit --env overrides declarative session variable" "$OUT" "ORDER=cli"
 assert_contains "secret file value overrides non-secret values" "$OUT" "SECRET_VALUE=from-secret-file"
 assert_contains "sandbox hook exports reach agent" "$OUT" "SANDBOX_HOOK=ran"
+assert_contains "agent subcommand excludes shell hooks" "$OUT" "SHELL_HOOK=<unset>"
+assert_contains "agent subcommand excludes cmd hooks" "$OUT" "CMD_HOOK=<unset>"
 assert_contains "disabled sandbox hook does not run" "$OUT" "DISABLED_HOOK=<unset>"
 assert_contains "Podman socket URI reaches Docker clients" "$OUT" "DOCKER_HOST=$PODMAN_SOCKET_URI"
 assert_contains "Podman socket URI reaches Podman clients" "$OUT" "CONTAINER_HOST=$PODMAN_SOCKET_URI"
@@ -466,6 +474,39 @@ assert_contains "secret tempfile is supplied to sandbox entrypoint" "$SECRET_TMP
 assert_contains "hook tempfile is supplied to sandbox entrypoint" "$HOOK_TMP_PATH" "yolo-darwin-hooks."
 assert_eq "secret temp file is removed after launch" "absent" "$(if [[ -n "$SECRET_TMP_PATH" && -e "$SECRET_TMP_PATH" ]]; then echo present; else echo absent; fi)"
 assert_eq "sandbox-hook temp file is removed after launch" "absent" "$(if [[ -n "$HOOK_TMP_PATH" && -e "$HOOK_TMP_PATH" ]]; then echo present; else echo absent; fi)"
+
+OUT="$(
+  cd "$PROJECT_DIR" &&
+    HOME="$FAKE_HOME" \
+    PATH="$FAKE_BIN:$PATH" \
+    SHELL="$FAKE_BIN/pi" \
+    YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
+    YOLO_SANDBOX_HOOKS_JSON="$SANDBOX_HOOKS" \
+    YOLO_SHELL_HOOKS_JSON="$SHELL_HOOKS" \
+    YOLO_CMD_HOOKS_JSON="$CMD_HOOKS" \
+    bash "$SCRIPT" shell 2>&1
+)"
+STATUS=$?
+assert_zero "shell hook launch succeeds" "$STATUS"
+assert_contains "shell subcommand selects shell hooks" "$OUT" "SHELL_HOOK=ran"
+assert_contains "shell subcommand excludes sandbox hooks" "$OUT" "SANDBOX_HOOK=<unset>"
+assert_contains "shell subcommand excludes cmd hooks" "$OUT" "CMD_HOOK=<unset>"
+
+OUT="$(
+  cd "$PROJECT_DIR" &&
+    HOME="$FAKE_HOME" \
+    PATH="$FAKE_BIN:$PATH" \
+    YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
+    YOLO_SANDBOX_HOOKS_JSON="$SANDBOX_HOOKS" \
+    YOLO_SHELL_HOOKS_JSON="$SHELL_HOOKS" \
+    YOLO_CMD_HOOKS_JSON="$CMD_HOOKS" \
+    bash "$SCRIPT" cmd "$FAKE_BIN/pi" 2>&1
+)"
+STATUS=$?
+assert_zero "cmd hook launch succeeds" "$STATUS"
+assert_contains "cmd subcommand selects cmd hooks" "$OUT" "CMD_HOOK=ran"
+assert_contains "cmd subcommand excludes sandbox hooks" "$OUT" "SANDBOX_HOOK=<unset>"
+assert_contains "cmd subcommand excludes shell hooks" "$OUT" "SHELL_HOOK=<unset>"
 
 # An absent configured socket matches Linux yolo: warn, skip the grant, and do
 # not advertise an unusable endpoint to Docker-compatible clients.
