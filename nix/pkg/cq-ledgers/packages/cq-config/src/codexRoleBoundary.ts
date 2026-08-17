@@ -174,6 +174,7 @@ export const CODEX_POST_STORE_FINALIZATION_MS = 300_000;
 export const CODEX_PARENT_GATE_WINDOW_MS = 5_620_000;
 export const CODEX_OUTER_BOUNDARY_RESERVE_MS = 900_000;
 export const CODEX_PARENT_GATE_TERMINATION_GRACE_MS = 1_000;
+const CODEX_PARENT_GATE_FINALIZER_ATTEMPTS = 2;
 
 export interface CodexParentGateFinalizerRequest {
   readonly command: string;
@@ -185,9 +186,9 @@ export interface CodexParentGateFinalizerRequest {
   readonly environment?: NodeJS.ProcessEnv;
 }
 
-/** Run the parent-only durable finalizer after the Codex child has exited. */
-export async function executeCodexParentGateFinalizer(
+async function executeCodexParentGateFinalizerAttempt(
   input: CodexParentGateFinalizerRequest,
+  timeoutMs: number,
 ): Promise<void> {
   const child = Bun.spawn(
     [
@@ -219,7 +220,7 @@ export async function executeCodexParentGateFinalizer(
     timedOut = true;
     child.kill("SIGTERM");
     killTimer = setTimeout(() => child.kill("SIGKILL"), CODEX_PARENT_GATE_TERMINATION_GRACE_MS);
-  }, input.timeoutMs);
+  }, timeoutMs);
   const [exitStatus, stdout, stderr] = await Promise.all([
     child.exited,
     new Response(child.stdout).text(),
@@ -230,7 +231,7 @@ export async function executeCodexParentGateFinalizer(
   });
   if (timedOut) {
     throw new CodexRoleBoundaryError(
-      `parent gate exceeded its ${String(input.timeoutMs)} ms window`,
+      `parent gate exceeded its ${String(timeoutMs)} ms window`,
     );
   }
   if (exitStatus !== 0) {
@@ -259,6 +260,29 @@ export async function executeCodexParentGateFinalizer(
   ) {
     throw new CodexRoleBoundaryError("parent gate emitted a foreign acknowledgement");
   }
+}
+
+/** Run and, after an ambiguous process outcome, reconcile the durable parent gate once. */
+export async function executeCodexParentGateFinalizer(
+  input: CodexParentGateFinalizerRequest,
+): Promise<void> {
+  const deadline = performance.now() + input.timeoutMs;
+  const failures: unknown[] = [];
+  for (let attempt = 0; attempt < CODEX_PARENT_GATE_FINALIZER_ATTEMPTS; attempt += 1) {
+    const remainingMs = Math.ceil(deadline - performance.now());
+    if (remainingMs <= 0) break;
+    try {
+      await executeCodexParentGateFinalizerAttempt(input, remainingMs);
+      return;
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length === 1) throw failures[0];
+  throw new AggregateError(
+    failures,
+    `Codex parent gate finalization failed after ${String(failures.length)} bounded attempts`,
+  );
 }
 
 export interface CodexInstalledIdentity {

@@ -146,6 +146,11 @@ the complete inherited-plus-current receipt chain.
    private launch supplies `gitChangeCapability`, do **not** invoke `cq gate run`
    inside the sandbox. Finish the commit and verification in Step 6, then
    call `store_result` without `gateDurationMs` or `supervisedGateEvidence`.
+   A matching `gate-pending` acknowledgement confirms durable handoff to the
+   trusted parent and permits the final response. Do not wait for
+   `result-stored`: the trusted parent starts the gate only after this child
+   exits. If the response is lost, retry only the exact same `store_result`
+   request.
    The trusted result-storage boundary holds the managed worktree effect lock,
    verifies the exact clean branch tip and receipt chain, runs the canonical
    full gate, rechecks the tip and tree, and attaches
@@ -219,8 +224,10 @@ The prompt-catalog schema is authoritative, including any conditional
 evidence where required, a verified commit object, a clean tree, base
 ancestry, a reported `actualWorktreePath`, and verified `baseVerification`.
 
-Store the object exactly once through the dispatch-scoped `store_result` tool. Only a
-`result-stored` acknowledgement permits the final response. Then reply with the
+Submit the object through the dispatch-scoped `store_result` tool. With
+`gitChangeCapability`, only a matching `gate-pending` acknowledgement permits
+the final response. Without `gitChangeCapability`, only `result-stored` permits
+the final response. Retry a lost response only with the exact same request. Then reply with the
 prepared dispatch handle only as the exact one-line JSON
 `{"attestationId":"<prepared attestation id>","generation":<prepared generation>}`
 and nothing else; never return the result body or a capability.

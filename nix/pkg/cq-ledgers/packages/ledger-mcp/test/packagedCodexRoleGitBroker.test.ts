@@ -641,6 +641,7 @@ describe("packaged cq-codex-role Git broker", () => {
     const workerFixture = await readFile(WORKER_FIXTURE, "utf8");
     expect(workerFixture).toContain('"update-ref"');
     expect(workerFixture).toContain("trusted result-storage boundary");
+    expect(workerFixture).toContain("installed worker instructions do not permit");
     expect(workerFixture).not.toContain("gateDurationMs:");
     const reviewerFixture = await readFile(REVIEWER_FIXTURE, "utf8");
     expect(reviewerFixture).toContain('expectedMode === "sandboxed"');
@@ -739,7 +740,7 @@ describe("packaged cq-codex-role Git broker", () => {
       await mkdir(workspaceRoot, { recursive: true });
       await writeFile(
         path.join(workspaceRoot, "package.json"),
-        `${JSON.stringify({ private: true, scripts: { check: "printf '1 pass\\n0 fail\\n'" } }, null, 2)}\n`,
+        `${JSON.stringify({ private: true, scripts: { check: "test -z \"$CQ_T2042_GATE_COUNT\" || printf 'run\\n' >> \"$CQ_T2042_GATE_COUNT\"; printf '1 pass\\n0 fail\\n'" } }, null, 2)}\n`,
       );
       await git(repositoryRoot, ["add", "file.txt", "a.txt", "b.txt", "bun.lock", "nix"]);
       await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
@@ -1113,6 +1114,31 @@ describe("packaged cq-codex-role Git broker", () => {
       };
       const retryCapturePath = path.join(fixtureRoot, "retry-capture.json");
       const retryStderrPath = path.join(fixtureRoot, "retry.stderr");
+      const gateCountPath = path.join(fixtureRoot, "retry-gate-count.log");
+      const finalizerAttemptsPath = path.join(fixtureRoot, "retry-finalizer-attempts.log");
+      const finalizerCommittedPath = path.join(fixtureRoot, "retry-finalizer-committed");
+      const flakyLedgerCommand = path.join(fixtureRoot, "flaky-ledger-command");
+      await writeFile(
+        flakyLedgerCommand,
+        `#!/bin/sh
+parent_gate=0
+for arg in "$@"; do
+  if test "$arg" = "--parent-gate-finalize"; then parent_gate=1; fi
+done
+if test "$parent_gate" = 1; then
+  printf 'attempt\\n' >> ${JSON.stringify(finalizerAttemptsPath)}
+  if test ! -e ${JSON.stringify(finalizerCommittedPath)}; then
+    ${JSON.stringify(ledgerCommand)} "$@" > /dev/null
+    status=$?
+    if test "$status" -ne 0; then exit "$status"; fi
+    touch ${JSON.stringify(finalizerCommittedPath)}
+    exit 1
+  fi
+fi
+exec ${JSON.stringify(ledgerCommand)} "$@"
+`,
+      );
+      await chmod(flakyLedgerCommand, 0o700);
       const retryExecution = await executeInstalledCodexRoleBoundary({
         executable: INSTALLED_ROLE,
         invocation: {
@@ -1139,7 +1165,8 @@ describe("packaged cq-codex-role Git broker", () => {
           CQ_SERVE_MANAGEMENT_TOKEN: "must-not-reach-installed-worker",
           CQ_LEDGER_REMOTE_TOKEN: "must-not-reach-installed-worker",
           CQ_CODEX_EXECUTABLE: fakeCodex,
-          CQ_CODEX_LEDGER_COMMAND: ledgerCommand,
+          CQ_CODEX_LEDGER_COMMAND: flakyLedgerCommand,
+          CQ_T2042_GATE_COUNT: gateCountPath,
           CQ_T2042_BROKER_CAPTURE: retryCapturePath,
           CQ_T2042_WORKER_STDERR: retryStderrPath,
           CQ_T2042_WORKTREE: resumed.handle.absolutePath,
@@ -1173,6 +1200,8 @@ describe("packaged cq-codex-role Git broker", () => {
       });
       expect(retryCapture.denied).toEqual(expect.arrayContaining(["git-metadata", "refs"]));
       expect(retryCapture.inheritedWorksetCredentials).toEqual([]);
+      expect((await readFile(finalizerAttemptsPath, "utf8")).trim().split("\n")).toHaveLength(2);
+      expect((await readFile(gateCountPath, "utf8")).trim().split("\n")).toHaveLength(1);
       expect(retryReceipts[0]?.["oldHead"]).toBe(firstResultCommit);
       await git(managed.handle.absolutePath, [
         "merge-base",

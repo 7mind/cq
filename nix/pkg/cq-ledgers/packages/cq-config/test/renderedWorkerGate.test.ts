@@ -52,6 +52,19 @@ describe("D244/D243 rendered worker gate and history contract", () => {
     expect(prompt).toContain("before retrying the gate, calling `store_result`, or returning");
   });
 
+  it("lets a parent-gated worker exit after the durable gate-pending handoff", () => {
+    const prompt = readFileSync(WORKER_PROMPT, "utf8").replace(/\s+/gu, " ");
+    expect(prompt).toContain(
+      "A matching `gate-pending` acknowledgement confirms durable handoff to the trusted parent and permits the final response",
+    );
+    expect(prompt).toContain(
+      "Without `gitChangeCapability`, only `result-stored` permits the final response",
+    );
+    expect(prompt).not.toContain(
+      "Store the object exactly once through the dispatch-scoped `store_result` tool. Only a `result-stored` acknowledgement permits the final response.",
+    );
+  });
+
   it("executes the real rendered gate from a fresh worktree root", () => {
     const worktree = temporaryDirectory("cq-t1629-gate-");
     const packageDirectory = path.join(worktree, "nix", "pkg", "cq-ledgers");

@@ -21,8 +21,24 @@ if (argv[0] !== "exec") throw new Error("recording executable expected codex exe
 const cwdIndex = argv.indexOf("-C");
 const codexCwd = cwdIndex < 0 ? undefined : argv[cwdIndex + 1];
 const mcpOverride = argv.find((argument) => argument.startsWith("mcp_servers.ledger="));
+const instructionsOverride = argv.find((argument) => argument.startsWith("developer_instructions="));
 if (codexCwd !== expectedWorktree || mcpOverride === undefined) {
   throw new Error("Codex role boundary did not select the managed worktree and ledger MCP");
+}
+if (instructionsOverride === undefined) {
+  throw new Error("Codex role boundary omitted the installed worker instructions");
+}
+const roleInstructions = JSON.parse(instructionsOverride.slice("developer_instructions=".length)) as string;
+const normalizedRoleInstructions = roleInstructions.replace(/\s+/gu, " ");
+if (
+  !normalizedRoleInstructions.includes(
+    "A matching `gate-pending` acknowledgement confirms durable handoff to the trusted parent and permits the final response",
+  ) ||
+  !normalizedRoleInstructions.includes(
+    "Without `gitChangeCapability`, only `result-stored` permits the final response",
+  )
+) {
+  throw new Error("installed worker instructions do not permit the parent-gate handoff");
 }
 const commandMatch = /(?:^|[,{}])command=("(?:\\.|[^"\\])*")/.exec(mcpOverride);
 const argsMatch = /(?:^|[,{}])args=(\[[^\]]*\])/.exec(mcpOverride);

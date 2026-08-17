@@ -604,6 +604,10 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
         expect(await afterComplete.store(p.resultCapability, PARENT_GATE_STAGED_OUTPUT)).toEqual(
           staged,
         );
+        await expect(afterComplete.abort(p, { reason: "native-failure" })).rejects.toThrow(
+          DispatchStateConflictError,
+        );
+        expect((await afterComplete.fetch(handleOf(p))).state).toBe("result-stored");
       }));
 
     // -- every abort path --------------------------------------------------

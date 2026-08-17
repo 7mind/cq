@@ -2856,6 +2856,13 @@ export function abortDispatch(
       `attestation "${row.attestationId}" is already aborted (${String(row.abortReason)})`,
     );
   }
+  if (row.state === "result-stored" && row.parentGateCapabilityHash !== undefined) {
+    throw new DispatchStateConflictError(
+      ABORT,
+      row.state,
+      `attestation "${row.attestationId}" has a finalized parent gate and cannot be aborted`,
+    );
+  }
   if (row.state === "consumed") {
     throw new DispatchStateConflictError(
       ABORT,

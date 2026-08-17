@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -161,6 +161,53 @@ describe("T1330 Codex role process boundary", () => {
       expect(Date.now() - startedAt).toBeLessThan(2_500);
       const pid = Number.parseInt(await Bun.file(pidFile).text(), 10);
       expect(await readProcessIdentity(pid)).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("parent finalization reconciles a committed result after its first acknowledgement is lost [Behavioral-Active Blackbox Good-Communication]", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cq-parent-gate-reconcile-"));
+    const command = join(root, "parent-gate-fixture");
+    const statePath = join(root, "state.json");
+    writeFileSync(statePath, JSON.stringify({ attempts: 0, gateRuns: 0, committed: false }));
+    writeFileSync(
+      command,
+      `#!/usr/bin/env bun
+import { readFileSync, writeFileSync } from "node:fs";
+await Bun.stdin.text();
+const statePath = process.env["CQ_PARENT_GATE_FIXTURE_STATE"];
+if (statePath === undefined) throw new Error("missing fixture state");
+const state = JSON.parse(readFileSync(statePath, "utf8"));
+state.attempts += 1;
+if (!state.committed) {
+  state.committed = true;
+  state.gateRuns += 1;
+  writeFileSync(statePath, JSON.stringify(state));
+  process.exit(1);
+}
+writeFileSync(statePath, JSON.stringify(state));
+process.stdout.write(JSON.stringify({ state: "result-stored", attestationId: ${JSON.stringify(HANDLE.attestationId)}, generation: ${String(HANDLE.generation)}, storedAt: "2026-08-17T16:00:00.000Z", outputDigest: "${"a".repeat(64)}" }) + "\\n");
+`,
+    );
+    chmodSync(command, 0o755);
+    try {
+      await expect(
+        executeCodexParentGateFinalizer({
+          command,
+          ledgerCwd: root,
+          promptRoot: root,
+          handle: HANDLE,
+          parentGateCapability: PARENT_GATE_CAPABILITY,
+          timeoutMs: 2_000,
+          environment: { CQ_PARENT_GATE_FIXTURE_STATE: statePath },
+        }),
+      ).resolves.toBeUndefined();
+      expect(JSON.parse(readFileSync(statePath, "utf8"))).toEqual({
+        attempts: 2,
+        gateRuns: 1,
+        committed: true,
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
