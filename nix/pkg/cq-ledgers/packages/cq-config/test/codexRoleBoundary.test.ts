@@ -213,6 +213,55 @@ process.stdout.write(JSON.stringify({ state: "result-stored", attestationId: ${J
     }
   });
 
+  test("parent finalization reserves time to reconcile a committed result after its first process hangs [Behavioral-Active Blackbox Good-Communication]", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cq-parent-gate-hang-reconcile-"));
+    const command = join(root, "parent-gate-fixture");
+    const statePath = join(root, "state.json");
+    writeFileSync(statePath, JSON.stringify({ attempts: 0, gateRuns: 0, committed: false }));
+    writeFileSync(
+      command,
+      `#!/usr/bin/env bun
+import { readFileSync, writeFileSync } from "node:fs";
+await Bun.stdin.text();
+const statePath = process.env["CQ_PARENT_GATE_FIXTURE_STATE"];
+if (statePath === undefined) throw new Error("missing fixture state");
+const state = JSON.parse(readFileSync(statePath, "utf8"));
+state.attempts += 1;
+if (!state.committed) {
+  state.committed = true;
+  state.gateRuns += 1;
+  writeFileSync(statePath, JSON.stringify(state));
+  process.on("SIGTERM", () => {});
+  setInterval(() => {}, 1_000);
+} else {
+  writeFileSync(statePath, JSON.stringify(state));
+  process.stdout.write(JSON.stringify({ state: "result-stored", attestationId: ${JSON.stringify(HANDLE.attestationId)}, generation: ${String(HANDLE.generation)}, storedAt: "2026-08-17T16:00:00.000Z", outputDigest: "${"a".repeat(64)}" }) + "\\n");
+}
+`,
+    );
+    chmodSync(command, 0o755);
+    try {
+      await expect(
+        executeCodexParentGateFinalizer({
+          command,
+          ledgerCwd: root,
+          promptRoot: root,
+          handle: HANDLE,
+          parentGateCapability: PARENT_GATE_CAPABILITY,
+          timeoutMs: 2_000,
+          environment: { CQ_PARENT_GATE_FIXTURE_STATE: statePath },
+        }),
+      ).resolves.toBeUndefined();
+      expect(JSON.parse(readFileSync(statePath, "utf8"))).toEqual({
+        attempts: 2,
+        gateRuns: 1,
+        committed: true,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("the outer boundary watchdog cancels and drains a child independently of its work deadline [Behavioral-Active Blackbox Good-Communication]", async () => {
     const root = mkdtempSync(join(tmpdir(), "cq-codex-outer-boundary-"));
     const pidFile = join(root, "pid");

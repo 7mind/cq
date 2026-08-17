@@ -175,6 +175,7 @@ export const CODEX_PARENT_GATE_WINDOW_MS = 5_620_000;
 export const CODEX_OUTER_BOUNDARY_RESERVE_MS = 900_000;
 export const CODEX_PARENT_GATE_TERMINATION_GRACE_MS = 1_000;
 const CODEX_PARENT_GATE_FINALIZER_ATTEMPTS = 2;
+const CODEX_PARENT_GATE_RECONCILIATION_RESERVE_MS = 30_000;
 
 export interface CodexParentGateFinalizerRequest {
   readonly command: string;
@@ -189,6 +190,7 @@ export interface CodexParentGateFinalizerRequest {
 async function executeCodexParentGateFinalizerAttempt(
   input: CodexParentGateFinalizerRequest,
   timeoutMs: number,
+  terminationGraceMs: number,
 ): Promise<void> {
   const child = Bun.spawn(
     [
@@ -219,7 +221,7 @@ async function executeCodexParentGateFinalizerAttempt(
   const timer = setTimeout(() => {
     timedOut = true;
     child.kill("SIGTERM");
-    killTimer = setTimeout(() => child.kill("SIGKILL"), CODEX_PARENT_GATE_TERMINATION_GRACE_MS);
+    killTimer = setTimeout(() => child.kill("SIGKILL"), terminationGraceMs);
   }, timeoutMs);
   const [exitStatus, stdout, stderr] = await Promise.all([
     child.exited,
@@ -267,16 +269,32 @@ export async function executeCodexParentGateFinalizer(
   input: CodexParentGateFinalizerRequest,
 ): Promise<void> {
   const deadline = performance.now() + input.timeoutMs;
+  const reconciliationReserveMs = Math.min(
+    CODEX_PARENT_GATE_RECONCILIATION_RESERVE_MS,
+    Math.max(1, Math.floor(input.timeoutMs / CODEX_PARENT_GATE_FINALIZER_ATTEMPTS)),
+  );
   const failures: unknown[] = [];
   for (let attempt = 0; attempt < CODEX_PARENT_GATE_FINALIZER_ATTEMPTS; attempt += 1) {
-    const remainingMs = Math.ceil(deadline - performance.now());
+    const remainingMs = Math.floor(deadline - performance.now());
     if (remainingMs <= 0) break;
+    const attemptBudgetMs =
+      attempt === 0 ? Math.max(1, remainingMs - reconciliationReserveMs) : remainingMs;
+    const terminationGraceMs = Math.min(
+      CODEX_PARENT_GATE_TERMINATION_GRACE_MS,
+      Math.floor(attemptBudgetMs / 2),
+    );
+    const attemptTimeoutMs = Math.max(1, attemptBudgetMs - terminationGraceMs);
     try {
-      await executeCodexParentGateFinalizerAttempt(input, remainingMs);
+      await executeCodexParentGateFinalizerAttempt(input, attemptTimeoutMs, terminationGraceMs);
       return;
     } catch (error) {
       failures.push(error);
     }
+  }
+  if (performance.now() >= deadline) {
+    throw new CodexRoleBoundaryError(
+      `parent gate exceeded its ${String(input.timeoutMs)} ms window`,
+    );
   }
   if (failures.length === 1) throw failures[0];
   throw new AggregateError(
