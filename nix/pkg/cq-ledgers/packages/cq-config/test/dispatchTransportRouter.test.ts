@@ -18,6 +18,7 @@ import {
   IMPLEMENT_REVIEWER_PHASE_EXHAUSTION_CRITICISM,
   IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
   InMemoryAttestationStore,
+  DISPATCH_ABORT_REASONS,
   DispatchTransportAbort,
   DispatchTransportAdapterRegistry,
   DispatchTransportRoutingError,
@@ -25,6 +26,7 @@ import {
   createCodexProcessDispatchAdapter,
   createNativeDispatchAdapter,
   createPiProcessDispatchAdapter,
+  abortDispatch,
   claudeExpectedChild,
   codexExpectedChild,
   dispatchEffectTargetRef,
@@ -35,10 +37,12 @@ import {
   sequentialDispatchRandomBytes,
   type AttestationNamespace,
   type AttestationRow,
+  type AbortedDispatchResult,
   type ClaudeChildCorrelation,
   type CodexChildCorrelation,
   type DispatchAdapterLaunchContext,
   type DispatchAdapterLaunchResult,
+  type DispatchAbortReason,
   type DispatchHandle,
   type DispatchJSONValue,
   type DispatchPrepared,
@@ -160,11 +164,17 @@ interface RecordedCapabilityEndpoint {
   readonly url: string;
   readonly counts: { input: number; store: number };
   bind(context: DispatchAdapterLaunchContext): void;
+  bindAbort(abort: (reason: DispatchAbortReason) => AbortedDispatchResult): void;
   stop(): void;
+}
+
+function isDispatchAbortReason(value: unknown): value is DispatchAbortReason {
+  return DISPATCH_ABORT_REASONS.some((candidate) => candidate === value);
 }
 
 function createRecordedCapabilityEndpoint(): RecordedCapabilityEndpoint {
   let context: DispatchAdapterLaunchContext | undefined;
+  let abort: ((reason: DispatchAbortReason) => AbortedDispatchResult) | undefined;
   const counts = { input: 0, store: 0 };
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -200,6 +210,19 @@ function createRecordedCapabilityEndpoint(): RecordedCapabilityEndpoint {
           counts.store += 1;
           return Response.json(context.child.storeResult(OUTPUT));
         }
+        if (new URL(request.url).pathname === "/abort") {
+          const reason = body["reason"];
+          if (
+            body["attestationId"] !== expectedHandle.attestationId ||
+            body["generation"] !== expectedHandle.generation ||
+            !isDispatchAbortReason(reason) ||
+            abort === undefined
+          ) {
+            throw new Error("recorded child sent an invalid abort acknowledgement request");
+          }
+          counts.store += 1;
+          return Response.json({ state: "aborted", result: abort(reason) });
+        }
         throw new Error("recorded child requested an unknown capability operation");
       } catch (error) {
         return Response.json(
@@ -216,12 +239,25 @@ function createRecordedCapabilityEndpoint(): RecordedCapabilityEndpoint {
       if (context !== undefined) throw new Error("recorded capability endpoint bound twice");
       context = boundContext;
     },
+    bindAbort: (boundAbort) => {
+      if (abort !== undefined) throw new Error("recorded capability abort bound twice");
+      abort = boundAbort;
+    },
     stop: () => server.stop(true),
   };
 }
 
 function createCodexRecordingFixture(
-  mode: "echo" | "failed-outcome" | "malformed" | "success" | "unused-capabilities" | "wait",
+  mode:
+    | "echo"
+    | "failed-outcome"
+    | "malformed"
+    | "success"
+    | "typed-abort-final"
+    | "typed-abort-tool"
+    | "unused-capabilities"
+    | "wait",
+  abortReason?: DispatchAbortReason,
 ): CodexRecordingFixture {
   const endpoint = createRecordedCapabilityEndpoint();
   const root = mkdtempSync(join(tmpdir(), "cq-t1631-codex-"));
@@ -235,6 +271,9 @@ function createCodexRecordingFixture(
   process.env["CQ_T1631_CODEX_MODE"] = mode;
   process.env["CQ_T1631_CODEX_CAPTURE"] = capturePath;
   process.env["CQ_T1631_CAPABILITY_ENDPOINT"] = endpoint.url;
+  if (abortReason !== undefined) {
+    process.env["CQ_T1631_CODEX_ABORT_REASON"] = abortReason;
+  }
   return { root, executable, capturePath, endpoint };
 }
 
@@ -242,6 +281,7 @@ function removeCodexRecordingFixture(fixture: CodexRecordingFixture): void {
   delete process.env["CQ_T1631_CODEX_MODE"];
   delete process.env["CQ_T1631_CODEX_CAPTURE"];
   delete process.env["CQ_T1631_CAPABILITY_ENDPOINT"];
+  delete process.env["CQ_T1631_CODEX_ABORT_REASON"];
   fixture.endpoint.stop();
   rmSync(fixture.root, { recursive: true, force: true });
 }
@@ -1117,6 +1157,59 @@ describe("T1631 shared three-harness transport router", () => {
       removeCodexRecordingFixture(processFixture);
     }
   });
+
+  for (const observation of ["final", "tool"] as const) {
+    for (const [reasonIndex, reason] of DISPATCH_ABORT_REASONS.entries()) {
+      test(`Codex process adapter reconciles ${reason} from the ${observation} store_result observation [Behavioral-Active Blackbox Good-Communication]`, async () => {
+        const processFixture = createCodexRecordingFixture(`typed-abort-${observation}`, reason);
+        try {
+          const fixture = preparedFixture("codex", 120 + reasonIndex + observation.length * 10, {
+            expectedChild: codexExpectedChild(CODEX_CORRELATION),
+            promptDigest: promptDigestOf(CLAUDE_ROLE_PROMPT),
+          });
+          processFixture.endpoint.bindAbort((observedReason) =>
+            abortDispatch(
+              {
+                namespace: NAMESPACE,
+                actor: "trusted-parent",
+                ...handleOf(fixture.prepared),
+                reason: observedReason,
+                details: { source: "recorded-store-result" },
+              },
+              fixture.deps,
+            ),
+          );
+          const registry = new DispatchTransportAdapterRegistry([
+            createCodexProcessDispatchAdapter(
+              createStrictInMemoryWorksetEffectAdmissionProvider(),
+              codexRecordingResolver(processFixture),
+            ),
+          ]);
+
+          const result = await runPreparedDispatch(
+            {
+              namespace: NAMESPACE,
+              prepared: fixture.prepared,
+              activeHarness: "claude",
+              targetHarness: "codex",
+              forceShellout: false,
+            },
+            registry,
+            fixture.deps,
+          );
+
+          expect(result).toMatchObject({
+            outcome: "aborted",
+            abort: { reason, details: { source: "recorded-store-result" } },
+          });
+          expect(processFixture.endpoint.counts).toEqual({ input: 1, store: 1 });
+          expect(fixture.store.replacements.filter(({ to }) => to === "aborted")).toHaveLength(1);
+        } finally {
+          removeCodexRecordingFixture(processFixture);
+        }
+      });
+    }
+  }
 
   test("a stored Codex handle with a live owned gate aborts before confirm or fetch", async () => {
     const processFixture = createCodexRecordingFixture("success");

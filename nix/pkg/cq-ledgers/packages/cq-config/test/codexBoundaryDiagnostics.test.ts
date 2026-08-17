@@ -304,6 +304,7 @@ describe("T1628 Codex boundary diagnostics", () => {
         const observed = captureBoundaryError(stream);
         expect(observed).toBeInstanceOf(CodexBrokeredStoreResultError);
         expect((observed as CodexBrokeredStoreResultError).outcome).toBe("typed-abort");
+        expect((observed as CodexBrokeredStoreResultError).abortReason).toBe(reason);
         expect(observed.message).toContain(reason);
       }
     }

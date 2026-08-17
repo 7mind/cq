@@ -1813,6 +1813,7 @@ PY
                 for expectedLeg in \
                   'workset owned-write contract [T1962] — PostgresLedgerStore' \
                   'workset coordination-bundle contract [T1962] — PostgresLedgerStore' \
+                  'statement failure rolls back the tenant and emits no post-commit hook' \
                   'post-commit NOTIFY invalidates a peer after the complete owned write'; do
                   if ! grep -F '(pass)' "$ownedWriteLog" | grep -Fq "$expectedLeg"; then
                     echo "T1966 live PostgreSQL owned-write run did not execute: $expectedLeg" >&2

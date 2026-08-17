@@ -11,6 +11,8 @@ if (
     "failed-outcome",
     "malformed",
     "success",
+    "typed-abort-final",
+    "typed-abort-tool",
     "unused-capabilities",
     "wait",
   ].includes(mode ?? "") ||
@@ -50,6 +52,10 @@ const handle = {
   attestationId: launch["attestationId"],
   generation: launch["generation"],
 };
+const abortReason = process.env["CQ_T1631_CODEX_ABORT_REASON"];
+if (mode?.startsWith("typed-abort-") === true && abortReason === undefined) {
+  throw new Error("typed-abort recording mode requires an abort reason");
+}
 const output = {
   taskId: "T1631",
   status: "pass",
@@ -104,12 +110,19 @@ if (mode !== "unused-capabilities") {
   if (mode === "wait") {
     await Bun.sleep(60_000);
   }
-  acknowledgement = await callCapability("/store", {
-    resultCapability,
-    output,
-  });
-  if (acknowledgement["state"] !== "result-stored") {
-    throw new Error("recorded child store did not return result-stored");
+  if (mode?.startsWith("typed-abort-") === true) {
+    acknowledgement = await callCapability("/abort", { ...handle, reason: abortReason });
+    if (acknowledgement["state"] !== "aborted") {
+      throw new Error("recorded child store did not return aborted");
+    }
+  } else {
+    acknowledgement = await callCapability("/store", {
+      resultCapability,
+      output,
+    });
+    if (acknowledgement["state"] !== "result-stored") {
+      throw new Error("recorded child store did not return result-stored");
+    }
   }
 }
 const finalMessage =
@@ -117,7 +130,10 @@ const finalMessage =
     ? "not-a-dispatch-handle"
     : mode === "echo"
       ? JSON.stringify({ ...handle, output: { leaked: true } })
-      : JSON.stringify(acknowledgement);
+      : mode === "typed-abort-tool"
+        ? JSON.stringify(handle)
+        : JSON.stringify(acknowledgement);
+const toolAcknowledgement = mode === "typed-abort-final" ? {} : acknowledgement;
 const threadId = "fresh-codex-thread-from-exec";
 const turnEvent =
   mode === "failed-outcome"
@@ -133,7 +149,7 @@ process.stdout.write(
         type: "mcp_tool_call",
         server: "ledger",
         tool: "store_result",
-        result: { content: [{ type: "text", text: JSON.stringify(acknowledgement) }] },
+        result: { content: [{ type: "text", text: JSON.stringify(toolAcknowledgement) }] },
       },
     }),
     JSON.stringify({

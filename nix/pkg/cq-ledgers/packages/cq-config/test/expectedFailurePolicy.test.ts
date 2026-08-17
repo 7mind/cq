@@ -261,7 +261,5 @@ test("the committed inventory agrees bidirectionally with exactly six live marke
   const sources = readExpectedFailureSources(WORKSPACE_ROOT, REPO_ROOT);
   const markers = scanExpectedFailures(sources, EXPECTED_FAILURE_INVENTORY);
   expect(markers).toHaveLength(6);
-  expect(markers.map(({ ledgerRef }) => ledgerRef)).toEqual([
-    ...Array(6).fill("tasks:T826"),
-  ]);
+  expect(markers.map(({ ledgerRef }) => ledgerRef)).toEqual(Array(6).fill("tasks:T826"));
 });

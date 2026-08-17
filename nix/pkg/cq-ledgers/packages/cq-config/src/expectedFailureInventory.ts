@@ -2,6 +2,7 @@ import type { ExpectedFailureInventoryEntry } from "./expectedFailurePolicy.js";
 
 const ARCHIVE_INVARIANT_FILE =
   "nix/pkg/cq-ledgers/packages/ledger/test/archive-dependency-invariants.test.ts";
+
 export const EXPECTED_FAILURE_INVENTORY: readonly ExpectedFailureInventoryEntry[] = [
   {
     file: ARCHIVE_INVARIANT_FILE,

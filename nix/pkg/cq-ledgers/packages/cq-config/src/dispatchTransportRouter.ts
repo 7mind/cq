@@ -36,6 +36,7 @@ import {
   type ClaudeChildCorrelation,
 } from "./claudeDispatchProtocol.js";
 import {
+  CodexBrokeredStoreResultError,
   CodexRoleBoundaryError,
   CodexOperationalAbstentionError,
   createCodexRoleBoundaryPlan,
@@ -122,6 +123,7 @@ export interface DispatchAdapterAbortion {
   readonly outcome: "aborted";
   readonly reason: DispatchAbortReason;
   readonly details?: DispatchJSONValue;
+  readonly storeResultAbortReason?: DispatchAbortReason;
 }
 
 export type DispatchAdapterLaunchResult = DispatchAdapterCompletion | DispatchAdapterAbortion;
@@ -380,6 +382,17 @@ function codexProcessBoundaryFailure(
   adapterId: "codex:process",
 ): DispatchAdapterAbortion {
   const boundaryError = findCodexRoleBoundaryError(error);
+  if (
+    boundaryError instanceof CodexBrokeredStoreResultError &&
+    boundaryError.outcome === "typed-abort" &&
+    boundaryError.abortReason !== undefined
+  ) {
+    return {
+      outcome: "aborted",
+      reason: boundaryError.abortReason,
+      storeResultAbortReason: boundaryError.abortReason,
+    };
+  }
   if (boundaryError instanceof CodexOperationalAbstentionError) {
     return {
       outcome: "aborted",
@@ -706,6 +719,35 @@ function adapterAbort(
   });
 }
 
+function reconcileStoreResultAbort(
+  request: RunPreparedDispatchRequest,
+  route: DispatchTransportRoute,
+  adapter: DispatchTransportAdapter,
+  handle: DispatchHandle,
+  reason: DispatchAbortReason,
+  deps: DispatchServiceDeps,
+): RoutedDispatchAborted {
+  const abort = fetchDispatchResult(
+    { namespace: request.namespace, actor: "trusted-parent", ...handle },
+    deps,
+  );
+  if (abort.state !== "aborted" || abort.reason !== reason) {
+    throw new AttestationContractError(
+      "adapter.storeResultAbortReason",
+      `adapter ${JSON.stringify(adapter.id)} reported authoritative abort ${JSON.stringify(reason)} ` +
+        `but the dispatch fetched as ${JSON.stringify(abort.state)}` +
+        (abort.state === "aborted" ? ` with reason ${JSON.stringify(abort.reason)}` : ""),
+    );
+  }
+  return Object.freeze({
+    outcome: "aborted" as const,
+    route,
+    adapterId: adapter.id,
+    handle,
+    abort,
+  });
+}
+
 function assertCompletionShape(
   completion: DispatchAdapterCompletion,
   route: DispatchTransportRoute,
@@ -804,11 +846,17 @@ function assertAdapterLaunchResult(value: unknown): asserts value is DispatchAda
   const record = value as Readonly<Record<string, unknown>>;
   if (record["outcome"] === "aborted") {
     const surplus = Object.keys(record).filter(
-      (key) => !["outcome", "reason", "details"].includes(key),
+      (key) => !["outcome", "reason", "details", "storeResultAbortReason"].includes(key),
     );
+    const storeResultAbortReason = record["storeResultAbortReason"];
     if (
       typeof record["reason"] !== "string" ||
       !ABORT_REASON_SET.has(record["reason"]) ||
+      (storeResultAbortReason !== undefined &&
+        (typeof storeResultAbortReason !== "string" ||
+          !ABORT_REASON_SET.has(storeResultAbortReason) ||
+          storeResultAbortReason !== record["reason"] ||
+          record["details"] !== undefined)) ||
       surplus.length > 0
     ) {
       throw new DispatchTransportAbort("protocol-violation", {
@@ -908,6 +956,16 @@ export async function runPreparedDispatch(
     );
     assertAdapterLaunchResult(result);
     if (result.outcome === "aborted") {
+      if (result.storeResultAbortReason !== undefined) {
+        return reconcileStoreResultAbort(
+          request,
+          route,
+          adapter,
+          handle,
+          result.storeResultAbortReason,
+          deps,
+        );
+      }
       return adapterAbort(request, route, adapter, handle, result.reason, result.details, deps);
     }
     assertCompletionShape(result, route, handle);

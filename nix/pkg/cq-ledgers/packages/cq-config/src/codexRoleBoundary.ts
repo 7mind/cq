@@ -467,11 +467,22 @@ export type CodexBrokeredStoreResultOutcome =
 /** Structural child store_result failure observed at the trusted process boundary. */
 export class CodexBrokeredStoreResultError extends CodexRoleBoundaryError {
   readonly outcome: CodexBrokeredStoreResultOutcome;
+  readonly abortReason: DispatchAbortReason | undefined;
 
-  constructor(outcome: CodexBrokeredStoreResultOutcome, detail?: string) {
+  constructor(outcome: "typed-abort", detail: string, abortReason: DispatchAbortReason);
+  constructor(outcome: Exclude<CodexBrokeredStoreResultOutcome, "typed-abort">, detail?: string);
+  constructor(
+    outcome: CodexBrokeredStoreResultOutcome,
+    detail?: string,
+    abortReason?: DispatchAbortReason,
+  ) {
+    if ((outcome === "typed-abort") !== (abortReason !== undefined)) {
+      throw new Error("typed brokered store_result abort must carry exactly one abort reason");
+    }
     super(`brokered store_result outcome: ${outcome}${detail === undefined ? "" : ` (${detail})`}`);
     this.name = "CodexBrokeredStoreResultError";
     this.outcome = outcome;
+    this.abortReason = abortReason;
   }
 }
 
@@ -1217,7 +1228,11 @@ export function interceptCodexRoleBoundaryResult(
   }
   const abortedAcknowledgement = abortedDispatchAcknowledgement(finalMessage, expectedHandle);
   if (abortedAcknowledgement !== undefined) {
-    throw new CodexBrokeredStoreResultError("typed-abort", typedAbortDetail(abortedAcknowledgement));
+    throw new CodexBrokeredStoreResultError(
+      "typed-abort",
+      typedAbortDetail(abortedAcknowledgement),
+      abortedAcknowledgement.reason,
+    );
   }
   const verdict = classifyCodexFinalMessage(finalMessage, expectedHandle);
   if (verdict.verdict !== "handle-only") {
@@ -1231,6 +1246,7 @@ export function interceptCodexRoleBoundaryResult(
       throw new CodexBrokeredStoreResultError(
         "typed-abort",
         typedAbortDetail(observation.storeResultTypedAbort),
+        observation.storeResultTypedAbort.reason,
       );
     }
     throw new CodexBrokeredStoreResultError(
