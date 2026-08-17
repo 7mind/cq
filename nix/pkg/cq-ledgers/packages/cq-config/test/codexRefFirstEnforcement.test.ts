@@ -1789,7 +1789,17 @@ describe("T692 §8 — the body is materialised on one surface, and named for th
     expect(naming).toEqual(["fetch_dispatch_result response"]);
     // ...and within the fetch union, exactly the `consumed` variant.
     const variants = FETCH_DISPATCH_RESULT_SCHEMA.oneOf ?? [];
-    expect(variants.length).toBe(7);
+    expect(variants.map((variant) => variant.properties?.["state"]?.enum?.[0])).toEqual([
+      "prepared",
+      "gate-pending",
+      "gate-running",
+      "result-stored",
+      "consumed",
+      "aborted",
+      "terminal-envelope-expired",
+      "attestation-not-found",
+      "output-already-materialized",
+    ]);
     const bodyBearing = variants.filter((variant) =>
       Object.hasOwn(variant.properties ?? {}, "output"),
     );
