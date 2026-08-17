@@ -540,6 +540,9 @@ describe("dispatch-bound Git change capability", () => {
       reprepareOf: first.handle,
     });
     if (!second.accepted) throw new Error(second.detail);
+    if (second.prepared.parentGateCapability === undefined) {
+      throw new Error("Codex retry did not receive parent gate authority");
+    }
     expect(second.handle).toEqual({
       attestationId: first.handle.attestationId,
       generation: first.handle.generation + 1,
@@ -592,6 +595,16 @@ describe("dispatch-bound Git change capability", () => {
       capability.storeResult({
         resultCapability: second.prepared.resultCapability,
         output: output as unknown as DispatchJSONValue,
+      }),
+    ).resolves.toMatchObject({ state: "gate-pending" });
+    expect(gateRuns).toBe(0);
+    if (capability.finalizeParentGate === undefined) {
+      throw new Error("Codex retry lacks parent gate finalization");
+    }
+    await expect(
+      capability.finalizeParentGate({
+        ...second.handle,
+        parentGateCapability: second.prepared.parentGateCapability,
       }),
     ).resolves.toMatchObject({ state: "result-stored" });
     expect(gateRuns).toBe(1);
@@ -719,7 +732,11 @@ describe("dispatch-bound Git change capability", () => {
       expectedChild: secondChild,
       reprepareOf: first.handle,
     });
-    if (!second.accepted || second.prepared.gitChangeCapability === undefined) {
+    if (
+      !second.accepted ||
+      second.prepared.gitChangeCapability === undefined ||
+      second.prepared.parentGateCapability === undefined
+    ) {
       throw new Error("second worker did not receive a Git capability");
     }
     expect(second.prepared.generation).toBe(first.prepared.generation + 1);
@@ -781,6 +798,15 @@ describe("dispatch-bound Git change capability", () => {
       capability.storeResult({
         resultCapability: second.prepared.resultCapability,
         output: secondOutput as unknown as DispatchJSONValue,
+      }),
+    ).resolves.toMatchObject({ state: "gate-pending" });
+    if (capability.finalizeParentGate === undefined) {
+      throw new Error("restarted broker lacks parent gate finalization");
+    }
+    await expect(
+      capability.finalizeParentGate({
+        ...second.handle,
+        parentGateCapability: second.prepared.parentGateCapability,
       }),
     ).resolves.toMatchObject({ state: "result-stored" });
     await expect(

@@ -297,6 +297,38 @@ async function fixture(runner: SupervisedWorkerGateRunner = new GateDummy()) {
   return await fixtureWithDispatchBase(runner, "managed");
 }
 
+type GateFixture = Awaited<ReturnType<typeof fixture>>;
+
+function parentGateInput(subject: GateFixture) {
+  if (subject.prepared.parentGateCapability === undefined) {
+    throw new Error("worker dispatch did not receive parent gate authority");
+  }
+  return {
+    attestationId: subject.prepared.attestationId,
+    generation: subject.prepared.generation,
+    parentGateCapability: subject.prepared.parentGateCapability,
+  };
+}
+
+async function stage(subject: GateFixture) {
+  return await subject.capability.storeResult({
+    resultCapability: subject.prepared.resultCapability,
+    output: subject.output,
+  });
+}
+
+async function finalize(subject: GateFixture) {
+  if (subject.capability.finalizeParentGate === undefined) {
+    throw new Error("parent gate finalizer is unavailable");
+  }
+  return await subject.capability.finalizeParentGate(parentGateInput(subject));
+}
+
+async function stageAndFinalize(subject: GateFixture) {
+  expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+  return await finalize(subject);
+}
+
 afterAll(async () => {
   for (const root of roots) await fs.rm(root, { recursive: true, force: true });
 });
@@ -306,10 +338,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     const runner = new GateDummy();
     const subject = await fixture(runner);
     expect(
-      await subject.capability.storeResult({
-        resultCapability: subject.prepared.resultCapability,
-        output: subject.output,
-      }),
+      await stageAndFinalize(subject),
     ).toMatchObject({ state: "result-stored" });
     expect(runner.requests).toEqual([
       {
@@ -364,8 +393,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     });
   });
 
-  // expected-failure: tasks:T2144
-  test.failing(
+  test(
     "D340 runs the default supervised worker gate in the child-started ledger MCP process [Behavioral-Progression Blackbox-GoodCommunication]",
     async () => {
       const parentProcessId = process.pid;
@@ -377,9 +405,10 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
           resultCapability: subject.prepared.resultCapability,
           output: subject.output,
         }),
-      ).resolves.toMatchObject({ state: "result-stored" });
-
-      expect(runner.callerProcessIds).not.toContain(parentProcessId);
+      ).resolves.toMatchObject({ state: "gate-pending" });
+      expect(runner.callerProcessIds).toEqual([]);
+      await expect(finalize(subject)).resolves.toMatchObject({ state: "result-stored" });
+      expect(runner.callerProcessIds).toEqual([parentProcessId]);
     },
   );
 
@@ -387,10 +416,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     const subject = await fixtureWithDispatchBase(new GateDummy(), "descendant");
     expect(subject.dispatchBaseCommit).not.toBe(subject.managed.handle.baseCommit);
     await expect(
-      subject.capability.storeResult({
-        resultCapability: subject.prepared.resultCapability,
-        output: subject.output,
-      }),
+      stageAndFinalize(subject),
     ).resolves.toMatchObject({ state: "result-stored" });
     expect(subject.store.rows()).toMatchObject([
       {
@@ -423,12 +449,8 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
         outputTail: "controlled red gate",
       });
       const subject = await fixture(runner);
-      await expect(
-        subject.capability.storeResult({
-          resultCapability: subject.prepared.resultCapability,
-          output: subject.output,
-        }),
-      ).rejects.toThrow("supervised worker gate rejected");
+      expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+      await expect(finalize(subject)).rejects.toThrow("supervised worker gate rejected");
     }
   });
 
@@ -437,35 +459,23 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     const dirty = await fixture(dirtyRunner);
     await fs.writeFile(path.join(dirty.managed.handle.absolutePath, "untracked.txt"), "dirty\n");
     await expect(
-      dirty.capability.storeResult({
-        resultCapability: dirty.prepared.resultCapability,
-        output: dirty.output,
-      }),
-    ).rejects.toThrow("clean result tree");
+      stage(dirty),
+    ).resolves.toMatchObject({ state: "gate-pending" });
+    await expect(finalize(dirty)).rejects.toThrow("clean result tree");
     expect(dirtyRunner.requests).toHaveLength(0);
 
     const movingRunner = new MovingTipGateDummy();
     const moving = await fixture(movingRunner);
     await expect(
-      moving.capability.storeResult({
-        resultCapability: moving.prepared.resultCapability,
-        output: moving.output,
-      }),
-    ).rejects.toThrow("branch tip moved during the gate");
+      stage(moving),
+    ).resolves.toMatchObject({ state: "gate-pending" });
+    await expect(finalize(moving)).rejects.toThrow("branch tip moved during the gate");
     expect(movingRunner.requests).toHaveLength(1);
 
     const replayRunner = new GateDummy();
     const replay = await fixture(replayRunner);
-    await replay.capability.storeResult({
-      resultCapability: replay.prepared.resultCapability,
-      output: replay.output,
-    });
-    await expect(
-      replay.capability.storeResult({
-        resultCapability: replay.prepared.resultCapability,
-        output: replay.output,
-      }),
-    ).rejects.toThrow("live prepared dispatch");
+    await stageAndFinalize(replay);
+    await expect(finalize(replay)).resolves.toMatchObject({ state: "result-stored" });
     expect(replayRunner.requests).toHaveLength(1);
   });
 
@@ -476,12 +486,8 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     ]) {
       const runner = new ThrowingGateDummy(message);
       const subject = await fixture(runner);
-      await expect(
-        subject.capability.storeResult({
-          resultCapability: subject.prepared.resultCapability,
-          output: subject.output,
-        }),
-      ).rejects.toThrow(message);
+      expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+      await expect(finalize(subject)).rejects.toThrow(message);
       expect(runner.requests).toHaveLength(1);
     }
   });
@@ -600,20 +606,15 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
   test("serializes concurrent stores into one active gate attempt", async () => {
     const runner = new BlockingGateDummy();
     const subject = await fixture(runner);
-    const first = subject.capability.storeResult({
-      resultCapability: subject.prepared.resultCapability,
-      output: subject.output,
-    });
+    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+    const first = finalize(subject);
     await runner.started;
-    const second = subject.capability.storeResult({
-      resultCapability: subject.prepared.resultCapability,
-      output: subject.output,
-    });
+    const second = finalize(subject);
     await Promise.resolve();
     runner.release();
 
     await expect(first).resolves.toMatchObject({ state: "result-stored" });
-    await expect(second).rejects.toThrow("live prepared dispatch");
+    await expect(second).resolves.toMatchObject({ state: "result-stored" });
     expect(runner.requests).toHaveLength(1);
   });
 
@@ -626,10 +627,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       new Date(current).toISOString(),
     );
     await expect(
-      subject.capability.storeResult({
-        resultCapability: subject.prepared.resultCapability,
-        output: subject.output,
-      }),
+      stageAndFinalize(subject),
     ).resolves.toMatchObject({ state: "result-stored" });
     expect(runner.requests).toHaveLength(1);
   });
@@ -690,17 +688,13 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     let firstStore: Promise<unknown> | undefined;
     let secondStore: Promise<unknown> | undefined;
     try {
-      firstStore = first.capability.storeResult({
-        resultCapability: first.prepared.resultCapability,
-        output: first.output,
-      });
+      expect(await stage(first)).toMatchObject({ state: "gate-pending" });
+      expect(await stage(second)).toMatchObject({ state: "gate-pending" });
+      firstStore = finalize(first);
       while (!(await Bun.file(firstStarted).exists())) await Bun.sleep(5);
-      secondStore = second.capability.storeResult({
-        resultCapability: second.prepared.resultCapability,
-        output: second.output,
-      });
+      secondStore = finalize(second);
       await Bun.sleep(200);
-      expect(second.store.rows()).toMatchObject([{ state: "prepared" }]);
+      expect(second.store.rows()).toMatchObject([{ state: "gate-running" }]);
       await fs.writeFile(releaseFirst, "release\n");
       await expect(Promise.all([firstStore, secondStore])).resolves.toMatchObject([
         { state: "result-stored" },

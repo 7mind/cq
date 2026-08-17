@@ -12,6 +12,7 @@ import type {
   MaterializedDispatchInput,
   NativeChildIdentity,
   NativeCompletionProof,
+  ParentGateCapability,
   PrepareDispatchOutcome,
   ResultCapability,
   StoreDispatchResultOutcome,
@@ -40,6 +41,10 @@ export interface PrepareDispatchToolInput {
 export interface StoreResultToolInput {
   readonly resultCapability: ResultCapability;
   readonly output: DispatchJSONValue;
+}
+
+export interface FinalizeParentGateInput extends DispatchHandle {
+  readonly parentGateCapability: ParentGateCapability;
 }
 
 export interface FetchDispatchInputToolInput extends DispatchHandle {
@@ -83,6 +88,7 @@ export interface DispatchCapability {
   prepare(input: PrepareDispatchToolInput): Promise<PrepareDispatchOutcome>;
   fetchInput(input: FetchDispatchInputToolInput): Promise<MaterializedDispatchInput>;
   storeResult(input: StoreResultToolInput): Promise<StoreDispatchResultOutcome>;
+  finalizeParentGate?(input: FinalizeParentGateInput): Promise<StoreDispatchResultOutcome>;
   confirmCompletion(
     input: ConfirmDispatchCompletionToolInput,
   ): Promise<ConfirmDispatchCompletionOutcome>;

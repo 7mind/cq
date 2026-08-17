@@ -185,6 +185,7 @@ export interface ParsedArgs {
   toolProfile: LedgerToolProfileName;
   promptSurface: PromptSurface | undefined;
   promptRoot: string | undefined;
+  parentGateFinalize: boolean;
 }
 
 /**
@@ -225,9 +226,12 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   let toolProfile: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE;
   let promptSurface: PromptSurface | undefined;
   let promptRoot: string | undefined;
+  let parentGateFinalize = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--cwd") {
+    if (a === "--parent-gate-finalize") {
+      parentGateFinalize = true;
+    } else if (a === "--cwd") {
       i += 1;
       const v = argv[i];
       if (v === undefined) {
@@ -291,7 +295,92 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   ledgerToolNamesForProfile(toolProfile);
   // Ledger root precedence: --cwd > $LEDGER_ROOT > process CWD; a relative
   // value resolves against the CWD. (See file header for the rationale.)
-  return { cwd: resolveRoot(cwd), http, toolPrefix, toolProfile, promptSurface, promptRoot };
+  return {
+    cwd: resolveRoot(cwd),
+    http,
+    toolPrefix,
+    toolProfile,
+    promptSurface,
+    promptRoot,
+    parentGateFinalize,
+  };
+}
+
+interface ParentGateFinalizeStdinRequest {
+  readonly attestationId: string;
+  readonly generation: number;
+  readonly parentGateCapability: { readonly scope: "parent-gate"; readonly token: string };
+}
+
+const PARENT_GATE_REQUEST_MAX_BYTES = 16_384;
+
+export async function readParentGateFinalizeRequest(
+  input: NodeJS.ReadableStream,
+): Promise<ParentGateFinalizeStdinRequest> {
+  const text = await new Promise<string>((resolveInput, rejectInput) => {
+    let buffered = Buffer.alloc(0);
+    const onData = (chunk: Buffer | string): void => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      if (buffered.length + bytes.length > PARENT_GATE_REQUEST_MAX_BYTES) {
+        cleanup();
+        rejectInput(
+          new Error(
+            `ledger-mcp: parent gate request exceeds ${String(PARENT_GATE_REQUEST_MAX_BYTES)} bytes before completion`,
+          ),
+        );
+        return;
+      }
+      buffered = Buffer.concat([buffered, bytes]);
+    };
+    const onEnd = (): void => {
+      cleanup();
+      resolveInput(buffered.toString("utf8"));
+    };
+    const onError = (error: Error): void => {
+      cleanup();
+      rejectInput(error);
+    };
+    const cleanup = (): void => {
+      input.off("data", onData);
+      input.off("end", onEnd);
+      input.off("error", onError);
+      input.pause();
+    };
+    input.on("data", onData);
+    input.once("end", onEnd);
+    input.once("error", onError);
+  });
+  if (
+    Buffer.byteLength(text, "utf8") > PARENT_GATE_REQUEST_MAX_BYTES ||
+    !text.endsWith("\n") ||
+    text.indexOf("\n") !== text.length - 1
+  ) {
+    throw new Error("ledger-mcp: parent gate request must be one bounded newline-terminated JSON value");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("ledger-mcp: parent gate request must be valid JSON");
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("ledger-mcp: parent gate request must be an object");
+  }
+  const request = parsed as Record<string, unknown>;
+  const capability = request["parentGateCapability"] as Record<string, unknown> | undefined;
+  if (
+    Object.keys(request).sort().join(",") !==
+      "attestationId,generation,parentGateCapability" ||
+    typeof request["attestationId"] !== "string" ||
+    !Number.isInteger(request["generation"]) ||
+    capability === undefined ||
+    Object.keys(capability).sort().join(",") !== "scope,token" ||
+    capability["scope"] !== "parent-gate" ||
+    typeof capability["token"] !== "string"
+  ) {
+    throw new Error("ledger-mcp: malformed parent gate request");
+  }
+  return request as unknown as ParentGateFinalizeStdinRequest;
 }
 
 /** Top-level CLI usage text (mirrors the file-header JSDoc; printed by --help/-h). */
@@ -1022,7 +1111,15 @@ export async function main(argv: readonly string[]): Promise<void> {
     return;
   }
 
-  const { cwd, http, toolPrefix, toolProfile, promptSurface, promptRoot } = parseArgs(argv);
+  const {
+    cwd,
+    http,
+    toolPrefix,
+    toolProfile,
+    promptSurface,
+    promptRoot,
+    parentGateFinalize,
+  } = parseArgs(argv);
   const displayName = path.basename(cwd);
   const resolvedPromptSurface = resolvePromptSurface({
     promptSurface,
@@ -1048,6 +1145,26 @@ export async function main(argv: readonly string[]): Promise<void> {
   });
   const dispatchCapability =
     dispatchRuntime.kind === "available" ? dispatchRuntime.capability : undefined;
+
+  if (parentGateFinalize) {
+    try {
+      if (http !== null || dispatchCapability?.finalizeParentGate === undefined) {
+        throw new Error("ledger-mcp: parent gate finalization requires a local durable dispatch runtime");
+      }
+      const outcome = await dispatchCapability.finalizeParentGate(
+        await readParentGateFinalizeRequest(process.stdin),
+      );
+      if (outcome.state !== "result-stored") {
+        throw new Error(`ledger-mcp: parent gate finalized as ${outcome.state}`);
+      }
+      process.stdout.write(`${JSON.stringify(outcome.result)}\n`);
+    } finally {
+      resolved.backup?.close();
+      await dispatchRuntime.close();
+      await store.dispose();
+    }
+    return;
+  }
 
   if (http !== null) {
     const server = serveHttp(

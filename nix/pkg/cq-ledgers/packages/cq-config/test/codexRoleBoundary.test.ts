@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -12,6 +12,7 @@ import {
   DOMAIN_LEDGER_TOOL_NAMES,
   ROLE_TOOL_CAPABILITY_MATRIX,
   createCodexRoleBoundaryPlan,
+  executeCodexParentGateFinalizer,
   executeCodexRoleBoundary,
   interceptCodexRoleBoundaryResult,
   type CodexRoleBoundaryPlan,
@@ -36,6 +37,10 @@ const GIT_CHANGE_CAPABILITY = {
 const GIT_CONFLICT_CAPABILITY = {
   scope: "git-conflict",
   token: "cq_conflict_0123456789abcdefghijklmnopqrstuvwxyz",
+} as const;
+const PARENT_GATE_CAPABILITY = {
+  scope: "parent-gate",
+  token: "cq_parent_gate_0123456789abcdefghijklmnopqrstuvwxyz",
 } as const;
 const BOUNDARY_CONTEXTS = {
   cwd: "/worktrees/task",
@@ -95,6 +100,7 @@ describe("T1330 Codex role process boundary", () => {
       handle: HANDLE,
       inputCapability: INPUT_CAPABILITY,
       gitChangeCapability: GIT_CHANGE_CAPABILITY,
+      parentGateCapability: PARENT_GATE_CAPABILITY,
       ...BOUNDARY_CONTEXTS,
       model: "frontier-model",
       reasoningEffort: "high",
@@ -109,6 +115,100 @@ describe("T1330 Codex role process boundary", () => {
       gitChangeCapability: GIT_CHANGE_CAPABILITY,
     });
     expect(plan.argv.join(" ")).not.toContain(GIT_CHANGE_CAPABILITY.token);
+    expect(plan.stdin).not.toContain(PARENT_GATE_CAPABILITY.token);
+    expect(plan.argv.join(" ")).not.toContain(PARENT_GATE_CAPABILITY.token);
+    expect(JSON.stringify(plan)).not.toContain(PARENT_GATE_CAPABILITY.token);
+  });
+
+  test("parent finalization drains a successful process and force-kills one that ignores SIGTERM [Behavioral-Active Blackbox Good-Communication]", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cq-parent-gate-finalizer-"));
+    const success = join(root, "success");
+    const hanging = join(root, "hanging");
+    const pidFile = join(root, "pid");
+    writeFileSync(
+      success,
+      [
+        "#!/usr/bin/env node",
+        "process.stdin.resume();",
+        "process.stdin.on('end',()=>process.stdout.write(JSON.stringify({state:'result-stored',attestationId:'att_0123456789abcdefghijklmnopqrstuvwxyz',generation:3,storedAt:'2026-08-17T12:00:00.000Z',outputDigest:'a'.repeat(64)})));",
+      ].join("\n"),
+    );
+    writeFileSync(
+      hanging,
+      [
+        "#!/usr/bin/env node",
+        "const fs=require('node:fs');",
+        `fs.writeFileSync(${JSON.stringify(pidFile)},String(process.pid));`,
+        "process.on('SIGTERM',()=>setTimeout(()=>process.exit(0),3000));",
+        "process.stdin.resume();",
+        "setInterval(()=>{},1000);",
+      ].join("\n"),
+    );
+    chmodSync(success, 0o700);
+    chmodSync(hanging, 0o700);
+    const request = {
+      ledgerCwd: root,
+      promptRoot: root,
+      handle: HANDLE,
+      parentGateCapability: PARENT_GATE_CAPABILITY,
+    } as const;
+    try {
+      await executeCodexParentGateFinalizer({ ...request, command: success, timeoutMs: 2_000 });
+      const startedAt = Date.now();
+      await expect(
+        executeCodexParentGateFinalizer({ ...request, command: hanging, timeoutMs: 250 }),
+      ).rejects.toThrow("parent gate exceeded its 250 ms window");
+      expect(Date.now() - startedAt).toBeLessThan(2_500);
+      const pid = Number.parseInt(await Bun.file(pidFile).text(), 10);
+      expect(await readProcessIdentity(pid)).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the outer boundary watchdog cancels and drains a child independently of its work deadline [Behavioral-Active Blackbox Good-Communication]", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cq-codex-outer-boundary-"));
+    const pidFile = join(root, "pid");
+    const base = createCodexRoleBoundaryPlan({
+      roleId: "implement-worker",
+      roleInstructions: "implement the task",
+      handle: HANDLE,
+      inputCapability: INPUT_CAPABILITY,
+      gitChangeCapability: GIT_CHANGE_CAPABILITY,
+      parentGateCapability: PARENT_GATE_CAPABILITY,
+      resultCapability: RESULT_CAPABILITY,
+      cwd: process.cwd(),
+      ledgerCwd: root,
+      model: "frontier-model",
+      reasoningEffort: "high",
+      sandboxMode: "workspace-write",
+      timeoutMs: 5_000,
+      promptRoot: root,
+      ledgerCommand: "cq-not-launched",
+      codexExecutable: process.execPath,
+    });
+    const plan: CodexRoleBoundaryPlan = {
+      ...base,
+      argv: [
+        process.execPath,
+        "-e",
+        `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000)`,
+      ],
+      stdin: "",
+      timeoutMs: 250,
+      childWorkTimeoutMs: 5_000,
+    };
+    const provider = createStrictInMemoryWorksetEffectAdmissionProvider();
+    try {
+      await expect(
+        executeCodexRoleBoundary(plan, { provider, targetRef: "tasks:T2144" }),
+      ).rejects.toThrow("wrapper received outer-timeout");
+      const pid = Number.parseInt(await Bun.file(pidFile).text(), 10);
+      expect(await readProcessIdentity(pid)).toBeNull();
+      expect(await provider.activeAdmissionCount()).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("delivers the resolver continuation capability only in the private stdin envelope", () => {
@@ -134,8 +234,7 @@ describe("T1330 Codex role process boundary", () => {
     expect(plan.argv.join(" ")).not.toContain(GIT_CONFLICT_CAPABILITY.token);
   });
 
-  // expected-failure: defects:D343
-  test.failing(
+  test(
     "D343 gives implement-worker result staging and terminal completion distinct bounded windows [Behavioral-Progression Blackbox-Atomic]",
     () => {
       const childWorkTimeoutMs = 120_000;
@@ -638,6 +737,7 @@ describe("T1330 Codex role process boundary", () => {
       argv: [process.execPath, "-e", script],
       stdin: "",
       timeoutMs: 30_000,
+      childWorkTimeoutMs: 30_000,
       expectedHandle: HANDLE,
       ledgerMcp: {
         command: "cq-not-launched",
@@ -649,7 +749,7 @@ describe("T1330 Codex role process boundary", () => {
       },
       effectivePreturn: {
         kind: "cq-codex-effective-preturn",
-        version: 1,
+        version: 2,
         roleId: "implement-worker",
         cwd: root,
         ledgerCwd: root,
@@ -663,6 +763,12 @@ describe("T1330 Codex role process boundary", () => {
         sandboxMode: "danger-full-access",
         skillsPolicy: "role-instructions",
         multiAgent: false,
+        childWorkTimeoutMs: 30_000,
+        storeResultSubmissionBudgetMs: 600_000,
+        ledgerToolTimeoutSec: 600,
+        postStoreSubmissionFinalizationMs: 300_000,
+        outerBoundaryTimeoutMs: 930_000,
+        parentGateWindowMs: 5_620_000,
       },
       interceptStdout: true,
     };
@@ -723,6 +829,7 @@ describe("T1330 Codex role process boundary", () => {
       ],
       stdin: "",
       timeoutMs: 30_000,
+      childWorkTimeoutMs: 30_000,
       expectedHandle: HANDLE,
       ledgerMcp: {
         command: "cq-not-launched",
@@ -734,7 +841,7 @@ describe("T1330 Codex role process boundary", () => {
       },
       effectivePreturn: {
         kind: "cq-codex-effective-preturn",
-        version: 1,
+        version: 2,
         roleId: "implement-worker",
         cwd: root,
         ledgerCwd: root,
@@ -748,6 +855,12 @@ describe("T1330 Codex role process boundary", () => {
         sandboxMode: "danger-full-access",
         skillsPolicy: "role-instructions",
         multiAgent: false,
+        childWorkTimeoutMs: 30_000,
+        storeResultSubmissionBudgetMs: 600_000,
+        ledgerToolTimeoutSec: 600,
+        postStoreSubmissionFinalizationMs: 300_000,
+        outerBoundaryTimeoutMs: 930_000,
+        parentGateWindowMs: 5_620_000,
       },
       interceptStdout: true,
     };

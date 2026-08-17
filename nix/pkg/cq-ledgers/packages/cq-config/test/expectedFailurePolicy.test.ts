@@ -257,14 +257,11 @@ test("the scanner rejects a computed expected-failure title", () => {
   ).toThrow(`${file}:3: expected-failure title must be solely a quoted string literal`);
 });
 
-test("the committed inventory agrees bidirectionally with exactly nine live markers", () => {
+test("the committed inventory agrees bidirectionally with exactly six live markers", () => {
   const sources = readExpectedFailureSources(WORKSPACE_ROOT, REPO_ROOT);
   const markers = scanExpectedFailures(sources, EXPECTED_FAILURE_INVENTORY);
-  expect(markers).toHaveLength(9);
+  expect(markers).toHaveLength(6);
   expect(markers.map(({ ledgerRef }) => ledgerRef)).toEqual([
-    "tasks:T2144",
-    "defects:D343",
-    "tasks:T2144",
     ...Array(6).fill("tasks:T826"),
   ]);
 });

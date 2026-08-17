@@ -78,6 +78,8 @@ import {
   authorizeDispatchGitConflict,
   authorizeDispatchGitEffect,
   confirmDispatchCompletion,
+  claimParentGate,
+  completeParentGate,
   fetchDispatchResult,
   fetchDispatchInput,
   gitEffectBindingForResultCapability,
@@ -99,6 +101,8 @@ import {
   type AttestationSweepReport,
   type ConfirmDispatchCompletionOutcome,
   type ConfirmDispatchCompletionRequest,
+  type ClaimParentGateOutcome,
+  type CompleteParentGateRequest,
   type DispatchNow,
   type DispatchRandomBytes,
   type FetchDispatchResultRequest,
@@ -106,7 +110,9 @@ import {
   type DispatchGitEffectBinding,
   type PrepareDispatchOutcome,
   type PrepareDispatchRequest,
+  type ParentGateFinalizeRequest,
   type StoreDispatchResultOutcome,
+  type StoredDispatchResultView,
 } from "./dispatchAttestation.js";
 import { LEDGER_BACKENDS } from "./types.js";
 import type {
@@ -870,6 +876,26 @@ export async function confirmDispatchCompletionOn(
 ): Promise<ConfirmDispatchCompletionOutcome> {
   return backend.transact(handleLoadScope(request), (store) =>
     confirmDispatchCompletion(request, { store, now: deps.now }),
+  );
+}
+
+export async function claimParentGateOn(
+  backend: AttestationBackend,
+  request: ParentGateFinalizeRequest,
+  deps: AttestationBackendDeps,
+): Promise<ClaimParentGateOutcome> {
+  return backend.transact(handleLoadScope(request), (store) =>
+    claimParentGate(request, { store, now: deps.now }),
+  );
+}
+
+export async function completeParentGateOn(
+  backend: AttestationBackend,
+  request: CompleteParentGateRequest,
+  deps: AttestationBackendDeps,
+): Promise<StoredDispatchResultView> {
+  return backend.transact(handleLoadScope(request), (store) =>
+    completeParentGate(request, { store, now: deps.now }),
   );
 }
 

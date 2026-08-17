@@ -9,6 +9,7 @@ import {
   CODEX_PRETURN_OBSERVATION_PATH_ENV,
   CodexRoleBoundaryError,
   createCodexRoleBoundaryPlan,
+  executeCodexParentGateFinalizer,
   executeCodexRoleBoundary,
   formatCodexRoleBoundaryDiagnostic,
   loadConfig,
@@ -120,6 +121,19 @@ export async function main(): Promise<void> {
       ? await executeCodexRoleBoundary(plan, worksetEffect)
       : await executeCodexRoleBoundary(plan, correlationId, undefined, worksetEffect);
   const handle = "observation" in execution ? execution.handle : execution;
+  if (roleId === "implement-worker") {
+    if (invocation.parentGateCapability === undefined) {
+      throw new Error("codex-role-dispatch: implement-worker requires parent gate authority");
+    }
+    await executeCodexParentGateFinalizer({
+      command: process.env[LEDGER_COMMAND_ENV] ?? "cq",
+      ledgerCwd: invocation.ledgerCwd,
+      promptRoot,
+      handle,
+      parentGateCapability: invocation.parentGateCapability,
+      timeoutMs: plan.effectivePreturn.parentGateWindowMs,
+    });
+  }
   if (observationPath !== undefined && "observation" in execution) {
     await appendFile(
       observationPath,

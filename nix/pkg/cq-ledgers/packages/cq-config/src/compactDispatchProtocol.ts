@@ -50,6 +50,12 @@ export interface ResultCapability {
   readonly token: string;
 }
 
+/** Parent-only authority to finalize a staged Codex implement-worker result. */
+export interface ParentGateCapability {
+  readonly scope: "parent-gate";
+  readonly token: string;
+}
+
 /** The child-facing capability authorizes exactly one assembled-input retrieval. */
 export interface InputCapability {
   readonly scope: "fetch-input";
@@ -90,6 +96,7 @@ export interface DispatchPrepared extends DispatchHandle, DispatchDeadlines {
   readonly promptProvenance: DispatchPromptProvenance;
   readonly inputCapability: InputCapability;
   readonly resultCapability: ResultCapability;
+  readonly parentGateCapability?: ParentGateCapability;
   readonly gitChangeCapability?: GitChangeCapability;
   readonly gitConflictCapability?: GitConflictCapability;
 }
@@ -148,6 +155,8 @@ export interface AbortDispatch extends DispatchHandle {
 
 export const DISPATCH_LIFECYCLE_STATES = [
   "prepared",
+  "gate-pending",
+  "gate-running",
   "result-stored",
   "consumed",
   "aborted",
@@ -166,6 +175,12 @@ export type FetchDispatchResultState = (typeof FETCH_DISPATCH_RESULT_STATES)[num
 
 export interface PreparedDispatchResult extends DispatchHandle, DispatchDeadlines {
   readonly state: "prepared";
+  readonly promptProvenance: DispatchPromptProvenance;
+}
+
+export interface GatePendingDispatchResult extends DispatchHandle {
+  readonly state: "gate-pending" | "gate-running";
+  readonly submittedAt: string;
   readonly promptProvenance: DispatchPromptProvenance;
 }
 
@@ -212,6 +227,7 @@ export interface OutputAlreadyMaterializedDispatchResult extends DispatchHandle 
  */
 export type FetchDispatchResult =
   | PreparedDispatchResult
+  | GatePendingDispatchResult
   | ResultStoredDispatchResult
   | ConsumedDispatchResult
   | AbortedDispatchResult
@@ -240,6 +256,7 @@ const SHA256_PATTERN = "^[0-9a-f]{64}$";
 const ATTESTATION_ID_PATTERN = "^att_[A-Za-z0-9_-]{32,}$";
 const INPUT_CAPABILITY_PATTERN = "^cq_input_[A-Za-z0-9_-]{43,}$";
 const RESULT_CAPABILITY_PATTERN = "^cq_result_[A-Za-z0-9_-]{43,}$";
+const PARENT_GATE_CAPABILITY_PATTERN = "^cq_parent_gate_[A-Za-z0-9_-]{43,}$";
 const GIT_CHANGE_CAPABILITY_PATTERN = "^cq_git_[A-Za-z0-9_-]{43,}$";
 const GIT_CONFLICT_CAPABILITY_PATTERN = "^cq_conflict_[A-Za-z0-9_-]{43,}$";
 
@@ -273,6 +290,16 @@ const resultCapabilitySchema = {
   properties: {
     scope: { type: "string", enum: ["store-result"] },
     token: { type: "string", pattern: RESULT_CAPABILITY_PATTERN },
+  },
+  required: ["scope", "token"],
+  additionalProperties: false,
+} as const;
+
+const parentGateCapabilitySchema = {
+  type: "object",
+  properties: {
+    scope: { type: "string", enum: ["parent-gate"] },
+    token: { type: "string", pattern: PARENT_GATE_CAPABILITY_PATTERN },
   },
   required: ["scope", "token"],
   additionalProperties: false,
@@ -405,6 +432,7 @@ export const DISPATCH_PREPARED_SCHEMA: JSONSchema = {
     promptProvenance: promptProvenanceSchema,
     inputCapability: inputCapabilitySchema,
     resultCapability: resultCapabilitySchema,
+    parentGateCapability: parentGateCapabilitySchema,
     gitChangeCapability: gitChangeCapabilitySchema,
     gitConflictCapability: gitConflictCapabilitySchema,
   },
@@ -528,6 +556,22 @@ export const FETCH_DISPATCH_RESULT_SCHEMA: JSONSchema = {
         promptProvenance: promptProvenanceSchema,
       },
       ["responseStoreNow", "childCancelAt", "launchDeadline", "promptProvenance"],
+    ),
+    fetchVariant(
+      "gate-pending",
+      {
+        submittedAt: { type: "string", pattern: DISPATCH_UTC_TIMESTAMP_PATTERN },
+        promptProvenance: promptProvenanceSchema,
+      },
+      ["submittedAt", "promptProvenance"],
+    ),
+    fetchVariant(
+      "gate-running",
+      {
+        submittedAt: { type: "string", pattern: DISPATCH_UTC_TIMESTAMP_PATTERN },
+        promptProvenance: promptProvenanceSchema,
+      },
+      ["submittedAt", "promptProvenance"],
     ),
     fetchVariant(
       "result-stored",

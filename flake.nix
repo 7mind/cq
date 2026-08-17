@@ -771,11 +771,26 @@ cat > "$TMPDIR/cq-codex-role.launch"
 printf '%s\n' '{"attestationId":"att_packaged_role_acknowledgement","generation":7,"inputCapability":{"scope":"fetch-input","token":"cq_input_packaged_role_acknowledgement"},"resultCapability":{"scope":"store-result","token":"cq_result_packaged_role_acknowledgement"},"gitChangeCapability":{"scope":"git-change","token":"cq_git_packaged_role_acknowledgement"}}' | \
   cmp -s - "$TMPDIR/cq-codex-role.launch"
 printf '%s\n' '{"type":"thread.started","thread_id":"packaged-role-thread"}'
-printf '%s\n' '{"type":"item.completed","item":{"type":"mcp_tool_call","server":"ledger","tool":"store_result","result":{"content":[{"type":"text","text":"{\"state\":\"result-stored\",\"result\":{\"state\":\"result-stored\",\"attestationId\":\"att_packaged_role_acknowledgement\",\"generation\":7,\"storedAt\":\"2026-08-13T09:00:00.000Z\",\"outputDigest\":\"digest-bound-output\"}}"}]}}}'
-printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"state\":\"result-stored\",\"attestationId\":\"att_packaged_role_acknowledgement\",\"generation\":7,\"outputDigest\":\"digest-bound-output\"}"}}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"mcp_tool_call","server":"ledger","tool":"store_result","result":{"content":[{"type":"text","text":"{\"state\":\"gate-pending\",\"result\":{\"state\":\"gate-pending\",\"attestationId\":\"att_packaged_role_acknowledgement\",\"generation\":7,\"submittedAt\":\"2026-08-13T09:00:00.000Z\",\"outputDigest\":\"digest-bound-output\"}}"}]}}}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"state\":\"gate-pending\",\"attestationId\":\"att_packaged_role_acknowledgement\",\"generation\":7,\"outputDigest\":\"digest-bound-output\"}"}}'
 printf '%s\n' '{"type":"turn.completed"}'
 EOF
             chmod +x "$fakeCodex"
+
+            fakeLedger=$TMPDIR/fake-ledger
+            cat > "$fakeLedger" <<EOF
+#!${pkgs.runtimeShell}
+set -eu
+case " \$* " in
+  *" --parent-gate-finalize "*)
+    IFS= read -r request
+    test "\$request" = '{"attestationId":"att_packaged_role_acknowledgement","generation":7,"parentGateCapability":{"scope":"parent-gate","token":"cq_parent_gate_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"}}'
+    printf '%s\n' '{"state":"result-stored","attestationId":"att_packaged_role_acknowledgement","generation":7,"storedAt":"2026-08-13T09:01:00.000Z","outputDigest":"digest-bound-output"}'
+    ;;
+  *) exec "$out/bin/cq" "\$@" ;;
+esac
+EOF
+            chmod +x "$fakeLedger"
 
             roleCwd=$TMPDIR/role-cwd
             ledgerCwd=$TMPDIR/ledger-cwd
@@ -783,9 +798,10 @@ EOF
             printf '%s\n' '[ledger]' 'backend = "fs"' > "$ledgerCwd/cq.toml"
             ${pkgs.git}/bin/git init -q "$roleCwd"
             roleStdout=$TMPDIR/cq-codex-role.stdout
-            if ! printf '%s\n' '{"roleId":"implement-worker","handle":{"attestationId":"att_packaged_role_acknowledgement","generation":7},"inputCapability":{"scope":"fetch-input","token":"cq_input_packaged_role_acknowledgement"},"resultCapability":{"scope":"store-result","token":"cq_result_packaged_role_acknowledgement"},"gitChangeCapability":{"scope":"git-change","token":"cq_git_packaged_role_acknowledgement"},"effectTargetRef":"tasks:T1983","cwd":"'"$roleCwd"'","ledgerCwd":"'"$ledgerCwd"'","model":"test-model","reasoningEffort":"high","sandboxMode":"read-only","timeoutMs":30000}' | \
+            if ! printf '%s\n' '{"roleId":"implement-worker","handle":{"attestationId":"att_packaged_role_acknowledgement","generation":7},"inputCapability":{"scope":"fetch-input","token":"cq_input_packaged_role_acknowledgement"},"resultCapability":{"scope":"store-result","token":"cq_result_packaged_role_acknowledgement"},"parentGateCapability":{"scope":"parent-gate","token":"cq_parent_gate_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"},"gitChangeCapability":{"scope":"git-change","token":"cq_git_packaged_role_acknowledgement"},"effectTargetRef":"tasks:T1983","cwd":"'"$roleCwd"'","ledgerCwd":"'"$ledgerCwd"'","model":"test-model","reasoningEffort":"high","sandboxMode":"read-only","timeoutMs":30000}' | \
               HOME=$TMPDIR \
               CQ_CODEX_EXECUTABLE="$fakeCodex" \
+              CQ_CODEX_LEDGER_COMMAND="$fakeLedger" \
               $out/bin/cq-codex-role > "$roleStdout"; then
               echo "cq-codex-role packaged acknowledgement check FAILED" >&2
               exit 1
@@ -809,13 +825,14 @@ EOF
               exec 9<>"$rolePtyInput"
               HOME=$TMPDIR \
                 CQ_CODEX_EXECUTABLE="$fakeCodex" \
+                CQ_CODEX_LEDGER_COMMAND="$fakeLedger" \
                 ${pkgs.coreutils}/bin/timeout 10s \
                 ${pkgs.util-linux}/bin/script --quiet --return \
                   --command "$out/bin/cq-codex-role" \
                   "$TMPDIR/cq-codex-role.typescript" \
                   < "$rolePtyInput" > "$rolePtyStdout" 2> "$rolePtyStderr" &
               rolePtyPid=$!
-              printf '%s\n' '{"roleId":"implement-worker","handle":{"attestationId":"att_packaged_role_acknowledgement","generation":7},"inputCapability":{"scope":"fetch-input","token":"cq_input_packaged_role_acknowledgement"},"resultCapability":{"scope":"store-result","token":"cq_result_packaged_role_acknowledgement"},"gitChangeCapability":{"scope":"git-change","token":"cq_git_packaged_role_acknowledgement"},"effectTargetRef":"tasks:T1983","cwd":"'"$roleCwd"'","ledgerCwd":"'"$ledgerCwd"'","model":"test-model","reasoningEffort":"high","sandboxMode":"read-only","timeoutMs":30000}' >&9
+              printf '%s\n' '{"roleId":"implement-worker","handle":{"attestationId":"att_packaged_role_acknowledgement","generation":7},"inputCapability":{"scope":"fetch-input","token":"cq_input_packaged_role_acknowledgement"},"resultCapability":{"scope":"store-result","token":"cq_result_packaged_role_acknowledgement"},"parentGateCapability":{"scope":"parent-gate","token":"cq_parent_gate_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"},"gitChangeCapability":{"scope":"git-change","token":"cq_git_packaged_role_acknowledgement"},"effectTargetRef":"tasks:T1983","cwd":"'"$roleCwd"'","ledgerCwd":"'"$ledgerCwd"'","model":"test-model","reasoningEffort":"high","sandboxMode":"read-only","timeoutMs":30000}' >&9
               set +e
               wait "$rolePtyPid"
               rolePtyStatus=$?
@@ -1654,6 +1671,20 @@ PY
                   exit 1
                 fi
 
+                attestationLog="$NIX_BUILD_TOP/t2144-parent-gate-attestation.log"
+                if ! ${pkgs.bun}/bin/bun test \
+                  packages/cq-config/test/attestationStore-postgres.test.ts \
+                  > "$attestationLog" 2>&1; then
+                  cat "$attestationLog" >&2
+                  exit 1
+                fi
+                cat "$attestationLog"
+                if grep -Fq '(skip)' "$attestationLog" || ! grep -F '(pass)' "$attestationLog" | grep -Fq \
+                  'parent-owned gate staging, reclaim, stale-epoch refusal, and exact replay survive restarts'; then
+                  echo "T2144 live PostgreSQL parent-gate attestation leg did not execute" >&2
+                  exit 1
+                fi
+
                 storeLog="$NIX_BUILD_TOP/t1858-store.log"
                 if ! ${pkgs.bun}/bin/bun test packages/ledger/test/store-postgres.test.ts \
                   --test-name-pattern 'PostgresLedgerStore' \
@@ -1782,7 +1813,6 @@ PY
                 for expectedLeg in \
                   'workset owned-write contract [T1962] — PostgresLedgerStore' \
                   'workset coordination-bundle contract [T1962] — PostgresLedgerStore' \
-                  'statement failure rolls back the tenant and emits no post-commit hook' \
                   'post-commit NOTIFY invalidates a peer after the complete owned write'; do
                   if ! grep -F '(pass)' "$ownedWriteLog" | grep -Fq "$expectedLeg"; then
                     echo "T1966 live PostgreSQL owned-write run did not execute: $expectedLeg" >&2

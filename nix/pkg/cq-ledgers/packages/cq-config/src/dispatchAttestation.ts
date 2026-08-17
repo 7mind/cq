@@ -68,6 +68,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { DISPATCHED_ROLE_SIDECARS } from "./promptCatalogStore.js";
 import { IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS } from "./schemas/implement-reviewer.js";
+import { implementWorkerStagedOutputSchema } from "./schemas/implement-worker.js";
 import { validateAgainstSchema, type ValidationError } from "./validation.js";
 import { LEDGER_BACKENDS, type LedgerBackend } from "./types.js";
 import { DispatchOverlayError, type DispatchOverlayRegistry } from "./dispatchOverlays.js";
@@ -100,6 +101,7 @@ import {
   type GitConflictCapability,
   type MaterializedDispatchInput,
   type NativeCompletionProof,
+  type ParentGateCapability,
   type ResultCapability,
   type StoreDispatchResult,
 } from "./compactDispatchProtocol.js";
@@ -108,6 +110,7 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
 const ATTESTATION_ID_RE = /^att_[A-Za-z0-9_-]{32,}$/;
 const INPUT_CAPABILITY_RE = /^cq_input_[A-Za-z0-9_-]{43,}$/;
 const RESULT_CAPABILITY_RE = /^cq_result_[A-Za-z0-9_-]{43,}$/;
+const PARENT_GATE_CAPABILITY_RE = /^cq_parent_gate_[A-Za-z0-9_-]{43,}$/;
 const GIT_CHANGE_CAPABILITY_RE = /^cq_git_[A-Za-z0-9_-]{43,}$/;
 const GIT_CONFLICT_CAPABILITY_RE = /^cq_conflict_[A-Za-z0-9_-]{43,}$/;
 const PROJECT_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -384,6 +387,9 @@ export const ATTESTATION_ID_ENTROPY_BYTES = 24;
 /** Entropy behind a minted result capability token. */
 export const RESULT_CAPABILITY_ENTROPY_BYTES = 32;
 
+/** Entropy behind the parent-only supervised-gate capability. */
+export const PARENT_GATE_CAPABILITY_ENTROPY_BYTES = 32;
+
 /** Entropy behind a minted assembled-input capability token. */
 export const INPUT_CAPABILITY_ENTROPY_BYTES = 32;
 
@@ -601,6 +607,16 @@ export function resultCapabilityHash(token: string): string {
   return sha256Utf8(token);
 }
 
+export function parentGateCapabilityHash(token: string): string {
+  if (typeof token !== "string" || !PARENT_GATE_CAPABILITY_RE.test(token)) {
+    throw new AttestationContractError(
+      "parentGateCapability.token",
+      "expected a minted parent gate capability token",
+    );
+  }
+  return sha256Utf8(token);
+}
+
 /** The stored hash of an assembled-input capability. The raw token is never persisted. */
 export function inputCapabilityHash(token: string): string {
   if (typeof token !== "string" || !INPUT_CAPABILITY_RE.test(token)) {
@@ -645,6 +661,11 @@ export function resultCapabilityMatches(token: string, storedHash: string): bool
   if (typeof storedHash !== "string" || !SHA256_HEX.test(storedHash)) {
     return false;
   }
+  return timingSafeEqual(hexBytes(sha256Utf8(token)), hexBytes(storedHash));
+}
+
+export function parentGateCapabilityMatches(token: string, storedHash: string): boolean {
+  if (typeof storedHash !== "string" || !SHA256_HEX.test(storedHash)) return false;
   return timingSafeEqual(hexBytes(sha256Utf8(token)), hexBytes(storedHash));
 }
 
@@ -743,6 +764,25 @@ export function mintResultCapability(randomBytes: DispatchRandomBytes): ResultCa
   return Object.freeze({ scope: "store-result" as const, token });
 }
 
+export function mintParentGateCapability(
+  randomBytes: DispatchRandomBytes,
+): ParentGateCapability {
+  const token = `cq_parent_gate_${base64url(
+    drawEntropy(
+      randomBytes,
+      PARENT_GATE_CAPABILITY_ENTROPY_BYTES,
+      "parentGateCapability.token",
+    ),
+  )}`;
+  if (!PARENT_GATE_CAPABILITY_RE.test(token)) {
+    throw new AttestationContractError(
+      "parentGateCapability.token",
+      `minted a malformed capability "${token}"`,
+    );
+  }
+  return Object.freeze({ scope: "parent-gate" as const, token });
+}
+
 /** Mint a fresh one-shot input capability, distinct from result submission. */
 export function mintInputCapability(randomBytes: DispatchRandomBytes): InputCapability {
   const token = `cq_input_${base64url(
@@ -790,6 +830,8 @@ export function mintGitConflictCapability(randomBytes: DispatchRandomBytes): Git
 /** The four states a LIVE attestation envelope can hold. */
 export const ATTESTATION_ENVELOPE_STATES = [
   "prepared",
+  "gate-pending",
+  "gate-running",
   "result-stored",
   "consumed",
   "aborted",
@@ -916,11 +958,16 @@ export interface AttestationEnvelope {
   readonly inputMaterializedAt?: string;
   /** The HASH of the minted capability. The token itself is never stored. */
   readonly resultCapabilityHash: string;
+  /** Parent-only finalization authority; present only for supervised Codex workers. */
+  readonly parentGateCapabilityHash?: string;
   readonly gitChangeCapabilityHash?: string;
   readonly gitConflictCapabilityHash?: string;
   readonly gitEffectBinding?: DispatchGitEffectBinding;
   readonly createdAt: string;
   readonly storedAt?: string;
+  readonly gateSubmittedAt?: string;
+  readonly gateClaimedAt?: string;
+  readonly gateEpoch?: number;
   readonly output?: DispatchJSONValue;
   readonly outputDigest?: string;
   readonly consumedAt?: string;
@@ -986,6 +1033,7 @@ export const TOMBSTONE_FORBIDDEN_FIELDS = [
   "output",
   "outputDigest",
   "resultCapabilityHash",
+  "parentGateCapabilityHash",
   "gitChangeCapabilityHash",
   "gitConflictCapabilityHash",
   "gitEffectBinding",
@@ -1002,6 +1050,9 @@ export const TOMBSTONE_FORBIDDEN_FIELDS = [
   "expectedChild",
   "state",
   "storedAt",
+  "gateSubmittedAt",
+  "gateClaimedAt",
+  "gateEpoch",
   "consumedAt",
   "outputMaterializedAt",
   "abortedAt",
@@ -1459,6 +1510,12 @@ export function prepareDispatch(
 
   executed.push("mint-result-capability");
   const resultCapability = mintResultCapability(deps.randomBytes);
+  const parentGateCapability =
+    validation.roleId === "implement-worker" &&
+    validation.surface === "codex" &&
+    gitEffectBinding !== undefined
+      ? mintParentGateCapability(deps.randomBytes)
+      : undefined;
   const gitChangeCapability =
     gitEffectBinding === undefined || validation.roleId !== "implement-worker"
       ? undefined
@@ -1512,6 +1569,9 @@ export function prepareDispatch(
       expectedChild,
       inputCapabilityHash: inputCapabilityHash(inputCapability.token),
       resultCapabilityHash: resultCapabilityHash(resultCapability.token),
+      ...(parentGateCapability === undefined
+        ? {}
+        : { parentGateCapabilityHash: parentGateCapabilityHash(parentGateCapability.token) }),
       ...(gitChangeCapability === undefined
         ? {}
         : { gitChangeCapabilityHash: gitChangeCapabilityHash(gitChangeCapability.token) }),
@@ -1531,6 +1591,7 @@ export function prepareDispatch(
       promptProvenance,
       inputCapability,
       resultCapability,
+      ...(parentGateCapability === undefined ? {} : { parentGateCapability }),
       ...(gitChangeCapability === undefined ? {} : { gitChangeCapability }),
       ...(gitConflictCapability === undefined ? {} : { gitConflictCapability }),
     }),
@@ -2002,6 +2063,7 @@ function writeAbort(
  * never consume: `consumed` is not in this union.
  */
 export type StoreDispatchResultOutcome =
+  | { readonly state: "gate-pending"; readonly result: GatePendingResultView }
   | { readonly state: "result-stored"; readonly result: StoredDispatchResultView }
   | { readonly state: "aborted"; readonly result: AbortedDispatchResult };
 
@@ -2011,6 +2073,15 @@ export interface StoredDispatchResultView {
   readonly attestationId: string;
   readonly generation: number;
   readonly storedAt: string;
+  readonly outputDigest: string;
+}
+
+/** Child-visible acknowledgement that its validated result is durably staged. */
+export interface GatePendingResultView {
+  readonly state: "gate-pending";
+  readonly attestationId: string;
+  readonly generation: number;
+  readonly submittedAt: string;
   readonly outputDigest: string;
 }
 
@@ -2088,6 +2159,23 @@ export function supervisedWorkerGateContextForResultCapability(
       "supervised gate requires a live prepared dispatch with materialized input",
     );
   }
+  const context = supervisedWorkerGateContextOf(row);
+  if (context === undefined) {
+    throw new AttestationContractError("row", "expected a supervised Codex worker binding");
+  }
+  return context;
+}
+
+function supervisedWorkerGateContextOf(
+  row: AttestationEnvelope,
+): AuthorizedSupervisedWorkerGateContext | undefined {
+  if (
+    row.gitEffectBinding === undefined ||
+    row.promptProvenance.roleId !== "implement-worker" ||
+    row.promptProvenance.surface !== "codex"
+  ) {
+    return undefined;
+  }
   if (row.input === null || typeof row.input !== "object" || Array.isArray(row.input)) {
     throw new AttestationContractError("row.input", "implement-worker input must be an object");
   }
@@ -2110,13 +2198,156 @@ export function supervisedWorkerGateContextForResultCapability(
     );
   }
   return Object.freeze({
-    ...authorization,
+    ...row.gitEffectBinding,
+    attestationId: row.attestationId,
+    generation: row.generation,
     roleId: "implement-worker" as const,
     surface: "codex" as const,
+    childCancelAt: row.deadlines.childCancelAt,
     promptProvenance: row.promptProvenance,
     dispatchBaseCommit,
     startingCommit,
   });
+}
+
+export interface ParentGateFinalizeRequest extends DispatchHandle {
+  readonly parentGateCapability: ParentGateCapability;
+}
+
+export interface ClaimedParentGate {
+  readonly state: "gate-running";
+  readonly gateEpoch: number;
+  readonly output: DispatchJSONValue;
+  readonly context: AuthorizedSupervisedWorkerGateContext;
+}
+
+export type ClaimParentGateOutcome =
+  | ClaimedParentGate
+  | { readonly state: "result-stored"; readonly result: StoredDispatchResultView };
+
+export interface CompleteParentGateRequest extends ParentGateFinalizeRequest {
+  readonly gateEpoch: number;
+  readonly output: DispatchJSONValue;
+}
+
+function requireParentGateRow(
+  request: ParentGateFinalizeRequest,
+  deps: DispatchServiceDeps,
+): AttestationEnvelope {
+  if (
+    request.parentGateCapability?.scope !== "parent-gate" ||
+    typeof request.parentGateCapability.token !== "string" ||
+    !PARENT_GATE_CAPABILITY_RE.test(request.parentGateCapability.token)
+  ) {
+    throw new DispatchAuthorizationError(STORE_RESULT, "malformed parent gate capability");
+  }
+  const row = requireRow(assertDispatchHandle(request), deps);
+  if (isAttestationTombstone(row)) {
+    throw new DispatchStateConflictError(
+      STORE_RESULT,
+      "terminal-envelope-expired",
+      `attestation "${row.attestationId}" is terminal and its envelope has expired`,
+    );
+  }
+  if (
+    row.parentGateCapabilityHash === undefined ||
+    !parentGateCapabilityMatches(
+      request.parentGateCapability.token,
+      row.parentGateCapabilityHash,
+    )
+  ) {
+    throw new DispatchAuthorizationError(STORE_RESULT, "unknown parent gate capability");
+  }
+  return row;
+}
+
+/** Claim or reclaim the durable parent-owned gate under the worktree effect lock. */
+export function claimParentGate(
+  request: ParentGateFinalizeRequest,
+  deps: DispatchServiceDeps,
+): ClaimParentGateOutcome {
+  const row = requireParentGateRow(request, deps);
+  if (row.state === "result-stored") {
+    return Object.freeze({ state: "result-stored" as const, result: storedViewOf(row) });
+  }
+  if (row.state !== "gate-pending" && row.state !== "gate-running") {
+    throw new DispatchStateConflictError(
+      STORE_RESULT,
+      row.state,
+      `attestation "${row.attestationId}" has no staged parent gate`,
+    );
+  }
+  if (row.output === undefined || row.gateSubmittedAt === undefined) {
+    throw new AttestationContractError("row", "a staged parent gate must carry output and time");
+  }
+  const context = supervisedWorkerGateContextOf(row);
+  if (context === undefined) {
+    throw new AttestationContractError("row", "a staged parent gate must bind a Codex worker");
+  }
+  const { at } = readNow(deps);
+  const gateEpoch = (row.gateEpoch ?? 0) + 1;
+  const next: AttestationEnvelope = Object.freeze({
+    ...row,
+    state: "gate-running" as const,
+    gateEpoch,
+    gateClaimedAt: at,
+  });
+  deps.store.replace(row, next);
+  return Object.freeze({
+    state: "gate-running" as const,
+    gateEpoch,
+    output: row.output,
+    context,
+  });
+}
+
+/** Publish runner-owned gate evidence only for the exact claimed epoch. */
+export function completeParentGate(
+  request: CompleteParentGateRequest,
+  deps: DispatchServiceDeps,
+): StoredDispatchResultView {
+  const row = requireParentGateRow(request, deps);
+  const outputDigest = dispatchPayloadDigest(request.output);
+  if (row.state === "result-stored") {
+    if (row.outputDigest === outputDigest) return storedViewOf(row);
+    throw new DispatchStateConflictError(
+      STORE_RESULT,
+      row.state,
+      `attestation "${row.attestationId}" already finalized a different result`,
+    );
+  }
+  if (row.state !== "gate-running") {
+    throw new DispatchStateConflictError(
+      STORE_RESULT,
+      row.state,
+      `attestation "${row.attestationId}" has no claimed parent gate`,
+    );
+  }
+  if (row.gateEpoch !== request.gateEpoch) {
+    throw new DispatchStateConflictError(
+      STORE_RESULT,
+      row.state,
+      `parent gate epoch ${String(request.gateEpoch)} lost to ${String(row.gateEpoch)}`,
+    );
+  }
+  const sidecar = DISPATCHED_ROLE_SIDECARS[row.promptProvenance.roleId];
+  const validation = validateAgainstSchema(sidecar.outputSchema, request.output);
+  if (!validation.ok) {
+    throw new AttestationContractError(
+      "output",
+      `parent gate produced invalid output: ${describeErrors(validation.errors)}`,
+    );
+  }
+  const { at } = readNow(deps);
+  const next: AttestationEnvelope = Object.freeze({
+    ...row,
+    state: "result-stored" as const,
+    storedAt: at,
+    output: request.output,
+    outputDigest,
+  });
+  deps.store.replace(row, next);
+  return storedViewOf(next);
 }
 
 /** Trusted pre-lock lookup used to serialize abort with a bound Git effect. */
@@ -2175,6 +2406,16 @@ export function storeDispatchResult(
   }
 
   const outputDigest = dispatchPayloadDigest(submission.output);
+  if (row.state === "gate-pending" || row.state === "gate-running") {
+    if (row.outputDigest === outputDigest) {
+      return Object.freeze({ state: "gate-pending" as const, result: gatePendingViewOf(row) });
+    }
+    throw new DispatchStateConflictError(
+      STORE_RESULT,
+      row.state,
+      `a different result is already staged for attestation "${row.attestationId}"`,
+    );
+  }
   if (row.state === "result-stored") {
     if (row.outputDigest === outputDigest) {
       return Object.freeze({ state: "result-stored" as const, result: storedViewOf(row) });
@@ -2224,7 +2465,12 @@ export function storeDispatchResult(
     );
   }
   const sidecar = DISPATCHED_ROLE_SIDECARS[row.promptProvenance.roleId];
-  const result = validateAgainstSchema(sidecar.outputSchema, submission.output);
+  const result = validateAgainstSchema(
+    row.parentGateCapabilityHash === undefined
+      ? sidecar.outputSchema
+      : implementWorkerStagedOutputSchema,
+    submission.output,
+  );
   if (!result.ok) {
     const details: InvalidOutputAbortDetails = {
       roleId: row.promptProvenance.roleId,
@@ -2238,15 +2484,40 @@ export function storeDispatchResult(
     });
   }
 
-  const next: AttestationEnvelope = Object.freeze({
-    ...row,
-    state: "result-stored" as const,
-    storedAt: at,
-    output: submission.output,
-    outputDigest,
-  });
+  const next: AttestationEnvelope = Object.freeze(
+    row.parentGateCapabilityHash === undefined
+      ? {
+          ...row,
+          state: "result-stored" as const,
+          storedAt: at,
+          output: submission.output,
+          outputDigest,
+        }
+      : {
+          ...row,
+          state: "gate-pending" as const,
+          gateSubmittedAt: at,
+          output: submission.output,
+          outputDigest,
+        },
+  );
   deps.store.replace(row, next);
-  return Object.freeze({ state: "result-stored" as const, result: storedViewOf(next) });
+  return next.state === "gate-pending"
+    ? Object.freeze({ state: "gate-pending" as const, result: gatePendingViewOf(next) })
+    : Object.freeze({ state: "result-stored" as const, result: storedViewOf(next) });
+}
+
+function gatePendingViewOf(row: AttestationEnvelope): GatePendingResultView {
+  if (row.gateSubmittedAt === undefined || row.outputDigest === undefined) {
+    throw new AttestationContractError("row", "expected a gate-pending envelope");
+  }
+  return Object.freeze({
+    state: "gate-pending" as const,
+    attestationId: row.attestationId,
+    generation: row.generation,
+    submittedAt: row.gateSubmittedAt,
+    outputDigest: row.outputDigest,
+  });
 }
 
 function storedViewOf(row: AttestationEnvelope): StoredDispatchResultView {
@@ -2404,6 +2675,13 @@ export function confirmDispatchCompletion(
         deps,
       ),
     });
+  }
+  if (row.state === "gate-pending" || row.state === "gate-running") {
+    throw new DispatchStateConflictError(
+      CONFIRM,
+      row.state,
+      `attestation "${row.attestationId}" still requires parent gate finalization`,
+    );
   }
   if (row.output === undefined || row.outputDigest === undefined) {
     throw new AttestationContractError("row", "a result-stored envelope must carry its output");
@@ -2654,6 +2932,17 @@ export function fetchDispatchResult(
         state: "prepared" as const,
         ...resolved,
         ...row.deadlines,
+        promptProvenance: row.promptProvenance,
+      });
+    case "gate-pending":
+    case "gate-running":
+      if (row.gateSubmittedAt === undefined) {
+        throw new AttestationContractError("row", "a staged gate must carry gateSubmittedAt");
+      }
+      return Object.freeze({
+        state: row.state,
+        ...resolved,
+        submittedAt: row.gateSubmittedAt,
         promptProvenance: row.promptProvenance,
       });
     case "result-stored":

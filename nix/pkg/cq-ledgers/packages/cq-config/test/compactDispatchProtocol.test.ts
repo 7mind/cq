@@ -287,6 +287,18 @@ describe("typed fetch_dispatch_result outcomes", () => {
         promptProvenance: PROMPT_PROVENANCE,
       },
       {
+        state: "gate-pending",
+        ...HANDLE,
+        submittedAt: "2026-07-25T09:29:20.000Z",
+        promptProvenance: PROMPT_PROVENANCE,
+      },
+      {
+        state: "gate-running",
+        ...HANDLE,
+        submittedAt: "2026-07-25T09:29:20.000Z",
+        promptProvenance: PROMPT_PROVENANCE,
+      },
+      {
         state: "result-stored",
         ...HANDLE,
         storedAt: "2026-07-25T09:29:30.000Z",
@@ -324,7 +336,7 @@ describe("typed fetch_dispatch_result outcomes", () => {
       },
     ];
     expect(variants.map((variant) => variant.state)).toEqual([...FETCH_DISPATCH_RESULT_STATES]);
-    expect(DISPATCH_LIFECYCLE_STATES).toHaveLength(6);
+    expect(DISPATCH_LIFECYCLE_STATES).toHaveLength(8);
     for (const variant of variants) {
       accepts(FETCH_DISPATCH_RESULT_SCHEMA, variant);
     }

@@ -12,6 +12,8 @@ import {
   AttestationBackendUnsupportedError,
   DispatchStateConflictError,
   abortDispatchOn,
+  claimParentGateOn,
+  completeParentGateOn,
   authorizeDispatchGitConflictOn,
   authorizeDispatchGitEffectOn,
   assembleDispatchInput,
@@ -653,15 +655,13 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     },
     fetchInput: (input) => fetchDispatchInputOn(options.backend, { namespace, ...input }, { now }),
     storeResult: async (input) => {
-      const submittedAt = now();
       const gateContext = await resolveSupervisedWorkerGateContextOn(options.backend, input);
       const binding =
         gateContext ?? (await resolveDispatchGitEffectBindingOn(options.backend, input));
       const store = async () => {
-        let output = input.output;
+        const output = input.output;
         // An unbound dispatch has no trusted parent that could have minted this evidence.
         if (
-          gateContext === undefined &&
           output !== null &&
           typeof output === "object" &&
           !Array.isArray(output) &&
@@ -687,26 +687,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               },
             );
           }
-          if (gateContext !== undefined) {
-            const liveGateContext = await resolveSupervisedWorkerGateContextOn(
-              options.backend,
-              input,
-            );
-            if (liveGateContext === undefined) {
-              throw new Error("supervised worker gate context disappeared under the effect lock");
-            }
-            output = await superviseImplementWorkerGate(
-              { context: liveGateContext, output },
-              {
-                ...(options.worktreeStateDir === undefined
-                  ? {}
-                  : { stateDir: options.worktreeStateDir }),
-                ...(options.supervisedWorkerGateRunner === undefined
-                  ? {}
-                  : { runner: options.supervisedWorkerGateRunner }),
-              },
-            );
-          }
         } else if (binding?.roleId === "implement-conflict-resolver") {
           const evidence = conflictResultEvidence(output);
           await validateGitConflictContinuationResultEvidence(
@@ -718,7 +698,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         return await storeDispatchResultOn(
           options.backend,
           { ...input, output },
-          { now: gateContext === undefined ? now : () => submittedAt },
+          { now },
         );
       };
       const outcome =
@@ -730,9 +710,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                 ...(options.worktreeStateDir === undefined
                   ? {}
                   : { stateDir: options.worktreeStateDir }),
-                ...(gateContext === undefined
-                  ? {}
-                  : { effectLockTimeoutMs: SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS }),
+                effectLockTimeoutMs: SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
               },
               store,
             );
@@ -740,6 +718,62 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         rememberTerminal(outcome.result, outcome.result.abortedAt);
       }
       return outcome;
+    },
+    finalizeParentGate: async (input) => {
+      const binding = await resolveDispatchGitEffectBindingForHandleOn(options.backend, input);
+      if (binding === undefined) {
+        throw new Error("parent gate finalization requires a managed worktree binding");
+      }
+      return await withManagedWorktreeEffectLock(
+        binding,
+        {
+          ...(options.worktreeStateDir === undefined
+            ? {}
+            : { stateDir: options.worktreeStateDir }),
+          effectLockTimeoutMs: SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
+        },
+        async () => {
+          const claimed = await claimParentGateOn(options.backend, input, { now });
+          if (claimed.state === "result-stored") {
+            return Object.freeze({ state: "result-stored" as const, result: claimed.result });
+          }
+          let output: DispatchJSONValue;
+          try {
+            output = await superviseImplementWorkerGate(
+              { context: claimed.context, output: claimed.output },
+              {
+                ...(options.worktreeStateDir === undefined
+                  ? {}
+                  : { stateDir: options.worktreeStateDir }),
+                ...(options.supervisedWorkerGateRunner === undefined
+                  ? {}
+                  : { runner: options.supervisedWorkerGateRunner }),
+              },
+            );
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            await abortDispatchOn(
+              options.backend,
+              {
+                namespace,
+                attestationId: input.attestationId,
+                generation: input.generation,
+                actor: "trusted-parent",
+                reason: "parent-lost",
+                details: { phase: "supervised-gate", message: message.slice(0, 1024) },
+              },
+              { now },
+            );
+            throw error;
+          }
+          const result = await completeParentGateOn(
+            options.backend,
+            { ...input, gateEpoch: claimed.gateEpoch, output },
+            { now },
+          );
+          return Object.freeze({ state: "result-stored" as const, result });
+        },
+      );
     },
     confirmCompletion: async (input) => {
       const outcome = await confirmDispatchCompletionOn(
@@ -910,7 +944,13 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           }
           const owner = `${row.attestationId}#${row.generation}`;
           if (row.state === "prepared") liveDispatches.push(owner);
-          if (row.state === "result-stored") liveLeases.push(owner);
+          if (
+            row.state === "gate-pending" ||
+            row.state === "gate-running" ||
+            row.state === "result-stored"
+          ) {
+            liveLeases.push(owner);
+          }
         }
         return { liveDispatches, liveLeases };
       }),

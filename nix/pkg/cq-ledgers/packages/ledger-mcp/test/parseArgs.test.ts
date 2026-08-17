@@ -7,8 +7,9 @@
  */
 
 import { describe, it, expect, afterEach } from "bun:test";
+import { PassThrough } from "node:stream";
 import * as path from "node:path";
-import { parseArgs } from "../src/main.js";
+import { parseArgs, readParentGateFinalizeRequest } from "../src/main.js";
 
 const savedEnv = process.env["LEDGER_ROOT"];
 afterEach(() => {
@@ -137,5 +138,32 @@ describe("parseArgs prompt surface selection (T655)", () => {
   it("rejects missing prompt selector values", () => {
     expect(() => parseArgs(["--prompt-surface"])).toThrow("--prompt-surface requires a value");
     expect(() => parseArgs(["--prompt-root"])).toThrow("--prompt-root requires a value");
+  });
+});
+
+describe("parent gate finalizer framing", () => {
+  it("accepts one exact bounded newline-terminated request", async () => {
+    const input = new PassThrough();
+    const reading = readParentGateFinalizeRequest(input);
+    input.end(
+      `${JSON.stringify({
+        attestationId: `att_${"a".repeat(32)}`,
+        generation: 1,
+        parentGateCapability: {
+          scope: "parent-gate",
+          token: `cq_parent_gate_${"b".repeat(43)}`,
+        },
+      })}\n`,
+    );
+    await expect(reading).resolves.toMatchObject({ generation: 1 });
+  });
+
+  it("rejects incomplete, multiple, and oversized input before parsing authority", async () => {
+    for (const bytes of ["{}", "{}\n{}\n", `${"x".repeat(16_385)}\n`]) {
+      const input = new PassThrough();
+      const reading = readParentGateFinalizeRequest(input);
+      input.end(bytes);
+      await expect(reading).rejects.toThrow(/parent gate request/);
+    }
   });
 });

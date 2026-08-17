@@ -61,6 +61,7 @@ import {
   attestationNamespacesEqual,
   attestationRowDigest,
   collapseAttestationEnvelope,
+  claimParentGate,
   confirmDispatchCompletion,
   defaultDispatchRandomBytes,
   dispatchInputDigest,
@@ -176,6 +177,23 @@ const OUTPUT: DispatchJSONValue = {
   checkSummary: "3621 pass / 142 skip / 0 fail",
   summary: "Contract, port and strict dummy landed.",
   gateDurationMs: 1,
+  baseVerification: {
+    status: "verified",
+    relation: "descendant",
+    baseCommit: "a".repeat(40),
+    headCommit: "b".repeat(40),
+  },
+};
+
+const STAGED_OUTPUT: DispatchJSONValue = {
+  taskId: "T685",
+  status: "pass",
+  resultCommit: "0be2cc034dd490d484bdac0dfad5efb9be52c068",
+  branch: "implement/T685",
+  actualWorktreePath: "/tmp/wt-actual",
+  filesTouched: ["packages/cq-config/src/dispatchAttestation.ts"],
+  checkSummary: "focused checks pass",
+  summary: "Implementation ready for the parent-owned gate.",
   baseVerification: {
     status: "verified",
     relation: "descendant",
@@ -1855,12 +1873,29 @@ describe("identical retries are idempotent, conflicting retries stay conflicts",
 });
 
 describe("fetch distinguishes every lifecycle state", () => {
-  test("all six states are produced and each validates against T682's schema", () => {
+  test("all eight states are produced and each validates against T682's schema", () => {
     const observed = new Map<string, unknown>();
 
     const preparedH = harness();
     const p1 = prepared(preparedH);
     observed.set("prepared", fetchDispatchResult(fetchRequest(p1), preparedH.deps));
+
+    const gateH = harness();
+    const gate = prepared(gateH, {
+      surface: "codex",
+      gitEffectBinding: GIT_EFFECT_BINDING,
+    });
+    fetchDispatchInput(fetchInputRequest(gate), gateH.deps);
+    storeDispatchResult(submission(gate.resultCapability, STAGED_OUTPUT), gateH.deps);
+    observed.set("gate-pending", fetchDispatchResult(fetchRequest(gate), gateH.deps));
+    if (gate.parentGateCapability === undefined) {
+      throw new Error("missing parent gate capability");
+    }
+    claimParentGate(
+      { ...handleOf(gate), parentGateCapability: gate.parentGateCapability },
+      gateH.deps,
+    );
+    observed.set("gate-running", fetchDispatchResult(fetchRequest(gate), gateH.deps));
 
     const storedH = harness();
     const p2 = prepared(storedH);
@@ -2743,6 +2778,8 @@ describe("what T685 defers", () => {
   test("the envelope states are exactly the four non-lookup lifecycle states", () => {
     expect(ATTESTATION_ENVELOPE_STATES).toEqual([
       "prepared",
+      "gate-pending",
+      "gate-running",
       "result-stored",
       "consumed",
       "aborted",

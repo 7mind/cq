@@ -187,8 +187,7 @@ describe("T1628 Codex boundary diagnostics", () => {
     ).toEqual(HANDLE);
   });
 
-  // expected-failure: tasks:T2144
-  test.failing(
+  test(
     "D340 classifies brokered store_result omission, rejection, and typed abort at the parent boundary [Behavioral-Progression Blackbox-Atomic]",
     () => {
       const typedAbort = JSON.stringify({

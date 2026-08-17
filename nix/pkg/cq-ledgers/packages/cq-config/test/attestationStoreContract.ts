@@ -53,6 +53,7 @@ import {
   DispatchStateConflictError,
   FakeDispatchClock,
   IDEMPOTENCY_HORIZON_MS,
+  IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   LAUNCH_DEADLINE_MS,
   RESPONSE_STORE_LEAD_MS,
   TERMINAL_ENVELOPE_RETENTION_MS,
@@ -61,7 +62,9 @@ import {
   TRUSTED_DISPATCH_ACTORS,
   abortDispatchOn,
   attestationRowDigest,
+  claimParentGateOn,
   confirmDispatchCompletionOn,
+  completeParentGateOn,
   defaultDispatchRandomBytes,
   dispatchOperationScope,
   dispatchPayloadDigest,
@@ -81,6 +84,7 @@ import {
   type AttestationRow,
   type ConfirmDispatchCompletionRequest,
   type DispatchHandle,
+  type DispatchGitEffectBinding,
   type DispatchJSONValue,
   type DispatchPrepared,
   type FetchDispatchResultRequest,
@@ -205,6 +209,70 @@ const OUTPUT: DispatchJSONValue = {
     headCommit: "b".repeat(40),
   },
 };
+
+const PARENT_GATE_BINDING: DispatchGitEffectBinding = Object.freeze({
+  taskId: "T720",
+  handleToken: "server-held-worktree-handle",
+  handleFingerprint: "d".repeat(64),
+  repositoryRoot: "/repo",
+  repositoryId: "e".repeat(64),
+  commonDir: "/repo/.git",
+  worktreePath: "/repo/.claude/worktrees/T720",
+  branch: "implement/T720",
+  ref: "refs/heads/implement/T720",
+  baseCommit: "8a8f94424a3eda1c2cb3aa1b0ccd47d5eca4ea2e",
+});
+
+const PARENT_GATE_STAGED_OUTPUT: DispatchJSONValue = {
+  taskId: "T720",
+  status: "pass",
+  resultCommit: "b".repeat(40),
+  branch: "implement/T720",
+  actualWorktreePath: "/repo/.claude/worktrees/T720",
+  filesTouched: ["packages/cq-config/src/dispatchAttestation.ts"],
+  checkSummary: "focused checks pass",
+  summary: "Ready for the parent-owned gate.",
+  baseVerification: {
+    status: "verified",
+    relation: "descendant",
+    baseCommit: "8a8f94424a3eda1c2cb3aa1b0ccd47d5eca4ea2e",
+    headCommit: "b".repeat(40),
+  },
+};
+
+function parentGateFinalOutput(p: DispatchPrepared): DispatchJSONValue {
+  return {
+    ...(PARENT_GATE_STAGED_OUTPUT as Readonly<Record<string, DispatchJSONValue>>),
+    supervisedGateEvidence: {
+      kind: "cq-supervised-gate-evidence",
+      version: 1,
+      attestationId: p.attestationId,
+      generation: p.generation,
+      roleId: "implement-worker",
+      roleVersion: p.promptProvenance.version,
+      surface: "codex",
+      promptDigest: p.promptProvenance.promptDigest,
+      catalogHash: p.promptProvenance.catalogHash,
+      inputDigest: p.promptProvenance.inputDigest,
+      taskId: "T720",
+      worktreePath: "/repo/.claude/worktrees/T720",
+      branch: "implement/T720",
+      baseCommit: "8a8f94424a3eda1c2cb3aa1b0ccd47d5eca4ea2e",
+      startingCommit: "8a8f94424a3eda1c2cb3aa1b0ccd47d5eca4ea2e",
+      resultCommit: "b".repeat(40),
+      clean: true,
+      command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+      gateExitCode: 0,
+      passCount: 1,
+      failCount: 0,
+      gateDurationMs: 1,
+      capturedAt: T0,
+      filesTouchedDigest: "f".repeat(64),
+      gitReceiptsDigest: "0".repeat(64),
+      mutationTableDigest: "1".repeat(64),
+    },
+  };
+}
 
 const OTHER_OUTPUT: DispatchJSONValue = {
   ...(OUTPUT as object),
@@ -444,6 +512,93 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
         expect(fetched.output).toEqual(OUTPUT);
         expect(fetched.promptProvenance.inputDigest).toBe(p.promptProvenance.inputDigest);
         expect(fetched.nativeCompletion.childId).toBe(CHILD.childId);
+      }));
+
+    test("parent-owned gate staging, reclaim, stale-epoch refusal, and exact replay survive restarts", () =>
+      withCase(async ({ fixture, driver, clock }) => {
+        const p = await driver.prepare({
+          surface: "codex",
+          gitEffectBinding: PARENT_GATE_BINDING,
+        });
+        if (p.parentGateCapability === undefined) {
+          throw new Error("Codex worker prepare omitted parent gate authority");
+        }
+        expect(await fixture.dump()).not.toContain(p.parentGateCapability.token);
+        await driver.fetchInput(p);
+        expect((await driver.store(p.resultCapability, PARENT_GATE_STAGED_OUTPUT)).state).toBe(
+          "gate-pending",
+        );
+        const beforeForgery = (await fixture.rows()).map(attestationRowDigest);
+        await expect(
+          claimParentGateOn(
+            driver.backend,
+            {
+              ...handleOf(p),
+              parentGateCapability: {
+                scope: "parent-gate",
+                token: `cq_parent_gate_${"Z".repeat(43)}`,
+              },
+            },
+            { now: clock.now },
+          ),
+        ).rejects.toThrow(DispatchAuthorizationError);
+        expect((await fixture.rows()).map(attestationRowDigest)).toEqual(beforeForgery);
+
+        const afterStage = new AttestationDriver(await fixture.restart(), clock);
+        expect((await afterStage.fetch(handleOf(p))).state).toBe("gate-pending");
+        const first = await claimParentGateOn(
+          afterStage.backend,
+          { ...handleOf(p), parentGateCapability: p.parentGateCapability },
+          { now: clock.now },
+        );
+        if (first.state !== "gate-running") throw new Error("expected first gate claim");
+
+        const afterCrash = new AttestationDriver(await fixture.restart(), clock);
+        expect((await afterCrash.fetch(handleOf(p))).state).toBe("gate-running");
+        const reclaimed = await claimParentGateOn(
+          afterCrash.backend,
+          { ...handleOf(p), parentGateCapability: p.parentGateCapability },
+          { now: clock.now },
+        );
+        if (reclaimed.state !== "gate-running") throw new Error("expected reclaimed gate");
+        expect(reclaimed.gateEpoch).toBe(first.gateEpoch + 1);
+
+        const output = parentGateFinalOutput(p);
+        await expect(
+          completeParentGateOn(
+            afterCrash.backend,
+            {
+              ...handleOf(p),
+              parentGateCapability: p.parentGateCapability,
+              gateEpoch: first.gateEpoch,
+              output,
+            },
+            { now: clock.now },
+          ),
+        ).rejects.toThrow(DispatchStateConflictError);
+        const completed = await completeParentGateOn(
+          afterCrash.backend,
+          {
+            ...handleOf(p),
+            parentGateCapability: p.parentGateCapability,
+            gateEpoch: reclaimed.gateEpoch,
+            output,
+          },
+          { now: clock.now },
+        );
+        const replayed = await completeParentGateOn(
+          afterCrash.backend,
+          {
+            ...handleOf(p),
+            parentGateCapability: p.parentGateCapability,
+            gateEpoch: reclaimed.gateEpoch,
+            output,
+          },
+          { now: clock.now },
+        );
+        expect(replayed).toEqual(completed);
+        const afterComplete = new AttestationDriver(await fixture.restart(), clock);
+        expect((await afterComplete.fetch(handleOf(p))).state).toBe("result-stored");
       }));
 
     // -- every abort path --------------------------------------------------

@@ -522,6 +522,29 @@ const outputSchema = {
   ],
 } as const;
 
+/** Parent-gated pass output before runner-owned evidence is attached. */
+export const implementWorkerStagedOutputSchema = {
+  ...outputSchema,
+  allOf: [
+    {
+      if: {
+        properties: { status: { const: "pass" } },
+        required: ["status"],
+      },
+      then: {
+        not: {
+          anyOf: [
+            { required: ["gateDurationMs"] },
+            { required: ["supervisedGateEvidence"] },
+          ],
+        },
+        properties: { baseVerification: implementWorkerVerifiedBaseVerificationSchema },
+      },
+    },
+    outputSchema.allOf[1],
+  ],
+} as const;
+
 /**
  * The implement-worker per-role schema sidecar (storage-format decision 3).
  * `version: 8` (bumped from 7, T2082): Codex broker-capable retries may receive

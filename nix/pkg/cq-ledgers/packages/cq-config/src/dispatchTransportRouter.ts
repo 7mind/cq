@@ -39,6 +39,7 @@ import {
   CodexRoleBoundaryError,
   CodexOperationalAbstentionError,
   createCodexRoleBoundaryPlan,
+  executeCodexParentGateFinalizer,
   executeCodexRoleBoundary,
   type CodexRoleBoundaryRequest,
   type CodexRoleSandboxMode,
@@ -310,6 +311,9 @@ export function createCodexProcessDispatchAdapter(
       handle,
       inputCapability: context.prepared.inputCapability,
       resultCapability: context.prepared.resultCapability,
+      ...(context.prepared.parentGateCapability === undefined
+        ? {}
+        : { parentGateCapability: context.prepared.parentGateCapability }),
       ...(context.prepared.gitChangeCapability === undefined
         ? {}
         : { gitChangeCapability: context.prepared.gitChangeCapability }),
@@ -329,6 +333,16 @@ export function createCodexProcessDispatchAdapter(
           targetRef: context.effectTargetRef,
         },
       );
+      if (context.prepared.parentGateCapability !== undefined) {
+        await executeCodexParentGateFinalizer({
+          command: binding.boundary.ledgerCommand,
+          ledgerCwd: binding.boundary.ledgerCwd,
+          promptRoot: binding.boundary.promptRoot,
+          handle: observed.handle,
+          parentGateCapability: context.prepared.parentGateCapability,
+          timeoutMs: plan.effectivePreturn.parentGateWindowMs,
+        });
+      }
       const observedAt = binding.now();
       const decision = decideCodexCompletion({
         handle,

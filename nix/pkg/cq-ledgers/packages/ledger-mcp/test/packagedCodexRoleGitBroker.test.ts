@@ -819,7 +819,11 @@ describe("packaged cq-codex-role Git broker", () => {
         timeoutMs: 600_000,
         expectedChild: { childId: "t2042-packaged-child", runId: "t2042-packaged-run" },
       });
-      if (!prepared.accepted || prepared.prepared.gitChangeCapability === undefined) {
+      if (
+        !prepared.accepted ||
+        prepared.prepared.gitChangeCapability === undefined ||
+        prepared.prepared.parentGateCapability === undefined
+      ) {
         throw new Error("packaged worker dispatch did not receive Git capability");
       }
       const fixtureRoot = await mkdtemp(path.join(tmpdir(), "t2042-packaged-fake-"));
@@ -857,6 +861,7 @@ describe("packaged cq-codex-role Git broker", () => {
             inputCapability: prepared.prepared.inputCapability,
             resultCapability: prepared.prepared.resultCapability,
             gitChangeCapability: prepared.prepared.gitChangeCapability,
+            parentGateCapability: prepared.prepared.parentGateCapability,
             cwd: managed.handle.absolutePath,
             ledgerCwd: repositoryRoot,
             model: "test-model",
@@ -900,6 +905,10 @@ describe("packaged cq-codex-role Git broker", () => {
         failureControls: string[];
         output: Record<string, unknown>;
       };
+      expect(JSON.stringify(capture)).not.toContain(prepared.prepared.parentGateCapability.token);
+      expect(await readFile(workerStderrPath, "utf8")).not.toContain(
+        prepared.prepared.parentGateCapability.token,
+      );
       expect(capture.boundary).toMatchObject({
         codexCwd: managed.handle.absolutePath,
         ledgerCommand,
@@ -973,6 +982,13 @@ describe("packaged cq-codex-role Git broker", () => {
         baseCommit,
         String(capture.output["resultCommit"]),
       ]);
+      if (capability.finalizeParentGate === undefined) {
+        throw new Error("packaged worker dispatch lacks parent finalization");
+      }
+      await capability.finalizeParentGate({
+        ...handle,
+        parentGateCapability: prepared.prepared.parentGateCapability,
+      });
       const completionRejection = await rejectionOf(() =>
         capability.confirmCompletion({
           ...handle,
@@ -1084,7 +1100,11 @@ describe("packaged cq-codex-role Git broker", () => {
         timeoutMs: 600_000,
         expectedChild: retryExpectedChild,
       });
-      if (!retryPrepared.accepted || retryPrepared.prepared.gitChangeCapability === undefined) {
+      if (
+        !retryPrepared.accepted ||
+        retryPrepared.prepared.gitChangeCapability === undefined ||
+        retryPrepared.prepared.parentGateCapability === undefined
+      ) {
         throw new Error("packaged worker retry did not receive Git capability");
       }
       const retryHandle = {
@@ -1101,6 +1121,7 @@ describe("packaged cq-codex-role Git broker", () => {
           inputCapability: retryPrepared.prepared.inputCapability,
           resultCapability: retryPrepared.prepared.resultCapability,
           gitChangeCapability: retryPrepared.prepared.gitChangeCapability,
+          parentGateCapability: retryPrepared.prepared.parentGateCapability,
           cwd: resumed.handle.absolutePath,
           ledgerCwd: repositoryRoot,
           model: "test-model",
@@ -1137,6 +1158,12 @@ describe("packaged cq-codex-role Git broker", () => {
         failureControls: string[];
         output: Record<string, unknown>;
       };
+      expect(JSON.stringify(retryCapture)).not.toContain(
+        retryPrepared.prepared.parentGateCapability.token,
+      );
+      expect(await readFile(retryStderrPath, "utf8")).not.toContain(
+        retryPrepared.prepared.parentGateCapability.token,
+      );
       const retryReceipts = retryCapture.output["gitReceipts"] as Record<string, unknown>[];
       expect(retryExecution.managedHandle).toEqual(managed.handle);
       expect(retryCapture.boundary).toMatchObject({
