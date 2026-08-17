@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import {
   CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX,
+  CodexBrokeredStoreResultError,
   CodexRoleBoundaryError,
   formatCodexRoleBoundaryDiagnostic,
   interceptCodexRoleBoundaryResult,
@@ -223,13 +224,13 @@ describe("T1628 Codex boundary diagnostics", () => {
           if (outcome === undefined || stream === undefined) {
             throw new Error("D340 outcome fixture is incomplete");
           }
-          let message = "";
           try {
             interceptCodexRoleBoundaryResult(stream, HANDLE);
           } catch (error) {
-            message = error instanceof Error ? error.message : String(error);
+            expect(error).toBeInstanceOf(CodexBrokeredStoreResultError);
+            return [outcome, (error as CodexBrokeredStoreResultError).outcome];
           }
-          return [outcome, message];
+          throw new Error(`expected ${outcome} to reject structurally`);
         }),
       );
 
@@ -243,25 +244,31 @@ describe("T1628 Codex boundary diagnostics", () => {
         .toThrow("handle-only contract");
       expect(() => interceptCodexRoleBoundaryResult(completedAgentMessage("timeout"), HANDLE))
         .toThrow("handle-only contract");
-      expect(() =>
-        interceptCodexRoleBoundaryResult(
-          completedAgentMessage(
-            JSON.stringify({
-              state: "aborted",
-              ...HANDLE,
-              abortedAt: "2026-08-16T22:00:00.000Z",
-              reason: "invalid-output",
-              details: { summary: "/unrelated expected string" },
-            }),
-          ),
-          HANDLE,
-        ),
-      ).toThrow("/unrelated expected string");
+      for (const summary of ["/resultCommit expected string", "/taskId expected string"]) {
+        try {
+          interceptCodexRoleBoundaryResult(
+            completedAgentMessage(
+              JSON.stringify({
+                state: "aborted",
+                ...HANDLE,
+                abortedAt: "2026-08-16T22:00:00.000Z",
+                reason: "invalid-output",
+                details: { summary },
+              }),
+            ),
+            HANDLE,
+          );
+          throw new Error("expected typed abort rejection");
+        } catch (error) {
+          expect(error).toBeInstanceOf(CodexBrokeredStoreResultError);
+          expect((error as CodexBrokeredStoreResultError).outcome).toBe("typed-abort");
+        }
+      }
 
       expect(observations).toEqual({
-        omitted: "D340 brokered store_result outcome: omitted",
-        rejected: "D340 brokered store_result outcome: rejected",
-        "typed-abort": "D340 brokered store_result outcome: typed-abort",
+        omitted: "omitted",
+        rejected: "rejected",
+        "typed-abort": "typed-abort",
       });
     },
   );

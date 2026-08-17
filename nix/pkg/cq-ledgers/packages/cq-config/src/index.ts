@@ -775,6 +775,7 @@ export type {
   CodexRoleBoundaryDiagnosticVerdict,
   CodexRoleBoundaryDiagnosticDetailCode,
   CodexRoleBoundaryDiagnostic,
+  CodexBrokeredStoreResultOutcome,
   CodexParentGateFinalizerRequest,
 } from "./codexRoleBoundary.js";
 export {
@@ -782,9 +783,11 @@ export {
   CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX,
   CODEX_ROLE_BOUNDARY_DIAGNOSTIC_VERDICTS,
   CODEX_ROLE_BOUNDARY_DIAGNOSTIC_DETAIL_CODES,
+  CODEX_BROKERED_STORE_RESULT_OUTCOMES,
   CODEX_PRETURN_OBSERVATION_PATH_ENV,
   CODEX_PARENT_GATE_TERMINATION_GRACE_MS,
   CodexRoleBoundaryError,
+  CodexBrokeredStoreResultError,
   CodexOperationalAbstentionError,
   formatCodexRoleBoundaryDiagnostic,
   assertCodexBoundaryEffectTargetRef,

@@ -221,6 +221,7 @@ async function fixtureWithDispatchBase(
     now,
     randomBytes: sequentialDispatchRandomBytes(sequence * 32),
   });
+  const expectedChild = { childId: `child-${sequence}`, runId: `run-${sequence}` };
   const prepared = await capability.prepare({
     roleId: "implement-worker",
     input: {
@@ -236,7 +237,7 @@ async function fixtureWithDispatchBase(
     },
     idempotencyKey: `T2081-${sequence}`,
     timeoutMs: 600_000,
-    expectedChild: { childId: `child-${sequence}`, runId: `run-${sequence}` },
+    expectedChild,
   });
   if (!prepared.accepted || prepared.prepared.gitChangeCapability === undefined) {
     throw new Error("worker dispatch did not receive Git authority");
@@ -290,6 +291,7 @@ async function fixtureWithDispatchBase(
     store,
     runner,
     dispatchBaseCommit,
+    expectedChild,
   };
 }
 
@@ -334,6 +336,17 @@ afterAll(async () => {
 });
 
 describe("T2081 supervised worker result storage [Effectual-GoodCommunication]", () => {
+  test("an exact staged result retry recovers the same acknowledgement before and after parent finalization", async () => {
+    const runner = new GateDummy();
+    const subject = await fixture(runner);
+    const first = await stage(subject);
+    expect(first).toMatchObject({ state: "gate-pending" });
+    await expect(stage(subject)).resolves.toEqual(first);
+    await expect(finalize(subject)).resolves.toMatchObject({ state: "result-stored" });
+    await expect(stage(subject)).resolves.toEqual(first);
+    expect(runner.requests).toHaveLength(1);
+  });
+
   test("attaches runner-owned evidence before an exact green tip becomes consumable", async () => {
     const runner = new GateDummy();
     const subject = await fixture(runner);
@@ -353,8 +366,8 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       nativeCompletion: {
         kind: "native-completion",
         actor: "trusted-parent",
-        childId: "child-1",
-        runId: "run-1",
+        childId: subject.expectedChild.childId,
+        runId: subject.expectedChild.runId,
         completedAt: "2026-08-12T20:00:02.000Z",
       },
       expectedProvenance: {

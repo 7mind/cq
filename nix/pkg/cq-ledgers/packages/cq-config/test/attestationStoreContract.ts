@@ -525,9 +525,8 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
         }
         expect(await fixture.dump()).not.toContain(p.parentGateCapability.token);
         await driver.fetchInput(p);
-        expect((await driver.store(p.resultCapability, PARENT_GATE_STAGED_OUTPUT)).state).toBe(
-          "gate-pending",
-        );
+        const staged = await driver.store(p.resultCapability, PARENT_GATE_STAGED_OUTPUT);
+        expect(staged.state).toBe("gate-pending");
         const beforeForgery = (await fixture.rows()).map(attestationRowDigest);
         await expect(
           claimParentGateOn(
@@ -546,6 +545,9 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
 
         const afterStage = new AttestationDriver(await fixture.restart(), clock);
         expect((await afterStage.fetch(handleOf(p))).state).toBe("gate-pending");
+        expect(await afterStage.store(p.resultCapability, PARENT_GATE_STAGED_OUTPUT)).toEqual(
+          staged,
+        );
         const first = await claimParentGateOn(
           afterStage.backend,
           { ...handleOf(p), parentGateCapability: p.parentGateCapability },
@@ -599,6 +601,9 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
         expect(replayed).toEqual(completed);
         const afterComplete = new AttestationDriver(await fixture.restart(), clock);
         expect((await afterComplete.fetch(handleOf(p))).state).toBe("result-stored");
+        expect(await afterComplete.store(p.resultCapability, PARENT_GATE_STAGED_OUTPUT)).toEqual(
+          staged,
+        );
       }));
 
     // -- every abort path --------------------------------------------------

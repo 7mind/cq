@@ -411,6 +411,26 @@ export class CodexRoleBoundaryError extends Error {
   }
 }
 
+export const CODEX_BROKERED_STORE_RESULT_OUTCOMES = [
+  "omitted",
+  "rejected",
+  "typed-abort",
+] as const;
+
+export type CodexBrokeredStoreResultOutcome =
+  (typeof CODEX_BROKERED_STORE_RESULT_OUTCOMES)[number];
+
+/** Structural child store_result failure observed at the trusted process boundary. */
+export class CodexBrokeredStoreResultError extends CodexRoleBoundaryError {
+  readonly outcome: CodexBrokeredStoreResultOutcome;
+
+  constructor(outcome: CodexBrokeredStoreResultOutcome, detail?: string) {
+    super(`brokered store_result outcome: ${outcome}${detail === undefined ? "" : ` (${detail})`}`);
+    this.name = "CodexBrokeredStoreResultError";
+    this.outcome = outcome;
+  }
+}
+
 /** A verified environmental refusal before any child capability can be consumed. */
 export class CodexOperationalAbstentionError extends CodexRoleBoundaryError {
   readonly operationalAbstention: {
@@ -685,6 +705,52 @@ interface CodexExecEvent {
   };
 }
 
+function isStoreResultStarted(event: CodexExecEvent): boolean {
+  return (
+    event.type === "item.started" &&
+    event.item?.type === "mcp_tool_call" &&
+    event.item.server === "ledger" &&
+    event.item.tool === "store_result"
+  );
+}
+
+async function readCodexExecStream(
+  stream: ReadableStream<Uint8Array>,
+  onEvent: (event: CodexExecEvent) => void,
+): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  let pending = "";
+  const observeLine = (line: string): void => {
+    if (line.trim() === "") return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line) as unknown;
+    } catch {
+      return;
+    }
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      onEvent(parsed as CodexExecEvent);
+    }
+  };
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    const text = decoder.decode(chunk.value, { stream: true });
+    output += text;
+    pending += text;
+    const lines = pending.split("\n");
+    pending = lines.pop() ?? "";
+    for (const line of lines) observeLine(line);
+  }
+  const finalText = decoder.decode();
+  output += finalText;
+  pending += finalText;
+  observeLine(pending);
+  return output;
+}
+
 function eventCarriesMatchingResultStoredAcknowledgement(
   event: CodexExecEvent,
   expectedHandle: DispatchHandle,
@@ -714,12 +780,41 @@ function eventCarriesMatchingResultStoredAcknowledgement(
   });
 }
 
+function storeResultTypedAbort(
+  event: CodexExecEvent,
+  expectedHandle: DispatchHandle,
+): RecognizedAbortedDispatchAcknowledgement | undefined {
+  const item = event.item;
+  if (
+    event.type !== "item.completed" ||
+    item?.type !== "mcp_tool_call" ||
+    item.server !== "ledger" ||
+    item.tool !== "store_result" ||
+    item.result === null ||
+    typeof item.result !== "object" ||
+    Array.isArray(item.result)
+  ) {
+    return undefined;
+  }
+  const content = (item.result as Record<string, unknown>)["content"];
+  if (!Array.isArray(content)) return undefined;
+  for (const part of content) {
+    if (part === null || typeof part !== "object" || Array.isArray(part)) continue;
+    const record = part as Record<string, unknown>;
+    if (record["type"] !== "text" || typeof record["text"] !== "string") continue;
+    const acknowledgement = abortedDispatchAcknowledgement(record["text"], expectedHandle);
+    if (acknowledgement?.reason === "invalid-output") return acknowledgement;
+  }
+  return undefined;
+}
+
 interface CodexRoleBoundaryStreamObservation {
   readonly finalMessage: string | undefined;
   readonly completedAgentMessageCount: number;
   readonly malformedJsonlCount: number;
   readonly matchingResultStoredAcknowledgementPresent: boolean;
   readonly storeResultRejected: boolean;
+  readonly storeResultTypedAbort: RecognizedAbortedDispatchAcknowledgement | undefined;
   readonly threadIds: readonly string[];
   readonly turnOutcomes: readonly ("completed" | "transport-failed")[];
   readonly failureControls: readonly string[];
@@ -734,6 +829,7 @@ function observeCodexRoleBoundaryStream(
   let malformedJsonlCount = 0;
   let matchingResultStoredAcknowledgementPresent = false;
   let storeResultRejected = false;
+  let observedStoreResultTypedAbort: RecognizedAbortedDispatchAcknowledgement | undefined;
   const threadIds: string[] = [];
   const turnOutcomes: ("completed" | "transport-failed")[] = [];
   const failureControls: string[] = [];
@@ -771,6 +867,7 @@ function observeCodexRoleBoundaryStream(
     if (eventCarriesMatchingResultStoredAcknowledgement(event, expectedHandle)) {
       matchingResultStoredAcknowledgementPresent = true;
     }
+    observedStoreResultTypedAbort ??= storeResultTypedAbort(event, expectedHandle);
     if (
       event.type === "item.completed" &&
       event.item?.type === "mcp_tool_call" &&
@@ -796,6 +893,7 @@ function observeCodexRoleBoundaryStream(
     malformedJsonlCount,
     matchingResultStoredAcknowledgementPresent,
     storeResultRejected,
+    storeResultTypedAbort: observedStoreResultTypedAbort,
     threadIds: Object.freeze(threadIds),
     turnOutcomes: Object.freeze(turnOutcomes),
     failureControls: Object.freeze(failureControls),
@@ -1079,16 +1177,11 @@ export function interceptCodexRoleBoundaryResult(
   const abortedAcknowledgement = abortedDispatchAcknowledgement(finalMessage, expectedHandle);
   if (abortedAcknowledgement !== undefined) {
     const diagnostic = boundedInvalidOutputAbortDiagnostic(abortedAcknowledgement);
-    const details = abortedAcknowledgement.details;
-    if (
-      diagnostic === "/resultCommit expected string" &&
-      details !== null &&
-      typeof details === "object" &&
-      !Array.isArray(details) &&
-      Object.keys(details).length === 1 &&
-      Object.hasOwn(details, "summary")
-    ) {
-      throw new Error("D340 brokered store_result outcome: typed-abort");
+    if (abortedAcknowledgement.reason === "invalid-output") {
+      throw new CodexBrokeredStoreResultError(
+        "typed-abort",
+        diagnostic === undefined ? "invalid-output" : `invalid-output: ${diagnostic}`,
+      );
     }
     throw new CodexRoleBoundaryError(
       abortedDispatchAcknowledgementMessage(abortedAcknowledgement),
@@ -1102,13 +1195,15 @@ export function interceptCodexRoleBoundaryResult(
     );
   }
   if (!observation.matchingResultStoredAcknowledgementPresent) {
-    if (finalMessage.trim() === expectedHandle.attestationId) {
-      throw new Error(
-        `D340 brokered store_result outcome: ${observation.storeResultRejected ? "rejected" : "omitted"}`,
+    if (observation.storeResultTypedAbort !== undefined) {
+      const diagnostic = boundedInvalidOutputAbortDiagnostic(observation.storeResultTypedAbort);
+      throw new CodexBrokeredStoreResultError(
+        "typed-abort",
+        diagnostic === undefined ? "invalid-output" : `invalid-output: ${diagnostic}`,
       );
     }
-    throw new CodexRoleBoundaryError(
-      "child final message lacks a matching trusted result-stored observation",
+    throw new CodexBrokeredStoreResultError(
+      observation.storeResultRejected ? "rejected" : "omitted",
     );
   }
   return verdict.handle;
@@ -1171,7 +1266,15 @@ export async function executeCodexRoleBoundary(
   environment?: NodeJS.ProcessEnv,
   correlatedWorksetEffect?: CodexRoleBoundaryWorksetEffect,
 ): Promise<DispatchHandle | CodexRoleBoundaryExecutionResult> {
-  type StopCause = "SIGINT" | "SIGTERM" | "abort" | "outer-timeout";
+  type StopCause =
+    | "SIGINT"
+    | "SIGTERM"
+    | "abort"
+    | "child-work-timeout"
+    | "store-result-timeout"
+    | "post-store-timeout"
+    | "outer-timeout";
+  type ChildPhase = "child-work" | "store-result" | "post-store";
   const correlationId =
     typeof correlationOrEffect === "string" ? correlationOrEffect : undefined;
   const worksetEffect =
@@ -1181,10 +1284,28 @@ export async function executeCodexRoleBoundary(
   }
   const abortController = new AbortController();
   let requestedStop: StopCause | undefined;
+  const stopError = (cause: StopCause): CodexRoleBoundaryError => {
+    if (cause === "child-work-timeout") {
+      return new CodexRoleBoundaryError(
+        `child exceeded its ${String(plan.childWorkTimeoutMs)} ms window`,
+      );
+    }
+    if (cause === "store-result-timeout") {
+      return new CodexRoleBoundaryError(
+        `store_result exceeded its ${String(plan.effectivePreturn.storeResultSubmissionBudgetMs)} ms window`,
+      );
+    }
+    if (cause === "post-store-timeout") {
+      return new CodexRoleBoundaryError(
+        `post-store finalization exceeded its ${String(plan.effectivePreturn.postStoreSubmissionFinalizationMs)} ms window`,
+      );
+    }
+    return new CodexRoleBoundaryError(`wrapper received ${cause}`);
+  };
   const requestStop = (cause: StopCause): void => {
     if (requestedStop !== undefined) return;
     requestedStop = cause;
-    abortController.abort(new CodexRoleBoundaryError(`wrapper received ${cause}`));
+    abortController.abort(stopError(cause));
   };
   const onSigint = (): void => requestStop("SIGINT");
   const onSigterm = (): void => requestStop("SIGTERM");
@@ -1195,6 +1316,42 @@ export async function executeCodexRoleBoundary(
   worksetEffect.signal?.addEventListener("abort", onAbort, { once: true });
   if (worksetEffect.signal?.aborted === true) onAbort();
   let gateSettlement: SettleProcessGroupsResult | undefined;
+  let childPhase: ChildPhase = "child-work";
+  let childPhaseTimer: ReturnType<typeof setTimeout> | undefined;
+  const childPhaseTimeoutMs = (): number => {
+    if (childPhase === "child-work") return plan.childWorkTimeoutMs;
+    if (childPhase === "store-result") {
+      return plan.effectivePreturn.storeResultSubmissionBudgetMs;
+    }
+    return plan.effectivePreturn.postStoreSubmissionFinalizationMs;
+  };
+  const childPhaseStopCause = (): StopCause => {
+    if (childPhase === "child-work") return "child-work-timeout";
+    if (childPhase === "store-result") return "store-result-timeout";
+    return "post-store-timeout";
+  };
+  const armChildPhaseTimer = (): void => {
+    if (childPhaseTimer !== undefined) clearTimeout(childPhaseTimer);
+    const cause = childPhaseStopCause();
+    childPhaseTimer = setTimeout(() => {
+      childPhaseTimer = undefined;
+      requestStop(cause);
+    }, childPhaseTimeoutMs());
+    childPhaseTimer.unref?.();
+  };
+  const observeChildEvent = (event: CodexExecEvent): void => {
+    if (isStoreResultStarted(event) && childPhase === "child-work") {
+      childPhase = "store-result";
+      armChildPhaseTimer();
+    }
+    if (
+      eventCarriesMatchingResultStoredAcknowledgement(event, plan.expectedHandle) &&
+      childPhase !== "post-store"
+    ) {
+      childPhase = "post-store";
+      armChildPhaseTimer();
+    }
+  };
 
   try {
     // D266: a read-only reviewer dispatch first proves, inside the same codex
@@ -1242,7 +1399,6 @@ export async function executeCodexRoleBoundary(
         env: childEnvironment,
         stdio: { stdin: "pipe", stdout: "pipe", stderr: "pipe" } as const,
         signal: abortController.signal,
-        timeoutMs: plan.childWorkTimeoutMs,
         settleRegisteredDescendants: async () => {
           gateSettlement = await settleWorktreeGateCommands({ worktree: plan.cwd });
           if (gateSettlement.survivors.length > 0) {
@@ -1260,7 +1416,7 @@ export async function executeCodexRoleBoundary(
             stdout: specification.stdio.stdout,
             stderr: specification.stdio.stderr,
           });
-          const stdout = new Response(child.stdout).text();
+          const stdout = readCodexExecStream(child.stdout, observeChildEvent);
           const stderr = new Response(child.stderr).text();
           return {
             process: { child, stdout, stderr },
@@ -1280,21 +1436,17 @@ export async function executeCodexRoleBoundary(
       });
     } catch (error) {
       if (requestedStop === undefined) throw error;
-      throw new CodexRoleBoundaryError(`wrapper received ${requestedStop}`);
+      throw stopError(requestedStop);
     }
 
     try {
       const { child, stdout, stderr } = launched.process;
+      if (requestedStop === undefined && childPhaseTimer === undefined) armChildPhaseTimer();
       child.stdin.write(plan.stdin);
       child.stdin.end();
       const [exitStatus, completedStdout] = await Promise.all([launched.exited, stdout, stderr]);
-      if (launched.terminationReason === "timeout") {
-        throw new CodexRoleBoundaryError(
-          `child exceeded its ${String(plan.childWorkTimeoutMs)} ms window`,
-        );
-      }
       if (requestedStop !== undefined) {
-        throw new CodexRoleBoundaryError(`wrapper received ${requestedStop}`);
+        throw stopError(requestedStop);
       }
       const result =
         correlationId !== undefined
@@ -1321,10 +1473,12 @@ export async function executeCodexRoleBoundary(
           "Codex role boundary failed and process-group settlement failed",
         );
       }
+      if (requestedStop !== undefined) throw stopError(requestedStop);
       throw error;
     }
   } finally {
     clearTimeout(outerBoundaryTimer);
+    if (childPhaseTimer !== undefined) clearTimeout(childPhaseTimer);
     process.off("SIGINT", onSigint);
     process.off("SIGTERM", onSigterm);
     worksetEffect.signal?.removeEventListener("abort", onAbort);

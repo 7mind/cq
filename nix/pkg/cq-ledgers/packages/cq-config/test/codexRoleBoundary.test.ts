@@ -211,6 +211,80 @@ describe("T1330 Codex role process boundary", () => {
     }
   });
 
+  test("a store_result started inside the work window receives its store and post-store windows [Behavioral-Active Blackbox Good-Communication]", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cq-codex-store-phase-"));
+    const base = createCodexRoleBoundaryPlan({
+      roleId: "implement-worker",
+      roleInstructions: "implement the task",
+      handle: HANDLE,
+      inputCapability: INPUT_CAPABILITY,
+      gitChangeCapability: GIT_CHANGE_CAPABILITY,
+      parentGateCapability: PARENT_GATE_CAPABILITY,
+      resultCapability: RESULT_CAPABILITY,
+      cwd: process.cwd(),
+      ledgerCwd: root,
+      model: "frontier-model",
+      reasoningEffort: "high",
+      sandboxMode: "workspace-write",
+      timeoutMs: 100,
+      promptRoot: root,
+      ledgerCommand: "cq-not-launched",
+      codexExecutable: process.execPath,
+    });
+    const started = JSON.stringify({
+      type: "item.started",
+      item: { type: "mcp_tool_call", server: "ledger", tool: "store_result" },
+    });
+    const stored = JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "mcp_tool_call",
+        server: "ledger",
+        tool: "store_result",
+        result: {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                state: "gate-pending",
+                result: {
+                  state: "gate-pending",
+                  ...HANDLE,
+                  submittedAt: "2026-08-17T12:00:00.000Z",
+                  outputDigest: "a".repeat(64),
+                },
+              }),
+            },
+          ],
+        },
+      },
+    });
+    const completed = JSON.stringify({
+      type: "item.completed",
+      item: { type: "agent_message", text: HANDLE.attestationId },
+    });
+    const plan: CodexRoleBoundaryPlan = {
+      ...base,
+      argv: [
+        process.execPath,
+        "-e",
+        `process.stdout.write(${JSON.stringify(`${started}\n`)});setTimeout(()=>process.stdout.write(${JSON.stringify(`${stored}\n`)}),250);setTimeout(()=>{process.stdout.write(${JSON.stringify(`${completed}\n`)});process.exit(0)},350)`,
+      ],
+      stdin: "",
+      timeoutMs: 1_000,
+      childWorkTimeoutMs: 100,
+    };
+    const provider = createStrictInMemoryWorksetEffectAdmissionProvider();
+    try {
+      await expect(
+        executeCodexRoleBoundary(plan, { provider, targetRef: "tasks:T2144" }),
+      ).resolves.toEqual(HANDLE);
+      expect(await provider.activeAdmissionCount()).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("delivers the resolver continuation capability only in the private stdin envelope", () => {
     const plan = createCodexRoleBoundaryPlan({
       roleId: "implement-conflict-resolver",
@@ -684,7 +758,7 @@ describe("T1330 Codex role process boundary", () => {
     ].join("\n");
 
     expect(() => interceptCodexRoleBoundaryResult(stream, HANDLE)).toThrow(
-      /matching trusted result-stored observation/,
+      /brokered store_result outcome: typed-abort.*\/gitReceipts expected array/,
     );
   });
 

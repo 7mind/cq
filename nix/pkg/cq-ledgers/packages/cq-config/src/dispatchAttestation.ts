@@ -966,6 +966,8 @@ export interface AttestationEnvelope {
   readonly createdAt: string;
   readonly storedAt?: string;
   readonly gateSubmittedAt?: string;
+  /** Digest of the child-staged payload, retained after the parent adds gate evidence. */
+  readonly gateSubmittedOutputDigest?: string;
   readonly gateClaimedAt?: string;
   readonly gateEpoch?: number;
   readonly output?: DispatchJSONValue;
@@ -1051,6 +1053,7 @@ export const TOMBSTONE_FORBIDDEN_FIELDS = [
   "state",
   "storedAt",
   "gateSubmittedAt",
+  "gateSubmittedOutputDigest",
   "gateClaimedAt",
   "gateEpoch",
   "consumedAt",
@@ -2152,7 +2155,13 @@ export function supervisedWorkerGateContextForResultCapability(
   if (row === undefined || isAttestationTombstone(row)) {
     throw new DispatchAuthorizationError(STORE_RESULT, "unknown result capability");
   }
-  if (row.state !== "prepared" || row.inputMaterializedAt === undefined) {
+  if (
+    (row.state !== "prepared" &&
+      row.state !== "gate-pending" &&
+      row.state !== "gate-running" &&
+      row.state !== "result-stored") ||
+    row.inputMaterializedAt === undefined
+  ) {
     throw new DispatchStateConflictError(
       STORE_RESULT,
       row.state,
@@ -2406,8 +2415,13 @@ export function storeDispatchResult(
   }
 
   const outputDigest = dispatchPayloadDigest(submission.output);
-  if (row.state === "gate-pending" || row.state === "gate-running") {
-    if (row.outputDigest === outputDigest) {
+  if (
+    row.parentGateCapabilityHash !== undefined &&
+    (row.state === "gate-pending" ||
+      row.state === "gate-running" ||
+      row.state === "result-stored")
+  ) {
+    if (row.gateSubmittedOutputDigest === outputDigest) {
       return Object.freeze({ state: "gate-pending" as const, result: gatePendingViewOf(row) });
     }
     throw new DispatchStateConflictError(
@@ -2497,6 +2511,7 @@ export function storeDispatchResult(
           ...row,
           state: "gate-pending" as const,
           gateSubmittedAt: at,
+          gateSubmittedOutputDigest: outputDigest,
           output: submission.output,
           outputDigest,
         },
@@ -2508,7 +2523,7 @@ export function storeDispatchResult(
 }
 
 function gatePendingViewOf(row: AttestationEnvelope): GatePendingResultView {
-  if (row.gateSubmittedAt === undefined || row.outputDigest === undefined) {
+  if (row.gateSubmittedAt === undefined || row.gateSubmittedOutputDigest === undefined) {
     throw new AttestationContractError("row", "expected a gate-pending envelope");
   }
   return Object.freeze({
@@ -2516,7 +2531,7 @@ function gatePendingViewOf(row: AttestationEnvelope): GatePendingResultView {
     attestationId: row.attestationId,
     generation: row.generation,
     submittedAt: row.gateSubmittedAt,
-    outputDigest: row.outputDigest,
+    outputDigest: row.gateSubmittedOutputDigest,
   });
 }
 
