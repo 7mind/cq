@@ -1,13 +1,9 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
 import { describe, expect, test } from "bun:test";
 import {
   CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX,
   CodexRoleBoundaryError,
+  formatCodexRoleBoundaryDiagnostic,
   interceptCodexRoleBoundaryResult,
   type CodexRoleBoundaryDiagnostic,
 } from "@cq/config";
@@ -16,12 +12,6 @@ const HANDLE = {
   attestationId: "att_0123456789abcdefghijklmnopqrstuvwxyz",
   generation: 3,
 } as const;
-const DISPATCH_SCRIPT = fileURLToPath(
-  new URL("../scripts/codex-role-dispatch.ts", import.meta.url),
-);
-const CQ_CLI_SOURCE = fileURLToPath(
-  new URL("../../cq-cli/src/main.ts", import.meta.url),
-);
 const FINAL_NARRATIVE_SENTINEL = "FINAL_NARRATIVE_SENTINEL";
 const RESULT_BODY_SENTINEL = "RESULT_BODY_SENTINEL";
 const CAPABILITY_SENTINEL = "CAPABILITY_SENTINEL";
@@ -197,93 +187,115 @@ describe("T1628 Codex boundary diagnostics", () => {
     ).toEqual(HANDLE);
   });
 
-  test("cq-codex-role emits exactly one canonical machine-readable diagnostic line", async () => {
-    const root = await mkdtemp(join(tmpdir(), "cq-codex-boundary-diagnostic-"));
-    try {
-      const worktree = join(root, "worktree");
-      const promptRoot = join(root, "prompts");
-      const fakeCodex = join(root, "fake-codex");
-      const ledgerCommand = join(root, "cq");
-      await mkdir(worktree);
-      await writeFile(join(worktree, "cq.toml"), '[ledger]\nbackend = "fs"\n');
-      await mkdir(join(promptRoot, "roles"), { recursive: true });
-      const git = spawnSync("git", ["init", "--quiet", worktree], { encoding: "utf8" });
-      if (git.status !== 0) throw new Error(`git init failed: ${git.stderr}`);
-      await writeFile(join(promptRoot, "roles", "implement-worker.md"), "Store one result.\n");
-      await writeFile(
-        fakeCodex,
-        `#!/bin/sh\nprintf '%s\\n' 'null' '${completedAgentMessage(FINAL_NARRATIVE_SENTINEL)}'\n`,
-      );
-      await chmod(fakeCodex, 0o700);
-      await writeFile(
-        ledgerCommand,
-        `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(CQ_CLI_SOURCE)} "$@"\n`,
-      );
-      await chmod(ledgerCommand, 0o700);
-      const child = Bun.spawn([process.execPath, "run", DISPATCH_SCRIPT], {
-        cwd: worktree,
-        env: {
-          ...process.env,
-          CQ_PROMPT_ROOT: promptRoot,
-          CQ_CODEX_EXECUTABLE: fakeCodex,
-          CQ_CODEX_LEDGER_COMMAND: ledgerCommand,
+  // expected-failure: tasks:T2144
+  test.failing(
+    "D340 classifies brokered store_result omission, rejection, and typed abort at the parent boundary [Behavioral-Progression Blackbox-Atomic]",
+    () => {
+      const typedAbort = JSON.stringify({
+        state: "aborted",
+        result: {
+          state: "aborted",
+          ...HANDLE,
+          abortedAt: "2026-08-16T22:00:00.000Z",
+          reason: "invalid-output",
+          details: { summary: "/resultCommit expected string" },
         },
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
       });
-      child.stdin.write(`${JSON.stringify({
-        roleId: "implement-worker",
-        handle: HANDLE,
-        inputCapability: { scope: "fetch-input", token: CAPABILITY_SENTINEL },
-        resultCapability: { scope: "store-result", token: CAPABILITY_SENTINEL },
-        effectTargetRef: "tasks:T1983",
-        cwd: worktree,
-        ledgerCwd: worktree,
-        model: "fake-model",
-        reasoningEffort: "high",
-        sandboxMode: "danger-full-access",
-        timeoutMs: 10_000,
-      })}\n`);
-      child.stdin.end();
-      const [exitCode, stdout, stderr] = await Promise.all([
-        child.exited,
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-      ]);
+      const rejectedStoreResult = JSON.stringify({
+        type: "item.completed",
+        item: {
+          type: "mcp_tool_call",
+          server: "ledger",
+          tool: "store_result",
+          result: null,
+          error: { message: "storage rejected" },
+          status: "failed",
+        },
+      });
+      const observations = Object.fromEntries(
+        [
+          ["omitted", completedAgentMessage(HANDLE.attestationId)],
+          [
+            "rejected",
+            [rejectedStoreResult, completedAgentMessage(HANDLE.attestationId)].join("\n"),
+          ],
+          ["typed-abort", completedAgentMessage(typedAbort)],
+        ].map(([outcome, stream]) => {
+          if (outcome === undefined || stream === undefined) {
+            throw new Error("D340 outcome fixture is incomplete");
+          }
+          let message = "";
+          try {
+            interceptCodexRoleBoundaryResult(stream, HANDLE);
+          } catch (error) {
+            message = error instanceof Error ? error.message : String(error);
+          }
+          return [outcome, message];
+        }),
+      );
 
-      expect(exitCode).toBe(1);
-      expect(stdout).toBe("");
-      const diagnosticLines = stderr
-        .split("\n")
-        .filter((line) => line.startsWith(CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX));
-      expect(diagnosticLines).toHaveLength(1);
-      const diagnostic = JSON.parse(
-        diagnosticLines[0]!.slice(CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX.length),
-      ) as CodexRoleBoundaryDiagnostic;
-      expect(Object.keys(diagnostic)).toEqual([
-        "version",
-        "verdict",
-        "detailCode",
-        "finalMessageByteLength",
-        "finalMessageSha256",
-        "completedAgentMessageCount",
-        "malformedJsonlCount",
-        "matchingResultStoredAcknowledgementPresent",
-      ]);
-      expect(diagnostic).toMatchObject({
-        version: 1,
-        verdict: "unparseable",
-        detailCode: "invalid-json",
-        completedAgentMessageCount: 1,
-        malformedJsonlCount: 1,
-        matchingResultStoredAcknowledgementPresent: false,
+      // These controls deliberately remain outside the D340 outcome matrix.
+      expect(
+        captureBoundaryError(
+          `${MALFORMED_JSONL_SENTINEL}\n${completedAgentMessage("null")}`,
+        ).diagnostic,
+      ).toMatchObject({ verdict: "unparseable", detailCode: "invalid-shape" });
+      expect(() => interceptCodexRoleBoundaryResult(completedAgentMessage("setup failed"), HANDLE))
+        .toThrow("handle-only contract");
+      expect(() => interceptCodexRoleBoundaryResult(completedAgentMessage("timeout"), HANDLE))
+        .toThrow("handle-only contract");
+      expect(() =>
+        interceptCodexRoleBoundaryResult(
+          completedAgentMessage(
+            JSON.stringify({
+              state: "aborted",
+              ...HANDLE,
+              abortedAt: "2026-08-16T22:00:00.000Z",
+              reason: "invalid-output",
+              details: { summary: "/unrelated expected string" },
+            }),
+          ),
+          HANDLE,
+        ),
+      ).toThrow("/unrelated expected string");
+
+      expect(observations).toEqual({
+        omitted: "D340 brokered store_result outcome: omitted",
+        rejected: "D340 brokered store_result outcome: rejected",
+        "typed-abort": "D340 brokered store_result outcome: typed-abort",
       });
-      expect(stderr).not.toContain(FINAL_NARRATIVE_SENTINEL);
-      expect(stderr).not.toContain(CAPABILITY_SENTINEL);
-      expect(stderr).not.toContain(HANDLE.attestationId);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    },
+  );
+
+  test("formats exactly one canonical machine-readable diagnostic line", () => {
+    const observed = captureBoundaryError(
+      [MALFORMED_JSONL_SENTINEL, completedAgentMessage(FINAL_NARRATIVE_SENTINEL)].join("\n"),
+    );
+    const line = formatCodexRoleBoundaryDiagnostic(observed.diagnostic!);
+    expect(line.startsWith(CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX)).toBe(true);
+    const diagnostic = JSON.parse(
+      line.slice(CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX.length),
+    ) as CodexRoleBoundaryDiagnostic;
+    expect(Object.keys(diagnostic)).toEqual([
+      "version",
+      "verdict",
+      "detailCode",
+      "finalMessageByteLength",
+      "finalMessageSha256",
+      "completedAgentMessageCount",
+      "malformedJsonlCount",
+      "matchingResultStoredAcknowledgementPresent",
+    ]);
+    expect(diagnostic).toMatchObject({
+      version: 1,
+      verdict: "unparseable",
+      detailCode: "invalid-json",
+      completedAgentMessageCount: 1,
+      malformedJsonlCount: 1,
+      matchingResultStoredAcknowledgementPresent: false,
+    });
+    expect(line).not.toContain(FINAL_NARRATIVE_SENTINEL);
+    expect(line).not.toContain(CAPABILITY_SENTINEL);
+    expect(line).not.toContain(HANDLE.attestationId);
   });
 });

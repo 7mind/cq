@@ -134,6 +134,46 @@ describe("T1330 Codex role process boundary", () => {
     expect(plan.argv.join(" ")).not.toContain(GIT_CONFLICT_CAPABILITY.token);
   });
 
+  // expected-failure: defects:D343
+  test.failing(
+    "D343 gives implement-worker result staging and terminal completion distinct bounded windows [Behavioral-Progression Blackbox-Atomic]",
+    () => {
+      const childWorkTimeoutMs = 120_000;
+      const plan = createCodexRoleBoundaryPlan({
+        roleId: "implement-worker",
+        roleInstructions: "implement the task",
+        handle: HANDLE,
+        inputCapability: INPUT_CAPABILITY,
+        gitChangeCapability: GIT_CHANGE_CAPABILITY,
+        ...BOUNDARY_CONTEXTS,
+        model: "frontier-model",
+        reasoningEffort: "high",
+        sandboxMode: "workspace-write",
+        timeoutMs: childWorkTimeoutMs,
+        promptRoot: "/nix/store/codex-prompt-root",
+        ledgerCommand: "/nix/store/cq/bin/cq",
+        codexExecutable: "/nix/store/codex/bin/codex",
+      });
+      const mcpOverride = plan.argv.find((arg) => arg.startsWith("mcp_servers.ledger="));
+      if (mcpOverride === undefined) throw new Error("missing ledger MCP override");
+      const parsed = parseToml(mcpOverride) as {
+        mcp_servers: { ledger: { tool_timeout_sec?: number } };
+      };
+
+      expect(parsed.mcp_servers.ledger.tool_timeout_sec).toBe(600);
+      expect(plan.timeoutMs).toBe(childWorkTimeoutMs + 900_000);
+      expect(plan.effectivePreturn).toMatchObject({
+        version: 2,
+        childWorkTimeoutMs,
+        storeResultSubmissionBudgetMs: 600_000,
+        ledgerToolTimeoutSec: 600,
+        postStoreSubmissionFinalizationMs: 300_000,
+        outerBoundaryTimeoutMs: childWorkTimeoutMs + 900_000,
+        parentGateWindowMs: 5_620_000,
+      });
+    },
+  );
+
   test("faithfully records every dispatched role's pre-context tool profile and launch invariants", () => {
     const domainTools = new Set<string>(DOMAIN_LEDGER_TOOL_NAMES);
     let unknownRoleRejected = false;

@@ -72,6 +72,7 @@ function artifactStore(): PromptArtifactStore {
 
 class GateDummy implements SupervisedWorkerGateRunner {
   readonly requests: SupervisedWorkerGateRunRequest[] = [];
+  readonly callerProcessIds: number[] = [];
 
   constructor(
     private readonly result: SupervisedWorkerGateRunResult = {
@@ -86,6 +87,7 @@ class GateDummy implements SupervisedWorkerGateRunner {
 
   async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
     this.requests.push(request);
+    this.callerProcessIds.push(process.pid);
     return this.result;
   }
 }
@@ -361,6 +363,25 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       },
     });
   });
+
+  // expected-failure: tasks:T2144
+  test.failing(
+    "D340 runs the default supervised worker gate in the child-started ledger MCP process [Behavioral-Progression Blackbox-GoodCommunication]",
+    async () => {
+      const parentProcessId = process.pid;
+      const runner = new GateDummy();
+      const subject = await fixture(runner);
+
+      await expect(
+        subject.capability.storeResult({
+          resultCapability: subject.prepared.resultCapability,
+          output: subject.output,
+        }),
+      ).resolves.toMatchObject({ state: "result-stored" });
+
+      expect(runner.callerProcessIds).not.toContain(parentProcessId);
+    },
+  );
 
   test("accepts correction-round verification against a descendant dispatch base", async () => {
     const subject = await fixtureWithDispatchBase(new GateDummy(), "descendant");

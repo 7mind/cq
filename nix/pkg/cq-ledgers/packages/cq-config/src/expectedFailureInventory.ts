@@ -2,8 +2,30 @@ import type { ExpectedFailureInventoryEntry } from "./expectedFailurePolicy.js";
 
 const ARCHIVE_INVARIANT_FILE =
   "nix/pkg/cq-ledgers/packages/ledger/test/archive-dependency-invariants.test.ts";
+const CODEX_BOUNDARY_DIAGNOSTICS_FILE =
+  "nix/pkg/cq-ledgers/packages/cq-config/test/codexBoundaryDiagnostics.test.ts";
+const SUPERVISED_WORKER_GATE_STORAGE_FILE =
+  "nix/pkg/cq-ledgers/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts";
 
 export const EXPECTED_FAILURE_INVENTORY: readonly ExpectedFailureInventoryEntry[] = [
+  {
+    file: CODEX_BOUNDARY_DIAGNOSTICS_FILE,
+    title:
+      "D340 classifies brokered store_result omission, rejection, and typed abort at the parent boundary [Behavioral-Progression Blackbox-Atomic]",
+    ledgerRef: "tasks:T2144",
+  },
+  {
+    file: SUPERVISED_WORKER_GATE_STORAGE_FILE,
+    title:
+      "D340 runs the default supervised worker gate in the child-started ledger MCP process [Behavioral-Progression Blackbox-GoodCommunication]",
+    ledgerRef: "tasks:T2144",
+  },
+  {
+    file: "nix/pkg/cq-ledgers/packages/cq-config/test/codexRoleBoundary.test.ts",
+    title:
+      "D343 gives implement-worker result staging and terminal completion distinct bounded windows [Behavioral-Progression Blackbox-Atomic]",
+    ledgerRef: "defects:D343",
+  },
   {
     file: ARCHIVE_INVARIANT_FILE,
     title:
