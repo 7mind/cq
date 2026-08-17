@@ -41,31 +41,31 @@
 }:
 
 let
-  version = "0.147.0";
+  version = "0.148.0-alpha.12";
   binaryAssets = {
     aarch64-darwin = {
       asset = "codex-aarch64-apple-darwin.tar.gz";
-      hash = "sha256-dZhLgfkqcbDA9LO1ytgOXFcXfk2Mi0seE9twOyDcQ1g=";
+      hash = "sha256-ygRn3jKZkc214w9EJ6CiL7nGbj7Av6tezxnuTL/nGvI=";
       codeModeHostAsset = "codex-code-mode-host-aarch64-apple-darwin.tar.gz";
-      codeModeHostHash = "sha256-Vs2/YYe/kUEI07f+7qWjT/uhXlwWK+3OaeBi7pLd+14=";
+      codeModeHostHash = "sha256-FXg8q1Aa7iHOE0Ys9+SK4xxV/X7MNtQxp2Ml0lNq5O8=";
     };
     aarch64-linux = {
       asset = "codex-aarch64-unknown-linux-musl.tar.gz";
-      hash = "sha256-62d8gPZmsauLSx0IO2bo1hSxKB2WC7b5/Yypj1izi5A=";
+      hash = "sha256-eiRg0R89xiRcME6p2gqkj40KgW+RHmPXRba5MB/X/60=";
       codeModeHostAsset = "codex-code-mode-host-aarch64-unknown-linux-musl.tar.gz";
-      codeModeHostHash = "sha256-39T/mOpNsw7QeK+cMbb4bj2kg20Fc6qH4iXlpbVNPHw=";
+      codeModeHostHash = "sha256-VOXmf3DV/aLQvPpHDqqc7iCmUMCcwC/MDubGL14QP90=";
     };
     x86_64-darwin = {
       asset = "codex-x86_64-apple-darwin.tar.gz";
-      hash = "sha256-NueC9x2BZMw3wricZJSPIYDpovhFayfmYNp1vGtVdOI=";
+      hash = "sha256-KC4+jRYd2NPxK+63tSEZ8AzH89/EQh1BysPzCSRyn/I=";
       codeModeHostAsset = "codex-code-mode-host-x86_64-apple-darwin.tar.gz";
-      codeModeHostHash = "sha256-cTGgUI3k3qYPecgWGIsLBrF/btQX2bOhhlsKSSf7xIo=";
+      codeModeHostHash = "sha256-itXJ4uq9/R4S/SKXsGIYvIqagENkUk36NDHEZIUVWoE=";
     };
     x86_64-linux = {
       asset = "codex-x86_64-unknown-linux-musl.tar.gz";
-      hash = "sha256-Akbi53ODTgfw+1JJ7W660S5FkeYI+Me7l91qlpBUTDY=";
+      hash = "sha256-QxPTxW1GigNJeWpOXoz18FSetmokkFQ0rGzrZ2Lm2JI=";
       codeModeHostAsset = "codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz";
-      codeModeHostHash = "sha256-AUat+qyDY+yfzbWJX3Yk21suhheig4h5OLf7l6HdQ1Y=";
+      codeModeHostHash = "sha256-M4pMcYmmmYIhfs8VaEKC5MT7b0WpWWjL75v8nHDyZZ0=";
     };
   };
   system = stdenv.hostPlatform.system;
