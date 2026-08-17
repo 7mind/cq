@@ -9,14 +9,16 @@ import {
   type SettleProcessGroupsResult,
   type WorksetEffectAdmissionProvider,
 } from "@cq/process-control";
-import type {
-  DispatchHandle,
-  GitChangeCapability,
-  GitConflictCapability,
-  InputCapability,
-  ParentGateCapability,
-  DispatchPromptProvenance,
-  ResultCapability,
+import {
+  DISPATCH_ABORT_REASONS,
+  type DispatchAbortReason,
+  type DispatchHandle,
+  type GitChangeCapability,
+  type GitConflictCapability,
+  type InputCapability,
+  type ParentGateCapability,
+  type DispatchPromptProvenance,
+  type ResultCapability,
 } from "./compactDispatchProtocol.js";
 import {
   validateManagedWorktreeHandle,
@@ -845,7 +847,7 @@ function storeResultTypedAbort(
     const record = part as Record<string, unknown>;
     if (record["type"] !== "text" || typeof record["text"] !== "string") continue;
     const acknowledgement = abortedDispatchAcknowledgement(record["text"], expectedHandle);
-    if (acknowledgement?.reason === "invalid-output") return acknowledgement;
+    if (acknowledgement !== undefined) return acknowledgement;
   }
   return undefined;
 }
@@ -1065,8 +1067,12 @@ function resultStoredAcknowledgementHandle(
 }
 
 interface RecognizedAbortedDispatchAcknowledgement {
-  readonly reason: string;
+  readonly reason: DispatchAbortReason;
   readonly details: unknown | undefined;
+}
+
+function isDispatchAbortReason(value: unknown): value is DispatchAbortReason {
+  return DISPATCH_ABORT_REASONS.some((reason) => reason === value);
 }
 
 /**
@@ -1110,7 +1116,7 @@ function abortedDispatchAcknowledgement(
     if (typeof candidate.abortedAt !== "string" || candidate.abortedAt.trim() === "") {
       return undefined;
     }
-    if (typeof candidate.reason !== "string" || candidate.reason.trim() === "") {
+    if (!isDispatchAbortReason(candidate.reason)) {
       return undefined;
     }
     return Object.freeze({
@@ -1172,20 +1178,13 @@ function boundedInvalidOutputAbortDiagnostic(
   return `${entry.path} ${entry.message}`;
 }
 
-function abortedDispatchAcknowledgementMessage(
+function typedAbortDetail(
   acknowledgement: RecognizedAbortedDispatchAcknowledgement,
 ): string {
   const diagnostic = boundedInvalidOutputAbortDiagnostic(acknowledgement);
-  if (diagnostic !== undefined) {
-    return (
-      `child final message is a typed abort acknowledgement ` +
-      `(reason=${acknowledgement.reason}): ${diagnostic}`
-    );
-  }
-  return (
-    `child final message is a typed abort acknowledgement ` +
-    `(reason=${acknowledgement.reason})`
-  );
+  return diagnostic === undefined
+    ? acknowledgement.reason
+    : `${acknowledgement.reason}: ${diagnostic}`;
 }
 
 /**
@@ -1218,16 +1217,7 @@ export function interceptCodexRoleBoundaryResult(
   }
   const abortedAcknowledgement = abortedDispatchAcknowledgement(finalMessage, expectedHandle);
   if (abortedAcknowledgement !== undefined) {
-    const diagnostic = boundedInvalidOutputAbortDiagnostic(abortedAcknowledgement);
-    if (abortedAcknowledgement.reason === "invalid-output") {
-      throw new CodexBrokeredStoreResultError(
-        "typed-abort",
-        diagnostic === undefined ? "invalid-output" : `invalid-output: ${diagnostic}`,
-      );
-    }
-    throw new CodexRoleBoundaryError(
-      abortedDispatchAcknowledgementMessage(abortedAcknowledgement),
-    );
+    throw new CodexBrokeredStoreResultError("typed-abort", typedAbortDetail(abortedAcknowledgement));
   }
   const verdict = classifyCodexFinalMessage(finalMessage, expectedHandle);
   if (verdict.verdict !== "handle-only") {
@@ -1238,10 +1228,9 @@ export function interceptCodexRoleBoundaryResult(
   }
   if (!observation.matchingResultStoredAcknowledgementPresent) {
     if (observation.storeResultTypedAbort !== undefined) {
-      const diagnostic = boundedInvalidOutputAbortDiagnostic(observation.storeResultTypedAbort);
       throw new CodexBrokeredStoreResultError(
         "typed-abort",
-        diagnostic === undefined ? "invalid-output" : `invalid-output: ${diagnostic}`,
+        typedAbortDetail(observation.storeResultTypedAbort),
       );
     }
     throw new CodexBrokeredStoreResultError(

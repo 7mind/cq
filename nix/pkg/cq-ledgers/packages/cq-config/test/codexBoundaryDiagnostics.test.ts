@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import {
   CODEX_ROLE_BOUNDARY_DIAGNOSTIC_PREFIX,
+  DISPATCH_ABORT_REASONS,
   CodexBrokeredStoreResultError,
   CodexRoleBoundaryError,
   formatCodexRoleBoundaryDiagnostic,
@@ -272,6 +273,41 @@ describe("T1628 Codex boundary diagnostics", () => {
       });
     },
   );
+
+  test("classifies every recognized store_result abort structurally in final and tool observations", () => {
+    for (const reason of DISPATCH_ABORT_REASONS) {
+      const typedAbort = JSON.stringify({
+        state: "aborted",
+        result: {
+          state: "aborted",
+          ...HANDLE,
+          abortedAt: "2026-08-17T18:00:00.000Z",
+          reason,
+        },
+      });
+      const storeResultEvent = JSON.stringify({
+        type: "item.completed",
+        item: {
+          type: "mcp_tool_call",
+          server: "ledger",
+          tool: "store_result",
+          result: { content: [{ type: "text", text: typedAbort }] },
+          error: null,
+          status: "completed",
+        },
+      });
+
+      for (const stream of [
+        completedAgentMessage(typedAbort),
+        [storeResultEvent, completedAgentMessage(HANDLE.attestationId)].join("\n"),
+      ]) {
+        const observed = captureBoundaryError(stream);
+        expect(observed).toBeInstanceOf(CodexBrokeredStoreResultError);
+        expect((observed as CodexBrokeredStoreResultError).outcome).toBe("typed-abort");
+        expect(observed.message).toContain(reason);
+      }
+    }
+  });
 
   test("formats exactly one canonical machine-readable diagnostic line", () => {
     const observed = captureBoundaryError(
