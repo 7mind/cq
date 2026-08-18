@@ -361,6 +361,45 @@ const inputSchema = {
       description:
         "Server-bound immutable receipt prefix from terminal prior generations. Callers must omit it; a brokered retry prepends it unchanged to the final receipt chain without replaying Git effects.",
     },
+    guardedRebaseLineage: {
+      type: "object",
+      description:
+        "Closed server-injected guarded-rebase bridge (D334/T2150). Callers must omit it; the trusted manager injects it only after resolving the opaque guardedRebase reference against a terminal durable journal and the exact terminal prior generation. The guarded round's baseCommit equals ontoCommit and its startingCommit equals rebasedStartCommit.",
+      properties: {
+        guardedRebase: {
+          type: "string",
+          pattern: "^cq-guarded-rebase:v1:[0-9a-f]{64}$",
+          description: "The resolved opaque digest-backed guarded-rebase reference.",
+        },
+        oldResultCommit: {
+          ...fullShaString,
+          description:
+            "The exact terminal pre-rebase worker result tip. On the initial bridge round priorResultCommit equals exactly this value — the one exempted ancestry exception.",
+        },
+        ontoCommit: {
+          ...fullShaString,
+          description: "The exact rebase target; the guarded dispatch's diff base.",
+        },
+        rebasedStartCommit: {
+          ...fullShaString,
+          description:
+            "The verified terminal rebased head; the guarded round's startingCommit. The fresh receipt suffix begins here.",
+        },
+        exactTip: {
+          type: "boolean",
+          description:
+            "Server-resolved permission for the no-new-commit arm: when true the worker may report resultCommit == rebasedStartCommit with an empty fresh suffix; when false a non-empty contiguous suffix is mandatory.",
+        },
+      },
+      required: [
+        "guardedRebase",
+        "oldResultCommit",
+        "ontoCommit",
+        "rebasedStartCommit",
+        "exactTip",
+      ],
+      additionalProperties: false,
+    },
     resolvedModel: {
       type: "string",
       description: "The resolved model class (informational).",
@@ -385,6 +424,36 @@ const inputSchema = {
  * conditional, not an always-required field). `blockedReason` is present only
  * on fail.
  */
+/** Ordinary-arm receipt floor: a lineage-free worker reports a non-empty complete chain. */
+const ordinaryReceiptFloorArm = {
+  if: { not: { required: ["gitLineage"] } },
+  then: { properties: { gitReceipts: { minItems: 1 } } },
+} as const;
+
+/** Guarded arm: the fresh post-rebase suffix is mandatory (empty only in exact-tip mode). */
+const guardedReceiptSuffixArm = {
+  if: { required: ["gitLineage"] },
+  then: { required: ["gitReceipts"] },
+} as const;
+
+const outputMutationTableArm = {
+  if: {
+    properties: {
+      filesTouched: {
+        type: "array",
+        contains: {
+          type: "string",
+          pattern: TEST_GUARD_PATTERN,
+        },
+      },
+    },
+    required: ["filesTouched"],
+  },
+  then: {
+    required: ["mutationTable"],
+  },
+} as const;
+
 const outputSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: "cq:prompt-catalog/implement-worker/output",
@@ -414,12 +483,28 @@ const outputSchema = {
     filesTouched: { type: "array", items: { type: "string" } },
     gitReceipts: {
       type: "array",
-      minItems: 1,
       description:
-        "Durable dispatch-bound broker receipts retained when the worker performed brokered commits.",
+        "Durable dispatch-bound broker receipts retained when the worker performed brokered commits. The ordinary arm (no gitLineage) keeps a non-empty complete chain; the guarded-rebase arm reports only the fresh post-rebase suffix, which may be empty only in the server-resolved exact-tip mode.",
       items: {
         ...gitChangeReceiptSchema,
       },
+    },
+    gitLineage: {
+      type: "object",
+      description:
+        "Closed guarded-rebase discriminant (D334/T2150). Omitted by ordinary workers; a guarded worker reports exactly the server-injected lineage coordinates and treats gitReceipts as the fresh post-rebase suffix. A caller can never mint this arm: store_result resolves it against the persisted dispatch Git binding.",
+      properties: {
+        kind: { type: "string", const: "guarded-rebase" },
+        guardedRebase: {
+          type: "string",
+          pattern: "^cq-guarded-rebase:v1:[0-9a-f]{64}$",
+        },
+        ontoCommit: fullShaString,
+        rebasedStartCommit: fullShaString,
+        exactTip: { type: "boolean" },
+      },
+      required: ["kind", "guardedRebase", "ontoCommit", "rebasedStartCommit", "exactTip"],
+      additionalProperties: false,
     },
     checkSummary: { type: "string" },
     summary: { type: "string" },
@@ -495,23 +580,7 @@ const outputSchema = {
         },
       },
     },
-    {
-      if: {
-        properties: {
-          filesTouched: {
-            type: "array",
-            contains: {
-              type: "string",
-              pattern: TEST_GUARD_PATTERN,
-            },
-          },
-        },
-        required: ["filesTouched"],
-      },
-      then: {
-        required: ["mutationTable"],
-      },
-    },
+    outputMutationTableArm,
     {
       if: { required: ["supervisedGateEvidence"] },
       then: {
@@ -519,6 +588,8 @@ const outputSchema = {
         required: ["status"],
       },
     },
+    ordinaryReceiptFloorArm,
+    guardedReceiptSuffixArm,
   ],
 } as const;
 
@@ -541,21 +612,23 @@ export const implementWorkerStagedOutputSchema = {
         properties: { baseVerification: implementWorkerVerifiedBaseVerificationSchema },
       },
     },
-    outputSchema.allOf[1],
+    outputMutationTableArm,
+    ordinaryReceiptFloorArm,
+    guardedReceiptSuffixArm,
   ],
 } as const;
 
 /**
  * The implement-worker per-role schema sidecar (storage-format decision 3).
- * `version: 8` (bumped from 7, T2082): Codex broker-capable retries may receive
- * a server-bound immutable prior-generation receipt prefix. A stale deployed
- * root rendered against the v7 contract must not be mistaken for this
- * one. DISPATCHED_ROLE_VERSIONS derives this automatically; it is not
- * hand-edited.
+ * `version: 9` (bumped from 8, T2150): the input contract gains the closed
+ * server-injected `guardedRebaseLineage` bridge and the output contract gains
+ * the closed `gitLineage` guarded-rebase discriminant (D334). A stale deployed
+ * root rendered against the v8 contract must not be mistaken for this one.
+ * DISPATCHED_ROLE_VERSIONS derives this automatically; it is not hand-edited.
  */
 export const implementWorkerSidecar: RoleSchemaSidecar = {
   id: "implement-worker",
-  version: 8,
+  version: 9,
   inputSchema,
   outputSchema,
 };

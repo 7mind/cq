@@ -1241,6 +1241,47 @@ function assertStoredInheritedGitReceipts(value: unknown): void {
   }
 }
 
+const STORED_GUARDED_REBASE_BRIDGE_FIELDS = [
+  "guardedRebase",
+  "operationId",
+  "requestDigest",
+  "oldResultCommit",
+  "ontoCommit",
+  "rebasedStartCommit",
+  "outcome",
+  "exactTip",
+  "finalizedAt",
+] as const;
+
+function assertStoredGuardedRebaseBridge(value: unknown): void {
+  const malformed = (): AttestationStorageError =>
+    new AttestationStorageError('stored attestation envelope has malformed "gitEffectBinding"');
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw malformed();
+  const bridge = value as Readonly<Record<string, unknown>>;
+  if (
+    Object.keys(bridge).sort().join(",") !==
+      [...STORED_GUARDED_REBASE_BRIDGE_FIELDS].sort().join(",") ||
+    typeof bridge["guardedRebase"] !== "string" ||
+    !/^cq-guarded-rebase:v1:[0-9a-f]{64}$/.test(bridge["guardedRebase"]) ||
+    typeof bridge["operationId"] !== "string" ||
+    !/^[A-Za-z0-9_-]{1,128}$/.test(bridge["operationId"]) ||
+    typeof bridge["requestDigest"] !== "string" ||
+    !STORED_SHA256_HEX.test(bridge["requestDigest"]) ||
+    typeof bridge["oldResultCommit"] !== "string" ||
+    !/^[0-9a-f]{40}$/.test(bridge["oldResultCommit"]) ||
+    typeof bridge["ontoCommit"] !== "string" ||
+    !/^[0-9a-f]{40}$/.test(bridge["ontoCommit"]) ||
+    typeof bridge["rebasedStartCommit"] !== "string" ||
+    !/^[0-9a-f]{40}$/.test(bridge["rebasedStartCommit"]) ||
+    (bridge["outcome"] !== "clean" && bridge["outcome"] !== "conflicted") ||
+    typeof bridge["exactTip"] !== "boolean" ||
+    typeof bridge["finalizedAt"] !== "string" ||
+    bridge["finalizedAt"].length === 0
+  ) {
+    throw malformed();
+  }
+}
+
 /**
  * Field names a stored body may NEVER carry as an OWN property. `JSON.parse`
  * materialises `"__proto__"` as an own, enumerable property rather than walking
@@ -1356,11 +1397,14 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
         "baseCommit",
       ] as const;
       const hasInheritedGitReceipts = Object.hasOwn(bindingRecord, "inheritedGitReceipts");
+      const hasGuardedRebaseBridge = Object.hasOwn(bindingRecord, "guardedRebaseBridge");
       const expectedFields = hasGitConflictHash
         ? [...fields, "conflictStateDigest"]
-        : hasInheritedGitReceipts
-          ? [...fields, "inheritedGitReceipts"]
-          : fields;
+        : [
+            ...fields,
+            ...(hasInheritedGitReceipts ? ["inheritedGitReceipts"] : []),
+            ...(hasGuardedRebaseBridge ? ["guardedRebaseBridge"] : []),
+          ];
       if (
         Object.keys(bindingRecord).sort().join(",") !== [...expectedFields].sort().join(",") ||
         fields.some(
@@ -1370,7 +1414,8 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
         !STORED_SHA256_HEX.test(String(bindingRecord["handleFingerprint"])) ||
         !STORED_SHA256_HEX.test(String(bindingRecord["repositoryId"])) ||
         (hasGitConflictHash &&
-          !STORED_SHA256_HEX.test(String(bindingRecord["conflictStateDigest"])))
+          !STORED_SHA256_HEX.test(String(bindingRecord["conflictStateDigest"]))) ||
+        (hasGitConflictHash && (hasInheritedGitReceipts || hasGuardedRebaseBridge))
       ) {
         throw new AttestationStorageError(
           'stored attestation envelope has malformed "gitEffectBinding"',
@@ -1378,6 +1423,9 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       }
       if (hasInheritedGitReceipts) {
         assertStoredInheritedGitReceipts(bindingRecord["inheritedGitReceipts"]);
+      }
+      if (hasGuardedRebaseBridge) {
+        assertStoredGuardedRebaseBridge(bindingRecord["guardedRebaseBridge"]);
       }
     }
   }

@@ -580,6 +580,7 @@ export type {
   NativeChildIdentity,
   DispatchProvenanceBinding,
   DispatchGitEffectBinding,
+  DispatchGuardedRebaseBridge,
   AuthorizedDispatchGitEffect,
   AuthorizedSupervisedWorkerGateContext,
   AttestationEnvelope,

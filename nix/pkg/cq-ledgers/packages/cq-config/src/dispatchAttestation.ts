@@ -881,6 +881,39 @@ export interface DispatchGitChangeReceipt {
   readonly committedAt: string;
 }
 
+/**
+ * The verified guarded-rebase bridge (D334/T2150), materialized ONLY by the
+ * trusted manager from one terminal durable guarded-rebase journal. Callers
+ * supply nothing but the opaque {@link DispatchGuardedRebaseBridge.guardedRebase}
+ * reference at prepare; every other field is server-resolved and persisted
+ * here so a restart, a backend round-trip, and the parent gate all see the
+ * exact same bridge.
+ */
+export interface DispatchGuardedRebaseBridge {
+  /** Opaque digest-backed reference: `cq-guarded-rebase:v1:<requestDigest>`. */
+  readonly guardedRebase: string;
+  /** The parent-supplied stable operation id the journal was minted under. */
+  readonly operationId: string;
+  /** SHA-256 over the canonical journaled guarded-rebase request. */
+  readonly requestDigest: string;
+  /** Exact terminal pre-rebase worker result tip the bridge replaces. */
+  readonly oldResultCommit: string;
+  /** Exact rebase target; the guarded dispatch's diff base. */
+  readonly ontoCommit: string;
+  /** Verified terminal rebased head; the guarded round's startingCommit. */
+  readonly rebasedStartCommit: string;
+  /** Clean rebases finalize from the live ref; conflicted ones only via receipts. */
+  readonly outcome: "clean" | "conflicted";
+  /**
+   * Server-resolved permission for the no-new-commit arm: true only when the
+   * clean replay carries the byte-identical change (equal stable patch-ids),
+   * so resultCommit == rebasedStartCommit with an empty fresh suffix stays
+   * indistinguishable from the approved pre-rebase result.
+   */
+  readonly exactTip: boolean;
+  readonly finalizedAt: string;
+}
+
 /** Trusted resolver output for a live worktree_manage handle; never child-authored. */
 export interface DispatchGitEffectBinding {
   readonly taskId: string;
@@ -896,6 +929,8 @@ export interface DispatchGitEffectBinding {
   readonly conflictStateDigest?: string;
   /** Exact durable prefix inherited from prior terminal generations. */
   readonly inheritedGitReceipts?: readonly DispatchGitChangeReceipt[];
+  /** Server-materialized guarded-rebase bridge (D334); never caller-authored. */
+  readonly guardedRebaseBridge?: DispatchGuardedRebaseBridge;
 }
 
 export interface AuthorizedDispatchGitEffect extends DispatchGitEffectBinding {
@@ -934,6 +969,21 @@ function gitEffectBindingPayload(binding: DispatchGitEffectBinding): DispatchJSO
       ? {}
       : {
           inheritedGitReceipts: binding.inheritedGitReceipts as unknown as DispatchJSONValue,
+        }),
+    ...(binding.guardedRebaseBridge === undefined
+      ? {}
+      : {
+          guardedRebaseBridge: {
+            guardedRebase: binding.guardedRebaseBridge.guardedRebase,
+            operationId: binding.guardedRebaseBridge.operationId,
+            requestDigest: binding.guardedRebaseBridge.requestDigest,
+            oldResultCommit: binding.guardedRebaseBridge.oldResultCommit,
+            ontoCommit: binding.guardedRebaseBridge.ontoCommit,
+            rebasedStartCommit: binding.guardedRebaseBridge.rebasedStartCommit,
+            outcome: binding.guardedRebaseBridge.outcome,
+            exactTip: binding.guardedRebaseBridge.exactTip,
+            finalizedAt: binding.guardedRebaseBridge.finalizedAt,
+          },
         }),
   };
 }
@@ -1365,11 +1415,77 @@ function assertGitEffectBinding(
       }
     }
   }
+  const guardedRebaseBridge = binding.guardedRebaseBridge;
+  if (guardedRebaseBridge !== undefined) {
+    if (roleId !== "implement-worker") {
+      throw new AttestationContractError(
+        "gitEffectBinding.guardedRebaseBridge",
+        "only implement-worker may carry a guarded-rebase bridge",
+      );
+    }
+    if (
+      typeof guardedRebaseBridge.guardedRebase !== "string" ||
+      !/^cq-guarded-rebase:v1:[0-9a-f]{64}$/.test(guardedRebaseBridge.guardedRebase)
+    ) {
+      throw new AttestationContractError(
+        "gitEffectBinding.guardedRebaseBridge.guardedRebase",
+        "expected an opaque cq-guarded-rebase:v1 reference",
+      );
+    }
+    if (
+      typeof guardedRebaseBridge.operationId !== "string" ||
+      !/^[A-Za-z0-9_-]{1,128}$/.test(guardedRebaseBridge.operationId)
+    ) {
+      throw new AttestationContractError(
+        "gitEffectBinding.guardedRebaseBridge.operationId",
+        "expected a stable operation id",
+      );
+    }
+    assertDigest(
+      guardedRebaseBridge.requestDigest,
+      "gitEffectBinding.guardedRebaseBridge.requestDigest",
+    );
+    for (const field of ["oldResultCommit", "ontoCommit", "rebasedStartCommit"] as const) {
+      if (!/^[0-9a-f]{40}$/.test(guardedRebaseBridge[field])) {
+        throw new AttestationContractError(
+          `gitEffectBinding.guardedRebaseBridge.${field}`,
+          "expected a full commit SHA",
+        );
+      }
+    }
+    if (
+      guardedRebaseBridge.outcome !== "clean" &&
+      guardedRebaseBridge.outcome !== "conflicted"
+    ) {
+      throw new AttestationContractError(
+        "gitEffectBinding.guardedRebaseBridge.outcome",
+        "expected clean or conflicted",
+      );
+    }
+    if (typeof guardedRebaseBridge.exactTip !== "boolean") {
+      throw new AttestationContractError(
+        "gitEffectBinding.guardedRebaseBridge.exactTip",
+        "expected a boolean",
+      );
+    }
+    if (
+      typeof guardedRebaseBridge.finalizedAt !== "string" ||
+      guardedRebaseBridge.finalizedAt.trim() === ""
+    ) {
+      throw new AttestationContractError(
+        "gitEffectBinding.guardedRebaseBridge.finalizedAt",
+        "expected a non-empty string",
+      );
+    }
+  }
   return Object.freeze({
     ...binding,
     ...(inheritedGitReceipts === undefined
       ? {}
       : { inheritedGitReceipts: Object.freeze([...inheritedGitReceipts]) }),
+    ...(guardedRebaseBridge === undefined
+      ? {}
+      : { guardedRebaseBridge: Object.freeze({ ...guardedRebaseBridge }) }),
   });
 }
 
