@@ -2,7 +2,7 @@
  * T2042 — Effectual Good-Communication tests for the dispatch attestation,
  * managed-worktree registry, broker, and result-store lock integration.
  */
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
@@ -17,7 +17,13 @@ import {
   type AttestationNamespace,
   type DispatchJSONValue,
 } from "@cq/config";
-import { fsAttestationProductionRoot, prepareManagedWorktree } from "@cq/ledger";
+import {
+  createLedgerStore,
+  fsAttestationProductionRoot,
+  MILESTONES_AMBIENT_ID,
+  prepareManagedWorktree,
+  TASKS_LEDGER,
+} from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
 
@@ -26,6 +32,11 @@ const roots: string[] = [];
 const NAMESPACE: AttestationNamespace = { backend: "xdg", projectKey: "t2042-integration" };
 const PEER_FIXTURE = new URL("./fixtures/gitChangeBrokerPeer.ts", import.meta.url).pathname;
 const RECEIPT_CHAIN_MATRIX_TIMEOUT_MS = 30_000;
+const CQ_CLI = new URL("../../cq-cli/src/main.ts", import.meta.url).pathname;
+const GUARDED_REBASE_SETUP_TIMEOUT_MS = 30_000;
+const D334_GIT_USER_NAME = "CQ D334 fixture";
+const D334_GIT_USER_EMAIL = "d334@example.invalid";
+const openBackends = new Set<FsAttestationBackend>();
 
 async function git(cwd: string, args: readonly string[]): Promise<string> {
   const { stdout } = await exec("git", [...args], {
@@ -268,7 +279,279 @@ function commitPeerRequest(
   };
 }
 
+type DispatchCapabilityInstance = ReturnType<typeof createDispatchCapability>;
+type AcceptedPrepare = Extract<
+  Awaited<ReturnType<DispatchCapabilityInstance["prepare"]>>,
+  { readonly accepted: true }
+>;
+
+interface GuardedRetryFixture {
+  readonly label: string;
+  readonly repositoryRoot: string;
+  readonly stateDir: string;
+  readonly managed: Extract<
+    Awaited<ReturnType<typeof prepareManagedWorktree>>,
+    { status: "prepared" }
+  >;
+  readonly namespace: AttestationNamespace;
+  readonly attestationRoot: string;
+  readonly baseCommit: string;
+  readonly capability: DispatchCapabilityInstance;
+  readonly backend: FsAttestationBackend;
+  readonly first: AcceptedPrepare;
+  readonly firstReceipt: Awaited<ReturnType<NonNullable<DispatchCapabilityInstance["gitCommit"]>>>;
+}
+
+function openGuardedRetryCapability(
+  fixture: Pick<
+    GuardedRetryFixture,
+    "repositoryRoot" | "stateDir" | "namespace" | "attestationRoot"
+  >,
+  randomSeed: number,
+): {
+  readonly backend: FsAttestationBackend;
+  readonly capability: DispatchCapabilityInstance;
+} {
+  const backend = new FsAttestationBackend({
+    namespace: fixture.namespace,
+    root: fixture.attestationRoot,
+  });
+  openBackends.add(backend);
+  return {
+    backend,
+    capability: createDispatchCapability({
+      backend,
+      promptArtifactStore: artifactStore("codex"),
+      repositoryRoot: fixture.repositoryRoot,
+      worktreeStateDir: fixture.stateDir,
+      now: () => "2026-08-18T12:00:00.000Z",
+      randomBytes: sequentialDispatchRandomBytes(randomSeed),
+      supervisedWorkerGateRunner: {
+        run: async () => ({
+          gateExitCode: 0,
+          passCount: 1,
+          failCount: 0,
+          gateDurationMs: 10,
+          capturedAt: "2026-08-18T12:00:01.000Z",
+          outputTail: "1 pass\n0 fail",
+        }),
+      },
+    }),
+  };
+}
+
+async function closeGuardedRetryBackend(backend: FsAttestationBackend): Promise<void> {
+  await backend.close();
+  openBackends.delete(backend);
+}
+
+function guardedWorkerInput(
+  fixture: Pick<GuardedRetryFixture, "managed" | "baseCommit">,
+  round: number,
+  startingCommit: string,
+) {
+  return {
+    taskId: "T2148",
+    headline: "reproduce the remaining current-main worker authority gaps",
+    description: "exercise one exact brokered worker continuation boundary",
+    acceptance: "the public dispatch lifecycle completes at the managed worktree tip",
+    worktreePath: fixture.managed.handle.absolutePath,
+    branch: fixture.managed.handle.branch,
+    baseCommit: fixture.baseCommit,
+    round,
+    startingCommit,
+    ...(round === 0 ? {} : { priorResultCommit: startingCommit }),
+  };
+}
+
+async function createGuardedRetryFixture(
+  label: string,
+  randomSeed: number,
+  productionManagerState = false,
+): Promise<GuardedRetryFixture> {
+  const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2148-${label}-`));
+  roots.push(repositoryRoot);
+  await git(repositoryRoot, [
+    "init",
+    "-q",
+    ...(productionManagerState ? ["--initial-branch=main"] : []),
+  ]);
+  if (productionManagerState) {
+    await git(repositoryRoot, ["config", "--local", "user.name", D334_GIT_USER_NAME]);
+    await git(repositoryRoot, ["config", "--local", "user.email", D334_GIT_USER_EMAIL]);
+  }
+  await fs.writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
+  await git(repositoryRoot, ["add", "file.txt"]);
+  await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
+  const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+  if (productionManagerState) {
+    expect(await git(repositoryRoot, ["rev-parse", "--verify", "refs/heads/main"])).toBe(
+      baseCommit,
+    );
+  }
+  const stateDir = productionManagerState
+    ? path.join(repositoryRoot, ".claude", "worktrees", ".cq-managed-registry")
+    : path.join(repositoryRoot, ".manager-state");
+  const managed = await prepareManagedWorktree(
+    { repositoryRoot, taskId: "T2148", baseCommit },
+    { stateDir, skipInstall: true, bunWorkspaceRoot: repositoryRoot },
+  );
+  if (managed.status !== "prepared")
+    throw new Error(`${label}: unexpected prepare ${managed.status}`);
+  const namespace: AttestationNamespace = { backend: "fs", projectKey: `t2148-${label}` };
+  const attestationRoot = fsAttestationProductionRoot(repositoryRoot);
+  const opened = openGuardedRetryCapability(
+    { repositoryRoot, stateDir, namespace, attestationRoot },
+    randomSeed,
+  );
+  const partial = {
+    label,
+    repositoryRoot,
+    stateDir,
+    managed,
+    namespace,
+    attestationRoot,
+    baseCommit,
+    capability: opened.capability,
+    backend: opened.backend,
+  };
+  const first = await opened.capability.prepare({
+    roleId: "implement-worker",
+    input: guardedWorkerInput(partial, 0, baseCommit),
+    idempotencyKey: `T2148-${label}-round-0`,
+    timeoutMs: 600_000,
+    expectedChild: { childId: `${label}-round-0`, runId: `${label}-round-0` },
+  });
+  if (!first.accepted || first.prepared.gitChangeCapability === undefined) {
+    throw new Error(`${label}: initial worker prepare did not allocate the broker capability`);
+  }
+  await opened.capability.fetchInput({
+    ...first.handle,
+    inputCapability: first.prepared.inputCapability,
+  });
+  await fs.writeFile(path.join(managed.handle.absolutePath, "file.txt"), "first\n");
+  if (opened.capability.gitCommit === undefined) throw new Error("git_commit was not wired");
+  const firstReceipt = await opened.capability.gitCommit({
+    ...first.handle,
+    gitChangeCapability: first.prepared.gitChangeCapability,
+    operationId: `t2148-${label}-round-0-change`,
+    expectedHead: baseCommit,
+    message: `${label}: durable first-generation change`,
+    changes: [
+      {
+        kind: "modify",
+        path: "file.txt",
+        oldState: { mode: "100644", digest: sha256("before\n") },
+        newState: { mode: "100644", digest: sha256("first\n") },
+      },
+    ],
+  });
+  await opened.capability.abort({ ...first.handle, reason: "parent-lost" });
+  return { ...partial, first, firstReceipt };
+}
+
+async function completeGuardedContinuation(
+  fixture: GuardedRetryFixture,
+  capability: DispatchCapabilityInstance,
+  prepared: AcceptedPrepare,
+  startingCommit: string,
+): Promise<void> {
+  const materialized = await capability.fetchInput({
+    ...prepared.handle,
+    inputCapability: prepared.prepared.inputCapability,
+  });
+  const input = materialized.input as Readonly<Record<string, unknown>>;
+  const inherited = input["inheritedGitReceipts"];
+  if (
+    inherited !== undefined &&
+    (!Array.isArray(inherited) ||
+      inherited.length === 0 ||
+      (inherited.at(-1) as Readonly<Record<string, unknown>>)["newHead"] !== startingCommit)
+  ) {
+    throw new Error("D334 restart returned a receipt prefix incompatible with the rebased tip");
+  }
+  const inheritedReceipts = (inherited ?? []) as GuardedRetryFixture["firstReceipt"][];
+  await fs.writeFile(path.join(fixture.managed.handle.absolutePath, "file.txt"), "continued\n");
+  if (capability.gitCommit === undefined || prepared.prepared.gitChangeCapability === undefined) {
+    throw new Error("guarded-rebase continuation did not receive git_commit authorization");
+  }
+  if (prepared.prepared.parentGateCapability === undefined) {
+    throw new Error("guarded-rebase continuation did not receive parent gate authority");
+  }
+  const parentGateCapability = prepared.prepared.parentGateCapability;
+  const currentReceipt = await capability.gitCommit({
+    ...prepared.handle,
+    gitChangeCapability: prepared.prepared.gitChangeCapability,
+    operationId: `t2148-${fixture.label}-round-1-change`,
+    expectedHead: startingCommit,
+    message: `${fixture.label}: continue after the guarded rebase`,
+    changes: [
+      {
+        kind: "modify",
+        path: "file.txt",
+        oldState: { mode: "100644", digest: sha256("first\n") },
+        newState: { mode: "100644", digest: sha256("continued\n") },
+      },
+    ],
+  });
+  const stored = await capability.storeResult({
+    resultCapability: prepared.prepared.resultCapability,
+    output: {
+      taskId: "T2148",
+      status: "pass",
+      resultCommit: currentReceipt.newHead,
+      branch: fixture.managed.handle.branch,
+      actualWorktreePath: fixture.managed.handle.absolutePath,
+      filesTouched: ["file.txt"],
+      gitReceipts: [...inheritedReceipts, currentReceipt],
+      checkSummary: "trusted gate delegated to result storage",
+      baseVerification: {
+        status: "verified",
+        relation: "descendant",
+        baseCommit: fixture.baseCommit,
+        headCommit: currentReceipt.newHead,
+      },
+      summary: "completed the guarded-rebase continuation through public lifecycle boundaries",
+    } as unknown as DispatchJSONValue,
+  });
+  if (stored.state !== "gate-pending") throw new Error(`unexpected stored state ${stored.state}`);
+  if (capability.finalizeParentGate === undefined) {
+    throw new Error("guarded-rebase continuation lacks parent gate finalization");
+  }
+  const finalized = await capability.finalizeParentGate({
+    ...prepared.handle,
+    parentGateCapability,
+  });
+  if (finalized.state !== "result-stored") {
+    throw new Error(`unexpected finalized state ${finalized.state}`);
+  }
+  const confirmed = await capability.confirmCompletion({
+    ...prepared.handle,
+    nativeCompletion: {
+      kind: "native-completion",
+      actor: "trusted-parent",
+      childId: `${fixture.label}-round-1`,
+      runId: `${fixture.label}-round-1`,
+      completedAt: "2026-08-18T12:00:02.000Z",
+    },
+    expectedProvenance: prepared.prepared.promptProvenance,
+  });
+  if (confirmed.state !== "consumed") {
+    throw new Error(`unexpected confirmation ${confirmed.state}`);
+  }
+  const fetched = await capability.fetch(prepared.handle);
+  if (fetched.state !== "consumed") throw new Error(`unexpected fetched state ${fetched.state}`);
+  const output = fetched.output as Readonly<Record<string, unknown>>;
+  if (
+    JSON.stringify(output["gitReceipts"]) !==
+    JSON.stringify([...inheritedReceipts, currentReceipt])
+  ) {
+    throw new Error("consumed result lost the exact guarded-rebase receipt chain");
+  }
+}
+
 afterAll(async () => {
+  for (const backend of openBackends) await backend.close();
   for (const root of roots) await fs.rm(root, { recursive: true, force: true });
 });
 
@@ -829,6 +1112,150 @@ describe("dispatch-bound Git change capability", () => {
       secondReceipt,
     ]);
     await backend.close();
+  });
+
+  describe("T2148 current-main worker authority regressions", () => {
+    let d332!: GuardedRetryFixture;
+    let d334!: GuardedRetryFixture;
+    let d334RebasedHead!: string;
+
+    beforeAll(async () => {
+      d332 = await createGuardedRetryFixture("d332-lineage-free", 2_148);
+
+      d334 = await createGuardedRetryFixture("d334-guarded-rebase", 2_149, true);
+      await closeGuardedRetryBackend(d334.backend);
+      await fs.writeFile(path.join(d334.repositoryRoot, ".gitignore"), ".claude/\n.cq/\n");
+      await fs.writeFile(path.join(d334.repositoryRoot, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+      await fs.writeFile(path.join(d334.repositoryRoot, "main.txt"), "advanced main\n");
+      await git(d334.repositoryRoot, ["add", ".gitignore", "cq.toml", "main.txt"]);
+      await git(d334.repositoryRoot, ["commit", "-q", "-m", "advance main"]);
+      const ontoCommit = await git(d334.repositoryRoot, ["rev-parse", "HEAD"]);
+      const ledger = await createLedgerStore(d334.repositoryRoot);
+      try {
+        await ledger.store.createItem(TASKS_LEDGER, MILESTONES_AMBIENT_ID, {
+          id: "T2148",
+          status: "wip",
+          fields: { headline: "D334 guarded-rebase continuation" },
+        });
+      } finally {
+        await ledger.store.dispose();
+      }
+      await exec(
+        process.execPath,
+        [
+          "run",
+          CQ_CLI,
+          "gate",
+          "git-effect",
+          "--operation",
+          "rebase",
+          "--cwd",
+          d334.repositoryRoot,
+          "--task-id",
+          "T2148",
+          "--commit",
+          ontoCommit,
+        ],
+        { cwd: d334.repositoryRoot, encoding: "utf8", env: process.env },
+      );
+      d334RebasedHead = await git(d334.managed.handle.absolutePath, ["rev-parse", "HEAD"]);
+      if (d334RebasedHead === d334.firstReceipt.newHead) {
+        throw new Error("D334 setup did not produce a real rebased commit");
+      }
+    }, GUARDED_REBASE_SETUP_TIMEOUT_MS);
+
+    // expected-failure: defects:D332
+    test.failing(
+      "D332 rejects a lineage-free implement-worker retry at an advanced managed-worktree tip [Behavioral-Progression Blackbox-GoodCommunication]",
+      async () => {
+        let retry: Awaited<ReturnType<DispatchCapabilityInstance["prepare"]>>;
+        try {
+          retry = await d332.capability.prepare({
+            roleId: "implement-worker",
+            input: guardedWorkerInput(d332, 1, d332.firstReceipt.newHead),
+            idempotencyKey: "T2148-d332-lineage-free-round-1",
+            timeoutMs: 600_000,
+            expectedChild: {
+              childId: "d332-lineage-free-round-1",
+              runId: "d332-lineage-free-round-1",
+            },
+          });
+        } catch (error) {
+          process.stderr.write(
+            `D332 prepare threw instead of returning a decision: ${String(error)}\n`,
+          );
+          return;
+        }
+        if (retry.accepted) {
+          if (retry.prepared.gitChangeCapability === undefined) {
+            process.stderr.write("D332 retry accepted without a Git capability\n");
+            return;
+          }
+          throw new Error(
+            `D332 observed lineage-free advanced-tip acceptance: prepare allocated attestation ${retry.handle.attestationId} generation ${String(retry.handle.generation)} with a broker Git capability at managed tip ${d332.firstReceipt.newHead} without reprepareOf lineage`,
+          );
+        }
+        if (
+          Object.hasOwn(retry, "handle") ||
+          Object.hasOwn(retry, "prepared") ||
+          retry.allocated !== false
+        ) {
+          throw new Error(`D332 rejected prepare still allocated authority: ${JSON.stringify(retry)}`);
+        }
+      },
+    );
+
+    // expected-failure: defects:D334
+    test.failing(
+      "D334 accepts an exact guarded-rebase continuation after broker restart [Behavioral-Progression Blackbox-GoodCommunication]",
+      async () => {
+        const restarted = openGuardedRetryCapability(d334, 2_150);
+        let retry: Awaited<ReturnType<DispatchCapabilityInstance["prepare"]>>;
+        try {
+          retry = await restarted.capability.prepare({
+            roleId: "implement-worker",
+            input: guardedWorkerInput(d334, 1, d334RebasedHead),
+            idempotencyKey: "T2148-d334-guarded-rebase-round-1",
+            timeoutMs: 600_000,
+            expectedChild: {
+              childId: "d334-guarded-rebase-round-1",
+              runId: "d334-guarded-rebase-round-1",
+            },
+            reprepareOf: d334.first.handle,
+          });
+        } catch (error) {
+          process.stderr.write(
+            `D334 prepare threw instead of returning a decision: ${String(error)}\n`,
+          );
+          return;
+        }
+        if (!retry.accepted) {
+          if (
+            Object.hasOwn(retry, "handle") ||
+            Object.hasOwn(retry, "prepared") ||
+            retry.allocated !== false
+          ) {
+            throw new Error(
+              `D334 rejected prepare still allocated authority: ${JSON.stringify(retry)}`,
+            );
+          }
+          if (
+            retry.path === "input.startingCommit" &&
+            retry.detail.includes("prior-generation receipt inheritance failed") &&
+            retry.detail.includes("does not belong to resultCommit")
+          ) {
+            throw new Error(
+              `D334 observed guarded-rebase receipt-lineage rejection at rebased tip ${d334RebasedHead}: ${retry.detail}`,
+            );
+          }
+          process.stderr.write(
+            `D334 unrelated prepare rejection at ${retry.path}: ${retry.detail}\n`,
+          );
+          return;
+        }
+        await completeGuardedContinuation(d334, restarted.capability, retry, d334RebasedHead);
+      },
+    );
   });
 
   test("serializes broker commits against result storage, abort, and guarded release in peer processes", async () => {
