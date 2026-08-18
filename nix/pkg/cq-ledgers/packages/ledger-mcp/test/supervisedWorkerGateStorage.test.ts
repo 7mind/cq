@@ -10,6 +10,7 @@ import {
   CODEX_STAGED_TIMING_BASIS,
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
+  isAttestationTombstone,
   sequentialDispatchRandomBytes,
   type AttestationNamespace,
 } from "@cq/config";
@@ -531,6 +532,79 @@ async function expectD342ObservationAndAbsence(scenario: D342Scenario): Promise<
   expect(d342ProcessAbsent(registration.leader.pid)).toBe(true);
 }
 
+/**
+ * D326/T2231 named bounds (D341: the retired 100 ms allowance let host process
+ * startup consume the semantic execution budget). The queued child's admission
+ * wait overlaps the first run; it never extends the serial enclosure below.
+ */
+const FIRST_EXECUTION_TIMEOUT_MS = 15_000;
+const QUEUED_EXECUTION_TIMEOUT_MS = 5_000;
+const ADMISSION_HOLD_MS = 6_000;
+const QUEUED_ADMISSION_TIMEOUT_MS = 90_000;
+const D326_TEST_TIMEOUT_MS = 300_000;
+const D326_LAUNCH_HANDSHAKE_MS = 60_000;
+const D326_RUN_SETTLEMENT_MS = 40_000;
+const D326_SERIAL_ENCLOSURE_MS =
+  2 * D326_LAUNCH_HANDSHAKE_MS +
+  FIRST_EXECUTION_TIMEOUT_MS +
+  QUEUED_EXECUTION_TIMEOUT_MS +
+  2 * D326_RUN_SETTLEMENT_MS;
+
+interface ChildIdentityMarker {
+  readonly pid: number;
+  readonly pgid: number;
+}
+
+function parseChildIdentityMarker(content: string): ChildIdentityMarker | undefined {
+  const fields = content.trim().split(/\s+/u);
+  if (fields.length !== 2) return undefined;
+  const pid = Number(fields[0]);
+  const pgid = Number(fields[1]);
+  if (
+    !Number.isSafeInteger(pid) ||
+    !Number.isSafeInteger(pgid) ||
+    pid <= 1 ||
+    pgid <= 1 ||
+    pid === pgid
+  ) {
+    return undefined;
+  }
+  return { pid, pgid };
+}
+
+/** Bounded wait until the marker names its child as a non-empty "pid pgid" pair. */
+async function waitForChildIdentityMarker(markerPath: string): Promise<ChildIdentityMarker> {
+  const deadline = Date.now() + D342_MARKER_TIMEOUT_MS;
+  for (;;) {
+    let content: string | undefined;
+    try {
+      content = await fs.readFile(markerPath, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (content !== undefined) {
+      const identity = parseChildIdentityMarker(content);
+      if (identity !== undefined) return identity;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `child identity marker timeout: no non-empty PID/PGID marker within ${String(D342_MARKER_TIMEOUT_MS)} ms`,
+      );
+    }
+    await Bun.sleep(5);
+  }
+}
+
+async function pathAbsent(target: string): Promise<boolean> {
+  try {
+    await fs.stat(target);
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+}
+
 afterAll(async () => {
   for (const root of roots) await fs.rm(root, { recursive: true, force: true });
 });
@@ -841,95 +915,241 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     expect(runner.requests).toHaveLength(1);
   });
 
-  // Regression D326: host-gate admission belongs to the supervisor, not the child budget.
-  test("D326 lets a second terminal store wait beyond its gate execution budget before admission [Behavioral-Active, Effectual-GoodCommunication]", async () => {
-    const root = await fs.mkdtemp(path.join(tmpdir(), "t2082-gate-admission-"));
-    roots.push(root);
-    const bin = path.join(root, "bin");
-    const lock = path.join(root, "exclusive-gate");
-    const releaseFirst = path.join(root, "release-first");
-    await fs.mkdir(bin, { recursive: true });
-    const cq = path.join(bin, "cq");
-    await fs.writeFile(
-      cq,
-      [
-        "#!/bin/sh",
-        "set -eu",
-        'while ! mkdir "$CQ_T2082_GATE_LOCK" 2>/dev/null; do sleep 0.01; done',
-        "trap 'rmdir \"$CQ_T2082_GATE_LOCK\" 2>/dev/null || true' EXIT INT TERM",
-        'worktree=""',
-        'while test "$#" -gt 0; do',
-        '  if test "$1" = --worktree; then worktree="$2"; shift 2; continue; fi',
-        "  shift",
-        "done",
-        'if test "$worktree" = "$CQ_T2082_FIRST_WORKTREE"; then',
-        '  : > "$CQ_T2082_FIRST_STARTED"',
-        '  while test ! -e "$CQ_T2082_RELEASE_FIRST"; do sleep 0.01; done',
-        "fi",
-        "printf '1 pass\\n0 fail\\n'",
-        "",
-      ].join("\n"),
+  test("D326 queued admission bound derives from the overlapped serial enclosure [Behavioral-Active Blackbox-Atomic]", () => {
+    expect(FIRST_EXECUTION_TIMEOUT_MS).toBe(15_000);
+    expect(QUEUED_EXECUTION_TIMEOUT_MS).toBe(5_000);
+    expect(ADMISSION_HOLD_MS).toBe(6_000);
+    expect(D326_TEST_TIMEOUT_MS).toBe(300_000);
+    // Queued admission = 30,000 ms remaining bootstrap acknowledgement after the
+    // first marker + 6,000 ms hold + 40,000 ms first-run settlement + 14,000 ms margin.
+    expect(QUEUED_ADMISSION_TIMEOUT_MS).toBe(
+      30_000 + ADMISSION_HOLD_MS + D326_RUN_SETTLEMENT_MS + 14_000,
     );
-    await fs.chmod(cq, 0o700);
-    let heldWorktreePath = "";
-    const phaseBoundRunner: SupervisedWorkerGateRunner = {
-      run: async (request) =>
-        await nodeSupervisedWorkerGateRunner.run({
-          ...request,
-          admissionTimeoutMs: 1_000,
-          executionTimeoutMs: request.worktreePath === heldWorktreePath ? 1_000 : 100,
-        }),
-    };
-    const first = await fixture(phaseBoundRunner);
-    heldWorktreePath = first.managed.handle.absolutePath;
-    const second = await fixture(phaseBoundRunner);
-    const firstStarted = path.join(root, "first-started");
-    const priorPath = process.env["PATH"];
-    const priorLock = process.env["CQ_T2082_GATE_LOCK"];
-    const priorFirstWorktree = process.env["CQ_T2082_FIRST_WORKTREE"];
-    const priorFirstStarted = process.env["CQ_T2082_FIRST_STARTED"];
-    const priorReleaseFirst = process.env["CQ_T2082_RELEASE_FIRST"];
-    process.env["PATH"] = `${bin}${path.delimiter}${priorPath ?? ""}`;
-    process.env["CQ_T2082_GATE_LOCK"] = lock;
-    process.env["CQ_T2082_FIRST_WORKTREE"] = first.managed.handle.absolutePath;
-    process.env["CQ_T2082_FIRST_STARTED"] = firstStarted;
-    process.env["CQ_T2082_RELEASE_FIRST"] = releaseFirst;
-    let firstStore: Promise<unknown> | undefined;
-    let secondStore: Promise<unknown> | undefined;
-    try {
-      expect(await stage(first)).toMatchObject({ state: "gate-pending" });
-      expect(await stage(second)).toMatchObject({ state: "gate-pending" });
-      firstStore = finalize(first);
-      while (!(await Bun.file(firstStarted).exists())) await Bun.sleep(5);
-      secondStore = finalize(second);
-      await Bun.sleep(200);
-      expect(second.store.rows()).toMatchObject([{ state: "gate-running" }]);
-      await fs.writeFile(releaseFirst, "release\n");
-      await expect(Promise.all([firstStore, secondStore])).resolves.toMatchObject([
-        { state: "result-stored" },
-        { state: "result-stored" },
-      ]);
-      expect(first.store.rows()).toHaveLength(1);
-      expect(second.store.rows()).toHaveLength(1);
-    } finally {
-      await fs.writeFile(releaseFirst, "release\n").catch(() => undefined);
-      await Promise.allSettled(
-        [firstStore, secondStore].filter(
-          (pending): pending is Promise<unknown> => pending !== undefined,
-        ),
-      );
-      if (priorPath === undefined) delete process.env["PATH"];
-      else process.env["PATH"] = priorPath;
-      if (priorLock === undefined) delete process.env["CQ_T2082_GATE_LOCK"];
-      else process.env["CQ_T2082_GATE_LOCK"] = priorLock;
-      if (priorFirstWorktree === undefined) delete process.env["CQ_T2082_FIRST_WORKTREE"];
-      else process.env["CQ_T2082_FIRST_WORKTREE"] = priorFirstWorktree;
-      if (priorFirstStarted === undefined) delete process.env["CQ_T2082_FIRST_STARTED"];
-      else process.env["CQ_T2082_FIRST_STARTED"] = priorFirstStarted;
-      if (priorReleaseFirst === undefined) delete process.env["CQ_T2082_RELEASE_FIRST"];
-      else process.env["CQ_T2082_RELEASE_FIRST"] = priorReleaseFirst;
-    }
+    expect(QUEUED_ADMISSION_TIMEOUT_MS).toBe(90_000);
+    // This wait overlaps the first run rather than being added again to the
+    // 220,000 ms serial enclosure of two 60,000 ms launch handshakes,
+    // 15,000/5,000 ms executions, and two 40,000 ms cleanups.
+    expect(D326_SERIAL_ENCLOSURE_MS).toBe(2 * 60_000 + 15_000 + 5_000 + 2 * 40_000);
+    expect(D326_SERIAL_ENCLOSURE_MS).toBe(220_000);
+    expect(QUEUED_ADMISSION_TIMEOUT_MS).toBeLessThanOrEqual(
+      D326_LAUNCH_HANDSHAKE_MS + FIRST_EXECUTION_TIMEOUT_MS + D326_RUN_SETTLEMENT_MS,
+    );
+    // The 300,000 ms test timeout leaves 80,000 ms margin over the enclosure.
+    expect(D326_TEST_TIMEOUT_MS - D326_SERIAL_ENCLOSURE_MS).toBe(80_000);
   });
+
+  // Regression D326: host-gate admission belongs to the supervisor, not the child budget.
+  test(
+    "D326 lets a second terminal store wait beyond its gate execution budget before admission [Behavioral-Active, Effectual-GoodCommunication]",
+    async () => {
+      const root = await fs.mkdtemp(path.join(tmpdir(), "t2082-gate-admission-"));
+      roots.push(root);
+      const bin = path.join(root, "bin");
+      const lock = path.join(root, "exclusive-gate");
+      const releaseFirst = path.join(root, "release-first");
+      const firstMarker = path.join(root, "first-child-marker");
+      const queuedMarker = path.join(root, "queued-child-marker");
+      await fs.mkdir(bin, { recursive: true });
+      const cq = path.join(bin, "cq");
+      await fs.writeFile(
+        cq,
+        [
+          "#!/bin/sh",
+          "set -eu",
+          'while ! mkdir "$CQ_T2082_GATE_LOCK" 2>/dev/null; do sleep 0.01; done',
+          "trap 'rmdir \"$CQ_T2082_GATE_LOCK\" 2>/dev/null || true' EXIT INT TERM",
+          'worktree=""',
+          'while test "$#" -gt 0; do',
+          '  if test "$1" = --worktree; then worktree="$2"; shift 2; continue; fi',
+          "  shift",
+          "done",
+          'if test "$worktree" = "$CQ_T2082_FIRST_WORKTREE"; then',
+          '  printf \'%s %s\\n\' "$$" "$(ps -o pgid= -p $$ | tr -d \'[:space:]\')" > "$CQ_T2082_FIRST_MARKER"',
+          '  while test ! -e "$CQ_T2082_RELEASE_FIRST"; do sleep 0.01; done',
+          "else",
+          '  printf \'%s %s\\n\' "$$" "$(ps -o pgid= -p $$ | tr -d \'[:space:]\')" > "$CQ_T2082_QUEUED_MARKER"',
+          "fi",
+          "printf '1 pass\\n0 fail\\n'",
+          "",
+        ].join("\n"),
+      );
+      await fs.chmod(cq, 0o700);
+      let heldWorktreePath = "";
+      const phaseBoundRunner: SupervisedWorkerGateRunner = {
+        run: async (request) =>
+          await nodeSupervisedWorkerGateRunner.run({
+            ...request,
+            admissionTimeoutMs: QUEUED_ADMISSION_TIMEOUT_MS,
+            executionTimeoutMs:
+              request.worktreePath === heldWorktreePath
+                ? FIRST_EXECUTION_TIMEOUT_MS
+                : QUEUED_EXECUTION_TIMEOUT_MS,
+          }),
+      };
+      const first = await fixture(phaseBoundRunner);
+      heldWorktreePath = first.managed.handle.absolutePath;
+      const second = await fixture(phaseBoundRunner);
+      const priorPath = process.env["PATH"];
+      const priorLock = process.env["CQ_T2082_GATE_LOCK"];
+      const priorFirstWorktree = process.env["CQ_T2082_FIRST_WORKTREE"];
+      const priorFirstMarker = process.env["CQ_T2082_FIRST_MARKER"];
+      const priorQueuedMarker = process.env["CQ_T2082_QUEUED_MARKER"];
+      const priorReleaseFirst = process.env["CQ_T2082_RELEASE_FIRST"];
+      process.env["PATH"] = `${bin}${path.delimiter}${priorPath ?? ""}`;
+      process.env["CQ_T2082_GATE_LOCK"] = lock;
+      process.env["CQ_T2082_FIRST_WORKTREE"] = first.managed.handle.absolutePath;
+      process.env["CQ_T2082_FIRST_MARKER"] = firstMarker;
+      process.env["CQ_T2082_QUEUED_MARKER"] = queuedMarker;
+      process.env["CQ_T2082_RELEASE_FIRST"] = releaseFirst;
+      let firstStore: Promise<unknown> | undefined;
+      let secondStore: Promise<unknown> | undefined;
+      try {
+        expect(await stage(first)).toMatchObject({ state: "gate-pending" });
+        expect(await stage(second)).toMatchObject({ state: "gate-pending" });
+        firstStore = finalize(first);
+        const firstIdentity = await waitForChildIdentityMarker(firstMarker);
+        secondStore = finalize(second);
+        // The hold: the first run still blocks runner admission, so the queued
+        // row claims gate-running promptly and keeps it for the complete hold.
+        const holdDeadline = Date.now() + ADMISSION_HOLD_MS;
+        for (;;) {
+          const claimed = second.store.rows();
+          expect(claimed).toHaveLength(1);
+          const claimedRow = claimed[0];
+          const claimedState =
+            claimedRow === undefined || isAttestationTombstone(claimedRow)
+              ? undefined
+              : claimedRow.state;
+          if (claimedState === "gate-running") break;
+          expect(claimedState).toBe("gate-pending");
+          if (Date.now() >= holdDeadline) {
+            throw new Error("D326 queued row never claimed gate-running during the hold");
+          }
+          await Bun.sleep(5);
+        }
+        while (Date.now() < holdDeadline) {
+          expect(second.store.rows()).toMatchObject([{ state: "gate-running" }]);
+          await Bun.sleep(25);
+        }
+        expect(second.store.rows()).toMatchObject([{ state: "gate-running" }]);
+        await fs.writeFile(releaseFirst, "release\n");
+        await expect(Promise.all([firstStore, secondStore])).resolves.toMatchObject([
+          { state: "result-stored" },
+          { state: "result-stored" },
+        ]);
+        expect(first.store.rows()).toMatchObject([{ state: "result-stored" }]);
+        expect(second.store.rows()).toMatchObject([{ state: "result-stored" }]);
+        expect(first.store.rows()).toHaveLength(1);
+        expect(second.store.rows()).toHaveLength(1);
+        const queuedIdentity = await waitForChildIdentityMarker(queuedMarker);
+        expect(await pathAbsent(lock)).toBe(true);
+        for (const identity of [firstIdentity, queuedIdentity]) {
+          expect(d342ProcessAbsent(identity.pid)).toBe(true);
+          expect(d342GroupAbsent(identity.pgid)).toBe(true);
+        }
+      } finally {
+        await fs.writeFile(releaseFirst, "release\n").catch(() => undefined);
+        await Promise.allSettled(
+          [firstStore, secondStore].filter(
+            (pending): pending is Promise<unknown> => pending !== undefined,
+          ),
+        );
+        if (priorPath === undefined) delete process.env["PATH"];
+        else process.env["PATH"] = priorPath;
+        if (priorLock === undefined) delete process.env["CQ_T2082_GATE_LOCK"];
+        else process.env["CQ_T2082_GATE_LOCK"] = priorLock;
+        if (priorFirstWorktree === undefined) delete process.env["CQ_T2082_FIRST_WORKTREE"];
+        else process.env["CQ_T2082_FIRST_WORKTREE"] = priorFirstWorktree;
+        if (priorFirstMarker === undefined) delete process.env["CQ_T2082_FIRST_MARKER"];
+        else process.env["CQ_T2082_FIRST_MARKER"] = priorFirstMarker;
+        if (priorQueuedMarker === undefined) delete process.env["CQ_T2082_QUEUED_MARKER"];
+        else process.env["CQ_T2082_QUEUED_MARKER"] = priorQueuedMarker;
+        if (priorReleaseFirst === undefined) delete process.env["CQ_T2082_RELEASE_FIRST"];
+        else process.env["CQ_T2082_RELEASE_FIRST"] = priorReleaseFirst;
+      }
+    },
+    D326_TEST_TIMEOUT_MS,
+  );
+
+  // D341/T2231 §6a form (c): the same host-execution-deadline detector with
+  // paired inputs through the production runner; no expected-failure marker.
+  test(
+    "D341 pairs a deadline-killed blocking child with a prompt child under the D326 bounds [Behavioral-Active Blackbox-Atomic]",
+    async () => {
+      const root = await fs.mkdtemp(path.join(tmpdir(), "t2231-d341-detector-"));
+      roots.push(root);
+      const worktreePath = path.join(root, "worktree");
+      await fs.mkdir(path.join(worktreePath, "nix", "pkg", "cq-ledgers"), { recursive: true });
+      await git(worktreePath, ["init", "-q"]);
+      const bin = path.join(root, "bin");
+      await fs.mkdir(bin, { recursive: true });
+      const markerPath = path.join(root, "blocking-child-marker");
+      const cq = path.join(bin, "cq");
+      await fs.writeFile(
+        cq,
+        [
+          "#!/bin/sh",
+          "set -eu",
+          'if test "$CQ_D341_DETECTOR_MODE" = blocking; then',
+          '  printf \'%s %s\\n\' "$$" "$(ps -o pgid= -p $$ | tr -d \'[:space:]\')" > "$CQ_D341_DETECTOR_MARKER"',
+          "  exec sleep 86400",
+          "fi",
+          "printf '1 pass\\n0 fail\\n'",
+          "",
+        ].join("\n"),
+      );
+      await fs.chmod(cq, 0o700);
+      const priorPath = process.env["PATH"];
+      const priorMode = process.env["CQ_D341_DETECTOR_MODE"];
+      const priorMarker = process.env["CQ_D341_DETECTOR_MARKER"];
+      process.env["PATH"] = `${bin}${path.delimiter}${priorPath ?? ""}`;
+      process.env["CQ_D341_DETECTOR_MARKER"] = markerPath;
+      try {
+        // Blocking input: 15,000 ms admission / 5,000 ms execution. The PID/PGID
+        // marker must land before the exact execution-deadline diagnostic.
+        process.env["CQ_D341_DETECTOR_MODE"] = "blocking";
+        const blockedOutcome = nodeSupervisedWorkerGateRunner
+          .run({
+            worktreePath,
+            admissionTimeoutMs: FIRST_EXECUTION_TIMEOUT_MS,
+            executionTimeoutMs: QUEUED_EXECUTION_TIMEOUT_MS,
+          })
+          .then(
+            () => ({ kind: "completed" as const }),
+            (error: unknown) => ({ kind: "rejected" as const, error }),
+          );
+        const identity = await waitForChildIdentityMarker(markerPath);
+        const blocked = await blockedOutcome;
+        if (blocked.kind !== "rejected") {
+          throw new Error("D341 blocking child unexpectedly completed the supervised gate");
+        }
+        expect(blocked.error).toBeInstanceOf(Error);
+        expect((blocked.error as Error).message).toBe(D342_DEADLINE_MESSAGE);
+        expect(d342ProcessAbsent(identity.pid)).toBe(true);
+        expect(d342GroupAbsent(identity.pgid)).toBe(true);
+
+        // Prompt input: 15,000 ms execution; positive passes, zero failures.
+        process.env["CQ_D341_DETECTOR_MODE"] = "prompt";
+        const prompt = await nodeSupervisedWorkerGateRunner.run({
+          worktreePath,
+          admissionTimeoutMs: FIRST_EXECUTION_TIMEOUT_MS,
+          executionTimeoutMs: FIRST_EXECUTION_TIMEOUT_MS,
+        });
+        expect(prompt.gateExitCode).toBe(0);
+        expect(prompt.passCount).toBeGreaterThan(0);
+        expect(prompt.failCount).toBe(0);
+      } finally {
+        if (priorPath === undefined) delete process.env["PATH"];
+        else process.env["PATH"] = priorPath;
+        if (priorMode === undefined) delete process.env["CQ_D341_DETECTOR_MODE"];
+        else process.env["CQ_D341_DETECTOR_MODE"] = priorMode;
+        if (priorMarker === undefined) delete process.env["CQ_D341_DETECTOR_MARKER"];
+        else process.env["CQ_D341_DETECTOR_MARKER"] = priorMarker;
+        await reapD342MarkerGroup(markerPath);
+      }
+    },
+    D326_TEST_TIMEOUT_MS,
+  );
 
   test(
     "D342 worktree settlement rejection still settles the registered root once and retains the deadline cause",
