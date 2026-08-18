@@ -1269,6 +1269,7 @@ export function createLedgerMcpToolSpecifications(
           ...(args.overlays === undefined ? {} : { overlays: args.overlays }),
           expectedChild: args.expectedChild,
           ...(args.reprepareOf === undefined ? {} : { reprepareOf: args.reprepareOf }),
+          ...(args.guardedRebase === undefined ? {} : { guardedRebase: args.guardedRebase }),
         }),
       );
     },

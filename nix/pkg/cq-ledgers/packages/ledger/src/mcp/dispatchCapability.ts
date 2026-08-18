@@ -36,6 +36,8 @@ export interface PrepareDispatchToolInput {
   readonly overlays?: readonly DispatchOverlayApplication[];
   readonly expectedChild: NativeChildIdentity;
   readonly reprepareOf?: DispatchHandle;
+  /** Opaque manager-minted guarded-rebase reference (D334); requires reprepareOf. */
+  readonly guardedRebase?: string;
 }
 
 export interface StoreResultToolInput {

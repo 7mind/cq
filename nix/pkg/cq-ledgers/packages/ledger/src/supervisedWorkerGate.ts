@@ -461,6 +461,26 @@ export async function superviseImplementWorkerGate(
   if (!Array.isArray(output["filesTouched"]) || !Array.isArray(output["gitReceipts"])) {
     throw new Error("supervised gate requires filesTouched and the complete Git receipt chain");
   }
+  if (context.guardedRebaseBridge === undefined) {
+    if (Object.hasOwn(output, "gitLineage")) {
+      throw new Error("an ordinary worker result cannot carry a guarded-rebase lineage");
+    }
+  } else {
+    const lineage = output["gitLineage"];
+    if (lineage === null || typeof lineage !== "object" || Array.isArray(lineage)) {
+      throw new Error("guarded worker result omitted its resolved lineage");
+    }
+    const record = lineage as Readonly<Record<string, unknown>>;
+    if (
+      record["kind"] !== "guarded-rebase" ||
+      record["guardedRebase"] !== context.guardedRebaseBridge.guardedRebase ||
+      record["ontoCommit"] !== context.guardedRebaseBridge.ontoCommit ||
+      record["rebasedStartCommit"] !== context.guardedRebaseBridge.rebasedStartCommit ||
+      record["exactTip"] !== context.guardedRebaseBridge.exactTip
+    ) {
+      throw new Error("guarded worker result substituted its resolved lineage");
+    }
+  }
   if (
     output["filesTouched"].some(
       (entry) => typeof entry === "string" && requiresMutationEvidence(entry),

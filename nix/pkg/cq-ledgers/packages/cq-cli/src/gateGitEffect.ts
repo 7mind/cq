@@ -7,8 +7,10 @@ import {
   nodeManagedWorktreeGitRunner,
   requireWorksetStore,
   resolveManagedWorktreeDispatchBinding,
+  runGuardedRebase,
   worksetEffectAdmissionProviderFromStore,
   type LedgerStore,
+  type ManagedWorktreeDispatchBinding,
   type ManagedWorktreeHandle,
 } from "@cq/ledger";
 import {
@@ -18,12 +20,15 @@ import {
 
 const FULL_COMMIT = /^[0-9a-f]{40}$/u;
 const TASK_ID = /^T[0-9]+$/u;
+const OPERATION_ID = /^[A-Za-z0-9_-]{1,128}$/u;
 
 export interface GateGitEffectRequest {
   readonly operation: "rebase" | "merge";
   readonly cwd: string;
   readonly taskId: string;
   readonly commit: string;
+  /** Parent-supplied stable guarded-rebase operation id (D334/T2150). */
+  readonly operationId?: string;
 }
 
 export interface GateGitEffectOutcome {
@@ -57,11 +62,11 @@ async function gitOutput(cwd: string, args: readonly string[], label: string): P
   return result.stdout.trim();
 }
 
-async function resolveBinding(
+async function resolveManagedBinding(
   store: LedgerStore,
   request: GateGitEffectRequest,
   repository: string,
-): Promise<WorksetGitEffectBinding> {
+): Promise<ManagedWorktreeDispatchBinding> {
   const task = store.fetchItem(TASKS_LEDGER, request.taskId);
   if (task.id !== request.taskId) {
     throw new Error("cq gate git-effect: task identity changed during resolution");
@@ -80,6 +85,15 @@ async function resolveBinding(
   if (binding === null || binding.handleToken !== handle.token) {
     throw new Error("cq gate git-effect: managed worktree binding is no longer authoritative");
   }
+  return binding;
+}
+
+async function resolveBinding(
+  store: LedgerStore,
+  request: GateGitEffectRequest,
+  repository: string,
+): Promise<WorksetGitEffectBinding> {
+  const binding = await resolveManagedBinding(store, request, repository);
   if ((await gitOutput(repository, ["symbolic-ref", "--quiet", "HEAD"], "integration branch")) !== "refs/heads/main") {
     throw new Error("cq gate git-effect: integration checkout must be on refs/heads/main");
   }
@@ -137,9 +151,50 @@ export async function runGateGitEffect(
   if (!isAbsolute(request.cwd)) {
     throw new Error("cq gate git-effect: --cwd must be absolute");
   }
+  if (request.operationId !== undefined && !OPERATION_ID.test(request.operationId)) {
+    throw new Error("cq gate git-effect: --operation-id must be one stable operation id");
+  }
+  if (request.operation === "merge" && request.operationId !== undefined) {
+    throw new Error("cq gate git-effect: --operation-id journals only a rebase");
+  }
   const resolved = await createManagementLedgerStore(request.cwd);
   try {
     const repository = await repositoryRoot(request.cwd);
+    if (request.operation === "rebase" && request.operationId !== undefined) {
+      // D334/T2150: the journaled guarded rebase. The journal is written under
+      // the managed handle's Git-effect lock BEFORE the admitted effect runs;
+      // a replay or restart reconciles the same journal and only a verified
+      // terminal state mints the opaque reference.
+      const managed = await resolveManagedBinding(resolved.store, request, repository);
+      const outcome = await runGuardedRebase({
+        binding: managed,
+        operationId: request.operationId,
+        ontoCommit: request.commit,
+        runEffect: async () => {
+          const trustedResolve = async () =>
+            await resolveBinding(resolved.store, request, repository);
+          const expected = await trustedResolve();
+          return await runWorksetGitEffectGate({
+            expected,
+            resolve: trustedResolve,
+            provider: worksetEffectAdmissionProviderFromStore(
+              requireWorksetStore(resolved.store),
+            ),
+          });
+        },
+      });
+      if (outcome.kind === "finalized") {
+        if (outcome.effect !== null) {
+          if (outcome.effect.stdout !== "") process.stdout.write(outcome.effect.stdout);
+          if (outcome.effect.stderr !== "") process.stderr.write(outcome.effect.stderr);
+        }
+        process.stdout.write(`CQ_GUARDED_REBASE_REFERENCE=${outcome.reference}\n`);
+        return { exitCode: 0 };
+      }
+      if (outcome.effect.stdout !== "") process.stdout.write(outcome.effect.stdout);
+      if (outcome.effect.stderr !== "") process.stderr.write(outcome.effect.stderr);
+      return { exitCode: outcome.effect.code === 0 ? 1 : outcome.effect.code };
+    }
     const trustedResolve = async () =>
       await resolveBinding(resolved.store, request, repository);
     const expected = await trustedResolve();

@@ -87,13 +87,15 @@ function parseGateGitEffect(argv: readonly string[]): GateGitEffectRequest {
   let cwd: string | undefined;
   let taskId: string | undefined;
   let commit: string | undefined;
+  let operationId: string | undefined;
   for (let index = 1; index < argv.length; index += 1) {
     const argument = argv[index];
     if (
       argument === "--operation" ||
       argument === "--cwd" ||
       argument === "--task-id" ||
-      argument === "--commit"
+      argument === "--commit" ||
+      argument === "--operation-id"
     ) {
       const value = argv[index + 1];
       if (value === undefined) throw new Error(`cq gate git-effect: ${argument} requires a value`);
@@ -104,6 +106,7 @@ function parseGateGitEffect(argv: readonly string[]): GateGitEffectRequest {
         operation = value;
       } else if (argument === "--cwd") cwd = value;
       else if (argument === "--task-id") taskId = value;
+      else if (argument === "--operation-id") operationId = value;
       else commit = value;
       index += 1;
       continue;
@@ -118,7 +121,7 @@ function parseGateGitEffect(argv: readonly string[]): GateGitEffectRequest {
   if (commit === undefined || commit === "") {
     throw new Error("cq gate git-effect: --commit is required");
   }
-  return { operation, cwd, taskId, commit };
+  return { operation, cwd, taskId, commit, ...(operationId === undefined ? {} : { operationId }) };
 }
 
 function parseDeadline(value: string): number {

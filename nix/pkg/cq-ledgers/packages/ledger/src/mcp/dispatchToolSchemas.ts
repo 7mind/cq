@@ -127,6 +127,7 @@ export const PREPARE_DISPATCH_INPUT = {
     runId: z.string().min(1),
   }),
   reprepareOf: z.object(handle).optional(),
+  guardedRebase: z.string().optional(),
 } as const;
 
 export const FETCH_DISPATCH_INPUT_INPUT = {

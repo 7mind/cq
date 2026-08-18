@@ -52,6 +52,9 @@ import {
   commitManagedWorktreeChanges,
   continueManagedWorktreeRebase,
   gitRebaseConflictStateDigest,
+  GuardedRebaseRejection,
+  materializeGuardedRebaseBridge,
+  reverifyGuardedRebaseBridge,
   validateGitConflictContinuationResultEvidence,
   validateGitChangeBrokerResultEvidence,
   resolveManagedWorktreeDispatchBinding,
@@ -139,6 +142,24 @@ function brokerResultEvidence(
   ) {
     throw new Error("broker-capable passing worker result lacks a complete receipt chain");
   }
+  const lineage = result["gitLineage"];
+  if (lineage !== undefined) {
+    if (lineage === null || typeof lineage !== "object" || Array.isArray(lineage)) {
+      throw new Error("broker-capable passing worker result carries a malformed gitLineage");
+    }
+    const record = lineage as Readonly<Record<string, unknown>>;
+    if (
+      Object.keys(record).sort().join(",") !==
+        ["exactTip", "guardedRebase", "kind", "ontoCommit", "rebasedStartCommit"].sort().join(",") ||
+      record["kind"] !== "guarded-rebase" ||
+      typeof record["guardedRebase"] !== "string" ||
+      typeof record["ontoCommit"] !== "string" ||
+      typeof record["rebasedStartCommit"] !== "string" ||
+      typeof record["exactTip"] !== "boolean"
+    ) {
+      throw new Error("broker-capable passing worker result carries a malformed gitLineage");
+    }
+  }
   return {
     taskId: result["taskId"],
     resultCommit: result["resultCommit"] as string,
@@ -146,6 +167,13 @@ function brokerResultEvidence(
     actualWorktreePath: result["actualWorktreePath"],
     filesTouched: result["filesTouched"] as string[],
     gitReceipts: result["gitReceipts"] as unknown as GitChangeBrokerResultEvidence["gitReceipts"],
+    ...(lineage === undefined
+      ? {}
+      : {
+          gitLineage: lineage as unknown as NonNullable<
+            GitChangeBrokerResultEvidence["gitLineage"]
+          >,
+        }),
   };
 }
 
@@ -390,6 +418,31 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         );
       }
 
+      if (
+        roleId === "implement-worker" &&
+        typeof dispatchInput === "object" &&
+        dispatchInput !== null &&
+        !Array.isArray(dispatchInput) &&
+        Object.hasOwn(dispatchInput, "guardedRebaseLineage")
+      ) {
+        return rejectLaunch(
+          "input.guardedRebaseLineage",
+          "caller must omit the server-injected guarded-rebase lineage",
+        );
+      }
+
+      if (
+        input.guardedRebase !== undefined &&
+        (roleId !== "implement-worker" ||
+          input.reprepareOf === undefined ||
+          options.repositoryRoot === undefined)
+      ) {
+        return rejectLaunch(
+          "guardedRebase",
+          "a guarded-rebase reference requires an implement-worker reprepareOf naming the exact terminal prior worker generation on a local repository",
+        );
+      }
+
       if (roleId === "implement-reviewer") {
         if (input.timeoutMs < IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS) {
           return rejectLaunch(
@@ -585,6 +638,12 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           }
           gitEffectBinding = resolvedGitEffectBinding;
         } else if (manifestSurface !== "codex") {
+          if (input.guardedRebase !== undefined) {
+            return rejectLaunch(
+              "guardedRebase",
+              "a guarded-rebase reference requires the brokered codex surface",
+            );
+          }
           gitEffectBinding = resolvedGitEffectBinding;
         } else {
           const priorBinding = await resolveDispatchGitEffectBindingForHandleOn(
@@ -620,32 +679,121 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           if (typeof startingCommit !== "string") {
             return rejectLaunch("input.startingCommit", "worker reprepare requires startingCommit");
           }
-          let inheritedGitReceipts;
-          try {
-            inheritedGitReceipts = await resolveInheritedGitChangeReceipts(
-              {
-                ...priorBinding,
-                attestationId: input.reprepareOf.attestationId,
-                generation: input.reprepareOf.generation,
-              },
-              startingCommit,
-              options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
-            );
-          } catch (error) {
-            return rejectLaunch(
-              "input.startingCommit",
-              `prior-generation receipt inheritance failed: ${error instanceof Error ? error.message : String(error)}`,
-            );
+          const baseCommitInput = dispatchRecord["baseCommit"];
+          if (typeof baseCommitInput !== "string") {
+            return rejectLaunch("input.baseCommit", "worker reprepare requires baseCommit");
           }
-          gitEffectBinding =
-            inheritedGitReceipts.length === 0
-              ? resolvedGitEffectBinding
-              : { ...resolvedGitEffectBinding, inheritedGitReceipts };
-          if (inheritedGitReceipts.length > 0) {
+          const guardedRebaseLineageOf = (bridge: {
+            readonly guardedRebase: string;
+            readonly oldResultCommit: string;
+            readonly ontoCommit: string;
+            readonly rebasedStartCommit: string;
+            readonly exactTip: boolean;
+          }): DispatchJSONValue =>
+            ({
+              guardedRebase: bridge.guardedRebase,
+              oldResultCommit: bridge.oldResultCommit,
+              ontoCommit: bridge.ontoCommit,
+              rebasedStartCommit: bridge.rebasedStartCommit,
+              exactTip: bridge.exactTip,
+            }) as unknown as DispatchJSONValue;
+          if (input.guardedRebase !== undefined) {
+            // D334 initial bridge round: the opaque reference is resolved
+            // against the terminal durable journal; the caller can never mint
+            // the materialized lineage.
+            let bridge;
+            try {
+              bridge = await materializeGuardedRebaseBridge({
+                reference: input.guardedRebase,
+                prior: {
+                  ...priorBinding,
+                  attestationId: input.reprepareOf.attestationId,
+                  generation: input.reprepareOf.generation,
+                },
+                current: resolvedGitEffectBinding,
+                baseCommitInput,
+                startingCommitInput: startingCommit,
+                priorResultCommitInput:
+                  (dispatchRecord["priorResultCommit"] as string | null | undefined) ?? null,
+                ...(options.worktreeStateDir === undefined
+                  ? {}
+                  : { stateDir: options.worktreeStateDir }),
+              });
+            } catch (error) {
+              return rejectLaunch(
+                error instanceof GuardedRebaseRejection ? error.path : "guardedRebase",
+                error instanceof Error ? error.message : String(error),
+              );
+            }
+            gitEffectBinding = { ...resolvedGitEffectBinding, guardedRebaseBridge: bridge };
             dispatchInput = {
               ...dispatchRecord,
-              inheritedGitReceipts: inheritedGitReceipts as unknown as DispatchJSONValue,
+              guardedRebaseLineage: guardedRebaseLineageOf(bridge),
             };
+          } else {
+            let inheritedGitReceipts;
+            try {
+              inheritedGitReceipts = await resolveInheritedGitChangeReceipts(
+                {
+                  ...priorBinding,
+                  attestationId: input.reprepareOf.attestationId,
+                  generation: input.reprepareOf.generation,
+                },
+                startingCommit,
+                options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+              );
+            } catch (error) {
+              return rejectLaunch(
+                "input.startingCommit",
+                `prior-generation receipt inheritance failed: ${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
+            if (priorBinding.guardedRebaseBridge === undefined) {
+              gitEffectBinding =
+                inheritedGitReceipts.length === 0
+                  ? resolvedGitEffectBinding
+                  : { ...resolvedGitEffectBinding, inheritedGitReceipts };
+              if (inheritedGitReceipts.length > 0) {
+                dispatchInput = {
+                  ...dispatchRecord,
+                  inheritedGitReceipts: inheritedGitReceipts as unknown as DispatchJSONValue,
+                };
+              }
+            } else {
+              // Later correction on a guarded lineage: the verified bridge is
+              // carried from the prior generation's persisted binding and
+              // re-verified against the terminal journal and live binding.
+              let bridge;
+              try {
+                bridge = await reverifyGuardedRebaseBridge({
+                  bridge: priorBinding.guardedRebaseBridge,
+                  current: resolvedGitEffectBinding,
+                  baseCommitInput,
+                  startingCommitInput: startingCommit,
+                  firstInheritedOldHead: inheritedGitReceipts[0]?.oldHead ?? null,
+                  ...(options.worktreeStateDir === undefined
+                    ? {}
+                    : { stateDir: options.worktreeStateDir }),
+                });
+              } catch (error) {
+                return rejectLaunch(
+                  error instanceof GuardedRebaseRejection ? error.path : "guardedRebase",
+                  error instanceof Error ? error.message : String(error),
+                );
+              }
+              gitEffectBinding = {
+                ...resolvedGitEffectBinding,
+                ...(inheritedGitReceipts.length === 0 ? {} : { inheritedGitReceipts }),
+                guardedRebaseBridge: bridge,
+              };
+              dispatchInput = {
+                ...dispatchRecord,
+                ...(inheritedGitReceipts.length === 0
+                  ? {}
+                  : { inheritedGitReceipts: inheritedGitReceipts as unknown as DispatchJSONValue }),
+                guardedRebaseLineage: guardedRebaseLineageOf(bridge),
+              };
+            }
           }
         }
       }

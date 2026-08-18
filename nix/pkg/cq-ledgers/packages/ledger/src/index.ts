@@ -524,6 +524,7 @@ export type {
 } from "./legacyWorktreeReconciliation.js";
 export {
   continueManagedWorktreeRebase,
+  durableHandleConflictContinuationReceipts,
   gitRebaseConflictStateDigest,
   observeManagedRebaseConflict,
   observeManagedWorktreeConflictState,
@@ -542,6 +543,23 @@ export type {
   GitRebaseConflictState,
   GitRebaseSequencerState,
 } from "./gitConflictContinuation.js";
+export {
+  GUARDED_REBASE_REFERENCE_PATTERN,
+  GUARDED_REBASE_REFERENCE_PREFIX,
+  GuardedRebaseRejection,
+  guardedRebaseReference,
+  materializeGuardedRebaseBridge,
+  reverifyGuardedRebaseBridge,
+  runGuardedRebase,
+} from "./guardedRebaseContinuation.js";
+export type {
+  GuardedRebaseEffectResult,
+  GuardedRebaseJournal,
+  GuardedRebaseRunOutcome,
+  MaterializeGuardedRebaseBridgeOptions,
+  ReverifyGuardedRebaseBridgeOptions,
+  RunGuardedRebaseOptions,
+} from "./guardedRebaseContinuation.js";
 export { GitPersistence } from "./store/git/GitPersistence.js";
 export { GitObjectLedgerBackend } from "./store/git/GitObjectLedgerBackend.js";
 export type { GitObjectLedgerBackendOpts } from "./store/git/GitObjectLedgerBackend.js";

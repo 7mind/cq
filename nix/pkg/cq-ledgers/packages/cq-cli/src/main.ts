@@ -260,7 +260,10 @@ export const USAGE = [
   "                                                  canonical Git-worktree exclusive gate.",
   "  gate git-effect --operation <rebase|merge> --cwd <repo> --task-id <Tn> --commit <full-sha>",
   "                                                  run one task-bound Git mutation through",
-  "                                                  the workset effect broker.",
+  "                                                  the workset effect broker. A rebase may",
+  "                                                  carry --operation-id <id> to journal one",
+  "                                                  replay-safe guarded rebase and print its",
+  "                                                  opaque CQ_GUARDED_REBASE_REFERENCE.",
   "",
   "ledger root: --cwd > $LEDGER_ROOT > current working directory",
 ].join("\n");

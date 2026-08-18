@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
+import type { DispatchGuardedRebaseBridge } from "@cq/config";
 import {
   assertManagedWorktreeDispatchBindingLive,
   withManagedWorktreeEffectLock,
@@ -56,6 +57,17 @@ export interface DispatchBoundGitAuthorization extends ManagedWorktreeDispatchBi
   readonly surface: string;
   readonly childCancelAt: string;
   readonly inheritedGitReceipts?: readonly GitChangeBrokerReceipt[];
+  /** Server-materialized guarded-rebase bridge (D334); present only on a guarded dispatch. */
+  readonly guardedRebaseBridge?: DispatchGuardedRebaseBridge;
+}
+
+/** The closed guarded-rebase lineage discriminant a guarded worker reports. */
+export interface GitChangeBrokerGuardedLineage {
+  readonly kind: "guarded-rebase";
+  readonly guardedRebase: string;
+  readonly ontoCommit: string;
+  readonly rebasedStartCommit: string;
+  readonly exactTip: boolean;
 }
 
 export interface GitChangeBrokerRequest {
@@ -89,6 +101,7 @@ export interface GitChangeBrokerResultEvidence {
   readonly actualWorktreePath: string;
   readonly filesTouched: readonly string[];
   readonly gitReceipts: readonly GitChangeBrokerReceipt[];
+  readonly gitLineage?: GitChangeBrokerGuardedLineage;
 }
 
 export interface GitChangeBrokerDeps extends Pick<ManagedWorktreeDeps, "stateDir" | "lockfile"> {
@@ -1152,8 +1165,35 @@ export async function validateGitChangeBrokerResultEvidence(
   ) {
     throw new Error("broker receipt worktree path does not match the dispatch binding");
   }
-  if (evidence.gitReceipts.length === 0) {
-    throw new Error("broker-capable worker result requires a non-empty receipt chain");
+  const bridge = authorization.guardedRebaseBridge;
+  if (bridge === undefined) {
+    if (evidence.gitLineage !== undefined) {
+      throw new Error("an ordinary worker result cannot carry a guarded-rebase lineage");
+    }
+    if (evidence.gitReceipts.length === 0) {
+      throw new Error("broker-capable worker result requires a non-empty receipt chain");
+    }
+  } else {
+    const lineage = evidence.gitLineage;
+    if (
+      lineage === undefined ||
+      lineage.kind !== "guarded-rebase" ||
+      lineage.guardedRebase !== bridge.guardedRebase ||
+      lineage.ontoCommit !== bridge.ontoCommit ||
+      lineage.rebasedStartCommit !== bridge.rebasedStartCommit ||
+      lineage.exactTip !== bridge.exactTip
+    ) {
+      throw new Error("guarded worker result omitted or substituted its resolved lineage");
+    }
+    if (evidence.gitReceipts.length === 0) {
+      if (evidence.resultCommit !== bridge.rebasedStartCommit || !bridge.exactTip) {
+        throw new Error(
+          "an empty guarded receipt suffix is authorized only by the resolved exact-tip mode",
+        );
+      }
+    } else if (evidence.gitReceipts[0]!.oldHead !== bridge.rebasedStartCommit) {
+      throw new Error("guarded receipt suffix must begin at the journaled rebased head");
+    }
   }
   const evidenceGit = async (args: readonly string[]): Promise<Buffer> =>
     await checkedGit(authorization.worktreePath, args, undefined, undefined, deps.deadlineMs);
@@ -1264,25 +1304,31 @@ export async function validateGitChangeBrokerResultEvidence(
     previousHead = receipt.newHead;
   }
 
-  const first = evidence.gitReceipts[0]!;
+  const first = evidence.gitReceipts[0];
   const diffBaseCommit = deps.diffBaseCommit ?? authorization.baseCommit;
   if (!FULL_OID.test(diffBaseCommit)) {
     throw new Error("broker result diff base is not a full Git oid");
   }
-  const baseAncestry = await runEvidenceGit([
-    "merge-base",
-    "--is-ancestor",
-    diffBaseCommit,
-    first.oldHead,
-  ]);
-  if (baseAncestry.code !== 0) {
-    throw new Error("broker receipt chain begins outside the dispatch base ancestry");
+  if (first !== undefined) {
+    const baseAncestry = await runEvidenceGit([
+      "merge-base",
+      "--is-ancestor",
+      diffBaseCommit,
+      first.oldHead,
+    ]);
+    if (baseAncestry.code !== 0) {
+      throw new Error("broker receipt chain begins outside the dispatch base ancestry");
+    }
   }
-  if (previousHead !== evidence.resultCommit) {
+  if (evidence.gitReceipts.length > 0 && previousHead !== evidence.resultCommit) {
     throw new Error("broker receipt chain head does not match resultCommit");
   }
-  if (canonical([...receiptPaths].sort()) !== canonical(touched)) {
-    throw new Error("broker receipt paths do not match filesTouched");
+  if (bridge === undefined) {
+    if (canonical([...receiptPaths].sort()) !== canonical(touched)) {
+      throw new Error("broker receipt paths do not match filesTouched");
+    }
+  } else if (diffBaseCommit !== bridge.ontoCommit) {
+    throw new Error("guarded worker result diff base does not equal the journaled ontoCommit");
   }
   const actualResultPaths = (
     await evidenceGit([

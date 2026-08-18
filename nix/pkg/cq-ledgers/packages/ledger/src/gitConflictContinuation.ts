@@ -1234,42 +1234,14 @@ export async function continueManagedWorktreeRebase(
   });
 }
 
-function brokerRoot(authorization: DispatchBoundGitAuthorization, stateDir?: string): string {
-  return stateDir ?? join(authorization.repositoryRoot, ".claude", "worktrees", ".cq-managed-registry");
+function brokerRoot(binding: ManagedWorktreeDispatchBinding, stateDir?: string): string {
+  return stateDir ?? join(binding.repositoryRoot, ".claude", "worktrees", ".cq-managed-registry");
 }
 
-async function durableReceipts(
-  authorization: DispatchBoundGitAuthorization,
-  deps: GitConflictContinuationEvidenceDeps,
-): Promise<readonly GitConflictContinuationReceipt[]> {
-  const root = join(brokerRoot(authorization, deps.stateDir), "git-conflict-broker");
-  let entries;
-  try {
-    entries = await fs.readdir(root, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return Object.freeze([]);
-    throw error;
-  }
-  const receipts: GitConflictContinuationReceipt[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const journal = await readJournal(join(root, entry.name, "journal.json"));
-    if (journal?.state !== "completed" || journal.receipt === undefined) continue;
-    const receipt = journal.receipt;
-    if (
-      receipt.attestationId !== authorization.attestationId ||
-      receipt.generation !== authorization.generation ||
-      receipt.taskId !== authorization.taskId
-    ) continue;
-    if (entry.name !== basename(operationRoot(authorization, receipt.operationId, deps.stateDir))) {
-      throw new Error(`durable continuation receipt ${receipt.operationId} has a substituted operationId`);
-    }
-    if (receipt.requestDigest !== journal.requestDigest || receipt.continuedAt !== journal.createdAt) {
-      throw new Error(`durable continuation receipt ${receipt.operationId} does not match its journal`);
-    }
-    receipts.push(receipt);
-  }
-  if (receipts.length < 2) return Object.freeze(receipts);
+function orderReceiptChain(
+  receipts: readonly GitConflictContinuationReceipt[],
+): readonly GitConflictContinuationReceipt[] {
+  if (receipts.length < 2) return Object.freeze([...receipts]);
   const newHeads = new Set(receipts.map((receipt) => receipt.newHead));
   const starts = receipts.filter((receipt) => !newHeads.has(receipt.oldHead));
   if (starts.length !== 1) throw new Error("durable continuation receipts do not have one chain start");
@@ -1289,6 +1261,66 @@ async function durableReceipts(
   }
   if (byOldHead.size !== 0) throw new Error("durable continuation receipts do not form one chain");
   return Object.freeze(ordered);
+}
+
+async function collectDurableReceipts(
+  binding: ManagedWorktreeDispatchBinding,
+  deps: GitConflictContinuationEvidenceDeps,
+  predicate: (receipt: GitConflictContinuationReceipt) => boolean,
+): Promise<readonly GitConflictContinuationReceipt[]> {
+  const root = join(brokerRoot(binding, deps.stateDir), "git-conflict-broker");
+  let entries;
+  try {
+    entries = await fs.readdir(root, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return Object.freeze([]);
+    throw error;
+  }
+  const receipts: GitConflictContinuationReceipt[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const journal = await readJournal(join(root, entry.name, "journal.json"));
+    if (journal?.state !== "completed" || journal.receipt === undefined) continue;
+    const receipt = journal.receipt;
+    if (!predicate(receipt)) continue;
+    const expectedDirectory = sha256(
+      `${receipt.attestationId}\n${String(receipt.generation)}\n${receipt.operationId}`,
+    );
+    if (entry.name !== expectedDirectory) {
+      throw new Error(`durable continuation receipt ${receipt.operationId} has a substituted operationId`);
+    }
+    if (receipt.requestDigest !== journal.requestDigest || receipt.continuedAt !== journal.createdAt) {
+      throw new Error(`durable continuation receipt ${receipt.operationId} does not match its journal`);
+    }
+    receipts.push(receipt);
+  }
+  return orderReceiptChain(receipts);
+}
+
+async function durableReceipts(
+  authorization: DispatchBoundGitAuthorization,
+  deps: GitConflictContinuationEvidenceDeps,
+): Promise<readonly GitConflictContinuationReceipt[]> {
+  return await collectDurableReceipts(
+    authorization,
+    deps,
+    (receipt) =>
+      receipt.attestationId === authorization.attestationId &&
+      receipt.generation === authorization.generation &&
+      receipt.taskId === authorization.taskId,
+  );
+}
+
+/**
+ * Every durable continuation receipt one managed handle produced, across every
+ * resolver generation, as one ordered chain. The guarded-rebase journal uses
+ * this to reconcile a conflicted rebase to its verified terminal tip (D334).
+ */
+export async function durableHandleConflictContinuationReceipts(
+  binding: ManagedWorktreeDispatchBinding,
+  deps: GitConflictContinuationEvidenceDeps,
+): Promise<readonly GitConflictContinuationReceipt[]> {
+  return await collectDurableReceipts(binding, deps, (receipt) => receipt.taskId === binding.taskId);
 }
 
 /** Trusted-parent validation of resolver continuation receipts before result storage. */
