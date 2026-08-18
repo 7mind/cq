@@ -63,8 +63,8 @@ const SCHEMA_PINS_JSON = String.raw`{
     "digest": "99be6cac6e847fbe1e66dd62ded37beab7890f5963930fa4053da3efb7325b22"
   },
   "implement-worker": {
-    "version": 8,
-    "digest": "69307068a5c607a9795ac7119cf80184025d54846154b7267cc80679adec40fe"
+    "version": 9,
+    "digest": "955c6d9a795ac733fceaa94398fb18dd52814d70cf7dc6beb6535763344e1ca9"
   },
   "implement-reviewer": {
     "version": 7,

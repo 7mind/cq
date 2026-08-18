@@ -10,7 +10,7 @@ description: Implement exactly one task in an isolated worktree, prove its guard
 
 ```yaml
 inputs:
-  - "task specification, optional advisory worktreePath, branch, verified full-SHA base, required round, authoritative starting commit, optional priorResultCommit, optional prior criticism, optional server-bound inherited Git receipts"
+  - "task specification, optional advisory worktreePath, branch, verified full-SHA base, required round, authoritative starting commit, optional priorResultCommit, optional prior criticism, optional server-bound inherited Git receipts, optional server-injected guarded-rebase lineage"
 outputs:
   - "one verified task commit, parent-verifiable git receipts, actualWorktreePath, required baseVerification evidence, green legacy or trusted supervised gate evidence, stored structured result, and handle-only final reply"
 ioSchema:
@@ -44,6 +44,18 @@ to equal `startingCommit`, and append only receipts returned by this generation'
 an inherited receipt. `filesTouched` must equal the sorted union of paths from
 the complete inherited-plus-current receipt chain.
 
+When fetched input carries `guardedRebaseLineage`, the dispatch is a
+guarded-rebase continuation (D334): the server resolved the opaque
+`guardedRebase` reference against a terminal durable journal and verified the
+bridge. The lineage binds `oldResultCommit` (the exact terminal pre-rebase
+worker result), `ontoCommit`, `rebasedStartCommit`, and the server-resolved
+`exactTip` mode. On this arm `baseCommit` equals `ontoCommit`, `startingCommit`
+equals `rebasedStartCommit`, the result reports the lineage verbatim as
+`gitLineage`, `gitReceipts` carries ONLY this lineage's fresh post-rebase
+suffix (never a pre-rebase receipt), and `filesTouched` equals the sorted
+`git diff --name-only <ontoCommit>..<resultCommit>` set rather than a receipt
+path union.
+
 ## Procedure
 
 1. **Step 0 — verify prepared evidence only (no install, no lifecycle).**
@@ -72,6 +84,16 @@ the complete inherited-plus-current receipt chain.
    When `round > 0`, also verify `priorResultCommit` when supplied (non-null):
    require it to be a full SHA commit object equal to or an ancestor of `HEAD`.
    Never hard-reset or rebase away from prior criticism commits.
+
+   On a guarded-rebase continuation (the fetched input carries
+   `guardedRebaseLineage`) Step 0 instead requires `baseCommit` to equal the
+   lineage `ontoCommit` and `HEAD` to equal both `startingCommit` and the
+   lineage `rebasedStartCommit`. On the initial bridge round
+   `priorResultCommit` must equal the bound `oldResultCommit` exactly; that
+   equality is the ONLY ancestry exemption — the pre-rebase result does not
+   descend from the rewritten `HEAD` and must not be claimed to. Any later
+   correction round's `priorResultCommit` is again equal to or an ancestor of
+   `HEAD`. Record `baseVerification` with `baseCommit` set to `ontoCommit`.
 
    On any mismatch STOP immediately with `status: "fail"`, a precise
    `blockedReason`, and `baseVerification` set to the matching unresolvable arm
@@ -108,7 +130,7 @@ the complete inherited-plus-current receipt chain.
    **Early skeleton write (load-bearing durability).** The first substantive
    action after grounding and base verification MUST be to create a durable
    partial artifact and persist it through the applicable commit path, even
-   when nearly empty. Prefer
+   when nearly empty.Prefer
    `WIP-<taskId>.md` in the worktree root using the existing WIP partial format
    (fenced JSON header with `taskId`, `role`, `baseCommit`, `startedAt`, and a
    non-empty `checkpoints[]` of `{name,status}` where status is
@@ -117,6 +139,13 @@ the complete inherited-plus-current receipt chain.
    `todo` or `unmeasured` rather than omitting it so a harvested partial is
    self-describing. A committed partial is worth more than an uncommitted
    complete deliverable. Do not defer the first write until the end of the turn.
+   The early WIP-skeleton commit and the non-empty new-receipt requirement are
+   exempted ONLY for the server-resolved exact-tip/no-new-commit mode of a
+   guarded-rebase continuation (`guardedRebaseLineage.exactTip === true` and
+   no change to make): then `resultCommit` must equal `rebasedStartCommit`,
+   the fresh suffix is empty, and no `git_commit` call is made at all. Any
+   guarded correction that advances the tip keeps early persistence and a
+   non-empty contiguous suffix beginning at `rebasedStartCommit`.
    **Incremental persistence.** Reproduce a defect before correcting it. Match
    project conventions and do not repair unrelated faults. At natural
    checkpoints — after each measurement, probe, acceptance clause, or
@@ -198,6 +227,7 @@ the complete inherited-plus-current receipt chain.
   "actualWorktreePath": "<absolute git rev-parse --show-toplevel>",
   "filesTouched": ["<path>"],
   "gitReceipts": [{ "kind": "cq-git-change-receipt", "version": 1, "attestationId": "<id>", "generation": 1, "taskId": "<task id>", "operationId": "<stable id>", "requestDigest": "<sha256>", "oldHead": "<commit>", "newHead": "<commit>", "tree": "<tree>", "objectOids": ["<oid>"], "paths": ["<path>"], "committedAt": "<utc timestamp>" }],
+  "gitLineage": "<guarded-rebase continuations only: the exact server-injected lineage object plus kind: \"guarded-rebase\"; omitted by ordinary workers>",
   "checkSummary": "<legacy REAL_CHECK_EXIT plus tail, or trusted-gate delegation summary>",
   "gateDurationMs": "<legacy dispatches only>",
   "baseVerification": {

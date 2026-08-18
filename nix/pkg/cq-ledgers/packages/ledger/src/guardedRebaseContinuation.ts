@@ -62,6 +62,9 @@ export class GuardedRebaseRejection extends Error {
   }
 }
 
+/** The journal is live but has no verified terminal tip yet — a pending state, not an integrity failure. */
+class NonterminalGuardedRebaseError extends Error {}
+
 type GuardedRebaseJournalState = "intent" | "rebase-stopped" | "finalized";
 
 /** The durable journal. Everything a verified bridge derives from lives here. */
@@ -446,7 +449,7 @@ async function finalizeConflicted(
   now: () => Date,
 ): Promise<GuardedRebaseJournal> {
   if (await sequencerActive(binding)) {
-    throw new Error("guarded rebase has not reached a verified terminal tip");
+    throw new NonterminalGuardedRebaseError("guarded rebase has not reached a verified terminal tip");
   }
   const receipts = await durableHandleConflictContinuationReceipts(binding, deps);
   const tip = await liveTip(binding);
@@ -457,7 +460,7 @@ async function finalizeConflicted(
     terminal.outcome.kind !== "terminal" ||
     terminal.newHead !== tip
   ) {
-    throw new Error("guarded rebase has not reached a verified terminal tip");
+    throw new NonterminalGuardedRebaseError("guarded rebase has not reached a verified terminal tip");
   }
   const first = receipts[0]!;
   if (journal.conflictHead !== undefined && first.oldHead !== journal.conflictHead) {
@@ -538,12 +541,21 @@ export async function runGuardedRebase(
         });
       }
       if (journal?.state === "rebase-stopped") {
-        const finalized = await finalizeConflicted(
-          binding,
-          journal,
-          { ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }) },
-          now,
-        );
+        let finalized: GuardedRebaseJournal;
+        try {
+          finalized = await finalizeConflicted(
+            binding,
+            journal,
+            { ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }) },
+            now,
+          );
+        } catch (error) {
+          if (!(error instanceof NonterminalGuardedRebaseError)) throw error;
+          return Object.freeze({
+            kind: "conflict-pending" as const,
+            effect: { code: 1, stdout: "", stderr: "guarded rebase stopped on a conflict" },
+          });
+        }
         await writeJournal(journalFile, finalized);
         return Object.freeze({
           kind: "finalized" as const,
@@ -580,7 +592,8 @@ export async function runGuardedRebase(
             bridge: bridgeOf(finalized, reference),
             effect: null,
           });
-        } catch {
+        } catch (error) {
+          if (!(error instanceof NonterminalGuardedRebaseError)) throw error;
           return Object.freeze({
             kind: "conflict-pending" as const,
             effect: { code: 1, stdout: "", stderr: "guarded rebase stopped on a conflict" },
