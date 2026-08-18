@@ -317,3 +317,34 @@ deployedTest(
   },
   15_000,
 );
+
+deployedTest(
+  "D343 live parent stages the trusted gate behind a controllable loopback listener [Behavioral-Active Blackbox-GoodCommunication]",
+  async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "cq-d343-live-parent-"));
+    try {
+      const listener = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch: () => new Response("ok"),
+      });
+      try {
+        const probe = await fetch(`http://127.0.0.1:${listener.port}/`);
+        expect(probe.status).toBe(200);
+        expect(await probe.text()).toBe("ok");
+        const [cq, role] = await Promise.all([
+          installedExecutable("cq"),
+          installedExecutable("cq-codex-role"),
+        ]);
+        console.log(`installed cq: ${cq}`);
+        console.log(`installed cq-codex-role: ${role}`);
+        await proveInstalledBootstrap(root);
+      } finally {
+        listener.stop(true);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+  15_000,
+);
