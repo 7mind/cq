@@ -567,7 +567,24 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               conflictState as unknown as GitRebaseConflictState,
             ),
           };
-        } else if (input.reprepareOf === undefined || manifestSurface !== "codex") {
+        } else if (input.reprepareOf === undefined) {
+          // D332: a lineage-free prepare may only build on the tip it declares as
+          // its diff base. When startingCommit has advanced past baseCommit, the
+          // base-to-result diff spans commits no receipt of this generation could
+          // cover, so allocation must wait for the exact reprepareOf lineage.
+          const startingCommit = dispatchRecord["startingCommit"];
+          if (
+            typeof startingCommit !== "string" ||
+            startingCommit !== dispatchRecord["baseCommit"]
+          ) {
+            return rejectLaunch(
+              "reprepareOf",
+              "a lineage-free implement-worker prepare requires startingCommit to equal baseCommit; " +
+                "an advanced managed-worktree tip must name the exact terminal prior worker generation",
+            );
+          }
+          gitEffectBinding = resolvedGitEffectBinding;
+        } else if (manifestSurface !== "codex") {
           gitEffectBinding = resolvedGitEffectBinding;
         } else {
           const priorBinding = await resolveDispatchGitEffectBindingForHandleOn(

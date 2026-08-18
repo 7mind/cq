@@ -45,12 +45,6 @@ export const EXPECTED_FAILURE_INVENTORY: readonly ExpectedFailureInventoryEntry[
   {
     file: DISPATCH_CAPABILITY_FILE,
     title:
-      "D332 rejects a lineage-free implement-worker retry at an advanced managed-worktree tip [Behavioral-Progression Blackbox-GoodCommunication]",
-    ledgerRef: "defects:D332",
-  },
-  {
-    file: DISPATCH_CAPABILITY_FILE,
-    title:
       "D334 accepts an exact guarded-rebase continuation after broker restart [Behavioral-Progression Blackbox-GoodCommunication]",
     ledgerRef: "defects:D334",
   },

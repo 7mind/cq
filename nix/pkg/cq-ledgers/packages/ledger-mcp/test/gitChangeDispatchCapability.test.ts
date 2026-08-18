@@ -1164,8 +1164,7 @@ describe("dispatch-bound Git change capability", () => {
       }
     }, GUARDED_REBASE_SETUP_TIMEOUT_MS);
 
-    // expected-failure: defects:D332
-    test.failing(
+    test(
       "D332 rejects a lineage-free implement-worker retry at an advanced managed-worktree tip [Behavioral-Progression Blackbox-GoodCommunication]",
       async () => {
         let retry: Awaited<ReturnType<DispatchCapabilityInstance["prepare"]>>;

@@ -1100,6 +1100,7 @@ describe("packaged cq-codex-role Git broker", () => {
         idempotencyKey: "T2042-packaged-role-retry",
         timeoutMs: 600_000,
         expectedChild: retryExpectedChild,
+        reprepareOf: handle,
       });
       if (
         !retryPrepared.accepted ||
@@ -1202,7 +1203,10 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
       expect(retryCapture.inheritedWorksetCredentials).toEqual([]);
       expect((await readFile(finalizerAttemptsPath, "utf8")).trim().split("\n")).toHaveLength(2);
       expect((await readFile(gateCountPath, "utf8")).trim().split("\n")).toHaveLength(1);
-      expect(retryReceipts[0]?.["oldHead"]).toBe(firstResultCommit);
+      expect(retryReceipts).toHaveLength(4);
+      expect(retryReceipts[1]?.["newHead"]).toBe(firstResultCommit);
+      expect(retryReceipts[2]?.["oldHead"]).toBe(firstResultCommit);
+      expect(retryReceipts[3]?.["newHead"]).toBe(retryCapture.output["resultCommit"]);
       await git(managed.handle.absolutePath, [
         "merge-base",
         "--is-ancestor",
@@ -1302,6 +1306,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         idempotencyKey: "T2042-packaged-cancel-control",
         timeoutMs: 600_000,
         expectedChild: { childId: "cancel-control", runId: "cancel-control" },
+        reprepareOf: retryHandle,
       });
       if (!cancelledPrepared.accepted) throw new Error("cancel control did not prepare");
       const cancelled = await capability.abort({
@@ -1333,6 +1338,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         idempotencyKey: "T2042-packaged-deadline-control",
         timeoutMs: 600_000,
         expectedChild: { childId: "deadline-control", runId: "deadline-control" },
+        reprepareOf: cancelledPrepared.handle,
       });
       if (!deadlinePrepared.accepted) throw new Error("deadline control did not prepare");
       await capability.fetchInput({
