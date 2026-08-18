@@ -27,12 +27,17 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { serializeWipArtifact } from "@cq/config";
 import {
+  acknowledgeOperatorAction,
+  completeOperatorActionTask,
   createLedgerMcpTools,
   createWorktreeManageCapability,
+  GOALS_LEDGER,
   InMemoryLedgerStore,
   isUuidV7,
   LEDGER_TOOL_NAMES,
+  materializeOperatorAction,
   parseWorktreeManageInput,
+  recordOperatorActionEvidence,
   registerLedgerStdioTools,
   TASKS_LEDGER,
   WORKTREE_MANAGE_TOOL_SPEC,
@@ -151,6 +156,69 @@ async function buildStore(options?: {
         ? {}
         : { dependsOn: [`tasks:${options.dependency.taskId}`] }),
     },
+  });
+  return store;
+}
+
+async function buildCompletedOperatorActionStore(baseCommit: string): Promise<InMemoryLedgerStore> {
+  const store = new InMemoryLedgerStore();
+  await store.init();
+  const milestone = await store.createMilestone({ title: "T2192 operator action dependency" });
+  const goal = await store.createItem(GOALS_LEDGER, milestone.id, {
+    status: "planned",
+    fields: { title: "deploy", description: "deploy" },
+  });
+  await store.createItem(TASKS_LEDGER, milestone.id, {
+    id: "T2191",
+    status: "done",
+    fields: { headline: "Git-producing ancestor", resultCommit: baseCommit },
+  });
+  await store.createItem(TASKS_LEDGER, milestone.id, {
+    id: "T2192",
+    status: "planned",
+    fields: {
+      headline: "Verified operator action",
+      description: "CQ-OPERATOR-ACTION v1 deploy-t2192. Deploy the verified external effect.",
+      dependsOn: ["tasks:T2191"],
+      ledgerRefs: [`goals:${goal.id}`],
+    },
+  });
+  await store.createItem(TASKS_LEDGER, milestone.id, {
+    id: "T2217",
+    status: "planned",
+    fields: { headline: "root", dependsOn: ["tasks:T2192"] },
+  });
+
+  const outputIdentity = "/nix/store/t2192-deployed-output";
+  const command = "probe-t2192-deployment";
+  const materialized = await materializeOperatorAction(store, {
+    taskId: "T2192",
+    expectedOutputIdentity: outputIdentity,
+    expectedEvidence: [command],
+    author: "parent",
+  });
+  await acknowledgeOperatorAction(store, {
+    actionId: materialized.action.id,
+    expectedRevision: 1,
+    outputIdentity,
+    acknowledgedAt: "2026-08-18T00:00:00.000Z",
+  });
+  await recordOperatorActionEvidence(
+    store,
+    materialized.action.id,
+    1,
+    {
+      command,
+      stdout: "deployed\n",
+      stderr: "",
+      exitCode: 0,
+      outputIdentity,
+      observedAt: "2026-08-18T00:01:00.000Z",
+    },
+    { author: "parent" },
+  );
+  await completeOperatorActionTask(store, materialized.action.id, 1, "verified", {
+    author: "parent",
   });
   return store;
 }
@@ -563,6 +631,48 @@ describe("worktree_manage direct/stdio contract", () => {
     expect(LEDGER_TOOL_NAMES).not.toContain("worktree_prepare" as never);
     expect(LEDGER_TOOL_NAMES).not.toContain("worktree_release" as never);
     expect(LEDGER_TOOL_NAMES).not.toContain("git_worktree_add" as never);
+  });
+
+  it("D346 preserves a verified T2192 external effect and its transitive Git contribution", async () => {
+    const repo = await seedRepository();
+    const install = recordingInstall();
+    const store = await buildCompletedOperatorActionStore(repo.base);
+    const tools = createLedgerMcpTools(
+      store,
+      undefined,
+      undefined,
+      undefined,
+      "",
+      undefined,
+      undefined,
+      "full",
+      capabilityFor(repo, install),
+    );
+    try {
+      const prepared = expectOk(
+        await invokeDirect(tools, "worktree_manage", {
+          operation: "prepare",
+          taskId: "T2217",
+          baseCommit: repo.base,
+        }),
+        "D346 operator-action dependency prepare",
+      ) as {
+        readonly status: string;
+        readonly evidence?: {
+          readonly dependencyResultCommits: readonly unknown[];
+        };
+      };
+
+      expect(prepared.status).toBe("prepared");
+      expect(prepared.evidence?.dependencyResultCommits).toEqual([
+        { dependencyRef: "tasks:T2191", resultCommit: repo.base },
+      ]);
+      expect(await git(repo.cwd, ["rev-parse", "HEAD"])).toBe(repo.base);
+      expect(store.fetchItem(TASKS_LEDGER, "T2192").status).toBe("done");
+      expect(store.fetchItem(TASKS_LEDGER, "T2217").status).toBe("planned");
+    } finally {
+      await store.dispose();
+    }
   });
 
   it("returns the complete manager-observed conflict state over both transports", async () => {
