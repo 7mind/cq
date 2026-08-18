@@ -19,7 +19,11 @@
 import { z } from "zod";
 import { validateManagedWorktreeHandle } from "@cq/config";
 import { TASKS_LEDGER } from "../constants.js";
-import type { DependencyTaskSnapshot, DependencyTaskSnapshotReader } from "../dependencyResultCommits.js";
+import {
+  dependencyTaskSnapshotFromItem,
+  type DependencyTaskSnapshot,
+  type DependencyTaskSnapshotReader,
+} from "../dependencyResultCommits.js";
 import {
   isUuidV7,
   prepareManagedWorktree,
@@ -34,7 +38,6 @@ import {
 } from "../managedWorktree.js";
 import { observeManagedWorktreeConflictState } from "../gitConflictContinuation.js";
 import { createManagedWorktreeGitEffectRunner } from "../worksetGitEffects.js";
-import type { Item } from "../types.js";
 import type { LedgerStore } from "../store/LedgerStore.js";
 import { produceWireDto, type ProducedWireDto } from "./wireResponseContract.js";
 
@@ -206,22 +209,6 @@ export class WorktreeManageNotImplementedError extends Error {
   }
 }
 
-function itemToSnapshot(item: Item, archived: boolean): DependencyTaskSnapshot {
-  const rawDepends = item.fields["dependsOn"];
-  const dependsOn = Array.isArray(rawDepends)
-    ? rawDepends.filter((entry): entry is string => typeof entry === "string")
-    : [];
-  const rawCommit = item.fields["resultCommit"];
-  const resultCommit = typeof rawCommit === "string" && rawCommit.length > 0 ? rawCommit : null;
-  return {
-    taskId: item.id,
-    status: item.status,
-    dependsOn,
-    resultCommit,
-    archived,
-  };
-}
-
 /**
  * Authoritative dependency-closure reader: active + archived tasks from the
  * bound ledger store. Callers cannot supply an alternate evidence list.
@@ -235,17 +222,17 @@ export function dependencyTaskSnapshotReaderFromStore(
       const snapshots: DependencyTaskSnapshot[] = [];
       for (const group of fetched.milestones) {
         for (const item of group.items) {
-          snapshots.push(itemToSnapshot(item, false));
+          snapshots.push(dependencyTaskSnapshotFromItem(item, false));
         }
       }
       for (const pointer of fetched.archivePointers) {
         const archive = await store.fetchArchive(TASKS_LEDGER, pointer.id);
         if (archive.kind === "group") {
           for (const item of archive.milestone.items) {
-            snapshots.push(itemToSnapshot(item, true));
+            snapshots.push(dependencyTaskSnapshotFromItem(item, true));
           }
         } else {
-          snapshots.push(itemToSnapshot(archive.item, true));
+          snapshots.push(dependencyTaskSnapshotFromItem(archive.item, true));
         }
       }
       return snapshots;

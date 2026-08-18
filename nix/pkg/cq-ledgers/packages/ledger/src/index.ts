@@ -376,12 +376,15 @@ export type {
   WorktreeSweepFacts,
 } from "./worktreeSweep.js";
 export {
+  classifyDependencyTaskContribution,
+  dependencyTaskSnapshotFromItem,
   resolveDependencyResultCommits,
   resolveDependencyResultCommitsForDispatch,
 } from "./dependencyResultCommits.js";
 export type {
   DependencyResultCommit,
   DependencyResultCommitResolution,
+  DependencyTaskContribution,
   DependencyTaskSnapshot,
   DependencyTaskSnapshotReader,
   ReadyDependencyResultCommits,

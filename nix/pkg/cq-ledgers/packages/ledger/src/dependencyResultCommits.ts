@@ -1,7 +1,13 @@
 import { TASKS_LEDGER, TASKS_SCHEMA } from "./constants.js";
 import { observeDispatchBase, verifyDispatchBase } from "./dispatchBase.js";
 import type { DispatchBaseGitRunner, DispatchBaseVerification } from "./dispatchBase.js";
+import {
+  OperatorActionEnvelopeError,
+  operatorActionDirectiveForTask,
+  type OperatorActionDirective,
+} from "./operatorActions.js";
 import { canonicalizeRef, parseRef } from "./refs.js";
+import type { Item } from "./types.js";
 
 const FULL_COMMIT_SHA = /^[0-9a-f]{40}$/;
 const TASK_ID = /^T\d+$/;
@@ -10,13 +16,25 @@ const TASK_SATISFYING_STATUSES = new Set(
   TASKS_SCHEMA.satisfiesDependencyStatuses ?? TASKS_SCHEMA.terminalStatuses,
 );
 
-export interface DependencyTaskSnapshot {
+interface DependencyTaskSnapshotBase {
   readonly taskId: string;
   readonly status: string;
   readonly dependsOn: readonly string[];
   readonly resultCommit: string | null;
   readonly archived: boolean;
 }
+
+export type DependencyTaskContribution =
+  | {
+      readonly contributionKind: "git-producing";
+      readonly operatorAction: null;
+    }
+  | {
+      readonly contributionKind: "external-effect";
+      readonly operatorAction: OperatorActionDirective;
+    };
+
+export type DependencyTaskSnapshot = DependencyTaskSnapshotBase & DependencyTaskContribution;
 
 export interface DependencyResultCommit {
   readonly dependencyRef: string;
@@ -25,6 +43,7 @@ export interface DependencyResultCommit {
 
 export interface ReadyDependencyResultCommits {
   readonly status: "ready";
+  readonly satisfyingDependencyRefs: readonly string[];
   readonly dependencyResultCommits: readonly DependencyResultCommit[];
 }
 
@@ -105,6 +124,42 @@ export function canonicalTaskDependencyRef(raw: string): string | null {
   }
 }
 
+export function classifyDependencyTaskContribution(item: Item): DependencyTaskContribution {
+  try {
+    const directive = operatorActionDirectiveForTask(item);
+    return directive === null
+      ? { contributionKind: "git-producing", operatorAction: null }
+      : {
+          contributionKind: "external-effect",
+          operatorAction: { version: directive.version, actionKey: directive.actionKey },
+        };
+  } catch (error) {
+    if (!(error instanceof OperatorActionEnvelopeError)) throw error;
+    return { contributionKind: "git-producing", operatorAction: null };
+  }
+}
+
+export function dependencyTaskSnapshotFromItem(
+  item: Item,
+  archived: boolean,
+): DependencyTaskSnapshot {
+  const rawDependsOn = item.fields["dependsOn"];
+  const rawResultCommit = item.fields["resultCommit"];
+  return {
+    taskId: item.id,
+    status: item.status,
+    dependsOn: Array.isArray(rawDependsOn)
+      ? rawDependsOn.filter((entry): entry is string => typeof entry === "string")
+      : [],
+    resultCommit:
+      typeof rawResultCommit === "string" && rawResultCommit.length > 0
+        ? rawResultCommit
+        : null,
+    archived,
+    ...classifyDependencyTaskContribution(item),
+  };
+}
+
 function invalidDependencyRef(dependencyRef: string): UnresolvableDependencyResultCommits {
   return { status: "unresolvable", reason: "dependency-ref-invalid", dependencyRef };
 }
@@ -127,6 +182,7 @@ export function resolveDependencyResultCommits(
 
   const stateByRef = new Map<string, "visiting" | "done">();
   const stack: string[] = [];
+  const satisfyingDependencyRefs: string[] = [];
   const dependencyResultCommits: DependencyResultCommit[] = [];
 
   function visit(taskRef: string): UnresolvableDependencyResultCommits | null {
@@ -156,16 +212,22 @@ export function resolveDependencyResultCommits(
           archived: task.archived,
         };
       }
-      if (task.resultCommit === null) {
-        return { status: "unresolvable", reason: "result-commit-missing", dependencyRef: taskRef };
-      }
-      if (!FULL_COMMIT_SHA.test(task.resultCommit)) {
-        return {
-          status: "unresolvable",
-          reason: "result-commit-malformed",
-          dependencyRef: taskRef,
-          resultCommit: task.resultCommit,
-        };
+      if (task.contributionKind === "git-producing") {
+        if (task.resultCommit === null) {
+          return {
+            status: "unresolvable",
+            reason: "result-commit-missing",
+            dependencyRef: taskRef,
+          };
+        }
+        if (!FULL_COMMIT_SHA.test(task.resultCommit)) {
+          return {
+            status: "unresolvable",
+            reason: "result-commit-malformed",
+            dependencyRef: taskRef,
+            resultCommit: task.resultCommit,
+          };
+        }
       }
     }
 
@@ -185,18 +247,21 @@ export function resolveDependencyResultCommits(
     stateByRef.set(taskRef, "done");
 
     if (taskRef !== rootTaskRef) {
-      const resultCommit = task.resultCommit;
-      if (resultCommit === null) {
-        throw new Error(`validated dependency ${taskRef} lost its result commit`);
+      satisfyingDependencyRefs.push(taskRef);
+      if (task.contributionKind === "git-producing") {
+        const resultCommit = task.resultCommit;
+        if (resultCommit === null) {
+          throw new Error(`validated dependency ${taskRef} lost its result commit`);
+        }
+        dependencyResultCommits.push({ dependencyRef: taskRef, resultCommit });
       }
-      dependencyResultCommits.push({ dependencyRef: taskRef, resultCommit });
     }
     return null;
   }
 
   const blocker = visit(rootTaskRef);
   if (blocker !== null) return blocker;
-  return { status: "ready", dependencyResultCommits };
+  return { status: "ready", satisfyingDependencyRefs, dependencyResultCommits };
 }
 
 export interface DependencyTaskSnapshotReader {

@@ -5,17 +5,20 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import {
+  classifyDependencyTaskContribution,
   nodeDispatchBaseGitRunner,
   resolveDependencyResultCommits,
   resolveDependencyResultCommitsForDispatch,
 } from "../src/index.js";
 import type {
   DependencyResultCommitResolution,
+  DependencyTaskContribution,
   DependencyTaskSnapshot,
   DependencyTaskSnapshotReader,
   DispatchBaseGitResult,
   DispatchBaseGitRunner,
 } from "../src/index.js";
+import type { Item } from "../src/types.js";
 
 const exec = promisify(execFile);
 const COMMIT_1 = "1".repeat(40);
@@ -29,8 +32,12 @@ function task(
   dependsOn: readonly string[],
   resultCommit: string | null,
   archived: boolean,
+  contribution: DependencyTaskContribution = {
+    contributionKind: "git-producing",
+    operatorAction: null,
+  },
 ): DependencyTaskSnapshot {
-  return { taskId, status, dependsOn, resultCommit, archived };
+  return { taskId, status, dependsOn, resultCommit, archived, ...contribution };
 }
 
 function resolve(
@@ -48,6 +55,7 @@ describe("resolveDependencyResultCommits", () => {
     const third = task("T3", "done", ["tasks:T1"], COMMIT_3, true);
     const expected: DependencyResultCommitResolution = {
       status: "ready",
+      satisfyingDependencyRefs: ["tasks:T1", "tasks:T2", "tasks:T3"],
       dependencyResultCommits: [
         { dependencyRef: "tasks:T1", resultCommit: COMMIT_1 },
         { dependencyRef: "tasks:T2", resultCommit: COMMIT_2 },
@@ -59,6 +67,38 @@ describe("resolveDependencyResultCommits", () => {
       resolve("T9", [root, third, first, second]),
       resolve("tasks:T9", [second, root, third, first]),
     ]).toEqual([expected, expected]);
+  });
+
+  it("D346 retains transitive Git contributions through an external-effect dependency", () => {
+    const root = task("T9", "planned", ["T2"], null, false);
+    const gitAncestor = task("T1", "done", [], COMMIT_1, true);
+    const externalEffect = task("T2", "done", ["T1"], null, true, {
+      contributionKind: "external-effect",
+      operatorAction: { version: "v1", actionKey: "deploy-t2192" },
+    });
+    const expected: DependencyResultCommitResolution = {
+      status: "ready",
+      satisfyingDependencyRefs: ["tasks:T1", "tasks:T2"],
+      dependencyResultCommits: [{ dependencyRef: "tasks:T1", resultCommit: COMMIT_1 }],
+    };
+
+    expect([
+      resolve("T9", [root, externalEffect, gitAncestor]),
+      resolve("tasks:T9", [gitAncestor, root, externalEffect]),
+    ]).toEqual([expected, expected]);
+  });
+
+  it("keeps a generic done dependency without resultCommit fail-closed", () => {
+    expect(
+      resolve("T9", [
+        task("T9", "planned", ["T1"], null, false),
+        task("T1", "done", [], null, true),
+      ]),
+    ).toEqual({
+      status: "unresolvable",
+      reason: "result-commit-missing",
+      dependencyRef: "tasks:T1",
+    });
   });
 
   it("returns the first deterministic metadata blocker with a closed reason", () => {
@@ -162,6 +202,7 @@ describe("resolveDependencyResultCommits", () => {
       blockers: cases.map(({ name, expected }) => ({ name, result: expected })),
       archivedDone: {
         status: "ready",
+        satisfyingDependencyRefs: ["tasks:T1"],
         dependencyResultCommits: [{ dependencyRef: "tasks:T1", resultCommit: COMMIT_1 }],
       },
     });
@@ -341,9 +382,49 @@ describe("dependency result commit ledger/Git adapter", () => {
       observed: gitCases.map(({ name, expected }) => ({ name, result: expected })),
       corrected: {
         status: "ready",
+        satisfyingDependencyRefs: ["tasks:T1"],
         dependencyResultCommits: [{ dependencyRef: "tasks:T1", resultCommit: COMMIT_1 }],
       },
     });
+  });
+});
+
+describe("dependency task contribution classifier", () => {
+  function item(description?: string): Item {
+    return {
+      id: "T2192",
+      milestoneId: "M1",
+      status: "done",
+      fields: {
+        headline: "operator action",
+        ...(description === undefined ? {} : { description }),
+      },
+      createdAt: "2026-08-18T00:00:00.000Z",
+      updatedAt: "2026-08-18T00:00:00.000Z",
+    };
+  }
+
+  it("classifies only an exact leading v1 envelope and preserves its action key", () => {
+    expect(
+      [
+        item("CQ-OPERATOR-ACTION v1 deploy-t2192. Deploy it."),
+        item(),
+        item(" CQ-OPERATOR-ACTION v1 deploy-t2192. Leading whitespace."),
+        item("CQ-OPERATOR-ACTION v2 deploy-t2192. Wrong version."),
+        item(
+          "CQ-OPERATOR-ACTION v1 deploy-t2192. Duplicate CQ-OPERATOR-ACTION envelope.",
+        ),
+      ].map(classifyDependencyTaskContribution),
+    ).toEqual([
+      {
+        contributionKind: "external-effect",
+        operatorAction: { version: "v1", actionKey: "deploy-t2192" },
+      },
+      { contributionKind: "git-producing", operatorAction: null },
+      { contributionKind: "git-producing", operatorAction: null },
+      { contributionKind: "git-producing", operatorAction: null },
+      { contributionKind: "git-producing", operatorAction: null },
+    ]);
   });
 });
 

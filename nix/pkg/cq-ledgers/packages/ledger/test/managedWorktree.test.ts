@@ -156,7 +156,15 @@ function task(
   dependsOn: readonly string[],
   resultCommit: string | null,
 ): DependencyTaskSnapshot {
-  return { taskId, status, dependsOn, resultCommit, archived: status === "done" };
+  return {
+    taskId,
+    status,
+    dependsOn,
+    resultCommit,
+    archived: status === "done",
+    contributionKind: "git-producing",
+    operatorAction: null,
+  };
 }
 
 afterAll(async () => {

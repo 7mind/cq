@@ -2,6 +2,7 @@ import type { Item } from "./types.js";
 import { LedgerError } from "./types.js";
 import {
   canonicalTaskDependencyRef,
+  dependencyTaskSnapshotFromItem,
   resolveDependencyResultCommits,
   type DependencyTaskSnapshot,
   type UnresolvableDependencyResultCommits,
@@ -51,13 +52,7 @@ export type TaskAdoptionPublicationResult =
   | { readonly status: "already-published" }
   | { readonly status: "invalid-fence" };
 
-interface TaskAdoptionSnapshotRow {
-  readonly taskId: string;
-  readonly status: string;
-  readonly dependsOn: readonly string[];
-  readonly resultCommit: string | null;
-  readonly archived: boolean;
-}
+type TaskAdoptionSnapshotRow = DependencyTaskSnapshot;
 
 interface TaskAdoptionEligibilitySnapshot {
   readonly taskId: string;
@@ -78,18 +73,6 @@ interface StoredFence {
   readonly taskId: string;
   readonly snapshotJson: string;
   published: boolean;
-}
-
-function dependencyTaskSnapshot(item: Item, archived: boolean): DependencyTaskSnapshot {
-  const dependsOn = item.fields["dependsOn"];
-  const resultCommit = item.fields["resultCommit"];
-  return {
-    taskId: item.id,
-    status: item.status,
-    dependsOn: Array.isArray(dependsOn) ? [...dependsOn] : [],
-    resultCommit: typeof resultCommit === "string" ? resultCommit : null,
-    archived,
-  };
 }
 
 function taskIdFromRef(taskRef: string): string {
@@ -140,7 +123,7 @@ export function observeTaskAdoptionEligibility(
   ] as const) {
     for (const item of items) {
       const snapshots = snapshotsById.get(item.id) ?? [];
-      snapshots.push(dependencyTaskSnapshot(item, archived));
+      snapshots.push(dependencyTaskSnapshotFromItem(item, archived));
       snapshotsById.set(item.id, snapshots);
     }
   }
@@ -193,9 +176,7 @@ export function observeTaskAdoptionEligibility(
 
   const closureIds = [
     taskId,
-    ...resolution.dependencyResultCommits.map(({ dependencyRef }) =>
-      taskIdFromRef(dependencyRef),
-    ),
+    ...resolution.satisfyingDependencyRefs.map(taskIdFromRef),
   ];
   const tasks = [...new Set(closureIds)].map((id): TaskAdoptionSnapshotRow => {
     const candidates = snapshotsById.get(id);
@@ -207,13 +188,23 @@ export function observeTaskAdoptionEligibility(
     }
     const snapshot = candidates[0];
     if (snapshot === undefined) throw new LedgerError(`task ${id} has no snapshot`);
-    return {
+    const common = {
       taskId: snapshot.taskId,
       status: snapshot.status,
       dependsOn: [...snapshot.dependsOn].sort(),
       resultCommit: snapshot.resultCommit,
       archived: snapshot.archived,
     };
+    return snapshot.contributionKind === "git-producing"
+      ? { ...common, contributionKind: "git-producing", operatorAction: null }
+      : {
+          ...common,
+          contributionKind: "external-effect",
+          operatorAction: {
+            version: snapshot.operatorAction.version,
+            actionKey: snapshot.operatorAction.actionKey,
+          },
+        };
   });
   tasks.sort((left, right) => left.taskId.localeCompare(right.taskId));
   return { status: "eligible", snapshot: { taskId, tasks } };
