@@ -1,5 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
+import {
+  WorksetEffectLaunchDeadlineError,
+  awaitBeforeLaunchDeadline,
+  remainingLaunchDeadlineMs,
+} from "./launchDeadline.ts";
 import type {
   WorksetBrokerAdmissionHandle,
   WorksetBrokerProcessGroupRegistration,
@@ -29,6 +34,7 @@ interface PendingResponse {
 }
 
 const PROCESS_PROVIDER_HANDLE_ID = "process-workset-effect-admission";
+const PROCESS_PROVIDER_TERMINATION_GRACE_MS = 1_000;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -44,7 +50,9 @@ function requiredNonEmpty(value: string, name: string): string {
 function hasExactKeys(record: Readonly<Record<string, unknown>>, keys: readonly string[]): boolean {
   const observed = Object.keys(record).sort();
   const expected = [...keys].sort();
-  return observed.length === expected.length && observed.every((key, index) => key === expected[index]);
+  return (
+    observed.length === expected.length && observed.every((key, index) => key === expected[index])
+  );
 }
 
 class ProcessWorksetProviderSession {
@@ -53,6 +61,7 @@ class ProcessWorksetProviderSession {
   private terminal = false;
   private exitError: Error | null = null;
   private readonly exited: Promise<void>;
+  private readonly closed: Promise<void>;
 
   constructor(options: ProcessWorksetEffectAdmissionProviderOptions) {
     const command = requiredNonEmpty(options.command, "command");
@@ -64,6 +73,9 @@ class ProcessWorksetProviderSession {
     this.child.stderr.resume();
     const lines = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
     lines.on("line", (line) => this.receive(line));
+    this.closed = new Promise<void>((resolve) => {
+      this.child.once("close", () => resolve());
+    });
     this.exited = new Promise<void>((resolve, reject) => {
       this.child.once("error", (error) => {
         const wrapped = new Error(
@@ -115,9 +127,7 @@ class ProcessWorksetProviderSession {
     }
     const response = value as Readonly<Record<string, unknown>>;
     if (response["ok"] !== true) {
-      const errorKeys = response["closed"] === true
-        ? ["closed", "error", "ok"]
-        : ["error", "ok"];
+      const errorKeys = response["closed"] === true ? ["closed", "error", "ok"] : ["error", "ok"];
       if (response["ok"] !== false || !hasExactKeys(response, errorKeys)) {
         pending.reject(new Error("@cq/process-control: malformed process workset provider error"));
         this.child.kill("SIGTERM");
@@ -137,18 +147,42 @@ class ProcessWorksetProviderSession {
       return;
     }
     if (!hasExactKeys(response, pending.expectedKeys)) {
-      pending.reject(new Error("@cq/process-control: surplus process workset provider response data"));
+      pending.reject(
+        new Error("@cq/process-control: surplus process workset provider response data"),
+      );
       this.child.kill("SIGTERM");
       return;
     }
     pending.resolve(response);
   }
 
-  async request(request: ProviderRequest, terminal = false): Promise<Readonly<Record<string, unknown>>> {
+  private async terminateForDeadline(error: WorksetEffectLaunchDeadlineError): Promise<void> {
+    this.terminal = true;
+    this.fail(error);
+    this.child.stdin.end();
+    this.child.kill("SIGTERM");
+    const killTimer = setTimeout(
+      () => this.child.kill("SIGKILL"),
+      PROCESS_PROVIDER_TERMINATION_GRACE_MS,
+    );
+    try {
+      await this.closed;
+    } finally {
+      clearTimeout(killTimer);
+    }
+  }
+
+  async request(
+    request: ProviderRequest,
+    terminal: boolean,
+    launchDeadlineMs?: number,
+  ): Promise<Readonly<Record<string, unknown>>> {
     if (this.exitError !== null) throw this.exitError;
     if (this.terminal) {
       throw new Error("@cq/process-control: process workset provider session is already closed");
     }
+    const phase = `provider-control ${request.op} exchange`;
+    remainingLaunchDeadlineMs(launchDeadlineMs, phase);
     const response = new Promise<Readonly<Record<string, unknown>>>((resolve, reject) => {
       this.pending.push({
         expectedKeys: request.op === "acquire" ? ["epoch", "ok"] : ["ok"],
@@ -165,11 +199,26 @@ class ProcessWorksetProviderSession {
         }
       });
     });
-    const value = await response;
+    let value: Readonly<Record<string, unknown>>;
+    try {
+      value = await awaitBeforeLaunchDeadline(response, launchDeadlineMs, phase);
+    } catch (error) {
+      if (error instanceof WorksetEffectLaunchDeadlineError) {
+        await this.terminateForDeadline(error);
+      }
+      throw error;
+    }
     if (terminal) {
       this.terminal = true;
       this.child.stdin.end();
-      await this.exited;
+      try {
+        await awaitBeforeLaunchDeadline(this.exited, launchDeadlineMs, `${phase} shutdown`);
+      } catch (error) {
+        if (error instanceof WorksetEffectLaunchDeadlineError) {
+          await this.terminateForDeadline(error);
+        }
+        throw error;
+      }
     }
     return value;
   }
@@ -186,11 +235,15 @@ export function createProcessWorksetEffectAdmissionProvider(
   return {
     acquire: async (input) => {
       const session = new ProcessWorksetProviderSession(options);
-      const response = await session.request({
-        op: "acquire",
-        kind: input.kind,
-        targetRef: input.targetRef,
-      });
+      const response = await session.request(
+        {
+          op: "acquire",
+          kind: input.kind,
+          targetRef: input.targetRef,
+        },
+        false,
+        input.launchDeadlineMs,
+      );
       const epoch = response["epoch"];
       if (!Number.isSafeInteger(epoch) || (epoch as number) < 0) {
         await session.request({ op: "abandon" }, true).catch(() => undefined);
@@ -201,14 +254,22 @@ export function createProcessWorksetEffectAdmissionProvider(
         epoch: epoch as number,
         kind: input.kind,
         targetRef: input.targetRef,
-        registerProcessGroup: async (registration) => {
-          await session.request({ op: "register", ...registration });
+        registerProcessGroup: async (registration, launchDeadlineMs) => {
+          await session.request(
+            { op: "register", ...registration },
+            false,
+            launchDeadlineMs ?? input.launchDeadlineMs,
+          );
         },
-        shareWithGuardian: async (registration) => {
-          await session.request({ op: "share", ...registration });
+        shareWithGuardian: async (registration, launchDeadlineMs) => {
+          await session.request(
+            { op: "share", ...registration },
+            false,
+            launchDeadlineMs ?? input.launchDeadlineMs,
+          );
         },
         markSettled: async () => {
-          await session.request({ op: "settle" });
+          await session.request({ op: "settle" }, false);
         },
         releaseAfterSettlement: async () => {
           await session.request({ op: "release" }, true);

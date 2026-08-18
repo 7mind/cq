@@ -5,10 +5,12 @@ import { constants, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
   WorksetEffectBroker,
+  WorksetEffectLaunchDeadlineError,
   settleWorktreeGateCommands,
   type SettleProcessGroupsResult,
   type WorksetEffectAdmissionProvider,
 } from "@cq/process-control";
+import { CODEX_STAGED_TIMING_BASIS } from "./codexStagedTiming.js";
 import {
   DISPATCH_ABORT_REASONS,
   type DispatchAbortReason,
@@ -87,11 +89,10 @@ export interface CodexRoleBoundaryRequest {
   readonly codexExecutable: string;
 }
 
-export interface CodexRoleBoundaryInvocation
-  extends Omit<
-    CodexRoleBoundaryRequest,
-    "roleInstructions" | "promptRoot" | "ledgerCommand" | "codexExecutable"
-  > {
+export interface CodexRoleBoundaryInvocation extends Omit<
+  CodexRoleBoundaryRequest,
+  "roleInstructions" | "promptRoot" | "ledgerCommand" | "codexExecutable"
+> {
   /** Canonical admitted dispatch target; identity only, never an admission capability. */
   readonly effectTargetRef: string;
 }
@@ -152,9 +153,7 @@ export interface CodexEffectivePreturn {
   readonly handle: DispatchHandle;
   readonly effectCapabilityScope: "git-change" | "git-conflict" | null;
   readonly receiptExpectation:
-    | "cq-git-change-receipt"
-    | "cq-git-conflict-continuation-receipt"
-    | null;
+    "cq-git-change-receipt" | "cq-git-conflict-continuation-receipt" | null;
   readonly rolePromptDigest: string;
   readonly enabledTools: readonly LedgerCapabilityToolName[];
   readonly model: string;
@@ -163,21 +162,46 @@ export interface CodexEffectivePreturn {
   readonly skillsPolicy: "role-instructions";
   readonly multiAgent: false;
   readonly childWorkTimeoutMs: number;
-  readonly storeResultSubmissionBudgetMs: 600_000;
-  readonly ledgerToolTimeoutSec: 600;
-  readonly postStoreSubmissionFinalizationMs: 300_000;
+  readonly childLaunchAdmissionMs: number;
+  readonly registeredLaunchIdentityHandshakeMs: number;
+  readonly registeredLaunchBootstrapHandshakeMs: number;
+  readonly storeResultEffectLockAcquisitionMs: number;
+  readonly storeResultSynchronousPhaseMs: number;
+  readonly storeResultDurableAcknowledgementMs: number;
+  readonly storeResultSubmissionBudgetMs: number;
+  readonly ledgerToolTimeoutSec: number;
+  readonly postStoreSubmissionFinalizationMs: number;
   readonly outerBoundaryTimeoutMs: number;
-  readonly parentGateWindowMs: 5_620_000;
+  readonly parentStartupBindingMs: number;
+  readonly parentEffectLockAcquisitionMs: number;
+  readonly parentClaimMs: number;
+  readonly parentGateFinalizationMs: number;
+  readonly parentPathMs: number;
+  readonly parentGateReconciliationReserveMs: number;
+  readonly parentGateTerminationGraceMs: number;
+  readonly parentFirstAttemptMs: number;
+  readonly parentGateWindowMs: number;
 }
 
-export const CODEX_STORE_RESULT_SUBMISSION_BUDGET_MS = 600_000;
-export const CODEX_LEDGER_TOOL_TIMEOUT_SEC = 600;
-export const CODEX_POST_STORE_FINALIZATION_MS = 300_000;
-export const CODEX_PARENT_GATE_WINDOW_MS = 5_620_000;
-export const CODEX_OUTER_BOUNDARY_RESERVE_MS = 900_000;
-export const CODEX_PARENT_GATE_TERMINATION_GRACE_MS = 1_000;
+export const CODEX_CHILD_LAUNCH_ADMISSION_MS = CODEX_STAGED_TIMING_BASIS.childLaunchAdmissionMs;
+export const CODEX_STORE_RESULT_EFFECT_LOCK_ACQUISITION_MS =
+  CODEX_STAGED_TIMING_BASIS.storeResultEffectLockAcquisitionMs;
+export const CODEX_STORE_RESULT_SYNCHRONOUS_PHASE_MS =
+  CODEX_STAGED_TIMING_BASIS.storeResultSynchronousPhaseMs;
+export const CODEX_STORE_RESULT_DURABLE_ACKNOWLEDGEMENT_MS =
+  CODEX_STAGED_TIMING_BASIS.storeResultDurableAcknowledgementMs;
+export const CODEX_STORE_RESULT_SUBMISSION_BUDGET_MS =
+  CODEX_STAGED_TIMING_BASIS.storeResultSubmissionBudgetMs;
+export const CODEX_LEDGER_TOOL_TIMEOUT_SEC = CODEX_STAGED_TIMING_BASIS.ledgerToolTimeoutSec;
+export const CODEX_POST_STORE_FINALIZATION_MS =
+  CODEX_STAGED_TIMING_BASIS.postStoreSubmissionFinalizationMs;
+export const CODEX_PARENT_GATE_WINDOW_MS = CODEX_STAGED_TIMING_BASIS.parentGateWindowMs;
+export const CODEX_OUTER_BOUNDARY_RESERVE_MS = CODEX_STAGED_TIMING_BASIS.outerBoundaryReserveMs;
+export const CODEX_PARENT_GATE_TERMINATION_GRACE_MS =
+  CODEX_STAGED_TIMING_BASIS.parentGateTerminationGraceMs;
 const CODEX_PARENT_GATE_FINALIZER_ATTEMPTS = 2;
-const CODEX_PARENT_GATE_RECONCILIATION_RESERVE_MS = 30_000;
+const CODEX_PARENT_GATE_RECONCILIATION_RESERVE_MS =
+  CODEX_STAGED_TIMING_BASIS.parentGateReconciliationReserveMs;
 
 export interface CodexParentGateFinalizerRequest {
   readonly command: string;
@@ -234,14 +258,10 @@ async function executeCodexParentGateFinalizerAttempt(
     if (killTimer !== undefined) clearTimeout(killTimer);
   });
   if (timedOut) {
-    throw new CodexRoleBoundaryError(
-      `parent gate exceeded its ${String(timeoutMs)} ms window`,
-    );
+    throw new CodexRoleBoundaryError(`parent gate exceeded its ${String(timeoutMs)} ms window`);
   }
   if (exitStatus !== 0) {
-    throw new CodexRoleBoundaryError(
-      `parent gate exited ${String(exitStatus)}: ${stderr.trim()}`,
-    );
+    throw new CodexRoleBoundaryError(`parent gate exited ${String(exitStatus)}: ${stderr.trim()}`);
   }
   let parsed: unknown;
   try {
@@ -375,11 +395,9 @@ const RUNNER_OWNED_INSTALLED_EXECUTIONS = new WeakSet<object>();
 const RUNNER_OWNED_NATIVE_EXECUTIONS = new WeakSet<object>();
 const RUNNER_OWNED_SANDBOX_CONTROLS = new WeakSet<object>();
 
-export const CODEX_PRETURN_OBSERVATION_PATH_ENV =
-  "CQ_CODEX_PRETURN_OBSERVATION_PATH" as const;
+export const CODEX_PRETURN_OBSERVATION_PATH_ENV = "CQ_CODEX_PRETURN_OBSERVATION_PATH" as const;
 
-const CODEX_BOUNDARY_EFFECT_TARGET_RE =
-  /^(?:tasks:T|goals:G|defects:D|researches:RS)\d+$/u;
+const CODEX_BOUNDARY_EFFECT_TARGET_RE = /^(?:tasks:T|goals:G|defects:D|researches:RS)\d+$/u;
 
 export function assertCodexBoundaryEffectTargetRef(value: unknown): string {
   if (typeof value !== "string" || !CODEX_BOUNDARY_EFFECT_TARGET_RE.test(value)) {
@@ -393,7 +411,9 @@ export function assertCodexBoundaryEffectTargetRef(value: unknown): string {
 export function isRunnerOwnedCodexInstalledRoleBoundaryExecution(
   value: unknown,
 ): value is CodexInstalledRoleBoundaryExecution {
-  return typeof value === "object" && value !== null && RUNNER_OWNED_INSTALLED_EXECUTIONS.has(value);
+  return (
+    typeof value === "object" && value !== null && RUNNER_OWNED_INSTALLED_EXECUTIONS.has(value)
+  );
 }
 
 export function isRunnerOwnedCodexRoleBoundaryExecution(
@@ -455,14 +475,9 @@ export class CodexRoleBoundaryError extends Error {
   }
 }
 
-export const CODEX_BROKERED_STORE_RESULT_OUTCOMES = [
-  "omitted",
-  "rejected",
-  "typed-abort",
-] as const;
+export const CODEX_BROKERED_STORE_RESULT_OUTCOMES = ["omitted", "rejected", "typed-abort"] as const;
 
-export type CodexBrokeredStoreResultOutcome =
-  (typeof CODEX_BROKERED_STORE_RESULT_OUTCOMES)[number];
+export type CodexBrokeredStoreResultOutcome = (typeof CODEX_BROKERED_STORE_RESULT_OUTCOMES)[number];
 
 /** Structural child store_result failure observed at the trusted process boundary. */
 export class CodexBrokeredStoreResultError extends CodexRoleBoundaryError {
@@ -546,8 +561,8 @@ function assertBoundaryRequest(request: CodexRoleBoundaryRequest): CodexRoleBoun
       `sandboxMode must be one of ${CODEX_ROLE_SANDBOX_MODES.join(", ")}`,
     );
   }
-  if (!Number.isInteger(request.timeoutMs) || request.timeoutMs <= 0) {
-    throw new CodexRoleBoundaryError("timeoutMs must be a positive integer");
+  if (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs <= 0) {
+    throw new CodexRoleBoundaryError("timeoutMs must be a positive safe integer");
   }
   if (
     typeof request.handle?.attestationId !== "string" ||
@@ -635,6 +650,10 @@ export function createCodexRoleBoundaryPlan(
   request: CodexRoleBoundaryRequest,
 ): CodexRoleBoundaryPlan {
   const resolved = assertBoundaryRequest(request);
+  const outerBoundaryTimeoutMs = resolved.timeoutMs + CODEX_OUTER_BOUNDARY_RESERVE_MS;
+  if (!Number.isSafeInteger(outerBoundaryTimeoutMs)) {
+    throw new CodexRoleBoundaryError("outer boundary timeout exceeds the safe integer range");
+  }
   const enabledTools = exposedLedgerToolsForRole(resolved.roleId);
   const ledgerMcp: CodexRoleLedgerMcpConfiguration = Object.freeze({
     command: resolved.ledgerCommand,
@@ -724,10 +743,28 @@ export function createCodexRoleBoundaryPlan(
     skillsPolicy: "role-instructions" as const,
     multiAgent: false as const,
     childWorkTimeoutMs: resolved.timeoutMs,
+    childLaunchAdmissionMs: CODEX_STAGED_TIMING_BASIS.childLaunchAdmissionMs,
+    registeredLaunchIdentityHandshakeMs:
+      CODEX_STAGED_TIMING_BASIS.registeredLaunchIdentityHandshakeMs,
+    registeredLaunchBootstrapHandshakeMs:
+      CODEX_STAGED_TIMING_BASIS.registeredLaunchBootstrapHandshakeMs,
+    storeResultEffectLockAcquisitionMs:
+      CODEX_STAGED_TIMING_BASIS.storeResultEffectLockAcquisitionMs,
+    storeResultSynchronousPhaseMs: CODEX_STAGED_TIMING_BASIS.storeResultSynchronousPhaseMs,
+    storeResultDurableAcknowledgementMs:
+      CODEX_STAGED_TIMING_BASIS.storeResultDurableAcknowledgementMs,
     storeResultSubmissionBudgetMs: CODEX_STORE_RESULT_SUBMISSION_BUDGET_MS,
     ledgerToolTimeoutSec: CODEX_LEDGER_TOOL_TIMEOUT_SEC,
     postStoreSubmissionFinalizationMs: CODEX_POST_STORE_FINALIZATION_MS,
-    outerBoundaryTimeoutMs: resolved.timeoutMs + CODEX_OUTER_BOUNDARY_RESERVE_MS,
+    outerBoundaryTimeoutMs,
+    parentStartupBindingMs: CODEX_STAGED_TIMING_BASIS.parentStartupBindingMs,
+    parentEffectLockAcquisitionMs: CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs,
+    parentClaimMs: CODEX_STAGED_TIMING_BASIS.parentClaimMs,
+    parentGateFinalizationMs: CODEX_STAGED_TIMING_BASIS.parentGateFinalizationMs,
+    parentPathMs: CODEX_STAGED_TIMING_BASIS.parentPathMs,
+    parentGateReconciliationReserveMs: CODEX_STAGED_TIMING_BASIS.parentGateReconciliationReserveMs,
+    parentGateTerminationGraceMs: CODEX_STAGED_TIMING_BASIS.parentGateTerminationGraceMs,
+    parentFirstAttemptMs: CODEX_STAGED_TIMING_BASIS.parentFirstAttemptMs,
     parentGateWindowMs: CODEX_PARENT_GATE_WINDOW_MS,
   });
   return Object.freeze({
@@ -736,7 +773,7 @@ export function createCodexRoleBoundaryPlan(
     sandboxMode: resolved.sandboxMode,
     argv,
     stdin: `${JSON.stringify(launch)}\n`,
-    timeoutMs: resolved.timeoutMs + CODEX_OUTER_BOUNDARY_RESERVE_MS,
+    timeoutMs: outerBoundaryTimeoutMs,
     childWorkTimeoutMs: resolved.timeoutMs,
     expectedHandle: resolved.handle,
     ledgerMcp,
@@ -1189,9 +1226,7 @@ function boundedInvalidOutputAbortDiagnostic(
   return `${entry.path} ${entry.message}`;
 }
 
-function typedAbortDetail(
-  acknowledgement: RecognizedAbortedDispatchAcknowledgement,
-): string {
+function typedAbortDetail(acknowledgement: RecognizedAbortedDispatchAcknowledgement): string {
   const diagnostic = boundedInvalidOutputAbortDiagnostic(acknowledgement);
   return diagnostic === undefined
     ? acknowledgement.reason
@@ -1317,13 +1352,13 @@ export async function executeCodexRoleBoundary(
     | "SIGINT"
     | "SIGTERM"
     | "abort"
+    | "child-launch-timeout"
     | "child-work-timeout"
     | "store-result-timeout"
     | "post-store-timeout"
     | "outer-timeout";
   type ChildPhase = "child-work" | "store-result" | "post-store";
-  const correlationId =
-    typeof correlationOrEffect === "string" ? correlationOrEffect : undefined;
+  const correlationId = typeof correlationOrEffect === "string" ? correlationOrEffect : undefined;
   const worksetEffect =
     typeof correlationOrEffect === "string" ? correlatedWorksetEffect : correlationOrEffect;
   if (worksetEffect === undefined) {
@@ -1332,6 +1367,11 @@ export async function executeCodexRoleBoundary(
   const abortController = new AbortController();
   let requestedStop: StopCause | undefined;
   const stopError = (cause: StopCause): CodexRoleBoundaryError => {
+    if (cause === "child-launch-timeout") {
+      return new CodexRoleBoundaryError(
+        `child launch/admission exceeded its ${String(plan.effectivePreturn.childLaunchAdmissionMs)} ms window`,
+      );
+    }
     if (cause === "child-work-timeout") {
       return new CodexRoleBoundaryError(
         `child exceeded its ${String(plan.childWorkTimeoutMs)} ms window`,
@@ -1358,6 +1398,27 @@ export async function executeCodexRoleBoundary(
   const onSigterm = (): void => requestStop("SIGTERM");
   const onAbort = (): void => requestStop("abort");
   const outerBoundaryTimer = setTimeout(() => requestStop("outer-timeout"), plan.timeoutMs);
+  if (
+    !Number.isSafeInteger(plan.effectivePreturn.childLaunchAdmissionMs) ||
+    plan.effectivePreturn.childLaunchAdmissionMs <= 0
+  ) {
+    clearTimeout(outerBoundaryTimer);
+    throw new CodexRoleBoundaryError(
+      "child launch/admission window must be a positive safe integer",
+    );
+  }
+  const launchDeadlineMs = Date.now() + plan.effectivePreturn.childLaunchAdmissionMs;
+  if (!Number.isSafeInteger(launchDeadlineMs)) {
+    clearTimeout(outerBoundaryTimer);
+    throw new CodexRoleBoundaryError(
+      "child launch/admission deadline exceeds the safe integer range",
+    );
+  }
+  let launchPhaseTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+    launchPhaseTimer = undefined;
+    requestStop("child-launch-timeout");
+  }, plan.effectivePreturn.childLaunchAdmissionMs);
+  launchPhaseTimer.unref?.();
   process.on("SIGINT", onSigint);
   process.on("SIGTERM", onSigterm);
   worksetEffect.signal?.addEventListener("abort", onAbort, { once: true });
@@ -1421,7 +1482,8 @@ export async function executeCodexRoleBoundary(
           timeoutMs: CODEX_SANDBOX_PIPE_PROBE_TIMEOUT_MS,
         });
       } catch (error) {
-        if (error instanceof SandboxPipeProbeError) throw new CodexOperationalAbstentionError(error);
+        if (error instanceof SandboxPipeProbeError)
+          throw new CodexOperationalAbstentionError(error);
         throw error;
       }
       argv = argvWithSandboxTmpdir(plan.argv, CODEX_READ_ONLY_SANDBOX_TMPDIR);
@@ -1446,6 +1508,7 @@ export async function executeCodexRoleBoundary(
         env: childEnvironment,
         stdio: { stdin: "pipe", stdout: "pipe", stderr: "pipe" } as const,
         signal: abortController.signal,
+        launchDeadlineMs,
         settleRegisteredDescendants: async () => {
           gateSettlement = await settleWorktreeGateCommands({ worktree: plan.cwd });
           if (gateSettlement.survivors.length > 0) {
@@ -1482,11 +1545,18 @@ export async function executeCodexRoleBoundary(
         },
       });
     } catch (error) {
+      if (error instanceof WorksetEffectLaunchDeadlineError) {
+        requestStop("child-launch-timeout");
+      }
       if (requestedStop === undefined) throw error;
       throw stopError(requestedStop);
     }
 
     try {
+      if (launchPhaseTimer !== undefined) {
+        clearTimeout(launchPhaseTimer);
+        launchPhaseTimer = undefined;
+      }
       const { child, stdout, stderr } = launched.process;
       if (requestedStop === undefined && childPhaseTimer === undefined) armChildPhaseTimer();
       child.stdin.write(plan.stdin);
@@ -1525,6 +1595,7 @@ export async function executeCodexRoleBoundary(
     }
   } finally {
     clearTimeout(outerBoundaryTimer);
+    if (launchPhaseTimer !== undefined) clearTimeout(launchPhaseTimer);
     if (childPhaseTimer !== undefined) clearTimeout(childPhaseTimer);
     process.off("SIGINT", onSigint);
     process.off("SIGTERM", onSigterm);
@@ -1548,10 +1619,7 @@ async function trustedRunnerInstalledIdentity(): Promise<CodexInstalledIdentity>
   const storePath = path.resolve(path.dirname(modulePath), "..", "..", "..", "..", "..");
   const executablePath = path.join(storePath, "bin", "cq-codex-role");
   const executable = await realpath(executablePath);
-  if (
-    !/^\/nix\/store\/[0-9a-z]{32}-cq-[^/]+$/.test(storePath) ||
-    executable !== executablePath
-  ) {
+  if (!/^\/nix\/store\/[0-9a-z]{32}-cq-[^/]+$/.test(storePath) || executable !== executablePath) {
     throw new CodexRoleBoundaryError(
       "installed boundary module does not belong to the trusted cq runner derivation",
     );
@@ -1559,7 +1627,9 @@ async function trustedRunnerInstalledIdentity(): Promise<CodexInstalledIdentity>
   return Object.freeze({
     storePath,
     executablePath,
-    executableDigest: createHash("sha256").update(await readFile(executablePath)).digest("hex"),
+    executableDigest: createHash("sha256")
+      .update(await readFile(executablePath))
+      .digest("hex"),
   });
 }
 
@@ -1597,11 +1667,33 @@ function assertInstalledPreturnObservation(
     observed["skillsPolicy"] !== "role-instructions" ||
     observed["multiAgent"] !== false ||
     observed["childWorkTimeoutMs"] !== request.invocation.timeoutMs ||
+    observed["childLaunchAdmissionMs"] !== CODEX_STAGED_TIMING_BASIS.childLaunchAdmissionMs ||
+    observed["registeredLaunchIdentityHandshakeMs"] !==
+      CODEX_STAGED_TIMING_BASIS.registeredLaunchIdentityHandshakeMs ||
+    observed["registeredLaunchBootstrapHandshakeMs"] !==
+      CODEX_STAGED_TIMING_BASIS.registeredLaunchBootstrapHandshakeMs ||
+    observed["storeResultEffectLockAcquisitionMs"] !==
+      CODEX_STAGED_TIMING_BASIS.storeResultEffectLockAcquisitionMs ||
+    observed["storeResultSynchronousPhaseMs"] !==
+      CODEX_STAGED_TIMING_BASIS.storeResultSynchronousPhaseMs ||
+    observed["storeResultDurableAcknowledgementMs"] !==
+      CODEX_STAGED_TIMING_BASIS.storeResultDurableAcknowledgementMs ||
     observed["storeResultSubmissionBudgetMs"] !== CODEX_STORE_RESULT_SUBMISSION_BUDGET_MS ||
     observed["ledgerToolTimeoutSec"] !== CODEX_LEDGER_TOOL_TIMEOUT_SEC ||
     observed["postStoreSubmissionFinalizationMs"] !== CODEX_POST_STORE_FINALIZATION_MS ||
     observed["outerBoundaryTimeoutMs"] !==
       request.invocation.timeoutMs + CODEX_OUTER_BOUNDARY_RESERVE_MS ||
+    observed["parentStartupBindingMs"] !== CODEX_STAGED_TIMING_BASIS.parentStartupBindingMs ||
+    observed["parentEffectLockAcquisitionMs"] !==
+      CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs ||
+    observed["parentClaimMs"] !== CODEX_STAGED_TIMING_BASIS.parentClaimMs ||
+    observed["parentGateFinalizationMs"] !== CODEX_STAGED_TIMING_BASIS.parentGateFinalizationMs ||
+    observed["parentPathMs"] !== CODEX_STAGED_TIMING_BASIS.parentPathMs ||
+    observed["parentGateReconciliationReserveMs"] !==
+      CODEX_STAGED_TIMING_BASIS.parentGateReconciliationReserveMs ||
+    observed["parentGateTerminationGraceMs"] !==
+      CODEX_STAGED_TIMING_BASIS.parentGateTerminationGraceMs ||
+    observed["parentFirstAttemptMs"] !== CODEX_STAGED_TIMING_BASIS.parentFirstAttemptMs ||
     observed["parentGateWindowMs"] !== CODEX_PARENT_GATE_WINDOW_MS
   ) {
     throw new CodexRoleBoundaryError(
@@ -1660,7 +1752,9 @@ async function runInstalledRoleProcess(input: {
     }
     const outcome = observedLines[1];
     if (outcome === null || typeof outcome !== "object" || Array.isArray(outcome)) {
-      throw new CodexRoleBoundaryError("installed boundary emitted no effective outcome observation");
+      throw new CodexRoleBoundaryError(
+        "installed boundary emitted no effective outcome observation",
+      );
     }
     const outcomeRecord = outcome as Record<string, unknown>;
     const outcomeHandle = outcomeRecord["handle"] as Record<string, unknown> | undefined;
@@ -1711,7 +1805,9 @@ export async function executeInstalledCodexRoleBoundary(
   const installedIdentity = Object.freeze({
     storePath,
     executablePath: executable,
-    executableDigest: createHash("sha256").update(await readFile(executable)).digest("hex"),
+    executableDigest: createHash("sha256")
+      .update(await readFile(executable))
+      .digest("hex"),
   });
   if (!installedIdentityEqual(installedIdentity, expectedInstalledIdentity)) {
     throw new CodexRoleBoundaryError(
@@ -1732,7 +1828,8 @@ export async function executeInstalledCodexRoleBoundary(
   }
   if (
     path.resolve(request.invocation.cwd) !== path.resolve(request.managedHandle.absolutePath) ||
-    path.resolve(request.invocation.ledgerCwd) !== path.resolve(request.managedHandle.repositoryRoot)
+    path.resolve(request.invocation.ledgerCwd) !==
+      path.resolve(request.managedHandle.repositoryRoot)
   ) {
     throw new CodexRoleBoundaryError(
       "provider gate invocation does not match the managed worktree/repository binding",
@@ -1773,12 +1870,12 @@ export async function executeInstalledCodexRoleBoundary(
   } satisfies CodexRoleBoundaryInvocation);
   const { exitStatus, stdout, stderr, effectivePreturn, observedFailureControls } =
     await runInstalledRoleProcess({
-    executable,
-    cwd: request.managedHandle.absolutePath,
-    invocationJson,
-    ...(request.environment === undefined ? {} : { environment: request.environment }),
-    correlationId: request.correlationId,
-    request,
+      executable,
+      cwd: request.managedHandle.absolutePath,
+      invocationJson,
+      ...(request.environment === undefined ? {} : { environment: request.environment }),
+      correlationId: request.correlationId,
+      request,
     });
   if (exitStatus !== 0) {
     throw new CodexRoleBoundaryError(
@@ -1882,9 +1979,13 @@ export async function executeCodexProviderSandboxControl(
 ): Promise<CodexProviderSandboxControl> {
   const validation = validateManagedWorktreeHandle(request.managedHandle);
   if (validation.status === "invalid") {
-    throw new CodexRoleBoundaryError(`sandbox control managed handle is invalid: ${validation.detail}`);
+    throw new CodexRoleBoundaryError(
+      `sandbox control managed handle is invalid: ${validation.detail}`,
+    );
   }
-  const codexExecutable = await realpath(requiredString(request.codexExecutable, "codexExecutable"));
+  const codexExecutable = await realpath(
+    requiredString(request.codexExecutable, "codexExecutable"),
+  );
   const gitExecutable = await realpath(requiredString(request.gitExecutable, "gitExecutable"));
   if (
     !/^\/nix\/store\/[0-9a-z]{32}-[^/]+\/bin\/codex$/.test(codexExecutable) ||

@@ -61,10 +61,9 @@ function nodeBootstrap(specification: RegisteredLaunchBootstrapSpecification<Std
     process: child,
     pid: child.pid,
     exited: exited(child),
-    outputDrained: Promise.all([
-      streamDrained(child.stdout),
-      streamDrained(child.stderr),
-    ]).then(() => undefined),
+    outputDrained: Promise.all([streamDrained(child.stdout), streamDrained(child.stderr)]).then(
+      () => undefined,
+    ),
     resultFromTargetOutcome: (outcome: {
       readonly exitCode: number | null;
       readonly signal: NodeJS.Signals | null;
@@ -96,6 +95,115 @@ afterEach(async () => {
 });
 
 describe("workset effect broker [T1979]", () => {
+  test("D343 bounded child launch shares one deadline across admission and registered handshakes [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-d343-launch-deadline-"));
+    roots.push(root);
+
+    const delayedStrict = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const permitAdmission = deferred();
+    const delayedBroker = new WorksetEffectBroker({
+      provider: {
+        acquire: async (input) => {
+          await permitAdmission.promise;
+          return await delayedStrict.acquire(input);
+        },
+      },
+    });
+    const delayedLaunch = delayedBroker.launch({
+      kind: "child-dispatch",
+      targetRef: "tasks:T2228",
+      argv: [process.execPath, "-e", ""],
+      cwd: root,
+      env: process.env,
+      stdio: "ignore" as const,
+      launchDeadlineMs: Date.now() + 50,
+      launchBootstrap: nodeBootstrap,
+    });
+    setTimeout(() => permitAdmission.resolve(), 100);
+    await expect(delayedLaunch).rejects.toThrow("launch/admission deadline expired");
+    for (let attempt = 0; attempt < 1_000; attempt += 1) {
+      if (delayedStrict.events().includes("admission-abandoned")) break;
+      await Bun.sleep(2);
+    }
+    expect(delayedStrict.events()).toEqual(["admission-acquired", "admission-abandoned"]);
+    expect(delayedStrict.activeAdmissionCount()).toBe(0);
+
+    const identityStrict = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const identityBroker = new WorksetEffectBroker({ provider: identityStrict });
+    let identityBootstrapPid: number | undefined;
+    await expect(
+      identityBroker.launch({
+        kind: "child-dispatch",
+        targetRef: "tasks:T2228",
+        argv: [process.execPath, "-e", ""],
+        cwd: root,
+        env: process.env,
+        stdio: "ignore" as const,
+        launchDeadlineMs: Date.now() + 100,
+        launchBootstrap: (specification) => {
+          const bootstrap = nodeBootstrap(specification);
+          identityBootstrapPid = bootstrap.pid;
+          return { ...bootstrap, pid: 999_999_999 };
+        },
+      }),
+    ).rejects.toThrow("registered-launch identity handshake");
+    if (identityBootstrapPid === undefined) throw new Error("identity bootstrap had no PID");
+    expect(await readProcessIdentity(identityBootstrapPid)).toBeNull();
+    expect(identityStrict.events()).toEqual(["admission-acquired", "admission-abandoned"]);
+    expect(identityStrict.activeAdmissionCount()).toBe(0);
+
+    const bootstrapStrict = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const bootstrapBroker = new WorksetEffectBroker({ provider: bootstrapStrict });
+    let stalledBootstrapPid: number | undefined;
+    await expect(
+      bootstrapBroker.launch({
+        kind: "child-dispatch",
+        targetRef: "tasks:T2228",
+        argv: [process.execPath, "-e", ""],
+        cwd: root,
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"] as StdioOptions,
+        launchDeadlineMs: Date.now() + 100,
+        launchBootstrap: (specification) => {
+          const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+            cwd: specification.cwd,
+            env: specification.env,
+            detached: specification.detached,
+            stdio: specification.stdio,
+          });
+          stalledBootstrapPid = child.pid;
+          return {
+            process: child,
+            pid: child.pid,
+            exited: exited(child),
+            outputDrained: Promise.all([
+              streamDrained(child.stdout),
+              streamDrained(child.stderr),
+            ]).then(() => undefined),
+            resultFromTargetOutcome: (outcome: {
+              readonly exitCode: number | null;
+              readonly signal: NodeJS.Signals | null;
+            }) => outcome,
+            terminate: (signal: NodeJS.Signals) => {
+              child.kill(signal);
+            },
+          };
+        },
+      }),
+    ).rejects.toThrow("registered-launch bootstrap handshake");
+    if (stalledBootstrapPid === undefined) throw new Error("stalled bootstrap had no PID");
+    expect(await readProcessIdentity(stalledBootstrapPid)).toBeNull();
+    expect(bootstrapStrict.events()).toEqual([
+      "admission-acquired",
+      "process-group-registered",
+      "guardian-shared",
+      "process-group-settled",
+      "guardian-released",
+      "admission-released",
+    ]);
+    expect(bootstrapStrict.activeAdmissionCount()).toBe(0);
+  });
+
   test("acquires and registers the guardian before releasing one target [BA]", async () => {
     const root = await mkdtemp(join(tmpdir(), "cq-workset-effect-order-"));
     roots.push(root);

@@ -1,4 +1,5 @@
 import {
+  CODEX_STAGED_TIMING_BASIS,
   DISPATCH_INPUT_VALIDATION_DEFERRED,
   DISPATCH_OVERLAY_REGISTRY,
   DISPATCH_REF_ASSEMBLY_DEFERRED,
@@ -71,6 +72,40 @@ import {
   type SingleProjectConstruction,
 } from "@cq/ledger";
 import type { PromptArtifactStore } from "./promptArtifactStore.js";
+
+function stagingDeadlineAfter(durationMs: number, phase: string): number {
+  const deadlineMs = Date.now() + durationMs;
+  if (!Number.isSafeInteger(deadlineMs)) {
+    throw new Error(`Codex store_result ${phase} deadline exceeds the safe integer range`);
+  }
+  return deadlineMs;
+}
+
+async function withinStagingDeadline<T>(
+  operation: () => Promise<T>,
+  deadlineMs: number,
+  phase: string,
+): Promise<T> {
+  const remainingMs = deadlineMs - Date.now();
+  if (remainingMs <= 0) {
+    throw new Error(`Codex store_result exceeded its ${phase} deadline`);
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Codex store_result exceeded its ${phase} deadline`)),
+          remainingMs,
+        );
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 export interface DispatchCapabilityOptions {
   readonly backend: AttestationBackend;
@@ -655,10 +690,30 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     },
     fetchInput: (input) => fetchDispatchInputOn(options.backend, { namespace, ...input }, { now }),
     storeResult: async (input) => {
-      const gateContext = await resolveSupervisedWorkerGateContextOn(options.backend, input);
+      const synchronousStartedAt = Date.now();
+      const initialSynchronousDeadlineMs = stagingDeadlineAfter(
+        CODEX_STAGED_TIMING_BASIS.storeResultSynchronousPhaseMs,
+        "synchronous phase",
+      );
+      const gateContext = await withinStagingDeadline(
+        async () => await resolveSupervisedWorkerGateContextOn(options.backend, input),
+        initialSynchronousDeadlineMs,
+        "synchronous phase",
+      );
       const binding =
-        gateContext ?? (await resolveDispatchGitEffectBindingOn(options.backend, input));
-      const store = async () => {
+        gateContext ??
+        (await withinStagingDeadline(
+          async () => await resolveDispatchGitEffectBindingOn(options.backend, input),
+          initialSynchronousDeadlineMs,
+          "synchronous phase",
+        ));
+      const preLockSynchronousElapsedMs = Date.now() - synchronousStartedAt;
+      const remainingSynchronousMs =
+        CODEX_STAGED_TIMING_BASIS.storeResultSynchronousPhaseMs - preLockSynchronousElapsedMs;
+      if (remainingSynchronousMs <= 0) {
+        throw new Error("Codex store_result exceeded its synchronous phase deadline");
+      }
+      const store = async (synchronousDeadlineMs: number) => {
         const output = input.output;
         // An unbound dispatch has no trusted parent that could have minted this evidence.
         if (
@@ -674,45 +729,58 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         if (binding?.roleId === "implement-worker") {
           const evidence = brokerResultEvidence(output);
           if (evidence !== undefined) {
-            await validateGitChangeBrokerResultEvidence(
-              binding,
-              evidence,
-              {
-                ...(options.worktreeStateDir === undefined
-                  ? {}
-                  : { stateDir: options.worktreeStateDir }),
-                ...(gateContext === undefined
-                  ? {}
-                  : { diffBaseCommit: gateContext.dispatchBaseCommit }),
-              },
+            await withinStagingDeadline(
+              async () =>
+                await validateGitChangeBrokerResultEvidence(binding, evidence, {
+                  ...(options.worktreeStateDir === undefined
+                    ? {}
+                    : { stateDir: options.worktreeStateDir }),
+                  ...(gateContext === undefined
+                    ? {}
+                    : { diffBaseCommit: gateContext.dispatchBaseCommit }),
+                  deadlineMs: synchronousDeadlineMs,
+                }),
+              synchronousDeadlineMs,
+              "synchronous phase",
             );
           }
         } else if (binding?.roleId === "implement-conflict-resolver") {
-          const evidence = conflictResultEvidence(output);
-          await validateGitConflictContinuationResultEvidence(
-            binding,
-            evidence,
-            options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+          await withinStagingDeadline(
+            async () =>
+              await validateGitConflictContinuationResultEvidence(
+                binding,
+                conflictResultEvidence(output),
+                options.worktreeStateDir === undefined
+                  ? {}
+                  : { stateDir: options.worktreeStateDir },
+              ),
+            synchronousDeadlineMs,
+            "synchronous phase",
           );
         }
-        return await storeDispatchResultOn(
-          options.backend,
-          { ...input, output },
-          { now },
+        const acknowledgementDeadlineMs = stagingDeadlineAfter(
+          CODEX_STAGED_TIMING_BASIS.storeResultDurableAcknowledgementMs,
+          "durable acknowledgement",
+        );
+        return await withinStagingDeadline(
+          async () => await storeDispatchResultOn(options.backend, { ...input, output }, { now }),
+          acknowledgementDeadlineMs,
+          "durable acknowledgement",
         );
       };
       const outcome =
         binding === undefined
-          ? await store()
+          ? await store(initialSynchronousDeadlineMs)
           : await withManagedWorktreeEffectLock(
               binding,
               {
                 ...(options.worktreeStateDir === undefined
                   ? {}
                   : { stateDir: options.worktreeStateDir }),
-                effectLockTimeoutMs: SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
+                effectLockTimeoutMs: CODEX_STAGED_TIMING_BASIS.storeResultEffectLockAcquisitionMs,
               },
-              store,
+              async () =>
+                await store(stagingDeadlineAfter(remainingSynchronousMs, "synchronous phase")),
             );
       if (outcome.state === "aborted") {
         rememberTerminal(outcome.result, outcome.result.abortedAt);
@@ -727,9 +795,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       return await withManagedWorktreeEffectLock(
         binding,
         {
-          ...(options.worktreeStateDir === undefined
-            ? {}
-            : { stateDir: options.worktreeStateDir }),
+          ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
           effectLockTimeoutMs: SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
         },
         async () => {

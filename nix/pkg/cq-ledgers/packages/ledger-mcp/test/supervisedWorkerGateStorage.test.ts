@@ -7,12 +7,14 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import {
+  CODEX_STAGED_TIMING_BASIS,
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
   sequentialDispatchRandomBytes,
   type AttestationNamespace,
 } from "@cq/config";
 import {
+  SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
   SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
   nodeSupervisedWorkerGateRunner,
   prepareManagedWorktree,
@@ -336,6 +338,15 @@ afterAll(async () => {
 });
 
 describe("T2081 supervised worker result storage [Effectual-GoodCommunication]", () => {
+  test("D343 staged timing basis keeps the ledger effect-lock acquisition source-bound [Behavioral-Active Blackbox-Atomic]", () => {
+    expect(SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS).toBe(3_600_000);
+    expect(SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS).toBe(
+      CODEX_STAGED_TIMING_BASIS.storeResultEffectLockAcquisitionMs,
+    );
+    expect(CODEX_STAGED_TIMING_BASIS.storeResultSubmissionBudgetMs).toBe(3_960_000);
+    expect(CODEX_STAGED_TIMING_BASIS.parentGateWindowMs).toBe(9_611_000);
+  });
+
   test("an exact staged result retry recovers the same acknowledgement before and after parent finalization", async () => {
     const runner = new GateDummy();
     const subject = await fixture(runner);
@@ -350,9 +361,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
   test("attaches runner-owned evidence before an exact green tip becomes consumable", async () => {
     const runner = new GateDummy();
     const subject = await fixture(runner);
-    expect(
-      await stageAndFinalize(subject),
-    ).toMatchObject({ state: "result-stored" });
+    expect(await stageAndFinalize(subject)).toMatchObject({ state: "result-stored" });
     expect(runner.requests).toEqual([
       {
         worktreePath: subject.managed.handle.absolutePath,
@@ -406,31 +415,26 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     });
   });
 
-  test(
-    "D340 runs the default supervised worker gate in the child-started ledger MCP process [Behavioral-Progression Blackbox-GoodCommunication]",
-    async () => {
-      const parentProcessId = process.pid;
-      const runner = new GateDummy();
-      const subject = await fixture(runner);
+  test("D340 runs the default supervised worker gate in the child-started ledger MCP process [Behavioral-Progression Blackbox-GoodCommunication]", async () => {
+    const parentProcessId = process.pid;
+    const runner = new GateDummy();
+    const subject = await fixture(runner);
 
-      await expect(
-        subject.capability.storeResult({
-          resultCapability: subject.prepared.resultCapability,
-          output: subject.output,
-        }),
-      ).resolves.toMatchObject({ state: "gate-pending" });
-      expect(runner.callerProcessIds).toEqual([]);
-      await expect(finalize(subject)).resolves.toMatchObject({ state: "result-stored" });
-      expect(runner.callerProcessIds).toEqual([parentProcessId]);
-    },
-  );
+    await expect(
+      subject.capability.storeResult({
+        resultCapability: subject.prepared.resultCapability,
+        output: subject.output,
+      }),
+    ).resolves.toMatchObject({ state: "gate-pending" });
+    expect(runner.callerProcessIds).toEqual([]);
+    await expect(finalize(subject)).resolves.toMatchObject({ state: "result-stored" });
+    expect(runner.callerProcessIds).toEqual([parentProcessId]);
+  });
 
   test("accepts correction-round verification against a descendant dispatch base", async () => {
     const subject = await fixtureWithDispatchBase(new GateDummy(), "descendant");
     expect(subject.dispatchBaseCommit).not.toBe(subject.managed.handle.baseCommit);
-    await expect(
-      stageAndFinalize(subject),
-    ).resolves.toMatchObject({ state: "result-stored" });
+    await expect(stageAndFinalize(subject)).resolves.toMatchObject({ state: "result-stored" });
     expect(subject.store.rows()).toMatchObject([
       {
         state: "result-stored",
@@ -471,17 +475,13 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     const dirtyRunner = new GateDummy();
     const dirty = await fixture(dirtyRunner);
     await fs.writeFile(path.join(dirty.managed.handle.absolutePath, "untracked.txt"), "dirty\n");
-    await expect(
-      stage(dirty),
-    ).resolves.toMatchObject({ state: "gate-pending" });
+    await expect(stage(dirty)).resolves.toMatchObject({ state: "gate-pending" });
     await expect(finalize(dirty)).rejects.toThrow("clean result tree");
     expect(dirtyRunner.requests).toHaveLength(0);
 
     const movingRunner = new MovingTipGateDummy();
     const moving = await fixture(movingRunner);
-    await expect(
-      stage(moving),
-    ).resolves.toMatchObject({ state: "gate-pending" });
+    await expect(stage(moving)).resolves.toMatchObject({ state: "gate-pending" });
     await expect(finalize(moving)).rejects.toThrow("branch tip moved during the gate");
     expect(movingRunner.requests).toHaveLength(1);
 
@@ -639,9 +639,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     const subject = await fixtureWithDispatchBase(runner, "managed", () =>
       new Date(current).toISOString(),
     );
-    await expect(
-      stageAndFinalize(subject),
-    ).resolves.toMatchObject({ state: "result-stored" });
+    await expect(stageAndFinalize(subject)).resolves.toMatchObject({ state: "result-stored" });
     expect(runner.requests).toHaveLength(1);
   });
 

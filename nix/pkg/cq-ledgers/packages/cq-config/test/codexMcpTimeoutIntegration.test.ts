@@ -157,9 +157,7 @@ throw new Error("unexpected fake cq invocation: " + process.argv.slice(2).join("
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual(HANDLE);
 
-  const [preturnLine, outcomeLine] = (await readFile(observation, "utf8"))
-    .trim()
-    .split("\n");
+  const [preturnLine, outcomeLine] = (await readFile(observation, "utf8")).trim().split("\n");
   if (preturnLine === undefined || outcomeLine === undefined) {
     throw new Error("installed boundary did not emit both observations");
   }
@@ -169,11 +167,19 @@ throw new Error("unexpected fake cq invocation: " + process.argv.slice(2).join("
     version: 2,
     roleId: "implement-worker",
     childWorkTimeoutMs: 2_000,
-    storeResultSubmissionBudgetMs: 600_000,
-    ledgerToolTimeoutSec: 600,
+    childLaunchAdmissionMs: 300_000,
+    registeredLaunchIdentityHandshakeMs: 30_000,
+    registeredLaunchBootstrapHandshakeMs: 30_000,
+    storeResultEffectLockAcquisitionMs: 3_600_000,
+    storeResultSynchronousPhaseMs: 300_000,
+    storeResultDurableAcknowledgementMs: 60_000,
+    storeResultSubmissionBudgetMs: 3_960_000,
+    ledgerToolTimeoutSec: 3_960,
     postStoreSubmissionFinalizationMs: 300_000,
-    outerBoundaryTimeoutMs: 902_000,
-    parentGateWindowMs: 5_620_000,
+    outerBoundaryTimeoutMs: 4_562_000,
+    parentPathMs: 9_580_000,
+    parentFirstAttemptMs: 9_580_000,
+    parentGateWindowMs: 9_611_000,
   });
   expect(JSON.parse(outcomeLine)).toMatchObject({
     kind: "cq-codex-effective-outcome",
@@ -185,11 +191,12 @@ throw new Error("unexpected fake cq invocation: " + process.argv.slice(2).join("
     readonly launch: Record<string, unknown>;
   };
   const mcpOverride = capture.argv.find((arg) => arg.startsWith("mcp_servers.ledger="));
-  if (mcpOverride === undefined) throw new Error("installed boundary omitted the ledger MCP override");
+  if (mcpOverride === undefined)
+    throw new Error("installed boundary omitted the ledger MCP override");
   const parsed = parseToml(mcpOverride) as {
     readonly mcp_servers: { readonly ledger: { readonly tool_timeout_sec?: number } };
   };
-  expect(parsed.mcp_servers.ledger.tool_timeout_sec).toBe(600);
+  expect(parsed.mcp_servers.ledger.tool_timeout_sec).toBe(3_960);
   expect(capture.launch).toMatchObject({
     attestationId: HANDLE.attestationId,
     generation: HANDLE.generation,

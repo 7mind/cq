@@ -8,14 +8,19 @@ import {
   readProcessIdentity,
 } from "@cq/process-control";
 import {
+  CODEX_STAGED_TIMING_BASIS,
+  CODEX_STAGED_TIMING_PHASES,
   DISPATCHED_ROLE_IDS,
   DOMAIN_LEDGER_TOOL_NAMES,
   ROLE_TOOL_CAPABILITY_MATRIX,
   createCodexRoleBoundaryPlan,
+  calculateCodexParentFirstAttemptMs,
+  calculateCodexStagedTimingBasis,
   executeCodexParentGateFinalizer,
   executeCodexRoleBoundary,
   interceptCodexRoleBoundaryResult,
   type CodexRoleBoundaryPlan,
+  type CodexStagedTimingPhase,
 } from "@cq/config";
 
 const HANDLE = {
@@ -489,44 +494,94 @@ if (!state.committed) {
     expect(plan.argv.join(" ")).not.toContain(GIT_CONFLICT_CAPABILITY.token);
   });
 
-  test(
-    "D343 gives implement-worker result staging and terminal completion distinct bounded windows [Behavioral-Progression Blackbox-Atomic]",
-    () => {
-      const childWorkTimeoutMs = 120_000;
-      const plan = createCodexRoleBoundaryPlan({
-        roleId: "implement-worker",
-        roleInstructions: "implement the task",
-        handle: HANDLE,
-        inputCapability: INPUT_CAPABILITY,
-        gitChangeCapability: GIT_CHANGE_CAPABILITY,
-        ...BOUNDARY_CONTEXTS,
-        model: "frontier-model",
-        reasoningEffort: "high",
-        sandboxMode: "workspace-write",
-        timeoutMs: childWorkTimeoutMs,
-        promptRoot: "/nix/store/codex-prompt-root",
-        ledgerCommand: "/nix/store/cq/bin/cq",
-        codexExecutable: "/nix/store/codex/bin/codex",
-      });
-      const mcpOverride = plan.argv.find((arg) => arg.startsWith("mcp_servers.ledger="));
-      if (mcpOverride === undefined) throw new Error("missing ledger MCP override");
-      const parsed = parseToml(mcpOverride) as {
-        mcp_servers: { ledger: { tool_timeout_sec?: number } };
-      };
+  test("D343 staged timing basis derives every launch, staging, terminal, and parent window [Behavioral-Active Blackbox-Atomic]", () => {
+    const childWorkTimeoutMs = 120_000;
+    const plan = createCodexRoleBoundaryPlan({
+      roleId: "implement-worker",
+      roleInstructions: "implement the task",
+      handle: HANDLE,
+      inputCapability: INPUT_CAPABILITY,
+      gitChangeCapability: GIT_CHANGE_CAPABILITY,
+      ...BOUNDARY_CONTEXTS,
+      model: "frontier-model",
+      reasoningEffort: "high",
+      sandboxMode: "workspace-write",
+      timeoutMs: childWorkTimeoutMs,
+      promptRoot: "/nix/store/codex-prompt-root",
+      ledgerCommand: "/nix/store/cq/bin/cq",
+      codexExecutable: "/nix/store/codex/bin/codex",
+    });
+    const mcpOverride = plan.argv.find((arg) => arg.startsWith("mcp_servers.ledger="));
+    if (mcpOverride === undefined) throw new Error("missing ledger MCP override");
+    const parsed = parseToml(mcpOverride) as {
+      mcp_servers: { ledger: { tool_timeout_sec?: number } };
+    };
 
-      expect(parsed.mcp_servers.ledger.tool_timeout_sec).toBe(600);
-      expect(plan.timeoutMs).toBe(childWorkTimeoutMs + 900_000);
-      expect(plan.effectivePreturn).toMatchObject({
-        version: 2,
-        childWorkTimeoutMs,
-        storeResultSubmissionBudgetMs: 600_000,
-        ledgerToolTimeoutSec: 600,
-        postStoreSubmissionFinalizationMs: 300_000,
-        outerBoundaryTimeoutMs: childWorkTimeoutMs + 900_000,
-        parentGateWindowMs: 5_620_000,
-      });
-    },
-  );
+    expect(parsed.mcp_servers.ledger.tool_timeout_sec).toBe(3_960);
+    expect(plan.timeoutMs).toBe(childWorkTimeoutMs + 4_560_000);
+    expect(plan.effectivePreturn).toMatchObject({
+      version: 2,
+      childWorkTimeoutMs,
+      childLaunchAdmissionMs: 300_000,
+      registeredLaunchIdentityHandshakeMs: 30_000,
+      registeredLaunchBootstrapHandshakeMs: 30_000,
+      storeResultEffectLockAcquisitionMs: 3_600_000,
+      storeResultSynchronousPhaseMs: 300_000,
+      storeResultDurableAcknowledgementMs: 60_000,
+      storeResultSubmissionBudgetMs: 3_960_000,
+      ledgerToolTimeoutSec: 3_960,
+      postStoreSubmissionFinalizationMs: 300_000,
+      outerBoundaryTimeoutMs: childWorkTimeoutMs + 4_560_000,
+      parentStartupBindingMs: 300_000,
+      parentEffectLockAcquisitionMs: 3_600_000,
+      parentClaimMs: 60_000,
+      parentGateFinalizationMs: 5_620_000,
+      parentPathMs: 9_580_000,
+      parentGateReconciliationReserveMs: 30_000,
+      parentGateTerminationGraceMs: 1_000,
+      parentFirstAttemptMs: 9_580_000,
+      parentGateWindowMs: 9_611_000,
+    });
+
+    const replaceDuration = (
+      name: CodexStagedTimingPhase["name"],
+      durationMs: number,
+    ): readonly CodexStagedTimingPhase[] =>
+      CODEX_STAGED_TIMING_PHASES.map((phase) =>
+        phase.name === name ? { ...phase, durationMs } : phase,
+      );
+    expect(() => calculateCodexStagedTimingBasis(CODEX_STAGED_TIMING_PHASES.slice(1))).toThrow(
+      "every phase exactly once",
+    );
+    expect(() =>
+      calculateCodexStagedTimingBasis([
+        CODEX_STAGED_TIMING_PHASES[0]!,
+        CODEX_STAGED_TIMING_PHASES[0]!,
+        ...CODEX_STAGED_TIMING_PHASES.slice(2),
+      ]),
+    ).toThrow("duplicated");
+    expect(() =>
+      calculateCodexStagedTimingBasis([
+        CODEX_STAGED_TIMING_PHASES[1]!,
+        CODEX_STAGED_TIMING_PHASES[0]!,
+        ...CODEX_STAGED_TIMING_PHASES.slice(2),
+      ]),
+    ).toThrow("source order");
+    expect(() =>
+      calculateCodexStagedTimingBasis(replaceDuration("parent-gate-finalization", 5_619_999)),
+    ).toThrow("shorter than its source bound");
+    expect(() =>
+      calculateCodexStagedTimingBasis(
+        replaceDuration("child-launch-admission", Number.MAX_SAFE_INTEGER),
+      ),
+    ).toThrow("safe integer range");
+    expect(() =>
+      calculateCodexStagedTimingBasis(replaceDuration("store-result-acknowledgement", 60_001)),
+    ).toThrow("whole tool-timeout seconds");
+    expect(() => calculateCodexParentFirstAttemptMs(9_610_999, 30_000, 1_000, 9_580_000)).toThrow(
+      "shorten the first attempt",
+    );
+  });
 
   test("faithfully records every dispatched role's pre-context tool profile and launch invariants", () => {
     const domainTools = new Set<string>(DOMAIN_LEDGER_TOOL_NAMES);
@@ -1019,11 +1074,8 @@ if (!state.committed) {
         skillsPolicy: "role-instructions",
         multiAgent: false,
         childWorkTimeoutMs: 30_000,
-        storeResultSubmissionBudgetMs: 600_000,
-        ledgerToolTimeoutSec: 600,
-        postStoreSubmissionFinalizationMs: 300_000,
-        outerBoundaryTimeoutMs: 930_000,
-        parentGateWindowMs: 5_620_000,
+        ...CODEX_STAGED_TIMING_BASIS,
+        outerBoundaryTimeoutMs: 30_000 + CODEX_STAGED_TIMING_BASIS.outerBoundaryReserveMs,
       },
       interceptStdout: true,
     };
@@ -1111,11 +1163,8 @@ if (!state.committed) {
         skillsPolicy: "role-instructions",
         multiAgent: false,
         childWorkTimeoutMs: 30_000,
-        storeResultSubmissionBudgetMs: 600_000,
-        ledgerToolTimeoutSec: 600,
-        postStoreSubmissionFinalizationMs: 300_000,
-        outerBoundaryTimeoutMs: 930_000,
-        parentGateWindowMs: 5_620_000,
+        ...CODEX_STAGED_TIMING_BASIS,
+        outerBoundaryTimeoutMs: 30_000 + CODEX_STAGED_TIMING_BASIS.outerBoundaryReserveMs,
       },
       interceptStdout: true,
     };

@@ -11,6 +11,11 @@ import {
   type RegisteredLaunchBootstrapSpecification,
 } from "./registeredLaunch.ts";
 import {
+  awaitBeforeLaunchDeadline,
+  remainingLaunchDeadlineMs,
+  validateLaunchDeadlineMs,
+} from "./launchDeadline.ts";
+import {
   WORKSET_BROKER_EXTERNAL_EFFECT_KINDS,
   WorksetEffectProtocolError,
   WorksetEffectProtocolSession,
@@ -41,10 +46,14 @@ export interface LaunchWorksetEffectOptions<TProcess, TExit, TStdio> {
   readonly settleRegisteredDescendants?: () => Promise<void>;
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
+  /** Absolute boundary for admission, registration/share, and target launch. */
+  readonly launchDeadlineMs?: number;
 }
 
-export interface LaunchedWorksetEffect<TProcess, TExit>
-  extends LaunchedRegisteredProcessGroup<TProcess, TExit> {
+export interface LaunchedWorksetEffect<TProcess, TExit> extends LaunchedRegisteredProcessGroup<
+  TProcess,
+  TExit
+> {
   /** Idempotently request TERM → grace → KILL → settlement. */
   cancel(): Promise<void>;
   /** First cleanup reason to win the target-completion/cancel/timeout race. */
@@ -60,8 +69,7 @@ export type StrictInMemoryWorksetEffectEvent =
   | "admission-released"
   | "admission-abandoned";
 
-export interface StrictInMemoryWorksetEffectAdmissionProvider
-  extends WorksetEffectAdmissionProvider {
+export interface StrictInMemoryWorksetEffectAdmissionProvider extends WorksetEffectAdmissionProvider {
   events(): readonly StrictInMemoryWorksetEffectEvent[];
   activeAdmissionCount(): number;
   waitForIdle(): Promise<void>;
@@ -91,11 +99,10 @@ function errorMessage(error: unknown): string {
 }
 
 function validateTimeout(timeoutMs: number | undefined): void {
-  if (
-    timeoutMs !== undefined &&
-    (!Number.isFinite(timeoutMs) || timeoutMs < 0)
-  ) {
-    throw new Error("@cq/process-control: workset effect timeout must be a bounded non-negative value");
+  if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs < 0)) {
+    throw new Error(
+      "@cq/process-control: workset effect timeout must be a bounded non-negative value",
+    );
   }
 }
 
@@ -129,12 +136,17 @@ export class WorksetEffectBroker {
     options: LaunchWorksetEffectOptions<TProcess, TExit, TStdio>,
   ): Promise<LaunchedWorksetEffect<TProcess, TExit>> {
     validateTimeout(options.timeoutMs);
+    validateLaunchDeadlineMs(options.launchDeadlineMs);
     const session = new WorksetEffectProtocolSession({
       provider: this.provider,
       kind: options.kind,
       targetRef: options.targetRef,
     });
-    await session.acquireAdmission();
+    await awaitBeforeLaunchDeadline(
+      session.acquireAdmission(options.launchDeadlineMs),
+      options.launchDeadlineMs,
+      "durable admission acquisition",
+    );
 
     let registration: ProcessGroupRegistration | null = null;
     let terminationReason: WorksetBrokerTerminationReason | null = null;
@@ -189,7 +201,13 @@ export class WorksetEffectBroker {
         await abandonAdmission(session);
         throw options.signal?.reason ?? new Error("@cq/process-control: workset effect cancelled");
       }
-      await options.beforeLaunch?.();
+      if (options.beforeLaunch !== undefined) {
+        await awaitBeforeLaunchDeadline(
+          options.beforeLaunch(),
+          options.launchDeadlineMs,
+          "pre-launch coordinate validation",
+        );
+      }
       if (signalAborted(options.signal)) {
         await abandonAdmission(session);
         throw options.signal?.reason ?? new Error("@cq/process-control: workset effect cancelled");
@@ -200,12 +218,18 @@ export class WorksetEffectBroker {
         env: options.env,
         stdio: options.stdio,
         launchBootstrap: options.launchBootstrap,
+        ...(options.launchDeadlineMs === undefined
+          ? {}
+          : { launchDeadlineMs: options.launchDeadlineMs }),
         register: async (candidate) => {
           registration = candidate;
-          await session.registerProcessGroup({
-            pgid: candidate.pgid,
-            leaderPid: candidate.leader.pid,
-          });
+          await session.registerProcessGroup(
+            {
+              pgid: candidate.pgid,
+              leaderPid: candidate.leader.pid,
+            },
+            options.launchDeadlineMs,
+          );
         },
         shareLeaseWithGuardian: async (candidate) => {
           if (registration?.pgid !== candidate.pgid) {
@@ -214,13 +238,14 @@ export class WorksetEffectBroker {
               "registered-launch guardian identity changed before target release",
             );
           }
-          await session.shareWithGuardian();
+          await session.shareWithGuardian(options.launchDeadlineMs);
           session.releaseTarget();
         },
         onTargetExit: async () => {
           await settle("normal");
         },
       });
+      remainingLaunchDeadlineMs(options.launchDeadlineMs, "target launch acknowledgement");
     } catch (launchError) {
       try {
         if (session.stage === "admission-held") {
@@ -316,9 +341,7 @@ export function createStrictInMemoryWorksetEffectAdmissionProvider(): StrictInMe
 
   return {
     async acquire(input): Promise<WorksetBrokerAdmissionHandle> {
-      if (
-        !(WORKSET_BROKER_EXTERNAL_EFFECT_KINDS as readonly string[]).includes(input.kind)
-      ) {
+      if (!(WORKSET_BROKER_EXTERNAL_EFFECT_KINDS as readonly string[]).includes(input.kind)) {
         throw new Error(`@cq/process-control: unknown workset effect kind ${String(input.kind)}`);
       }
       if (input.targetRef.trim() === "") {
@@ -339,7 +362,8 @@ export function createStrictInMemoryWorksetEffectAdmissionProvider(): StrictInMe
         targetRef: input.targetRef,
         registerProcessGroup(registration): void {
           if (!state.open) throw new Error("strict provider: admission already closed");
-          if (state.registered) throw new Error("strict provider: process group already registered");
+          if (state.registered)
+            throw new Error("strict provider: process group already registered");
           if (registration.pgid !== registration.leaderPid) {
             throw new Error("strict provider: process group leader must equal PGID");
           }
@@ -371,7 +395,8 @@ export function createStrictInMemoryWorksetEffectAdmissionProvider(): StrictInMe
         },
         async abandonBeforeRegistration(): Promise<void> {
           if (!state.open) throw new Error("strict provider: admission already closed");
-          if (state.registered) throw new Error("strict provider: registered admission cannot be abandoned");
+          if (state.registered)
+            throw new Error("strict provider: registered admission cannot be abandoned");
           history.push("admission-abandoned");
           close(state);
         },

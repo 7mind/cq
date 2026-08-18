@@ -1,3 +1,5 @@
+import { awaitBeforeLaunchDeadline, remainingLaunchDeadlineMs } from "./launchDeadline.ts";
+
 /**
  * T1953 — host effect-broker protocol for workset external effects.
  *
@@ -34,8 +36,7 @@ export const WORKSET_BROKER_EXTERNAL_EFFECT_KINDS = [
   "merge",
 ] as const;
 
-export type WorksetBrokerExternalEffectKind =
-  (typeof WORKSET_BROKER_EXTERNAL_EFFECT_KINDS)[number];
+export type WorksetBrokerExternalEffectKind = (typeof WORKSET_BROKER_EXTERNAL_EFFECT_KINDS)[number];
 
 export const WORKSET_BROKER_TERMINATION_REASONS = [
   "normal",
@@ -45,8 +46,7 @@ export const WORKSET_BROKER_TERMINATION_REASONS = [
   "broker-death",
 ] as const;
 
-export type WorksetBrokerTerminationReason =
-  (typeof WORKSET_BROKER_TERMINATION_REASONS)[number];
+export type WorksetBrokerTerminationReason = (typeof WORKSET_BROKER_TERMINATION_REASONS)[number];
 
 // ---------------------------------------------------------------------------
 // Stages
@@ -66,8 +66,7 @@ export const WORKSET_EFFECT_BROKER_STAGES = [
   "admission-closed",
 ] as const;
 
-export type WorksetEffectBrokerStage =
-  (typeof WORKSET_EFFECT_BROKER_STAGES)[number];
+export type WorksetEffectBrokerStage = (typeof WORKSET_EFFECT_BROKER_STAGES)[number];
 
 // ---------------------------------------------------------------------------
 // Opaque admission provider (injected; backends implement this)
@@ -93,9 +92,13 @@ export interface WorksetBrokerAdmissionHandle {
    */
   registerProcessGroup(
     registration: WorksetBrokerProcessGroupRegistration,
+    launchDeadlineMs?: number,
   ): void | Promise<void>;
   /** Share the held admission with the already registered bootstrap guardian. */
-  shareWithGuardian(guardian: WorksetBrokerProcessGroupRegistration): void | Promise<void>;
+  shareWithGuardian(
+    guardian: WorksetBrokerProcessGroupRegistration,
+    launchDeadlineMs?: number,
+  ): void | Promise<void>;
   markSettled(): void | Promise<void>;
   releaseAfterSettlement(): Promise<void>;
   /** Close an acquired admission when its fenced bootstrap never registered. */
@@ -111,6 +114,7 @@ export interface WorksetEffectAdmissionProvider {
   acquire(input: {
     readonly kind: WorksetBrokerExternalEffectKind;
     readonly targetRef: string;
+    readonly launchDeadlineMs?: number;
   }): Promise<WorksetBrokerAdmissionHandle>;
 }
 
@@ -187,7 +191,7 @@ export class WorksetEffectProtocolSession {
     return this.terminationReason;
   }
 
-  async acquireAdmission(): Promise<void> {
+  async acquireAdmission(launchDeadlineMs?: number): Promise<void> {
     this.assertStage("unacquired", "acquireAdmission");
     if (this.effectCount > 0) {
       throw new WorksetEffectProtocolError(
@@ -198,7 +202,21 @@ export class WorksetEffectProtocolSession {
     const handle = await this.provider.acquire({
       kind: this.kind,
       targetRef: this.targetRef,
+      ...(launchDeadlineMs === undefined ? {} : { launchDeadlineMs }),
     });
+    try {
+      remainingLaunchDeadlineMs(launchDeadlineMs, "durable admission acquisition");
+    } catch (error) {
+      try {
+        await handle.abandonBeforeRegistration();
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          "@cq/process-control: expired admission acquisition could not be abandoned",
+        );
+      }
+      throw error;
+    }
     this.admission = handle;
     this.stageValue = "admission-held";
   }
@@ -217,6 +235,7 @@ export class WorksetEffectProtocolSession {
 
   async registerProcessGroup(
     registration: WorksetBrokerProcessGroupRegistration,
+    launchDeadlineMs?: number,
   ): Promise<void> {
     this.assertStage("admission-held", "registerProcessGroup");
     if (this.admission === null) {
@@ -231,15 +250,21 @@ export class WorksetEffectProtocolSession {
         "process-group registration requires leaderPid === pgid",
       );
     }
-    await Promise.resolve(this.admission.registerProcessGroup(registration));
+    remainingLaunchDeadlineMs(launchDeadlineMs, "durable process-group registration");
+    await awaitBeforeLaunchDeadline(
+      Promise.resolve(this.admission.registerProcessGroup(registration, launchDeadlineMs)),
+      launchDeadlineMs,
+      "durable process-group registration",
+    );
     this.registration = {
       pgid: registration.pgid,
       leaderPid: registration.leaderPid,
     };
     this.stageValue = "process-group-registered";
+    remainingLaunchDeadlineMs(launchDeadlineMs, "durable process-group registration");
   }
 
-  async shareWithGuardian(): Promise<void> {
+  async shareWithGuardian(launchDeadlineMs?: number): Promise<void> {
     this.assertStage("process-group-registered", "shareWithGuardian");
     if (this.admission === null || this.registration === null) {
       throw new WorksetEffectProtocolError(
@@ -253,8 +278,14 @@ export class WorksetEffectProtocolSession {
         "workset effect admission already has a guardian share",
       );
     }
-    await Promise.resolve(this.admission.shareWithGuardian(this.registration));
+    remainingLaunchDeadlineMs(launchDeadlineMs, "durable guardian share");
+    await awaitBeforeLaunchDeadline(
+      Promise.resolve(this.admission.shareWithGuardian(this.registration, launchDeadlineMs)),
+      launchDeadlineMs,
+      "durable guardian share",
+    );
     this.guardianShared = true;
+    remainingLaunchDeadlineMs(launchDeadlineMs, "durable guardian share");
   }
 
   /**
@@ -279,10 +310,7 @@ export class WorksetEffectProtocolSession {
    * close.
    */
   beginTermination(reason: WorksetBrokerTerminationReason): void {
-    if (
-      this.stageValue !== "process-group-registered" &&
-      this.stageValue !== "target-released"
-    ) {
+    if (this.stageValue !== "process-group-registered" && this.stageValue !== "target-released") {
       throw new WorksetEffectProtocolError(
         "illegal-stage-transition",
         `beginTermination not allowed from stage ${this.stageValue}`,
@@ -312,10 +340,7 @@ export class WorksetEffectProtocolSession {
 
   async closeAdmission(): Promise<void> {
     if (this.stageValue === "admission-closed") {
-      throw new WorksetEffectProtocolError(
-        "already-closed",
-        "admission already closed",
-      );
+      throw new WorksetEffectProtocolError("already-closed", "admission already closed");
     }
     if (this.stageValue !== "settled") {
       throw new WorksetEffectProtocolError(
@@ -343,10 +368,7 @@ export class WorksetEffectProtocolSession {
     await this.closeAdmission();
   }
 
-  private assertStage(
-    expected: WorksetEffectBrokerStage,
-    operation: string,
-  ): void {
+  private assertStage(expected: WorksetEffectBrokerStage, operation: string): void {
     if (this.stageValue !== expected) {
       throw new WorksetEffectProtocolError(
         "illegal-stage-transition",

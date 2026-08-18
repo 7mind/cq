@@ -1,6 +1,7 @@
 import { constants } from "node:os";
 import { join, resolve } from "node:path";
 import {
+  CODEX_STAGED_TIMING_BASIS,
   IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   dispatchPayloadDigest,
   type AuthorizedSupervisedWorkerGateContext,
@@ -20,7 +21,8 @@ const PASS_COUNT = /(?:^|\n)\s*([0-9]+)\s+pass\b/gu;
 const FAIL_COUNT = /(?:^|\n)\s*([0-9]+)\s+fail\b/gu;
 
 /** Host-owned bounds begin only after the child has submitted its result. */
-export const SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS = 60 * 60 * 1_000;
+export const SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS =
+  CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs;
 export const SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS = 30 * 60 * 1_000;
 
 function requiresMutationEvidence(entryPath: string): boolean {
@@ -148,14 +150,18 @@ function createNodeSupervisedWorkerGateRunner(): SupervisedWorkerGateRunner {
       const held = new Promise<void>((resolve) => {
         releaseAdmission = resolve;
       });
-      admissionTail = predecessor.then(() => held, () => held);
+      admissionTail = predecessor.then(
+        () => held,
+        () => held,
+      );
       let admissionTimer: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([
           predecessor,
           new Promise<never>((_resolve, reject) => {
             admissionTimer = setTimeout(
-              () => reject(new Error("supervised worker gate exceeded its host admission deadline")),
+              () =>
+                reject(new Error("supervised worker gate exceeded its host admission deadline")),
               request.admissionTimeoutMs,
             );
           }),
@@ -174,103 +180,103 @@ function createNodeSupervisedWorkerGateRunner(): SupervisedWorkerGateRunner {
 async function runAdmittedNodeSupervisedWorkerGate(
   request: SupervisedWorkerGateRunRequest,
 ): Promise<SupervisedWorkerGateRunResult> {
-    const startedAt = Date.now();
-    let registration: ProcessGroupRegistration | undefined;
-    let capturedStdout: Promise<string> | undefined;
-    let capturedStderr: Promise<string> | undefined;
-    const commandCwd = join(request.worktreePath, "nix", "pkg", "cq-ledgers");
-    const launched = await launchRegisteredProcessGroup({
-      argv: [
-        "cq",
-        "gate",
-        "run",
-        "--worktree",
-        request.worktreePath,
-        "--command-cwd",
-        commandCwd,
-        "--",
-        "bun",
-        "run",
-        "check",
-      ],
-      cwd: request.worktreePath,
-      env: process.env,
-      stdio: { stdin: "ignore", stdout: "pipe", stderr: "pipe" } as const,
-      register: async (observed) => {
-        registration = observed;
-      },
-      launchBootstrap: (specification) => {
-        const child = Bun.spawn([...specification.argv], {
-          cwd: specification.cwd,
-          detached: specification.detached,
-          env: specification.env,
-          stdin: specification.stdio.stdin,
-          stdout: specification.stdio.stdout,
-          stderr: specification.stdio.stderr,
-        });
-        const stdout = new Response(child.stdout).text();
-        const stderr = new Response(child.stderr).text();
-        capturedStdout = stdout;
-        capturedStderr = stderr;
-        return {
-          process: { child, stdout, stderr },
-          pid: child.pid,
-          exited: child.exited,
-          outputDrained: Promise.all([stdout, stderr]).then(() => undefined),
-          resultFromTargetOutcome: (outcome) => {
-            if (outcome.exitCode !== null) return outcome.exitCode;
-            if (outcome.signal === null) return 1;
-            return 128 + (constants.signals[outcome.signal] ?? 1);
-          },
-          terminate: (signal: NodeJS.Signals) => child.kill(signal),
-        };
-      },
+  const startedAt = Date.now();
+  let registration: ProcessGroupRegistration | undefined;
+  let capturedStdout: Promise<string> | undefined;
+  let capturedStderr: Promise<string> | undefined;
+  const commandCwd = join(request.worktreePath, "nix", "pkg", "cq-ledgers");
+  const launched = await launchRegisteredProcessGroup({
+    argv: [
+      "cq",
+      "gate",
+      "run",
+      "--worktree",
+      request.worktreePath,
+      "--command-cwd",
+      commandCwd,
+      "--",
+      "bun",
+      "run",
+      "check",
+    ],
+    cwd: request.worktreePath,
+    env: process.env,
+    stdio: { stdin: "ignore", stdout: "pipe", stderr: "pipe" } as const,
+    register: async (observed) => {
+      registration = observed;
+    },
+    launchBootstrap: (specification) => {
+      const child = Bun.spawn([...specification.argv], {
+        cwd: specification.cwd,
+        detached: specification.detached,
+        env: specification.env,
+        stdin: specification.stdio.stdin,
+        stdout: specification.stdio.stdout,
+        stderr: specification.stdio.stderr,
+      });
+      const stdout = new Response(child.stdout).text();
+      const stderr = new Response(child.stderr).text();
+      capturedStdout = stdout;
+      capturedStderr = stderr;
+      return {
+        process: { child, stdout, stderr },
+        pid: child.pid,
+        exited: child.exited,
+        outputDrained: Promise.all([stdout, stderr]).then(() => undefined),
+        resultFromTargetOutcome: (outcome) => {
+          if (outcome.exitCode !== null) return outcome.exitCode;
+          if (outcome.signal === null) return 1;
+          return 128 + (constants.signals[outcome.signal] ?? 1);
+        },
+        terminate: (signal: NodeJS.Signals) => child.kill(signal),
+      };
+    },
+  });
+  if (capturedStdout === undefined || capturedStderr === undefined) {
+    throw new Error("supervised worker gate produced no output capture");
+  }
+  const processResult = Promise.all([launched.exited, capturedStdout, capturedStderr]).then(
+    ([gateExitCode, stdout, stderr]) => ({ gateExitCode, stdout, stderr }),
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new Error("supervised worker gate exceeded its host execution deadline")),
+        request.executionTimeoutMs,
+      );
     });
-    if (capturedStdout === undefined || capturedStderr === undefined) {
-      throw new Error("supervised worker gate produced no output capture");
+    const result = await Promise.race([processResult, timeout]);
+    const gateSettlement = await settleWorktreeGateCommands({ worktree: request.worktreePath });
+    const rootSettlement =
+      registration === undefined
+        ? { signaled: [], survivors: [] }
+        : await settleProcessGroups([registration]);
+    if (
+      gateSettlement.signaled.length > 0 ||
+      gateSettlement.survivors.length > 0 ||
+      rootSettlement.survivors.length > 0
+    ) {
+      throw new Error("supervised worker gate left an unsettled process group");
     }
-    const processResult = Promise.all([launched.exited, capturedStdout, capturedStderr]).then(
-      ([gateExitCode, stdout, stderr]) => ({ gateExitCode, stdout, stderr }),
-    );
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      const timeout = new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () => reject(new Error("supervised worker gate exceeded its host execution deadline")),
-          request.executionTimeoutMs,
-        );
-      });
-      const result = await Promise.race([processResult, timeout]);
-      const gateSettlement = await settleWorktreeGateCommands({ worktree: request.worktreePath });
-      const rootSettlement =
-        registration === undefined
-          ? { signaled: [], survivors: [] }
-          : await settleProcessGroups([registration]);
-      if (
-        gateSettlement.signaled.length > 0 ||
-        gateSettlement.survivors.length > 0 ||
-        rootSettlement.survivors.length > 0
-      ) {
-        throw new Error("supervised worker gate left an unsettled process group");
-      }
-      const combined = `${result.stdout}\n${result.stderr}`;
-      const passCount = lastCount(PASS_COUNT, combined) ?? 0;
-      const failCount = lastCount(FAIL_COUNT, combined) ?? (result.gateExitCode === 0 ? 0 : 1);
-      return Object.freeze({
-        gateExitCode: result.gateExitCode,
-        passCount,
-        failCount,
-        gateDurationMs: Date.now() - startedAt,
-        capturedAt: new Date().toISOString(),
-        outputTail: tail(combined),
-      });
-    } catch (error) {
-      await settleWorktreeGateCommands({ worktree: request.worktreePath });
-      if (registration !== undefined) await settleProcessGroups([registration]);
-      throw error;
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
-    }
+    const combined = `${result.stdout}\n${result.stderr}`;
+    const passCount = lastCount(PASS_COUNT, combined) ?? 0;
+    const failCount = lastCount(FAIL_COUNT, combined) ?? (result.gateExitCode === 0 ? 0 : 1);
+    return Object.freeze({
+      gateExitCode: result.gateExitCode,
+      passCount,
+      failCount,
+      gateDurationMs: Date.now() - startedAt,
+      capturedAt: new Date().toISOString(),
+      outputTail: tail(combined),
+    });
+  } catch (error) {
+    await settleWorktreeGateCommands({ worktree: request.worktreePath });
+    if (registration !== undefined) await settleProcessGroups([registration]);
+    throw error;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 export const nodeSupervisedWorkerGateRunner: SupervisedWorkerGateRunner =

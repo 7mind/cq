@@ -804,6 +804,18 @@ export {
   isRunnerOwnedCodexProviderSandboxControl,
 } from "./codexRoleBoundary.js";
 export type {
+  CodexStagedTimingBasis,
+  CodexStagedTimingPhase,
+  CodexStagedTimingPhaseName,
+} from "./codexStagedTiming.js";
+export {
+  CODEX_STAGED_TIMING_BASIS,
+  CODEX_STAGED_TIMING_PHASE_NAMES,
+  CODEX_STAGED_TIMING_PHASES,
+  calculateCodexParentFirstAttemptMs,
+  calculateCodexStagedTimingBasis,
+} from "./codexStagedTiming.js";
+export type {
   CodexSandboxPipeProbeVerdict,
   CodexSandboxPipeProbeRequest,
   CodexSandboxPipeProbeReport,

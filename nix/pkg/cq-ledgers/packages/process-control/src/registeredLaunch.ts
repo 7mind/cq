@@ -5,6 +5,13 @@ import { constants, tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  WorksetEffectLaunchDeadlineError,
+  awaitBeforeLaunchDeadline,
+  boundedLaunchPhaseDeadlineMs,
+  remainingLaunchDeadlineMs,
+  validateLaunchDeadlineMs,
+} from "./launchDeadline.ts";
+import {
   assertSupportedPlatform,
   isProcessGroupAlive,
   isProcessIdentityAlive,
@@ -16,8 +23,8 @@ import {
 
 export { REGISTERED_LAUNCH_ORPHAN_SETTLEMENT_MS } from "./registeredLaunchProtocol.ts";
 
-const IDENTITY_TIMEOUT_MS = 30_000;
-const HANDSHAKE_TIMEOUT_MS = 30_000;
+export const REGISTERED_LAUNCH_IDENTITY_HANDSHAKE_TIMEOUT_MS = 30_000;
+export const REGISTERED_LAUNCH_BOOTSTRAP_HANDSHAKE_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 2;
 const COMPLETION_POLL_INTERVAL_MS = 25;
 const FAILURE_KILL_GRACE_MS = 1_000;
@@ -78,14 +85,14 @@ export interface LaunchRegisteredProcessGroupOptions<TProcess, TExit, TStdio> {
    * Publish the admission's guardian share after registration and before the
    * bootstrap receives its target-release record.
    */
-  readonly shareLeaseWithGuardian?: (
-    registration: ProcessGroupRegistration,
-  ) => Promise<void>;
+  readonly shareLeaseWithGuardian?: (registration: ProcessGroupRegistration) => Promise<void>;
   /** Await adapter-owned settlement after target exit and before bootstrap release. */
   readonly onTargetExit?: (
     registration: ProcessGroupRegistration,
     outcome: RegisteredTargetOutcome,
   ) => Promise<void>;
+  /** One monotonic launch boundary shared by admission and both handshakes. */
+  readonly launchDeadlineMs?: number;
 }
 
 export interface LaunchedRegisteredProcessGroup<TProcess, TExit> {
@@ -114,10 +121,7 @@ interface BootstrapExitedStatus extends RegisteredTargetOutcome {
   readonly state: "exited";
 }
 
-type BootstrapStatus =
-  | BootstrapLaunchedStatus
-  | BootstrapFailedStatus
-  | BootstrapExitedStatus;
+type BootstrapStatus = BootstrapLaunchedStatus | BootstrapFailedStatus | BootstrapExitedStatus;
 
 interface ExitObservation {
   settled: boolean;
@@ -162,8 +166,13 @@ async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
 async function waitForLeaderIdentity(
   pid: number,
   exit: ExitObservation,
+  launchDeadlineMs: number | undefined,
 ): Promise<ProcessGroupRegistration> {
-  const deadline = Date.now() + IDENTITY_TIMEOUT_MS;
+  const deadline = boundedLaunchPhaseDeadlineMs(
+    launchDeadlineMs,
+    REGISTERED_LAUNCH_IDENTITY_HANDSHAKE_TIMEOUT_MS,
+    "registered-launch identity handshake",
+  );
   for (;;) {
     const leader = await readProcessIdentity(pid);
     if (leader !== null) {
@@ -181,6 +190,9 @@ async function waitForLeaderIdentity(
       );
     }
     if (Date.now() >= deadline) {
+      if (launchDeadlineMs !== undefined && Date.now() >= launchDeadlineMs) {
+        throw new WorksetEffectLaunchDeadlineError("registered-launch identity handshake");
+      }
       throw new Error(
         `@cq/process-control: registered-launch bootstrap ${pid} exposed no process identity`,
       );
@@ -212,10 +224,10 @@ function parseStatus(value: unknown, nonce: string, pgid: number): BootstrapStat
   const exitCode = status["exitCode"];
   const signal = status["signal"];
   const validExitCode =
-    exitCode === null || (typeof exitCode === "number" && Number.isSafeInteger(exitCode) && exitCode >= 0);
+    exitCode === null ||
+    (typeof exitCode === "number" && Number.isSafeInteger(exitCode) && exitCode >= 0);
   const validSignal =
-    signal === null ||
-    (typeof signal === "string" && Object.hasOwn(constants.signals, signal));
+    signal === null || (typeof signal === "string" && Object.hasOwn(constants.signals, signal));
   if (
     status["state"] !== "exited" ||
     !validExitCode ||
@@ -238,8 +250,13 @@ async function waitForBootstrapStatus(
   nonce: string,
   pgid: number,
   exit: ExitObservation,
+  launchDeadlineMs: number | undefined,
 ): Promise<void> {
-  const deadline = Date.now() + HANDSHAKE_TIMEOUT_MS;
+  const deadline = boundedLaunchPhaseDeadlineMs(
+    launchDeadlineMs,
+    REGISTERED_LAUNCH_BOOTSTRAP_HANDSHAKE_TIMEOUT_MS,
+    "registered-launch bootstrap handshake",
+  );
   for (;;) {
     try {
       const status = parseStatus(JSON.parse(await readFile(statusPath, "utf8")), nonce, pgid);
@@ -259,6 +276,9 @@ async function waitForBootstrapStatus(
       );
     }
     if (Date.now() >= deadline) {
+      if (launchDeadlineMs !== undefined && Date.now() >= launchDeadlineMs) {
+        throw new WorksetEffectLaunchDeadlineError("registered-launch bootstrap handshake");
+      }
       throw new Error("@cq/process-control: timed out waiting for target launch acknowledgement");
     }
     await new Promise((resolveDelay) => setTimeout(resolveDelay, POLL_INTERVAL_MS));
@@ -301,8 +321,7 @@ async function hasProcessGroupMembersOtherThanLeader(
     return (result.stdout ?? "").split("\n").some((line) => {
       const fields = line.trim().split(/\s+/u);
       return (
-        Number(fields[1]) === registration.pgid &&
-        Number(fields[0]) !== registration.leader.pid
+        Number(fields[1]) === registration.pgid && Number(fields[0]) !== registration.leader.pid
       );
     });
   }
@@ -360,12 +379,7 @@ async function completeRegisteredLaunch<TProcess, TExit>(
   output: ExitObservation,
   onTargetExit: LaunchRegisteredProcessGroupOptions<TProcess, TExit, unknown>["onTargetExit"],
 ): Promise<TExit> {
-  const targetOutcome = await waitForTargetOutcome(
-    statusPath,
-    nonce,
-    registration.pgid,
-    exit,
-  );
+  const targetOutcome = await waitForTargetOutcome(statusPath, nonce, registration.pgid, exit);
   if (targetOutcome === null) {
     const bootstrapOutcome = await bootstrap.exited;
     await bootstrap.outputDrained;
@@ -384,9 +398,7 @@ async function completeRegisteredLaunch<TProcess, TExit>(
       }
       break;
     }
-    await new Promise((resolveDelay) =>
-      setTimeout(resolveDelay, COMPLETION_POLL_INTERVAL_MS),
-    );
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, COMPLETION_POLL_INTERVAL_MS));
   }
   await Promise.all([bootstrap.exited, bootstrap.outputDrained]);
   return bootstrap.resultFromTargetOutcome(targetOutcome);
@@ -429,9 +441,13 @@ async function failClosed<TProcess, TExit>(
           `@cq/process-control: fenced group did not settle: ${result.survivors.join(", ")}`,
         );
       }
+      if (bootstrap !== null) {
+        await Promise.all([bootstrap.exited.catch(() => undefined), bootstrap.outputDrained]);
+      }
     } else if (bootstrap !== null) {
       await bootstrap.terminate("SIGKILL");
       await waitForBootstrapExit(bootstrap);
+      await bootstrap.outputDrained;
     }
   } catch (error) {
     settlementFailure = error;
@@ -458,6 +474,8 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
   options: LaunchRegisteredProcessGroupOptions<TProcess, TExit, TStdio>,
 ): Promise<LaunchedRegisteredProcessGroup<TProcess, TExit>> {
   assertTarget(options.argv, options.cwd);
+  validateLaunchDeadlineMs(options.launchDeadlineMs);
+  remainingLaunchDeadlineMs(options.launchDeadlineMs, "registered-launch bootstrap creation");
   const cwd = targetCwd(options.cwd);
   const configuredLauncherHelper = process.env["CQ_PROCESS_IDENTITY_HELPER"];
   const launcherDarwinHelper =
@@ -528,25 +546,45 @@ export async function launchRegisteredProcessGroup<TProcess, TExit, TStdio>(
       throw new Error("@cq/process-control: registered-launch bootstrap returned no PID");
     }
 
-    registration = await waitForLeaderIdentity(pid, exit);
-    await options.register(registration);
+    registration = await waitForLeaderIdentity(pid, exit, options.launchDeadlineMs);
+    await awaitBeforeLaunchDeadline(
+      options.register(registration),
+      options.launchDeadlineMs,
+      "registered-launch durable registration",
+    );
+    remainingLaunchDeadlineMs(options.launchDeadlineMs, "registered-launch durable registration");
     if (!(await isProcessIdentityAlive(registration.leader))) {
       throw new Error("@cq/process-control: registered-launch bootstrap exited before release");
     }
     if (options.shareLeaseWithGuardian !== undefined) {
-      await options.shareLeaseWithGuardian(registration);
+      await awaitBeforeLaunchDeadline(
+        options.shareLeaseWithGuardian(registration),
+        options.launchDeadlineMs,
+        "registered-launch guardian share",
+      );
+      remainingLaunchDeadlineMs(options.launchDeadlineMs, "registered-launch guardian share");
       if (!(await isProcessIdentityAlive(registration.leader))) {
         throw new Error(
           "@cq/process-control: registered-launch guardian exited before target release",
         );
       }
     }
-    await writeJsonAtomic(releasePath, {
+    await awaitBeforeLaunchDeadline(
+      writeJsonAtomic(releasePath, {
+        nonce,
+        pgid: registration.pgid,
+        launcher,
+      }),
+      options.launchDeadlineMs,
+      "registered-launch target release",
+    );
+    await waitForBootstrapStatus(
+      statusPath,
       nonce,
-      pgid: registration.pgid,
-      launcher,
-    });
-    await waitForBootstrapStatus(statusPath, nonce, registration.pgid, exit);
+      registration.pgid,
+      exit,
+      options.launchDeadlineMs,
+    );
     const exited = completeRegisteredLaunch(
       bootstrap,
       registration,

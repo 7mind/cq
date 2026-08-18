@@ -100,7 +100,16 @@ export interface GitChangeBrokerDeps extends Pick<ManagedWorktreeDeps, "stateDir
 export type GitChangeBrokerEvidenceDeps = Pick<ManagedWorktreeDeps, "stateDir"> & {
   /** Dispatch-round base used to prove every surviving result path was reported. */
   readonly diffBaseCommit?: string;
+  /** Absolute staging deadline propagated to each checked Git subprocess. */
+  readonly deadlineMs?: number;
 };
+
+function assertEvidenceDeadline(deadlineMs: number | undefined): void {
+  if (deadlineMs === undefined) return;
+  if (!Number.isSafeInteger(deadlineMs) || deadlineMs <= Date.now()) {
+    throw new Error("Git evidence validation exceeded its staging deadline");
+  }
+}
 
 export type GitChangeReceiptLineageBinding = Omit<
   DispatchBoundGitAuthorization,
@@ -280,6 +289,7 @@ async function committedDispatchReceipts(
   resultCommit: string,
   deps: GitChangeBrokerEvidenceDeps,
 ): Promise<readonly GitChangeBrokerReceipt[]> {
+  assertEvidenceDeadline(deps.deadlineMs);
   const root = join(brokerRoot(authorization, deps.stateDir), "git-broker");
   let operationDirectories;
   try {
@@ -290,6 +300,7 @@ async function committedDispatchReceipts(
   }
   const candidates: GitChangeBrokerReceipt[] = [];
   for (const operationDirectory of operationDirectories) {
+    assertEvidenceDeadline(deps.deadlineMs);
     if (!operationDirectory.isDirectory()) continue;
     const journal = await readJournal(join(root, operationDirectory.name, "journal.json"));
     if (journal?.receipt === undefined || journal.state === "intent") continue;
@@ -319,12 +330,13 @@ async function committedDispatchReceipts(
         `durable broker receipt ${receipt.operationId} has a substituted committedAt`,
       );
     }
-    const ancestry = await runGit(authorization.worktreePath, [
-      "merge-base",
-      "--is-ancestor",
-      receipt.newHead,
-      resultCommit,
-    ]);
+    const ancestry = await runGit(
+      authorization.worktreePath,
+      ["merge-base", "--is-ancestor", receipt.newHead, resultCommit],
+      undefined,
+      undefined,
+      deps.deadlineMs,
+    );
     if (ancestry.code === 0) {
       candidates.push(receipt);
       continue;
@@ -448,7 +460,9 @@ function runGit(
   args: readonly string[],
   environment?: NodeJS.ProcessEnv,
   input?: Uint8Array,
+  deadlineMs?: number,
 ): Promise<GitResult> {
+  assertEvidenceDeadline(deadlineMs);
   const selectedEnvironment = environment ?? trustedGitEnvironment();
   const child = Bun.spawn(
     ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", ...args],
@@ -460,15 +474,28 @@ function runGit(
       stderr: "pipe",
     },
   );
+  let timedOut = false;
+  const remainingMs = deadlineMs === undefined ? undefined : deadlineMs - Date.now();
+  const timer =
+    remainingMs === undefined
+      ? undefined
+      : setTimeout(() => {
+          timedOut = true;
+          child.kill("SIGKILL");
+        }, remainingMs);
   return Promise.all([
     child.exited,
     new Response(child.stdout).arrayBuffer(),
     new Response(child.stderr).arrayBuffer(),
-  ]).then(([code, stdout, stderr]) => ({
-    code,
-    stdout: Buffer.from(stdout),
-    stderr: Buffer.from(stderr),
-  }));
+  ]).then(([code, stdout, stderr]) => {
+    if (timer !== undefined) clearTimeout(timer);
+    if (timedOut) throw new Error("Git evidence validation exceeded its staging deadline");
+    return {
+      code,
+      stdout: Buffer.from(stdout),
+      stderr: Buffer.from(stderr),
+    };
+  });
 }
 
 async function checkedGit(
@@ -476,8 +503,9 @@ async function checkedGit(
   args: readonly string[],
   environment?: NodeJS.ProcessEnv,
   input?: Uint8Array,
+  deadlineMs?: number,
 ): Promise<Buffer> {
-  const result = await runGit(cwd, args, environment, input);
+  const result = await runGit(cwd, args, environment, input, deadlineMs);
   if (result.code !== 0) {
     throw new Error(
       `git ${args[0] ?? ""} failed (${result.code}): ${result.stderr.toString().trim()}`,
@@ -486,8 +514,19 @@ async function checkedGit(
   return result.stdout;
 }
 
-async function currentHead(binding: DispatchBoundGitAuthorization): Promise<string> {
-  return (await checkedGit(binding.worktreePath, ["rev-parse", "--verify", "HEAD^{commit}"]))
+async function currentHead(
+  binding: DispatchBoundGitAuthorization,
+  deadlineMs?: number,
+): Promise<string> {
+  return (
+    await checkedGit(
+      binding.worktreePath,
+      ["rev-parse", "--verify", "HEAD^{commit}"],
+      undefined,
+      undefined,
+      deadlineMs,
+    )
+  )
     .toString()
     .trim();
 }
@@ -1116,6 +1155,10 @@ export async function validateGitChangeBrokerResultEvidence(
   if (evidence.gitReceipts.length === 0) {
     throw new Error("broker-capable worker result requires a non-empty receipt chain");
   }
+  const evidenceGit = async (args: readonly string[]): Promise<Buffer> =>
+    await checkedGit(authorization.worktreePath, args, undefined, undefined, deps.deadlineMs);
+  const runEvidenceGit = async (args: readonly string[]): Promise<GitResult> =>
+    await runGit(authorization.worktreePath, args, undefined, undefined, deps.deadlineMs);
 
   const inheritedReceipts = authorization.inheritedGitReceipts ?? [];
   const currentReceipts = await committedDispatchReceipts(
@@ -1174,28 +1217,20 @@ export async function validateGitChangeBrokerResultEvidence(
     if (canonical(paths) !== canonical([...new Set(paths)].sort())) {
       throw new Error(`broker receipt chain entry ${index} paths are not unique and sorted`);
     }
-    const parent = (
-      await checkedGit(authorization.worktreePath, ["rev-parse", "--verify", `${receipt.newHead}^`])
-    )
+    const parent = (await evidenceGit(["rev-parse", "--verify", `${receipt.newHead}^`]))
       .toString()
       .trim();
     if (parent !== receipt.oldHead) {
       throw new Error(`broker receipt chain entry ${index} oldHead is not the commit parent`);
     }
-    const tree = (
-      await checkedGit(authorization.worktreePath, [
-        "rev-parse",
-        "--verify",
-        `${receipt.newHead}^{tree}`,
-      ])
-    )
+    const tree = (await evidenceGit(["rev-parse", "--verify", `${receipt.newHead}^{tree}`]))
       .toString()
       .trim();
     if (tree !== receipt.tree) {
       throw new Error(`broker receipt chain entry ${index} tree does not match newHead`);
     }
     const changedPaths = (
-      await checkedGit(authorization.worktreePath, [
+      await evidenceGit([
         "diff-tree",
         "--no-commit-id",
         "--name-only",
@@ -1217,7 +1252,7 @@ export async function validateGitChangeBrokerResultEvidence(
       if (!FULL_OID.test(oid)) {
         throw new Error(`broker receipt chain entry ${index} contains a malformed object oid`);
       }
-      await checkedGit(authorization.worktreePath, ["cat-file", "-e", oid]);
+      await evidenceGit(["cat-file", "-e", oid]);
     }
     if (
       !receipt.objectOids.includes(receipt.newHead) ||
@@ -1234,7 +1269,7 @@ export async function validateGitChangeBrokerResultEvidence(
   if (!FULL_OID.test(diffBaseCommit)) {
     throw new Error("broker result diff base is not a full Git oid");
   }
-  const baseAncestry = await runGit(authorization.worktreePath, [
+  const baseAncestry = await runEvidenceGit([
     "merge-base",
     "--is-ancestor",
     diffBaseCommit,
@@ -1250,7 +1285,7 @@ export async function validateGitChangeBrokerResultEvidence(
     throw new Error("broker receipt paths do not match filesTouched");
   }
   const actualResultPaths = (
-    await checkedGit(authorization.worktreePath, [
+    await evidenceGit([
       "diff",
       "--name-only",
       "--no-renames",
@@ -1270,7 +1305,7 @@ export async function validateGitChangeBrokerResultEvidence(
   ) {
     throw new Error("broker filesTouched does not equal the actual base-to-result diff");
   }
-  if ((await currentHead(authorization)) !== evidence.resultCommit) {
+  if ((await currentHead(authorization, deps.deadlineMs)) !== evidence.resultCommit) {
     throw new Error("broker receipt resultCommit does not match the manager-bound branch tip");
   }
 }
