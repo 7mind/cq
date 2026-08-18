@@ -931,8 +931,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     }
   });
 
-  // expected-failure: defects:D342
-  test.failing(
+  test(
     "D342 worktree settlement rejection still settles the registered root once and retains the deadline cause",
     async () => {
       const scenario = await runD342Scenario({
@@ -954,8 +953,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     D342_TEST_TIMEOUT_MS,
   );
 
-  // expected-failure: defects:D342
-  test.failing(
+  test(
     "D342 registered-root settlement rejection retains the deadline cause after both arms settle once",
     async () => {
       const scenario = await runD342Scenario({
@@ -977,8 +975,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     D342_TEST_TIMEOUT_MS,
   );
 
-  // expected-failure: defects:D342
-  test.failing(
+  test(
     "D342 direct-root survivors remain a concrete identifier list alongside the deadline cause",
     async () => {
       const scenario = await runD342Scenario({ rootFault: { kind: "survivors" } });
@@ -1000,8 +997,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     D342_TEST_TIMEOUT_MS,
   );
 
-  // expected-failure: defects:D342
-  test.failing(
+  test(
     "D342 rejecting both settlement arms retains both bounded diagnostics and the deadline cause",
     async () => {
       const scenario = await runD342Scenario({

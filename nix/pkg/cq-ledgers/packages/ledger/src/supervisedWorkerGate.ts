@@ -195,6 +195,79 @@ export function createNodeSupervisedWorkerGateRunner(
   });
 }
 
+const SETTLEMENT_DIAGNOSTIC_MESSAGE_LIMIT = 200;
+const SETTLEMENT_DIAGNOSTIC_SURVIVOR_LIMIT = 8;
+
+type SettlementArmOutcome =
+  | { readonly status: "fulfilled"; readonly result: SettleProcessGroupsResult }
+  | { readonly status: "rejected"; readonly error: unknown };
+
+/** All-settled capture: one cleanup arm's rejection never suppresses the other arm (D342). */
+async function captureSettlementArm(
+  arm: () => Promise<SettleProcessGroupsResult>,
+): Promise<SettlementArmOutcome> {
+  try {
+    return { status: "fulfilled", result: await arm() };
+  } catch (error) {
+    return { status: "rejected", error };
+  }
+}
+
+function boundedDiagnosticMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.length <= SETTLEMENT_DIAGNOSTIC_MESSAGE_LIMIT
+    ? message
+    : `${message.slice(0, SETTLEMENT_DIAGNOSTIC_MESSAGE_LIMIT)}…`;
+}
+
+function boundedSurvivorList(survivors: readonly number[]): string {
+  const listed = survivors.slice(0, SETTLEMENT_DIAGNOSTIC_SURVIVOR_LIMIT).join(", ");
+  const omitted = survivors.length - SETTLEMENT_DIAGNOSTIC_SURVIVOR_LIMIT;
+  return omitted <= 0 ? listed : `${listed}, … (+${String(omitted)} more)`;
+}
+
+/** Bounded per-arm diagnostics: rejections and survivor identifier lists, in arm order. */
+function settlementDiagnostics(
+  worktreeSettlement: SettlementArmOutcome,
+  rootSettlement: SettlementArmOutcome,
+): string[] {
+  const diagnostics: string[] = [];
+  if (worktreeSettlement.status === "rejected") {
+    diagnostics.push(
+      `worktree settlement rejected: ${boundedDiagnosticMessage(worktreeSettlement.error)}`,
+    );
+  } else if (worktreeSettlement.result.survivors.length > 0) {
+    diagnostics.push(
+      `worktree settlement survivors: ${boundedSurvivorList(worktreeSettlement.result.survivors)}`,
+    );
+  }
+  if (rootSettlement.status === "rejected") {
+    diagnostics.push(
+      `registered-root settlement rejected: ${boundedDiagnosticMessage(rootSettlement.error)}`,
+    );
+  } else if (rootSettlement.result.survivors.length > 0) {
+    diagnostics.push(
+      `registered-root survivors: ${boundedSurvivorList(rootSettlement.result.survivors)}`,
+    );
+  }
+  return diagnostics;
+}
+
+/** Success-path settlement gate: any arm rejection, signaled worktree group, or survivor fails closed. */
+function settlementFailed(
+  worktreeSettlement: SettlementArmOutcome,
+  rootSettlement: SettlementArmOutcome,
+): boolean {
+  if (worktreeSettlement.status === "rejected" || rootSettlement.status === "rejected") {
+    return true;
+  }
+  return (
+    worktreeSettlement.result.signaled.length > 0 ||
+    worktreeSettlement.result.survivors.length > 0 ||
+    rootSettlement.result.survivors.length > 0
+  );
+}
+
 /** Real host adapter: serialized admission, fixed command, execution deadline, full settlement. */
 async function runAdmittedNodeSupervisedWorkerGate(
   request: SupervisedWorkerGateRunRequest,
@@ -259,6 +332,10 @@ async function runAdmittedNodeSupervisedWorkerGate(
     ([gateExitCode, stdout, stderr]) => ({ gateExitCode, stdout, stderr }),
   );
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let raced: Awaited<typeof processResult> | undefined;
+  let originalError: unknown;
+  let worktreeSettlement: SettlementArmOutcome | undefined;
+  let rootSettlement: SettlementArmOutcome | undefined;
   try {
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(
@@ -266,39 +343,50 @@ async function runAdmittedNodeSupervisedWorkerGate(
         request.executionTimeoutMs,
       );
     });
-    const result = await Promise.race([processResult, timeout]);
-    const gateSettlement = await settlement.settleWorktreeGateCommands({
-      worktree: request.worktreePath,
-    });
-    const rootSettlement =
-      registration === undefined
-        ? { signaled: [], survivors: [] }
-        : await settlement.settleProcessGroups([registration]);
-    if (
-      gateSettlement.signaled.length > 0 ||
-      gateSettlement.survivors.length > 0 ||
-      rootSettlement.survivors.length > 0
-    ) {
-      throw new Error("supervised worker gate left an unsettled process group");
-    }
-    const combined = `${result.stdout}\n${result.stderr}`;
-    const passCount = lastCount(PASS_COUNT, combined) ?? 0;
-    const failCount = lastCount(FAIL_COUNT, combined) ?? (result.gateExitCode === 0 ? 0 : 1);
-    return Object.freeze({
-      gateExitCode: result.gateExitCode,
-      passCount,
-      failCount,
-      gateDurationMs: Date.now() - startedAt,
-      capturedAt: new Date().toISOString(),
-      outputTail: tail(combined),
-    });
+    raced = await Promise.race([processResult, timeout]);
   } catch (error) {
-    await settlement.settleWorktreeGateCommands({ worktree: request.worktreePath });
-    if (registration !== undefined) await settlement.settleProcessGroups([registration]);
-    throw error;
+    originalError = error;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    // D342: both cleanup arms run exactly once in this unconditional finally;
+    // neither a rejection nor survivors in one arm may suppress the other.
+    worktreeSettlement = await captureSettlementArm(() =>
+      settlement.settleWorktreeGateCommands({ worktree: request.worktreePath }),
+    );
+    const registeredRoot = registration;
+    rootSettlement =
+      registeredRoot === undefined
+        ? { status: "fulfilled", result: { signaled: [], survivors: [] } }
+        : await captureSettlementArm(() => settlement.settleProcessGroups([registeredRoot]));
   }
+  if (worktreeSettlement === undefined || rootSettlement === undefined) {
+    throw new Error("supervised worker gate settlement arms did not both run");
+  }
+  const diagnostics = settlementDiagnostics(worktreeSettlement, rootSettlement);
+  if (raced === undefined) {
+    if (diagnostics.length > 0) {
+      throw new Error(`supervised worker gate cleanup failed: ${diagnostics.join("; ")}`, {
+        cause: originalError,
+      });
+    }
+    throw originalError;
+  }
+  if (settlementFailed(worktreeSettlement, rootSettlement)) {
+    throw new Error(
+      `supervised worker gate left an unsettled process group${diagnostics.length === 0 ? "" : `: ${diagnostics.join("; ")}`}`,
+    );
+  }
+  const combined = `${raced.stdout}\n${raced.stderr}`;
+  const passCount = lastCount(PASS_COUNT, combined) ?? 0;
+  const failCount = lastCount(FAIL_COUNT, combined) ?? (raced.gateExitCode === 0 ? 0 : 1);
+  return Object.freeze({
+    gateExitCode: raced.gateExitCode,
+    passCount,
+    failCount,
+    gateDurationMs: Date.now() - startedAt,
+    capturedAt: new Date().toISOString(),
+    outputTail: tail(combined),
+  });
 }
 
 export const nodeSupervisedWorkerGateRunner: SupervisedWorkerGateRunner =
