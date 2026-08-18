@@ -16,8 +16,15 @@ import {
 import {
   SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
   SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
+  createNodeSupervisedWorkerGateRunner,
   nodeSupervisedWorkerGateRunner,
   prepareManagedWorktree,
+  settleProcessGroups,
+  settleWorktreeGateCommands,
+  type NodeSupervisedWorkerGateSettlement,
+  type ProcessGroupRegistration,
+  type SettleProcessGroupsResult,
+  type SettleWorktreeGateCommandsOptions,
   type SupervisedWorkerGateRunRequest,
   type SupervisedWorkerGateRunResult,
   type SupervisedWorkerGateRunner,
@@ -331,6 +338,197 @@ async function finalize(subject: GateFixture) {
 async function stageAndFinalize(subject: GateFixture) {
   expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
   return await finalize(subject);
+}
+
+const D342_ADMISSION_TIMEOUT_MS = 15_000;
+const D342_EXECUTION_TIMEOUT_MS = 5_000;
+const D342_MARKER_TIMEOUT_MS = 90_000;
+const D342_TEST_TIMEOUT_MS = 300_000;
+const D342_REAP_TIMEOUT_MS = 5_000;
+const D342_DEADLINE_MESSAGE = "supervised worker gate exceeded its host execution deadline";
+const D342_MARKER_ENV = "CQ_D342_MARKER";
+
+async function waitForD342Marker(markerPath: string): Promise<void> {
+  const deadline = Date.now() + D342_MARKER_TIMEOUT_MS;
+  for (;;) {
+    if (await Bun.file(markerPath).exists()) return;
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `D342 marker timeout: blocking child reported no live marker within ${String(D342_MARKER_TIMEOUT_MS)} ms`,
+      );
+    }
+    await Bun.sleep(5);
+  }
+}
+
+function d342KillProbe(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return true;
+    throw error;
+  }
+}
+
+function d342ProcessAbsent(pid: number): boolean {
+  return d342KillProbe(pid);
+}
+
+function d342GroupAbsent(pgid: number): boolean {
+  return d342KillProbe(-pgid);
+}
+
+/** Hygiene, never assertion: reap the blocking child's group after a fail-first run. */
+async function reapD342MarkerGroup(markerPath: string): Promise<void> {
+  let content: string;
+  try {
+    content = await fs.readFile(markerPath, "utf8");
+  } catch {
+    return;
+  }
+  const pgid = Number(content.trim().split(/\s+/u)[1]);
+  if (!Number.isSafeInteger(pgid) || pgid <= 1) return;
+  for (const signal of ["SIGTERM", "SIGKILL"] as const) {
+    if (d342GroupAbsent(pgid)) return;
+    try {
+      process.kill(-pgid, signal);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+    const deadline = Date.now() + D342_REAP_TIMEOUT_MS;
+    while (!d342GroupAbsent(pgid) && Date.now() < deadline) await Bun.sleep(10);
+  }
+}
+
+type D342RootFault =
+  | { readonly kind: "reject"; readonly detail: string }
+  | { readonly kind: "survivors" };
+
+/** Hand-written worktree-arm wrapper: records the call, settles for real, then injects. */
+class D342WorktreeSettlement {
+  calls = 0;
+
+  constructor(private readonly rejection: string | undefined) {}
+
+  readonly settle = async (
+    options: SettleWorktreeGateCommandsOptions,
+  ): Promise<SettleProcessGroupsResult> => {
+    this.calls += 1;
+    const result = await settleWorktreeGateCommands(options);
+    if (this.rejection !== undefined) throw new Error(this.rejection);
+    return result;
+  };
+}
+
+/**
+ * Hand-written registered-root wrapper: observes the registration and the live
+ * marker, performs the real settlement, then injects a rejection or a survivor
+ * list carrying the concrete registered PGIDs.
+ */
+class D342RootSettlement {
+  calls = 0;
+  readonly observed: ProcessGroupRegistration[] = [];
+  realResult: SettleProcessGroupsResult | undefined;
+
+  constructor(
+    private readonly markerPath: string,
+    private readonly fault: D342RootFault | undefined,
+  ) {}
+
+  readonly settle = async (
+    registrations: readonly ProcessGroupRegistration[],
+  ): Promise<SettleProcessGroupsResult> => {
+    this.calls += 1;
+    this.observed.push(...registrations);
+    await waitForD342Marker(this.markerPath);
+    const result = await settleProcessGroups(registrations);
+    this.realResult = result;
+    if (this.fault?.kind === "reject") throw new Error(this.fault.detail);
+    if (this.fault?.kind === "survivors") {
+      return { signaled: result.signaled, survivors: registrations.map(({ pgid }) => pgid) };
+    }
+    return result;
+  };
+}
+
+interface D342Scenario {
+  readonly failure: unknown;
+  readonly worktreeArm: D342WorktreeSettlement;
+  readonly rootArm: D342RootSettlement;
+  readonly markerPath: string;
+}
+
+async function runD342Scenario(options: {
+  readonly worktreeRejection?: string;
+  readonly rootFault?: D342RootFault;
+}): Promise<D342Scenario> {
+  sequence += 1;
+  const root = await fs.mkdtemp(path.join(tmpdir(), `t2230-d342-${sequence}-`));
+  roots.push(root);
+  const worktreePath = path.join(root, "worktree");
+  await fs.mkdir(path.join(worktreePath, "nix", "pkg", "cq-ledgers"), { recursive: true });
+  await git(worktreePath, ["init", "-q"]);
+  const bin = path.join(root, "bin");
+  await fs.mkdir(bin, { recursive: true });
+  const markerPath = path.join(root, "child-live");
+  const cq = path.join(bin, "cq");
+  await fs.writeFile(
+    cq,
+    [
+      "#!/bin/sh",
+      "set -eu",
+      'printf \'%s %s\\n\' "$$" "$(ps -o pgid= -p $$ | tr -d \'[:space:]\')" > "$CQ_D342_MARKER"',
+      "exec sleep 86400",
+      "",
+    ].join("\n"),
+  );
+  await fs.chmod(cq, 0o700);
+  const worktreeArm = new D342WorktreeSettlement(options.worktreeRejection);
+  const rootArm = new D342RootSettlement(markerPath, options.rootFault);
+  const settlement: NodeSupervisedWorkerGateSettlement = {
+    settleWorktreeGateCommands: worktreeArm.settle,
+    settleProcessGroups: rootArm.settle,
+  };
+  const runner = createNodeSupervisedWorkerGateRunner(settlement);
+  const priorPath = process.env["PATH"];
+  const priorMarker = process.env[D342_MARKER_ENV];
+  process.env["PATH"] = `${bin}${path.delimiter}${priorPath ?? ""}`;
+  process.env[D342_MARKER_ENV] = markerPath;
+  let failure: unknown;
+  try {
+    await runner.run({
+      worktreePath,
+      admissionTimeoutMs: D342_ADMISSION_TIMEOUT_MS,
+      executionTimeoutMs: D342_EXECUTION_TIMEOUT_MS,
+    });
+    failure = new Error("D342 scenario unexpectedly completed the supervised gate");
+  } catch (error) {
+    failure = error;
+  } finally {
+    if (priorPath === undefined) delete process.env["PATH"];
+    else process.env["PATH"] = priorPath;
+    if (priorMarker === undefined) delete process.env[D342_MARKER_ENV];
+    else process.env[D342_MARKER_ENV] = priorMarker;
+    await reapD342MarkerGroup(markerPath);
+  }
+  return { failure, worktreeArm, rootArm, markerPath };
+}
+
+/** Observation and absence proof shared by every D342 scenario. */
+async function expectD342ObservationAndAbsence(scenario: D342Scenario): Promise<void> {
+  const registration = scenario.rootArm.observed[0];
+  if (registration === undefined) {
+    throw new Error("D342 root settlement observed no registered process group");
+  }
+  expect(Number.isSafeInteger(registration.pgid)).toBe(true);
+  expect(registration.pgid).toBeGreaterThan(1);
+  expect(registration.leader.pid).toBe(registration.pgid);
+  expect(registration.leader.startTime).not.toBe("");
+  expect(await Bun.file(scenario.markerPath).exists()).toBe(true);
+  expect(scenario.rootArm.realResult?.signaled).toContain(registration.pgid);
+  expect(d342GroupAbsent(registration.pgid)).toBe(true);
+  expect(d342ProcessAbsent(registration.leader.pid)).toBe(true);
 }
 
 afterAll(async () => {
@@ -732,4 +930,98 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       else process.env["CQ_T2082_RELEASE_FIRST"] = priorReleaseFirst;
     }
   });
+
+  // expected-failure: defects:D342
+  test.failing(
+    "D342 worktree settlement rejection still settles the registered root once and retains the deadline cause",
+    async () => {
+      const scenario = await runD342Scenario({
+        worktreeRejection: "D342 injected worktree-arm settlement rejection",
+      });
+      const { failure, worktreeArm, rootArm } = scenario;
+      expect(failure).toBeInstanceOf(Error);
+      expect(worktreeArm.calls).toBe(1);
+      expect(rootArm.calls).toBe(1);
+      const message = (failure as Error).message;
+      expect(message).toContain("worktree settlement rejected");
+      expect(message).toContain("D342 injected worktree-arm settlement rejection");
+      expect(message).not.toContain("registered-root settlement rejected");
+      const cause = (failure as Error).cause;
+      expect(cause).toBeInstanceOf(Error);
+      expect((cause as Error).message).toBe(D342_DEADLINE_MESSAGE);
+      await expectD342ObservationAndAbsence(scenario);
+    },
+    D342_TEST_TIMEOUT_MS,
+  );
+
+  // expected-failure: defects:D342
+  test.failing(
+    "D342 registered-root settlement rejection retains the deadline cause after both arms settle once",
+    async () => {
+      const scenario = await runD342Scenario({
+        rootFault: { kind: "reject", detail: "D342 injected root-arm settlement rejection" },
+      });
+      const { failure, worktreeArm, rootArm } = scenario;
+      expect(failure).toBeInstanceOf(Error);
+      expect(worktreeArm.calls).toBe(1);
+      expect(rootArm.calls).toBe(1);
+      const message = (failure as Error).message;
+      expect(message).toContain("registered-root settlement rejected");
+      expect(message).toContain("D342 injected root-arm settlement rejection");
+      expect(message).not.toContain("worktree settlement rejected");
+      const cause = (failure as Error).cause;
+      expect(cause).toBeInstanceOf(Error);
+      expect((cause as Error).message).toBe(D342_DEADLINE_MESSAGE);
+      await expectD342ObservationAndAbsence(scenario);
+    },
+    D342_TEST_TIMEOUT_MS,
+  );
+
+  // expected-failure: defects:D342
+  test.failing(
+    "D342 direct-root survivors remain a concrete identifier list alongside the deadline cause",
+    async () => {
+      const scenario = await runD342Scenario({ rootFault: { kind: "survivors" } });
+      const { failure, worktreeArm, rootArm } = scenario;
+      expect(failure).toBeInstanceOf(Error);
+      expect(worktreeArm.calls).toBe(1);
+      expect(rootArm.calls).toBe(1);
+      const registration = rootArm.observed[0];
+      expect(registration).toBeDefined();
+      const message = (failure as Error).message;
+      expect(message).toContain("registered-root survivors:");
+      expect(message).toContain(String(registration?.pgid));
+      expect(rootArm.realResult?.survivors).toEqual([]);
+      const cause = (failure as Error).cause;
+      expect(cause).toBeInstanceOf(Error);
+      expect((cause as Error).message).toBe(D342_DEADLINE_MESSAGE);
+      await expectD342ObservationAndAbsence(scenario);
+    },
+    D342_TEST_TIMEOUT_MS,
+  );
+
+  // expected-failure: defects:D342
+  test.failing(
+    "D342 rejecting both settlement arms retains both bounded diagnostics and the deadline cause",
+    async () => {
+      const scenario = await runD342Scenario({
+        worktreeRejection: "D342 injected worktree-arm settlement rejection",
+        rootFault: { kind: "reject", detail: "D342 injected root-arm settlement rejection" },
+      });
+      const { failure, worktreeArm, rootArm } = scenario;
+      expect(failure).toBeInstanceOf(Error);
+      expect(worktreeArm.calls).toBe(1);
+      expect(rootArm.calls).toBe(1);
+      const message = (failure as Error).message;
+      expect(message).toContain("worktree settlement rejected");
+      expect(message).toContain("D342 injected worktree-arm settlement rejection");
+      expect(message).toContain("registered-root settlement rejected");
+      expect(message).toContain("D342 injected root-arm settlement rejection");
+      const cause = (failure as Error).cause;
+      expect(cause).toBeInstanceOf(Error);
+      expect((cause as Error).message).toBe(D342_DEADLINE_MESSAGE);
+      await expectD342ObservationAndAbsence(scenario);
+    },
+    D342_TEST_TIMEOUT_MS,
+  );
 });

@@ -456,16 +456,26 @@ export type { GitChangeReceiptLineageBinding } from "./gitChangeBroker.js";
 export {
   SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
   SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
+  createNodeSupervisedWorkerGateRunner,
   nodeSupervisedWorkerGateRunner,
   superviseImplementWorkerGate,
 } from "./supervisedWorkerGate.js";
 export type {
+  NodeSupervisedWorkerGateSettlement,
   SupervisedWorkerGateRunRequest,
   SupervisedWorkerGateRunResult,
   SupervisedWorkerGateRunner,
   SuperviseImplementWorkerGateRequest,
   SuperviseImplementWorkerGateDeps,
 } from "./supervisedWorkerGate.js";
+// D342 settlement seam: ledger-mcp tests wrap these real helpers without a
+// direct @cq/process-control dependency.
+export { settleProcessGroups, settleWorktreeGateCommands } from "@cq/process-control";
+export type {
+  ProcessGroupRegistration,
+  SettleProcessGroupsResult,
+  SettleWorktreeGateCommandsOptions,
+} from "@cq/process-control";
 export type {
   DispatchBoundGitAuthorization,
   GitChangeBrokerDeps,

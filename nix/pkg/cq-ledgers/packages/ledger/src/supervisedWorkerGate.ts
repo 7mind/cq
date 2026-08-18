@@ -13,6 +13,8 @@ import {
   settleProcessGroups,
   settleWorktreeGateCommands,
   type ProcessGroupRegistration,
+  type SettleProcessGroupsResult,
+  type SettleWorktreeGateCommandsOptions,
 } from "@cq/process-control";
 import { assertManagedWorktreeDispatchBindingLive } from "./managedWorktree.js";
 
@@ -53,6 +55,21 @@ export interface SupervisedWorkerGateRunResult {
 
 export interface SupervisedWorkerGateRunner {
   run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult>;
+}
+
+/**
+ * Injectable settlement arms around the node runner (D342). The production
+ * singleton explicitly supplies the real worktree and registered-root
+ * settlement helpers; tests substitute hand-written wrappers around those
+ * same real helpers.
+ */
+export interface NodeSupervisedWorkerGateSettlement {
+  readonly settleWorktreeGateCommands: (
+    options: SettleWorktreeGateCommandsOptions,
+  ) => Promise<SettleProcessGroupsResult>;
+  readonly settleProcessGroups: (
+    registrations: readonly ProcessGroupRegistration[],
+  ) => Promise<SettleProcessGroupsResult>;
 }
 
 export interface SuperviseImplementWorkerGateRequest {
@@ -135,7 +152,9 @@ function tail(output: string, lineCount = 20): string {
   return output.trimEnd().split("\n").slice(-lineCount).join("\n");
 }
 
-function createNodeSupervisedWorkerGateRunner(): SupervisedWorkerGateRunner {
+export function createNodeSupervisedWorkerGateRunner(
+  settlement: NodeSupervisedWorkerGateSettlement,
+): SupervisedWorkerGateRunner {
   let admissionTail: Promise<void> = Promise.resolve();
   return Object.freeze({
     async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
@@ -167,7 +186,7 @@ function createNodeSupervisedWorkerGateRunner(): SupervisedWorkerGateRunner {
           }),
         ]);
         if (admissionTimer !== undefined) clearTimeout(admissionTimer);
-        return await runAdmittedNodeSupervisedWorkerGate(request);
+        return await runAdmittedNodeSupervisedWorkerGate(request, settlement);
       } finally {
         if (admissionTimer !== undefined) clearTimeout(admissionTimer);
         releaseAdmission();
@@ -179,6 +198,7 @@ function createNodeSupervisedWorkerGateRunner(): SupervisedWorkerGateRunner {
 /** Real host adapter: serialized admission, fixed command, execution deadline, full settlement. */
 async function runAdmittedNodeSupervisedWorkerGate(
   request: SupervisedWorkerGateRunRequest,
+  settlement: NodeSupervisedWorkerGateSettlement,
 ): Promise<SupervisedWorkerGateRunResult> {
   const startedAt = Date.now();
   let registration: ProcessGroupRegistration | undefined;
@@ -247,11 +267,13 @@ async function runAdmittedNodeSupervisedWorkerGate(
       );
     });
     const result = await Promise.race([processResult, timeout]);
-    const gateSettlement = await settleWorktreeGateCommands({ worktree: request.worktreePath });
+    const gateSettlement = await settlement.settleWorktreeGateCommands({
+      worktree: request.worktreePath,
+    });
     const rootSettlement =
       registration === undefined
         ? { signaled: [], survivors: [] }
-        : await settleProcessGroups([registration]);
+        : await settlement.settleProcessGroups([registration]);
     if (
       gateSettlement.signaled.length > 0 ||
       gateSettlement.survivors.length > 0 ||
@@ -271,8 +293,8 @@ async function runAdmittedNodeSupervisedWorkerGate(
       outputTail: tail(combined),
     });
   } catch (error) {
-    await settleWorktreeGateCommands({ worktree: request.worktreePath });
-    if (registration !== undefined) await settleProcessGroups([registration]);
+    await settlement.settleWorktreeGateCommands({ worktree: request.worktreePath });
+    if (registration !== undefined) await settlement.settleProcessGroups([registration]);
     throw error;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
@@ -280,7 +302,7 @@ async function runAdmittedNodeSupervisedWorkerGate(
 }
 
 export const nodeSupervisedWorkerGateRunner: SupervisedWorkerGateRunner =
-  createNodeSupervisedWorkerGateRunner();
+  createNodeSupervisedWorkerGateRunner({ settleWorktreeGateCommands, settleProcessGroups });
 
 /**
  * Validate the exact manager-bound result tip, run the fixed host gate, and
