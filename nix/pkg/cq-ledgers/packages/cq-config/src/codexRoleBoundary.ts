@@ -300,7 +300,7 @@ export async function executeCodexParentGateFinalizer(
     const remainingMs = Math.floor(deadline - performance.now());
     if (remainingMs <= 0) break;
     const attemptBudgetMs =
-      attempt === 0 ? Math.max(1, remainingMs - reconciliationReserveMs) : remainingMs;
+      attempt === 0 ? Math.max(1, input.timeoutMs - reconciliationReserveMs) : remainingMs;
     const terminationGraceMs = Math.min(
       CODEX_PARENT_GATE_TERMINATION_GRACE_MS,
       Math.floor(attemptBudgetMs / 2),

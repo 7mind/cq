@@ -59,7 +59,6 @@ import {
   runLedgerWorksetGitEffect,
   withManagedWorktreeEffectLock,
   superviseImplementWorkerGate,
-  SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
   resolveSingleProjectAttestationNamespace,
   type DispatchCapability,
   type GitChangeBrokerResultEvidence,
@@ -796,7 +795,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         binding,
         {
           ...(options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir }),
-          effectLockTimeoutMs: SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
+          effectLockTimeoutMs: CODEX_STAGED_TIMING_BASIS.parentEffectLockAcquisitionMs,
         },
         async () => {
           const claimed = await claimParentGateOn(options.backend, input, { now });

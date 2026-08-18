@@ -583,6 +583,61 @@ if (!state.committed) {
     );
   });
 
+  test("D343 bounded child launch starts before broker admission and reports its own phase [Behavioral-Active Blackbox-Group]", async () => {
+    const base = createCodexRoleBoundaryPlan({
+      roleId: "implement-worker",
+      roleInstructions: "implement the task",
+      handle: HANDLE,
+      inputCapability: INPUT_CAPABILITY,
+      gitChangeCapability: GIT_CHANGE_CAPABILITY,
+      ...BOUNDARY_CONTEXTS,
+      model: "frontier-model",
+      reasoningEffort: "high",
+      sandboxMode: "workspace-write",
+      timeoutMs: 1_000,
+      promptRoot: "/nix/store/codex-prompt-root",
+      ledgerCommand: "/nix/store/cq/bin/cq",
+      codexExecutable: "/nix/store/codex/bin/codex",
+    });
+    const plan: CodexRoleBoundaryPlan = {
+      ...base,
+      timeoutMs: 1_000,
+      effectivePreturn: {
+        ...base.effectivePreturn,
+        childLaunchAdmissionMs: 50,
+      },
+    };
+    let admissionReleased = false;
+    let releaseAdmission!: () => void;
+    const permitAdmission = new Promise<void>((resolve) => {
+      releaseAdmission = resolve;
+    });
+    const strict = createStrictInMemoryWorksetEffectAdmissionProvider();
+    setTimeout(() => {
+      admissionReleased = true;
+      releaseAdmission();
+    }, 100);
+
+    await expect(
+      executeCodexRoleBoundary(plan, {
+        targetRef: "tasks:T2228",
+        provider: {
+          acquire: async (input) => {
+            await permitAdmission;
+            return await strict.acquire(input);
+          },
+        },
+      }),
+    ).rejects.toThrow("child launch/admission exceeded its 50 ms window");
+    expect(admissionReleased).toBe(false);
+    for (let attempt = 0; attempt < 1_000; attempt += 1) {
+      if (strict.events().includes("admission-abandoned")) break;
+      await Bun.sleep(2);
+    }
+    expect(strict.events()).toEqual(["admission-acquired", "admission-abandoned"]);
+    expect(strict.activeAdmissionCount()).toBe(0);
+  });
+
   test("faithfully records every dispatched role's pre-context tool profile and launch invariants", () => {
     const domainTools = new Set<string>(DOMAIN_LEDGER_TOOL_NAMES);
     let unknownRoleRejected = false;

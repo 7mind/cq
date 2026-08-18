@@ -119,8 +119,13 @@ describe("workset effect broker [T1979]", () => {
       launchDeadlineMs: Date.now() + 50,
       launchBootstrap: nodeBootstrap,
     });
-    setTimeout(() => permitAdmission.resolve(), 100);
+    let admissionReleased = false;
+    setTimeout(() => {
+      admissionReleased = true;
+      permitAdmission.resolve();
+    }, 100);
     await expect(delayedLaunch).rejects.toThrow("launch/admission deadline expired");
+    expect(admissionReleased).toBe(false);
     for (let attempt = 0; attempt < 1_000; attempt += 1) {
       if (delayedStrict.events().includes("admission-abandoned")) break;
       await Bun.sleep(2);
