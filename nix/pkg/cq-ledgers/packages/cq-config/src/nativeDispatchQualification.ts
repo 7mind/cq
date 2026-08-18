@@ -255,6 +255,16 @@ function objectRecord(value: unknown, field: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+/** Key-order-insensitive JSON, matching the broker's durable receipt comparison. */
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+    .join(",")}}`;
+}
+
 function sameDispatchHandle(
   left: { readonly attestationId: string; readonly generation: number },
   right: { readonly attestationId: string; readonly generation: number },
@@ -494,17 +504,27 @@ export function authenticateCodexProviderGateObservation(
     throw new Error(`Codex provider ${receiptsField} must contain a multi-step receipt chain`);
   }
   let previousHead: string | undefined;
+  let previousGeneration = 0;
+  let currentGenerationStart = -1;
   for (const [index, value] of receipts.entries()) {
     const receipt = objectRecord(value, `${receiptsField}[${String(index)}]`);
     const expectedKind =
       execution.roleId === "implement-worker"
         ? "cq-git-change-receipt"
         : "cq-git-conflict-continuation-receipt";
+    // A reprepared worker retains its inherited prior-generation prefix: entries
+    // may name any generation of the same attestation up to the dispatch's own,
+    // as long as the prefix precedes the current generation's segment.
+    const generation = receipt["generation"];
     if (
       receipt["kind"] !== expectedKind ||
       receipt["version"] !== 1 ||
       receipt["attestationId"] !== execution.handle.attestationId ||
-      receipt["generation"] !== execution.handle.generation ||
+      typeof generation !== "number" ||
+      !Number.isInteger(generation) ||
+      generation < 1 ||
+      generation > execution.handle.generation ||
+      generation < previousGeneration ||
       receipt["taskId"] !== managed.taskId ||
       typeof receipt["oldHead"] !== "string" ||
       typeof receipt["newHead"] !== "string" ||
@@ -512,22 +532,41 @@ export function authenticateCodexProviderGateObservation(
     ) {
       throw new Error(`Codex provider ${receiptsField}[${String(index)}] breaks its dispatch chain`);
     }
+    if (generation === execution.handle.generation && currentGenerationStart < 0) {
+      currentGenerationStart = index;
+    }
+    previousGeneration = generation;
     previousHead = receipt["newHead"];
   }
   if (previousHead !== output["resultCommit"]) {
     throw new Error(`Codex provider ${receiptsField} does not terminate at resultCommit`);
+  }
+  if (currentGenerationStart < 0) {
+    throw new Error(`Codex provider ${receiptsField} omits the current dispatch generation`);
   }
   if (input.priorConsumed !== undefined) {
     const priorOutput = objectRecord(
       input.priorConsumed.output,
       "installedGateTest.priorConsumed.output",
     );
-    const firstReceipt = objectRecord(receipts[0], `${receiptsField}[0]`);
+    const priorReceipts = priorOutput[receiptsField];
+    const firstCurrent = objectRecord(
+      receipts[currentGenerationStart],
+      `${receiptsField}[${String(currentGenerationStart)}]`,
+    );
     if (
+      !Array.isArray(priorReceipts) ||
+      priorReceipts.length === 0 ||
+      currentGenerationStart !== priorReceipts.length ||
       typeof priorOutput["resultCommit"] !== "string" ||
-      firstReceipt["oldHead"] !== priorOutput["resultCommit"]
+      firstCurrent["oldHead"] !== priorOutput["resultCommit"] ||
+      !priorReceipts.every(
+        (prior, index) => canonicalJson(prior) === canonicalJson(receipts[index]),
+      )
     ) {
-      throw new Error("Codex worker criticism retry did not continue from the prior result commit");
+      throw new Error(
+        "Codex worker criticism retry did not retain and continue the prior receipt chain",
+      );
     }
   }
   if (execution.roleId === "implement-conflict-resolver") {
