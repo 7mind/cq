@@ -46,6 +46,18 @@ import {
 const PG_URL = process.env["CQ_TEST_PG_URL"];
 const NAMESPACE_BACKEND = "postgres" as const;
 
+/** T2108: required-live mode fails closed instead of skipping. */
+function assertRequiredPostgresDsn(
+  pgUrl: string | undefined,
+  requirePg: string | undefined,
+): void {
+  if ((pgUrl === undefined || pgUrl.length === 0) && requirePg === "1") {
+    throw new Error("CQ_TEST_REQUIRE_PG=1 requires CQ_TEST_PG_URL to contain a PostgreSQL DSN");
+  }
+}
+
+assertRequiredPostgresDsn(PG_URL, process.env["CQ_TEST_REQUIRE_PG"]);
+
 /**
  * The single gate the live half of this file is governed by. Named (rather than
  * repeating `PG_URL === undefined`) so the relationship between the gate and what
@@ -67,6 +79,23 @@ afterAll(async () => {
   for (const backend of opened) {
     await backend.close().catch(() => undefined);
   }
+});
+
+describe("T2108 PostgreSQL required-mode disposition", () => {
+  test("skips an ordinary local run without CQ_TEST_PG_URL", () => {
+    expect(() => assertRequiredPostgresDsn(undefined, undefined)).not.toThrow();
+  });
+
+  test("requires CQ_TEST_PG_URL when required-live mode is selected", () => {
+    expect(() => assertRequiredPostgresDsn(undefined, "1")).toThrow(/CQ_TEST_PG_URL/);
+    expect(() => assertRequiredPostgresDsn("", "1")).toThrow(/CQ_TEST_PG_URL/);
+  });
+
+  test("selects the supplied CQ_TEST_PG_URL", () => {
+    expect(() =>
+      assertRequiredPostgresDsn("postgres://localhost/cq-test", "1"),
+    ).not.toThrow();
+  });
 });
 
 /**

@@ -29,7 +29,37 @@ import { attestationNamespaceForTrustedHubProject, createAttestationStoreForCons
 import type { AttestationBackend } from "@cq/config";
 
 const PG_URL = process.env["CQ_TEST_PG_URL"];
+
+/** T2108: required-live mode fails closed instead of skipping. */
+function assertRequiredPostgresDsn(
+  pgUrl: string | undefined,
+  requirePg: string | undefined,
+): void {
+  if ((pgUrl === undefined || pgUrl.length === 0) && requirePg === "1") {
+    throw new Error("CQ_TEST_REQUIRE_PG=1 requires CQ_TEST_PG_URL to contain a PostgreSQL DSN");
+  }
+}
+
+assertRequiredPostgresDsn(PG_URL, process.env["CQ_TEST_REQUIRE_PG"]);
+
 const LIVE_SUITE_SKIPPED = PG_URL === undefined;
+
+describe("T2108 PostgreSQL hub required-mode disposition", () => {
+  test("skips an ordinary local run without CQ_TEST_PG_URL", () => {
+    expect(() => assertRequiredPostgresDsn(undefined, undefined)).not.toThrow();
+  });
+
+  test("requires CQ_TEST_PG_URL when required-live mode is selected", () => {
+    expect(() => assertRequiredPostgresDsn(undefined, "1")).toThrow(/CQ_TEST_PG_URL/);
+    expect(() => assertRequiredPostgresDsn("", "1")).toThrow(/CQ_TEST_PG_URL/);
+  });
+
+  test("selects the supplied CQ_TEST_PG_URL", () => {
+    expect(() =>
+      assertRequiredPostgresDsn("postgres://localhost/cq-test", "1"),
+    ).not.toThrow();
+  });
+});
 
 let counter = 0;
 function trustedHubProjectKey(tag: string): string {
