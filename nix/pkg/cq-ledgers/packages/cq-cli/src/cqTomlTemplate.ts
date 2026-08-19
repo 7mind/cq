@@ -98,6 +98,14 @@ export const CQ_TOML_TEMPLATE: string = `\
   # reset to false after the upstream defect is fixed.
   unsafeDisableCodexReadOnlySandbox = false
 
+# [upstream] — kill-switches for ordinary third-party reports (Q336).
+# Absence, or a missing key, means enabled. These never authorize security
+# reporting or inner-loop filing; /cq:upstream files only explicit ordinary
+# reports. Recheck is independent. Inner loops only record/defer.
+# [upstream]
+#   filing  = "enabled"   # or "disabled"
+#   recheck = "enabled"   # or "disabled"
+
 # Panels + tier->model map for the default (claude) harness. Tiers are
 # harness-specific — there is no shared [tiers]. This map is what makes a model
 # dispatchable; an alias named by no tier here is inert.

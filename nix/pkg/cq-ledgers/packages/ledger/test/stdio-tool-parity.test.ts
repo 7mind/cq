@@ -61,6 +61,10 @@ const CONFIG_RESULT = {
     forceShellout: false,
     unsafeDisableCodexReadOnlySandbox: false,
   },
+  upstream: {
+    filing: "enabled",
+    recheck: "enabled",
+  },
 } as const;
 const PROMPT_RESULT = {
   roleId: "plan-reviewer",

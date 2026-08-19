@@ -379,6 +379,26 @@ export interface DispatchConfig {
   readonly unsafeDisableCodexReadOnlySandbox: boolean;
 }
 
+/** Kill-switch value for `[upstream]` filing and recheck (Q336). */
+export const UPSTREAM_SWITCHES = ["enabled", "disabled"] as const;
+
+/** A `[upstream]` kill-switch. */
+export type UpstreamSwitch = (typeof UPSTREAM_SWITCHES)[number];
+
+/** Type guard: is `value` a known upstream kill-switch? */
+export function isUpstreamSwitch(value: string): value is UpstreamSwitch {
+  return (UPSTREAM_SWITCHES as readonly string[]).includes(value);
+}
+
+/**
+ * The `[upstream]` table: independent filing/recheck kill-switches.
+ * Absence, and any missing key, default to `enabled` (kill-switch, not opt-in).
+ */
+export interface UpstreamConfig {
+  readonly filing: UpstreamSwitch;
+  readonly recheck: UpstreamSwitch;
+}
+
 /**
  * The parsed cq.toml configuration (T170, T223, T349).
  *
@@ -429,6 +449,8 @@ export interface CqConfig {
   /** The `[project]` table (name), or null if absent. */
   readonly project: ProjectConfig | null;
   readonly dispatch: DispatchConfig;
+  /** The `[upstream]` kill-switches; defaults to both enabled when the table is absent. */
+  readonly upstream: UpstreamConfig;
   /**
    * The ACTIVE selector's fail-closed violation message, or null when there is
    * none (T861). Raised at dispatch-panel resolution, never at parse time.

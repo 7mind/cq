@@ -148,6 +148,11 @@ export interface GetConfigResult {
     readonly forceShellout: boolean;
     readonly unsafeDisableCodexReadOnlySandbox: boolean;
   };
+  /** `[upstream]` kill-switches; both default to enabled when the table is absent. */
+  readonly upstream: {
+    readonly filing: "enabled" | "disabled";
+    readonly recheck: "enabled" | "disabled";
+  };
 }
 
 /**

@@ -754,6 +754,10 @@ describe("wire serialization", () => {
         forceShellout: false,
         unsafeDisableCodexReadOnlySandbox: false,
       },
+      upstream: {
+        filing: "enabled",
+        recheck: "enabled",
+      },
     };
     const prompt: FetchPromptResult = {
       roleId: "plan-reviewer",

@@ -28,6 +28,8 @@ export type {
   RemoteLedgerToken,
   ProjectConfig,
   DispatchConfig,
+  UpstreamSwitch,
+  UpstreamConfig,
 } from "./types.js";
 export {
   HARNESSES,
@@ -45,6 +47,8 @@ export {
   isLedgerBackend,
   LEDGER_BACKUP_MODES,
   isLedgerBackupMode,
+  UPSTREAM_SWITCHES,
+  isUpstreamSwitch,
 } from "./types.js";
 export {
   CQ_CONFIG_FILENAME,

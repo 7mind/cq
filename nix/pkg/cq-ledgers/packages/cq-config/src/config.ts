@@ -42,6 +42,7 @@ import {
   isTier,
   isLedgerBackend,
   isLedgerBackupMode,
+  isUpstreamSwitch,
   DEFAULT_TIER,
   PI_EFFORTS,
   CLAUDE_EFFORTS,
@@ -49,6 +50,7 @@ import {
   type ActiveHarness,
   type CqConfig,
   type DispatchConfig,
+  type UpstreamConfig,
   type Effort,
   type Harness,
   type LedgerConfig,
@@ -495,6 +497,21 @@ function parseDispatch(raw: import("./toml.js").RawDispatch | null): DispatchCon
   };
 }
 
+function parseUpstreamSwitch(raw: unknown, key: "filing" | "recheck"): import("./types.js").UpstreamSwitch {
+  if (raw === undefined) return "enabled";
+  if (typeof raw !== "string" || !isUpstreamSwitch(raw)) {
+    throw new CqConfigError(`[upstream] ${key} must be "enabled" or "disabled"`);
+  }
+  return raw;
+}
+
+function parseUpstream(raw: import("./toml.js").RawUpstream | null): UpstreamConfig {
+  return {
+    filing: parseUpstreamSwitch(raw?.filing, "filing"),
+    recheck: parseUpstreamSwitch(raw?.recheck, "recheck"),
+  };
+}
+
 /**
  * Parse a cq.toml document string into a typed CqConfig for one ACTIVE harness.
  *
@@ -597,6 +614,7 @@ function parseConfigFromRaw(raw: RawToml, activeHarness: ActiveHarness): CqConfi
   const ledger = raw.ledger === null ? null : parseLedger(raw.ledger);
   const project = raw.project === null ? null : parseProject(raw.project);
   const dispatch = parseDispatch(raw.dispatch);
+  const upstream = parseUpstream(raw.upstream);
   return {
     aliases,
     reviewers,
@@ -608,6 +626,7 @@ function parseConfigFromRaw(raw: RawToml, activeHarness: ActiveHarness): CqConfi
     ledger,
     project,
     dispatch,
+    upstream,
     dispatchViolation,
   };
 }
@@ -660,6 +679,7 @@ function mergeGlobalAndLocalConfig(globalConfig: RawToml, localConfig: RawToml):
       localConfig.harnessOverrides,
     ),
     dispatch: localConfig.dispatch ?? globalConfig.dispatch,
+    upstream: localConfig.upstream ?? globalConfig.upstream,
     // Project identity and storage selection are local-only. A global
     // projectId/name would collapse unrelated repositories onto one project;
     // a global backend/URL edit would relocate every repository at once, and

@@ -179,6 +179,40 @@ describe("T1630: get_config projects Codex mappings and the global dispatch poli
   });
 });
 
+describe("T805: get_config projects [upstream] kill-switches", () => {
+  it("defaults both switches to enabled when the table is absent", () => {
+    writeCqToml("[aliases]\n");
+    expect(computeConfig(dir).upstream).toEqual({
+      filing: "enabled",
+      recheck: "enabled",
+    });
+    expect(computeSection(dir, "all")).toMatchObject({
+      upstream: { filing: "enabled", recheck: "enabled" },
+    });
+  });
+
+  it("projects explicit combinations without changing older fields", () => {
+    writeCqToml([
+      'reviewers = ["sol"]',
+      "",
+      "[aliases]",
+      '  sol = "codex:gpt-5.6-sol"',
+      "",
+      "[upstream]",
+      '  filing = "disabled"',
+      '  recheck = "enabled"',
+    ].join("\n"));
+    const config = computeConfig(dir);
+    expect(config.upstream).toEqual({ filing: "disabled", recheck: "enabled" });
+    expect(config.reviewers).toEqual(["sol"]);
+    expect(config.dispatch).toEqual({
+      forceShellout: false,
+      unsafeDisableCodexReadOnlySandbox: false,
+    });
+    expect(JSON.stringify(config.upstream)).not.toMatch(/token|secret|password/i);
+  });
+});
+
 describe("T232: provider threading — computePlanners", () => {
   it("returns provider:null for the claude planner token", () => {
     writeCqToml(FIXTURE);

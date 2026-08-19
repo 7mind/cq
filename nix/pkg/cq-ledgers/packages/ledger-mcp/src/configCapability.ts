@@ -151,6 +151,10 @@ export function computeConfig(repoRoot: string): GetConfigResult {
         forceShellout: false,
         unsafeDisableCodexReadOnlySandbox: false,
       },
+      upstream: {
+        filing: "enabled",
+        recheck: "enabled",
+      },
     };
   }
   assertDispatchable(config);
@@ -208,6 +212,7 @@ function projectConfig(config: CqConfig): GetConfigResult {
     agentTiers: config.agentTiers,
     agentEfforts: config.agentEfforts,
     dispatch: config.dispatch,
+    upstream: config.upstream,
   };
 }
 

@@ -32,6 +32,8 @@
 #   [agent_efforts]  — maps agent-name -> reasoning-effort override (optional)
 #   [dispatch]       — global dispatch policy (`forceShellout` and the unsafe
 #                      Codex read-only sandbox override; both default false)
+#   [upstream]       — kill-switches for ordinary third-party reports
+#                      (filing / recheck = enabled|disabled; default enabled)
 #   [ledger]         — ledger storage backend (backend, branch, remote, backup,
 #                      projectId, serverUrl; default: backend="xdg",
 #                      backup="none")
@@ -200,6 +202,16 @@ planners = ["opus"]
   # Use only as a temporary compatibility switch for a verified sandbox defect.
   unsafeDisableCodexReadOnlySandbox = false
 
+# [upstream] — kill-switches for ordinary third-party reports (Q336).
+# Absence, or a missing key, means enabled. These never authorize security
+# reporting or inner-loop filing; /cq:upstream files only explicit ordinary
+# reports. Recheck is independent. Inner loops only record/defer.
+# Example (COMMENTED OUT — uncomment to disable filing):
+#
+# [upstream]
+#   filing  = "disabled"
+#   recheck = "enabled"
+
 # [ledger] — Ledger storage backend configuration (T349, T494, G81, K117).
 # Absence of this block (or of cq.toml entirely) defaults to backend="xdg"
 # (the out-of-tree bun:sqlite primary at the XDG location, K102) and
@@ -292,6 +304,7 @@ planners = ["opus"]
 #   [ledger]         — storage backend (fs / git-object)
 #   [agent_tiers]    — agent-name -> tier class map
 #   [agent_efforts]  — agent-name -> reasoning-effort override map
+#   [upstream]       — ordinary-report filing/recheck kill-switches
 #   [dispatch]       — global dispatch policy (`forceShellout = false` and
 #                        `unsafeDisableCodexReadOnlySandbox = false` by default),
 #                        never per-harness

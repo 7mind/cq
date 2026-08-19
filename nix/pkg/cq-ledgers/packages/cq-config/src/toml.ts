@@ -73,6 +73,12 @@ export interface RawDispatch {
   readonly unsafeDisableCodexReadOnlySandbox: unknown;
 }
 
+/** The raw `[upstream]` table; cells stay untyped for parseConfig. */
+export interface RawUpstream {
+  readonly filing: unknown;
+  readonly recheck: unknown;
+}
+
 /**
  * A single `[harness.<name>]` override block (Q240): the raw per-harness
  * subset of the SHARED config that may be overridden for one harness. Each
@@ -120,6 +126,8 @@ export interface RawToml {
   /** The `[project]` table, or null if absent (T570). */
   readonly project: RawProject | null;
   readonly dispatch: RawDispatch | null;
+  /** The `[upstream]` table, or null if absent. */
+  readonly upstream: RawUpstream | null;
   /**
    * The `[harness.<name>]` per-harness override tables (Q240, T861): ACTIVE
    * CONFIGURATION SELECTOR name (`claude`/`pi`/`codex`) -> its raw overridable
@@ -148,6 +156,7 @@ const ALLOWED_TOP_LEVEL = new Set([
   "ledger",
   "project",
   "dispatch",
+  "upstream",
   "harness",
 ]);
 
@@ -294,6 +303,18 @@ function parseDispatchRaw(value: unknown): RawDispatch {
   };
 }
 
+const ALLOWED_UPSTREAM_KEYS = new Set(["filing", "recheck"]);
+
+function parseUpstreamRaw(value: unknown): RawUpstream {
+  if (!isTable(value)) throw new TomlSyntaxError("[upstream] must be a table");
+  for (const key of Object.keys(value)) {
+    if (!ALLOWED_UPSTREAM_KEYS.has(key)) {
+      throw new TomlSyntaxError(`unexpected key "${key}" in [upstream]`);
+    }
+  }
+  return { filing: value.filing, recheck: value.recheck };
+}
+
 /**
  * Structurally validate the `[harness]` table of per-harness override blocks
  * (Q240, T861): each sub-table key must be a known ACTIVE CONFIGURATION
@@ -386,6 +407,7 @@ export function parseToml(source: string): RawToml {
   const ledger = "ledger" in doc ? parseLedgerRaw(doc.ledger) : null;
   const project = "project" in doc ? parseProjectRaw(doc.project) : null;
   const dispatch = "dispatch" in doc ? parseDispatchRaw(doc.dispatch) : null;
+  const upstream = "upstream" in doc ? parseUpstreamRaw(doc.upstream) : null;
   const harnessOverrides =
     "harness" in doc ? parseHarnessOverrides(doc.harness) : null;
 
@@ -400,6 +422,7 @@ export function parseToml(source: string): RawToml {
     ledger,
     project,
     dispatch,
+    upstream,
     harnessOverrides,
   };
 }

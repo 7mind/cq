@@ -221,6 +221,27 @@ describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
     });
   });
 
+  it("T806 documents [upstream] kill-switches without enabling credentials", () => {
+    expect(parseConfig(CQ_TOML_TEMPLATE).upstream).toEqual({
+      filing: "enabled",
+      recheck: "enabled",
+    });
+    expect(CQ_TOML_TEMPLATE).toContain("[upstream]");
+    expect(CQ_TOML_TEMPLATE).toContain('filing  = "enabled"');
+    expect(CQ_TOML_TEMPLATE).toContain("Inner loops only record/defer.");
+    const upstreamBlock = CQ_TOML_TEMPLATE.slice(
+      CQ_TOML_TEMPLATE.indexOf("# [upstream] —"),
+      CQ_TOML_TEMPLATE.indexOf("# Panels + tier->model"),
+    );
+    expect(upstreamBlock).not.toMatch(/token|secret|password|bearer/i);
+    const example = readFileSync(EXAMPLE_PATH, "utf8");
+    expect(example).toContain('filing  = "disabled"');
+    expect(parseConfig(example).upstream).toEqual({
+      filing: "enabled",
+      recheck: "enabled",
+    });
+  });
+
   it("no pi model token appears in the active reviewer panel", () => {
     const config = parseConfig(CQ_TOML_TEMPLATE);
     const reviewerTokens = resolveReviewers(config);
