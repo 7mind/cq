@@ -1375,31 +1375,14 @@ projectId = "acme-widgets"
 
 // ── T570: 'postgres' backend + [ledger].url + [project].name (G81) ───────────
 
-describe("parseConfig with [ledger] backend='postgres' and url (T570)", () => {
-  it("[ledger] backend='postgres' parses (config-surface only — store wiring is T577)", () => {
-    const config = parseConfig(`
+describe("parseConfig rejects public backend='postgres' (T736)", () => {
+  it("[ledger] backend='postgres' is not a public backend", () => {
+    expect(() =>
+      parseConfig(`
 [ledger]
 backend = "postgres"
-`);
-    expect(config.ledger).not.toBeNull();
-    expect(config.ledger!.backend).toBe("postgres");
-  });
-
-  it("[ledger].url is optional — null when absent", () => {
-    const config = parseConfig(`
-[ledger]
-backend = "postgres"
-`);
-    expect(config.ledger!.url).toBeNull();
-  });
-
-  it("[ledger].url parses as a credential-less DSN string when present", () => {
-    const config = parseConfig(`
-[ledger]
-backend = "postgres"
-url     = "postgres://db.example.com:5432/cq_ledger"
-`);
-    expect(config.ledger!.url).toBe("postgres://db.example.com:5432/cq_ledger");
+`),
+    ).toThrow(/not a valid backend/);
   });
 
   it("throws CqConfigError on a non-string [ledger].url", () => {

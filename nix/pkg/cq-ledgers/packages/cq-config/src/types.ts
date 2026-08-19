@@ -253,8 +253,6 @@ export interface TiersConfig {
  *   ever the DEFAULT — the no-cq.toml fallback resolves to `xdg`.
  * - `xdg`: the out-of-tree bun:sqlite primary at the XDG location (K102) —
  *   the DEFAULT runtime primary.
- * - `postgres`: an OPT-IN external Postgres primary (G81), retained through
- *   the remote-client cutover. T736 exclusively owns its removal.
  * - `remote`: the repository-backed remote-service client. Its required,
  *   non-secret endpoint is carried by `serverUrl`; the bearer token never
  *   enters this model and resolves only from `CQ_LEDGER_REMOTE_TOKEN`.
@@ -263,7 +261,6 @@ export const LEDGER_BACKENDS = [
   "fs",
   "git-object",
   "xdg",
-  "postgres",
   "remote",
 ] as const;
 
@@ -311,9 +308,8 @@ export function isLedgerBackupMode(value: string): value is LedgerBackupMode {
  * - `backend`: the storage backend to use; 'xdg' — the out-of-tree bun:sqlite
  *   primary (K102) — is the default (K117). 'fs' and 'git-object' are the
  *   LEGACY in-repo backends: still selectable explicitly, but construction
- *   emits a deprecation warning pointing at `cq migrate`. 'postgres' is the
- *   opt-in multi-tenant backend (G81), retained until T736. 'remote' selects
- *   the repository-backed remote service.
+ *   emits a deprecation warning pointing at `cq migrate`. 'remote' selects
+ *   the repository-backed remote service. PostgreSQL is private cq serve state.
  * - `backendExplicit`: whether cq.toml carried an explicit `backend` key
  *   (K117) — lets callers distinguish a deliberate backend choice from the
  *   'xdg' default (the legacy-shadow warning and `cq migrate`'s source
@@ -325,11 +321,8 @@ export function isLedgerBackupMode(value: string): value is LedgerBackupMode {
  * - `projectId`: an optional committed project-identity string, used for
  *   repo-identity keying (Q246) — e.g. to locate the right out-of-tree store
  *   when the repo is cloned to multiple paths. `null` when absent.
- * - `url`: an optional committed connection string for the `postgres` backend
- *   (G81, Q272/Q278 hybrid). MUST be credential-less (no embedded password) —
- *   `null` when absent. A `CQ_LEDGER_PG_URL` / `DATABASE_URL` environment
- *   variable takes precedence over this value at resolution time (the
- *   resolver itself is T571, not this config layer). `null` when absent.
+ * - `url`: retained for parse compatibility; public checkouts must not commit
+ *   a PostgreSQL DSN. cq serve resolves its DSN from `--pg-url` / env.
  * - `serverUrl`: the required non-secret remote-service endpoint when
  *   `backend='remote'`; `null` for every other backend. It has no default.
  *   Ordinary bearer authentication resolves only from
@@ -337,8 +330,7 @@ export function isLedgerBackupMode(value: string): value is LedgerBackupMode {
  *
  * `branch` and `remote` are consumed by the git-object backend (W5/T355);
  * they are parsed and stored for any backend, but only meaningful for
- * 'git-object'. `url` is only meaningful for 'postgres'; `serverUrl` is only
- * meaningful for 'remote'.
+ * 'git-object'. `serverUrl` is only meaningful for 'remote'.
  */
 interface LedgerConfigCommon {
   readonly backendExplicit: boolean;

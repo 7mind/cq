@@ -22,30 +22,24 @@
 import { describe, it, expect, afterAll, beforeEach, afterEach, spyOn, type Mock } from "bun:test";
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import {
   createLedgerStore,
-  createPostgresLedgerStore,
-  PublicPostgresBackendRetiredError,
   openLegacyLedgerStore,
   resolveLedgerBackend,
   assertGitWorkTree,
   GitEnvironmentError,
-  PostgresLedgerStore,
   FsLedgerStore,
   GitObjectLedgerBackend,
   SqliteLedgerStore,
   resolveStateDir,
   ProjectKeyResolutionError,
-  createObserveOnlyWorksetInvocationAuthority,
 } from "../src/index.js";
 
 const exec = promisify(execFile);
 const dirs: string[] = [];
-const PG_URL = process.env.CQ_TEST_PG_URL;
 
 async function git(cwd: string, ...args: string[]): Promise<void> {
   await exec("git", args, { cwd, encoding: "utf8" });
@@ -83,27 +77,6 @@ async function writeCqToml(dir: string, body: string): Promise<void> {
  * same `projectKey` tenant) would cross-contaminate each other's rows. Mirrors
  * log-put-postgres.test.ts's `postgresRepo` helper.
  */
-async function pgGitRepo(): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(tmpdir(), "cls-pg-"));
-  dirs.push(dir);
-  await git(dir, "init", "-q");
-  await git(dir, "config", "user.email", "t@example.com");
-  await git(dir, "config", "user.name", "t");
-  await git(dir, "config", "commit.gpgsign", "false");
-  await fs.writeFile(path.join(dir, "README.md"), `# repo ${randomUUID()}\n`);
-  await git(dir, "add", "README.md");
-  await git(dir, "commit", "-q", "-m", "init");
-  return dir;
-}
-
-async function projectKeyOf(dir: string): Promise<string> {
-  const { stdout } = await exec("git", ["rev-list", "--max-parents=0", "HEAD"], {
-    cwd: dir,
-    encoding: "utf8",
-  });
-  return stdout.trim();
-}
-
 afterAll(async () => {
   await Promise.all(dirs.map((d) => fs.rm(d, { recursive: true, force: true })));
 });
@@ -441,124 +414,11 @@ describe("createLedgerStore — xdg backend (T530)", () => {
   });
 });
 
-describe("createLedgerStore — postgres backend (T577, G81/M248)", () => {
-  const ORIGINAL_PG_ENV_VARS = [
-    "CQ_LEDGER_PG_URL",
-    "DATABASE_URL",
-    "PGHOST",
-    "PGPORT",
-    "PGDATABASE",
-    "PGUSER",
-    "PGPASSWORD",
-    "PGSERVICE",
-    "PGSSLMODE",
-    "PGOPTIONS",
-    "PGPASSFILE",
-    "PGAPPNAME",
-  ] as const;
-  let savedEnv: Record<string, string | undefined>;
-
-  beforeEach(() => {
-    savedEnv = {};
-    for (const name of ORIGINAL_PG_ENV_VARS) {
-      savedEnv[name] = process.env[name];
-    }
-  });
-
-  afterEach(() => {
-    for (const [name, value] of Object.entries(savedEnv)) {
-      if (value === undefined) {
-        delete process.env[name];
-      } else {
-        process.env[name] = value;
-      }
-    }
-  });
-
-  it("backend='fs' still takes the legacy warn-and-open path (unaffected by the postgres branch)", async () => {
-    const dir = await gitRepo();
-    await writeCqToml(dir, '[ledger]\nbackend = "fs"\n');
-    const spy = spyOn(process.stderr, "write").mockImplementation(() => true);
-    try {
-      const { store } = await createLedgerStore(dir);
-      expect(store).toBeInstanceOf(FsLedgerStore);
-      await store.dispose();
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it("missing DSN throws PostgresDsnResolutionError — no connection attempted, no server needed", async () => {
+describe("createLedgerStore — public postgres backend retired (T736)", () => {
+  it("backend=postgres is not a valid public config", async () => {
     const dir = await gitRepo();
     await writeCqToml(dir, '[ledger]\nbackend = "postgres"\n');
-    for (const name of ORIGINAL_PG_ENV_VARS) {
-      delete process.env[name];
-    }
-    await expect(createLedgerStore(dir)).rejects.toBeInstanceOf(PublicPostgresBackendRetiredError);
-  });
-
-  describe.skipIf(!PG_URL)("live round-trip (CQ_TEST_PG_URL)", () => {
-    it("resolves a working PostgresLedgerStore: canonical ledgers present, createItem/fetchItem round-trip", async () => {
-      const dir = await pgGitRepo();
-      await writeCqToml(dir, '[ledger]\nbackend = "postgres"\n');
-      const expectedProjectKey = await projectKeyOf(dir);
-      process.env["CQ_LEDGER_PG_URL"] = PG_URL;
-
-      await expect(createLedgerStore(dir)).rejects.toBeInstanceOf(PublicPostgresBackendRetiredError);
-      const resolved = await createPostgresLedgerStore(
-        dir,
-        "cq-ledger",
-        createObserveOnlyWorksetInvocationAuthority(),
-      );
-      try {
-        expect(resolved.backend).toBe("postgres");
-        expect(resolved.store).toBeInstanceOf(PostgresLedgerStore);
-        // dbPath/logsDir stay undefined — logs + ledger rows both live in the DB.
-        expect(resolved.dbPath).toBeUndefined();
-        expect(resolved.logsDir).toBeUndefined();
-        expect(resolved.pg).toBeDefined();
-        expect(resolved.pg?.projectKey).toBe(expectedProjectKey);
-
-        // Canonical ledgers were bootstrapped for this fresh tenant.
-        expect(resolved.store.enumerate()).toContain("tasks");
-        expect(resolved.store.enumerate()).toContain("defects");
-
-        const milestone = await resolved.store.createMilestone({ title: "T577 pg smoke" });
-        const created = await resolved.store.createItem("tasks", milestone.id, {
-          status: "planned",
-          fields: { headline: "round-trip via createLedgerStore" },
-        });
-        const fetched = resolved.store.fetchItem("tasks", created.id);
-        expect(fetched.id).toBe(created.id);
-        expect(fetched.fields["headline"]).toBe("round-trip via createLedgerStore");
-      } finally {
-        await resolved.store.dispose();
-      }
-    });
-
-    it("displayName chain: cq.toml [project].name wins over the repo basename / projectKey rungs", async () => {
-      const dir = await pgGitRepo();
-      await writeCqToml(dir, '[ledger]\nbackend = "postgres"\n\n[project]\nname = "T577 Display Name"\n');
-      const expectedProjectKey = await projectKeyOf(dir);
-      process.env["CQ_LEDGER_PG_URL"] = PG_URL;
-
-      const resolved = await createPostgresLedgerStore(
-        dir,
-        "cq-ledger",
-        createObserveOnlyWorksetInvocationAuthority(),
-      );
-      try {
-        const pool = resolved.pg?.pool;
-        expect(pool).toBeDefined();
-        const rows = await pool!<Array<{ display_name: string }>>`
-          SELECT display_name FROM projects WHERE project_key = ${expectedProjectKey}
-        `;
-        expect(rows).toHaveLength(1);
-        expect(rows[0]?.display_name).toBe("T577 Display Name");
-      } finally {
-        await resolved.store.dispose();
-      }
-    });
+    await expect(createLedgerStore(dir)).rejects.toThrow(/not a valid backend/);
   });
 });
 

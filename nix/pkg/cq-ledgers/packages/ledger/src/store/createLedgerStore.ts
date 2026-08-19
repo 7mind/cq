@@ -40,7 +40,6 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { basename, join } from "node:path";
-import type { SQL } from "bun";
 import { loadConfig, type LedgerBackend } from "@cq/config";
 import type { LedgerStore } from "./LedgerStore.js";
 import { FsLedgerStore } from "./FsLedgerStore.js";
@@ -48,11 +47,7 @@ import { GitObjectLedgerBackend } from "./git/GitObjectLedgerBackend.js";
 import { SqliteLedgerStore } from "./sqlite/SqliteLedgerStore.js";
 import { coherenceVersion, openLedgerDb } from "./sqlite/connection.js";
 import { SqliteXdgProjectIdentityAccess } from "./sqlite/projectIdentity.js";
-import { openPgPool } from "./postgres/connection.js";
-import { ensureSchema } from "./postgres/schema.js";
-import { resolvePostgresDsn } from "./postgres/dsn.js";
 import { resolveDisplayName } from "./postgres/displayName.js";
-import { PostgresLedgerStore } from "./postgres/PostgresLedgerStore.js";
 import { LEDGER_STORAGE_DIRNAME } from "../constants.js";
 import { resolveProjectKey } from "../projectKey.js";
 import { resolveStateDir, resolveLogsDir, ensureStateDir } from "../stateDir.js";
@@ -123,45 +118,13 @@ export interface ResolvedLedgerStore {
    */
   readonly backup?: BackupScheduler;
   /**
-   * The live Postgres handle (`backend = 'postgres'` only, T577/G81) — what
-   * T578's LISTEN/NOTIFY coherence watcher needs: the
-   * connection pool to reserve a dedicated LISTEN connection from, the
-   * resolved DSN (to re-`new SQL(dsn)` on a dropped LISTEN connection, since
-   * `PG_DRIVER_DEFAULTS` resolves to `""` for "let the driver use its own
-   * defaults" — the SAME empty-string convention `runLogPutPostgres` uses),
-   * and this tenant's `projectKey` (to filter NOTIFY payloads to this store's
-   * own tenant). `undefined` for every other backend.
-   */
-  readonly pg?: ResolvedPostgresHandle;
-  /**
    * This repo's resolved `projectKey` (T585 / Q284) — the SAME value
-   * `resolveProjectKey` computed to key the xdg `stateDir` / the postgres
-   * tenant row, exposed here so ledger-mcp's `createLedgerMcpServer` can
-   * synthesize the single-project `list_projects` fallback entry without
-   * re-resolving it. `undefined` only for the legacy backends
-   * {@link openLegacyLedgerStore} returns (no such concept there — that
-   * internal path is not a `list_projects`-serving runtime primary).
+   * `resolveProjectKey` computed to key the xdg `stateDir`, exposed here so
+   * ledger-mcp's `createLedgerMcpServer` can synthesize the single-project
+   * `list_projects` fallback entry without re-resolving it. `undefined` only
+   * for the legacy backends {@link openLegacyLedgerStore} returns.
    */
   readonly projectKey?: string;
-}
-
-/**
- * The `backend = 'postgres'`-only handle carried on {@link ResolvedLedgerStore}
- * (see `pg` above). Kept as its own named interface (rather than inlined) so
- * T578's watcher signature reads as `startPostgresCoherenceWatcher(store,
- * pgHandle, onChange?)` against a stable type.
- */
-export interface ResolvedPostgresHandle {
-  /** The connection pool `PostgresLedgerStore` was constructed with. */
-  readonly pool: SQL;
-  /**
-   * The resolved DSN, or `""` when {@link resolvePostgresDsn} returned the
-   * `PG_DRIVER_DEFAULTS` sentinel (no explicit DSN — the driver reads `PG*`
-   * env vars itself).
-   */
-  readonly dsn: string;
-  /** This store's tenant key (`projects.project_key`). */
-  readonly projectKey: string;
 }
 
 /**
@@ -318,10 +281,6 @@ async function createLedgerStoreWithAuthority(
     return openLegacyLedgerStore(root, backend, worksetAuthority);
   }
 
-  if (backend === "postgres") {
-    throw new PublicPostgresBackendRetiredError("createLedgerStore", root);
-  }
-
   if (!explicit && hasLegacyFsLedger(root)) {
     warnLegacyLedgerShadowedByXdgDefault(root);
   }
@@ -402,115 +361,6 @@ export async function createManagementLedgerStore(
     root,
     createTrustedWorksetManagementAuthority(),
   );
-}
-
-/**
- * The `backend = 'postgres'` construction path (T577, G81/M248) —
- * {@link createLedgerStore}'s delegate, split out only for readability.
- *
- * Mirrors the xdg branch's fail-fast shape:
- *  - `resolveProjectKey` lets {@link ProjectKeyResolutionError} propagate
- *    (same no-fallback rationale, Q246) — the postgres backend's tenant key
- *    IS the projectKey, same as xdg's stateDir key.
- *  - `resolvePostgresDsn` lets {@link PostgresDsnResolutionError} propagate
- *    when no connection info is configured (dsn.ts).
- *
- * The display name is the RECONCILED four-rung chain (Q270, displayName.ts):
- * cq.toml `[project].name` > `[ledger].projectId` > the repo root's basename
- * > the projectKey itself (which never fails to resolve). `PostgresLedgerStore`
- * UPSERTs it into `projects.display_name` on every `init()`, so a later
- * cq.toml rename propagates on reconnect.
- *
- * `dbPath`/`logsDir` stay `undefined` (unlike the xdg branch) — this backend's
- * ledger rows AND log artifacts both live in the database, not on this host's
- * filesystem. The returned `pg` handle (pool + resolved dsn + projectKey) is
- * what T578's LISTEN/NOTIFY coherence watcher needs.
- *
- * `[ledger].backup != 'none'` (T582, Q275 full-parity decision): mirrors the
- * xdg branch's {@link BackupScheduler} wiring exactly — `runBackupExport`'s
- * dump builder is store-agnostic (T575's `listLogs` duck-type feeds it this
- * store's tenant-scoped logs in place of a filesystem `logsDir`, which this
- * backend passes as `null`), so the SAME debounced post-mutation trigger the
- * xdg backend uses works unchanged against `PostgresLedgerStore`.
- *
- * On any failure after the pool is opened (schema DDL, tenant bootstrap,
- * `init()`), the pool is closed before the error propagates — otherwise a
- * failed construction would leak a live connection pool.
- */
-/** @internal Server/test adapter. Public checkouts must use backend=remote. */
-export async function createPostgresLedgerStore(
-  root: string,
-  branch: string,
-  worksetAuthority: unknown,
-): Promise<ResolvedLedgerStore> {
-  const config = loadConfig(root);
-  const ledgerConfig = config?.ledger;
-  if (ledgerConfig === null || ledgerConfig === undefined) {
-    // Unreachable in practice: resolveLedgerBackend's no-`[ledger]`-table
-    // default resolves to 'xdg' (K117), never 'postgres' — a second loadConfig here
-    // finding no `[ledger]` table would mean cq.toml changed between the two
-    // reads. Fail loud rather than silently treat it as misconfigured.
-    throw new Error(
-      `[ledger] backend = 'postgres' resolved at ${root}, but reloading cq.toml found no ` +
-        `[ledger] table — cq.toml may have changed concurrently; re-run.`,
-    );
-  }
-
-  const projectKey = await resolveProjectKey({
-    repoRoot: root,
-    projectId: ledgerConfig.projectId,
-  });
-
-  const resolution = resolvePostgresDsn(ledgerConfig, process.env);
-  const dsn = resolution.kind === "dsn" ? resolution.dsn : "";
-
-  const backupTarget = ledgerConfig.backup;
-
-  const displayName = resolveDisplayName({
-    projectName: config?.project?.name,
-    projectId: ledgerConfig.projectId,
-    repoBasename: basename(root),
-    projectKey,
-  });
-
-  const pool = openPgPool(dsn);
-  try {
-    await ensureSchema(pool);
-    let backup: BackupScheduler | undefined;
-    const store = new PostgresLedgerStore({
-      pool,
-      projectKey,
-      displayName,
-      onMutation: () => backup?.schedule(),
-      worksetAuthority,
-    });
-    await store.init();
-    if (backupTarget !== "none") {
-      backup = new BackupScheduler(async () => {
-        await runBackupExport({ store, root, target: backupTarget, branch, logsDir: null });
-      });
-      return {
-        store,
-        configRoot: root,
-        backend: "postgres",
-        branch,
-        pg: { pool, dsn, projectKey },
-        projectKey,
-        backup,
-      };
-    }
-    return {
-      store,
-      configRoot: root,
-      backend: "postgres",
-      branch,
-      pg: { pool, dsn, projectKey },
-      projectKey,
-    };
-  } catch (err) {
-    await pool.close().catch(() => undefined);
-    throw err;
-  }
 }
 
 /**

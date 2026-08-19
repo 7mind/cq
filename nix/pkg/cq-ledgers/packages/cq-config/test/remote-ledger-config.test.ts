@@ -196,20 +196,16 @@ token = "must-not-be-committed"
     },
   );
 
-  it("keeps postgres parseable alongside remote; T736 is the sole removal owner", () => {
+  it("rejects public backend=postgres; remote remains the service client", () => {
     expect(LEDGER_BACKENDS).toContain("remote");
-    expect(LEDGER_BACKENDS).toContain("postgres");
-    expect(
+    expect(LEDGER_BACKENDS).not.toContain("postgres");
+    expect(() =>
       parseConfig(`
 [ledger]
 backend = "postgres"
 url = "postgres://db.example.test:5432/cq"
-`).ledger,
-    ).toMatchObject({
-      backend: "postgres",
-      url: "postgres://db.example.test:5432/cq",
-      serverUrl: null,
-    });
+`),
+    ).toThrow(/not a valid backend/);
   });
 
   it("preserves the xdg default while remote remains opt-in", () => {

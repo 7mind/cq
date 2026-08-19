@@ -169,20 +169,10 @@ export const CQ_TOML_TEMPLATE: string = `\
 #   backup    = "none"
 #   projectId = "my-project"
 
-# To opt into the postgres backend instead, uncomment the block below (and
-# comment out/remove the active [ledger] table above — cq.toml has exactly
-# one active [ledger] table). \`url\` here is a COMMITTED, credential-less
-# default (Q278) — e.g. "postgres://host:5432/dbname" with no user/password.
-# SECRET HYGIENE: a real connection string (with credentials) belongs in the
-# CQ_LEDGER_PG_URL or DATABASE_URL environment variable — highest precedence,
-# resolved at runtime — NEVER in this committed file. \`cq migrate --to
-# postgres\` (from an existing backend = "xdg" repo) is the one-shot importer.
-# [ledger]
-#   backend = "postgres"
-#   url     = "postgres://host:5432/dbname"   # credential-less; see CQ_LEDGER_PG_URL above
-# backup    = "none"
-# projectId = "my-project"
-# T736 is the sole removal owner for this temporary direct-postgres surface.
+# PostgreSQL is private cq serve state. Start the hub with --pg-url /
+# CQ_LEDGER_PG_URL, then point checkouts at it with backend = "remote".
+# Ordinary token: CQ_LEDGER_REMOTE_TOKEN. Admin token:
+# CQ_LEDGER_REMOTE_ADMIN_TOKEN (migrate/backup/restore/reset/erase).
 
 # [project] (T570) — optional project-level metadata; \`name\` is a cosmetic
 # display-name override (Q270's reconciled chain: [project].name >

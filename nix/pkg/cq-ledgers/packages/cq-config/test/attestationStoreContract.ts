@@ -143,7 +143,7 @@ export interface AttestationContractFixture {
 export interface AttestationContractFactory {
   readonly name: string;
   /** The ledger backend the namespaces this fixture serves are keyed by. */
-  readonly namespaceBackend: LedgerBackend;
+  readonly namespaceBackend: LedgerBackend | "postgres";
   readonly skip?: boolean;
   build(projectKey: string): Promise<AttestationContractFixture>;
   /** Opening with wrong credentials / an unusable location must fail loudly. */

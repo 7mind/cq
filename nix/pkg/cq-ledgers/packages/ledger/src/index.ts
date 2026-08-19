@@ -648,14 +648,9 @@ export type { CreatePostgresWorksetGuardedLedgerOptions } from "./store/postgres
 export { resolvePostgresDsn, PostgresDsnResolutionError } from "./store/postgres/dsn.js";
 export { resolveDisplayName } from "./store/postgres/displayName.js";
 export type { DisplayNameCandidates } from "./store/postgres/displayName.js";
-export { startPostgresCoherenceWatcher } from "./store/postgres/coherenceWatcher.js";
-export type { PostgresCoherenceWatcher } from "./store/postgres/coherenceWatcher.js";
-export { startPostgresHubCoherenceWatcher } from "./store/postgres/coherenceWatcher.js";
-export type { PostgresHubWatcherCallbacks } from "./store/postgres/coherenceWatcher.js";
 export { restoreDumpToPostgres, isPostgresTenantEmpty } from "./store/postgres/restoreImporter.js";
 export {
   createLedgerStore,
-  createPostgresLedgerStore,
   createManagementLedgerStore,
   openLegacyLedgerStore,
   resolveLedgerBackend,
@@ -675,7 +670,6 @@ export type {
 } from "./store/xdgWatcherLease.js";
 export type {
   ResolvedLedgerStore,
-  ResolvedPostgresHandle,
   XdgCoherenceWatcher,
 } from "./store/createLedgerStore.js";
 export {

@@ -337,7 +337,7 @@ function parseLedger(raw: import("./toml.js").RawLedger): LedgerConfig {
     }
     if (!isLedgerBackend(raw.backend)) {
       throw new CqConfigError(
-        `[ledger] backend "${raw.backend}" is not a valid backend (expected fs, git-object, xdg, postgres, or remote)`,
+        `[ledger] backend "${raw.backend}" is not a valid backend (expected fs, git-object, xdg, or remote)`,
       );
     }
     backend = raw.backend;

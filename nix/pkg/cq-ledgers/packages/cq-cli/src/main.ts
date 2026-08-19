@@ -41,15 +41,10 @@ import {
   restoreDumpToXdg,
   RestoreTargetChangedError,
   isXdgPrimaryEmpty,
-  restoreDumpToPostgres,
-  isPostgresTenantEmpty,
   createTrustedWorksetManagementAuthority,
-  createPostgresWorksetStore,
   createSqliteWorksetStore,
   openExistingLedgerDb,
-  PostgresLedgerStore,
   XDG_DB_FILENAME,
-  PostgresDsnResolutionError,
   type LedgerStore,
   type ResetSummary,
 } from "@cq/ledger";
@@ -73,12 +68,7 @@ import {
   WORKSET_EFFECT_PROVIDER_CONTROL_MODE,
 } from "./worksetEffectProviderControl.js";
 import { parseLogPutArgs, runLogPut, EXIT_USAGE as LOG_PUT_EXIT_USAGE } from "./logPut.js";
-import {
-  resolvePostgresTenant,
-  countTenantActiveItems,
-  wipeTenantRows,
-  type PostgresTenantHandle,
-} from "./postgresTenant.js";
+
 import { withRemoteAdminClient } from "./remoteClient.js";
 
 export { CQ_CONFIG_FILENAME };
@@ -512,12 +502,6 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
   if (preflightBackend === "remote") {
     return runResetRemote(args, io);
   }
-  if (preflightBackend === "postgres") {
-    io.err(
-      `cq reset: backend='postgres' is retired; set backend="remote" and use CQ_LEDGER_REMOTE_ADMIN_TOKEN`,
-    );
-    return { exitCode: EXIT_USAGE };
-  }
 
   const decision = await confirmDestructive(
     args.yes,
@@ -554,82 +538,6 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
   return { exitCode: 0 };
 }
 
-/**
- * `cq reset` — postgres backend (T583). DELETEs every row this tenant owns
- * (children-first FK order, same order `PostgresLedgerStore.backupAndReinitTenant`
- * uses) + re-inits the canonical ledger set — never touching any OTHER
- * tenant's rows in the shared database.
- *
- * Resolves the tenant (project_key + display name) via
- * {@link resolvePostgresTenant} BEFORE confirming, so the prompt names the
- * blast radius, then wipes + reseeds on the SAME pool/projectKey.
- */
-async function _runResetPostgres(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
-  const tenant = await resolvePostgresTenant(args.cwd);
-  let store: PostgresLedgerStore | null = null;
-  try {
-    const displayName = tenant.registeredDisplayName ?? tenant.candidateDisplayName;
-    const decision = await confirmDestructive(
-      args.yes,
-      `Reset postgres tenant "${displayName}" (project_key ${tenant.projectKey}) at ${args.cwd}? ` +
-        `DELETEs ALL of this tenant's rows, then reinitialises the canonical ledger set. [y/N] `,
-      `cq reset: refusing to reset postgres tenant "${displayName}" (project_key ${tenant.projectKey}) ` +
-        `at ${args.cwd} without confirmation; re-run with --yes to reset non-interactively.`,
-      io.confirm,
-    );
-    if (!decision.proceed) {
-      return { exitCode: decision.exitCode };
-    }
-
-    const before = await countTenantActiveItems(tenant.pool, tenant.projectKey);
-    const authority = createTrustedWorksetManagementAuthority();
-    store = new PostgresLedgerStore({
-      pool: tenant.pool,
-      projectKey: tenant.projectKey,
-      displayName,
-      worksetAuthority: authority,
-    });
-    const resetStore = store;
-    await resetStore.init();
-    const { branch } = resolveLedgerBackend(args.cwd);
-    const backupTarget = tenant.backup;
-    let backupLine = `none ([ledger].backup = "none" — run \`cq backup\` before reset for a pre-wipe dump)`;
-    await resetStore.resetTenant({
-      authority,
-      ...(backupTarget === "none"
-        ? {}
-        : {
-            beforeReset: async () => {
-              const fileCount = await runBackupExport({
-                store: resetStore,
-                root: args.cwd,
-                target: backupTarget,
-                branch,
-                logsDir: null,
-              });
-              backupLine =
-                backupTarget === "in-tree"
-                  ? `${fileCount} file(s) at ${path.join(args.cwd, LEDGER_STORAGE_DIRNAME)}`
-                  : `${fileCount} file(s) at refs/heads/${branch}`;
-            },
-          }),
-    });
-
-    io.out(
-      `cq reset: reset postgres tenant "${displayName}" (project_key ${tenant.projectKey}) at ${args.cwd}`,
-    );
-    io.out(
-      `  backup: ${backupLine}`,
-    );
-    for (const { name, itemCount } of before) {
-      io.out(`  ${name}: ${itemCount} item(s) wiped, reinitialised empty`);
-    }
-    return { exitCode: 0 };
-  } finally {
-    if (store === null) await tenant.pool.close();
-    else await store.dispose();
-  }
-}
 
 /**
  * `cq erase` (Q110, the MOST destructive subcommand): DESTROY everything the
@@ -722,11 +630,9 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
   // NOT folded into that degrade — the operator asked to erase a live tenant
   // and must learn the rows were NOT erased.
   let xdgProjectDir: string | undefined;
-  let postgresTenant: PostgresTenantHandle | undefined;
   if (configExists) {
-    let backend: string | undefined;
     try {
-      backend = resolveLedgerBackend(args.cwd).backend;
+      const backend = resolveLedgerBackend(args.cwd).backend;
       if (backend === "remote") {
         return runEraseRemote(args, io);
       }
@@ -735,19 +641,9 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
         const projectId = config?.ledger?.projectId ?? null;
         const projectKey = await resolveProjectKey({ repoRoot: args.cwd, projectId });
         xdgProjectDir = resolveStateDirBase(projectKey);
-      } else if (backend === "postgres") {
-        postgresTenant = await resolvePostgresTenant(args.cwd);
       }
-    } catch (err) {
-      if (backend === "postgres" && !(err instanceof PostgresDsnResolutionError)) {
-        const detail = err instanceof Error ? err.message : String(err);
-        io.err(
-          `cq erase: postgres tenant NOT erased — could not reach the database: ${detail}`,
-        );
-        return { exitCode: EXIT_USAGE };
-      }
+    } catch {
       xdgProjectDir = undefined;
-      postgresTenant = undefined;
     }
   }
   // D91: deliberately OUTSIDE the try/catch above — an invariant violation
@@ -762,15 +658,6 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
   // silently no-op the tenant wipe while still deleting the bounded
   // fs+config artifacts (which would read as "erase succeeded" to an
   // operator who wanted the live tenant rows gone).
-  if (postgresTenant !== undefined && postgresTenant.registeredDisplayName === null) {
-    await postgresTenant.pool.close();
-    io.err(
-      `cq erase: nothing to erase — project_key ${postgresTenant.projectKey} at ${args.cwd} ` +
-        `is not registered in the postgres tenant registry.`,
-    );
-    return { exitCode: EXIT_USAGE };
-  }
-
   // SAFETY: nothing to erase → refuse (don't silently succeed on an empty root).
   if (!storageExists && !configExists && !xdgProjectDirExists) {
     io.err(
@@ -780,19 +667,14 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
     return { exitCode: EXIT_USAGE };
   }
 
-  const tenantLabel =
-    postgresTenant !== undefined
-      ? ` — postgres tenant "${postgresTenant.registeredDisplayName}" (project_key ${postgresTenant.projectKey})`
-      : "";
   const decision = await confirmDestructive(
     args.yes,
-    `ERASE all ledgers + config at ${args.cwd}${tenantLabel}? This is IRREVERSIBLE. [y/N] `,
-    `cq erase: refusing to erase ledgers + config at ${args.cwd}${tenantLabel} without confirmation; ` +
+    `ERASE all ledgers + config at ${args.cwd}? This is IRREVERSIBLE. [y/N] `,
+    `cq erase: refusing to erase ledgers + config at ${args.cwd} without confirmation; ` +
       `re-run with --yes to erase non-interactively.`,
     io.confirm,
   );
   if (!decision.proceed) {
-    if (postgresTenant !== undefined) await postgresTenant.pool.close();
     return { exitCode: decision.exitCode };
   }
 
@@ -852,49 +734,11 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
     removed.push(xdgProjectDir);
   }
 
-  // postgres (T583): DELETE exactly this tenant's rows — items, groups,
-  // ledgers, logs, AND the projects registry entry — never another tenant's.
-  let postgresWipeSummary:
-    | { projectKey: string; items: Array<{ name: string; itemCount: number }> }
-    | undefined;
-  if (postgresTenant !== undefined) {
-    const items = await countTenantActiveItems(postgresTenant.pool, postgresTenant.projectKey);
-    // T1959: exclusive administrative admission for erase; the final tenant
-    // deletion commits while the exclusive row remains visible to every peer.
-    const workset = createPostgresWorksetStore({
-      pool: postgresTenant.pool,
-      projectKey: postgresTenant.projectKey,
-    });
-    try {
-      await workset.runAdministrative({
-        kind: "erase",
-        authority: createTrustedWorksetManagementAuthority(),
-        destructivePhase: async () => {
-          await wipeTenantRows(postgresTenant.pool, postgresTenant.projectKey, true, false);
-        },
-      });
-    } finally {
-      workset.close();
-    }
-    await postgresTenant.pool.close();
-    removed.push(
-      `postgres tenant "${postgresTenant.registeredDisplayName}" (project_key ${postgresTenant.projectKey})`,
-    );
-    postgresWipeSummary = { projectKey: postgresTenant.projectKey, items };
-  }
-
   await removeLocalArtifacts();
 
   io.out(`cq erase: erased ledgers + config at ${args.cwd} (IRREVERSIBLE, no backup)`);
   for (const p of removed) {
     io.out(`  removed: ${p}`);
-  }
-  if (postgresWipeSummary !== undefined) {
-    for (const { name, itemCount } of postgresWipeSummary.items) {
-      io.out(
-        `  ${name}: ${itemCount} item(s) removed (postgres project_key ${postgresWipeSummary.projectKey})`,
-      );
-    }
   }
   if (storageDirPreserved) {
     io.out(`  preserved: ${storageDir} (non-ledger content remains)`);
@@ -1075,11 +919,10 @@ export async function runBackup(args: SubcommandArgs, io: DispatchIo): Promise<S
   if (backend === "remote") {
     return runBackupRemote(args, io, target, branch);
   }
-  if (backend !== "xdg" && backend !== "postgres") {
+  if (backend !== "xdg") {
     io.err(
-      `cq backup: [ledger] backend='${backend}' does not support the backup exporter ` +
-        `(it dumps the out-of-tree xdg primary or the postgres tenant into the .cq/ layout, which ` +
-        `the '${backend}' backend already keeps human-readable). Use backend='xdg' or backend='postgres'.`,
+      `cq backup: [ledger] backend='${backend}' does not support the local backup exporter ` +
+        `(use backend='xdg', or backend='remote' which is handled above).`,
     );
     return { exitCode: EXIT_USAGE };
   }
@@ -1213,7 +1056,7 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
   if (backend === "remote") {
     return runRestoreRemote(args, io, target, branch);
   }
-  if (backend !== "xdg" && backend !== "postgres") {
+  if (backend !== "xdg") {
     io.err(
       `cq restore: [ledger] backend='${backend}' does not support restore (it imports INTO the ` +
         `out-of-tree xdg primary or the postgres tenant; the '${backend}' backend already keeps its ` +
@@ -1231,10 +1074,6 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
   } catch (e) {
     io.err(`cq restore: failed to read the ${target} dump: ${e instanceof Error ? e.message : String(e)}`);
     return { exitCode: EXIT_USAGE };
-  }
-
-  if (backend === "postgres") {
-    return runRestorePostgres(args, io, target, dump);
   }
 
   const resolved = await createManagementLedgerStore(args.cwd);
@@ -1285,72 +1124,6 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
   return { exitCode: 0 };
 }
 
-/**
- * `cq restore`'s postgres branch (T582, Q275 full-parity decision) —
- * {@link runRestore}'s delegate, split out only for readability. Resolves the
- * tenant via {@link resolvePostgresTenant} (self-sufficient: it does NOT
- * pre-register the tenant, mirroring `restoreDumpToPostgres`'s own UPSERT of
- * the `projects` row — T580's doc), applies the SAME destructive-op
- * confirmation policy `runRestore`'s xdg path uses (keyed off
- * {@link isPostgresTenantEmpty}, the postgres analogue of
- * `isXdgPrimaryEmpty`), then imports via `restoreDumpToPostgres` — scoped
- * STRICTLY to this one `project_key`, never another tenant's rows.
- */
-async function runRestorePostgres(
-  args: SubcommandArgs,
-  io: DispatchIo,
-  target: "in-tree" | "orphan-branch",
-  dump: Awaited<ReturnType<typeof readDumpInTree>>,
-): Promise<SubcommandOutcome> {
-  const tenant = await resolvePostgresTenant(args.cwd);
-  const displayName = tenant.registeredDisplayName ?? tenant.candidateDisplayName;
-  try {
-    const empty = await isPostgresTenantEmpty(tenant.pool, tenant.projectKey);
-    let overwriteAuthorized = args.yes;
-    if (!empty) {
-      const decision = await confirmDestructive(
-        args.yes,
-        `Restore will OVERWRITE the non-empty postgres tenant "${displayName}" ` +
-          `(project_key ${tenant.projectKey}) at ${args.cwd}? [y/N] `,
-        `cq restore: refusing to overwrite the non-empty postgres tenant "${displayName}" ` +
-          `(project_key ${tenant.projectKey}) at ${args.cwd} without confirmation; re-run with ` +
-          `--yes to restore non-interactively.`,
-        io.confirm,
-      );
-      if (!decision.proceed) {
-        return { exitCode: decision.exitCode };
-      }
-      overwriteAuthorized = true;
-    }
-
-    let summary;
-    try {
-      summary = await restoreDumpToPostgres({
-        pool: tenant.pool,
-        projectKey: tenant.projectKey,
-        displayName,
-        dump,
-        authority: createTrustedWorksetManagementAuthority(),
-        overwriteAuthorized,
-      });
-    } catch (error) {
-      if (!(error instanceof RestoreTargetChangedError)) throw error;
-      io.err(
-        `cq restore: refusing because postgres tenant ${tenant.projectKey} became non-empty ` +
-          `after confirmation`,
-      );
-      return { exitCode: EXIT_REFUSED };
-    }
-    io.out(
-      `cq restore: restored ${summary.ledgerCount} ledger(s) + ${summary.logCount} log artifact(s) ` +
-        `from the ${target} dump at ${args.cwd} (postgres tenant "${displayName}", ` +
-        `project_key ${tenant.projectKey})`,
-    );
-    return { exitCode: 0 };
-  } finally {
-    await tenant.pool.close();
-  }
-}
 
 /**
  * `cq migrate` (T504 / Q243, xdg->postgres leg T581): the explicit one-shot
@@ -1369,8 +1142,14 @@ export async function runMigrateCmd(
   args: SubcommandArgs,
   io: DispatchIo,
 ): Promise<SubcommandOutcome> {
-  if (args.to !== null && args.to !== "postgres" && args.to !== "remote") {
-    io.err(`cq migrate: --to only recognises "postgres" or "remote" (got "${args.to}").`);
+  if (args.to === "postgres") {
+    io.err(
+      `cq migrate: --to postgres is retired; use --to remote with CQ_LEDGER_SERVER_URL and CQ_LEDGER_REMOTE_ADMIN_TOKEN`,
+    );
+    return { exitCode: EXIT_USAGE };
+  }
+  if (args.to !== null && args.to !== "remote") {
+    io.err(`cq migrate: --to only recognises "remote" (got "${args.to}").`);
     return { exitCode: EXIT_USAGE };
   }
   return runMigrate(

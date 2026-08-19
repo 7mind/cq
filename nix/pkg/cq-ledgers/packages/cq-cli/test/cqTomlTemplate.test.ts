@@ -291,16 +291,11 @@ describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
     expect(config.ledger?.projectId).toBeNull();
   });
 
-  it("documents the commented-out backend='postgres' + url example, with the secret-hygiene warning (T584)", () => {
-    // The postgres example is COMMENTED OUT (the active [ledger] table stays
-    // backend='xdg', asserted above) — so this checks the rendered TEXT, not
-    // the parsed config. parseConfig succeeding (first test in this describe)
-    // already proves the extra commented lines don't break TOML parsing.
-    expect(CQ_TOML_TEMPLATE).toContain('backend = "postgres"');
-    expect(CQ_TOML_TEMPLATE).toContain("url     = ");
-    expect(CQ_TOML_TEMPLATE).toContain("SECRET HYGIENE");
-    expect(CQ_TOML_TEMPLATE).toContain("CQ_LEDGER_PG_URL");
-    expect(CQ_TOML_TEMPLATE).toContain("DATABASE_URL");
+  it("does not document a public postgres backend or committed DSN (T736/T737)", () => {
+    expect(CQ_TOML_TEMPLATE).not.toContain('backend = "postgres"');
+    expect(CQ_TOML_TEMPLATE).toContain("CQ_LEDGER_REMOTE_TOKEN");
+    expect(CQ_TOML_TEMPLATE).toContain("CQ_LEDGER_REMOTE_ADMIN_TOKEN");
+    expect(CQ_TOML_TEMPLATE).toContain('backend = "remote"');
   });
 
   it("renders the remote backend schema without rendering its environment-only token (T723)", () => {

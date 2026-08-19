@@ -33,8 +33,6 @@ import {
   LEDGER_LOGS_DIRNAME,
   resolveProjectKey,
   resolveLogsDir,
-  createLedgerStore,
-  PostgresLedgerStore,
   type TreeEntry,
 } from "@cq/ledger";
 import { withRemoteClient } from "./remoteClient.js";
@@ -286,13 +284,6 @@ export async function runLogPut(
     return runLogPutXdg(args, io, redacted);
   }
 
-  if (backend === "postgres") {
-    io.err(
-      `cq log put: backend='postgres' is retired; set backend="remote" and use CQ_LEDGER_REMOTE_TOKEN`,
-    );
-    return { exitCode: 1 };
-  }
-
   // backend === 'fs' (the historical default) — write under <cwd>/.cq/<dest>.
 
   // --- Resolve the on-disk destination path ---
@@ -431,65 +422,4 @@ async function runLogPutXdg(
   await atomicWrite(destAbs, content);
   io.out(destAbs);
   return { exitCode: 0 };
-}
-
-/**
- * The postgres backend write path (T575, Q274/Q285). Same redaction +
- * strict-JSONL validation as every other backend (run by the caller,
- * `runLogPut`); only the final write differs — into the tenant-keyed `logs`
- * table (T572 schema) via {@link PostgresLedgerStore.putLog} instead of the
- * xdg out-of-tree files.
- *
- * Routes through {@link createLedgerStore} (T577) — the ONE backend-selecting
- * store factory — instead of constructing a `PostgresLedgerStore` directly
- * (this function's former shape, written before T577 existed). This picks up
- * the factory's RECONCILED four-rung display-name chain (`resolveDisplayName`
- * over `[project].name` / `[ledger].projectId` / the repo basename /
- * `projectKey`, displayName.ts) in place of this file's former two-rung
- * shortcut (`config?.project?.name ?? projectKey`, review R697 deferred
- * defect) — a bare `projectKey` fallback here could downgrade an already
- * `projects.display_name` from an earlier connect with a fuller candidate
- * set — and (T582) the factory's debounced backup-exporter wiring for a
- * configured `[ledger].backup != 'none'`.
- *
- * The destination-path normalisation mirrors {@link runLogPutXdg} EXACTLY
- * (strip the leading `logs/` prefix via {@link LOGS_PREFIX}) so
- * sessionLogs/rawLogs references keep resolving identically regardless of
- * backend.
- */
-async function _runLogPutPostgres(
-  args: LogPutArgs,
-  io: LogPutIo,
-  content: string,
-): Promise<LogPutOutcome> {
-  // createLedgerStore lets PostgresDsnResolutionError propagate as the
-  // fail-fast (uncaught here, consistent with the rest of this function's
-  // error handling).
-  const resolved = await createLedgerStore(args.cwd);
-  try {
-    if (resolved.pg === undefined) {
-      // Invariant: runLogPut only dispatches here when resolveLedgerBackend
-      // already returned 'postgres', so createLedgerStore must have taken
-      // its postgres branch and populated `pg`.
-      throw new Error(
-        "cq log put: createLedgerStore resolved backend='postgres' without a pg handle " +
-          "(internal inconsistency)",
-      );
-    }
-
-    // args.dest is validated (validateLogDest) to start with "logs/" — strip
-    // it exactly as runLogPutXdg does so the stored key matches what readLog
-    // resolves (bare, logsDir-relative form).
-    const rel = args.dest.slice(LOGS_PREFIX.length);
-    // `putLog` is postgres-specific (not part of the LedgerStore interface,
-    // duck-typed like `listLogs`/`readLog` elsewhere) — safe to cast given
-    // the `pg` handle check above.
-    const store = resolved.store as PostgresLedgerStore;
-    await store.putLog(rel, content);
-
-    io.out(`postgres:${resolved.pg.projectKey}/${args.dest}`);
-    return { exitCode: 0 };
-  } finally {
-    await resolved.store.dispose();
-  }
 }

@@ -178,12 +178,15 @@ export function assertAttestationConstructionSupported(
         "column gives a hub construction real per-request tenant routing",
     );
   }
-  if (construction === ATTESTATION_HUB_CONSTRUCTION && backend !== "postgres") {
-    throw new AttestationConstructionUnsupportedError(
-      construction,
-      backend,
-      'the postgres hub only ever routes to backend "postgres" tenants',
-    );
+  if (construction === ATTESTATION_HUB_CONSTRUCTION) {
+    if (backend !== "postgres") {
+      throw new AttestationConstructionUnsupportedError(
+        construction,
+        backend,
+        'the postgres hub only ever routes to backend "postgres" tenants',
+      );
+    }
+    return "postgres";
   }
   // Delegate the bare-backend decision (git-object/remote/in-memory/unknown)
   // to the one function that owns it. Its `AttestationBackendUnsupportedError`
@@ -215,7 +218,7 @@ export interface AttestationConstructionVerdict {
  * list. Frozen; consult it, don't mutate it.
  */
 export function buildAttestationConstructionCoverage(): readonly AttestationConstructionVerdict[] {
-  const backends: readonly string[] = [...LEDGER_BACKENDS, ATTESTATION_IN_MEMORY_BACKEND];
+  const backends: readonly string[] = [...LEDGER_BACKENDS, ATTESTATION_IN_MEMORY_BACKEND, "postgres"];
   const verdicts: AttestationConstructionVerdict[] = [];
   for (const construction of LEDGER_SERVER_CONSTRUCTIONS) {
     for (const backend of backends) {

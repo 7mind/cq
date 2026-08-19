@@ -137,25 +137,6 @@ export async function withAdvisoryLock<T>(
   }
 }
 
-/**
- * LISTEN/NOTIFY channel carrying ledger-change coherence events (Q281): the
- * PG analogue of the sqlite backend's `PRAGMA data_version` poll
- * (../sqlite/connection.ts `dataVersion`), but push-based. Payload is the
- * `project_key` whose data changed, so a single shared connection can LISTEN
- * once and dispatch to the right project's watchers.
- */
-export const LEDGER_CHANGE_CHANNEL = "cq_ledger_changed";
-
-/**
- * Notify `LEDGER_CHANGE_CHANNEL` that `projectKey` changed. Uses
- * `pg_notify(channel, payload)` rather than the `NOTIFY channel, payload`
- * statement so both arguments are bound query parameters (NOTIFY's own
- * syntax does not accept a parameter for the channel name).
- */
-export async function notifyProjectChanged(sql: SQL, projectKey: string): Promise<void> {
-  await sql`select pg_notify(${LEDGER_CHANGE_CHANNEL}, ${projectKey})`;
-}
-
 /** Bound on write-transaction attempts under contention (mirrors sqlite's WRITE_TXN_MAX_ATTEMPTS). */
 export const WRITE_TXN_MAX_ATTEMPTS = 5;
 

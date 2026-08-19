@@ -648,6 +648,7 @@ export {
 } from "./dispatchRefAssembly.js";
 export type {
   AttestationNamespace,
+  AttestationNamespaceBackend,
   DispatchAuthorizationScope,
   TrustedDispatchActor,
   StoreResultCannotName,

@@ -54,7 +54,7 @@ import {
   MILESTONES_LEDGER,
 } from "../../constants.js";
 import { ensureSchema } from "./schema.js";
-import { notifyProjectChanged, writeTransaction } from "./connection.js";
+import { writeTransaction } from "./connection.js";
 import { encodePostgresPlanScope } from "../planLifecycleDump.js";
 import {
   WorksetAdmissionError,
@@ -330,9 +330,6 @@ export async function restoreDumpToPostgres(opts: {
   } finally {
     workset.close();
   }
-
-  // Peer invalidation: NOTIFY after the exclusive administrative restore commits.
-  await notifyProjectChanged(pool, pk);
 
   return {
     fileCount: prepared.dump.length,

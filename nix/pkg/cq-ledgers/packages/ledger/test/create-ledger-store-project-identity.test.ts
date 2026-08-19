@@ -26,7 +26,6 @@ import {
   type XdgProjectIdentity,
 } from "../src/index.js";
 import { dataVersion, openLedgerDb } from "../src/store/sqlite/connection.js";
-import { PostgresDsnResolutionError } from "../src/store/postgres/dsn.js";
 
 const exec = promisify(execFile);
 const dirs: string[] = [];
@@ -289,9 +288,7 @@ describe("createLedgerStore — repository-backed XDG identity (T829)", () => {
       for (const name of PG_ENV_VARS) delete process.env[name];
       const postgresRepo = await gitRepo();
       await writeCqToml(postgresRepo, '[ledger]\nbackend = "postgres"\n');
-      await expect(createLedgerStore(postgresRepo)).rejects.toBeInstanceOf(
-        PostgresDsnResolutionError,
-      );
+      await expect(createLedgerStore(postgresRepo)).rejects.toThrow(/not a valid backend/);
 
       expect(upsertSpy).not.toHaveBeenCalled();
     } finally {
@@ -304,7 +301,7 @@ describe("createLedgerStore — repository-backed XDG identity (T829)", () => {
     }
   });
 
-  describe.skipIf(!PG_URL)("live PostgreSQL exclusion (CQ_TEST_PG_URL)", () => {
+  describe.skip("live PostgreSQL exclusion retired with public backend (T736)", () => {
     it("does not write XDG identity metadata for a successful PostgreSQL open", async () => {
       const repo = await gitRepo();
       await writeCqToml(repo, '[ledger]\nbackend = "postgres"\n');

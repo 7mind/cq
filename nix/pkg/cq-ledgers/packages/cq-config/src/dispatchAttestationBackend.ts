@@ -133,11 +133,14 @@ import type {
  * bun:sqlite XDG primary, the cross-process-safe filesystem store, and
  * PostgreSQL.
  */
-export const ATTESTATION_STORE_BACKENDS = ["xdg", "fs", "postgres"] as const;
+export const ATTESTATION_STORE_BACKENDS = ["xdg", "fs"] as const;
 
-export type AttestationStoreBackend = (typeof ATTESTATION_STORE_BACKENDS)[number];
+export type AttestationStoreBackend = (typeof ATTESTATION_STORE_BACKENDS)[number] | "postgres";
 
-const ATTESTATION_STORE_BACKEND_SET: ReadonlySet<string> = new Set(ATTESTATION_STORE_BACKENDS);
+const ATTESTATION_STORE_BACKEND_SET: ReadonlySet<string> = new Set([
+  ...ATTESTATION_STORE_BACKENDS,
+  "postgres",
+]);
 
 /**
  * The ledger backends that deliberately have NO attestation adapter, with the

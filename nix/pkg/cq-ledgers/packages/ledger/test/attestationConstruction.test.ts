@@ -27,7 +27,11 @@ import {
   supportedConstructionCells,
 } from "../src/index.js";
 
-const ALL_BACKEND_NAMES: readonly string[] = [...LEDGER_BACKENDS, ATTESTATION_IN_MEMORY_BACKEND];
+const ALL_BACKEND_NAMES: readonly string[] = [
+  ...LEDGER_BACKENDS,
+  ATTESTATION_IN_MEMORY_BACKEND,
+  "postgres",
+];
 
 // ---------------------------------------------------------------------------
 // The exhaustive supported/excluded cell table (T686 acceptance, verbatim)
@@ -46,7 +50,7 @@ const ALL_BACKEND_NAMES: readonly string[] = [...LEDGER_BACKENDS, ATTESTATION_IN
 function expectedSupported(construction: string, backend: string): boolean {
   if (construction === ATTESTATION_UNSUPPORTED_LOCAL_HUB_CONSTRUCTION) return false;
   if (construction === ATTESTATION_HUB_CONSTRUCTION) return backend === "postgres";
-  return backend === "xdg" || backend === "fs" || backend === "postgres";
+  return backend === "xdg" || backend === "fs";
 }
 
 describe("the two-dimensional construction x backend coverage matrix", () => {
@@ -70,13 +74,14 @@ describe("the two-dimensional construction x backend coverage matrix", () => {
     }
   });
 
-  test("exactly 13 supported cells: 4 single-project constructions x 3 backends, plus the hub", () => {
+  test("exactly 9 supported cells: 4 single-project constructions x 2 backends, plus the hub", () => {
     const cells = supportedConstructionCells();
-    expect(cells.size).toBe(13);
+    expect(cells.size).toBe(9);
     for (const construction of SINGLE_PROJECT_CONSTRUCTIONS) {
-      for (const backend of ["xdg", "fs", "postgres"]) {
+      for (const backend of ["xdg", "fs"]) {
         expect(cells.has(`${construction}:${backend}`)).toBe(true);
       }
+      expect(cells.has(`${construction}:postgres`)).toBe(false);
       for (const backend of ["git-object", "remote", ATTESTATION_IN_MEMORY_BACKEND]) {
         expect(cells.has(`${construction}:${backend}`)).toBe(false);
       }

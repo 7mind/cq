@@ -123,7 +123,7 @@ export interface MigrateArgs {
    * `--to postgres` (T581): selects the xdg -> postgres leg instead of the
    * default legacy -> xdg leg. `null` (the flag absent) is the default leg.
    */
-  to: "postgres" | "remote" | null;
+  to: "remote" | null;
 }
 
 async function runUnderMigrationAdmission<T>(
@@ -263,9 +263,6 @@ export async function setLedgerBackend(
  * postgres leg (T581). See the module doc for the full contract.
  */
 export async function runMigrate(args: MigrateArgs, io: MigrateIo): Promise<MigrateOutcome> {
-  if (args.to === "postgres") {
-    return runMigrateXdgToPostgres(args, io);
-  }
   if (args.to === "remote") {
     return runMigrateXdgToRemote(args, io);
   }
@@ -418,7 +415,7 @@ async function runMigrateLegacyToXdg(args: MigrateArgs, io: MigrateIo): Promise<
  * Postgres tenant, then flip cq.toml's `[ledger].backend` to `postgres`. See
  * the module doc for the full contract.
  */
-async function runMigrateXdgToPostgres(args: MigrateArgs, io: MigrateIo): Promise<MigrateOutcome> {
+async function _runMigrateXdgToPostgres(args: MigrateArgs, io: MigrateIo): Promise<MigrateOutcome> {
   const { backend, explicit } = resolveLedgerBackend(args.cwd);
   if (backend === "xdg" && !explicit) {
     // K117: 'xdg' is now also the DEFAULT resolution (no cq.toml / no

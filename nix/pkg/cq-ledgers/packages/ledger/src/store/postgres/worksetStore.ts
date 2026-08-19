@@ -47,7 +47,7 @@ import {
   type WorksetRootsEpoch,
 } from "../../worksetEffectAdmission.js";
 import type { WorksetStore } from "../../worksetStore.js";
-import { notifyProjectChanged, writeTransaction } from "./connection.js";
+import { writeTransaction } from "./connection.js";
 
 // ---------------------------------------------------------------------------
 // Constants / types
@@ -291,7 +291,7 @@ export function createPostgresWorksetStore(
   const onRootsCommitted =
     options.onRootsCommitted ??
     (async (_snapshot: WorksetRootsEpoch) => {
-      await notifyProjectChanged(pool, projectKey);
+      return;
     });
 
   // Local observation (sync WorksetStore surface).

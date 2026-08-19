@@ -292,12 +292,17 @@ export function isAttestationDomainError(error: unknown): boolean {
  * (it has no field for it), and a row surfacing from another namespace is an
  * {@link AttestationNamespaceError}, never a lifecycle state.
  */
+export type AttestationNamespaceBackend = LedgerBackend | "postgres";
+
 export interface AttestationNamespace {
-  readonly backend: LedgerBackend;
+  readonly backend: AttestationNamespaceBackend;
   readonly projectKey: string;
 }
 
-const LEDGER_BACKEND_SET: ReadonlySet<string> = new Set(LEDGER_BACKENDS);
+const ATTESTATION_NAMESPACE_BACKEND_SET: ReadonlySet<string> = new Set([
+  ...LEDGER_BACKENDS,
+  "postgres",
+]);
 
 /**
  * Validate a namespace declaration. Set-based backend membership, so no
@@ -308,7 +313,7 @@ export function assertAttestationNamespace(
   path = "namespace",
 ): AttestationNamespace {
   const backend: unknown = namespace?.backend;
-  if (typeof backend !== "string" || !LEDGER_BACKEND_SET.has(backend)) {
+  if (typeof backend !== "string" || !ATTESTATION_NAMESPACE_BACKEND_SET.has(backend)) {
     throw new AttestationContractError(
       `${path}.backend`,
       `unknown ledger backend "${String(backend)}"`,
@@ -321,7 +326,7 @@ export function assertAttestationNamespace(
       `expected a project key, got "${String(projectKey)}"`,
     );
   }
-  return Object.freeze({ backend: backend as LedgerBackend, projectKey });
+  return Object.freeze({ backend: backend as AttestationNamespaceBackend, projectKey });
 }
 
 /** Whether two namespaces are the same `{backend,projectKey}` pair. */

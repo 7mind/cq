@@ -262,19 +262,10 @@ planners = ["opus"]
 #   backup    = "none"
 #   projectId = "my-project"
 #
-# To activate the postgres backend (multi-tenant shared database), uncomment
-# and edit the block below. The `url` field is a COMMITTED, CREDENTIAL-LESS
-# DSN (no user/password). A real connection with credentials belongs in the
-# environment variables CQ_LEDGER_PG_URL or DATABASE_URL (highest precedence
-# at runtime). See docs/drafts/20260722-1230-postgres-backend-and-cq-serve.md
-# for the full postgres setup guide.
-#
-# [ledger]
-#   backend = "postgres"
-#   url     = "postgres://localhost:5432/cq_ledger"   # credential-less; see CQ_LEDGER_PG_URL/DATABASE_URL
-#   backup  = "none"
-#   projectId = "my-project"
-# T736 is the sole removal owner for this temporary direct-postgres surface.
+# PostgreSQL is private cq serve state. Do not put a DSN or token in this
+# file. Start `cq serve --pg-url ... --token ... --admin-token ...` and point
+# checkouts at it with backend = "remote" plus CQ_LEDGER_REMOTE_TOKEN /
+# CQ_LEDGER_REMOTE_ADMIN_TOKEN.
 
 # ---------------------------------------------------------------------------
 # PER-HARNESS LAYERED OVERRIDES (Q239 / Q240)

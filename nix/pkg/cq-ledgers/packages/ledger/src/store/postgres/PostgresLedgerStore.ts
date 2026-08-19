@@ -169,7 +169,7 @@ import {
   type ReadLogResult,
 } from "../../mcp/readLog.js";
 import type { ListProjectsResult } from "../../mcp/listProjects.js";
-import { notifyProjectChanged, readTransaction, writeTransaction } from "./connection.js";
+import { readTransaction, writeTransaction } from "./connection.js";
 import { classifyCanonicalLedgers } from "./divergence.js";
 import {
   createPostgresWorksetStore,
@@ -475,7 +475,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       await this.bootstrapCanonicalRows(missing, widened);
     }
 
-    const relocatedIdeas = await writeTransaction(pool, async (tx) => {
+    await writeTransaction(pool, async (tx) => {
       await tx`
         SELECT 1 FROM ledgers
         WHERE project_key = ${pk} AND name = ${IDEAS_LEDGER}
@@ -496,8 +496,6 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       await this.persistLedgerState(tx, ideas);
       return true;
     });
-    if (relocatedIdeas) await notifyProjectChanged(pool, pk);
-
     await this.loadCache();
     this.initialised = true;
 

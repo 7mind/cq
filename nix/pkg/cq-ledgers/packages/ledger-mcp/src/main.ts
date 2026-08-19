@@ -52,12 +52,10 @@ import {
   type ListProjectsCapability,
   type ResolvedLedgerStore,
   type XdgCoherenceWatcher,
-  type PostgresCoherenceWatcher,
   createLedgerStore,
   resolveLedgerBackend,
   resolveProjectKey,
   RemoteLedgerClientNotWiredError,
-  PublicPostgresBackendRetiredError,
   startXdgCoherenceWatcher,
   nodeGitRunner,
   createLedgerMcpToolSpecifications,
@@ -626,11 +624,10 @@ export function listProjectsOf(
  * Start the per-backend coherence watcher for a resolved store (T357 item 5;
  * xdg case wired in T500): file-watch ({@link startLedgerWatcher}) for the fs
  * backend, ref-sha-watch ({@link startLedgerRefWatcher}, T353) for git-object,
- * domain-state-version poll ({@link startXdgCoherenceWatcher}) for xdg, and
- * LISTEN/NOTIFY push ({@link startPostgresCoherenceWatcher}, T578) for
- * postgres. Remote refuses before watcher construction until its downstream
- * client adapter lands. All four local watchers return a handle with
- * `.close()`, so the host wires shutdown identically regardless of backend.
+ * domain-state-version poll ({@link startXdgCoherenceWatcher}) for xdg.
+ * Public postgres is retired (T736). Remote launches do not watch a local store.
+ * Local watchers return a handle with `.close()`, so the host wires shutdown
+ * identically regardless of backend.
  * The git-object path binds a {@link nodeGitRunner} at the repo root so the
  * watcher polls `refs/heads/<branch>` for ledger advances by another process.
  *
@@ -645,7 +642,7 @@ export function startLedgerCoherenceWatcher(
   resolved: ResolvedLedgerStore,
   root: string,
   onChange?: (ledgerId: string | null) => void,
-): LedgerWatcher | XdgCoherenceWatcher | PostgresCoherenceWatcher {
+): LedgerWatcher | XdgCoherenceWatcher {
   if (resolved.backend === "remote") {
     throw new RemoteLedgerClientNotWiredError("startLedgerCoherenceWatcher", root);
   }
@@ -660,9 +657,6 @@ export function startLedgerCoherenceWatcher(
       );
     }
     return startXdgCoherenceWatcher(resolved.store, resolved.dbPath, undefined, onChange);
-  }
-  if (resolved.backend === "postgres") {
-    throw new PublicPostgresBackendRetiredError("startLedgerCoherenceWatcher", root);
   }
   return startLedgerWatcher(resolved.store, root, onChange);
 }

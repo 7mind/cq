@@ -1282,17 +1282,8 @@ export async function createSingleProjectDispatchRuntime(
         ledgerRoot: options.resolved.configRoot,
       });
       break;
-    case "postgres": {
-      if (options.resolved.pg === undefined) {
-        throw new Error("postgres ledger runtime lacks its resolved pool");
-      }
-      attestationBackend = await createAttestationStoreForConstruction({
-        backend,
-        namespace,
-        pool: options.resolved.pg.pool,
-      });
-      break;
-    }
+    default:
+      throw new Error(`unsupported single-project attestation backend: ${String(backend)}`);
   }
   return available(
     attestationBackend,
