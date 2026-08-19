@@ -33,9 +33,11 @@ const NAMESPACE: AttestationNamespace = { backend: "xdg", projectKey: "t2042-int
 const PEER_FIXTURE = new URL("./fixtures/gitChangeBrokerPeer.ts", import.meta.url).pathname;
 const RECEIPT_CHAIN_MATRIX_TIMEOUT_MS = 30_000;
 const CQ_CLI = new URL("../../cq-cli/src/main.ts", import.meta.url).pathname;
-const GUARDED_REBASE_SETUP_TIMEOUT_MS = 30_000;
+const GUARDED_REBASE_SETUP_TIMEOUT_MS = 120_000;
 const D334_GIT_USER_NAME = "CQ D334 fixture";
 const D334_GIT_USER_EMAIL = "d334@example.invalid";
+/** Test-glob path the guarded fixture's change touches, so mutation evidence is mandatory. */
+const GUARDED_FIXTURE_PATH = "pkg/test/guarded-fixture.test.ts";
 const openBackends = new Set<FsAttestationBackend>();
 
 async function git(cwd: string, args: readonly string[]): Promise<string> {
@@ -66,7 +68,7 @@ function artifactStore(surface: "claude" | "codex" = "claude"): PromptArtifactSt
     sidecarSchemaRoleId: "implement-worker",
     promptSurface: surface,
     promptDigest: "a".repeat(64),
-    schemaVersion: 8,
+    schemaVersion: 9,
   };
   return {
     readManifest: () => ({
@@ -380,8 +382,9 @@ async function createGuardedRetryFixture(
     await git(repositoryRoot, ["config", "--local", "user.name", D334_GIT_USER_NAME]);
     await git(repositoryRoot, ["config", "--local", "user.email", D334_GIT_USER_EMAIL]);
   }
-  await fs.writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
-  await git(repositoryRoot, ["add", "file.txt"]);
+  await fs.mkdir(path.join(repositoryRoot, "pkg", "test"), { recursive: true });
+  await fs.writeFile(path.join(repositoryRoot, GUARDED_FIXTURE_PATH), "before\n");
+  await git(repositoryRoot, ["add", GUARDED_FIXTURE_PATH]);
   await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
   const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
   if (productionManagerState) {
@@ -429,7 +432,7 @@ async function createGuardedRetryFixture(
     ...first.handle,
     inputCapability: first.prepared.inputCapability,
   });
-  await fs.writeFile(path.join(managed.handle.absolutePath, "file.txt"), "first\n");
+  await fs.writeFile(path.join(managed.handle.absolutePath, GUARDED_FIXTURE_PATH), "first\n");
   if (opened.capability.gitCommit === undefined) throw new Error("git_commit was not wired");
   const firstReceipt = await opened.capability.gitCommit({
     ...first.handle,
@@ -440,7 +443,7 @@ async function createGuardedRetryFixture(
     changes: [
       {
         kind: "modify",
-        path: "file.txt",
+        path: GUARDED_FIXTURE_PATH,
         oldState: { mode: "100644", digest: sha256("before\n") },
         newState: { mode: "100644", digest: sha256("first\n") },
       },
@@ -450,28 +453,63 @@ async function createGuardedRetryFixture(
   return { ...partial, first, firstReceipt };
 }
 
+interface GuardedRebaseContinuationContext {
+  readonly guardedRebase: string;
+  readonly oldResultCommit: string;
+  readonly ontoCommit: string;
+  readonly rebasedStartCommit: string;
+}
+
+interface GuardedContinuationReceiptContext {
+  readonly handle: AcceptedPrepare["handle"];
+  readonly resultCommit: string;
+  readonly receipts: readonly GuardedRetryFixture["firstReceipt"][];
+}
+
 async function completeGuardedContinuation(
   fixture: GuardedRetryFixture,
   capability: DispatchCapabilityInstance,
   prepared: AcceptedPrepare,
-  startingCommit: string,
-): Promise<void> {
+  context: GuardedRebaseContinuationContext,
+  round: number,
+  correction: { readonly content: string; readonly baseReceipts: readonly GuardedRetryFixture["firstReceipt"][] },
+): Promise<GuardedContinuationReceiptContext> {
   const materialized = await capability.fetchInput({
     ...prepared.handle,
     inputCapability: prepared.prepared.inputCapability,
   });
   const input = materialized.input as Readonly<Record<string, unknown>>;
-  const inherited = input["inheritedGitReceipts"];
-  if (
-    inherited !== undefined &&
-    (!Array.isArray(inherited) ||
-      inherited.length === 0 ||
-      (inherited.at(-1) as Readonly<Record<string, unknown>>)["newHead"] !== startingCommit)
-  ) {
-    throw new Error("D334 restart returned a receipt prefix incompatible with the rebased tip");
+  const injected = input["guardedRebaseLineage"] as Readonly<Record<string, unknown>> | undefined;
+  if (injected === undefined) {
+    throw new Error("guarded-rebase continuation did not receive the server-injected lineage");
   }
-  const inheritedReceipts = (inherited ?? []) as GuardedRetryFixture["firstReceipt"][];
-  await fs.writeFile(path.join(fixture.managed.handle.absolutePath, "file.txt"), "continued\n");
+  if (
+    JSON.stringify(injected) !==
+    JSON.stringify({
+      guardedRebase: context.guardedRebase,
+      oldResultCommit: context.oldResultCommit,
+      ontoCommit: context.ontoCommit,
+      rebasedStartCommit: context.rebasedStartCommit,
+      exactTip: true,
+    })
+  ) {
+    throw new Error(`guarded-rebase lineage mismatch: ${JSON.stringify(injected)}`);
+  }
+  const inherited = input["inheritedGitReceipts"];
+  if (round === 1 && inherited !== undefined) {
+    throw new Error("a pre-rebase receipt must never be inherited across a guarded rebase");
+  }
+  if (
+    round > 1 &&
+    (inherited === undefined ||
+      JSON.stringify(inherited) !== JSON.stringify(correction.baseReceipts))
+  ) {
+    throw new Error("a guarded correction lost its exact post-rebase receipt prefix");
+  }
+  await fs.writeFile(
+    path.join(fixture.managed.handle.absolutePath, GUARDED_FIXTURE_PATH),
+    correction.content,
+  );
   if (capability.gitCommit === undefined || prepared.prepared.gitChangeCapability === undefined) {
     throw new Error("guarded-rebase continuation did not receive git_commit authorization");
   }
@@ -479,21 +517,24 @@ async function completeGuardedContinuation(
     throw new Error("guarded-rebase continuation did not receive parent gate authority");
   }
   const parentGateCapability = prepared.prepared.parentGateCapability;
+  const expectedHead =
+    round === 1 ? context.rebasedStartCommit : correction.baseReceipts.at(-1)!.newHead;
   const currentReceipt = await capability.gitCommit({
     ...prepared.handle,
     gitChangeCapability: prepared.prepared.gitChangeCapability,
-    operationId: `t2148-${fixture.label}-round-1-change`,
-    expectedHead: startingCommit,
-    message: `${fixture.label}: continue after the guarded rebase`,
+    operationId: `t2148-${fixture.label}-round-${String(round)}-change`,
+    expectedHead,
+    message: `${fixture.label}: continue after the guarded rebase (round ${String(round)})`,
     changes: [
       {
         kind: "modify",
-        path: "file.txt",
-        oldState: { mode: "100644", digest: sha256("first\n") },
-        newState: { mode: "100644", digest: sha256("continued\n") },
+        path: GUARDED_FIXTURE_PATH,
+        oldState: { mode: "100644", digest: sha256(round === 1 ? "first\n" : "continued\n") },
+        newState: { mode: "100644", digest: sha256(correction.content) },
       },
     ],
   });
+  const receipts = [...correction.baseReceipts, currentReceipt];
   const stored = await capability.storeResult({
     resultCapability: prepared.prepared.resultCapability,
     output: {
@@ -502,16 +543,30 @@ async function completeGuardedContinuation(
       resultCommit: currentReceipt.newHead,
       branch: fixture.managed.handle.branch,
       actualWorktreePath: fixture.managed.handle.absolutePath,
-      filesTouched: ["file.txt"],
-      gitReceipts: [...inheritedReceipts, currentReceipt],
+      filesTouched: [GUARDED_FIXTURE_PATH],
+      gitReceipts: receipts,
+      gitLineage: {
+        kind: "guarded-rebase",
+        guardedRebase: context.guardedRebase,
+        ontoCommit: context.ontoCommit,
+        rebasedStartCommit: context.rebasedStartCommit,
+        exactTip: true,
+      },
       checkSummary: "trusted gate delegated to result storage",
       baseVerification: {
         status: "verified",
         relation: "descendant",
-        baseCommit: fixture.baseCommit,
+        baseCommit: context.ontoCommit,
         headCommit: currentReceipt.newHead,
       },
       summary: "completed the guarded-rebase continuation through public lifecycle boundaries",
+      mutationTable: [
+        {
+          mutation: `${GUARDED_FIXTURE_PATH}: replaced the rebased content with the round ${String(round)} continuation`,
+          observed: "the durable broker receipt pins the exact rebased-to-continuation diff",
+          restored: "the continuation content is committed verbatim by the broker",
+        },
+      ],
     } as unknown as DispatchJSONValue,
   });
   if (stored.state !== "gate-pending") throw new Error(`unexpected stored state ${stored.state}`);
@@ -530,8 +585,8 @@ async function completeGuardedContinuation(
     nativeCompletion: {
       kind: "native-completion",
       actor: "trusted-parent",
-      childId: `${fixture.label}-round-1`,
-      runId: `${fixture.label}-round-1`,
+      childId: `${fixture.label}-round-${String(round)}`,
+      runId: `${fixture.label}-round-${String(round)}`,
       completedAt: "2026-08-18T12:00:02.000Z",
     },
     expectedProvenance: prepared.prepared.promptProvenance,
@@ -542,12 +597,22 @@ async function completeGuardedContinuation(
   const fetched = await capability.fetch(prepared.handle);
   if (fetched.state !== "consumed") throw new Error(`unexpected fetched state ${fetched.state}`);
   const output = fetched.output as Readonly<Record<string, unknown>>;
-  if (
-    JSON.stringify(output["gitReceipts"]) !==
-    JSON.stringify([...inheritedReceipts, currentReceipt])
-  ) {
-    throw new Error("consumed result lost the exact guarded-rebase receipt chain");
+  if (JSON.stringify(output["gitReceipts"]) !== JSON.stringify(receipts)) {
+    throw new Error("consumed result lost the exact guarded-rebase receipt suffix");
   }
+  if (
+    JSON.stringify(output["gitLineage"]) !==
+    JSON.stringify({
+      kind: "guarded-rebase",
+      guardedRebase: context.guardedRebase,
+      ontoCommit: context.ontoCommit,
+      rebasedStartCommit: context.rebasedStartCommit,
+      exactTip: true,
+    })
+  ) {
+    throw new Error("consumed result lost the exact guarded-rebase lineage");
+  }
+  return { handle: prepared.handle, resultCommit: currentReceipt.newHead, receipts };
 }
 
 afterAll(async () => {
@@ -1118,29 +1183,23 @@ describe("dispatch-bound Git change capability", () => {
     let d332!: GuardedRetryFixture;
     let d334!: GuardedRetryFixture;
     let d334RebasedHead!: string;
+    let d334OntoCommit!: string;
+    let d334GuardedRebase!: string;
+    let d334Negative!: GuardedRetryFixture;
+    let d334NegativeRebasedHead!: string;
+    let d334NegativeOntoCommit!: string;
+    let d334NegativeReference!: string;
+    let d334ExactTip!: GuardedRetryFixture;
+    let d334ExactTipRebasedHead!: string;
+    let d334ExactTipOntoCommit!: string;
+    let d334ExactTipReference!: string;
 
-    beforeAll(async () => {
-      d332 = await createGuardedRetryFixture("d332-lineage-free", 2_148);
-
-      d334 = await createGuardedRetryFixture("d334-guarded-rebase", 2_149, true);
-      await closeGuardedRetryBackend(d334.backend);
-      await fs.writeFile(path.join(d334.repositoryRoot, ".gitignore"), ".claude/\n.cq/\n");
-      await fs.writeFile(path.join(d334.repositoryRoot, "cq.toml"), '[ledger]\nbackend = "fs"\n');
-      await fs.writeFile(path.join(d334.repositoryRoot, "main.txt"), "advanced main\n");
-      await git(d334.repositoryRoot, ["add", ".gitignore", "cq.toml", "main.txt"]);
-      await git(d334.repositoryRoot, ["commit", "-q", "-m", "advance main"]);
-      const ontoCommit = await git(d334.repositoryRoot, ["rev-parse", "HEAD"]);
-      const ledger = await createLedgerStore(d334.repositoryRoot);
-      try {
-        await ledger.store.createItem(TASKS_LEDGER, MILESTONES_AMBIENT_ID, {
-          id: "T2148",
-          status: "wip",
-          fields: { headline: "D334 guarded-rebase continuation" },
-        });
-      } finally {
-        await ledger.store.dispose();
-      }
-      await exec(
+    async function runGuardedRebaseCli(
+      fixture: GuardedRetryFixture,
+      ontoCommit: string,
+      operationId: string,
+    ): Promise<{ readonly rebasedHead: string; readonly reference: string }> {
+      const run = await exec(
         process.execPath,
         [
           "run",
@@ -1150,18 +1209,74 @@ describe("dispatch-bound Git change capability", () => {
           "--operation",
           "rebase",
           "--cwd",
-          d334.repositoryRoot,
+          fixture.repositoryRoot,
           "--task-id",
           "T2148",
           "--commit",
           ontoCommit,
+          "--operation-id",
+          operationId,
         ],
-        { cwd: d334.repositoryRoot, encoding: "utf8", env: process.env },
+        { cwd: fixture.repositoryRoot, encoding: "utf8", env: process.env },
       );
-      d334RebasedHead = await git(d334.managed.handle.absolutePath, ["rev-parse", "HEAD"]);
-      if (d334RebasedHead === d334.firstReceipt.newHead) {
+      const match = /^CQ_GUARDED_REBASE_REFERENCE=(\S+)$/mu.exec(run.stdout);
+      if (match === null) {
+        throw new Error(`guarded rebase emitted no reference: ${run.stdout}\n${run.stderr}`);
+      }
+      return {
+        rebasedHead: await git(fixture.managed.handle.absolutePath, ["rev-parse", "HEAD"]),
+        reference: match[1]!,
+      };
+    }
+
+    async function setupGuardedRebase(
+      fixture: GuardedRetryFixture,
+      operationId: string,
+    ): Promise<{ readonly ontoCommit: string; readonly rebasedHead: string; readonly reference: string }> {
+      await closeGuardedRetryBackend(fixture.backend);
+      await fs.writeFile(path.join(fixture.repositoryRoot, ".gitignore"), ".claude/\n.cq/\n");
+      await fs.writeFile(path.join(fixture.repositoryRoot, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+      await fs.writeFile(path.join(fixture.repositoryRoot, "main.txt"), "advanced main\n");
+      await git(fixture.repositoryRoot, ["add", ".gitignore", "cq.toml", "main.txt"]);
+      await git(fixture.repositoryRoot, ["commit", "-q", "-m", "advance main"]);
+      const ontoCommit = await git(fixture.repositoryRoot, ["rev-parse", "HEAD"]);
+      const ledger = await createLedgerStore(fixture.repositoryRoot);
+      try {
+        await ledger.store.createItem(TASKS_LEDGER, MILESTONES_AMBIENT_ID, {
+          id: "T2148",
+          status: "wip",
+          fields: { headline: "D334 guarded-rebase continuation" },
+        });
+      } finally {
+        await ledger.store.dispose();
+      }
+      const { rebasedHead, reference } = await runGuardedRebaseCli(fixture, ontoCommit, operationId);
+      if (rebasedHead === fixture.firstReceipt.newHead) {
         throw new Error("D334 setup did not produce a real rebased commit");
       }
+      return { ontoCommit, rebasedHead, reference };
+    }
+
+    beforeAll(async () => {
+      d332 = await createGuardedRetryFixture("d332-lineage-free", 2_148);
+
+      d334 = await createGuardedRetryFixture("d334-guarded-rebase", 2_149, true);
+      const setup = await setupGuardedRebase(d334, "d334-guarded-rebase-operation");
+      d334OntoCommit = setup.ontoCommit;
+      d334RebasedHead = setup.rebasedHead;
+      d334GuardedRebase = setup.reference;
+
+      d334Negative = await createGuardedRetryFixture("d334-negative", 2_152, true);
+      const negative = await setupGuardedRebase(d334Negative, "d334-negative-rebase-operation");
+      d334NegativeOntoCommit = negative.ontoCommit;
+      d334NegativeRebasedHead = negative.rebasedHead;
+      d334NegativeReference = negative.reference;
+
+      d334ExactTip = await createGuardedRetryFixture("d334-exact-tip", 2_153, true);
+      const exactTip = await setupGuardedRebase(d334ExactTip, "d334-exact-tip-rebase-operation");
+      d334ExactTipOntoCommit = exactTip.ontoCommit;
+      d334ExactTipRebasedHead = exactTip.rebasedHead;
+      d334ExactTipReference = exactTip.reference;
     }, GUARDED_REBASE_SETUP_TIMEOUT_MS);
 
     test(
@@ -1204,57 +1319,464 @@ describe("dispatch-bound Git change capability", () => {
       },
     );
 
-    // expected-failure: defects:D334
-    test.failing(
+    test(
       "D334 accepts an exact guarded-rebase continuation after broker restart [Behavioral-Progression Blackbox-GoodCommunication]",
       async () => {
-        const restarted = openGuardedRetryCapability(d334, 2_150);
-        let retry: Awaited<ReturnType<DispatchCapabilityInstance["prepare"]>>;
-        try {
-          retry = await restarted.capability.prepare({
-            roleId: "implement-worker",
-            input: guardedWorkerInput(d334, 1, d334RebasedHead),
-            idempotencyKey: "T2148-d334-guarded-rebase-round-1",
-            timeoutMs: 600_000,
-            expectedChild: {
-              childId: "d334-guarded-rebase-round-1",
-              runId: "d334-guarded-rebase-round-1",
-            },
-            reprepareOf: d334.first.handle,
-          });
-        } catch (error) {
-          process.stderr.write(
-            `D334 prepare threw instead of returning a decision: ${String(error)}\n`,
-          );
-          return;
-        }
+        const restarted = openGuardedRetryCapability(d334, 3_149);
+        const retry = await restarted.capability.prepare({
+          roleId: "implement-worker",
+          input: {
+            taskId: "T2148",
+            headline: "reproduce the remaining current-main worker authority gaps",
+            description: "exercise one exact brokered worker continuation boundary",
+            acceptance: "the public dispatch lifecycle completes at the managed worktree tip",
+            worktreePath: d334.managed.handle.absolutePath,
+            branch: d334.managed.handle.branch,
+            baseCommit: d334OntoCommit,
+            round: 1,
+            startingCommit: d334RebasedHead,
+            priorResultCommit: d334.firstReceipt.newHead,
+          },
+          idempotencyKey: "T2148-d334-guarded-rebase-round-1",
+          timeoutMs: 600_000,
+          expectedChild: {
+            childId: "d334-guarded-rebase-round-1",
+            runId: "d334-guarded-rebase-round-1",
+          },
+          reprepareOf: d334.first.handle,
+          guardedRebase: d334GuardedRebase,
+        });
         if (!retry.accepted) {
-          if (
-            Object.hasOwn(retry, "handle") ||
-            Object.hasOwn(retry, "prepared") ||
-            retry.allocated !== false
-          ) {
-            throw new Error(
-              `D334 rejected prepare still allocated authority: ${JSON.stringify(retry)}`,
-            );
-          }
-          if (
-            retry.path === "input.startingCommit" &&
-            retry.detail.includes("prior-generation receipt inheritance failed") &&
-            retry.detail.includes("does not belong to resultCommit")
-          ) {
-            throw new Error(
-              `D334 observed guarded-rebase receipt-lineage rejection at rebased tip ${d334RebasedHead}: ${retry.detail}`,
-            );
-          }
-          process.stderr.write(
-            `D334 unrelated prepare rejection at ${retry.path}: ${retry.detail}\n`,
+          throw new Error(
+            `D334 rejected the exact guarded-rebase continuation at ${retry.path}: ${retry.detail}`,
           );
-          return;
         }
-        await completeGuardedContinuation(d334, restarted.capability, retry, d334RebasedHead);
+        const context = {
+          guardedRebase: d334GuardedRebase,
+          oldResultCommit: d334.firstReceipt.newHead,
+          ontoCommit: d334OntoCommit,
+          rebasedStartCommit: d334RebasedHead,
+        };
+        const first = await completeGuardedContinuation(d334, restarted.capability, retry, context, 1, {
+          content: "continued\n",
+          baseReceipts: [],
+        });
+
+        // A later correction round carries the verified bridge from the
+        // persisted prior binding: no caller reference, early persistence, and
+        // a non-empty contiguous suffix beginning at the rebased head.
+        const corrected = await restarted.capability.prepare({
+          roleId: "implement-worker",
+          input: {
+            taskId: "T2148",
+            headline: "reproduce the remaining current-main worker authority gaps",
+            description: "exercise one exact brokered worker continuation boundary",
+            acceptance: "the public dispatch lifecycle completes at the managed worktree tip",
+            worktreePath: d334.managed.handle.absolutePath,
+            branch: d334.managed.handle.branch,
+            baseCommit: d334OntoCommit,
+            round: 2,
+            startingCommit: first.resultCommit,
+            priorResultCommit: first.resultCommit,
+          },
+          idempotencyKey: "T2148-d334-guarded-rebase-round-2",
+          timeoutMs: 600_000,
+          expectedChild: {
+            childId: "d334-guarded-rebase-round-2",
+            runId: "d334-guarded-rebase-round-2",
+          },
+          reprepareOf: first.handle,
+        });
+        if (!corrected.accepted) {
+          throw new Error(
+            `D334 rejected the guarded correction round at ${corrected.path}: ${corrected.detail}`,
+          );
+        }
+        await completeGuardedContinuation(d334, restarted.capability, corrected, context, 2, {
+          content: "corrected\n",
+          baseReceipts: first.receipts,
+        });
       },
     );
+
+    function guardedContinuationInput(
+      fixture: GuardedRetryFixture,
+      ontoCommit: string,
+      startingCommit: string,
+      priorResultCommit: string,
+      round: number,
+    ): DispatchJSONValue {
+      return {
+        taskId: "T2148",
+        headline: "reproduce the remaining current-main worker authority gaps",
+        description: "exercise one exact brokered worker continuation boundary",
+        acceptance: "the public dispatch lifecycle completes at the managed worktree tip",
+        worktreePath: fixture.managed.handle.absolutePath,
+        branch: fixture.managed.handle.branch,
+        baseCommit: ontoCommit,
+        round,
+        startingCommit,
+        priorResultCommit,
+      } as unknown as DispatchJSONValue;
+    }
+
+    function expectRejection(
+      retry: Awaited<ReturnType<DispatchCapabilityInstance["prepare"]>>,
+      path: string,
+      detail: string,
+    ): void {
+      if (retry.accepted) {
+        throw new Error(
+          `guarded-rebase control unexpectedly allocated attestation ${retry.handle.attestationId} generation ${String(retry.handle.generation)}`,
+        );
+      }
+      if (
+        Object.hasOwn(retry, "handle") ||
+        Object.hasOwn(retry, "prepared") ||
+        retry.allocated !== false
+      ) {
+        throw new Error(`rejected prepare still allocated authority: ${JSON.stringify(retry)}`);
+      }
+      expect(retry.path).toBe(path);
+      expect(retry.detail).toContain(detail);
+    }
+
+    test("guarded prepare controls: caller injection, omission, substitution, and foreign coordinates reject [Behavioral-Progression Blackbox-GoodCommunication]", async () => {
+      const opened = openGuardedRetryCapability(d334Negative, 3_152);
+      const capability = opened.capability;
+      try {
+      const roundOne = {
+        roleId: "implement-worker" as const,
+        idempotencyKey: "T2148-d334-negative-injection",
+        timeoutMs: 600_000,
+        expectedChild: { childId: "d334-negative-injection", runId: "d334-negative-injection" },
+        reprepareOf: d334Negative.first.handle,
+      };
+      // Caller-injected lineage is never accepted, even with the exact coordinates.
+      expectRejection(
+        await capability.prepare({
+          ...roundOne,
+          input: {
+            ...(guardedContinuationInput(
+              d334Negative,
+              d334NegativeOntoCommit,
+              d334NegativeRebasedHead,
+              d334Negative.firstReceipt.newHead,
+              1,
+            ) as Readonly<Record<string, unknown>>),
+            guardedRebaseLineage: {
+              guardedRebase: d334NegativeReference,
+              oldResultCommit: d334Negative.firstReceipt.newHead,
+              ontoCommit: d334NegativeOntoCommit,
+              rebasedStartCommit: d334NegativeRebasedHead,
+              exactTip: true,
+            },
+          },
+          guardedRebase: d334NegativeReference,
+        }),
+        "input.guardedRebaseLineage",
+        "caller must omit the server-injected guarded-rebase lineage",
+      );
+      // Omission: the advanced rebased tip without the reference stays unauthorized.
+      expectRejection(
+        await capability.prepare({
+          ...roundOne,
+          idempotencyKey: "T2148-d334-negative-omission",
+          expectedChild: { childId: "d334-negative-omission", runId: "d334-negative-omission" },
+          input: guardedContinuationInput(
+            d334Negative,
+            d334NegativeOntoCommit,
+            d334NegativeRebasedHead,
+            d334Negative.firstReceipt.newHead,
+            1,
+          ),
+        }),
+        "input.startingCommit",
+        "prior-generation receipt inheritance failed",
+      );
+      // Substitution: a well-formed but unknown reference resolves nothing.
+      expectRejection(
+        await capability.prepare({
+          ...roundOne,
+          idempotencyKey: "T2148-d334-negative-substitution",
+          expectedChild: {
+            childId: "d334-negative-substitution",
+            runId: "d334-negative-substitution",
+          },
+          input: guardedContinuationInput(
+            d334Negative,
+            d334NegativeOntoCommit,
+            d334NegativeRebasedHead,
+            d334Negative.firstReceipt.newHead,
+            1,
+          ),
+          guardedRebase: `cq-guarded-rebase:v1:${"1".repeat(64)}`,
+        }),
+        "guardedRebase",
+        "does not resolve to a durable journal",
+      );
+      // Foreign/stale coordinates: the exact reference with a wrong declared base.
+      expectRejection(
+        await capability.prepare({
+          ...roundOne,
+          idempotencyKey: "T2148-d334-negative-foreign-base",
+          expectedChild: {
+            childId: "d334-negative-foreign-base",
+            runId: "d334-negative-foreign-base",
+          },
+          input: guardedContinuationInput(
+            d334Negative,
+            d334Negative.baseCommit,
+            d334NegativeRebasedHead,
+            d334Negative.firstReceipt.newHead,
+            1,
+          ),
+          guardedRebase: d334NegativeReference,
+        }),
+        "input.baseCommit",
+        "baseCommit to equal the journaled ontoCommit",
+      );
+      // No broader ancestry exception: priorResultCommit must equal oldResultCommit exactly.
+      expectRejection(
+        await capability.prepare({
+          ...roundOne,
+          idempotencyKey: "T2148-d334-negative-foreign-prior",
+          expectedChild: {
+            childId: "d334-negative-foreign-prior",
+            runId: "d334-negative-foreign-prior",
+          },
+          input: guardedContinuationInput(
+            d334Negative,
+            d334NegativeOntoCommit,
+            d334NegativeRebasedHead,
+            d334NegativeRebasedHead,
+            1,
+          ),
+          guardedRebase: d334NegativeReference,
+        }),
+        "input.priorResultCommit",
+        "priorResultCommit to equal the bound old worker result",
+      );
+      } finally {
+        await closeGuardedRetryBackend(opened.backend);
+      }
+    });
+
+    test("guarded store controls: pre-rebase receipts, lineage omission/substitution, and mode spoofing fail closed [Behavioral-Progression Blackbox-GoodCommunication]", async () => {
+      const opened = openGuardedRetryCapability(d334Negative, 3_155);
+      const capability = opened.capability;
+      try {
+      const baseOutput = {
+        taskId: "T2148",
+        status: "pass",
+        resultCommit: d334NegativeRebasedHead,
+        branch: d334Negative.managed.handle.branch,
+        actualWorktreePath: d334Negative.managed.handle.absolutePath,
+        filesTouched: [GUARDED_FIXTURE_PATH],
+        gitReceipts: [] as readonly unknown[],
+        gitLineage: {
+          kind: "guarded-rebase",
+          guardedRebase: d334NegativeReference,
+          ontoCommit: d334NegativeOntoCommit,
+          rebasedStartCommit: d334NegativeRebasedHead,
+          exactTip: true,
+        },
+        checkSummary: "trusted gate delegated to result storage",
+        baseVerification: {
+          status: "verified",
+          relation: "descendant",
+          baseCommit: d334NegativeOntoCommit,
+          headCommit: d334NegativeRebasedHead,
+        },
+        summary: "control payload",
+        mutationTable: [
+          {
+            mutation: `${GUARDED_FIXTURE_PATH}: rebased change`,
+            observed: "the journal pins the rebased diff",
+            restored: "no local mutation",
+          },
+        ],
+      };
+      const controls = [
+        {
+          label: "pre-rebase-receipt",
+          output: { ...baseOutput, gitReceipts: [d334Negative.firstReceipt] },
+          error: "guarded receipt suffix must begin at the journaled rebased head",
+        },
+        {
+          label: "lineage-omission",
+          output: Object.fromEntries(
+            Object.entries(baseOutput).filter(([key]) => key !== "gitLineage"),
+          ),
+          error: "omitted or substituted its resolved lineage",
+        },
+        {
+          label: "lineage-substitution",
+          output: {
+            ...baseOutput,
+            gitLineage: { ...baseOutput.gitLineage, exactTip: false },
+          },
+          error: "omitted or substituted its resolved lineage",
+        },
+        {
+          label: "mode-spoofing",
+          output: { ...baseOutput, resultCommit: d334Negative.firstReceipt.newHead },
+          error: "empty guarded receipt suffix",
+        },
+      ] as const;
+      let prior = d334Negative.first.handle;
+      for (const [index, control] of controls.entries()) {
+        const prepared = await capability.prepare({
+          roleId: "implement-worker",
+          input: guardedContinuationInput(
+            d334Negative,
+            d334NegativeOntoCommit,
+            d334NegativeRebasedHead,
+            d334Negative.firstReceipt.newHead,
+            index + 1,
+          ),
+          idempotencyKey: `T2148-d334-negative-store-${control.label}`,
+          timeoutMs: 600_000,
+          expectedChild: {
+            childId: `d334-negative-store-${control.label}`,
+            runId: `d334-negative-store-${control.label}`,
+          },
+          reprepareOf: prior,
+          guardedRebase: d334NegativeReference,
+        });
+        if (!prepared.accepted) {
+          throw new Error(`control ${control.label} did not prepare: ${prepared.detail}`);
+        }
+        await capability.fetchInput({
+          ...prepared.handle,
+          inputCapability: prepared.prepared.inputCapability,
+        });
+        await expect(
+          capability.storeResult({
+            resultCapability: prepared.prepared.resultCapability,
+            output: control.output as unknown as DispatchJSONValue,
+          }),
+        ).rejects.toThrow(control.error);
+        await capability.abort({ ...prepared.handle, reason: "parent-lost" });
+        prior = prepared.handle;
+      }
+      } finally {
+        await closeGuardedRetryBackend(opened.backend);
+      }
+    });
+
+    test("D334 no-new-commit control: the exact-tip mode stages with an empty fresh suffix and a trusted parent gate [Behavioral-Progression Blackbox-GoodCommunication]", async () => {
+      const opened = openGuardedRetryCapability(d334ExactTip, 3_153);
+      const capability = opened.capability;
+      try {
+      const prepared = await capability.prepare({
+        roleId: "implement-worker",
+        input: guardedContinuationInput(
+          d334ExactTip,
+          d334ExactTipOntoCommit,
+          d334ExactTipRebasedHead,
+          d334ExactTip.firstReceipt.newHead,
+          1,
+        ),
+        idempotencyKey: "T2148-d334-exact-tip-round-1",
+        timeoutMs: 600_000,
+        expectedChild: { childId: "d334-exact-tip-round-1", runId: "d334-exact-tip-round-1" },
+        reprepareOf: d334ExactTip.first.handle,
+        guardedRebase: d334ExactTipReference,
+      });
+      if (!prepared.accepted) {
+        throw new Error(`exact-tip prepare rejected: ${prepared.path}: ${prepared.detail}`);
+      }
+      const materialized = await capability.fetchInput({
+        ...prepared.handle,
+        inputCapability: prepared.prepared.inputCapability,
+      });
+      const input = materialized.input as Readonly<Record<string, unknown>>;
+      expect(input["guardedRebaseLineage"]).toEqual({
+        guardedRebase: d334ExactTipReference,
+        oldResultCommit: d334ExactTip.firstReceipt.newHead,
+        ontoCommit: d334ExactTipOntoCommit,
+        rebasedStartCommit: d334ExactTipRebasedHead,
+        exactTip: true,
+      });
+      expect(input["inheritedGitReceipts"]).toBeUndefined();
+      // No WIP commit and no git_commit call: the rebased tip already carries
+      // the byte-identical approved change, so resultCommit is the rebased head.
+      const stored = await capability.storeResult({
+        resultCapability: prepared.prepared.resultCapability,
+        output: {
+          taskId: "T2148",
+          status: "pass",
+          resultCommit: d334ExactTipRebasedHead,
+          branch: d334ExactTip.managed.handle.branch,
+          actualWorktreePath: d334ExactTip.managed.handle.absolutePath,
+          filesTouched: [GUARDED_FIXTURE_PATH],
+          gitReceipts: [],
+          gitLineage: {
+            kind: "guarded-rebase",
+            guardedRebase: d334ExactTipReference,
+            ontoCommit: d334ExactTipOntoCommit,
+            rebasedStartCommit: d334ExactTipRebasedHead,
+            exactTip: true,
+          },
+          checkSummary: "trusted gate delegated to result storage",
+          baseVerification: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit: d334ExactTipOntoCommit,
+            headCommit: d334ExactTipRebasedHead,
+          },
+          summary: "no-new-commit exact-tip continuation at the journaled rebased head",
+          mutationTable: [
+            {
+              mutation: `${GUARDED_FIXTURE_PATH}: rebased change re-proven at the rebased tip`,
+              observed: "the onto..result diff equals the approved pre-rebase change",
+              restored: "no local mutation; the tree stays clean at the rebased head",
+            },
+          ],
+        } as unknown as DispatchJSONValue,
+      });
+      if (stored.state !== "gate-pending") throw new Error(`unexpected stored state ${stored.state}`);
+      if (
+        capability.finalizeParentGate === undefined ||
+        prepared.prepared.parentGateCapability === undefined
+      ) {
+        throw new Error("exact-tip control lacks parent gate authority");
+      }
+      const finalized = await capability.finalizeParentGate({
+        ...prepared.handle,
+        parentGateCapability: prepared.prepared.parentGateCapability,
+      });
+      expect(finalized.state).toBe("result-stored");
+      const confirmed = await capability.confirmCompletion({
+        ...prepared.handle,
+        nativeCompletion: {
+          kind: "native-completion",
+          actor: "trusted-parent",
+          childId: "d334-exact-tip-round-1",
+          runId: "d334-exact-tip-round-1",
+          completedAt: "2026-08-18T12:00:03.000Z",
+        },
+        expectedProvenance: prepared.prepared.promptProvenance,
+      });
+      expect(confirmed.state).toBe("consumed");
+      const fetched = await capability.fetch(prepared.handle);
+      if (fetched.state !== "consumed") throw new Error(`unexpected fetched state ${fetched.state}`);
+      const output = fetched.output as Readonly<Record<string, unknown>>;
+      expect(output["resultCommit"]).toBe(d334ExactTipRebasedHead);
+      expect(output["gitReceipts"]).toEqual([]);
+      expect(output["filesTouched"]).toEqual([GUARDED_FIXTURE_PATH]);
+      expect(output["gitLineage"]).toEqual({
+        kind: "guarded-rebase",
+        guardedRebase: d334ExactTipReference,
+        ontoCommit: d334ExactTipOntoCommit,
+        rebasedStartCommit: d334ExactTipRebasedHead,
+        exactTip: true,
+      });
+      } finally {
+        await closeGuardedRetryBackend(opened.backend);
+      }
+    });
   });
 
   test("serializes broker commits against result storage, abort, and guarded release in peer processes", async () => {

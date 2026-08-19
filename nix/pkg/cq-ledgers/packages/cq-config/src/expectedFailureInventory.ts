@@ -2,8 +2,6 @@ import type { ExpectedFailureInventoryEntry } from "./expectedFailurePolicy.js";
 
 const ARCHIVE_INVARIANT_FILE =
   "nix/pkg/cq-ledgers/packages/ledger/test/archive-dependency-invariants.test.ts";
-const DISPATCH_CAPABILITY_FILE =
-  "nix/pkg/cq-ledgers/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts";
 
 export const EXPECTED_FAILURE_INVENTORY: readonly ExpectedFailureInventoryEntry[] = [
   {
@@ -41,11 +39,5 @@ export const EXPECTED_FAILURE_INVENTORY: readonly ExpectedFailureInventoryEntry[
     title:
       "race (barrier-concurrent): exactly one of reopen/archive refuses — never an active dependent on an archived non-satisfying target",
     ledgerRef: "tasks:T826",
-  },
-  {
-    file: DISPATCH_CAPABILITY_FILE,
-    title:
-      "D334 accepts an exact guarded-rebase continuation after broker restart [Behavioral-Progression Blackbox-GoodCommunication]",
-    ledgerRef: "defects:D334",
   },
 ];
