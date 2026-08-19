@@ -66,5 +66,8 @@ describe("normalizeUrl / liveUrlFor", () => {
   it("derives the ws live URL from the mcp URL", () => {
     expect(liveUrlFor("http://127.0.0.1:7777/mcp")).toBe("ws://127.0.0.1:7777/ws");
     expect(liveUrlFor("https://h/mcp")).toBe("wss://h/ws");
+    expect(liveUrlFor("http://127.0.0.1:5190/p/alpha/mcp")).toBe(
+      "ws://127.0.0.1:5190/p/alpha/ws",
+    );
   });
 });

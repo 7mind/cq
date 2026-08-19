@@ -54,6 +54,8 @@ import {
   type XdgCoherenceWatcher,
   type PostgresCoherenceWatcher,
   createLedgerStore,
+  resolveLedgerBackend,
+  resolveProjectKey,
   RemoteLedgerClientNotWiredError,
   startXdgCoherenceWatcher,
   startPostgresCoherenceWatcher,
@@ -76,7 +78,10 @@ import {
   bindWorksetInvocationAuthority,
   type WorksetInvocationAuthority,
 } from "@cq/ledger";
+import { loadConfig, resolveRemoteLedgerTokenFromProcess } from "@cq/config";
 import { createConfigCapability } from "./configCapability.js";
+import { serveRemoteStdioProxy } from "./stdioRemoteProxy.js";
+export { connectRemoteMcpProxy, serveRemoteStdioProxy } from "./stdioRemoteProxy.js";
 export { computeConfig } from "./configCapability.js";
 import {
   createSingleProjectDispatchRuntime,
@@ -1126,6 +1131,29 @@ export async function main(argv: readonly string[]): Promise<void> {
     promptRoot,
     environment: process.env,
   });
+
+  if (resolveLedgerBackend(cwd).backend === "remote") {
+    if (http !== null) {
+      throw new Error(
+        "ledger-mcp: backend=remote does not serve local HTTP; connect clients to cq serve",
+      );
+    }
+    const config = loadConfig(cwd);
+    if (config?.ledger?.backend !== "remote" || config.ledger.serverUrl === null) {
+      throw new Error("ledger-mcp: backend=remote requires [ledger].serverUrl");
+    }
+    const projectKey = await resolveProjectKey({
+      repoRoot: cwd,
+      projectId: config.ledger.projectId,
+    });
+    await serveRemoteStdioProxy({
+      serverUrl: config.ledger.serverUrl,
+      projectKey,
+      token: resolveRemoteLedgerTokenFromProcess(),
+      displayName,
+    });
+    return;
+  }
 
   // Construct the store via the backend-selecting factory (T357), init it, then
   // register tools. The factory honours cq.toml's `[ledger]` backend ('xdg'

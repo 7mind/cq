@@ -729,6 +729,8 @@ export type {
   RemoteMilestonePatch,
   RemoteFtsSearchOpts,
 } from "./store/remote/RemoteLedgerClient.js";
+export { resolveRemoteLaunch } from "./store/remote/remoteLaunch.js";
+export type { RemoteLaunchTarget } from "./store/remote/remoteLaunch.js";
 export { InMemoryLedgerStore } from "./store/InMemoryLedgerStore.js";
 export type { InMemoryLedgerStoreOpts } from "./store/InMemoryLedgerStore.js";
 export { validateSchema } from "./store/core.js";

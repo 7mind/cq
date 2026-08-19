@@ -24,6 +24,7 @@ import React from "react";
 import { render } from "ink";
 import type { RenderOptions } from "ink";
 import { startLedgerCoherenceWatcher } from "@cq/ledger-mcp";
+import { resolveRemoteLaunch } from "@cq/ledger";
 import { App } from "./app.js";
 import { McpLedgerClient } from "./mcpClient.js";
 
@@ -101,7 +102,8 @@ export function normalizeUrl(raw: string): string {
 export function liveUrlFor(mcpUrl: string): string {
   const u = new URL(mcpUrl);
   const proto = u.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${u.host}/ws`;
+  const wsPath = u.pathname.endsWith("/mcp") ? `${u.pathname.slice(0, -3)}ws` : "/ws";
+  return `${proto}//${u.host}${wsPath}`;
 }
 
 /**
@@ -129,13 +131,24 @@ export async function main(argv: readonly string[]): Promise<void> {
     liveUrl = liveUrlFor(mcpUrl);
   } else {
     try {
-      client = await McpLedgerClient.embedded(cwd);
+      const remote = await resolveRemoteLaunch(cwd);
+      if (remote !== null) {
+        client = await McpLedgerClient.connect(remote.mcpUrl, remote.token);
+        liveUrl = liveUrlFor(remote.mcpUrl);
+        if (remote.token !== "") {
+          const live = new URL(liveUrl);
+          live.searchParams.set("token", remote.token);
+          liveUrl = live.toString();
+        }
+      } else {
+        client = await McpLedgerClient.embedded(cwd);
+        liveUrl = null;
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(`ledger-tui: cannot open ledger at ${cwd}: ${msg}\n`);
       process.exit(1);
     }
-    liveUrl = null;
   }
   // Embedded mode has no WebSocket: wire live refresh to the in-process
   // backend-selecting coherence watcher so external edits (the agent's stdio

@@ -41,6 +41,7 @@ import {
   FilesystemXdgProjectCatalogSource,
   ReadOnlyXdgProjectCatalog,
   resolveProjectKey,
+  resolveRemoteLaunch,
   resolveStateDirBase,
   type XdgProjectCatalogEntry,
   type XdgProjectIdentityBackfillResult,
@@ -86,6 +87,8 @@ export interface ServeOpts {
    * EMBEDDED in this process (rooted at `cwd`) and host `/mcp` + `/ws` directly.
    */
   mcpUrl: string | null;
+  /** Injected bearer token for backend=remote proxy launches. */
+  remoteToken?: string;
   /** Ledger root for embedded mode (--cwd > $LEDGER_ROOT > CWD). */
   cwd: string;
   outdir: string;
@@ -184,12 +187,19 @@ export async function prepare(outdir: string): Promise<BundleBuild> {
  * HTTP transport's SSE channel works through the proxy. The `mcp-session-id`
  * response header is preserved (it rides in the forwarded headers).
  */
-export async function proxyToMcp(req: Request, upstream: string): Promise<Response> {
+export async function proxyToMcp(
+  req: Request,
+  upstream: string,
+  remoteToken?: string,
+): Promise<Response> {
   const headers = new Headers(req.headers);
   // Hop-by-hop / host headers must not be forwarded; fetch recomputes them.
   headers.delete("host");
   headers.delete("connection");
   headers.delete("content-length");
+  if (remoteToken !== undefined && !headers.has("authorization")) {
+    headers.set("authorization", `Bearer ${remoteToken}`);
+  }
   const init: RequestInit = { method: req.method, headers, redirect: "manual" };
   if (req.method !== "GET" && req.method !== "HEAD") {
     init.body = await req.arrayBuffer();
@@ -223,7 +233,10 @@ export const WS_PROXY_PATH = "/ws";
 export function mcpUrlToWs(mcpUrl: string): string {
   const u = new URL(mcpUrl);
   const proto = u.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${u.host}${WS_PROXY_PATH}`;
+  const wsPath = u.pathname.endsWith("/mcp")
+    ? `${u.pathname.slice(0, -3)}ws`
+    : WS_PROXY_PATH;
+  return `${proto}//${u.host}${wsPath}`;
 }
 
 interface WsData {
@@ -254,8 +267,27 @@ export async function serveStatic(url: URL, outdir: string, indexPath: string): 
 export async function serve(opts: ServeOpts): Promise<ReturnType<typeof Bun.serve>> {
   await prepare(opts.outdir);
   const indexPath = path.join(opts.outdir, "index.html");
-  if (opts.mcpUrl !== null) {
-    return scanForPort(opts.port, (p) => serveProxy({ ...opts, port: p }, opts.mcpUrl!, indexPath));
+  let mcpUrl = opts.mcpUrl;
+  let remoteToken = opts.remoteToken;
+  if (mcpUrl === null) {
+    const remote = await resolveRemoteLaunch(opts.cwd);
+    if (remote !== null) {
+      mcpUrl = remote.mcpUrl;
+      remoteToken = remote.token;
+    }
+  }
+  if (mcpUrl !== null) {
+    return scanForPort(opts.port, (p) =>
+      serveProxy(
+        {
+          ...opts,
+          port: p,
+          ...(remoteToken === undefined ? {} : { remoteToken }),
+        },
+        mcpUrl,
+        indexPath,
+      ),
+    );
   }
   // Embedded: async setup first, then synchronous bind scan.
   return serveEmbedded(opts, indexPath);
@@ -267,7 +299,13 @@ function serveProxy(
   mcpUrl: string,
   indexPath: string,
 ): ReturnType<typeof Bun.serve> {
-  const wsUpstream = mcpUrlToWs(mcpUrl);
+  const wsUpstream = (() => {
+    const base = mcpUrlToWs(mcpUrl);
+    if (opts.remoteToken === undefined) return base;
+    const url = new URL(base);
+    url.searchParams.set("token", opts.remoteToken);
+    return url.toString();
+  })();
 
   return Bun.serve<WsData>({
     hostname: opts.host,
@@ -282,7 +320,7 @@ function serveProxy(
         return new Response("expected a websocket upgrade", { status: 426 });
       }
       if (url.pathname === MCP_PROXY_PATH) {
-        return proxyToMcp(req, mcpUrl);
+        return proxyToMcp(req, mcpUrl, opts.remoteToken);
       }
       return serveStatic(url, opts.outdir, indexPath);
     },
