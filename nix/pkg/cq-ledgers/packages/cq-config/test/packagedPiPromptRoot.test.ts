@@ -444,7 +444,7 @@ describe("packaged Pi prompt root", () => {
     expect(roles.get("begin")).toContain('fetch_prompt("<path>")');
     expect(roles.get("begin")).toContain("CQ::advance");
     expect(roles.get("plan/advance")).toContain(
-      'dispatch_agent(agent: "<role>", task: "<complete prompt>", targetRef: "<canonical-ref>")',
+      'dispatch_agent(agent: "<role>", task: "<dispatch-handle>", targetRef: "<canonical-ref>")',
     );
     for (const call of [
       "derive_predicates({})",

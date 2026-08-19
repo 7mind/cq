@@ -1,5 +1,6 @@
 > **Subagent dispatch (Codex).** `CQ_SUBAGENT` means the repository-owned
 > `cq-codex-role` process boundary, never the native `spawn_agent` transport.
+> Call `prepare_dispatch` with the role's typed input first.
 > Write one JSON request to its stdin:
 > `{ roleId, handle:{attestationId,generation}, inputCapability,
 > resultCapability, gitChangeCapability?, gitConflictCapability?, cwd, ledgerCwd,
@@ -11,4 +12,5 @@
 > disables child collaboration, and exposes only the role matrix's ledger
 > profile before model context construction. Its intercepted stdout contains
 > only the verified dispatch handle. Treat process completion as the trusted
-> extension observation for confirm/fetch; never simulate the role inline.
+> extension observation for confirm/fetch; materialize a validated result
+> exactly once with `fetch_dispatch_result`. Never simulate the role inline.

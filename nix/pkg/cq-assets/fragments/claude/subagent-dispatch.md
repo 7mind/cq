@@ -1,5 +1,5 @@
 > **Subagent dispatch (Claude).** `CQ_SUBAGENT` means the ref-first Claude
-> bridge. Prepare the typed role input first, then launch
+> bridge. Call `prepare_dispatch` with the role's typed input first, then launch
 > `CQ_SUBAGENT(role: "<role>", handle: <dispatch-handle>, model: <model>)`.
 > The bridge selects the generated role,
 > gives only that child a capability-scoped `store_result`, observes the actual
