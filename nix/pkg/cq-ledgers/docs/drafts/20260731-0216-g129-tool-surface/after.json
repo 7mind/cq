@@ -70,13 +70,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48277,
-        "tokens": 11614,
-        "sha256": "7891a756d26a853b0206889a59a2e104b98a7bf1d0a8a7a40f3ebf1ecb9c6b57"
+        "utf8Bytes": 48257,
+        "tokens": 11613,
+        "sha256": "e9d4ad75aaa92f8daa57934868df46d932d495670f2252a41fcb152dab89dabc"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11778,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -4,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -204,13 +204,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48277,
-        "tokens": 11614,
-        "sha256": "7891a756d26a853b0206889a59a2e104b98a7bf1d0a8a7a40f3ebf1ecb9c6b57"
+        "utf8Bytes": 48257,
+        "tokens": 11613,
+        "sha256": "e9d4ad75aaa92f8daa57934868df46d932d495670f2252a41fcb152dab89dabc"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11778,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -4,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -275,13 +275,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48277,
-        "tokens": 11614,
-        "sha256": "7891a756d26a853b0206889a59a2e104b98a7bf1d0a8a7a40f3ebf1ecb9c6b57"
+        "utf8Bytes": 48257,
+        "tokens": 11613,
+        "sha256": "e9d4ad75aaa92f8daa57934868df46d932d495670f2252a41fcb152dab89dabc"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11778,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -4,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -310,13 +310,13 @@
         "sha256": "5b97c070d30f6e7852703100df3dc86d37a2a7710e2df5ccdd5e0b566cf8562a"
       },
       "toolsList": {
-        "utf8Bytes": 4832,
-        "tokens": 1234,
-        "sha256": "5f143f2fe0368c407ee9e603e3f19743f52b82478ceba8c41e0f7f8caa48fba2"
+        "utf8Bytes": 4811,
+        "tokens": 1230,
+        "sha256": "d150bf82fa7af0c309b000bd96180885702fe3b893138a02c46291e84dd8daaf"
       },
-      "surfaceTokens": 1273,
+      "surfaceTokens": 1269,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -10509,
+      "deltaTokens": -10513,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_dispatch_input",
@@ -379,13 +379,13 @@
         "sha256": "bd1af5a0129f0131f8dde225d5a1f90aa1b018e9ff3c0fba51087c169d4e0683"
       },
       "toolsList": {
-        "utf8Bytes": 1513,
-        "tokens": 323,
-        "sha256": "9a2e683c561fa57bbd0e89867b689face918f9bceca163af4fee94aece3549f7"
+        "utf8Bytes": 1492,
+        "tokens": 319,
+        "sha256": "e1cfda81c2836c814297903edf5b39f6041c37490ea0d3e98d020f1700367eeb"
       },
-      "surfaceTokens": 354,
+      "surfaceTokens": 350,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11428,
+      "deltaTokens": -11432,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_dispatch_input",
@@ -417,13 +417,13 @@
         "sha256": "4dad9059b1b657f5657ef2a0dff21029f3639f0d43462bf7176e7cd26eae5961"
       },
       "toolsList": {
-        "utf8Bytes": 4659,
-        "tokens": 1115,
-        "sha256": "b4b0ff72e4cef9d5664f1d0d890f1878fa99b78a37ad2d95725dc93f887df1fd"
+        "utf8Bytes": 4638,
+        "tokens": 1111,
+        "sha256": "8a77ef8bc018c38dda9087130a7d5bb71e14b5aef278e8be343d39bf67df7167"
       },
-      "surfaceTokens": 1149,
+      "surfaceTokens": 1145,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -10633,
+      "deltaTokens": -10637,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_dispatch_input",
@@ -492,13 +492,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48277,
-        "tokens": 11614,
-        "sha256": "7891a756d26a853b0206889a59a2e104b98a7bf1d0a8a7a40f3ebf1ecb9c6b57"
+        "utf8Bytes": 48257,
+        "tokens": 11613,
+        "sha256": "e9d4ad75aaa92f8daa57934868df46d932d495670f2252a41fcb152dab89dabc"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11778,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -4,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -563,13 +563,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48277,
-        "tokens": 11614,
-        "sha256": "7891a756d26a853b0206889a59a2e104b98a7bf1d0a8a7a40f3ebf1ecb9c6b57"
+        "utf8Bytes": 48257,
+        "tokens": 11613,
+        "sha256": "e9d4ad75aaa92f8daa57934868df46d932d495670f2252a41fcb152dab89dabc"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11778,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -4,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -634,13 +634,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48277,
-        "tokens": 11614,
-        "sha256": "7891a756d26a853b0206889a59a2e104b98a7bf1d0a8a7a40f3ebf1ecb9c6b57"
+        "utf8Bytes": 48257,
+        "tokens": 11613,
+        "sha256": "e9d4ad75aaa92f8daa57934868df46d932d495670f2252a41fcb152dab89dabc"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11778,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -4,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -668,13 +668,13 @@
         "sha256": "d5f5f57624f7f1b95ce56a0ea0791e636a1ceccc4819cad29c30c74164fad792"
       },
       "toolsList": {
-        "utf8Bytes": 1513,
-        "tokens": 323,
-        "sha256": "9a2e683c561fa57bbd0e89867b689face918f9bceca163af4fee94aece3549f7"
+        "utf8Bytes": 1492,
+        "tokens": 319,
+        "sha256": "e1cfda81c2836c814297903edf5b39f6041c37490ea0d3e98d020f1700367eeb"
       },
-      "surfaceTokens": 355,
+      "surfaceTokens": 351,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11427,
+      "deltaTokens": -11431,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_dispatch_input",
@@ -705,13 +705,13 @@
         "sha256": "d2eea83ad71bf8a628b1a8aeb3f8ed4f1829b31423c6f5017c23ac25ddaf1bc6"
       },
       "toolsList": {
-        "utf8Bytes": 1513,
-        "tokens": 323,
-        "sha256": "9a2e683c561fa57bbd0e89867b689face918f9bceca163af4fee94aece3549f7"
+        "utf8Bytes": 1492,
+        "tokens": 319,
+        "sha256": "e1cfda81c2836c814297903edf5b39f6041c37490ea0d3e98d020f1700367eeb"
       },
-      "surfaceTokens": 355,
+      "surfaceTokens": 351,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11427,
+      "deltaTokens": -11431,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_dispatch_input",
@@ -779,13 +779,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48277,
-        "tokens": 11614,
-        "sha256": "7891a756d26a853b0206889a59a2e104b98a7bf1d0a8a7a40f3ebf1ecb9c6b57"
+        "utf8Bytes": 48257,
+        "tokens": 11613,
+        "sha256": "e9d4ad75aaa92f8daa57934868df46d932d495670f2252a41fcb152dab89dabc"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11778,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -4,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -850,13 +850,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48277,
-        "tokens": 11614,
-        "sha256": "7891a756d26a853b0206889a59a2e104b98a7bf1d0a8a7a40f3ebf1ecb9c6b57"
+        "utf8Bytes": 48257,
+        "tokens": 11613,
+        "sha256": "e9d4ad75aaa92f8daa57934868df46d932d495670f2252a41fcb152dab89dabc"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11778,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -4,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -887,13 +887,13 @@
         "sha256": "14da64cb2f35ae50a2b39775480defcccd39d731ec9d78360f757db03b899ab3"
       },
       "toolsList": {
-        "utf8Bytes": 3578,
-        "tokens": 782,
-        "sha256": "d81908df1370bc2a26491205c242294214cbe149e08ca5e0a0c441a61bc8bfc4"
+        "utf8Bytes": 3557,
+        "tokens": 778,
+        "sha256": "70054746bc7efa3bd146c790460a3bbc0dadc495c0e41007286cd49fa36ceeea"
       },
-      "surfaceTokens": 829,
+      "surfaceTokens": 825,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -10953,
+      "deltaTokens": -10957,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_item",
@@ -960,13 +960,13 @@
         "sha256": "e2a31dd335cf34fe72327dc3d3138ccfc50bf09c42c26b2ec67846316f495e45"
       },
       "toolsList": {
-        "utf8Bytes": 3578,
-        "tokens": 782,
-        "sha256": "d81908df1370bc2a26491205c242294214cbe149e08ca5e0a0c441a61bc8bfc4"
+        "utf8Bytes": 3557,
+        "tokens": 778,
+        "sha256": "70054746bc7efa3bd146c790460a3bbc0dadc495c0e41007286cd49fa36ceeea"
       },
-      "surfaceTokens": 829,
+      "surfaceTokens": 825,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -10953,
+      "deltaTokens": -10957,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_item",
@@ -1035,13 +1035,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48277,
-        "tokens": 11614,
-        "sha256": "7891a756d26a853b0206889a59a2e104b98a7bf1d0a8a7a40f3ebf1ecb9c6b57"
+        "utf8Bytes": 48257,
+        "tokens": 11613,
+        "sha256": "e9d4ad75aaa92f8daa57934868df46d932d495670f2252a41fcb152dab89dabc"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11778,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -4,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1106,13 +1106,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48277,
-        "tokens": 11614,
-        "sha256": "7891a756d26a853b0206889a59a2e104b98a7bf1d0a8a7a40f3ebf1ecb9c6b57"
+        "utf8Bytes": 48257,
+        "tokens": 11613,
+        "sha256": "e9d4ad75aaa92f8daa57934868df46d932d495670f2252a41fcb152dab89dabc"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11778,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -4,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1212,13 +1212,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48277,
-        "tokens": 11614,
-        "sha256": "7891a756d26a853b0206889a59a2e104b98a7bf1d0a8a7a40f3ebf1ecb9c6b57"
+        "utf8Bytes": 48257,
+        "tokens": 11613,
+        "sha256": "e9d4ad75aaa92f8daa57934868df46d932d495670f2252a41fcb152dab89dabc"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11778,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -4,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1246,13 +1246,13 @@
         "sha256": "b3866e278a6516c908c6e2e5d63c248864ee3f94a9edfa987a5ec280acca93aa"
       },
       "toolsList": {
-        "utf8Bytes": 1513,
-        "tokens": 323,
-        "sha256": "9a2e683c561fa57bbd0e89867b689face918f9bceca163af4fee94aece3549f7"
+        "utf8Bytes": 1492,
+        "tokens": 319,
+        "sha256": "e1cfda81c2836c814297903edf5b39f6041c37490ea0d3e98d020f1700367eeb"
       },
-      "surfaceTokens": 355,
+      "surfaceTokens": 351,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11427,
+      "deltaTokens": -11431,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_dispatch_input",
@@ -1283,13 +1283,13 @@
         "sha256": "c06a6f8524a73582b04a273a8dd0aa1682e17846ce3c48c5bf0d603b1be12928"
       },
       "toolsList": {
-        "utf8Bytes": 1513,
-        "tokens": 323,
-        "sha256": "9a2e683c561fa57bbd0e89867b689face918f9bceca163af4fee94aece3549f7"
+        "utf8Bytes": 1492,
+        "tokens": 319,
+        "sha256": "e1cfda81c2836c814297903edf5b39f6041c37490ea0d3e98d020f1700367eeb"
       },
-      "surfaceTokens": 354,
+      "surfaceTokens": 350,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11428,
+      "deltaTokens": -11432,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_dispatch_input",
@@ -1357,13 +1357,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48277,
-        "tokens": 11614,
-        "sha256": "7891a756d26a853b0206889a59a2e104b98a7bf1d0a8a7a40f3ebf1ecb9c6b57"
+        "utf8Bytes": 48257,
+        "tokens": 11613,
+        "sha256": "e9d4ad75aaa92f8daa57934868df46d932d495670f2252a41fcb152dab89dabc"
       },
-      "surfaceTokens": 11779,
+      "surfaceTokens": 11778,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -3,
+      "deltaTokens": -4,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1678,8 +1678,8 @@
       "name": "confirm_dispatch_completion",
       "whole": {
         "baselineTokens": 271,
-        "afterTokens": 263,
-        "deltaTokens": -8
+        "afterTokens": 262,
+        "deltaTokens": -9
       },
       "fields": {
         "name": {
@@ -1702,12 +1702,12 @@
             "marginalTokens": 33
           },
           "after": {
-            "serializedTokens": 32,
-            "marginalTokens": 33
+            "serializedTokens": 31,
+            "marginalTokens": 32
           },
           "delta": {
-            "serializedTokens": 0,
-            "marginalTokens": 0
+            "serializedTokens": -1,
+            "marginalTokens": -1
           }
         },
         "inputSchema": {
@@ -1990,8 +1990,8 @@
       "name": "fetch_dispatch_input",
       "whole": {
         "baselineTokens": 152,
-        "afterTokens": 139,
-        "deltaTokens": -13
+        "afterTokens": 138,
+        "deltaTokens": -14
       },
       "fields": {
         "name": {
@@ -2014,12 +2014,12 @@
             "marginalTokens": 37
           },
           "after": {
-            "serializedTokens": 36,
-            "marginalTokens": 37
+            "serializedTokens": 35,
+            "marginalTokens": 36
           },
           "delta": {
-            "serializedTokens": 0,
-            "marginalTokens": 0
+            "serializedTokens": -1,
+            "marginalTokens": -1
           }
         },
         "inputSchema": {
@@ -2042,8 +2042,8 @@
       "name": "fetch_dispatch_result",
       "whole": {
         "baselineTokens": 117,
-        "afterTokens": 99,
-        "deltaTokens": -18
+        "afterTokens": 96,
+        "deltaTokens": -21
       },
       "fields": {
         "name": {
@@ -2066,12 +2066,12 @@
             "marginalTokens": 40
           },
           "after": {
-            "serializedTokens": 39,
-            "marginalTokens": 40
+            "serializedTokens": 36,
+            "marginalTokens": 37
           },
           "delta": {
-            "serializedTokens": 0,
-            "marginalTokens": 0
+            "serializedTokens": -3,
+            "marginalTokens": -3
           }
         },
         "inputSchema": {
@@ -2822,8 +2822,8 @@
       "name": "prepare_dispatch",
       "whole": {
         "baselineTokens": 441,
-        "afterTokens": 434,
-        "deltaTokens": -7
+        "afterTokens": 441,
+        "deltaTokens": 0
       },
       "fields": {
         "name": {
@@ -2846,12 +2846,12 @@
             "marginalTokens": 50
           },
           "after": {
-            "serializedTokens": 49,
-            "marginalTokens": 50
+            "serializedTokens": 47,
+            "marginalTokens": 48
           },
           "delta": {
-            "serializedTokens": 0,
-            "marginalTokens": 0
+            "serializedTokens": -2,
+            "marginalTokens": -2
           }
         },
         "inputSchema": {
@@ -2860,12 +2860,12 @@
             "marginalTokens": 377
           },
           "after": {
-            "serializedTokens": 376,
-            "marginalTokens": 377
+            "serializedTokens": 385,
+            "marginalTokens": 386
           },
           "delta": {
-            "serializedTokens": 1,
-            "marginalTokens": 0
+            "serializedTokens": 10,
+            "marginalTokens": 9
           }
         }
       }
@@ -3290,8 +3290,8 @@
       "name": "store_result",
       "whole": {
         "baselineTokens": 194,
-        "afterTokens": 182,
-        "deltaTokens": -12
+        "afterTokens": 179,
+        "deltaTokens": -15
       },
       "fields": {
         "name": {
@@ -3314,12 +3314,12 @@
             "marginalTokens": 33
           },
           "after": {
-            "serializedTokens": 32,
-            "marginalTokens": 33
+            "serializedTokens": 29,
+            "marginalTokens": 30
           },
           "delta": {
-            "serializedTokens": 0,
-            "marginalTokens": 0
+            "serializedTokens": -3,
+            "marginalTokens": -3
           }
         },
         "inputSchema": {
@@ -3606,62 +3606,62 @@
       {
         "roleId": "plan-advance",
         "transcripts": 51,
-        "currentTokensPerTranscript": 829,
+        "currentTokensPerTranscript": 825,
         "baselineTokensPerTranscript": 11782,
-        "savingTokensPerTranscript": 10953,
-        "currentWeightedTokens": 42279,
+        "savingTokensPerTranscript": 10957,
+        "currentWeightedTokens": 42075,
         "baselineWeightedTokens": 600882
       },
       {
         "roleId": "plan-reviewer",
         "transcripts": 42,
-        "currentTokensPerTranscript": 829,
+        "currentTokensPerTranscript": 825,
         "baselineTokensPerTranscript": 11782,
-        "savingTokensPerTranscript": 10953,
-        "currentWeightedTokens": 34818,
+        "savingTokensPerTranscript": 10957,
+        "currentWeightedTokens": 34650,
         "baselineWeightedTokens": 494844
       },
       {
         "roleId": "implement-worker",
         "transcripts": 97,
-        "currentTokensPerTranscript": 1149,
+        "currentTokensPerTranscript": 1145,
         "baselineTokensPerTranscript": 11782,
-        "savingTokensPerTranscript": 10633,
-        "currentWeightedTokens": 111453,
+        "savingTokensPerTranscript": 10637,
+        "currentWeightedTokens": 111065,
         "baselineWeightedTokens": 1142854
       },
       {
         "roleId": "implement-reviewer",
         "transcripts": 142,
-        "currentTokensPerTranscript": 354,
+        "currentTokensPerTranscript": 350,
         "baselineTokensPerTranscript": 11782,
-        "savingTokensPerTranscript": 11428,
-        "currentWeightedTokens": 50268,
+        "savingTokensPerTranscript": 11432,
+        "currentWeightedTokens": 49700,
         "baselineWeightedTokens": 1673044
       },
       {
         "roleId": "investigate-explorer",
         "transcripts": 23,
-        "currentTokensPerTranscript": 355,
+        "currentTokensPerTranscript": 351,
         "baselineTokensPerTranscript": 11782,
-        "savingTokensPerTranscript": 11427,
-        "currentWeightedTokens": 8165,
+        "savingTokensPerTranscript": 11431,
+        "currentWeightedTokens": 8073,
         "baselineWeightedTokens": 270986
       },
       {
         "roleId": "investigate-prober",
         "transcripts": 2,
-        "currentTokensPerTranscript": 355,
+        "currentTokensPerTranscript": 351,
         "baselineTokensPerTranscript": 11782,
-        "savingTokensPerTranscript": 11427,
-        "currentWeightedTokens": 710,
+        "savingTokensPerTranscript": 11431,
+        "currentWeightedTokens": 702,
         "baselineWeightedTokens": 23564
       }
     ],
-    "currentWeightedTokens": 247693,
+    "currentWeightedTokens": 246265,
     "baselineWeightedTokens": 4206174,
-    "savingWeightedTokens": 3958481,
-    "currentMeanTokensPerTranscript": 693.8179271708683,
+    "savingWeightedTokens": 3959909,
+    "currentMeanTokensPerTranscript": 689.8179271708683,
     "baselineMeanTokensPerTranscript": 11782
   },
   "transportOnlyOverhead": {
@@ -3675,7 +3675,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "begin": {
@@ -3683,7 +3683,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "implement-conflict-resolver": {
@@ -3691,7 +3691,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "implement-review": {
@@ -3704,7 +3704,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "implement-worker": {
@@ -3712,7 +3712,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "implement/advance": {
@@ -3720,7 +3720,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "implement/start": {
@@ -3728,7 +3728,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "investigate": {
@@ -3736,7 +3736,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "investigate-explorer": {
@@ -3744,7 +3744,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "investigate-prober": {
@@ -3752,7 +3752,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "investigate/advance": {
@@ -3760,7 +3760,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "plan": {
@@ -3768,7 +3768,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "plan-advance": {
@@ -3776,7 +3776,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "plan-review": {
@@ -3789,7 +3789,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "plan/advance": {
@@ -3797,7 +3797,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "plan/follow-up": {
@@ -3805,7 +3805,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "planners": {
@@ -3818,7 +3818,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "research-experimenter": {
@@ -3826,7 +3826,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "research-explorer": {
@@ -3834,7 +3834,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "research/advance": {
@@ -3842,7 +3842,7 @@
           "fetch_dispatch_input",
           "store_result"
         ],
-        "toolsListTokens": 323,
+        "toolsListTokens": 319,
         "inputSchemaTokens": 234
       },
       "reviewers": {
@@ -3851,8 +3851,8 @@
         "inputSchemaTokens": 0
       }
     },
-    "weightedToolsListTokens": 115311,
-    "meanToolsListTokensPerTranscript": 323
+    "weightedToolsListTokens": 113883,
+    "meanToolsListTokensPerTranscript": 319
   },
   "g93": {
     "historicalColdSchemaChargeTokens": 2214,

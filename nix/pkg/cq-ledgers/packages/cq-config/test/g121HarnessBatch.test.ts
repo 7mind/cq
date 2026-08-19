@@ -204,7 +204,7 @@ describe("T1307 implement-worker round + baseVerification [BA]", () => {
   });
 
   test("sidecar version advanced for the T1307 contract mutation", () => {
-    expect(implementWorkerSidecar.version).toBe(8);
+    expect(implementWorkerSidecar.version).toBe(9);
   });
 });
 

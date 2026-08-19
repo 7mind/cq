@@ -1255,7 +1255,7 @@ export function createLedgerMcpToolSpecifications(
 
   const prepareDispatchTool = tool(
     "prepare_dispatch",
-    "Validate and durably prepare one typed dispatch, returning its handle, deadlines, provenance, and distinct input/result capabilities.",
+    "Validate and durably prepare one typed dispatch: handle, deadlines, provenance, and distinct input/result capabilities.",
     PREPARE_DISPATCH_INPUT,
     async (args) => {
       if (dispatchCapability === undefined) throw new Error("unreachable dispatch tool");
@@ -1276,7 +1276,7 @@ export function createLedgerMcpToolSpecifications(
   );
   const fetchDispatchInputTool = tool(
     "fetch_dispatch_input",
-    "Materialize the prepare-bound typed child input exactly once using its distinct input capability.",
+    "Materialize the prepare-bound typed child input exactly once using its input capability.",
     FETCH_DISPATCH_INPUT_INPUT,
     async (args) => {
       if (dispatchCapability === undefined) throw new Error("unreachable dispatch tool");
@@ -1285,7 +1285,7 @@ export function createLedgerMcpToolSpecifications(
   );
   const storeResultTool = tool(
     "store_result",
-    "Store a typed child result using the capability that authorizes only this operation.",
+    "Store a typed child result using its single-operation result capability.",
     STORE_RESULT_INPUT,
     async (args) => {
       if (dispatchCapability === undefined) throw new Error("unreachable dispatch tool");
@@ -1294,7 +1294,7 @@ export function createLedgerMcpToolSpecifications(
   );
   const confirmDispatchCompletionTool = tool(
     "confirm_dispatch_completion",
-    "Confirm observed native completion and promote a stored result to consumed without returning its body.",
+    "Confirm native completion and promote a stored result to consumed without returning its body.",
     CONFIRM_DISPATCH_COMPLETION_INPUT,
     async (args) => {
       if (dispatchCapability === undefined) throw new Error("unreachable dispatch tool");
@@ -1319,7 +1319,7 @@ export function createLedgerMcpToolSpecifications(
   );
   const fetchDispatchResultTool = tool(
     "fetch_dispatch_result",
-    "Materialize a consumed dispatch result exactly once. Input is the dispatch handle only.",
+    "Materialize a consumed dispatch result exactly once from its dispatch handle.",
     FETCH_DISPATCH_RESULT_INPUT,
     async (args) => {
       if (dispatchCapability === undefined) throw new Error("unreachable dispatch tool");

@@ -624,8 +624,8 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
     expect(schemaPinHistoryErrors([SCHEMA_PINS, deletedPins])).toEqual([]);
   });
 
-  test.each([1, 2, 3, 4, 5, 6, 7, 8])(
-    "rejects reintroduction at version %i when the last historical version is 8",
+  test.each([1, 2, 3, 4, 5, 6, 7, 8, 9])(
+    "rejects reintroduction at version %i when the last historical version is 9",
     (version) => {
       const implementWorkerPin = SCHEMA_PINS["implement-worker"]!;
       const deletedPins = { ...SCHEMA_PINS };
@@ -639,7 +639,7 @@ describe("typed prompt-catalog store — sidecar schema pins (T1579)", () => {
       };
 
       expect(schemaPinHistoryErrors([SCHEMA_PINS, deletedPins, reintroducedPins])).toEqual([
-        "reintroduced schema pin must advance beyond version 8 for implement-worker",
+        "reintroduced schema pin must advance beyond version 9 for implement-worker",
       ]);
     },
   );

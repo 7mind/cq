@@ -45,7 +45,7 @@ an inherited receipt. `filesTouched` must equal the sorted union of paths from
 the complete inherited-plus-current receipt chain.
 
 When fetched input carries `guardedRebaseLineage`, the dispatch is a
-guarded-rebase continuation (D334): the server resolved the opaque
+guarded-rebase continuation: the server resolved the opaque
 `guardedRebase` reference against a terminal durable journal and verified the
 bridge. The lineage binds `oldResultCommit` (the exact terminal pre-rebase
 worker result), `ontoCommit`, `rebasedStartCommit`, and the server-resolved
