@@ -5,6 +5,20 @@ import { isSafeProjectKey } from "@cq/ledger/projectKeySafety";
  * `mcp` or `ws`. Returns the decoded `projectKey` + `leaf`, or `null` when the
  * pathname is not a per-project route. `<projectKey>` is a single path segment.
  */
+export function matchAdminProjectRoute(
+  pathname: string,
+): { projectKey: string } | null {
+  const match = /^\/p\/([^/]+)\/admin\/mcp$/.exec(pathname);
+  if (match === null) return null;
+  let projectKey: string;
+  try {
+    projectKey = decodeURIComponent(match[1]!);
+  } catch {
+    return null;
+  }
+  return { projectKey };
+}
+
 export function matchProjectRoute(
   pathname: string,
 ): { projectKey: string; leaf: "mcp" | "ws" } | null {

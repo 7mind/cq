@@ -41,7 +41,7 @@ import type { ServerWebSocket } from "bun";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { isInitializeRequest, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { startParentDeathWatcher, startStdinEndWatcher } from "./stdioProcessGuards.js";
 import {
   type LedgerStore,
@@ -66,6 +66,7 @@ import {
   ledgerToolNamesForProfile,
   registerLedgerStdioToolSpecifications,
   selectLedgerMcpToolSpecifications,
+  ledgerToolListDefinitions,
   assertToolPrefix,
   prefixToolName,
   type LedgerToolName,
@@ -75,14 +76,31 @@ import {
   createWorktreeManageCapability,
   createObserveOnlyWorksetInvocationAuthority,
   createTrustedWorksetManagementAuthority,
+  validateJsonl,
   bindWorksetInvocationAuthority,
   type WorksetInvocationAuthority,
 } from "@cq/ledger";
 import { loadConfig, resolveRemoteLedgerTokenFromProcess } from "@cq/config";
+import { z } from "zod";
 import { createConfigCapability } from "./configCapability.js";
 import { serveRemoteStdioProxy } from "./stdioRemoteProxy.js";
 export { connectRemoteMcpProxy, serveRemoteStdioProxy } from "./stdioRemoteProxy.js";
 export { computeConfig } from "./configCapability.js";
+export {
+  attachProjectAdminMcpHttp,
+  createProjectAdminMcpServer,
+  resolveAdminToken,
+  PROJECT_ADMIN_TOOLS,
+  HUB_ADMIN_TOKEN_ENV_VAR,
+  REMOTE_ADMIN_TOKEN_ENV_VAR,
+  MAX_ADMIN_DUMP_BYTES,
+} from "./projectAdminMcp.js";
+export type {
+  ProjectAdminHandlers,
+  ProjectAdminToolName,
+  AttachProjectAdminMcpHttpOptions,
+  ProjectAdminReconcileKind,
+} from "./projectAdminMcp.js";
 import {
   createSingleProjectDispatchRuntime,
   type DispatchRuntime,
@@ -524,6 +542,57 @@ export function rootDirOf(store: LedgerStore): string | undefined {
  * purpose, replacing the former `instanceof FsLedgerStore` gate (which excluded
  * the git-object backend even though it can serve read_log from the ref tree).
  */
+const MAX_PUT_LOG_BYTES = 4 * 1024 * 1024;
+
+function putLogOf(
+  store: LedgerStore,
+): ((relPath: string, content: string) => Promise<void>) | undefined {
+  const candidate = (store as { putLog?: unknown }).putLog;
+  if (typeof candidate !== "function") return undefined;
+  const fn = candidate as (relPath: string, content: string) => Promise<void>;
+  return (relPath, content) => fn.call(store, relPath, content);
+}
+
+function registerOrdinaryPutLog(server: McpServer, store: LedgerStore, toolPrefix: string): void {
+  const putLog = putLogOf(store);
+  if (putLog === undefined) {
+    throw new Error("enableLogWrite requires a store that implements putLog");
+  }
+  const name = prefixToolName(toolPrefix, "put_log");
+  server.registerTool(
+    name,
+    {
+      description:
+        "Upload one log artifact. Ordinary bearer only. Path must stay under logs/; JSONL is re-validated.",
+      inputSchema: {
+        path: z.string().min(1),
+        content: z.string(),
+      },
+    },
+    async ({ path: relPath, content }) => {
+      if (Buffer.byteLength(content, "utf8") > MAX_PUT_LOG_BYTES) {
+        throw new Error(`put_log: content exceeds ${String(MAX_PUT_LOG_BYTES)} bytes`);
+      }
+      const normalized = relPath.replace(/^logs\//, "");
+      if (
+        normalized.trim() === "" ||
+        normalized.startsWith("/") ||
+        normalized.split("/").some((part) => part === "" || part === "." || part === "..")
+      ) {
+        throw new Error(`put_log: path escapes logs root: ${relPath}`);
+      }
+      if (normalized.endsWith(".jsonl")) {
+        const validation = validateJsonl(content);
+        if (!validation.ok) {
+          throw new Error(`put_log: malformed JSONL at line ${String(validation.line)}: ${validation.reason}`);
+        }
+      }
+      await putLog(normalized, content);
+      return { content: [{ type: "text" as const, text: JSON.stringify({ path: normalized, stored: true }) }] };
+    },
+  );
+}
+
 export function readLogOf(store: LedgerStore): ReadLogCapability | undefined {
   const candidate = (store as { readLog?: unknown }).readLog;
   if (typeof candidate !== "function") return undefined;
@@ -669,6 +738,11 @@ export interface CreateLedgerMcpServerOptions {
   repositoryRoot?: string;
   /** Runtime-only workset authority; never serialized into tool schemas. */
   worksetAuthority?: WorksetInvocationAuthority;
+  /**
+   * T741 — register ordinary `put_log` when the store can persist artifacts.
+   * Off by default so the T1326 tools/list inventory does not grow.
+   */
+  enableLogWrite?: boolean;
 }
 
 /**
@@ -759,6 +833,27 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
     instructions,
   });
   registerLedgerStdioToolSpecifications(server, specifications, toolPrefix);
+  if (opts.enableLogWrite === true) {
+    registerOrdinaryPutLog(server, store, toolPrefix);
+    server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: [
+        ...ledgerToolListDefinitions(specifications, toolPrefix),
+        {
+          name: prefixToolName(toolPrefix, "put_log"),
+          description:
+            "Upload one log artifact. Ordinary bearer only. Path must stay under logs/; JSONL is re-validated.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              content: { type: "string" },
+            },
+            required: ["path", "content"],
+          },
+        },
+      ],
+    }));
+  }
   return bindWorksetInvocationAuthority(
     server,
     opts.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority(),
@@ -935,6 +1030,7 @@ export function attachMcpHttp(
   repositoryRoot?: string,
   credentials?: McpHttpCredentialConfig,
   trustedDefaultScope: McpSessionScope = "observe",
+  enableLogWrite = false,
 ): McpHttpHandlers {
   assertMcpHttpCredentialSeparation(credentials);
   const sessions = new Map<string, McpSessionBinding>();
@@ -998,6 +1094,7 @@ export function attachMcpHttp(
           ? createTrustedWorksetManagementAuthority()
           : createObserveOnlyWorksetInvocationAuthority(),
       toolProfile,
+      ...(enableLogWrite ? { enableLogWrite: true } : {}),
     });
     await server.connect(transport);
     // Body already consumed above; hand it back so the transport doesn't

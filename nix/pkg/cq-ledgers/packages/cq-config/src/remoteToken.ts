@@ -3,6 +3,9 @@ import type { RemoteLedgerToken } from "./types.js";
 /** The sole cq environment variable carrying the ordinary remote bearer token. */
 export const CQ_LEDGER_REMOTE_TOKEN_ENV = "CQ_LEDGER_REMOTE_TOKEN";
 
+/** Dedicated admin bearer for migrate/backup/restore/reset/erase. */
+export const CQ_LEDGER_REMOTE_ADMIN_TOKEN_ENV = "CQ_LEDGER_REMOTE_ADMIN_TOKEN";
+
 /** Raised when remote operation has no usable environment bearer token. */
 export class RemoteLedgerTokenError extends Error {
   constructor(message: string) {
@@ -32,4 +35,16 @@ export function resolveRemoteLedgerToken(
 /** Resolve the remote ledger bearer token from the current process boundary. */
 export function resolveRemoteLedgerTokenFromProcess(): RemoteLedgerToken {
   return resolveRemoteLedgerToken(process.env);
+}
+
+export function resolveRemoteAdminToken(
+  env: Readonly<Record<string, string | undefined>>,
+): string {
+  const token = env[CQ_LEDGER_REMOTE_ADMIN_TOKEN_ENV];
+  if (token === undefined || token.trim() === "") {
+    throw new RemoteLedgerTokenError(
+      "CQ_LEDGER_REMOTE_ADMIN_TOKEN must be set to a non-empty bearer token for remote admin operations",
+    );
+  }
+  return token;
 }

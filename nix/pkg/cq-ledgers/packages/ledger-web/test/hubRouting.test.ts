@@ -737,7 +737,7 @@ describe("D138 hubServe bounds 400 to route-shaped decode/safety failures", () =
       close: async () => undefined,
     }) as unknown as ReturnType<typeof openPgPool>;
     const server = serveHub(
-      { host: "127.0.0.1", port: 0, token: null, managementToken: null, outdir },
+      { host: "127.0.0.1", port: 0, token: null, managementToken: null, adminToken: null, outdir },
       pool,
       indexPath,
     );

@@ -1,16 +1,21 @@
 /**
  * T733/T734 — resolve a backend=remote checkout into a cq serve MCP URL.
  */
-import { loadConfig, resolveRemoteLedgerToken } from "@cq/config";
+import { loadConfig, resolveRemoteAdminToken, resolveRemoteLedgerToken } from "@cq/config";
 import { resolveLedgerBackend } from "../createLedgerStore.js";
 import { resolveProjectKey } from "../../projectKey.js";
-import { remoteMcpUrl } from "./RemoteLedgerClient.js";
+import { remoteAdminMcpUrl, remoteMcpUrl } from "./RemoteLedgerClient.js";
 
 export interface RemoteLaunchTarget {
   readonly mcpUrl: string;
   readonly token: string;
   readonly projectKey: string;
   readonly serverUrl: string;
+}
+
+export interface RemoteAdminLaunchTarget extends RemoteLaunchTarget {
+  readonly adminMcpUrl: string;
+  readonly adminToken: string;
 }
 
 export async function resolveRemoteLaunch(
@@ -29,5 +34,19 @@ export async function resolveRemoteLaunch(
     projectKey,
     mcpUrl: remoteMcpUrl(config.ledger.serverUrl, projectKey),
     token: resolveRemoteLedgerToken(env),
+  };
+}
+
+export async function resolveRemoteAdminLaunch(
+  cwd: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): Promise<RemoteAdminLaunchTarget | null> {
+  const ordinary = await resolveRemoteLaunch(cwd, env);
+  if (ordinary === null) return null;
+  const adminToken = resolveRemoteAdminToken(env);
+  return {
+    ...ordinary,
+    adminToken,
+    adminMcpUrl: remoteAdminMcpUrl(ordinary.serverUrl, ordinary.projectKey),
   };
 }

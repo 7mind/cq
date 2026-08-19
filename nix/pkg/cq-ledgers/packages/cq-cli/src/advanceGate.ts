@@ -38,8 +38,10 @@ import * as path from "node:path";
 import {
   createLedgerStore,
   deriveWorksetPredicates,
+  resolveLedgerBackend,
   type DerivedPredicates,
 } from "@cq/ledger";
+import { withRemoteClient } from "./remoteClient.js";
 
 /** Exit code for an ALLOW verdict (block=false). */
 export const EXIT_ALLOW = 0;
@@ -165,12 +167,16 @@ export async function computeVerdict(args: AdvanceGateArgs): Promise<AdvanceGate
   }
 
   // (4) Derive the predicates from the in-process fs-backed store.
-  const { store } = await createLedgerStore(args.cwd);
   let predicates: DerivedPredicates;
-  try {
-    predicates = await deriveWorksetPredicates(store);
-  } finally {
-    await store.dispose();
+  if (resolveLedgerBackend(args.cwd).backend === "remote") {
+    predicates = await withRemoteClient(args.cwd, (client) => client.derivePredicates());
+  } else {
+    const { store } = await createLedgerStore(args.cwd);
+    try {
+      predicates = await deriveWorksetPredicates(store);
+    } finally {
+      await store.dispose();
+    }
   }
 
   const blocking = firstBlockingPredicate(predicates);

@@ -18,7 +18,8 @@
  * `runCounts`) and disposed in a `finally`.
  */
 
-import { createLedgerStore, type UsageStatsSnapshot } from "@cq/ledger";
+import { createLedgerStore, resolveLedgerBackend, type UsageStatsSnapshot } from "@cq/ledger";
+import { withRemoteClient } from "./remoteClient.js";
 
 /** Exit code for `cq stats` — ALWAYS success (it never blocks). */
 export const EXIT_STATS = 0;
@@ -49,12 +50,16 @@ export async function runStats(
   args: StatsArgs,
   io: StatsIo,
 ): Promise<StatsOutcome> {
-  const { store } = await createLedgerStore(args.cwd);
   let snapshot: UsageStatsSnapshot;
-  try {
-    snapshot = await store.fetchMcpUsageStats();
-  } finally {
-    await store.dispose();
+  if (resolveLedgerBackend(args.cwd).backend === "remote") {
+    snapshot = await withRemoteClient(args.cwd, (client) => client.getUsageStats());
+  } else {
+    const { store } = await createLedgerStore(args.cwd);
+    try {
+      snapshot = await store.fetchMcpUsageStats();
+    } finally {
+      await store.dispose();
+    }
   }
   io.out(JSON.stringify(snapshot));
   return { exitCode: EXIT_STATS };

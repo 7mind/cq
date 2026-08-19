@@ -58,6 +58,7 @@
 
 import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
+import { randomUUID } from "node:crypto";
 import {
   buildBackupDump,
   createManagementLedgerStore,
@@ -80,6 +81,7 @@ import {
   resolveProjectKey,
   resolveStateDir,
   prepareImportedOwnershipDump,
+  RemoteLedgerClient,
   restoreDumpToPostgres,
   restoreDumpToXdg,
   RestoreTargetChangedError,
@@ -90,6 +92,7 @@ import {
   type WorksetStore,
 } from "@cq/ledger";
 import { loadConfig } from "@cq/config";
+import { resolveRemoteAdminToken } from "@cq/config";
 import { confirmDestructive, type ConfirmIo } from "./confirm.js";
 
 /** Exit code for a usage / refusal error (mirrors main.ts EXIT_USAGE). */
@@ -120,7 +123,7 @@ export interface MigrateArgs {
    * `--to postgres` (T581): selects the xdg -> postgres leg instead of the
    * default legacy -> xdg leg. `null` (the flag absent) is the default leg.
    */
-  to: "postgres" | null;
+  to: "postgres" | "remote" | null;
 }
 
 async function runUnderMigrationAdmission<T>(
@@ -176,7 +179,8 @@ async function readGitObjectLogs(root: string, branch: string): Promise<BackupDu
  */
 export async function setLedgerBackend(
   root: string,
-  backend: "git-object" | "fs" | "xdg" | "postgres",
+  backend: "git-object" | "fs" | "xdg" | "postgres" | "remote",
+  extras: Readonly<Record<string, string>> = {},
 ): Promise<void> {
   const configPath = path.join(root, CQ_CONFIG_FILENAME);
   let source: string | null;
@@ -186,7 +190,8 @@ export async function setLedgerBackend(
     source = null;
   }
 
-  const block = `[ledger]\n  backend = "${backend}"\n`;
+  const extraLines = Object.entries(extras).map(([key, value]) => `  ${key} = "${value}"`);
+  const block = [`[ledger]`, `  backend = "${backend}"`, ...extraLines, ""].join("\n");
 
   if (source === null) {
     await fsPromises.writeFile(configPath, block, "utf8");
@@ -227,6 +232,27 @@ export async function setLedgerBackend(
   } else {
     // Insert a backend line right after the header.
     lines.splice(headerIdx + 1, 0, `  backend = "${backend}"`);
+    backendIdx = headerIdx + 1;
+    end += 1;
+  }
+  let insertAt = backendIdx + 1;
+  for (const [key, value] of Object.entries(extras)) {
+    const extraRe = new RegExp(`^\\s*${key}\\s*=`);
+    let extraIdx = -1;
+    for (let i = headerIdx + 1; i < end; i++) {
+      if (extraRe.test(lines[i] ?? "")) {
+        extraIdx = i;
+        break;
+      }
+    }
+    if (extraIdx >= 0) {
+      const indent = (lines[extraIdx] ?? "").match(/^\s*/)?.[0] ?? "  ";
+      lines[extraIdx] = `${indent}${key} = "${value}"`;
+    } else {
+      lines.splice(insertAt, 0, `  ${key} = "${value}"`);
+      insertAt += 1;
+      end += 1;
+    }
   }
   await fsPromises.writeFile(configPath, lines.join("\n"), "utf8");
 }
@@ -239,6 +265,9 @@ export async function setLedgerBackend(
 export async function runMigrate(args: MigrateArgs, io: MigrateIo): Promise<MigrateOutcome> {
   if (args.to === "postgres") {
     return runMigrateXdgToPostgres(args, io);
+  }
+  if (args.to === "remote") {
+    return runMigrateXdgToRemote(args, io);
   }
   return runMigrateLegacyToXdg(args, io);
 }
@@ -526,6 +555,50 @@ async function runMigrateXdgToPostgres(args: MigrateArgs, io: MigrateIo): Promis
         await pool.close();
       }
     });
+  } finally {
+    await resolved.store.dispose();
+  }
+}
+
+async function runMigrateXdgToRemote(args: MigrateArgs, io: MigrateIo): Promise<MigrateOutcome> {
+  const { backend, explicit } = resolveLedgerBackend(args.cwd);
+  if (backend !== "xdg" || !explicit) {
+    io.err(
+      `cq migrate --to remote: [ledger] backend at ${args.cwd} must be explicit 'xdg'.`,
+    );
+    return { exitCode: EXIT_USAGE };
+  }
+  const serverUrl = process.env["CQ_LEDGER_SERVER_URL"]?.trim() ?? "";
+  if (serverUrl === "") {
+    io.err("cq migrate --to remote: CQ_LEDGER_SERVER_URL must be set to the cq serve origin");
+    return { exitCode: EXIT_USAGE };
+  }
+  const resolved = await createManagementLedgerStore(args.cwd);
+  const projectKey = resolved.projectKey;
+  const logsDir = resolved.logsDir;
+  if (projectKey === undefined || logsDir === undefined) {
+    await resolved.store.dispose();
+    throw new Error("cq migrate --to remote: xdg store resolved without projectKey/logsDir");
+  }
+  try {
+    const dump = await buildBackupDump(resolved.store, logsDir);
+    const operationId = `migrate-${randomUUID()}`;
+    const adminToken = resolveRemoteAdminToken(process.env);
+    const client = await RemoteLedgerClient.connectAdmin({
+      serverUrl,
+      projectKey,
+      adminToken,
+    });
+    try {
+      await client.importDump(operationId, "migrate-empty", dump);
+    } finally {
+      await client.close();
+    }
+    await setLedgerBackend(args.cwd, "remote", { serverUrl });
+    io.out(`cq migrate: uploaded the xdg primary at ${args.cwd} to remote tenant ${projectKey}`);
+    io.out(`  ${CQ_CONFIG_FILENAME}:  [ledger] backend = "remote"`);
+    io.out("  xdg primary data left INTACT — delete it manually once confident.");
+    return { exitCode: 0 };
   } finally {
     await resolved.store.dispose();
   }

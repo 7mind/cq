@@ -20,7 +20,13 @@
  * `runAdvanceGate`'s step 4 and `runInit`) and disposed in a `finally`.
  */
 
-import { createLedgerStore, deriveWorksetPredicates, type DerivedPredicates } from "@cq/ledger";
+import {
+  createLedgerStore,
+  deriveWorksetPredicates,
+  resolveLedgerBackend,
+  type DerivedPredicates,
+} from "@cq/ledger";
+import { withRemoteClient } from "./remoteClient.js";
 
 /** Exit code for `cq predicates` — ALWAYS success (it never blocks). */
 export const EXIT_PREDICATES = 0;
@@ -63,12 +69,16 @@ export async function runPredicates(
   args: PredicatesArgs,
   io: PredicatesIo,
 ): Promise<PredicatesOutcome> {
-  const { store } = await createLedgerStore(args.cwd);
   let predicates: DerivedPredicates;
-  try {
-    predicates = await deriveWorksetPredicates(store);
-  } finally {
-    await store.dispose();
+  if (resolveLedgerBackend(args.cwd).backend === "remote") {
+    predicates = await withRemoteClient(args.cwd, (client) => client.derivePredicates());
+  } else {
+    const { store } = await createLedgerStore(args.cwd);
+    try {
+      predicates = await deriveWorksetPredicates(store);
+    } finally {
+      await store.dispose();
+    }
   }
   const output: PredicatesOutput = { predicates };
   io.out(JSON.stringify(output));

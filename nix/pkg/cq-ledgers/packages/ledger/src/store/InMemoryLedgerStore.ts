@@ -54,6 +54,8 @@ import type {
   UpdateItemPatch,
   UpdateMilestoneItemPatch,
 } from "./LedgerStore.js";
+import type { ParsedDump } from "./restoreImporter.js";
+import type { ReadLogResult } from "../mcp/readLog.js";
 import type {
   PlanClaimInput,
   PlanClaimResult,
@@ -206,6 +208,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   private initialised = false;
   private worksetHandle: WorksetAdmissionCoordinator | null = null;
   private readonly initialSeed: Array<{ name: string; schema: LedgerSchema }>;
+  private readonly logArtifacts = new Map<string, string>();
 
   constructor(opts: InMemoryLedgerStoreOpts = {}) {
     this.now = opts.now ?? (() => new Date().toISOString());
@@ -1392,6 +1395,100 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   private assertInit(): void {
     if (!this.initialised) throw new LedgerError("InMemoryLedgerStore not initialised");
   }
+
+  async putLog(relPath: string, content: string): Promise<void> {
+    this.assertInit();
+    const rel = normalizeMemoryLogPath(relPath);
+    this.logArtifacts.set(rel, content);
+    this.fireMutation("logs", "update");
+  }
+
+  async *listLogs(): AsyncIterable<{ path: string; content: string }> {
+    this.assertInit();
+    for (const [path, content] of [...this.logArtifacts.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      yield { path, content };
+    }
+  }
+
+  async readLog(relPath: string): Promise<ReadLogResult> {
+    this.assertInit();
+    const rel = normalizeMemoryLogPath(relPath);
+    const content = this.logArtifacts.get(rel);
+    if (content === undefined) {
+      throw new LedgerError(`read_log: not found: ${rel}`);
+    }
+    return { path: rel, content };
+  }
+
+  async replaceFromParsedDump(parsed: ParsedDump): Promise<void> {
+    this.assertInit();
+    this.ledgers.clear();
+    this.archives.clear();
+    this.itemArchives.clear();
+    this.planClaims.clear();
+    this.planOperations.clear();
+    this.logArtifacts.clear();
+    for (const [name, ledger] of parsed.ledgers) {
+      this.ledgers.set(name, cloneLedger(ledger));
+    }
+    for (const canonical of CANONICAL_LEDGERS) {
+      if (!this.ledgers.has(canonical.name)) {
+        this.ledgers.set(canonical.name, freshLedger(canonical.name, canonical.schema));
+      }
+    }
+    for (const [ledgerName, archiveMap] of parsed.archives) {
+      for (const [id, content] of archiveMap) {
+        const key = `${ledgerName}/${id}`;
+        if (content.kind === "item") this.itemArchives.set(key, cloneItem(content.item));
+        else this.archives.set(key, cloneMilestone(content.milestone));
+      }
+    }
+    if (parsed.planLifecycle !== null) {
+      for (const [key, claim] of parsed.planLifecycle.claims) this.planClaims.set(key, claim);
+      for (const [key, operation] of parsed.planLifecycle.operations) {
+        this.planOperations.set(key, operation);
+      }
+    }
+    for (const log of parsed.logs) {
+      const rel = log.path.replace(/^logs\//, "");
+      this.logArtifacts.set(rel, log.content);
+    }
+    if (parsed.worksetRoots !== null) {
+      this.replaceWorksetRoots(parsed.worksetRoots.roots);
+    }
+    this.normalizeStoredRefs();
+    for (const ledger of this.ledgers.values()) relocateActiveIdeasToAmbient(ledger);
+    for (const name of this.ledgers.keys()) {
+      this.rebuildLedgerIndexActive(name);
+      this.refreshLedgerIndexArchived(name);
+    }
+    this.fireMutation(MILESTONES_LEDGER, "update");
+  }
+
+  async resetToBootstrap(): Promise<void> {
+    this.assertInit();
+    this.ledgers.clear();
+    this.archives.clear();
+    this.itemArchives.clear();
+    this.planClaims.clear();
+    this.planOperations.clear();
+    this.logArtifacts.clear();
+    this.initialised = false;
+    await this.init();
+    this.fireMutation(MILESTONES_LEDGER, "archive");
+  }
+}
+
+function normalizeMemoryLogPath(relPath: string): string {
+  if (relPath.trim() === "" || relPath.startsWith("/") || relPath.includes("\\")) {
+    throw new LedgerError(`read_log: invalid path: ${relPath}`);
+  }
+  const stripped = relPath.replace(/^logs\//, "");
+  const normalized = stripped.split("/").filter((part) => part.length > 0);
+  if (normalized.length === 0 || normalized.some((part) => part === "." || part === "..")) {
+    throw new LedgerError(`read_log: path escapes logs root: ${relPath}`);
+  }
+  return normalized.join("/");
 }
 
 // --- shared materialiser + clone helpers ---

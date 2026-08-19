@@ -241,9 +241,11 @@ export type {
 export { parseToml } from "./toml.js";
 export {
   CQ_LEDGER_REMOTE_TOKEN_ENV,
+  CQ_LEDGER_REMOTE_ADMIN_TOKEN_ENV,
   RemoteLedgerTokenError,
   resolveRemoteLedgerToken,
   resolveRemoteLedgerTokenFromProcess,
+  resolveRemoteAdminToken,
 } from "./remoteToken.js";
 export {
   WORKSET_CREDENTIAL_ENV_NAMES,

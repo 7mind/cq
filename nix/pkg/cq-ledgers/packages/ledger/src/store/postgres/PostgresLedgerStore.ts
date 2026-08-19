@@ -1155,6 +1155,51 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       VALUES (${this.projectKey}, ${rel}, ${content})
       ON CONFLICT (project_key, path) DO UPDATE SET content = EXCLUDED.content, created_at = now()
     `;
+    this.fireHook("logs", "update");
+    await this.notify();
+  }
+
+  tenantKey(): string {
+    return this.projectKey;
+  }
+
+  sharedPool(): SQL {
+    return this.pool();
+  }
+
+  async reloadCommittedState(): Promise<void> {
+    this.assertInit();
+    await this.loadCache();
+    for (const ledgerId of this.ledgers.keys()) {
+      this.rebuildLedgerIndexActive(ledgerId);
+      this.refreshLedgerIndexArchived(ledgerId);
+    }
+  }
+
+  async eraseTenant(opts: { readonly authority: unknown }): Promise<void> {
+    this.assertInit();
+    const workset = this.worksetStore();
+    await workset.runAdministrative({
+      kind: "erase",
+      authority: opts.authority,
+      destructivePhase: async () => {
+        await writeTransaction(this.pool(), async (tx) => {
+          await tx`DELETE FROM workset_admissions WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM workset_roots WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM plan_operations WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM plan_claims WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM archived_items WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM archive_pointers WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM items WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM groups WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM ledgers WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM logs WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM projects WHERE project_key = ${this.projectKey}`;
+        });
+      },
+    });
+    this.fireHook("logs", "archive");
+    await this.notify();
   }
 
   /**

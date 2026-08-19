@@ -86,6 +86,7 @@ describe("parseHubArgs", () => {
       pgUrlArg: undefined,
       token: null,
       managementToken: null,
+      adminToken: null,
     });
   });
 
@@ -108,6 +109,7 @@ describe("parseHubArgs", () => {
       pgUrlArg: "postgres://u:p@h:5432/db",
       token: "secret1",
       managementToken: "management1",
+      adminToken: null,
     });
   });
 
@@ -125,6 +127,7 @@ describe("parseHubArgs", () => {
       pgUrlArg: "postgres://u:p@h:5432/db",
       token: "secret1",
       managementToken: "management1",
+      adminToken: null,
     });
   });
 
@@ -157,6 +160,7 @@ describe("serveHub credential construction", () => {
             port: 0,
             token: "same-secret",
             managementToken: "same-secret",
+            adminToken: null,
             outdir,
           },
           pool,

@@ -35,9 +35,9 @@ import {
   resolveLogsDir,
   createLedgerStore,
   PostgresLedgerStore,
-  RemoteLedgerClientNotWiredError,
   type TreeEntry,
 } from "@cq/ledger";
+import { withRemoteClient } from "./remoteClient.js";
 
 /** Exit code for a usage / validation error. */
 export const EXIT_USAGE = 2;
@@ -239,10 +239,6 @@ export async function runLogPut(
 ): Promise<LogPutOutcome> {
   const { backend, branch } = resolveLedgerBackend(args.cwd);
 
-  if (backend === "remote") {
-    throw new RemoteLedgerClientNotWiredError("cq log put", args.cwd);
-  }
-
   // --- Read source ---
   let raw: string;
   if (args.stdin) {
@@ -273,6 +269,13 @@ export async function runLogPut(
       );
       return { exitCode: 1 };
     }
+  }
+
+  if (backend === "remote") {
+    const rel = args.dest.startsWith("logs/") ? args.dest.slice("logs/".length) : args.dest;
+    const stored = await withRemoteClient(args.cwd, (client) => client.putLog(rel, redacted));
+    io.out(`remote:${stored.path}`);
+    return { exitCode: 0 };
   }
 
   if (backend === "git-object") {

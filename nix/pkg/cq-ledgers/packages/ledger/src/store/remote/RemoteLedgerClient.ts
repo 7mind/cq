@@ -47,6 +47,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { ArchivePointer, FieldValue, Item, LedgerSchema } from "../../types.js";
 import type { ArchiveContent } from "../LedgerStore.js";
+import type { BackupDumpFile } from "../backupExporter.js";
 import type {
   CompactItemDto,
   ComplementItemDto,
@@ -204,6 +205,10 @@ export function remoteMcpUrl(serverUrl: string, projectKey: string): string {
   return `${u.protocol}//${u.host}/p/${encodeURIComponent(projectKey)}/mcp`;
 }
 
+export function remoteAdminMcpUrl(serverUrl: string, projectKey: string): string {
+  return remoteMcpUrl(serverUrl, projectKey).replace(/\/mcp$/, "/admin/mcp");
+}
+
 /** Connection parameters for {@link RemoteLedgerClient.connect}. */
 export interface RemoteLedgerClientOpts {
   /** The hub origin (cq.toml `[ledger].serverUrl`), e.g. `http://127.0.0.1:5190/`. */
@@ -239,7 +244,8 @@ interface RemoteLedgerConnectionOpts {
   readonly credential: string;
   readonly displayName?: string;
   readonly clientInfo?: { readonly name: string; readonly version: string };
-  readonly scope: "ordinary" | "management";
+  readonly scope: "ordinary" | "management" | "admin";
+  readonly endpoint?: string;
 }
 
 /** `create_item` input (mirrors the tool schema). */
@@ -353,7 +359,7 @@ export class RemoteLedgerClient {
     private readonly endpoint: string,
     private readonly _displayName: string,
     private readonly _protocolVersion: string,
-    private readonly _scope: "ordinary" | "management",
+    private readonly _scope: "ordinary" | "management" | "admin",
   ) {}
 
   /**
@@ -369,6 +375,22 @@ export class RemoteLedgerClient {
       ...(opts.displayName === undefined ? {} : { displayName: opts.displayName }),
       ...(opts.clientInfo === undefined ? {} : { clientInfo: opts.clientInfo }),
       scope: "ordinary",
+    });
+  }
+
+  static async connectAdmin(opts: {
+    readonly serverUrl: string;
+    readonly projectKey: string;
+    readonly adminToken: string;
+    readonly clientInfo?: { readonly name: string; readonly version: string };
+  }): Promise<RemoteLedgerClient> {
+    return await RemoteLedgerClient.connectWithCredential({
+      serverUrl: opts.serverUrl,
+      projectKey: opts.projectKey,
+      credential: opts.adminToken,
+      ...(opts.clientInfo === undefined ? {} : { clientInfo: opts.clientInfo }),
+      scope: "admin",
+      endpoint: remoteAdminMcpUrl(opts.serverUrl, opts.projectKey),
     });
   }
 
@@ -389,7 +411,7 @@ export class RemoteLedgerClient {
   private static async connectWithCredential(
     opts: RemoteLedgerConnectionOpts,
   ): Promise<RemoteLedgerClient> {
-    const endpoint = remoteMcpUrl(opts.serverUrl, opts.projectKey);
+    const endpoint = opts.endpoint ?? remoteMcpUrl(opts.serverUrl, opts.projectKey);
     const headers: Record<string, string> = {
       authorization: `Bearer ${opts.credential}`,
     };
@@ -454,7 +476,7 @@ export class RemoteLedgerClient {
   }
 
   /** Runtime-observable connection scope; contains no credential material. */
-  connectionScope(): "ordinary" | "management" {
+  connectionScope(): "ordinary" | "management" | "admin" {
     return this._scope;
   }
 
@@ -906,6 +928,47 @@ export class RemoteLedgerClient {
     return (
       await this.call<{ task: Item }>("complete_operator_action", args)
     ).task;
+  }
+
+  async putLog(relPath: string, content: string): Promise<{ path: string; stored: true }> {
+    return await this.call<{ path: string; stored: true }>("put_log", {
+      path: relPath,
+      content,
+    });
+  }
+
+  async exportDump(operationId: string): Promise<BackupDumpFile[]> {
+    return (await this.call<{ dump: BackupDumpFile[] }>("export_dump", {
+      operation_id: operationId,
+    })).dump;
+  }
+
+  async importDump(
+    operationId: string,
+    intent: "migrate-empty" | "restore-replace-confirmed",
+    dump: readonly BackupDumpFile[],
+  ): Promise<{ imported: true; intent: string }> {
+    return await this.call<{ imported: true; intent: string }>("import_dump", {
+      operation_id: operationId,
+      intent,
+      dump,
+    });
+  }
+
+  async resetProject(operationId: string): Promise<{ reset: true }> {
+    return await this.call<{ reset: true }>("reset_project", {
+      operation_id: operationId,
+    });
+  }
+
+  async eraseProject(operationId: string): Promise<{ erased: true }> {
+    return await this.call<{ erased: true }>("erase_project", {
+      operation_id: operationId,
+    });
+  }
+
+  async getOperationStatus(operationId: string): Promise<unknown> {
+    return await this.call("get_operation_status", { operation_id: operationId });
   }
 
   /** Close the MCP session and release the transport. */

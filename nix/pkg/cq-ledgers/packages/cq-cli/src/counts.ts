@@ -12,7 +12,13 @@
  * `runPredicates`) and disposed in a `finally`.
  */
 
-import { createLedgerStore, computeLedgerSummaries, type LedgerSummariesResult } from "@cq/ledger";
+import {
+  createLedgerStore,
+  computeLedgerSummaries,
+  resolveLedgerBackend,
+  type LedgerSummariesResult,
+} from "@cq/ledger";
+import { withRemoteClient } from "./remoteClient.js";
 
 /** Exit code for `cq counts` — ALWAYS success (it never blocks). */
 export const EXIT_COUNTS = 0;
@@ -44,12 +50,16 @@ export async function runCounts(
   args: CountsArgs,
   io: CountsIo,
 ): Promise<CountsOutcome> {
-  const { store } = await createLedgerStore(args.cwd);
   let summaries: LedgerSummariesResult;
-  try {
-    summaries = computeLedgerSummaries(store);
-  } finally {
-    await store.dispose();
+  if (resolveLedgerBackend(args.cwd).backend === "remote") {
+    summaries = await withRemoteClient(args.cwd, (client) => client.enumerateLedgers());
+  } else {
+    const { store } = await createLedgerStore(args.cwd);
+    try {
+      summaries = computeLedgerSummaries(store);
+    } finally {
+      await store.dispose();
+    }
   }
   io.out(JSON.stringify(summaries));
   return { exitCode: EXIT_COUNTS };

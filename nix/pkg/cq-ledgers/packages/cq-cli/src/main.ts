@@ -34,6 +34,8 @@ import {
   resolveStateDirBase,
   resolveProjectKey,
   runBackupExport,
+  exportBackupInTree,
+  exportBackupOrphanBranch,
   readDumpInTree,
   readDumpOrphanBranch,
   restoreDumpToXdg,
@@ -47,7 +49,6 @@ import {
   openExistingLedgerDb,
   PostgresLedgerStore,
   XDG_DB_FILENAME,
-  RemoteLedgerClientNotWiredError,
   PostgresDsnResolutionError,
   type LedgerStore,
   type ResetSummary,
@@ -78,6 +79,7 @@ import {
   wipeTenantRows,
   type PostgresTenantHandle,
 } from "./postgresTenant.js";
+import { withRemoteAdminClient } from "./remoteClient.js";
 
 export { CQ_CONFIG_FILENAME };
 
@@ -458,6 +460,48 @@ export async function runInit(args: SubcommandArgs, io: DispatchIo): Promise<Sub
  *   - TTY, no `--yes`    → prompt; proceed only on a `y`/`Y` answer.
  *   - non-TTY, no `--yes`→ REFUSE (exit 2) — never wipe a tree silently.
  */
+async function runResetRemote(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
+  const decision = await confirmDestructive(
+    args.yes,
+    `Reset remote tenant at ${args.cwd}? [y/N] `,
+    `cq reset: refusing to reset a remote tenant without confirmation; re-run with --yes.`,
+    io.confirm,
+  );
+  if (!decision.proceed) return { exitCode: decision.exitCode };
+  const operationId = `reset-${randomUUID()}`;
+  try {
+    await withRemoteAdminClient(args.cwd, (client) => client.resetProject(operationId));
+  } catch (err) {
+    io.err(
+      `cq reset: outcome-unknown for operation ${operationId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return { exitCode: EXIT_USAGE };
+  }
+  io.out(`cq reset: reset remote tenant`);
+  return { exitCode: 0 };
+}
+
+async function runEraseRemote(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
+  const decision = await confirmDestructive(
+    args.yes,
+    `Erase remote tenant at ${args.cwd}? IRREVERSIBLE [y/N] `,
+    `cq erase: refusing to erase a remote tenant without confirmation; re-run with --yes.`,
+    io.confirm,
+  );
+  if (!decision.proceed) return { exitCode: decision.exitCode };
+  const operationId = `erase-${randomUUID()}`;
+  try {
+    await withRemoteAdminClient(args.cwd, (client) => client.eraseProject(operationId));
+  } catch (err) {
+    io.err(
+      `cq erase: tenant NOT erased; outcome-unknown for operation ${operationId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return { exitCode: EXIT_USAGE };
+  }
+  io.out(`cq erase: erased remote tenant`);
+  return { exitCode: 0 };
+}
+
 export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
   // backend='postgres' (T583, Q275 context) is scoped to ONE tenant's rows in
   // a SHARED database — routed to its own handler below rather than the
@@ -465,6 +509,9 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
   // tenant (display name + project_key) BEFORE createLedgerStore's init()
   // would auto-register a not-yet-registered one as a side effect.
   const { backend: preflightBackend } = resolveLedgerBackend(args.cwd);
+  if (preflightBackend === "remote") {
+    return runResetRemote(args, io);
+  }
   if (preflightBackend === "postgres") {
     return runResetPostgres(args, io);
   }
@@ -678,8 +725,7 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
     try {
       backend = resolveLedgerBackend(args.cwd).backend;
       if (backend === "remote") {
-        io.err(new RemoteLedgerClientNotWiredError("cq erase", args.cwd).message);
-        return { exitCode: EXIT_USAGE };
+        return runEraseRemote(args, io);
       }
       if (backend === "xdg") {
         const config = loadConfig(args.cwd);
@@ -1023,6 +1069,9 @@ export async function runBackup(args: SubcommandArgs, io: DispatchIo): Promise<S
     );
     return { exitCode: EXIT_USAGE };
   }
+  if (backend === "remote") {
+    return runBackupRemote(args, io, target, branch);
+  }
   if (backend !== "xdg" && backend !== "postgres") {
     io.err(
       `cq backup: [ledger] backend='${backend}' does not support the backup exporter ` +
@@ -1056,6 +1105,67 @@ export async function runBackup(args: SubcommandArgs, io: DispatchIo): Promise<S
     resolved.backup?.close();
     await resolved.store.dispose();
   }
+  return { exitCode: 0 };
+}
+
+async function runBackupRemote(
+  args: SubcommandArgs,
+  io: DispatchIo,
+  target: "in-tree" | "orphan-branch",
+  branch: string,
+): Promise<SubcommandOutcome> {
+  const dump = await withRemoteAdminClient(args.cwd, (client) =>
+    client.exportDump(`backup-${randomUUID()}`),
+  );
+  if (target === "in-tree") await exportBackupInTree(args.cwd, dump);
+  else await exportBackupOrphanBranch(args.cwd, branch, dump);
+  if (target === "in-tree") {
+    io.out(
+      `cq backup: exported ${dump.length} file(s) to ${path.join(args.cwd, LEDGER_STORAGE_DIRNAME)}`,
+    );
+  } else {
+    io.out(
+      `cq backup: committed a ${dump.length}-file dump to refs/heads/${branch} at ${args.cwd}`,
+    );
+  }
+  return { exitCode: 0 };
+}
+
+async function runRestoreRemote(
+  args: SubcommandArgs,
+  io: DispatchIo,
+  target: "in-tree" | "orphan-branch",
+  branch: string,
+): Promise<SubcommandOutcome> {
+  let dump;
+  try {
+    dump =
+      target === "in-tree"
+        ? await readDumpInTree(args.cwd)
+        : await readDumpOrphanBranch(args.cwd, branch);
+  } catch (e) {
+    io.err(`cq restore: failed to read the ${target} dump: ${e instanceof Error ? e.message : String(e)}`);
+    return { exitCode: EXIT_USAGE };
+  }
+  const decision = await confirmDestructive(
+    args.yes,
+    `Restore remote tenant from the ${target} dump at ${args.cwd}? This replaces the tenant. [y/N] `,
+    `cq restore: refusing to restore a remote tenant without confirmation; re-run with --yes.`,
+    io.confirm,
+  );
+  if (!decision.proceed) return { exitCode: decision.exitCode };
+  const operationId = `restore-${randomUUID()}`;
+  try {
+    await withRemoteAdminClient(args.cwd, (client) =>
+      client.importDump(operationId, "restore-replace-confirmed", dump),
+    );
+  } catch (err) {
+    io.err(
+      `cq restore: outcome-unknown for operation ${operationId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return { exitCode: EXIT_USAGE };
+  }
+  io.out(`cq restore: restored remote tenant from the ${target} dump`);
   return { exitCode: 0 };
 }
 
@@ -1096,6 +1206,9 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
         `configured. Set backup = "in-tree" or "orphan-branch" in ${CQ_CONFIG_FILENAME} to enable restore.`,
     );
     return { exitCode: EXIT_USAGE };
+  }
+  if (backend === "remote") {
+    return runRestoreRemote(args, io, target, branch);
   }
   if (backend !== "xdg" && backend !== "postgres") {
     io.err(
@@ -1253,8 +1366,8 @@ export async function runMigrateCmd(
   args: SubcommandArgs,
   io: DispatchIo,
 ): Promise<SubcommandOutcome> {
-  if (args.to !== null && args.to !== "postgres") {
-    io.err(`cq migrate: --to only recognises "postgres" (got "${args.to}").`);
+  if (args.to !== null && args.to !== "postgres" && args.to !== "remote") {
+    io.err(`cq migrate: --to only recognises "postgres" or "remote" (got "${args.to}").`);
     return { exitCode: EXIT_USAGE };
   }
   return runMigrate(

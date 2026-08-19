@@ -63,16 +63,24 @@ import {
 } from "@cq/ledger";
 import {
   attachMcpHttp,
+  attachProjectAdminMcpHttp,
   changedFrame,
   createPostgresHubDispatchRuntime,
   resolvePromptSurface,
   wsHeartbeat,
+  HUB_ADMIN_TOKEN_ENV_VAR,
   type McpHttpHandlers,
   type McpHttpCredentialConfig,
   type PromptArtifactStore,
   type DispatchRuntime,
+  type ProjectAdminHandlers,
 } from "@cq/ledger-mcp";
-import { hubTopic, isSafeProjectKeySegment, matchProjectRoute } from "./projectRoutes.js";
+import {
+  hubTopic,
+  isSafeProjectKeySegment,
+  matchAdminProjectRoute,
+  matchProjectRoute,
+} from "./projectRoutes.js";
 import { prepare, serveStatic, scanForPort, DEFAULT_OUTDIR } from "./serve.js";
 
 export { hubTopic, matchProjectRoute } from "./projectRoutes.js";
@@ -117,6 +125,8 @@ export interface HubServeArgs {
   token: string | null;
   /** `--management-token <secret>`; null when absent. */
   managementToken: string | null;
+  /** `--admin-token <secret>`; null when absent. */
+  adminToken: string | null;
 }
 
 /**
@@ -131,6 +141,7 @@ export function parseHubArgs(argv: readonly string[]): HubServeArgs {
   let pgUrlArg: string | undefined;
   let token: string | null = null;
   let managementToken: string | null = null;
+  let adminToken: string | null = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--host") host = argv[++i] ?? host;
@@ -144,12 +155,15 @@ export function parseHubArgs(argv: readonly string[]): HubServeArgs {
     else if (a === "--management-token") managementToken = argv[++i] ?? managementToken;
     else if (a?.startsWith("--management-token=")) {
       managementToken = a.slice("--management-token=".length);
+    } else if (a === "--admin-token") adminToken = argv[++i] ?? adminToken;
+    else if (a?.startsWith("--admin-token=")) {
+      adminToken = a.slice("--admin-token=".length);
     }
   }
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     throw new Error(`cq serve: --port must be 0..65535; got: ${String(port)}`);
   }
-  return { host, port, pgUrlArg, token, managementToken };
+  return { host, port, pgUrlArg, token, managementToken, adminToken };
 }
 
 /** Env vars consulted for the DSN when `--pg-url` is absent, in precedence order. */
@@ -224,6 +238,17 @@ export function resolveHubManagementToken(
   return null;
 }
 
+/** Resolve the distinct project-admin credential from flag, env, or disabled. */
+export function resolveHubAdminToken(
+  tokenArg: string | null,
+  env: Readonly<Record<string, string | undefined>>,
+): string | null {
+  if (tokenArg !== null && tokenArg.trim() !== "") return tokenArg;
+  const fromEnv = env[HUB_ADMIN_TOKEN_ENV_VAR];
+  if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv;
+  return null;
+}
+
 export class HubCredentialSeparationError extends Error {
   constructor() {
     super("cq serve: the management token must differ from the ordinary token");
@@ -235,6 +260,7 @@ export class HubCredentialSeparationError extends Error {
 export function assertHubCredentialSeparation(
   ordinaryToken: string | null,
   managementToken: string | null,
+  adminToken: string | null = null,
 ): void {
   if (
     ordinaryToken !== null &&
@@ -242,6 +268,14 @@ export function assertHubCredentialSeparation(
     tokensMatch(ordinaryToken, managementToken)
   ) {
     throw new HubCredentialSeparationError();
+  }
+  if (adminToken !== null) {
+    if (ordinaryToken !== null && tokensMatch(ordinaryToken, adminToken)) {
+      throw new HubCredentialSeparationError();
+    }
+    if (managementToken !== null && tokensMatch(managementToken, adminToken)) {
+      throw new HubCredentialSeparationError();
+    }
   }
 }
 
@@ -371,6 +405,7 @@ interface HubWsData {
 interface ProjectRuntime {
   store: PostgresLedgerStore;
   handlers: McpHttpHandlers;
+  admin: ProjectAdminHandlers | null;
   dispatchRuntime: DispatchRuntime;
 }
 
@@ -382,6 +417,8 @@ export interface HubServeOpts {
   token: string | null;
   /** Distinct management credential; null leaves HTTP management disabled. */
   managementToken: string | null;
+  /** Distinct project-admin credential; null disables /admin/mcp. */
+  adminToken: string | null;
   outdir: string;
 }
 
@@ -520,7 +557,7 @@ export function serveHub(
   indexPath: string,
   promptArtifactStore?: PromptArtifactStore,
 ): ReturnType<typeof Bun.serve> {
-  assertHubCredentialSeparation(opts.token, opts.managementToken);
+  assertHubCredentialSeparation(opts.token, opts.managementToken, opts.adminToken);
   // Lazily-constructed per-tenant runtimes, keyed by projectKey. Stored as a
   // PROMISE so two concurrent first-requests for the same tenant share ONE
   // construction (no double-construct racing the same pool). A failed or
@@ -586,8 +623,25 @@ export function serveHub(
           ordinaryToken: opts.token,
           managementToken: opts.managementToken,
         } satisfies McpHttpCredentialConfig,
+        "observe",
+        true,
       );
-      return { store, handlers, dispatchRuntime };
+      const admin =
+        opts.adminToken === null
+          ? null
+          : attachProjectAdminMcpHttp({
+              store,
+              adminToken: opts.adminToken,
+              onReconcile: async (kind) => {
+                if (kind === "erase") {
+                  runtimes.delete(projectKey);
+                  return;
+                }
+                await store.reloadCommittedState();
+                server.publish(hubTopic(projectKey), changedFrame(null));
+              },
+            });
+      return { store, handlers, admin, dispatchRuntime };
     })();
     runtimes.set(projectKey, built);
     // Do not cache a negative/failed result: evict so a tenant registered later
@@ -621,6 +675,24 @@ export function serveHub(
         // or key safety (`%ZZ`, `..`, separators). True non-routes under `/p/`
         // (`/p/abc`, `/p/abc/`, `/p/abc/other`) fall through to SPA static 200.
         // Unknown well-formed keys still 404 after auth (below).
+        const adminRoute = matchAdminProjectRoute(url.pathname);
+        if (adminRoute !== null) {
+          if (!isSafeProjectKeySegment(adminRoute.projectKey)) {
+            return new Response("invalid project route", { status: 400 });
+          }
+          if (opts.adminToken === null) {
+            return new Response("admin surface disabled", { status: 503 });
+          }
+          const provided = extractBearerToken(req);
+          if (provided === null || !tokensMatch(provided, opts.adminToken)) {
+            return unauthorized();
+          }
+          const runtime = await getRuntime(adminRoute.projectKey);
+          if (runtime === null || runtime.admin === null) {
+            return new Response("unknown project", { status: 404 });
+          }
+          return runtime.admin.handle(req);
+        }
         const route = matchProjectRoute(url.pathname);
         if (route !== null) {
           if (!isSafeProjectKeySegment(route.projectKey)) {
@@ -669,7 +741,7 @@ export function serveHub(
         }
         // Route-shaped but matchProjectRoute returned null → decode failure
         // (e.g. `/p/%ZZ/mcp`). Do not SPA-fallback a broken tenant URL.
-        if (/^\/p\/[^/]+\/(mcp|ws)$/.test(url.pathname)) {
+        if (/^\/p\/[^/]+\/(mcp|ws|admin\/mcp)$/.test(url.pathname)) {
           return new Response("invalid project route", { status: 400 });
         }
         // Static bundle + assets stay unauthenticated even when --token is set
@@ -719,11 +791,12 @@ export async function main(argv: readonly string[]): Promise<void> {
   // can be injected out-of-band (env) instead of via a `ps`-visible flag.
   const token = resolveHubToken(args.token, process.env);
   const managementToken = resolveHubManagementToken(args.managementToken, process.env);
+  const adminToken = resolveHubAdminToken(args.adminToken, process.env);
   // Q273 startup gate: a non-loopback --host with no token is refused
   // BEFORE DSN resolution, so a misconfigured bind never touches Postgres.
   try {
     assertTokenIfNonLoopback(args.host, token);
-    assertHubCredentialSeparation(token, managementToken);
+    assertHubCredentialSeparation(token, managementToken, adminToken);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`cq: fatal: ${msg}\n`);
@@ -763,6 +836,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     port: args.port,
     token,
     managementToken,
+    adminToken,
     outdir,
   };
   const runningServer = serveHub(opts, pool, indexPath, promptSurface?.store);
