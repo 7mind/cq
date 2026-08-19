@@ -562,7 +562,12 @@ The `tasks` schema statuses are `planned`, `wip`, `done`, `blocked`,
    an `open` question and set the task `blocked` (`wip → blocked`).
 7. **Success gate** — a code task succeeds only with green check AND reconciled
    `approve`; only succeeded tasks merge.
-8. **Merge-back** — sequential, in DAG order, rebase-before-merge. On a clean
+8. **Merge-back** — sequential, in DAG order, rebase-before-merge through the
+   task-bound broker (`cq gate git-effect`). The rebase runs under one stable
+   operation id and journals a guarded rebase whose opaque
+   `CQ_GUARDED_REBASE_REFERENCE` is the only rebase authority: a rewritten tip
+   re-prepares the worker through that exact reference (server-materialized
+   lineage, fresh parent-owned gate, fresh reviewers) before merge. On a clean
    rebase, fast-forward merge and set the task `done`. On conflict, dispatch the
    `implement-conflict-resolver`; on its `fail`, treat as a question bailout
    (park `blocked`). When a merged task fixes a defect, close that defect to
