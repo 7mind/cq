@@ -52,11 +52,14 @@ It returns:
   "openQuestionGate": { "value": false, "items": [] },
   "belowFloor": { "value": false, "items": [] },
   "planBusy": { "value": false, "items": [] },
-  "goalDrift": { "value": false, "items": [] }
+  "goalDrift": { "value": false, "items": [] },
+  "upstreamBlocked": { "value": false, "items": [] }
 }
 ```
 
-Trust these derived values. Use `snapshot()` or focused item reads only for
+Trust these derived values. `upstreamBlocked` is report-only and never stops
+the cycle; record third-party package faults on the `upstream` ledger and run
+`CQ::upstream` for filing/recheck. Use `snapshot()` or focused item reads only for
 narrative needed by the selected action. Never reimplement readiness by scanning
 entire ledgers or parsing a child command's report.
 

@@ -64,7 +64,7 @@ function buildClaudePromptRoot(): string {
 
 describe("packaged Claude prompt root", () => {
   test(
-    "builds the exact catalog and all 24 directly rendered role artifacts",
+    "builds the exact catalog and all 25 directly rendered role artifacts",
     () => {
       const output = buildClaudePromptRoot();
       const catalogJson = evaluateRaw("catalogJson");
@@ -92,7 +92,7 @@ describe("packaged Claude prompt root", () => {
     roleSchemas: DISPATCHED_ROLE_SCHEMAS,
       });
 
-      expect(catalog).toHaveLength(24);
+      expect(catalog).toHaveLength(25);
       expect(catalog.some(({ roleId }) => roleId === "begin")).toBe(true);
       expect(readdirSync(output).sort()).toEqual(["catalog.json", "roles", "schemas", "surface.json"]);
       expect(readFileSync(path.join(output, "catalog.json"), "utf8")).toBe(catalogJson);

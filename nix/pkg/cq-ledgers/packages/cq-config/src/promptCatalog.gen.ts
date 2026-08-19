@@ -3969,9 +3969,126 @@ export const PROMPT_CATALOG_PROJECTION = {
         "codex",
         "pi"
       ]
+    },
+    {
+      "canonicalSource": "commands/cq/upstream.md",
+      "dispatchRelations": [],
+      "fragmentBindings": [
+        {
+          "forbiddenVocabulary": {
+            "claude": [
+              "$cq-"
+            ],
+            "codex": [
+              "/cq:"
+            ],
+            "pi": [
+              "$cq-"
+            ]
+          },
+          "fragment": "cq-command-invocation",
+          "intentionalDifference": {
+            "kind": "invocation-syntax",
+            "reason": "Claude and Pi invoke CQ slash commands while Codex invokes generated CQ skills.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "frontmatter and body CQ command references",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [
+              "dispatch_agent(",
+              "$cq-"
+            ],
+            "codex": [
+              "allowed-tools:",
+              "disallowedTools:",
+              "mcp__ledger__",
+              "Agent"
+            ],
+            "pi": [
+              "Agent",
+              "$cq-"
+            ]
+          },
+          "fragment": "host-tool-vocabulary",
+          "intentionalDifference": {
+            "kind": "tool-vocabulary",
+            "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "frontmatter host tool and isolation capabilities",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "ledger-response-contract",
+          "sourceBlock": "ledger item-read projection and mutation response contract",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        }
+      ],
+      "intentionalDifferences": [
+        {
+          "kind": "invocation-syntax",
+          "reason": "Claude and Pi invoke CQ slash commands while Codex invokes generated CQ skills.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "tool-vocabulary",
+          "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        }
+      ],
+      "name": "/cq:upstream",
+      "roleId": "upstream",
+      "roleKind": "orchestrator-command",
+      "sharedSourceBlock": {
+        "classification": "shared-prose",
+        "sourceBlock": "all prose outside the classified surface-sensitive blocks",
+        "targetFragment": null
+      },
+      "sidecar": null,
+      "surfaces": [
+        "claude",
+        "codex",
+        "pi"
+      ]
     }
   ],
-  "catalogMetadataHash": "fb25b59c9a6298b161ea26ec65a2aec2a43d440e9223c8b5bf58b9c051280233",
+  "catalogMetadataHash": "7f9d3b0a2866083f0ed5ca6db92dd31dea78cd261c5018fd1dd203cbc3832c85",
   "fragmentContracts": [
     {
       "forbiddenVocabulary": {

@@ -216,7 +216,7 @@ function profileForCatalogRole({
 
 const entries = PROMPT_CATALOG_PROJECTION.catalog.map(profileForCatalogRole);
 
-/** One total, fail-closed role-to-capability matrix for the 24-role prompt catalogue. */
+/** One total, fail-closed role-to-capability matrix for the 25-role prompt catalogue. */
 export const ROLE_TOOL_CAPABILITY_MATRIX: Readonly<Record<string, RoleToolCapabilityProfile>> =
   Object.freeze(
     Object.fromEntries(entries.map((entry) => [entry.roleId, entry])),

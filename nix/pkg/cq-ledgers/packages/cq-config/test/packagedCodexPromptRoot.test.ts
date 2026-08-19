@@ -133,7 +133,7 @@ describe("packaged Codex prompt root and command skills", () => {
         ({ roleKind }) => roleKind === "dispatched-subagent",
       );
 
-      expect(commands).toHaveLength(15);
+      expect(commands).toHaveLength(16);
       expect(dispatched).toHaveLength(9);
       expect(dispatched.map(({ sidecar }) => sidecar?.schemaRoleId)).toEqual(
         dispatched.map(({ roleId }) => roleId),

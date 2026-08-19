@@ -499,6 +499,14 @@ export class UpstreamFilingClaimedError extends LedgerError {
   }
 }
 
+/** T808: finalize requires the exact claimed operation token. */
+export class UpstreamFinalizeTokenError extends LedgerError {
+  constructor(itemId: string) {
+    super(`upstream ${itemId} finalize token does not match the claimed filing operation`);
+    this.name = "UpstreamFinalizeTokenError";
+  }
+}
+
 /**
  * Thrown when an operation would violate a bootstrapped invariant of
  * the `milestones` ledger — e.g. attempting to archive the bootstrap

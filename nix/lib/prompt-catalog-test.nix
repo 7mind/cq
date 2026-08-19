@@ -37,9 +37,9 @@ let
   begin = builtins.elemAt catalog 9;
   assetsSource = builtins.readFile ../pkg/cq-assets/assets.nix;
 in
-assert builtins.length catalog == 24;
+assert builtins.length catalog == 25;
 assert first.roleId == "plan-advance";
-assert (lib.last catalog).roleId == "reviewers";
+assert (lib.last catalog).roleId == "upstream";
 assert begin.canonicalSource == "commands/cq/begin.md";
 assert begin.roleKind == "orchestrator-command";
 assert begin.sidecar == null;

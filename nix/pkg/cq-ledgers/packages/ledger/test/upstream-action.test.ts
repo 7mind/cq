@@ -1,17 +1,30 @@
 /**
  * T807 — deterministic upstream action planning and filing claim.
  */
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
 import { InMemoryLedgerStore } from "../src/store/InMemoryLedgerStore.js";
+import { FsLedgerStore } from "../src/store/FsLedgerStore.js";
+import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
 import {
   classifyUpstreamEligibility,
   claimUpstreamFiling,
+  finalizeUpstreamAction,
   planExplicitPrepare,
   selectUpstreamRecheckBatch,
   UPSTREAM_BATCH_LIMIT,
 } from "../src/upstreamAction.js";
-import { UpstreamFilingClaimedError } from "../src/types.js";
-import { UPSTREAM_LEDGER } from "../src/constants.js";
+import { UpstreamFilingClaimedError, UpstreamFinalizeTokenError } from "../src/types.js";
+import {
+  GOALS_LEDGER,
+  TASKS_LEDGER,
+  UPSTREAM_LEDGER,
+} from "../src/constants.js";
+import { derivePredicates } from "../src/store/predicates.js";
+import type { LedgerStore } from "../src/store/LedgerStore.js";
 import type { Item } from "../src/types.js";
 
 function item(partial: Partial<Item> & Pick<Item, "id" | "status">): Item {
@@ -162,6 +175,180 @@ describe("T807 upstream action planning", () => {
     }
     const after = store.fetchItem(UPSTREAM_LEDGER, created.id);
     expect(["op-a", "op-b"]).toContain(String(after.fields["filingOperationId"]));
+    await store.dispose();
+  });
+});
+
+const dirs: string[] = [];
+afterEach(async () => {
+  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+async function makeStore(kind: "memory" | "fs" | "sqlite"): Promise<LedgerStore> {
+  if (kind === "memory") {
+    const store = new InMemoryLedgerStore({});
+    await store.init();
+    return store;
+  }
+  const root = await mkdtemp(path.join(tmpdir(), `t808-${kind}-`));
+  dirs.push(root);
+  if (kind === "fs") {
+    const store = new FsLedgerStore({ root });
+    await store.init();
+    return store;
+  }
+  const store = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db") });
+  await store.init();
+  return store;
+}
+
+describe("T808 finalize and store-family claims", () => {
+  test("architecture: planner does no network or process I/O [BA]", () => {
+    const source = readFileSync(path.resolve(import.meta.dir, "../src/upstreamAction.ts"), "utf8");
+    expect(source).not.toMatch(/node:http|node:child_process|undici|from "node:net"/);
+    expect(source).not.toContain("fetch(");
+  });
+
+  for (const kind of ["memory", "fs", "sqlite"] as const) {
+    test(`${kind}: wrong finalize token is refused; matching token is idempotent [BA]`, async () => {
+      const store = await makeStore(kind);
+      const milestone = await store.createMilestone({ title: "fin" });
+      const created = await store.createItem(UPSTREAM_LEDGER, milestone.id, {
+        status: "open",
+        fields: {
+          headline: "file-me",
+          package: "pkg",
+          reportingClassification: "ordinary",
+          trackerKind: "github",
+        },
+      });
+      await claimUpstreamFiling(store, created.id, "op-1", "2026-08-19T21:00:00.000Z");
+      await expect(
+        finalizeUpstreamAction(store, created.id, {
+          kind: "confirmed-url",
+          url: "https://example.invalid/issues/1",
+          checkedAt: "2026-08-19T21:00:01.000Z",
+        }, "wrong"),
+      ).rejects.toBeInstanceOf(UpstreamFinalizeTokenError);
+      expect(store.fetchItem(UPSTREAM_LEDGER, created.id).status).toBe("open");
+      const first = await finalizeUpstreamAction(store, created.id, {
+        kind: "confirmed-url",
+        url: "https://example.invalid/issues/1",
+        checkedAt: "2026-08-19T21:00:01.000Z",
+      }, "op-1");
+      expect(first.status).toBe("reported");
+      const second = await finalizeUpstreamAction(store, created.id, {
+        kind: "confirmed-url",
+        url: "https://example.invalid/issues/1",
+        checkedAt: "2026-08-19T21:00:02.000Z",
+      }, "op-1");
+      expect(second.status).toBe("reported");
+      expect(second.fields["reportUrls"]).toEqual(["https://example.invalid/issues/1"]);
+      await store.dispose();
+    });
+  }
+
+  test("bookkeeping does not change status or reportUrls [BA]", async () => {
+    const store = await makeStore("memory");
+    const milestone = await store.createMilestone({ title: "bk" });
+    const created = await store.createItem(UPSTREAM_LEDGER, milestone.id, {
+      status: "reported",
+      fields: {
+        headline: "recheck",
+        package: "pkg",
+        reportingClassification: "ordinary",
+        trackerKind: "github",
+        reportUrls: ["https://example.invalid/issues/1"],
+      },
+    });
+    const before = structuredClone(store.fetchItem(UPSTREAM_LEDGER, created.id));
+    await finalizeUpstreamAction(store, created.id, {
+      kind: "bookkeeping",
+      outcome: "offline",
+      checkedAt: "2026-08-19T21:05:00.000Z",
+    });
+    const after = store.fetchItem(UPSTREAM_LEDGER, created.id);
+    expect(after.status).toBe(before.status);
+    expect(after.fields["reportUrls"]).toEqual(before.fields["reportUrls"]);
+    expect(after.fields["lastCheckOutcome"]).toBe("offline");
+    await store.dispose();
+  });
+
+  test("unknown submission stays claimed until reconciliation [BA]", async () => {
+    const store = await makeStore("memory");
+    const milestone = await store.createMilestone({ title: "unk" });
+    const created = await store.createItem(UPSTREAM_LEDGER, milestone.id, {
+      status: "open",
+      fields: {
+        headline: "unknown",
+        package: "pkg",
+        reportingClassification: "ordinary",
+        trackerKind: "github",
+      },
+    });
+    await claimUpstreamFiling(store, created.id, "op-u", "2026-08-19T21:06:00.000Z");
+    await finalizeUpstreamAction(store, created.id, {
+      kind: "unknown-submission",
+      checkedAt: "2026-08-19T21:06:01.000Z",
+    }, "op-u");
+    const after = store.fetchItem(UPSTREAM_LEDGER, created.id);
+    expect(after.status).toBe("open");
+    expect(after.fields["filingState"]).toBe("reconciliation-required");
+    expect(after.fields["filingOperationId"]).toBe("op-u");
+    await expect(claimUpstreamFiling(store, created.id, "op-retry", "2026-08-19T21:06:02.000Z")).rejects.toBeInstanceOf(
+      UpstreamFilingClaimedError,
+    );
+    await store.dispose();
+  });
+});
+
+describe("T809 confirmed release unblocks dependents", () => {
+  test("fixed-upstream → released admits the gated task and clears upstreamBlocked [BA]", async () => {
+    const store = new InMemoryLedgerStore({});
+    await store.init();
+    const milestone = await store.createMilestone({ title: "rel" });
+    const upstream = await store.createItem(UPSTREAM_LEDGER, milestone.id, {
+      status: "fixed-upstream",
+      fields: {
+        headline: "fixed",
+        package: "pkg",
+        reportingClassification: "ordinary",
+        trackerKind: "github",
+      },
+    });
+    const goal = await store.createItem(GOALS_LEDGER, milestone.id, {
+      status: "planned",
+      fields: { title: "g", description: "d" },
+    });
+    const task = await store.createItem(TASKS_LEDGER, milestone.id, {
+      status: "planned",
+      fields: {
+        headline: "gated",
+        dependsOn: [`upstream:${upstream.id}`],
+        ledgerRefs: [`${GOALS_LEDGER}:${goal.id}`],
+      },
+    });
+    const before = derivePredicates(store);
+    expect(before.pImplement.items).not.toContain(task.id);
+    expect(before.upstreamBlocked.items).toContain(task.id);
+    await finalizeUpstreamAction(store, upstream.id, {
+      kind: "bookkeeping",
+      outcome: "still-open",
+      checkedAt: "2026-08-19T21:10:00.000Z",
+    });
+    expect(store.fetchItem(UPSTREAM_LEDGER, upstream.id).status).toBe("fixed-upstream");
+    await finalizeUpstreamAction(store, upstream.id, {
+      kind: "confirmed-release",
+      checkedAt: "2026-08-19T21:10:01.000Z",
+    });
+    const after = derivePredicates(store);
+    expect(after.pImplement.items).toContain(task.id);
+    expect(after.upstreamBlocked.items).not.toContain(task.id);
+    const again = await finalizeUpstreamAction(store, upstream.id, {
+      kind: "confirmed-release",
+      checkedAt: "2026-08-19T21:10:02.000Z",
+    });
+    expect(again.status).toBe("released");
     await store.dispose();
   });
 });

@@ -336,6 +336,29 @@ interface ReferenceRenderProps {
   onNavigateReference?: (ledger: string, id: string) => void;
 }
 
+const URL_FIELDS = new Set(["reportUrls", "priorArt", "trackingUrl"]);
+
+/** http(s) only; javascript/data/file and unparseable values stay plain text. */
+export function safeHref(raw: string): string | null {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") return parsed.href;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function renderSafeLink(raw: string): React.ReactNode {
+  const href = safeHref(raw);
+  if (href === null) return raw;
+  return (
+    <a href={href} data-testid="safe-link" rel="noreferrer noopener">
+      {raw}
+    </a>
+  );
+}
+
 function renderListField(items: string[], referenceProps?: ReferenceRenderProps): React.ReactElement {
   return (
     <ul className="lw-field-list">
@@ -345,7 +368,7 @@ function renderListField(items: string[], referenceProps?: ReferenceRenderProps)
           : parseReferenceListItem(referenceProps.fieldName, item);
         return (
           <li key={i}>
-            {reference === null || referenceProps === undefined ? item : (
+            {URL_FIELDS.has(referenceProps?.fieldName ?? "") ? renderSafeLink(item) : reference === null || referenceProps === undefined ? item : (
               <ItemReferenceChip
                 text={item}
                 reference={reference}
@@ -512,6 +535,7 @@ export function App({
   // { value, items } verdict — refreshed on connect and on every WS 'changed'
   // push alongside the ledger counters.
   const [goalDrift, setGoalDrift] = useState<PredicateVerdict | null>(null);
+  const [upstreamBlocked, setUpstreamBlocked] = useState<PredicateVerdict | null>(null);
   const [ledger, setLedger] = useState<string | null>(null);
   const [view, setView] = useState<FetchedLedger | null>(null);
   const [selected, setSelected] = useState<Row | null>(null);
@@ -791,6 +815,7 @@ export function App({
             return;
           }
           setGoalDrift(predicates.goalDrift);
+          setUpstreamBlocked(predicates.upstreamBlocked);
         } catch {
           /* server predates derive_predicates — indicator stays hidden */
         }
@@ -1269,7 +1294,9 @@ export function App({
         // T611); independent try/catch so an unsupported/older server doesn't
         // suppress the counters refresh above.
         try {
-          setGoalDrift((await client.derivePredicates()).goalDrift);
+          const predicates = await client.derivePredicates();
+          setGoalDrift(predicates.goalDrift);
+          setUpstreamBlocked(predicates.upstreamBlocked);
         } catch {
           /* server predates derive_predicates — indicator stays hidden */
         }
@@ -1654,6 +1681,7 @@ export function App({
           Workset
         </button>
         <GoalDriftIndicator goalDrift={goalDrift} />
+        <UpstreamBlockedIndicator upstreamBlocked={upstreamBlocked} />
         <LedgerProgressBar testid="progress-questions" label="questions" ledgers={ledgers} />
         <LedgerProgressBar testid="progress-tasks" label="tasks" ledgers={ledgers} />
         <LedgerProgressBar testid="progress-defects" label="defects" ledgers={ledgers} />
@@ -2499,6 +2527,25 @@ function GoalDriftIndicator({ goalDrift }: { goalDrift: PredicateVerdict | null 
       aria-label={`goal drift warning: ${ids}`}
     >
       ⚠ drift: {ids}
+    </div>
+  );
+}
+
+function UpstreamBlockedIndicator({
+  upstreamBlocked,
+}: {
+  upstreamBlocked: PredicateVerdict | null;
+}): React.ReactElement | null {
+  if (upstreamBlocked === null || !upstreamBlocked.value) return null;
+  const ids = upstreamBlocked.items.join(", ");
+  return (
+    <div
+      className="lw-upstream-blocked"
+      data-testid="upstream-blocked-indicator"
+      title={`tasks gated on unreleased upstream: ${ids}`}
+      aria-label={`upstream blocked: ${ids}`}
+    >
+      ⚠ upstream: {ids}
     </div>
   );
 }
@@ -4363,7 +4410,9 @@ function DetailPanel({
     ? undefined
     : (targetLedger: string, itemId: string): void => onNavigateToItem(targetLedger, itemId);
   const renderReferenceValue = (fieldName: string, value: FieldValue): React.ReactNode =>
-    Array.isArray(value)
+    !Array.isArray(value) && URL_FIELDS.has(fieldName) && typeof value === "string"
+      ? renderSafeLink(value)
+    : Array.isArray(value)
       ? renderListField(value, {
           fieldName,
           ...(resolveReference !== undefined ? { resolveReference } : {}),

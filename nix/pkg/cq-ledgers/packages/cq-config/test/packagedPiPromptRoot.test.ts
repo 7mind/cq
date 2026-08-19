@@ -374,13 +374,13 @@ afterEach(() => {
 });
 
 describe("packaged Pi prompt root", () => {
-  test("projects the direct Nix catalog into the exact 24-role Pi runtime tree", () => {
+  test("projects the direct Nix catalog into the exact 25-role Pi runtime tree", () => {
     const output = buildPiPromptRoot();
     const catalogJson = evaluateRaw("catalogJson");
     const catalog = JSON.parse(catalogJson) as readonly CatalogRole[];
     const direct = directPiTree(catalogJson);
 
-    expect(catalog).toHaveLength(24);
+    expect(catalog).toHaveLength(25);
     expect(readdirSync(output).sort()).toEqual([
       "catalog.json",
       PI_ROLE_TOOL_PROFILE_MANIFEST_PATH,

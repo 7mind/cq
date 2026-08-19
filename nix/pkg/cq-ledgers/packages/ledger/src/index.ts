@@ -4,6 +4,7 @@
 
 export * from "./types.js";
 export * from "./upstreamAction.js";
+export * from "./recordUpstreamIssues.js";
 export * from "./usageStats.js";
 export * from "./planLifecycle.js";
 export * from "./operatorActions.js";

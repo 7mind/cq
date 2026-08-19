@@ -289,7 +289,7 @@ in
     assert !invalidDispatchTarget.success;
     assert !invalidSidecar.success;
     assert !collidingNames.success;
-    assert builtins.length projectedSkillNames == 15;
+    assert builtins.length projectedSkillNames == 16;
     assert builtins.length projectedRoleNames == 9;
     assert projectedAgentNames == projectedRoleNames;
     assert projected.catalog == "${promptRoot}/catalog.json";

@@ -496,6 +496,7 @@ let
     (mkCommand "implement-review" [ I ] [ ])
     (mkCommand "planners" [ I T ] [ ])
     (mkCommand "reviewers" [ I T ] [ ])
+    (mkCommand "upstream" [ I T C ] [ ])
   ];
 
   expectedAgentIds = builtins.attrNames agents;

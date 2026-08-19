@@ -129,7 +129,7 @@ pkgs.runCommand "claude-prompt-home-check"
     mkdir -p "$out/home"
     ${lib.concatMapStringsSep "\n" checkRole promptCatalog}
 
-    test ${toString (builtins.length promptCatalog)} -eq 24
+    test ${toString (builtins.length promptCatalog)} -eq 25
     test ${toString commandCount} -eq 15
     test ${toString agentCount} -eq 9
     test ${lib.escapeShellArg claudeConfig.package.promptSurface} = claude
