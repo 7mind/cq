@@ -35,6 +35,7 @@ import {
   NonTerminalItemsError,
   SchemaValidationError,
   UnsatisfiedDependencyArchiveError,
+  UpstreamFilingClaimedError,
 } from "../types.js";
 import {
   buildPrefixRegistry,
@@ -53,6 +54,7 @@ import {
   MEMORIES_LEDGER,
   OPERATOR_ACTIONS_LEDGER,
   TASKS_LEDGER,
+  UPSTREAM_LEDGER,
 } from "../constants.js";
 import {
   isAuthorizedOperatorActionCompletionPatch,
@@ -431,6 +433,23 @@ export function normalizeRefFields(
   }
 }
 
+function stringField(fields: Record<string, FieldValue | undefined>, name: string): string {
+  const value = fields[name];
+  return typeof value === "string" ? value : "";
+}
+
+function assertUpstreamFilingClaim(
+  item: Item,
+  patchFields: Record<string, FieldValue>,
+): void {
+  if (patchFields["filingOperationId"] === undefined) return;
+  const existing = stringField(item.fields, "filingOperationId");
+  const next = stringField(patchFields, "filingOperationId");
+  if (existing !== "" && existing !== next) {
+    throw new UpstreamFilingClaimedError(item.id, existing);
+  }
+}
+
 export function applyUpdateItem(
   ledger: Ledger,
   itemId: string,
@@ -485,6 +504,9 @@ export function applyUpdateItem(
   }
   if (patch.fields !== undefined) {
     validateFields(ledger, patch.fields, /*creating*/ false);
+    if (ledger.id === UPSTREAM_LEDGER) {
+      assertUpstreamFilingClaim(item, patch.fields);
+    }
     // T1951: sealed workset ownership is library-managed — generic update cannot set/change it.
     assertWorksetOwnershipFieldsAbsent(patch.fields, item);
     if (ledger.id === TASKS_LEDGER && patch.fields["description"] !== undefined) {

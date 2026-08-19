@@ -491,6 +491,14 @@ export class UnsatisfiedDependencyArchiveError extends LedgerError {
   }
 }
 
+/** T807: a second prepare cannot steal an existing upstream filing claim. */
+export class UpstreamFilingClaimedError extends LedgerError {
+  constructor(itemId: string, operationId: string) {
+    super(`upstream ${itemId} is already claimed by filing operation ${operationId}`);
+    this.name = "UpstreamFilingClaimedError";
+  }
+}
+
 /**
  * Thrown when an operation would violate a bootstrapped invariant of
  * the `milestones` ledger — e.g. attempting to archive the bootstrap
