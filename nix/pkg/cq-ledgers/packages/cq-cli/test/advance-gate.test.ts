@@ -27,13 +27,18 @@
  */
 
 import { describe, it, expect, afterAll, beforeAll, beforeEach } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { dispatch, type ConfirmIo, type DispatchIo } from "../src/main.js";
 import { EXIT_ALLOW, EXIT_BLOCK, type AdvanceGateVerdict } from "../src/advanceGate.js";
 import {
   createLedgerStore,
+  derivePredicates,
+  isPlanLifecycleStore,
   MILESTONES_AMBIENT_ID,
   GOALS_LEDGER,
   TASKS_LEDGER,
@@ -433,5 +438,191 @@ describe("cq advance-gate — verdict + exit-code contract (T367)", () => {
     // External-signal path short-circuits BEFORE reading the ledger → empty
     // predicates despite the actionable defect on disk.
     expect(verdict.predicates.pInvestigate.value).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T1270 / G126 — advance-gate preserves shared pPlan; no local task-wait.
+// ---------------------------------------------------------------------------
+
+const T1270_PROVENANCE = { author: "t1270", session: "t1270-session" } as const;
+const T1270_OWNER_TOKEN = "T1270-owner-fence-token";
+const TASK_WAIT_EXCLUSION =
+  "    if (activePlanTaskWaits(g, tasks).length > 0) continue;";
+const PREDICATES_SRC = fileURLToPath(
+  new URL("../../ledger/src/store/predicates.ts", import.meta.url),
+);
+const ADVANCE_GATE_SRC = fileURLToPath(new URL("../src/advanceGate.ts", import.meta.url));
+
+async function seedTaskWaitLedger(): Promise<{
+  root: string;
+  goalId: string;
+  taskId: string;
+}> {
+  const root = await xdgRoot();
+  let goalId = "";
+  let taskId = "";
+  await seedStore(root, async (store) => {
+    if (!isPlanLifecycleStore(store)) {
+      throw new Error("T1270 fixture requires a PlanLifecycleStore");
+    }
+    const goal = await store.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
+      status: "clarifying",
+      fields: { title: "task-gated goal", description: "paused on a live task" },
+      ...T1270_PROVENANCE,
+    });
+    goalId = goal.id;
+    const waited = await store.createItem(TASKS_LEDGER, MILESTONES_AMBIENT_ID, {
+      status: "planned",
+      fields: { headline: "waited task" },
+      ...T1270_PROVENANCE,
+    });
+    taskId = waited.id;
+    const claimed = await store.claimPlan({
+      goalId,
+      purpose: "initial",
+      claimRequestId: `t1270-${goalId}`,
+      ownerFenceToken: T1270_OWNER_TOKEN,
+      expectedGeneration: null,
+      ...T1270_PROVENANCE,
+    });
+    if (!claimed.ok) throw new Error(`T1270 claim failed: ${claimed.conflict.code}`);
+    const paused = await store.releasePlanClaim({
+      kind: "pause",
+      goalId,
+      claimId: claimed.acknowledgement.claimId,
+      generation: claimed.acknowledgement.generation,
+      operationId: `t1270-pause-${goalId}`,
+      ownerFenceToken: claimed.acknowledgement.ownerFenceToken,
+      ...T1270_PROVENANCE,
+      effect: { kind: "tasks", tasks: [taskId] },
+    });
+    if (!paused.ok || paused.acknowledgement.kind !== "tasks") {
+      throw new Error("T1270 tasks pause failed");
+    }
+  });
+  return { root, goalId, taskId };
+}
+
+async function sharedPlanItems(root: string): Promise<string[]> {
+  const { store } = await createLedgerStore(root);
+  try {
+    return derivePredicates(store).pPlan.items.slice();
+  } finally {
+    await store.dispose();
+  }
+}
+
+async function finishWaitedTask(root: string, taskId: string): Promise<void> {
+  await seedStore(root, async (store) => {
+    await store.updateItem(TASKS_LEDGER, taskId, {
+      status: "done",
+      ...T1270_PROVENANCE,
+    });
+  });
+}
+
+describe("T1270: advance-gate preserves shared pPlan without local task-wait semantics", () => {
+  it("T1270 active wait allows and matches shared pPlan", async () => {
+    const { root, goalId } = await seedTaskWaitLedger();
+    await writeFile(markerFile(runtimeDir), "started\n", "utf8");
+
+    const { exitCode, verdict } = await runGate(root);
+    const shared = await sharedPlanItems(root);
+
+    expect(exitCode).toBe(EXIT_ALLOW);
+    expect(verdict.block).toBe(false);
+    expect(verdict.predicates.pPlan).toEqual({ value: false, items: [] });
+    expect(verdict.predicates.pPlan.items).toEqual(shared);
+    expect(shared).not.toContain(goalId);
+    expect(verdict.predicates.pInvestigate.value).toBe(false);
+    expect(verdict.predicates.pSeed.value).toBe(false);
+    expect(verdict.predicates.pResearch.value).toBe(false);
+    expect(verdict.predicates.pImplement.value).toBe(false);
+    expect(verdict.predicates.pOperatorAction.value).toBe(false);
+  });
+
+  it("T1270 terminal wait blocks with P-plan=TRUE and matches shared pPlan", async () => {
+    const { root, goalId, taskId } = await seedTaskWaitLedger();
+    await finishWaitedTask(root, taskId);
+    await writeFile(markerFile(runtimeDir), "started\n", "utf8");
+
+    const { exitCode, verdict } = await runGate(root);
+    const shared = await sharedPlanItems(root);
+
+    expect(exitCode).toBe(EXIT_BLOCK);
+    expect(exitCode).not.toBe(0);
+    expect(verdict.block).toBe(true);
+    expect(verdict.reason).toContain("P-plan=TRUE");
+    expect(verdict.predicates.pPlan).toEqual({ value: true, items: [goalId] });
+    expect(verdict.predicates.pPlan.items).toEqual(shared);
+    expect(shared).toEqual([goalId]);
+    expect(verdict.predicates.pImplement.value).toBe(false);
+  });
+
+  it("T1270 advanceGate.ts has no local task-wait semantics", async () => {
+    const source = await readFile(ADVANCE_GATE_SRC, "utf8");
+    expect(source).toContain("deriveWorksetPredicates");
+    expect(source).toMatch(/predicates = await deriveWorksetPredicates\(store\)/);
+    expect(source).toContain("if (p.pPlan.value) return \"plan\";");
+    expect(source).not.toMatch(/waitingTasks/);
+    expect(source).not.toMatch(/activePlanTaskWaits/);
+    expect(source).not.toMatch(/TASKS_LEDGER/);
+    expect(source).not.toMatch(/planned["'], ["']wip["'], ["']blocked/);
+    expect(source).not.toMatch(/pPlan\.items\s*=/);
+  });
+
+  it("T1270 deleting shared exclusion fails the active-wait leg", () => {
+    const original = readFileSync(PREDICATES_SRC, "utf8");
+    expect(original).toContain(TASK_WAIT_EXCLUSION);
+    try {
+      writeFileSync(PREDICATES_SRC, original.replace(TASK_WAIT_EXCLUSION, ""), "utf8");
+      const probe = spawnSync(
+        process.execPath,
+        [
+          "test",
+          "packages/cq-cli/test/advance-gate.test.ts",
+          "-t",
+          "T1270 active wait allows and matches shared pPlan",
+        ],
+        {
+          cwd: fileURLToPath(new URL("../../..", import.meta.url)),
+          encoding: "utf8",
+          env: process.env,
+        },
+      );
+      expect(probe.status).not.toBe(0);
+    } finally {
+      writeFileSync(PREDICATES_SRC, original, "utf8");
+    }
+  });
+
+  it("T1270 unconditional exclusion fails the terminal leg", () => {
+    const original = readFileSync(PREDICATES_SRC, "utf8");
+    expect(original).toContain(TASK_WAIT_EXCLUSION);
+    try {
+      writeFileSync(
+        PREDICATES_SRC,
+        original.replace(TASK_WAIT_EXCLUSION, "    if (true) continue;"),
+        "utf8",
+      );
+      const probe = spawnSync(
+        process.execPath,
+        [
+          "test",
+          "packages/cq-cli/test/advance-gate.test.ts",
+          "-t",
+          "T1270 terminal wait blocks with P-plan=TRUE and matches shared pPlan",
+        ],
+        {
+          cwd: fileURLToPath(new URL("../../..", import.meta.url)),
+          encoding: "utf8",
+          env: process.env,
+        },
+      );
+      expect(probe.status).not.toBe(0);
+    } finally {
+      writeFileSync(PREDICATES_SRC, original, "utf8");
+    }
   });
 });
