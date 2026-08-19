@@ -513,7 +513,10 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
     return runResetRemote(args, io);
   }
   if (preflightBackend === "postgres") {
-    return runResetPostgres(args, io);
+    io.err(
+      `cq reset: backend='postgres' is retired; set backend="remote" and use CQ_LEDGER_REMOTE_ADMIN_TOKEN`,
+    );
+    return { exitCode: EXIT_USAGE };
   }
 
   const decision = await confirmDestructive(
@@ -561,7 +564,7 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
  * {@link resolvePostgresTenant} BEFORE confirming, so the prompt names the
  * blast radius, then wipes + reseeds on the SAME pool/projectKey.
  */
-async function runResetPostgres(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
+async function _runResetPostgres(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
   const tenant = await resolvePostgresTenant(args.cwd);
   let store: PostgresLedgerStore | null = null;
   try {

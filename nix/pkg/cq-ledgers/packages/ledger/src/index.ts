@@ -655,6 +655,7 @@ export type { PostgresHubWatcherCallbacks } from "./store/postgres/coherenceWatc
 export { restoreDumpToPostgres, isPostgresTenantEmpty } from "./store/postgres/restoreImporter.js";
 export {
   createLedgerStore,
+  createPostgresLedgerStore,
   createManagementLedgerStore,
   openLegacyLedgerStore,
   resolveLedgerBackend,
@@ -662,6 +663,7 @@ export {
   hasLegacyFsLedger,
   GitEnvironmentError,
   RemoteLedgerClientNotWiredError,
+  PublicPostgresBackendRetiredError,
   startXdgCoherenceWatcher,
   XDG_DB_FILENAME,
 } from "./store/createLedgerStore.js";

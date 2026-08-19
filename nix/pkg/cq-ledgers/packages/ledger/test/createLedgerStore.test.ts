@@ -28,6 +28,8 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 import {
   createLedgerStore,
+  createPostgresLedgerStore,
+  PublicPostgresBackendRetiredError,
   openLegacyLedgerStore,
   resolveLedgerBackend,
   assertGitWorkTree,
@@ -38,8 +40,8 @@ import {
   SqliteLedgerStore,
   resolveStateDir,
   ProjectKeyResolutionError,
+  createObserveOnlyWorksetInvocationAuthority,
 } from "../src/index.js";
-import { PostgresDsnResolutionError } from "../src/store/postgres/dsn.js";
 
 const exec = promisify(execFile);
 const dirs: string[] = [];
@@ -492,7 +494,7 @@ describe("createLedgerStore — postgres backend (T577, G81/M248)", () => {
     for (const name of ORIGINAL_PG_ENV_VARS) {
       delete process.env[name];
     }
-    await expect(createLedgerStore(dir)).rejects.toBeInstanceOf(PostgresDsnResolutionError);
+    await expect(createLedgerStore(dir)).rejects.toBeInstanceOf(PublicPostgresBackendRetiredError);
   });
 
   describe.skipIf(!PG_URL)("live round-trip (CQ_TEST_PG_URL)", () => {
@@ -502,7 +504,12 @@ describe("createLedgerStore — postgres backend (T577, G81/M248)", () => {
       const expectedProjectKey = await projectKeyOf(dir);
       process.env["CQ_LEDGER_PG_URL"] = PG_URL;
 
-      const resolved = await createLedgerStore(dir);
+      await expect(createLedgerStore(dir)).rejects.toBeInstanceOf(PublicPostgresBackendRetiredError);
+      const resolved = await createPostgresLedgerStore(
+        dir,
+        "cq-ledger",
+        createObserveOnlyWorksetInvocationAuthority(),
+      );
       try {
         expect(resolved.backend).toBe("postgres");
         expect(resolved.store).toBeInstanceOf(PostgresLedgerStore);
@@ -535,7 +542,11 @@ describe("createLedgerStore — postgres backend (T577, G81/M248)", () => {
       const expectedProjectKey = await projectKeyOf(dir);
       process.env["CQ_LEDGER_PG_URL"] = PG_URL;
 
-      const resolved = await createLedgerStore(dir);
+      const resolved = await createPostgresLedgerStore(
+        dir,
+        "cq-ledger",
+        createObserveOnlyWorksetInvocationAuthority(),
+      );
       try {
         const pool = resolved.pg?.pool;
         expect(pool).toBeDefined();

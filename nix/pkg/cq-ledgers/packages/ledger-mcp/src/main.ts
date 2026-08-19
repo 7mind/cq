@@ -57,8 +57,8 @@ import {
   resolveLedgerBackend,
   resolveProjectKey,
   RemoteLedgerClientNotWiredError,
+  PublicPostgresBackendRetiredError,
   startXdgCoherenceWatcher,
-  startPostgresCoherenceWatcher,
   nodeGitRunner,
   createLedgerMcpToolSpecifications,
   FULL_LEDGER_TOOL_PROFILE,
@@ -662,13 +662,7 @@ export function startLedgerCoherenceWatcher(
     return startXdgCoherenceWatcher(resolved.store, resolved.dbPath, undefined, onChange);
   }
   if (resolved.backend === "postgres") {
-    if (resolved.pg === undefined) {
-      throw new Error(
-        "startLedgerCoherenceWatcher: backend 'postgres' resolved without a pg handle — " +
-          "createLedgerStore must always set pg for the postgres backend.",
-      );
-    }
-    return startPostgresCoherenceWatcher(resolved.store, resolved.pg, onChange);
+    throw new PublicPostgresBackendRetiredError("startLedgerCoherenceWatcher", root);
   }
   return startLedgerWatcher(resolved.store, root, onChange);
 }

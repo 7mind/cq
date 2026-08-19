@@ -2847,15 +2847,9 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     }
   }
 
-  /** Guarded post-commit `NOTIFY` (the T578 LISTEN watcher consumes it). */
+  /** Post-commit peer notify retired: hub publication is onMutation only (T736). */
   private async notify(): Promise<void> {
-    if (this.handle === null) return;
-    try {
-      await notifyProjectChanged(this.handle, this.projectKey);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`PostgresLedgerStore: NOTIFY threw for ${this.projectKey}: ${msg}\n`);
-    }
+    return;
   }
 
   /** Rebuild the ACTIVE index bucket for a ledger from the cache. Guarded. */

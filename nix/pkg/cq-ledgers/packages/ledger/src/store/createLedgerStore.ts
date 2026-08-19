@@ -224,6 +224,17 @@ export class RemoteLedgerClientNotWiredError extends Error {
   }
 }
 
+/** Raised when a checkout still names the retired public postgres backend. */
+export class PublicPostgresBackendRetiredError extends Error {
+  constructor(operation: string, root: string) {
+    super(
+      `[ledger] backend = 'postgres' at ${root} cannot run ${operation}: PostgreSQL is private ` +
+        `cq serve state. Set backend = "remote" and use CQ_LEDGER_REMOTE_TOKEN.`,
+    );
+    this.name = "PublicPostgresBackendRetiredError";
+  }
+}
+
 /**
  * Resolve the `[ledger]` backend for `root` from cq.toml. No cq.toml, no
  * `[ledger]` table, or a `[ledger]` table without a `backend` key → `'xdg'`
@@ -308,7 +319,7 @@ async function createLedgerStoreWithAuthority(
   }
 
   if (backend === "postgres") {
-    return createPostgresLedgerStore(root, branch, worksetAuthority);
+    throw new PublicPostgresBackendRetiredError("createLedgerStore", root);
   }
 
   if (!explicit && hasLegacyFsLedger(root)) {
@@ -426,7 +437,8 @@ export async function createManagementLedgerStore(
  * `init()`), the pool is closed before the error propagates — otherwise a
  * failed construction would leak a live connection pool.
  */
-async function createPostgresLedgerStore(
+/** @internal Server/test adapter. Public checkouts must use backend=remote. */
+export async function createPostgresLedgerStore(
   root: string,
   branch: string,
   worksetAuthority: unknown,

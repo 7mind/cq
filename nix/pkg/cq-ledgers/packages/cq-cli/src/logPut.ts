@@ -287,7 +287,10 @@ export async function runLogPut(
   }
 
   if (backend === "postgres") {
-    return runLogPutPostgres(args, io, redacted);
+    io.err(
+      `cq log put: backend='postgres' is retired; set backend="remote" and use CQ_LEDGER_REMOTE_TOKEN`,
+    );
+    return { exitCode: 1 };
   }
 
   // backend === 'fs' (the historical default) — write under <cwd>/.cq/<dest>.
@@ -454,7 +457,7 @@ async function runLogPutXdg(
  * sessionLogs/rawLogs references keep resolving identically regardless of
  * backend.
  */
-async function runLogPutPostgres(
+async function _runLogPutPostgres(
   args: LogPutArgs,
   io: LogPutIo,
   content: string,
