@@ -473,7 +473,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
   });
 
   it("T2151 pins the codex brokered redispatch mechanics and the installed worker lineage bindings", () => {
-    const codexAdvance = normalize(renderedOf("codex", "implement/advance"));
+    const codexAdvance = normalize(renderedOf("codex", "implement/advance").replace(/^>\s?/gm, ""));
     expect(codexAdvance).toContain(
       normalize(
         "the worker redispatch prepare names the exact terminal prior worker generation through `reprepareOf` and carries the exact retained reference as `guardedRebase`",
@@ -500,7 +500,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
   });
 
   it("T2151 guarded-rebase scanner catches a dropped reference, a changed operation id, and substituted coordinates", () => {
-    const real = renderedOf("codex", "implement/advance");
+    const real = normalize(renderedOf("codex", "implement/advance"));
     const droppedReference = real.replaceAll(
       "CQ_GUARDED_REBASE_REFERENCE",
       "CQ_GUARDED_REBASE_OUTCOME",
@@ -511,8 +511,8 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     const droppedOperationId = real.replaceAll(" --operation-id <stableRebaseOperationId>", "");
     expect(guardedRebaseContractViolations(droppedOperationId)).toContain("missing-operation-id");
     const substitutedCoordinates = real.replaceAll(
-      "the exact pre-rebase worker `resultCommit`",
-      "any plausible prior tip",
+      "`priorResultCommit` to the exact pre-rebase worker `resultCommit`",
+      "`priorResultCommit` to any plausible prior tip",
     );
     expect(guardedRebaseContractViolations(substitutedCoordinates)).toContain(
       "missing-coordinate-reset",

@@ -384,12 +384,56 @@ increment criticism/no-files counters. If the tip changes under rebase, the old
 worker result loses authority: redispatch the worker on the rebased tree (same
 handle), rerun its gate and review, and repeat the success checks.
 
-Run the rebase only through the task-bound broker, using the exact current main
-commit already verified above:
+**Guarded rebase authority.** Run the rebase only through the task-bound
+broker under one stable operation id, using the exact current main commit
+already verified above:
 
 ```sh
-cq gate git-effect --operation rebase --cwd <repositoryRoot> --task-id <taskId> --commit <currentMainCommit>
+cq gate git-effect --operation rebase --cwd <repositoryRoot> --task-id <taskId> --commit <currentMainCommit> --operation-id <stableRebaseOperationId>
 ```
+
+Choose `<stableRebaseOperationId>` once per rebase maintenance round — for
+example `implement-<taskId>-rebase-r<round>` — and reuse it verbatim when a
+response is lost or ambiguous: an exact replay returns the same authority
+without re-running the effect. A changed payload under a reused id is
+rejected; when main advances again, select a fresh operation id. Never run a
+rebase maintenance round without an operation id.
+
+A finalized guarded rebase prints exactly one machine-readable stdout line
+`CQ_GUARDED_REBASE_REFERENCE=cq-guarded-rebase:v1:<64 lowercase hex>`.
+Capture that exact reference and retain it as the sole rebase authority.
+Missing, malformed, duplicated, or mismatched handoff output stops the flow
+closed: never fall back to raw Git, never read or reconstruct the rebase
+journal, and never mint coordinates or lineage yourself.
+
+Redispatch the worker on the rebased managed tree (same retained handle)
+supplying only that parent-only reference with the exact terminal prior worker
+generation: the prepare carries `reprepareOf` naming the consumed pre-rebase
+worker handle and `guardedRebase` carrying the exact retained reference —
+nothing else from the rebase. The server, never the flow or the child,
+resolves the reference against its terminal durable journal and materializes
+`guardedRebaseLineage` into the worker input; a caller-supplied
+`guardedRebaseLineage` is always rejected. On this initial bridge round set
+`baseCommit` to the verified onto commit, `startingCommit` to the observed
+rebased worktree tip, and `priorResultCommit` to the exact pre-rebase worker
+`resultCommit`; the server verifies every coordinate against the journal and
+rejects any substitution. Never claim the rewritten pre-rebase commit is an
+ancestor of the rebased tip — the exact-equality binding is the only ancestry
+exemption. The server-resolved lineage selects the mode: under `exactTip` the
+worker reports the exact rebased tip with an empty fresh receipt suffix and no
+early WIP commit; any guarded correction that advances the tip keeps early
+persistence and a non-empty contiguous suffix beginning at the rebased head,
+and any later criticism round follows the ordinary persistence procedure.
+
+Consume the redispatched result only through the retained handle after the
+parent-owned gate attaches fresh green evidence bound to the exact rebased
+tip, then rerun every required reviewer against the rebased result and repeat
+the success checks: pre-rebase worker, reviewer, and gate authority never
+authorizes the rebased result. A prepare rejection, an unresolvable or stale
+reference, or a lineage mismatch stops the flow closed rather than falling
+back to raw Git, broadening the worker sandbox, or accepting caller-minted
+lineage or gate evidence. Only after the fresh gate and reviews pass does the
+existing ff-only guarded merge below run.
 
 On conflict, call `worktree_manage` with `operation: "observe-conflict"` and the
 manager handle. Supply its exact `conflictState` (original tip, onto, dispatch
@@ -397,7 +441,11 @@ base, current HEAD and ancestry, sequencer identity/todo/current command, and
 every unmerged stage OID/mode) to `implement-conflict-resolver`. Continue only
 from a consumed `pass` result whose
 durable continuation receipts form one chain ending at its terminal
-`resultCommit`. A consumed `fail` must still carry the bound branch, absolute
+`resultCommit`; then replay the identical guarded rebase command — same
+operation id, same commit — to reconcile the journal to its verified terminal
+tip and mint the reference before the redispatch above (a conflicted journal
+never selects the exact-tip mode). A consumed `fail` must still carry the bound
+branch, absolute
 worktree path, and the complete durable receipt chain; after any continuation
 its last receipt must end at the exact live nonterminal conflict state. Then
 create a linked question, set the task `blocked`, keep the worktree/handle, and

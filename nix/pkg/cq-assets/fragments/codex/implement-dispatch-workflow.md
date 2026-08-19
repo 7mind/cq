@@ -37,6 +37,20 @@
 > edge and receipt tree against Git, require the final new head to equal
 > `resultCommit`, and require the union of receipt paths to equal
 > `filesTouched`.
+>
+> **Guarded-rebase redispatch.** When a journaled guarded rebase rewrote the
+> managed tip, the worker redispatch prepare names the exact terminal prior
+> worker generation through `reprepareOf` and carries the exact retained
+> reference as `guardedRebase`; never place `guardedRebaseLineage` or any
+> journal coordinate in caller input. The server resolves the reference against
+> its terminal durable journal, verifies the declared coordinates, and injects
+> the closed lineage into the worker input. Accept a consumed guarded result
+> only when its `gitLineage` echoes the resolved bridge exactly, its receipt
+> chain is the fresh post-rebase suffix beginning at the rebased head (empty
+> only in the server-resolved exact-tip mode, with `resultCommit` equal to the
+> rebased tip), its `filesTouched` equals the onto-commit-to-result diff set,
+> and fresh runner-owned `supervisedGateEvidence` binds the rebased tip before
+> any review.
 > If the adapter rejects an invalid final reply after it can observe the `result-stored` acknowledgement, the trusted parent persists only that
 > lifecycle state and the adapter's bounded diagnostic through `cq log put`,
 > then calls `abort_dispatch` with reason `protocol-violation`. Do not expose
