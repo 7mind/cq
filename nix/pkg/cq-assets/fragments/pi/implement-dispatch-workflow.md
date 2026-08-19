@@ -1,51 +1,50 @@
-> **Implement-worker dispatch.** In Pi, for each
+> **Implement-worker dispatch.** In Pi's ref-first
+> procedure, for each
 > `implement-worker`, first ensure a managed worktree via
 > `worktree_manage({ operation: "prepare", taskId, baseCommit: <full main tip> })`
 > (or resume-by-handle with the retained opaque handle). Use the returned
-> absolute path as advisory `worktreePath`. Retain the handle across criticism
-> rounds; on restart recover via prepare's resume-required response. Then
-> adopt an exact pre-registry tree only through handle-free prepare with paired
-> `adoptWorktreePath: <canonical .claude/worktrees/implement-<taskId>>` and
-> `expectedHead: <observed full HEAD>`; never combine them with a handle, and
-> never supply activity-fence, registry, reconciliation, Git, or install
+> absolute path as advisory `worktreePath` / coordinates. Retain the handle
+> across criticism rounds; on restart recover via prepare's resume-required
+> response. For an exact pre-registry tree only, use handle-free prepare with
+> paired `adoptWorktreePath: <canonical .claude/worktrees/implement-<taskId>>`
+> and `expectedHead: <observed full HEAD>`; never combine them with a handle,
+> and never supply activity-fence, registry, reconciliation, Git, or install
 > authority. Retain the returned opaque handle and refuse launch when adoption
-> refuses. Then compose
-> `{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit, round, startingCommit, priorCriticism? }` against the role's typed `inputSchema`, dispatch
-> `CQ_SUBAGENT` with the composed input and `isolation: "worktree"`.
->
-> **Result authority (Pi held freeform).** When the Pi extension-local
-> prepare/store/confirm/fetch lifecycle is available, materialize only a
-> consumed, schema-valid result through that gate — never trust a
-> child-reported handle alone. Until that lifecycle ships, the **held freeform**
-> path is authoritative under parent verification: the parent MUST independently
-> require (1) `resultCommit` is a full-SHA commit object equal to the worker
-> branch tip, (2) `git merge-base --is-ancestor <startingCommit> <resultCommit>`,
-> (3) clean worktree vs claimed files, (4) `REAL_CHECK_EXIT=0` from a parent-
-> observed full gate (or an equivalent parent-attested green gate record), and
-> (5) dual-review approve with empty criticism/questions before merge. Freeform
-> authority is **not** consumed-handle semantics; do not claim
-> `state: "consumed"` without a prepare-bound handle. Do not bail out solely
-> because freeform lacks a prepare-bound result capability.
->
-> After terminal status, cleanup uses guarded
+> refuses. Then compose refs only:
+> `{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, priorReviewId?, guidance?, resolvedModel? }`.
+> Call `prepare_dispatch`; the server reads the task/review narrative, assembles
+> it against the generated role's `inputSchema`, and returns a handle. Retain
+> the exact prepared handle independently of every child-visible value, plus
+> the deadlines. Dispatch `CQ_SUBAGENT` with the worker role,
+> `isolation: "worktree"`, and the opaque prepared handle as the entire
+> `dispatch_agent` `task`. The extension delivers the assembled typed input at
+> the child boundary; the parent never reads or launches the task narrative.
+> Confirm or abort through the parent, then call `fetch_dispatch_result` with
+> the retained prepared handle exactly once. Apply the blocking consumed-only
+> rule before interpreting the already-validated worker result. An unavailable
+> scoped store or extension aborts the dispatch; it never falls back to a
+> body-returning completion. After terminal status, cleanup uses guarded
 > `worktree_manage({ operation: "release", handle, terminalDisposition, … })`
 > only — never raw git worktree lifecycle commands.
 >
-> **Implement-reviewer dispatch.** For each native
-> `implement-reviewer`, compose `{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism? }`,
+> **Implement-reviewer dispatch.** Apply the same sequence
+> to every native `pi:*` `implement-reviewer` with
+> `{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism? }`, using the reviewer's resolved model.
 > Omit `responseStoreNow`, `gateCompleteBy`, and `synthesisStoreReserveMs` from
-> caller input because the authoritative dispatch lifecycle binds those
-> absolute values when present, then dispatch through `CQ_SUBAGENT`. When the
-> consumed-result gate is unavailable, accept a freeform structured verdict
-> only after the parent independently verifies resultCommit + baseAncestry +
-> gate evidence (same parent-verification bar as workers). The `pi:*` panel
-> members remain external shellouts driving the shared `CQ::implement-review`
-> rubric and count as votes under the external-reviewer usable-verdict rule.
+> caller input because `prepare_dispatch` binds those absolute values. A
+> prepare, confirmation, abort, or fetch failure makes that reviewer abstain
+> under the returned-failure rule; only the fetched consumed body is a usable
+> verdict. The `pi:*` panel members remain external shellouts driving the
+> shared `CQ::implement-review` rubric.
 >
-> **Conflict-resolver dispatch.** For
-> `implement-conflict-resolver`, compose `{ taskId, headline?, description?, worktreePath, branch, baseCommit, conflictingFiles, conflictState, baseSideNote? }`, dispatch
-> with the frontier model and `isolation: "worktree"` only when the extension
+> **Conflict-resolver dispatch.** On a merge
+> conflict, prepare `{ taskId, headline?, description?, worktreePath, branch, baseCommit, conflictingFiles, conflictState, baseSideNote? }` for
+> `implement-conflict-resolver` and use the frontier model through the same
+> handle-only sequence with `isolation: "worktree"` only when the extension
 > delivers a prepare-bound `gitConflictCapability` to the child. Conflict
-> continuation has no held-freeform mutation path: without that capability,
+> continuation has no body-returning mutation path: without that capability,
 > fail closed and retain the managed worktree for inspection. Accept only a
-> consumed result whose durable receipt chain ends at the terminal tip.
+> consumed result whose durable receipt chain ends at the terminal tip. A
+> prepare, scoped-store, confirmation, or fetch failure enters the command's
+> bailout. A second materialization attempt is a protocol violation. Never
+> fall back to a body-returning completion.

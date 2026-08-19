@@ -25,9 +25,8 @@
  *     any surface's dispatch path. Pinned as an exact zero on all three
  *     RENDERED surfaces, with a negative control on the scanner.
  *   CHECK 3 — the same semantic input still reaches the child. Pinned per
- *     dispatch edge on all three RENDERED surfaces; T977's Claude/Codex worker
- *     edge carries refs from which the server assembles the narrative, while
- *     the held Pi edge retains direct typed input.
+ *     dispatch edge on all three RENDERED surfaces; T977's worker edge on every
+ *     surface carries refs from which the server assembles the narrative.
  *   CHECK 1 — the role prompt is injected once at the CHILD boundary and does
  *     not enter parent context. Only the STATIC substrate is pinnable here: the
  *     identical dispatched-role set per surface, and the per-surface injection
@@ -390,12 +389,11 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       expect(rendered).not.toContain("return a single fenced `json` block");
     }
 
-    const heldPiAdvance = normalize(renderedOf("pi", "implement/advance").replace(/^>\s?/gm, ""));
-    // Pi held freeform is parent-verified authoritative; no unconditional bailout.
-    expect(heldPiAdvance).toContain(normalize("held freeform"));
-    expect(heldPiAdvance).toContain(normalize("parent verification"));
-    expect(heldPiAdvance).toContain(normalize("Do not bail out solely"));
-    expect(heldPiAdvance).not.toContain(
+    const piAdvance = normalize(renderedOf("pi", "implement/advance").replace(/^>\s?/gm, ""));
+    expect(piAdvance).toContain("prepare_dispatch");
+    expect(piAdvance).toContain("fetch_dispatch_result");
+    expect(piAdvance).not.toContain(normalize("held freeform"));
+    expect(piAdvance).not.toContain(
       normalize(
         "never interpret the held adapter's raw completion. Enter the bailout until the extension-local lifecycle can return a consumed fetched body.",
       ),
@@ -633,11 +631,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       expect(advance).toContain(
         "Omit `responseStoreNow`, `gateCompleteBy`, and `synthesisStoreReserveMs`",
       );
-      if (surface === "pi") {
-        expect(advance).toContain("the authoritative dispatch lifecycle binds those");
-      } else {
-        expect(advance).toContain("`prepare_dispatch` binds those absolute values");
-      }
+      expect(advance).toContain("`prepare_dispatch` binds those absolute values");
     }
   });
 
@@ -696,16 +690,13 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       for (const edge of DISPATCH_EDGE_INPUTS) {
         const body = normalize(renderedOf(surface, edge.flowRoleId));
         expect(body).toContain(edge.role);
-        const refsOnlyWorker = surface !== "pi" && edge.role === "implement-worker";
         if (edge.role === "implement-worker") {
-          if (refsOnlyWorker) {
-            expect(body).toContain(normalize(T977_WORKER_REFS));
-          } else {
-            expect(body).not.toContain(normalize(T977_WORKER_REFS));
-            expect(body).toContain("headline");
-            expect(body).toContain("acceptance");
-            expect(body).toContain("worktreePath");
-          }
+          expect(body).toContain(normalize(T977_WORKER_REFS));
+          expect(body).not.toContain(
+            normalize(
+              "{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit, round, startingCommit, priorCriticism? }",
+            ),
+          );
         }
       }
     });

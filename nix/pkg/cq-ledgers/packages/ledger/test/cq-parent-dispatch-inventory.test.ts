@@ -243,24 +243,22 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
     });
   }
 
-  it("pins the live T977 worker-input protocol without migrating the held Pi path", () => {
+  it("pins the live T977 worker-input protocol on every parent implement fragment", () => {
     const narrativeCourier =
       "{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit, round, startingCommit, priorCriticism? }";
     const refsOnly =
       "{ roleId, surface, projectKey, taskId, coordinates, round, startingCommit, priorReviewId?, guidance?, resolvedModel? }";
 
-    for (const body of [claudeImplementDispatch, codexImplementDispatch]) {
+    for (const body of [claudeImplementDispatch, codexImplementDispatch, piImplementDispatch]) {
       expect(normalize(body)).toContain(normalize(refsOnly));
       expect(body).toContain("prepare_dispatch");
-      expect(body).toContain("inputCapability");
-      expect(body).toContain("fetch_dispatch_input");
       expect(body).not.toContain(narrativeCourier);
     }
-
-    expect(piImplementDispatch).toContain(narrativeCourier);
-    expect(piImplementDispatch).not.toContain("prepare_dispatch");
-    expect(piImplementDispatch).not.toContain("inputCapability");
-    expect(piImplementDispatch).not.toContain("fetch_dispatch_input");
+    for (const body of [claudeImplementDispatch, codexImplementDispatch]) {
+      expect(body).toContain("inputCapability");
+      expect(body).toContain("fetch_dispatch_input");
+    }
+    expect(piImplementDispatch).toContain("fetch_dispatch_result");
 
     expect(implementWorker).toContain("{{cq:fragment:dispatch-input-delivery}}");
     expect(implementWorker).not.toContain("Inputs (from the dispatch prompt)");
