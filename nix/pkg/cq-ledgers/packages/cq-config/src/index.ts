@@ -322,6 +322,34 @@ export {
   validatePromptFragmentInventory,
 } from "./promptFragmentInventory.js";
 export type {
+  DispatchFlowFamily,
+  InventoryDispatchEdgeKind,
+  PromptSiteKind,
+  PromptSiteClass,
+  CatalogDispatchRelation,
+  CatalogInventoryRole,
+  SurfaceLifecycle,
+  DispatchEdgeRecord,
+  RecursionEdgeRecord,
+  InventoryEdge,
+  ClassifiedPromptSite,
+  DispatchEdgeInventory,
+} from "./dispatchEdgeInventory.js";
+export {
+  DISPATCH_FLOW_FAMILIES,
+  DISPATCH_EDGE_KINDS,
+  PROMPT_SITE_KINDS,
+  PROMPT_SITE_CLASSES,
+  RefFirstInventoryError,
+  buildDispatchEdgeInventory,
+  DISPATCH_EDGE_INVENTORY,
+  planReviewDispatchEdges,
+  investigateResearchDispatchEdges,
+  implementDispatchEdges,
+  recursionEdges,
+  inspectionSites,
+} from "./dispatchEdgeInventory.js";
+export type {
   PromptCatalogFileInput,
   PromptFragmentFileInput,
   RenderPromptSurfaceTreeInput,
