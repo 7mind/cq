@@ -33,12 +33,17 @@ export interface ResolvedReviewer {
 /**
  * The `reviewers` section payload. LIST-KEYED (D144/D153): `configured` is true
  * only when a `cq.toml` exists AND declares a non-empty `reviewers` list.
- * When unconfigured the payload still carries the built-in DEFAULT_REVIEWERS
- * fallback tokens with `configured: false` — orchestrators must not invent a
- * model, and must not treat this flag as get_config's presence-only D81 sense.
+ * When unconfigured the payload still carries the ACTIVE harness's built-in
+ * default panel with `configured: false` and `source: "default"`.
+ * A non-empty repo panel is `configured: true` and `source: "cq.toml"`.
+ * Orchestrators must not invent a model, and must not treat `configured` as
+ * get_config's presence-only D81 sense.
  */
+export type PanelConfigSource = "default" | "cq.toml";
+
 export interface GetReviewersResult {
   readonly configured: boolean;
+  readonly source: PanelConfigSource;
   readonly reviewers: readonly ResolvedReviewer[];
 }
 
@@ -64,11 +69,13 @@ export interface ResolvedPlanner {
 /**
  * The `planners` section payload. LIST-KEYED (D144/D153): `configured` is true
  * only when a `cq.toml` exists AND declares a non-empty `planners` list. When
- * unconfigured the payload still carries DEFAULT_PLANNERS with
- * `configured: false`. Mirrors {@link GetReviewersResult}.
+ * unconfigured the payload still carries the ACTIVE harness's built-in
+ * default panel with `configured: false` and `source: "default"`.
+ * Mirrors {@link GetReviewersResult}.
  */
 export interface GetPlannersResult {
   readonly configured: boolean;
+  readonly source: PanelConfigSource;
   readonly planners: readonly ResolvedPlanner[];
 }
 

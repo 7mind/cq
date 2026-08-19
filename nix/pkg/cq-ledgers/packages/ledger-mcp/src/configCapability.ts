@@ -20,9 +20,8 @@ import {
   resolveAgentTier,
   tierModel,
   applyAgentEffort,
-  formatReviewerToken,
-  DEFAULT_REVIEWERS,
-  DEFAULT_PLANNERS,
+  defaultPanelFor,
+  resolveActiveHarnessFromProcess,
   HARNESSES,
   AGENT_ROLE_TIERS,
   type CqConfig,
@@ -43,18 +42,18 @@ import type {
 } from "@cq/ledger";
 
 /**
- * Project a built-in DEFAULT_* panel token into the MCP wire shape. Alias is
- * the canonical token string (no cq.toml alias name exists for the fallback).
+ * Project a built-in default panel into the MCP wire shape. Alias is the
+ * template alias name (opus/grok/codex), not the rendered token string.
  */
 function resolveDefaultPanel(
-  tokens: readonly ReviewerToken[],
+  entries: readonly { readonly alias: string; readonly token: ReviewerToken }[],
 ): readonly ResolvedReviewer[] {
-  return tokens.map((token) => ({
-    harness: token.harness,
-    model: token.model,
-    provider: token.provider,
-    alias: formatReviewerToken(token),
-    effort: token.effort ?? null,
+  return entries.map((entry) => ({
+    harness: entry.token.harness,
+    model: entry.token.model,
+    provider: entry.token.provider,
+    alias: entry.alias,
+    effort: entry.token.effort ?? null,
   }));
 }
 
@@ -63,17 +62,25 @@ function resolveDefaultPanel(
  *
  * LIST-KEYED `configured` (D144/D153): true only when a cq.toml exists AND the
  * resolved reviewers list is non-empty. When unconfigured (absent cq.toml or
- * empty list), returns {@link DEFAULT_REVIEWERS} with honest `configured:
- * false` so orchestrators still receive a grammar-valid dispatchable token.
+ * empty list), returns the ACTIVE harness default panel with `source:
+ * "default"` and `configured: false`.
  */
 export function computeReviewers(repoRoot: string): GetReviewersResult {
   const config = loadConfig(repoRoot);
   if (config === null) {
-    return { configured: false, reviewers: resolveDefaultPanel(DEFAULT_REVIEWERS) };
+    return {
+      configured: false,
+      source: "default",
+      reviewers: resolveDefaultPanel(defaultPanelFor(resolveActiveHarnessFromProcess()).reviewers),
+    };
   }
   const tokens = resolveReviewers(config);
   if (tokens.length === 0) {
-    return { configured: false, reviewers: resolveDefaultPanel(DEFAULT_REVIEWERS) };
+    return {
+      configured: false,
+      source: "default",
+      reviewers: resolveDefaultPanel(defaultPanelFor(resolveActiveHarnessFromProcess()).reviewers),
+    };
   }
   const reviewers: ResolvedReviewer[] = tokens.map((token, i) => ({
     harness: token.harness,
@@ -83,7 +90,7 @@ export function computeReviewers(repoRoot: string): GetReviewersResult {
     alias: config.reviewers[i] as string,
     effort: token.effort ?? null,
   }));
-  return { configured: true, reviewers };
+  return { configured: true, source: "cq.toml", reviewers };
 }
 
 /**
@@ -91,17 +98,24 @@ export function computeReviewers(repoRoot: string): GetReviewersResult {
  *
  * LIST-KEYED `configured` (D144/D153): true only when a cq.toml exists AND the
  * resolved planners list is non-empty. When unconfigured, returns
- * {@link DEFAULT_PLANNERS} with honest `configured: false`. Mirrors
- * {@link computeReviewers}.
+ * `source: "default"` and `configured: false`. Mirrors {@link computeReviewers}.
  */
 export function computePlanners(repoRoot: string): GetPlannersResult {
   const config = loadConfig(repoRoot);
   if (config === null) {
-    return { configured: false, planners: resolveDefaultPanel(DEFAULT_PLANNERS) };
+    return {
+      configured: false,
+      source: "default",
+      planners: resolveDefaultPanel(defaultPanelFor(resolveActiveHarnessFromProcess()).planners),
+    };
   }
   const tokens = resolvePlanners(config);
   if (tokens.length === 0) {
-    return { configured: false, planners: resolveDefaultPanel(DEFAULT_PLANNERS) };
+    return {
+      configured: false,
+      source: "default",
+      planners: resolveDefaultPanel(defaultPanelFor(resolveActiveHarnessFromProcess()).planners),
+    };
   }
   const planners: ResolvedPlanner[] = tokens.map((token, i) => ({
     harness: token.harness,
@@ -111,7 +125,7 @@ export function computePlanners(repoRoot: string): GetPlannersResult {
     alias: config.planners[i] as string,
     effort: token.effort ?? null,
   }));
-  return { configured: true, planners };
+  return { configured: true, source: "cq.toml", planners };
 }
 
 /**

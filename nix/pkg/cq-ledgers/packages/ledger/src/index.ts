@@ -883,6 +883,7 @@ export type {
   ConfigSectionResult,
   ResolvedReviewer,
   GetReviewersResult,
+  PanelConfigSource,
   ResolvedPlanner,
   GetPlannersResult,
   GetConfigResult,

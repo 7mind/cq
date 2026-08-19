@@ -717,25 +717,30 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
       await withClientAtRoot(noCfgRoot, async (client) => {
         const reviewers = decode<{
           configured: boolean;
-          reviewers: Array<{ harness: string; model: string }>;
+          source: string;
+          reviewers: Array<{ harness: string; model: string; alias?: string }>;
         }>(await client.callTool({ name: "get_config", arguments: { section: "reviewers" } }));
         expect(reviewers.configured).toBe(false);
-        // D153: DEFAULT_REVIEWERS served under configured:false.
+        expect(reviewers.source).toBe("default");
         expect(reviewers.reviewers).toHaveLength(1);
         expect(reviewers.reviewers[0]).toMatchObject({
           harness: "claude",
-          model: "opus-4.8[1m]",
+          model: "opus",
+          alias: "opus",
         });
 
         const planners = decode<{
           configured: boolean;
-          planners: Array<{ harness: string; model: string }>;
+          source: string;
+          planners: Array<{ harness: string; model: string; alias?: string }>;
         }>(await client.callTool({ name: "get_config", arguments: { section: "planners" } }));
         expect(planners.configured).toBe(false);
+        expect(planners.source).toBe("default");
         expect(planners.planners).toHaveLength(1);
         expect(planners.planners[0]).toMatchObject({
           harness: "claude",
-          model: "opus-4.8[1m]",
+          model: "opus",
+          alias: "opus",
         });
 
         const config = decode<{

@@ -52,6 +52,8 @@ export {
   resolveGlobalConfigPath,
   DEFAULT_REVIEWERS,
   DEFAULT_PLANNERS,
+  DEFAULT_PANELS,
+  defaultPanelFor,
   CqConfigError,
   parseReviewerToken,
   formatReviewerToken,
@@ -66,6 +68,7 @@ export {
   resolveAgentModel,
   loadConfig,
 } from "./config.js";
+export type { DefaultPanel, DefaultPanelEntry } from "./config.js";
 export type {
   DispatchTransport,
   DispatchTransportRouteRequest,

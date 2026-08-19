@@ -1237,8 +1237,9 @@ export function createLedgerMcpToolSpecifications(
   const getConfig = tool(
     "get_config",
     "Return one independently-fallbacked cq.toml section. reviewers and planners " +
-      "preserve their former resolved payloads; agent_models preserves its former " +
-      "per-role overlay; all preserves the former full get_config payload.",
+      "preserve their former resolved payloads and add source=default|cq.toml; " +
+      "agent_models preserves its former per-role overlay; all preserves the former " +
+      "full get_config payload.",
     { section: z.enum(CONFIG_SECTIONS) } as const,
     async (args) => {
       if (configCapability === undefined) throw new ConfigNotImplementedError();

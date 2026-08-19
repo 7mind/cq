@@ -15,6 +15,7 @@ import * as path from "node:path";
 import {
   DEFAULT_REVIEWERS,
   DEFAULT_PLANNERS,
+  DEFAULT_PANELS,
   formatReviewerToken,
   parseReviewerToken,
 } from "@cq/config";
@@ -124,10 +125,12 @@ describe("T695: sectioned get_config parity and independent fallbacks", () => {
     // configured:false (list-keyed), while tiers remain independently active.
     expect(reviewers.configured).toBe(false);
     expect(reviewers.reviewers).toHaveLength(1);
+    expect(reviewers.source).toBe("default");
     expect(reviewers.reviewers[0]).toMatchObject({
       harness: "claude",
-      model: "opus-4.8[1m]",
+      model: "opus",
       provider: null,
+      alias: "opus",
     });
     expect(computeSection(dir, "tiers")).toEqual({
       configured: true,
@@ -1310,23 +1313,25 @@ describe("D144/D153: get_reviewers/get_planners LIST-KEYED configured + DEFAULT 
   it("case 1: no cq.toml → configured:false with DEFAULT_REVIEWERS/DEFAULT_PLANNERS", () => {
     const reviewers = computeReviewers(dir);
     expect(reviewers.configured).toBe(false);
+    expect(reviewers.source).toBe("default");
     expect(reviewers.reviewers).toEqual(
       DEFAULT_REVIEWERS.map((token) => ({
         harness: token.harness,
         model: token.model,
         provider: token.provider,
-        alias: formatReviewerToken(token),
+        alias: "opus",
         effort: token.effort ?? null,
       })),
     );
     const planners = computePlanners(dir);
     expect(planners.configured).toBe(false);
+    expect(planners.source).toBe("default");
     expect(planners.planners).toEqual(
       DEFAULT_PLANNERS.map((token) => ({
         harness: token.harness,
         model: token.model,
         provider: token.provider,
-        alias: formatReviewerToken(token),
+        alias: "opus",
         effort: token.effort ?? null,
       })),
     );
@@ -1336,10 +1341,12 @@ describe("D144/D153: get_reviewers/get_planners LIST-KEYED configured + DEFAULT 
     writeCqToml(["reviewers = []", "planners = []", ""].join("\n"));
     const reviewers = computeReviewers(dir);
     expect(reviewers.configured).toBe(false);
-    expect(reviewers.reviewers[0]?.model).toBe("opus-4.8[1m]");
+    expect(reviewers.source).toBe("default");
+    expect(reviewers.reviewers[0]?.model).toBe("opus");
     const planners = computePlanners(dir);
     expect(planners.configured).toBe(false);
-    expect(planners.planners[0]?.model).toBe("opus-4.8[1m]");
+    expect(planners.source).toBe("default");
+    expect(planners.planners[0]?.model).toBe("opus");
   });
 
   it("case 3: non-empty list → configured:true with those resolved tokens", () => {
@@ -1355,6 +1362,7 @@ describe("D144/D153: get_reviewers/get_planners LIST-KEYED configured + DEFAULT 
     );
     const reviewers = computeReviewers(dir);
     expect(reviewers.configured).toBe(true);
+    expect(reviewers.source).toBe("cq.toml");
     expect(reviewers.reviewers).toEqual([
       {
         harness: "claude",
@@ -1366,6 +1374,7 @@ describe("D144/D153: get_reviewers/get_planners LIST-KEYED configured + DEFAULT 
     ]);
     const planners = computePlanners(dir);
     expect(planners.configured).toBe(true);
+    expect(planners.source).toBe("cq.toml");
     expect(planners.planners[0]?.alias).toBe("haiku");
   });
 
@@ -1386,6 +1395,57 @@ describe("D144/D153: get_reviewers/get_planners LIST-KEYED configured + DEFAULT 
       expect(body).not.toMatch(/presence-only \(a parseable cq\.toml exists\)/i);
       // No hardcoded frontier/opus tables.
       expect(body).not.toMatch(/frontier\s*[→=].*opus/i);
+      expect(body).not.toMatch(/\bpi:[A-Za-z]/);
+      expect(body).not.toMatch(/\bclaude:[A-Za-z]/);
     }
+  });
+});
+
+describe("G117: active-harness default panels + source", () => {
+  const savedHarness = process.env["CQ_HARNESS"];
+
+  afterEach(() => {
+    if (savedHarness === undefined) delete process.env["CQ_HARNESS"];
+    else process.env["CQ_HARNESS"] = savedHarness;
+  });
+
+  it("D153-invalid token literals are absent from every default panel", () => {
+    const forbidden = ["pi:grok-build", "pi:gpt-5.6-sol", "claude:opus-4.8[1m]"];
+    for (const panel of Object.values(DEFAULT_PANELS)) {
+      for (const entry of [...panel.reviewers, ...panel.planners]) {
+        const rendered = formatReviewerToken(entry.token);
+        expect(forbidden).not.toContain(rendered);
+      }
+    }
+  });
+
+  it("pi and codex default panels contain no claude token", () => {
+    for (const harness of ["pi", "codex"] as const) {
+      for (const entry of [...DEFAULT_PANELS[harness].reviewers, ...DEFAULT_PANELS[harness].planners]) {
+        expect(entry.token.harness).not.toBe("claude");
+      }
+    }
+  });
+
+  it("no cq.toml + CQ_HARNESS=pi serves the pi default panel, not claude", () => {
+    process.env["CQ_HARNESS"] = "pi";
+    const reviewers = computeReviewers(dir);
+    expect(reviewers.configured).toBe(false);
+    expect(reviewers.source).toBe("default");
+    expect(reviewers.reviewers.map((row) => row.alias)).toEqual(["grok", "codex"]);
+    expect(reviewers.reviewers.every((row) => row.harness === "pi")).toBe(true);
+    const planners = computePlanners(dir);
+    expect(planners.source).toBe("default");
+    expect(planners.planners.map((row) => row.alias)).toEqual(["codex"]);
+  });
+
+  it("no cq.toml + CQ_HARNESS=codex serves the fail-closed non-claude default", () => {
+    process.env["CQ_HARNESS"] = "codex";
+    const reviewers = computeReviewers(dir);
+    expect(reviewers.source).toBe("default");
+    expect(reviewers.reviewers).toHaveLength(1);
+    expect(reviewers.reviewers[0]?.harness).toBe("pi");
+    expect(reviewers.reviewers[0]?.alias).toBe("codex");
+    expect(reviewers.reviewers[0]?.provider).toBe("openai-codex");
   });
 });

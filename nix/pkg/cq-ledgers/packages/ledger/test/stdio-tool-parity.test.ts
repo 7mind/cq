@@ -102,6 +102,7 @@ const readLog: ReadLogCapability = async (path) => {
 const configCapability: ConfigCapability = {
   computeReviewers: () => ({
     configured: true,
+    source: "cq.toml",
     reviewers: [
       {
         harness: "codex",
@@ -114,6 +115,7 @@ const configCapability: ConfigCapability = {
   }),
   computePlanners: () => ({
     configured: true,
+    source: "cq.toml",
     planners: [
       {
         harness: "codex",

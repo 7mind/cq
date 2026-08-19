@@ -136,6 +136,7 @@ describe("T1379: get_config inherits global cq.toml composition", () => {
     });
     expect(reviewers).toEqual({
       configured: true,
+      source: "cq.toml",
       reviewers: [{
         harness: "pi",
         model: "reviewer",
@@ -146,6 +147,7 @@ describe("T1379: get_config inherits global cq.toml composition", () => {
     });
     expect(planners).toEqual({
       configured: true,
+      source: "cq.toml",
       planners: [{
         harness: "pi",
         model: "planner",

@@ -89,23 +89,64 @@ export function resolveGlobalConfigPath(
 }
 
 /**
- * D153: built-in single-reviewer fallback panel. Grammar-valid and dispatchable
- * (`claude` harness, bare model, no effort). Served by `get_reviewers` when
- * unconfigured (`configured: false`) so orchestrators still receive a usable
- * token without inventing one.
+ * One entry of a built-in default panel: the template alias name plus the
+ * resolved token. Alias names keep CQ::reviewers / CQ::planners resolution
+ * working on the unconfigured path (G117/T962).
  */
-export const DEFAULT_REVIEWERS: readonly ReviewerToken[] = Object.freeze([
-  parseReviewerToken("claude:opus-4.8[1m]"),
-]);
+export interface DefaultPanelEntry {
+  readonly alias: string;
+  readonly token: ReviewerToken;
+}
+
+/** Built-in reviewers + planners for one active configuration selector. */
+export interface DefaultPanel {
+  readonly reviewers: readonly DefaultPanelEntry[];
+  readonly planners: readonly DefaultPanelEntry[];
+}
+
+function panelEntry(alias: string, token: string): DefaultPanelEntry {
+  return Object.freeze({ alias, token: parseReviewerToken(token) });
+}
 
 /**
- * D153: built-in single-planner fallback panel. Mirrors
- * {@link DEFAULT_REVIEWERS} — same grammar/dispatch validity, served by
- * `get_planners` when unconfigured with honest `configured: false`.
+ * G117/T961: single owner of unconfigured panel defaults, shaped like
+ * CQ_TOML_TEMPLATE's per-harness panels. Grammar-valid and dispatch-valid.
+ * The three D153-invalid literals (`pi:grok-build`, `pi:gpt-5.6-sol`,
+ * `claude:opus-4.8[1m]`) are absent. No claude token appears in the pi/codex
+ * panels (T861).
  */
-export const DEFAULT_PLANNERS: readonly ReviewerToken[] = Object.freeze([
-  parseReviewerToken("claude:opus-4.8[1m]"),
-]);
+export const DEFAULT_PANELS: Readonly<Record<ActiveHarness, DefaultPanel>> = Object.freeze({
+  claude: Object.freeze({
+    reviewers: Object.freeze([panelEntry("opus", "claude:opus")]),
+    planners: Object.freeze([panelEntry("opus", "claude:opus")]),
+  }),
+  pi: Object.freeze({
+    reviewers: Object.freeze([
+      panelEntry("grok", "pi:grok-build/grok-build:high"),
+      panelEntry("codex", "pi:openai-codex/gpt-5.6-sol:xhigh"),
+    ]),
+    planners: Object.freeze([panelEntry("codex", "pi:openai-codex/gpt-5.6-sol:xhigh")]),
+  }),
+  codex: Object.freeze({
+    reviewers: Object.freeze([panelEntry("codex", "pi:openai-codex/gpt-5.6-sol:xhigh")]),
+    planners: Object.freeze([panelEntry("codex", "pi:openai-codex/gpt-5.6-sol:xhigh")]),
+  }),
+});
+
+/** Claude-selector fallback tokens. Prefer {@link DEFAULT_PANELS} for new code. */
+export const DEFAULT_REVIEWERS: readonly ReviewerToken[] = Object.freeze(
+  DEFAULT_PANELS.claude.reviewers.map((entry) => entry.token),
+);
+
+/** Claude-selector fallback tokens. Prefer {@link DEFAULT_PANELS} for new code. */
+export const DEFAULT_PLANNERS: readonly ReviewerToken[] = Object.freeze(
+  DEFAULT_PANELS.claude.planners.map((entry) => entry.token),
+);
+
+/** Return the built-in panel for one configuration selector. */
+export function defaultPanelFor(harness: ActiveHarness): DefaultPanel {
+  return DEFAULT_PANELS[harness];
+}
 
 /** The lowest / highest valid TCP port number. */
 const MIN_PORT = 1;
