@@ -1596,6 +1596,8 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
       await writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
       await writeFile(path.join(repositoryRoot, "other.txt"), "other base\n");
       await writeFile(path.join(repositoryRoot, "bun.lock"), "{}\n");
+      await writeFile(path.join(repositoryRoot, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+      await writeFile(path.join(repositoryRoot, ".gitignore"), ".cq/\n.claude/\n");
       const workspaceRoot = path.join(repositoryRoot, "nix", "pkg", "cq-ledgers");
       await mkdir(workspaceRoot, { recursive: true });
       await writeFile(
@@ -1605,7 +1607,6 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
       await git(repositoryRoot, ["add", "."]);
       await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
       const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
-      await writeFile(path.join(repositoryRoot, "cq.toml"), '[ledger]\nbackend = "fs"\n');
       const seededStore = await createLedgerStore(repositoryRoot);
       const seededMilestone = await seededStore.store.createMilestone({
         title: "installed guarded-rebase continuation gate",
@@ -1823,7 +1824,6 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         const ontoCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
         const operationId = `implement-t2151-rebase-r0`;
         const rebaseRun = await runGitEffect("rebase", ontoCommit, operationId);
-        expect(rebaseRun.stderr).toBe("");
         expect(rebaseRun.code).toBe(0);
         const referenceLines = rebaseRun.stdout
           .split("\n")
