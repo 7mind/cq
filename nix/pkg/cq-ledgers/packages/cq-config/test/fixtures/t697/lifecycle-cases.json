@@ -1,0 +1,33 @@
+{
+  "fixtureVersion": 1,
+  "kind": "cq-dispatch-lifecycle-log",
+  "savingsClaim": false,
+  "success": [
+    { "surface": "claude", "flowFamily": "plan-review", "roleId": "plan-advance" },
+    { "surface": "codex", "flowFamily": "plan-review", "roleId": "plan-reviewer" },
+    { "surface": "pi", "flowFamily": "plan-review", "roleId": "plan-advance" },
+    { "surface": "claude", "flowFamily": "investigate-research", "roleId": "investigate-explorer" },
+    { "surface": "codex", "flowFamily": "investigate-research", "roleId": "investigate-prober" },
+    { "surface": "pi", "flowFamily": "investigate-research", "roleId": "research-explorer" },
+    { "surface": "claude", "flowFamily": "implement", "roleId": "implement-worker" },
+    { "surface": "codex", "flowFamily": "implement", "roleId": "implement-reviewer" },
+    { "surface": "pi", "flowFamily": "implement", "roleId": "implement-conflict-resolver" }
+  ],
+  "outcomes": [
+    { "name": "invalid-output", "outcomeKind": "invalid-output", "outcome": "aborted", "abortReason": "invalid-output" },
+    { "name": "echo", "outcomeKind": "echo", "outcome": "aborted", "abortReason": "protocol-violation", "extraKeyCount": 1 },
+    { "name": "cancellation-after-store", "outcomeKind": "cancellation-after-store", "outcome": "aborted", "abortReason": "cancelled", "store": true },
+    { "name": "native-error", "outcomeKind": "native-error", "outcome": "aborted", "abortReason": "native-failure" },
+    { "name": "expiry", "outcomeKind": "expiry", "outcome": "aborted", "abortReason": "deadline-exceeded" },
+    { "name": "store-failure", "outcomeKind": "store-failure", "outcome": "aborted", "abortReason": "native-failure" },
+    { "name": "fetch-failure", "outcomeKind": "fetch-failure", "outcome": "aborted", "abortReason": "parent-lost" },
+    { "name": "conflict", "outcomeKind": "conflict", "outcome": "aborted", "abortReason": "protocol-violation" },
+    { "name": "retry", "outcomeKind": "success", "outcome": "consumed", "retry": true, "fetch": true, "store": true, "confirm": true }
+  ],
+  "recursion": [
+    { "sourceRoleId": "investigate", "roleId": "investigate/advance", "flowFamily": "investigate-research" },
+    { "sourceRoleId": "research", "roleId": "research/advance", "flowFamily": "investigate-research" },
+    { "sourceRoleId": "implement/start", "roleId": "implement/advance", "flowFamily": "implement" },
+    { "sourceRoleId": "plan", "roleId": "investigate/advance", "flowFamily": "plan-review" }
+  ]
+}

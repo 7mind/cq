@@ -350,6 +350,23 @@ export {
   inspectionSites,
 } from "./dispatchEdgeInventory.js";
 export type {
+  DispatchLifecycleKind,
+  DispatchLifecycleOutcomeKind,
+  DispatchLifecycleAttribution,
+  DispatchLifecycleTerminal,
+  DispatchLifecycleLog,
+  DispatchLifecycleEvent,
+} from "./dispatchLifecycleLog.js";
+export {
+  DISPATCH_LIFECYCLE_LOG_KIND,
+  DISPATCH_LIFECYCLE_LOG_VERSION,
+  DISPATCH_LIFECYCLE_KINDS,
+  DISPATCH_LIFECYCLE_OUTCOME_KINDS,
+  LifecycleLogError,
+  assertDispatchLifecycleLogSafe,
+  foldDispatchLifecycleEvents,
+} from "./dispatchLifecycleLog.js";
+export type {
   PromptCatalogFileInput,
   PromptFragmentFileInput,
   RenderPromptSurfaceTreeInput,
