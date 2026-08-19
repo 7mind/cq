@@ -188,7 +188,7 @@ export async function runGateGitEffect(
           if (outcome.effect.stdout !== "") process.stdout.write(outcome.effect.stdout);
           if (outcome.effect.stderr !== "") process.stderr.write(outcome.effect.stderr);
         }
-        process.stdout.write(`CQ_GUARDED_REBASE_REFERENCE=${outcome.reference}\n`);
+        process.stdout.write(`CQ_GUARDED_REBASE=${outcome.reference}\n`);
         return { exitCode: 0 };
       }
       if (outcome.effect.stdout !== "") process.stdout.write(outcome.effect.stdout);
