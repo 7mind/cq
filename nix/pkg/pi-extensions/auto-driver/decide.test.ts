@@ -45,6 +45,7 @@ function emptyPredicates(): DerivedPredicates {
     belowFloor: { value: false, items: [] },
     planBusy: { value: false, items: [] },
     goalDrift: { value: false, items: [] },
+    upstreamBlocked: { value: false, items: [] },
   };
 }
 
@@ -62,6 +63,7 @@ function allActivePredicates(items?: string[]): DerivedPredicates {
     belowFloor: { value: false, items: [] },
     planBusy: { value: false, items: [] },
     goalDrift: { value: false, items: [] },
+    upstreamBlocked: { value: false, items: [] },
   };
 }
 
@@ -79,6 +81,7 @@ const SEED_DEFAULTS = {
   belowFloor: { value: false, items: [] as string[] },
   planBusy: { value: false, items: [] as string[] },
   goalDrift: { value: false, items: [] as string[] },
+  upstreamBlocked: { value: false, items: [] as string[] },
 };
 
 /** Default signals: not quota-hit, context unknown. */

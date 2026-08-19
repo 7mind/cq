@@ -22,8 +22,8 @@
  *     pInvestigate/pSeed/pPlan/pResearch/pOperatorAction/pImplement is TRUE-and-unblocked →
  *     BLOCK (block=true), naming the FIRST such predicate in flow order
  *     (investigate → seed → plan → research → implement); else ALLOW.
- *     The informational `belowFloor`, `planBusy`, and `goalDrift` companions
- *     are NEVER part of the block decision.
+ *     The informational `belowFloor`, `planBusy`, `goalDrift`, and
+ *     `upstreamBlocked` companions are NEVER part of the block decision.
  *  5. Emit on stdout the NEUTRAL verdict JSON
  *     `{ block, reason, predicates: { pInvestigate, pSeed, pPlan, pResearch,
  *     pImplement, pOperatorAction, openQuestionGate, belowFloor, planBusy, goalDrift } }`. EXIT CODE:
@@ -233,6 +233,7 @@ function allowVerdict(reason: string): AdvanceGateVerdict {
       belowFloor: empty,
       planBusy: empty,
       goalDrift: empty,
+      upstreamBlocked: empty,
     },
   };
 }

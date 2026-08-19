@@ -1,10 +1,12 @@
 import type { ServerWebSocket } from "bun";
 import {
+  createXdgWatcherLease,
   isSafeProjectKey,
   openXdgProjectRuntime,
   type ListProjectsCapability,
   type OpenXdgProjectRuntimeOptions,
   type XdgProjectRuntime,
+  type XdgWatcherLease,
 } from "@cq/ledger";
 import {
   attachMcpHttp,
@@ -135,6 +137,16 @@ export function serveXdgCatalog(
     projects: listedProjects,
   });
   const runtimes = new Map<string, Promise<XdgProjectHandlers>>();
+  const leases = new Map<string, XdgWatcherLease>();
+  const desiredHolders = new Map<string, number>();
+
+  function syncLease(projectKey: string): void {
+    const lease = leases.get(projectKey);
+    if (lease === undefined) return;
+    const desired = desiredHolders.get(projectKey) ?? 0;
+    while (lease.holders < desired) lease.acquire();
+    while (lease.holders > desired) lease.release();
+  }
 
   function getRuntime(project: XdgHostProject): Promise<XdgProjectHandlers> {
     const existing = runtimes.get(project.key);
@@ -161,6 +173,16 @@ export function serveXdgCatalog(
         undefined,
         "management",
       );
+      const lease = createXdgWatcherLease({
+        store: runtime.store,
+        dbPath: runtime.dbPath,
+        pollMs: 500,
+        onChange: (ledgerId) => {
+          server.publish(hubTopic(project.key), changedFrame(ledgerId));
+        },
+      });
+      leases.set(project.key, lease);
+      syncLease(project.key);
       return { runtime, handlers };
     })();
     runtimes.set(project.key, built);
@@ -216,6 +238,16 @@ export function serveXdgCatalog(
       websocket: {
         open(ws: ServerWebSocket<XdgWsData>): void {
           ws.subscribe(hubTopic(ws.data.projectKey));
+          desiredHolders.set(
+            ws.data.projectKey,
+            (desiredHolders.get(ws.data.projectKey) ?? 0) + 1,
+          );
+          syncLease(ws.data.projectKey);
+        },
+        close(ws: ServerWebSocket<XdgWsData>): void {
+          const current = desiredHolders.get(ws.data.projectKey) ?? 0;
+          desiredHolders.set(ws.data.projectKey, current > 0 ? current - 1 : 0);
+          syncLease(ws.data.projectKey);
         },
         message(ws: ServerWebSocket<XdgWsData>, raw: string | Buffer): void {
           wsHeartbeat((frame) => ws.send(frame), raw);
@@ -234,6 +266,10 @@ export function serveXdgCatalog(
     // still runs exactly once however many times `stop` is called.
     await originalStop(closeActiveConnections);
     disposeRuntimes ??= (async () => {
+      for (const lease of leases.values()) {
+        while (lease.holders > 0) lease.release();
+      }
+      leases.clear();
       const settled = await Promise.allSettled(runtimes.values());
       await Promise.all(
         settled.flatMap((result) =>

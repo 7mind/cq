@@ -14,7 +14,7 @@
  * openQuestionGate, belowFloor, planBusy, goalDrift } }` — so the auto-driver oracle's
  * `parseAdvanceGateOutput` (which reads `parsed.predicates`) parses
  * `cq predicates` output UNCHANGED. pSeed is a first-class stage predicate;
- * belowFloor, planBusy, and goalDrift are informational (never gate).
+ * belowFloor, planBusy, goalDrift, and upstreamBlocked are informational (never gate).
  *
  * The store is built IN-PROCESS via `createLedgerStore(cwd)` (exactly like
  * `runAdvanceGate`'s step 4 and `runInit`) and disposed in a `finally`.

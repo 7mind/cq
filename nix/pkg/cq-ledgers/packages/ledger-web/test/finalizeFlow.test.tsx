@@ -163,6 +163,7 @@ function emptyPredicates(): DerivedPredicates {
     belowFloor: v(),
     planBusy: v(),
     goalDrift: v(),
+    upstreamBlocked: v(),
   };
 }
 

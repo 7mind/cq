@@ -1122,6 +1122,7 @@ function assertRepresentativeContracts(
       "pResearch",
       "pSeed",
       "planBusy",
+      "upstreamBlocked",
     ].sort(),
   );
   expect(predicates).toMatchObject({

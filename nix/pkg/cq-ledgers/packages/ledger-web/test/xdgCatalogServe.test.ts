@@ -611,6 +611,9 @@ describe("explicit XDG catalog HTTP/WS host", () => {
     expect(source).toContain("hubTopic");
     expect(source).toContain("attachMcpHttp");
     expect(source).toContain("openXdgProjectRuntime");
+    expect(source).toContain("createXdgWatcherLease");
+    expect(source).toContain(".acquire()");
+    expect(source).toContain(".release()");
 
     // Two complementary mechanisms, neither sufficient alone. The import
     // allowlist catches coupling that arrives through ANY module specifier,

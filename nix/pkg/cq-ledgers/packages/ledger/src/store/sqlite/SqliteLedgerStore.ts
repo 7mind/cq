@@ -100,7 +100,9 @@ import {
   applyDetachMilestoneItem,
   applyReattachItem,
   applyReopenItem,
+  assertArchiveDoesNotDropUnsatisfyingGates,
   applyUpdateItem,
+  statusSatisfiesDependency,
   validateMilestoneItemPatch,
   applyUpdateMilestoneItem,
   assertGoalPhasePreconditions,
@@ -1224,7 +1226,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
           toStatus,
         );
       }
-      const x = applyReopenItem(shim, itemId, toStatus, this.now());
+      const x = applyReopenItem(shim, itemId, toStatus, this.now(), this.buildRefValidationContext());
       // D267/T1856: resurrection respects parent liveness.
       assertMilestoneActive(this.loadLedger(MILESTONES_LEDGER), source.milestoneId);
       this.persistItemRow(ledgerId, x);
@@ -1353,6 +1355,9 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     immediateWriteTransaction(this.db(), () => {
       const db = this.db();
       participating = [];
+      const snapshot = new Map<string, Ledger>();
+      for (const name of this.enumerate()) snapshot.set(name, this.loadLedger(name));
+      assertArchiveDoesNotDropUnsatisfyingGates(snapshot, milestoneId);
       const otherNames = this.enumerate().filter((n) => n !== MILESTONES_LEDGER);
 
       // Phase 1 — verify EVERY participating ledger's group is fully
@@ -2128,12 +2133,26 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     const registry = buildPrefixRegistry(
       rows.map((r) => ({ name: r.name, schema: JSON.parse(r.schema_json) as LedgerSchema })),
     );
+    const schemas = new Map(
+      rows.map((r) => [r.name, JSON.parse(r.schema_json) as LedgerSchema]),
+    );
     const activeQ = db.query("SELECT 1 FROM items WHERE ledger = ? AND id = ? LIMIT 1");
     const archivedQ = db.query("SELECT 1 FROM archived_items WHERE ledger = ? AND id = ? LIMIT 1");
+    const archivedStatusQ = db.query(
+      "SELECT status FROM archived_items WHERE ledger = ? AND id = ? LIMIT 1",
+    );
     return {
       registry,
       refExists: (ledger: string, id: string): boolean =>
         activeQ.get(ledger, id) !== null || archivedQ.get(ledger, id) !== null,
+      archivedUnsatisfying: (ledger: string, id: string): boolean => {
+        if (activeQ.get(ledger, id) !== null) return false;
+        const row = archivedStatusQ.get(ledger, id) as { status: string } | null;
+        if (row === null) return false;
+        const schema = schemas.get(ledger);
+        if (schema === undefined) return false;
+        return !statusSatisfiesDependency(schema, row.status);
+      },
     };
   }
 

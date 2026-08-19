@@ -110,6 +110,7 @@ import {
   QUESTIONS_LEDGER,
   RESEARCHES_LEDGER,
   TASKS_LEDGER,
+  UPSTREAM_LEDGER,
 } from "../constants.js";
 import {
   PLAN_ACTIVE_CLAIM_FIELD,
@@ -177,6 +178,13 @@ export interface DerivedPredicates {
    * invisible to this signal — the one-time migration sweep covers those.
    */
   goalDrift: PredicateVerdict;
+  /**
+   * REPORT-ONLY signal (G95 / T800): TRUE with the ids of non-terminal tasks
+   * whose `dependsOn` names an active `upstream:<U>` item that is not
+   * `released`. Never participates in any stop condition and never feeds the
+   * open-question gate.
+   */
+  upstreamBlocked: PredicateVerdict;
 }
 
 // --- lifecycle constants (mirror the schemas in constants.ts) --------------
@@ -698,6 +706,30 @@ function deriveEligiblePredicates(
   }
   const goalDriftItems = [...driftedGoalIds];
 
+  const upstreamById = new Map(
+    activeItems(store, UPSTREAM_LEDGER, undefined).map((item) => [item.id, item]),
+  );
+  const prefixRegistry = buildPrefixRegistry(
+    store.enumerate().map((name) => ({ name, schema: store.fetch(name).schema })),
+  );
+  const upstreamBlockedItems: string[] = [];
+  for (const task of tasks) {
+    if (TASK_TERMINAL_STATUSES.has(task.status)) continue;
+    const blocked = refList(task, "dependsOn").some((raw) => {
+      let canonical: string;
+      try {
+        canonical = canonicalizeRef(raw, prefixRegistry);
+      } catch {
+        return false;
+      }
+      const parsed = parseRef(canonical);
+      if (parsed.kind !== "prefixed" || parsed.ledger !== UPSTREAM_LEDGER) return false;
+      const target = upstreamById.get(parsed.id);
+      return target !== undefined && target.status !== "released";
+    });
+    if (blocked) upstreamBlockedItems.push(task.id);
+  }
+
   return {
     pInvestigate: { value: investigateItems.length > 0, items: investigateItems },
     pSeed: { value: seedItems.length > 0, items: seedItems },
@@ -715,6 +747,10 @@ function deriveEligiblePredicates(
     belowFloor: { value: belowFloorItems.length > 0, items: belowFloorItems },
     planBusy: { value: busyGoalIds.length > 0, items: busyGoalIds },
     goalDrift: { value: goalDriftItems.length > 0, items: goalDriftItems },
+    upstreamBlocked: {
+      value: upstreamBlockedItems.length > 0,
+      items: upstreamBlockedItems,
+    },
   };
 }
 

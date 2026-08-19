@@ -143,6 +143,7 @@ const ALL_FALSE: DerivedPredicates = {
   belowFloor: { value: false, items: [] },
   planBusy: { value: false, items: [] },
   goalDrift: { value: false, items: [] },
+  upstreamBlocked: { value: false, items: [] },
 };
 
 function withPlanWork(items: string[]): DerivedPredicates {
@@ -980,6 +981,7 @@ describe("T468: preset terminalPredicates (bound correctly to each flow)", () =>
     belowFloor: { value: false, items: [] },
     planBusy: { value: false, items: [] },
     goalDrift: { value: false, items: [] },
+    upstreamBlocked: { value: false, items: [] },
   };
 
   test("advanceAutoPreset terminal when ALL SIX p-predicates are false", () => {

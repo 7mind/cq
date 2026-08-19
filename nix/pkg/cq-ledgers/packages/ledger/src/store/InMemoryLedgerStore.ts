@@ -23,6 +23,7 @@ import {
   applyEnsureAmbientMilestone,
   applyReattachItem,
   applyReopenItem,
+  assertArchiveDoesNotDropUnsatisfyingGates,
   applyUpdateItem,
   collectNonTerminalChildren,
   validateMilestoneItemPatch,
@@ -39,6 +40,7 @@ import {
 import { UsageTracker } from "../usageStats.js";
 import type { UsageStatsSnapshot } from "../usageStats.js";
 import type { RefValidationContext, StatusChangePrecondition } from "./core.js";
+import { statusSatisfiesDependency } from "./core.js";
 import { buildPrefixRegistry, normalizeStoredRefFields } from "../refs.js";
 import type {
   ArchiveContent,
@@ -502,6 +504,25 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
         }
         return false;
       },
+      archivedUnsatisfying: (ledger: string, id: string): boolean => {
+        const active = this.ledgers.get(ledger);
+        if (active !== undefined) {
+          for (const m of active.milestones) for (const it of m.items) if (it.id === id) return false;
+        }
+        const schema = active?.schema;
+        if (schema === undefined) return false;
+        if (ledger === MILESTONES_LEDGER) {
+          const archived = this.itemArchives.get(`${MILESTONES_LEDGER}/${id}`);
+          return archived !== undefined && !statusSatisfiesDependency(schema, archived.status);
+        }
+        for (const [key, group] of this.archives) {
+          if (!key.startsWith(`${ledger}/`)) continue;
+          for (const it of group.items) {
+            if (it.id === id) return !statusSatisfiesDependency(schema, it.status);
+          }
+        }
+        return false;
+      },
     };
   }
 
@@ -956,7 +977,9 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
         // D267/T1856: resurrection respects parent liveness — a non-terminal
         // child must never reappear under an absent/archived/terminal parent.
         assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), source.milestoneId);
-        return cloneItem(applyReopenItem(ledger, itemId, toStatus, this.now()));
+        return cloneItem(
+          applyReopenItem(ledger, itemId, toStatus, this.now(), this.buildRefValidationContext()),
+        );
       }),
     );
     this.fireMutation(ledgerId, "update");
@@ -1245,6 +1268,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
         `${MILESTONES_AMBIENT_ID} is immortal and cannot be archived`,
       );
     }
+    assertArchiveDoesNotDropUnsatisfyingGates(this.ledgers, milestoneId);
     // Phase 1: verify no non-terminal items in ANY ledger.
     for (const [name, ledger] of this.ledgers) {
       if (name === MILESTONES_LEDGER) continue;

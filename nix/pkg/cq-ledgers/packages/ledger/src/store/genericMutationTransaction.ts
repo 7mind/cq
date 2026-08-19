@@ -31,7 +31,9 @@ import {
   applyDetachMilestoneItem,
   applyReattachItem,
   applyReopenItem,
+  assertArchiveDoesNotDropUnsatisfyingGates,
   applyUpdateItem,
+  statusSatisfiesDependency,
   applyUpdateMilestoneItem,
   assertGoalPhasePreconditions,
   assertMilestoneActive,
@@ -122,6 +124,21 @@ function refsFor(state: GenericMutationTransactionState): RefValidationContext {
       for (const entry of state.archives.values()) {
         if (entry.ledgerId === ledgerId && entry.items.some((item) => item.id === itemId)) {
           return true;
+        }
+      }
+      return false;
+    },
+    archivedUnsatisfying: (ledgerId, itemId) => {
+      const ledger = state.ledgers.get(ledgerId);
+      if (ledger?.milestones.some((group) => group.items.some((item) => item.id === itemId)) === true) {
+        return false;
+      }
+      if (ledger === undefined) return false;
+      for (const entry of state.archives.values()) {
+        if (entry.ledgerId !== ledgerId) continue;
+        const archived = entry.items.find((item) => item.id === itemId);
+        if (archived !== undefined) {
+          return !statusSatisfiesDependency(ledger.schema, archived.status);
         }
       }
       return false;
@@ -272,7 +289,7 @@ export function createGenericMutationTransaction(
         assertManagedTaskTransitionAllowed(getLedger, source, toStatus);
       }
       assertMilestoneActive(getLedger(MILESTONES_LEDGER), source.milestoneId);
-      const item = applyReopenItem(ledger, itemId, toStatus, state.now());
+      const item = applyReopenItem(ledger, itemId, toStatus, state.now(), refsFor(state));
       dirtyLedgers.add(ledgerId);
       return cloneItem(item);
     },
@@ -334,6 +351,7 @@ export function createGenericMutationTransaction(
           `${MILESTONES_AMBIENT_ID} is immortal and cannot be archived`,
         );
       }
+      assertArchiveDoesNotDropUnsatisfyingGates(state.ledgers, milestoneId);
       const milestones = getLedger(MILESTONES_LEDGER);
       const milestone = findItem(milestones, milestoneId).item;
       const title = typeof milestone.fields.title === "string" ? milestone.fields.title : "";

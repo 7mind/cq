@@ -62,6 +62,8 @@ import {
   applyEnsureAmbientMilestone,
   applyReattachItem,
   applyReopenItem,
+  assertArchiveDoesNotDropUnsatisfyingGates,
+  statusSatisfiesDependency,
   applyUpdateItem,
   applyUpdateMilestoneItem,
   collectNonTerminalChildren,
@@ -689,11 +691,13 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     // Authoritative archived id sets — loaded ONLY for candidate known ledgers
     // that actually hold archive pointers (D284 lazy path).
     const archivedIds = new Map<string, Set<string>>();
+    const archivedStatus = new Map<string, Map<string, string>>();
     for (const ledgerId of candidateLedgers) {
       const ledger = this.ledgers.get(ledgerId);
       if (ledger === undefined || ledger.archivePointers.length === 0) continue;
       const items = await this.collectArchivedItems(ledgerId);
       archivedIds.set(ledgerId, new Set(items.map((it) => it.id)));
+      archivedStatus.set(ledgerId, new Map(items.map((it) => [it.id, it.status])));
       // Heal the fail-soft FTS cache while we hold authoritative data.
       try {
         this.searchIndex.setLedgerArchived(ledgerId, items);
@@ -713,6 +717,17 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
         const loaded = archivedIds.get(ledger);
         if (loaded !== undefined) return loaded.has(id);
         return this.searchIndex.hasArchivedItem(ledger, id);
+      },
+      archivedUnsatisfying: (ledger: string, id: string): boolean => {
+        const active = this.ledgers.get(ledger);
+        if (active !== undefined) {
+          for (const m of active.milestones) for (const it of m.items) if (it.id === id) return false;
+        }
+        const schema = active?.schema;
+        if (schema === undefined) return false;
+        const status = archivedStatus.get(ledger)?.get(id);
+        if (status === undefined) return false;
+        return !statusSatisfiesDependency(schema, status);
       },
     };
   }
@@ -911,7 +926,13 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
         }
         // D267/T1856: resurrection respects parent liveness.
         assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), source.milestoneId);
-        const x = applyReopenItem(ledger, itemId, toStatus, this.now());
+        const x = applyReopenItem(
+          ledger,
+          itemId,
+          toStatus,
+          this.now(),
+          await this.buildRefValidationContext(source.fields),
+        );
         await this.writeLedgerFile(ledger);
         return cloneItem(x);
       }),
@@ -1730,6 +1751,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
       if (name === MILESTONES_LEDGER) continue;
       await this.reloadLedgerFromDisk(name);
     }
+    assertArchiveDoesNotDropUnsatisfyingGates(this.ledgers, milestoneId);
     // Phase 1 — verify no non-terminal items in ANY ledger.
     for (const [name, ledger] of this.ledgers) {
       if (name === MILESTONES_LEDGER) continue;

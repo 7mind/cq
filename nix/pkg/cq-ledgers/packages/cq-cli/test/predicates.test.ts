@@ -50,6 +50,7 @@ const PREDICATE_KEYS = [
   "openQuestionGate",
   "belowFloor",
   "goalDrift",
+  "upstreamBlocked",
 ] as const;
 
 const dirs: string[] = [];

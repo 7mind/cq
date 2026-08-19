@@ -49,6 +49,7 @@ function emptyPredicates(): DerivedPredicates {
     belowFloor: emptyVerdict(),
     planBusy: emptyVerdict(),
     goalDrift: emptyVerdict(),
+    upstreamBlocked: emptyVerdict(),
   };
 }
 

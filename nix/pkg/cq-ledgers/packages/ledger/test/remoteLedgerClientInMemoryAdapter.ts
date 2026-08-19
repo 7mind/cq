@@ -763,6 +763,7 @@ const derivePredicates: ToolHandler = () => {
     belowFloor: verdict(),
     planBusy: verdict(),
     goalDrift: verdict(),
+    upstreamBlocked: verdict(),
   };
 };
 

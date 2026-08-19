@@ -21,6 +21,7 @@ import {
   type LedgerSchema,
   type LedgerStore,
 } from "../src/index.js";
+import { taskDependenciesSatisfied } from "../src/store/predicates.js";
 
 interface StoreFactory {
   name: string;
@@ -251,5 +252,34 @@ describe("frozen pre-upstream MCP client compatibility", () => {
         .map(([name]) => name)
         .sort(),
     );
+  });
+});
+
+describe("T797 only released satisfies an upstream dependency", () => {
+  it("wontfix/open/reported do not satisfy; released does", async () => {
+    const store = new InMemoryLedgerStore({});
+    await store.init();
+    const m = await store.createMilestone({ title: "upstream" });
+    const make = async (status: string) =>
+      store.createItem(UPSTREAM_LEDGER, m.id, {
+        status,
+        fields: { headline: status, package: "example" },
+      });
+    const open = await make("open");
+    const reported = await make("reported");
+    const wontfix = await make("wontfix");
+    const released = await make("released");
+    const gated = async (id: string) => {
+      const task = await store.createItem(TASKS_LEDGER, m.id, {
+        status: "planned",
+        fields: { headline: id, dependsOn: [`upstream:${id}`] },
+      });
+      return taskDependenciesSatisfied(store, task);
+    };
+    expect(await gated(open.id)).toBe(false);
+    expect(await gated(reported.id)).toBe(false);
+    expect(await gated(wontfix.id)).toBe(false);
+    expect(await gated(released.id)).toBe(true);
+    await store.dispose();
   });
 });

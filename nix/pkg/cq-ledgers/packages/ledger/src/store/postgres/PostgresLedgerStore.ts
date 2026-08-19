@@ -126,7 +126,9 @@ import {
   applyDetachMilestoneItem,
   applyReattachItem,
   applyReopenItem,
+  assertArchiveDoesNotDropUnsatisfyingGates,
   applyUpdateItem,
+  statusSatisfiesDependency,
   validateMilestoneItemPatch,
   applyUpdateMilestoneItem,
   assertGoalPhasePreconditions,
@@ -1645,7 +1647,13 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
             );
           }
         }
-        const x = applyReopenItem(source, itemId, toStatus, this.now());
+        const x = applyReopenItem(
+          source,
+          itemId,
+          toStatus,
+          this.now(),
+          this.buildRefValidationContext(live),
+        );
         await this.persistItemRow(tx, ledgerId, x);
         out = cloneItem(x);
         mutated = source;
@@ -1805,6 +1813,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
           await this.lockParentMilestoneRow(tx, milestoneId);
           const state = await this.readLiveTenant(tx);
           const live = state.ledgers;
+          assertArchiveDoesNotDropUnsatisfyingGates(live, milestoneId);
           msClone = requireLiveLedger(live, MILESTONES_LEDGER);
 
           // D101: locate the milestone item in msClone's active group and
@@ -2668,6 +2677,25 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         for (const [key, group] of this.archives) {
           if (!key.startsWith(`${ledger}/`)) continue;
           for (const it of group.items) if (it.id === id) return true;
+        }
+        return false;
+      },
+      archivedUnsatisfying: (ledger: string, id: string): boolean => {
+        const active = source.get(ledger);
+        if (active !== undefined) {
+          for (const m of active.milestones) for (const it of m.items) if (it.id === id) return false;
+        }
+        const schema = active?.schema;
+        if (schema === undefined) return false;
+        if (ledger === MILESTONES_LEDGER && this.itemArchives.has(`${MILESTONES_LEDGER}/${id}`)) {
+          const archived = this.itemArchives.get(`${MILESTONES_LEDGER}/${id}`);
+          return archived !== undefined && !statusSatisfiesDependency(schema, archived.status);
+        }
+        for (const [key, group] of this.archives) {
+          if (!key.startsWith(`${ledger}/`)) continue;
+          for (const it of group.items) {
+            if (it.id === id) return !statusSatisfiesDependency(schema, it.status);
+          }
         }
         return false;
       },

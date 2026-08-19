@@ -465,6 +465,33 @@ export class DanglingRefError extends LedgerError {
 }
 
 /**
+ * T826: a newly-added dependsOn/blockedBy points at an archived item whose
+ * status does not satisfy that ledger's dependency gate.
+ */
+export class ArchivedUnsatisfyingDependencyError extends LedgerError {
+  constructor(raw: string, ledger: string, id: string) {
+    super(
+      `dependency ref "${raw}" resolves to archived ${ledger}:${id}, which does not satisfy ` +
+        `that ledger's dependency gate`,
+    );
+    this.name = "ArchivedUnsatisfyingDependencyError";
+  }
+}
+
+/**
+ * T826: archive would drop a non-satisfying target that still gates an active
+ * nonterminal dependent.
+ */
+export class UnsatisfiedDependencyArchiveError extends LedgerError {
+  constructor(milestoneId: string, dependentRef: string, targetRef: string) {
+    super(
+      `cannot archive ${milestoneId}: active ${dependentRef} still depends on non-satisfying ${targetRef}`,
+    );
+    this.name = "UnsatisfiedDependencyArchiveError";
+  }
+}
+
+/**
  * Thrown when an operation would violate a bootstrapped invariant of
  * the `milestones` ledger — e.g. attempting to archive the bootstrap
  * active group, or to re-create the milestones ledger with a different

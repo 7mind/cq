@@ -663,6 +663,12 @@ export {
   startXdgCoherenceWatcher,
   XDG_DB_FILENAME,
 } from "./store/createLedgerStore.js";
+export { createXdgWatcherLease } from "./store/xdgWatcherLease.js";
+export type {
+  CreateXdgWatcherLeaseOptions,
+  XdgWatcherFactory,
+  XdgWatcherLease,
+} from "./store/xdgWatcherLease.js";
 export type {
   ResolvedLedgerStore,
   ResolvedPostgresHandle,

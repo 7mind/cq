@@ -37,6 +37,7 @@ export const DERIVED_PREDICATE_KEYS = [
   "belowFloor",
   "planBusy",
   "goalDrift",
+  "upstreamBlocked",
 ] as const satisfies readonly (keyof DerivedPredicates)[];
 
 // Compile-time tie: DERIVED_PREDICATE_KEYS must name EVERY DerivedPredicates

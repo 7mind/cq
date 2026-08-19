@@ -18,6 +18,7 @@ import type {
 import {
   BootstrapViolationError,
   CrossPrefixIdError,
+  ArchivedUnsatisfyingDependencyError,
   DanglingRefError,
   DuplicateIdError,
   DuplicatePrefixError,
@@ -33,8 +34,14 @@ import {
   MissingRequiredFieldError,
   NonTerminalItemsError,
   SchemaValidationError,
+  UnsatisfiedDependencyArchiveError,
 } from "../types.js";
-import { canonicalizeRef, DEPENDENCY_REF_FIELDS, parseRef } from "../refs.js";
+import {
+  buildPrefixRegistry,
+  canonicalizeRef,
+  DEPENDENCY_REF_FIELDS,
+  parseRef,
+} from "../refs.js";
 import {
   GOALS_LEDGER,
   HANDOFFS_LEDGER,
@@ -334,6 +341,15 @@ export interface RefValidationContext {
    * table respectively.
    */
   refExists(ledger: string, id: string): boolean;
+  /**
+   * True iff the named item exists only as an archived record whose status
+   * does not satisfy that ledger's dependency gate (T826).
+   */
+  archivedUnsatisfying?(ledger: string, id: string): boolean;
+}
+
+export function statusSatisfiesDependency(schema: LedgerSchema, status: string): boolean {
+  return (schema.satisfiesDependencyStatuses ?? schema.terminalStatuses).includes(status);
 }
 
 /**
@@ -374,7 +390,12 @@ function processRefEntry(raw: string, isNew: boolean, ctx: RefValidationContext)
   // canonicalizeRef always yields the prefixed form; the bare branch is
   // unreachable but keeps this total.
   if (parsed.kind !== "prefixed") return raw;
-  if (ctx.refExists(parsed.ledger, parsed.id)) return canonical; // normalize
+  if (ctx.refExists(parsed.ledger, parsed.id)) {
+    if (isNew && ctx.archivedUnsatisfying?.(parsed.ledger, parsed.id) === true) {
+      throw new ArchivedUnsatisfyingDependencyError(raw, parsed.ledger, parsed.id);
+    }
+    return canonical; // normalize
+  }
   if (isNew) throw new DanglingRefError(raw, parsed.ledger, parsed.id);
   return raw; // pre-existing unresolvable → verbatim, never throw
 }
@@ -914,6 +935,74 @@ export function applyDetachMilestoneItem(
   return { item, pointer };
 }
 
+function assertReopenRetainedGates(item: Item, refCtx: RefValidationContext | undefined): void {
+  if (refCtx === undefined) return;
+  const deps = item.fields["dependsOn"];
+  if (!Array.isArray(deps)) return;
+  for (const raw of deps) {
+    let canonical: string;
+    try {
+      canonical = canonicalizeRef(raw, refCtx.registry);
+    } catch {
+      continue;
+    }
+    const parsed = parseRef(canonical);
+    if (parsed.kind !== "prefixed") continue;
+    if (refCtx.archivedUnsatisfying?.(parsed.ledger, parsed.id) === true) {
+      throw new ArchivedUnsatisfyingDependencyError(raw, parsed.ledger, parsed.id);
+    }
+  }
+}
+
+/**
+ * T826: refuse to archive a milestone that still carries a non-satisfying
+ * item targeted by an active nonterminal dependsOn.
+ */
+export function assertArchiveDoesNotDropUnsatisfyingGates(
+  ledgers: ReadonlyMap<string, Ledger>,
+  milestoneId: string,
+): void {
+  const registry = buildPrefixRegistry(
+    [...ledgers].map(([name, ledger]) => ({ name, schema: ledger.schema })),
+  );
+  const leaving = new Set<string>();
+  for (const [name, ledger] of ledgers) {
+    if (name === MILESTONES_LEDGER) continue;
+    const group = ledger.milestones.find((milestone) => milestone.id === milestoneId);
+    if (group === undefined) continue;
+    for (const item of group.items) {
+      if (!statusSatisfiesDependency(ledger.schema, item.status)) {
+        leaving.add(`${name}:${item.id}`);
+      }
+    }
+  }
+  if (leaving.size === 0) return;
+  for (const [name, ledger] of ledgers) {
+    const terminal = new Set(ledger.schema.terminalStatuses);
+    for (const group of ledger.milestones) {
+      for (const item of group.items) {
+        if (terminal.has(item.status)) continue;
+        const deps = item.fields["dependsOn"];
+        if (!Array.isArray(deps)) continue;
+        for (const raw of deps) {
+          let canonical: string;
+          try {
+            canonical = canonicalizeRef(raw, registry);
+          } catch {
+            continue;
+          }
+          const parsed = parseRef(canonical);
+          if (parsed.kind !== "prefixed") continue;
+          const target = `${parsed.ledger}:${parsed.id}`;
+          if (leaving.has(target)) {
+            throw new UnsatisfiedDependencyArchiveError(milestoneId, `${name}:${item.id}`, target);
+          }
+        }
+      }
+    }
+  }
+}
+
 /**
  * Reopen a TERMINAL item: move it to a chosen NON-terminal status,
  * bypassing the declarative transition guard (F1) but validating that
@@ -936,6 +1025,7 @@ export function applyReopenItem(
   itemId: string,
   toStatus: string,
   now: string,
+  refCtx?: RefValidationContext,
 ): Item {
   const { item } = findItem(ledger, itemId);
   if (ledger.id === OPERATOR_ACTIONS_LEDGER) {
@@ -961,6 +1051,7 @@ export function applyReopenItem(
       `cannot reopen item ${itemId} in ledger ${ledger.id} to terminal status "${toStatus}"; pick a non-terminal status`,
     );
   }
+  assertReopenRetainedGates(item, refCtx);
   item.status = toStatus;
   item.updatedAt = now;
   return item;
