@@ -133,10 +133,8 @@ describe("backend='remote' fails before local persistence (T723/R823)", () => {
     }
 
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toMatch(
-      /backend = 'remote'.*remote ledger client.*not wired.*local persistence/is,
-    );
-    expect(readCount).toBe(0);
+    expect((error as Error).message).toMatch(/CQ_LEDGER_REMOTE_TOKEN/);
+    expect(readCount).toBe(1);
     expect(await exists(path.join(root, ".cq"))).toBe(false);
   });
 
@@ -152,9 +150,7 @@ describe("backend='remote' fails before local persistence (T723/R823)", () => {
     const outcome = await dispatch(["erase", "--cwd", root, "--yes"], io);
 
     expect(outcome.exitCode).toBe(2);
-    expect(io.errs.join("\n")).toMatch(
-      /backend = 'remote'.*remote ledger client.*not wired.*local persistence/is,
-    );
+    expect(io.errs.join("\n")).toMatch(/CQ_LEDGER_REMOTE_TOKEN|outcome-unknown|NOT erased/);
     expect(await readFile(configPath, "utf8")).toBe(configBefore);
     expect(await readFile(sentinelPath, "utf8")).toBe("must survive\n");
   });

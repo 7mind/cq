@@ -208,10 +208,12 @@ export async function buildBackupDump(
   }
 
   const listLogs = listLogsOf(store);
+  const storeLogs: Array<{ path: string; content: string }> = [];
   if (listLogs !== undefined) {
-    // Store-supplied logs source (postgres) takes unconditional precedence:
-    // there is no filesystem logs area to fall back to under that backend.
-    for await (const entry of listLogs()) {
+    for await (const entry of listLogs()) storeLogs.push(entry);
+  }
+  if (storeLogs.length > 0) {
+    for (const entry of storeLogs) {
       files.push({ path: path.posix.join(LEDGER_LOGS_DIRNAME, entry.path), content: entry.content });
     }
   } else if (logsDir !== null) {

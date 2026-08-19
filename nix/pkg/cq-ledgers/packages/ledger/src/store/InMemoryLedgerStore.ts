@@ -54,7 +54,6 @@ import type {
   UpdateItemPatch,
   UpdateMilestoneItemPatch,
 } from "./LedgerStore.js";
-import type { ParsedDump } from "./restoreImporter.js";
 import type { ReadLogResult } from "../mcp/readLog.js";
 import type {
   PlanClaimInput,
@@ -1420,7 +1419,16 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     return { path: rel, content };
   }
 
-  async replaceFromParsedDump(parsed: ParsedDump): Promise<void> {
+  async replaceFromParsedDump(parsed: {
+    readonly ledgers: ReadonlyMap<string, Ledger>;
+    readonly archives: ReadonlyMap<string, ReadonlyMap<string, ArchiveContent>>;
+    readonly logs: readonly { path: string; content: string }[];
+    readonly planLifecycle: {
+      readonly claims: ReadonlyMap<string, PlanPrivateClaimRecord>;
+      readonly operations: ReadonlyMap<string, InMemoryPlanOperationRecord>;
+    } | null;
+    readonly worksetRoots: { readonly roots: readonly string[] } | null;
+  }): Promise<void> {
     this.assertInit();
     this.ledgers.clear();
     this.archives.clear();
