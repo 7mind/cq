@@ -90,6 +90,28 @@ describe("T1984 generated Git effect command surfaces", () => {
     }
   });
 
+  test("Claude, Codex, and Pi journal the rebase under a stable operation id and capture the opaque reference [Behavioral-Active Blackbox-Group]", () => {
+    for (const surface of SURFACES) {
+      const body = implementAdvance(surface);
+      expect(body).toContain(
+        "cq gate git-effect --operation rebase --cwd <repositoryRoot> --task-id <taskId> --commit <currentMainCommit> --operation-id <stableRebaseOperationId>",
+      );
+      expect(body).toContain("CQ_GUARDED_REBASE_REFERENCE=cq-guarded-rebase:v1:");
+      expect(body).toContain("guardedRebase");
+      expect(body).toContain("reprepareOf");
+      expect(body.match(RAW_MUTATING_GIT), surface).toBeNull();
+    }
+  });
+
+  test("the tracked generated catalogues carry the guarded-rebase reference capture", () => {
+    const body = readFileSync(
+      join(import.meta.dir, "..", "..", "ledger-web", "src", "agentsCatalogue.gen.ts"),
+      "utf8",
+    );
+    expect(body).toContain("CQ_GUARDED_REBASE_REFERENCE");
+    expect(body).toContain("--operation-id <stableRebaseOperationId>");
+  });
+
   test("the tracked generated catalogues contain the same brokered command and no raw merge", () => {
     const body = readFileSync(
       join(import.meta.dir, "..", "..", "ledger-web", "src", "agentsCatalogue.gen.ts"),

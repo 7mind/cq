@@ -195,6 +195,87 @@ function lostReportContractViolations(body: string): readonly LostReportViolatio
 
 const REMOVED_VALIDATION_TOKENS = ["validate_input", "validate_output"] as const;
 
+/**
+ * T2151 (goal: preserve worker authority across guarded rebases) — the
+ * guarded-rebase continuation contract every implement/advance surface must
+ * carry: a stable operation id on the brokered rebase, capture and retention
+ * of the exact opaque reference, a redispatch bound only by that reference and
+ * the exact terminal prior worker generation, server-side lineage
+ * materialization, the coordinate reset, the exact-tip/no-new-commit mode, a
+ * fresh parent-owned gate plus fresh reviewers before the ff-only merge, and a
+ * fail-closed stop with no raw-Git or caller-minted fallback.
+ */
+type GuardedRebaseViolation =
+  | "missing-operation-id"
+  | "missing-stable-reuse"
+  | "missing-reference-capture"
+  | "missing-reference-retention"
+  | "missing-reprepare-binding"
+  | "missing-server-materialization"
+  | "missing-coordinate-reset"
+  | "missing-ancestry-exemption-limit"
+  | "missing-exact-tip-mode"
+  | "missing-correction-persistence"
+  | "missing-fresh-gate-and-review"
+  | "missing-authority-reset"
+  | "missing-fail-closed";
+
+function guardedRebaseContractViolations(body: string): readonly GuardedRebaseViolation[] {
+  const normalized = normalize(body);
+  const required: readonly [GuardedRebaseViolation, string][] = [
+    [
+      "missing-operation-id",
+      "cq gate git-effect --operation rebase --cwd <repositoryRoot> --task-id <taskId> --commit <currentMainCommit> --operation-id <stableRebaseOperationId>",
+    ],
+    ["missing-stable-reuse", "reuse it verbatim when a response is lost or ambiguous"],
+    [
+      "missing-reference-capture",
+      "CQ_GUARDED_REBASE_REFERENCE=cq-guarded-rebase:v1:<64 lowercase hex>",
+    ],
+    ["missing-reference-retention", "retain it as the sole rebase authority"],
+    [
+      "missing-reprepare-binding",
+      "`reprepareOf` naming the consumed pre-rebase worker handle and `guardedRebase` carrying the exact retained reference",
+    ],
+    [
+      "missing-server-materialization",
+      "materializes `guardedRebaseLineage` into the worker input; a caller-supplied `guardedRebaseLineage` is always rejected",
+    ],
+    [
+      "missing-coordinate-reset",
+      "`priorResultCommit` to the exact pre-rebase worker `resultCommit`",
+    ],
+    [
+      "missing-ancestry-exemption-limit",
+      "Never claim the rewritten pre-rebase commit is an ancestor of the rebased tip",
+    ],
+    [
+      "missing-exact-tip-mode",
+      "the worker reports the exact rebased tip with an empty fresh receipt suffix and no early WIP commit",
+    ],
+    [
+      "missing-correction-persistence",
+      "keeps early persistence and a non-empty contiguous suffix beginning at the rebased head",
+    ],
+    [
+      "missing-fresh-gate-and-review",
+      "rerun every required reviewer against the rebased result",
+    ],
+    [
+      "missing-authority-reset",
+      "pre-rebase worker, reviewer, and gate authority never authorizes the rebased result",
+    ],
+    [
+      "missing-fail-closed",
+      "stops the flow closed rather than falling back to raw Git, broadening the worker sandbox, or accepting caller-minted lineage or gate evidence",
+    ],
+  ];
+
+  return required.flatMap(([violation, needle]) =>
+    normalized.includes(normalize(needle)) ? [] : [violation],
+  );
+}
+
 const DISPATCH_EDGE_INPUTS: readonly {
   readonly flowRoleId: string;
   readonly role: string;
@@ -380,6 +461,69 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       expect(advance).not.toContain("git worktree remove");
       expect(advance).not.toContain("git worktree prune");
     }
+  });
+
+  it("T2151 carries guarded-rebase authority through every implement/advance surface", () => {
+    for (const surface of PROMPT_SURFACES) {
+      expect(
+        guardedRebaseContractViolations(renderedOf(surface, "implement/advance")),
+        surface,
+      ).toEqual([]);
+    }
+  });
+
+  it("T2151 pins the codex brokered redispatch mechanics and the installed worker lineage bindings", () => {
+    const codexAdvance = normalize(renderedOf("codex", "implement/advance"));
+    expect(codexAdvance).toContain(
+      normalize(
+        "the worker redispatch prepare names the exact terminal prior worker generation through `reprepareOf` and carries the exact retained reference as `guardedRebase`",
+      ),
+    );
+    expect(codexAdvance).toContain(
+      normalize("never place `guardedRebaseLineage` or any journal coordinate in caller input"),
+    );
+    expect(codexAdvance).toContain(normalize("its `gitLineage` echoes the resolved bridge exactly"));
+    expect(codexAdvance).toContain(
+      normalize("empty only in the server-resolved exact-tip mode"),
+    );
+    expect(codexAdvance).toContain(
+      normalize("fresh runner-owned `supervisedGateEvidence` binds the rebased tip"),
+    );
+    for (const surface of PROMPT_SURFACES) {
+      const worker = normalize(renderedOf(surface, "implement-worker"));
+      expect(worker).toContain("guardedRebaseLineage");
+      expect(worker).toContain("oldResultCommit");
+      expect(worker).toContain("ontoCommit");
+      expect(worker).toContain("rebasedStartCommit");
+      expect(worker).toContain("exactTip");
+    }
+  });
+
+  it("T2151 guarded-rebase scanner catches a dropped reference, a changed operation id, and substituted coordinates", () => {
+    const real = renderedOf("codex", "implement/advance");
+    const droppedReference = real.replaceAll(
+      "CQ_GUARDED_REBASE_REFERENCE",
+      "CQ_GUARDED_REBASE_OUTCOME",
+    );
+    expect(guardedRebaseContractViolations(droppedReference)).toContain(
+      "missing-reference-capture",
+    );
+    const droppedOperationId = real.replaceAll(" --operation-id <stableRebaseOperationId>", "");
+    expect(guardedRebaseContractViolations(droppedOperationId)).toContain("missing-operation-id");
+    const substitutedCoordinates = real.replaceAll(
+      "the exact pre-rebase worker `resultCommit`",
+      "any plausible prior tip",
+    );
+    expect(guardedRebaseContractViolations(substitutedCoordinates)).toContain(
+      "missing-coordinate-reset",
+    );
+    const callerMinted = real.replaceAll(
+      "a caller-supplied `guardedRebaseLineage` is always rejected",
+      "a caller-supplied `guardedRebaseLineage` is accepted when plausible",
+    );
+    expect(guardedRebaseContractViolations(callerMinted)).toContain(
+      "missing-server-materialization",
+    );
   });
 
   it("T2053/T2058/T2066 keep revisioned operator actions in one parent-only lifecycle", () => {
