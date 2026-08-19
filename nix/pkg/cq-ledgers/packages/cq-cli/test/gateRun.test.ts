@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as processControl from "@cq/process-control";
 import { dispatch, type DispatchIo } from "../src/main.js";
+import { runGateGitEffect } from "../src/gateGitEffect.js";
 import { GATE_DEADLINE_EXIT_CODE, runGateRun } from "../src/gateRun.js";
 
 const roots: string[] = [];
@@ -315,6 +316,67 @@ describe("cq gate git-effect [T1984]", () => {
         commit: "a".repeat(40),
       },
     ]);
+  });
+
+  test("carries one stable guarded-rebase operation id into the typed rebase request [Behavioral-Active Blackbox-Atomic]", async () => {
+    const requests: unknown[] = [];
+    const outcome = await runGateRun(
+      [
+        "git-effect",
+        "--operation",
+        "rebase",
+        "--cwd",
+        "/tmp/cq-repository",
+        "--task-id",
+        "T1984",
+        "--commit",
+        "a".repeat(40),
+        "--operation-id",
+        "implement-t1984-rebase-r0",
+      ],
+      { err: () => undefined },
+      {
+        gitEffect: async (request) => {
+          requests.push(request);
+          return { exitCode: 0 };
+        },
+      },
+    );
+
+    expect(outcome).toEqual({ exitCode: 0 });
+    expect(requests).toEqual([
+      {
+        operation: "rebase",
+        cwd: "/tmp/cq-repository",
+        taskId: "T1984",
+        commit: "a".repeat(40),
+        operationId: "implement-t1984-rebase-r0",
+      },
+    ]);
+  });
+
+  test("the trusted runner rejects a merge carrying an operation id before any store access [Behavioral-Active Blackbox-Atomic]", async () => {
+    await expect(
+      runGateGitEffect({
+        operation: "merge",
+        cwd: "/tmp/cq-repository",
+        taskId: "T1984",
+        commit: "a".repeat(40),
+        operationId: "implement-t1984-rebase-r0",
+      }),
+    ).rejects.toThrow("--operation-id journals only a rebase");
+  });
+
+  test("the trusted runner rejects a malformed guarded-rebase operation id [Behavioral-Active Blackbox-Atomic]", async () => {
+    await expect(
+      runGateGitEffect({
+        operation: "rebase",
+        cwd: "/tmp/cq-repository",
+        taskId: "T1984",
+        commit: "a".repeat(40),
+        operationId: "has spaces",
+      }),
+    ).rejects.toThrow("--operation-id must be one stable operation id");
   });
 
   test("rejects untyped operations before invoking the trusted runner [Behavioral-Active Blackbox-Atomic]", async () => {

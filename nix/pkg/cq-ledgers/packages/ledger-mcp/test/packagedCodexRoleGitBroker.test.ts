@@ -36,6 +36,7 @@ import {
   resolveSingleProjectAttestationNamespace,
   worksetEffectAdmissionProviderFromStore,
   nodeSupervisedWorkerGateRunner,
+  TASKS_LEDGER,
   type DispatchBoundGitAuthorization,
   type ManagedWorktreeHandle,
 } from "@cq/ledger";
@@ -1578,5 +1579,530 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
       expect(registry.has("codex:native")).toBe(true);
     },
     60_000,
+  );
+
+  installedGateTest(
+    "installed guarded-rebase continuation: exact-tip bridge, paired correction, fresh review, and ff-only merge [Effectual-GoodCommunication, Blackbox-Group]",
+    async () => {
+      if (INSTALLED_ROLE === undefined || INSTALLED_CODEX === undefined) {
+        throw new Error("installed guarded-rebase gate was not selected");
+      }
+      const taskId = "T2151";
+      const repositoryRoot = await mkdtemp(path.join(tmpdir(), "t2151-packaged-guarded-"));
+      roots.push(repositoryRoot);
+      await git(repositoryRoot, ["init", "-q", "-b", "main"]);
+      await git(repositoryRoot, ["config", "user.name", "T2151"]);
+      await git(repositoryRoot, ["config", "user.email", "t2151@example.invalid"]);
+      await writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
+      await writeFile(path.join(repositoryRoot, "other.txt"), "other base\n");
+      await writeFile(path.join(repositoryRoot, "bun.lock"), "{}\n");
+      const workspaceRoot = path.join(repositoryRoot, "nix", "pkg", "cq-ledgers");
+      await mkdir(workspaceRoot, { recursive: true });
+      await writeFile(
+        path.join(workspaceRoot, "package.json"),
+        `${JSON.stringify({ private: true, scripts: { check: "test -z \"$CQ_T2151_GATE_COUNT\" || printf 'run\\n' >> \"$CQ_T2151_GATE_COUNT\"; printf '1 pass\\n0 fail\\n'" } }, null, 2)}\n`,
+      );
+      await git(repositoryRoot, ["add", "."]);
+      await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
+      const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+      await writeFile(path.join(repositoryRoot, "cq.toml"), '[ledger]\nbackend = "fs"\n');
+      const seededStore = await createLedgerStore(repositoryRoot);
+      const seededMilestone = await seededStore.store.createMilestone({
+        title: "installed guarded-rebase continuation gate",
+      });
+      await seededStore.store.createItem(TASKS_LEDGER, seededMilestone.id, {
+        id: taskId,
+        status: "planned",
+        fields: {
+          headline: "installed guarded-rebase continuation",
+          description: "terminal worker, guarded rebase, restart, bridge, correction, merge",
+          acceptance: "the guarded continuation completes through the installed boundary",
+        },
+      });
+      await seededStore.store.updateItem(TASKS_LEDGER, taskId, { status: "wip" });
+      await seededStore.store.dispose();
+
+      const fixtureRoot = await mkdtemp(path.join(tmpdir(), "t2151-packaged-fake-"));
+      roots.push(fixtureRoot);
+      const gateCountPath = path.join(fixtureRoot, "gate-count.log");
+      const priorGateCount = process.env["CQ_T2151_GATE_COUNT"];
+      process.env["CQ_T2151_GATE_COUNT"] = gateCountPath;
+      const gateRuns = async (): Promise<number> =>
+        (await readFile(gateCountPath, "utf8").catch(() => ""))
+          .split("\n")
+          .filter((line) => line === "run").length;
+
+      const managed = await prepareManagedWorktree(
+        { repositoryRoot, taskId, baseCommit },
+        { skipInstall: true, bunWorkspaceRoot: repositoryRoot },
+      );
+      if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
+
+      const namespace = await resolveSingleProjectAttestationNamespace({
+        construction: "direct",
+        backend: "fs",
+        repoRoot: repositoryRoot,
+        projectId: null,
+      });
+      let backend = new FsAttestationBackend({
+        namespace,
+        root: fsAttestationProductionRoot(repositoryRoot),
+      });
+      const dispatchRandomBytes = sequentialDispatchRandomBytes(4_096);
+      const serviceNow = (): string => new Date().toISOString();
+      let capability = createDispatchCapability({
+        backend,
+        promptArtifactStore: artifactStore("implement-worker"),
+        repositoryRoot,
+        now: serviceNow,
+        randomBytes: dispatchRandomBytes,
+      });
+      const fakeCodex = path.join(fixtureRoot, "fake-codex");
+      await writeFile(
+        fakeCodex,
+        `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} run ${JSON.stringify(WORKER_FIXTURE)} "$@" 2>"$CQ_T2042_WORKER_STDERR"\n`,
+      );
+      await chmod(fakeCodex, 0o700);
+      const ledgerCommand = path.join(path.dirname(INSTALLED_ROLE), "cq");
+
+      const runWorker = async (input: {
+        readonly label: string;
+        readonly dispatchInput: Record<string, unknown>;
+        readonly idempotencyKey: string;
+        readonly reprepareOf?: { readonly attestationId: string; readonly generation: number };
+        readonly guardedRebase?: string;
+        readonly guardedMode?: "exact-tip" | "correction";
+      }) => {
+        const expectedChild = {
+          childId: `t2151-${input.label}-child`,
+          runId: `t2151-${input.label}-run`,
+        };
+        const prepared = await capability.prepare({
+          roleId: "implement-worker",
+          input: JSON.parse(JSON.stringify(input.dispatchInput)),
+          idempotencyKey: input.idempotencyKey,
+          timeoutMs: 600_000,
+          expectedChild,
+          ...(input.reprepareOf === undefined ? {} : { reprepareOf: input.reprepareOf }),
+          ...(input.guardedRebase === undefined ? {} : { guardedRebase: input.guardedRebase }),
+        });
+        if (
+          !prepared.accepted ||
+          prepared.prepared.gitChangeCapability === undefined ||
+          prepared.prepared.parentGateCapability === undefined
+        ) {
+          throw new Error(`${input.label} did not prepare with Git and gate capabilities`);
+        }
+        const handle = {
+          attestationId: prepared.prepared.attestationId,
+          generation: prepared.prepared.generation,
+        };
+        const capturePath = path.join(fixtureRoot, `${input.label}-capture.json`);
+        await executeInstalledCodexRoleBoundary({
+          executable: INSTALLED_ROLE,
+          invocation: {
+            roleId: "implement-worker",
+            handle,
+            inputCapability: prepared.prepared.inputCapability,
+            resultCapability: prepared.prepared.resultCapability,
+            gitChangeCapability: prepared.prepared.gitChangeCapability,
+            parentGateCapability: prepared.prepared.parentGateCapability,
+            cwd: managed.handle.absolutePath,
+            ledgerCwd: repositoryRoot,
+            model: "test-model",
+            reasoningEffort: "high",
+            sandboxMode: "workspace-write",
+            timeoutMs: 30_000,
+          },
+          managedHandle: managed.handle,
+          expectedChild,
+          expectedPromptProvenance: prepared.prepared.promptProvenance,
+          correlationId: `t2151-${input.label}`,
+          environment: {
+            ...process.env,
+            CQ_CODEX_EXECUTABLE: fakeCodex,
+            CQ_CODEX_LEDGER_COMMAND: ledgerCommand,
+            CQ_T2042_BROKER_CAPTURE: capturePath,
+            CQ_T2042_WORKER_STDERR: path.join(fixtureRoot, `${input.label}.stderr`),
+            CQ_T2042_WORKTREE: managed.handle.absolutePath,
+            CQ_T2042_LEDGER_ROOT: repositoryRoot,
+            ...(input.guardedMode === undefined
+              ? {}
+              : { CQ_T2151_GUARDED_MODE: input.guardedMode }),
+          },
+        });
+        const capture = JSON.parse(await readFile(capturePath, "utf8")) as {
+          guardedMode?: string;
+          failureControls: string[];
+          directGit: { attempted: boolean; exitStatus: number; stderrDigest: string };
+          output: Record<string, unknown>;
+        };
+        if (capability.finalizeParentGate === undefined) {
+          throw new Error("installed worker dispatch lacks parent finalization");
+        }
+        await capability.finalizeParentGate({
+          ...handle,
+          parentGateCapability: prepared.prepared.parentGateCapability,
+        });
+        const confirmed = await capability.confirmCompletion({
+          ...handle,
+          nativeCompletion: {
+            kind: "native-completion",
+            actor: "trusted-parent",
+            ...expectedChild,
+            completedAt: new Date().toISOString(),
+          },
+          expectedProvenance: prepared.prepared.promptProvenance,
+        });
+        expect(confirmed.state).toBe("consumed");
+        const fetched = await capability.fetch(handle);
+        if (fetched.state !== "consumed") throw new Error(`unexpected worker state ${fetched.state}`);
+        return { handle, capture, consumed: fetched as ConsumedDispatchResult };
+      };
+
+      const runGitEffect = async (
+        operation: "rebase" | "merge",
+        commit: string,
+        operationId?: string,
+      ) => {
+        const child = Bun.spawn(
+          [
+            ledgerCommand,
+            "gate",
+            "git-effect",
+            "--operation",
+            operation,
+            "--cwd",
+            repositoryRoot,
+            "--task-id",
+            taskId,
+            "--commit",
+            commit,
+            ...(operationId === undefined ? [] : ["--operation-id", operationId]),
+          ],
+          {
+            cwd: repositoryRoot,
+            env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+            stdout: "pipe",
+            stderr: "pipe",
+          },
+        );
+        const [code, stdout, stderr] = await Promise.all([
+          child.exited,
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+        ]);
+        return { code, stdout, stderr };
+      };
+
+      try {
+        // 1. Terminal worker at the dispatch base.
+        const round0 = await runWorker({
+          label: "round0",
+          dispatchInput: {
+            taskId,
+            headline: "installed guarded-rebase continuation",
+            description: "make two broker commits",
+            acceptance: "the guarded continuation completes through the installed boundary",
+            worktreePath: managed.handle.absolutePath,
+            branch: managed.handle.branch,
+            baseCommit,
+            round: 0,
+            startingCommit: baseCommit,
+          },
+          idempotencyKey: `${taskId}-guarded-round-0`,
+        });
+        const oldResultCommit = String(round0.capture.output["resultCommit"]);
+        expect(await gateRuns()).toBe(1);
+
+        // 2. Main advances on a disjoint file; the guarded rebase is clean and
+        // the server resolves the exact-tip mode.
+        await writeFile(path.join(repositoryRoot, "other.txt"), "main advance\n");
+        await git(repositoryRoot, ["add", "other.txt"]);
+        await git(repositoryRoot, ["commit", "-q", "-m", "advance main"]);
+        const ontoCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+        const operationId = `implement-t2151-rebase-r0`;
+        const rebaseRun = await runGitEffect("rebase", ontoCommit, operationId);
+        expect(rebaseRun.stderr).toBe("");
+        expect(rebaseRun.code).toBe(0);
+        const referenceLines = rebaseRun.stdout
+          .split("\n")
+          .filter((line) => line.startsWith("CQ_GUARDED_REBASE_REFERENCE="));
+        expect(referenceLines).toHaveLength(1);
+        const guardedRebase = referenceLines[0]!.slice("CQ_GUARDED_REBASE_REFERENCE=".length);
+        expect(guardedRebase).toMatch(/^cq-guarded-rebase:v1:[0-9a-f]{64}$/);
+        const rebasedStartCommit = await git(managed.handle.absolutePath, ["rev-parse", "HEAD"]);
+        expect(rebasedStartCommit).not.toBe(oldResultCommit);
+        await git(managed.handle.absolutePath, [
+          "merge-base",
+          "--is-ancestor",
+          ontoCommit,
+          rebasedStartCommit,
+        ]);
+
+        // 2a. Exact replay returns the same reference without re-running the
+        // effect; a changed payload under the same operation id rejects.
+        const replayRun = await runGitEffect("rebase", ontoCommit, operationId);
+        expect(replayRun.code).toBe(0);
+        expect(replayRun.stdout).toContain(`CQ_GUARDED_REBASE_REFERENCE=${guardedRebase}`);
+        expect(await git(managed.handle.absolutePath, ["rev-parse", "HEAD"])).toBe(
+          rebasedStartCommit,
+        );
+        const changedPayloadRun = await runGitEffect("rebase", baseCommit, operationId);
+        expect(changedPayloadRun.code).not.toBe(0);
+        expect(changedPayloadRun.stderr).toContain("was reused with a different request");
+        expect(await git(managed.handle.absolutePath, ["rev-parse", "HEAD"])).toBe(
+          rebasedStartCommit,
+        );
+
+        // 3. Broker and parent-runner restart: the journal and the persisted
+        // binding survive; the reference resolves against the durable state.
+        await backend.close();
+        backend = new FsAttestationBackend({
+          namespace,
+          root: fsAttestationProductionRoot(repositoryRoot),
+        });
+        capability = createDispatchCapability({
+          backend,
+          promptArtifactStore: artifactStore("implement-worker"),
+          repositoryRoot,
+          now: serviceNow,
+          randomBytes: dispatchRandomBytes,
+        });
+
+        const bridgeInput = {
+          taskId,
+          headline: "installed guarded-rebase continuation",
+          description: "resume on the rebased managed tree",
+          acceptance: "the guarded continuation completes through the installed boundary",
+          worktreePath: managed.handle.absolutePath,
+          branch: managed.handle.branch,
+          baseCommit: ontoCommit,
+          round: 1,
+          startingCommit: rebasedStartCommit,
+          priorResultCommit: oldResultCommit,
+        };
+
+        // 3a. Prepare-side negative controls: a dropped reference, substituted
+        // lineage coordinates, an unbound prior result, and a caller-minted
+        // lineage all reject before allocation.
+        const expectPrepareRejection = async (
+          label: string,
+          override: Record<string, unknown>,
+          extra: { readonly guardedRebase?: string },
+          path: string,
+          detail: string,
+        ) => {
+          const rejectedPrepare = await capability.prepare({
+            roleId: "implement-worker",
+            input: JSON.parse(JSON.stringify({ ...bridgeInput, ...override })),
+            idempotencyKey: `${taskId}-guarded-reject-${label}`,
+            timeoutMs: 600_000,
+            expectedChild: {
+              childId: `t2151-reject-${label}-child`,
+              runId: `t2151-reject-${label}-run`,
+            },
+            reprepareOf: round0.handle,
+            ...(extra.guardedRebase === undefined ? {} : { guardedRebase: extra.guardedRebase }),
+          });
+          if (rejectedPrepare.accepted) {
+            throw new Error(`${label} unexpectedly allocated a guarded continuation`);
+          }
+          expect(rejectedPrepare.allocated).toBe(false);
+          expect(rejectedPrepare.path).toBe(path);
+          expect(rejectedPrepare.detail).toContain(detail);
+        };
+        await expectPrepareRejection(
+          "dropped-reference",
+          {},
+          {},
+          "input.startingCommit",
+          "prior-generation receipt inheritance failed",
+        );
+        await expectPrepareRejection(
+          "substituted-base",
+          { baseCommit },
+          { guardedRebase },
+          "input.baseCommit",
+          "ontoCommit",
+        );
+        await expectPrepareRejection(
+          "unbound-prior-result",
+          { priorResultCommit: baseCommit },
+          { guardedRebase },
+          "input.priorResultCommit",
+          "old worker result",
+        );
+        await expectPrepareRejection(
+          "caller-minted-lineage",
+          {
+            guardedRebaseLineage: {
+              guardedRebase,
+              oldResultCommit,
+              ontoCommit,
+              rebasedStartCommit,
+              exactTip: true,
+            },
+          },
+          { guardedRebase },
+          "input.guardedRebaseLineage",
+          "caller must omit",
+        );
+
+        // 4. Initial bridge round: the server-resolved exact-tip/no-new-commit
+        // mode. No WIP commit, no fresh receipt, the exact rebased tip.
+        const round1 = await runWorker({
+          label: "round1-exact-tip",
+          dispatchInput: bridgeInput,
+          idempotencyKey: `${taskId}-guarded-round-1`,
+          reprepareOf: round0.handle,
+          guardedRebase,
+          guardedMode: "exact-tip",
+        });
+        expect(round1.capture.guardedMode).toBe("exact-tip");
+        expect(round1.capture.failureControls).toEqual([]);
+        expect(round1.capture.directGit.exitStatus).not.toBe(0);
+        expect(round1.capture.output["gitReceipts"]).toEqual([]);
+        expect(round1.capture.output["resultCommit"]).toBe(rebasedStartCommit);
+        expect(round1.capture.output["gitLineage"]).toEqual({
+          kind: "guarded-rebase",
+          guardedRebase,
+          ontoCommit,
+          rebasedStartCommit,
+          exactTip: true,
+        });
+        expect(round1.capture.output["filesTouched"]).toEqual(["file.txt"]);
+        expect(round1.capture.output).not.toHaveProperty("supervisedGateEvidence");
+        expect(await git(managed.handle.absolutePath, ["rev-parse", "HEAD"])).toBe(
+          rebasedStartCommit,
+        );
+        expect(await gateRuns()).toBe(2);
+        expect(round1.consumed.output).toMatchObject({
+          supervisedGateEvidence: {
+            kind: "cq-supervised-gate-evidence",
+            taskId,
+            worktreePath: managed.handle.absolutePath,
+            branch: managed.handle.branch,
+            baseCommit: ontoCommit,
+            startingCommit: rebasedStartCommit,
+            resultCommit: rebasedStartCommit,
+            clean: true,
+            gateExitCode: 0,
+            passCount: 1,
+            failCount: 0,
+          },
+        });
+
+        // 5. A fresh review of the rebased result (sandboxed: forwarded
+        // runner-owned evidence).
+        const round1Review = await runPackagedReviewer({
+          repositoryRoot,
+          managedHandle: managed.handle,
+          baseCommit: ontoCommit,
+          backend,
+          randomBytes: dispatchRandomBytes,
+          workerRoute: "process",
+          reviewerMode: "sandboxed",
+          workerResult: round1.consumed,
+        });
+        expect(round1Review).toMatchObject({
+          verdict: "approve",
+          gateReRan: false,
+          evidenceForwarded: true,
+          fastForwardEligible: true,
+        });
+
+        // 6. Paired correction control: early persistence and a non-empty
+        // contiguous fresh suffix beginning at the rebased head; mutation
+        // evidence rides because the change touches a test path.
+        const round2 = await runWorker({
+          label: "round2-correction",
+          dispatchInput: {
+            ...bridgeInput,
+            round: 2,
+            priorResultCommit: rebasedStartCommit,
+            priorCriticism: ["advance the rebased tip with a guarded correction"],
+          },
+          idempotencyKey: `${taskId}-guarded-round-2`,
+          reprepareOf: round1.handle,
+          guardedMode: "correction",
+        });
+        expect(round2.capture.guardedMode).toBe("correction");
+        const round2Receipts = round2.capture.output["gitReceipts"] as Record<string, unknown>[];
+        expect(round2Receipts).toHaveLength(2);
+        expect(round2Receipts[0]?.["oldHead"]).toBe(rebasedStartCommit);
+        expect(round2Receipts[0]?.["paths"]).toEqual([`WIP-${taskId}.md`]);
+        expect(round2Receipts[1]?.["oldHead"]).toBe(round2Receipts[0]?.["newHead"]);
+        expect(round2Receipts[1]?.["newHead"]).toBe(round2.capture.output["resultCommit"]);
+        const round2ResultCommit = String(round2.capture.output["resultCommit"]);
+        expect(round2.capture.output["filesTouched"]).toEqual(
+          [`WIP-${taskId}.md`, "file.txt", "pkg/test/guarded-correction.test.ts"].sort(),
+        );
+        expect(round2.capture.output["mutationTable"]).toHaveLength(1);
+        expect(round2.capture.failureControls).toEqual(["post-store"]);
+        expect(round2.capture.output["gitLineage"]).toEqual({
+          kind: "guarded-rebase",
+          guardedRebase,
+          ontoCommit,
+          rebasedStartCommit,
+          exactTip: true,
+        });
+        await git(managed.handle.absolutePath, [
+          "merge-base",
+          "--is-ancestor",
+          rebasedStartCommit,
+          round2ResultCommit,
+        ]);
+        expect(await gateRuns()).toBe(3);
+        expect(round2.consumed.output).toMatchObject({
+          supervisedGateEvidence: {
+            kind: "cq-supervised-gate-evidence",
+            taskId,
+            resultCommit: round2ResultCommit,
+            clean: true,
+            gateExitCode: 0,
+            passCount: 1,
+            failCount: 0,
+          },
+        });
+
+        // 7. A fresh review of the correction (non-sandboxed: the reviewer
+        // re-runs the canonical gate on the rebased tree itself).
+        const round2Review = await runPackagedReviewer({
+          repositoryRoot,
+          managedHandle: managed.handle,
+          baseCommit: ontoCommit,
+          backend,
+          randomBytes: dispatchRandomBytes,
+          workerRoute: "process",
+          reviewerMode: "non-sandboxed",
+          workerResult: round2.consumed,
+        });
+        expect(round2Review).toMatchObject({
+          verdict: "approve",
+          gateReRan: true,
+          evidenceForwarded: false,
+          fastForwardEligible: true,
+        });
+        expect(await gateRuns()).toBe(4);
+
+        // 8. The existing ff-only guarded merge lands the rebased lineage.
+        const mergeRun = await runGitEffect("merge", round2ResultCommit);
+        expect(mergeRun.code).toBe(0);
+        expect(await git(repositoryRoot, ["rev-parse", "HEAD"])).toBe(round2ResultCommit);
+        expect(
+          await git(managed.handle.absolutePath, [
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+          ]),
+        ).toBe("");
+        await backend.close();
+      } finally {
+        if (priorGateCount === undefined) delete process.env["CQ_T2151_GATE_COUNT"];
+        else process.env["CQ_T2151_GATE_COUNT"] = priorGateCount;
+      }
+    },
+    120_000,
   );
 });

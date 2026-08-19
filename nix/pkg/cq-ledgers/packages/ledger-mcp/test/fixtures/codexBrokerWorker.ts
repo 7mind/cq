@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -39,6 +39,16 @@ if (
   )
 ) {
   throw new Error("installed worker instructions do not permit the parent-gate handoff");
+}
+if (
+  !normalizedRoleInstructions.includes(
+    "exempted ONLY for the server-resolved exact-tip/no-new-commit mode",
+  ) ||
+  !normalizedRoleInstructions.includes(
+    "the result reports the lineage verbatim as `gitLineage`",
+  )
+) {
+  throw new Error("installed worker instructions lack the guarded-rebase continuation contract");
 }
 const commandMatch = /(?:^|[,{}])command=("(?:\\.|[^"\\])*")/.exec(mcpOverride);
 const argsMatch = /(?:^|[,{}])args=(\[[^\]]*\])/.exec(mcpOverride);
@@ -139,6 +149,341 @@ if (
   throw new Error("packaged worker received a malformed inherited receipt prefix");
 }
 const inheritedReceipts = (inheritedGitReceipts ?? []) as Record<string, unknown>[];
+
+function directGitProbe(): { exitCode: number | null; stderr: Buffer } {
+  const probe = Bun.spawnSync(
+    [
+      process.env["CQ_TEST_CODEX_SANDBOX_EXECUTABLE"] ?? "codex",
+      "-c",
+      'default_permissions="qualification"',
+      "-c",
+      `permissions.qualification.filesystem={":minimal"="read",` +
+        `${JSON.stringify(worktreePath)}="write",` +
+        `${JSON.stringify(`${expectedLedgerRoot}/.git`)}="read"}`,
+      "sandbox",
+      "-P",
+      "qualification",
+      "-C",
+      worktreePath,
+      "--",
+      process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git",
+      "update-ref",
+      "refs/heads/cq-direct-git-probe",
+      startingCommit,
+    ],
+    { cwd: worktreePath, stdout: "pipe", stderr: "pipe" },
+  );
+  if (probe.exitCode === 0) {
+    throw new Error("direct Git ref mutation unexpectedly succeeded");
+  }
+  return probe;
+}
+
+const guardedLineageInput = input["guardedRebaseLineage"];
+if (guardedLineageInput !== undefined) {
+  // Guarded-rebase continuation arm: the installed worker receives only the
+  // server-materialized lineage and follows the narrow role exemption.
+  if (
+    guardedLineageInput === null ||
+    typeof guardedLineageInput !== "object" ||
+    Array.isArray(guardedLineageInput)
+  ) {
+    throw new Error("packaged worker received a malformed guardedRebaseLineage");
+  }
+  const lineage = guardedLineageInput as Record<string, unknown>;
+  const lineageKeys = Object.keys(lineage).sort();
+  if (
+    lineageKeys.join(",") !==
+    ["exactTip", "guardedRebase", "oldResultCommit", "ontoCommit", "rebasedStartCommit"]
+      .sort()
+      .join(",")
+  ) {
+    throw new Error(`packaged worker received foreign lineage keys: ${lineageKeys.join(",")}`);
+  }
+  const guardedRebase = String(lineage["guardedRebase"]);
+  const oldResultCommit = String(lineage["oldResultCommit"]);
+  const ontoCommit = String(lineage["ontoCommit"]);
+  const rebasedStartCommit = String(lineage["rebasedStartCommit"]);
+  if (lineage["exactTip"] !== true && lineage["exactTip"] !== false) {
+    throw new Error("packaged worker received a non-boolean exactTip mode");
+  }
+  const exactTip = lineage["exactTip"] === true;
+  if (!/^cq-guarded-rebase:v1:[0-9a-f]{64}$/.test(guardedRebase)) {
+    throw new Error("packaged worker received a non-opaque guardedRebase reference");
+  }
+  for (const [label, value] of [
+    ["oldResultCommit", oldResultCommit],
+    ["ontoCommit", ontoCommit],
+    ["rebasedStartCommit", rebasedStartCommit],
+  ] as const) {
+    if (!/^[0-9a-f]{40}$/.test(value)) throw new Error(`malformed lineage ${label}`);
+  }
+  if (baseCommit !== ontoCommit) {
+    throw new Error("guarded baseCommit does not equal the lineage ontoCommit");
+  }
+  if (startingCommit !== rebasedStartCommit) {
+    throw new Error("guarded startingCommit does not equal the lineage rebasedStartCommit");
+  }
+  const gitExecutable = process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git";
+  const liveHead = Bun.spawnSync([gitExecutable, "rev-parse", "HEAD"], {
+    cwd: worktreePath,
+    stdout: "pipe",
+  });
+  if (liveHead.exitCode !== 0 || liveHead.stdout.toString().trim() !== rebasedStartCommit) {
+    throw new Error("guarded worktree HEAD is not the rebased start commit");
+  }
+  if (
+    inheritedReceipts.length > 0 &&
+    inheritedReceipts[0]!["oldHead"] !== rebasedStartCommit
+  ) {
+    throw new Error("guarded inherited suffix does not begin at the rebased head");
+  }
+  const priorResultCommit = input["priorResultCommit"];
+  const guardedMode = process.env["CQ_T2151_GUARDED_MODE"];
+  const gitLineage = {
+    kind: "guarded-rebase",
+    guardedRebase,
+    ontoCommit,
+    rebasedStartCommit,
+    exactTip,
+  } as const;
+  const guardedFilesTouched = (tip: string): string[] =>
+    Bun.spawnSync(
+      [gitExecutable, "diff", "--name-only", "--no-renames", "-z", ontoCommit, tip, "--"],
+      { cwd: worktreePath, stdout: "pipe" },
+    )
+      .stdout.toString()
+      .split("\0")
+      .filter(Boolean)
+      .sort();
+  const guardedFinish = async (
+    output: Record<string, unknown>,
+    guardedMode: "exact-tip" | "correction",
+    directGit: { exitCode: number | null; stderr: Buffer },
+    postStoreExpectedHead: string | null,
+  ): Promise<never> => {
+    const storeResult = await client.callTool({
+      name: "store_result",
+      arguments: { resultCapability, output },
+    });
+    if ((storeResult as { isError?: boolean }).isError === true) {
+      throw new Error(`store_result failed: ${JSON.stringify(storeResult)}`);
+    }
+    const acknowledgement = decode(storeResult);
+    const failureControls: string[] = [];
+    if (postStoreExpectedHead !== null) {
+      await call(
+        "git_commit",
+        {
+          ...handle,
+          gitChangeCapability,
+          operationId: `${taskId}-guarded-deny-post-store`,
+          expectedHead: postStoreExpectedHead,
+          message: `${taskId}-guarded-deny-post-store`,
+          changes: [
+            {
+              kind: "modify",
+              path: "file.txt",
+              oldState: { mode: "100644", digest: "0".repeat(64) },
+              newState: { mode: "100644", digest: "1".repeat(64) },
+            },
+          ],
+        },
+        false,
+      );
+      failureControls.push("post-store");
+    }
+    await writeFile(
+      capturePath,
+      JSON.stringify({
+        boundary: { codexCwd, ledgerCommand, ledgerArgs, ledgerCwd, listedTools },
+        guardedMode,
+        directGit: {
+          attempted: true,
+          exitStatus: directGit.exitCode,
+          stderrDigest: sha256(directGit.stderr.toString()),
+        },
+        failureControls,
+        output,
+      }),
+    );
+    await client.close();
+    const payload = [
+      JSON.stringify({ type: "thread.started", thread_id: "t2151-packaged-guarded" }),
+      JSON.stringify({
+        type: "item.completed",
+        item: { type: "cq_provider_gate_observation", failure_controls: failureControls },
+      }),
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          type: "mcp_tool_call",
+          server: "ledger",
+          tool: "store_result",
+          result: storeResult,
+        },
+      }),
+      JSON.stringify({
+        type: "item.completed",
+        item: { type: "agent_message", text: JSON.stringify(acknowledgement) },
+      }),
+      JSON.stringify({ type: "turn.completed" }),
+    ].join("\n");
+    await new Promise<void>((resolvePromise) => {
+      process.stdout.write(payload, () => resolvePromise());
+    });
+    process.exit(0);
+  };
+
+  if (guardedMode === "exact-tip") {
+    // The server-resolved exact-tip/no-new-commit exemption: no early WIP
+    // commit, no git_commit call at all, an empty fresh suffix, and the exact
+    // rebased tip. The initial bridge round binds the exact pre-rebase result.
+    if (priorResultCommit !== oldResultCommit) {
+      throw new Error("initial bridge round did not bind the exact pre-rebase result");
+    }
+    if (!exactTip) {
+      throw new Error("the server did not resolve the exact-tip mode for this control");
+    }
+    if (inheritedReceipts.length !== 0) {
+      throw new Error("the exact-tip bridge round carries no inherited suffix");
+    }
+    const directGit = directGitProbe();
+    await guardedFinish(
+      {
+        taskId,
+        status: "pass",
+        resultCommit: rebasedStartCommit,
+        branch,
+        actualWorktreePath: worktreePath,
+        filesTouched: guardedFilesTouched(rebasedStartCommit),
+        gitReceipts: [],
+        gitLineage,
+        checkSummary: "canonical gate delegated to trusted result-storage boundary",
+        baseVerification: {
+          status: "verified",
+          relation: ontoCommit === rebasedStartCommit ? "equal" : "descendant",
+          baseCommit,
+          headCommit: rebasedStartCommit,
+        },
+        summary: "guarded exact-tip continuation: no new commit at the rebased tip",
+      },
+      "exact-tip",
+      directGit,
+      null,
+    );
+  }
+  if (guardedMode === "correction") {
+    // A guarded correction keeps the ordinary persistence procedure: an early
+    // WIP skeleton commit first, then a non-empty contiguous fresh suffix
+    // beginning at the rebased head; mutation evidence rides along because the
+    // change touches a test path.
+    if (typeof priorResultCommit !== "string" || !/^[0-9a-f]{40}$/.test(priorResultCommit)) {
+      throw new Error("guarded correction round lacks a full priorResultCommit");
+    }
+    const priorAncestry = Bun.spawnSync(
+      [gitExecutable, "merge-base", "--is-ancestor", priorResultCommit, "HEAD"],
+      { cwd: worktreePath },
+    );
+    if (priorAncestry.exitCode !== 0) {
+      throw new Error("guarded correction priorResultCommit is not an ancestor of HEAD");
+    }
+    const wipPath = `WIP-${taskId}.md`;
+    const wipContent =
+      [
+        "```json",
+        JSON.stringify({
+          taskId,
+          role: "implement-worker",
+          baseCommit,
+          startedAt: "2026-08-19T00:00:00Z",
+          checkpoints: [{ name: "guarded-correction", status: "done" }],
+        }),
+        "```",
+        "",
+        "## guarded-correction <!-- cq:wip-checkpoint -->",
+        "",
+        "Guarded correction round: early persistence at the rebased head.",
+        "",
+      ].join("\n");
+    await writeFile(`${worktreePath}/${wipPath}`, wipContent);
+    const wip = await call("git_commit", {
+      ...handle,
+      gitChangeCapability,
+      operationId: `${taskId}-guarded-r${String(round)}-wip`,
+      expectedHead: startingCommit,
+      message: `${taskId} guarded correction WIP skeleton`,
+      changes: [
+        {
+          kind: "add",
+          path: wipPath,
+          newState: { mode: "100644", digest: sha256(wipContent) },
+        },
+      ],
+    });
+    const beforeCorrection = await readFile(`${worktreePath}/file.txt`, "utf8");
+    const afterCorrection = `${beforeCorrection}guarded correction r${String(round)}\n`;
+    await writeFile(`${worktreePath}/file.txt`, afterCorrection);
+    const testPath = "pkg/test/guarded-correction.test.ts";
+    const testContent = `// guarded correction control for ${taskId}\nexport {};
+`;
+    await mkdir(`${worktreePath}/pkg/test`, { recursive: true });
+    await writeFile(`${worktreePath}/${testPath}`, testContent);
+    const change = await call("git_commit", {
+      ...handle,
+      gitChangeCapability,
+      operationId: `${taskId}-guarded-r${String(round)}-change`,
+      expectedHead: String(wip["newHead"]),
+      message: `${taskId} guarded correction change`,
+      changes: [
+        {
+          kind: "modify",
+          path: "file.txt",
+          oldState: { mode: "100644", digest: sha256(beforeCorrection) },
+          newState: { mode: "100644", digest: sha256(afterCorrection) },
+        },
+        {
+          kind: "add",
+          path: testPath,
+          newState: { mode: "100644", digest: sha256(testContent) },
+        },
+      ],
+    });
+    const directGit = directGitProbe();
+    await guardedFinish(
+      {
+        taskId,
+        status: "pass",
+        resultCommit: change["newHead"],
+        branch,
+        actualWorktreePath: worktreePath,
+        filesTouched: guardedFilesTouched(String(change["newHead"])),
+        gitReceipts: [...inheritedReceipts, wip, change],
+        gitLineage,
+        checkSummary: "canonical gate delegated to trusted result-storage boundary",
+        baseVerification: {
+          status: "verified",
+          relation: "descendant",
+          baseCommit,
+          headCommit: change["newHead"],
+        },
+        summary: "guarded correction: early WIP persistence plus a non-empty fresh suffix",
+        mutationTable: [
+          {
+            mutation: `${testPath}: added by the guarded correction`,
+            observed: "filesTouched intersects the test globs, so mutation evidence is required",
+            restored: "the correction carries its evidence row",
+          },
+        ],
+      },
+      "correction",
+      directGit,
+      String(change["newHead"]),
+    );
+  }
+  throw new Error(`unknown CQ_T2151_GUARDED_MODE ${String(guardedMode)}`);
+}
+
 if (round !== 0 && round !== 1)
   throw new Error(`unexpected packaged worker round ${String(round)}`);
 const roundContent =
@@ -182,31 +527,7 @@ const second = await call(
   ),
 );
 
-const directGit = Bun.spawnSync(
-  [
-    process.env["CQ_TEST_CODEX_SANDBOX_EXECUTABLE"] ?? "codex",
-    "-c",
-    'default_permissions="qualification"',
-    "-c",
-    `permissions.qualification.filesystem={":minimal"="read",` +
-      `${JSON.stringify(worktreePath)}="write",` +
-      `${JSON.stringify(`${expectedLedgerRoot}/.git`)}="read"}`,
-    "sandbox",
-    "-P",
-    "qualification",
-    "-C",
-    worktreePath,
-    "--",
-    process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git",
-    "update-ref",
-    "refs/heads/cq-direct-git-probe",
-    startingCommit,
-  ],
-  { cwd: worktreePath, stdout: "pipe", stderr: "pipe" },
-);
-if (directGit.exitCode === 0) {
-  throw new Error("direct Git ref mutation unexpectedly succeeded");
-}
+const directGit = directGitProbe();
 
 const failureControls: string[] = [];
 await call(
