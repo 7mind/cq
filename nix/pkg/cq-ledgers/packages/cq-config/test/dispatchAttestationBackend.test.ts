@@ -644,6 +644,90 @@ describe("persisted row serialization", () => {
     expectMalformedBinding(resolver, () => {});
   });
 
+  test("a worker envelope strictly rehydrates one optional guarded-rebase bridge", () => {
+    const bridge = {
+      guardedRebase: `cq-guarded-rebase:v1:${"2".repeat(64)}`,
+      operationId: "t2150-guarded-rebase",
+      requestDigest: "3".repeat(64),
+      oldResultCommit: "4".repeat(40),
+      ontoCommit: "5".repeat(40),
+      rebasedStartCommit: "6".repeat(40),
+      outcome: "clean" as const,
+      exactTip: true,
+      finalizedAt: "2026-08-18T12:00:00.000Z",
+    };
+    const binding = {
+      taskId: "T977",
+      handleToken: "server-held-token",
+      handleFingerprint: "8".repeat(64),
+      repositoryRoot: "/repo",
+      repositoryId: "9".repeat(64),
+      commonDir: "/repo/.git",
+      worktreePath: "/repo/.claude/worktrees/T977",
+      branch: "implement/T977",
+      ref: "refs/heads/implement/T977",
+      baseCommit: "a".repeat(40),
+      guardedRebaseBridge: bridge,
+    };
+    const worker = envelope({
+      gitChangeCapabilityHash: "7".repeat(64),
+      gitEffectBinding: binding,
+    });
+    const persisted = persistAttestationRow(worker);
+    expect(rehydrateAttestationRow(NAMESPACE, persisted.body, persisted.rowDigest)).toEqual(worker);
+
+    const expectMalformedBridge = (mutate: (stored: Record<string, unknown>) => void): void => {
+      const stored = JSON.parse(persistAttestationRow(worker).body) as Record<string, unknown>;
+      mutate(stored);
+      expect(() =>
+        rehydrateAttestationRow(
+          NAMESPACE,
+          JSON.stringify(stored),
+          attestationRowDigest(stored as unknown as AttestationRow),
+        ),
+      ).toThrow(/malformed "gitEffectBinding"/);
+    };
+    const mutateBridge = (mutate: (storedBridge: Record<string, unknown>) => void): void => {
+      expectMalformedBridge((stored) => {
+        const storedBinding = stored["gitEffectBinding"] as Record<string, unknown>;
+        mutate(storedBinding["guardedRebaseBridge"] as Record<string, unknown>);
+      });
+    };
+    mutateBridge((storedBridge) => {
+      storedBridge["extra"] = true;
+    });
+    mutateBridge((storedBridge) => {
+      storedBridge["guardedRebase"] = "caller-minted-reference";
+    });
+    mutateBridge((storedBridge) => {
+      storedBridge["requestDigest"] = "0".repeat(63);
+    });
+    mutateBridge((storedBridge) => {
+      storedBridge["ontoCommit"] = "not-an-object-id";
+    });
+    mutateBridge((storedBridge) => {
+      storedBridge["outcome"] = "unknown";
+    });
+    mutateBridge((storedBridge) => {
+      storedBridge["exactTip"] = "true";
+    });
+    mutateBridge((storedBridge) => {
+      delete storedBridge["finalizedAt"];
+    });
+    // A resolver (conflict capability) must never carry the worker-only bridge.
+    const resolver = envelope({
+      gitConflictCapabilityHash: "6".repeat(64),
+      gitEffectBinding: {
+        ...binding,
+        conflictStateDigest: "b".repeat(64),
+      },
+    });
+    const resolverPersisted = persistAttestationRow(resolver);
+    expect(() =>
+      rehydrateAttestationRow(NAMESPACE, resolverPersisted.body, resolverPersisted.rowDigest),
+    ).toThrow(/malformed "gitEffectBinding"/);
+  });
+
   test("a tombstone persists NO capability hash, so no capability can resolve it", () => {
     const terminal = envelope({
       state: "aborted",

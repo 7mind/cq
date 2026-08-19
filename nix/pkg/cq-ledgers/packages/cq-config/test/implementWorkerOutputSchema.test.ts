@@ -182,4 +182,66 @@ describe("T894 implement-worker outputSchema", () => {
     );
     expect(result.ok).toBe(false);
   });
+
+  // --- (f) T2150 gitLineage discriminant ---------------------------------------
+
+  const ONTO = "c".repeat(40);
+  const REBASED = "d".repeat(40);
+
+  function guardedLineage(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      kind: "guarded-rebase",
+      guardedRebase: `cq-guarded-rebase:v1:${"9".repeat(64)}`,
+      ontoCommit: ONTO,
+      rebasedStartCommit: REBASED,
+      exactTip: true,
+      ...overrides,
+    };
+  }
+
+  test("(f) the ordinary arm still rejects an empty receipt chain", () => {
+    const result = validateAgainstSchema(
+      implementWorkerSidecar.outputSchema,
+      basePassPayload({ gitReceipts: [] }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  test("(f) the guarded arm accepts the empty fresh suffix in exact-tip mode", () => {
+    const result = validateAgainstSchema(
+      implementWorkerSidecar.outputSchema,
+      basePassPayload({
+        resultCommit: REBASED,
+        gitReceipts: [],
+        gitLineage: guardedLineage(),
+      }),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  test("(f) the guarded arm requires the receipt suffix to be present", () => {
+    const payload = basePassPayload({ gitLineage: guardedLineage() });
+    const result = validateAgainstSchema(implementWorkerSidecar.outputSchema, payload);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.params.missingProperty === "gitReceipts")).toBe(true);
+    }
+  });
+
+  test("(f) gitLineage is a closed object", () => {
+    for (const lineage of [
+      { ...guardedLineage(), kind: "rebase" },
+      { ...guardedLineage(), guardedRebase: "opaque" },
+      { ...guardedLineage(), ontoCommit: "abc" },
+      { ...guardedLineage(), exactTip: 1 },
+      { ...guardedLineage(), oldResultCommit: SHA },
+    ]) {
+      expect(
+        validateAgainstSchema(
+          implementWorkerSidecar.outputSchema,
+          basePassPayload({ gitReceipts: [], gitLineage: lineage }),
+        ).ok,
+      ).toBe(false);
+    }
+  });
 });
