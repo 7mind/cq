@@ -1,0 +1,52 @@
+{
+  "kind": "cq-dispatch-telemetry-fixtures",
+  "version": 1,
+  "labeledResearch": [
+    {
+      "researchId": "RS4",
+      "sampleSize": 1,
+      "label": "98.05% compact prompt reduction on the frozen research-explorer representative",
+      "aggregateClaim": false,
+      "crossHarnessClaim": false
+    },
+    {
+      "researchId": "RS5",
+      "sampleSize": 1,
+      "label": "N=1 Codex output-validation parent-visible reduction, not an aggregate saving",
+      "aggregateClaim": false,
+      "crossHarnessClaim": false
+    }
+  ],
+  "hosts": {
+    "claude": {
+      "source": "T722 sanitized claude -p / bridge shapes",
+      "storageProvenance": "attestation-store",
+      "roleId": "implement-worker",
+      "model": "claude-opus-5-20260715",
+      "provider": "anthropic"
+    },
+    "codex": {
+      "source": "T713 sanitized child store_result / parent completion shapes",
+      "storageProvenance": "attestation-store",
+      "roleId": "implement-worker",
+      "model": "gpt-5.4",
+      "provider": "openai"
+    },
+    "pi": {
+      "source": "Pi extension-local message_end / tool_result_end shapes",
+      "storageProvenance": "pi-extension-local",
+      "roleId": "implement-worker",
+      "model": "pi:xai/grok-4.5",
+      "provider": "xai"
+    }
+  },
+  "outcomes": [
+    "success",
+    "invalid-output",
+    "echo",
+    "cancellation-after-store",
+    "native-error",
+    "store-failure",
+    "fetch-failure"
+  ]
+}

@@ -367,6 +367,29 @@ export {
   foldDispatchLifecycleEvents,
 } from "./dispatchLifecycleLog.js";
 export type {
+  TelemetryPhase,
+  TelemetryUnit,
+  TelemetryOwner,
+  MeasuredQuantity,
+  UnavailableQuantity,
+  TelemetryQuantity,
+  LabeledResearchMeasurement,
+  DispatchTelemetryRecord,
+  HostTelemetryFixture,
+} from "./dispatchTelemetry.js";
+export {
+  DISPATCH_TELEMETRY_KIND,
+  DISPATCH_TELEMETRY_VERSION,
+  TELEMETRY_PHASES,
+  TELEMETRY_UNITS,
+  TELEMETRY_OWNERS,
+  TelemetryContractError,
+  buildDispatchTelemetry,
+  unavailable,
+  measured,
+  mapHostTelemetryFixture,
+} from "./dispatchTelemetry.js";
+export type {
   PromptCatalogFileInput,
   PromptFragmentFileInput,
   RenderPromptSurfaceTreeInput,
