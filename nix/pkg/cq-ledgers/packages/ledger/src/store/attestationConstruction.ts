@@ -188,6 +188,12 @@ export function assertAttestationConstructionSupported(
     }
     return "postgres";
   }
+  if (backend === "postgres") {
+    throw new AttestationBackendUnsupportedError(
+      backend,
+      "postgres is private cq serve state; single-project constructions use backend=remote",
+    );
+  }
   // Delegate the bare-backend decision (git-object/remote/in-memory/unknown)
   // to the one function that owns it. Its `AttestationBackendUnsupportedError`
   // propagates AS-IS — this construction-level gate only ever mints its OWN
