@@ -1411,6 +1411,77 @@
         "allTokens": 19,
         "deltasAreAdditive": false
       }
+    },
+    "upstream": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:upstream",
+      "inventory": [
+        "abort_dispatch",
+        "acknowledge_operator_action",
+        "archive_milestone",
+        "claim_plan",
+        "complete_operator_action",
+        "confirm_dispatch_completion",
+        "create_item",
+        "create_ledger",
+        "derive_predicates",
+        "enumerate_ledgers",
+        "fetch_dispatch_input",
+        "fetch_dispatch_result",
+        "fetch_item",
+        "fetch_ledger",
+        "fetch_ledger_archive",
+        "fetch_prompt",
+        "finalize_plan",
+        "fts_search",
+        "get_config",
+        "get_usage_stats",
+        "git_commit",
+        "git_resolve_continue",
+        "list_milestone_items",
+        "list_projects",
+        "materialize_operator_action",
+        "prepare_dispatch",
+        "publish_plan_draft",
+        "read_log",
+        "record_operator_action_evidence",
+        "release_plan_claim",
+        "reopen_item",
+        "revise_operator_action",
+        "search_items",
+        "snapshot",
+        "store_result",
+        "unarchive_item",
+        "update_item",
+        "workset",
+        "worktree_manage"
+      ],
+      "toolCount": 39,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 812,
+        "tokens": 165,
+        "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
+      },
+      "toolsList": {
+        "utf8Bytes": 48257,
+        "tokens": 11613,
+        "sha256": "e9d4ad75aaa92f8daa57934868df46d932d495670f2252a41fcb152dab89dabc"
+      },
+      "surfaceTokens": 11778,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -4,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": false,
+      "domainInputSchemaTokens": 5164,
+      "responseContractCounterfactual": {
+        "projectionTokens": 213,
+        "acknowledgementSentenceTokens": 193,
+        "authoritativeResponseTokens": 976,
+        "allTokens": 1277,
+        "deltasAreAdditive": false
+      }
     }
   },
   "perToolAndFieldDeltas": [
@@ -3849,6 +3920,14 @@
         "inventory": [],
         "toolsListTokens": 1,
         "inputSchemaTokens": 0
+      },
+      "upstream": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 319,
+        "inputSchemaTokens": 234
       }
     },
     "weightedToolsListTokens": 113883,
@@ -3959,6 +4038,10 @@
       {
         "profileName": "reviewers",
         "remainingG93AttributableTokens": 19
+      },
+      {
+        "profileName": "upstream",
+        "remainingG93AttributableTokens": 1277
       }
     ],
     "maximumRemainingG93AttributableTokens": 1277

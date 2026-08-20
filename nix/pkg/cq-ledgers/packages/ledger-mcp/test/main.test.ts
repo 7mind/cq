@@ -875,8 +875,7 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
           }>;
         }>(await client.callTool({ name: "get_config", arguments: { section: "agent_models" } }));
         expect(result.configured).toBe(true);
-        // The fixed roster has exactly 24 roles.
-        expect(result.agents).toHaveLength(24);
+        expect(result.agents).toHaveLength(25);
         // Every entry has the required fields.
         for (const agent of result.agents) {
           expect(typeof agent.id).toBe("string");
@@ -919,7 +918,7 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
           agents: Array<{ id: string; status: string }>;
         }>(await client.callTool({ name: "get_config", arguments: { section: "agent_models" } }));
         expect(result.configured).toBe(true);
-        expect(result.agents).toHaveLength(24);
+        expect(result.agents).toHaveLength(25);
         for (const agent of result.agents) {
           expect(["no-live-token", "not-model-configurable"]).toContain(agent.status);
         }

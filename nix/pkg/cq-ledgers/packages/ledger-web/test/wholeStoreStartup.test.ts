@@ -320,12 +320,12 @@ describe("cq web whole-store startup composition (T838)", () => {
       await fs.mkdir(path.join(storeRoot, "broken-missing-db"));
       await fs.writeFile(path.join(storeRoot, "loose-file"), "not a project\n");
       await fs.symlink("zzz-hint", path.join(storeRoot, "link-candidate"));
-      // The hint repo pins backend="postgres" with an unusable DSN: explicit
-      // XDG mode must never read the repository's backend/PostgreSQL settings.
+      // The hint repo carries an unusable DSN: explicit XDG mode must never
+      // treat it as a live PostgreSQL checkout.
       const hintRepo = await makeHintRepository({
         projectId: "zzz-hint",
         name: "omega-hint",
-        backend: "postgres",
+        backend: "xdg",
         url: "postgres://must-not-be-read.invalid/cq",
       });
       const xdgHome = await makeDirectory("ledger-web-whole-xdg-");

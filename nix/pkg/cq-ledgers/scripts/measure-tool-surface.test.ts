@@ -103,7 +103,7 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
       passed: true,
       failures: [],
     },
-    measuredProfiles: 26,
+    measuredProfiles: 27,
     corpusTranscripts: 357,
     // 817 -> 886 under T1993: fetch_prompt gained the optional projection
     // argument (D269 schema projection). Decomposition (after.json):

@@ -44,8 +44,8 @@ const GEN_FILE = path.resolve(TEST_DIR, "..", "src", "agentsCatalogue.gen.ts");
 const EXPECTED_ROLE_IDS: readonly string[] = AGENT_ROLE_TIERS.map((role) => role.id);
 
 describe("AGENT_ROLES — Q148 role-set invariants (part a)", () => {
-  it("exports exactly 24 roles in the fixed generation order", () => {
-    expect(AGENT_ROLES.length).toBe(24);
+  it("exports exactly 25 roles in the fixed generation order", () => {
+    expect(AGENT_ROLES.length).toBe(25);
     expect(AGENT_ROLES.map((r) => r.id)).toEqual([...EXPECTED_ROLE_IDS]);
   });
 
@@ -107,7 +107,7 @@ describe("AGENT_ROLES — Q148 role-set invariants (part a)", () => {
     }
   });
 
-  it("all 15 orchestrator commands are orchestrator kind", () => {
+  it("all orchestrator commands are orchestrator kind", () => {
     const cmdIds = EXPECTED_ROLE_IDS.slice(9);
     for (const id of cmdIds) {
       const role = AGENT_ROLES.find((r) => r.id === id)!;
