@@ -145,12 +145,21 @@ class Harness {
   }
 
   /**
-   * Open a store whose pool runs `hook` ONCE, right after the first
-   * transaction statement whose SQL contains `marker` — a deterministic way to
-   * land a peer's commit BETWEEN two reads of the same transaction.
+   * Open a store whose pool runs `hook` ONCE, right after a write-transaction
+   * statement whose SQL contains `marker` — a deterministic way to land a
+   * peer's commit BETWEEN two reads of the same transaction.
+   *
+   * `skip` ignores that many earlier write-path matches. Init's ideas-ambient
+   * relocation runs `readActiveLedgers` inside a write transaction and would
+   * otherwise consume a `FROM archive_pointers` probe before the fenced
+   * `updateItem` under test.
    */
-  async openInterleaving(marker: string, hook: () => Promise<void>): Promise<LifecycleStore> {
-    const pool = interleavingPool(this.dsn, marker, hook);
+  async openInterleaving(
+    marker: string,
+    hook: () => Promise<void>,
+    skip: number = 0,
+  ): Promise<LifecycleStore> {
+    const pool = interleavingPool(this.dsn, marker, hook, skip);
     await ensureSchema(pool);
     const store = new PostgresLedgerStore({
       pool,
@@ -269,9 +278,15 @@ function injectingPool(dsn: string): { pool: SQL; injector: Injector } {
  * statement whose SQL text contains `marker` is issued, awaited, and then
  * `hook` runs to completion before the caller is resumed.
  */
-function interleavingPool(dsn: string, marker: string, hook: () => Promise<void>): SQL {
+function interleavingPool(
+  dsn: string,
+  marker: string,
+  hook: () => Promise<void>,
+  skip: number = 0,
+): SQL {
   const real = openPgPool(dsn);
   let fired = false;
+  let skipped = 0;
 
   const sqlTextOf = (args: readonly unknown[]): string => {
     const [strings] = args;
@@ -289,6 +304,10 @@ function interleavingPool(dsn: string, marker: string, hook: () => Promise<void>
         if (/READ\s+ONLY/i.test(text)) readOnly = true;
         const result = Reflect.apply(target, thisArg, args);
         if (readOnly || fired || !text.includes(marker)) return result;
+        if (skipped < skip) {
+          skipped += 1;
+          return result;
+        }
         fired = true;
         return (async (): Promise<unknown> => {
           const rows: unknown = await result;
@@ -660,10 +679,14 @@ describe.skipIf(!PG_URL)("postgres plan-lifecycle fence (T851)", () => {
     // NOT atomic against peers. Land the peer's archive squarely between the
     // pointer read and the archived-row read: the item + pointer snapshots
     // pre-date the archive, the archived-row snapshot post-dates it.
-    const writer = await h.openInterleaving("FROM archive_pointers", async () => {
-      await peer.archiveMilestone(archivedId, "archived mid-read");
-      interleaved = true;
-    });
+    const writer = await h.openInterleaving(
+      "FROM archive_pointers",
+      async () => {
+        await peer.archiveMilestone(archivedId, "archived mid-read");
+        interleaved = true;
+      },
+      1,
+    );
     await writer.updateItem(TASKS_LEDGER, first, { status: "wip", ...PROVENANCE });
     expect(interleaved).toBe(true);
 
