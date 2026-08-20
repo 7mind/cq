@@ -111,7 +111,7 @@ export interface CreatePostgresWorksetStoreOptions {
   readonly settleRegisteredGroup?: (
     registration: ProcessGroupRegistration,
   ) => Promise<{ readonly survivors: readonly number[] }>;
-  /** Fired after a successful roots commit. Default: LISTEN/NOTIFY channel. */
+  /** Fired after a successful roots commit. */
   readonly onRootsCommitted?: (snapshot: WorksetRootsEpoch) => Promise<void> | void;
 }
 

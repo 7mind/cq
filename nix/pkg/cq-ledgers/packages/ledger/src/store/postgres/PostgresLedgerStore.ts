@@ -14,12 +14,12 @@
  *    (`this.ledgers`) + the archived-row maps (`this.archives` /
  *    `this.itemArchives`), exactly like InMemoryLedgerStore.
  *  - Mutations WRITE THROUGH to Postgres in a transaction (every row scoped by
- *    `project_key`), then update the cache POST-COMMIT and fire `onMutation` +
- *    `NOTIFY` (the LISTEN side is T578's concern — this store only NOTIFYs via
- *    the T572 `notifyProjectChanged` helper).
+ *    `project_key`), then update the cache POST-COMMIT and fire `onMutation`.
+ *    Hub live frames are published from that hook (T726/T736). There is no
+ *    PostgreSQL LISTEN/NOTIFY coherence path.
  *  - `invalidate(ledgerId)` re-reads that ledger's rows from Postgres under the
- *    per-ledger lock (async, matching the interface) so a peer instance's write
- *    — surfaced by the T578 LISTEN watcher — becomes visible here.
+ *    per-ledger lock (async, matching the interface) so a caller that already
+ *    observed a peer write can refresh this instance.
  *  - The derived `LedgerSearchIndex` (ftsSearch) is cold-built on `init()`,
  *    updated incrementally on single-item mutations (D147, parity with
  *    SqliteLedgerStore.indexUpsertActive), fully rebuilt on structural/
@@ -32,7 +32,7 @@
  * write transaction (`UPDATE … RETURNING`), so cross-instance id allocation
  * never collides.
  *
- * Scope (T573): the full LedgerStore surface + write-through + cache + NOTIFY.
+ * Scope (T573): the full LedgerStore surface + write-through + cache.
  *
  * Tenant bootstrap + auto-registration + display-name chain (T574): `init()`
  * (a) UPSERTs the `projects` row for this tenant's `projectKey` on EVERY
@@ -1037,7 +1037,6 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     }
     // Exactly one peer invalidation, after both the reset transaction and the
     // surrounding administrative generation advance have committed.
-    await this.notify();
   }
 
   async dispose(): Promise<void> {
@@ -1154,7 +1153,6 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       ON CONFLICT (project_key, path) DO UPDATE SET content = EXCLUDED.content, created_at = now()
     `;
     this.fireHook("logs", "update");
-    await this.notify();
   }
 
   tenantKey(): string {
@@ -1197,7 +1195,6 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       },
     });
     this.fireHook("logs", "archive");
-    await this.notify();
   }
 
   /**
@@ -1368,7 +1365,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   // ---------------------------------------------------------------------------
   // Mutations (async write-through: apply* against a clone → persist affected
   // rows to PG in one transaction → swap clone into cache post-commit → rebuild
-  // index → fire onMutation → NOTIFY). Every mutation runs under the same
+  // index → fire onMutation). Every mutation runs under the same
   // per-ledger / global-milestones AsyncMutex discipline as InMemoryLedgerStore
   // so within-instance ordering (and the concurrency-parity suite) holds; the
   // PG transaction provides cross-process isolation.
@@ -1956,7 +1953,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     });
 
     // Rebuild indices + fire hooks in D-COHERENCE order (participants
-    // alphabetic, then milestones), then NOTIFY once.
+    // alphabetic, then milestones).
     for (const name of participating) {
       this.rebuildLedgerIndexActive(name);
       this.refreshLedgerIndexArchived(name);
@@ -1965,7 +1962,6 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.refreshLedgerIndexArchived(MILESTONES_LEDGER);
     for (const name of participating) this.fireHook(name, "archive");
     this.fireHook(MILESTONES_LEDGER, "archive");
-    await this.notify();
     return pointer;
   }
 
@@ -2039,11 +2035,11 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
 
   /**
    * Re-read `ledgerId`'s rows from Postgres into the cache under its per-ledger
-   * lock (the T578 LISTEN watcher's refresh path). No-op for an unknown ledger
+   * lock. No-op for an unknown ledger
    * id (graceful — drop any stale index docs), matching the interface contract.
    */
   async invalidate(ledgerId: string): Promise<void> {
-    // D148: a trailing watcher pass after dispose must no-op, not throw
+    // D148: a trailing invalidate after dispose must no-op, not throw
     // "not initialised" / "pool is closed" out of the detached IIFE.
     if (!this.initialised || this.handle === null) return;
     if (!this.ledgers.has(ledgerId)) {
@@ -2178,7 +2174,6 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     // whatever a peer had committed since its last refresh.
     this.absorbLiveLedgers(live);
     for (const ledgerId of dirty) this.fireHook(ledgerId, "update");
-    await this.notify();
     return value;
   }
 
@@ -2215,7 +2210,6 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     });
     this.absorbLiveLedgers(live);
     for (const ledgerId of dirtyLedgers) this.fireHook(ledgerId, "update");
-    if (dirtyLedgers.length > 0) await this.notify();
     return result;
   }
 
@@ -2247,7 +2241,6 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     });
     this.absorbLiveLedgers(live);
     for (const ledgerId of dirtyLedgers) this.fireHook(ledgerId, "update");
-    if (dirtyLedgers.length > 0) await this.notify();
     return result;
   }
 
@@ -2342,7 +2335,6 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     });
     this.absorbLiveLedgers(live);
     for (const ledgerId of dirtyLedgers) this.fireHook(ledgerId, archivedChanged ? "archive" : "update");
-    if (dirtyLedgers.length > 0 || archivedChanged) await this.notify();
     return result;
   }
 
@@ -2371,7 +2363,6 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     });
     this.absorbLiveLedgers(live);
     for (const ledgerId of dirty) this.fireHook(ledgerId, "update");
-    await this.notify();
     return value;
   }
 
@@ -2751,7 +2742,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
    *  - `upsertItem: null` — index already current (absorbLiveLedgers rebuilt it);
    *  - omitted — full active-bucket rebuild (createLedger / structural ops);
    *  - `alsoArchived: true` — always refresh both buckets (archive transitions).
-   * Then fire the guarded `onMutation` hook and NOTIFY the coherence channel.
+   * Then fire the guarded `onMutation` hook.
    */
   private async afterCommit(
     ledgerId: string,
@@ -2763,14 +2754,13 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       this.rebuildLedgerIndexActive(ledgerId);
       this.refreshLedgerIndexArchived(ledgerId);
     } else if (opts.upsertItem === null) {
-      // Index already rebuilt by absorbLiveLedgers — hook + NOTIFY only.
+      // Index already rebuilt by absorbLiveLedgers — hook only.
     } else if (opts.upsertItem !== undefined) {
       this.indexUpsertActive(ledgerId, opts.upsertItem);
     } else {
       this.rebuildLedgerIndexActive(ledgerId);
     }
     this.fireHook(ledgerId, op);
-    await this.notify();
   }
 
   /**
@@ -2843,11 +2833,6 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         `PostgresLedgerStore: onMutation hook threw for ${ledgerId} (${op}): ${msg}\n`,
       );
     }
-  }
-
-  /** Post-commit peer notify retired: hub publication is onMutation only (T736). */
-  private async notify(): Promise<void> {
-    return;
   }
 
   /** Rebuild the ACTIVE index bucket for a ledger from the cache. Guarded. */

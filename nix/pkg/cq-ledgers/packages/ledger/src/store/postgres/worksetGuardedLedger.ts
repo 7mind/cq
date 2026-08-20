@@ -9,8 +9,8 @@
  *
  * Each ordinary graph/eligibility mutation still flows through the ledger-layer
  * gateway: admit (`generic-write`) → resolve targets/epoch → validate → apply
- * the tenant-scoped Postgres write transaction → advance coherence → NOTIFY
- * only after commit → acknowledge admission. Replacement (`setRoots`) serializes
+ * the tenant-scoped Postgres write transaction → fire `onMutation` after commit
+ * → acknowledge admission. Replacement (`setRoots`) serializes
  * behind live admissions via the durable workset store.
  */
 

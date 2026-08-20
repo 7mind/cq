@@ -60,7 +60,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
 
   runStoreAbstractSuite({
     name: "PostgresLedgerStore",
-    // Every op is a real network round-trip (write transaction + NOTIFY); a
+    // Every op is a real network round-trip (write transaction); a
     // generous per-test timeout keeps the concurrency-parity tests
     // deterministic under full-suite parallel load.
     timeoutMs: 20_000,

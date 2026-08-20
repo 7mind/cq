@@ -5,8 +5,7 @@
  * Mirrors the role of ../sqlite/connection.ts, but for Postgres: pool
  * construction from a DSN, advisory-lock helpers (Q271 — the DDL/migration
  * pass in schema.ts must run under a lock so concurrent connecting instances
- * never race CREATE TABLE), a NOTIFY helper for the LISTEN/NOTIFY coherence
- * mechanism (Q281), and transaction helpers with bounded retry on Postgres
+ * never race CREATE TABLE), and transaction helpers with bounded retry on Postgres
  * serialization/deadlock failures (the PG analogue of the sqlite store's
  * SQLITE_BUSY retry in ../sqlite/connection.ts).
  *

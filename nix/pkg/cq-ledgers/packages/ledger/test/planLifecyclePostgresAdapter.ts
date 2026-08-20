@@ -16,9 +16,7 @@
  *
  * Coherence between the two same-tenant stores is the job of
  * {@link AlternatingPostgresLifecycle}, which invalidates the peer store after
- * each dispatched call. That is exactly the role the T578 LISTEN watcher plays
- * in production (`NOTIFY` → `invalidate`), run synchronously here so the
- * contract's assertions are deterministic rather than racing a watcher.
+ * each dispatched call so the contract's assertions are deterministic.
  *
  * Env-gated on CQ_TEST_PG_URL (Q286) by the conformance test that registers
  * this factory.

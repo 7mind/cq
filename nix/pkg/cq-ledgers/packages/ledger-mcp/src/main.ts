@@ -631,12 +631,12 @@ export function listProjectsOf(
  * The git-object path binds a {@link nodeGitRunner} at the repo root so the
  * watcher polls `refs/heads/<branch>` for ledger advances by another process.
  *
- * The xdg AND postgres watchers bulk-invalidate every known ledger off a
- * single coherence signal (a content-version bump / a NOTIFY on the tenant's
- * `project_key`) with no per-ledger granularity to report, so their
- * `onChange` (D89) fires once per invalidate pass with `null` rather than once
- * per ledger id — `onChange` is forwarded here exactly as for the other
- * backends, driving the same WS "changed" push for a peer process's write.
+ * The xdg watcher bulk-invalidates every known ledger off a content-version
+ * bump, so its `onChange` (D89) fires once per invalidate pass with `null`
+ * rather than once per ledger id — `onChange` is forwarded here exactly as
+ * for the other backends, driving the same WS "changed" push for a peer
+ * process's write. Public postgres is retired; hub live frames come from
+ * in-process `onMutation` (T726/T736).
  */
 export function startLedgerCoherenceWatcher(
   resolved: ResolvedLedgerStore,

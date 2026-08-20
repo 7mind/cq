@@ -13,12 +13,6 @@ import {
   type WorksetOwnedGuardedLedger,
 } from "../src/index.js";
 
-
-type ResolvedPostgresHandle = { pool: unknown; dsn: string; projectKey: string };
-function startPostgresCoherenceWatcher(_store: unknown, _handle: unknown, _onChange?: () => void) {
-  return { close(): void {} };
-}
-
 const dsn = process.env.CQ_TEST_PG_URL;
 const requirePostgres = process.env.CQ_TEST_REQUIRE_PG === "1";
 
@@ -82,52 +76,7 @@ if (dsn === undefined || dsn.length === 0) {
     return { raw, ledger, pool };
   }
 
-  async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      if (predicate()) return true;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    return predicate();
-  }
-
   describe("workset coordination-bundle PostgreSQL faults [T1966]", () => {
-    it.skip("post-commit NOTIFY invalidates a peer after the complete owned write", async () => {
-      const projectKey = `t1966-notify-${randomUUID()}`;
-      const writer = await open(projectKey);
-      const reader = await open(projectKey);
-      let notifications = 0;
-      const handle: ResolvedPostgresHandle = {
-        pool: reader.pool,
-        dsn: pgDsn,
-        projectKey,
-      };
-      const watcher = startPostgresCoherenceWatcher(reader.raw, handle, () => {
-        notifications += 1;
-      });
-      try {
-        await waitFor(() => notifications > 0);
-        const before = notifications;
-        const idea = await writer.ledger.owned.createOwnerless({
-          ledgerId: IDEAS_LEDGER,
-          status: "open",
-          fields: { title: "pg-notify-complete" },
-        });
-        const converged = await waitFor(() => {
-          if (notifications <= before) return false;
-          try {
-            return reader.raw.fetchItem(IDEAS_LEDGER, idea.id).fields.title ===
-              "pg-notify-complete";
-          } catch {
-            return false;
-          }
-        });
-        expect(converged).toBe(true);
-      } finally {
-        watcher.close();
-      }
-    });
-
     it("serializes same-tenant writers while preserving tenant isolation", async () => {
       const sharedProject = `t1966-serialized-${randomUUID()}`;
       const isolatedProject = `t1966-isolated-${randomUUID()}`;

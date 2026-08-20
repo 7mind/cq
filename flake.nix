@@ -1815,8 +1815,7 @@ PY
                 for expectedLeg in \
                   'workset owned-write contract [T1962] — PostgresLedgerStore' \
                   'workset coordination-bundle contract [T1962] — PostgresLedgerStore' \
-                  'statement failure rolls back the tenant and emits no post-commit hook' \
-                  'post-commit NOTIFY invalidates a peer after the complete owned write'; do
+                  'statement failure rolls back the tenant and emits no post-commit hook'; do
                   if ! grep -F '(pass)' "$ownedWriteLog" | grep -Fq "$expectedLeg"; then
                     echo "T1966 live PostgreSQL owned-write run did not execute: $expectedLeg" >&2
                     exit 1
@@ -1841,7 +1840,6 @@ PY
                   'serializes guarded and raw same-goal writes in both lock orders' \
                   'statement failure rolls back tenant rows and restart retries as new' \
                   'backend disconnect aborts the transaction without a replay row' \
-                  'post-commit NOTIFY reveals the complete lifecycle graph to a peer' \
                   'serializes same-tenant replacements while preserving tenant isolation'; do
                   if ! grep -F '(pass)' "$planWorksetLog" | grep -Fq "$expectedLeg"; then
                     echo "T1971 live PostgreSQL workset plan-lifecycle run did not execute: $expectedLeg" >&2
@@ -1865,7 +1863,6 @@ PY
                 for expectedLeg in \
                   'workset generic-mutation contract [T1961] — postgres-durable' \
                   'allowed status update under restrictive roots persists across restart' \
-                  'post-commit NOTIFY publishes generic writes and a rolled-back denial stays silent' \
                   'cross-server: peer setRoots waits for holder generic mutation then observes result'; do
                   if ! grep -F '(pass)' "$genericMutationLog" | grep -Fq "$expectedLeg"; then
                     echo "T1975 live PostgreSQL generic-mutation run did not execute: $expectedLeg" >&2
@@ -1904,8 +1901,8 @@ PY
                 cat "$coherenceLog"
                 if grep -Fq '(skip)' "$coherenceLog" || \
                    ! grep -F '(pass)' "$coherenceLog" | grep -Fq \
-                     "pushes A's writes to B, isolates other tenants, and reconverges after a LISTEN drop"; then
-                  echo "T1975 live PostgreSQL coherence watcher did not execute" >&2
+                     "coherenceWatcher.ts is gone"; then
+                  echo "T736 LISTEN/NOTIFY retirement pin did not execute" >&2
                   exit 1
                 fi
 

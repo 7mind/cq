@@ -18,12 +18,6 @@ import {
   type WorksetGuardedPlanLifecycleStore,
 } from "../src/index.js";
 
-
-type ResolvedPostgresHandle = { pool: unknown; dsn: string; projectKey: string };
-function startPostgresCoherenceWatcher(_store: unknown, _handle: unknown, _onChange?: () => void) {
-  return { close(): void {} };
-}
-
 const dsn = process.env.CQ_TEST_PG_URL;
 const requirePostgres = process.env.CQ_TEST_REQUIRE_PG === "1";
 const provenance = { author: "T1971", session: "T1971-fault" } as const;
@@ -144,18 +138,6 @@ if (dsn === undefined || dsn.length === 0) {
       },
       ...provenance,
     };
-  }
-
-  async function waitFor(
-    predicate: () => boolean,
-    timeoutMs = 3_000,
-  ): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      if (predicate()) return true;
-      await Bun.sleep(20);
-    }
-    return predicate();
   }
 
   async function settleWithoutDeadlock<T>(promise: Promise<T>): Promise<T> {
@@ -313,49 +295,6 @@ if (dsn === undefined || dsn.length === 0) {
       expect(
         restarted.store.search(TASKS_LEDGER, "pg-disconnect-must-rollback"),
       ).toHaveLength(1);
-    });
-
-    it.skip("post-commit NOTIFY reveals the complete lifecycle graph to a peer", async () => {
-      const projectKey = `t1971-notify-${randomUUID()}`;
-      const writer = await open(projectKey);
-      const claim = await seedClaim(writer.store, "pg-notify-claim");
-      const reader = await open(projectKey);
-      let notifications = 0;
-      const handle: ResolvedPostgresHandle = {
-        pool: reader.pool,
-        dsn: pgDsn,
-        projectKey,
-      };
-      const watcher = startPostgresCoherenceWatcher(reader.raw, handle, () => {
-        notifications += 1;
-      });
-      try {
-        expect(await waitFor(() => notifications > 0)).toBe(true);
-        const before = notifications;
-        const result = await writer.store.publishPlanDraft(
-          publishInput(claim, "pg-notify-publish", "pg-notify-complete"),
-        );
-        if (!result.ok) throw new Error(`publish failed: ${result.conflict.code}`);
-        const taskId = result.acknowledgement.manifest.tasks[0]?.id;
-        if (taskId === undefined) throw new Error("published task missing");
-        const converged = await waitFor(() => {
-          if (notifications <= before) return false;
-          try {
-            return (
-              reader.store.fetchItem(TASKS_LEDGER, taskId).fields.headline ===
-                "pg-notify-complete" &&
-              reader.store.fetchItem(GOALS_LEDGER, "G1").fields[
-                PLAN_CURRENT_DRAFT_FIELD
-              ] !== undefined
-            );
-          } catch {
-            return false;
-          }
-        });
-        expect(converged).toBe(true);
-      } finally {
-        watcher.close();
-      }
     });
 
     it("serializes same-tenant replacements while preserving tenant isolation", async () => {
