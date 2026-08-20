@@ -512,7 +512,7 @@
           mkdir -p "$WORKSPACE/packages/ledger/node_modules/@anthropic-ai" \
                    "$WORKSPACE/packages/ledger/node_modules/@modelcontextprotocol" \
                    "$WORKSPACE/packages/ledger/node_modules/.bin"
-          for dep in zod yaml unified remark-frontmatter remark-parse remark-stringify minisearch postgres bun-types; do
+          for dep in zod yaml unified remark-frontmatter remark-parse remark-stringify minisearch bun-types; do
             if [ -e "${bunNodeModules}/packages/ledger/node_modules/$dep" ]; then
               ln -s "${bunNodeModules}/packages/ledger/node_modules/$dep" \
                 "$WORKSPACE/packages/ledger/node_modules/$dep"
@@ -535,10 +535,12 @@ EOF
                    "$WORKSPACE/packages/ledger-mcp/node_modules/@cq"
           ln -s ${bunNodeModules}/packages/ledger-mcp/node_modules/@modelcontextprotocol/sdk \
             "$WORKSPACE/packages/ledger-mcp/node_modules/@modelcontextprotocol/sdk"
-          if [ -e "${bunNodeModules}/packages/ledger-mcp/node_modules/bun-types" ]; then
-            ln -s "${bunNodeModules}/packages/ledger-mcp/node_modules/bun-types" \
-              "$WORKSPACE/packages/ledger-mcp/node_modules/bun-types"
-          fi
+          for dep in bun-types zod; do
+            if [ -e "${bunNodeModules}/packages/ledger-mcp/node_modules/$dep" ]; then
+              ln -s "${bunNodeModules}/packages/ledger-mcp/node_modules/$dep" \
+                "$WORKSPACE/packages/ledger-mcp/node_modules/$dep"
+            fi
+          done
           ln -s "$WORKSPACE/packages/ledger" \
             "$WORKSPACE/packages/ledger-mcp/node_modules/@cq/ledger"
           ln -s "$WORKSPACE/packages/cq-config" \
