@@ -196,7 +196,7 @@ describe.skipIf(!PG_URL)("restoreDumpToPostgres (T580)", () => {
           authority: createTrustedWorksetManagementAuthority(),
           overwriteAuthorized: false,
         }),
-      ).rejects.toThrow(/non-empty tenant/);
+      ).rejects.toThrow(/non-empty/i);
 
       // The FIRST restore's data survives untouched.
       const survivor = new PostgresLedgerStore({

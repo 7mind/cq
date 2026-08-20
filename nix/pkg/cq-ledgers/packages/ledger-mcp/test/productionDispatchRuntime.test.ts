@@ -39,24 +39,26 @@ async function inMemoryStore(): Promise<InMemoryLedgerStore> {
 }
 
 function workerArtifactStore(surface: PromptSurface): PromptArtifactStore {
-  const metadata: PromptArtifactRoleMetadata = {
-    roleId: "implement-worker",
+  const metadataFor = (roleId: string): PromptArtifactRoleMetadata => ({
+    roleId,
     roleKind: "dispatched-subagent",
-    artifactPath: "roles/implement-worker.md",
-    sidecarSchemaRoleId: "implement-worker",
+    artifactPath: `roles/${roleId}.md`,
+    sidecarSchemaRoleId: roleId,
     promptSurface: surface,
     promptDigest: "a".repeat(64),
     schemaVersion: 1,
-  };
+  });
+  const roles = ["implement-worker", "plan-advance"].map(metadataFor);
   return {
     readManifest: () => ({
       bytes: new Uint8Array(),
-      roles: [metadata],
+      roles,
       promptSurface: surface,
       catalogHash: "b".repeat(64),
     }),
     readRole: (roleId) => {
-      if (roleId !== metadata.roleId) throw new Error(`unexpected role "${roleId}"`);
+      const metadata = roles.find((role) => role.roleId === roleId);
+      if (metadata === undefined) throw new Error(`unexpected role "${roleId}"`);
       return { metadata, bytes: new Uint8Array([1]) };
     },
   };

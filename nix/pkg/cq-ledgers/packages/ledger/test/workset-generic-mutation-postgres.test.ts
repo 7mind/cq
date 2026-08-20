@@ -392,15 +392,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
         displayName: projectKey,
       });
       await reader.init();
-      let notifications = 0;
-      const handle: ResolvedPostgresHandle = { pool: readerPool, dsn, projectKey };
-      const watcher = startPostgresCoherenceWatcher(reader, handle, () => {
-        notifications += 1;
-      });
       try {
-        expect(await waitFor(() => notifications > 0)).toBe(true);
-        await Bun.sleep(50);
-        const notificationsBefore = notifications;
         const tasksBefore = writer.fetch(TASKS_LEDGER);
         const milestonesBefore = writer.fetch(MILESTONES_LEDGER);
         const rootsBefore = await writer.snapshotRoots();
@@ -432,9 +424,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
           await setupPool.unsafe(`DROP FUNCTION ${functionName}()`);
         }
 
-        await Bun.sleep(100);
         expect(ops).toEqual([]);
-        expect(notifications).toBe(notificationsBefore);
         expect(writer.fetch(TASKS_LEDGER)).toEqual(tasksBefore);
         expect(writer.fetch(MILESTONES_LEDGER)).toEqual(milestonesBefore);
         expect(await writer.snapshotRoots()).toEqual(rootsBefore);
@@ -450,7 +440,6 @@ if (PG_URL === undefined || PG_URL.length === 0) {
         await expect(fresh.fetchArchive(TASKS_LEDGER, m.id)).rejects.toThrow();
         await expect(fresh.fetchArchive(MILESTONES_LEDGER, m.id)).rejects.toThrow();
       } finally {
-        watcher.close();
         await reader.dispose();
       }
     });

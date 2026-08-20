@@ -62,7 +62,9 @@ function textOf(result: ToolResultLike): string {
 }
 
 function decode<T>(result: ToolResultLike): T {
-  expect(result.isError ?? false).toBe(false);
+  if (result.isError === true) {
+    throw new Error(`tool reported an error: ${textOf(result)}`);
+  }
   return JSON.parse(textOf(result)) as T;
 }
 
