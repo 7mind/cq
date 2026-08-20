@@ -1,12 +1,12 @@
 /**
- * `cq migrate` (T504 / Q243, xdg->postgres leg T581 / Q280) — the explicit
+ * `cq migrate` (T504 / Q243, remote owner T731 / T736) — the explicit
  * ONE-SHOT migration EITHER from a LEGACY in-repo backend into the
- * out-of-tree xdg primary, OR from the xdg primary into the multi-tenant
- * Postgres backend. There is deliberately NO auto-migration on init (D43-class
- * data-loss territory): this subcommand is the only path, and it NEVER
- * touches the migration's source data.
+ * out-of-tree xdg primary, OR from the xdg primary into a `cq serve` tenant
+ * over project-admin MCP. There is deliberately NO auto-migration on init
+ * (D43-class data-loss territory): this subcommand is the only path, and it
+ * NEVER touches the migration's source data.
  *
- * Two legs, selected by `--to postgres` (absent = the original legacy->xdg leg):
+ * Two legs, selected by `--to remote` (absent = the original legacy->xdg leg):
  *
  * 1. legacy -> xdg (default, no `--to`) — source is whichever legacy backend
  *    cq.toml names:
@@ -21,36 +21,25 @@
  *    primary through {@link restoreDumpToXdg} (T503's importer), then cq.toml's
  *    `[ledger].backend` flips to `xdg` ({@link setLedgerBackend}).
  *
- * 2. xdg -> postgres (`--to postgres`, T581) — source is the CURRENT xdg
- *    primary (`backend` must already be `xdg`), read via {@link createLedgerStore}
- *    (the same live construction path every product uses) and serialised
- *    through the SAME {@link buildBackupDump}, INCLUDING the out-of-tree logs
- *    dir (Q274 option-3 import — plain filesystem walk, same as the legacy
- *    leg). Imported via {@link restoreDumpToPostgres} (T580's importer: direct
- *    row writes into ONE tenant, preserving every id/timestamp/counter/
- *    author/session, self-registering the `projects` row), then cq.toml's
- *    `[ledger].backend` flips to `postgres`. The Postgres connection is
- *    resolved via {@link resolvePostgresDsn} (env override > cq.toml
- *    `[ledger].url` > `PG*` driver defaults) EVEN THOUGH cq.toml still names
- *    `xdg` at read time — `resolvePostgresDsn` only reads `.url` + env, never
- *    `.backend`.
+ * 2. xdg -> remote (`--to remote`, T731) — source is the CURRENT xdg primary
+ *    (`backend` must already be explicit `xdg`). The dump is imported through
+ *    project-admin `import_dump` with `intent=migrate-empty`, then cq.toml's
+ *    `[ledger].backend` flips to `remote`. The hub origin is `CQ_LEDGER_SERVER_URL`;
+ *    the admin secret is `CQ_LEDGER_REMOTE_ADMIN_TOKEN`. Public `--to postgres`
+ *    is retired at the dispatcher.
  *
  * Either leg's source data remains in place so recovery remains possible. The
  * workset records the durable administrative admission used for exclusion;
  * the user deletes the old primary manually once confident.
  *
  * Safety:
- *   - leg 1: `backend = 'xdg'` already (and no `--to postgres`) → refuse (no
- *     legacy source is configured);
+ *   - leg 1: `backend = 'xdg'` already (and no `--to`) → refuse (no legacy
+ *     source is configured);
  *   - leg 1: a NON-EMPTY xdg target → the shared destructive-op confirmation
  *     policy ({@link confirmDestructive}): `--yes` proceeds, a TTY prompts,
  *     non-TTY refuses. An empty target (nothing beyond canonical bootstrap)
  *     migrates unconditionally;
- *   - leg 2: `--to postgres` with `backend != 'xdg'` → refuse (this leg only
- *     migrates FROM xdg; run `cq migrate` first to reach xdg);
- *   - leg 2: a NON-EMPTY postgres tenant → hard refuse, UNCONDITIONALLY (no
- *     `--yes` override) — mirrors {@link restoreDumpToPostgres}'s own
- *     no-merge-semantics contract (T580);
+ *   - leg 2: `--to remote` with a non-explicit-xdg backend → refuse;
  *   - both legs: the source is read and the dump parsed BEFORE any
  *     confirmation or write, so a broken source fails loud without touching
  *     the target.
@@ -64,25 +53,19 @@ import {
   createManagementLedgerStore,
   createFsWorksetStore,
   createGitObjectWorksetStore,
-  ensureSchema,
   ensureStateDir,
   GitPlumbing,
-  isPostgresTenantEmpty,
   isXdgPrimaryEmpty,
   LEDGER_LOGS_DIRNAME,
   LEDGER_STORAGE_DIRNAME,
   hasLegacyFsLedger,
   openLegacyLedgerStore,
-  openPgPool,
-  resolveDisplayName,
   resolveLedgerBackend,
   resolveLogsDir,
-  resolvePostgresDsn,
   resolveProjectKey,
   resolveStateDir,
   prepareImportedOwnershipDump,
   RemoteLedgerClient,
-  restoreDumpToPostgres,
   restoreDumpToXdg,
   RestoreTargetChangedError,
   createTrustedWorksetManagementAuthority,
@@ -120,8 +103,8 @@ export interface MigrateArgs {
   /** `--yes`/`-y`: overwrite a non-empty xdg target without prompting (leg 1 only). */
   yes: boolean;
   /**
-   * `--to postgres` (T581): selects the xdg -> postgres leg instead of the
-   * default legacy -> xdg leg. `null` (the flag absent) is the default leg.
+   * `--to remote` (T731): selects the xdg -> cq serve tenant leg instead of
+   * the default legacy -> xdg leg. `null` (the flag absent) is the default leg.
    */
   to: "remote" | null;
 }
@@ -179,7 +162,7 @@ async function readGitObjectLogs(root: string, branch: string): Promise<BackupDu
  */
 export async function setLedgerBackend(
   root: string,
-  backend: "git-object" | "fs" | "xdg" | "postgres" | "remote",
+  backend: "git-object" | "fs" | "xdg" | "remote",
   extras: Readonly<Record<string, string>> = {},
 ): Promise<void> {
   const configPath = path.join(root, CQ_CONFIG_FILENAME);
@@ -259,8 +242,8 @@ export async function setLedgerBackend(
 
 /**
  * Run `cq migrate`: routes to the leg `args.to` selects — the default
- * legacy (fs | git-object) -> xdg leg, or (`--to postgres`) the xdg ->
- * postgres leg (T581). See the module doc for the full contract.
+ * legacy (fs | git-object) -> xdg leg, or (`--to remote`) the xdg ->
+ * cq serve tenant leg (T731). See the module doc for the full contract.
  */
 export async function runMigrate(args: MigrateArgs, io: MigrateIo): Promise<MigrateOutcome> {
   if (args.to === "remote") {
@@ -295,7 +278,7 @@ async function runMigrateLegacyToXdg(args: MigrateArgs, io: MigrateIo): Promise<
       io.err(
         `cq migrate: [ledger] backend is already 'xdg' at ${args.cwd} — there is no legacy ` +
           `(fs | git-object) source configured to migrate from. Nothing to do. (Did you mean ` +
-          `\`cq migrate --to postgres\`, to migrate the xdg primary onward into postgres?)`,
+          `\`cq migrate --to remote\`, to upload the xdg primary into a cq serve tenant?)`,
       );
       return { exitCode: EXIT_USAGE };
     }
@@ -408,153 +391,6 @@ async function runMigrateLegacyToXdg(args: MigrateArgs, io: MigrateIo): Promise<
     );
     return { exitCode: 0 };
   });
-}
-
-/**
- * Leg 2 (`--to postgres`, T581 / Q280): the xdg primary's state + logs → a
- * Postgres tenant, then flip cq.toml's `[ledger].backend` to `postgres`. See
- * the module doc for the full contract.
- */
-async function _runMigrateXdgToPostgres(args: MigrateArgs, io: MigrateIo): Promise<MigrateOutcome> {
-  const { backend, explicit } = resolveLedgerBackend(args.cwd);
-  if (backend === "xdg" && !explicit) {
-    // K117: 'xdg' is now also the DEFAULT resolution (no cq.toml / no
-    // [ledger].backend key). This leg needs a real cq.toml to read the
-    // committed DSN context from and to flip to 'postgres' afterwards —
-    // refuse cleanly rather than fall through to the (previously
-    // unreachable) config===null internal error below.
-    io.err(
-      `cq migrate --to postgres: no [ledger] backend configured at ${args.cwd} (the 'xdg' ` +
-        `resolution is the default, not a committed choice). Run \`cq init\` (or \`cq migrate\` ` +
-        `from a legacy tree) to write cq.toml with backend = "xdg" first, then ` +
-        `\`cq migrate --to postgres\`.`,
-    );
-    return { exitCode: EXIT_USAGE };
-  }
-  if (backend !== "xdg") {
-    io.err(
-      `cq migrate --to postgres: [ledger] backend at ${args.cwd} is '${backend}', not 'xdg' — ` +
-        `the xdg -> postgres leg migrates the OUT-OF-TREE xdg primary onward; it does not read a ` +
-        `legacy (fs | git-object) source directly. Run \`cq migrate\` (no --to) first to reach ` +
-        `xdg, then \`cq migrate --to postgres\`.`,
-    );
-    return { exitCode: EXIT_USAGE };
-  }
-
-  // --- Read the ENTIRE xdg source (state + logs) before any target write.
-  // createLedgerStore is the SAME live construction path every product uses
-  // for backend='xdg' — no need to re-derive stateDir/dbPath/logsDir by hand
-  // (unlike leg 1, where cq.toml still names the legacy backend and the xdg
-  // TARGET location has to be computed ahead of the flip).
-  const resolved = await createManagementLedgerStore(args.cwd);
-  let dump: BackupDumpFile[];
-  const projectKey = resolved.projectKey;
-  const dbPath = resolved.dbPath;
-  const logsDir = resolved.logsDir;
-  if (projectKey === undefined || dbPath === undefined || logsDir === undefined) {
-    // Unreachable in practice: createLedgerStore's xdg branch always returns
-    // projectKey/dbPath/logsDir. Guarded so a future refactor there fails
-    // loud here rather than silently mis-migrating.
-    await resolved.store.dispose();
-    throw new Error(
-      `cq migrate --to postgres: internal error — the xdg store at ${args.cwd} resolved without ` +
-        `a projectKey/dbPath/logsDir (backend='${resolved.backend}').`,
-    );
-  }
-  const sourceWorkset = (
-    resolved.store as typeof resolved.store & { worksetStore(): WorksetStore }
-  ).worksetStore();
-  try {
-    return await runUnderMigrationAdmission(sourceWorkset, async () => {
-      dump = await buildBackupDump(resolved.store, logsDir);
-      // T1977: same pure pre-target boundary as the legacy leg. PostgreSQL is
-      // not connected until every imported relation has reconciled.
-      const preparedOwnership = prepareImportedOwnershipDump(dump, "infer-unambiguous-legacy");
-
-      // --- Resolve the postgres TARGET connection. cq.toml still names 'xdg' at
-      // this point (the flip happens only after a successful import) —
-      // resolvePostgresDsn only reads `.url` + env, never `.backend`, so this is
-      // safe to call before the flip. A ProjectKeyResolutionError already
-      // propagated above (via createLedgerStore); PostgresDsnResolutionError
-      // propagates here the same fail-fast way.
-      const config = loadConfig(args.cwd);
-      if (config === null || config.ledger === null) {
-        // Unreachable: the explicit-xdg guard above already required a cq.toml
-        // with a [ledger].backend key (a DEFAULT-resolved xdg refuses with
-        // EXIT_USAGE, K117) — cq.toml would have had to change concurrently
-        // between the two reads.
-        throw new Error(
-          `cq migrate --to postgres: [ledger] backend='xdg' resolved at ${args.cwd}, but reloading ` +
-            `cq.toml found no [ledger] table — cq.toml may have changed concurrently; re-run.`,
-        );
-      }
-      const ledgerConfig = config.ledger;
-      const resolution = resolvePostgresDsn(ledgerConfig, process.env);
-      const dsn = resolution.kind === "dsn" ? resolution.dsn : "";
-      const displayName = resolveDisplayName({
-        projectName: config.project?.name,
-        projectId: ledgerConfig.projectId,
-        repoBasename: path.basename(args.cwd),
-        projectKey,
-      });
-
-      const pool = openPgPool(dsn);
-      try {
-        await ensureSchema(pool);
-
-        // --- Refuse to clobber a NON-EMPTY tenant — UNCONDITIONALLY (no --yes
-        // override), mirroring restoreDumpToPostgres's own no-merge contract.
-        const targetEmpty = await isPostgresTenantEmpty(pool, projectKey);
-        if (!targetEmpty) {
-          io.err(
-            `cq migrate --to postgres: refusing — the postgres tenant "${displayName}" ` +
-              `(project_key ${projectKey}) already holds data beyond the canonical bootstrap state; ` +
-              `migrate never merges into a non-empty target.`,
-          );
-          return { exitCode: EXIT_USAGE };
-        }
-
-        // --- Import, then flip the backend. Source user data remains intact;
-        // only the durable administrative admission is created and closed.
-        let summary;
-        try {
-          summary = await restoreDumpToPostgres({
-            pool,
-            projectKey,
-            displayName,
-            preparedOwnership,
-            authority: createTrustedWorksetManagementAuthority(),
-            overwriteAuthorized: false,
-            administrativeKind: "backend-migration",
-          });
-        } catch (error) {
-          if (!(error instanceof RestoreTargetChangedError)) throw error;
-          io.err(
-            `cq migrate --to postgres: refusing — tenant ${projectKey} became non-empty ` +
-              `after the initial check`,
-          );
-          return { exitCode: EXIT_USAGE };
-        }
-        await setLedgerBackend(args.cwd, "postgres");
-
-        io.out(
-          `cq migrate: migrated the xdg primary at ${args.cwd} into postgres tenant "${displayName}" ` +
-            `(project_key ${projectKey})`,
-        );
-        io.out(
-          `  ledgers:  ${summary.ledgerCount} (items + archives, ${summary.fileCount} dump file(s))`,
-        );
-        io.out(`  logs:     ${summary.logCount} artifact(s)`);
-        io.out(`  ${CQ_CONFIG_FILENAME}:  [ledger] backend = "postgres"`);
-        io.out(`  xdg primary data left INTACT at ${dbPath} — delete it manually once confident.`);
-        return { exitCode: 0 };
-      } finally {
-        await pool.close();
-      }
-    });
-  } finally {
-    await resolved.store.dispose();
-  }
 }
 
 async function runMigrateXdgToRemote(args: MigrateArgs, io: MigrateIo): Promise<MigrateOutcome> {

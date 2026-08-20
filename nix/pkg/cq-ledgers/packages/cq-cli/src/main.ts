@@ -154,12 +154,13 @@ export interface SubcommandArgs {
    */
   session: string | null;
   /**
-   * `--to <value>`: `migrate`'s target-leg selector (T581) — the RAW string
+   * `--to <value>`: `migrate`'s target-leg selector (T731) — the RAW string
    * value, unvalidated here (mirrors `--session`'s leniency, and matters for
    * the RETIRED `move-ledger` subcommand, which also recognised a `--to
    * <local|git>` flag it now ignores — see move-ledger.test.ts's "old flags
    * ignored" contract). `runMigrateCmd` is the ONE place that validates it
-   * against `"postgres"`. `null` when the flag is absent.
+   * against `"remote"` and refuses the retired `"postgres"`. `null` when the
+   * flag is absent.
    */
   to: string | null;
 }
@@ -174,15 +175,18 @@ export const USAGE = [
   "  web         [--port <n>] [--host <h>] [--cwd <path>] [--mcp-url <url>]",
   "                                                  run the web UI (default port 5180)",
   "  serve       --pg-url <dsn> [--host <h>] [--port <n>] [--token <t>]",
-  "              [--management-token <t>]",
+  "              [--management-token <t>] [--admin-token <t>]",
   "                                                  run the multi-tenant hub server (default port",
   "                                                  5190); NO --cwd/cq.toml — DSN resolves from",
   "                                                  --pg-url, else $CQ_LEDGER_PG_URL/$DATABASE_URL.",
-  "                                                  --token is REQUIRED for a non-loopback --host",
-  "                                                  management token must differ from --token",
-  "                                                  (Q273); once set, /mcp + the projects API need",
-  "                                                  Authorization: Bearer <token>, /ws needs ?token=",
-  "                                                  (the web UI reads/forwards it from its own URL).",
+  "                                                  PostgreSQL is private hub state. --token is",
+  "                                                  REQUIRED for a non-loopback --host; the",
+  "                                                  management token and --admin-token /",
+  "                                                  $CQ_SERVE_ADMIN_TOKEN must all differ from",
+  "                                                  --token (Q273). Ordinary /mcp + the projects",
+  "                                                  API need Authorization: Bearer <token>, /ws",
+  "                                                  needs ?token=. Project-admin MCP lives at",
+  "                                                  /p/<key>/admin/mcp and uses the admin token.",
   "",
   "commands:",
   "  init        [--cwd <path>] [--force] [--global] initialise the canonical ledger set",
@@ -222,31 +226,27 @@ export const USAGE = [
   "                                                  source is a local file path OR --stdin;",
   "                                                  --dest must be under logs/ (no escapes).",
   "  backup      [--cwd <path>]                      export a human-readable .cq dump of the",
-  "                                                  out-of-tree primary (xdg SQLite, or a",
-  "                                                  postgres tenant's rows, incl. logs either",
-  "                                                  way) to the target configured by",
-  "                                                  [ledger].backup (in-tree | orphan-branch);",
-  "                                                  write-only, never read back as a primary.",
-  "  restore     [--cwd <path>] [--yes|-y]           import a .cq dump (in-tree | orphan-branch,",
-  "                                                  per [ledger].backup) INTO the out-of-tree",
-  "                                                  primary (xdg SQLite, or a postgres tenant's",
-  "                                                  rows, incl. logs either way); disaster",
-  "                                                  recovery, no merge; refuses a non-empty",
-  "                                                  primary/tenant without --yes.",
-  "  migrate     [--cwd <path>] [--yes|-y] [--to postgres]",
+  "                                                  xdg primary, or of a remote cq serve tenant",
+  "                                                  via project-admin export; write-only, never",
+  "                                                  read back as a primary.",
+  "  restore     [--cwd <path>] [--yes|-y]           import a .cq dump INTO the xdg primary or a",
+  "                                                  remote tenant via project-admin import;",
+  "                                                  disaster recovery, no merge; refuses a",
+  "                                                  non-empty target without --yes.",
+  "  migrate     [--cwd <path>] [--yes|-y] [--to remote]",
   "                                                  one-shot migration; default (no --to): the",
   "                                                  LEGACY backend cq.toml names (fs .cq/ |",
   "                                                  git-object orphan ref), state AND logs, INTO",
   "                                                  the out-of-tree xdg primary; flips [ledger]",
   "                                                  backend to xdg; refuses a non-empty target",
-  "                                                  without --yes. `--to postgres` (requires",
-  "                                                  backend='xdg' already): the xdg primary,",
-  "                                                  state AND logs, INTO a Postgres tenant (DSN",
-  "                                                  via CQ_LEDGER_PG_URL / DATABASE_URL /",
-  "                                                  [ledger].url / PG* env); flips [ledger]",
-  "                                                  backend to postgres; hard-refuses a",
-  "                                                  non-empty tenant (no override). Either leg",
-  "                                                  leaves its source untouched.",
+  "                                                  without --yes. `--to remote` (requires",
+  "                                                  explicit backend='xdg'): uploads the xdg",
+  "                                                  primary through project-admin MCP",
+  "                                                  (CQ_LEDGER_SERVER_URL +",
+  "                                                  CQ_LEDGER_REMOTE_ADMIN_TOKEN) and flips",
+  "                                                  backend to remote. `--to postgres` is",
+  "                                                  retired. Either leg leaves its source",
+  "                                                  untouched.",
   "  gate run --worktree <path> --command-cwd <path> [--deadline <ISO-8601>] -- <command...>",
   "                                                  run one bounded process group under the",
   "                                                  canonical Git-worktree exclusive gate.",
@@ -1126,17 +1126,18 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
 
 
 /**
- * `cq migrate` (T504 / Q243, xdg->postgres leg T581): the explicit one-shot
- * LEGACY (fs | git-object) → xdg migration, or (`--to postgres`) the xdg →
- * postgres migration. The full logic lives in ./migrate.ts; this thin
+ * `cq migrate` (T504 / Q243, remote owner T731 / T736): the explicit one-shot
+ * LEGACY (fs | git-object) → xdg migration, or (`--to remote`) the xdg →
+ * cq serve tenant migration. The full logic lives in ./migrate.ts; this thin
  * wrapper bridges {@link SubcommandArgs} to its {@link MigrateArgs} and
  * threads the dispatcher IO (out/err + the shared confirmation IO).
  *
  * `args.to` is the RAW, unvalidated `--to` value (parseSubcommandArgs is
  * shared across every subcommand, so it stays lenient — see its doc). THIS
- * is the one place that validates it: `"postgres"` selects the xdg ->
- * postgres leg, absent (`null`) selects the default leg, and any OTHER
- * value is a usage error naming the one recognised value.
+ * is the one place that validates it: `"remote"` selects the xdg -> cq serve
+ * leg, absent (`null`) selects the default leg, `"postgres"` is refused as
+ * retired, and any OTHER value is a usage error naming the one recognised
+ * value.
  */
 export async function runMigrateCmd(
   args: SubcommandArgs,

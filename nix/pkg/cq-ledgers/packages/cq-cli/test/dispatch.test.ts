@@ -100,14 +100,13 @@ describe("dispatch", () => {
     expect(USAGE).toContain("log put");
   });
 
-  it("USAGE documents backend='postgres' on migrate/backup/restore, and serve's --pg-url (T584)", () => {
+  it("USAGE documents serve --pg-url and migrate --to remote (T736/T737)", () => {
     // serve: no --cwd/cq.toml at all — its own --pg-url / env DSN pointer.
     expect(USAGE).toContain("--pg-url");
     expect(USAGE).toContain("CQ_LEDGER_PG_URL");
-    // migrate --to postgres.
-    expect(USAGE).toContain("--to postgres");
-    // backup / restore: both name the postgres tenant alongside the xdg primary.
-    expect(USAGE).toContain("postgres tenant");
+    expect(USAGE).toContain("--admin-token");
+    expect(USAGE).toContain("--to remote");
+    expect(USAGE).toContain("CQ_LEDGER_REMOTE_ADMIN_TOKEN");
   });
 
   it("routes erase to its handler (nonexistent root => refuse exit 2, nothing to erase)", async () => {

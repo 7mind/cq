@@ -23,6 +23,17 @@ describe("T736 architecture [BA]", () => {
     expect(existsSync(path.join(pkg, "src/store/postgres/coherenceWatcher.ts"))).toBe(false);
   });
 
+  test("cq migrate no longer constructs a public postgres target", () => {
+    const migrate = readFileSync(
+      path.resolve(pkg, "../cq-cli/src/migrate.ts"),
+      "utf8",
+    );
+    expect(migrate).not.toContain("openPgPool");
+    expect(migrate).not.toContain("restoreDumpToPostgres");
+    expect(migrate).not.toContain("setLedgerBackend(args.cwd, \"postgres\")");
+    expect(migrate).toContain("runMigrateXdgToRemote");
+  });
+
   test("public product sources do not listen/notify", () => {
     const sources = walkTs(path.join(pkg, "src"));
     for (const file of sources) {

@@ -221,19 +221,14 @@ planners = ["opus"]
 # `cq migrate` (the one-shot legacy -> xdg importer). A root that still
 # carries a legacy in-tree .cq/ ledger while resolving to the xdg DEFAULT
 # gets a shadow warning — the in-tree data is not read until migrated.
-# "remote" selects the repository-backed cq serve service. "postgres" remains
-# an opt-in direct multi-tenant backend until its sole removal owner T736.
+# "remote" selects the repository-backed cq serve service. PostgreSQL is
+# private cq serve state, not a public checkout backend.
 #
 # Keys:
-#   backend   — storage backend: "xdg" (default) | "remote" | "postgres" | "fs" (legacy, deprecated) | "git-object" (legacy, deprecated)
+#   backend   — storage backend: "xdg" (default) | "remote" | "fs" (legacy, deprecated) | "git-object" (legacy, deprecated)
 #   serverUrl — required for remote: non-secret absolute HTTP(S) URL with no
 #               credentials, query, or fragment. The ordinary bearer secret
 #               comes only from CQ_LEDGER_REMOTE_TOKEN and never from cq.toml.
-#   url       — optional DSN for postgres backend (CREDENTIAL-LESS; env override required for credentials)
-#               Example: "postgres://localhost:5432/cq_ledger" (no user/password).
-#               Resolution precedence: CQ_LEDGER_PG_URL > DATABASE_URL > [ledger].url > PG* driver defaults.
-#               SECRET HYGIENE: Never commit plaintext passwords to [ledger].url.
-#               Use CQ_LEDGER_PG_URL or DATABASE_URL environment variables instead.
 #   branch    — git branch for the git-object backend (default: "cq-ledger")
 #   remote    — git remote for the git-object backend (default: "origin")
 #   backup    — human-readable markdown export/backup mode:
@@ -246,7 +241,7 @@ planners = ["opus"]
 # branch/remote keys are optional; the shown values are the defaults.
 #
 # [ledger]
-#   backend   = "git-object"   # "xdg" (default) | "postgres" | "fs" (legacy) | "git-object" (legacy)
+#   backend   = "git-object"   # "xdg" (default) | "remote" | "fs" (legacy) | "git-object" (legacy)
 #   branch    = "cq-ledger"    # git branch to store ledger objects on
 #   remote    = "origin"       # git remote to push/fetch ledger objects from
 #   backup    = "none"         # "none" (default) | "in-tree" | "orphan-branch"

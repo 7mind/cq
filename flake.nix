@@ -330,7 +330,7 @@
           # system. To add a system: set its entry to nixpkgs lib.fakeHash
           # (sha256-AAAA…), `nix build .#node-modules`, paste the reported `got:`.
           outputHash = {
-            "x86_64-linux" = "sha256-QmusCVAIh7fBs4rWWhiJ2W7s7HyNkkLEXzfjmyyCnUc=";
+            "x86_64-linux" = "sha256-bWl1yOIVweIhg84FVJGx+q/B9ZO4wEdGxAoZBCdSD74=";
             "aarch64-darwin" = "sha256-o6DHi9UeCgeseZFloOcjZpBKLL9LEEvNOIajCQHqWuE=";
           }.${system} or (throw "ledger-node-modules: no FOD hash pinned for ${system}");
         };

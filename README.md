@@ -145,10 +145,12 @@ services.cq-server.enable = true;   # binds 127.0.0.1:5190, provisions local Pos
 
 Set `host` / `port` to change the bind, `tokenFile` for a bearer token
 (required for a non-loopback bind; injected via `CQ_SERVE_TOKEN`, not a
-`ps`-visible flag), and `postgres.tune.{totalMemoryMB,maxConnections,ssd}` to
-size the database. See
-[`docs/drafts/20260722-1230-postgres-backend-and-cq-serve.md`](docs/drafts/20260722-1230-postgres-backend-and-cq-serve.md)
-for the full option reference.
+`ps`-visible flag), an admin token for project-admin MCP, and
+`postgres.tune.{totalMemoryMB,maxConnections,ssd}` to size the database.
+Checkouts never select `backend = "postgres"`; they use `backend = "remote"`
+and `CQ_LEDGER_REMOTE_TOKEN`. See
+[`docs/drafts/20260819-2230-g81-remote-owner.md`](docs/drafts/20260819-2230-g81-remote-owner.md)
+for the operator commands.
 
 ## Storage layout
 

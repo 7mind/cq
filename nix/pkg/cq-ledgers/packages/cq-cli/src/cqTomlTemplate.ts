@@ -34,8 +34,8 @@
  *    `--force`) keeps whatever backend it already has. The backup mode
  *    defaults to `none` (T494; unaffected). A commented `backend = "remote"`
  *    + required `serverUrl` example documents repository-backed operation;
- *    its bearer secret belongs only in `CQ_LEDGER_REMOTE_TOKEN`. The existing
- *    postgres example and DSN environment chain remain until T736.
+ *    its bearer secret belongs only in `CQ_LEDGER_REMOTE_TOKEN`. PostgreSQL
+ *    is private `cq serve` state and is not a public `[ledger]` backend.
  *  - `[project]` (T570/Q270) is documented, commented out: its one key
  *    (`name`) is a purely cosmetic display-name override — no credentials
  *    ever belong there either.
@@ -151,7 +151,6 @@ export const CQ_TOML_TEMPLATE: string = `\
 # "remote" selects a repository-backed cq serve endpoint; serverUrl is a
 # required, non-secret HTTP(S) URL. Its ordinary bearer secret comes only from
 # CQ_LEDGER_REMOTE_TOKEN and never from this file.
-# "postgres" remains an opt-in, direct multi-tenant backend until T736 (G81).
 # backup (default: "none") is OFF by default (Q244); projectId is an
 # optional committed project-identity key (Q246), needed only for a repo
 # with no stable git root commit (e.g. a shallow clone).

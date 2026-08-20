@@ -292,10 +292,14 @@ describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
   });
 
   it("does not document a public postgres backend or committed DSN (T736/T737)", () => {
-    expect(CQ_TOML_TEMPLATE).not.toContain('backend = "postgres"');
-    expect(CQ_TOML_TEMPLATE).toContain("CQ_LEDGER_REMOTE_TOKEN");
+    const example = readFileSync(EXAMPLE_PATH, "utf8");
+    for (const source of [CQ_TOML_TEMPLATE, example]) {
+      expect(source).not.toContain('backend = "postgres"');
+      expect(source).not.toMatch(/url\s*=\s*"postgres:\/\//);
+      expect(source).toContain("CQ_LEDGER_REMOTE_TOKEN");
+      expect(source).toContain('backend = "remote"');
+    }
     expect(CQ_TOML_TEMPLATE).toContain("CQ_LEDGER_REMOTE_ADMIN_TOKEN");
-    expect(CQ_TOML_TEMPLATE).toContain('backend = "remote"');
   });
 
   it("renders the remote backend schema without rendering its environment-only token (T723)", () => {

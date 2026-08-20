@@ -1,13 +1,15 @@
-# dev/ — local dev/test Postgres
+# dev/ — throwaway PostgreSQL for `cq serve` and hub-internal suites
 
-`@cq/ledger`'s Postgres backend (G81/M248) is exercised by a set of
-env-gated suites that skip cleanly when no server is reachable:
-`packages/ledger/test/postgres-*.test.ts`, `store-postgres.test.ts`,
-`multi-writer-stress-postgres.test.ts`, the postgres block of
-`backup-exporter.test.ts`, and the `packages/cq-cli/test/*-postgres.test.ts`
-suites (log-put / reset-erase / backup-restore). All of them gate on the
-same `CQ_TEST_PG_URL` environment variable (Q286) — a `postgres://` DSN
-pointing at a throwaway database.
+PostgreSQL is private `cq serve` state. Project checkouts use
+`backend = "remote"`; they do not set `backend = "postgres"`. The DSN below
+is for the hub process and for env-gated hub-internal tests.
+
+Operator commands: [`docs/drafts/20260819-2230-g81-remote-owner.md`](../../../../docs/drafts/20260819-2230-g81-remote-owner.md).
+
+Hub-internal suites (`packages/ledger/test/postgres-*.test.ts`,
+`store-postgres.test.ts`, `attestationStore-postgres.test.ts`, the
+`cq serve` live boot/routing tests) gate on `CQ_TEST_PG_URL` (Q286). Public
+CLI `*-postgres.test.ts` files now assert retirement, not a public backend.
 
 ## Bring one up with docker/podman compose
 
@@ -17,7 +19,7 @@ export CQ_TEST_PG_URL=postgres://cq:cq@localhost:5432/cq_test
 bun test   # run from nix/pkg/cq-ledgers/
 ```
 
-(`podman-compose -f dev/docker-compose.postgres.yml up -d` works the same
+(`podman compose -f dev/docker-compose.postgres.yml up -d` works the same
 way if you use podman instead of docker.)
 
 Tear down when done:
