@@ -277,7 +277,7 @@ async function settleRegisteredProcessGroups(
   if (
     callerGroup.status !== 0 ||
     !Number.isSafeInteger(callerPgid) ||
-    callerPgid <= 1
+    callerPgid < 1
   ) {
     throw new Error("cq gate: could not resolve the caller process group");
   }
