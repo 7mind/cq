@@ -11,6 +11,7 @@ import {
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
   isAttestationTombstone,
+  serializeWipArtifact,
   sequentialDispatchRandomBytes,
   type AttestationNamespace,
 } from "@cq/config";
@@ -20,6 +21,7 @@ import {
   createNodeSupervisedWorkerGateRunner,
   nodeSupervisedWorkerGateRunner,
   prepareManagedWorktree,
+  releaseManagedWorktree,
   settleProcessGroups,
   settleWorktreeGateCommands,
   type NodeSupervisedWorkerGateSettlement,
@@ -192,6 +194,7 @@ async function fixtureWithDispatchBase(
   runner: SupervisedWorkerGateRunner,
   dispatchBaseMode: DispatchBaseMode,
   now: () => string = () => "2026-08-12T20:00:00.000Z",
+  reservedGateWip = false,
 ) {
   sequence += 1;
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2081-gate-${sequence}-`));
@@ -258,6 +261,25 @@ async function fixtureWithDispatchBase(
     inputCapability: prepared.prepared.inputCapability,
   });
   await fs.writeFile(path.join(managed.handle.absolutePath, "file.txt"), "after\n");
+  const wipPath = `WIP-${managed.handle.taskId}.md`;
+  const wipBody = serializeWipArtifact({
+    id: managed.handle.taskId,
+    role: "implement-worker",
+    baseCommit: dispatchBaseCommit,
+    startedAt: "2026-08-12T20:00:00.000Z",
+    checkpoints: [
+      {
+        name: "trusted full gate",
+        status: "unmeasured",
+        body: "Awaiting the runner-owned parent gate.\n",
+      },
+    ],
+    complete: false,
+    openCheckpoints: ["trusted full gate"],
+  });
+  if (reservedGateWip) {
+    await fs.writeFile(path.join(managed.handle.absolutePath, wipPath), wipBody);
+  }
   if (capability.gitCommit === undefined) throw new Error("git_commit unavailable");
   const receipt = await capability.gitCommit({
     attestationId: prepared.prepared.attestationId,
@@ -273,6 +295,15 @@ async function fixtureWithDispatchBase(
         oldState: { mode: "100644", digest: sha256("before\n") },
         newState: { mode: "100644", digest: sha256("after\n") },
       },
+      ...(reservedGateWip
+        ? [
+            {
+              kind: "add" as const,
+              path: wipPath,
+              newState: { mode: "100644" as const, digest: sha256(wipBody) },
+            },
+          ]
+        : []),
     ],
   });
   const output = {
@@ -281,7 +312,7 @@ async function fixtureWithDispatchBase(
     resultCommit: receipt.newHead,
     branch: managed.handle.branch,
     actualWorktreePath: managed.handle.absolutePath,
-    filesTouched: ["file.txt"],
+    filesTouched: [...receipt.paths],
     gitReceipts: [{ ...receipt, objectOids: [...receipt.objectOids], paths: [...receipt.paths] }],
     checkSummary: "runner-supervised gate requested",
     summary: "candidate exact tip",
@@ -302,6 +333,7 @@ async function fixtureWithDispatchBase(
     runner,
     dispatchBaseCommit,
     expectedChild,
+    stateDir,
   };
 }
 
@@ -685,6 +717,29 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
         },
       },
     });
+  });
+
+  test("runner-owned green evidence closes only the exact reserved gate checkpoint without moving the tip", async () => {
+    const subject = await fixtureWithDispatchBase(
+      new GateDummy(),
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      true,
+    );
+    expect(await stageAndFinalize(subject)).toMatchObject({ state: "result-stored" });
+    expect(await git(subject.managed.handle.absolutePath, ["rev-parse", "HEAD"])).toBe(
+      subject.receipt.newHead,
+    );
+
+    const released = await releaseManagedWorktree(
+      {
+        handle: subject.managed.handle,
+        terminalDisposition: "done",
+        resultCommit: subject.receipt.newHead,
+      },
+      { stateDir: subject.stateDir },
+    );
+    expect(released).toMatchObject({ status: "released" });
   });
 
   test("D340 runs the default supervised worker gate in the child-started ledger MCP process [Behavioral-Progression Blackbox-GoodCommunication]", async () => {
