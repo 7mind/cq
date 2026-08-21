@@ -65,6 +65,7 @@ postgres_port="$(bun -e 'console.log(20_000 + crypto.getRandomValues(new Uint16A
   --encoding=UTF8 \
   --no-locale \
   >/dev/null
+postgres_started=1
 if ! "$postgres_bin/pg_ctl" \
   -D "$postgres_data" \
   -l "$postgres_log" \
@@ -73,7 +74,6 @@ if ! "$postgres_bin/pg_ctl" \
   cat "$postgres_log" >&2
   exit 1
 fi
-postgres_started=1
 
 "$postgres_bin/pg_isready" \
   --host=127.0.0.1 \

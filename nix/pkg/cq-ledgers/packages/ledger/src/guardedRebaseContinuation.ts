@@ -19,7 +19,6 @@
  * authorizes a prepare.
  */
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import { dirname, join } from "node:path";
 import type { DispatchGuardedRebaseBridge } from "@cq/config";
@@ -166,21 +165,22 @@ function runGit(
   args: readonly string[],
   input?: Uint8Array,
 ): Promise<GitResult> {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(
-      "git",
-      ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", ...args],
-      { cwd, env: trustedGitEnvironment(), stdio: ["pipe", "pipe", "pipe"] },
-    );
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.once("error", reject);
-    child.once("close", (code) => {
-      resolvePromise({ code: code ?? 1, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) });
-    });
-    child.stdin.end(input);
+  const child = Bun.spawn(
+    ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", ...args],
+    {
+      cwd,
+      env: trustedGitEnvironment(),
+      stdin: input ?? "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  return Promise.all([
+    child.exited,
+    new Response(child.stdout).arrayBuffer(),
+    new Response(child.stderr).arrayBuffer(),
+  ]).then(([code, stdout, stderr]) => {
+    return { code, stdout: Buffer.from(stdout), stderr: Buffer.from(stderr) };
   });
 }
 

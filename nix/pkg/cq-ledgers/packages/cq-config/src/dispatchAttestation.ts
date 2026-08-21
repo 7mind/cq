@@ -1098,11 +1098,11 @@ export interface AttestationEnvelope {
 }
 
 /**
- * A terminal record whose 24h envelope has expired. It retains ONLY the
- * namespace, the idempotency key, the payload/attestation/terminal digests and
- * the timestamps — deliberately NOT the output, the capability hash, the
- * completion proof, the prompt or catalog digest, the schema, or the abort
- * reason body. {@link TOMBSTONE_RETAINED_FIELDS} pins the key set.
+ * A terminal record whose 24h envelope has expired. It retains the mandatory
+ * identity/digest/timestamp fields and, only for an eligible parent-lost
+ * worker, its explicit recovery authority. It deliberately drops the output,
+ * capability hashes, completion proof, prompt/catalog digests, schema, and
+ * abort-reason body. {@link TOMBSTONE_RETAINED_FIELDS} pins the mandatory set.
  */
 export interface AttestationTombstone {
   readonly kind: "tombstone";
@@ -1125,7 +1125,7 @@ export interface AttestationTombstone {
 
 export type AttestationRow = AttestationEnvelope | AttestationTombstone;
 
-/** Exactly what a collapsed tombstone retains. Asserted by the collapse. */
+/** Mandatory fields every collapsed tombstone retains. */
 export const TOMBSTONE_RETAINED_FIELDS = [
   "kind",
   "namespace",
@@ -3599,10 +3599,10 @@ export function resolveDispatchRecovery(
 // ---------------------------------------------------------------------------
 
 /**
- * Collapse one terminal envelope to the minimal tombstone. Retains ONLY
- * {@link TOMBSTONE_RETAINED_FIELDS}; the output, the capability hash, the
- * completion proof, the prompt/catalog digests and the abort reason body are
- * dropped and unrecoverable.
+ * Collapse one terminal envelope to the minimal tombstone. Retains the
+ * mandatory {@link TOMBSTONE_RETAINED_FIELDS} and an eligible recovery binding;
+ * the output, capability hashes, completion proof, prompt/catalog digests and
+ * abort-reason body are dropped and unrecoverable.
  */
 export function collapseAttestationEnvelope(row: AttestationEnvelope): AttestationTombstone {
   if (row.terminalAt === undefined || row.terminalDigest === undefined) {
