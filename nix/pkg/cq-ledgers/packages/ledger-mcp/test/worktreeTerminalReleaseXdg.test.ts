@@ -7,13 +7,22 @@
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import {
+  InMemoryAttestationBackend,
+  InMemoryAttestationStore,
+  sequentialDispatchRandomBytes,
+  serializeWipArtifact,
+  type AttestationNamespace,
+} from "@cq/config";
 import {
   createLedgerStore,
   createWorktreeManageCapability,
@@ -22,13 +31,21 @@ import {
   MILESTONES_AMBIENT_ID,
   TASKS_LEDGER,
   type ManagedWorktreeHandle,
+  type DispatchCapability,
+  type SupervisedWorkerGateRunRequest,
+  type SupervisedWorkerGateRunResult,
+  type SupervisedWorkerGateRunner,
 } from "@cq/ledger";
+import { createDispatchCapability } from "../src/dispatchCapability.js";
 import { createManagementLedgerMcpServer } from "../src/main.js";
+import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
 
 const exec = promisify(execFile);
 const roots: string[] = [];
 const TASK_ID = "T336";
 const GOAL_ID = "G336";
+const cqCli = fileURLToPath(new URL("../../cq-cli/src/main.ts", import.meta.url));
+let dispatchSequence = 0;
 
 interface ReleaseEvidence {
   readonly worktreePresent: boolean;
@@ -39,6 +56,47 @@ interface ReleaseEvidence {
 interface ToolResult {
   readonly content?: readonly { readonly type: string; readonly text?: string }[];
   readonly isError?: boolean;
+}
+
+class GreenGateRunner implements SupervisedWorkerGateRunner {
+  readonly requests: SupervisedWorkerGateRunRequest[] = [];
+
+  async run(request: SupervisedWorkerGateRunRequest): Promise<SupervisedWorkerGateRunResult> {
+    this.requests.push(request);
+    return {
+      gateExitCode: 0,
+      passCount: 17,
+      failCount: 0,
+      gateDurationMs: 123,
+      capturedAt: "2026-08-21T00:00:01.000Z",
+      outputTail: "17 pass\n0 fail",
+    };
+  }
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function workerArtifactStore(): PromptArtifactStore {
+  const metadata = {
+    roleId: "implement-worker",
+    roleKind: "dispatched-subagent" as const,
+    artifactPath: "roles/implement-worker.md",
+    sidecarSchemaRoleId: "implement-worker",
+    promptSurface: "codex" as const,
+    promptDigest: "a".repeat(64),
+    schemaVersion: 9,
+  };
+  return {
+    readManifest: () => ({
+      bytes: new Uint8Array(),
+      roles: [metadata],
+      promptSurface: "codex",
+      catalogHash: "b".repeat(64),
+    }),
+    readRole: () => ({ metadata, bytes: new Uint8Array([1]) }),
+  };
 }
 
 interface ReleaseState {
@@ -112,15 +170,31 @@ async function withClient(
   run: (
     client: Client,
     store: Awaited<ReturnType<typeof createLedgerStore>>["store"],
+    dispatchCapability: DispatchCapability,
+    gateRunner: GreenGateRunner,
   ) => Promise<void>,
 ): Promise<void> {
   const resolved = await createLedgerStore(repositoryRoot);
+  dispatchSequence += 1;
+  const namespace: AttestationNamespace = {
+    backend: "xdg",
+    projectKey: `d336-dispatch-${String(dispatchSequence)}`,
+  };
+  const gateRunner = new GreenGateRunner();
+  const dispatchCapability = createDispatchCapability({
+    backend: new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace)),
+    promptArtifactStore: workerArtifactStore(),
+    repositoryRoot,
+    supervisedWorkerGateRunner: gateRunner,
+    randomBytes: sequentialDispatchRandomBytes(dispatchSequence * 32),
+  });
   const server = createManagementLedgerMcpServer({
     store: resolved.store,
     displayName: "D336 XDG fixture",
     configRoot: resolved.configRoot,
     ...(resolved.projectKey === undefined ? {} : { projectKey: resolved.projectKey }),
     repositoryRoot,
+    dispatchCapability,
     worktreeManage: createWorktreeManageCapability(repositoryRoot, { deps: { skipInstall: true } }),
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -130,7 +204,7 @@ async function withClient(
   try {
     expect(resolved.backend).toBe("xdg");
     expect(resolved.dbPath).toContain(process.env["XDG_STATE_HOME"]!);
-    await run(client, resolved.store);
+    await run(client, resolved.store, dispatchCapability, gateRunner);
   } finally {
     await client.close();
     await server.close();
@@ -220,7 +294,7 @@ describe("D336 production XDG terminal worktree release", () => {
       const repositoryRoot = await repository();
       const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
       const milestoneId = await seedLedger(repositoryRoot);
-      await withClient(repositoryRoot, async (client, store) => {
+      await withClient(repositoryRoot, async (client, store, dispatchCapability, gateRunner) => {
         decode<{ acknowledgement: { roots: string[] } }>(
           (await client.callTool({
             name: "workset",
@@ -234,20 +308,182 @@ describe("D336 production XDG terminal worktree release", () => {
           })) as ToolResult,
         );
         expect(prepared.status, JSON.stringify(prepared)).toBe("prepared");
-        await writeFile(
-          path.join(prepared.handle.absolutePath, "RESULT-T336.md"),
-          "merged result\n",
+        decode(
+          (await client.callTool({
+            name: "update_item",
+            arguments: { ledger_id: "tasks", item_id: TASK_ID, status: "wip" },
+          })) as ToolResult,
         );
-        await git(prepared.handle.absolutePath, ["add", "RESULT-T336.md"]);
-        await git(prepared.handle.absolutePath, ["commit", "-q", "-m", "D336 result"]);
-        const resultCommit = await git(prepared.handle.absolutePath, ["rev-parse", "HEAD"]);
-        await git(repositoryRoot, [
+        const expectedChild = { childId: "child-d336", runId: "run-d336" };
+        const dispatch = decode<{
+          accepted: true;
+          prepared: {
+            attestationId: string;
+            generation: number;
+            inputCapability: { scope: "fetch-input"; token: string };
+            resultCapability: { scope: "store-result"; token: string };
+            gitChangeCapability: { scope: "git-change"; token: string };
+            parentGateCapability: { scope: "parent-gate"; token: string };
+            promptProvenance: {
+              roleId: string;
+              version: number;
+              promptDigest: string;
+              inputDigest: string;
+            };
+          };
+        }>(
+          (await client.callTool({
+            name: "prepare_dispatch",
+            arguments: {
+              roleId: "implement-worker",
+              input: {
+                taskId: TASK_ID,
+                headline: "Release exact D336 result",
+                description: "Exercise runner-owned WIP closure through XDG MCP",
+                acceptance: "merge and terminal release complete without broadening roots",
+                worktreePath: prepared.handle.absolutePath,
+                branch: prepared.handle.branch,
+                baseCommit,
+                round: 0,
+                startingCommit: baseCommit,
+              },
+              idempotencyKey: "d336-terminal-release",
+              timeoutMs: 600_000,
+              expectedChild,
+            },
+          })) as ToolResult,
+        );
+        decode(
+          (await client.callTool({
+            name: "fetch_dispatch_input",
+            arguments: {
+              attestationId: dispatch.prepared.attestationId,
+              generation: dispatch.prepared.generation,
+              inputCapability: dispatch.prepared.inputCapability,
+            },
+          })) as ToolResult,
+        );
+
+        const resultBody = "merged result\n";
+        const wipPath = `WIP-${TASK_ID}.md`;
+        const wipBody = serializeWipArtifact({
+          id: TASK_ID,
+          role: "implement-worker",
+          baseCommit,
+          startedAt: "2026-08-21T00:00:00.000Z",
+          checkpoints: [
+            {
+              name: "trusted full gate",
+              status: "unmeasured",
+              body: "Awaiting runner-owned evidence.\n",
+            },
+          ],
+          complete: false,
+          openCheckpoints: ["trusted full gate"],
+        });
+        await writeFile(path.join(prepared.handle.absolutePath, "RESULT-T336.md"), resultBody);
+        await writeFile(path.join(prepared.handle.absolutePath, wipPath), wipBody);
+        const receipt = decode<{
+          kind: "cq-git-change-receipt";
+          newHead: string;
+          paths: string[];
+        }>(
+          (await client.callTool({
+            name: "git_commit",
+            arguments: {
+              attestationId: dispatch.prepared.attestationId,
+              generation: dispatch.prepared.generation,
+              gitChangeCapability: dispatch.prepared.gitChangeCapability,
+              operationId: "d336-result-v1",
+              expectedHead: baseCommit,
+              message: "D336 supervised result",
+              changes: [
+                {
+                  kind: "add",
+                  path: "RESULT-T336.md",
+                  newState: { mode: "100644", digest: sha256(resultBody) },
+                },
+                {
+                  kind: "add",
+                  path: wipPath,
+                  newState: { mode: "100644", digest: sha256(wipBody) },
+                },
+              ],
+            },
+          })) as ToolResult,
+        );
+        const resultCommit = receipt.newHead;
+        const output = {
+          taskId: TASK_ID,
+          status: "pass",
+          resultCommit,
+          branch: prepared.handle.branch,
+          actualWorktreePath: prepared.handle.absolutePath,
+          filesTouched: [...receipt.paths],
+          gitReceipts: [receipt],
+          checkSummary: "runner-supervised gate requested",
+          summary: "D336 exact-tip result",
+          baseVerification: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit,
+            headCommit: resultCommit,
+          },
+        };
+        expect(
+          decode<{ state: string }>(
+            (await client.callTool({
+              name: "store_result",
+              arguments: { resultCapability: dispatch.prepared.resultCapability, output },
+            })) as ToolResult,
+          ).state,
+        ).toBe("gate-pending");
+        if (dispatchCapability.finalizeParentGate === undefined) {
+          throw new Error("parent gate finalization unavailable");
+        }
+        expect(
+          (
+            await dispatchCapability.finalizeParentGate({
+              attestationId: dispatch.prepared.attestationId,
+              generation: dispatch.prepared.generation,
+              parentGateCapability: dispatch.prepared.parentGateCapability,
+            })
+          ).state,
+        ).toBe("result-stored");
+        expect(gateRunner.requests).toHaveLength(1);
+        decode(
+          (await client.callTool({
+            name: "confirm_dispatch_completion",
+            arguments: {
+              attestationId: dispatch.prepared.attestationId,
+              generation: dispatch.prepared.generation,
+              nativeCompletion: {
+                kind: "native-completion",
+                actor: "trusted-parent",
+                ...expectedChild,
+                completedAt: "2026-08-21T00:00:02.000Z",
+              },
+              expectedProvenance: {
+                roleId: dispatch.prepared.promptProvenance.roleId,
+                version: dispatch.prepared.promptProvenance.version,
+                promptDigest: dispatch.prepared.promptProvenance.promptDigest,
+                inputDigest: dispatch.prepared.promptProvenance.inputDigest,
+              },
+            },
+          })) as ToolResult,
+        );
+        await exec(process.execPath, [
+          cqCli,
+          "gate",
+          "git-effect",
+          "--operation",
           "merge",
-          "--no-ff",
-          "--no-gpg-sign",
-          prepared.handle.branch,
-          "-m",
-          "merge D336",
+          "--cwd",
+          repositoryRoot,
+          "--task-id",
+          TASK_ID,
+          "--commit",
+          resultCommit,
         ]);
 
         const updated = decode<{ item: { status: string } }>(
