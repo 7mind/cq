@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  assessWipArtifactClosure,
   parseWipArtifact,
   serializeWipArtifact,
   WipArtifactParseError,
@@ -62,8 +63,7 @@ describe("WIP artifacts (T1284)", () => {
       {
         name: "implementation",
         status: "done",
-        body:
-          "A prose heading follows.\n\n## verification\n\nIt remains implementation evidence.\n\n```md\n## verification <!-- cq:wip-checkpoint -->\n```\n",
+        body: "A prose heading follows.\n\n## verification\n\nIt remains implementation evidence.\n\n```md\n## verification <!-- cq:wip-checkpoint -->\n```\n",
       },
       { name: "verification", status: "todo", body: "Run the full gate.\n" },
     ]);
@@ -173,6 +173,52 @@ describe("WIP artifacts (T1284)", () => {
     );
     expect(parsed.complete).toBe(false);
     expect(parsed.openCheckpoints).toEqual(["timing", "review", "publish", "follow-up"]);
+  });
+
+  it("projects only the exact task's unmeasured trusted full gate checkpoint", () => {
+    const exact = artifact([
+      { name: "implementation", status: "done", body: "complete\n" },
+      { name: "trusted full gate", status: "unmeasured", body: "runner-owned\n" },
+    ]);
+    expect(assessWipArtifactClosure(CANDIDATE_PATH, exact, { taskId: "T1284" })).toEqual({
+      status: "clean",
+    });
+    expect(
+      assessWipArtifactClosure(
+        CANDIDATE_PATH,
+        artifact([{ name: "trusted full gate", status: "todo", body: "" }]),
+        { taskId: "T1284" },
+      ),
+    ).toEqual({ status: "open", openCheckpoints: ["trusted full gate"] });
+    expect(
+      assessWipArtifactClosure(
+        CANDIDATE_PATH,
+        artifact([
+          { name: "trusted full gate", status: "unmeasured", body: "" },
+          { name: "review", status: "todo", body: "" },
+        ]),
+        { taskId: "T1284" },
+      ),
+    ).toEqual({ status: "open", openCheckpoints: ["review"] });
+  });
+
+  it("rejects foreign filenames, task ids, and roles under trusted projection", () => {
+    const exact = artifact([
+      { name: "trusted full gate", status: "unmeasured", body: "runner-owned\n" },
+    ]);
+    expect(assessWipArtifactClosure("WIP-T2234.md", exact, { taskId: "T1284" })).toMatchObject({
+      status: "foreign",
+    });
+    expect(
+      assessWipArtifactClosure(CANDIDATE_PATH, { ...exact, id: "T2235" }, { taskId: "T1284" }),
+    ).toMatchObject({ status: "foreign" });
+    expect(
+      assessWipArtifactClosure(
+        CANDIDATE_PATH,
+        { ...exact, role: "implement-reviewer" },
+        { taskId: "T1284" },
+      ),
+    ).toMatchObject({ status: "foreign" });
   });
 
   it("parses a valid hand-written artifact without body restrictions", () => {

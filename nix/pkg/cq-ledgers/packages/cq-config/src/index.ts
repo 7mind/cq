@@ -489,10 +489,18 @@ export {
 } from "./promptCatalogStore.js";
 export type { ValidationError, ValidationResult } from "./validation.js";
 export { validateAgainstSchema } from "./validation.js";
-export type { WipArtifactCheckpoint, WipArtifact, WipCheckpointStatus } from "./wipArtifact.js";
+export type {
+  WipArtifactCheckpoint,
+  WipArtifact,
+  WipArtifactClosureAssessment,
+  WipCheckpointStatus,
+  WipClosureProjection,
+} from "./wipArtifact.js";
 export {
+  TRUSTED_FULL_GATE_CHECKPOINT,
   WIP_CHECKPOINT_STATUSES,
   WipArtifactParseError,
+  assessWipArtifactClosure,
   parseWipArtifact,
   serializeWipArtifact,
 } from "./wipArtifact.js";

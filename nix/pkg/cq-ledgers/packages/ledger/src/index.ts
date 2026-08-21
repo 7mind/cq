@@ -110,10 +110,7 @@ export {
   isRestrictiveInactiveWorkset,
   WorksetRootError,
 } from "./worksetGraph.js";
-export {
-  closedGraphIsTargetAdmitted,
-  requireWorksetStore,
-} from "./worksetAccess.js";
+export { closedGraphIsTargetAdmitted, requireWorksetStore } from "./worksetAccess.js";
 export {
   WORKSET_PROJECTION_SCHEMA,
   createWorksetOperation,
@@ -398,6 +395,7 @@ export {
   buildManagedWorktreeInstallPlan,
   discoverBunWorkspaceRoot,
   findOpenWipCheckpoints,
+  assertManagedWorktreeWipClosure,
   generateUuidV7,
   isUuidV7,
   listManagedLiveWorktrees,
@@ -670,10 +668,7 @@ export type {
   XdgWatcherFactory,
   XdgWatcherLease,
 } from "./store/xdgWatcherLease.js";
-export type {
-  ResolvedLedgerStore,
-  XdgCoherenceWatcher,
-} from "./store/createLedgerStore.js";
+export type { ResolvedLedgerStore, XdgCoherenceWatcher } from "./store/createLedgerStore.js";
 export {
   LEDGER_SERVER_CONSTRUCTIONS,
   SINGLE_PROJECT_CONSTRUCTIONS,

@@ -1,6 +1,7 @@
 /** A self-describing partial-work artifact that can be safely harvested. */
 
 export const WIP_CHECKPOINT_STATUSES = ["done", "todo", "unmeasured"] as const;
+export const TRUSTED_FULL_GATE_CHECKPOINT = "trusted full gate";
 const WIP_CHECKPOINT_MARKER = "<!-- cq:wip-checkpoint -->";
 
 export type WipCheckpointStatus = (typeof WIP_CHECKPOINT_STATUSES)[number];
@@ -19,6 +20,59 @@ export interface WipArtifact {
   readonly checkpoints: readonly WipArtifactCheckpoint[];
   readonly complete: boolean;
   readonly openCheckpoints: readonly string[];
+}
+
+export interface WipClosureProjection {
+  readonly taskId: string;
+}
+
+export type WipArtifactClosureAssessment =
+  | { readonly status: "clean" }
+  | { readonly status: "open"; readonly openCheckpoints: readonly string[] }
+  | { readonly status: "foreign"; readonly detail: string };
+
+/**
+ * Project the one runner-owned checkpoint without rewriting the artifact.
+ * Coordinate and gate-evidence authentication remains the caller's boundary;
+ * this policy decides only which parsed checkpoint table is admissible.
+ */
+export function assessWipArtifactClosure(
+  candidatePath: string,
+  artifact: WipArtifact,
+  projection?: WipClosureProjection,
+): WipArtifactClosureAssessment {
+  if (projection === undefined) {
+    return artifact.openCheckpoints.length === 0
+      ? { status: "clean" }
+      : { status: "open", openCheckpoints: artifact.openCheckpoints };
+  }
+
+  const candidateName = candidatePath.split(/[\\/]/u).at(-1);
+  const expectedName = `WIP-${projection.taskId}.md`;
+  if (candidateName !== expectedName) {
+    return { status: "foreign", detail: `foreign WIP artifact ${String(candidateName)}` };
+  }
+  if (artifact.id !== projection.taskId) {
+    return {
+      status: "foreign",
+      detail: `WIP task ${artifact.id} does not match ${projection.taskId}`,
+    };
+  }
+  if (artifact.role !== "implement-worker") {
+    return {
+      status: "foreign",
+      detail: `WIP role ${artifact.role} cannot receive trusted gate projection`,
+    };
+  }
+
+  const openCheckpoints = artifact.checkpoints
+    .filter(
+      (checkpoint) =>
+        checkpoint.status !== "done" &&
+        !(checkpoint.name === TRUSTED_FULL_GATE_CHECKPOINT && checkpoint.status === "unmeasured"),
+    )
+    .map((checkpoint) => checkpoint.name);
+  return openCheckpoints.length === 0 ? { status: "clean" } : { status: "open", openCheckpoints };
 }
 
 type WipArtifactHeader = {

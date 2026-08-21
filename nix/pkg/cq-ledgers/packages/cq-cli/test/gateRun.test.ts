@@ -1,8 +1,15 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as processControl from "@cq/process-control";
+import { serializeWipArtifact } from "@cq/config";
+import {
+  TASKS_LEDGER,
+  createManagementLedgerStore,
+  listManagedLiveWorktrees,
+  prepareManagedWorktree,
+} from "@cq/ledger";
 import { dispatch, type DispatchIo } from "../src/main.js";
 import { runGateGitEffect } from "../src/gateGitEffect.js";
 import { GATE_DEADLINE_EXIT_CODE, runGateRun } from "../src/gateRun.js";
@@ -23,6 +30,21 @@ async function repositoryFixture(): Promise<string> {
   const init = Bun.spawnSync(["git", "init", "-q", root]);
   if (init.exitCode !== 0) throw new Error(init.stderr.toString());
   return root;
+}
+
+function git(cwd: string, args: readonly string[]): string {
+  const result = Bun.spawnSync(["git", ...args], {
+    cwd,
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "T1984",
+      GIT_AUTHOR_EMAIL: "t1984@example.invalid",
+      GIT_COMMITTER_NAME: "T1984",
+      GIT_COMMITTER_EMAIL: "t1984@example.invalid",
+    },
+  });
+  if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+  return result.stdout.toString().trim();
 }
 
 afterEach(async () => {
@@ -177,9 +199,9 @@ describe("cq gate run absolute phase deadline [BA]", () => {
   }
 
   test("rejects deadline values outside the dispatch UTC timestamp grammar", async () => {
-    await expect(
-      runGateRun(args("2099-08-03T12:34:56"), { err: () => {} }),
-    ).rejects.toThrow("dispatch UTC timestamp");
+    await expect(runGateRun(args("2099-08-03T12:34:56"), { err: () => {} })).rejects.toThrow(
+      "dispatch UTC timestamp",
+    );
   });
 
   test("does not launch when gate acquisition consumes the remaining window", async () => {
@@ -200,12 +222,15 @@ describe("cq gate run absolute phase deadline [BA]", () => {
       const outcome = await runGateRun(args(new Date(deadlineMs).toISOString()), {
         err: () => {},
       });
-      expect({ outcome, launchCalls: launch.mock.calls.length, closeCalls: close.mock.calls.length })
-        .toEqual({
-          outcome: { exitCode: GATE_DEADLINE_EXIT_CODE },
-          launchCalls: 0,
-          closeCalls: 1,
-        });
+      expect({
+        outcome,
+        launchCalls: launch.mock.calls.length,
+        closeCalls: close.mock.calls.length,
+      }).toEqual({
+        outcome: { exitCode: GATE_DEADLINE_EXIT_CODE },
+        launchCalls: 0,
+        closeCalls: 1,
+      });
     } finally {
       close.mockRestore();
       launch.mockRestore();
@@ -377,6 +402,78 @@ describe("cq gate git-effect [T1984]", () => {
         operationId: "has spaces",
       }),
     ).rejects.toThrow("--operation-id must be one stable operation id");
+  });
+
+  test("guarded merge rejects the inherited T2234/T2235 WIP tree before mutating integration, task, worktree, branch, or registry", async () => {
+    const previousStateHome = process.env["XDG_STATE_HOME"];
+    const stateHome = await mkdtemp(join(tmpdir(), "cq-gate-merge-xdg-"));
+    roots.push(stateHome);
+    process.env["XDG_STATE_HOME"] = stateHome;
+    let store: Awaited<ReturnType<typeof createManagementLedgerStore>> | undefined;
+    try {
+      const root = await repositoryFixture();
+      git(root, ["branch", "-M", "main"]);
+      const workspace = join(root, "nix", "pkg", "cq-ledgers");
+      await mkdir(workspace, { recursive: true });
+      await writeFile(
+        join(root, "cq.toml"),
+        `[ledger]\nbackend = "xdg"\nprojectId = "t1984-${crypto.randomUUID()}"\n`,
+      );
+      await writeFile(join(workspace, "package.json"), '{"name":"t1984","private":true}\n');
+      await writeFile(join(workspace, "bun.lock"), "{}\n");
+      await writeFile(join(root, ".gitignore"), ".claude/worktrees/\nnode_modules/\n");
+      await writeFile(join(root, "tracked.txt"), "base\n");
+      git(root, ["add", "."]);
+      git(root, ["commit", "-q", "-m", "base"]);
+      const base = git(root, ["rev-parse", "HEAD"]);
+
+      store = await createManagementLedgerStore(root);
+      const milestone = await store.store.createMilestone({ title: "T1984 guarded merge" });
+      await store.store.createItem(TASKS_LEDGER, milestone.id, {
+        id: "T1984",
+        status: "wip",
+        fields: { headline: "Guard WIP closure" },
+      });
+      const prepared = await prepareManagedWorktree(
+        { repositoryRoot: root, taskId: "T1984", baseCommit: base },
+        { skipInstall: true, bunWorkspaceRoot: workspace },
+      );
+      if (prepared.status !== "prepared") throw new Error(`prepare ${prepared.status}`);
+      for (const taskId of ["T2234", "T2235"] as const) {
+        await writeFile(
+          join(prepared.handle.absolutePath, `WIP-${taskId}.md`),
+          serializeWipArtifact({
+            id: taskId,
+            role: "implement-worker",
+            baseCommit: base,
+            startedAt: "2026-08-21T00:00:00.000Z",
+            checkpoints: [{ name: "trusted full gate", status: "unmeasured", body: "inherited\n" }],
+            complete: false,
+            openCheckpoints: ["trusted full gate"],
+          }),
+        );
+      }
+      git(prepared.handle.absolutePath, ["add", "WIP-T2234.md", "WIP-T2235.md"]);
+      git(prepared.handle.absolutePath, ["commit", "-q", "-m", "inherited WIP tree"]);
+      const resultCommit = git(prepared.handle.absolutePath, ["rev-parse", "HEAD"]);
+      const taskStatus = store.store.fetchItem(TASKS_LEDGER, "T1984").status;
+      const liveBefore = await listManagedLiveWorktrees(root, "T1984");
+
+      await expect(
+        runGateGitEffect({ operation: "merge", cwd: root, taskId: "T1984", commit: resultCommit }),
+      ).rejects.toThrow("managed WIP closure denied open checkpoints");
+      expect(git(root, ["rev-parse", "HEAD"])).toBe(base);
+      expect(store.store.fetchItem(TASKS_LEDGER, "T1984").status).toBe(taskStatus);
+      expect(await stat(prepared.handle.absolutePath).then((entry) => entry.isDirectory())).toBe(
+        true,
+      );
+      expect(git(root, ["rev-parse", `refs/heads/${prepared.handle.branch}`])).toBe(resultCommit);
+      expect(await listManagedLiveWorktrees(root, "T1984")).toEqual(liveBefore);
+    } finally {
+      await store?.store.dispose();
+      if (previousStateHome === undefined) delete process.env["XDG_STATE_HOME"];
+      else process.env["XDG_STATE_HOME"] = previousStateHome;
+    }
   });
 
   test("rejects untyped operations before invoking the trusted runner [Behavioral-Active Blackbox-Atomic]", async () => {

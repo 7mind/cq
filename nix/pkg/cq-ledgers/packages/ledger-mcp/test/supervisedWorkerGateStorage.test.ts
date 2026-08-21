@@ -18,10 +18,13 @@ import {
 import {
   SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS,
   SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
+  assertManagedWorktreeWipClosure,
   createNodeSupervisedWorkerGateRunner,
+  listManagedLiveWorktrees,
   nodeSupervisedWorkerGateRunner,
   prepareManagedWorktree,
   releaseManagedWorktree,
+  resolveManagedWorktreeDispatchBinding,
   settleProcessGroups,
   settleWorktreeGateCommands,
   type NodeSupervisedWorkerGateSettlement,
@@ -189,12 +192,13 @@ class ClockAdvancingGateDummy implements SupervisedWorkerGateRunner {
 }
 
 type DispatchBaseMode = "managed" | "descendant";
+type WipFixtureMode = false | "exact" | "inherited" | "malformed";
 
 async function fixtureWithDispatchBase(
   runner: SupervisedWorkerGateRunner,
   dispatchBaseMode: DispatchBaseMode,
   now: () => string = () => "2026-08-12T20:00:00.000Z",
-  reservedGateWip = false,
+  wipFixture: WipFixtureMode = false,
 ) {
   sequence += 1;
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2081-gate-${sequence}-`));
@@ -261,24 +265,37 @@ async function fixtureWithDispatchBase(
     inputCapability: prepared.prepared.inputCapability,
   });
   await fs.writeFile(path.join(managed.handle.absolutePath, "file.txt"), "after\n");
-  const wipPath = `WIP-${managed.handle.taskId}.md`;
-  const wipBody = serializeWipArtifact({
-    id: managed.handle.taskId,
-    role: "implement-worker",
-    baseCommit: dispatchBaseCommit,
-    startedAt: "2026-08-12T20:00:00.000Z",
-    checkpoints: [
-      {
-        name: "trusted full gate",
-        status: "unmeasured",
-        body: "Awaiting the runner-owned parent gate.\n",
-      },
-    ],
-    complete: false,
-    openCheckpoints: ["trusted full gate"],
-  });
-  if (reservedGateWip) {
-    await fs.writeFile(path.join(managed.handle.absolutePath, wipPath), wipBody);
+  const wipFiles: readonly { readonly path: string; readonly body: string }[] =
+    wipFixture === "malformed"
+      ? [{ path: `WIP-${managed.handle.taskId}.md`, body: "not a WIP artifact\n" }]
+      : (wipFixture === "exact"
+          ? [{ taskId: managed.handle.taskId, path: `WIP-${managed.handle.taskId}.md` }]
+          : wipFixture === "inherited"
+            ? [
+                { taskId: "T2234", path: "WIP-T2234.md" },
+                { taskId: "T2235", path: "WIP-T2235.md" },
+              ]
+            : []
+        ).map(({ taskId, path: wipPath }) => ({
+          path: wipPath,
+          body: serializeWipArtifact({
+            id: taskId,
+            role: "implement-worker",
+            baseCommit: dispatchBaseCommit,
+            startedAt: "2026-08-12T20:00:00.000Z",
+            checkpoints: [
+              {
+                name: "trusted full gate",
+                status: "unmeasured",
+                body: "Awaiting the runner-owned parent gate.\n",
+              },
+            ],
+            complete: false,
+            openCheckpoints: ["trusted full gate"],
+          }),
+        }));
+  for (const wip of wipFiles) {
+    await fs.writeFile(path.join(managed.handle.absolutePath, wip.path), wip.body);
   }
   if (capability.gitCommit === undefined) throw new Error("git_commit unavailable");
   const receipt = await capability.gitCommit({
@@ -295,15 +312,11 @@ async function fixtureWithDispatchBase(
         oldState: { mode: "100644", digest: sha256("before\n") },
         newState: { mode: "100644", digest: sha256("after\n") },
       },
-      ...(reservedGateWip
-        ? [
-            {
-              kind: "add" as const,
-              path: wipPath,
-              newState: { mode: "100644" as const, digest: sha256(wipBody) },
-            },
-          ]
-        : []),
+      ...wipFiles.map((wip) => ({
+        kind: "add" as const,
+        path: wip.path,
+        newState: { mode: "100644" as const, digest: sha256(wip.body) },
+      })),
     ],
   });
   const output = {
@@ -435,8 +448,7 @@ async function reapD342MarkerGroup(markerPath: string): Promise<void> {
 }
 
 type D342RootFault =
-  | { readonly kind: "reject"; readonly detail: string }
-  | { readonly kind: "survivors" };
+  { readonly kind: "reject"; readonly detail: string } | { readonly kind: "survivors" };
 
 /** Hand-written worktree-arm wrapper: records the call, settles for real, then injects. */
 class D342WorktreeSettlement {
@@ -724,12 +736,27 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       new GateDummy(),
       "managed",
       () => "2026-08-12T20:00:00.000Z",
-      true,
+      "exact",
     );
     expect(await stageAndFinalize(subject)).toMatchObject({ state: "result-stored" });
     expect(await git(subject.managed.handle.absolutePath, ["rev-parse", "HEAD"])).toBe(
       subject.receipt.newHead,
     );
+    const binding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: subject.managed.handle.repositoryRoot,
+        taskId: subject.managed.handle.taskId,
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+      },
+      { stateDir: subject.stateDir },
+    );
+    if (binding === null) throw new Error("expected live managed binding");
+    await expect(
+      assertManagedWorktreeWipClosure(binding, subject.receipt.newHead, {
+        stateDir: subject.stateDir,
+      }),
+    ).resolves.toBeUndefined();
 
     const released = await releaseManagedWorktree(
       {
@@ -740,6 +767,130 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       { stateDir: subject.stateDir },
     );
     expect(released).toMatchObject({ status: "released" });
+  });
+
+  test("pre-merge WIP closure admits the exact task and rejects the inherited T2234/T2235 tree without mutation", async () => {
+    const subject = await fixtureWithDispatchBase(
+      new GateDummy(),
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      "inherited",
+    );
+    expect(await stageAndFinalize(subject)).toMatchObject({ state: "result-stored" });
+    const binding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: subject.managed.handle.repositoryRoot,
+        taskId: subject.managed.handle.taskId,
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+      },
+      { stateDir: subject.stateDir },
+    );
+    if (binding === null) throw new Error("expected live managed binding");
+    const integrationHead = await git(subject.managed.handle.repositoryRoot, ["rev-parse", "HEAD"]);
+    const branchHead = await git(subject.managed.handle.absolutePath, ["rev-parse", "HEAD"]);
+    const liveBefore = await listManagedLiveWorktrees(
+      subject.managed.handle.repositoryRoot,
+      subject.managed.handle.taskId,
+      subject.stateDir,
+    );
+
+    await expect(
+      assertManagedWorktreeWipClosure(binding, subject.receipt.newHead, {
+        stateDir: subject.stateDir,
+      }),
+    ).rejects.toThrow(/foreign WIP artifact WIP-T223[45]\.md/u);
+    expect(await git(subject.managed.handle.repositoryRoot, ["rev-parse", "HEAD"])).toBe(
+      integrationHead,
+    );
+    expect(await git(subject.managed.handle.absolutePath, ["rev-parse", "HEAD"])).toBe(branchHead);
+    expect(
+      await listManagedLiveWorktrees(
+        subject.managed.handle.repositoryRoot,
+        subject.managed.handle.taskId,
+        subject.stateDir,
+      ),
+    ).toEqual(liveBefore);
+  });
+
+  test("pre-merge WIP closure denies missing, malformed, stale, and coordinate-mismatched evidence", async () => {
+    const missing = await fixtureWithDispatchBase(
+      new GateDummy(),
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      "exact",
+    );
+    const missingBinding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: missing.managed.handle.repositoryRoot,
+        taskId: missing.managed.handle.taskId,
+        worktreePath: missing.managed.handle.absolutePath,
+        branch: missing.managed.handle.branch,
+      },
+      { stateDir: missing.stateDir },
+    );
+    if (missingBinding === null) throw new Error("expected missing-evidence binding");
+    await expect(
+      assertManagedWorktreeWipClosure(missingBinding, missing.receipt.newHead, {
+        stateDir: missing.stateDir,
+      }),
+    ).rejects.toThrow("trusted full gate");
+
+    const malformed = await fixtureWithDispatchBase(
+      new GateDummy(),
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      "malformed",
+    );
+    expect(await stageAndFinalize(malformed)).toMatchObject({ state: "result-stored" });
+    const malformedBinding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: malformed.managed.handle.repositoryRoot,
+        taskId: malformed.managed.handle.taskId,
+        worktreePath: malformed.managed.handle.absolutePath,
+        branch: malformed.managed.handle.branch,
+      },
+      { stateDir: malformed.stateDir },
+    );
+    if (malformedBinding === null) throw new Error("expected malformed-evidence binding");
+    await expect(
+      assertManagedWorktreeWipClosure(malformedBinding, malformed.receipt.newHead, {
+        stateDir: malformed.stateDir,
+      }),
+    ).rejects.toThrow("malformed artifact");
+
+    const stale = await fixtureWithDispatchBase(
+      new GateDummy(),
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      "exact",
+    );
+    expect(await stageAndFinalize(stale)).toMatchObject({ state: "result-stored" });
+    await fs.writeFile(path.join(stale.managed.handle.absolutePath, "moved.txt"), "moved\n");
+    await git(stale.managed.handle.absolutePath, ["add", "moved.txt"]);
+    await git(stale.managed.handle.absolutePath, ["commit", "-q", "-m", "move candidate tip"]);
+    const movedTip = await git(stale.managed.handle.absolutePath, ["rev-parse", "HEAD"]);
+    const staleBinding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: stale.managed.handle.repositoryRoot,
+        taskId: stale.managed.handle.taskId,
+        worktreePath: stale.managed.handle.absolutePath,
+        branch: stale.managed.handle.branch,
+      },
+      { stateDir: stale.stateDir },
+    );
+    if (staleBinding === null) throw new Error("expected stale-evidence binding");
+    await expect(
+      assertManagedWorktreeWipClosure(staleBinding, movedTip, { stateDir: stale.stateDir }),
+    ).rejects.toThrow("trusted full gate");
+    await expect(
+      assertManagedWorktreeWipClosure(
+        { ...staleBinding, handleToken: "substituted-token" },
+        movedTip,
+        { stateDir: stale.stateDir },
+      ),
+    ).rejects.toThrow("binding changed at handleToken");
+    expect(await git(stale.managed.handle.absolutePath, ["rev-parse", "HEAD"])).toBe(movedTip);
   });
 
   test("D340 runs the default supervised worker gate in the child-started ledger MCP process [Behavioral-Progression Blackbox-GoodCommunication]", async () => {

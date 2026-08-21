@@ -16,7 +16,10 @@ import {
   type SettleProcessGroupsResult,
   type SettleWorktreeGateCommandsOptions,
 } from "@cq/process-control";
-import { assertManagedWorktreeDispatchBindingLive } from "./managedWorktree.js";
+import {
+  assertManagedWorktreeDispatchBindingLive,
+  recordManagedWorktreeSupervisedGateEvidence,
+} from "./managedWorktree.js";
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const PASS_COUNT = /(?:^|\n)\s*([0-9]+)\s+pass\b/gu;
@@ -540,6 +543,9 @@ export async function superviseImplementWorkerGate(
     filesTouchedDigest: dispatchPayloadDigest(output["filesTouched"]),
     gitReceiptsDigest: dispatchPayloadDigest(output["gitReceipts"]),
     mutationTableDigest: dispatchPayloadDigest(output["mutationTable"] ?? null),
+  });
+  await recordManagedWorktreeSupervisedGateEvidence(context, evidence, {
+    ...(deps.stateDir === undefined ? {} : { stateDir: deps.stateDir }),
   });
   return Object.freeze({
     ...output,

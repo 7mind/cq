@@ -2,6 +2,7 @@ import { realpath } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import {
   TASKS_LEDGER,
+  assertManagedWorktreeWipClosure,
   createManagementLedgerStore,
   listManagedLiveWorktrees,
   nodeManagedWorktreeGitRunner,
@@ -13,10 +14,7 @@ import {
   type ManagedWorktreeDispatchBinding,
   type ManagedWorktreeHandle,
 } from "@cq/ledger";
-import {
-  runWorksetGitEffectGate,
-  type WorksetGitEffectBinding,
-} from "@cq/process-control";
+import { runWorksetGitEffectGate, type WorksetGitEffectBinding } from "@cq/process-control";
 
 const FULL_COMMIT = /^[0-9a-f]{40}$/u;
 const TASK_ID = /^T[0-9]+$/u;
@@ -43,10 +41,7 @@ async function repositoryRoot(cwd: string): Promise<string> {
   return await realpath(resolve(result.stdout.trim()));
 }
 
-async function uniqueHandle(
-  repository: string,
-  taskId: string,
-): Promise<ManagedWorktreeHandle> {
+async function uniqueHandle(repository: string, taskId: string): Promise<ManagedWorktreeHandle> {
   const handles = await listManagedLiveWorktrees(repository, taskId);
   if (handles.length !== 1) {
     throw new Error(
@@ -94,17 +89,34 @@ async function resolveBinding(
   repository: string,
 ): Promise<WorksetGitEffectBinding> {
   const binding = await resolveManagedBinding(store, request, repository);
-  if ((await gitOutput(repository, ["symbolic-ref", "--quiet", "HEAD"], "integration branch")) !== "refs/heads/main") {
+  if (
+    (await gitOutput(repository, ["symbolic-ref", "--quiet", "HEAD"], "integration branch")) !==
+    "refs/heads/main"
+  ) {
     throw new Error("cq gate git-effect: integration checkout must be on refs/heads/main");
   }
-  if ((await gitOutput(repository, ["status", "--porcelain", "--untracked-files=all"], "integration status")) !== "") {
+  if (
+    (await gitOutput(
+      repository,
+      ["status", "--porcelain", "--untracked-files=all"],
+      "integration status",
+    )) !== ""
+  ) {
     throw new Error("cq gate git-effect: integration checkout must be clean");
   }
-  if ((await gitOutput(binding.worktreePath, ["status", "--porcelain", "--untracked-files=all"], "managed worktree status")) !== "") {
+  if (
+    (await gitOutput(
+      binding.worktreePath,
+      ["status", "--porcelain", "--untracked-files=all"],
+      "managed worktree status",
+    )) !== ""
+  ) {
     throw new Error("cq gate git-effect: managed worktree must be clean");
   }
   if (request.operation === "rebase") {
-    if ((await gitOutput(repository, ["rev-parse", "HEAD"], "integration HEAD")) !== request.commit) {
+    if (
+      (await gitOutput(repository, ["rev-parse", "HEAD"], "integration HEAD")) !== request.commit
+    ) {
       throw new Error("cq gate git-effect: rebase target does not equal the integration HEAD");
     }
     return {
@@ -131,6 +143,7 @@ async function resolveBinding(
   if (ancestor.code !== 0) {
     throw new Error("cq gate git-effect: merge commit is not a fast-forward of integration HEAD");
   }
+  await assertManagedWorktreeWipClosure(binding, request.commit);
   return {
     kind: "merge",
     targetRef: `tasks:${request.taskId}`,
@@ -177,9 +190,7 @@ export async function runGateGitEffect(
           return await runWorksetGitEffectGate({
             expected,
             resolve: trustedResolve,
-            provider: worksetEffectAdmissionProviderFromStore(
-              requireWorksetStore(resolved.store),
-            ),
+            provider: worksetEffectAdmissionProviderFromStore(requireWorksetStore(resolved.store)),
           });
         },
       });
@@ -195,8 +206,7 @@ export async function runGateGitEffect(
       if (outcome.effect.stderr !== "") process.stderr.write(outcome.effect.stderr);
       return { exitCode: outcome.effect.code === 0 ? 1 : outcome.effect.code };
     }
-    const trustedResolve = async () =>
-      await resolveBinding(resolved.store, request, repository);
+    const trustedResolve = async () => await resolveBinding(resolved.store, request, repository);
     const expected = await trustedResolve();
     const result = await runWorksetGitEffectGate({
       expected,

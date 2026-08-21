@@ -44,10 +44,13 @@ import {
 import { fileURLToPath } from "node:url";
 import {
   MANAGED_WORKTREE_HANDLE_KIND,
+  assessWipArtifactClosure,
   parseWipArtifact,
   validateManagedWorktreeHandle as validateManagedWorktreeHandleContract,
   WipArtifactParseError,
   type ManagedWorktreeHandle as ConfigManagedWorktreeHandle,
+  type ImplementWorkerSupervisedGateEvidence,
+  type WipClosureProjection,
 } from "@cq/config";
 import { recordManagerOwnedReleaseResult } from "../../cq-config/src/internal/managedWorktreeReleaseAuthority.js";
 import {
@@ -114,10 +117,7 @@ export type ManagedWorktreeTerminalDisposition = "done" | "abandoned";
 export type ManagedWorktreeHandle = ConfigManagedWorktreeHandle;
 
 /** Public core validator shared by registry resume/release and transport adapters. */
-export function validateManagedWorktreeHandle(
-  value: unknown,
-  expectedRepositoryRoot?: string,
-) {
+export function validateManagedWorktreeHandle(value: unknown, expectedRepositoryRoot?: string) {
   return validateManagedWorktreeHandleContract(value, expectedRepositoryRoot);
 }
 
@@ -431,8 +431,7 @@ export function buildManagedWorktreeInstallPlan(input: {
   const nodeGypBin = resolveNodeGypBinDir();
   if (nodeGypBin !== null) {
     const priorPath = env["PATH"] ?? "";
-    env["PATH"] =
-      priorPath.length === 0 ? nodeGypBin : `${nodeGypBin}${pathDelimiter}${priorPath}`;
+    env["PATH"] = priorPath.length === 0 ? nodeGypBin : `${nodeGypBin}${pathDelimiter}${priorPath}`;
   }
   return {
     cwd: input.bunWorkspaceRoot,
@@ -459,11 +458,7 @@ export function validateManagedWorktreeInstallPlan(
   }
   const cacheRoot = resolveCqCacheRoot(opts.cacheRoot);
   const cacheRelation = relative(cacheRoot, resolve(cacheDir));
-  if (
-    cacheRelation === ".." ||
-    cacheRelation.startsWith(`..${sep}`) ||
-    isAbsolute(cacheRelation)
-  ) {
+  if (cacheRelation === ".." || cacheRelation.startsWith(`..${sep}`) || isAbsolute(cacheRelation)) {
     return {
       status: "invalid",
       reason: "bun-install-cache-dir-outside-root",
@@ -683,7 +678,26 @@ interface StoredHandleRecord {
   readonly status: "live" | "released";
   readonly headAtPrepare: string;
   readonly bunWorkspaceRoot: string;
+  readonly trustedGateProjection?: ManagedWorktreeTrustedGateProjection;
   readonly releasedAt?: string;
+}
+
+interface ManagedWorktreeTrustedGateProjection {
+  readonly kind: "cq-managed-trusted-gate-projection";
+  readonly version: 1;
+  readonly attestationId: string;
+  readonly generation: number;
+  readonly taskId: string;
+  readonly handleToken: string;
+  readonly handleFingerprint: string;
+  readonly repositoryRoot: string;
+  readonly worktreePath: string;
+  readonly branch: string;
+  readonly resultCommit: string;
+  readonly gateExitCode: 0;
+  readonly passCount: number;
+  readonly failCount: 0;
+  readonly capturedAt: string;
 }
 
 interface TaskRegistryGeneration {
@@ -701,10 +715,7 @@ function isHandleShape(value: unknown): value is ManagedWorktreeHandle {
   return validateManagedWorktreeHandle(value).status === "valid";
 }
 
-type HandleIntegrityFailure =
-  | "handle-invalid"
-  | "handle-foreign"
-  | "handle-path-traversal";
+type HandleIntegrityFailure = "handle-invalid" | "handle-foreign" | "handle-path-traversal";
 
 function assertHandleIntegrity(
   handle: ManagedWorktreeHandle,
@@ -769,6 +780,13 @@ function isStoredHandleRecord(value: unknown, taskId?: string): value is StoredH
   if (record.status !== "live" && record.status !== "released") return false;
   if (typeof record.headAtPrepare !== "string") return false;
   if (typeof record.bunWorkspaceRoot !== "string") return false;
+  const projectionBinding = { handle: record.handle, fingerprint: record.fingerprint };
+  if (
+    record.trustedGateProjection !== undefined &&
+    !isManagedWorktreeTrustedGateProjection(record.trustedGateProjection, projectionBinding)
+  ) {
+    return false;
+  }
   if (record.releasedAt !== undefined && typeof record.releasedAt !== "string") return false;
   return true;
 }
@@ -793,8 +811,41 @@ function canonicalStoredHandleRecord(record: StoredHandleRecord): StoredHandleRe
     status: record.status,
     headAtPrepare: record.headAtPrepare,
     bunWorkspaceRoot: record.bunWorkspaceRoot,
+    ...(record.trustedGateProjection === undefined
+      ? {}
+      : { trustedGateProjection: record.trustedGateProjection }),
     ...(record.releasedAt !== undefined ? { releasedAt: record.releasedAt } : {}),
   };
+}
+
+function isManagedWorktreeTrustedGateProjection(
+  value: unknown,
+  record: Pick<StoredHandleRecord, "handle" | "fingerprint">,
+): value is ManagedWorktreeTrustedGateProjection {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const projection = value as Partial<ManagedWorktreeTrustedGateProjection>;
+  return (
+    projection.kind === "cq-managed-trusted-gate-projection" &&
+    projection.version === 1 &&
+    typeof projection.attestationId === "string" &&
+    projection.attestationId.length > 0 &&
+    Number.isSafeInteger(projection.generation) &&
+    (projection.generation ?? 0) > 0 &&
+    projection.taskId === record.handle.taskId &&
+    projection.handleToken === record.handle.token &&
+    projection.handleFingerprint === record.fingerprint &&
+    projection.repositoryRoot === record.handle.repositoryRoot &&
+    projection.worktreePath === record.handle.absolutePath &&
+    projection.branch === record.handle.branch &&
+    typeof projection.resultCommit === "string" &&
+    /^[0-9a-f]{40}$/u.test(projection.resultCommit) &&
+    projection.gateExitCode === 0 &&
+    Number.isSafeInteger(projection.passCount) &&
+    (projection.passCount ?? 0) > 0 &&
+    projection.failCount === 0 &&
+    typeof projection.capturedAt === "string" &&
+    Number.isFinite(Date.parse(projection.capturedAt))
+  );
 }
 
 function serializeTaskGeneration(taskId: string, records: readonly StoredHandleRecord[]): string {
@@ -1190,9 +1241,7 @@ async function loadOrReconcileTaskRecords(
 // Bun workspace discovery
 // ---------------------------------------------------------------------------
 
-export async function discoverBunWorkspaceRoot(
-  repositoryRoot: string,
-): Promise<string | null> {
+export async function discoverBunWorkspaceRoot(repositoryRoot: string): Promise<string | null> {
   const root = resolve(repositoryRoot);
   async function hasLock(dir: string): Promise<boolean> {
     for (const name of BUN_LOCK_NAMES) {
@@ -1355,6 +1404,7 @@ export interface WipOpenCheckpointFinding {
 
 export async function findOpenWipCheckpoints(
   worktreePath: string,
+  projection?: WipClosureProjection,
 ): Promise<
   | { readonly status: "clean" }
   | { readonly status: "open"; readonly findings: readonly WipOpenCheckpointFinding[] }
@@ -1382,8 +1432,12 @@ export async function findOpenWipCheckpoints(
     }
     try {
       const artifact = parseWipArtifact(full, content);
-      if (artifact.openCheckpoints.length > 0) {
-        findings.push({ path: full, openCheckpoints: artifact.openCheckpoints });
+      const assessment = assessWipArtifactClosure(full, artifact, projection);
+      if (assessment.status === "foreign") {
+        return { status: "malformed", path: full, detail: assessment.detail };
+      }
+      if (assessment.status === "open") {
+        findings.push({ path: full, openCheckpoints: assessment.openCheckpoints });
       }
     } catch (error) {
       if (error instanceof WipArtifactParseError) {
@@ -1617,10 +1671,7 @@ export async function prepareManagedWorktree(
 
   const repositoryRoot = await resolveRepositoryRoot(git, request.repositoryRoot);
   if (repositoryRoot === null) {
-    return refusedPrepare(
-      "repository-invalid",
-      `not a git repository: ${request.repositoryRoot}`,
-    );
+    return refusedPrepare("repository-invalid", `not a git repository: ${request.repositoryRoot}`);
   }
 
   const regRoot = registryRoot(repositoryRoot, deps.stateDir);
@@ -1754,16 +1805,7 @@ async function prepareAdoptedWorktreeUnderLock(
   ctx: PrepareUnderLockContext,
   live: readonly StoredHandleRecord[],
 ): Promise<PrepareManagedWorktreeResult> {
-  const {
-    git,
-    dispatchGit,
-    install,
-    idFactory,
-    now,
-    fault,
-    repositoryRoot,
-    regRoot,
-  } = ctx;
+  const { git, dispatchGit, install, idFactory, now, fault, repositoryRoot, regRoot } = ctx;
   const authority = deps.taskAdoptionAuthority;
   const activityFence = deps.adoptionActivityFence;
   if (authority === undefined || activityFence === undefined || deps.skipInstall === true) {
@@ -1827,10 +1869,7 @@ async function prepareAdoptedWorktreeUnderLock(
       },
       { managerLock: heldAdoptionManagerLock, activityFence },
     );
-    if (
-      recovered.status === "refused" &&
-      recovered.reason !== "journal-missing"
-    ) {
+    if (recovered.status === "refused" && recovered.reason !== "journal-missing") {
       return refusedPrepare(
         "adoption-recovery-failed",
         `published adoption recovery refused: ${recovered.reason}: ${recovered.detail}`,
@@ -2165,7 +2204,9 @@ async function prepareAdoptedWorktreeUnderLock(
       try {
         await staged.rollback();
       } catch (caught) {
-        compensation.push(`registry rollback failed: ${caught instanceof Error ? caught.message : String(caught)}`);
+        compensation.push(
+          `registry rollback failed: ${caught instanceof Error ? caught.message : String(caught)}`,
+        );
       }
     }
     if (transaction !== null) {
@@ -2173,15 +2214,14 @@ async function prepareAdoptedWorktreeUnderLock(
         await transaction.rollback();
         await fs.rm(journalPath, { force: true });
       } catch (caught) {
-        compensation.push(`reconciliation rollback failed: ${caught instanceof Error ? caught.message : String(caught)}`);
+        compensation.push(
+          `reconciliation rollback failed: ${caught instanceof Error ? caught.message : String(caught)}`,
+        );
       }
     }
     const detail = error instanceof Error ? error.message : String(error);
     if (compensation.length > 0) {
-      return refusedPrepare(
-        "adoption-recovery-failed",
-        `${detail}; ${compensation.join("; ")}`,
-      );
+      return refusedPrepare("adoption-recovery-failed", `${detail}; ${compensation.join("; ")}`);
     }
     return refusedPrepare(
       error instanceof AdoptionRefusal ? error.reason : "adoption-reconciliation-failed",
@@ -2782,7 +2822,24 @@ async function releaseManagedWorktreeUnderEffectLock(
       return refusedRelease("dirty", `worktree has uncommitted changes`, { absolutePath });
     }
 
-    const wip = await findOpenWipCheckpoints(absolutePath);
+    const head = await revParse(git, absolutePath, "HEAD");
+    if (head === null) {
+      return refusedRelease("ambiguous", `cannot resolve HEAD in ${absolutePath}`, {
+        absolutePath,
+      });
+    }
+    if (request.resultCommit !== undefined && request.resultCommit !== null) {
+      if (request.resultCommit !== head) {
+        return refusedRelease(
+          "commit-mismatch",
+          `HEAD ${head} does not equal resultCommit ${request.resultCommit}`,
+          { absolutePath },
+        );
+      }
+    }
+
+    const projection = trustedWipProjectionForRecord(stored, head, request.resultCommit);
+    const wip = await findOpenWipCheckpoints(absolutePath, projection);
     if (wip.status === "malformed") {
       return refusedRelease(
         "wip-malformed",
@@ -2798,22 +2855,6 @@ async function releaseManagedWorktreeUnderEffectLock(
         absolutePath,
         openCheckpoints,
       });
-    }
-
-    const head = await revParse(git, absolutePath, "HEAD");
-    if (head === null) {
-      return refusedRelease("ambiguous", `cannot resolve HEAD in ${absolutePath}`, {
-        absolutePath,
-      });
-    }
-    if (request.resultCommit !== undefined && request.resultCommit !== null) {
-      if (request.resultCommit !== head) {
-        return refusedRelease(
-          "commit-mismatch",
-          `HEAD ${head} does not equal resultCommit ${request.resultCommit}`,
-          { absolutePath },
-        );
-      }
     }
 
     await fault("before-worktree-remove", {
@@ -2886,11 +2927,7 @@ async function deleteBranchAfterRegistryRelease(
   const tip = await revParse(git, repositoryRoot, branch);
   if (tip !== null) {
     // Park the tip so a subsequent failure still has a recoverable ref.
-    await git(repositoryRoot, [
-      "update-ref",
-      `${RECOVERY_REF_PREFIX}/${branch}`,
-      tip,
-    ]);
+    await git(repositoryRoot, ["update-ref", `${RECOVERY_REF_PREFIX}/${branch}`, tip]);
   }
   await git(repositoryRoot, ["branch", "-D", branch]);
 }
@@ -2915,6 +2952,153 @@ export async function listManagedLiveWorktrees(
     return live.map((entry) => entry.handle);
   } finally {
     await releaseTaskLock();
+  }
+}
+
+function trustedWipProjectionForRecord(
+  stored: StoredHandleRecord,
+  head: string,
+  requestedResultCommit: string | null | undefined,
+): WipClosureProjection | undefined {
+  const projection = stored.trustedGateProjection;
+  if (
+    projection === undefined ||
+    requestedResultCommit !== head ||
+    projection.resultCommit !== head ||
+    projection.taskId !== stored.handle.taskId ||
+    projection.handleToken !== stored.handle.token ||
+    projection.handleFingerprint !== stored.fingerprint ||
+    projection.repositoryRoot !== stored.handle.repositoryRoot ||
+    projection.worktreePath !== stored.handle.absolutePath ||
+    projection.branch !== stored.handle.branch ||
+    projection.gateExitCode !== 0 ||
+    projection.failCount !== 0 ||
+    projection.passCount <= 0
+  ) {
+    return undefined;
+  }
+  return { taskId: projection.taskId };
+}
+
+/** Persist a runner-minted exact-tip projection outside the Git worktree. */
+export async function recordManagedWorktreeSupervisedGateEvidence(
+  binding: ManagedWorktreeDispatchBinding,
+  evidence: ImplementWorkerSupervisedGateEvidence,
+  deps: Pick<ManagedWorktreeDeps, "git" | "stateDir" | "prepareLockTimeoutMs"> = {},
+): Promise<void> {
+  await assertManagedWorktreeDispatchBindingLive(binding, deps);
+  if (
+    evidence.kind !== "cq-supervised-gate-evidence" ||
+    evidence.version !== 1 ||
+    evidence.taskId !== binding.taskId ||
+    resolve(evidence.worktreePath) !== binding.worktreePath ||
+    evidence.branch !== binding.branch ||
+    evidence.gateExitCode !== 0 ||
+    evidence.failCount !== 0 ||
+    evidence.passCount <= 0
+  ) {
+    throw new Error("supervised gate evidence does not match the managed worktree binding");
+  }
+  const git = deps.git ?? nodeManagedWorktreeGitRunner;
+  const head = await revParse(git, binding.worktreePath, "HEAD");
+  if (head === null || head !== evidence.resultCommit) {
+    throw new Error("supervised gate evidence is stale for the managed worktree tip");
+  }
+
+  const regRoot = registryRoot(binding.repositoryRoot, deps.stateDir);
+  const lockfile = new Lockfile({
+    ...(deps.prepareLockTimeoutMs === undefined
+      ? {}
+      : { acquireTimeoutMs: deps.prepareLockTimeoutMs }),
+  });
+  const releaseTaskLock = await lockfile.acquire(
+    join(regRoot, PREPARE_LOCKS_DIRNAME),
+    `prepare-${binding.taskId}`,
+  );
+  try {
+    const stored = await readStoredHandle(
+      regRoot,
+      binding.taskId,
+      binding.handleToken,
+      async () => undefined,
+    );
+    if (
+      stored === null ||
+      stored.status !== "live" ||
+      stored.fingerprint !== binding.handleFingerprint ||
+      stored.handle.absolutePath !== binding.worktreePath ||
+      stored.handle.branch !== binding.branch
+    ) {
+      throw new Error("managed worktree registry changed before gate projection publication");
+    }
+    const trustedGateProjection: ManagedWorktreeTrustedGateProjection = Object.freeze({
+      kind: "cq-managed-trusted-gate-projection",
+      version: 1,
+      attestationId: evidence.attestationId,
+      generation: evidence.generation,
+      taskId: binding.taskId,
+      handleToken: binding.handleToken,
+      handleFingerprint: binding.handleFingerprint,
+      repositoryRoot: binding.repositoryRoot,
+      worktreePath: binding.worktreePath,
+      branch: binding.branch,
+      resultCommit: evidence.resultCommit,
+      gateExitCode: 0,
+      passCount: evidence.passCount,
+      failCount: 0,
+      capturedAt: evidence.capturedAt,
+    });
+    await updateStoredHandle(regRoot, { ...stored, trustedGateProjection }, async () => undefined);
+  } finally {
+    await releaseTaskLock();
+  }
+}
+
+/** Fail closed unless the exact candidate tip's WIP table is virtually complete. */
+export async function assertManagedWorktreeWipClosure(
+  binding: ManagedWorktreeDispatchBinding,
+  resultCommit: string,
+  deps: Pick<ManagedWorktreeDeps, "git" | "stateDir"> = {},
+): Promise<void> {
+  await assertManagedWorktreeDispatchBindingLive(binding, deps);
+  const git = deps.git ?? nodeManagedWorktreeGitRunner;
+  const head = await revParse(git, binding.worktreePath, "HEAD");
+  if (head === null || head !== resultCommit) {
+    throw new Error("managed WIP closure requires the immutable candidate tip");
+  }
+  const regRoot = registryRoot(binding.repositoryRoot, deps.stateDir);
+  const lockfile = new Lockfile();
+  const releaseTaskLock = await lockfile.acquire(
+    join(regRoot, PREPARE_LOCKS_DIRNAME),
+    `prepare-${binding.taskId}`,
+  );
+  let stored: StoredHandleRecord | null;
+  try {
+    stored = await readStoredHandle(
+      regRoot,
+      binding.taskId,
+      binding.handleToken,
+      async () => undefined,
+    );
+  } finally {
+    await releaseTaskLock();
+  }
+  if (stored === null || stored.fingerprint !== binding.handleFingerprint) {
+    throw new Error("managed WIP closure registry binding changed");
+  }
+  const projection = trustedWipProjectionForRecord(stored, head, resultCommit);
+  const assessment = await findOpenWipCheckpoints(binding.worktreePath, projection);
+  if (assessment.status === "malformed") {
+    throw new Error(
+      `managed WIP closure denied malformed artifact ${assessment.path}: ${assessment.detail}`,
+    );
+  }
+  if (assessment.status === "open") {
+    throw new Error(
+      `managed WIP closure denied open checkpoints: ${assessment.findings
+        .flatMap((finding) => finding.openCheckpoints)
+        .join(", ")}`,
+    );
   }
 }
 
@@ -3048,7 +3232,10 @@ export async function resolveManagedWorktreeDispatchBinding(
     if (gitDirResult.code !== 0 || gitDirResult.stdout.trim() === "") return null;
     try {
       const headName = (
-        await fs.readFile(join(resolve(gitDirResult.stdout.trim()), "rebase-merge", "head-name"), "utf8")
+        await fs.readFile(
+          join(resolve(gitDirResult.stdout.trim()), "rebase-merge", "head-name"),
+          "utf8",
+        )
       ).trim();
       if (headName !== ref) return null;
     } catch {
