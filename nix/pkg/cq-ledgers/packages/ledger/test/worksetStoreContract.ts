@@ -317,6 +317,19 @@ export function runWorksetStoreContract(factory: WorksetStoreContractFactory): v
         expect(store.activeAdmissionCount()).toBe(0);
       }
 
+      const unsupportedRuntimeEffect = {
+        kind: "merge",
+        targetRef,
+        repositoryRoot,
+        branch,
+        expectedCommit: "1".repeat(40),
+      } as unknown as ManagedTerminalReleaseEffect;
+      await expectRejection(
+        store.admitManagedTerminalReleaseEffect({ binding, effect: unsupportedRuntimeEffect }),
+        "management-authority-required",
+      );
+      expect(store.activeAdmissionCount()).toBe(0);
+
       await settleManagedRelease(
         store,
         binding,

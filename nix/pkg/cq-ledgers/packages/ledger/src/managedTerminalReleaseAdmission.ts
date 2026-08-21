@@ -172,6 +172,9 @@ export function authorizeManagedTerminalReleaseEffect(
     return { kind: effect.kind, targetRef: effect.targetRef };
   }
 
+  if (effect.kind !== "branch-remove") {
+    reject("terminal release effect kind is not in the managed release inventory");
+  }
   if (effect.branch !== binding.branch) reject("removed branch was substituted");
   if (!FULL_COMMIT.test(effect.expectedCommit)) reject("removed branch commit is invalid");
   state.branchRemoveAdmitted = true;
