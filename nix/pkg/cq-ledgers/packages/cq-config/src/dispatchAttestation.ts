@@ -113,6 +113,7 @@ const RESULT_CAPABILITY_RE = /^cq_result_[A-Za-z0-9_-]{43,}$/;
 const PARENT_GATE_CAPABILITY_RE = /^cq_parent_gate_[A-Za-z0-9_-]{43,}$/;
 const GIT_CHANGE_CAPABILITY_RE = /^cq_git_[A-Za-z0-9_-]{43,}$/;
 const GIT_CONFLICT_CAPABILITY_RE = /^cq_conflict_[A-Za-z0-9_-]{43,}$/;
+const DISPATCH_RECOVERY_REFERENCE_RE = /^cq-dispatch-recovery:v1:[0-9a-f]{64}$/;
 const PROJECT_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const IDEMPOTENCY_KEY_MAX_LENGTH = 256;
 
@@ -230,6 +231,25 @@ export class AttestationKeyReuseError extends AttestationStorageError {
   }
 }
 
+export type DispatchRecoveryFailureReason =
+  | "not-found"
+  | "ambiguous"
+  | "nonterminal"
+  | "unbound"
+  | "expired"
+  | "binding-mismatch";
+
+/** A terminal recovery reference is absent, ambiguous, expired, or no longer exact. */
+export class DispatchRecoveryError extends Error {
+  readonly reason: DispatchRecoveryFailureReason;
+
+  constructor(reason: DispatchRecoveryFailureReason, detail: string) {
+    super(detail);
+    this.name = "DispatchRecoveryError";
+    this.reason = reason;
+  }
+}
+
 /**
  * Every error class that can escape a dispatch service call as a DECISION about
  * the dispatch, rather than as a failure of the underlying store.
@@ -257,6 +277,7 @@ export const ATTESTATION_ERROR_CLASSES = Object.freeze([
   AttestationStorageError,
   AttestationTransportError,
   AttestationKeyReuseError,
+  DispatchRecoveryError,
   DispatchInputValidationError,
   DispatchOverlayError,
   DispatchRefAssemblyError,
@@ -938,6 +959,39 @@ export interface DispatchGitEffectBinding {
   readonly guardedRebaseBridge?: DispatchGuardedRebaseBridge;
 }
 
+/** Trusted live-Git evidence captured while the managed worktree effect lock is held. */
+export interface DispatchRecoveryContext {
+  readonly liveTip: string;
+  readonly gitReceipts: readonly DispatchGitChangeReceipt[];
+}
+
+/**
+ * Durable authority for one parent-lost implement-worker generation. The
+ * reference is public and opaque; this server-held association is the authority.
+ */
+export interface DispatchRecoveryBinding {
+  readonly kind: "cq-dispatch-recovery-binding";
+  readonly version: 1;
+  readonly recoveryReference: string;
+  readonly attestationId: string;
+  readonly generation: number;
+  readonly terminalDigest: string;
+  readonly terminalAt: string;
+  readonly gitEffectBinding: DispatchGitEffectBinding;
+  readonly liveTip: string;
+  readonly gitReceipts: readonly DispatchGitChangeReceipt[];
+}
+
+/** Trusted resolution used internally by reprepare; public callers receive only its projection. */
+export interface ResolvedDispatchRecovery {
+  readonly recoveryReference: string;
+  readonly reprepareOf: DispatchHandle;
+  readonly terminalAt: string;
+  readonly gitEffectBinding: DispatchGitEffectBinding;
+  readonly liveTip: string;
+  readonly gitReceipts: readonly DispatchGitChangeReceipt[];
+}
+
 export interface AuthorizedDispatchGitEffect extends DispatchGitEffectBinding {
   readonly attestationId: string;
   readonly generation: number;
@@ -1039,6 +1093,8 @@ export interface AttestationEnvelope {
   readonly terminalAt?: string;
   /** Digest binding the terminal outcome; survives the envelope collapse. */
   readonly terminalDigest?: string;
+  /** Parent-lost recovery authority, persisted atomically with the terminal transition. */
+  readonly dispatchRecoveryBinding?: DispatchRecoveryBinding;
 }
 
 /**
@@ -1063,6 +1119,8 @@ export interface AttestationTombstone {
   readonly terminalAt: string;
   /** When the key becomes reusable: `terminalAt + IDEMPOTENCY_HORIZON_MS`. */
   readonly reuseAfter: string;
+  /** Explicit recovery authority; an otherwise identical tombstone grants none. */
+  readonly dispatchRecoveryBinding?: DispatchRecoveryBinding;
 }
 
 export type AttestationRow = AttestationEnvelope | AttestationTombstone;
@@ -1491,6 +1549,200 @@ function assertGitEffectBinding(
     ...(guardedRebaseBridge === undefined
       ? {}
       : { guardedRebaseBridge: Object.freeze({ ...guardedRebaseBridge }) }),
+  });
+}
+
+const RECOVERY_BINDING_FIELDS = [
+  "taskId",
+  "handleToken",
+  "handleFingerprint",
+  "repositoryRoot",
+  "repositoryId",
+  "commonDir",
+  "worktreePath",
+  "branch",
+  "ref",
+  "baseCommit",
+] as const;
+
+function dispatchRecoveryReferenceOf(
+  binding: Omit<DispatchRecoveryBinding, "recoveryReference">,
+): string {
+  return `cq-dispatch-recovery:v1:${dispatchPayloadDigest(
+    binding as unknown as DispatchJSONValue,
+  )}`;
+}
+
+/** Validate a persisted recovery association and its self-authenticating reference. */
+export function assertDispatchRecoveryBinding(
+  value: DispatchRecoveryBinding,
+  path = "dispatchRecoveryBinding",
+): DispatchRecoveryBinding {
+  if (value?.kind !== "cq-dispatch-recovery-binding" || value.version !== 1) {
+    throw new AttestationContractError(path, "expected a version-1 dispatch recovery binding");
+  }
+  if (!DISPATCH_RECOVERY_REFERENCE_RE.test(value.recoveryReference)) {
+    throw new AttestationContractError(
+      `${path}.recoveryReference`,
+      "expected an opaque cq-dispatch-recovery:v1 reference",
+    );
+  }
+  assertDispatchHandle(value, path);
+  assertDigest(value.terminalDigest, `${path}.terminalDigest`);
+  attestationInstantMs(value.terminalAt, `${path}.terminalAt`);
+  if (!/^[0-9a-f]{40}$/.test(value.liveTip)) {
+    throw new AttestationContractError(`${path}.liveTip`, "expected a full commit SHA");
+  }
+  const gitEffectBinding = assertGitEffectBinding(value.gitEffectBinding, "implement-worker");
+  if (gitEffectBinding === undefined || gitEffectBinding.conflictStateDigest !== undefined) {
+    throw new AttestationContractError(
+      `${path}.gitEffectBinding`,
+      "expected an implement-worker Git binding",
+    );
+  }
+  if (!Array.isArray(value.gitReceipts)) {
+    throw new AttestationContractError(`${path}.gitReceipts`, "expected a receipt array");
+  }
+  const receipts = value.gitReceipts.length === 0
+    ? Object.freeze([] as DispatchGitChangeReceipt[])
+    : (assertGitEffectBinding(
+        { ...gitEffectBinding, inheritedGitReceipts: value.gitReceipts },
+        "implement-worker",
+      )?.inheritedGitReceipts ?? Object.freeze([]));
+  const normalizedWithoutReference = Object.freeze({
+    kind: "cq-dispatch-recovery-binding" as const,
+    version: 1 as const,
+    attestationId: value.attestationId,
+    generation: value.generation,
+    terminalDigest: value.terminalDigest,
+    terminalAt: value.terminalAt,
+    gitEffectBinding,
+    liveTip: value.liveTip,
+    gitReceipts: Object.freeze([...receipts]),
+  });
+  const expectedReference = dispatchRecoveryReferenceOf(normalizedWithoutReference);
+  if (value.recoveryReference !== expectedReference) {
+    throw new AttestationBindingError(
+      `${path}.recoveryReference`,
+      "reference does not match its durable recovery association",
+    );
+  }
+  return Object.freeze({
+    ...normalizedWithoutReference,
+    recoveryReference: expectedReference,
+  });
+}
+
+function dispatchInputStartingCommit(row: AttestationEnvelope): string {
+  if (typeof row.input !== "object" || row.input === null || Array.isArray(row.input)) {
+    throw new AttestationContractError("row.input", "implement-worker input must be an object");
+  }
+  const startingCommit = (row.input as Readonly<Record<string, unknown>>)["startingCommit"];
+  if (typeof startingCommit !== "string" || !/^[0-9a-f]{40}$/.test(startingCommit)) {
+    throw new AttestationContractError(
+      "row.input.startingCommit",
+      "expected a full commit SHA",
+    );
+  }
+  return startingCommit;
+}
+
+function createDispatchRecoveryBinding(
+  row: AttestationEnvelope,
+  terminalAt: string,
+  terminalDigest: string,
+  context: DispatchRecoveryContext,
+): DispatchRecoveryBinding {
+  if (row.promptProvenance.roleId !== "implement-worker" || row.gitEffectBinding === undefined) {
+    throw new AttestationContractError(
+      "recoveryContext",
+      "only a manager-bound implement-worker can persist dispatch recovery",
+    );
+  }
+  const liveTip = context.liveTip;
+  if (!/^[0-9a-f]{40}$/.test(liveTip)) {
+    throw new AttestationContractError("recoveryContext.liveTip", "expected a full commit SHA");
+  }
+  const receipts = context.gitReceipts;
+  if (!Array.isArray(receipts)) {
+    throw new AttestationContractError("recoveryContext.gitReceipts", "expected a receipt array");
+  }
+  if (receipts.length > 0) {
+    assertGitEffectBinding(
+      { ...row.gitEffectBinding, inheritedGitReceipts: receipts },
+      "implement-worker",
+    );
+  }
+  const inherited = row.gitEffectBinding.inheritedGitReceipts ?? [];
+  if (
+    dispatchPayloadDigest(receipts.slice(0, inherited.length) as unknown as DispatchJSONValue) !==
+    dispatchPayloadDigest(inherited as unknown as DispatchJSONValue)
+  ) {
+    throw new AttestationBindingError(
+      "recoveryContext.gitReceipts",
+      "receipt closure does not retain the exact inherited prefix",
+    );
+  }
+  for (const [index, receipt] of receipts.entries()) {
+    if (receipt.taskId !== row.gitEffectBinding.taskId) {
+      throw new AttestationBindingError(
+        `recoveryContext.gitReceipts[${String(index)}].taskId`,
+        "receipt carries a foreign task identity",
+      );
+    }
+    const previous = receipts[index - 1];
+    if (previous !== undefined && receipt.oldHead !== previous.newHead) {
+      throw new AttestationBindingError(
+        `recoveryContext.gitReceipts[${String(index)}].oldHead`,
+        "receipt closure is not contiguous",
+      );
+    }
+    if (
+      index >= inherited.length &&
+      (receipt.attestationId !== row.attestationId || receipt.generation !== row.generation)
+    ) {
+      throw new AttestationBindingError(
+        `recoveryContext.gitReceipts[${String(index)}]`,
+        "new receipt is not bound to the terminal generation",
+      );
+    }
+  }
+  const startingCommit = dispatchInputStartingCommit(row);
+  if (receipts.length === 0) {
+    if (liveTip !== startingCommit) {
+      throw new AttestationBindingError(
+        "recoveryContext.liveTip",
+        "an advanced live tip requires a complete durable receipt closure",
+      );
+    }
+  } else {
+    if (receipts.at(-1)?.newHead !== liveTip) {
+      throw new AttestationBindingError(
+        "recoveryContext.gitReceipts",
+        "receipt closure does not end at the live tip",
+      );
+    }
+    if (!receipts.some((receipt) => receipt.oldHead === startingCommit || receipt.newHead === startingCommit)) {
+      throw new AttestationBindingError(
+        "recoveryContext.gitReceipts",
+        "receipt closure does not contain the generation starting commit",
+      );
+    }
+  }
+  const withoutReference = Object.freeze({
+    kind: "cq-dispatch-recovery-binding" as const,
+    version: 1 as const,
+    attestationId: row.attestationId,
+    generation: row.generation,
+    terminalDigest,
+    terminalAt,
+    gitEffectBinding: row.gitEffectBinding,
+    liveTip,
+    gitReceipts: Object.freeze([...receipts]),
+  });
+  return Object.freeze({
+    ...withoutReference,
+    recoveryReference: dispatchRecoveryReferenceOf(withoutReference),
   });
 }
 
@@ -2132,7 +2384,30 @@ function writeAbort(
   reason: DispatchAbortReason,
   details: DispatchJSONValue | undefined,
   deps: Deps,
+  recoveryContext?: DispatchRecoveryContext,
 ): AbortedDispatchResult {
+  if (recoveryContext !== undefined && reason !== "parent-lost") {
+    throw new AttestationContractError(
+      "recoveryContext",
+      "dispatch recovery is valid only for a parent-lost abort",
+    );
+  }
+  const recoveryEligible =
+    row.promptProvenance.roleId === "implement-worker" && row.gitEffectBinding !== undefined;
+  if (reason === "parent-lost" && recoveryEligible && recoveryContext === undefined) {
+    throw new AttestationContractError(
+      "recoveryContext",
+      "a manager-bound parent-lost implement-worker requires recovery evidence",
+    );
+  }
+  const terminalDigest = terminalDigestOf("aborted", {
+    reason,
+    detailsDigest: details === undefined ? null : dispatchPayloadDigest(details),
+  });
+  const dispatchRecoveryBinding =
+    recoveryContext === undefined
+      ? undefined
+      : createDispatchRecoveryBinding(row, at, terminalDigest, recoveryContext);
   const next: AttestationEnvelope = Object.freeze({
     kind: "envelope" as const,
     namespace: row.namespace,
@@ -2168,10 +2443,8 @@ function writeAbort(
     ...(details === undefined ? {} : { abortDetails: details }),
     ...(details === undefined ? {} : { abortDetailsDigest: dispatchPayloadDigest(details) }),
     terminalAt: at,
-    terminalDigest: terminalDigestOf("aborted", {
-      reason,
-      detailsDigest: details === undefined ? null : dispatchPayloadDigest(details),
-    }),
+    terminalDigest,
+    ...(dispatchRecoveryBinding === undefined ? {} : { dispatchRecoveryBinding }),
   });
   deps.store.replace(row, next);
   return abortedResultOf(next);
@@ -2921,6 +3194,8 @@ export interface AbortDispatchRequest extends AbortDispatch {
   readonly namespace: AttestationNamespace;
   /** Who is aborting. Only a trusted actor may. */
   readonly actor: TrustedDispatchActor;
+  /** Trusted server-only evidence captured under the managed worktree effect lock. */
+  readonly recoveryContext?: DispatchRecoveryContext;
 }
 
 const ABORT: DispatchProtocolOperation = "abort_dispatch";
@@ -2999,7 +3274,14 @@ export function abortDispatch(
     );
   }
   const { at } = readNow(deps);
-  return writeAbort(row, at, reason as DispatchAbortReason, details, deps);
+  return writeAbort(
+    row,
+    at,
+    reason as DispatchAbortReason,
+    details,
+    deps,
+    request.recoveryContext,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -3123,6 +3405,196 @@ export function fetchDispatchResult(
 }
 
 // ---------------------------------------------------------------------------
+// Managed-handle terminal dispatch recovery
+// ---------------------------------------------------------------------------
+
+export interface DiscoverDispatchRecoveryRequest {
+  readonly namespace: AttestationNamespace;
+  readonly actor: TrustedDispatchActor;
+  readonly gitEffectBinding: DispatchGitEffectBinding;
+  readonly liveTip: string;
+}
+
+export interface ResolveDispatchRecoveryRequest extends DiscoverDispatchRecoveryRequest {
+  readonly recoveryReference: string;
+}
+
+function assertRecoveryRequest(
+  request: DiscoverDispatchRecoveryRequest,
+  deps: Deps,
+): DispatchGitEffectBinding {
+  assertTrustedNamespace(request.namespace, deps, "prepare_dispatch");
+  if (!TRUSTED_ACTOR_SET.has(request.actor)) {
+    throw new DispatchAuthorizationError(
+      "prepare_dispatch",
+      `untrusted recovery actor "${String(request.actor)}"`,
+    );
+  }
+  if (!/^[0-9a-f]{40}$/.test(request.liveTip)) {
+    throw new AttestationContractError("liveTip", "expected a full commit SHA");
+  }
+  const binding = assertGitEffectBinding(request.gitEffectBinding, "implement-worker");
+  if (binding === undefined || binding.conflictStateDigest !== undefined) {
+    throw new AttestationContractError(
+      "gitEffectBinding",
+      "expected a live implement-worker manager binding",
+    );
+  }
+  return binding;
+}
+
+function recoveryBindingOfRow(
+  row: AttestationRow,
+  atMs: number,
+  expired: "omit" | "reject",
+): DispatchRecoveryBinding | undefined {
+  const binding = row.dispatchRecoveryBinding;
+  if (binding === undefined) return undefined;
+  if (isAttestationTombstone(row)) {
+    if (atMs >= attestationInstantMs(row.reuseAfter, "reuseAfter")) {
+      if (expired === "omit") return undefined;
+      throw new DispatchRecoveryError("expired", "dispatch recovery binding has expired");
+    }
+    if (row.terminalKind !== "aborted") {
+      throw new DispatchRecoveryError(
+        "binding-mismatch",
+        "dispatch recovery tombstone is not an aborted terminal generation",
+      );
+    }
+  } else {
+    if (row.terminalAt === undefined || !TERMINAL_STATE_SET.has(row.state)) {
+      throw new DispatchRecoveryError(
+        "nonterminal",
+        "dispatch recovery binding is attached to a nonterminal generation",
+      );
+    }
+    if (
+      atMs >=
+      attestationInstantMs(row.terminalAt, "terminalAt") + IDEMPOTENCY_HORIZON_MS
+    ) {
+      if (expired === "omit") return undefined;
+      throw new DispatchRecoveryError("expired", "dispatch recovery binding has expired");
+    }
+    if (row.state !== "aborted" || row.abortReason !== "parent-lost") {
+      throw new DispatchRecoveryError(
+        "binding-mismatch",
+        "dispatch recovery binding is not attached to a parent-lost abort",
+      );
+    }
+  }
+  const resolved = assertDispatchRecoveryBinding(binding);
+  if (
+    resolved.attestationId !== row.attestationId ||
+    resolved.generation !== row.generation ||
+    resolved.terminalDigest !== row.terminalDigest ||
+    resolved.terminalAt !== row.terminalAt
+  ) {
+    throw new DispatchRecoveryError(
+      "binding-mismatch",
+      "dispatch recovery terminal identity differs from its attestation row",
+    );
+  }
+  return resolved;
+}
+
+function recoveryMatchesLiveBinding(
+  recovery: DispatchRecoveryBinding,
+  current: DispatchGitEffectBinding,
+  liveTip: string,
+): boolean {
+  return (
+    recovery.liveTip === liveTip &&
+    RECOVERY_BINDING_FIELDS.every(
+      (field) => recovery.gitEffectBinding[field] === current[field],
+    )
+  );
+}
+
+function resolvedRecoveryOf(binding: DispatchRecoveryBinding): ResolvedDispatchRecovery {
+  return Object.freeze({
+    recoveryReference: binding.recoveryReference,
+    reprepareOf: Object.freeze({
+      attestationId: binding.attestationId,
+      generation: binding.generation,
+    }),
+    terminalAt: binding.terminalAt,
+    gitEffectBinding: binding.gitEffectBinding,
+    liveTip: binding.liveTip,
+    gitReceipts: Object.freeze([...binding.gitReceipts]),
+  });
+}
+
+/** Discover the latest unambiguous parent-lost generation for one exact managed handle. */
+export function discoverDispatchRecovery(
+  request: DiscoverDispatchRecoveryRequest,
+  deps: DispatchServiceDeps,
+): ResolvedDispatchRecovery {
+  const current = assertRecoveryRequest(request, deps);
+  const { atMs } = readNow(deps);
+  const candidates = deps.store
+    .rows()
+    .map((row) => recoveryBindingOfRow(row, atMs, "omit"))
+    .filter(
+      (binding): binding is DispatchRecoveryBinding =>
+        binding !== undefined && recoveryMatchesLiveBinding(binding, current, request.liveTip),
+    );
+  if (candidates.length === 0) {
+    throw new DispatchRecoveryError(
+      "not-found",
+      "no parent-lost dispatch recovery is bound to this managed handle and live tip",
+    );
+  }
+  const attestationIds = new Set(candidates.map((binding) => binding.attestationId));
+  if (attestationIds.size !== 1) {
+    throw new DispatchRecoveryError(
+      "ambiguous",
+      "multiple terminal dispatch lineages match this managed handle and live tip",
+    );
+  }
+  candidates.sort((left, right) => right.generation - left.generation);
+  return resolvedRecoveryOf(candidates[0]!);
+}
+
+/** Resolve an opaque recovery reference against the current exact managed binding. */
+export function resolveDispatchRecovery(
+  request: ResolveDispatchRecoveryRequest,
+  deps: DispatchServiceDeps,
+): ResolvedDispatchRecovery {
+  const current = assertRecoveryRequest(request, deps);
+  if (!DISPATCH_RECOVERY_REFERENCE_RE.test(request.recoveryReference)) {
+    throw new AttestationContractError(
+      "recoveryReference",
+      "expected an opaque cq-dispatch-recovery:v1 reference",
+    );
+  }
+  const { atMs } = readNow(deps);
+  const matches = deps.store
+    .rows()
+    .filter(
+      (row) => row.dispatchRecoveryBinding?.recoveryReference === request.recoveryReference,
+    )
+    .map((row) => recoveryBindingOfRow(row, atMs, "reject"))
+    .filter(
+      (binding): binding is DispatchRecoveryBinding =>
+        binding?.recoveryReference === request.recoveryReference,
+    );
+  if (matches.length === 0) {
+    throw new DispatchRecoveryError("not-found", "dispatch recovery reference is not bound");
+  }
+  if (matches.length !== 1) {
+    throw new DispatchRecoveryError("ambiguous", "dispatch recovery reference is ambiguous");
+  }
+  const binding = matches[0]!;
+  if (!recoveryMatchesLiveBinding(binding, current, request.liveTip)) {
+    throw new DispatchRecoveryError(
+      "binding-mismatch",
+      "dispatch recovery reference does not match the current managed handle or live tip",
+    );
+  }
+  return resolvedRecoveryOf(binding);
+}
+
+// ---------------------------------------------------------------------------
 // Sweep: the 24h envelope collapse and the 30d tombstone drop
 // ---------------------------------------------------------------------------
 
@@ -3152,6 +3624,9 @@ export function collapseAttestationEnvelope(row: AttestationEnvelope): Attestati
     createdAt: row.createdAt,
     terminalAt: row.terminalAt,
     reuseAfter: isoAt(terminalMs + IDEMPOTENCY_HORIZON_MS),
+    ...(row.dispatchRecoveryBinding === undefined
+      ? {}
+      : { dispatchRecoveryBinding: row.dispatchRecoveryBinding }),
   });
 }
 

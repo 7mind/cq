@@ -22,4 +22,18 @@ describe("T1987 implementation command workset guards", () => {
     expect(start).toContain("eligible finalized-manifest work");
     expect(advance).toContain("eligible finalized-manifest work");
   });
+
+  test("implement advance uses managed parent-lost recovery for an advanced tip", () => {
+    const advance = command("implement/advance.md");
+    const prose = advance.replace(/\s+/g, " ");
+    expect(prose).toContain('operation: "resolve-dispatch-recovery"');
+    expect(prose).toContain("persist that literal reference");
+    expect(prose).toContain("recovery: <recoveryReference>");
+    expect(prose).toContain("without `reprepareOf`");
+    expect(prose).toContain("injects only its verified durable Git receipt lineage");
+    expect(prose).toContain("Never retry an advanced tip as a fresh lineage-free dispatch");
+    expect(prose).not.toContain(
+      "manager-bound implement-worker, retry once with a fresh prepared dispatch",
+    );
+  });
 });

@@ -63,6 +63,19 @@ the effect boundaries required by the shared contract.
   discard worker partial/WIP state. Consume the worker's required
   `actualWorktreePath` on output as the authoritative location; merge by
   `resultCommit` SHA.
+- **Parent-lost dispatch recovery.** After a manager-bound implement-worker is
+  terminally aborted `parent-lost`, retain its exact worktree handle and call
+  `worktree_manage({ operation: "resolve-dispatch-recovery", handle })`. Accept
+  only the server-returned opaque `recoveryReference`; persist that literal
+  reference with the task's recovery metadata and `cq log put` record. Re-read
+  the worktree `HEAD` and require it to equal the returned live tip, then call
+  `prepare_dispatch` with `recovery: <recoveryReference>` and without
+  `reprepareOf`. The server resolves the exact terminal generation and injects
+  only its verified durable Git receipt lineage. Never retry an advanced tip as
+  a fresh lineage-free dispatch, never reconstruct a prior dispatch handle or
+  recovery association from registry files, and never substitute raw
+  attestation, repository, worktree, branch, base, tip, terminal, or receipt
+  coordinates for the opaque reference.
 - **Exact pre-registry adoption.** When, and only when, a task already has a
   pre-registry tree at the canonical
   `<repositoryRoot>/.claude/worktrees/implement-<taskId>` path on branch
@@ -82,8 +95,9 @@ the effect boundaries required by the shared contract.
   materialization. Retain the parent-prepared handle. Interpret a native
   result only after the exact retained handle yields `state: "consumed"`.
   Never inspect a body-returning completion or trust a child-reported handle.
-- A missing or non-consumed native result is a LOST REPORT. Log it and retry
-  the same role once with a fresh prepared dispatch. A second loss fails that
+- A missing or non-consumed native result is a LOST REPORT. Log it. For a
+  manager-bound implement-worker, use the parent-lost recovery procedure above;
+  other roles retry once with a fresh prepared dispatch. A second loss fails that
   task path closed, leaves the task non-terminal and its worktree intact, and
   cannot become a worker failure, reviewer abstention, or resolver verdict.
 

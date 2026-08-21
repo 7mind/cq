@@ -297,6 +297,22 @@ describe("live compact-dispatch capability", () => {
     expect(store.snapshot()).toHaveLength(0);
   });
 
+  test("terminal recovery requires the repository-bound worker path before allocation", async () => {
+    const { store, capability } = runtime("codex");
+    const outcome = await capability.prepare(
+      inlineRequest({
+        recovery: `cq-dispatch-recovery:v1:${"a".repeat(64)}`,
+        idempotencyKey: "T977-unbound-recovery",
+      }),
+    );
+    expect(outcome).toMatchObject({
+      accepted: false,
+      allocated: false,
+      path: "recovery",
+    });
+    expect(store.snapshot()).toHaveLength(0);
+  });
+
   test("manifest and role-artifact surfaces must agree before durable allocation", async () => {
     const store = new InMemoryAttestationStore(NAMESPACE);
     const capability = createDispatchCapability({

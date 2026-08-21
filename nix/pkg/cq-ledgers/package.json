@@ -20,6 +20,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "bun test --pass-with-no-tests",
+    "test:attestation-postgres-required": "bash scripts/test-attestation-postgres-required.sh",
     "bench:store": "bun run packages/ledger/bench/storeBackendBench.ts",
     "bench:concurrent": "bun run packages/ledger/bench/proto/concurrentWriterSmoke.ts",
     "measure:tool-surface": "bun run scripts/measure-tool-surface.ts",

@@ -3,6 +3,7 @@ import type {
   AbortedDispatchResult,
   ConfirmDispatchCompletionOutcome,
   DispatchHandle,
+  DispatchGitEffectBinding,
   DispatchJSONValue,
   DispatchOverlayApplication,
   FetchDispatchResult,
@@ -38,6 +39,16 @@ export interface PrepareDispatchToolInput {
   readonly reprepareOf?: DispatchHandle;
   /** Opaque manager-minted guarded-rebase reference (D334); requires reprepareOf. */
   readonly guardedRebase?: string;
+  /** Opaque manager-bound parent-lost recovery reference; mutually exclusive with reprepareOf. */
+  readonly recovery?: string;
+}
+
+export interface DispatchRecoveryResolution {
+  readonly status: "dispatch-recovery-resolved";
+  readonly recoveryReference: string;
+  readonly taskId: string;
+  readonly liveTip: string;
+  readonly terminalAt: string;
 }
 
 export interface StoreResultToolInput {
@@ -101,6 +112,10 @@ export interface DispatchCapability {
   observeWorktreeActivity?(
     worktreePath: string,
   ): Promise<DispatchWorktreeActivityObservation>;
+  resolveRecovery?(
+    gitEffectBinding: DispatchGitEffectBinding,
+    liveTip: string,
+  ): Promise<DispatchRecoveryResolution>;
 }
 
 export class DispatchNotImplementedError extends Error {

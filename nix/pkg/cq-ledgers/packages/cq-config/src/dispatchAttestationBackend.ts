@@ -67,6 +67,7 @@ import {
   AttestationNamespaceError,
   AttestationStorageError,
   assertAttestationNamespace,
+  assertDispatchRecoveryBinding,
   assertDispatchHandle,
   attestationNamespacesEqual,
   attestationRowDigest,
@@ -80,12 +81,14 @@ import {
   confirmDispatchCompletion,
   claimParentGate,
   completeParentGate,
+  discoverDispatchRecovery,
   fetchDispatchResult,
   fetchDispatchInput,
   gitEffectBindingForResultCapability,
   gitEffectBindingForHandle,
   supervisedWorkerGateContextForResultCapability,
   prepareDispatch,
+  resolveDispatchRecovery,
   storeDispatchResult,
   sweepAttestations,
   DISPATCH_ATTESTATION_DEFERRED,
@@ -108,11 +111,14 @@ import {
   type FetchDispatchResultRequest,
   type FetchDispatchInputRequest,
   type DispatchGitEffectBinding,
+  type DiscoverDispatchRecoveryRequest,
   type PrepareDispatchOutcome,
   type PrepareDispatchRequest,
   type ParentGateFinalizeRequest,
   type StoreDispatchResultOutcome,
   type StoredDispatchResultView,
+  type ResolveDispatchRecoveryRequest,
+  type ResolvedDispatchRecovery,
 } from "./dispatchAttestation.js";
 import { LEDGER_BACKENDS } from "./types.js";
 import type {
@@ -841,6 +847,26 @@ export async function resolveDispatchGitEffectBindingForHandleOn(
   );
 }
 
+export async function discoverDispatchRecoveryOn(
+  backend: AttestationBackend,
+  request: DiscoverDispatchRecoveryRequest,
+  deps: AttestationBackendDeps,
+): Promise<ResolvedDispatchRecovery> {
+  return backend.transact({ kind: "namespace" }, (store) =>
+    discoverDispatchRecovery(request, { store, now: deps.now }),
+  );
+}
+
+export async function resolveDispatchRecoveryOn(
+  backend: AttestationBackend,
+  request: ResolveDispatchRecoveryRequest,
+  deps: AttestationBackendDeps,
+): Promise<ResolvedDispatchRecovery> {
+  return backend.transact({ kind: "namespace" }, (store) =>
+    resolveDispatchRecovery(request, { store, now: deps.now }),
+  );
+}
+
 /** One-shot child input retrieval, serialized with every other row mutation. */
 export async function fetchDispatchInputOn(
   backend: AttestationBackend,
@@ -1430,6 +1456,20 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       if (hasGuardedRebaseBridge) {
         assertStoredGuardedRebaseBridge(bindingRecord["guardedRebaseBridge"]);
       }
+    }
+  }
+  if (Object.hasOwn(record, "dispatchRecoveryBinding")) {
+    try {
+      assertDispatchRecoveryBinding(
+        record["dispatchRecoveryBinding"] as never,
+        "storedRow.dispatchRecoveryBinding",
+      );
+    } catch (error) {
+      throw new AttestationStorageError(
+        `stored attestation body has malformed "dispatchRecoveryBinding": ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
   }
   return Object.freeze(record) as unknown as AttestationRow;

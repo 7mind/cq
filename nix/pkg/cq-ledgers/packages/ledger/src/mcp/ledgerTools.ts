@@ -1270,6 +1270,7 @@ export function createLedgerMcpToolSpecifications(
           expectedChild: args.expectedChild,
           ...(args.reprepareOf === undefined ? {} : { reprepareOf: args.reprepareOf }),
           ...(args.guardedRebase === undefined ? {} : { guardedRebase: args.guardedRebase }),
+          ...(args.recovery === undefined ? {} : { recovery: args.recovery }),
         }),
       );
     },

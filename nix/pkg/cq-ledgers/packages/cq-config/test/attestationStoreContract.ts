@@ -68,6 +68,7 @@ import {
   defaultDispatchRandomBytes,
   dispatchOperationScope,
   dispatchPayloadDigest,
+  discoverDispatchRecoveryOn,
   fetchDispatchInputOn,
   fetchDispatchResultOn,
   inputCapabilityHash,
@@ -76,6 +77,7 @@ import {
   prepareDispatchOn,
   provenanceBindingOf,
   resultCapabilityHash,
+  resolveDispatchRecoveryOn,
   storeDispatchResultOn,
   sweepAttestationsOn,
   type AbortDispatchRequest,
@@ -645,6 +647,46 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
           await expect(driver.confirm(p)).rejects.toThrow(DispatchStateConflictError);
         }
         expect(await fixture.rows()).toHaveLength(4);
+      }));
+
+    test("parent-lost recovery survives restart and terminal-envelope collapse", () =>
+      withCase(async ({ fixture, driver, clock }) => {
+        const p = await driver.prepare({
+          surface: "codex",
+          gitEffectBinding: PARENT_GATE_BINDING,
+        });
+        await driver.abort(p, {
+          reason: "parent-lost",
+          recoveryContext: {
+            liveTip: (INPUT as { startingCommit: string }).startingCommit,
+            gitReceipts: [],
+          },
+        });
+        const request = {
+          namespace: driver.namespace,
+          actor: "trusted-parent" as const,
+          gitEffectBinding: PARENT_GATE_BINDING,
+          liveTip: (INPUT as { startingCommit: string }).startingCommit,
+        };
+        const discovered = await discoverDispatchRecoveryOn(driver.backend, request, {
+          now: clock.now,
+        });
+        const restarted = await fixture.restart();
+        expect(
+          await resolveDispatchRecoveryOn(
+            restarted,
+            { ...request, recoveryReference: discovered.recoveryReference },
+            { now: clock.now },
+          ),
+        ).toEqual(discovered);
+
+        clock.advance(TERMINAL_ENVELOPE_RETENTION_MS);
+        await sweepAttestationsOn(restarted, { now: clock.now });
+        expect(
+          await discoverDispatchRecoveryOn(await fixture.restart(), request, {
+            now: clock.now,
+          }),
+        ).toEqual(discovered);
       }));
 
     test("invalid output aborts atomically — no revision is ever result-stored", () =>

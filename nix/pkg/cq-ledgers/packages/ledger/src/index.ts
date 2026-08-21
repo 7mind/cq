@@ -413,6 +413,7 @@ export {
   validateManagedWorktreeHandle,
   validateManagedWorktreeInstallPlan,
   assertManagedWorktreeDispatchBindingLive,
+  observeManagedWorktreeLiveTip,
   assertManagedWorktreeConflictDispatchBindingLive,
   withManagedWorktreeEffectLock,
 } from "./managedWorktree.js";
@@ -865,6 +866,7 @@ export type {
   ConfirmDispatchCompletionToolInput,
   DispatchCapability,
   DispatchWorktreeActivityObservation,
+  DispatchRecoveryResolution,
   FetchDispatchInputToolInput,
   FetchDispatchResultToolInput,
   PrepareDispatchToolInput,

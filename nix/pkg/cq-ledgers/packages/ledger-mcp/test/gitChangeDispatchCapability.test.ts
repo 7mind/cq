@@ -22,6 +22,7 @@ import {
   fsAttestationProductionRoot,
   MILESTONES_AMBIENT_ID,
   prepareManagedWorktree,
+  resolveManagedWorktreeDispatchBinding,
   TASKS_LEDGER,
 } from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
@@ -787,8 +788,9 @@ describe("dispatch-bound Git change capability", () => {
     );
     if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
     let gateRuns = 0;
+    const attestationStore = new InMemoryAttestationStore(NAMESPACE);
     const capability = createDispatchCapability({
-      backend: new InMemoryAttestationBackend(new InMemoryAttestationStore(NAMESPACE)),
+      backend: new InMemoryAttestationBackend(attestationStore),
       promptArtifactStore: artifactStore("codex"),
       repositoryRoot,
       worktreeStateDir: stateDir,
@@ -852,6 +854,35 @@ describe("dispatch-bound Git change capability", () => {
       ],
     });
     await capability.abort({ ...first.handle, reason: "parent-lost" });
+    const liveBinding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot,
+        taskId: managed.handle.taskId,
+        worktreePath: managed.handle.absolutePath,
+        branch: managed.handle.branch,
+      },
+      { stateDir },
+    );
+    if (liveBinding === null || capability.resolveRecovery === undefined) {
+      throw new Error("managed recovery resolution was not wired");
+    }
+    const recovery = await capability.resolveRecovery(liveBinding, receipt.newHead);
+    expect(recovery).toMatchObject({
+      status: "dispatch-recovery-resolved",
+      taskId: "T2082",
+      liveTip: receipt.newHead,
+    });
+    const rowsBeforeForgery = attestationStore.rows().length;
+    const forgedRecovery = await capability.prepare({
+      roleId: "implement-worker",
+      input: workerInput(1, receipt.newHead),
+      idempotencyKey: "T2082-lost-report-forged-recovery",
+      timeoutMs: 600_000,
+      expectedChild: { childId: "lost-forged-recovery", runId: "lost-forged-recovery" },
+      recovery: `cq-dispatch-recovery:v1:${"f".repeat(64)}`,
+    });
+    expect(forgedRecovery).toMatchObject({ accepted: false, path: "recovery" });
+    expect(attestationStore.rows()).toHaveLength(rowsBeforeForgery);
 
     const callerForged = await capability.prepare({
       roleId: "implement-worker",
@@ -885,7 +916,7 @@ describe("dispatch-bound Git change capability", () => {
       idempotencyKey: "T2082-lost-report-r1",
       timeoutMs: 600_000,
       expectedChild: { childId: "lost-r1", runId: "lost-r1" },
-      reprepareOf: first.handle,
+      recovery: recovery.recoveryReference,
     });
     if (!second.accepted) throw new Error(second.detail);
     if (second.prepared.parentGateCapability === undefined) {

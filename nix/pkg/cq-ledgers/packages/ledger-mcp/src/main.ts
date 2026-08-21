@@ -790,6 +790,9 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
     opts.worktreeManage ??
     (opts.repositoryRoot !== undefined
       ? createWorktreeManageCapability(opts.repositoryRoot, {
+          ...(opts.dispatchCapability?.resolveRecovery === undefined
+            ? {}
+            : { resolveDispatchRecovery: opts.dispatchCapability.resolveRecovery }),
           deps: {
             adoptionActivityFence: createGitLegacyWorktreeActivityFence(
               opts.dispatchCapability?.observeWorktreeActivity,

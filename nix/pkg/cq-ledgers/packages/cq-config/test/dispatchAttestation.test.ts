@@ -29,6 +29,7 @@ import {
   DISPATCH_TIMEOUT_MIN_MS,
   DispatchAuthorizationError,
   DispatchInputValidationError,
+  DispatchRecoveryError,
   DispatchStateConflictError,
   FETCH_DISPATCH_RESULT_SCHEMA,
   FakeDispatchClock,
@@ -2388,6 +2389,154 @@ describe("managed-handle terminal dispatch recovery", () => {
         h.deps,
       ),
     ).toEqual(discovered);
+  });
+
+  test("recovery is written only by a parent-lost terminal transition with a complete receipt closure", () => {
+    const h = harness();
+    const p = prepared(h, { surface: "codex", gitEffectBinding: GIT_EFFECT_BINDING });
+
+    expect(() =>
+      abortDispatch(abortRequest(p, { reason: "parent-lost" }), h.deps),
+    ).toThrow("requires recovery evidence");
+    expect(() =>
+      abortDispatch(
+        abortRequest(p, {
+          reason: "parent-lost",
+          recoveryContext: { liveTip: "d".repeat(40), gitReceipts: [] },
+        }),
+        h.deps,
+      ),
+    ).toThrow("an advanced live tip requires a complete durable receipt closure");
+    expect(fetchDispatchResult(fetchRequest(p), h.deps).state).toBe("prepared");
+    expect(h.store.rows().some((row) => row.dispatchRecoveryBinding !== undefined)).toBe(false);
+  });
+
+  test("resolution denies foreign, forged, expired and mismatched recovery authority without allocation", () => {
+    const h = harness();
+    const p = prepared(h, { surface: "codex", gitEffectBinding: GIT_EFFECT_BINDING });
+    const liveTip = (INPUT as { startingCommit: string }).startingCommit;
+    abortDispatch(
+      abortRequest(p, {
+        reason: "parent-lost",
+        recoveryContext: { liveTip, gitReceipts: [] },
+      }),
+      h.deps,
+    );
+    const recovery = discoverDispatchRecovery(
+      {
+        namespace: NAMESPACE,
+        actor: "trusted-parent",
+        gitEffectBinding: GIT_EFFECT_BINDING,
+        liveTip,
+      },
+      h.deps,
+    );
+    const rowsBefore = h.store.rows().length;
+    const resolve = (
+      overrides: Partial<Parameters<typeof resolveDispatchRecovery>[0]> = {},
+    ) =>
+      resolveDispatchRecovery(
+        {
+          namespace: NAMESPACE,
+          actor: "trusted-parent",
+          recoveryReference: recovery.recoveryReference,
+          gitEffectBinding: GIT_EFFECT_BINDING,
+          liveTip,
+          ...overrides,
+        },
+        h.deps,
+      );
+
+    expect(() => resolve({ namespace: OTHER_PROJECT })).toThrow(AttestationNamespaceError);
+    expect(() => resolve({ recoveryReference: "forged" })).toThrow(AttestationContractError);
+    expect(() =>
+      resolve({ recoveryReference: `cq-dispatch-recovery:v1:${"f".repeat(64)}` }),
+    ).toThrow(DispatchRecoveryError);
+    for (const [field, value] of [
+      ["taskId", "T999"],
+      ["handleToken", "foreign-handle"],
+      ["handleFingerprint", "e".repeat(64)],
+      ["repositoryRoot", "/foreign/repo"],
+      ["repositoryId", "e".repeat(64)],
+      ["commonDir", "/foreign/repo/.git"],
+      ["worktreePath", "/foreign/worktree"],
+      ["branch", "implement/T999"],
+      ["ref", "refs/heads/implement/T999"],
+      ["baseCommit", "e".repeat(40)],
+    ] as const) {
+      expect(() =>
+        resolve({ gitEffectBinding: { ...GIT_EFFECT_BINDING, [field]: value } }),
+      ).toThrow(DispatchRecoveryError);
+    }
+    expect(() => resolve({ liveTip: "e".repeat(40) })).toThrow(DispatchRecoveryError);
+    expect(h.store.rows()).toHaveLength(rowsBefore);
+
+    h.clock.advance(IDEMPOTENCY_HORIZON_MS);
+    expect(() => resolve()).toThrow(DispatchRecoveryError);
+    expect(h.store.rows()).toHaveLength(rowsBefore);
+  });
+
+  test("discovery selects the latest generation but rejects unbound and ambiguous lineages", () => {
+    const h = harness();
+    const liveTip = (INPUT as { startingCommit: string }).startingCommit;
+    const first = prepared(h, { surface: "codex", gitEffectBinding: GIT_EFFECT_BINDING });
+    abortDispatch(
+      abortRequest(first, {
+        reason: "parent-lost",
+        recoveryContext: { liveTip, gitReceipts: [] },
+      }),
+      h.deps,
+    );
+    const second = acceptedOf(
+      prepareDispatch(
+        prepareRequest({
+          surface: "codex",
+          idempotencyKey: "T685-round-1",
+          reprepareOf: handleOf(first),
+          gitEffectBinding: GIT_EFFECT_BINDING,
+        }),
+        h.prepareDeps,
+      ),
+    ).prepared;
+    abortDispatch(
+      abortRequest(second, {
+        reason: "parent-lost",
+        recoveryContext: { liveTip, gitReceipts: [] },
+      }),
+      h.deps,
+    );
+    const recoveryRequest = {
+      namespace: NAMESPACE,
+      actor: "trusted-parent" as const,
+      gitEffectBinding: GIT_EFFECT_BINDING,
+      liveTip,
+    };
+    expect(discoverDispatchRecovery(recoveryRequest, h.deps).reprepareOf).toEqual(
+      handleOf(second),
+    );
+
+    const separate = prepared(h, {
+      surface: "codex",
+      idempotencyKey: "separate-lineage",
+      gitEffectBinding: GIT_EFFECT_BINDING,
+    });
+    abortDispatch(
+      abortRequest(separate, {
+        reason: "parent-lost",
+        recoveryContext: { liveTip, gitReceipts: [] },
+      }),
+      h.deps,
+    );
+    expect(() => discoverDispatchRecovery(recoveryRequest, h.deps)).toThrow(
+      DispatchRecoveryError,
+    );
+
+    const unbound = harness({ seed: 50 });
+    const ordinary = prepared(unbound);
+    abortDispatch(abortRequest(ordinary, { reason: "parent-lost" }), unbound.deps);
+    expect(() => discoverDispatchRecovery(recoveryRequest, unbound.deps)).toThrow(
+      DispatchRecoveryError,
+    );
   });
 });
 

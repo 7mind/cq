@@ -512,6 +512,20 @@ describe("worktree_manage schema", () => {
     ).toThrow(/must not accompany/);
   });
 
+  it("accepts only a manager handle for dispatch recovery resolution", () => {
+    const handle = wireHandle(2);
+    expect(
+      parseWorktreeManageInput({ operation: "resolve-dispatch-recovery", handle }),
+    ).toEqual({ operation: "resolve-dispatch-recovery", recoveryHandle: handle });
+    expect(() =>
+      parseWorktreeManageInput({
+        operation: "resolve-dispatch-recovery",
+        handle,
+        taskId: "T1207",
+      }),
+    ).toThrow(/must not accompany/);
+  });
+
   it("accepts only a complete prepare-only legacy adoption target", () => {
     const expectedHead = "b".repeat(40);
     const adoptWorktreePath = "/tmp/project/.claude/worktrees/implement-T1207";
@@ -634,6 +648,73 @@ describe("worktree_manage direct/stdio contract", () => {
     expect(LEDGER_TOOL_NAMES).not.toContain("worktree_prepare" as never);
     expect(LEDGER_TOOL_NAMES).not.toContain("worktree_release" as never);
     expect(LEDGER_TOOL_NAMES).not.toContain("git_worktree_add" as never);
+  });
+
+  it("resolves dispatch recovery only from the exact live manager handle", async () => {
+    const repo = await seedRepository();
+    const install = recordingInstall();
+    const store = await buildStore({ rootTaskId: "T2306" });
+    const observed: Array<{ taskId: string; liveTip: string }> = [];
+    const capability = createWorktreeManageCapability(repo.cwd, {
+      deps: {
+        stateDir: repo.stateDir,
+        cacheRoot: repo.cacheRoot,
+        install: install.runner,
+      },
+      resolveDispatchRecovery: async (binding, liveTip) => {
+        observed.push({ taskId: binding.taskId, liveTip });
+        return {
+          status: "dispatch-recovery-resolved",
+          recoveryReference: `cq-dispatch-recovery:v1:${"a".repeat(64)}`,
+          taskId: binding.taskId,
+          liveTip,
+          terminalAt: "2026-08-21T20:00:00.000Z",
+        };
+      },
+    });
+    const tools = createLedgerMcpTools(
+      store,
+      undefined,
+      undefined,
+      undefined,
+      "",
+      undefined,
+      undefined,
+      "full",
+      capability,
+    );
+    try {
+      const prepared = expectOk(
+        await invokeDirect(tools, "worktree_manage", {
+          operation: "prepare",
+          taskId: "T2306",
+          baseCommit: repo.base,
+        }),
+        "prepare recovery worktree",
+      ) as { readonly handle: ManagedWorktreeHandle };
+      const resolved = expectOk(
+        await invokeDirect(tools, "worktree_manage", {
+          operation: "resolve-dispatch-recovery",
+          handle: prepared.handle,
+        }),
+        "resolve recovery",
+      ) as Record<string, unknown>;
+      expect(resolved).toMatchObject({
+        status: "dispatch-recovery-resolved",
+        taskId: "T2306",
+        liveTip: repo.base,
+      });
+      expect(observed).toEqual([{ taskId: "T2306", liveTip: repo.base }]);
+
+      const forged = await invokeDirect(tools, "worktree_manage", {
+        operation: "resolve-dispatch-recovery",
+        handle: { ...prepared.handle, nonce: "forged" },
+      });
+      expect(forged.ok).toBe(false);
+      expect(observed).toHaveLength(1);
+    } finally {
+      await store.dispose();
+    }
   });
 
   it("D346 preserves a verified T2192 external effect and its transitive Git contribution", async () => {

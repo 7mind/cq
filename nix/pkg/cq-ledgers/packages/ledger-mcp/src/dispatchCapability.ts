@@ -15,6 +15,7 @@ import {
   abortDispatchOn,
   claimParentGateOn,
   completeParentGateOn,
+  discoverDispatchRecoveryOn,
   authorizeDispatchGitConflictOn,
   authorizeDispatchGitEffectOn,
   assembleDispatchInput,
@@ -32,6 +33,7 @@ import {
   resolveDispatchGitEffectBindingOn,
   resolveSupervisedWorkerGateContextOn,
   resolveDispatchGitEffectBindingForHandleOn,
+  resolveDispatchRecoveryOn,
   storeDispatchResultOn,
   validateDispatchInput,
   type AttestationBackend,
@@ -58,6 +60,7 @@ import {
   validateGitConflictContinuationResultEvidence,
   validateGitChangeBrokerResultEvidence,
   resolveManagedWorktreeDispatchBinding,
+  observeManagedWorktreeLiveTip,
   resolveInheritedGitChangeReceipts,
   runLedgerWorksetGitEffect,
   withManagedWorktreeEffectLock,
@@ -344,6 +347,57 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     return dispatchPreLaunchRejection("invalid-launch-envelope", path, detail);
   }
 
+  async function abortWithRecovery(
+    input: {
+      readonly attestationId: string;
+      readonly generation: number;
+      readonly reason: Parameters<typeof abortDispatchOn>[1]["reason"];
+      readonly details?: DispatchJSONValue;
+    },
+    binding: Awaited<ReturnType<typeof resolveDispatchGitEffectBindingForHandleOn>>,
+    lockHeld = false,
+  ) {
+    const abort = async () => {
+      let recoveryContext;
+      if (
+        input.reason === "parent-lost" &&
+        binding !== undefined &&
+        binding.conflictStateDigest === undefined
+      ) {
+        const liveTip = await observeManagedWorktreeLiveTip(
+          binding,
+          options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+        );
+        const gitReceipts = await resolveInheritedGitChangeReceipts(
+          {
+            ...binding,
+            attestationId: input.attestationId,
+            generation: input.generation,
+          },
+          liveTip,
+          options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+        );
+        recoveryContext = { liveTip, gitReceipts };
+      }
+      return await abortDispatchOn(
+        options.backend,
+        {
+          namespace,
+          actor: "trusted-parent",
+          ...input,
+          ...(recoveryContext === undefined ? {} : { recoveryContext }),
+        },
+        { now },
+      );
+    };
+    if (binding === undefined || lockHeld) return await abort();
+    return await withManagedWorktreeEffectLock(
+      binding,
+      options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+      abort,
+    );
+  }
+
   return {
     prepare: async (input) => {
       if (
@@ -443,6 +497,19 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         );
       }
 
+      if (
+        input.recovery !== undefined &&
+        (roleId !== "implement-worker" ||
+          input.reprepareOf !== undefined ||
+          input.guardedRebase !== undefined ||
+          options.repositoryRoot === undefined)
+      ) {
+        return rejectLaunch(
+          "recovery",
+          "a terminal recovery reference requires an implement-worker on a local repository and must replace, not accompany, reprepareOf or guardedRebase",
+        );
+      }
+
       if (roleId === "implement-reviewer") {
         if (input.timeoutMs < IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS) {
           return rejectLaunch(
@@ -528,6 +595,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         );
       }
       let gitEffectBinding;
+      let resolvedReprepareOf = input.reprepareOf;
       if (
         (roleId === "implement-worker" || roleId === "implement-conflict-resolver") &&
         options.repositoryRoot !== undefined
@@ -620,6 +688,57 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               conflictState as unknown as GitRebaseConflictState,
             ),
           };
+        } else if (input.recovery !== undefined) {
+          if (manifestSurface !== "codex") {
+            return rejectLaunch(
+              "recovery",
+              "a terminal recovery reference requires the brokered codex surface",
+            );
+          }
+          const startingCommit = dispatchRecord["startingCommit"];
+          const baseCommitInput = dispatchRecord["baseCommit"];
+          if (typeof startingCommit !== "string") {
+            return rejectLaunch("input.startingCommit", "worker recovery requires startingCommit");
+          }
+          if (typeof baseCommitInput !== "string") {
+            return rejectLaunch("input.baseCommit", "worker recovery requires baseCommit");
+          }
+          let recovery;
+          try {
+            recovery = await resolveDispatchRecoveryOn(
+              options.backend,
+              {
+                namespace,
+                actor: "trusted-parent",
+                recoveryReference: input.recovery,
+                gitEffectBinding: resolvedGitEffectBinding,
+                liveTip: startingCommit,
+              },
+              { now },
+            );
+          } catch (error) {
+            return rejectLaunch(
+              "recovery",
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+          if (baseCommitInput !== recovery.gitEffectBinding.baseCommit) {
+            return rejectLaunch(
+              "input.baseCommit",
+              "worker recovery baseCommit differs from the terminal managed binding",
+            );
+          }
+          resolvedReprepareOf = recovery.reprepareOf;
+          gitEffectBinding =
+            recovery.gitReceipts.length === 0
+              ? resolvedGitEffectBinding
+              : { ...resolvedGitEffectBinding, inheritedGitReceipts: recovery.gitReceipts };
+          if (recovery.gitReceipts.length > 0) {
+            dispatchInput = {
+              ...dispatchRecord,
+              inheritedGitReceipts: recovery.gitReceipts as unknown as DispatchJSONValue,
+            };
+          }
         } else if (input.reprepareOf === undefined) {
           // D332: a lineage-free prepare may only build on the tip it declares as
           // its diff base. When startingCommit has advanced past baseCommit, the
@@ -809,7 +928,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         promptDigest,
         catalogHash,
         expectedChild: input.expectedChild,
-        ...(input.reprepareOf === undefined ? {} : { reprepareOf: input.reprepareOf }),
+        ...(resolvedReprepareOf === undefined ? {} : { reprepareOf: resolvedReprepareOf }),
         ...(gitEffectBinding === undefined ? {} : { gitEffectBinding }),
       } as const;
       const fingerprint = prepareDispatchRequestDigest(request);
@@ -982,17 +1101,15 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             );
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            await abortDispatchOn(
-              options.backend,
+            await abortWithRecovery(
               {
-                namespace,
                 attestationId: input.attestationId,
                 generation: input.generation,
-                actor: "trusted-parent",
                 reason: "parent-lost",
                 details: { phase: "supervised-gate", message: message.slice(0, 1024) },
               },
-              { now },
+              binding,
+              true,
             );
             throw error;
           }
@@ -1019,20 +1136,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     },
     abort: async (input) => {
       const binding = await resolveDispatchGitEffectBindingForHandleOn(options.backend, input);
-      const abort = async () =>
-        await abortDispatchOn(
-          options.backend,
-          { namespace, actor: "trusted-parent", ...input },
-          { now },
-        );
-      const result =
-        binding === undefined
-          ? await abort()
-          : await withManagedWorktreeEffectLock(
-              binding,
-              options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
-              abort,
-            );
+      const result = await abortWithRecovery(input, binding);
       rememberTerminal(result, result.abortedAt);
       return result;
     },
@@ -1184,6 +1288,25 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         }
         return { liveDispatches, liveLeases };
       }),
+    resolveRecovery: async (gitEffectBinding, liveTip) => {
+      const recovery = await discoverDispatchRecoveryOn(
+        options.backend,
+        {
+          namespace,
+          actor: "trusted-parent",
+          gitEffectBinding,
+          liveTip,
+        },
+        { now },
+      );
+      return Object.freeze({
+        status: "dispatch-recovery-resolved" as const,
+        recoveryReference: recovery.recoveryReference,
+        taskId: recovery.gitEffectBinding.taskId,
+        liveTip: recovery.liveTip,
+        terminalAt: recovery.terminalAt,
+      });
+    },
   };
 }
 
