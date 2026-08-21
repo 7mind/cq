@@ -67,6 +67,7 @@ import {
   dispatchInputDigest,
   dispatchOperationScope,
   dispatchPayloadDigest,
+  discoverDispatchRecovery,
   fetchDispatchResult,
   fetchDispatchInput,
   formatAttestationNamespace,
@@ -86,6 +87,7 @@ import {
   resultCapabilityAuthorizes,
   resultCapabilityHash,
   resultCapabilityMatches,
+  resolveDispatchRecovery,
   sequentialDispatchRandomBytes,
   storeDispatchResult,
   sweepAttestations,
@@ -2333,6 +2335,59 @@ describe("namespace, auth, transport and storage errors stay explicit", () => {
     expect(clock.advance(1000).peek()).toBe(new Date(T0_MS + 1000).toISOString());
     expect(clock.set(T0).epochMs).toBe(T0_MS);
     expect(() => new FakeDispatchClock("not a time")).toThrow(AttestationContractError);
+  });
+});
+
+describe("managed-handle terminal dispatch recovery", () => {
+  test("a parent-lost worker recovery binding survives envelope collapse", () => {
+    const h = harness();
+    const p = prepared(h, { surface: "codex", gitEffectBinding: GIT_EFFECT_BINDING });
+    const liveTip = (INPUT as { startingCommit: string }).startingCommit;
+
+    abortDispatch(
+      abortRequest(p, {
+        reason: "parent-lost",
+        recoveryContext: { liveTip, gitReceipts: [] },
+      }),
+      h.deps,
+    );
+
+    const discovered = discoverDispatchRecovery(
+      {
+        namespace: NAMESPACE,
+        actor: "trusted-parent",
+        gitEffectBinding: GIT_EFFECT_BINDING,
+        liveTip,
+      },
+      h.deps,
+    );
+    expect(discovered.recoveryReference).toMatch(/^cq-dispatch-recovery:v1:[0-9a-f]{64}$/);
+    expect(
+      resolveDispatchRecovery(
+        {
+          namespace: NAMESPACE,
+          actor: "trusted-parent",
+          recoveryReference: discovered.recoveryReference,
+          gitEffectBinding: GIT_EFFECT_BINDING,
+          liveTip,
+        },
+        h.deps,
+      ),
+    ).toEqual(discovered);
+
+    h.clock.advance(TERMINAL_ENVELOPE_RETENTION_MS);
+    expect(sweepAttestations(h.deps).envelopesCollapsed).toEqual([handleOf(p)]);
+    expect(
+      discoverDispatchRecovery(
+        {
+          namespace: NAMESPACE,
+          actor: "trusted-parent",
+          gitEffectBinding: GIT_EFFECT_BINDING,
+          liveTip,
+        },
+        h.deps,
+      ),
+    ).toEqual(discovered);
   });
 });
 
