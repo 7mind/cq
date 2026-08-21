@@ -979,8 +979,10 @@ describe("worktree_manage direct/stdio contract", () => {
         }),
         "stdio unreadable wip",
       ) as { status: string; reason: string };
-      expect(unreadableWipDirect).toMatchObject({ status: "refused", reason: "wip-malformed" });
-      expect(unreadableWipStdio).toMatchObject({ status: "refused", reason: "wip-malformed" });
+      expect([unreadableWipDirect, unreadableWipStdio]).toMatchObject([
+        { status: "refused", reason: "wip-malformed" },
+        { status: "refused", reason: "wip-malformed" },
+      ]);
       for (const handle of [freshDirect.handle, freshStdio.handle]) {
         await fs.rm(path.join(handle.absolutePath, "WIP-T9999.md"), {
           recursive: true,
