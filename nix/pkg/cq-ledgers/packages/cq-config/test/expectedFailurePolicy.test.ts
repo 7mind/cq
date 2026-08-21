@@ -268,7 +268,7 @@ test("the committed inventory agrees bidirectionally with live markers", () => {
       file: "nix/pkg/cq-ledgers/packages/ledger-mcp/test/worktreeTerminalReleaseXdg.test.ts",
       title: "releases a merged terminal task while restrictive roots remain stable",
       ledgerRef: "tasks:T2234",
-      line: 149,
+      line: 184,
     },
   ]);
 });
