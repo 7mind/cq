@@ -1427,8 +1427,13 @@ export async function findOpenWipCheckpoints(
     let content: string;
     try {
       content = await fs.readFile(full, "utf8");
-    } catch {
-      continue;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      return {
+        status: "malformed",
+        path: full,
+        detail: error instanceof Error ? error.message : String(error),
+      };
     }
     try {
       const artifact = parseWipArtifact(full, content);
