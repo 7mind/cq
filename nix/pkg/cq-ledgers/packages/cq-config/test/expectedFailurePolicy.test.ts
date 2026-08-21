@@ -1,12 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import {
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
@@ -78,7 +71,9 @@ function assertPromptPolicy(sources: Readonly<Record<string, string>>): void {
   expect(sha256(advance.slice(successStart, policyStart))).toBe(SUCCESS_SECTION_SHA256);
   const policy = advance.slice(policyStart, mergeStart);
   for (const sentence of SINGLETON_SENTENCES) expect(occurrences(advance, sentence)).toBe(1);
-  expect(policy).toContain("Forms (a) and (b) express the expected failure inside a green full gate.");
+  expect(policy).toContain(
+    "Forms (a) and (b) express the expected failure inside a green full gate.",
+  );
   expect(policy).toContain("Form\n(c) carries no marker.");
   expect(policy).toContain("A red full gate remains unmergeable.");
   expect(policy).toContain("may supplement, but never replace, these controls");
@@ -101,7 +96,11 @@ function source(file: string, body: string): ExpectedFailureSource {
   return { file, source: body };
 }
 
-function inventory(file: string, title: string, ledgerRef = "tasks:T1"): ExpectedFailureInventoryEntry {
+function inventory(
+  file: string,
+  title: string,
+  ledgerRef = "tasks:T1",
+): ExpectedFailureInventoryEntry {
   return { file, title, ledgerRef };
 }
 
@@ -121,10 +120,7 @@ test("the bounded prompt detector rejects mutations to every canonical block", (
     expect(() =>
       assertPromptPolicy({
         ...original,
-        [relativePath]: original[relativePath]!.replace(
-          block,
-          block.replace("\n", "\nT999\n"),
-        ),
+        [relativePath]: original[relativePath]!.replace(block, block.replace("\n", "\nT999\n")),
       }),
     ).toThrow();
     expect(() =>
@@ -162,8 +158,13 @@ test("the deterministic enumerator includes package source trees and excludes fo
     mkdirSync(path.dirname(absolutePath), { recursive: true });
     writeFileSync(absolutePath, "export {};\n");
   }
-  symlinkSync(path.join(root, "packages", "a", "src"), path.join(root, "packages", "a", "test", "linked"));
-  expect(enumerateExpectedFailureSourceFiles(root).map((file) => path.relative(root, file))).toEqual([
+  symlinkSync(
+    path.join(root, "packages", "a", "src"),
+    path.join(root, "packages", "a", "test", "linked"),
+  );
+  expect(
+    enumerateExpectedFailureSourceFiles(root).map((file) => path.relative(root, file)),
+  ).toEqual([
     "packages/a/scripts/tool.ts",
     "packages/a/src/a.ts",
     "packages/a/src/catalogue.gen.ts",
@@ -183,11 +184,13 @@ test("the syntax-aware scanner ignores comments and literals and accepts both su
         "// expected-failure: tasks:T1",
         "test.failing('alpha', () => {});",
         "// expected-failure: tasks:T2",
-        "it.failing(\"beta\", () => {});",
+        'it.failing("beta", () => {});',
       ].join("\n"),
     ),
   ];
-  expect(scanExpectedFailures(sources, [inventory(file, "alpha"), inventory(file, "beta", "tasks:T2")])).toEqual([
+  expect(
+    scanExpectedFailures(sources, [inventory(file, "alpha"), inventory(file, "beta", "tasks:T2")]),
+  ).toEqual([
     { file, title: "alpha", ledgerRef: "tasks:T1", line: 5 },
     { file, title: "beta", ledgerRef: "tasks:T2", line: 7 },
   ]);
@@ -260,5 +263,12 @@ test("the scanner rejects a computed expected-failure title", () => {
 test("the committed inventory agrees bidirectionally with live markers", () => {
   const sources = readExpectedFailureSources(WORKSPACE_ROOT, REPO_ROOT);
   const markers = scanExpectedFailures(sources, EXPECTED_FAILURE_INVENTORY);
-  expect(markers).toHaveLength(0);
+  expect(markers).toEqual([
+    {
+      file: "nix/pkg/cq-ledgers/packages/ledger-mcp/test/worktreeTerminalReleaseXdg.test.ts",
+      title: "releases a merged terminal task while restrictive roots remain stable",
+      ledgerRef: "tasks:T2234",
+      line: 149,
+    },
+  ]);
 });
