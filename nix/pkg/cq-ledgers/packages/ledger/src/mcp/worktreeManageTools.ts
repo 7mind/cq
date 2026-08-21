@@ -132,7 +132,7 @@ export const WORKTREE_MANAGE_INPUT_SHAPE = {
   operation: z
     .enum(["prepare", "observe-conflict", "resolve-dispatch-recovery", "release"])
     .describe(
-      "prepare = mint or resume; observe-conflict = return the manager-observed rebase state; resolve-dispatch-recovery = resolve the latest bound parent-lost worker; release = guarded teardown",
+      "prepare/resume, observe conflict, resolve bound parent-loss recovery, or guarded release",
     ),
   taskId: taskIdSchema.optional().describe("required for prepare (except pure handle resume)"),
   baseCommit: fullCommitSha.optional().describe("required for fresh prepare"),
@@ -396,16 +396,14 @@ export interface WorktreeManageToolSpec {
 }
 
 const WORKTREE_MANAGE_DESCRIPTION =
-  "Prepare, observe an active rebase conflict, resolve parent-lost dispatch recovery, or release ONE managed implement-flow worktree. " +
-  "`operation=prepare` mints a fresh UUIDv7-named tree under `.claude/worktrees/` " +
-  "(or resumes by optional handle / returns typed resume-required when a live " +
-  "tree already exists). A handle-free prepare may adopt one exact legacy tree " +
-  "only when paired `adoptWorktreePath` and `expectedHead` coordinates are supplied; " +
-  "the server constructs adoption authority internally. Dependency result-commit closure is derived " +
-  "authoritatively from `taskId` and the bound ledger — callers MUST NOT supply " +
-  "dependency evidence. `operation=release` performs guarded teardown " +
-  "(dirty/WIP/terminal checks) and is idempotent once released. Returns a typed " +
-  "acknowledgement; never exposes filesystem mutation primitives individually.";
+  "Manage one implement-flow worktree: prepare/resume, inspect a rebase conflict, " +
+  "resolve bound parent-loss recovery, or release. Prepare mints a UUIDv7 tree under " +
+  "`.claude/worktrees/`; it may resume by handle, return `resume-required`, or adopt one " +
+  "exact legacy tree from paired `adoptWorktreePath` and `expectedHead`. The server " +
+  "derives adoption authority and dependency result-commit closure from `taskId` and " +
+  "the bound ledger; callers cannot supply dependency evidence. Release is guarded " +
+  "(dirty/WIP/terminal checks) and idempotent. Returns a typed acknowledgement; " +
+  "exposes no individual filesystem mutation primitives.";
 
 export const WORKTREE_MANAGE_TOOL_SPEC: WorktreeManageToolSpec = {
   name: WORKTREE_MANAGE_TOOL_NAME,
