@@ -956,6 +956,40 @@ describe("worktree_manage direct/stdio contract", () => {
         await git(handle.absolutePath, ["commit", "-q", "-m", "clear wip"]);
       }
 
+      // regression: a present WIP candidate that cannot be read must fail closed.
+      for (const handle of [freshDirect.handle, freshStdio.handle]) {
+        await fs.mkdir(path.join(handle.absolutePath, "WIP-T9999.md"));
+        await fs.writeFile(path.join(handle.absolutePath, "WIP-T9999.md", "present"), "present\n");
+        await git(handle.absolutePath, ["add", "WIP-T9999.md"]);
+        await git(handle.absolutePath, ["commit", "-q", "-m", "unreadable wip candidate"]);
+      }
+      const unreadableWipDirect = expectOk(
+        await direct.call({
+          operation: "release",
+          handle: freshDirect.handle,
+          terminalDisposition: "done",
+        }),
+        "direct unreadable wip",
+      ) as { status: string; reason: string };
+      const unreadableWipStdio = expectOk(
+        await stdio.call({
+          operation: "release",
+          handle: freshStdio.handle,
+          terminalDisposition: "done",
+        }),
+        "stdio unreadable wip",
+      ) as { status: string; reason: string };
+      expect(unreadableWipDirect).toMatchObject({ status: "refused", reason: "wip-malformed" });
+      expect(unreadableWipStdio).toMatchObject({ status: "refused", reason: "wip-malformed" });
+      for (const handle of [freshDirect.handle, freshStdio.handle]) {
+        await fs.rm(path.join(handle.absolutePath, "WIP-T9999.md"), {
+          recursive: true,
+          force: true,
+        });
+        await git(handle.absolutePath, ["add", "-A"]);
+        await git(handle.absolutePath, ["commit", "-q", "-m", "clear unreadable wip"]);
+      }
+
       // 7. successful release + idempotent release
       const releasedDirect = expectOk(
         await direct.call({
