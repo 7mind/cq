@@ -47,6 +47,10 @@ import {
   type WorksetRootsEpoch,
 } from "../../worksetEffectAdmission.js";
 import type { WorksetStore } from "../../worksetStore.js";
+import {
+  authorizeManagedTerminalReleaseEffect,
+  type ManagedTerminalReleaseAdmissionRequest,
+} from "../../managedTerminalReleaseAdmission.js";
 import { writeTransaction } from "./connection.js";
 
 // ---------------------------------------------------------------------------
@@ -783,10 +787,13 @@ export function createPostgresWorksetStore(
     }
   }
 
-  async function admitExternalEffect(input: {
-    readonly kind: WorksetExternalEffectKind;
-    readonly targetRef: string;
-  }): Promise<WorksetExternalEffectAdmission> {
+  async function admitExternalEffectInternal(
+    input: {
+      readonly kind: WorksetExternalEffectKind;
+      readonly targetRef: string;
+    },
+    requireTargetAdmission: boolean,
+  ): Promise<WorksetExternalEffectAdmission> {
     if (!(WORKSET_EXTERNAL_EFFECT_KINDS as readonly string[]).includes(input.kind)) {
       throw new WorksetAdmissionError(
         "invalid-replacement",
@@ -829,7 +836,7 @@ export function createPostgresWorksetStore(
         if (exclusiveHeldFlag || (await exclusivePresent(tx))) {
           return { kind: "retry" };
         }
-        if (!isTargetAdmitted(input.targetRef, locked.roots)) {
+        if (requireTargetAdmission && !isTargetAdmitted(input.targetRef, locked.roots)) {
           return { kind: "target-excluded" };
         }
         const id = `ee-${++admissionSeq}-${randomUUID()}`;
@@ -1037,6 +1044,20 @@ export function createPostgresWorksetStore(
     }
   }
 
+  async function admitExternalEffect(input: {
+    readonly kind: WorksetExternalEffectKind;
+    readonly targetRef: string;
+  }): Promise<WorksetExternalEffectAdmission> {
+    return admitExternalEffectInternal(input, true);
+  }
+
+  async function admitManagedTerminalReleaseEffect(
+    input: ManagedTerminalReleaseAdmissionRequest,
+  ): Promise<WorksetExternalEffectAdmission> {
+    const effect = authorizeManagedTerminalReleaseEffect(input);
+    return admitExternalEffectInternal(effect, false);
+  }
+
   async function publishProcessGroup(
     admissionId: string,
     registration: WorksetProcessGroupRegistration,
@@ -1202,6 +1223,7 @@ export function createPostgresWorksetStore(
     setValidatedRoots,
     admitLedgerMutation,
     admitExternalEffect,
+    admitManagedTerminalReleaseEffect,
     runAdministrative,
     activeAdmissionCount,
     exclusiveHeld,

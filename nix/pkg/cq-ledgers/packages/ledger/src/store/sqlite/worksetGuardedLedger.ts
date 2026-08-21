@@ -28,6 +28,7 @@ function lazySqliteWorksetStore(get: () => WorksetStore): WorksetStore {
     setRoots: (roots) => get().setRoots(roots),
     admitLedgerMutation: (input) => get().admitLedgerMutation(input),
     admitExternalEffect: (input) => get().admitExternalEffect(input),
+    admitManagedTerminalReleaseEffect: (input) => get().admitManagedTerminalReleaseEffect(input),
     runAdministrative: (input) => get().runAdministrative(input),
     activeAdmissionCount: () => get().activeAdmissionCount(),
     exclusiveHeld: () => get().exclusiveHeld(),

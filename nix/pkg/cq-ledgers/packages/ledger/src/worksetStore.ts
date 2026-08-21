@@ -27,6 +27,7 @@ import {
   type WorksetLedgerMutationKind,
   type WorksetRootsEpoch,
 } from "./worksetEffectAdmission.js";
+import type { ManagedTerminalReleaseAdmissionRequest } from "./managedTerminalReleaseAdmission.js";
 
 // ---------------------------------------------------------------------------
 // Store contract
@@ -63,6 +64,10 @@ export interface WorksetStore {
     readonly kind: WorksetExternalEffectKind;
     readonly targetRef: string;
   }): Promise<WorksetExternalEffectAdmission>;
+  /** Manager-minted terminal teardown only; ordinary admission stays root-bound. */
+  admitManagedTerminalReleaseEffect(
+    input: ManagedTerminalReleaseAdmissionRequest,
+  ): Promise<WorksetExternalEffectAdmission>;
   /**
    * Exclusive administrative effect under trusted management authority.
    */

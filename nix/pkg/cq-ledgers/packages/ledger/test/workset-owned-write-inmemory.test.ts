@@ -130,6 +130,8 @@ describe("workset owned-write in-memory focused [T1962]", () => {
       setRoots: (roots) => admittedStore.setRoots(roots),
       admitLedgerMutation: (input) => admittedStore.admitLedgerMutation(input),
       admitExternalEffect: (input) => admittedStore.admitExternalEffect(input),
+      admitManagedTerminalReleaseEffect: (input) =>
+        admittedStore.admitManagedTerminalReleaseEffect(input),
       runAdministrative: (input) => admittedStore.runAdministrative(input),
       activeAdmissionCount: () => admittedStore.activeAdmissionCount(),
       exclusiveHeld: () => admittedStore.exclusiveHeld(),

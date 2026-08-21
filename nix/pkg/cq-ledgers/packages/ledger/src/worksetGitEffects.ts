@@ -12,6 +12,11 @@ import {
 import type { LedgerStore } from "./store/LedgerStore.js";
 import { requireWorksetStore } from "./worksetAccess.js";
 import { worksetEffectAdmissionProviderFromStore } from "./worksetStore.js";
+import {
+  assertManagedTerminalReleaseRunnerBinding,
+  type ManagedTerminalReleaseBinding,
+  type ManagedTerminalReleaseEffect,
+} from "./managedTerminalReleaseAdmission.js";
 
 const ZERO_COMMIT = "0".repeat(40);
 
@@ -19,6 +24,7 @@ export interface ManagedWorktreeGitEffectRunnerOptions {
   readonly store: LedgerStore;
   readonly taskId: string;
   readonly repositoryRoot: string;
+  readonly terminalReleaseBinding?: ManagedTerminalReleaseBinding;
   readonly readOnlyGit?: ManagedWorktreeGitRunner;
 }
 
@@ -26,16 +32,76 @@ export interface RunLedgerWorksetGitEffectOptions {
   readonly store: LedgerStore;
   readonly expected: WorksetGitEffectBinding;
   readonly resolve: () => Promise<WorksetGitEffectBinding>;
+  readonly terminalReleaseBinding?: ManagedTerminalReleaseBinding;
   readonly environment?: NodeJS.ProcessEnv;
+}
+
+function terminalReleaseEffect(binding: WorksetGitEffectBinding): ManagedTerminalReleaseEffect {
+  if (binding.kind === "worktree-remove") {
+    return {
+      kind: binding.kind,
+      targetRef: binding.targetRef,
+      repositoryRoot: binding.repositoryRoot,
+      worktreePath: binding.worktreePath,
+      branch: binding.branch,
+    };
+  }
+  if (
+    binding.kind === "branch-create" &&
+    binding.reference !== undefined &&
+    binding.expectedReferenceCommit !== undefined
+  ) {
+    return {
+      kind: binding.kind,
+      targetRef: binding.targetRef,
+      repositoryRoot: binding.repositoryRoot,
+      reference: binding.reference,
+      expectedReferenceCommit: binding.expectedReferenceCommit,
+      commit: binding.commit,
+    };
+  }
+  if (binding.kind === "branch-remove") {
+    return {
+      kind: binding.kind,
+      targetRef: binding.targetRef,
+      repositoryRoot: binding.repositoryRoot,
+      branch: binding.branch,
+      expectedCommit: binding.expectedCommit,
+    };
+  }
+  throw new Error("managed terminal release binding cannot admit this Git effect");
 }
 
 export async function runLedgerWorksetGitEffect(
   options: RunLedgerWorksetGitEffectOptions,
 ): Promise<ManagedWorktreeGitResult> {
+  const worksetStore = requireWorksetStore(options.store);
+  const provider =
+    options.terminalReleaseBinding === undefined
+      ? worksetEffectAdmissionProviderFromStore(worksetStore)
+      : {
+          acquire: async (input: {
+            readonly kind: WorksetGitEffectBinding["kind"];
+            readonly targetRef: string;
+          }) => {
+            if (
+              input.kind !== options.expected.kind ||
+              input.targetRef !== options.expected.targetRef
+            ) {
+              throw new Error(
+                "managed terminal release effect coordinates changed before admission",
+              );
+            }
+            return await worksetStore.admitManagedTerminalReleaseEffect({
+              binding: options.terminalReleaseBinding!,
+              effect: terminalReleaseEffect(options.expected),
+            });
+          },
+        };
   return await runWorksetGitEffectGate({
     expected: options.expected,
     resolve: options.resolve,
-    provider: worksetEffectAdmissionProviderFromStore(requireWorksetStore(options.store)),
+    provider,
     ...(options.environment === undefined ? {} : { environment: options.environment }),
   });
 }
@@ -73,6 +139,12 @@ export function createManagedWorktreeGitEffectRunner(
   const readOnlyGit = options.readOnlyGit ?? nodeManagedWorktreeGitRunner;
   const targetRef = `tasks:${options.taskId}`;
   const taskBranch = `implement/${options.taskId}`;
+  if (options.terminalReleaseBinding !== undefined) {
+    assertManagedTerminalReleaseRunnerBinding(options.terminalReleaseBinding, {
+      taskId: options.taskId,
+      repositoryRoot,
+    });
+  }
 
   function assertTaskBranch(branch: string): string {
     if (branch !== taskBranch) {
@@ -111,6 +183,9 @@ export function createManagedWorktreeGitEffectRunner(
       store: options.store,
       expected: binding,
       resolve: resolveBinding,
+      ...(options.terminalReleaseBinding === undefined
+        ? {}
+        : { terminalReleaseBinding: options.terminalReleaseBinding }),
     });
   }
 
@@ -260,10 +335,13 @@ export function createManagedWorktreeGitEffectRunner(
       };
       return await effect(binding, async () => {
         if (
-          (await requiredGit(repositoryRoot, ["rev-parse", taskBranch], "task branch")) !== args[2]! ||
+          (await requiredGit(repositoryRoot, ["rev-parse", taskBranch], "task branch")) !==
+            args[2]! ||
           (await currentReferenceCommit(args[1]!)) !== expectedReferenceCommit
         ) {
-          throw new Error("managed worktree Git effect recovery coordinates changed before publication");
+          throw new Error(
+            "managed worktree Git effect recovery coordinates changed before publication",
+          );
         }
         return binding;
       });

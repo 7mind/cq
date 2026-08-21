@@ -38,6 +38,10 @@ import type {
   CreateInMemoryWorksetStoreOptions,
   WorksetStore,
 } from "../../worksetStore.js";
+import {
+  authorizeManagedTerminalReleaseEffect,
+  type ManagedTerminalReleaseAdmissionRequest,
+} from "../../managedTerminalReleaseAdmission.js";
 import { immediateWriteTransaction } from "./connection.js";
 
 // ---------------------------------------------------------------------------
@@ -531,10 +535,13 @@ export function createSqliteWorksetStore(
     return handle;
   }
 
-  async function admitExternalEffect(input: {
-    readonly kind: WorksetExternalEffectKind;
-    readonly targetRef: string;
-  }): Promise<WorksetExternalEffectAdmission> {
+  async function admitExternalEffectInternal(
+    input: {
+      readonly kind: WorksetExternalEffectKind;
+      readonly targetRef: string;
+    },
+    requireTargetAdmission: boolean,
+  ): Promise<WorksetExternalEffectAdmission> {
     if (!(WORKSET_EXTERNAL_EFFECT_KINDS as readonly string[]).includes(input.kind)) {
       throw new WorksetAdmissionError(
         "invalid-replacement",
@@ -542,7 +549,7 @@ export function createSqliteWorksetStore(
       );
     }
     const granted = await beginNonExclusiveAdmit("external-effect");
-    if (!isTargetAdmitted(input.targetRef, granted.roots)) {
+    if (requireTargetAdmission && !isTargetAdmitted(input.targetRef, granted.roots)) {
       deleteAdmission(granted.id);
       throw new WorksetAdmissionError(
         "target-excluded",
@@ -730,6 +737,20 @@ export function createSqliteWorksetStore(
     return handle;
   }
 
+  async function admitExternalEffect(input: {
+    readonly kind: WorksetExternalEffectKind;
+    readonly targetRef: string;
+  }): Promise<WorksetExternalEffectAdmission> {
+    return admitExternalEffectInternal(input, true);
+  }
+
+  async function admitManagedTerminalReleaseEffect(
+    input: ManagedTerminalReleaseAdmissionRequest,
+  ): Promise<WorksetExternalEffectAdmission> {
+    const effect = authorizeManagedTerminalReleaseEffect(input);
+    return admitExternalEffectInternal(effect, false);
+  }
+
   async function replaceRoots(
     nextRoots: readonly string[],
     replacementValidation: typeof validateReplacement,
@@ -806,6 +827,7 @@ export function createSqliteWorksetStore(
     setValidatedRoots,
     admitLedgerMutation,
     admitExternalEffect,
+    admitManagedTerminalReleaseEffect,
     runAdministrative,
     activeAdmissionCount,
     exclusiveHeld,

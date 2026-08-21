@@ -38,6 +38,10 @@ import {
   type WorksetRootsEpoch,
 } from "../worksetEffectAdmission.js";
 import type { WorksetStore } from "../worksetStore.js";
+import {
+  authorizeManagedTerminalReleaseEffect,
+  type ManagedTerminalReleaseAdmissionRequest,
+} from "../managedTerminalReleaseAdmission.js";
 import { LEDGER_STORAGE_DIRNAME } from "../constants.js";
 import { atomicWrite as defaultAtomicWrite } from "./fsAtomic.js";
 import type { LockfileOpts } from "./lockfile.js";
@@ -811,10 +815,13 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): FsWo
     return handle;
   }
 
-  async function admitExternalEffect(input: {
-    readonly kind: WorksetExternalEffectKind;
-    readonly targetRef: string;
-  }): Promise<WorksetExternalEffectAdmission> {
+  async function admitExternalEffectInternal(
+    input: {
+      readonly kind: WorksetExternalEffectKind;
+      readonly targetRef: string;
+    },
+    requireTargetAdmission: boolean,
+  ): Promise<WorksetExternalEffectAdmission> {
     if (!(WORKSET_EXTERNAL_EFFECT_KINDS as readonly string[]).includes(input.kind)) {
       throw new WorksetAdmissionError(
         "invalid-replacement",
@@ -822,7 +829,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): FsWo
       );
     }
     const granted = await beginNonExclusiveAdmit("external-effect", (g) => {
-      if (!isTargetAdmitted(input.targetRef, g.roots)) {
+      if (requireTargetAdmission && !isTargetAdmitted(input.targetRef, g.roots)) {
         throw new WorksetAdmissionError(
           "target-excluded",
           `external effect target "${input.targetRef}" is outside the admitted workset`,
@@ -1007,6 +1014,20 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): FsWo
     return handle;
   }
 
+  async function admitExternalEffect(input: {
+    readonly kind: WorksetExternalEffectKind;
+    readonly targetRef: string;
+  }): Promise<WorksetExternalEffectAdmission> {
+    return admitExternalEffectInternal(input, true);
+  }
+
+  async function admitManagedTerminalReleaseEffect(
+    input: ManagedTerminalReleaseAdmissionRequest,
+  ): Promise<WorksetExternalEffectAdmission> {
+    const effect = authorizeManagedTerminalReleaseEffect(input);
+    return admitExternalEffectInternal(effect, false);
+  }
+
   async function replaceRoots(
     nextRoots: readonly string[],
     replacementValidation: typeof validateReplacement,
@@ -1088,6 +1109,7 @@ export function createFsWorksetStore(options: CreateFsWorksetStoreOptions): FsWo
     setValidatedRoots,
     admitLedgerMutation,
     admitExternalEffect,
+    admitManagedTerminalReleaseEffect,
     runAdministrative,
     activeAdmissionCount,
     exclusiveHeld,

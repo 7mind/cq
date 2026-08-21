@@ -136,6 +136,17 @@ export interface ManagedWorktreeDispatchBinding {
   readonly baseCommit: string;
 }
 
+/** Exact manager-registry identity used only to authorize terminal teardown. */
+export interface ManagedWorktreeTerminalReleaseRegistryBinding {
+  readonly registryStatus: "live" | "released";
+  readonly taskId: string;
+  readonly handleToken: string;
+  readonly handleFingerprint: string;
+  readonly repositoryRoot: string;
+  readonly worktreePath: string;
+  readonly branch: string;
+}
+
 export interface PreparedWorktreeEvidence {
   readonly worktreeId: string;
   readonly absolutePath: string;
@@ -2904,6 +2915,70 @@ export async function listManagedLiveWorktrees(
     return live.map((entry) => entry.handle);
   } finally {
     await releaseTaskLock();
+  }
+}
+
+/**
+ * Resolve the presented handle against the authoritative manager registry.
+ * Every caller-visible coordinate participates in the stored fingerprint;
+ * exact repository/task/token/path/branch equality is also checked directly.
+ */
+export async function resolveManagedWorktreeTerminalReleaseRegistryBinding(
+  repositoryCandidate: string,
+  handle: ManagedWorktreeHandle,
+  deps: Pick<ManagedWorktreeDeps, "git" | "stateDir" | "lockfile" | "prepareLockTimeoutMs"> = {},
+): Promise<ManagedWorktreeTerminalReleaseRegistryBinding | null> {
+  const git = deps.git ?? nodeManagedWorktreeGitRunner;
+  const repositoryRoot = await resolveRepositoryRoot(git, repositoryCandidate);
+  if (repositoryRoot === null || handle.repositoryRoot !== repositoryRoot) return null;
+  if (assertHandleIntegrity(handle, repositoryRoot) !== null) return null;
+  if (handle.branch !== defaultBranchForTask(handle.taskId)) return null;
+
+  const regRoot = registryRoot(repositoryRoot, deps.stateDir);
+  await fs.mkdir(regRoot, { recursive: true });
+  const lockfile =
+    deps.lockfile ??
+    new Lockfile({
+      ...(deps.prepareLockTimeoutMs === undefined
+        ? {}
+        : { acquireTimeoutMs: deps.prepareLockTimeoutMs }),
+    });
+  let releaseTaskLock: (() => Promise<void>) | undefined;
+  try {
+    releaseTaskLock = await lockfile.acquire(
+      join(regRoot, PREPARE_LOCKS_DIRNAME),
+      `prepare-${handle.taskId}`,
+    );
+    const stored = await readStoredHandle(
+      regRoot,
+      handle.taskId,
+      handle.token,
+      async () => undefined,
+    );
+    if (stored === null) return null;
+    if (fingerprintHandle(handle) !== stored.fingerprint) return null;
+    if (
+      stored.handle.taskId !== handle.taskId ||
+      stored.handle.token !== handle.token ||
+      stored.handle.repositoryRoot !== repositoryRoot ||
+      stored.handle.absolutePath !== handle.absolutePath ||
+      stored.handle.branch !== handle.branch
+    ) {
+      return null;
+    }
+    return Object.freeze({
+      registryStatus: stored.status,
+      taskId: stored.handle.taskId,
+      handleToken: stored.handle.token,
+      handleFingerprint: stored.fingerprint,
+      repositoryRoot,
+      worktreePath: stored.handle.absolutePath,
+      branch: stored.handle.branch,
+    });
+  } catch {
+    return null;
+  } finally {
+    if (releaseTaskLock !== undefined) await releaseTaskLock();
   }
 }
 

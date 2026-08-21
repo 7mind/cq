@@ -263,12 +263,5 @@ test("the scanner rejects a computed expected-failure title", () => {
 test("the committed inventory agrees bidirectionally with live markers", () => {
   const sources = readExpectedFailureSources(WORKSPACE_ROOT, REPO_ROOT);
   const markers = scanExpectedFailures(sources, EXPECTED_FAILURE_INVENTORY);
-  expect(markers).toEqual([
-    {
-      file: "nix/pkg/cq-ledgers/packages/ledger-mcp/test/worktreeTerminalReleaseXdg.test.ts",
-      title: "releases a merged terminal task while restrictive roots remain stable",
-      ledgerRef: "tasks:T2234",
-      line: 184,
-    },
-  ]);
+  expect(markers).toEqual([]);
 });

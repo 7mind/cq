@@ -604,6 +604,8 @@ export async function createGitObjectWorksetStore(
       withExclusiveLockRelease(() => coordinator.setValidatedRoots(roots, validation, boundary)),
     admitLedgerMutation: (input) => coordinator.admitLedgerMutation(input),
     admitExternalEffect: (input) => coordinator.admitExternalEffect(input),
+    admitManagedTerminalReleaseEffect: (input) =>
+      coordinator.admitManagedTerminalReleaseEffect(input),
     runAdministrative: (input) =>
       withExclusiveLockRelease(() => coordinator.runAdministrative(input)),
     activeAdmissionCount: () => coordinator.activeAdmissionCount(),

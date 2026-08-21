@@ -30,6 +30,11 @@ import {
   type WorksetStore,
   WORKSET_EFFECT_TERMINATION_REASONS,
 } from "../src/index.js";
+import {
+  mintManagedTerminalReleaseBinding,
+  type ManagedTerminalReleaseBinding,
+  type ManagedTerminalReleaseEffect,
+} from "../src/managedTerminalReleaseAdmission.js";
 
 // ---------------------------------------------------------------------------
 // Factory surface
@@ -96,6 +101,18 @@ async function settleExternal(
   await Promise.resolve(admission.markSettled());
   await admission.releaseAfterSettlement();
   return admission;
+}
+
+async function settleManagedRelease(
+  store: WorksetStore,
+  binding: ManagedTerminalReleaseBinding,
+  effect: ManagedTerminalReleaseEffect,
+  pgid: number,
+): Promise<void> {
+  const admission = await store.admitManagedTerminalReleaseEffect({ binding, effect });
+  await Promise.resolve(admission.registerProcessGroup({ pgid, leaderPid: pgid }));
+  await Promise.resolve(admission.markSettled());
+  await admission.releaseAfterSettlement();
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +250,113 @@ export function runWorksetStoreContract(factory: WorksetStoreContractFactory): v
       await Promise.resolve(again.registerProcessGroup({ pgid: 1, leaderPid: 1 }));
       await Promise.resolve(again.markSettled());
       await again.releaseAfterSettlement();
+    });
+
+    it("admits only one manager-bound terminal release sequence outside restrictive roots", async () => {
+      const store = await factory.build();
+      await store.setRoots(["goals:G-only"]);
+      const targetRef = "tasks:T2235";
+      const repositoryRoot = "/tmp/t2235-repository";
+      const worktreePath = "/tmp/t2235-repository/.claude/worktrees/t2235";
+      const branch = "implement/T2235";
+
+      for (const kind of ["worktree-remove", "branch-create", "branch-remove"] as const) {
+        await expectRejection(store.admitExternalEffect({ kind, targetRef }), "target-excluded");
+      }
+
+      const binding = mintManagedTerminalReleaseBinding({
+        taskId: "T2235",
+        handleToken: "manager-token",
+        handleFingerprint: "a".repeat(64),
+        repositoryRoot,
+        worktreePath,
+        branch,
+        terminalDisposition: "done",
+      });
+      const forged = {
+        ...binding,
+        handleToken: "substituted-token",
+        handleFingerprint: "b".repeat(64),
+      } as ManagedTerminalReleaseBinding;
+      await expectRejection(
+        store.admitManagedTerminalReleaseEffect({
+          binding: forged,
+          effect: { kind: "worktree-remove", targetRef, repositoryRoot, worktreePath, branch },
+        }),
+        "management-authority-required",
+      );
+
+      for (const effect of [
+        { kind: "worktree-remove", targetRef: "tasks:T9999", repositoryRoot, worktreePath, branch },
+        {
+          kind: "worktree-remove",
+          targetRef,
+          repositoryRoot: "/tmp/foreign",
+          worktreePath,
+          branch,
+        },
+        {
+          kind: "worktree-remove",
+          targetRef,
+          repositoryRoot,
+          worktreePath: `${worktreePath}-foreign`,
+          branch,
+        },
+        {
+          kind: "worktree-remove",
+          targetRef,
+          repositoryRoot,
+          worktreePath,
+          branch: "implement/T9999",
+        },
+      ] as const) {
+        await expectRejection(
+          store.admitManagedTerminalReleaseEffect({ binding, effect }),
+          "management-authority-required",
+        );
+        expect(store.activeAdmissionCount()).toBe(0);
+      }
+
+      await settleManagedRelease(
+        store,
+        binding,
+        { kind: "worktree-remove", targetRef, repositoryRoot, worktreePath, branch },
+        22351,
+      );
+      await settleManagedRelease(
+        store,
+        binding,
+        {
+          kind: "branch-create",
+          targetRef,
+          repositoryRoot,
+          reference: "refs/cq-managed-recovery/implement/T2235",
+          expectedReferenceCommit: "0".repeat(40),
+          commit: "1".repeat(40),
+        },
+        22352,
+      );
+      await settleManagedRelease(
+        store,
+        binding,
+        {
+          kind: "branch-remove",
+          targetRef,
+          repositoryRoot,
+          branch,
+          expectedCommit: "1".repeat(40),
+        },
+        22353,
+      );
+      await expectRejection(
+        store.admitManagedTerminalReleaseEffect({
+          binding,
+          effect: { kind: "worktree-remove", targetRef, repositoryRoot, worktreePath, branch },
+        }),
+        "management-authority-required",
+      );
+      expect(store.activeAdmissionCount()).toBe(0);
+      expect(await readWorksetRootsEpoch(store)).toEqual({ roots: ["goals:G-only"], epoch: 1 });
     });
 
     it("set waits for an already-admitted effect, then commits (effect-then-set)", async () => {

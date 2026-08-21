@@ -201,11 +201,20 @@ export class GitPlumbing {
   /**
    * Write `content` as a blob into the object DB and return its blob SHA.
    *
-   * Runs: `git hash-object -w --stdin` (content on stdin).
+   * Runs: `git hash-object -w -- <scratch-file>`.
    */
   async hashObject(content: string): Promise<string> {
-    const res = await this.runOk(["hash-object", "-w", "--stdin"], { stdin: content });
-    return res.stdout.trim();
+    const inputFile = path.join(
+      this.scratchDir,
+      `cq-ledger-blob-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    );
+    await fs.writeFile(inputFile, content, { flag: "wx", mode: 0o600 });
+    try {
+      const res = await this.runOk(["hash-object", "-w", "--", inputFile]);
+      return res.stdout.trim();
+    } finally {
+      await fs.rm(inputFile, { force: true });
+    }
   }
 
   /**
@@ -228,10 +237,9 @@ export class GitPlumbing {
     const env = { GIT_INDEX_FILE: indexFile } as const;
     try {
       for (const e of entries) {
-        await this.runOk(
-          ["update-index", "--add", "--cacheinfo", `${e.mode},${e.sha},${e.path}`],
-          { env },
-        );
+        await this.runOk(["update-index", "--add", "--cacheinfo", `${e.mode},${e.sha},${e.path}`], {
+          env,
+        });
       }
       const res = await this.runOk(["write-tree"], { env });
       return res.stdout.trim();

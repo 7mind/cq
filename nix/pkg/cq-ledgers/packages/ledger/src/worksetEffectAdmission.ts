@@ -31,6 +31,10 @@ import {
   createTrustedWorksetManagementAuthority,
   isTrustedWorksetManagementAuthority,
 } from "./worksetInvocationAuthority.js";
+import {
+  authorizeManagedTerminalReleaseEffect,
+  type ManagedTerminalReleaseAdmissionRequest,
+} from "./managedTerminalReleaseAdmission.js";
 
 export {
   createTrustedWorksetManagementAuthority,
@@ -400,6 +404,9 @@ export interface WorksetAdmissionCoordinator {
     readonly kind: WorksetExternalEffectKind;
     readonly targetRef: string;
   }): Promise<WorksetExternalEffectAdmission>;
+  admitManagedTerminalReleaseEffect(
+    input: ManagedTerminalReleaseAdmissionRequest,
+  ): Promise<WorksetExternalEffectAdmission>;
   /**
    * Exclusive workset replacement. Waits for older admissions, validates the
    * full batch, commits ordered roots + epoch+1, revokes not-yet-admitted
@@ -786,10 +793,13 @@ export function createInMemoryWorksetAdmissionCoordinator(
     return handle;
   }
 
-  async function admitExternalEffect(input: {
-    readonly kind: WorksetExternalEffectKind;
-    readonly targetRef: string;
-  }): Promise<WorksetExternalEffectAdmission> {
+  async function admitExternalEffectInternal(
+    input: {
+      readonly kind: WorksetExternalEffectKind;
+      readonly targetRef: string;
+    },
+    requireTargetAdmission: boolean,
+  ): Promise<WorksetExternalEffectAdmission> {
     if (!(WORKSET_EXTERNAL_EFFECT_KINDS as readonly string[]).includes(input.kind)) {
       throw new WorksetAdmissionError(
         "invalid-replacement",
@@ -798,7 +808,7 @@ export function createInMemoryWorksetAdmissionCoordinator(
     }
     const granted = await beginNonExclusiveAdmit("external-effect");
     try {
-      if (!isTargetAdmitted(input.targetRef, granted.roots)) {
+      if (requireTargetAdmission && !isTargetAdmitted(input.targetRef, granted.roots)) {
         throw new WorksetAdmissionError(
           "target-excluded",
           `external effect target "${input.targetRef}" is outside the admitted workset`,
@@ -953,6 +963,20 @@ export function createInMemoryWorksetAdmissionCoordinator(
     return handle;
   }
 
+  async function admitExternalEffect(input: {
+    readonly kind: WorksetExternalEffectKind;
+    readonly targetRef: string;
+  }): Promise<WorksetExternalEffectAdmission> {
+    return admitExternalEffectInternal(input, true);
+  }
+
+  async function admitManagedTerminalReleaseEffect(
+    input: ManagedTerminalReleaseAdmissionRequest,
+  ): Promise<WorksetExternalEffectAdmission> {
+    const effect = authorizeManagedTerminalReleaseEffect(input);
+    return admitExternalEffectInternal(effect, false);
+  }
+
   async function replaceRoots(
     nextRoots: readonly string[],
     replacementValidation: typeof validateReplacement,
@@ -1036,6 +1060,7 @@ export function createInMemoryWorksetAdmissionCoordinator(
     snapshot,
     admitLedgerMutation,
     admitExternalEffect,
+    admitManagedTerminalReleaseEffect,
     setRoots,
     setValidatedRoots,
     runAdministrative,

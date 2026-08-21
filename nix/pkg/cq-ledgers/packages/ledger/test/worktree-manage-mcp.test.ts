@@ -350,6 +350,7 @@ function capabilityFor(
 interface TransportPair {
   readonly label: "direct" | "stdio";
   readonly repo: Awaited<ReturnType<typeof seedRepository>>;
+  readonly store: InMemoryLedgerStore;
   call(args: ToolArgs): Promise<Outcome>;
   close(): Promise<void>;
 }
@@ -377,6 +378,7 @@ async function openTransportPair(
     return {
       label,
       repo,
+      store,
       call: (args) => invokeDirect(tools, "worktree_manage", args),
       close: async () => {
         await store.dispose();
@@ -387,6 +389,7 @@ async function openTransportPair(
   return {
     label,
     repo,
+    store,
     call: (args) => invokeStdio(stdio.client, "worktree_manage", args),
     close: async () => {
       await stdio.close();
@@ -886,6 +889,9 @@ describe("worktree_manage direct/stdio contract", () => {
         await depDirectPair.close();
         await depStdioPair.close();
       }
+
+      await direct.store.updateItem(TASKS_LEDGER, "T1306", { status: "done" });
+      await stdio.store.updateItem(TASKS_LEDGER, "T1306", { status: "done" });
 
       // 6. guarded release refusal — dirty
       await fs.writeFile(path.join(freshDirect.handle.absolutePath, "dirty.txt"), "dirty\n");

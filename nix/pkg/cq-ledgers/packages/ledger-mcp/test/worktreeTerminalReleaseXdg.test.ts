@@ -18,6 +18,7 @@ import {
   createLedgerStore,
   createWorktreeManageCapability,
   GOALS_LEDGER,
+  listManagedLiveWorktrees,
   MILESTONES_AMBIENT_ID,
   TASKS_LEDGER,
   type ManagedWorktreeHandle,
@@ -28,9 +29,6 @@ const exec = promisify(execFile);
 const roots: string[] = [];
 const TASK_ID = "T336";
 const GOAL_ID = "G336";
-const EXPECTED_RELEASE_ERROR =
-  'external effect target "tasks:T336" is outside the admitted workset';
-const EXPECTED_FAILURE_SENTINEL = new Error("D336 target-excluded release preserved every state");
 
 interface ReleaseEvidence {
   readonly worktreePresent: boolean;
@@ -41,6 +39,12 @@ interface ReleaseEvidence {
 interface ToolResult {
   readonly content?: readonly { readonly type: string; readonly text?: string }[];
   readonly isError?: boolean;
+}
+
+interface ReleaseState {
+  readonly worktreePresent: boolean;
+  readonly branchCommit: string | null;
+  readonly registry: string;
 }
 
 async function git(cwd: string, args: readonly string[]): Promise<string> {
@@ -105,7 +109,10 @@ async function repository(): Promise<string> {
 
 async function withClient(
   repositoryRoot: string,
-  run: (client: Client) => Promise<void>,
+  run: (
+    client: Client,
+    store: Awaited<ReturnType<typeof createLedgerStore>>["store"],
+  ) => Promise<void>,
 ): Promise<void> {
   const resolved = await createLedgerStore(repositoryRoot);
   const server = createManagementLedgerMcpServer({
@@ -123,12 +130,36 @@ async function withClient(
   try {
     expect(resolved.backend).toBe("xdg");
     expect(resolved.dbPath).toContain(process.env["XDG_STATE_HOME"]!);
-    await run(client);
+    await run(client, resolved.store);
   } finally {
     await client.close();
     await server.close();
     await resolved.store.dispose();
   }
+}
+
+async function releaseState(
+  repositoryRoot: string,
+  handle: ManagedWorktreeHandle,
+): Promise<ReleaseState> {
+  const registryPath = path.join(
+    repositoryRoot,
+    ".claude",
+    "worktrees",
+    ".cq-managed-registry",
+    "tasks",
+    handle.taskId,
+    "current.json",
+  );
+  return {
+    worktreePresent: await stat(handle.absolutePath)
+      .then((entry) => entry.isDirectory())
+      .catch(() => false),
+    branchCommit: await git(repositoryRoot, ["rev-parse", `refs/heads/${handle.branch}`]).catch(
+      () => null,
+    ),
+    registry: await readFile(registryPath, "utf8"),
+  };
 }
 
 async function seedLedger(repositoryRoot: string): Promise<string> {
@@ -180,106 +211,203 @@ describe("D336 production XDG terminal worktree release", () => {
     ).toBe(false);
   });
 
-  // expected-failure: tasks:T2234
-  test.failing(
-    "releases a merged terminal task while restrictive roots remain stable",
-    async () => {
-      try {
-        const previousStateHome = process.env["XDG_STATE_HOME"];
-        const stateHome = await mkdtemp(path.join(tmpdir(), "d336-xdg-state-"));
-        roots.push(stateHome);
-        process.env["XDG_STATE_HOME"] = stateHome;
-        try {
-          const repositoryRoot = await repository();
-          const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
-          const milestoneId = await seedLedger(repositoryRoot);
-          await withClient(repositoryRoot, async (client) => {
-            decode<{ acknowledgement: { roots: string[] } }>(
-              (await client.callTool({
-                name: "workset",
-                arguments: { op: "set", roots: [`milestones:${milestoneId}`, `goals:${GOAL_ID}`] },
-              })) as ToolResult,
-            );
-            const prepared = decode<{ status: string; handle: ManagedWorktreeHandle }>(
-              (await client.callTool({
-                name: "worktree_manage",
-                arguments: { operation: "prepare", taskId: TASK_ID, baseCommit },
-              })) as ToolResult,
-            );
-            expect(prepared.status, JSON.stringify(prepared)).toBe("prepared");
-            await writeFile(
-              path.join(prepared.handle.absolutePath, "RESULT-T336.md"),
-              "merged result\n",
-            );
-            await git(prepared.handle.absolutePath, ["add", "RESULT-T336.md"]);
-            await git(prepared.handle.absolutePath, ["commit", "-q", "-m", "D336 result"]);
-            const resultCommit = await git(prepared.handle.absolutePath, ["rev-parse", "HEAD"]);
-            await git(repositoryRoot, [
-              "merge",
-              "--no-ff",
-              "--no-gpg-sign",
-              prepared.handle.branch,
-              "-m",
-              "merge D336",
-            ]);
+  test("releases a merged terminal task while restrictive roots remain stable", async () => {
+    const previousStateHome = process.env["XDG_STATE_HOME"];
+    const stateHome = await mkdtemp(path.join(tmpdir(), "d336-xdg-state-"));
+    roots.push(stateHome);
+    process.env["XDG_STATE_HOME"] = stateHome;
+    try {
+      const repositoryRoot = await repository();
+      const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+      const milestoneId = await seedLedger(repositoryRoot);
+      await withClient(repositoryRoot, async (client, store) => {
+        decode<{ acknowledgement: { roots: string[] } }>(
+          (await client.callTool({
+            name: "workset",
+            arguments: { op: "set", roots: [`milestones:${milestoneId}`, `goals:${GOAL_ID}`] },
+          })) as ToolResult,
+        );
+        const prepared = decode<{ status: string; handle: ManagedWorktreeHandle }>(
+          (await client.callTool({
+            name: "worktree_manage",
+            arguments: { operation: "prepare", taskId: TASK_ID, baseCommit },
+          })) as ToolResult,
+        );
+        expect(prepared.status, JSON.stringify(prepared)).toBe("prepared");
+        await writeFile(
+          path.join(prepared.handle.absolutePath, "RESULT-T336.md"),
+          "merged result\n",
+        );
+        await git(prepared.handle.absolutePath, ["add", "RESULT-T336.md"]);
+        await git(prepared.handle.absolutePath, ["commit", "-q", "-m", "D336 result"]);
+        const resultCommit = await git(prepared.handle.absolutePath, ["rev-parse", "HEAD"]);
+        await git(repositoryRoot, [
+          "merge",
+          "--no-ff",
+          "--no-gpg-sign",
+          prepared.handle.branch,
+          "-m",
+          "merge D336",
+        ]);
 
-            const updated = decode<{ item: { status: string } }>(
-              (await client.callTool({
-                name: "update_item",
-                arguments: { ledger_id: "tasks", item_id: TASK_ID, status: "done" },
-              })) as ToolResult,
-            );
-            expect(updated.item.status).toBe("done");
+        const updated = decode<{ item: { status: string } }>(
+          (await client.callTool({
+            name: "update_item",
+            arguments: { ledger_id: "tasks", item_id: TASK_ID, status: "done" },
+          })) as ToolResult,
+        );
+        expect(updated.item.status).toBe("done");
 
-            const registryPath = path.join(
-              repositoryRoot,
-              ".claude",
-              "worktrees",
-              ".cq-managed-registry",
-              "tasks",
-              TASK_ID,
-              "current.json",
-            );
-            const branchBefore = await git(repositoryRoot, [
-              "rev-parse",
-              `refs/heads/${prepared.handle.branch}`,
-            ]);
-            const registryBefore = await readFile(registryPath, "utf8");
+        const rootsBefore = await store.worksetStore!().snapshot();
+        await expect(
+          store.worksetStore!().admitExternalEffect({
+            kind: "worktree-remove",
+            targetRef: `tasks:${TASK_ID}`,
+          }),
+        ).rejects.toMatchObject({ code: "target-excluded" });
 
-            const released = (await client.callTool({
-              name: "worktree_manage",
-              arguments: {
-                operation: "release",
-                handle: prepared.handle,
-                terminalDisposition: "done",
-                resultCommit,
-              },
-            })) as ToolResult;
-            if (released.isError !== true || textOf(released) !== EXPECTED_RELEASE_ERROR) return;
-            const evidence = {
-              worktreePresent: await stat(prepared.handle.absolutePath)
-                .then((entry) => entry.isDirectory())
-                .catch(() => false),
-              branchUnchanged: await git(repositoryRoot, [
-                "rev-parse",
-                `refs/heads/${prepared.handle.branch}`,
-              ])
-                .then((branch) => branch === branchBefore)
-                .catch(() => false),
-              registryUnchanged: await readFile(registryPath, "utf8")
-                .then((registry) => registry === registryBefore)
-                .catch(() => false),
-            };
-            if (!releaseEvidenceRemains(evidence)) return;
-            throw EXPECTED_FAILURE_SENTINEL;
-          });
-        } finally {
-          if (previousStateHome === undefined) delete process.env["XDG_STATE_HOME"];
-          else process.env["XDG_STATE_HOME"] = previousStateHome;
+        const released = decode<{
+          status: string;
+          handle: ManagedWorktreeHandle;
+          idempotent: boolean;
+          absolutePath: string;
+        }>(
+          (await client.callTool({
+            name: "worktree_manage",
+            arguments: {
+              operation: "release",
+              handle: prepared.handle,
+              terminalDisposition: "done",
+              resultCommit,
+            },
+          })) as ToolResult,
+        );
+        expect(released).toEqual({
+          status: "released",
+          handle: prepared.handle,
+          idempotent: false,
+          absolutePath: prepared.handle.absolutePath,
+        });
+        expect(
+          await stat(prepared.handle.absolutePath)
+            .then(() => true)
+            .catch(() => false),
+        ).toBe(false);
+        expect(
+          await git(repositoryRoot, ["rev-parse", `refs/heads/${prepared.handle.branch}`]).catch(
+            () => null,
+          ),
+        ).toBeNull();
+        expect(
+          await git(repositoryRoot, [
+            "rev-parse",
+            `refs/cq-managed-recovery/${prepared.handle.branch}`,
+          ]),
+        ).toBe(resultCommit);
+        expect(await listManagedLiveWorktrees(repositoryRoot, TASK_ID)).toEqual([]);
+        expect(await store.worksetStore!().snapshot()).toEqual(rootsBefore);
+      });
+    } finally {
+      if (previousStateHome === undefined) delete process.env["XDG_STATE_HOME"];
+      else process.env["XDG_STATE_HOME"] = previousStateHome;
+    }
+  });
+
+  test("denies nonterminal, mismatched, and substituted release bindings without mutation", async () => {
+    const previousStateHome = process.env["XDG_STATE_HOME"];
+    const stateHome = await mkdtemp(path.join(tmpdir(), "d336-xdg-denial-state-"));
+    roots.push(stateHome);
+    process.env["XDG_STATE_HOME"] = stateHome;
+    try {
+      const repositoryRoot = await repository();
+      const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+      const milestoneId = await seedLedger(repositoryRoot);
+      await withClient(repositoryRoot, async (client) => {
+        decode(
+          (await client.callTool({
+            name: "workset",
+            arguments: { op: "set", roots: [`milestones:${milestoneId}`, `goals:${GOAL_ID}`] },
+          })) as ToolResult,
+        );
+        const prepared = decode<{ status: string; handle: ManagedWorktreeHandle }>(
+          (await client.callTool({
+            name: "worktree_manage",
+            arguments: { operation: "prepare", taskId: TASK_ID, baseCommit },
+          })) as ToolResult,
+        );
+        expect(prepared.status).toBe("prepared");
+        const initial = await releaseState(repositoryRoot, prepared.handle);
+
+        const nonterminal = (await client.callTool({
+          name: "worktree_manage",
+          arguments: {
+            operation: "release",
+            handle: prepared.handle,
+            terminalDisposition: "done",
+          },
+        })) as ToolResult;
+        expect(nonterminal.isError, textOf(nonterminal)).toBe(true);
+        expect(await releaseState(repositoryRoot, prepared.handle)).toEqual(initial);
+
+        decode(
+          (await client.callTool({
+            name: "update_item",
+            arguments: { ledger_id: "tasks", item_id: TASK_ID, status: "done" },
+          })) as ToolResult,
+        );
+
+        const substitutedAttempts: readonly {
+          readonly handle: ManagedWorktreeHandle;
+        }[] = [
+          { handle: { ...prepared.handle, token: "substituted-token" } },
+          {
+            handle: { ...prepared.handle, nonce: "substituted-fingerprint-material" },
+          },
+          {
+            handle: {
+              ...prepared.handle,
+              repositoryRoot: `${repositoryRoot}-foreign`,
+              absolutePath: `${repositoryRoot}-foreign/.claude/worktrees/${prepared.handle.worktreeId}`,
+            },
+          },
+          {
+            handle: {
+              ...prepared.handle,
+              worktreeId: "019f2c7a-6b21-7c44-9e10-7a3f5d9b2e09",
+              absolutePath: `${repositoryRoot}/.claude/worktrees/019f2c7a-6b21-7c44-9e10-7a3f5d9b2e09`,
+            },
+          },
+          {
+            handle: { ...prepared.handle, taskId: "T337", branch: "implement/T337" },
+          },
+        ];
+        for (const attempt of substitutedAttempts) {
+          const denied = (await client.callTool({
+            name: "worktree_manage",
+            arguments: {
+              operation: "release",
+              handle: attempt.handle,
+              terminalDisposition: "done",
+            },
+          })) as ToolResult;
+          expect(denied.isError, textOf(denied)).toBe(true);
+          expect(await releaseState(repositoryRoot, prepared.handle)).toEqual(initial);
         }
-      } catch (error) {
-        if (error === EXPECTED_FAILURE_SENTINEL) throw error;
-      }
-    },
-  );
+
+        const mismatch = (await client.callTool({
+          name: "worktree_manage",
+          arguments: {
+            operation: "release",
+            handle: prepared.handle,
+            terminalDisposition: "abandoned",
+          },
+        })) as ToolResult;
+        expect(mismatch.isError, textOf(mismatch)).toBe(true);
+        expect(await releaseState(repositoryRoot, prepared.handle)).toEqual(initial);
+      });
+    } finally {
+      if (previousStateHome === undefined) delete process.env["XDG_STATE_HOME"];
+      else process.env["XDG_STATE_HOME"] = previousStateHome;
+    }
+  });
 });

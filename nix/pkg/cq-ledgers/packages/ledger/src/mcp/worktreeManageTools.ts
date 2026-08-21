@@ -28,6 +28,7 @@ import {
   isUuidV7,
   prepareManagedWorktree,
   releaseManagedWorktree,
+  resolveManagedWorktreeTerminalReleaseRegistryBinding,
   resolveManagedWorktreeDispatchBinding,
   type ManagedWorktreeDeps,
   type ManagedWorktreeHandle,
@@ -38,6 +39,7 @@ import {
 } from "../managedWorktree.js";
 import { observeManagedWorktreeConflictState } from "../gitConflictContinuation.js";
 import { createManagedWorktreeGitEffectRunner } from "../worksetGitEffects.js";
+import { mintManagedTerminalReleaseBinding } from "../managedTerminalReleaseAdmission.js";
 import type { LedgerStore } from "../store/LedgerStore.js";
 import { produceWireDto, type ProducedWireDto } from "./wireResponseContract.js";
 
@@ -446,6 +448,41 @@ export const WORKTREE_MANAGE_TOOL_SPEC: WorktreeManageToolSpec = {
     }
 
     const release = parsed.release!;
+    const registryBinding = await resolveManagedWorktreeTerminalReleaseRegistryBinding(
+      capability.repositoryRoot,
+      release.handle,
+      deps,
+    );
+    if (registryBinding === null) {
+      throw new Error(
+        "worktree_manage release handle does not match the authoritative manager registry",
+      );
+    }
+    if (registryBinding.taskId !== release.handle.taskId) {
+      throw new Error("worktree_manage release registry task does not match the presented handle");
+    }
+    const terminalDisposition = release.terminalDisposition;
+    if (terminalDisposition !== "done" && terminalDisposition !== "abandoned") {
+      throw new Error("worktree_manage release terminal disposition is not canonical");
+    }
+    const task = store.fetchItem(TASKS_LEDGER, release.handle.taskId);
+    if (task.id !== release.handle.taskId) {
+      throw new Error("worktree_manage release task identity changed during authoritative read");
+    }
+    if (task.status !== terminalDisposition) {
+      throw new Error(
+        `worktree_manage release task status ${task.status} does not equal terminalDisposition ${terminalDisposition}`,
+      );
+    }
+    const terminalReleaseBinding = mintManagedTerminalReleaseBinding({
+      taskId: registryBinding.taskId,
+      handleToken: registryBinding.handleToken,
+      handleFingerprint: registryBinding.handleFingerprint,
+      repositoryRoot: registryBinding.repositoryRoot,
+      worktreePath: registryBinding.worktreePath,
+      branch: registryBinding.branch,
+      terminalDisposition,
+    });
     const result = await releaseFn(release, {
       ...deps,
       git:
@@ -453,7 +490,8 @@ export const WORKTREE_MANAGE_TOOL_SPEC: WorktreeManageToolSpec = {
         createManagedWorktreeGitEffectRunner({
           store,
           taskId: release.handle.taskId,
-          repositoryRoot: capability.repositoryRoot,
+          repositoryRoot: registryBinding.repositoryRoot,
+          terminalReleaseBinding,
         }),
     });
     return produceWireDto(result as object);
