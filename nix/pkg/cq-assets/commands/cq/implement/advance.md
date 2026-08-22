@@ -97,9 +97,10 @@ the effect boundaries required by the shared contract.
   Never inspect a body-returning completion or trust a child-reported handle.
 - A missing or non-consumed native result is a LOST REPORT. Log it. For a
   manager-bound implement-worker, use the parent-lost recovery procedure above;
-  other roles retry once with a fresh prepared dispatch. A second loss fails that
-  task path closed, leaves the task non-terminal and its worktree intact, and
-  cannot become a worker failure, reviewer abstention, or resolver verdict.
+  other roles retry the same role once with a fresh prepared dispatch. A second
+  loss fails that task path closed, leaves the task non-terminal and its worktree
+  intact, and cannot become a worker failure, reviewer abstention, or resolver
+  verdict.
 
 ## 1. Derive the ready set
 

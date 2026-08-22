@@ -1101,16 +1101,25 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             );
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            await abortWithRecovery(
-              {
-                attestationId: input.attestationId,
-                generation: input.generation,
-                reason: "parent-lost",
-                details: { phase: "supervised-gate", message: message.slice(0, 1024) },
-              },
-              binding,
-              true,
-            );
+            try {
+              await abortWithRecovery(
+                {
+                  attestationId: input.attestationId,
+                  generation: input.generation,
+                  reason: "parent-lost",
+                  details: { phase: "supervised-gate", message: message.slice(0, 1024) },
+                },
+                binding,
+                true,
+              );
+            } catch (abortError) {
+              const abortMessage =
+                abortError instanceof Error ? abortError.message : String(abortError);
+              throw new Error(
+                `${message}; parent-lost terminalization failed: ${abortMessage}`,
+                { cause: abortError },
+              );
+            }
             throw error;
           }
           const result = await completeParentGateOn(

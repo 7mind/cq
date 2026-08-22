@@ -962,6 +962,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     await expect(stage(moving)).resolves.toMatchObject({ state: "gate-pending" });
     await expect(finalize(moving)).rejects.toThrow("branch tip moved during the gate");
     expect(movingRunner.requests).toHaveLength(1);
+    expect(moving.store.rows()).toMatchObject([{ state: "gate-running" }]);
 
     const replayRunner = new GateDummy();
     const replay = await fixture(replayRunner);
