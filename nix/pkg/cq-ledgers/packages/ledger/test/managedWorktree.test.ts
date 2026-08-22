@@ -1430,6 +1430,81 @@ describe("T1310 managed worktree prepare→dispatch→release state machine [BA]
     expect(await listManagedLiveWorktrees(repo.cwd, "T13101", repo.stateDir)).toHaveLength(0);
   });
 
+  it("D346 refuses every invalid Git-producing dependency before allocating a worktree", async () => {
+    const repo = await seedRepository();
+    const install = recordingInstall();
+    let worktreeAddCount = 0;
+    const gitRunner = async (cwd: string, args: readonly string[]) => {
+      if (args[0] === "worktree" && args[1] === "add") worktreeAddCount += 1;
+      return exec("git", [...args], {
+        cwd,
+        encoding: "utf8",
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      }).then(
+        (ok) => ({ code: 0, stdout: ok.stdout, stderr: ok.stderr }),
+        (error: { code?: number; stdout?: string; stderr?: string }) => ({
+          code: typeof error.code === "number" ? error.code : 1,
+          stdout: String(error.stdout ?? ""),
+          stderr: String(error.stderr ?? ""),
+        }),
+      );
+    };
+    const blob = await git(repo.cwd, ["hash-object", "-w", "README.md"]);
+    const orphanTree = await git(repo.cwd, ["write-tree"]);
+    const unrelated = await git(repo.cwd, ["commit-tree", orphanTree, "-m", "unrelated"]);
+    const cases = [
+      { taskId: "T22971", resultCommit: null, reason: "result-commit-missing" },
+      { taskId: "T22972", resultCommit: "deadbeef", reason: "result-commit-malformed" },
+      {
+        taskId: "T22973",
+        resultCommit: "f".repeat(40),
+        reason: "result-commit-object-missing",
+      },
+      { taskId: "T22974", resultCommit: blob, reason: "result-commit-object-not-commit" },
+      { taskId: "T22975", resultCommit: unrelated, reason: "result-commit-not-contained" },
+    ] as const;
+
+    const outcomes = await Promise.all(
+      cases.map(async ({ taskId, resultCommit }) => {
+        const result = await prepareManagedWorktree(
+          {
+            repositoryRoot: repo.cwd,
+            taskId,
+            baseCommit: repo.base,
+            dependencyReader: readerOf([
+              task(taskId, "planned", ["T1"], null),
+              task("T1", "done", [], resultCommit),
+            ]),
+          },
+          {
+            stateDir: repo.stateDir,
+            cacheRoot: repo.cacheRoot,
+            install: install.runner,
+            bunWorkspaceRoot: repo.workspace,
+            git: gitRunner,
+          },
+        );
+        return {
+          taskId,
+          result,
+          live: await listManagedLiveWorktrees(repo.cwd, taskId, repo.stateDir),
+        };
+      }),
+    );
+
+    expect(
+      outcomes.map(({ taskId, result, live }) => ({
+        taskId,
+        reason: result.status === "refused" ? result.dependency?.reason : result.status,
+        live,
+      })),
+    ).toEqual(
+      cases.map(({ taskId, reason }) => ({ taskId, reason, live: [] })),
+    );
+    expect(worktreeAddCount).toBe(0);
+    expect(install.plans).toHaveLength(0);
+  });
+
   it("forged resultCommit cannot release; stale reused tree resumes criticism tip", async () => {
     const repo = await seedRepository();
     const install = recordingInstall();

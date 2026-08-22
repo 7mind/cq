@@ -35,6 +35,7 @@ import {
   InMemoryLedgerStore,
   isUuidV7,
   LEDGER_TOOL_NAMES,
+  listManagedLiveWorktrees,
   materializeOperatorAction,
   parseWorktreeManageInput,
   recordOperatorActionEvidence,
@@ -751,6 +752,8 @@ describe("worktree_manage direct/stdio contract", () => {
       expect(prepared.evidence?.dependencyResultCommits).toEqual([
         { dependencyRef: "tasks:T2191", resultCommit: repo.base },
       ]);
+      expect(install.plans).toHaveLength(1);
+      expect(await listManagedLiveWorktrees(repo.cwd, "T2217", repo.stateDir)).toHaveLength(1);
       expect(await git(repo.cwd, ["rev-parse", "HEAD"])).toBe(repo.base);
       expect(store.fetchItem(TASKS_LEDGER, "T2192").status).toBe("done");
       expect(store.fetchItem(TASKS_LEDGER, "T2217").status).toBe("planned");
