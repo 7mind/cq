@@ -11,7 +11,7 @@ fi
 
 if [[ -z "$postgres_bin" ]]; then
   postgres_root="$(
-    nix build --no-link --print-out-paths --inputs-from "$repository_root" nixpkgs#postgresql
+    nix build --no-link --print-out-paths --inputs-from "$repository_root" 'nixpkgs#postgresql^out'
   )"
   postgres_bin="$postgres_root/bin"
 fi
