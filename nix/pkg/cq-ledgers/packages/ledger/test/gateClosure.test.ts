@@ -280,20 +280,35 @@ describe("managed gate closure v1", () => {
       expect(undeclared.detail).toContain(configRelative);
     }
 
-    await writeManifest(fixture, [
-      {
-        kind: "path",
-        source: configRelative,
-        sha256: digest(configBytes),
-        targets: [preloadRelative],
-      },
-      {
-        kind: "path",
-        source: preloadRelative,
-        sha256: digest(preloadBytes),
-        targets: [],
-      },
-    ]);
+    const configurationEdge: ManagedGateOpaqueEdgeDeclaration = {
+      kind: "path",
+      source: configRelative,
+      sha256: digest(configBytes),
+      targets: [preloadRelative],
+    };
+    const preloadEdge: ManagedGateOpaqueEdgeDeclaration = {
+      kind: "path",
+      source: preloadRelative,
+      sha256: digest(preloadBytes),
+      targets: [],
+    };
+    await writeManifest(fixture, [{ ...configurationEdge, targets: [] }, preloadEdge]);
+    const uncovered = await resolveManagedGateClosure(fixture.root);
+    expect(uncovered.status).toBe("invalid");
+    if (uncovered.status === "invalid") {
+      expect(uncovered.reason).toBe("source-declaration-missing");
+      expect(uncovered.detail).toContain("does not exactly cover");
+    }
+
+    await writeManifest(fixture, [configurationEdge]);
+    const unboundPreload = await resolveManagedGateClosure(fixture.root);
+    expect(unboundPreload.status).toBe("invalid");
+    if (unboundPreload.status === "invalid") {
+      expect(unboundPreload.reason).toBe("source-declaration-missing");
+      expect(unboundPreload.detail).toContain(preloadRelative);
+    }
+
+    await writeManifest(fixture, [configurationEdge, preloadEdge]);
     const resolved = await resolveManagedGateClosure(fixture.root);
     expect(resolved.status).toBe("resolved");
     if (resolved.status === "resolved") expect(resolved.installRoots).toEqual([fixture.targetRoot]);
