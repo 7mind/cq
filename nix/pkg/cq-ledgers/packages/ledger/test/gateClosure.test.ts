@@ -92,6 +92,13 @@ async function createExternalFile(name: string, bytes: string | Uint8Array): Pro
   return file;
 }
 
+async function replaceBunLockWithExternal(root: string): Promise<void> {
+  const lockPath = path.join(root, "bun.lock");
+  const externalLock = await createExternalFile("bun.lock", "{}\n");
+  await fs.rm(lockPath);
+  await fs.symlink(externalLock, lockPath, "file");
+}
+
 afterEach(async () => {
   for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true });
 });
@@ -116,10 +123,44 @@ describe("managed gate closure v1", () => {
   test("rejects a target Bun lock symlink outside the repository", async () => {
     const fixture = await createFixture();
     await writeManifest(fixture);
-    const lockPath = path.join(fixture.targetRoot, "bun.lock");
-    const externalLock = await createExternalFile("bun.lock", "{}\n");
-    await fs.rm(lockPath);
-    await fs.symlink(externalLock, lockPath, "file");
+    await replaceBunLockWithExternal(fixture.targetRoot);
+
+    const resolution = await resolveManagedGateClosure(fixture.root);
+    expect(resolution.status).toBe("invalid");
+    if (resolution.status === "invalid") expect(resolution.reason).toBe("path-escape");
+  });
+
+  test("rejects a static-import root Bun lock symlink outside the repository", async () => {
+    const fixture = await createFixture();
+    const source = await addBunRoot(fixture, "nix/pkg/static-root");
+    await replaceBunLockWithExternal(path.dirname(path.join(fixture.root, source)));
+    await fs.writeFile(
+      path.join(fixture.targetRoot, "test", "gate.test.ts"),
+      'import { edge } from "../../static-root/index.js";\nvoid edge;\n',
+    );
+    await writeManifest(fixture);
+
+    const resolution = await resolveManagedGateClosure(fixture.root);
+    expect(resolution.status).toBe("invalid");
+    if (resolution.status === "invalid") expect(resolution.reason).toBe("path-escape");
+  });
+
+  test("rejects a declared target root Bun lock symlink outside the repository", async () => {
+    const fixture = await createFixture();
+    const sourcePath = path.join(fixture.targetRoot, "test", "gate.test.ts");
+    const sourceBytes =
+      'const modulePath = "../../../declared-root/index.ts";\nawait import(modulePath);\n';
+    await fs.writeFile(sourcePath, sourceBytes);
+    const target = await addBunRoot(fixture, "nix/pkg/declared-root");
+    await replaceBunLockWithExternal(path.dirname(path.join(fixture.root, target)));
+    await writeManifest(fixture, [
+      {
+        kind: "dynamic",
+        source: path.relative(fixture.root, sourcePath).split(path.sep).join("/"),
+        sha256: digest(sourceBytes),
+        targets: [target],
+      },
+    ]);
 
     const resolution = await resolveManagedGateClosure(fixture.root);
     expect(resolution.status).toBe("invalid");

@@ -1500,7 +1500,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/gateClosure.test.ts",
-      "sha256": "d88943c47e2fea20db84e5fe90c6ad0fdf95e2dfb3b491810b7a342ba8a29429",
+      "sha256": "1a49b2707ebd114c26896fde0000466fc6cb44a0e06fed8bd2dd4efc1d80ebe2",
       "targets": []
     },
     {
