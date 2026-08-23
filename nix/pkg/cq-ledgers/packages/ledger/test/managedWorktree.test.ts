@@ -76,7 +76,10 @@ async function seedRepository(): Promise<{
     `${JSON.stringify({ name: "t1305-workspace", private: true, workspaces: [] }, null, 2)}\n`,
   );
   await fs.writeFile(path.join(workspace, "bun.lock"), "{}\n");
-  await fs.writeFile(path.join(cwd, ".gitignore"), "node_modules/\n.test-cache/\n.test-managed-state/\n");
+  await fs.writeFile(
+    path.join(cwd, ".gitignore"),
+    "node_modules/\n.test-cache/\n.test-managed-state/\n",
+  );
   await fs.writeFile(path.join(cwd, "README.md"), "t1305 seed\n");
   await git(cwd, ["add", "."]);
   await git(cwd, ["commit", "-q", "-m", "seed"]);
@@ -192,7 +195,10 @@ describe("install plan validation (negative controls)", () => {
     await fs.mkdir(provider, { recursive: true });
     await fs.mkdir(binDir, { recursive: true });
     await fs.writeFile(consumer, "");
-    await fs.writeFile(path.join(provider, "package.json"), '{"name":"node-gyp","version":"13.0.1"}\n');
+    await fs.writeFile(
+      path.join(provider, "package.json"),
+      '{"name":"node-gyp","version":"13.0.1"}\n',
+    );
     await fs.writeFile(path.join(binDir, "node-gyp"), "executable\n");
 
     expect(resolveNodeGypBinDir(consumer)).toBe(binDir);
@@ -211,7 +217,11 @@ describe("install plan validation (negative controls)", () => {
     expect(plan.env["BUN_INSTALL_CACHE_DIR"]).toBe("/tmp/cq-cache/bun-install");
     // D292: node-gyp must be on PATH for native postinstall scripts under MCP.
     const pathEnv = plan.env["PATH"] ?? "";
-    expect(pathEnv.split(path.delimiter).some((dir) => dir.endsWith(`${path.sep}.bin`) || dir.includes(`${path.sep}.bin`))).toBe(true);
+    expect(
+      pathEnv
+        .split(path.delimiter)
+        .some((dir) => dir.endsWith(`${path.sep}.bin`) || dir.includes(`${path.sep}.bin`)),
+    ).toBe(true);
     expect(pathEnv.includes("node-gyp") || pathEnv.split(path.delimiter).length > 0).toBe(true);
     const nodeGypDir = pathEnv.split(path.delimiter)[0]!;
     expect(existsSync(path.join(nodeGypDir, "node-gyp"))).toBe(true);
@@ -578,6 +588,128 @@ describe("prepareManagedWorktree", () => {
     await expect(fs.stat(path.join(repo.workspace, "node_modules"))).rejects.toBeDefined();
   });
 
+  it("fresh prepare installs the target-derived gate closure before publishing a handle", async () => {
+    const repo = await seedRepository();
+    const packagedTest = path.join(
+      repo.workspace,
+      "packages",
+      "cq-config",
+      "test",
+      "packagedPiPromptRoot.test.ts",
+    );
+    const extensionRoot = path.join(
+      repo.cwd,
+      "nix",
+      "pkg",
+      "pi-extensions",
+      "cq-subagent-dispatch",
+    );
+    const extensionSource = path.join(extensionRoot, "index.ts");
+    const checkScript = "bun test packages/cq-config/test/packagedPiPromptRoot.test.ts";
+    const packagedTestBytes = [
+      'import * as path from "node:path";',
+      'const extensionPath = path.join(import.meta.dir, "../../../../pi-extensions/cq-subagent-dispatch/index.ts");',
+      "await import(extensionPath);",
+      "",
+    ].join("\n");
+    await fs.mkdir(path.dirname(packagedTest), { recursive: true });
+    await fs.mkdir(extensionRoot, { recursive: true });
+    await fs.writeFile(packagedTest, packagedTestBytes);
+    await fs.writeFile(
+      path.join(repo.workspace, "package.json"),
+      `${JSON.stringify(
+        {
+          name: "t2317-target",
+          private: true,
+          scripts: {
+            check: checkScript,
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    await fs.writeFile(
+      path.join(extensionRoot, "package.json"),
+      `${JSON.stringify({ name: "t2317-pi-extension", private: true, dependencies: { typebox: "1.3.14" } }, null, 2)}\n`,
+    );
+    await fs.writeFile(path.join(extensionRoot, "bun.lock"), "{}\n");
+    await fs.writeFile(extensionSource, 'import { Type } from "typebox";\nvoid Type;\n');
+    await fs.writeFile(
+      path.join(repo.cwd, "cq-gate-closure.json"),
+      `${JSON.stringify(
+        {
+          version: 1,
+          target: {
+            packageJson: "nix/pkg/cq-ledgers/package.json",
+            script: "check",
+            scriptDagSha256: createHash("sha256")
+              .update(JSON.stringify([["check", checkScript]]))
+              .digest("hex"),
+          },
+          opaqueEdges: [
+            {
+              kind: "dynamic",
+              source: "nix/pkg/cq-ledgers/packages/cq-config/test/packagedPiPromptRoot.test.ts",
+              sha256: createHash("sha256").update(packagedTestBytes).digest("hex"),
+              targets: ["nix/pkg/pi-extensions/cq-subagent-dispatch/index.ts"],
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    await git(repo.cwd, ["add", "."]);
+    await git(repo.cwd, ["commit", "-q", "-m", "target gate fixture"]);
+    const base = await git(repo.cwd, ["rev-parse", "HEAD"]);
+    await fs.writeFile(path.join(repo.cwd, "cq-gate-closure.json"), '{"version":999}\n');
+    await git(repo.cwd, ["add", "cq-gate-closure.json"]);
+    await git(repo.cwd, ["commit", "-q", "-m", "divergent seed must not select closure"]);
+
+    const plans: ManagedWorktreeInstallPlan[] = [];
+    const install: ManagedWorktreeInstallRunner = async (plan) => {
+      plans.push(plan);
+      const modules = path.join(plan.cwd, "node_modules");
+      await fs.mkdir(modules, { recursive: true });
+      if (plan.cwd.endsWith(path.join("pi-extensions", "cq-subagent-dispatch"))) {
+        await fs.mkdir(path.join(modules, "typebox"), { recursive: true });
+        await fs.writeFile(path.join(modules, "typebox", "package.json"), '{"name":"typebox"}\n');
+      }
+      return { code: 0, stdout: "install-ok\n", stderr: "" };
+    };
+
+    await expect(fs.stat(path.join(repo.workspace, "node_modules"))).rejects.toBeDefined();
+    await expect(fs.stat(path.join(extensionRoot, "node_modules"))).rejects.toBeDefined();
+    const prepared = await prepareManagedWorktree(
+      { repositoryRoot: repo.cwd, taskId: "T2317", baseCommit: base },
+      { stateDir: repo.stateDir, cacheRoot: repo.cacheRoot, install },
+    );
+    expect(prepared.status).toBe("prepared");
+    if (prepared.status !== "prepared") return;
+    const relativeInstallRoots = plans.map((plan) =>
+      path.relative(prepared.evidence.absolutePath, plan.cwd),
+    );
+    expect(relativeInstallRoots).toEqual([
+      path.join("nix", "pkg", "cq-ledgers"),
+      path.join("nix", "pkg", "pi-extensions", "cq-subagent-dispatch"),
+    ]);
+    expect(
+      await fs.stat(
+        path.join(
+          prepared.evidence.absolutePath,
+          "nix",
+          "pkg",
+          "pi-extensions",
+          "cq-subagent-dispatch",
+          "node_modules",
+          "typebox",
+          "package.json",
+        ),
+      ),
+    ).toBeDefined();
+  });
+
   it("post-add bun-install failure rolls back worktree and created branch (no live orphan)", async () => {
     const repo = await seedRepository();
     const failingInstall: ManagedWorktreeInstallRunner = async (plan) => {
@@ -601,10 +733,14 @@ describe("prepareManagedWorktree", () => {
     const live = await listManagedLiveWorktrees(repo.cwd, "T1701", repo.stateDir);
     expect(live).toHaveLength(0);
     // Branch created by prepare must be gone after rollback.
-    const branchCheck = await exec("git", ["show-ref", "--verify", "--quiet", "refs/heads/implement/T1701"], {
-      cwd: repo.cwd,
-      encoding: "utf8",
-    }).then(
+    const branchCheck = await exec(
+      "git",
+      ["show-ref", "--verify", "--quiet", "refs/heads/implement/T1701"],
+      {
+        cwd: repo.cwd,
+        encoding: "utf8",
+      },
+    ).then(
       () => 0,
       (error: { code?: number }) => (typeof error.code === "number" ? error.code : 1),
     );
@@ -647,10 +783,14 @@ describe("prepareManagedWorktree", () => {
       expect(result.reason).toBe("registry-conflict");
     }
     expect(await listManagedLiveWorktrees(repo.cwd, "T1702", repo.stateDir)).toHaveLength(0);
-    const branchCheck = await exec("git", ["show-ref", "--verify", "--quiet", "refs/heads/implement/T1702"], {
-      cwd: repo.cwd,
-      encoding: "utf8",
-    }).then(
+    const branchCheck = await exec(
+      "git",
+      ["show-ref", "--verify", "--quiet", "refs/heads/implement/T1702"],
+      {
+        cwd: repo.cwd,
+        encoding: "utf8",
+      },
+    ).then(
       () => 0,
       (error: { code?: number }) => (typeof error.code === "number" ? error.code : 1),
     );
@@ -681,10 +821,7 @@ describe("prepareManagedWorktree", () => {
         if (arrived >= 2) releaseBarrier?.();
         // Wait briefly for a peer; under the lock the peer cannot arrive until
         // we finish, so the timeout expires and we proceed alone.
-        await Promise.race([
-          bothArrived,
-          new Promise<void>((r) => setTimeout(r, 150)),
-        ]);
+        await Promise.race([bothArrived, new Promise<void>((r) => setTimeout(r, 150))]);
       },
     });
     const [a, b] = await Promise.all([
@@ -917,7 +1054,8 @@ describe("releaseManagedWorktree", () => {
       deps,
     );
     expect(mismatchRelease.status).toBe("refused");
-    if (mismatchRelease.status === "refused") expect(mismatchRelease.reason).toBe("commit-mismatch");
+    if (mismatchRelease.status === "refused")
+      expect(mismatchRelease.reason).toBe("commit-mismatch");
     expect(await fs.stat(mismatchPrep.evidence.absolutePath).then((s) => s.isDirectory())).toBe(
       true,
     );
@@ -1090,19 +1228,20 @@ describe("releaseManagedWorktree", () => {
     if (recovered.status === "released") expect(recovered.idempotent).toBe(false);
     expect(await listManagedLiveWorktrees(repo.cwd, "T1601", repo.stateDir)).toHaveLength(0);
     // Branch deleted only after durable registry release.
-    const branchGone = await exec("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
-      cwd: repo.cwd,
-      encoding: "utf8",
-    }).then(
+    const branchGone = await exec(
+      "git",
+      ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+      {
+        cwd: repo.cwd,
+        encoding: "utf8",
+      },
+    ).then(
       () => false,
       () => true,
     );
     expect(branchGone).toBe(true);
     // Recovery ref still holds the tip for archaeology.
-    const recoveryTip = await git(repo.cwd, [
-      "rev-parse",
-      `refs/cq-managed-recovery/${branch}`,
-    ]);
+    const recoveryTip = await git(repo.cwd, ["rev-parse", `refs/cq-managed-recovery/${branch}`]);
     expect(recoveryTip).toBe(head);
   });
 
@@ -1114,10 +1253,14 @@ describe("releaseManagedWorktree", () => {
       cacheRoot: repo.cacheRoot,
       install: recordingInstall().runner,
       bunWorkspaceRoot: repo.workspace,
-      faultInjector: (boundary: ManagedWorktreeFaultBoundary, context: Readonly<Record<string, string>>) => {
+      faultInjector: (
+        boundary: ManagedWorktreeFaultBoundary,
+        context: Readonly<Record<string, string>>,
+      ) => {
         if (String(boundary) === "after-registry-directory-sync") {
           const directory = context.directory;
-          if (directory === undefined) throw new Error("directory-sync fault context is incomplete");
+          if (directory === undefined)
+            throw new Error("directory-sync fault context is incomplete");
           syncedDirectories.push(directory);
         }
       },
@@ -1268,7 +1411,10 @@ describe("releaseManagedWorktree", () => {
 describe("T1310 managed worktree prepare→dispatch→release state machine [BA]", () => {
   type OrchestratorPhase = "idle" | "prepared" | "wip" | "terminal" | "released";
 
-  function advance(phase: OrchestratorPhase, event: "prepare" | "wip" | "terminal" | "release"): OrchestratorPhase | "refused" {
+  function advance(
+    phase: OrchestratorPhase,
+    event: "prepare" | "wip" | "terminal" | "release",
+  ): OrchestratorPhase | "refused" {
     // Local gate table — mirrors implement/advance ordering.
     if (event === "prepare") {
       return phase === "idle" || phase === "prepared" ? "prepared" : "refused";
@@ -1498,9 +1644,7 @@ describe("T1310 managed worktree prepare→dispatch→release state machine [BA]
         reason: result.status === "refused" ? result.dependency?.reason : result.status,
         live,
       })),
-    ).toEqual(
-      cases.map(({ taskId, reason }) => ({ taskId, reason, live: [] })),
-    );
+    ).toEqual(cases.map(({ taskId, reason }) => ({ taskId, reason, live: [] })));
     expect(worktreeAddCount).toBe(0);
     expect(install.plans).toHaveLength(0);
   });

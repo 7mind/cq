@@ -344,6 +344,7 @@ function capabilityFor(
       stateDir: repo.stateDir,
       cacheRoot: repo.cacheRoot,
       install: install.runner,
+      bunWorkspaceRoot: path.join(repo.cwd, "nix", "pkg", "cq-ledgers"),
     },
   });
 }
@@ -673,6 +674,7 @@ describe("worktree_manage direct/stdio contract", () => {
         stateDir: repo.stateDir,
         cacheRoot: repo.cacheRoot,
         install: install.runner,
+        bunWorkspaceRoot: path.join(repo.cwd, "nix", "pkg", "cq-ledgers"),
       },
       resolveDispatchRecovery: async (binding, liveTip) => {
         observed.push({ taskId: binding.taskId, liveTip });

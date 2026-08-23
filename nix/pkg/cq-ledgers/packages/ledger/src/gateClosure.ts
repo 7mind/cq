@@ -455,6 +455,7 @@ function commonJsCallees(
   const moduleAlternation = moduleNames.map((name) => name.replaceAll("/", "\\/")).join("|");
   const requireExpression = `require\\s*\\(\\s*["'](?:${moduleAlternation})["']\\s*\\)`;
   const identifier = "[A-Za-z_$][\\w$]*";
+  const statementBoundary = "(?:^|[;\\n])";
   const addDestructuredCallees = (bindings: string): void => {
     for (const part of bindings.split(",")) {
       const parsed = part
@@ -470,7 +471,7 @@ function commonJsCallees(
     }
   };
   const namespacePattern = new RegExp(
-    `(?:^|\\n)\\s*(?:const|let|var)\\s+(${identifier})\\s*=\\s*${requireExpression}`,
+    `${statementBoundary}\\s*(?:const|let|var)\\s+(${identifier})\\s*=\\s*${requireExpression}`,
     "gu",
   );
   const namespaces = new Set<string>();
@@ -481,7 +482,7 @@ function commonJsCallees(
   }
 
   const destructuredPattern = new RegExp(
-    `(?:^|\\n)\\s*(?:const|let|var)\\s+\\{([\\s\\S]*?)\\}\\s*=\\s*${requireExpression}`,
+    `${statementBoundary}\\s*(?:const|let|var)\\s+\\{([\\s\\S]*?)\\}\\s*=\\s*${requireExpression}`,
     "gu",
   );
   for (const match of source.matchAll(destructuredPattern)) {
@@ -490,7 +491,7 @@ function commonJsCallees(
 
   for (const namespace of namespaces) {
     const destructuredNamespacePattern = new RegExp(
-      `(?:^|\\n)\\s*(?:const|let|var)\\s+\\{([\\s\\S]*?)\\}\\s*=\\s*${namespace}(?:\\s*;|\\s*$)`,
+      `${statementBoundary}\\s*(?:const|let|var)\\s+\\{([\\s\\S]*?)\\}\\s*=\\s*${namespace}(?:\\s*;|\\s*$)`,
       "gu",
     );
     for (const match of source.matchAll(destructuredNamespacePattern)) {
@@ -498,7 +499,7 @@ function commonJsCallees(
     }
     for (const method of methods) {
       const aliasPattern = new RegExp(
-        `(?:^|\\n)\\s*(?:const|let|var)\\s+(${identifier})\\s*=\\s*${namespace}\\.${method}(?:\\s*;|\\s*$)`,
+        `${statementBoundary}\\s*(?:const|let|var)\\s+(${identifier})\\s*=\\s*${namespace}\\.${method}(?:\\s*;|\\s*$)`,
         "gu",
       );
       for (const match of source.matchAll(aliasPattern)) callees.add(match[1]!);

@@ -1,0 +1,2011 @@
+{
+  "version": 1,
+  "target": {
+    "packageJson": "nix/pkg/cq-ledgers/package.json",
+    "script": "check",
+    "scriptDagSha256": "8f07ceadfa10d5076100baa6b57b481f629d88190505e53f1a0a9096ec5899eb"
+  },
+  "opaqueEdges": [
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/worktreeTerminalReleaseXdg.test.ts",
+      "sha256": "d8435d77ef3fb07da35576f168b090b53e32fadfcdc5334d17c631824655f08a",
+      "targets": []
+    },
+    {
+      "kind": "nix",
+      "source": "nix/pkg/cq-ledgers/package.json",
+      "sha256": "ab5c4bc52d1ea75b5cf9e099d44e099d037f08b1d0b59dfff965acb66ad501a0",
+      "targets": []
+    },
+    {
+      "kind": "dynamic",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/ledgerStatusTeardownSafety.test.ts",
+      "sha256": "d15d248116403cde737feb6fc83581a8efbacdd34112c68c6573d2cba9ae5ad8",
+      "targets": ["nix/pkg/pi-extensions/ledger-status/index.ts"]
+    },
+    {
+      "kind": "dynamic",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/orchestratorPromptSources.test.ts",
+      "sha256": "9bb3a026119007124a978b846ef504015a26bc1bdb24db0016f4159ff1eda415",
+      "targets": ["nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts"]
+    },
+    {
+      "kind": "dynamic",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/packagedPiPromptRoot.test.ts",
+      "sha256": "386bde9ea746bc749156eaa7d847740f6a55926cfcf1b12e2be51727d8a525b3",
+      "targets": ["nix/pkg/pi-extensions/cq-subagent-dispatch/index.ts"]
+    },
+    {
+      "kind": "dynamic",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/piRefFirstDispatch.test.ts",
+      "sha256": "1e3a791f4605f21f74a5de2f7cb3cbb8c7a78045409ea5d916a6dc420d520d4e",
+      "targets": ["nix/pkg/pi-extensions/cq-subagent-dispatch/index.ts"]
+    },
+    {
+      "kind": "dynamic",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/scripts/verify-packaged-prompt-surfaces.ts",
+      "sha256": "88a6b162ce122753daafaa94cc048055704b8b81497cfa8bbf0b3f66b976043b",
+      "targets": ["nix/pkg/cq-ledgers/packages/ledger-mcp/package.json"]
+    },
+    {
+      "kind": "dynamic",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-tui/test/status.test.tsx",
+      "sha256": "778c7acd702904535c0feb7806785b8712fb9041aa06d4729dc92965818ea097",
+      "targets": ["nix/pkg/cq-ledgers/packages/ledger-tui/package.json"]
+    },
+    {
+      "kind": "dynamic",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/multiWriterStressWriter.ts",
+      "sha256": "5326966a5908cc909644c9ca9ca9558963f961e86850a24490126022ce55924c",
+      "targets": [
+        "nix/pkg/cq-ledgers/packages/ledger/test/postgresWriterStore.ts",
+        "nix/pkg/cq-ledgers/packages/ledger/test/sqliteWriterStore.ts"
+      ]
+    },
+    {
+      "kind": "dynamic",
+      "source": "nix/pkg/cq-ledgers/scripts/measure-tool-surface.ts",
+      "sha256": "f5053c5e6af3860a5bea4305f1d7ca9cbef81d6b48f1003f87ca2347876e0d36",
+      "targets": ["nix/pkg/cq-ledgers/packages/ledger-mcp/package.json"]
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/gateRun.test.ts",
+      "sha256": "3f6e3b4773af6a2ceacbb2183f4c6f9888f1075e9a9deefa9727609d03bd1bb9",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/gateRun.test.ts",
+      "sha256": "3f6e3b4773af6a2ceacbb2183f4c6f9888f1075e9a9deefa9727609d03bd1bb9",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/raw-log-lifecycle-capstone.test.ts",
+      "sha256": "8243bed89c8b58f081c570bb3409d60bd6b5971cb580fad9471e43006ab4658d",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/scripts/gen-prompt-catalog.ts",
+      "sha256": "0ff4d5bbc5eb9d1d2a429014946aedd12d8c8d6a4a660f074c93ddd948389864",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/scripts/probe-codex-role-tool-profile.ts",
+      "sha256": "72347a334972cd0bcd4add910f6f06cf0d3dba1706cc7733b2552df1b1f28d49",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/src/claudeDispatchBridge.ts",
+      "sha256": "2b7a84d665639495ae5b8e6722bab34edad8a3b99600262b7067963f65f12088",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/src/codexRoleBoundary.ts",
+      "sha256": "10cc5a8bd401ce0c2be54711fd3462501d32527d13c1126065f1f517843dc05f",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/src/codexSandboxPreflight.ts",
+      "sha256": "e039d8534902ec623130e50d5b5d584b9af05c51d51282f77292a9b2a044b1a6",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/agentPromptSources.test.ts",
+      "sha256": "881484a8c1078c0449ef2c78d78aae3a8e5b3413a02ff1f0d0302cb8b77cc980",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/attestationStore-crossProcess.test.ts",
+      "sha256": "b57412c15be51aac3838af47bbd01928741a9ae1f45befea53bdd7b16b41b719",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/claudeDispatchBridge.test.ts",
+      "sha256": "a890e08c2b5435c74a58e94b3c8f803853c4c24b8d80c6b4c6ffb7e21daba877",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/claudeDispatchProtocol.test.ts",
+      "sha256": "64ef599d8c88c748e5687f1d4a31e5f1c50241f1195a13e745f6384fd839e086",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexBoundaryDiagnostics.test.ts",
+      "sha256": "3bbd14c64485f8cc346fdb0d552a7b98cc5c3b3aa69ebc290cff41fd03241183",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexEffortProbe.test.ts",
+      "sha256": "333b2ec71efd4c40ced533259859ef379568a3fb5eb9b2abbc5a07ccf19202f7",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexGateCommandFixture.ts",
+      "sha256": "a80367f3127df9ee35c9150be0d34554046d795d5fbb030216ab29b3282bc823",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexGateIntegration.test.ts",
+      "sha256": "a07f02ec3388a821186774e19040e9b0024799f68265746cbbbc7e394b2d8a01",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexLifecycleFake.ts",
+      "sha256": "6aa00468f82afe73932379a6eb8de477563e17970ad91a64cd6a9402101841ee",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexMcpTimeoutIntegration.test.ts",
+      "sha256": "c87d0e57e7e16812eef18c8765647f661f417160d5e1008c96ecb8036a5ec69b",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRoleBoundary.test.ts",
+      "sha256": "2f0963044393dc6a5ffa70391f1a530c98abaac43198a9395b878e8c4a844bd8",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRoleBoundary.test.ts",
+      "sha256": "2f0963044393dc6a5ffa70391f1a530c98abaac43198a9395b878e8c4a844bd8",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexSandboxPreflight.test.ts",
+      "sha256": "ca6bcb5143488fa67de86daaec212760924a195f1b5d8d9e031083d64d677cc1",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/crossSurfaceDispatchConformance.test.ts",
+      "sha256": "6d7daf01af048d54f65006308e5a909522cc859c4f4da4e99beea201dcf91230",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/dispatchTransportRouter.test.ts",
+      "sha256": "d5c2186cd6d058081c03d2de46354a079cce918c96c5519eceb9e9f28bcbcda9",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/expectedFailureMarkerContract.test.ts",
+      "sha256": "bb3142b32625d3a445dc7c0412def5d195ee000196588c1d948f305f0eddfcc5",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/fixtures/codex-sandbox-preflight.ts",
+      "sha256": "6b564ad799f67cee92ff3b45e62754e9a8fed9074611690a1dab0f6396c40a36",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/orchestratorPromptSources.test.ts",
+      "sha256": "9bb3a026119007124a978b846ef504015a26bc1bdb24db0016f4159ff1eda415",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/packagedClaudePromptRoot.test.ts",
+      "sha256": "80c994064cce516b1637b5d958483c66c354f1653d4f5f69ae70961d44984398",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/packagedCodexPromptRoot.test.ts",
+      "sha256": "91d68bb7954721402c173467e4e981d48e713229fee69505a0ad474894f4f173",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/packagedPiPromptRoot.test.ts",
+      "sha256": "386bde9ea746bc749156eaa7d847740f6a55926cfcf1b12e2be51727d8a525b3",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/planAdvanceCandidatePromptContract.test.ts",
+      "sha256": "ee818d13bf93ba3040e6d79935fd320bbafbee309e74c0d6a0bdfe82f63e1f2a",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/planReviewerPromptContract.test.ts",
+      "sha256": "f56af3118c3257e3fb48a34ba5683d70a9a8f8efe88017d8c641c87e369e6236",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/promptCatalogAuthority.test.ts",
+      "sha256": "9e62b59a393118927f2436dc8e138e113ec1748206cd4655c28827176d457cb8",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/promptCatalogAuthority.test.ts",
+      "sha256": "9e62b59a393118927f2436dc8e138e113ec1748206cd4655c28827176d457cb8",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/promptRenderer.test.ts",
+      "sha256": "3ab20aefe3a25a743c5c27d7328f385d1928727fe1eb86b84891608053293bc7",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/promptSurfaceManifestValidator.test.ts",
+      "sha256": "b8b80ad65436955d33c993ef4aa0d6f1872db8387703993e7feec00defd76312",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/promptSurfaces.test.ts",
+      "sha256": "ef0879e843a9509b9eb43abaa94506e97be47df1ea3b7874289f038c896b1964",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/renderedWorkerGate.test.ts",
+      "sha256": "d2f052dbef05a970de1b0d0b2ddddb8a7dc6ba9ba2c5039363362f06d548af7a",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/roleToolProfiles.test.ts",
+      "sha256": "34d03f2630e14aa9289ac98bf919886129dbd31b1d1c5aaa3116cbac201259c0",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workset-git-command-surfaces.test.ts",
+      "sha256": "118fe18cae85dd04ec45a95de43a396aa4cea8e1c93a829ad53b509d226a44c1",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/scripts/verify-packaged-prompt-surfaces.ts",
+      "sha256": "88a6b162ce122753daafaa94cc048055704b8b81497cfa8bbf0b3f66b976043b",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/createLedgerMcpServer.test.ts",
+      "sha256": "6a64b5196f26bfb74c9a1a09210beb54cb6d8d67733f0fa11017f19b66697335",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts",
+      "sha256": "1e6c5f30daa294461c4052881e73db99db3f2df2fcf28792612e6601650a29cd",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts",
+      "sha256": "1e6c5f30daa294461c4052881e73db99db3f2df2fcf28792612e6601650a29cd",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/gitConflictDispatchCapability.test.ts",
+      "sha256": "5ad0429853ad2a46853f0943d82b1dee42ce65943fe271de7706ef1ce9baff57",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts",
+      "sha256": "abfeb4b966f76810cf084d6d5df0c9fae353cbfcb6114f8e9307764e9b649a27",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts",
+      "sha256": "7b2b578ccde42e3376be6786148fb130200faa6c71460998a08c77b8eb693554",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-web/scripts/gen-agents-catalogue.ts",
+      "sha256": "15cff98810c5a7cd72f91af3e72449beb5a961099650737c61373f8c086b6e98",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-web/src/serve.ts",
+      "sha256": "406f89d6fa80c152d5cff3611c1444b7e6ae8f51a9b266a2b1c440e77592d4b2",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-web/test/agentsCatalogue.gen.test.ts",
+      "sha256": "cac73c00a7d6f93494c6c0d7a23c4e46838620f8925391fd6921ec3d85079b19",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/gitChangeBroker.ts",
+      "sha256": "2bc8c5d1e4185710c86d0efb3f0d52ffd3a78d83d652a721245e3c74a0a619eb",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/supervisedWorkerGate.ts",
+      "sha256": "f543e550e5c8bcdef3bc96259d3b685f881a201bdc2266ec484db3fdeca08dc4",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/testing/killHarness.ts",
+      "sha256": "1fb055fd45a72bb0a88e7e60ba77d1988461dedb8dc3ca1db469b8cee5b77af7",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/testing/killHarness.ts",
+      "sha256": "1fb055fd45a72bb0a88e7e60ba77d1988461dedb8dc3ca1db469b8cee5b77af7",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/codexInvalidOutputAttestation.test.ts",
+      "sha256": "953ecdd55991a55a44399fae6e562e6d2301b3b838756cb3838ad1cb0938e141",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/cq-tool-response-contract.test.ts",
+      "sha256": "750d31e9273af88e6233b00871fb68b50035ccde2baa87c1710882613deb5d08",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/d184-kill-harness.test.ts",
+      "sha256": "30374e1ebc478d58baa26806d7d44136a49984711515824693a211987a259696",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/gitChangeBroker.test.ts",
+      "sha256": "a898f165b35de86fa4c1a9b13855c8d35c123a00c19c2eaf68960f03475d4fb9",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/gitConflictContinuation.test.ts",
+      "sha256": "c43f5fec20a5b28747d98091277c7de8e592a2365a7f2d8b4fd60e76c6e684a3",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/managedWorktree.test.ts",
+      "sha256": "b968a5e03e810f2686c97053cc101f445e562066e2a388929574536ece48b00b",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/managedWorktreeAdoption.test.ts",
+      "sha256": "ea5b1596e5268821acdabe80cf0ce53e2b2c12f4590d0e150e27fc755824298a",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/multiWriterStressHarness.ts",
+      "sha256": "7a0c88e304e43af2cd8521438f789cf1d88f4f393ffc52b996978f202efeccf8",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/sqlite-connection-contention.test.ts",
+      "sha256": "22785c5bc2db39ef5a76f2eb87db4389c662e8d1296ea29f0d6391cdc9eeb60e",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-command-conformance.test.ts",
+      "sha256": "094a2b016d7b708d7412d804547fc4e3a6fa9428bffec42dc6d8dce495ddbb2a",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-effect-admission-fs.test.ts",
+      "sha256": "b4a95d2a12198ad3ed26a53855eba55919c17f883555538e36389fa512c215c0",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-effect-admission-fs.test.ts",
+      "sha256": "b4a95d2a12198ad3ed26a53855eba55919c17f883555538e36389fa512c215c0",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-effect-admission-sqlite.test.ts",
+      "sha256": "72e2c11a2b892168b9ac7f0ba8908d44660d8519baba49321a6872fbd614e6b6",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-git-effect-gate.test.ts",
+      "sha256": "c332d06424ca6a6105d1838441a243d0df39b914df7867e2e855002a62f92a50",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-git-effect-gate.test.ts",
+      "sha256": "c332d06424ca6a6105d1838441a243d0df39b914df7867e2e855002a62f92a50",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-postgres-disconnect.test.ts",
+      "sha256": "a60ce9c3dd5b9f6fbfee76414992b8fc39423f19daff4c9973dfca718093afcd",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-postgres-disconnect.test.ts",
+      "sha256": "a60ce9c3dd5b9f6fbfee76414992b8fc39423f19daff4c9973dfca718093afcd",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/worksetFsStorePeer.ts",
+      "sha256": "a20c9e1b893481240cee3589e3a6a88dc6e5de203e85479e955e22e5cfb63496",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/worktree-manage-mcp.test.ts",
+      "sha256": "a88ba831d1f20ee0ef4bc92fe2d3d48acd2c2752fafeaef7df8a6932d0dfb5b2",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/test/registeredLaunch.test.ts",
+      "sha256": "2ea5a525fcfdbd3d55a37fb61629dce2bef85a14c69f5f74d8cc6ef08d29a8ac",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/test/registeredLaunch.test.ts",
+      "sha256": "2ea5a525fcfdbd3d55a37fb61629dce2bef85a14c69f5f74d8cc6ef08d29a8ac",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/test/worksetEffectBroker.test.ts",
+      "sha256": "14168195c53030bed9dd8b0814113db309431cd8b6e2858977f3afa2d924924e",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/test/worksetGitEffectGate.test.ts",
+      "sha256": "b491c7717cfa6a86e6025948a525dce37f83e92eb732f3cd3b247241e52d0aa0",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/test/worktreeGate.test.ts",
+      "sha256": "1f43fc311af35e302f7afe718fa8ca6631d5e34eeb40a80d9005e42b7dba6de7",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/test/worktreeGate.test.ts",
+      "sha256": "1f43fc311af35e302f7afe718fa8ca6631d5e34eeb40a80d9005e42b7dba6de7",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/scripts/link-prompts.ts",
+      "sha256": "94a2e1fc285db389aa073fd2d0b7213ff749973754f8b38f99ca598a57a1a7cb",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/src/advanceGate.ts",
+      "sha256": "8adde655385e7ea22fcc78fd2c1f993db218247e45e2b88119ae1c665c427c40",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/src/logPut.ts",
+      "sha256": "c68e33c96fd0d79c9f974e03a52849b7f63e0a194ff201c63f48e2aaec64ba81",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/src/migrate.ts",
+      "sha256": "7216b3193f52a0dea2442e4db560ecf582ee2920c0ddec5aae4ebbbf565a6139",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/advance-gate.test.ts",
+      "sha256": "6ff2dec627e14ef7308ae614b93fb59dac13aafb59bdd46ccb05f68a8710fe78",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/backup-cmd.test.ts",
+      "sha256": "1b879917337fae447740eb7a5574c85049267db832d89a04dd28cab2e4b7cdd7",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/claude-stop-hook.test.ts",
+      "sha256": "149b3e2727ec04dd3ec8840dacbbf7e6919f099be446171f6ea176ae33f23fce",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/cqTomlTemplate.test.ts",
+      "sha256": "50c816ad3c8ef1e269ed288bcf7c6c61d00ca1382f495220e3cd1614452054f3",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/erase.test.ts",
+      "sha256": "12e8c77aec967b89b94e70a01278825d5f91cd6034664befae5ef21edc53d638",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/g81-remote-cli-architecture.test.ts",
+      "sha256": "8b2ac76cfce015a7a288934c00e943df477977d34844e5231734455f06874b86",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/init-global.test.ts",
+      "sha256": "39bf3d738be73783f76504fb9709cbedbb85076cabdeac4a85589a8a686e42fe",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/init-xdg.test.ts",
+      "sha256": "c317d09ea1532819c965ad092546f8ae79089b061646b2849c399879d95a106f",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/init.test.ts",
+      "sha256": "fff8e055f89a9c989653e02eedfdbcf149e0262f9892f2457c9b19c005d70ac7",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/log-put-fs.test.ts",
+      "sha256": "6e5270104cb4b5ac11e36d9b74ea276d8ecce3e534b828e13a47e2ed355b323b",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/migrate-cmd.test.ts",
+      "sha256": "47f07d975e071a74c146a143e73ef6c52a2422bfa53b3e437fea7b196091a29c",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/no-committed-src-artifacts.test.ts",
+      "sha256": "487a0e51c0a16af8312c501da5f84e3df00cce3498c17bd7a42149e535354710",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/remote-backend-fail-fast.test.ts",
+      "sha256": "94262aea479fcd1594c20e48a78978678d5f388832321c3379a6f7dffe8e560a",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/remote-cli.test.ts",
+      "sha256": "233ff7c1e30477a0f82cc651bcf9d34ac35c96ac18b49d4a7209c4fab472ce33",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/reset.test.ts",
+      "sha256": "a0b5750b9afc5ee0932d30d0963e569438e52274ee9d5c55d8248fe68ee5c0cd",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/workset-effect-provider.test.ts",
+      "sha256": "592e8fb9268e56c18046e9efcf07686139c931a55909c1fc2c3c1e2f9ca5885b",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/workset-effect-provider.test.ts",
+      "sha256": "592e8fb9268e56c18046e9efcf07686139c931a55909c1fc2c3c1e2f9ca5885b",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/worksetEffectProviderParentFixture.ts",
+      "sha256": "93ac7866269ea7d2876c3ceb44222af708bf2fc428daabd3c765060b486d06d0",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/scripts/aggregate-role-tool-corpus.ts",
+      "sha256": "e9201cb606118023f569ae152f5094f282ba3eafc4175dbf971b8cb26210195f",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/scripts/codex-role-dispatch.ts",
+      "sha256": "9e9832743d583a729952e4af91e0f6172885b3e92919994b8983fdfa35f5d1fb",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/scripts/render-prompt-surface.ts",
+      "sha256": "c438daad9a24e7a2ddf248983e4ce26016582eec02610e6ba705c4f74ae0f2dc",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/src/codexRoleBoundary.ts",
+      "sha256": "10cc5a8bd401ce0c2be54711fd3462501d32527d13c1126065f1f517843dc05f",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/src/config.ts",
+      "sha256": "134f909fe98fd667e0163aa3991b2172d0e841a6cd71745ba2907be049d8c215",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/src/dispatchAttestationFs.ts",
+      "sha256": "4affbcbe11432ba3eaf3c4063d03407dd0713214ed699f65ffa78bcae4932243",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/src/dispatchEdgeInventory.ts",
+      "sha256": "b1765ba258712fae5b51c10e5161cbd26998a3049d6166c45113814f195762ca",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/src/expectedFailurePolicy.ts",
+      "sha256": "f9a76f453ea5bb6b887fdfa25084aef71952b85617e8b2863a60b9e4102816e2",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/src/packagedPromptSurface.ts",
+      "sha256": "2145d85663519066b40c05fd52598d3fefe486cd26977f390c062478e2cd3c01",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/src/promptRenderer.ts",
+      "sha256": "23fdd5cb143ddb75b17696bde53885ec01142b45fb82bc9002d135beddcaafcc",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/agentPromptSources.test.ts",
+      "sha256": "881484a8c1078c0449ef2c78d78aae3a8e5b3413a02ff1f0d0302cb8b77cc980",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/claudeNativeWorktree.test.ts",
+      "sha256": "232fe96cb6b9043b80999e1cab07e153bb39a895f18db10ca391be39f3f250cc",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/claudeRefFirstEnforcement.test.ts",
+      "sha256": "8785425f8a13e62209d3c7c812eae54c3f18b15f5b8e421128da2a1e5d592931",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexDispatchProtocol.test.ts",
+      "sha256": "93c2600833a01dc18f09868253706f7bbe7c2f308de30f96dccd6ce999ee9dfb",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexGateCommandFixture.ts",
+      "sha256": "a80367f3127df9ee35c9150be0d34554046d795d5fbb030216ab29b3282bc823",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexGateIntegration.test.ts",
+      "sha256": "a07f02ec3388a821186774e19040e9b0024799f68265746cbbbc7e394b2d8a01",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexLifecycleFake.ts",
+      "sha256": "6aa00468f82afe73932379a6eb8de477563e17970ad91a64cd6a9402101841ee",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexMcpTimeoutIntegration.test.ts",
+      "sha256": "c87d0e57e7e16812eef18c8765647f661f417160d5e1008c96ecb8036a5ec69b",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRefFirstEnforcement.test.ts",
+      "sha256": "829f23f18a41476d812751de6a33691566c9b60ecd4cbdde2b8871abb7bf1a8b",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexSandboxPreflight.test.ts",
+      "sha256": "ca6bcb5143488fa67de86daaec212760924a195f1b5d8d9e031083d64d677cc1",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/cq-toml-example.test.ts",
+      "sha256": "45d7a0b2ad389245969d395b1d3a9520b573a0413ed514de99920ce5b597ff10",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/crossSurfaceDispatchConformance.test.ts",
+      "sha256": "6d7daf01af048d54f65006308e5a909522cc859c4f4da4e99beea201dcf91230",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/d143D184WorktreeDurability.test.ts",
+      "sha256": "6cb444c9f6ba022951d05fb1cf1af815e8fb1f69a0e2f256e797a1ef2085c3f6",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/dispatchGraphClosure.test.ts",
+      "sha256": "4652f396651576066d5139fc194b3b0f9061ffd51f88cdb010374284a0973c38",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/dispatchLifecycleLog.test.ts",
+      "sha256": "1e6e1320645c484601ffe91d65c147707c58718989ae0722aa5f9884011a1f2d",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/dispatchTelemetry.test.ts",
+      "sha256": "1e4371b06aa35d16e1e9fd284ee7102fa789678142b8334e284b91d7703112d4",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/dispatchTelemetryBenchmark.test.ts",
+      "sha256": "24c29c2dbcab04e8ee19b52270899aabdb2b7389f4b25497f6a6a01d422192d6",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/dispatchTransportRouter.test.ts",
+      "sha256": "d5c2186cd6d058081c03d2de46354a079cce918c96c5519eceb9e9f28bcbcda9",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/expectedFailurePolicy.test.ts",
+      "sha256": "c0b577dac2f20471d8243e31bb69730159518f6983b116129e4c73eee8a56282",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/flat-toml-backward-compat.test.ts",
+      "sha256": "82e717b2fa7ebd481bd0cecec83030bc9cdaa51210100642eb2cc08735e1df5a",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/g121HarnessBatch.test.ts",
+      "sha256": "51b4224a0daacaf50c09d3d98bf507d1617d165e733a8c7b62b29b614fef1ea6",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/g94BundleAndAcceptance.test.ts",
+      "sha256": "9195ed0070c9dcfdbc4e47b3c40dfe64bef505d5d4c2a60bcd75af2a3dbcfb35",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/g94ReleaseGate.test.ts",
+      "sha256": "2d1e11a3944eb123e64b1240e46196a01b44c165a4356644a6afb8b366747207",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/ideasAmbientPromptContract.test.ts",
+      "sha256": "1a80ab21edcc0a12fe8fdb0fdcd7cb24c24c6b39393e0e62b4947c92cfb7aeeb",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/implementDispatchConformance.test.ts",
+      "sha256": "361ddffc52f2205825ca5546623abeffc33db36a894ea5c47dea4a149fe558e7",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/investigateResearchDispatchConformance.test.ts",
+      "sha256": "1a39021f1c99b0201102e41fba1b3dd1bced5b5f45ad026e337928231459be39",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/ledgerStatusTeardownSafety.test.ts",
+      "sha256": "d15d248116403cde737feb6fc83581a8efbacdd34112c68c6573d2cba9ae5ad8",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/ledgerStatusTeardownSafety.test.ts",
+      "sha256": "d15d248116403cde737feb6fc83581a8efbacdd34112c68c6573d2cba9ae5ad8",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/nativeDispatchQualification.test.ts",
+      "sha256": "78cd4c1f223a3cc7468b62b615949fda1f99bf0a8fa6f75a7ebb4cb9a0486ab6",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/packagedClaudePromptRoot.test.ts",
+      "sha256": "80c994064cce516b1637b5d958483c66c354f1653d4f5f69ae70961d44984398",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/packagedCodexPromptRoot.test.ts",
+      "sha256": "91d68bb7954721402c173467e4e981d48e713229fee69505a0ad474894f4f173",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/packagedPiPromptRoot.test.ts",
+      "sha256": "386bde9ea746bc749156eaa7d847740f6a55926cfcf1b12e2be51727d8a525b3",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/parentGateAttestation.test.ts",
+      "sha256": "f938975954bbcb638a79ca23cfba39254ccf8abaf32ce1b48bb54f374bd152cf",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/piAbstentionPromptContract.test.ts",
+      "sha256": "584b0c38ef0f056e311c5a876b74de45c0e3b7859b4f9ddb88de02c394c74dfd",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/piDispatchCouplingGuard.test.ts",
+      "sha256": "3c5f480fdce4b4bfcc118109e79e1e8b67ef3afbbe1d11d963d6f7fc9b87ed68",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/piDispatchCouplingGuard.test.ts",
+      "sha256": "3c5f480fdce4b4bfcc118109e79e1e8b67ef3afbbe1d11d963d6f7fc9b87ed68",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/piNativeWorktree.test.ts",
+      "sha256": "43035a5208a87e2b194ba6844dbddf3b0f3a852d39e0d96cdaa85020ce32eef0",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/piRefFirstDispatch.test.ts",
+      "sha256": "1e3a791f4605f21f74a5de2f7cb3cbb8c7a78045409ea5d916a6dc420d520d4e",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/planReviewDispatchConformance.test.ts",
+      "sha256": "064297ebe4d935bace6206ba66dac15d6c9c1ee1b7673148de70b7d210d817c6",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/planReviewTranslation.test.ts",
+      "sha256": "3aefe0ba8b273f52b7874974a9413936ef9550959c38db739c51363f6500230b",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/promptFragmentInventory.test.ts",
+      "sha256": "6668852cb80ff8215591d444593488bc1b5c872f48f1838d268d42079432b6b5",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/promptRenderer.test.ts",
+      "sha256": "3ab20aefe3a25a743c5c27d7328f385d1928727fe1eb86b84891608053293bc7",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/promptSourceHygiene.test.ts",
+      "sha256": "0b561c94140ba44e9986b4ff367d3ff5daed25ddd2aae3f7aef4c359b71bfc0b",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/refFirstAdversarialCoverage.test.ts",
+      "sha256": "fbcb49e5731909fac2b6968ac9eea79a8be907e5a5e28c1611ce6a2d333e64ad",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/renderedWorkerGate.test.ts",
+      "sha256": "d2f052dbef05a970de1b0d0b2ddddb8a7dc6ba9ba2c5039363362f06d548af7a",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/roleToolProfiles.test.ts",
+      "sha256": "34d03f2630e14aa9289ac98bf919886129dbd31b1d1c5aaa3116cbac201259c0",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/upstreamCommandConformance.test.ts",
+      "sha256": "45ebc6afbc717e661e2e40bcb8fea9e75754d4d522cf4bebf78e93a0fcd385b6",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workset-effect-boundary-inventory.test.ts",
+      "sha256": "9dc2c299c93912cfcc551de8aed970eeec502f1dc17c68d1bee16b714488acae",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workset-git-command-surfaces.test.ts",
+      "sha256": "118fe18cae85dd04ec45a95de43a396aa4cea8e1c93a829ad53b509d226a44c1",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workset-implement-review-guard.test.ts",
+      "sha256": "4f3c37c81f5debed7500a3397523956e745e7ceff07a8bc70728fa35149e7f39",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workset-implementation-command-guards.test.ts",
+      "sha256": "25ffe909bebf1375d373cfbd07dfd8a688adb5f859143ee2409e30703cdf099c",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workset-implementation-lifecycle-matrix.test.ts",
+      "sha256": "17b6263298b3986103737637e9b22c3f81da642623e69475e27f16974e28c6ea",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workset-implementation-revocation-race.test.ts",
+      "sha256": "4f7aeef494a12fbbe9e235a4fe47a8d18b17347436700bdbc38bdbd0f8fd5f85",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workset-lifecycle-creation-matrix.test.ts",
+      "sha256": "6954ea36e0ac6cafb3d3af75a099852ebac2f4867d4b6b149445de611324822b",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workset-operation-authority.test.ts",
+      "sha256": "4a82e139d587337d7cdf387618499df8395e50b57abd729abd67e02a3a73963b",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workset-parent-command-guards.test.ts",
+      "sha256": "65c99b50090b1061e4b460faaaf5e29746fdf832be95f38655073bcdcca09690",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workset-plan-review-guard.test.ts",
+      "sha256": "3009e87ad8bed7db1013df44794981b9cd7414c688f2e7cfd3899d1da41dda97",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workset-revocation-race.test.ts",
+      "sha256": "2157f502a74e3df758f351c7637685245b91cd7ca3ecf6dc29494f726c493dc6",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workspaceScriptContract.test.ts",
+      "sha256": "2f607cc4a2b6ec8adc6acf1e0e1f2b13e346257e995d98f03bc4d22d5668e218",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/scripts/verify-packaged-prompt-surfaces.ts",
+      "sha256": "88a6b162ce122753daafaa94cc048055704b8b81497cfa8bbf0b3f66b976043b",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/promptArtifactStore.ts",
+      "sha256": "0350bc6489f8b6b30d8a47ecfdd9828d240a699820ebf9958b8d59ec6b57b129",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/promptCatalogCapability.ts",
+      "sha256": "99ed925fd6291ad204266c08560f5aa2b4beff47c31ac6fb1f2ef0c5d638d5cb",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/stdioProcessGuards.ts",
+      "sha256": "2870493135d9e28e852985d47d59ebcd2abd2cbaa47de02f26146fbea2926820",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/codexHarnessSelection.test.ts",
+      "sha256": "2e010ffe5a926442dd73ae15d99185f65931bacc81dd8a7b610f9e3d196725f2",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/configCapability.test.ts",
+      "sha256": "462526517f34736a2412a00b21d6cde25277fed86c98aaa82645b474d2314f5a",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/createLedgerMcpServer.test.ts",
+      "sha256": "6a64b5196f26bfb74c9a1a09210beb54cb6d8d67733f0fa11017f19b66697335",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/g81-client-no-postgres.test.ts",
+      "sha256": "d604cf79337e4c62b5eb2031cd42832584f713a90af0b8aa3369a34c8bdc3a3a",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/ideasAmbientE2e.test.ts",
+      "sha256": "90b38cefb161c46b5c872dc6f3a27e33a9df34f43fca3c96304040dc256d7ac8",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/legacyProtocolMeasurements.test.ts",
+      "sha256": "b2442167b9557c9d05a5855b5e670badf4d154180835d7b9345a5bc4b143fa4c",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts",
+      "sha256": "abfeb4b966f76810cf084d6d5df0c9fae353cbfcb6114f8e9307764e9b649a27",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/responseContractDocs.test.ts",
+      "sha256": "674ca388c6c0ebd2b93757846f45322eee03863e55d2cb49c0e268931a030d2c",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/stdioRemoteProxy.test.ts",
+      "sha256": "e78c113919e67a4a0f7fad1d024be418559761505d8b5504d89ac7a9da9c3ee6",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/xdgProjectRuntimeCapabilities.test.ts",
+      "sha256": "c7dc7d2b38e1344aa5ee08af64e9787428bff6348131bbac227f010c7cb0d4a5",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-tui/test/finalize.test.tsx",
+      "sha256": "ac0424b85332fe6a90189a1f5aa351c7f6558fa8bcdfb3b722741cbc3043308c",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-web/scripts/gen-agents-catalogue.ts",
+      "sha256": "15cff98810c5a7cd72f91af3e72449beb5a961099650737c61373f8c086b6e98",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-web/test/ItemReferenceChip.test.tsx",
+      "sha256": "cf83cc7df6cbbe43d9612c58c16d8ca1af75fbe1ddca78705e9ee6d793827c0b",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-web/test/agentsCatalogue.gen.test.ts",
+      "sha256": "cac73c00a7d6f93494c6c0d7a23c4e46838620f8925391fd6921ec3d85079b19",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-web/test/finalizeFlow.test.tsx",
+      "sha256": "3ef10a2709861e02a5e43fc112390e13056d3ff2b6c98a32d330b8b7e0ffb99f",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-web/test/itemReferences.test.ts",
+      "sha256": "aeb0d54a1737b98d58816e4d667ff42d1c01a386a417dbc2a674c8f9bd8d7c8d",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-web/test/mainWiring.test.ts",
+      "sha256": "69b92a9526458d2b94b2d736c0001c5d0f30080b0e3183705c60c5c458126bed",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-web/test/serveEmbedded.test.ts",
+      "sha256": "124f8bb7be96a2a35adb19fce3a9790d5a8472cba13ed39c5d37b7d25238b34c",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-web/test/summarizeImport.test.ts",
+      "sha256": "530e1678c429c0f9d91cc428b6fd685e7c2fc04f097524559741942ddd170ffb",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-web/test/tsconfigPathsCoverage.test.ts",
+      "sha256": "f774aa54b8245f3644b9086b0d45f1f4f4a81fe760068e612d49fe42d671d869",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-web/test/webMode.test.ts",
+      "sha256": "d65a495474cdff309cd68342bcc87ad1a83c4cf306f6521ccee25e5db09f8eba",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-web/test/wholeStoreStartup.test.ts",
+      "sha256": "b0d04c73c2f114c13a4aaa1b58188d31cce95bcf8ae383666abda756cb89cb1d",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-web/test/xdgCatalogServe.test.ts",
+      "sha256": "9ae5b4e2018a57058bd15fc61042e7038e0e3c4175eea9feaddb84fcd0d18f11",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/bench/proto/concurrentWriterSmoke.ts",
+      "sha256": "cc1f29a82d2db2a924ea62b1d65cc0add5738e5ffa9ed0bbb5c21b05ffdfb4b7",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/bench/proto/jsonlProtoStore.ts",
+      "sha256": "79962b4f80b57513106b4dac8dbccb7dae1d5587fcc94b769b8456839ece77c5",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/dispatchBase.ts",
+      "sha256": "409f3ff17398e8227f5a1c7aeebaa1d4652a80404e02d0cce3a008a6a36e585b",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/gitChangeBroker.ts",
+      "sha256": "2bc8c5d1e4185710c86d0efb3f0d52ffd3a78d83d652a721245e3c74a0a619eb",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/gitConflictContinuation.ts",
+      "sha256": "6ec7298747afda7d23cbc9fec75bb9ff9f0ebbd9aa5b9e8137ff783c5799ced0",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/gitConflictContinuation.ts",
+      "sha256": "6ec7298747afda7d23cbc9fec75bb9ff9f0ebbd9aa5b9e8137ff783c5799ced0",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/guardedRebaseContinuation.ts",
+      "sha256": "3bb137829e1192483cff66c0d699d3629c50c9a108de58283012dbe7e7c0de4c",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/guardedRebaseContinuation.ts",
+      "sha256": "3bb137829e1192483cff66c0d699d3629c50c9a108de58283012dbe7e7c0de4c",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/legacyWorktreeReconciliation.ts",
+      "sha256": "e302c31b8600277ab8727dbf2723954c76cfb0ea4fc6f58e506671ba7158214d",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/legacyWorktreeReconciliation.ts",
+      "sha256": "e302c31b8600277ab8727dbf2723954c76cfb0ea4fc6f58e506671ba7158214d",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/managedWorktree.ts",
+      "sha256": "3348fb71caa58fe65fe978f63447d1a83c09484a314b3a9bfa16a2b963e51ac5",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/managedWorktree.ts",
+      "sha256": "3348fb71caa58fe65fe978f63447d1a83c09484a314b3a9bfa16a2b963e51ac5",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/FsLedgerStore.ts",
+      "sha256": "072db9f1c3c88f2ff09e410eb90bcc2c0dd7f39d86316f658131cdeb8fe00e15",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/FsPersistence.ts",
+      "sha256": "c57eab8250d05ae7eb719946b9d781aa5185f030cbe468a0b63e8e94bf3502f6",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/backupExporter.ts",
+      "sha256": "4b41b066da263fd9a123ca8fccf76fa21bf8b730fcbe1c6a55229245366330fb",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/createLedgerStore.ts",
+      "sha256": "c3f53cd921e403949a67fa156611d9de1da106c484c6aaf914536ea4d949ff6d",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/fsAtomic.ts",
+      "sha256": "feac7a2d1f479472939b40384d2ad2bddcafd7132f7eb36c9d38b4e53b7b43c7",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/fsWorksetStore.ts",
+      "sha256": "b127d0fd1dd55588b2c2bd63ab03c7da4f0a19ff31d16798a8c29fa226503cb3",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/git/GitPersistence.ts",
+      "sha256": "1a44d418c261335798312e476c1883d47e1291b0c4ebc67836df28f13d93bbab",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/git/GitPlumbing.ts",
+      "sha256": "073163fc9e85377de6364e8e9be59516f52cbf49c18c3cacd11428d0b9f53ce6",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/ledgerArtifacts.ts",
+      "sha256": "9ca16a2e653c83a9a04fe2dde817195dc5d00a9de077e6403c716821b8c2ba2c",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/lockfile.ts",
+      "sha256": "2e4b5ea3122ed72d6d01b4263461a36d69f7aa7032e1ed7e59e33900ff45285d",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/restoreImporter.ts",
+      "sha256": "ea6c2d9d3acca447b39bf667227bf54531185919ea5606f2895fa5f206e786be",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/sqlite/SqliteLedgerStore.ts",
+      "sha256": "f03b2d362d124e4bd7f974b2bf7a54abb20ec99297b3fda706598a560cc57c90",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/sqlite/xdgProjectCatalog.ts",
+      "sha256": "2cdac21c5725c7007ea040c8492f9447e77c4a10915018361b8a8a399c980343",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/store/sqlite/xdgProjectRuntime.ts",
+      "sha256": "1e86f08b70376a884bef90e6d5e40e9201ae6ab5388dcb084c749ed437e36bfb",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/src/worksetStoreGit.ts",
+      "sha256": "60c4d98e402c5bfbf93ec9653e7dc39ec26b80ded3058574831a70195fd8e3a2",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/activePlanTaskWaits.test.ts",
+      "sha256": "1a3fe4a99440fa2ef74ac5ce106f76c0db19e764cf078454cddf149cefe66e5c",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/added-optional-field-init.test.ts",
+      "sha256": "900b5d22c0f8e8c86545b366854dab79bffd1fd9f40b4f62affe1df4b47b6cc0",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/backup-and-reinit.test.ts",
+      "sha256": "51255f85457c36473230f620dd3c7ec6f5bc7efa47e6bc8decfef06028e1386a",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/backup-exporter.test.ts",
+      "sha256": "183d6bf4b99e32d2889f86412b43d0a4c3803719e22897a1d5e9211458e77805",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/backup-reinit-init.test.ts",
+      "sha256": "88d16a69b356bb08f073a79f1d78d8e3c8fca28ccf242b1f57a69d524a740a1f",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/canonical-ledgers.test.ts",
+      "sha256": "340e9ba83a4139a663ba99f887f473befbdd55411714f8be2ef23443b7a26b0a",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/codexInvalidOutputAttestation.test.ts",
+      "sha256": "953ecdd55991a55a44399fae6e562e6d2301b3b838756cb3838ad1cb0938e141",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/concurrency.test.ts",
+      "sha256": "83e3dcbc650ea0389472c44f1b2274e445cfab2fc9be4e73892bec7e0acbb6f8",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/cq-command-frontmatter.test.ts",
+      "sha256": "8980868da77e72e66722b42d41484c4623cf7ced1fa210fdf688ea0925a2f191",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/cq-parent-dispatch-inventory.test.ts",
+      "sha256": "7e35639bdb7180e2511369b6464fb1cd72eedf240e3618cb530966be916274b2",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/dependency-ref-migration.test.ts",
+      "sha256": "a45d9a8bfc2f5f6f1ae8d64802c13e64498e612cda077772144e1827f53d808e",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/dispatch-refs-assembly.test.ts",
+      "sha256": "f50bf2b403f1d9bf9f9ba476882fddac79b63bdb162d724ebfe43a8f0a331a43",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/finalize.test.ts",
+      "sha256": "ca7aa76025d9da1f632a6054da879d2e5b44ecdd6fd4c912a45684c7b8333d99",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/g81-public-postgres-retired.test.ts",
+      "sha256": "001bedceee3d86bd0039dbd77b4d24bc6cd61ff2dbd9e9e977fcf5d2258f6d9b",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/g81-t736-architecture.test.ts",
+      "sha256": "41ae4e0962f3f08781f5206c7b44843e55a62ff6e7074bfacddaa4c42fd83e60",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/gateClosure.test.ts",
+      "sha256": "8a9d41f3a133e06571548b97f45ee7c8081f49a165a97802a6aea4a90e3f58f0",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/gitChangeBroker.test.ts",
+      "sha256": "a898f165b35de86fa4c1a9b13855c8d35c123a00c19c2eaf68960f03475d4fb9",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/gitConflictContinuation.test.ts",
+      "sha256": "c43f5fec20a5b28747d98091277c7de8e592a2365a7f2d8b4fd60e76c6e684a3",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/gitInvariants.test.ts",
+      "sha256": "ee486361d29ad5a316a2fb787cf74d57e447656ea2096a3431c9a9b21f5712c1",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/gitObjectLedgerBackend.test.ts",
+      "sha256": "9cae542b17499f43b9e0aefc56ee757d427e8d381c4c6211eb0824b8acd4068f",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/gitPlumbing.test.ts",
+      "sha256": "85018e93a67df2947178c1cd643187e41aa901502cf126b804fd380b8a32c781",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/guardedRebaseContinuation.test.ts",
+      "sha256": "0e0c1d6db5045906bd9b8cd2a72abea31f40a146824ee02f8669ca5161c58364",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/handoffs-additive-widening-init.test.ts",
+      "sha256": "aeb0925b5baf95c3fa0a802da686d2af40d7ad7f4e1ff5b57d629fe836c74bb8",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/ideas-ambient-migration.test.ts",
+      "sha256": "1197171281d635fd72d407d9e0c0c28998d1db720255b6e05eff3925da889bb0",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/legacyWorktreeReconciliation.test.ts",
+      "sha256": "2bc3a9011767d4f0a8977852282f5c740ec243e91bc9e16a3796ccf776e5226d",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/managedWorktree.test.ts",
+      "sha256": "b968a5e03e810f2686c97053cc101f445e562066e2a388929574536ece48b00b",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/managedWorktreeAdoption.test.ts",
+      "sha256": "ea5b1596e5268821acdabe80cf0ce53e2b2c12f4590d0e150e27fc755824298a",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/managedWorktreeAdoptionCrashWorker.ts",
+      "sha256": "6322fa2917fca78f7ec50f61af7ae10dcc8d036bc54d5ebc143452f078156531",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/managedWorktreeCrashWorker.ts",
+      "sha256": "a5de93d35c127da3b03b5e89ce0a54ba206a50a108c85a8de8baf7f2e61166ce",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/older-build-divergence-guard.test.ts",
+      "sha256": "12359ef873b9329e7727eceddcb53e46b42dec388dd23b47bbe9609f80261ed7",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/operator-actions.test.ts",
+      "sha256": "ed7b6d97a79fab13613a83812bf5f3b0877d91d9adccd540c13a2adfa35ffaeb",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/package-exports.test.ts",
+      "sha256": "f1a98276d1564f0d805203a2579b71a3d1796b197d0f7fa478ec7e5ca4b7de37",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/package-exports.test.ts",
+      "sha256": "f1a98276d1564f0d805203a2579b71a3d1796b197d0f7fa478ec7e5ca4b7de37",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/plan-lifecycle-backup-roundtrip.test.ts",
+      "sha256": "74172f76d73ece2eb7f79e551055bb4482d56c10c4b8a1a8bd3fe0c3e9e07757",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/plan-lifecycle-fs-git.test.ts",
+      "sha256": "f376e1c99486c16fc268860efd4b929df3cfbc6f01694d20efae3769ec796e7b",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/plan-lifecycle-fs-git.test.ts",
+      "sha256": "f376e1c99486c16fc268860efd4b929df3cfbc6f01694d20efae3769ec796e7b",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/plan-lifecycle-inmemory.test.ts",
+      "sha256": "b299c8b646741b4a548466ec1e615d290670a3d072441d7012bbfebe0916b099",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/plan-predicates.test.ts",
+      "sha256": "9e80186608c93d7bc9cf1664c7090d83bb5b56f492126b7fdcc4610750143b1b",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/plan-predicates.test.ts",
+      "sha256": "9e80186608c93d7bc9cf1664c7090d83bb5b56f492126b7fdcc4610750143b1b",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/planLifecyclePersistentAdapters.ts",
+      "sha256": "6ba0784e8c1fc8e7fafc2903e9ac22f09ceaded8f9cd6bda2d0964f2bbbc8ad6",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/populated-store-reinit-guard.test.ts",
+      "sha256": "702fef8ba63d8a19bc2eba9d4ed8682044936a21bbab4495f8f21761dbdcbb16",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/pre-upstream-additive-init.test.ts",
+      "sha256": "4b39d06c56c4b057d311616d6f5125e971d82e12bc80ba4bb0051e1fc980f56b",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/relationships-cross-ui.test.ts",
+      "sha256": "636a8a60eb20bc2d31d40c1c854be2e62a8360a99dfabfb00077aa77dbe7a8f0",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/remote-launch.test.ts",
+      "sha256": "42a22e65124597c29d68e84f5bff3d9710fab629a2c7c2c8757938f15d2d44b1",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/reset.test.ts",
+      "sha256": "da14c6c8235d2c437c5ed82bd122e1c20a2c6268b4238704e1d2175c6e36fd2c",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/satisfies-dependency-statuses.test.ts",
+      "sha256": "d954079a8dc86f433a8bd3f2ad4bae76259e620052811b6fbbeb0f1893c0de5f",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/sqlite-write-txn.test.ts",
+      "sha256": "7d155ab240e980202bec0065bd5a5555c88a7da699e7c4d45597c1ace7f2c391",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/t1698-claude-managed-e2e.test.ts",
+      "sha256": "4e3d0e85fedecbf60e070b52b0cdb780b17121667b255e2d8ce6a8c0751ab199",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/t1699-pi-managed-e2e.test.ts",
+      "sha256": "fb5350a14261b964fe41347cd0b8e2f0470cc530bbe192ef72228d47f86dd196",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/task-adoption-eligibility-store-conformance.test.ts",
+      "sha256": "ae78081b6bea722581ec7c29093c75ecac12e27b0cac8f7bc9af97458819d77c",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/tool-surface-target.test.ts",
+      "sha256": "5af46355f722af07143598d7505192aae3113ee66ccbdc4a0a16286c4e746fa9",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
+      "sha256": "c2aa91573c42b45f955863a5b3999a479b28ceb3211c609829a82db0a6c56001",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
+      "sha256": "c2aa91573c42b45f955863a5b3999a479b28ceb3211c609829a82db0a6c56001",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/upstream-action.test.ts",
+      "sha256": "9ab4996b8ae87e28bec8e790fe0d7f1ce34371968429f3b3fe8d4a70f4d536e4",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/upstream-ledger.test.ts",
+      "sha256": "cf2cdce828d95fe69546636336499a1cfde5f4ad95acf15c4d8b1d03fa2cb2d4",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-authority-conformance.test.ts",
+      "sha256": "e1d7e759c310131bfa11cb6182640249826cf8fe813a04bd159cb8e228788c2c",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-command-conformance.test.ts",
+      "sha256": "094a2b016d7b708d7412d804547fc4e3a6fa9428bffec42dc6d8dce495ddbb2a",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-conformance.test.ts",
+      "sha256": "3133b4ff0d759b044bd3bb6439cd6b47db7244e6921d80b6acc3c66efd51950d",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-effect-admission-git.test.ts",
+      "sha256": "b7d37d21f5da6ab473b29795a7f2f882e8738bb552192019acb24d27603abfd0",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-generic-mutation-conformance.test.ts",
+      "sha256": "b5b0438bda54f63441247d6e1410613cf7c56ac9dcc189e6e93bf328cb69f89a",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-generic-mutation-fs-faults.test.ts",
+      "sha256": "566f560e465642d111f8a353cd79bc0b9fe92957cd03a6e88e8b49d3e5d84690",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-generic-mutation-fs.test.ts",
+      "sha256": "6010d2b432d966d2549023ef8e83f4293219c3a1da323dd3df68747e4507e214",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-owner-backup-restore.test.ts",
+      "sha256": "5833d5232eb16bddb5ca5b1ebbc06445ebae783a41af4bf3d1e21330be6f65ce",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-plan-lifecycle-conformance.test.ts",
+      "sha256": "174520646c9a3b7f191cddfffc65a0203ffdeee4b676e57a019240ce7b9b92ba",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-root-lifecycle.test.ts",
+      "sha256": "f5ff7336191e52889b0dc813ada3a3a86380f4e2b3ad3e9d07db278e69663774",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-sqlite-schema-divergence.test.ts",
+      "sha256": "a007321e344e8d22e70ac472db201955a74382baaa6ed28824284e516477a081",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-store-fs.test.ts",
+      "sha256": "f6d7d9abecbc785aebcfb22a827ca22e28e13937f2912c9d7934858c57d27a0f",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-store-git.test.ts",
+      "sha256": "9bd9dcbb0405af6debf8830eed894fc875a46e5fbb93bff0a4bc8d6e5d905360",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/worksetEffectBrokerFsChild.ts",
+      "sha256": "39ebc6fe6dc69cd5e07d652cc96787ac695b758f297deb59ea4fe0c0bb385cf9",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/worksetEffectBrokerPostgresChild.ts",
+      "sha256": "33c19ddd71161fc9283bd5beb8931d095caf02500d128aa4e24c3f73d217033e",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/xdg-project-catalog.test.ts",
+      "sha256": "d40b47a9ee4feb2335414eee0005501229f692fa150ea7f415e68f5ad82b72c2",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/xdg-project-identity-backfill.test.ts",
+      "sha256": "cb66bbb9d5a9cf80f624f724cb9178e5b185f638c28e1dca8ec1a2f673067a52",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/xdg-project-runtime.test.ts",
+      "sha256": "6aadcd95df3155e8b1611df1391cb605b1060db3e68ef4f859a02707ba78598b",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/xdg-watcher-lease.test.ts",
+      "sha256": "c0483c33b0fcfc8315d200e2bdde8b945e890f9ac123a180944af52564a68c67",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/src/commandBootstrap.ts",
+      "sha256": "e4914aafe984f042610c7f6713d22b03cd5ad115ce33ad8955a15fe2f8ea356b",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/src/commandBootstrap.ts",
+      "sha256": "e4914aafe984f042610c7f6713d22b03cd5ad115ce33ad8955a15fe2f8ea356b",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/src/processGroup.ts",
+      "sha256": "d5dfe8807e83e957224cddc8ad5c61b8239ef3e58b082cf8b640e6a6ddb707ac",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/src/processGroup.ts",
+      "sha256": "d5dfe8807e83e957224cddc8ad5c61b8239ef3e58b082cf8b640e6a6ddb707ac",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/src/processWorksetEffectAdmissionProvider.ts",
+      "sha256": "ebbe003b77e45790acd57e746ecac3a7fc05a8e3b66d67975b752d11ec7dac10",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/src/registeredLaunch.ts",
+      "sha256": "859baebbf612a7631af5f7403fbe0351abaaf7a4626c6cea45772878b7e55bbc",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/src/registeredLaunch.ts",
+      "sha256": "859baebbf612a7631af5f7403fbe0351abaaf7a4626c6cea45772878b7e55bbc",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/src/worksetGitEffectGate.ts",
+      "sha256": "72e1aca2b333f9d06b719704b80dfd7113e4c5354a91a4fc768f6b7a6be5e4d1",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/src/worktreeGate.ts",
+      "sha256": "ef6fd7318d1eb447496903a566ccd82377bfe9aed05b73dae4100e987000562f",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/src/worktreeGate.ts",
+      "sha256": "ef6fd7318d1eb447496903a566ccd82377bfe9aed05b73dae4100e987000562f",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/test/processGroup.test.ts",
+      "sha256": "33756a9ef6c00c52c98aaed32e8e4a9934003b963b92fcb95b5f9bdbe280cdc7",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/test/processGroup.test.ts",
+      "sha256": "33756a9ef6c00c52c98aaed32e8e4a9934003b963b92fcb95b5f9bdbe280cdc7",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/test/processGroupFixture.ts",
+      "sha256": "1cc1482442952cd4dd77d67440cff307ed432cbe075829058b94e1b1392f720a",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/test/processWorksetEffectAdmissionProvider.test.ts",
+      "sha256": "6bb735058dfaf0171941c0ad9227032aa0f537efcb8e092f2b539be92b72480c",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/test/worksetDispatchBroker.test.ts",
+      "sha256": "1818814d2b4942fb18363aa73a785a48fcd3d8fc26e3f7523e4e31a54ea6e6ca",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/test/worksetDispatchBroker.test.ts",
+      "sha256": "1818814d2b4942fb18363aa73a785a48fcd3d8fc26e3f7523e4e31a54ea6e6ca",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/test/worksetEffectBroker.test.ts",
+      "sha256": "14168195c53030bed9dd8b0814113db309431cd8b6e2858977f3afa2d924924e",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/process-control/test/worksetEffectConformance.test.ts",
+      "sha256": "a2392b755cd8104461e57a89d6eff8b166f03d1cd229069d4d593bb65ebcb8de",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/scripts/link-prompts.test.ts",
+      "sha256": "11daabc52942edb059aeac125a64770aea8e82ccf453a4471cbcdfe1fe96383f",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/scripts/link-prompts.ts",
+      "sha256": "94a2e1fc285db389aa073fd2d0b7213ff749973754f8b38f99ca598a57a1a7cb",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/scripts/measure-tool-surface.test.ts",
+      "sha256": "7045f850e77e6bae06f3058299e2338c31485fb8e9cba3f23a923dc70b1bdbc8",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/scripts/measure-tool-surface.ts",
+      "sha256": "f5053c5e6af3860a5bea4305f1d7ca9cbef81d6b48f1003f87ca2347876e0d36",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/pi-extensions/cq-subagent-dispatch/index.ts",
+      "sha256": "e048aff3f723a8e85a62e506fb5e0a56e740b963f744c8d7ec610e7a2eafc0c0",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/pi-extensions/cq-subagent-dispatch/index.ts",
+      "sha256": "e048aff3f723a8e85a62e506fb5e0a56e740b963f744c8d7ec610e7a2eafc0c0",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/pi-extensions/ledger-status/index.ts",
+      "sha256": "86a3bb91f633e2e35e455c1b083f1257f3027710a131c67fba10197c49d94eaf",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/pi-extensions/cq-subagent-dispatch/cq-subagent-process-lifecycle.ts",
+      "sha256": "8e43863be93cdd9b84d320960a8757af416e77752340750be5fc6c914074597e",
+      "targets": []
+    }
+  ]
+}

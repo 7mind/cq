@@ -66,6 +66,7 @@ import {
   observeDispatchBase,
   verifyDispatchBase,
 } from "./dispatchBase.js";
+import { MANAGED_GATE_CLOSURE_MANIFEST, resolveManagedGateClosure } from "./gateClosure.js";
 import { AGENT_WORKTREE_SEGMENT } from "./projectKey.js";
 import {
   assessLegacyReconciliationActivity,
@@ -154,6 +155,7 @@ export interface PreparedWorktreeEvidence {
   readonly baseCommit: string;
   readonly headCommit: string;
   readonly bunWorkspaceRoot: string;
+  readonly bunWorkspaceRoots: readonly string[];
   readonly bunInstallCacheDir: string;
   readonly bunInstallArgs: readonly string[];
   readonly dependencyResultCommits: readonly DependencyResultCommit[];
@@ -178,6 +180,7 @@ export type PrepareManagedWorktreeRefusalReason =
   | "bun-workspace-missing"
   | "bun-install-plan-invalid"
   | "bun-install-failed"
+  | "gate-closure-invalid"
   | "adoption-invalid"
   | "adoption-unavailable"
   | "adoption-ineligible"
@@ -349,6 +352,8 @@ export interface ManagedWorktreeDeps {
   readonly stateDir?: string;
   readonly cacheRoot?: string;
   readonly bunWorkspaceRoot?: string;
+  /** Repository-relative v1 closure manifest path. Defaults to cq-gate-closure.json. */
+  readonly gateClosureManifestPath?: string;
   readonly faultInjector?: ManagedWorktreeFaultInjector;
   /** Skip real install (tests that only cover git/registry). Default false. */
   readonly skipInstall?: boolean;
@@ -1545,6 +1550,7 @@ async function buildEvidence(
   handle: ManagedWorktreeHandle,
   headCommit: string,
   bunWorkspaceRoot: string,
+  bunWorkspaceRoots: readonly string[],
   bunInstallCacheDir: string,
   dependencyResultCommits: readonly DependencyResultCommit[],
   mode: "fresh" | "resume" | "adopted",
@@ -1556,6 +1562,7 @@ async function buildEvidence(
     baseCommit: handle.baseCommit,
     headCommit,
     bunWorkspaceRoot,
+    bunWorkspaceRoots,
     bunInstallCacheDir,
     bunInstallArgs: [...FROZEN_INSTALL_ARGS],
     dependencyResultCommits,
@@ -1647,6 +1654,7 @@ async function resumeFromStored(
     handle,
     head,
     stored.bunWorkspaceRoot,
+    [stored.bunWorkspaceRoot],
     resolveBunInstallCacheDir(deps.cacheRoot),
     [],
     "resume",
@@ -2146,6 +2154,7 @@ async function prepareAdoptedWorktreeUnderLock(
       handle,
       headCommit,
       bunWorkspaceRoot,
+      [bunWorkspaceRoot],
       installPlan.bunInstallCacheDir,
       dependencyResultCommits,
       "adopted",
@@ -2359,21 +2368,11 @@ async function prepareManagedWorktreeHandleFreeUnderLock(
     );
   }
 
-  // Discover the seed-side workspace BEFORE mutation; install cwd is rebased
-  // into the managed worktree after `git worktree add`.
-  const seedBunWorkspaceRoot =
-    deps.bunWorkspaceRoot ?? (await discoverBunWorkspaceRoot(repositoryRoot));
-  if (seedBunWorkspaceRoot === null) {
-    return refusedPrepare(
-      "bun-workspace-missing",
-      `no Bun workspace (bun.lock) discovered under ${repositoryRoot}`,
-    );
-  }
-
-  // Validate install plan shape against a placeholder cwd; the real managed
-  // cwd is substituted after worktree add.
+  // An explicit root is a test/legacy seam. Production closure selection must
+  // happen from the clean target worktree, not from a possibly divergent seed.
+  const seedBunWorkspaceRoot = deps.bunWorkspaceRoot;
   const seedInstallPlan = buildManagedWorktreeInstallPlan({
-    bunWorkspaceRoot: seedBunWorkspaceRoot,
+    bunWorkspaceRoot: seedBunWorkspaceRoot ?? repositoryRoot,
     ...(deps.cacheRoot !== undefined ? { cacheRoot: deps.cacheRoot } : {}),
   });
   const planValidation = validateManagedWorktreeInstallPlan(
@@ -2449,8 +2448,10 @@ async function prepareManagedWorktreeHandleFreeUnderLock(
       (await revParse(git, repositoryRoot, branch)) ??
       baseCommit;
     const managedWorkspace =
-      rebaseBunWorkspaceIntoWorktree(repositoryRoot, seedBunWorkspaceRoot, absolutePath) ??
-      absolutePath;
+      seedBunWorkspaceRoot === undefined
+        ? absolutePath
+        : (rebaseBunWorkspaceIntoWorktree(repositoryRoot, seedBunWorkspaceRoot, absolutePath) ??
+          absolutePath);
     const createdAt = now().toISOString();
     const token = randomBytes(16).toString("hex");
     const nonce = randomBytes(8).toString("hex");
@@ -2502,58 +2503,99 @@ async function prepareManagedWorktreeHandleFreeUnderLock(
     }
   }
 
-  const bunWorkspaceRoot = rebaseBunWorkspaceIntoWorktree(
-    repositoryRoot,
-    seedBunWorkspaceRoot,
-    absolutePath,
-  );
-  if (bunWorkspaceRoot === null) {
-    return refuseAfterAdd(
-      "bun-workspace-missing",
-      `seed workspace ${seedBunWorkspaceRoot} could not be rebased into managed worktree ${absolutePath}`,
+  let bunWorkspaceRoots: readonly string[];
+  if (seedBunWorkspaceRoot !== undefined) {
+    const rebased = rebaseBunWorkspaceIntoWorktree(
+      repositoryRoot,
+      seedBunWorkspaceRoot,
+      absolutePath,
     );
+    if (rebased === null) {
+      return refuseAfterAdd(
+        "bun-workspace-missing",
+        `seed workspace ${seedBunWorkspaceRoot} could not be rebased into managed worktree ${absolutePath}`,
+      );
+    }
+    bunWorkspaceRoots = [rebased];
+  } else {
+    const closure = await resolveManagedGateClosure(
+      absolutePath,
+      deps.gateClosureManifestPath ?? MANAGED_GATE_CLOSURE_MANIFEST,
+    );
+    if (closure.status === "invalid") {
+      // Generic managed repositories retain their single-workspace contract.
+      // A cq-ledgers target is closure-aware and never receives this fallback.
+      const cqTarget = join(absolutePath, "nix", "pkg", "cq-ledgers", "package.json");
+      if (closure.reason === "manifest-missing" && !existsSync(cqTarget)) {
+        const discovered = await discoverBunWorkspaceRoot(absolutePath);
+        if (discovered !== null) {
+          bunWorkspaceRoots = [discovered];
+        } else {
+          return refuseAfterAdd(
+            "bun-workspace-missing",
+            `no Bun workspace (bun.lock) discovered under managed target ${absolutePath}`,
+          );
+        }
+      } else {
+        return refuseAfterAdd("gate-closure-invalid", `${closure.reason}: ${closure.detail}`);
+      }
+    } else {
+      bunWorkspaceRoots = closure.installRoots;
+    }
+  }
+  if (bunWorkspaceRoots.length === 0) {
+    return refuseAfterAdd("gate-closure-invalid", "resolved gate closure has no install roots");
   }
 
-  // Confirm the workspace exists inside the managed tree (git worktree copies the files).
-  try {
-    await fs.access(bunWorkspaceRoot);
-  } catch {
-    return refuseAfterAdd(
-      "bun-workspace-missing",
-      `managed worktree workspace missing at ${bunWorkspaceRoot}`,
+  const installPlans: ManagedWorktreeInstallPlan[] = [];
+  for (const bunWorkspaceRoot of bunWorkspaceRoots) {
+    try {
+      await fs.access(bunWorkspaceRoot);
+    } catch {
+      return refuseAfterAdd(
+        "bun-workspace-missing",
+        `managed worktree workspace missing at ${bunWorkspaceRoot}`,
+      );
+    }
+    const installPlan = buildManagedWorktreeInstallPlan({
+      bunWorkspaceRoot,
+      ...(deps.cacheRoot !== undefined ? { cacheRoot: deps.cacheRoot } : {}),
+    });
+    const managedPlanValidation = validateManagedWorktreeInstallPlan(
+      installPlan,
+      deps.cacheRoot !== undefined ? { cacheRoot: deps.cacheRoot } : {},
     );
-  }
-
-  const installPlan = buildManagedWorktreeInstallPlan({
-    bunWorkspaceRoot,
-    ...(deps.cacheRoot !== undefined ? { cacheRoot: deps.cacheRoot } : {}),
-  });
-  // Re-validate with the managed cwd (cwd non-empty + cache contract).
-  const managedPlanValidation = validateManagedWorktreeInstallPlan(
-    installPlan,
-    deps.cacheRoot !== undefined ? { cacheRoot: deps.cacheRoot } : {},
-  );
-  if (managedPlanValidation.status === "invalid") {
-    return refuseAfterAdd(
-      "bun-install-plan-invalid",
-      `${managedPlanValidation.reason}: ${managedPlanValidation.detail}`,
-    );
+    if (managedPlanValidation.status === "invalid") {
+      return refuseAfterAdd(
+        "bun-install-plan-invalid",
+        `${managedPlanValidation.reason}: ${managedPlanValidation.detail}`,
+      );
+    }
+    const preInstallSymlink = await assertNoNodeModulesSymlink(bunWorkspaceRoot);
+    if (preInstallSymlink !== null) {
+      return refuseAfterAdd("bun-install-plan-invalid", preInstallSymlink);
+    }
+    installPlans.push(installPlan);
   }
 
   if (!deps.skipInstall) {
-    await fs.mkdir(installPlan.bunInstallCacheDir, { recursive: true });
-    const installResult = await install(installPlan);
-    if (installResult.code !== 0) {
-      return refuseAfterAdd(
-        "bun-install-failed",
-        `bun install failed (exit ${installResult.code}): ${installResult.stderr.trim()}`,
-      );
-    }
-    const symlinkProblem = await assertNoNodeModulesSymlink(bunWorkspaceRoot);
-    if (symlinkProblem !== null) {
-      return refuseAfterAdd("bun-install-plan-invalid", symlinkProblem);
+    await fs.mkdir(installPlans[0]!.bunInstallCacheDir, { recursive: true });
+    for (const installPlan of installPlans) {
+      const installResult = await install(installPlan);
+      if (installResult.code !== 0) {
+        return refuseAfterAdd(
+          "bun-install-failed",
+          `bun install failed in ${installPlan.cwd} (exit ${installResult.code}): ${installResult.stderr.trim()}`,
+        );
+      }
+      const symlinkProblem = await assertNoNodeModulesSymlink(installPlan.cwd);
+      if (symlinkProblem !== null) {
+        return refuseAfterAdd("bun-install-plan-invalid", symlinkProblem);
+      }
     }
   }
+  const bunWorkspaceRoot = bunWorkspaceRoots[0]!;
+  const installPlan = installPlans[0]!;
 
   const headCommit = await revParse(git, absolutePath, "HEAD");
   if (headCommit === null) {
@@ -2610,6 +2652,7 @@ async function prepareManagedWorktreeHandleFreeUnderLock(
     handle,
     headCommit,
     bunWorkspaceRoot,
+    bunWorkspaceRoots,
     installPlan.bunInstallCacheDir,
     dependencyResultCommits,
     "fresh",
@@ -3302,7 +3345,11 @@ export async function observeManagedWorktreeLiveTip(
   deps: Pick<ManagedWorktreeDeps, "git" | "stateDir"> = {},
 ): Promise<string> {
   await assertManagedWorktreeDispatchBindingLive(binding, deps);
-  const tip = await revParse(deps.git ?? nodeManagedWorktreeGitRunner, binding.worktreePath, "HEAD");
+  const tip = await revParse(
+    deps.git ?? nodeManagedWorktreeGitRunner,
+    binding.worktreePath,
+    "HEAD",
+  );
   if (tip === null || !FULL_COMMIT_SHA.test(tip)) {
     throw new Error("managed worktree HEAD is not a full commit SHA");
   }
