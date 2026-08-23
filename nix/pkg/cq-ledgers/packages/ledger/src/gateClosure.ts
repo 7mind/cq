@@ -246,31 +246,59 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-async function hasBunLock(directory: string): Promise<boolean> {
+type BunLockResolution =
+  | { readonly status: "found" }
+  | { readonly status: "missing" }
+  | { readonly status: "path-escape"; readonly path: string };
+
+async function resolveBunLock(
+  repositoryRoot: string,
+  directory: string,
+): Promise<BunLockResolution> {
   for (const lock of BUN_LOCK_NAMES) {
-    if (await pathExists(join(directory, lock))) return true;
+    const lockPath = join(directory, lock);
+    const canonicalLockPath = await canonicalRepositoryPath(repositoryRoot, lockPath);
+    if (canonicalLockPath !== null) {
+      try {
+        if ((await fs.stat(canonicalLockPath)).isFile()) return { status: "found" };
+      } catch {
+        // continue
+      }
+    } else if (await pathExists(lockPath)) {
+      return { status: "path-escape", path: lockPath };
+    }
   }
-  return false;
+  return { status: "missing" };
 }
 
-async function nearestBunRoot(repositoryRoot: string, inputPath: string): Promise<string | null> {
+type BunRootResolution =
+  | { readonly status: "found"; readonly root: string }
+  | { readonly status: "missing" }
+  | { readonly status: "path-escape"; readonly path: string };
+
+async function nearestBunRoot(
+  repositoryRoot: string,
+  inputPath: string,
+): Promise<BunRootResolution> {
   let current = inputPath;
   try {
     if (!(await fs.stat(current)).isDirectory()) current = dirname(current);
   } catch {
-    return null;
+    return { status: "missing" };
   }
   while (true) {
-    if ((await pathExists(join(current, "package.json"))) && (await hasBunLock(current))) {
-      return current;
+    if (await pathExists(join(current, "package.json"))) {
+      const lock = await resolveBunLock(repositoryRoot, current);
+      if (lock.status === "path-escape") return lock;
+      if (lock.status === "found") return { status: "found", root: current };
     }
-    if (current === repositoryRoot) return null;
+    if (current === repositoryRoot) return { status: "missing" };
     const parent = dirname(current);
     if (
       parent === current ||
       !safeRepositoryPath(repositoryRoot, relative(repositoryRoot, parent))
     ) {
-      return null;
+      return { status: "missing" };
     }
     current = parent;
   }
@@ -572,9 +600,25 @@ export async function resolveManagedGateClosure(
       `gate closure manifest path escapes the repository: ${manifestRelativePath}`,
     );
   }
+  const canonicalManifestPath = await canonicalRepositoryPath(
+    repositoryRoot,
+    manifestPath.absolute,
+  );
+  if (canonicalManifestPath === null) {
+    if (await pathExists(manifestPath.absolute)) {
+      return invalid(
+        "path-escape",
+        `resolved gate closure manifest escapes the repository: ${manifestRelativePath}`,
+      );
+    }
+    return invalid(
+      "manifest-missing",
+      `gate closure manifest is missing at ${manifestPath.relative}`,
+    );
+  }
   let manifestBytes: string;
   try {
-    manifestBytes = await fs.readFile(manifestPath.absolute, "utf8");
+    manifestBytes = await fs.readFile(canonicalManifestPath, "utf8");
   } catch {
     return invalid(
       "manifest-missing",
@@ -658,7 +702,14 @@ export async function resolveManagedGateClosure(
     );
   }
   const targetRoot = dirname(packagePath.absolute);
-  if (!(await hasBunLock(targetRoot))) {
+  const targetLock = await resolveBunLock(repositoryRoot, targetRoot);
+  if (targetLock.status === "path-escape") {
+    return invalid(
+      "path-escape",
+      `resolved target Bun lock escapes the repository: ${relative(repositoryRoot, targetLock.path).split(sep).join("/")}`,
+    );
+  }
+  if (targetLock.status === "missing") {
     return invalid(
       "bun-root-incomplete",
       `target ${packagePath.relative} has no sibling bun.lock or bun.lockb`,
@@ -678,9 +729,19 @@ export async function resolveManagedGateClosure(
     if (source === null) {
       return invalid("path-escape", `opaque edge source escapes the repository: ${edge.source}`);
     }
+    const canonicalSource = await canonicalRepositoryPath(repositoryRoot, source.absolute);
+    if (canonicalSource === null) {
+      if (await pathExists(source.absolute)) {
+        return invalid(
+          "path-escape",
+          `resolved opaque edge source escapes the repository: ${edge.source}`,
+        );
+      }
+      return invalid("edge-source-missing", `opaque edge source is missing: ${source.relative}`);
+    }
     let bytes: Uint8Array;
     try {
-      bytes = await fs.readFile(source.absolute);
+      bytes = await fs.readFile(canonicalSource);
     } catch {
       return invalid("edge-source-missing", `opaque edge source is missing: ${source.relative}`);
     }
@@ -691,9 +752,9 @@ export async function resolveManagedGateClosure(
         `opaque ${edge.kind} edge source ${source.relative} digest ${observed} does not match declared ${edge.sha256}`,
       );
     }
-    const kinds = declarations.get(source.absolute) ?? new Set<ManagedGateOpaqueEdgeKind>();
+    const kinds = declarations.get(canonicalSource) ?? new Set<ManagedGateOpaqueEdgeKind>();
     kinds.add(edge.kind);
-    declarations.set(source.absolute, kinds);
+    declarations.set(canonicalSource, kinds);
     for (const target of edge.targets) {
       const resolvedTarget = safeRepositoryPath(repositoryRoot, target);
       if (resolvedTarget === null) {
@@ -773,25 +834,34 @@ export async function resolveManagedGateClosure(
         );
       }
       const root = await nearestBunRoot(repositoryRoot, canonicalTarget);
-      if (root === null) {
+      if (root.status === "path-escape") {
+        return invalid(
+          "path-escape",
+          `resolved Bun lock ${root.path} escapes the repository`,
+        );
+      }
+      if (root.status === "missing") {
         return invalid(
           "bun-root-incomplete",
           `static import target ${relative(repositoryRoot, canonicalTarget)} has no enclosing package.json plus Bun lock`,
         );
       }
-      installRoots.add(root);
+      installRoots.add(root.root);
       pendingSources.push(canonicalTarget);
     }
   }
   for (const target of declaredTargets) {
     const root = await nearestBunRoot(repositoryRoot, target);
-    if (root === null) {
+    if (root.status === "path-escape") {
+      return invalid("path-escape", `resolved Bun lock ${root.path} escapes the repository`);
+    }
+    if (root.status === "missing") {
       return invalid(
         "bun-root-incomplete",
         `opaque edge target ${relative(repositoryRoot, target)} has no enclosing package.json plus Bun lock`,
       );
     }
-    installRoots.add(root);
+    installRoots.add(root.root);
   }
 
   return {
