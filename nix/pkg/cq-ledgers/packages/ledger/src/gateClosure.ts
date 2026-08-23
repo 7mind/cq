@@ -6,6 +6,7 @@ export const MANAGED_GATE_CLOSURE_VERSION = 1 as const;
 export const MANAGED_GATE_CLOSURE_MANIFEST = "cq-gate-closure.json";
 
 const BUN_LOCK_NAMES = ["bun.lock", "bun.lockb"] as const;
+const BUN_CONFIGURATION_NAME = "bunfig.toml";
 const SOURCE_EXTENSIONS = new Set([".cjs", ".js", ".jsx", ".mjs", ".mts", ".cts", ".ts", ".tsx"]);
 const SKIPPED_DIRECTORIES = new Set([
   ".cache",
@@ -65,6 +66,8 @@ export interface ManagedGateClosureManifestV1 {
 }
 
 export type ManagedGateClosureInvalidReason =
+  | "bun-configuration-invalid"
+  | "bun-configuration-unsupported"
   | "bun-root-incomplete"
   | "edge-source-missing"
   | "edge-target-missing"
@@ -275,6 +278,216 @@ type BunRootResolution =
   | { readonly status: "found"; readonly root: string }
   | { readonly status: "missing" }
   | { readonly status: "path-escape"; readonly path: string };
+
+type BunConfigurationTargetKind = "preload" | "test-root";
+
+interface BunConfigurationTarget {
+  readonly kind: BunConfigurationTargetKind;
+  readonly path: string;
+  readonly relative: string;
+}
+
+interface ApplicableBunConfiguration {
+  readonly path: string;
+  readonly relative: string;
+  readonly targets: readonly BunConfigurationTarget[];
+}
+
+type BunConfigurationResolution =
+  | { readonly status: "absent" }
+  | { readonly status: "found"; readonly configuration: ApplicableBunConfiguration }
+  | Extract<ManagedGateClosureResolution, { readonly status: "invalid" }>;
+
+function configuredPreloads(
+  value: unknown,
+  field: string,
+):
+  | { readonly status: "parsed"; readonly specifiers: readonly string[] }
+  | { readonly status: "invalid"; readonly detail: string } {
+  if (value === undefined || value === null) return { status: "parsed", specifiers: [] };
+  if (typeof value === "string") {
+    return { status: "parsed", specifiers: value.length === 0 ? [] : [value] };
+  }
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    return {
+      status: "invalid",
+      detail: `${field} must be a string, string array, or null`,
+    };
+  }
+  return {
+    status: "parsed",
+    specifiers: (value as string[]).filter((entry) => entry.length > 0),
+  };
+}
+
+async function resolveBunConfigurationTarget(
+  repositoryRoot: string,
+  targetRoot: string,
+  specifier: string,
+  kind: BunConfigurationTargetKind,
+): Promise<
+  | { readonly status: "found"; readonly target: BunConfigurationTarget }
+  | Extract<ManagedGateClosureResolution, { readonly status: "invalid" }>
+> {
+  if (!isAbsolute(specifier) && !specifier.startsWith(".")) {
+    return invalid(
+      "bun-configuration-unsupported",
+      `applicable Bun ${kind} target ${JSON.stringify(specifier)} is not a filesystem path`,
+    );
+  }
+  const unresolved = resolve(targetRoot, specifier);
+  if (!isRepositoryPath(repositoryRoot, unresolved)) {
+    return invalid(
+      "path-escape",
+      `applicable Bun ${kind} target escapes the repository: ${specifier}`,
+    );
+  }
+  const canonical = await canonicalRepositoryPath(repositoryRoot, unresolved);
+  if (canonical === null) {
+    if (await pathExists(unresolved)) {
+      return invalid(
+        "path-escape",
+        `resolved applicable Bun ${kind} target escapes the repository: ${specifier}`,
+      );
+    }
+    return invalid(
+      "edge-target-missing",
+      `applicable Bun ${kind} target is missing: ${relative(repositoryRoot, unresolved).split(sep).join("/")}`,
+    );
+  }
+  let targetKind: Awaited<ReturnType<typeof fs.stat>>;
+  try {
+    targetKind = await fs.stat(canonical);
+  } catch {
+    return invalid(
+      "edge-target-missing",
+      `applicable Bun ${kind} target is missing: ${relative(repositoryRoot, canonical).split(sep).join("/")}`,
+    );
+  }
+  if (
+    (kind === "preload" && !targetKind.isFile()) ||
+    (kind === "test-root" && !targetKind.isDirectory())
+  ) {
+    return invalid(
+      "bun-configuration-invalid",
+      `applicable Bun ${kind} target has the wrong filesystem type: ${relative(repositoryRoot, canonical).split(sep).join("/")}`,
+    );
+  }
+  if (kind === "preload" && !SOURCE_EXTENSIONS.has(extname(canonical))) {
+    return invalid(
+      "bun-configuration-unsupported",
+      `applicable Bun preload target has an unsupported source extension: ${relative(repositoryRoot, canonical).split(sep).join("/")}`,
+    );
+  }
+  return {
+    status: "found",
+    target: {
+      kind,
+      path: canonical,
+      relative: relative(repositoryRoot, canonical).split(sep).join("/"),
+    },
+  };
+}
+
+async function resolveApplicableBunConfiguration(
+  repositoryRoot: string,
+  targetRoot: string,
+): Promise<BunConfigurationResolution> {
+  const unresolved = join(targetRoot, BUN_CONFIGURATION_NAME);
+  const canonical = await canonicalRepositoryPath(repositoryRoot, unresolved);
+  if (canonical === null) {
+    return (await pathExists(unresolved))
+      ? invalid(
+          "path-escape",
+          `resolved applicable Bun configuration escapes the repository: ${relative(repositoryRoot, unresolved).split(sep).join("/")}`,
+        )
+      : { status: "absent" };
+  }
+  let bytes: string;
+  try {
+    bytes = await fs.readFile(canonical, "utf8");
+  } catch (error) {
+    return invalid(
+      "bun-configuration-invalid",
+      `cannot read applicable Bun configuration ${relative(repositoryRoot, canonical).split(sep).join("/")}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  let value: unknown;
+  try {
+    value = Bun.TOML.parse(bytes);
+  } catch (error) {
+    return invalid(
+      "bun-configuration-invalid",
+      `cannot parse applicable Bun configuration ${relative(repositoryRoot, canonical).split(sep).join("/")}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!isRecord(value)) {
+    return invalid("bun-configuration-invalid", "applicable Bun configuration is not a table");
+  }
+  const topLevelPreload = configuredPreloads(value["preload"], "preload");
+  if (topLevelPreload.status === "invalid") {
+    return invalid("bun-configuration-invalid", topLevelPreload.detail);
+  }
+  if (topLevelPreload.specifiers.length > 0) {
+    return invalid(
+      "bun-configuration-unsupported",
+      "top-level Bun preload is outside the supported package-script/test configuration domain",
+    );
+  }
+  const install = value["install"];
+  if (isRecord(install) && isRecord(install["security"])) {
+    const scanner = install["security"]["scanner"];
+    if (scanner !== undefined) {
+      return invalid(
+        "bun-configuration-unsupported",
+        "Bun install.security.scanner is an unsupported executable configuration construct",
+      );
+    }
+  }
+  const serve = value["serve"];
+  if (isRecord(serve) && isRecord(serve["static"]) && serve["static"]["plugins"] !== undefined) {
+    return invalid(
+      "bun-configuration-unsupported",
+      "Bun serve.static.plugins is an unsupported executable configuration construct",
+    );
+  }
+  const test = value["test"];
+  if (test !== undefined && !isRecord(test)) {
+    return invalid("bun-configuration-invalid", "test must be a table");
+  }
+  const preloads = configuredPreloads(test?.["preload"], "test.preload");
+  if (preloads.status === "invalid") {
+    return invalid("bun-configuration-invalid", preloads.detail);
+  }
+  const specifications: { readonly kind: BunConfigurationTargetKind; readonly value: string }[] =
+    preloads.specifiers.map((specifier) => ({ kind: "preload", value: specifier }));
+  const testRoot = test?.["root"];
+  if (testRoot !== undefined) {
+    if (typeof testRoot !== "string") {
+      return invalid("bun-configuration-invalid", "test.root must be a string");
+    }
+    specifications.push({ kind: "test-root", value: testRoot.length === 0 ? "." : testRoot });
+  }
+  const targets = new Map<string, BunConfigurationTarget>();
+  for (const specification of specifications) {
+    const resolved = await resolveBunConfigurationTarget(
+      repositoryRoot,
+      targetRoot,
+      specification.value,
+      specification.kind,
+    );
+    if (resolved.status === "invalid") return resolved;
+    targets.set(`${resolved.target.kind}\0${resolved.target.path}`, resolved.target);
+  }
+  return {
+    status: "found",
+    configuration: {
+      path: canonical,
+      relative: relative(repositoryRoot, canonical).split(sep).join("/"),
+      targets: [...targets.values()],
+    },
+  };
+}
 
 async function nearestBunRoot(
   repositoryRoot: string,
@@ -740,8 +953,11 @@ export async function resolveManagedGateClosure(
       `target ${packagePath.relative} has no sibling bun.lock or bun.lockb`,
     );
   }
+  const bunConfiguration = await resolveApplicableBunConfiguration(repositoryRoot, targetRoot);
+  if (bunConfiguration.status === "invalid") return bunConfiguration;
 
   const declarations = new Map<string, Set<ManagedGateOpaqueEdgeKind>>();
+  const declarationTargets = new Map<string, Map<ManagedGateOpaqueEdgeKind, Set<string>>>();
   const declaredTargets: string[] = [];
   for (const edge of manifest.opaqueEdges) {
     if (edge.kind === "dynamic" && edge.targets.length === 0) {
@@ -780,6 +996,9 @@ export async function resolveManagedGateClosure(
     const kinds = declarations.get(canonicalSource) ?? new Set<ManagedGateOpaqueEdgeKind>();
     kinds.add(edge.kind);
     declarations.set(canonicalSource, kinds);
+    const targetsByKind =
+      declarationTargets.get(canonicalSource) ?? new Map<ManagedGateOpaqueEdgeKind, Set<string>>();
+    const kindTargets = targetsByKind.get(edge.kind) ?? new Set<string>();
     for (const target of edge.targets) {
       const resolvedTarget = safeRepositoryPath(repositoryRoot, target);
       if (resolvedTarget === null) {
@@ -802,7 +1021,10 @@ export async function resolveManagedGateClosure(
         );
       }
       declaredTargets.push(canonicalTarget);
+      kindTargets.add(canonicalTarget);
     }
+    targetsByKind.set(edge.kind, kindTargets);
+    declarationTargets.set(canonicalSource, targetsByKind);
   }
   if (dag.scripts.some((name) => /(?:^|\s|&&|;)nix(?:\s|$)/u.test(scripts[name]!))) {
     if (!declarations.get(packagePath.absolute)?.has("nix")) {
@@ -810,6 +1032,37 @@ export async function resolveManagedGateClosure(
         "source-declaration-missing",
         `reachable Nix command in ${packagePath.relative} lacks a hashed nix edge declaration`,
       );
+    }
+  }
+  const configuredTargets: BunConfigurationTarget[] = [];
+  if (bunConfiguration.status === "found") {
+    const configured = bunConfiguration.configuration;
+    if (!declarations.get(configured.path)?.has("path")) {
+      return invalid(
+        "source-declaration-missing",
+        `applicable Bun configuration ${configured.relative} lacks a hashed path edge declaration`,
+      );
+    }
+    const declaredConfigurationTargets =
+      declarationTargets.get(configured.path)?.get("path") ?? new Set<string>();
+    const observedConfigurationTargets = new Set(configured.targets.map((target) => target.path));
+    if (
+      declaredConfigurationTargets.size !== observedConfigurationTargets.size ||
+      [...observedConfigurationTargets].some((target) => !declaredConfigurationTargets.has(target))
+    ) {
+      return invalid(
+        "source-declaration-missing",
+        `applicable Bun configuration ${configured.relative} path declaration does not exactly cover its executable targets`,
+      );
+    }
+    for (const target of configured.targets) {
+      if (target.kind === "preload" && !declarations.get(target.path)?.has("path")) {
+        return invalid(
+          "source-declaration-missing",
+          `applicable Bun preload ${target.relative} lacks a hashed path edge declaration`,
+        );
+      }
+      configuredTargets.push(target);
     }
   }
 
@@ -823,6 +1076,20 @@ export async function resolveManagedGateClosure(
   }
   const pendingSources = [...discoveredSources.files];
   pendingSources.push(...declaredTargets);
+  for (const target of configuredTargets) {
+    if (target.kind === "preload") {
+      pendingSources.push(target.path);
+      continue;
+    }
+    const configuredSources = await sourceFiles(repositoryRoot, target.path);
+    if (configuredSources.status === "path-escape") {
+      return invalid(
+        "path-escape",
+        `resolved source entry ${configuredSources.path} escapes the repository`,
+      );
+    }
+    pendingSources.push(...configuredSources.files);
+  }
   const observedSources = new Set<string>();
   while (pendingSources.length > 0) {
     const sourcePath = pendingSources.shift()!;

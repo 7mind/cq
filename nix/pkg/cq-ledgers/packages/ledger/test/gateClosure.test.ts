@@ -261,6 +261,205 @@ describe("managed gate closure v1", () => {
     if (resolution.status === "invalid") expect(resolution.reason).toBe("path-escape");
   });
 
+  test("binds target-local Bun configuration and preload bytes", async () => {
+    const fixture = await createFixture();
+    const preloadPath = path.join(fixture.targetRoot, "test", "configured-preload.ts");
+    const preloadBytes = "export const configuredPreload = true;\n";
+    const configBytes = '[test]\npreload = "./test/configured-preload.ts"\n';
+    const configPath = path.join(fixture.targetRoot, "bunfig.toml");
+    const configRelative = path.relative(fixture.root, configPath).split(path.sep).join("/");
+    const preloadRelative = path.relative(fixture.root, preloadPath).split(path.sep).join("/");
+    await fs.writeFile(configPath, configBytes);
+    await fs.writeFile(preloadPath, preloadBytes);
+
+    await writeManifest(fixture);
+    const undeclared = await resolveManagedGateClosure(fixture.root);
+    expect(undeclared.status).toBe("invalid");
+    if (undeclared.status === "invalid") {
+      expect(undeclared.reason).toBe("source-declaration-missing");
+      expect(undeclared.detail).toContain(configRelative);
+    }
+
+    await writeManifest(fixture, [
+      {
+        kind: "path",
+        source: configRelative,
+        sha256: digest(configBytes),
+        targets: [preloadRelative],
+      },
+      {
+        kind: "path",
+        source: preloadRelative,
+        sha256: digest(preloadBytes),
+        targets: [],
+      },
+    ]);
+    const resolved = await resolveManagedGateClosure(fixture.root);
+    expect(resolved.status).toBe("resolved");
+    if (resolved.status === "resolved") expect(resolved.installRoots).toEqual([fixture.targetRoot]);
+
+    await fs.appendFile(configPath, "# configuration drift\n");
+    const changedConfiguration = await resolveManagedGateClosure(fixture.root);
+    expect(changedConfiguration.status).toBe("invalid");
+    if (changedConfiguration.status === "invalid") {
+      expect(changedConfiguration.reason).toBe("source-digest-mismatch");
+    }
+
+    await fs.writeFile(configPath, configBytes);
+    await fs.appendFile(preloadPath, "// preload drift\n");
+    const changedPreload = await resolveManagedGateClosure(fixture.root);
+    expect(changedPreload.status).toBe("invalid");
+    if (changedPreload.status === "invalid") {
+      expect(changedPreload.reason).toBe("source-digest-mismatch");
+    }
+  });
+
+  test("uses only target-local Bun configuration under pinned precedence", async () => {
+    const fixture = await createFixture();
+    const localPreloadPath = path.join(fixture.targetRoot, "test", "local-preload.ts");
+    const localPreloadBytes = 'console.log("T2317_LOCAL_BUNFIG_PRELOAD");\n';
+    const externalPreload = await createExternalFile(
+      "ancestor-preload.ts",
+      'console.log("T2317_ANCESTOR_BUNFIG_PRELOAD");\n',
+    );
+    const localConfigBytes = '[test]\npreload = ["./test/local-preload.ts"]\n';
+    const ancestorConfigBytes = `[test]\npreload = [${JSON.stringify(
+      path.relative(fixture.root, externalPreload).split(path.sep).join("/"),
+    )}]\n`;
+    const localConfigPath = path.join(fixture.targetRoot, "bunfig.toml");
+    const localConfigRelative = path
+      .relative(fixture.root, localConfigPath)
+      .split(path.sep)
+      .join("/");
+    const localPreloadRelative = path
+      .relative(fixture.root, localPreloadPath)
+      .split(path.sep)
+      .join("/");
+    await fs.writeFile(localConfigPath, localConfigBytes);
+    await fs.writeFile(localPreloadPath, localPreloadBytes);
+    await fs.writeFile(path.join(fixture.root, "bunfig.toml"), ancestorConfigBytes);
+    await fs.writeFile(
+      path.join(fixture.targetRoot, "test", "gate.test.ts"),
+      'import { test } from "bun:test";\ntest("gate", () => {});\n',
+    );
+    await writeManifest(fixture, [
+      {
+        kind: "path",
+        source: localConfigRelative,
+        sha256: digest(localConfigBytes),
+        targets: [localPreloadRelative],
+      },
+      {
+        kind: "path",
+        source: localPreloadRelative,
+        sha256: digest(localPreloadBytes),
+        targets: [],
+      },
+    ]);
+
+    const executed = Bun.spawnSync([process.execPath, "test", "test/gate.test.ts"], {
+      cwd: fixture.targetRoot,
+      env: {
+        ...process.env,
+        HOME: path.join(fixture.root, "home"),
+        XDG_CONFIG_HOME: path.join(fixture.root, "xdg"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const executionOutput = `${new TextDecoder().decode(executed.stdout)}${new TextDecoder().decode(executed.stderr)}`;
+    expect(executed.exitCode).toBe(0);
+    expect(executionOutput).toContain("T2317_LOCAL_BUNFIG_PRELOAD");
+    expect(executionOutput).not.toContain("T2317_ANCESTOR_BUNFIG_PRELOAD");
+    expect((await resolveManagedGateClosure(fixture.root)).status).toBe("resolved");
+  });
+
+  test("scans an internal configured test root through ordinary edge validation", async () => {
+    const fixture = await createFixture();
+    const configuredSource = await addBunRoot(
+      fixture,
+      "nix/pkg/configured-tests",
+      "configured.test.ts",
+    );
+    const configuredSourcePath = path.join(fixture.root, configuredSource);
+    const configuredSourceBytes =
+      "const assetPath = process.env.ASSET_PATH!;\nawait Bun.file(assetPath).text();\n";
+    const configBytes = '[test]\nroot = "../configured-tests"\n';
+    const configPath = path.join(fixture.targetRoot, "bunfig.toml");
+    const configRelative = path.relative(fixture.root, configPath).split(path.sep).join("/");
+    await fs.writeFile(configuredSourcePath, configuredSourceBytes);
+    await fs.writeFile(configPath, configBytes);
+    const configurationEdge: ManagedGateOpaqueEdgeDeclaration = {
+      kind: "path",
+      source: configRelative,
+      sha256: digest(configBytes),
+      targets: ["nix/pkg/configured-tests"],
+    };
+    await writeManifest(fixture, [configurationEdge]);
+
+    const undeclared = await resolveManagedGateClosure(fixture.root);
+    expect(undeclared.status).toBe("invalid");
+    if (undeclared.status === "invalid") {
+      expect(undeclared.reason).toBe("source-declaration-missing");
+      expect(undeclared.detail).toContain(configuredSource);
+    }
+
+    await writeManifest(fixture, [
+      configurationEdge,
+      {
+        kind: "path",
+        source: configuredSource,
+        sha256: digest(configuredSourceBytes),
+        targets: [],
+      },
+    ]);
+    const resolved = await resolveManagedGateClosure(fixture.root);
+    expect(resolved.status).toBe("resolved");
+    if (resolved.status !== "resolved") return;
+    expect(resolved.installRoots).toEqual([
+      fixture.targetRoot,
+      path.join(fixture.root, "nix/pkg/configured-tests"),
+    ]);
+  });
+
+  test("rejects external and unsupported executable Bun configuration constructs", async () => {
+    const escaped = await createFixture();
+    const externalConfig = await createExternalFile(
+      "bunfig.toml",
+      '[test]\npreload = ["./setup.ts"]\n',
+    );
+    await fs.symlink(externalConfig, path.join(escaped.targetRoot, "bunfig.toml"), "file");
+    await writeManifest(escaped);
+    const escapedResolution = await resolveManagedGateClosure(escaped.root);
+    expect(escapedResolution.status).toBe("invalid");
+    if (escapedResolution.status === "invalid") {
+      expect(escapedResolution.reason).toBe("path-escape");
+    }
+
+    for (const configured of [
+      {
+        bytes: 'preload = ["./test/gate.test.ts"]\n',
+        reason: "bun-configuration-unsupported",
+      },
+      {
+        bytes: '[test]\npreload = ["package-preload"]\n',
+        reason: "bun-configuration-unsupported",
+      },
+      {
+        bytes: '[install.security]\nscanner = "scanner-package"\n',
+        reason: "bun-configuration-unsupported",
+      },
+      { bytes: "[test]\npreload = 42\n", reason: "bun-configuration-invalid" },
+    ] as const) {
+      const fixture = await createFixture();
+      await fs.writeFile(path.join(fixture.targetRoot, "bunfig.toml"), configured.bytes);
+      await writeManifest(fixture);
+      const resolution = await resolveManagedGateClosure(fixture.root);
+      expect(resolution.status).toBe("invalid");
+      if (resolution.status === "invalid") expect(resolution.reason).toBe(configured.reason);
+    }
+  });
+
   test("validates a source symlink target that remains inside the repository", async () => {
     const fixture = await createFixture();
     const sourceBytes =
