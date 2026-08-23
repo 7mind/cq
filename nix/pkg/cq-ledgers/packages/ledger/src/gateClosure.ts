@@ -308,10 +308,7 @@ type SourceFilesResolution =
   | { readonly status: "found"; readonly files: readonly string[] }
   | { readonly status: "path-escape"; readonly path: string };
 
-async function sourceFiles(
-  repositoryRoot: string,
-  root: string,
-): Promise<SourceFilesResolution> {
+async function sourceFiles(repositoryRoot: string, root: string): Promise<SourceFilesResolution> {
   const files = new Set<string>();
   const visitedDirectories = new Set<string>();
   async function visit(directory: string): Promise<string | null> {
