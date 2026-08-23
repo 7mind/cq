@@ -1512,13 +1512,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/gateClosure.test.ts",
-      "sha256": "3c11043bafd213491ab53c86ef4cad7c267fbc1c86aa1a440bb5f1ae355e2b2b",
+      "sha256": "435b32a133bb374ce4b17b99cbd57f3c977c739d483bc100b439a331fe20e292",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/gateClosure.test.ts",
-      "sha256": "3c11043bafd213491ab53c86ef4cad7c267fbc1c86aa1a440bb5f1ae355e2b2b",
+      "sha256": "435b32a133bb374ce4b17b99cbd57f3c977c739d483bc100b439a331fe20e292",
       "targets": []
     },
     {

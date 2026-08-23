@@ -334,14 +334,8 @@ describe("managed gate closure v1", () => {
 
   test("rejects valid and malformed executable identifier Unicode escapes", async () => {
     for (const [name, sourceBytes] of [
-      [
-        "fixed-width",
-        'requ\\u0069re("./unclassified-fixed-width.cjs");\n',
-      ],
-      [
-        "code-point",
-        '\\u{72}equire("./unclassified-code-point.cjs");\n',
-      ],
+      ["fixed-width", 'requ\\u0069re("./unclassified-fixed-width.cjs");\n'],
+      ["code-point", '\\u{72}equire("./unclassified-code-point.cjs");\n'],
       [
         "template-expression",
         [
@@ -360,11 +354,7 @@ describe("managed gate closure v1", () => {
       ["malformed-code-point", "const invalid\\u{110000} = true;\n"],
     ] as const) {
       const fixture = await createFixture();
-      const sourcePath = path.join(
-        fixture.targetRoot,
-        "test",
-        name + "-identifier-escape.cjs",
-      );
+      const sourcePath = path.join(fixture.targetRoot, "test", name + "-identifier-escape.cjs");
       await fs.writeFile(sourcePath, sourceBytes);
       await writeManifest(fixture);
 
