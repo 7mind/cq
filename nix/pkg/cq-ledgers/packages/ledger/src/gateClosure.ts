@@ -584,7 +584,7 @@ function staticImportSpecifiers(source: string): readonly string[] {
 }
 
 function hasOpaqueDynamicImport(source: string): boolean {
-  return hasOpaqueCall(source, ["import"], true);
+  return hasOpaqueCodeCall(source, ["import"], true);
 }
 
 type FirstCallArgument =
@@ -747,46 +747,6 @@ function hasCall(
   const argument = firstCallArgument(source, index, callee);
   if (argument === null) return false;
   return !nonLiteralFirstArgument || argument.kind === "nonliteral";
-}
-
-function hasOpaqueCall(
-  source: string,
-  callees: readonly string[],
-  nonLiteralFirstArgument: boolean,
-): boolean {
-  let index = 0;
-  while (index < source.length) {
-    const character = source[index]!;
-    const next = source[index + 1];
-    if (character === "/" && next === "/") {
-      index = source.indexOf("\n", index + 2);
-      if (index === -1) return false;
-      continue;
-    }
-    if (character === "/" && next === "*") {
-      const end = source.indexOf("*/", index + 2);
-      if (end === -1) return false;
-      index = end + 2;
-      continue;
-    }
-    if (character === '"' || character === "'" || character === "`") {
-      const quote = character;
-      index += 1;
-      while (index < source.length) {
-        if (source[index] === "\\") index += 2;
-        else if (source[index] === quote) {
-          index += 1;
-          break;
-        } else index += 1;
-      }
-      continue;
-    }
-    if (callees.some((callee) => hasCall(source, index, callee, nonLiteralFirstArgument))) {
-      return true;
-    }
-    index += 1;
-  }
-  return false;
 }
 
 function hasOpaqueCodeCall(
@@ -1302,14 +1262,14 @@ function opaqueSourceEdgeKinds(source: string): ReadonlySet<ManagedGateOpaqueEdg
     ...importedCallees(source, FILESYSTEM_MODULE_NAMES, OPAQUE_PATH_METHODS),
     ...commonJsCallees(source, FILESYSTEM_MODULE_NAMES, OPAQUE_PATH_METHODS),
   ];
-  if (hasOpaqueCall(source, pathCallees, false)) kinds.add("path");
+  if (hasOpaqueCodeCall(source, pathCallees, false)) kinds.add("path");
   const spawnCallees = [
     "Bun.spawn",
     "Bun.spawnSync",
     ...importedCallees(source, CHILD_PROCESS_MODULE_NAMES, OPAQUE_SPAWN_METHODS),
     ...commonJsCallees(source, CHILD_PROCESS_MODULE_NAMES, OPAQUE_SPAWN_METHODS),
   ];
-  if (hasOpaqueCall(source, spawnCallees, false)) kinds.add("spawn");
+  if (hasOpaqueCodeCall(source, spawnCallees, false)) kinds.add("spawn");
   return kinds;
 }
 
