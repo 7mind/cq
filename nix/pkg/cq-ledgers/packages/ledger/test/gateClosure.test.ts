@@ -99,6 +99,16 @@ async function replaceBunLockWithExternal(root: string): Promise<void> {
   await fs.symlink(externalLock, lockPath, "file");
 }
 
+async function replacePackageJsonWithExternal(root: string): Promise<void> {
+  const packagePath = path.join(root, "package.json");
+  const externalPackage = await createExternalFile(
+    "package.json",
+    '{"name":"external","private":true}\n',
+  );
+  await fs.rm(packagePath);
+  await fs.symlink(externalPackage, packagePath, "file");
+}
+
 afterEach(async () => {
   for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true });
 });
@@ -134,6 +144,21 @@ describe("managed gate closure v1", () => {
     const fixture = await createFixture();
     const source = await addBunRoot(fixture, "nix/pkg/static-root");
     await replaceBunLockWithExternal(path.dirname(path.join(fixture.root, source)));
+    await fs.writeFile(
+      path.join(fixture.targetRoot, "test", "gate.test.ts"),
+      'import { edge } from "../../static-root/index.js";\nvoid edge;\n',
+    );
+    await writeManifest(fixture);
+
+    const resolution = await resolveManagedGateClosure(fixture.root);
+    expect(resolution.status).toBe("invalid");
+    if (resolution.status === "invalid") expect(resolution.reason).toBe("path-escape");
+  });
+
+  test("rejects a static-import root package manifest symlink outside the repository", async () => {
+    const fixture = await createFixture();
+    const source = await addBunRoot(fixture, "nix/pkg/static-root");
+    await replacePackageJsonWithExternal(path.dirname(path.join(fixture.root, source)));
     await fs.writeFile(
       path.join(fixture.targetRoot, "test", "gate.test.ts"),
       'import { edge } from "../../static-root/index.js";\nvoid edge;\n',
