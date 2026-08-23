@@ -2,7 +2,7 @@
  * The Q148/Q158 agent-role model-resolution view, generated from the canonical
  * Nix prompt catalog's `(roleId, roleKind)` pairs.
  *
- * Two consumers must agree on the SAME 24 roles and which of them carry an
+ * Two consumers must agree on the same catalog-derived roles and which carry an
  * `[agent_tiers]` key:
  *  - the ledger-mcp `computeAgentModels` capability (the `agent_models`
  *    section of the `get_config` server payload), and

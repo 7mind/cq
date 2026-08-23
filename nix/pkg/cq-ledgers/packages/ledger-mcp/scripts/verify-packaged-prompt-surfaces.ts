@@ -6,6 +6,7 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
+import { PROMPT_CATALOG_PROJECTION } from "../../cq-config/src/promptCatalog.gen.js";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const LEDGERS_ROOT = path.resolve(SCRIPT_DIR, "..", "..", "..");
@@ -432,9 +433,24 @@ export function assertPackagedRoleClosure(
   roleRoot: string,
   roleFiles: readonly string[],
 ): void {
-  if (roleFiles.length !== 24) {
+  const expectedRoleFiles = PROMPT_CATALOG_PROJECTION.catalog
+    .map(({ roleId }) => path.join(roleRoot, `${roleId}.md`))
+    .sort();
+  const actualRoleFiles = [...roleFiles].sort();
+  const expectedRoleSet = new Set(expectedRoleFiles);
+  const actualRoleSet = new Set(actualRoleFiles);
+  const missing = expectedRoleFiles.filter((filePath) => !actualRoleSet.has(filePath));
+  const unexpected = actualRoleFiles.filter((filePath) => !expectedRoleSet.has(filePath));
+  const exact =
+    actualRoleFiles.length === expectedRoleFiles.length &&
+    actualRoleFiles.every((filePath, index) => filePath === expectedRoleFiles[index]);
+  if (!exact) {
+    const display = (filePaths: readonly string[]): string =>
+      filePaths.length === 0
+        ? "none"
+        : filePaths.map((filePath) => path.relative(roleRoot, filePath)).join(", ");
     throw new Error(
-      `${surface} role closure failed: ${roleRoot}: expected 24, got ${String(roleFiles.length)}`,
+      `${surface} role closure failed: ${roleRoot}: missing ${display(missing)}; unexpected ${display(unexpected)}`,
     );
   }
 }
@@ -482,7 +498,9 @@ async function verifyPackagedRoot(surface: PromptSurface, root: string): Promise
       throw new Error(`missing fixed mutation acknowledgement: ${filePath}`);
     }
   }
-  console.log(`${surface}: 24 roles; nested projection/ack and packaged hygiene passed`);
+  console.log(
+    `${surface}: ${String(roleFiles.length)} roles; nested projection/ack and packaged hygiene passed`,
+  );
 }
 
 async function verifyCanonicalResponseProse(): Promise<void> {
