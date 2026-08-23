@@ -24,14 +24,18 @@ import {
   type AttestationNamespace,
 } from "@cq/config";
 import {
+  computeManagedGateScriptDagSha256,
   createLedgerStore,
   createWorktreeManageCapability,
   GOALS_LEDGER,
   listManagedLiveWorktrees,
+  MANAGED_GATE_CLOSURE_MANIFEST,
+  MANAGED_GATE_CLOSURE_VERSION,
   MILESTONES_AMBIENT_ID,
   TASKS_LEDGER,
-  type ManagedWorktreeHandle,
   type DispatchCapability,
+  type ManagedGateClosureManifestV1,
+  type ManagedWorktreeHandle,
   type SupervisedWorkerGateRunRequest,
   type SupervisedWorkerGateRunResult,
   type SupervisedWorkerGateRunner,
@@ -44,6 +48,9 @@ const exec = promisify(execFile);
 const roots: string[] = [];
 const TASK_ID = "T336";
 const GOAL_ID = "G336";
+const GATE_TARGET_PACKAGE = "nix/pkg/cq-ledgers/package.json";
+const GATE_TARGET_SCRIPT = "check";
+const GATE_TARGET_SCRIPTS = { [GATE_TARGET_SCRIPT]: "bun test" } as const;
 const cqCli = fileURLToPath(new URL("../../cq-cli/src/main.ts", import.meta.url));
 let dispatchSequence = 0;
 
@@ -150,15 +157,37 @@ async function repository(): Promise<string> {
   );
   await writeFile(path.join(root, ".gitignore"), ".claude/worktrees/\nnode_modules/\n");
   await writeFile(path.join(root, "README.md"), "D336 seed\n");
-  const workspace = path.join(root, "nix", "pkg", "cq-ledgers");
+  const workspace = path.join(root, path.dirname(GATE_TARGET_PACKAGE));
   await mkdir(workspace, { recursive: true });
   await writeFile(
     path.join(workspace, "package.json"),
-    `${JSON.stringify({ name: "d336-workspace", private: true, workspaces: [] }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        name: "d336-workspace",
+        private: true,
+        workspaces: [],
+        scripts: GATE_TARGET_SCRIPTS,
+      },
+      null,
+      2,
+    )}\n`,
   );
   await writeFile(
     path.join(workspace, "bun.lock"),
     '{\n  "lockfileVersion": 1,\n  "configVersion": 1,\n  "workspaces": {\n    "": { "name": "d336-workspace", "private": true }\n  }\n}\n',
+  );
+  const gateClosure: ManagedGateClosureManifestV1 = {
+    version: MANAGED_GATE_CLOSURE_VERSION,
+    target: {
+      packageJson: GATE_TARGET_PACKAGE,
+      script: GATE_TARGET_SCRIPT,
+      scriptDagSha256: computeManagedGateScriptDagSha256(GATE_TARGET_SCRIPTS, GATE_TARGET_SCRIPT),
+    },
+    opaqueEdges: [],
+  };
+  await writeFile(
+    path.join(root, MANAGED_GATE_CLOSURE_MANIFEST),
+    `${JSON.stringify(gateClosure, null, 2)}\n`,
   );
   await git(root, ["add", "."]);
   await git(root, ["commit", "-q", "-m", "seed"]);
