@@ -48,6 +48,8 @@ const exec = promisify(execFile);
 const roots: string[] = [];
 const TASK_ID = "T336";
 const GOAL_ID = "G336";
+const ARCHIVED_TASK_ID = "T350";
+const ARCHIVED_GOAL_ID = "G350";
 const GATE_TARGET_PACKAGE = "nix/pkg/cq-ledgers/package.json";
 const GATE_TARGET_SCRIPT = "check";
 const GATE_TARGET_SCRIPTS = { [GATE_TARGET_SCRIPT]: "bun test" } as const;
@@ -265,17 +267,21 @@ async function releaseState(
   };
 }
 
-async function seedLedger(repositoryRoot: string): Promise<string> {
+async function seedLedger(
+  repositoryRoot: string,
+  taskId = TASK_ID,
+  goalId = GOAL_ID,
+): Promise<string> {
   const resolved = await createLedgerStore(repositoryRoot);
   try {
     const milestone = await resolved.store.createMilestone({ title: "D336 terminal release" });
     await resolved.store.createItem(TASKS_LEDGER, milestone.id, {
-      id: TASK_ID,
+      id: taskId,
       status: "planned",
       fields: { headline: "Release managed D336 task" },
     });
     await resolved.store.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
-      id: GOAL_ID,
+      id: goalId,
       status: "clarifying",
       fields: { title: "D336 restrictive root", description: "keeps the workset nonempty" },
     });
@@ -578,6 +584,107 @@ describe("D336 production XDG terminal worktree release", () => {
     }
   });
 
+  // expected-failure: tasks:T2321
+  test.failing("D350 retains an archived done task worktree when release can no longer read it", async () => {
+    const previousStateHome = process.env["XDG_STATE_HOME"];
+    const stateHome = await mkdtemp(path.join(tmpdir(), "d350-xdg-archived-state-"));
+    roots.push(stateHome);
+    process.env["XDG_STATE_HOME"] = stateHome;
+    try {
+      const repositoryRoot = await repository();
+      const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+      const milestoneId = await seedLedger(repositoryRoot, ARCHIVED_TASK_ID, ARCHIVED_GOAL_ID);
+      await withClient(repositoryRoot, async (client, store) => {
+        decode<{ acknowledgement: { roots: string[] } }>(
+          (await client.callTool({
+            name: "workset",
+            arguments: {
+              op: "set",
+              roots: [
+                `milestones:${milestoneId}`,
+                `tasks:${ARCHIVED_TASK_ID}`,
+                `goals:${ARCHIVED_GOAL_ID}`,
+              ],
+            },
+          })) as ToolResult,
+        );
+        const prepared = decode<{ status: string; handle: ManagedWorktreeHandle }>(
+          (await client.callTool({
+            name: "worktree_manage",
+            arguments: { operation: "prepare", taskId: ARCHIVED_TASK_ID, baseCommit },
+          })) as ToolResult,
+        );
+        expect(prepared.status, JSON.stringify(prepared)).toBe("prepared");
+
+        expect(
+          decode<{ item: { status: string } }>(
+            (await client.callTool({
+              name: "update_item",
+              arguments: { ledger_id: TASKS_LEDGER, item_id: ARCHIVED_TASK_ID, status: "done" },
+            })) as ToolResult,
+          ).item.status,
+        ).toBe("done");
+        expect(
+          decode<{ item: { status: string } }>(
+            (await client.callTool({
+              name: "update_item",
+              arguments: { ledger_id: "milestones", item_id: milestoneId, status: "done" },
+            })) as ToolResult,
+          ).item.status,
+        ).toBe("done");
+        expect(
+          decode<{ pointer: { id: string; status: string } }>(
+            (await client.callTool({
+              name: "archive_milestone",
+              arguments: { milestone_id: milestoneId, summary: "D350 archived done task" },
+            })) as ToolResult,
+          ).pointer,
+        ).toMatchObject({ id: milestoneId, status: "done" });
+
+        const activeTasks = decode<{ items: readonly { id: string }[] }>(
+          (await client.callTool({
+            name: "fetch_ledger",
+            arguments: { ledger_id: TASKS_LEDGER, projection: "full", offset: 0, limit: 10 },
+          })) as ToolResult,
+        );
+        expect(activeTasks.items.filter((item) => item.id === ARCHIVED_TASK_ID)).toEqual([]);
+        const archive = decode<{
+          archive: { kind: string; milestone: { id: string; items: readonly { id: string; status: string }[] } };
+        }>(
+          (await client.callTool({
+            name: "fetch_ledger_archive",
+            arguments: { ledger_id: TASKS_LEDGER, archive_id: milestoneId },
+          })) as ToolResult,
+        );
+        expect(archive.archive.kind).toBe("group");
+        expect(archive.archive.milestone.id).toBe(milestoneId);
+        expect(archive.archive.milestone.items.filter((item) => item.id === ARCHIVED_TASK_ID)).toEqual([
+          expect.objectContaining({ id: ARCHIVED_TASK_ID, status: "done" }),
+        ]);
+
+        const beforeRelease = await releaseState(repositoryRoot, prepared.handle);
+        const rootsBeforeRelease = await store.worksetStore!().snapshot();
+        const released = (await client.callTool({
+          name: "worktree_manage",
+          arguments: {
+            operation: "release",
+            handle: prepared.handle,
+            terminalDisposition: "done",
+          },
+        })) as ToolResult;
+        expect(released.isError, textOf(released)).toBe(true);
+        expect(textOf(released)).toBe(`Item not found in ledger tasks: ${ARCHIVED_TASK_ID}`);
+        expect(await releaseState(repositoryRoot, prepared.handle)).toEqual(beforeRelease);
+        expect(await store.worksetStore!().snapshot()).toEqual(rootsBeforeRelease);
+
+        expect(released.isError).toBe(false);
+      });
+    } finally {
+      if (previousStateHome === undefined) delete process.env["XDG_STATE_HOME"];
+      else process.env["XDG_STATE_HOME"] = previousStateHome;
+    }
+  });
+
   test("denies nonterminal, mismatched, and substituted release bindings without mutation", async () => {
     const previousStateHome = process.env["XDG_STATE_HOME"];
     const stateHome = await mkdtemp(path.join(tmpdir(), "d336-xdg-denial-state-"));
@@ -602,6 +709,16 @@ describe("D336 production XDG terminal worktree release", () => {
         );
         expect(prepared.status).toBe("prepared");
         const initial = await releaseState(repositoryRoot, prepared.handle);
+
+        const missing = (await client.callTool({
+          name: "worktree_manage",
+          arguments: { operation: "prepare", taskId: "T337", baseCommit },
+        })) as ToolResult;
+        expect(decode<{ status: string; reason: string }>(missing)).toMatchObject({
+          status: "refused",
+          reason: "dependency-unresolvable",
+        });
+        expect(await releaseState(repositoryRoot, prepared.handle)).toEqual(initial);
 
         const nonterminal = (await client.callTool({
           name: "worktree_manage",
@@ -668,6 +785,17 @@ describe("D336 production XDG terminal worktree release", () => {
           },
         })) as ToolResult;
         expect(mismatch.isError, textOf(mismatch)).toBe(true);
+        expect(await releaseState(repositoryRoot, prepared.handle)).toEqual(initial);
+
+        const nonCanonical = (await client.callTool({
+          name: "worktree_manage",
+          arguments: {
+            operation: "release",
+            handle: prepared.handle,
+            terminalDisposition: "done ",
+          },
+        })) as ToolResult;
+        expect(nonCanonical.isError, textOf(nonCanonical)).toBe(true);
         expect(await releaseState(repositoryRoot, prepared.handle)).toEqual(initial);
       });
     } finally {
