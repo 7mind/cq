@@ -6,7 +6,10 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { PROMPT_CATALOG_PROJECTION } from "../../cq-config/src/promptCatalog.gen.js";
+import {
+  assertPackagedRoleClosure,
+  type PromptSurface,
+} from "../src/packagedPromptRoleClosure.js";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const LEDGERS_ROOT = path.resolve(SCRIPT_DIR, "..", "..", "..");
@@ -32,8 +35,6 @@ const STALE_RESPONSE_PATTERNS = [
   /reload[^.\n]*mutation result/i,
   /read[^.\n]*mutation result/i,
 ] as const;
-
-type PromptSurface = (typeof SURFACES)[number];
 
 interface FetchPromptResult {
   readonly roleId: string;
@@ -426,33 +427,6 @@ async function walkFiles(root: string): Promise<readonly string[]> {
     }
   }
   return files.sort();
-}
-
-export function assertPackagedRoleClosure(
-  surface: PromptSurface,
-  roleRoot: string,
-  roleFiles: readonly string[],
-): void {
-  const expectedRoleFiles = PROMPT_CATALOG_PROJECTION.catalog
-    .map(({ roleId }) => path.join(roleRoot, `${roleId}.md`))
-    .sort();
-  const actualRoleFiles = [...roleFiles].sort();
-  const expectedRoleSet = new Set(expectedRoleFiles);
-  const actualRoleSet = new Set(actualRoleFiles);
-  const missing = expectedRoleFiles.filter((filePath) => !actualRoleSet.has(filePath));
-  const unexpected = actualRoleFiles.filter((filePath) => !expectedRoleSet.has(filePath));
-  const exact =
-    actualRoleFiles.length === expectedRoleFiles.length &&
-    actualRoleFiles.every((filePath, index) => filePath === expectedRoleFiles[index]);
-  if (!exact) {
-    const display = (filePaths: readonly string[]): string =>
-      filePaths.length === 0
-        ? "none"
-        : filePaths.map((filePath) => path.relative(roleRoot, filePath)).join(", ");
-    throw new Error(
-      `${surface} role closure failed: ${roleRoot}: missing ${display(missing)}; unexpected ${display(unexpected)}`,
-    );
-  }
 }
 
 function assertNoStaleResponseProse(filePath: string, content: string): void {

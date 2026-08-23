@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import * as path from "node:path";
 import { PROMPT_CATALOG_PROJECTION } from "../../cq-config/src/promptCatalog.gen.js";
-import { assertPackagedRoleClosure } from "../scripts/verify-packaged-prompt-surfaces.js";
+import { assertPackagedRoleClosure } from "../src/packagedPromptRoleClosure.js";
 
 const SURFACES = ["claude", "codex", "pi"] as const;
 
