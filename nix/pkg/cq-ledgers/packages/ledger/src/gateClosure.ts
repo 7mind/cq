@@ -921,14 +921,351 @@ function createdRequireCallees(source: string): readonly string[] {
   return [...callees];
 }
 
-function commonJsLiteralLoadSpecifiers(source: string): readonly string[] {
+const COMMON_JS_COMPUTED_PROPERTIES = new Set([
+  "apply",
+  "bind",
+  "cache",
+  "call",
+  "extensions",
+  "main",
+  "paths",
+  "require",
+  "resolve",
+]);
+
+interface CommonJsLoaderAliases {
+  readonly loaders: readonly string[];
+  readonly resolvers: readonly string[];
+  readonly referenceRanges: readonly { readonly start: number; readonly end: number }[];
+}
+
+interface CommonJsLoaderAnalysis {
+  readonly literalSpecifiers: readonly string[];
+  readonly opaque: boolean;
+}
+
+function normalizeComputedCommonJsProperties(source: string): string {
+  const normalized = [...source];
+  const code = sourceCodeMask(source);
+  for (let index = 0; index < source.length; index += 1) {
+    if (source[index] !== "[" || code[index] === " ") continue;
+    const match = source.slice(index).match(/^\[\s*(["'])([A-Za-z_$][\w$]*)\1\s*\]/u);
+    if (match === null || !COMMON_JS_COMPUTED_PROPERTIES.has(match[2]!)) continue;
+    const replacement = `.${match[2]!}`.padEnd(match[0].length, " ");
+    normalized.splice(index, match[0].length, ...replacement);
+    index += match[0].length - 1;
+  }
+  return normalized.join("");
+}
+
+function canonicalSimpleReference(value: string): string {
+  let canonical = value.trim();
+  while (/^\(\s*[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*\s*\)$/u.test(canonical)) {
+    canonical = canonical.slice(1, -1).trim();
+  }
+  return canonical.replace(/\s*\.\s*/gu, ".");
+}
+
+function commonJsLoaderAliases(
+  source: string,
+  initialLoaders: readonly string[],
+  initialResolvers: readonly string[],
+): CommonJsLoaderAliases {
+  const loaders = new Set(initialLoaders);
+  const resolvers = new Set(initialResolvers);
+  const referenceRanges: { start: number; end: number }[] = [];
+  const code = sourceCodeMask(source);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const declarationPattern =
+      /(?:^|[;\n])\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([^;\n]+?)\s*(?:;|$)/gu;
+    for (const match of source.matchAll(declarationPattern)) {
+      const declarationOffset = match[0].search(/\b(?:const|let|var)\b/u);
+      if (declarationOffset === -1 || code[match.index + declarationOffset] === " ") continue;
+      const local = match[1]!;
+      const reference = canonicalSimpleReference(match[2]!);
+      const referenceOffset = match[0].indexOf(match[2]!);
+      if (loaders.has(reference)) {
+        if (!loaders.has(local)) {
+          loaders.add(local);
+          changed = true;
+        }
+        referenceRanges.push({
+          start: match.index + referenceOffset,
+          end: match.index + referenceOffset + match[2]!.length,
+        });
+      } else if (resolvers.has(reference)) {
+        if (!resolvers.has(local)) {
+          resolvers.add(local);
+          changed = true;
+        }
+        referenceRanges.push({
+          start: match.index + referenceOffset,
+          end: match.index + referenceOffset + match[2]!.length,
+        });
+      }
+    }
+  }
+
+  const destructuredPattern =
+    /(?:^|[;\n])\s*(?:const|let|var)\s+\{\s*require(?:\s*:\s*([A-Za-z_$][\w$]*))?\s*\}\s*=\s*module\s*(?:;|$)/gu;
+  for (const match of source.matchAll(destructuredPattern)) {
+    const declarationOffset = match[0].search(/\b(?:const|let|var)\b/u);
+    if (declarationOffset === -1 || code[match.index + declarationOffset] === " ") continue;
+    loaders.add(match[1] ?? "require");
+    referenceRanges.push({ start: match.index, end: match.index + match[0].length });
+  }
+
+  return { loaders: [...loaders], resolvers: [...resolvers], referenceRanges };
+}
+
+function normalizeParenthesizedReferences(source: string, references: readonly string[]): string {
+  const normalized = [...source];
+  for (const reference of [...references].sort((left, right) => right.length - left.length)) {
+    let index = 0;
+    while (index < source.length) {
+      const current = normalized.join("");
+      const code = sourceCodeMask(current);
+      index = current.indexOf(reference, index);
+      if (index === -1) break;
+      if (
+        code[index] !== " " &&
+        !/[A-Za-z0-9_$]/u.test(current[index - 1] ?? "") &&
+        !/[A-Za-z0-9_$]/u.test(current[index + reference.length] ?? "")
+      ) {
+        let left = index - 1;
+        while (/\s/u.test(current[left] ?? "")) left -= 1;
+        const right = skipCallTrivia(current, index + reference.length);
+        if (current[left] === "(" && current[right] === ")") {
+          normalized[left] = " ";
+          normalized[right] = " ";
+          index = left;
+          continue;
+        }
+      }
+      index += reference.length;
+    }
+  }
+  return normalized.join("");
+}
+
+interface ArgumentRange {
+  readonly start: number;
+  readonly end: number;
+}
+
+function argumentRanges(
+  source: string,
+  openIndex: number,
+  closing: ")" | "]",
+): readonly ArgumentRange[] {
+  const ranges: ArgumentRange[] = [];
+  const stack: string[] = [closing];
+  let start = openIndex + 1;
+  let cursor = start;
+  while (cursor < source.length) {
+    const character = source[cursor]!;
+    const next = source[cursor + 1];
+    if (character === "/" && next === "/") {
+      const end = source.indexOf("\n", cursor + 2);
+      cursor = end === -1 ? source.length : end + 1;
+      continue;
+    }
+    if (character === "/" && next === "*") {
+      const end = source.indexOf("*/", cursor + 2);
+      cursor = end === -1 ? source.length : end + 2;
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      const quote = character;
+      cursor += 1;
+      while (cursor < source.length) {
+        if (source[cursor] === "\\") cursor += 2;
+        else if (source[cursor] === quote) {
+          cursor += 1;
+          break;
+        } else cursor += 1;
+      }
+      continue;
+    }
+    if (character === "(" || character === "[" || character === "{") {
+      stack.push(character === "(" ? ")" : character === "[" ? "]" : "}");
+      cursor += 1;
+      continue;
+    }
+    if (character === stack.at(-1)) {
+      if (stack.length === 1) {
+        ranges.push({ start, end: cursor });
+        return ranges;
+      }
+      stack.pop();
+      cursor += 1;
+      continue;
+    }
+    if (character === "," && stack.length === 1) {
+      ranges.push({ start, end: cursor });
+      start = cursor + 1;
+    }
+    cursor += 1;
+  }
+  return [];
+}
+
+function literalArgument(source: string, range: ArgumentRange): FirstCallArgument {
+  const start = skipCallTrivia(source, range.start);
+  const quote = source[start];
+  if (quote !== '"' && quote !== "'" && quote !== "`") return { kind: "nonliteral" };
+  let cursor = start + 1;
+  while (cursor < range.end) {
+    if (source[cursor] === "\\") {
+      cursor += 2;
+      continue;
+    }
+    if (quote === "`" && source[cursor] === "$" && source[cursor + 1] === "{") {
+      return { kind: "nonliteral" };
+    }
+    if (source[cursor] === quote) {
+      return /^\s*$/u.test(source.slice(cursor + 1, range.end))
+        ? { kind: "literal", value: source.slice(start + 1, cursor) }
+        : { kind: "nonliteral" };
+    }
+    cursor += 1;
+  }
+  return { kind: "nonliteral" };
+}
+
+function indirectLoaderTarget(
+  source: string,
+  index: number,
+  callee: string,
+  method: "apply" | "call",
+): FirstCallArgument | null {
+  const indirectCallee = `${callee}.${method}`;
+  if (!source.startsWith(indirectCallee, index)) return null;
+  let cursor = skipCallTrivia(source, index + indirectCallee.length);
+  if (source[cursor] !== "(") return null;
+  const callArguments = argumentRanges(source, cursor, ")");
+  const targetRange = callArguments[1];
+  if (targetRange === undefined) return { kind: "nonliteral" };
+  if (method === "call") return literalArgument(source, targetRange);
+  cursor = skipCallTrivia(source, targetRange.start);
+  if (source[cursor] !== "[") return { kind: "nonliteral" };
+  const appliedArguments = argumentRanges(source, cursor, "]");
+  return appliedArguments[0] === undefined
+    ? { kind: "nonliteral" }
+    : literalArgument(source, appliedArguments[0]);
+}
+
+function isReferenceRange(
+  index: number,
+  ranges: readonly { readonly start: number; readonly end: number }[],
+): boolean {
+  return ranges.some((range) => index >= range.start && index < range.end);
+}
+
+function hasOpaqueComputedModuleReference(source: string): boolean {
+  const code = sourceCodeMask(source);
+  for (let index = 0; index < source.length; index += 1) {
+    if (
+      code[index] === " " ||
+      !source.startsWith("module", index) ||
+      /[A-Za-z0-9_$]/u.test(source[index - 1] ?? "") ||
+      /[A-Za-z0-9_$]/u.test(source[index + "module".length] ?? "")
+    ) {
+      continue;
+    }
+    const cursor = skipCallTrivia(source, index + "module".length);
+    if (source[cursor] === "[") return true;
+  }
+  return false;
+}
+
+function hasUnsupportedLoaderReference(
+  source: string,
+  loaders: readonly string[],
+  resolvers: readonly string[],
+  referenceRanges: readonly { readonly start: number; readonly end: number }[],
+): boolean {
+  const references = [...new Set([...loaders, ...resolvers])].sort(
+    (left, right) => right.length - left.length,
+  );
+  const resolverSet = new Set(resolvers);
+  const code = sourceCodeMask(source);
+  const consumed = new Set<number>();
+  for (let index = 0; index < source.length; index += 1) {
+    if (code[index] === " " || consumed.has(index)) continue;
+    const reference = references.find(
+      (candidate) =>
+        source.startsWith(candidate, index) &&
+        !/[A-Za-z0-9_$]/u.test(source[index - 1] ?? "") &&
+        !/[A-Za-z0-9_$]/u.test(source[index + candidate.length] ?? ""),
+    );
+    if (reference === undefined) continue;
+    for (let offset = 0; offset < reference.length; offset += 1) consumed.add(index + offset);
+    if (isReferenceRange(index, referenceRanges)) continue;
+    const cursor = skipCallTrivia(source, index + reference.length);
+    if (source[cursor] === "(") continue;
+    if (
+      indirectLoaderTarget(source, index, reference, "call") !== null ||
+      indirectLoaderTarget(source, index, reference, "apply") !== null
+    ) {
+      continue;
+    }
+    const suffix = source.slice(cursor);
+    if (resolverSet.has(reference) && /^\.\s*paths\s*\(/u.test(suffix)) continue;
+    if (reference === "require" && /^\.\s*(?:cache|extensions)\b/u.test(suffix)) continue;
+    if (source[cursor] === "=" && isRequireBinding(source, index)) continue;
+    return true;
+  }
+  return false;
+}
+
+function analyzeCommonJsLoaders(source: string): CommonJsLoaderAnalysis {
+  let normalized = normalizeComputedCommonJsProperties(source);
   const createdLoaders = createdRequireCallees(source);
-  return literalCallSpecifiers(source, [
-    "require",
+  const initialLoaders = ["require", "module.require", "require.main.require", ...createdLoaders];
+  const initialResolvers = [
     "require.resolve",
-    ...createdLoaders,
     ...createdLoaders.map((callee) => `${callee}.resolve`),
+  ];
+  const aliases = commonJsLoaderAliases(normalized, initialLoaders, initialResolvers);
+  normalized = normalizeParenthesizedReferences(normalized, [
+    ...aliases.loaders,
+    ...aliases.resolvers,
   ]);
+  const literalSpecifiers = new Set(
+    literalCallSpecifiers(normalized, [...aliases.loaders, ...aliases.resolvers]),
+  );
+  let opaque = hasOpaqueCodeCall(normalized, [...aliases.loaders, ...aliases.resolvers], true);
+  const code = sourceCodeMask(normalized);
+  for (const loader of aliases.loaders) {
+    for (let index = 0; index < normalized.length; index += 1) {
+      if (code[index] === " ") continue;
+      for (const method of ["call", "apply"] as const) {
+        const target = indirectLoaderTarget(normalized, index, loader, method);
+        if (target?.kind === "literal") literalSpecifiers.add(target.value);
+        else if (target?.kind === "nonliteral") opaque = true;
+      }
+    }
+    if (hasOpaqueCodeCall(normalized, [`${loader}.bind`], false)) opaque = true;
+  }
+  if (
+    hasOpaqueComputedModuleReference(normalized) ||
+    hasUnsupportedLoaderReference(
+      normalized,
+      aliases.loaders,
+      aliases.resolvers,
+      aliases.referenceRanges,
+    )
+  ) {
+    opaque = true;
+  }
+  return { literalSpecifiers: [...literalSpecifiers], opaque };
+}
+
+function commonJsLiteralLoadSpecifiers(source: string): readonly string[] {
+  return analyzeCommonJsLoaders(source).literalSpecifiers;
 }
 
 function isRequireBinding(source: string, index: number): boolean {
@@ -939,60 +1276,10 @@ function isRequireBinding(source: string, index: number): boolean {
   return /(?:const|let|var|function)\s*$/u.test(source.slice(boundary + 1, index));
 }
 
-function hasOpaqueRequireIndirection(source: string): boolean {
-  const code = sourceCodeMask(source);
-  for (let index = 0; index < source.length; index += 1) {
-    if (code[index] === " ") continue;
-    if (
-      !source.startsWith("require", index) ||
-      /[A-Za-z0-9_$]/u.test(source[index - 1] ?? "") ||
-      /[A-Za-z0-9_$]/u.test(source[index + "require".length] ?? "")
-    ) {
-      continue;
-    }
-    const cursor = skipCallTrivia(source, index + "require".length);
-    if (source[cursor] === "(") {
-      continue;
-    }
-    const suffix = source.slice(cursor);
-    if (/^\.\s*resolve\s*\.\s*paths\s*\(/u.test(suffix)) {
-      continue;
-    }
-    if (/^\.\s*(?:resolve|main\s*\.\s*require)\s*\(/u.test(suffix)) {
-      continue;
-    }
-    if (/^\.\s*(?:cache|extensions)\b/u.test(suffix)) {
-      continue;
-    }
-    if (/^\.\s*(?:apply|bind|call)\s*\(/u.test(suffix)) return true;
-    if (source[cursor] === "=" && isRequireBinding(source, index)) {
-      continue;
-    }
-    return true;
-  }
-  return false;
-}
-
 function opaqueSourceEdgeKinds(source: string): ReadonlySet<ManagedGateOpaqueEdgeKind> {
   const kinds = new Set<ManagedGateOpaqueEdgeKind>();
-  const createdLoaders = createdRequireCallees(source);
-  const commonJsLoadCallees = [
-    "require",
-    "require.resolve",
-    ...createdLoaders,
-    ...createdLoaders.map((callee) => `${callee}.resolve`),
-  ];
-  const createdLoaderIndirections = createdLoaders.flatMap((callee) => [
-    `${callee}.apply`,
-    `${callee}.bind`,
-    `${callee}.call`,
-  ]);
-  if (
-    hasOpaqueDynamicImport(source) ||
-    hasOpaqueCodeCall(source, commonJsLoadCallees, true) ||
-    hasOpaqueCodeCall(source, createdLoaderIndirections, false) ||
-    hasOpaqueRequireIndirection(source)
-  ) {
+  const commonJs = analyzeCommonJsLoaders(source);
+  if (hasOpaqueDynamicImport(source) || commonJs.opaque) {
     kinds.add("dynamic");
   }
   const pathCallees = [
