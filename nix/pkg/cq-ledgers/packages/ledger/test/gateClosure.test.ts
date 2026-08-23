@@ -464,6 +464,10 @@ describe("managed gate closure v1", () => {
         bytes: '[install.security]\nscanner = "scanner-package"\n',
         reason: "bun-configuration-unsupported",
       },
+      {
+        bytes: '[serve.static]\nplugins = ["./plugin.ts"]\n',
+        reason: "bun-configuration-unsupported",
+      },
       { bytes: "[test]\npreload = 42\n", reason: "bun-configuration-invalid" },
     ] as const) {
       const fixture = await createFixture();
