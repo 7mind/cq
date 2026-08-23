@@ -259,6 +259,67 @@ describe("managed gate closure v1", () => {
     }
   });
 
+  test("distinguishes pinned CommonJS execution from resolution", async () => {
+    const fixture = await createFixture();
+    const siblingSource = await addBunRoot(
+      fixture,
+      "nix/pkg/commonjs-family-root",
+      "index.cjs",
+    );
+    await fs.writeFile(
+      path.join(fixture.root, siblingSource),
+      'console.log("T2317_COMMONJS_TARGET_EXECUTED");\nmodule.exports = true;\n',
+    );
+    const moduleSpecifier = "../../commonjs-family-root/index.cjs";
+    for (const measurement of [
+      {
+        name: "direct-require",
+        source: `const target = ${JSON.stringify(moduleSpecifier)};\nrequire(target);\n`,
+        executes: true,
+      },
+      {
+        name: "module-require",
+        source: `const target = ${JSON.stringify(moduleSpecifier)};\nmodule.require(target);\n`,
+        executes: true,
+      },
+      {
+        name: "main-require",
+        source: `const target = ${JSON.stringify(moduleSpecifier)};\nrequire.main.require(target);\n`,
+        executes: true,
+      },
+      {
+        name: "created-require",
+        source: [
+          'const { createRequire } = require("node:module");',
+          "const load = createRequire(__filename);",
+          `const target = ${JSON.stringify(moduleSpecifier)};`,
+          "load(target);",
+          "",
+        ].join("\n"),
+        executes: true,
+      },
+      {
+        name: "require-resolve",
+        source: `const target = ${JSON.stringify(moduleSpecifier)};\nconsole.log(require.resolve(target));\n`,
+        executes: false,
+      },
+    ] as const) {
+      const sourcePath = path.join(fixture.targetRoot, "test", `${measurement.name}.cjs`);
+      await fs.writeFile(sourcePath, measurement.source);
+      const result = Bun.spawnSync([process.execPath, sourcePath], {
+        cwd: fixture.targetRoot,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const output = `${new TextDecoder().decode(result.stdout)}${new TextDecoder().decode(result.stderr)}`;
+      expect(result.exitCode).toBe(0);
+      expect(output.includes("T2317_COMMONJS_TARGET_EXECUTED")).toBe(measurement.executes);
+      if (!measurement.executes) {
+        expect(output).toContain(path.join(fixture.root, siblingSource));
+      }
+    }
+  });
+
   test("rejects an executable Bun test preload outside the repository", async () => {
     const fixture = await createFixture();
     const externalPreload = await createExternalFile(
