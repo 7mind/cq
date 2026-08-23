@@ -326,6 +326,8 @@ describe("managed gate closure v1", () => {
       ].join("\n"),
       "const target = process.env.MODULE_PATH;\nrequire.resolve(target);\n",
       "const segment = process.env.MODULE_NAME;\nrequire(`./${segment}.cjs`);\n",
+      "const target = process.env.MODULE_PATH;\nconst loaded = `${require(target)}`;\n",
+      "const target = process.env.MODULE_PATH;\nrequire /* loader */ (target);\n",
       "const load = require;\nconst target = process.env.MODULE_PATH;\nload(target);\n",
       "const target = process.env.MODULE_PATH;\nrequire.call(null, target);\n",
     ]) {
@@ -341,6 +343,25 @@ describe("managed gate closure v1", () => {
         expect(resolution.detail).toContain("opaque dynamic edge");
       }
     }
+  });
+
+  test("ignores CommonJS loader spellings outside executable code", async () => {
+    const fixture = await createFixture();
+    await fs.writeFile(
+      path.join(fixture.targetRoot, "test", "non-code-require.cjs"),
+      [
+        "// require(commentTarget);",
+        "/* const load = require; load(blockTarget); */",
+        'const quoted = "require(stringTarget)";',
+        "const templated = `require(templateTarget)`;",
+        "void quoted;",
+        "void templated;",
+        "",
+      ].join("\n"),
+    );
+    await writeManifest(fixture);
+
+    expect((await resolveManagedGateClosure(fixture.root)).status).toBe("resolved");
   });
 
   test("binds dynamic CommonJS targets and preserves literal CommonJS roots", async () => {
@@ -378,6 +399,13 @@ describe("managed gate closure v1", () => {
         'const { createRequire } = require("node:module");',
         "const load = createRequire(__filename);",
         'load("../../literal-commonjs-root/index.cjs");',
+        "",
+      ].join("\n"),
+      [
+        'import { createRequire } from "node:module";',
+        "const require = createRequire(import.meta.url);",
+        'require.resolve("../../literal-commonjs-root/index.cjs");',
+        'require.resolve.paths("literal-commonjs-root");',
         "",
       ].join("\n"),
     ]) {

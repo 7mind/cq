@@ -579,6 +579,88 @@ function hasOpaqueDynamicImport(source: string): boolean {
 type FirstCallArgument =
   { readonly kind: "literal"; readonly value: string } | { readonly kind: "nonliteral" };
 
+function sourceCodeMask(source: string): string {
+  const mask = Array.from({ length: source.length }, () => " ");
+  const scanQuoted = (start: number, quote: '"' | "'"): number => {
+    let cursor = start + 1;
+    while (cursor < source.length) {
+      if (source[cursor] === "\\") cursor += 2;
+      else if (source[cursor] === quote) return cursor + 1;
+      else cursor += 1;
+    }
+    return cursor;
+  };
+  const scanCode = (start: number, templateExpression: boolean): number => {
+    let cursor = start;
+    let braceDepth = 0;
+    while (cursor < source.length) {
+      const character = source[cursor]!;
+      const next = source[cursor + 1];
+      if (character === "/" && next === "/") {
+        const end = source.indexOf("\n", cursor + 2);
+        cursor = end === -1 ? source.length : end;
+        continue;
+      }
+      if (character === "/" && next === "*") {
+        const end = source.indexOf("*/", cursor + 2);
+        cursor = end === -1 ? source.length : end + 2;
+        continue;
+      }
+      if (character === '"' || character === "'") {
+        cursor = scanQuoted(cursor, character);
+        continue;
+      }
+      if (character === "`") {
+        cursor += 1;
+        while (cursor < source.length) {
+          if (source[cursor] === "\\") {
+            cursor += 2;
+            continue;
+          }
+          if (source[cursor] === "`") {
+            cursor += 1;
+            break;
+          }
+          if (source[cursor] === "$" && source[cursor + 1] === "{") {
+            cursor = scanCode(cursor + 2, true);
+            continue;
+          }
+          cursor += 1;
+        }
+        continue;
+      }
+      if (templateExpression && character === "}" && braceDepth === 0) return cursor + 1;
+      if (character === "{") braceDepth += 1;
+      else if (templateExpression && character === "}") braceDepth -= 1;
+      mask[cursor] = character;
+      cursor += 1;
+    }
+    return cursor;
+  };
+  scanCode(0, false);
+  return mask.join("");
+}
+
+function skipCallTrivia(source: string, start: number): number {
+  let cursor = start;
+  while (cursor < source.length) {
+    if (/\s/u.test(source[cursor] ?? "")) {
+      cursor += 1;
+      continue;
+    }
+    if (source[cursor] === "/" && source[cursor + 1] === "/") {
+      const end = source.indexOf("\n", cursor + 2);
+      return end === -1 ? source.length : skipCallTrivia(source, end + 1);
+    }
+    if (source[cursor] === "/" && source[cursor + 1] === "*") {
+      const end = source.indexOf("*/", cursor + 2);
+      return end === -1 ? source.length : skipCallTrivia(source, end + 2);
+    }
+    return cursor;
+  }
+  return cursor;
+}
+
 function firstCallArgument(
   source: string,
   index: number,
@@ -587,11 +669,9 @@ function firstCallArgument(
   if (!source.startsWith(callee, index)) return null;
   if (/[A-Za-z0-9_$]/u.test(source[index - 1] ?? "")) return null;
   if (/[A-Za-z0-9_$]/u.test(source[index + callee.length] ?? "")) return null;
-  let cursor = index + callee.length;
-  while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
+  let cursor = skipCallTrivia(source, index + callee.length);
   if (source[cursor] !== "(") return null;
-  cursor += 1;
-  while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
+  cursor = skipCallTrivia(source, cursor + 1);
   const quote = source[cursor];
   if (quote !== '"' && quote !== "'" && quote !== "`") return { kind: "nonliteral" };
   const start = cursor + 1;
@@ -628,75 +708,25 @@ function hasOpaqueCall(
   callees: readonly string[],
   nonLiteralFirstArgument: boolean,
 ): boolean {
-  let index = 0;
-  while (index < source.length) {
-    const character = source[index]!;
-    const next = source[index + 1];
-    if (character === "/" && next === "/") {
-      index = source.indexOf("\n", index + 2);
-      if (index === -1) return false;
-      continue;
-    }
-    if (character === "/" && next === "*") {
-      const end = source.indexOf("*/", index + 2);
-      if (end === -1) return false;
-      index = end + 2;
-      continue;
-    }
-    if (character === '"' || character === "'" || character === "`") {
-      const quote = character;
-      index += 1;
-      while (index < source.length) {
-        if (source[index] === "\\") index += 2;
-        else if (source[index] === quote) {
-          index += 1;
-          break;
-        } else index += 1;
-      }
-      continue;
-    }
+  const code = sourceCodeMask(source);
+  for (let index = 0; index < source.length; index += 1) {
+    if (code[index] === " ") continue;
     if (callees.some((callee) => hasCall(source, index, callee, nonLiteralFirstArgument))) {
       return true;
     }
-    index += 1;
   }
   return false;
 }
 
 function literalCallSpecifiers(source: string, callees: readonly string[]): readonly string[] {
   const specifiers = new Set<string>();
-  let index = 0;
-  while (index < source.length) {
-    const character = source[index]!;
-    const next = source[index + 1];
-    if (character === "/" && next === "/") {
-      index = source.indexOf("\n", index + 2);
-      if (index === -1) break;
-      continue;
-    }
-    if (character === "/" && next === "*") {
-      const end = source.indexOf("*/", index + 2);
-      if (end === -1) break;
-      index = end + 2;
-      continue;
-    }
-    if (character === '"' || character === "'" || character === "`") {
-      const quote = character;
-      index += 1;
-      while (index < source.length) {
-        if (source[index] === "\\") index += 2;
-        else if (source[index] === quote) {
-          index += 1;
-          break;
-        } else index += 1;
-      }
-      continue;
-    }
+  const code = sourceCodeMask(source);
+  for (let index = 0; index < source.length; index += 1) {
+    if (code[index] === " ") continue;
     for (const callee of callees) {
       const argument = firstCallArgument(source, index, callee);
       if (argument?.kind === "literal") specifiers.add(argument.value);
     }
-    index += 1;
   }
   return [...specifiers];
 }
@@ -833,63 +863,32 @@ function isRequireBinding(source: string, index: number): boolean {
 }
 
 function hasOpaqueRequireIndirection(source: string): boolean {
-  let index = 0;
-  while (index < source.length) {
-    const character = source[index]!;
-    const next = source[index + 1];
-    if (character === "/" && next === "/") {
-      index = source.indexOf("\n", index + 2);
-      if (index === -1) return false;
-      continue;
-    }
-    if (character === "/" && next === "*") {
-      const end = source.indexOf("*/", index + 2);
-      if (end === -1) return false;
-      index = end + 2;
-      continue;
-    }
-    if (character === '"' || character === "'" || character === "`") {
-      const quote = character;
-      index += 1;
-      while (index < source.length) {
-        if (source[index] === "\\") index += 2;
-        else if (source[index] === quote) {
-          index += 1;
-          break;
-        } else index += 1;
-      }
-      continue;
-    }
+  const code = sourceCodeMask(source);
+  for (let index = 0; index < source.length; index += 1) {
+    if (code[index] === " ") continue;
     if (
       !source.startsWith("require", index) ||
       /[A-Za-z0-9_$]/u.test(source[index - 1] ?? "") ||
       /[A-Za-z0-9_$]/u.test(source[index + "require".length] ?? "")
     ) {
-      index += 1;
       continue;
     }
-    let cursor = index + "require".length;
-    while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
+    const cursor = skipCallTrivia(source, index + "require".length);
     if (source[cursor] === "(") {
-      index = cursor + 1;
       continue;
     }
     const suffix = source.slice(cursor);
     if (/^\.\s*resolve\s*\.\s*paths\s*\(/u.test(suffix)) {
-      index = cursor + 1;
       continue;
     }
     if (/^\.\s*(?:resolve|main\s*\.\s*require)\s*\(/u.test(suffix)) {
-      index = cursor + 1;
       continue;
     }
     if (/^\.\s*(?:cache|extensions)\b/u.test(suffix)) {
-      index = cursor + 1;
       continue;
     }
     if (/^\.\s*(?:apply|bind|call)\s*\(/u.test(suffix)) return true;
     if (source[cursor] === "=" && isRequireBinding(source, index)) {
-      index = cursor + 1;
       continue;
     }
     return true;
