@@ -835,10 +835,7 @@ export async function resolveManagedGateClosure(
       }
       const root = await nearestBunRoot(repositoryRoot, canonicalTarget);
       if (root.status === "path-escape") {
-        return invalid(
-          "path-escape",
-          `resolved Bun lock ${root.path} escapes the repository`,
-        );
+        return invalid("path-escape", `resolved Bun lock ${root.path} escapes the repository`);
       }
       if (root.status === "missing") {
         return invalid(
