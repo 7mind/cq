@@ -79,6 +79,7 @@ export type ManagedGateClosureInvalidReason =
   | "script-edge-missing"
   | "source-declaration-missing"
   | "source-digest-mismatch"
+  | "source-identifier-escape-unsupported"
   | "static-import-unresolved"
   | "target-diverged"
   | "target-package-missing"
@@ -670,6 +671,10 @@ function sourceCodeMask(source: string): string {
   };
   scanCode(0, false);
   return mask.join("");
+}
+
+function hasExecutableIdentifierEscape(source: string): boolean {
+  return sourceCodeMask(source).includes("\\u");
 }
 
 function skipCallTrivia(source: string, start: number): number {
@@ -1605,6 +1610,14 @@ export async function resolveManagedGateClosure(
       source = await fs.readFile(sourcePath, "utf8");
     } catch {
       continue;
+    }
+    if (hasExecutableIdentifierEscape(source)) {
+      return invalid(
+        "source-identifier-escape-unsupported",
+        "executable identifier Unicode escape in " +
+          relative(repositoryRoot, sourcePath).split(sep).join("/") +
+          " is unsupported",
+      );
     }
     for (const kind of opaqueSourceEdgeKinds(source)) {
       if (!declarations.get(sourcePath)?.has(kind)) {

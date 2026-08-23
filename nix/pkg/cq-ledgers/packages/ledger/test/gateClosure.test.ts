@@ -332,6 +332,51 @@ describe("managed gate closure v1", () => {
     }
   });
 
+  test("rejects valid and malformed executable identifier Unicode escapes", async () => {
+    for (const [name, sourceBytes] of [
+      [
+        "fixed-width",
+        "const requ\\u0069reAlias = require;\nvoid requ\\u0069reAlias;\n",
+      ],
+      [
+        "code-point",
+        "const \\u{72}esolver = require.resolve;\nvoid \\u{72}esolver;\n",
+      ],
+      [
+        "template-expression",
+        [
+          "const target = process.env.MODULE_PATH;",
+          "const rendered = " +
+            String.fromCharCode(96) +
+            "$" +
+            "{requ\\u0069re(target)}" +
+            String.fromCharCode(96) +
+            ";",
+          "void rendered;",
+          "",
+        ].join("\n"),
+      ],
+      ["malformed-fixed-width", "const invalid\\u00zz = true;\n"],
+      ["malformed-code-point", "const invalid\\u{110000} = true;\n"],
+    ] as const) {
+      const fixture = await createFixture();
+      const sourcePath = path.join(
+        fixture.targetRoot,
+        "test",
+        name + "-identifier-escape.cjs",
+      );
+      await fs.writeFile(sourcePath, sourceBytes);
+      await writeManifest(fixture);
+
+      const resolution = await resolveManagedGateClosure(fixture.root);
+      expect(resolution.status).toBe("invalid");
+      if (resolution.status === "invalid") {
+        expect(resolution.reason).toBe("source-identifier-escape-unsupported");
+        expect(resolution.detail).toContain("test/" + name + "-identifier-escape.cjs");
+      }
+    }
+  });
+
   test("distinguishes pinned CommonJS execution from resolution", async () => {
     const fixture = await createFixture();
     const siblingSource = await addBunRoot(fixture, "nix/pkg/commonjs-family-root", "index.cjs");
@@ -528,10 +573,22 @@ describe("managed gate closure v1", () => {
         'const computed = `module["require"](computedStringTarget)`;',
         "const templated = `require(templateTarget)`;",
         "const pattern = /require\\(regexTarget\\)/u;",
+        "// requ\\u0069re(escapedCommentTarget);",
+        "/* \\u{72}equire(escapedBlockCommentTarget); */",
+        'const escapedQuoted = "requ\\u0069re(escapedStringTarget)";',
+        "const escapedTemplate = " +
+          String.fromCharCode(96) +
+          "requ\\u{69}re(escapedTemplateTarget)" +
+          String.fromCharCode(96) +
+          ";",
+        "const escapedPattern = /requ\\u0069re\\(escapedRegexTarget\\)/u;",
         "void quoted;",
         "void computed;",
         "void templated;",
         "void pattern;",
+        "void escapedQuoted;",
+        "void escapedTemplate;",
+        "void escapedPattern;",
         "",
       ].join("\n"),
     );
