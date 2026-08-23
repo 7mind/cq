@@ -419,6 +419,12 @@ describe("managed gate closure v1", () => {
         "",
       ].join("\n"),
       [
+        'const { createRequire } = require("node:module");',
+        "const load = createRequire(__filename);",
+        'load.resolve("../../literal-commonjs-root/index.cjs");',
+        "",
+      ].join("\n"),
+      [
         'import { createRequire } from "node:module";',
         "const require = createRequire(import.meta.url);",
         'require.resolve("../../literal-commonjs-root/index.cjs");',

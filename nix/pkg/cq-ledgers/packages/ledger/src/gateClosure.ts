@@ -922,10 +922,12 @@ function createdRequireCallees(source: string): readonly string[] {
 }
 
 function commonJsLiteralLoadSpecifiers(source: string): readonly string[] {
+  const createdLoaders = createdRequireCallees(source);
   return literalCallSpecifiers(source, [
     "require",
     "require.resolve",
-    ...createdRequireCallees(source),
+    ...createdLoaders,
+    ...createdLoaders.map((callee) => `${callee}.resolve`),
   ]);
 }
 
@@ -973,10 +975,22 @@ function hasOpaqueRequireIndirection(source: string): boolean {
 
 function opaqueSourceEdgeKinds(source: string): ReadonlySet<ManagedGateOpaqueEdgeKind> {
   const kinds = new Set<ManagedGateOpaqueEdgeKind>();
-  const commonJsLoadCallees = ["require", "require.resolve", ...createdRequireCallees(source)];
+  const createdLoaders = createdRequireCallees(source);
+  const commonJsLoadCallees = [
+    "require",
+    "require.resolve",
+    ...createdLoaders,
+    ...createdLoaders.map((callee) => `${callee}.resolve`),
+  ];
+  const createdLoaderIndirections = createdLoaders.flatMap((callee) => [
+    `${callee}.apply`,
+    `${callee}.bind`,
+    `${callee}.call`,
+  ]);
   if (
     hasOpaqueDynamicImport(source) ||
     hasOpaqueCodeCall(source, commonJsLoadCallees, true) ||
+    hasOpaqueCodeCall(source, createdLoaderIndirections, false) ||
     hasOpaqueRequireIndirection(source)
   ) {
     kinds.add("dynamic");
