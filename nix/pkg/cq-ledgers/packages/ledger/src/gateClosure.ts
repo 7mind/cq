@@ -304,22 +304,50 @@ async function nearestBunRoot(
   }
 }
 
-async function sourceFiles(root: string): Promise<string[]> {
-  const files: string[] = [];
-  async function visit(directory: string): Promise<void> {
+type SourceFilesResolution =
+  | { readonly status: "found"; readonly files: readonly string[] }
+  | { readonly status: "path-escape"; readonly path: string };
+
+async function sourceFiles(
+  repositoryRoot: string,
+  root: string,
+): Promise<SourceFilesResolution> {
+  const files = new Set<string>();
+  const visitedDirectories = new Set<string>();
+  async function visit(directory: string): Promise<string | null> {
+    if (visitedDirectories.has(directory)) return null;
+    visitedDirectories.add(directory);
     const entries = await fs.readdir(directory, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.isSymbolicLink()) continue;
       const absolute = join(directory, entry.name);
-      if (entry.isDirectory()) {
-        if (!SKIPPED_DIRECTORIES.has(entry.name)) await visit(absolute);
-      } else if (entry.isFile() && SOURCE_EXTENSIONS.has(extname(entry.name))) {
-        files.push(absolute);
+      let canonical: string;
+      try {
+        canonical = await fs.realpath(absolute);
+      } catch {
+        continue;
+      }
+      if (!isRepositoryPath(repositoryRoot, canonical)) return canonical;
+      let kind: Awaited<ReturnType<typeof fs.stat>>;
+      try {
+        kind = await fs.stat(canonical);
+      } catch {
+        continue;
+      }
+      if (kind.isDirectory()) {
+        if (!SKIPPED_DIRECTORIES.has(entry.name)) {
+          const escape = await visit(canonical);
+          if (escape !== null) return escape;
+        }
+      } else if (kind.isFile() && SOURCE_EXTENSIONS.has(extname(entry.name))) {
+        files.add(canonical);
       }
     }
+    return null;
   }
-  await visit(root);
-  return files.sort((left, right) => left.localeCompare(right));
+  const escape = await visit(root);
+  return escape === null
+    ? { status: "found", files: [...files].sort((left, right) => left.localeCompare(right)) }
+    : { status: "path-escape", path: escape };
 }
 
 function staticImportSpecifiers(source: string): readonly string[] {
@@ -789,7 +817,14 @@ export async function resolveManagedGateClosure(
   }
 
   const installRoots = new Set<string>([targetRoot]);
-  const pendingSources = await sourceFiles(targetRoot);
+  const discoveredSources = await sourceFiles(repositoryRoot, targetRoot);
+  if (discoveredSources.status === "path-escape") {
+    return invalid(
+      "path-escape",
+      `resolved source entry ${discoveredSources.path} escapes the repository`,
+    );
+  }
+  const pendingSources = [...discoveredSources.files];
   pendingSources.push(...declaredTargets);
   const observedSources = new Set<string>();
   while (pendingSources.length > 0) {

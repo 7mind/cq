@@ -252,6 +252,14 @@ describe("managed gate closure v1", () => {
     expect((await resolveManagedGateClosure(fixture.root)).status).toBe("resolved");
   });
 
+  test("terminates discovery through an internal source symlink directory cycle", async () => {
+    const fixture = await createFixture();
+    await fs.symlink(fixture.targetRoot, path.join(fixture.targetRoot, "test", "target-loop"), "dir");
+    await writeManifest(fixture);
+
+    expect((await resolveManagedGateClosure(fixture.root)).status).toBe("resolved");
+  });
+
   test("accepts manifest and Bun lock symlinks that remain inside the repository", async () => {
     const fixture = await createFixture();
     await writeManifest(fixture);
