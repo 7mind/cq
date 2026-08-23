@@ -114,6 +114,7 @@ const PARENT_GATE_CAPABILITY_RE = /^cq_parent_gate_[A-Za-z0-9_-]{43,}$/;
 const GIT_CHANGE_CAPABILITY_RE = /^cq_git_[A-Za-z0-9_-]{43,}$/;
 const GIT_CONFLICT_CAPABILITY_RE = /^cq_conflict_[A-Za-z0-9_-]{43,}$/;
 const DISPATCH_RECOVERY_REFERENCE_RE = /^cq-dispatch-recovery:v1:[0-9a-f]{64}$/;
+const DISPATCH_CONTINUATION_REFERENCE_RE = /^cq-dispatch-continuation:v1:[0-9a-f]{64}$/;
 const PROJECT_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const IDEMPOTENCY_KEY_MAX_LENGTH = 256;
 
@@ -232,12 +233,7 @@ export class AttestationKeyReuseError extends AttestationStorageError {
 }
 
 export type DispatchRecoveryFailureReason =
-  | "not-found"
-  | "ambiguous"
-  | "nonterminal"
-  | "unbound"
-  | "expired"
-  | "binding-mismatch";
+  "not-found" | "ambiguous" | "nonterminal" | "unbound" | "expired" | "binding-mismatch";
 
 /** A terminal recovery reference is absent, ambiguous, expired, or no longer exact. */
 export class DispatchRecoveryError extends Error {
@@ -246,6 +242,28 @@ export class DispatchRecoveryError extends Error {
   constructor(reason: DispatchRecoveryFailureReason, detail: string) {
     super(detail);
     this.name = "DispatchRecoveryError";
+    this.reason = reason;
+  }
+}
+
+export type DispatchContinuationFailureReason =
+  | "not-found"
+  | "ambiguous"
+  | "nonterminal"
+  | "non-consumed"
+  | "unbound"
+  | "expired"
+  | "binding-mismatch"
+  | "unauthorized-lineage"
+  | "already-claimed";
+
+/** A consumed continuation reference is absent, stale, foreign, or already spent. */
+export class DispatchContinuationError extends Error {
+  readonly reason: DispatchContinuationFailureReason;
+
+  constructor(reason: DispatchContinuationFailureReason, detail: string) {
+    super(detail);
+    this.name = "DispatchContinuationError";
     this.reason = reason;
   }
 }
@@ -278,6 +296,7 @@ export const ATTESTATION_ERROR_CLASSES = Object.freeze([
   AttestationTransportError,
   AttestationKeyReuseError,
   DispatchRecoveryError,
+  DispatchContinuationError,
   DispatchInputValidationError,
   DispatchOverlayError,
   DispatchRefAssemblyError,
@@ -790,15 +809,9 @@ export function mintResultCapability(randomBytes: DispatchRandomBytes): ResultCa
   return Object.freeze({ scope: "store-result" as const, token });
 }
 
-export function mintParentGateCapability(
-  randomBytes: DispatchRandomBytes,
-): ParentGateCapability {
+export function mintParentGateCapability(randomBytes: DispatchRandomBytes): ParentGateCapability {
   const token = `cq_parent_gate_${base64url(
-    drawEntropy(
-      randomBytes,
-      PARENT_GATE_CAPABILITY_ENTROPY_BYTES,
-      "parentGateCapability.token",
-    ),
+    drawEntropy(randomBytes, PARENT_GATE_CAPABILITY_ENTROPY_BYTES, "parentGateCapability.token"),
   )}`;
   if (!PARENT_GATE_CAPABILITY_RE.test(token)) {
     throw new AttestationContractError(
@@ -965,6 +978,9 @@ export interface DispatchRecoveryContext {
   readonly gitReceipts: readonly DispatchGitChangeReceipt[];
 }
 
+/** Trusted live-Git evidence captured while the continuation effect lock is held. */
+export type DispatchContinuationContext = DispatchRecoveryContext;
+
 /**
  * Durable authority for one parent-lost implement-worker generation. The
  * reference is public and opaque; this server-held association is the authority.
@@ -990,6 +1006,49 @@ export interface ResolvedDispatchRecovery {
   readonly gitEffectBinding: DispatchGitEffectBinding;
   readonly liveTip: string;
   readonly gitReceipts: readonly DispatchGitChangeReceipt[];
+}
+
+/** The trusted parent lineage authorized to continue one consumed worker generation. */
+export interface DispatchContinuationCallerLineage extends NativeChildIdentity {
+  readonly actor: TrustedDispatchActor;
+}
+
+/** Durable, single-use continuation authority for one consumed managed worker. */
+export interface DispatchContinuationBinding {
+  readonly kind: "cq-dispatch-continuation-binding";
+  readonly version: 1;
+  readonly continuationReference: string;
+  readonly attestationId: string;
+  readonly generation: number;
+  readonly terminalDigest: string;
+  readonly terminalAt: string;
+  readonly gitEffectBinding: DispatchGitEffectBinding;
+  readonly liveTip: string;
+  readonly gitReceipts: readonly DispatchGitChangeReceipt[];
+  readonly callerLineage: DispatchContinuationCallerLineage;
+}
+
+/** The successor row is itself the atomic, durable claim on the opaque association. */
+export interface DispatchContinuationSourceClaim {
+  readonly continuationReference: string;
+  readonly source: DispatchHandle;
+}
+
+/** Trusted resolution used internally by prepare; public callers receive an opaque projection. */
+export interface ResolvedDispatchContinuation {
+  readonly continuationReference: string;
+  readonly reprepareOf: DispatchHandle;
+  readonly terminalAt: string;
+  readonly gitEffectBinding: DispatchGitEffectBinding;
+  readonly liveTip: string;
+  readonly gitReceipts: readonly DispatchGitChangeReceipt[];
+}
+
+/** Server-only continuation claim carried into the allocation transaction. */
+export interface DispatchContinuationClaim {
+  readonly continuationReference: string;
+  readonly actor: TrustedDispatchActor;
+  readonly liveTip: string;
 }
 
 export interface AuthorizedDispatchGitEffect extends DispatchGitEffectBinding {
@@ -1095,6 +1154,10 @@ export interface AttestationEnvelope {
   readonly terminalDigest?: string;
   /** Parent-lost recovery authority, persisted atomically with the terminal transition. */
   readonly dispatchRecoveryBinding?: DispatchRecoveryBinding;
+  /** Consumed-worker continuation authority, persisted by the consuming compare-and-set. */
+  readonly dispatchContinuationBinding?: DispatchContinuationBinding;
+  /** Present only on the generation whose allocation claimed a consumed predecessor. */
+  readonly dispatchContinuationClaim?: DispatchContinuationSourceClaim;
 }
 
 /**
@@ -1121,6 +1184,10 @@ export interface AttestationTombstone {
   readonly reuseAfter: string;
   /** Explicit recovery authority; an otherwise identical tombstone grants none. */
   readonly dispatchRecoveryBinding?: DispatchRecoveryBinding;
+  /** Single-use consumed continuation authority retained to the idempotency horizon. */
+  readonly dispatchContinuationBinding?: DispatchContinuationBinding;
+  /** Retained so collapse cannot resurrect a predecessor's single-use authority. */
+  readonly dispatchContinuationClaim?: DispatchContinuationSourceClaim;
 }
 
 export type AttestationRow = AttestationEnvelope | AttestationTombstone;
@@ -1311,6 +1378,8 @@ export interface PrepareDispatchRequest {
   readonly reprepareOf?: DispatchHandle;
   /** Trusted, manager-resolved binding. Caller input can never supply this field. */
   readonly gitEffectBinding?: DispatchGitEffectBinding;
+  /** Trusted, server-resolved claim; public callers can supply only the opaque reference. */
+  readonly continuationClaim?: DispatchContinuationClaim;
 }
 
 /**
@@ -1347,6 +1416,14 @@ export function prepareDispatchRequestDigest(request: PrepareDispatchRequest): s
       request.gitEffectBinding === undefined
         ? null
         : gitEffectBindingPayload(request.gitEffectBinding),
+    continuationClaim:
+      request.continuationClaim === undefined
+        ? null
+        : {
+            continuationReference: request.continuationClaim.continuationReference,
+            actor: request.continuationClaim.actor,
+            liveTip: request.continuationClaim.liveTip,
+          },
   });
 }
 
@@ -1516,10 +1593,7 @@ function assertGitEffectBinding(
         );
       }
     }
-    if (
-      guardedRebaseBridge.outcome !== "clean" &&
-      guardedRebaseBridge.outcome !== "conflicted"
-    ) {
+    if (guardedRebaseBridge.outcome !== "clean" && guardedRebaseBridge.outcome !== "conflicted") {
       throw new AttestationContractError(
         "gitEffectBinding.guardedRebaseBridge.outcome",
         "expected clean or conflicted",
@@ -1603,12 +1677,13 @@ export function assertDispatchRecoveryBinding(
   if (!Array.isArray(value.gitReceipts)) {
     throw new AttestationContractError(`${path}.gitReceipts`, "expected a receipt array");
   }
-  const receipts = value.gitReceipts.length === 0
-    ? Object.freeze([] as DispatchGitChangeReceipt[])
-    : (assertGitEffectBinding(
-        { ...gitEffectBinding, inheritedGitReceipts: value.gitReceipts },
-        "implement-worker",
-      )?.inheritedGitReceipts ?? Object.freeze([]));
+  const receipts =
+    value.gitReceipts.length === 0
+      ? Object.freeze([] as DispatchGitChangeReceipt[])
+      : (assertGitEffectBinding(
+          { ...gitEffectBinding, inheritedGitReceipts: value.gitReceipts },
+          "implement-worker",
+        )?.inheritedGitReceipts ?? Object.freeze([]));
   const normalizedWithoutReference = Object.freeze({
     kind: "cq-dispatch-recovery-binding" as const,
     version: 1 as const,
@@ -1633,16 +1708,87 @@ export function assertDispatchRecoveryBinding(
   });
 }
 
+function dispatchContinuationReferenceOf(
+  binding: Omit<DispatchContinuationBinding, "continuationReference">,
+): string {
+  return `cq-dispatch-continuation:v1:${dispatchPayloadDigest(
+    binding as unknown as DispatchJSONValue,
+  )}`;
+}
+
+/** Validate one persisted consumed-continuation association and its opaque reference. */
+export function assertDispatchContinuationBinding(
+  value: DispatchContinuationBinding,
+  path = "dispatchContinuationBinding",
+): DispatchContinuationBinding {
+  if (value?.kind !== "cq-dispatch-continuation-binding" || value.version !== 1) {
+    throw new AttestationContractError(path, "expected a version-1 dispatch continuation binding");
+  }
+  if (!DISPATCH_CONTINUATION_REFERENCE_RE.test(value.continuationReference)) {
+    throw new AttestationContractError(
+      `${path}.continuationReference`,
+      "expected an opaque cq-dispatch-continuation:v1 reference",
+    );
+  }
+  assertDispatchHandle(value, path);
+  assertDigest(value.terminalDigest, `${path}.terminalDigest`);
+  attestationInstantMs(value.terminalAt, `${path}.terminalAt`);
+  if (!/^[0-9a-f]{40}$/.test(value.liveTip)) {
+    throw new AttestationContractError(`${path}.liveTip`, "expected a full commit SHA");
+  }
+  const gitEffectBinding = assertGitEffectBinding(value.gitEffectBinding, "implement-worker");
+  if (gitEffectBinding === undefined || gitEffectBinding.conflictStateDigest !== undefined) {
+    throw new AttestationContractError(
+      `${path}.gitEffectBinding`,
+      "expected an implement-worker Git binding",
+    );
+  }
+  if (!Array.isArray(value.gitReceipts)) {
+    throw new AttestationContractError(`${path}.gitReceipts`, "expected a receipt array");
+  }
+  const receipts =
+    value.gitReceipts.length === 0
+      ? Object.freeze([] as DispatchGitChangeReceipt[])
+      : (assertGitEffectBinding(
+          { ...gitEffectBinding, inheritedGitReceipts: value.gitReceipts },
+          "implement-worker",
+        )?.inheritedGitReceipts ?? Object.freeze([]));
+  if (!TRUSTED_ACTOR_SET.has(value.callerLineage?.actor)) {
+    throw new AttestationContractError(`${path}.callerLineage.actor`, "expected a trusted actor");
+  }
+  const child = assertChildIdentity(value.callerLineage, `${path}.callerLineage`);
+  const normalizedWithoutReference = Object.freeze({
+    kind: "cq-dispatch-continuation-binding" as const,
+    version: 1 as const,
+    attestationId: value.attestationId,
+    generation: value.generation,
+    terminalDigest: value.terminalDigest,
+    terminalAt: value.terminalAt,
+    gitEffectBinding,
+    liveTip: value.liveTip,
+    gitReceipts: Object.freeze([...receipts]),
+    callerLineage: Object.freeze({ actor: value.callerLineage.actor, ...child }),
+  });
+  const expectedReference = dispatchContinuationReferenceOf(normalizedWithoutReference);
+  if (value.continuationReference !== expectedReference) {
+    throw new AttestationBindingError(
+      `${path}.continuationReference`,
+      "reference does not match its durable continuation association",
+    );
+  }
+  return Object.freeze({
+    ...normalizedWithoutReference,
+    continuationReference: expectedReference,
+  });
+}
+
 function dispatchInputStartingCommit(row: AttestationEnvelope): string {
   if (typeof row.input !== "object" || row.input === null || Array.isArray(row.input)) {
     throw new AttestationContractError("row.input", "implement-worker input must be an object");
   }
   const startingCommit = (row.input as Readonly<Record<string, unknown>>)["startingCommit"];
   if (typeof startingCommit !== "string" || !/^[0-9a-f]{40}$/.test(startingCommit)) {
-    throw new AttestationContractError(
-      "row.input.startingCommit",
-      "expected a full commit SHA",
-    );
+    throw new AttestationContractError("row.input.startingCommit", "expected a full commit SHA");
   }
   return startingCommit;
 }
@@ -1722,7 +1868,11 @@ function createDispatchRecoveryBinding(
         "receipt closure does not end at the live tip",
       );
     }
-    if (!receipts.some((receipt) => receipt.oldHead === startingCommit || receipt.newHead === startingCommit)) {
+    if (
+      !receipts.some(
+        (receipt) => receipt.oldHead === startingCommit || receipt.newHead === startingCommit,
+      )
+    ) {
       throw new AttestationBindingError(
         "recoveryContext.gitReceipts",
         "receipt closure does not contain the generation starting commit",
@@ -1743,6 +1893,36 @@ function createDispatchRecoveryBinding(
   return Object.freeze({
     ...withoutReference,
     recoveryReference: dispatchRecoveryReferenceOf(withoutReference),
+  });
+}
+
+function createDispatchContinuationBinding(
+  row: AttestationEnvelope,
+  terminalAt: string,
+  terminalDigest: string,
+  proof: NativeCompletionProof,
+  context: DispatchContinuationContext,
+): DispatchContinuationBinding {
+  const validated = createDispatchRecoveryBinding(row, terminalAt, terminalDigest, context);
+  const withoutReference = Object.freeze({
+    kind: "cq-dispatch-continuation-binding" as const,
+    version: 1 as const,
+    attestationId: row.attestationId,
+    generation: row.generation,
+    terminalDigest,
+    terminalAt,
+    gitEffectBinding: validated.gitEffectBinding,
+    liveTip: validated.liveTip,
+    gitReceipts: validated.gitReceipts,
+    callerLineage: Object.freeze({
+      actor: proof.actor,
+      childId: proof.childId,
+      runId: proof.runId,
+    }),
+  });
+  return Object.freeze({
+    ...withoutReference,
+    continuationReference: dispatchContinuationReferenceOf(withoutReference),
   });
 }
 
@@ -1868,7 +2048,7 @@ export function prepareDispatch(
 
   // --- allocation phase -------------------------------------------------
   const { at, atMs } = prepareInstant ?? readNow(deps);
-  const generation = resolveGeneration(request.reprepareOf, deps);
+  const generation = resolveGeneration(request, atMs, deps);
   // Rows whose idempotency horizon has passed no longer HOLD the key, but they
   // are still physically present until a sweep runs. They are reclaimed here, in
   // this unit of work, so reuse is decided purely by the clock — see
@@ -1930,34 +2110,44 @@ export function prepareDispatch(
   for (const stale of reclaimable) {
     deps.store.remove(stale);
   }
-  deps.store.insert(
-    Object.freeze({
-      kind: "envelope" as const,
-      namespace,
-      attestationId,
-      generation,
-      idempotencyKey,
-      state: "prepared" as const,
-      promptProvenance,
-      prepareRequestDigest,
-      input: preparedInput,
-      deadlines,
-      expectedChild,
-      inputCapabilityHash: inputCapabilityHash(inputCapability.token),
-      resultCapabilityHash: resultCapabilityHash(resultCapability.token),
-      ...(parentGateCapability === undefined
-        ? {}
-        : { parentGateCapabilityHash: parentGateCapabilityHash(parentGateCapability.token) }),
-      ...(gitChangeCapability === undefined
-        ? {}
-        : { gitChangeCapabilityHash: gitChangeCapabilityHash(gitChangeCapability.token) }),
-      ...(gitConflictCapability === undefined
-        ? {}
-        : { gitConflictCapabilityHash: gitConflictCapabilityHash(gitConflictCapability.token) }),
-      ...(gitEffectBinding === undefined ? {} : { gitEffectBinding }),
-      createdAt: at,
-    }),
-  );
+  const next = Object.freeze({
+    kind: "envelope" as const,
+    namespace,
+    attestationId,
+    generation,
+    idempotencyKey,
+    state: "prepared" as const,
+    promptProvenance,
+    prepareRequestDigest,
+    input: preparedInput,
+    deadlines,
+    expectedChild,
+    inputCapabilityHash: inputCapabilityHash(inputCapability.token),
+    resultCapabilityHash: resultCapabilityHash(resultCapability.token),
+    ...(parentGateCapability === undefined
+      ? {}
+      : { parentGateCapabilityHash: parentGateCapabilityHash(parentGateCapability.token) }),
+    ...(gitChangeCapability === undefined
+      ? {}
+      : { gitChangeCapabilityHash: gitChangeCapabilityHash(gitChangeCapability.token) }),
+    ...(gitConflictCapability === undefined
+      ? {}
+      : { gitConflictCapabilityHash: gitConflictCapabilityHash(gitConflictCapability.token) }),
+    ...(gitEffectBinding === undefined ? {} : { gitEffectBinding }),
+    ...(request.continuationClaim === undefined
+      ? {}
+      : {
+          dispatchContinuationClaim: Object.freeze({
+            continuationReference: request.continuationClaim.continuationReference,
+            source: Object.freeze({
+              attestationId: request.reprepareOf!.attestationId,
+              generation: request.reprepareOf!.generation,
+            }),
+          }),
+        }),
+    createdAt: at,
+  });
+  deps.store.insert(next);
   return Object.freeze({
     accepted: true as const,
     prepared: Object.freeze({
@@ -1977,10 +2167,18 @@ export function prepareDispatch(
 }
 
 function resolveGeneration(
-  reprepareOf: DispatchHandle | undefined,
+  request: PrepareDispatchRequest,
+  atMs: number,
   deps: PrepareDispatchDeps,
 ): number {
+  const reprepareOf = request.reprepareOf;
   if (reprepareOf === undefined) {
+    if (request.continuationClaim !== undefined) {
+      throw new AttestationContractError(
+        "continuationClaim",
+        "a continuation claim requires its server-resolved terminal generation",
+      );
+    }
     return 1;
   }
   const previous = requireRow(reprepareOf, deps);
@@ -1992,7 +2190,75 @@ function resolveGeneration(
         "a generation may only be re-prepared after the previous one is terminal",
     );
   }
+  if (request.continuationClaim === undefined) {
+    return reprepareOf.generation + 1;
+  }
+  const claim = request.continuationClaim;
+  if (!DISPATCH_CONTINUATION_REFERENCE_RE.test(claim.continuationReference)) {
+    throw new AttestationContractError(
+      "continuationClaim.continuationReference",
+      "expected an opaque cq-dispatch-continuation:v1 reference",
+    );
+  }
+  if (!TRUSTED_ACTOR_SET.has(claim.actor)) {
+    throw new DispatchContinuationError(
+      "unauthorized-lineage",
+      `untrusted continuation actor "${String(claim.actor)}"`,
+    );
+  }
+  if (!/^[0-9a-f]{40}$/.test(claim.liveTip)) {
+    throw new AttestationContractError("continuationClaim.liveTip", "expected a full commit SHA");
+  }
+  const association = continuationBindingOfRow(previous, atMs, "reject");
+  if (
+    association === undefined ||
+    association.continuationReference !== claim.continuationReference
+  ) {
+    throw new DispatchContinuationError(
+      "binding-mismatch",
+      "continuation claim does not match the server-resolved terminal generation",
+    );
+  }
+  if (continuationClaimedBy(association.continuationReference, deps) !== undefined) {
+    throw new DispatchContinuationError(
+      "already-claimed",
+      "dispatch continuation has already allocated its successor generation",
+    );
+  }
+  if (association.callerLineage.actor !== claim.actor) {
+    throw new DispatchContinuationError(
+      "unauthorized-lineage",
+      "dispatch continuation caller lineage does not authorize this actor",
+    );
+  }
+  if (
+    request.gitEffectBinding === undefined ||
+    !continuationMatchesLiveBinding(association, request.gitEffectBinding, claim.liveTip)
+  ) {
+    throw new DispatchContinuationError(
+      "binding-mismatch",
+      "dispatch continuation no longer matches the managed binding or live tip",
+    );
+  }
   return reprepareOf.generation + 1;
+}
+
+function continuationClaimedBy(
+  continuationReference: string,
+  deps: Deps,
+): DispatchHandle | undefined {
+  const claims = deps.store
+    .rows()
+    .filter(
+      (row) => row.dispatchContinuationClaim?.continuationReference === continuationReference,
+    );
+  if (claims.length > 1) {
+    throw new DispatchContinuationError(
+      "binding-mismatch",
+      "multiple durable successor rows claim one dispatch continuation",
+    );
+  }
+  return claims.length === 0 ? undefined : handleOf(claims[0]!);
 }
 
 /**
@@ -2654,10 +2920,7 @@ function requireParentGateRow(
   }
   if (
     row.parentGateCapabilityHash === undefined ||
-    !parentGateCapabilityMatches(
-      request.parentGateCapability.token,
-      row.parentGateCapabilityHash,
-    )
+    !parentGateCapabilityMatches(request.parentGateCapability.token, row.parentGateCapabilityHash)
   ) {
     throw new DispatchAuthorizationError(STORE_RESULT, "unknown parent gate capability");
   }
@@ -2818,9 +3081,7 @@ export function storeDispatchResult(
   const outputDigest = dispatchPayloadDigest(submission.output);
   if (
     row.parentGateCapabilityHash !== undefined &&
-    (row.state === "gate-pending" ||
-      row.state === "gate-running" ||
-      row.state === "result-stored")
+    (row.state === "gate-pending" || row.state === "gate-running" || row.state === "result-stored")
   ) {
     if (row.gateSubmittedOutputDigest === outputDigest) {
       return Object.freeze({ state: "gate-pending" as const, result: gatePendingViewOf(row) });
@@ -2978,6 +3239,8 @@ export interface ConfirmDispatchCompletionRequest {
   readonly generation: number;
   readonly nativeCompletion: NativeCompletionProof;
   readonly expectedProvenance: DispatchProvenanceBinding;
+  /** Server-derived while holding the exact managed-worktree effect lock. */
+  readonly continuationContext?: DispatchContinuationContext;
 }
 
 /**
@@ -3017,20 +3280,15 @@ export type ConfirmDispatchCompletionOutcome =
 
 const CONFIRM: DispatchProtocolOperation = "confirm_dispatch_completion";
 
-/**
- * THE trusted promotion (T685) — the ONLY path from `result-stored` to
- * `consumed`, and unreachable with a result capability.
- *
- * A native completion for a record with no stored result aborts
- * `missing-result`. An identical confirmation retry is idempotent; a different
- * child/run, or a confirmation of an already-terminal record, is a typed
- * conflict that cannot consume. A mismatched role/version/prompt/input digest is
- * an {@link AttestationBindingError}.
- */
-export function confirmDispatchCompletion(
+interface ConfirmDispatchContext {
+  readonly proof: NativeCompletionProof;
+  readonly row: AttestationEnvelope;
+}
+
+function confirmDispatchContext(
   request: ConfirmDispatchCompletionRequest,
   deps: DispatchServiceDeps,
-): ConfirmDispatchCompletionOutcome {
+): ConfirmDispatchContext {
   assertTrustedNamespace(request.namespace, deps, CONFIRM);
   const proof = assertNativeCompletion(request.nativeCompletion);
   const handle = assertDispatchHandle(request);
@@ -3050,24 +3308,60 @@ export function confirmDispatchCompletion(
         `"${row.attestationId}" expects "${row.expectedChild.childId}"/"${row.expectedChild.runId}"`,
     );
   }
-  const { at } = readNow(deps);
-  if (row.state === "consumed") {
-    const existing = row.nativeCompletion;
-    if (
-      existing !== undefined &&
-      existing.actor === proof.actor &&
-      existing.childId === proof.childId &&
-      existing.runId === proof.runId &&
-      existing.completedAt === proof.completedAt
-    ) {
-      return Object.freeze({ state: "consumed" as const, result: confirmedViewOf(row) });
-    }
-    throw new DispatchStateConflictError(
-      CONFIRM,
-      row.state,
-      `attestation "${row.attestationId}" is already consumed under a different completion proof`,
-    );
+  return { proof, row };
+}
+
+function consumedConfirmationReplay(
+  context: ConfirmDispatchContext,
+): Extract<ConfirmDispatchCompletionOutcome, { readonly state: "consumed" }> | undefined {
+  if (context.row.state !== "consumed") return undefined;
+  const existing = context.row.nativeCompletion;
+  if (
+    existing !== undefined &&
+    existing.actor === context.proof.actor &&
+    existing.childId === context.proof.childId &&
+    existing.runId === context.proof.runId &&
+    existing.completedAt === context.proof.completedAt
+  ) {
+    return Object.freeze({
+      state: "consumed" as const,
+      result: confirmedViewOf(context.row),
+    });
   }
+  throw new DispatchStateConflictError(
+    CONFIRM,
+    context.row.state,
+    `attestation "${context.row.attestationId}" is already consumed under a different completion proof`,
+  );
+}
+
+/** Return an identical consumed confirmation without attempting a new transition. */
+export function replayConfirmedDispatchCompletion(
+  request: ConfirmDispatchCompletionRequest,
+  deps: DispatchServiceDeps,
+): Extract<ConfirmDispatchCompletionOutcome, { readonly state: "consumed" }> | undefined {
+  return consumedConfirmationReplay(confirmDispatchContext(request, deps));
+}
+
+/**
+ * THE trusted promotion (T685) — the ONLY path from `result-stored` to
+ * `consumed`, and unreachable with a result capability.
+ *
+ * A native completion for a record with no stored result aborts
+ * `missing-result`. An identical confirmation retry is idempotent; a different
+ * child/run, or a confirmation of an already-terminal record, is a typed
+ * conflict that cannot consume. A mismatched role/version/prompt/input digest is
+ * an {@link AttestationBindingError}.
+ */
+export function confirmDispatchCompletion(
+  request: ConfirmDispatchCompletionRequest,
+  deps: DispatchServiceDeps,
+): ConfirmDispatchCompletionOutcome {
+  const context = confirmDispatchContext(request, deps);
+  const { proof, row } = context;
+  const { at } = readNow(deps);
+  const replay = consumedConfirmationReplay(context);
+  if (replay !== undefined) return replay;
   if (row.state === "aborted") {
     // Abort WINS: a terminal abort is never promoted, whatever completed.
     throw new DispatchStateConflictError(
@@ -3102,18 +3396,39 @@ export function confirmDispatchCompletion(
   if (row.output === undefined || row.outputDigest === undefined) {
     throw new AttestationContractError("row", "a result-stored envelope must carry its output");
   }
+  const terminalDigest = terminalDigestOf("consumed", {
+    outputDigest: row.outputDigest,
+    childId: proof.childId,
+    runId: proof.runId,
+    completedAt: proof.completedAt,
+  });
+  const continuationBinding =
+    row.promptProvenance.roleId === "implement-worker" && row.gitEffectBinding !== undefined
+      ? request.continuationContext === undefined
+        ? (() => {
+            throw new AttestationContractError(
+              "continuationContext",
+              "consuming a manager-bound implement-worker requires locked continuation evidence",
+            );
+          })()
+        : createDispatchContinuationBinding(
+            row,
+            at,
+            terminalDigest,
+            proof,
+            request.continuationContext,
+          )
+      : undefined;
   const next: AttestationEnvelope = Object.freeze({
     ...row,
     state: "consumed" as const,
     consumedAt: at,
     nativeCompletion: proof,
     terminalAt: at,
-    terminalDigest: terminalDigestOf("consumed", {
-      outputDigest: row.outputDigest,
-      childId: proof.childId,
-      runId: proof.runId,
-      completedAt: proof.completedAt,
-    }),
+    terminalDigest,
+    ...(continuationBinding === undefined
+      ? {}
+      : { dispatchContinuationBinding: continuationBinding }),
   });
   deps.store.replace(row, next);
   return Object.freeze({ state: "consumed" as const, result: confirmedViewOf(next) });
@@ -3274,14 +3589,7 @@ export function abortDispatch(
     );
   }
   const { at } = readNow(deps);
-  return writeAbort(
-    row,
-    at,
-    reason as DispatchAbortReason,
-    details,
-    deps,
-    request.recoveryContext,
-  );
+  return writeAbort(row, at, reason as DispatchAbortReason, details, deps, request.recoveryContext);
 }
 
 // ---------------------------------------------------------------------------
@@ -3468,10 +3776,7 @@ function recoveryBindingOfRow(
         "dispatch recovery binding is attached to a nonterminal generation",
       );
     }
-    if (
-      atMs >=
-      attestationInstantMs(row.terminalAt, "terminalAt") + IDEMPOTENCY_HORIZON_MS
-    ) {
+    if (atMs >= attestationInstantMs(row.terminalAt, "terminalAt") + IDEMPOTENCY_HORIZON_MS) {
       if (expired === "omit") return undefined;
       throw new DispatchRecoveryError("expired", "dispatch recovery binding has expired");
     }
@@ -3504,9 +3809,7 @@ function recoveryMatchesLiveBinding(
 ): boolean {
   return (
     recovery.liveTip === liveTip &&
-    RECOVERY_BINDING_FIELDS.every(
-      (field) => recovery.gitEffectBinding[field] === current[field],
-    )
+    RECOVERY_BINDING_FIELDS.every((field) => recovery.gitEffectBinding[field] === current[field])
   );
 }
 
@@ -3570,9 +3873,7 @@ export function resolveDispatchRecovery(
   const { atMs } = readNow(deps);
   const matches = deps.store
     .rows()
-    .filter(
-      (row) => row.dispatchRecoveryBinding?.recoveryReference === request.recoveryReference,
-    )
+    .filter((row) => row.dispatchRecoveryBinding?.recoveryReference === request.recoveryReference)
     .map((row) => recoveryBindingOfRow(row, atMs, "reject"))
     .filter(
       (binding): binding is DispatchRecoveryBinding =>
@@ -3592,6 +3893,215 @@ export function resolveDispatchRecovery(
     );
   }
   return resolvedRecoveryOf(binding);
+}
+
+// ---------------------------------------------------------------------------
+// Consumed managed-worker continuation
+// ---------------------------------------------------------------------------
+
+export interface DiscoverDispatchContinuationRequest {
+  readonly namespace: AttestationNamespace;
+  readonly actor: TrustedDispatchActor;
+  readonly gitEffectBinding: DispatchGitEffectBinding;
+  readonly liveTip: string;
+}
+
+export interface ResolveDispatchContinuationRequest extends DiscoverDispatchContinuationRequest {
+  readonly continuationReference: string;
+}
+
+function assertContinuationRequest(
+  request: DiscoverDispatchContinuationRequest,
+  deps: Deps,
+): DispatchGitEffectBinding {
+  assertTrustedNamespace(request.namespace, deps, "prepare_dispatch");
+  if (!TRUSTED_ACTOR_SET.has(request.actor)) {
+    throw new DispatchAuthorizationError(
+      "prepare_dispatch",
+      `untrusted continuation actor "${String(request.actor)}"`,
+    );
+  }
+  if (!/^[0-9a-f]{40}$/.test(request.liveTip)) {
+    throw new AttestationContractError("liveTip", "expected a full commit SHA");
+  }
+  const binding = assertGitEffectBinding(request.gitEffectBinding, "implement-worker");
+  if (binding === undefined || binding.conflictStateDigest !== undefined) {
+    throw new AttestationContractError(
+      "gitEffectBinding",
+      "expected a live implement-worker manager binding",
+    );
+  }
+  return binding;
+}
+
+function continuationBindingOfRow(
+  row: AttestationRow,
+  atMs: number,
+  expired: "omit" | "reject",
+): DispatchContinuationBinding | undefined {
+  const binding = row.dispatchContinuationBinding;
+  if (binding === undefined) return undefined;
+  if (isAttestationTombstone(row)) {
+    if (atMs >= attestationInstantMs(row.reuseAfter, "reuseAfter")) {
+      if (expired === "omit") return undefined;
+      throw new DispatchContinuationError("expired", "dispatch continuation has expired");
+    }
+    if (row.terminalKind !== "consumed") {
+      throw new DispatchContinuationError(
+        "non-consumed",
+        "dispatch continuation tombstone is not a consumed generation",
+      );
+    }
+  } else {
+    if (row.terminalAt === undefined || !TERMINAL_STATE_SET.has(row.state)) {
+      throw new DispatchContinuationError(
+        "nonterminal",
+        "dispatch continuation is attached to a nonterminal generation",
+      );
+    }
+    if (atMs >= attestationInstantMs(row.terminalAt, "terminalAt") + IDEMPOTENCY_HORIZON_MS) {
+      if (expired === "omit") return undefined;
+      throw new DispatchContinuationError("expired", "dispatch continuation has expired");
+    }
+    if (row.state !== "consumed") {
+      throw new DispatchContinuationError(
+        "non-consumed",
+        "dispatch continuation is not attached to a consumed generation",
+      );
+    }
+  }
+  const resolved = assertDispatchContinuationBinding(binding);
+  if (
+    resolved.attestationId !== row.attestationId ||
+    resolved.generation !== row.generation ||
+    resolved.terminalDigest !== row.terminalDigest ||
+    resolved.terminalAt !== row.terminalAt
+  ) {
+    throw new DispatchContinuationError(
+      "binding-mismatch",
+      "dispatch continuation terminal identity differs from its attestation row",
+    );
+  }
+  return resolved;
+}
+
+function continuationMatchesLiveBinding(
+  continuation: DispatchContinuationBinding,
+  current: DispatchGitEffectBinding,
+  liveTip: string,
+): boolean {
+  return (
+    continuation.liveTip === liveTip &&
+    RECOVERY_BINDING_FIELDS.every(
+      (field) => continuation.gitEffectBinding[field] === current[field],
+    )
+  );
+}
+
+function resolvedContinuationOf(
+  binding: DispatchContinuationBinding,
+): ResolvedDispatchContinuation {
+  return Object.freeze({
+    continuationReference: binding.continuationReference,
+    reprepareOf: Object.freeze({
+      attestationId: binding.attestationId,
+      generation: binding.generation,
+    }),
+    terminalAt: binding.terminalAt,
+    gitEffectBinding: binding.gitEffectBinding,
+    liveTip: binding.liveTip,
+    gitReceipts: Object.freeze([...binding.gitReceipts]),
+  });
+}
+
+/** Discover exactly one unclaimed consumed continuation for the live manager handle. */
+export function discoverDispatchContinuation(
+  request: DiscoverDispatchContinuationRequest,
+  deps: DispatchServiceDeps,
+): ResolvedDispatchContinuation {
+  const current = assertContinuationRequest(request, deps);
+  const { atMs } = readNow(deps);
+  const candidates = deps.store
+    .rows()
+    .map((row) => continuationBindingOfRow(row, atMs, "omit"))
+    .filter(
+      (binding): binding is DispatchContinuationBinding =>
+        binding !== undefined &&
+        continuationClaimedBy(binding.continuationReference, deps) === undefined &&
+        binding.callerLineage.actor === request.actor &&
+        continuationMatchesLiveBinding(binding, current, request.liveTip),
+    );
+  if (candidates.length === 0) {
+    throw new DispatchContinuationError(
+      "not-found",
+      "no unclaimed consumed continuation is bound to this managed handle and live tip",
+    );
+  }
+  if (candidates.length !== 1) {
+    throw new DispatchContinuationError(
+      "ambiguous",
+      "multiple consumed continuations match this managed handle and live tip",
+    );
+  }
+  return resolvedContinuationOf(candidates[0]!);
+}
+
+/** Resolve an opaque continuation reference against one exact live manager binding. */
+export function resolveDispatchContinuation(
+  request: ResolveDispatchContinuationRequest,
+  deps: DispatchServiceDeps,
+): ResolvedDispatchContinuation {
+  const current = assertContinuationRequest(request, deps);
+  if (!DISPATCH_CONTINUATION_REFERENCE_RE.test(request.continuationReference)) {
+    throw new AttestationContractError(
+      "continuationReference",
+      "expected an opaque cq-dispatch-continuation:v1 reference",
+    );
+  }
+  const { atMs } = readNow(deps);
+  const matches = deps.store
+    .rows()
+    .filter(
+      (row) =>
+        row.dispatchContinuationBinding?.continuationReference === request.continuationReference,
+    )
+    .map((row) => continuationBindingOfRow(row, atMs, "reject"))
+    .filter(
+      (binding): binding is DispatchContinuationBinding =>
+        binding?.continuationReference === request.continuationReference,
+    );
+  if (matches.length === 0) {
+    throw new DispatchContinuationError(
+      "not-found",
+      "dispatch continuation reference is not bound",
+    );
+  }
+  if (matches.length !== 1) {
+    throw new DispatchContinuationError(
+      "ambiguous",
+      "dispatch continuation reference is ambiguous",
+    );
+  }
+  const binding = matches[0]!;
+  if (continuationClaimedBy(binding.continuationReference, deps) !== undefined) {
+    throw new DispatchContinuationError(
+      "already-claimed",
+      "dispatch continuation has already allocated its successor generation",
+    );
+  }
+  if (binding.callerLineage.actor !== request.actor) {
+    throw new DispatchContinuationError(
+      "unauthorized-lineage",
+      "dispatch continuation caller lineage does not authorize this actor",
+    );
+  }
+  if (!continuationMatchesLiveBinding(binding, current, request.liveTip)) {
+    throw new DispatchContinuationError(
+      "binding-mismatch",
+      "dispatch continuation does not match the current managed handle or live tip",
+    );
+  }
+  return resolvedContinuationOf(binding);
 }
 
 // ---------------------------------------------------------------------------
@@ -3627,6 +4137,12 @@ export function collapseAttestationEnvelope(row: AttestationEnvelope): Attestati
     ...(row.dispatchRecoveryBinding === undefined
       ? {}
       : { dispatchRecoveryBinding: row.dispatchRecoveryBinding }),
+    ...(row.dispatchContinuationBinding === undefined
+      ? {}
+      : { dispatchContinuationBinding: row.dispatchContinuationBinding }),
+    ...(row.dispatchContinuationClaim === undefined
+      ? {}
+      : { dispatchContinuationClaim: row.dispatchContinuationClaim }),
   });
 }
 

@@ -76,6 +76,22 @@ the effect boundaries required by the shared contract.
   recovery association from registry files, and never substitute raw
   attestation, repository, worktree, branch, base, tip, terminal, or receipt
   coordinates for the opaque reference.
+- **Consumed-worker continuation.** A consumed manager-bound implement-worker
+  whose worktree remains live is continued only through its single-use opaque
+  association. Before an ordinary criticism redispatch, or before parking a
+  consumed worker for later resumption, call
+  `worktree_manage({ operation: "resolve-dispatch-continuation", handle })` and
+  accept exactly one server-returned `continuationReference`. Persist that
+  literal reference with the task metadata and `cq log put` record. Re-read
+  `HEAD`, require it to equal the returned live tip, then call
+  `prepare_dispatch` with `continuation: <continuationReference>` and without
+  `reprepareOf`, `recovery`, or `guardedRebase`. The server resolves the consumed
+  generation, complete receipt closure, manager identity, repository binding,
+  and authorized caller lineage, and atomically claims the association while
+  allocating its successor. A missing, ambiguous, expired, stale, foreign, or
+  already-claimed reference blocks redispatch; never reconstruct terminal
+  handles, receipts, or capabilities. Guarded-rebase redispatch remains the
+  explicit `reprepareOf` + `guardedRebase` exception described below.
 - **Exact pre-registry adoption.** When, and only when, a task already has a
   pre-registry tree at the canonical
   `<repositoryRoot>/.claude/worktrees/implement-<taskId>` path on branch
@@ -323,7 +339,9 @@ current task and never become user disposition questions.
 When the reconciled verdict disapproves with criticism and no questions,
 redispatch the same worker in the **same managed worktree** (retained handle;
 `round` incremented; `priorResultCommit` = prior pass tip when present), then
-review again. Round N+1 must retain round N commits. There is no fixed round cap
+review again. Resolve and claim the consumed-worker continuation authority above
+for this ordinary redispatch; never pass the consumed attestation handle as
+`reprepareOf`. Round N+1 must retain round N commits. There is no fixed round cap
 while evidence shows convergence.
 
 Park the task when:
@@ -337,7 +355,8 @@ Create linked open questions with the round history. Under restrictive roots,
 create each through `owner_ref: "tasks:<T>"` and
 `creation_kind: "exact-gate-question"`. Then set the task `blocked` and
 preserve its worktree + handle. Do not ask the user to decide whether a
-confirmed fault deserves a fix.
+confirmed fault deserves a fix. When a consumed worker is the parked tip,
+resolve and persist its continuation reference before ending the pass.
 
 ## 6. Success authority
 

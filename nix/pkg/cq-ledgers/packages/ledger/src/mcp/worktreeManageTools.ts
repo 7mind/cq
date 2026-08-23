@@ -81,18 +81,18 @@ const fullCommitSha = z
 const taskIdSchema = z.string().regex(TASK_ID_RE, "expected task id matching /^T\\d+$/");
 
 const managedWorktreeHandleFields = {
-    token: z.string().min(1),
-    worktreeId: z
-      .string()
-      .min(1)
-      .refine((value) => isUuidV7(value), "worktreeId must be a UUIDv7"),
-    taskId: taskIdSchema,
-    branch: z.string().min(1),
-    repositoryRoot: z.string().min(1),
-    absolutePath: z.string().min(1),
-    baseCommit: fullCommitSha,
-    createdAt: z.string().min(1),
-    nonce: z.string().min(1),
+  token: z.string().min(1),
+  worktreeId: z
+    .string()
+    .min(1)
+    .refine((value) => isUuidV7(value), "worktreeId must be a UUIDv7"),
+  taskId: taskIdSchema,
+  branch: z.string().min(1),
+  repositoryRoot: z.string().min(1),
+  absolutePath: z.string().min(1),
+  baseCommit: fullCommitSha,
+  createdAt: z.string().min(1),
+  nonce: z.string().min(1),
 } as const;
 
 const managedWorktreeHandleV1Schema = z
@@ -130,9 +130,15 @@ const managedWorktreeHandleSchema = z
  */
 export const WORKTREE_MANAGE_INPUT_SHAPE = {
   operation: z
-    .enum(["prepare", "observe-conflict", "resolve-dispatch-recovery", "release"])
+    .enum([
+      "prepare",
+      "observe-conflict",
+      "resolve-dispatch-recovery",
+      "resolve-dispatch-continuation",
+      "release",
+    ])
     .describe(
-      "prepare/resume, observe conflict, resolve bound parent-loss recovery, or guarded release",
+      "prepare/resume, observe conflict, resolve bound terminal dispatch authority, or guarded release",
     ),
   taskId: taskIdSchema.optional().describe("required for prepare (except pure handle resume)"),
   baseCommit: fullCommitSha.optional().describe("required for fresh prepare"),
@@ -143,7 +149,11 @@ export const WORKTREE_MANAGE_INPUT_SHAPE = {
     .boolean()
     .optional()
     .describe("prepare only: when true (default), a live tree yields resume-required"),
-  branch: z.string().min(1).optional().describe("prepare only: override default implement/<taskId>"),
+  branch: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("prepare only: override default implement/<taskId>"),
   priorResultCommit: fullCommitSha
     .nullable()
     .optional()
@@ -197,6 +207,10 @@ export interface WorktreeManageCapability {
     deps: ManagedWorktreeDeps,
   ) => Promise<object>;
   readonly resolveDispatchRecovery?: (
+    binding: ManagedWorktreeDispatchBinding,
+    liveTip: string,
+  ) => Promise<object>;
+  readonly resolveDispatchContinuation?: (
     binding: ManagedWorktreeDispatchBinding,
     liveTip: string,
   ) => Promise<object>;
@@ -280,16 +294,21 @@ export function parseWorktreeManageInput(args: unknown): {
     | "prepare"
     | "observe-conflict"
     | "resolve-dispatch-recovery"
+    | "resolve-dispatch-continuation"
     | "release";
   readonly prepare?: Omit<PrepareManagedWorktreeRequest, "repositoryRoot" | "dependencyReader">;
   readonly observeHandle?: ManagedWorktreeHandle;
   readonly recoveryHandle?: ManagedWorktreeHandle;
+  readonly continuationHandle?: ManagedWorktreeHandle;
   readonly release?: ReleaseManagedWorktreeRequest;
 } {
   if (args !== null && typeof args === "object") {
     for (const key of FORBIDDEN_DEPENDENCY_EVIDENCE_KEYS) {
       if (Object.prototype.hasOwnProperty.call(args, key)) {
-        rejectPath(key, "caller-supplied dependency evidence is rejected; prepare derives the closure from taskId + ledger");
+        rejectPath(
+          key,
+          "caller-supplied dependency evidence is rejected; prepare derives the closure from taskId + ledger",
+        );
       }
     }
   }
@@ -324,8 +343,7 @@ export function parseWorktreeManageInput(args: unknown): {
       managedWorktreeHandleSchema.parse(prepare.handle);
     }
     const adoptionFieldCount =
-      Number(prepare.adoptWorktreePath !== undefined) +
-      Number(prepare.expectedHead !== undefined);
+      Number(prepare.adoptWorktreePath !== undefined) + Number(prepare.expectedHead !== undefined);
     if (adoptionFieldCount === 1 || (adoptionFieldCount > 0 && prepare.handle !== undefined)) {
       rejectPath(
         "adoptWorktreePath",
@@ -365,6 +383,24 @@ export function parseWorktreeManageInput(args: unknown): {
     };
   }
 
+  if (flat.operation === "resolve-dispatch-continuation") {
+    for (const key of [...PREPARE_ONLY_KEYS, ...RELEASE_ONLY_KEYS]) {
+      if (raw[key] !== undefined) {
+        rejectPath(
+          key,
+          `field "${key}" must not accompany operation=resolve-dispatch-continuation`,
+        );
+      }
+    }
+    if (flat.handle === undefined) {
+      rejectPath("handle", "resolve-dispatch-continuation requires handle");
+    }
+    return {
+      operation: "resolve-dispatch-continuation",
+      continuationHandle: managedWorktreeHandleSchema.parse(flat.handle) as ManagedWorktreeHandle,
+    };
+  }
+
   for (const key of PREPARE_ONLY_KEYS) {
     if (raw[key] !== undefined) {
       rejectPath(key, `field "${key}" is prepare-only and must not accompany operation=release`);
@@ -397,7 +433,7 @@ export interface WorktreeManageToolSpec {
 
 const WORKTREE_MANAGE_DESCRIPTION =
   "Manage one implement-flow worktree: prepare/resume, inspect a rebase conflict, " +
-  "resolve bound parent-loss recovery, or release. Prepare mints a UUIDv7 tree under " +
+  "resolve opaque terminal dispatch authority, or release. Prepare mints a UUIDv7 tree under " +
   "`.claude/worktrees/`; it may resume by handle, return `resume-required`, or adopt one " +
   "exact legacy tree from paired `adoptWorktreePath` and `expectedHead`. The server " +
   "derives adoption authority and dependency result-commit closure from `taskId` and " +
@@ -504,6 +540,41 @@ export const WORKTREE_MANAGE_TOOL_SPEC: WorktreeManageToolSpec = {
       }
       const liveTip = await observeManagedWorktreeLiveTip(binding, deps);
       return produceWireDto(await capability.resolveDispatchRecovery(binding, liveTip));
+    }
+
+    if (parsed.operation === "resolve-dispatch-continuation") {
+      if (capability.resolveDispatchContinuation === undefined) {
+        throw new Error("worktree_manage dispatch continuation is unavailable for this server");
+      }
+      const handle = parsed.continuationHandle!;
+      const registryBinding = await resolveManagedWorktreeTerminalReleaseRegistryBinding(
+        capability.repositoryRoot,
+        handle,
+        deps,
+      );
+      const binding = await resolveManagedWorktreeDispatchBinding(
+        {
+          repositoryRoot: capability.repositoryRoot,
+          taskId: handle.taskId,
+          worktreePath: handle.absolutePath,
+          branch: handle.branch,
+        },
+        deps,
+      );
+      if (
+        registryBinding === null ||
+        registryBinding.registryStatus !== "live" ||
+        binding === null ||
+        binding.handleToken !== handle.token ||
+        binding.handleFingerprint !== registryBinding.handleFingerprint ||
+        binding.baseCommit !== handle.baseCommit
+      ) {
+        throw new Error(
+          "resolve-dispatch-continuation handle does not resolve to one live managed worktree",
+        );
+      }
+      const liveTip = await observeManagedWorktreeLiveTip(binding, deps);
+      return produceWireDto(await capability.resolveDispatchContinuation(binding, liveTip));
     }
 
     const release = parsed.release!;

@@ -104,10 +104,7 @@ import {
 } from "./promptCatalogCapability.js";
 import { ListProjectsNotImplementedError, type ListProjectsCapability } from "./listProjects.js";
 import { PLAN_LIFECYCLE_TOOL_SPECS } from "./planLifecycleTools.js";
-import {
-  WORKTREE_MANAGE_TOOL_SPEC,
-  type WorktreeManageCapability,
-} from "./worktreeManageTools.js";
+import { WORKTREE_MANAGE_TOOL_SPEC, type WorktreeManageCapability } from "./worktreeManageTools.js";
 import {
   acknowledgeOperatorAction,
   completeOperatorActionTask,
@@ -516,9 +513,7 @@ function requireGenericMutations(
     typeof candidate.worksetStore !== "function" ||
     typeof candidate.runAtomicGenericMutation !== "function"
   ) {
-    throw new LedgerError(
-      `${toolName} requires a workset-guarded generic mutation capability`,
-    );
+    throw new LedgerError(`${toolName} requires a workset-guarded generic mutation capability`);
   }
   return createWorksetGenericMutationGateway({
     rawStore: store,
@@ -543,18 +538,14 @@ function requireOwnedLifecycleMutations(
     typeof candidate.worksetStore !== "function" ||
     typeof candidate.runAtomicOwnedMutation !== "function"
   ) {
-    throw new LedgerError(
-      `${toolName} requires a workset-guarded owned lifecycle capability`,
-    );
+    throw new LedgerError(`${toolName} requires a workset-guarded owned lifecycle capability`);
   }
   const host = {
     rawStore: store,
     worksetStore: (candidate.worksetStore as () => WorksetStore).call(store),
     runOwnedTransaction: <T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T> =>
       (
-        candidate.runAtomicOwnedMutation as (
-          mutate: (tx: WorksetOwnedWriteTx) => T,
-        ) => Promise<T>
+        candidate.runAtomicOwnedMutation as (mutate: (tx: WorksetOwnedWriteTx) => T) => Promise<T>
       ).call(store, mutate),
   };
   return {
@@ -733,10 +724,7 @@ export function createLedgerMcpToolSpecifications(
         if (dependsOn !== undefined) patch.dependsOn = dependsOn;
         if (args.author !== undefined) patch.author = args.author;
         if (args.session !== undefined) patch.session = args.session;
-        const milestone = await mutationsFor("update_item").updateMilestone(
-          args.item_id,
-          patch,
-        );
+        const milestone = await mutationsFor("update_item").updateMilestone(args.item_id, patch);
         return wireResult(produceWireDto({ item: projectItemMutationAckDto(milestone) }));
       }
       const patch: UpdateItemPatch = {};
@@ -780,9 +768,7 @@ export function createLedgerMcpToolSpecifications(
         "session",
       ]);
       if ((args.owner_ref === undefined) !== (args.creation_kind === undefined)) {
-        throw new LedgerError(
-          "create_item owner_ref and creation_kind must be supplied together",
-        );
+        throw new LedgerError("create_item owner_ref and creation_kind must be supplied together");
       }
       if (args.owner_ref !== undefined && args.creation_kind !== undefined) {
         const owner = parseCanonicalOwnerRef(args.owner_ref);
@@ -885,8 +871,7 @@ export function createLedgerMcpToolSpecifications(
         return wireResult(produceWireDto({ item: projectItemMutationAckDto(milestone) }));
       }
       const milestoneId =
-        args.milestone_id ??
-        (args.ledger_id === IDEAS_LEDGER ? MILESTONES_AMBIENT_ID : undefined);
+        args.milestone_id ?? (args.ledger_id === IDEAS_LEDGER ? MILESTONES_AMBIENT_ID : undefined);
       if (milestoneId === undefined) {
         throw new LedgerError("milestone_id is required outside the milestones ledger");
       }
@@ -897,11 +882,7 @@ export function createLedgerMcpToolSpecifications(
       if (args.id !== undefined) init.id = args.id;
       if (args.author !== undefined) init.author = args.author;
       if (args.session !== undefined) init.session = args.session;
-      const item = await mutationsFor("create_item").createItem(
-        args.ledger_id,
-        milestoneId,
-        init,
-      );
+      const item = await mutationsFor("create_item").createItem(args.ledger_id, milestoneId, init);
       return wireResult(produceWireDto({ item: projectItemMutationAckDto(item) }));
     },
   );
@@ -1051,11 +1032,7 @@ export function createLedgerMcpToolSpecifications(
       item_id: z.string(),
     } as const,
     async (args) => {
-      assertOnlyToolArguments("unarchive_item", args, [
-        "ledger_id",
-        "milestone_id",
-        "item_id",
-      ]);
+      assertOnlyToolArguments("unarchive_item", args, ["ledger_id", "milestone_id", "item_id"]);
       const item = await mutationsFor("unarchive_item").unarchiveItem(
         args.ledger_id,
         args.milestone_id,
@@ -1271,6 +1248,7 @@ export function createLedgerMcpToolSpecifications(
           ...(args.reprepareOf === undefined ? {} : { reprepareOf: args.reprepareOf }),
           ...(args.guardedRebase === undefined ? {} : { guardedRebase: args.guardedRebase }),
           ...(args.recovery === undefined ? {} : { recovery: args.recovery }),
+          ...(args.continuation === undefined ? {} : { continuation: args.continuation }),
         }),
       );
     },
@@ -1371,8 +1349,8 @@ export function createLedgerMcpToolSpecifications(
         .enum(FETCH_PROMPT_PROJECTIONS)
         .optional()
         .describe(
-          "optional projection: \"full\" (default) returns the complete typed entry; " +
-            "\"schema\" returns exactly { roleId, version?, inputSchema?, outputSchema? }",
+          'optional projection: "full" (default) returns the complete typed entry; ' +
+            '"schema" returns exactly { roleId, version?, inputSchema?, outputSchema? }',
         ),
     } as const,
     async (args) => {
@@ -1475,9 +1453,10 @@ export function createLedgerMcpToolSpecifications(
       }
       return {
         ...ledgerTool,
-        description: toolName === "workset" || COMPLETE_DESCRIPTION_TOOL_NAMES.has(toolName)
-          ? ledgerTool.description
-          : appendLedgerResponseDescription(toolName, ledgerTool.description),
+        description:
+          toolName === "workset" || COMPLETE_DESCRIPTION_TOOL_NAMES.has(toolName)
+            ? ledgerTool.description
+            : appendLedgerResponseDescription(toolName, ledgerTool.description),
       } as LedgerToolSpecification;
     }),
   );
@@ -1485,8 +1464,7 @@ export function createLedgerMcpToolSpecifications(
 
 /** Sum the UTF-8 sizes of a result's text content blocks (the wire payload). */
 function measureResultBytesOut(result: unknown): number {
-  const content = (result as { content?: Array<{ type?: string; text?: string }> } | null)
-    ?.content;
+  const content = (result as { content?: Array<{ type?: string; text?: string }> } | null)?.content;
   if (!Array.isArray(content)) return measureUtf8JsonBytes(result);
   return content.reduce(
     (sum, block) => sum + (typeof block.text === "string" ? measureUtf8TextBytes(block.text) : 0),
@@ -1526,14 +1504,20 @@ function withUsageRecording(
       const bytesIn = measureUtf8JsonBytes(args);
       let result: unknown;
       try {
-        result = await (
-          specification.handler as (a: unknown, e: unknown) => Promise<unknown>
-        )(args, extra);
+        result = await (specification.handler as (a: unknown, e: unknown) => Promise<unknown>)(
+          args,
+          extra,
+        );
       } catch (error) {
         await recordUsageBestEffort(store, specification.name, bytesIn, 0);
         throw error;
       }
-      await recordUsageBestEffort(store, specification.name, bytesIn, measureResultBytesOut(result));
+      await recordUsageBestEffort(
+        store,
+        specification.name,
+        bytesIn,
+        measureResultBytesOut(result),
+      );
       return result;
     }) as LedgerToolSpecification["handler"],
   }));

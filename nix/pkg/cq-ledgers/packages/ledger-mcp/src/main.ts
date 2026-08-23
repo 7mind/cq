@@ -99,10 +99,7 @@ export type {
   AttachProjectAdminMcpHttpOptions,
   ProjectAdminReconcileKind,
 } from "./projectAdminMcp.js";
-import {
-  createSingleProjectDispatchRuntime,
-  type DispatchRuntime,
-} from "./dispatchCapability.js";
+import { createSingleProjectDispatchRuntime, type DispatchRuntime } from "./dispatchCapability.js";
 export {
   DISPATCH_RUNTIME_DEFERRAL_DISCHARGE,
   createDispatchCapability,
@@ -376,7 +373,9 @@ export async function readParentGateFinalizeRequest(
     !text.endsWith("\n") ||
     text.indexOf("\n") !== text.length - 1
   ) {
-    throw new Error("ledger-mcp: parent gate request must be one bounded newline-terminated JSON value");
+    throw new Error(
+      "ledger-mcp: parent gate request must be one bounded newline-terminated JSON value",
+    );
   }
   let parsed: unknown;
   try {
@@ -390,8 +389,7 @@ export async function readParentGateFinalizeRequest(
   const request = parsed as Record<string, unknown>;
   const capability = request["parentGateCapability"] as Record<string, unknown> | undefined;
   if (
-    Object.keys(request).sort().join(",") !==
-      "attestationId,generation,parentGateCapability" ||
+    Object.keys(request).sort().join(",") !== "attestationId,generation,parentGateCapability" ||
     typeof request["attestationId"] !== "string" ||
     !Number.isInteger(request["generation"]) ||
     capability === undefined ||
@@ -582,11 +580,17 @@ function registerOrdinaryPutLog(server: McpServer, store: LedgerStore, toolPrefi
       if (normalized.endsWith(".jsonl")) {
         const validation = validateJsonl(content);
         if (!validation.ok) {
-          throw new Error(`put_log: malformed JSONL at line ${String(validation.line)}: ${validation.reason}`);
+          throw new Error(
+            `put_log: malformed JSONL at line ${String(validation.line)}: ${validation.reason}`,
+          );
         }
       }
       await putLog(normalized, content);
-      return { content: [{ type: "text" as const, text: JSON.stringify({ path: normalized, stored: true }) }] };
+      return {
+        content: [
+          { type: "text" as const, text: JSON.stringify({ path: normalized, stored: true }) },
+        ],
+      };
     },
   );
 }
@@ -793,6 +797,9 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
           ...(opts.dispatchCapability?.resolveRecovery === undefined
             ? {}
             : { resolveDispatchRecovery: opts.dispatchCapability.resolveRecovery }),
+          ...(opts.dispatchCapability?.resolveContinuation === undefined
+            ? {}
+            : { resolveDispatchContinuation: opts.dispatchCapability.resolveContinuation }),
           deps: {
             adoptionActivityFence: createGitLegacyWorktreeActivityFence(
               opts.dispatchCapability?.observeWorktreeActivity,
@@ -994,9 +1001,7 @@ function sessionCredentialMatches(
 ): boolean {
   if (credentials === undefined) return true;
   const expected =
-    binding.scope === "management"
-      ? credentials.managementToken
-      : credentials.ordinaryToken;
+    binding.scope === "management" ? credentials.managementToken : credentials.ordinaryToken;
   const provided = extractBearerCredential(req);
   if (expected === null) return provided === null;
   return provided !== null && worksetCredentialsMatch(provided, expected);
@@ -1204,15 +1209,8 @@ export async function main(argv: readonly string[]): Promise<void> {
     return;
   }
 
-  const {
-    cwd,
-    http,
-    toolPrefix,
-    toolProfile,
-    promptSurface,
-    promptRoot,
-    parentGateFinalize,
-  } = parseArgs(argv);
+  const { cwd, http, toolPrefix, toolProfile, promptSurface, promptRoot, parentGateFinalize } =
+    parseArgs(argv);
   const displayName = path.basename(cwd);
   const resolvedPromptSurface = resolvePromptSurface({
     promptSurface,
@@ -1265,7 +1263,9 @@ export async function main(argv: readonly string[]): Promise<void> {
   if (parentGateFinalize) {
     try {
       if (http !== null || dispatchCapability?.finalizeParentGate === undefined) {
-        throw new Error("ledger-mcp: parent gate finalization requires a local durable dispatch runtime");
+        throw new Error(
+          "ledger-mcp: parent gate finalization requires a local durable dispatch runtime",
+        );
       }
       const outcome = await dispatchCapability.finalizeParentGate(
         await readParentGateFinalizeRequest(process.stdin),
@@ -1348,9 +1348,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     void dispatchRuntime.close().finally(() => process.exit(0));
   };
   stopParentWatch = startParentDeathWatcher(() => {
-    process.stderr.write(
-      "ledger-mcp: parent process gone — exiting (D293/T2019 orphan reaper)\n",
-    );
+    process.stderr.write("ledger-mcp: parent process gone — exiting (D293/T2019 orphan reaper)\n");
     shutdown();
   });
   stopStdinWatch = startStdinEndWatcher(() => {

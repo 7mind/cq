@@ -505,22 +505,34 @@ describe("worktree_manage schema", () => {
 
   it("accepts only a manager handle for observe-conflict", () => {
     const handle = wireHandle(2);
-    expect(
-      parseWorktreeManageInput({ operation: "observe-conflict", handle }),
-    ).toEqual({ operation: "observe-conflict", observeHandle: handle });
+    expect(parseWorktreeManageInput({ operation: "observe-conflict", handle })).toEqual({
+      operation: "observe-conflict",
+      observeHandle: handle,
+    });
     expect(() =>
       parseWorktreeManageInput({ operation: "observe-conflict", handle, taskId: "T1207" }),
     ).toThrow(/must not accompany/);
   });
 
-  it("accepts only a manager handle for dispatch recovery resolution", () => {
+  it("accepts only a manager handle for terminal dispatch authority resolution", () => {
     const handle = wireHandle(2);
-    expect(
-      parseWorktreeManageInput({ operation: "resolve-dispatch-recovery", handle }),
-    ).toEqual({ operation: "resolve-dispatch-recovery", recoveryHandle: handle });
+    expect(parseWorktreeManageInput({ operation: "resolve-dispatch-recovery", handle })).toEqual({
+      operation: "resolve-dispatch-recovery",
+      recoveryHandle: handle,
+    });
     expect(() =>
       parseWorktreeManageInput({
         operation: "resolve-dispatch-recovery",
+        handle,
+        taskId: "T1207",
+      }),
+    ).toThrow(/must not accompany/);
+    expect(
+      parseWorktreeManageInput({ operation: "resolve-dispatch-continuation", handle }),
+    ).toEqual({ operation: "resolve-dispatch-continuation", continuationHandle: handle });
+    expect(() =>
+      parseWorktreeManageInput({
+        operation: "resolve-dispatch-continuation",
         handle,
         taskId: "T1207",
       }),
@@ -672,6 +684,16 @@ describe("worktree_manage direct/stdio contract", () => {
           terminalAt: "2026-08-21T20:00:00.000Z",
         };
       },
+      resolveDispatchContinuation: async (binding, liveTip) => {
+        observed.push({ taskId: binding.taskId, liveTip });
+        return {
+          status: "dispatch-continuation-resolved",
+          continuationReference: `cq-dispatch-continuation:v1:${"b".repeat(64)}`,
+          taskId: binding.taskId,
+          liveTip,
+          terminalAt: "2026-08-21T20:00:01.000Z",
+        };
+      },
     });
     const tools = createLedgerMcpTools(
       store,
@@ -707,12 +729,36 @@ describe("worktree_manage direct/stdio contract", () => {
       });
       expect(observed).toEqual([{ taskId: "T2306", liveTip: repo.base }]);
 
+      const continuation = expectOk(
+        await invokeDirect(tools, "worktree_manage", {
+          operation: "resolve-dispatch-continuation",
+          handle: prepared.handle,
+        }),
+        "resolve continuation",
+      ) as Record<string, unknown>;
+      expect(continuation).toEqual({
+        status: "dispatch-continuation-resolved",
+        continuationReference: `cq-dispatch-continuation:v1:${"b".repeat(64)}`,
+        taskId: "T2306",
+        liveTip: repo.base,
+        terminalAt: "2026-08-21T20:00:01.000Z",
+      });
+      expect(observed).toEqual([
+        { taskId: "T2306", liveTip: repo.base },
+        { taskId: "T2306", liveTip: repo.base },
+      ]);
+
       const forged = await invokeDirect(tools, "worktree_manage", {
         operation: "resolve-dispatch-recovery",
         handle: { ...prepared.handle, nonce: "forged" },
       });
       expect(forged.ok).toBe(false);
-      expect(observed).toHaveLength(1);
+      const forgedContinuation = await invokeDirect(tools, "worktree_manage", {
+        operation: "resolve-dispatch-continuation",
+        handle: { ...prepared.handle, nonce: "forged" },
+      });
+      expect(forgedContinuation.ok).toBe(false);
+      expect(observed).toHaveLength(2);
     } finally {
       await store.dispose();
     }
@@ -920,14 +966,14 @@ describe("worktree_manage direct/stdio contract", () => {
           taskId: "T1400",
           baseCommit: "f".repeat(40),
         };
-        const baseDirect = expectOk(
-          await baseDirectPair.call(baseArgs),
-          "direct base refuse",
-        ) as { status: string; reason: string };
-        const baseStdio = expectOk(
-          await baseStdioPair.call(baseArgs),
-          "stdio base refuse",
-        ) as { status: string; reason: string };
+        const baseDirect = expectOk(await baseDirectPair.call(baseArgs), "direct base refuse") as {
+          status: string;
+          reason: string;
+        };
+        const baseStdio = expectOk(await baseStdioPair.call(baseArgs), "stdio base refuse") as {
+          status: string;
+          reason: string;
+        };
         expect(baseDirect).toMatchObject({ status: "refused", reason: "base-unresolvable" });
         expect(baseStdio).toMatchObject({ status: "refused", reason: "base-unresolvable" });
         expect(normalizeJson(baseDirect)).toEqual(normalizeJson(baseStdio));

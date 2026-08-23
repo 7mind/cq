@@ -313,6 +313,40 @@ describe("live compact-dispatch capability", () => {
     expect(store.snapshot()).toHaveLength(0);
   });
 
+  test("consumed continuation is mutually exclusive and requires the repository-bound worker path", async () => {
+    const { store, capability } = runtime("codex");
+    const reference = `cq-dispatch-continuation:v1:${"a".repeat(64)}`;
+    const unbound = await capability.prepare(
+      inlineRequest({
+        continuation: reference,
+        idempotencyKey: "T977-unbound-continuation",
+      }),
+    );
+    expect(unbound).toMatchObject({
+      accepted: false,
+      allocated: false,
+      path: "continuation",
+    });
+    const mixedStore = new InMemoryAttestationStore(NAMESPACE);
+    const mixedCapability = createDispatchCapability({
+      backend: new InMemoryAttestationBackend(mixedStore),
+      promptArtifactStore: artifactStore("codex"),
+      now: () => NOW,
+      randomBytes: sequentialDispatchRandomBytes(0),
+      repositoryRoot: "/tmp/repo",
+    });
+    const mixed = await mixedCapability.prepare(
+      inlineRequest({
+        continuation: reference,
+        recovery: `cq-dispatch-recovery:v1:${"b".repeat(64)}`,
+        idempotencyKey: "T977-mixed-continuation",
+      }),
+    );
+    expect(mixed).toMatchObject({ accepted: false, allocated: false, path: "recovery" });
+    expect(store.snapshot()).toHaveLength(0);
+    expect(mixedStore.snapshot()).toHaveLength(0);
+  });
+
   test("manifest and role-artifact surfaces must agree before durable allocation", async () => {
     const store = new InMemoryAttestationStore(NAMESPACE);
     const capability = createDispatchCapability({

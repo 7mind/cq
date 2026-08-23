@@ -15,12 +15,14 @@ import {
   abortDispatchOn,
   claimParentGateOn,
   completeParentGateOn,
+  discoverDispatchContinuationOn,
   discoverDispatchRecoveryOn,
   authorizeDispatchGitConflictOn,
   authorizeDispatchGitEffectOn,
   assembleDispatchInput,
   attestationInstantMs,
   confirmDispatchCompletionOn,
+  replayConfirmedDispatchCompletionOn,
   defaultDispatchRandomBytes,
   dispatchPayloadDigest,
   dispatchPreLaunchRejection,
@@ -34,6 +36,7 @@ import {
   resolveSupervisedWorkerGateContextOn,
   resolveDispatchGitEffectBindingForHandleOn,
   resolveDispatchRecoveryOn,
+  resolveDispatchContinuationOn,
   storeDispatchResultOn,
   validateDispatchInput,
   type AttestationBackend,
@@ -153,7 +156,9 @@ function brokerResultEvidence(
     const record = lineage as Readonly<Record<string, unknown>>;
     if (
       Object.keys(record).sort().join(",") !==
-        ["exactTip", "guardedRebase", "kind", "ontoCommit", "rebasedStartCommit"].sort().join(",") ||
+        ["exactTip", "guardedRebase", "kind", "ontoCommit", "rebasedStartCommit"]
+          .sort()
+          .join(",") ||
       record["kind"] !== "guarded-rebase" ||
       typeof record["guardedRebase"] !== "string" ||
       typeof record["ontoCommit"] !== "string" ||
@@ -264,6 +269,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
   const randomBytes = options.randomBytes ?? defaultDispatchRandomBytes;
   const namespace = options.backend.namespace;
   interface CachedPrepare {
+    readonly callerFingerprint: string | undefined;
     readonly fingerprint: string;
     readonly request: PrepareDispatchRequest;
     readonly promise: Promise<DispatchPrepareAccepted>;
@@ -271,6 +277,16 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
   }
   const prepares = new Map<string, CachedPrepare>();
   const preparesByHandle = new Map<string, CachedPrepare>();
+
+  function callerPrepareFingerprint(
+    input: Parameters<DispatchCapability["prepare"]>[0],
+  ): string | undefined {
+    try {
+      return dispatchPayloadDigest(input as unknown as DispatchJSONValue);
+    } catch {
+      return undefined;
+    }
+  }
 
   function cacheHandleKey(handle: {
     readonly attestationId: string;
@@ -341,6 +357,30 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       }
       return true;
     });
+  }
+
+  async function replayCachedPrepare(
+    idempotencyKey: string,
+    fingerprint: string,
+    fingerprintKind: "caller" | "resolved",
+  ): Promise<DispatchPrepareAccepted | undefined> {
+    while (true) {
+      const existing = prepares.get(idempotencyKey);
+      if (existing === undefined) return undefined;
+      const accepted = await existing.promise;
+      if (await cachedPrepareRemainsHeld(idempotencyKey, accepted, existing)) {
+        const existingFingerprint =
+          fingerprintKind === "caller" ? existing.callerFingerprint : existing.fingerprint;
+        if (existingFingerprint !== fingerprint) {
+          throw new AttestationKeyReuseError(idempotencyKey, accepted.handle);
+        }
+        return accepted;
+      }
+      if (prepares.get(idempotencyKey) === existing) {
+        prepares.delete(idempotencyKey);
+        preparesByHandle.delete(cacheHandleKey(accepted.handle));
+      }
+    }
   }
 
   function rejectLaunch(path: string, detail: string): DispatchPreLaunchRejection {
@@ -419,6 +459,15 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           "timeoutMs",
           `expected an integer timeout within [${DISPATCH_TIMEOUT_MIN_MS}, ${DISPATCH_TIMEOUT_MAX_MS}] ms`,
         );
+      }
+      const callerFingerprint = callerPrepareFingerprint(input);
+      if (callerFingerprint !== undefined) {
+        const replay = await replayCachedPrepare(
+          input.idempotencyKey,
+          callerFingerprint,
+          "caller",
+        );
+        if (replay !== undefined) return replay;
       }
       let roleId: string;
       let dispatchInput: Parameters<typeof dispatchPayloadDigest>[0];
@@ -502,11 +551,26 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         (roleId !== "implement-worker" ||
           input.reprepareOf !== undefined ||
           input.guardedRebase !== undefined ||
+          input.continuation !== undefined ||
           options.repositoryRoot === undefined)
       ) {
         return rejectLaunch(
           "recovery",
           "a terminal recovery reference requires an implement-worker on a local repository and must replace, not accompany, reprepareOf or guardedRebase",
+        );
+      }
+
+      if (
+        input.continuation !== undefined &&
+        (roleId !== "implement-worker" ||
+          input.reprepareOf !== undefined ||
+          input.guardedRebase !== undefined ||
+          input.recovery !== undefined ||
+          options.repositoryRoot === undefined)
+      ) {
+        return rejectLaunch(
+          "continuation",
+          "a consumed continuation requires an implement-worker on a local repository and must replace, not accompany, reprepareOf, guardedRebase, or recovery",
         );
       }
 
@@ -596,6 +660,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       }
       let gitEffectBinding;
       let resolvedReprepareOf = input.reprepareOf;
+      let continuationClaim;
       if (
         (roleId === "implement-worker" || roleId === "implement-conflict-resolver") &&
         options.repositoryRoot !== undefined
@@ -688,6 +753,72 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               conflictState as unknown as GitRebaseConflictState,
             ),
           };
+        } else if (input.continuation !== undefined) {
+          const startingCommit = dispatchRecord["startingCommit"];
+          const baseCommitInput = dispatchRecord["baseCommit"];
+          if (typeof startingCommit !== "string") {
+            return rejectLaunch(
+              "input.startingCommit",
+              "worker continuation requires startingCommit",
+            );
+          }
+          if (typeof baseCommitInput !== "string") {
+            return rejectLaunch("input.baseCommit", "worker continuation requires baseCommit");
+          }
+          const liveTip = await observeManagedWorktreeLiveTip(
+            resolvedGitEffectBinding,
+            options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+          );
+          if (liveTip !== startingCommit) {
+            return rejectLaunch(
+              "input.startingCommit",
+              "worker continuation startingCommit differs from the live managed-worktree tip",
+            );
+          }
+          let continuation;
+          try {
+            continuation = await resolveDispatchContinuationOn(
+              options.backend,
+              {
+                namespace,
+                actor: "trusted-parent",
+                continuationReference: input.continuation,
+                gitEffectBinding: resolvedGitEffectBinding,
+                liveTip,
+              },
+              { now },
+            );
+          } catch (error) {
+            return rejectLaunch(
+              "continuation",
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+          if (baseCommitInput !== continuation.gitEffectBinding.baseCommit) {
+            return rejectLaunch(
+              "input.baseCommit",
+              "worker continuation baseCommit differs from the consumed managed binding",
+            );
+          }
+          resolvedReprepareOf = continuation.reprepareOf;
+          continuationClaim = {
+            continuationReference: continuation.continuationReference,
+            actor: "trusted-parent" as const,
+            liveTip,
+          };
+          gitEffectBinding =
+            continuation.gitReceipts.length === 0
+              ? resolvedGitEffectBinding
+              : {
+                  ...resolvedGitEffectBinding,
+                  inheritedGitReceipts: continuation.gitReceipts,
+                };
+          if (continuation.gitReceipts.length > 0) {
+            dispatchInput = {
+              ...dispatchRecord,
+              inheritedGitReceipts: continuation.gitReceipts as unknown as DispatchJSONValue,
+            };
+          }
         } else if (input.recovery !== undefined) {
           if (manifestSurface !== "codex") {
             return rejectLaunch(
@@ -717,10 +848,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               { now },
             );
           } catch (error) {
-            return rejectLaunch(
-              "recovery",
-              error instanceof Error ? error.message : String(error),
-            );
+            return rejectLaunch("recovery", error instanceof Error ? error.message : String(error));
           }
           if (baseCommitInput !== recovery.gitEffectBinding.baseCommit) {
             return rejectLaunch(
@@ -859,7 +987,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                   generation: input.reprepareOf.generation,
                 },
                 startingCommit,
-                options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+                options.worktreeStateDir === undefined
+                  ? {}
+                  : { stateDir: options.worktreeStateDir },
               );
             } catch (error) {
               return rejectLaunch(
@@ -930,6 +1060,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         expectedChild: input.expectedChild,
         ...(resolvedReprepareOf === undefined ? {} : { reprepareOf: resolvedReprepareOf }),
         ...(gitEffectBinding === undefined ? {} : { gitEffectBinding }),
+        ...(continuationClaim === undefined ? {} : { continuationClaim }),
       } as const;
       const fingerprint = prepareDispatchRequestDigest(request);
       while (true) {
@@ -957,7 +1088,12 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           }
           return outcome;
         });
-        const entry: CachedPrepare = { fingerprint, request, promise: pending };
+        const entry: CachedPrepare = {
+          callerFingerprint,
+          fingerprint,
+          request,
+          promise: pending,
+        };
         prepares.set(input.idempotencyKey, entry);
         try {
           const accepted = await pending;
@@ -1115,10 +1251,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             } catch (abortError) {
               const abortMessage =
                 abortError instanceof Error ? abortError.message : String(abortError);
-              throw new Error(
-                `${message}; parent-lost terminalization failed: ${abortMessage}`,
-                { cause: abortError },
-              );
+              throw new Error(`${message}; parent-lost terminalization failed: ${abortMessage}`, {
+                cause: abortError,
+              });
             }
             throw error;
           }
@@ -1132,11 +1267,52 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       );
     },
     confirmCompletion: async (input) => {
-      const outcome = await confirmDispatchCompletionOn(
+      const replay = await replayConfirmedDispatchCompletionOn(
         options.backend,
         { namespace, ...input },
         { now },
       );
+      if (replay !== undefined) {
+        rememberTerminal(replay.result, replay.result.consumedAt);
+        return replay;
+      }
+      const binding = await resolveDispatchGitEffectBindingForHandleOn(options.backend, input);
+      const confirm = async () => {
+        let continuationContext;
+        if (binding !== undefined && binding.conflictStateDigest === undefined) {
+          const liveTip = await observeManagedWorktreeLiveTip(
+            binding,
+            options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+          );
+          const gitReceipts = await resolveInheritedGitChangeReceipts(
+            {
+              ...binding,
+              attestationId: input.attestationId,
+              generation: input.generation,
+            },
+            liveTip,
+            options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+          );
+          continuationContext = { liveTip, gitReceipts };
+        }
+        return await confirmDispatchCompletionOn(
+          options.backend,
+          {
+            namespace,
+            ...input,
+            ...(continuationContext === undefined ? {} : { continuationContext }),
+          },
+          { now },
+        );
+      };
+      const outcome =
+        binding === undefined
+          ? await confirm()
+          : await withManagedWorktreeEffectLock(
+              binding,
+              options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+              confirm,
+            );
       rememberTerminal(
         outcome.result,
         outcome.state === "consumed" ? outcome.result.consumedAt : outcome.result.abortedAt,
@@ -1314,6 +1490,25 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         taskId: recovery.gitEffectBinding.taskId,
         liveTip: recovery.liveTip,
         terminalAt: recovery.terminalAt,
+      });
+    },
+    resolveContinuation: async (gitEffectBinding, liveTip) => {
+      const continuation = await discoverDispatchContinuationOn(
+        options.backend,
+        {
+          namespace,
+          actor: "trusted-parent",
+          gitEffectBinding,
+          liveTip,
+        },
+        { now },
+      );
+      return Object.freeze({
+        status: "dispatch-continuation-resolved" as const,
+        continuationReference: continuation.continuationReference,
+        taskId: continuation.gitEffectBinding.taskId,
+        liveTip: continuation.liveTip,
+        terminalAt: continuation.terminalAt,
       });
     },
   };

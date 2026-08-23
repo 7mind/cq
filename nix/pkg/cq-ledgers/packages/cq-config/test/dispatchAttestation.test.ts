@@ -29,6 +29,7 @@ import {
   DISPATCH_TIMEOUT_MIN_MS,
   DispatchAuthorizationError,
   DispatchInputValidationError,
+  DispatchContinuationError,
   DispatchRecoveryError,
   DispatchStateConflictError,
   FETCH_DISPATCH_RESULT_SCHEMA,
@@ -36,6 +37,7 @@ import {
   GIT_CHANGE_CAPABILITY_ENTROPY_BYTES,
   GIT_CONFLICT_CAPABILITY_ENTROPY_BYTES,
   IDEMPOTENCY_HORIZON_MS,
+  InMemoryAttestationBackend,
   InMemoryAttestationStore,
   INPUT_CAPABILITY_ENTROPY_BYTES,
   INPUT_CAPABILITY_OPERATIONS,
@@ -64,11 +66,13 @@ import {
   collapseAttestationEnvelope,
   claimParentGate,
   confirmDispatchCompletion,
+  confirmDispatchCompletionOn,
   defaultDispatchRandomBytes,
   dispatchInputDigest,
   dispatchOperationScope,
   dispatchPayloadDigest,
   discoverDispatchRecovery,
+  discoverDispatchContinuation,
   fetchDispatchResult,
   fetchDispatchInput,
   formatAttestationNamespace,
@@ -83,12 +87,14 @@ import {
   mintInputCapability,
   mintResultCapability,
   prepareDispatch,
+  prepareDispatchOn,
   prepareDispatchRequestDigest,
   provenanceBindingOf,
   resultCapabilityAuthorizes,
   resultCapabilityHash,
   resultCapabilityMatches,
   resolveDispatchRecovery,
+  resolveDispatchContinuation,
   sequentialDispatchRandomBytes,
   storeDispatchResult,
   sweepAttestations,
@@ -1022,9 +1028,7 @@ describe("prepare validates role, input and timeout, then allocates", () => {
     expect(p.gitChangeCapability?.scope).toBe("git-change");
     if (p.gitChangeCapability === undefined) throw new Error("missing Git change capability");
     const row = envelopeOf(h, p);
-    expect(row.gitChangeCapabilityHash).toBe(
-      gitChangeCapabilityHash(p.gitChangeCapability.token),
-    );
+    expect(row.gitChangeCapabilityHash).toBe(gitChangeCapabilityHash(p.gitChangeCapability.token));
     expect(JSON.stringify(h.store.snapshot())).not.toContain(p.gitChangeCapability.token);
     expect(() =>
       authorizeDispatchGitEffect(
@@ -1112,7 +1116,17 @@ describe("prepare validates role, input and timeout, then allocates", () => {
       if (p.gitChangeCapability === undefined) throw new Error("missing Git change capability");
       fetchDispatchInput(fetchInputRequest(p), h.deps);
       if (terminal === "result-stored" || terminal === "consumed") storeOne(h, p);
-      if (terminal === "consumed") confirmDispatchCompletion(confirmation(p), h.deps);
+      if (terminal === "consumed") {
+        confirmDispatchCompletion(
+          confirmation(p, {
+            continuationContext: {
+              liveTip: (INPUT as { startingCommit: string }).startingCommit,
+              gitReceipts: [],
+            },
+          }),
+          h.deps,
+        );
+      }
       if (terminal === "aborted") abortDispatch(abortRequest(p), h.deps);
       if (terminal === "expired") h.clock.set(p.childCancelAt).advance(1);
       expect(
@@ -2395,9 +2409,9 @@ describe("managed-handle terminal dispatch recovery", () => {
     const h = harness();
     const p = prepared(h, { surface: "codex", gitEffectBinding: GIT_EFFECT_BINDING });
 
-    expect(() =>
-      abortDispatch(abortRequest(p, { reason: "parent-lost" }), h.deps),
-    ).toThrow("requires recovery evidence");
+    expect(() => abortDispatch(abortRequest(p, { reason: "parent-lost" }), h.deps)).toThrow(
+      "requires recovery evidence",
+    );
     expect(() =>
       abortDispatch(
         abortRequest(p, {
@@ -2432,9 +2446,7 @@ describe("managed-handle terminal dispatch recovery", () => {
       h.deps,
     );
     const rowsBefore = h.store.rows().length;
-    const resolve = (
-      overrides: Partial<Parameters<typeof resolveDispatchRecovery>[0]> = {},
-    ) =>
+    const resolve = (overrides: Partial<Parameters<typeof resolveDispatchRecovery>[0]> = {}) =>
       resolveDispatchRecovery(
         {
           namespace: NAMESPACE,
@@ -2511,9 +2523,7 @@ describe("managed-handle terminal dispatch recovery", () => {
       gitEffectBinding: GIT_EFFECT_BINDING,
       liveTip,
     };
-    expect(discoverDispatchRecovery(recoveryRequest, h.deps).reprepareOf).toEqual(
-      handleOf(second),
-    );
+    expect(discoverDispatchRecovery(recoveryRequest, h.deps).reprepareOf).toEqual(handleOf(second));
 
     const separate = prepared(h, {
       surface: "codex",
@@ -2527,9 +2537,7 @@ describe("managed-handle terminal dispatch recovery", () => {
       }),
       h.deps,
     );
-    expect(() => discoverDispatchRecovery(recoveryRequest, h.deps)).toThrow(
-      DispatchRecoveryError,
-    );
+    expect(() => discoverDispatchRecovery(recoveryRequest, h.deps)).toThrow(DispatchRecoveryError);
 
     const unbound = harness({ seed: 50 });
     const ordinary = prepared(unbound);
@@ -2537,6 +2545,389 @@ describe("managed-handle terminal dispatch recovery", () => {
     expect(() => discoverDispatchRecovery(recoveryRequest, unbound.deps)).toThrow(
       DispatchRecoveryError,
     );
+  });
+});
+
+describe("consumed managed-worker continuation authority", () => {
+  const liveTip = (INPUT as { startingCommit: string }).startingCommit;
+  const continuationContext = { liveTip, gitReceipts: [] } as const;
+
+  function consumeManaged(h: Harness, p: DispatchPrepared): void {
+    storeOne(h, p);
+    confirmDispatchCompletion(confirmation(p, { continuationContext }), h.deps);
+  }
+
+  test("consumption persists one restart-stable association that survives envelope collapse", () => {
+    const h = harness();
+    const p = prepared(h, { gitEffectBinding: GIT_EFFECT_BINDING });
+    storeOne(h, p);
+    expect(() => confirmDispatchCompletion(confirmation(p), h.deps)).toThrow(
+      "requires locked continuation evidence",
+    );
+    expect(fetchDispatchResult(fetchRequest(p), h.deps).state).toBe("result-stored");
+    confirmDispatchCompletion(confirmation(p, { continuationContext }), h.deps);
+    const continuation = discoverDispatchContinuation(
+      {
+        namespace: NAMESPACE,
+        actor: "trusted-parent",
+        gitEffectBinding: GIT_EFFECT_BINDING,
+        liveTip,
+      },
+      h.deps,
+    );
+    expect(continuation.continuationReference).toMatch(
+      /^cq-dispatch-continuation:v1:[0-9a-f]{64}$/,
+    );
+    expect(
+      resolveDispatchContinuation(
+        {
+          namespace: NAMESPACE,
+          actor: "trusted-parent",
+          continuationReference: continuation.continuationReference,
+          gitEffectBinding: GIT_EFFECT_BINDING,
+          liveTip,
+        },
+        h.deps,
+      ),
+    ).toEqual(continuation);
+
+    h.clock.advance(TERMINAL_ENVELOPE_RETENTION_MS);
+    expect(sweepAttestations(h.deps).envelopesCollapsed).toEqual([handleOf(p)]);
+    expect(
+      discoverDispatchContinuation(
+        {
+          namespace: NAMESPACE,
+          actor: "trusted-parent",
+          gitEffectBinding: GIT_EFFECT_BINDING,
+          liveTip,
+        },
+        h.deps,
+      ),
+    ).toEqual(continuation);
+  });
+
+  test("claim and successor allocation are one single-use transaction", () => {
+    const h = harness();
+    const first = prepared(h, { gitEffectBinding: GIT_EFFECT_BINDING });
+    consumeManaged(h, first);
+    const continuation = discoverDispatchContinuation(
+      {
+        namespace: NAMESPACE,
+        actor: "trusted-parent",
+        gitEffectBinding: GIT_EFFECT_BINDING,
+        liveTip,
+      },
+      h.deps,
+    );
+    const successor = acceptedOf(
+      prepareDispatch(
+        prepareRequest({
+          input: {
+            ...(INPUT as object),
+            round: 1,
+            priorResultCommit: liveTip,
+          },
+          idempotencyKey: "T685-consumed-successor",
+          reprepareOf: continuation.reprepareOf,
+          gitEffectBinding: GIT_EFFECT_BINDING,
+          continuationClaim: {
+            continuationReference: continuation.continuationReference,
+            actor: "trusted-parent",
+            liveTip,
+          },
+        }),
+        h.prepareDeps,
+      ),
+    );
+    expect(successor.handle).toEqual({
+      attestationId: first.attestationId,
+      generation: first.generation + 1,
+    });
+    const successorRow = h.store.read(successor.handle);
+    expect(successorRow?.dispatchContinuationClaim).toEqual({
+      continuationReference: continuation.continuationReference,
+      source: handleOf(first),
+    });
+    expect(() =>
+      prepareDispatch(
+        prepareRequest({
+          surface: "codex",
+          input: {
+            ...(INPUT as object),
+            round: 1,
+            priorResultCommit: liveTip,
+          },
+          idempotencyKey: "T685-consumed-loser",
+          reprepareOf: continuation.reprepareOf,
+          gitEffectBinding: GIT_EFFECT_BINDING,
+          continuationClaim: {
+            continuationReference: continuation.continuationReference,
+            actor: "trusted-parent",
+            liveTip,
+          },
+        }),
+        h.prepareDeps,
+      ),
+    ).toThrow(DispatchContinuationError);
+    expect(h.store.rows()).toHaveLength(2);
+  });
+
+  test("concurrent successor allocations have exactly one durable claimant", async () => {
+    const h = harness();
+    const first = prepared(h, { gitEffectBinding: GIT_EFFECT_BINDING });
+    consumeManaged(h, first);
+    const continuation = discoverDispatchContinuation(
+      {
+        namespace: NAMESPACE,
+        actor: "trusted-parent",
+        gitEffectBinding: GIT_EFFECT_BINDING,
+        liveTip,
+      },
+      h.deps,
+    );
+    const backend = new InMemoryAttestationBackend(h.store);
+    const allocate = (suffix: string, seed: number) =>
+      prepareDispatchOn(
+        backend,
+        prepareRequest({
+          input: {
+            ...(INPUT as object),
+            round: 1,
+            priorResultCommit: liveTip,
+          },
+          idempotencyKey: `T685-consumed-concurrent-${suffix}`,
+          reprepareOf: continuation.reprepareOf,
+          gitEffectBinding: GIT_EFFECT_BINDING,
+          continuationClaim: {
+            continuationReference: continuation.continuationReference,
+            actor: "trusted-parent",
+            liveTip,
+          },
+        }),
+        { now: h.clock.now, randomBytes: sequentialDispatchRandomBytes(seed) },
+      );
+
+    const attempts = await Promise.allSettled([allocate("a", 96), allocate("b", 112)]);
+    const winners = attempts.filter(
+      (attempt) => attempt.status === "fulfilled" && attempt.value.accepted,
+    );
+    const losers = attempts.filter((attempt) => attempt.status === "rejected");
+    expect(winners).toHaveLength(1);
+    expect(losers).toHaveLength(1);
+    expect((losers[0] as PromiseRejectedResult).reason).toBeInstanceOf(
+      DispatchContinuationError,
+    );
+    expect(backend.storedRows()).toHaveLength(2);
+    expect(
+      backend.storedRows().filter((row) => row.dispatchContinuationClaim !== undefined),
+    ).toHaveLength(1);
+  });
+
+  test("failure injection leaves neither consumption nor allocation half-persisted and retries are idempotent", async () => {
+    const seeded = harness();
+    const first = prepared(seeded, { gitEffectBinding: GIT_EFFECT_BINDING });
+    storeOne(seeded, first);
+    let failReplace = true;
+    let failInsert = false;
+    const durable = InMemoryAttestationStore.rehydrate(
+      NAMESPACE,
+      seeded.store.snapshot(),
+      (operation) => {
+        if ((operation === "replace" && failReplace) || (operation === "insert" && failInsert)) {
+          throw new AttestationStorageError(`injected ${operation} failure`);
+        }
+      },
+    );
+    const backend = new InMemoryAttestationBackend(durable);
+    const confirmRequest = confirmation(first, { continuationContext });
+
+    await expect(
+      confirmDispatchCompletionOn(backend, confirmRequest, { now: seeded.clock.now }),
+    ).rejects.toThrow("injected replace failure");
+    expect(backend.storedRows()).toHaveLength(1);
+    expect(backend.storedRows()[0]).toMatchObject({ state: "result-stored" });
+    expect(backend.storedRows()[0]?.dispatchContinuationBinding).toBeUndefined();
+
+    failReplace = false;
+    const consumed = await confirmDispatchCompletionOn(backend, confirmRequest, {
+      now: seeded.clock.now,
+    });
+    expect(consumed.state).toBe("consumed");
+    expect(
+      await confirmDispatchCompletionOn(backend, confirmRequest, { now: seeded.clock.now }),
+    ).toEqual(consumed);
+    const consumedRows = backend
+      .storedRows()
+      .filter((row) => row.dispatchContinuationBinding !== undefined);
+    expect(consumedRows).toHaveLength(1);
+    const association = consumedRows[0]!.dispatchContinuationBinding!;
+
+    const retryRequest = prepareRequest({
+      input: {
+        ...(INPUT as object),
+        round: 1,
+        priorResultCommit: liveTip,
+      },
+      idempotencyKey: "T685-failure-injected-successor",
+      reprepareOf: handleOf(first),
+      gitEffectBinding: GIT_EFFECT_BINDING,
+      continuationClaim: {
+        continuationReference: association.continuationReference,
+        actor: "trusted-parent",
+        liveTip,
+      },
+    });
+    failInsert = true;
+    await expect(
+      prepareDispatchOn(backend, retryRequest, {
+        now: seeded.clock.now,
+        randomBytes: sequentialDispatchRandomBytes(80),
+      }),
+    ).rejects.toThrow("injected insert failure");
+    expect(backend.storedRows()).toHaveLength(1);
+    expect(backend.storedRows().some((row) => row.dispatchContinuationClaim !== undefined)).toBe(
+      false,
+    );
+
+    failInsert = false;
+    const successor = await prepareDispatchOn(backend, retryRequest, {
+      now: seeded.clock.now,
+      randomBytes: sequentialDispatchRandomBytes(96),
+    });
+    expect(successor.accepted).toBe(true);
+    expect(backend.storedRows()).toHaveLength(2);
+    expect(
+      backend.storedRows().filter((row) => row.dispatchContinuationClaim !== undefined),
+    ).toHaveLength(1);
+  });
+
+  test("resolution denies every candidate and binding substitution without mutation", () => {
+    const h = harness();
+    const p = prepared(h, { gitEffectBinding: GIT_EFFECT_BINDING });
+    consumeManaged(h, p);
+    const continuation = discoverDispatchContinuation(
+      {
+        namespace: NAMESPACE,
+        actor: "trusted-parent",
+        gitEffectBinding: GIT_EFFECT_BINDING,
+        liveTip,
+      },
+      h.deps,
+    );
+    const rowsBefore = h.store.snapshot();
+    const resolve = (overrides: Partial<Parameters<typeof resolveDispatchContinuation>[0]> = {}) =>
+      resolveDispatchContinuation(
+        {
+          namespace: NAMESPACE,
+          actor: "trusted-parent",
+          continuationReference: continuation.continuationReference,
+          gitEffectBinding: GIT_EFFECT_BINDING,
+          liveTip,
+          ...overrides,
+        },
+        h.deps,
+      );
+
+    expect(() => resolve({ namespace: OTHER_PROJECT })).toThrow(AttestationNamespaceError);
+    expect(() => resolve({ continuationReference: "forged" })).toThrow(AttestationContractError);
+    expect(() =>
+      resolve({ continuationReference: `cq-dispatch-continuation:v1:${"f".repeat(64)}` }),
+    ).toThrow(DispatchContinuationError);
+    expect(() => resolve({ actor: "trusted-extension" })).toThrow(DispatchContinuationError);
+    for (const [field, value] of [
+      ["taskId", "T999"],
+      ["handleToken", "foreign-handle"],
+      ["handleFingerprint", "e".repeat(64)],
+      ["repositoryRoot", "/foreign/repo"],
+      ["repositoryId", "e".repeat(64)],
+      ["commonDir", "/foreign/repo/.git"],
+      ["worktreePath", "/foreign/worktree"],
+      ["branch", "implement/T999"],
+      ["ref", "refs/heads/implement/T999"],
+      ["baseCommit", "e".repeat(40)],
+    ] as const) {
+      expect(() =>
+        resolve({ gitEffectBinding: { ...GIT_EFFECT_BINDING, [field]: value } }),
+      ).toThrow(DispatchContinuationError);
+    }
+    expect(() => resolve({ liveTip: "e".repeat(40) })).toThrow(DispatchContinuationError);
+    expect(h.store.snapshot()).toEqual(rowsBefore);
+
+    h.clock.advance(IDEMPOTENCY_HORIZON_MS);
+    expect(() => resolve()).toThrow(DispatchContinuationError);
+    expect(h.store.snapshot()).toEqual(rowsBefore);
+  });
+
+  test("discovery rejects parent-lost-only, non-consumed, and ambiguous candidates", () => {
+    const parentLost = harness();
+    const aborted = prepared(parentLost, {
+      gitEffectBinding: GIT_EFFECT_BINDING,
+    });
+    abortDispatch(
+      abortRequest(aborted, { reason: "parent-lost", recoveryContext: continuationContext }),
+      parentLost.deps,
+    );
+    expect(() =>
+      discoverDispatchContinuation(
+        {
+          namespace: NAMESPACE,
+          actor: "trusted-parent",
+          gitEffectBinding: GIT_EFFECT_BINDING,
+          liveTip,
+        },
+        parentLost.deps,
+      ),
+    ).toThrow(DispatchContinuationError);
+
+    const nonConsumed = harness({ seed: 20 });
+    const consumed = prepared(nonConsumed, {
+      gitEffectBinding: GIT_EFFECT_BINDING,
+    });
+    consumeManaged(nonConsumed, consumed);
+    const consumedRow = envelopeOf(nonConsumed, consumed);
+    nonConsumed.store.replace(
+      consumedRow,
+      Object.freeze({
+        ...consumedRow,
+        state: "aborted" as const,
+        abortReason: "cancelled" as const,
+        abortedAt: consumedRow.terminalAt!,
+      }),
+    );
+    expect(() =>
+      discoverDispatchContinuation(
+        {
+          namespace: NAMESPACE,
+          actor: "trusted-parent",
+          gitEffectBinding: GIT_EFFECT_BINDING,
+          liveTip,
+        },
+        nonConsumed.deps,
+      ),
+    ).toThrow(DispatchContinuationError);
+
+    const ambiguous = harness({ seed: 40 });
+    const first = prepared(ambiguous, {
+      idempotencyKey: "T685-continuation-a",
+      gitEffectBinding: GIT_EFFECT_BINDING,
+    });
+    const second = prepared(ambiguous, {
+      idempotencyKey: "T685-continuation-b",
+      gitEffectBinding: GIT_EFFECT_BINDING,
+    });
+    consumeManaged(ambiguous, first);
+    consumeManaged(ambiguous, second);
+    expect(() =>
+      discoverDispatchContinuation(
+        {
+          namespace: NAMESPACE,
+          actor: "trusted-parent",
+          gitEffectBinding: GIT_EFFECT_BINDING,
+          liveTip,
+        },
+        ambiguous.deps,
+      ),
+    ).toThrow(DispatchContinuationError);
   });
 });
 

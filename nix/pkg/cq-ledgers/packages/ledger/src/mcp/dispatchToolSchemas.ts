@@ -129,6 +129,7 @@ export const PREPARE_DISPATCH_INPUT = {
   reprepareOf: z.object(handle).optional(),
   guardedRebase: z.string().optional(),
   recovery: z.string().optional(),
+  continuation: z.string().optional(),
 } as const;
 
 export const FETCH_DISPATCH_INPUT_INPUT = {
@@ -165,7 +166,10 @@ export const GIT_COMMIT_INPUT = {
   gitChangeCapability,
   operationId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
   expectedHead: z.string().regex(/^[0-9a-f]{40,64}$/),
-  message: z.string().min(1).max(16 * 1024),
+  message: z
+    .string()
+    .min(1)
+    .max(16 * 1024),
   changes: z.array(gitChange).min(1),
 } as const;
 

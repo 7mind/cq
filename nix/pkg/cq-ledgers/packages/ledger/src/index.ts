@@ -867,6 +867,7 @@ export type {
   DispatchCapability,
   DispatchWorktreeActivityObservation,
   DispatchRecoveryResolution,
+  DispatchContinuationResolution,
   FetchDispatchInputToolInput,
   FetchDispatchResultToolInput,
   PrepareDispatchToolInput,

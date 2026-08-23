@@ -18,10 +18,7 @@ import type {
   ResultCapability,
   StoreDispatchResultOutcome,
 } from "@cq/config";
-import type {
-  GitChangeBrokerReceipt,
-  GitChangeManifestEntry,
-} from "../gitChangeBroker.js";
+import type { GitChangeBrokerReceipt, GitChangeManifestEntry } from "../gitChangeBroker.js";
 import type {
   GitConflictContinuationReceipt,
   GitConflictResolution,
@@ -41,11 +38,21 @@ export interface PrepareDispatchToolInput {
   readonly guardedRebase?: string;
   /** Opaque manager-bound parent-lost recovery reference; mutually exclusive with reprepareOf. */
   readonly recovery?: string;
+  /** Opaque single-use authority to continue one consumed managed worker generation. */
+  readonly continuation?: string;
 }
 
 export interface DispatchRecoveryResolution {
   readonly status: "dispatch-recovery-resolved";
   readonly recoveryReference: string;
+  readonly taskId: string;
+  readonly liveTip: string;
+  readonly terminalAt: string;
+}
+
+export interface DispatchContinuationResolution {
+  readonly status: "dispatch-continuation-resolved";
+  readonly continuationReference: string;
   readonly taskId: string;
   readonly liveTip: string;
   readonly terminalAt: string;
@@ -109,13 +116,15 @@ export interface DispatchCapability {
   fetch(input: FetchDispatchResultToolInput): Promise<FetchDispatchResult>;
   gitCommit?(input: GitCommitToolInput): Promise<GitChangeBrokerReceipt>;
   gitResolveContinue?(input: GitResolveContinueToolInput): Promise<GitConflictContinuationReceipt>;
-  observeWorktreeActivity?(
-    worktreePath: string,
-  ): Promise<DispatchWorktreeActivityObservation>;
+  observeWorktreeActivity?(worktreePath: string): Promise<DispatchWorktreeActivityObservation>;
   resolveRecovery?(
     gitEffectBinding: DispatchGitEffectBinding,
     liveTip: string,
   ): Promise<DispatchRecoveryResolution>;
+  resolveContinuation?(
+    gitEffectBinding: DispatchGitEffectBinding,
+    liveTip: string,
+  ): Promise<DispatchContinuationResolution>;
 }
 
 export class DispatchNotImplementedError extends Error {

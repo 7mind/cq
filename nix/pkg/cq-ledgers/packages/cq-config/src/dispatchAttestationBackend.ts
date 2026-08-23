@@ -67,6 +67,7 @@ import {
   AttestationNamespaceError,
   AttestationStorageError,
   assertAttestationNamespace,
+  assertDispatchContinuationBinding,
   assertDispatchRecoveryBinding,
   assertDispatchHandle,
   attestationNamespacesEqual,
@@ -79,9 +80,11 @@ import {
   authorizeDispatchGitConflict,
   authorizeDispatchGitEffect,
   confirmDispatchCompletion,
+  replayConfirmedDispatchCompletion,
   claimParentGate,
   completeParentGate,
   discoverDispatchRecovery,
+  discoverDispatchContinuation,
   fetchDispatchResult,
   fetchDispatchInput,
   gitEffectBindingForResultCapability,
@@ -89,6 +92,7 @@ import {
   supervisedWorkerGateContextForResultCapability,
   prepareDispatch,
   resolveDispatchRecovery,
+  resolveDispatchContinuation,
   storeDispatchResult,
   sweepAttestations,
   DISPATCH_ATTESTATION_DEFERRED,
@@ -112,6 +116,7 @@ import {
   type FetchDispatchInputRequest,
   type DispatchGitEffectBinding,
   type DiscoverDispatchRecoveryRequest,
+  type DiscoverDispatchContinuationRequest,
   type PrepareDispatchOutcome,
   type PrepareDispatchRequest,
   type ParentGateFinalizeRequest,
@@ -119,6 +124,8 @@ import {
   type StoredDispatchResultView,
   type ResolveDispatchRecoveryRequest,
   type ResolvedDispatchRecovery,
+  type ResolveDispatchContinuationRequest,
+  type ResolvedDispatchContinuation,
 } from "./dispatchAttestation.js";
 import { LEDGER_BACKENDS } from "./types.js";
 import type {
@@ -311,7 +318,8 @@ export function assertAttestationStoreNamespace(
  *  - `capability` — the row bound to one stored capability hash (`store_result`).
  *  - `prepare` — every row holding one idempotency key, plus the optional
  *    terminal generation being re-prepared.
- *  - `namespace` — every row in the namespace (the sweep).
+ *  - `namespace` — every row in the namespace (the sweep, discovery, and the
+ *    single-use continuation allocation that must detect an existing claim).
  *  - `none` — nothing: the operation is refused before it reaches the store.
  */
 export type AttestationLoadScope =
@@ -737,13 +745,19 @@ export interface AttestationBackendPrepareDeps extends AttestationBackendDeps {
 }
 
 /**
- * The scope one `prepare_dispatch` may see: the rows holding its idempotency
- * key, plus the terminal generation it re-prepares.
+ * The scope one `prepare_dispatch` may see: ordinarily the rows holding its
+ * idempotency key plus the terminal generation it re-prepares. A continuation
+ * allocation sees the namespace because its one inserted successor row is the
+ * durable claim and a competing claim under another idempotency key must be
+ * detected under the same backend lock.
  */
 export function prepareLoadScope(request: PrepareDispatchRequest): AttestationLoadScope {
   const key: unknown = request?.idempotencyKey;
   if (typeof key !== "string") {
     return { kind: "none" };
+  }
+  if (request.continuationClaim !== undefined) {
+    return { kind: "namespace" };
   }
   if (request.reprepareOf === undefined) {
     return { kind: "prepare", idempotencyKey: key };
@@ -822,7 +836,10 @@ export async function resolveDispatchGitEffectBindingOn(
   submission: StoreDispatchResult,
 ): Promise<AuthorizedDispatchGitEffect | undefined> {
   return backend.transact(storeResultLoadScope(submission), (store) =>
-    gitEffectBindingForResultCapability(submission, { store, now: () => new Date(0).toISOString() }),
+    gitEffectBindingForResultCapability(submission, {
+      store,
+      now: () => new Date(0).toISOString(),
+    }),
   );
 }
 
@@ -867,6 +884,26 @@ export async function resolveDispatchRecoveryOn(
   );
 }
 
+export async function discoverDispatchContinuationOn(
+  backend: AttestationBackend,
+  request: DiscoverDispatchContinuationRequest,
+  deps: AttestationBackendDeps,
+): Promise<ResolvedDispatchContinuation> {
+  return backend.transact({ kind: "namespace" }, (store) =>
+    discoverDispatchContinuation(request, { store, now: deps.now }),
+  );
+}
+
+export async function resolveDispatchContinuationOn(
+  backend: AttestationBackend,
+  request: ResolveDispatchContinuationRequest,
+  deps: AttestationBackendDeps,
+): Promise<ResolvedDispatchContinuation> {
+  return backend.transact({ kind: "namespace" }, (store) =>
+    resolveDispatchContinuation(request, { store, now: deps.now }),
+  );
+}
+
 /** One-shot child input retrieval, serialized with every other row mutation. */
 export async function fetchDispatchInputOn(
   backend: AttestationBackend,
@@ -905,6 +942,16 @@ export async function confirmDispatchCompletionOn(
 ): Promise<ConfirmDispatchCompletionOutcome> {
   return backend.transact(handleLoadScope(request), (store) =>
     confirmDispatchCompletion(request, { store, now: deps.now }),
+  );
+}
+
+export async function replayConfirmedDispatchCompletionOn(
+  backend: AttestationBackend,
+  request: ConfirmDispatchCompletionRequest,
+  deps: AttestationBackendDeps,
+): Promise<Extract<ConfirmDispatchCompletionOutcome, { readonly state: "consumed" }> | undefined> {
+  return backend.transact(handleLoadScope(request), (store) =>
+    replayConfirmedDispatchCompletion(request, { store, now: deps.now }),
   );
 }
 
@@ -1369,15 +1416,9 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
         throw new AttestationStorageError(`stored attestation envelope has no "${field}"`);
       }
     }
-    for (const field of [
-      "prepareRequestDigest",
-      "inputCapabilityHash",
-      "resultCapabilityHash",
-    ]) {
+    for (const field of ["prepareRequestDigest", "inputCapabilityHash", "resultCapabilityHash"]) {
       if (typeof record[field] !== "string" || !STORED_SHA256_HEX.test(record[field])) {
-        throw new AttestationStorageError(
-          `stored attestation envelope has malformed "${field}"`,
-        );
+        throw new AttestationStorageError(`stored attestation envelope has malformed "${field}"`);
       }
     }
     const hasGitChangeHash = Object.hasOwn(record, "gitChangeCapabilityHash");
@@ -1437,8 +1478,7 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       if (
         Object.keys(bindingRecord).sort().join(",") !== [...expectedFields].sort().join(",") ||
         fields.some(
-          (field) =>
-            typeof bindingRecord[field] !== "string" || bindingRecord[field].length === 0,
+          (field) => typeof bindingRecord[field] !== "string" || bindingRecord[field].length === 0,
         ) ||
         !STORED_SHA256_HEX.test(String(bindingRecord["handleFingerprint"])) ||
         !STORED_SHA256_HEX.test(String(bindingRecord["repositoryId"])) ||
@@ -1467,6 +1507,50 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
     } catch (error) {
       throw new AttestationStorageError(
         `stored attestation body has malformed "dispatchRecoveryBinding": ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+  if (Object.hasOwn(record, "dispatchContinuationBinding")) {
+    try {
+      assertDispatchContinuationBinding(
+        record["dispatchContinuationBinding"] as never,
+        "storedRow.dispatchContinuationBinding",
+      );
+    } catch (error) {
+      throw new AttestationStorageError(
+        `stored attestation body has malformed "dispatchContinuationBinding": ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+  if (Object.hasOwn(record, "dispatchContinuationClaim")) {
+    const claim = record["dispatchContinuationClaim"];
+    if (typeof claim !== "object" || claim === null || Array.isArray(claim)) {
+      throw new AttestationStorageError(
+        'stored attestation body has malformed "dispatchContinuationClaim"',
+      );
+    }
+    const claimRecord = claim as Readonly<Record<string, unknown>>;
+    if (
+      Object.keys(claimRecord).sort().join(",") !== "continuationReference,source" ||
+      typeof claimRecord["continuationReference"] !== "string" ||
+      !/^cq-dispatch-continuation:v1:[0-9a-f]{64}$/.test(claimRecord["continuationReference"])
+    ) {
+      throw new AttestationStorageError(
+        'stored attestation body has malformed "dispatchContinuationClaim"',
+      );
+    }
+    try {
+      assertDispatchHandle(
+        claimRecord["source"] as never,
+        "storedRow.dispatchContinuationClaim.source",
+      );
+    } catch (error) {
+      throw new AttestationStorageError(
+        `stored attestation body has malformed "dispatchContinuationClaim": ${
           error instanceof Error ? error.message : String(error)
         }`,
       );

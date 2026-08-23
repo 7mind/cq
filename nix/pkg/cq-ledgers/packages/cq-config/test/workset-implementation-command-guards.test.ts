@@ -36,4 +36,16 @@ describe("T1987 implementation command workset guards", () => {
       "manager-bound implement-worker, retry once with a fresh prepared dispatch",
     );
   });
+
+  test("implement advance uses single-use consumed continuation authority for ordinary redispatch", () => {
+    const prose = command("implement/advance.md").replace(/\s+/g, " ");
+    expect(prose).toContain('operation: "resolve-dispatch-continuation"');
+    expect(prose).toContain("continuation: <continuationReference>");
+    expect(prose).toContain("without `reprepareOf`, `recovery`, or `guardedRebase`");
+    expect(prose).toContain("atomically claims the association while allocating its successor");
+    expect(prose).toContain("never pass the consumed attestation handle as `reprepareOf`");
+    expect(prose).toContain(
+      "resolve and persist its continuation reference before ending the pass",
+    );
+  });
 });
