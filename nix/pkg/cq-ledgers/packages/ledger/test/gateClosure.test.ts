@@ -224,11 +224,7 @@ describe("managed gate closure v1", () => {
 
   test("rejects an executable variable-valued CommonJS require without a declaration", async () => {
     const fixture = await createFixture();
-    const siblingSource = await addBunRoot(
-      fixture,
-      "nix/pkg/commonjs-sibling-root",
-      "index.cjs",
-    );
+    const siblingSource = await addBunRoot(fixture, "nix/pkg/commonjs-sibling-root", "index.cjs");
     await fs.writeFile(
       path.join(fixture.root, siblingSource),
       'console.log("T2317_VARIABLE_REQUIRE_EXECUTED");\nmodule.exports = true;\n',
@@ -261,11 +257,7 @@ describe("managed gate closure v1", () => {
 
   test("distinguishes pinned CommonJS execution from resolution", async () => {
     const fixture = await createFixture();
-    const siblingSource = await addBunRoot(
-      fixture,
-      "nix/pkg/commonjs-family-root",
-      "index.cjs",
-    );
+    const siblingSource = await addBunRoot(fixture, "nix/pkg/commonjs-family-root", "index.cjs");
     await fs.writeFile(
       path.join(fixture.root, siblingSource),
       'console.log("T2317_COMMONJS_TARGET_EXECUTED");\nmodule.exports = true;\n',
@@ -316,6 +308,94 @@ describe("managed gate closure v1", () => {
       expect(output.includes("T2317_COMMONJS_TARGET_EXECUTED")).toBe(measurement.executes);
       if (!measurement.executes) {
         expect(output).toContain(path.join(fixture.root, siblingSource));
+      }
+    }
+  });
+
+  test("classifies non-literal CommonJS loading and resolution forms as dynamic", async () => {
+    for (const commonJsSource of [
+      "const target = process.env.MODULE_PATH;\nrequire(target);\n",
+      "const target = process.env.MODULE_PATH;\nmodule.require(target);\n",
+      "const target = process.env.MODULE_PATH;\nrequire.main.require(target);\n",
+      [
+        'const { createRequire } = require("node:module");',
+        "const load = createRequire(__filename);",
+        "const target = process.env.MODULE_PATH;",
+        "load(target);",
+        "",
+      ].join("\n"),
+      "const target = process.env.MODULE_PATH;\nrequire.resolve(target);\n",
+      "const segment = process.env.MODULE_NAME;\nrequire(`./${segment}.cjs`);\n",
+      "const load = require;\nconst target = process.env.MODULE_PATH;\nload(target);\n",
+      "const target = process.env.MODULE_PATH;\nrequire.call(null, target);\n",
+    ]) {
+      const fixture = await createFixture();
+      const sourcePath = path.join(fixture.targetRoot, "test", "commonjs-load.cjs");
+      await fs.writeFile(sourcePath, commonJsSource);
+      await writeManifest(fixture);
+
+      const resolution = await resolveManagedGateClosure(fixture.root);
+      expect(resolution.status).toBe("invalid");
+      if (resolution.status === "invalid") {
+        expect(resolution.reason).toBe("source-declaration-missing");
+        expect(resolution.detail).toContain("opaque dynamic edge");
+      }
+    }
+  });
+
+  test("binds dynamic CommonJS targets and preserves literal CommonJS roots", async () => {
+    const dynamicFixture = await createFixture();
+    const dynamicSourcePath = path.join(dynamicFixture.targetRoot, "test", "dynamic-require.cjs");
+    const dynamicSourceBytes = "const target = process.env.MODULE_PATH;\nmodule.require(target);\n";
+    await fs.writeFile(dynamicSourcePath, dynamicSourceBytes);
+    const dynamicTarget = await addBunRoot(
+      dynamicFixture,
+      "nix/pkg/dynamic-commonjs-root",
+      "index.cjs",
+    );
+    await writeManifest(dynamicFixture, [
+      {
+        kind: "dynamic",
+        source: path.relative(dynamicFixture.root, dynamicSourcePath).split(path.sep).join("/"),
+        sha256: digest(dynamicSourceBytes),
+        targets: [dynamicTarget],
+      },
+    ]);
+
+    const dynamicResolution = await resolveManagedGateClosure(dynamicFixture.root);
+    expect(dynamicResolution.status).toBe("resolved");
+    if (dynamicResolution.status === "resolved") {
+      expect(dynamicResolution.installRoots).toEqual([
+        dynamicFixture.targetRoot,
+        path.join(dynamicFixture.root, "nix/pkg/dynamic-commonjs-root"),
+      ]);
+    }
+
+    for (const literalSource of [
+      'require("../../literal-commonjs-root/index.cjs");\n',
+      'require.resolve("../../literal-commonjs-root/index.cjs");\n',
+      [
+        'const { createRequire } = require("node:module");',
+        "const load = createRequire(__filename);",
+        'load("../../literal-commonjs-root/index.cjs");',
+        "",
+      ].join("\n"),
+    ]) {
+      const fixture = await createFixture();
+      await addBunRoot(fixture, "nix/pkg/literal-commonjs-root", "index.cjs");
+      await fs.writeFile(
+        path.join(fixture.targetRoot, "test", "literal-require.cjs"),
+        literalSource,
+      );
+      await writeManifest(fixture);
+
+      const resolution = await resolveManagedGateClosure(fixture.root);
+      expect(resolution.status).toBe("resolved");
+      if (resolution.status === "resolved") {
+        expect(resolution.installRoots).toEqual([
+          fixture.targetRoot,
+          path.join(fixture.root, "nix/pkg/literal-commonjs-root"),
+        ]);
       }
     }
   });

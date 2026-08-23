@@ -44,6 +44,8 @@ const OPAQUE_SPAWN_METHODS = new Set([
 ] as const);
 const FILESYSTEM_MODULE_NAMES = ["node:fs", "node:fs/promises"] as const;
 const CHILD_PROCESS_MODULE_NAMES = ["node:child_process"] as const;
+const MODULE_MODULE_NAMES = ["node:module", "module"] as const;
+const CREATE_REQUIRE_METHODS = new Set(["createRequire"] as const);
 
 export type ManagedGateOpaqueEdgeKind = "dynamic" | "nix" | "path" | "spawn";
 
@@ -566,54 +568,48 @@ function staticImportSpecifiers(source: string): readonly string[] {
     pattern.lastIndex = 0;
     for (const match of source.matchAll(pattern)) specifiers.add(match[1]!);
   }
+  for (const specifier of commonJsLiteralLoadSpecifiers(source)) specifiers.add(specifier);
   return [...specifiers];
 }
 
 function hasOpaqueDynamicImport(source: string): boolean {
-  let index = 0;
-  while (index < source.length) {
-    const character = source[index]!;
-    const next = source[index + 1];
-    if (character === "/" && next === "/") {
-      index = source.indexOf("\n", index + 2);
-      if (index === -1) return false;
+  return hasOpaqueCall(source, ["import"], true);
+}
+
+type FirstCallArgument =
+  { readonly kind: "literal"; readonly value: string } | { readonly kind: "nonliteral" };
+
+function firstCallArgument(
+  source: string,
+  index: number,
+  callee: string,
+): FirstCallArgument | null {
+  if (!source.startsWith(callee, index)) return null;
+  if (/[A-Za-z0-9_$]/u.test(source[index - 1] ?? "")) return null;
+  if (/[A-Za-z0-9_$]/u.test(source[index + callee.length] ?? "")) return null;
+  let cursor = index + callee.length;
+  while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
+  if (source[cursor] !== "(") return null;
+  cursor += 1;
+  while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
+  const quote = source[cursor];
+  if (quote !== '"' && quote !== "'" && quote !== "`") return { kind: "nonliteral" };
+  const start = cursor + 1;
+  cursor = start;
+  while (cursor < source.length) {
+    if (source[cursor] === "\\") {
+      cursor += 2;
       continue;
     }
-    if (character === "/" && next === "*") {
-      const end = source.indexOf("*/", index + 2);
-      if (end === -1) return false;
-      index = end + 2;
-      continue;
+    if (quote === "`" && source[cursor] === "$" && source[cursor + 1] === "{") {
+      return { kind: "nonliteral" };
     }
-    if (character === '"' || character === "'" || character === "`") {
-      const quote = character;
-      index += 1;
-      while (index < source.length) {
-        if (source[index] === "\\") index += 2;
-        else if (source[index] === quote) {
-          index += 1;
-          break;
-        } else index += 1;
-      }
-      continue;
+    if (source[cursor] === quote) {
+      return { kind: "literal", value: source.slice(start, cursor) };
     }
-    if (source.startsWith("import", index) && !/[A-Za-z0-9_$]/u.test(source[index - 1] ?? "")) {
-      let cursor = index + "import".length;
-      while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
-      if (source[cursor] === "(") {
-        cursor += 1;
-        while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
-        const argument = source[cursor];
-        if (argument !== '"' && argument !== "'" && argument !== "`") return true;
-        if (argument === "`") {
-          const end = source.indexOf("`", cursor + 1);
-          if (end === -1 || source.slice(cursor + 1, end).includes("${")) return true;
-        }
-      }
-    }
-    index += 1;
+    cursor += 1;
   }
-  return false;
+  return { kind: "nonliteral" };
 }
 
 function hasCall(
@@ -622,16 +618,9 @@ function hasCall(
   callee: string,
   nonLiteralFirstArgument: boolean,
 ): boolean {
-  if (!source.startsWith(callee, index)) return false;
-  if (/[A-Za-z0-9_$]/u.test(source[index - 1] ?? "")) return false;
-  if (/[A-Za-z0-9_$]/u.test(source[index + callee.length] ?? "")) return false;
-  let cursor = index + callee.length;
-  while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
-  if (source[cursor] !== "(") return false;
-  if (!nonLiteralFirstArgument) return true;
-  cursor += 1;
-  while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
-  return source[cursor] !== '"' && source[cursor] !== "'" && source[cursor] !== "`";
+  const argument = firstCallArgument(source, index, callee);
+  if (argument === null) return false;
+  return !nonLiteralFirstArgument || argument.kind === "nonliteral";
 }
 
 function hasOpaqueCall(
@@ -672,6 +661,44 @@ function hasOpaqueCall(
     index += 1;
   }
   return false;
+}
+
+function literalCallSpecifiers(source: string, callees: readonly string[]): readonly string[] {
+  const specifiers = new Set<string>();
+  let index = 0;
+  while (index < source.length) {
+    const character = source[index]!;
+    const next = source[index + 1];
+    if (character === "/" && next === "/") {
+      index = source.indexOf("\n", index + 2);
+      if (index === -1) break;
+      continue;
+    }
+    if (character === "/" && next === "*") {
+      const end = source.indexOf("*/", index + 2);
+      if (end === -1) break;
+      index = end + 2;
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      const quote = character;
+      index += 1;
+      while (index < source.length) {
+        if (source[index] === "\\") index += 2;
+        else if (source[index] === quote) {
+          index += 1;
+          break;
+        } else index += 1;
+      }
+      continue;
+    }
+    for (const callee of callees) {
+      const argument = firstCallArgument(source, index, callee);
+      if (argument?.kind === "literal") specifiers.add(argument.value);
+    }
+    index += 1;
+  }
+  return [...specifiers];
 }
 
 function importedCallees(
@@ -774,9 +801,112 @@ function commonJsCallees(
   return [...callees];
 }
 
+function createdRequireCallees(source: string): readonly string[] {
+  const factories = [
+    ...importedCallees(source, MODULE_MODULE_NAMES, CREATE_REQUIRE_METHODS),
+    ...commonJsCallees(source, MODULE_MODULE_NAMES, CREATE_REQUIRE_METHODS),
+  ];
+  const callees = new Set<string>();
+  const identifier = "[A-Za-z_$][\\w$]*";
+  const statementBoundary = "(?:^|[;\\n])";
+  for (const factory of factories) {
+    const escapedFactory = factory.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    const pattern = new RegExp(
+      `${statementBoundary}\\s*(?:const|let|var)\\s+(${identifier})\\s*=\\s*${escapedFactory}\\s*\\(`,
+      "gu",
+    );
+    for (const match of source.matchAll(pattern)) callees.add(match[1]!);
+  }
+  return [...callees];
+}
+
+function commonJsLiteralLoadSpecifiers(source: string): readonly string[] {
+  return literalCallSpecifiers(source, ["require.resolve", ...createdRequireCallees(source)]);
+}
+
+function isRequireBinding(source: string, index: number): boolean {
+  const boundary = Math.max(
+    source.lastIndexOf(";", index - 1),
+    source.lastIndexOf("\n", index - 1),
+  );
+  return /(?:const|let|var|function)\s*$/u.test(source.slice(boundary + 1, index));
+}
+
+function hasOpaqueRequireIndirection(source: string): boolean {
+  let index = 0;
+  while (index < source.length) {
+    const character = source[index]!;
+    const next = source[index + 1];
+    if (character === "/" && next === "/") {
+      index = source.indexOf("\n", index + 2);
+      if (index === -1) return false;
+      continue;
+    }
+    if (character === "/" && next === "*") {
+      const end = source.indexOf("*/", index + 2);
+      if (end === -1) return false;
+      index = end + 2;
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      const quote = character;
+      index += 1;
+      while (index < source.length) {
+        if (source[index] === "\\") index += 2;
+        else if (source[index] === quote) {
+          index += 1;
+          break;
+        } else index += 1;
+      }
+      continue;
+    }
+    if (
+      !source.startsWith("require", index) ||
+      /[A-Za-z0-9_$]/u.test(source[index - 1] ?? "") ||
+      /[A-Za-z0-9_$]/u.test(source[index + "require".length] ?? "")
+    ) {
+      index += 1;
+      continue;
+    }
+    let cursor = index + "require".length;
+    while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
+    if (source[cursor] === "(") {
+      index = cursor + 1;
+      continue;
+    }
+    const suffix = source.slice(cursor);
+    if (/^\.\s*resolve\s*\.\s*paths\s*\(/u.test(suffix)) {
+      index = cursor + 1;
+      continue;
+    }
+    if (/^\.\s*(?:resolve|main\s*\.\s*require)\s*\(/u.test(suffix)) {
+      index = cursor + 1;
+      continue;
+    }
+    if (/^\.\s*(?:cache|extensions)\b/u.test(suffix)) {
+      index = cursor + 1;
+      continue;
+    }
+    if (/^\.\s*(?:apply|bind|call)\s*\(/u.test(suffix)) return true;
+    if (source[cursor] === "=" && isRequireBinding(source, index)) {
+      index = cursor + 1;
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
 function opaqueSourceEdgeKinds(source: string): ReadonlySet<ManagedGateOpaqueEdgeKind> {
   const kinds = new Set<ManagedGateOpaqueEdgeKind>();
-  if (hasOpaqueDynamicImport(source)) kinds.add("dynamic");
+  const commonJsLoadCallees = ["require", "require.resolve", ...createdRequireCallees(source)];
+  if (
+    hasOpaqueDynamicImport(source) ||
+    hasOpaqueCall(source, commonJsLoadCallees, true) ||
+    hasOpaqueRequireIndirection(source)
+  ) {
+    kinds.add("dynamic");
+  }
   const pathCallees = [
     "Bun.file",
     ...importedCallees(source, FILESYSTEM_MODULE_NAMES, OPAQUE_PATH_METHODS),
