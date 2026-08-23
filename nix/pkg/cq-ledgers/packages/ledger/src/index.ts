@@ -392,6 +392,19 @@ export type {
   UnresolvableDependencyResultCommits,
 } from "./dependencyResultCommits.js";
 export {
+  computeManagedGateScriptDagSha256,
+  MANAGED_GATE_CLOSURE_MANIFEST,
+  MANAGED_GATE_CLOSURE_VERSION,
+  resolveManagedGateClosure,
+} from "./gateClosure.js";
+export type {
+  ManagedGateClosureInvalidReason,
+  ManagedGateClosureManifestV1,
+  ManagedGateClosureResolution,
+  ManagedGateOpaqueEdgeDeclaration,
+  ManagedGateOpaqueEdgeKind,
+} from "./gateClosure.js";
+export {
   buildManagedWorktreeInstallPlan,
   discoverBunWorkspaceRoot,
   findOpenWipCheckpoints,
