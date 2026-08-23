@@ -590,6 +590,33 @@ function sourceCodeMask(source: string): string {
     }
     return cursor;
   };
+  const regularExpressionCanStart = (index: number): boolean => {
+    let cursor = index - 1;
+    while (cursor >= 0 && /\s/u.test(source[cursor] ?? "")) cursor -= 1;
+    if (cursor < 0 || /[([{=:;,!?&|+*%^~<>-]/u.test(source[cursor] ?? "")) return true;
+    return /\b(?:await|case|delete|in|instanceof|of|return|throw|typeof|void|yield)\s*$/u.test(
+      source.slice(0, index),
+    );
+  };
+  const scanRegularExpression = (start: number): number => {
+    let cursor = start + 1;
+    let characterClass = false;
+    while (cursor < source.length) {
+      if (source[cursor] === "\\") cursor += 2;
+      else if (source[cursor] === "[") {
+        characterClass = true;
+        cursor += 1;
+      } else if (source[cursor] === "]") {
+        characterClass = false;
+        cursor += 1;
+      } else if (source[cursor] === "/" && !characterClass) {
+        cursor += 1;
+        while (/[A-Za-z]/u.test(source[cursor] ?? "")) cursor += 1;
+        return cursor;
+      } else cursor += 1;
+    }
+    return cursor;
+  };
   const scanCode = (start: number, templateExpression: boolean): number => {
     let cursor = start;
     let braceDepth = 0;
@@ -604,6 +631,10 @@ function sourceCodeMask(source: string): string {
       if (character === "/" && next === "*") {
         const end = source.indexOf("*/", cursor + 2);
         cursor = end === -1 ? source.length : end + 2;
+        continue;
+      }
+      if (character === "/" && regularExpressionCanStart(cursor)) {
+        cursor = scanRegularExpression(cursor);
         continue;
       }
       if (character === '"' || character === "'") {
@@ -704,6 +735,46 @@ function hasCall(
 }
 
 function hasOpaqueCall(
+  source: string,
+  callees: readonly string[],
+  nonLiteralFirstArgument: boolean,
+): boolean {
+  let index = 0;
+  while (index < source.length) {
+    const character = source[index]!;
+    const next = source[index + 1];
+    if (character === "/" && next === "/") {
+      index = source.indexOf("\n", index + 2);
+      if (index === -1) return false;
+      continue;
+    }
+    if (character === "/" && next === "*") {
+      const end = source.indexOf("*/", index + 2);
+      if (end === -1) return false;
+      index = end + 2;
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      const quote = character;
+      index += 1;
+      while (index < source.length) {
+        if (source[index] === "\\") index += 2;
+        else if (source[index] === quote) {
+          index += 1;
+          break;
+        } else index += 1;
+      }
+      continue;
+    }
+    if (callees.some((callee) => hasCall(source, index, callee, nonLiteralFirstArgument))) {
+      return true;
+    }
+    index += 1;
+  }
+  return false;
+}
+
+function hasOpaqueCodeCall(
   source: string,
   callees: readonly string[],
   nonLiteralFirstArgument: boolean,
@@ -905,7 +976,7 @@ function opaqueSourceEdgeKinds(source: string): ReadonlySet<ManagedGateOpaqueEdg
   const commonJsLoadCallees = ["require", "require.resolve", ...createdRequireCallees(source)];
   if (
     hasOpaqueDynamicImport(source) ||
-    hasOpaqueCall(source, commonJsLoadCallees, true) ||
+    hasOpaqueCodeCall(source, commonJsLoadCallees, true) ||
     hasOpaqueRequireIndirection(source)
   ) {
     kinds.add("dynamic");

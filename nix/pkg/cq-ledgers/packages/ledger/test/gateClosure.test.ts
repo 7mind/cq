@@ -354,8 +354,10 @@ describe("managed gate closure v1", () => {
         "/* const load = require; load(blockTarget); */",
         'const quoted = "require(stringTarget)";',
         "const templated = `require(templateTarget)`;",
+        "const pattern = /require\\(regexTarget\\)/u;",
         "void quoted;",
         "void templated;",
+        "void pattern;",
         "",
       ].join("\n"),
     );
