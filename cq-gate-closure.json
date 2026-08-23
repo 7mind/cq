@@ -8,6 +8,18 @@
   "opaqueEdges": [
     {
       "kind": "path",
+      "source": "nix/pkg/cq-ledgers/bunfig.toml",
+      "sha256": "22902260ed8ecbe623eedb941034bcb51101bf2cfface698a93846880ba31726",
+      "targets": ["nix/pkg/cq-ledgers/test-setup/isolate-state-dir.ts"]
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/test-setup/isolate-state-dir.ts",
+      "sha256": "20817aec389eba6a1da819f470cf210a2e5652358ef0d72dffbdf09d3e665905",
+      "targets": []
+    },
+    {
+      "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/worktreeTerminalReleaseXdg.test.ts",
       "sha256": "1434c65b02f334edf18f16c672a46030521dd5a58c0d19d3bb42131525606702",
       "targets": []
@@ -1500,13 +1512,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/gateClosure.test.ts",
-      "sha256": "fc3b96cfde652eadc9de0c576a91780f9daa2155d759433fbb0876a4b370c572",
+      "sha256": "0a6a9191ac7f16f4aaeefe2c0c0edf07fa31b62ea13e7e03081bbded7147e173",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/gateClosure.test.ts",
-      "sha256": "fc3b96cfde652eadc9de0c576a91780f9daa2155d759433fbb0876a4b370c572",
+      "sha256": "0a6a9191ac7f16f4aaeefe2c0c0edf07fa31b62ea13e7e03081bbded7147e173",
       "targets": []
     },
     {
