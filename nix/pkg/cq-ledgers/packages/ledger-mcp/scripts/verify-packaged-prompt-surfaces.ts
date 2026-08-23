@@ -510,6 +510,4 @@ async function main(): Promise<void> {
   console.log("verify-packaged-prompt-surfaces: PASS");
 }
 
-if (import.meta.main) {
-  await main();
-}
+await main();
