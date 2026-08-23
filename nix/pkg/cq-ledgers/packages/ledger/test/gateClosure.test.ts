@@ -222,6 +222,43 @@ describe("managed gate closure v1", () => {
     if (resolution.status === "invalid") expect(resolution.reason).toBe("path-escape");
   });
 
+  test("rejects an executable variable-valued CommonJS require without a declaration", async () => {
+    const fixture = await createFixture();
+    const siblingSource = await addBunRoot(
+      fixture,
+      "nix/pkg/commonjs-sibling-root",
+      "index.cjs",
+    );
+    await fs.writeFile(
+      path.join(fixture.root, siblingSource),
+      'console.log("T2317_VARIABLE_REQUIRE_EXECUTED");\nmodule.exports = true;\n',
+    );
+    const sourcePath = path.join(fixture.targetRoot, "test", "variable-require.cjs");
+    const sourceBytes = [
+      'const modulePath = "../../commonjs-sibling-root/index.cjs";',
+      "require(modulePath);",
+      "",
+    ].join("\n");
+    await fs.writeFile(sourcePath, sourceBytes);
+    await writeManifest(fixture);
+
+    const executed = Bun.spawnSync([process.execPath, sourcePath], {
+      cwd: fixture.targetRoot,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const executionOutput = `${new TextDecoder().decode(executed.stdout)}${new TextDecoder().decode(executed.stderr)}`;
+    expect(executed.exitCode).toBe(0);
+    expect(executionOutput).toContain("T2317_VARIABLE_REQUIRE_EXECUTED");
+
+    const resolution = await resolveManagedGateClosure(fixture.root);
+    expect(resolution.status).toBe("invalid");
+    if (resolution.status === "invalid") {
+      expect(resolution.reason).toBe("source-declaration-missing");
+      expect(resolution.detail).toContain("test/variable-require.cjs");
+    }
+  });
+
   test("rejects an executable Bun test preload outside the repository", async () => {
     const fixture = await createFixture();
     const externalPreload = await createExternalFile(
