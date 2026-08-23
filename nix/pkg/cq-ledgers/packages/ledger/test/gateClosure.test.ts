@@ -1229,6 +1229,40 @@ describe("managed gate closure v1", () => {
     }
   });
 
+  for (const edge of [
+    {
+      expectedKind: "dynamic",
+      source:
+        'const target = "./fixture.ts";\nconst value = `${await import(target)}`;\nvoid value;\n',
+    },
+    {
+      expectedKind: "path",
+      source:
+        "const asset = process.env.ASSET_PATH!;\nconst value = `${await Bun.file(asset).text()}`;\nvoid value;\n",
+    },
+    {
+      expectedKind: "spawn",
+      source:
+        "const command = process.execPath;\nconst value = `${Bun.spawn([command])}`;\nvoid value;\n",
+    },
+  ] as const) {
+    test(`fails closed for an undeclared ${edge.expectedKind} call inside a template-literal expression`, async () => {
+      const fixture = await createFixture();
+      await fs.writeFile(
+        path.join(fixture.targetRoot, "test", `${edge.expectedKind}.test.ts`),
+        edge.source,
+      );
+      await writeManifest(fixture);
+
+      const resolution = await resolveManagedGateClosure(fixture.root);
+      expect(resolution.status).toBe("invalid");
+      if (resolution.status === "invalid") {
+        expect(resolution.reason).toBe("source-declaration-missing");
+        expect(resolution.detail).toContain(`hashed ${edge.expectedKind} edge declaration`);
+      }
+    });
+  }
+
   test("requires matching declarations for opaque path and spawn edges", async () => {
     for (const edge of [
       {
