@@ -459,6 +459,8 @@ describe("managed gate closure v1", () => {
       "const target = process.env.MODULE_PATH;\nrequire /* loader */ (target);\n",
       "const load = require;\nconst target = process.env.MODULE_PATH;\nload(target);\n",
       "const target = process.env.MODULE_PATH;\nrequire.call(null, target);\n",
+      "const bound = require.bind(null);\nconst target = process.env.MODULE_PATH;\nbound(target);\n",
+      "const loaders = [require];\nconst target = process.env.MODULE_PATH;\nloaders[0](target);\n",
     ]) {
       const fixture = await createFixture();
       const sourcePath = path.join(fixture.targetRoot, "test", "commonjs-load.cjs");
@@ -480,11 +482,14 @@ describe("managed gate closure v1", () => {
       path.join(fixture.targetRoot, "test", "non-code-require.cjs"),
       [
         "// require(commentTarget);",
+        '// module["require"](computedCommentTarget);',
         "/* const load = require; load(blockTarget); */",
         'const quoted = "require(stringTarget)";',
+        'const computed = `module["require"](computedStringTarget)`;',
         "const templated = `require(templateTarget)`;",
         "const pattern = /require\\(regexTarget\\)/u;",
         "void quoted;",
+        "void computed;",
         "void templated;",
         "void pattern;",
         "",
@@ -496,31 +501,65 @@ describe("managed gate closure v1", () => {
   });
 
   test("binds dynamic CommonJS targets and preserves literal CommonJS roots", async () => {
-    const dynamicFixture = await createFixture();
-    const dynamicSourcePath = path.join(dynamicFixture.targetRoot, "test", "dynamic-require.cjs");
-    const dynamicSourceBytes = "const target = process.env.MODULE_PATH;\nmodule.require(target);\n";
-    await fs.writeFile(dynamicSourcePath, dynamicSourceBytes);
-    const dynamicTarget = await addBunRoot(
-      dynamicFixture,
-      "nix/pkg/dynamic-commonjs-root",
-      "index.cjs",
-    );
-    await writeManifest(dynamicFixture, [
-      {
-        kind: "dynamic",
-        source: path.relative(dynamicFixture.root, dynamicSourcePath).split(path.sep).join("/"),
-        sha256: digest(dynamicSourceBytes),
-        targets: [dynamicTarget],
-      },
-    ]);
-
-    const dynamicResolution = await resolveManagedGateClosure(dynamicFixture.root);
-    expect(dynamicResolution.status).toBe("resolved");
-    if (dynamicResolution.status === "resolved") {
-      expect(dynamicResolution.installRoots).toEqual([
-        dynamicFixture.targetRoot,
-        path.join(dynamicFixture.root, "nix/pkg/dynamic-commonjs-root"),
+    for (const [name, dynamicSourceBytes] of [
+      ["member", "const target = process.env.MODULE_PATH;\nmodule.require(target);\n"],
+      ["computed", 'const target = process.env.MODULE_PATH;\nmodule["require"](target);\n'],
+      ["parenthesized", "const target = process.env.MODULE_PATH;\n(require)(target);\n"],
+      ["call", "const target = process.env.MODULE_PATH;\nrequire.call(null, target);\n"],
+      [
+        "apply",
+        "const target = process.env.MODULE_PATH;\nmodule.require.apply(module, [target]);\n",
+      ],
+      ["alias", "const load = require;\nconst target = process.env.MODULE_PATH;\nload(target);\n"],
+      [
+        "computed-alias",
+        'const load = module["require"];\nconst target = process.env.MODULE_PATH;\nload(target);\n',
+      ],
+      [
+        "destructured-alias",
+        "const { require: load } = module;\nconst target = process.env.MODULE_PATH;\nload(target);\n",
+      ],
+      [
+        "computed-resolve",
+        'const target = process.env.MODULE_PATH;\nrequire["resolve"](target);\n',
+      ],
+      [
+        "resolve-alias",
+        "const resolveModule = require.resolve;\nconst target = process.env.MODULE_PATH;\nresolveModule(target);\n",
+      ],
+    ] as const) {
+      const dynamicFixture = await createFixture();
+      const dynamicSourcePath = path.join(dynamicFixture.targetRoot, "test", `dynamic-${name}.cjs`);
+      await fs.writeFile(dynamicSourcePath, dynamicSourceBytes);
+      const dynamicTarget = await addBunRoot(
+        dynamicFixture,
+        "nix/pkg/dynamic-commonjs-root",
+        "index.cjs",
+      );
+      await writeManifest(dynamicFixture, [
+        {
+          kind: "dynamic",
+          source: path.relative(dynamicFixture.root, dynamicSourcePath).split(path.sep).join("/"),
+          sha256: digest(dynamicSourceBytes),
+          targets: [dynamicTarget],
+        },
       ]);
+
+      const dynamicResolution = await resolveManagedGateClosure(dynamicFixture.root);
+      expect(dynamicResolution.status).toBe("resolved");
+      if (dynamicResolution.status === "resolved") {
+        expect(dynamicResolution.installRoots).toEqual([
+          dynamicFixture.targetRoot,
+          path.join(dynamicFixture.root, "nix/pkg/dynamic-commonjs-root"),
+        ]);
+      }
+
+      await fs.appendFile(dynamicSourcePath, "// source drift\n");
+      const driftedResolution = await resolveManagedGateClosure(dynamicFixture.root);
+      expect(driftedResolution.status).toBe("invalid");
+      if (driftedResolution.status === "invalid") {
+        expect(driftedResolution.reason).toBe("source-digest-mismatch");
+      }
     }
 
     for (const literalSource of [
