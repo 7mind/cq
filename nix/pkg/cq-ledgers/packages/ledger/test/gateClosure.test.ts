@@ -292,6 +292,46 @@ describe("managed gate closure v1", () => {
     }
   });
 
+  test("rejects an executable escaped-identifier CommonJS require", async () => {
+    const fixture = await createFixture();
+    const siblingSource = await addBunRoot(
+      fixture,
+      "nix/pkg/identifier-escape-commonjs-sibling-root",
+      "index.cjs",
+    );
+    await fs.writeFile(
+      path.join(fixture.root, siblingSource),
+      'console.log("T2317_IDENTIFIER_ESCAPE_REQUIRE_EXECUTED");\nmodule.exports = true;\n',
+    );
+    const sourcePath = path.join(fixture.targetRoot, "test", "identifier-escape-require.cjs");
+    await fs.writeFile(
+      sourcePath,
+      [
+        'const modulePath = "../../identifier-escape-commonjs-sibling-root/index.cjs";',
+        "requ\\u0069re(modulePath);",
+        "",
+      ].join("\n"),
+    );
+    await writeManifest(fixture);
+
+    const executed = Bun.spawnSync([process.execPath, sourcePath], {
+      cwd: fixture.targetRoot,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const executionOutput =
+      new TextDecoder().decode(executed.stdout) + new TextDecoder().decode(executed.stderr);
+    expect(executed.exitCode).toBe(0);
+    expect(executionOutput).toContain("T2317_IDENTIFIER_ESCAPE_REQUIRE_EXECUTED");
+
+    const resolution = await resolveManagedGateClosure(fixture.root);
+    expect(resolution.status).toBe("invalid");
+    if (resolution.status === "invalid") {
+      expect(resolution.reason).toBe("source-identifier-escape-unsupported");
+      expect(resolution.detail).toContain("test/identifier-escape-require.cjs");
+    }
+  });
+
   test("distinguishes pinned CommonJS execution from resolution", async () => {
     const fixture = await createFixture();
     const siblingSource = await addBunRoot(fixture, "nix/pkg/commonjs-family-root", "index.cjs");
