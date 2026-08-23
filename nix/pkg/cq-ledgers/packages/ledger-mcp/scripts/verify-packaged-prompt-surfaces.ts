@@ -51,6 +51,10 @@ interface PromptRoots {
   readonly pi: string;
 }
 
+interface PackagedCatalogRole {
+  readonly roleId: string;
+}
+
 interface McpModules {
   readonly Client: new (
     clientInfo: { readonly name: string; readonly version: string },
@@ -440,7 +444,11 @@ function assertNoStaleResponseProse(filePath: string, content: string): void {
 async function verifyPackagedRoot(surface: PromptSurface, root: string): Promise<void> {
   const roleRoot = path.join(root, "roles");
   const roleFiles = (await walkFiles(roleRoot)).filter((filePath) => filePath.endsWith(".md"));
-  assertPackagedRoleClosure(surface, roleRoot, roleFiles);
+  const catalog = JSON.parse(
+    await readFile(path.join(root, "catalog.json"), "utf8"),
+  ) as readonly PackagedCatalogRole[];
+  const expectedRoleIds = catalog.map(({ roleId }) => roleId);
+  assertPackagedRoleClosure(surface, roleRoot, expectedRoleIds, roleFiles);
 
   const allFiles = await walkFiles(root);
   for (const filePath of allFiles) {

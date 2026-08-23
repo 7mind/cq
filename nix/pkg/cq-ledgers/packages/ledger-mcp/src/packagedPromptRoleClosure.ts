@@ -1,15 +1,15 @@
 import * as path from "node:path";
-import { PROMPT_CATALOG_PROJECTION } from "../../cq-config/src/promptCatalog.gen.js";
 
 export type PromptSurface = "claude" | "codex" | "pi";
 
 export function assertPackagedRoleClosure(
   surface: PromptSurface,
   roleRoot: string,
+  expectedRoleIds: readonly string[],
   roleFiles: readonly string[],
 ): void {
-  const expectedRoleFiles = PROMPT_CATALOG_PROJECTION.catalog
-    .map(({ roleId }) => path.join(roleRoot, `${roleId}.md`))
+  const expectedRoleFiles = expectedRoleIds
+    .map((roleId) => path.join(roleRoot, `${roleId}.md`))
     .sort();
   const actualRoleFiles = [...roleFiles].sort();
   const expectedRoleSet = new Set(expectedRoleFiles);
