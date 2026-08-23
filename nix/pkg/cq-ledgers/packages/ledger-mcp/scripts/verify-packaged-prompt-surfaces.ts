@@ -427,6 +427,18 @@ async function walkFiles(root: string): Promise<readonly string[]> {
   return files.sort();
 }
 
+export function assertPackagedRoleClosure(
+  surface: PromptSurface,
+  roleRoot: string,
+  roleFiles: readonly string[],
+): void {
+  if (roleFiles.length !== 24) {
+    throw new Error(
+      `${surface} role closure failed: ${roleRoot}: expected 24, got ${String(roleFiles.length)}`,
+    );
+  }
+}
+
 function assertNoStaleResponseProse(filePath: string, content: string): void {
   for (const pattern of STALE_RESPONSE_PATTERNS) {
     if (pattern.test(content)) {
@@ -438,11 +450,7 @@ function assertNoStaleResponseProse(filePath: string, content: string): void {
 async function verifyPackagedRoot(surface: PromptSurface, root: string): Promise<void> {
   const roleRoot = path.join(root, "roles");
   const roleFiles = (await walkFiles(roleRoot)).filter((filePath) => filePath.endsWith(".md"));
-  if (roleFiles.length !== 24) {
-    throw new Error(
-      `${surface} role closure failed: ${roleRoot}: expected 24, got ${String(roleFiles.length)}`,
-    );
-  }
+  assertPackagedRoleClosure(surface, roleRoot, roleFiles);
 
   const allFiles = await walkFiles(root);
   for (const filePath of allFiles) {
@@ -510,4 +518,6 @@ async function main(): Promise<void> {
   console.log("verify-packaged-prompt-surfaces: PASS");
 }
 
-await main();
+if (import.meta.main) {
+  await main();
+}
