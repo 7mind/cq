@@ -188,6 +188,70 @@ describe("managed gate closure v1", () => {
     if (resolution.status === "invalid") expect(resolution.reason).toBe("path-escape");
   });
 
+  test("rejects an executable source symlink outside the repository", async () => {
+    const fixture = await createFixture();
+    const markerPath = path.join(fixture.root, "source-symlink-marker.txt");
+    await fs.writeFile(markerPath, "executed\n");
+    const sourceBytes = [
+      'import { expect, test } from "bun:test";',
+      "const markerPath = process.env.T2317_SOURCE_SYMLINK_MARKER;",
+      'if (markerPath === undefined) throw new Error("missing source symlink marker");',
+      "const marker = await Bun.file(markerPath).text();",
+      'test("external source symlink executes", () => {',
+      '  console.log("T2317_EXTERNAL_SOURCE_SYMLINK_EXECUTED");',
+      '  expect(marker).toBe("executed\\n");',
+      "});",
+      "",
+    ].join("\n");
+    const externalSource = await createExternalFile("escaped.test.ts", sourceBytes);
+    const sourcePath = path.join(fixture.targetRoot, "test", "escaped.test.ts");
+    await fs.symlink(externalSource, sourcePath, "file");
+    await writeManifest(fixture);
+
+    const executed = Bun.spawnSync([process.execPath, "test", sourcePath], {
+      env: { ...process.env, T2317_SOURCE_SYMLINK_MARKER: markerPath },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const executionOutput = `${new TextDecoder().decode(executed.stdout)}${new TextDecoder().decode(executed.stderr)}`;
+    expect(executed.exitCode).toBe(0);
+    expect(executionOutput).toContain("T2317_EXTERNAL_SOURCE_SYMLINK_EXECUTED");
+
+    const resolution = await resolveManagedGateClosure(fixture.root);
+    expect(resolution.status).toBe("invalid");
+    if (resolution.status === "invalid") expect(resolution.reason).toBe("path-escape");
+  });
+
+  test("validates a source symlink target that remains inside the repository", async () => {
+    const fixture = await createFixture();
+    const sourceBytes =
+      "const assetPath = process.env.ASSET_PATH!;\nawait Bun.file(assetPath).text();\n";
+    const inputsRoot = path.join(fixture.root, "gate-inputs");
+    await fs.mkdir(inputsRoot);
+    const internalSource = path.join(inputsRoot, "internal-source.test.ts");
+    await fs.writeFile(internalSource, sourceBytes);
+    const sourcePath = path.join(fixture.targetRoot, "test", "internal-source.test.ts");
+    await fs.symlink(path.relative(path.dirname(sourcePath), internalSource), sourcePath, "file");
+    await writeManifest(fixture);
+
+    const undeclared = await resolveManagedGateClosure(fixture.root);
+    expect(undeclared.status).toBe("invalid");
+    if (undeclared.status === "invalid") {
+      expect(undeclared.reason).toBe("source-declaration-missing");
+      expect(undeclared.detail).toContain("gate-inputs/internal-source.test.ts");
+    }
+
+    await writeManifest(fixture, [
+      {
+        kind: "path",
+        source: path.relative(fixture.root, sourcePath).split(path.sep).join("/"),
+        sha256: digest(sourceBytes),
+        targets: [],
+      },
+    ]);
+    expect((await resolveManagedGateClosure(fixture.root)).status).toBe("resolved");
+  });
+
   test("accepts manifest and Bun lock symlinks that remain inside the repository", async () => {
     const fixture = await createFixture();
     await writeManifest(fixture);
