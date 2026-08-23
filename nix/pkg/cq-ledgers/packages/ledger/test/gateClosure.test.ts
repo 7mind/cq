@@ -394,6 +394,7 @@ describe("managed gate closure v1", () => {
 
     for (const literalSource of [
       'require("../../literal-commonjs-root/index.cjs");\n',
+      'require /* loader */ ("../../literal-commonjs-root/index.cjs");\n',
       'require.resolve("../../literal-commonjs-root/index.cjs");\n',
       [
         'const { createRequire } = require("node:module");',

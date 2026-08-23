@@ -851,7 +851,11 @@ function createdRequireCallees(source: string): readonly string[] {
 }
 
 function commonJsLiteralLoadSpecifiers(source: string): readonly string[] {
-  return literalCallSpecifiers(source, ["require.resolve", ...createdRequireCallees(source)]);
+  return literalCallSpecifiers(source, [
+    "require",
+    "require.resolve",
+    ...createdRequireCallees(source),
+  ]);
 }
 
 function isRequireBinding(source: string, index: number): boolean {
