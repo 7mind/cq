@@ -200,6 +200,16 @@ describe("WIP artifacts (T1284)", () => {
         { taskId: "T1284" },
       ),
     ).toEqual({ status: "open", openCheckpoints: ["review"] });
+
+    for (const synonym of ["full-gate", "full gate", "trusted-full-gate"]) {
+      expect(
+        assessWipArtifactClosure(
+          CANDIDATE_PATH,
+          artifact([{ name: synonym, status: "unmeasured", body: "runner-owned\n" }]),
+          { taskId: "T1284" },
+        ),
+      ).toEqual({ status: "open", openCheckpoints: [synonym] });
+    }
   });
 
   it("rejects foreign filenames, task ids, and roles under trusted projection", () => {

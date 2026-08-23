@@ -137,8 +137,12 @@ path union.
    `done | todo | unmeasured`, followed by
    `## <name> <!-- cq:wip-checkpoint -->` body sections). Mark unfinished work
    `todo` or `unmeasured` rather than omitting it so a harvested partial is
-   self-describing. A committed partial is worth more than an uncommitted
-   complete deliverable. Do not defer the first write until the end of the turn.
+   self-describing. For the parent-owned supervised full gate, use the exact
+   task-local checkpoint name `trusted full gate` with status `unmeasured`.
+   Preserve that checkpoint's status `unmeasured` until trusted finalization;
+   synonyms such as `full-gate` do not qualify. A committed partial is worth
+   more than an uncommitted complete deliverable. Do not defer the first write
+   until the end of the turn.
    The early WIP-skeleton commit and the non-empty new-receipt requirement are
    exempted ONLY for the server-resolved exact-tip/no-new-commit mode of a
    guarded-rebase continuation (`guardedRebaseLineage.exactTip === true` and

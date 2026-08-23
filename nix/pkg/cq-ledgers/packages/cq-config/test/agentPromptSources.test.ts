@@ -70,6 +70,12 @@ function captureRendererError(run: () => unknown): PromptRendererError {
 }
 
 describe("dispatched-role prompt sources", () => {
+  test("requires the exact trusted-gate checkpoint in implement-worker guidance", () => {
+    const source = readFileSync(path.join(ASSETS_ROOT, "agents", "implement-worker.md"), "utf8");
+    expect(source).toMatch(/exact\s+task-local checkpoint name `trusted full gate`/u);
+    expect(source).toMatch(/status `unmeasured` until trusted finalization/u);
+  });
+
   test("renders the complete typed-sidecar roster on every surface", () => {
     const catalogJson = evaluateNixJson("agentCatalogJson");
     const catalog = JSON.parse(catalogJson) as readonly CatalogRole[];
@@ -176,6 +182,10 @@ describe("dispatched-role prompt sources", () => {
         expect(content).toContain(`name: ${role.roleId}`);
         expect(content).not.toContain("{{cq:fragment:");
         expect(content).not.toContain("CQ_HARNESS");
+        if (role.roleId === "implement-worker") {
+          expect(content).toMatch(/exact\s+task-local checkpoint name `trusted full gate`/u);
+          expect(content).toMatch(/status `unmeasured` until trusted finalization/u);
+        }
         if (surface === "claude") {
           expect(content).toMatch(/^(?:isolation|disallowedTools):/m);
         } else if (surface === "pi") {
