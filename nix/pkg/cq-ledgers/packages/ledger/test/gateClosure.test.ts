@@ -222,6 +222,45 @@ describe("managed gate closure v1", () => {
     if (resolution.status === "invalid") expect(resolution.reason).toBe("path-escape");
   });
 
+  test("rejects an executable Bun test preload outside the repository", async () => {
+    const fixture = await createFixture();
+    const externalPreload = await createExternalFile(
+      "external-preload.ts",
+      'console.log("T2317_EXTERNAL_BUNFIG_PRELOAD_EXECUTED");\n',
+    );
+    const preloadSpecifier = path
+      .relative(fixture.targetRoot, externalPreload)
+      .split(path.sep)
+      .join("/");
+    await fs.writeFile(
+      path.join(fixture.targetRoot, "bunfig.toml"),
+      `[test]\npreload = [${JSON.stringify(preloadSpecifier)}]\n`,
+    );
+    await fs.writeFile(
+      path.join(fixture.targetRoot, "test", "gate.test.ts"),
+      'import { expect, test } from "bun:test";\ntest("gate", () => expect(true).toBe(true));\n',
+    );
+    await writeManifest(fixture);
+
+    const executed = Bun.spawnSync([process.execPath, "test", "test/gate.test.ts"], {
+      cwd: fixture.targetRoot,
+      env: {
+        ...process.env,
+        HOME: path.join(fixture.root, "home"),
+        XDG_CONFIG_HOME: path.join(fixture.root, "xdg"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const executionOutput = `${new TextDecoder().decode(executed.stdout)}${new TextDecoder().decode(executed.stderr)}`;
+    expect(executed.exitCode).toBe(0);
+    expect(executionOutput).toContain("T2317_EXTERNAL_BUNFIG_PRELOAD_EXECUTED");
+
+    const resolution = await resolveManagedGateClosure(fixture.root);
+    expect(resolution.status).toBe("invalid");
+    if (resolution.status === "invalid") expect(resolution.reason).toBe("path-escape");
+  });
+
   test("validates a source symlink target that remains inside the repository", async () => {
     const fixture = await createFixture();
     const sourceBytes =
