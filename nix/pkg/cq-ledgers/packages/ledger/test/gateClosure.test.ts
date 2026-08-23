@@ -312,8 +312,58 @@ describe("managed gate closure v1", () => {
         executes: true,
       },
       {
+        name: "computed-module-require",
+        source: `const target = ${JSON.stringify(moduleSpecifier)};\nmodule["require"](target);\n`,
+        executes: true,
+      },
+      {
+        name: "dynamic-computed-module-require",
+        source: `const property = "require";\nconst target = ${JSON.stringify(moduleSpecifier)};\nmodule[property](target);\n`,
+        executes: true,
+      },
+      {
+        name: "parenthesized-require",
+        source: `const target = ${JSON.stringify(moduleSpecifier)};\n(require)(target);\n`,
+        executes: true,
+      },
+      {
+        name: "parenthesized-module-require",
+        source: `const target = ${JSON.stringify(moduleSpecifier)};\n(module.require)(target);\n`,
+        executes: true,
+      },
+      {
         name: "main-require",
         source: `const target = ${JSON.stringify(moduleSpecifier)};\nrequire.main.require(target);\n`,
+        executes: true,
+      },
+      {
+        name: "require-call",
+        source: `const target = ${JSON.stringify(moduleSpecifier)};\nrequire.call(null, target);\n`,
+        executes: true,
+      },
+      {
+        name: "module-require-apply",
+        source: `const target = ${JSON.stringify(moduleSpecifier)};\nmodule.require.apply(module, [target]);\n`,
+        executes: true,
+      },
+      {
+        name: "require-alias",
+        source: `const load = require;\nconst target = ${JSON.stringify(moduleSpecifier)};\nload(target);\n`,
+        executes: true,
+      },
+      {
+        name: "module-require-alias",
+        source: `const load = module.require;\nconst target = ${JSON.stringify(moduleSpecifier)};\nload(target);\n`,
+        executes: true,
+      },
+      {
+        name: "computed-module-require-alias",
+        source: `const load = module["require"];\nconst target = ${JSON.stringify(moduleSpecifier)};\nload(target);\n`,
+        executes: true,
+      },
+      {
+        name: "destructured-module-require-alias",
+        source: `const { require: load } = module;\nconst target = ${JSON.stringify(moduleSpecifier)};\nload(target);\n`,
         executes: true,
       },
       {
@@ -330,6 +380,21 @@ describe("managed gate closure v1", () => {
       {
         name: "require-resolve",
         source: `const target = ${JSON.stringify(moduleSpecifier)};\nconsole.log(require.resolve(target));\n`,
+        executes: false,
+      },
+      {
+        name: "computed-require-resolve",
+        source: `const target = ${JSON.stringify(moduleSpecifier)};\nconsole.log(require["resolve"](target));\n`,
+        executes: false,
+      },
+      {
+        name: "parenthesized-require-resolve",
+        source: `const target = ${JSON.stringify(moduleSpecifier)};\nconsole.log((require.resolve)(target));\n`,
+        executes: false,
+      },
+      {
+        name: "require-resolve-alias",
+        source: `const resolveModule = require.resolve;\nconst target = ${JSON.stringify(moduleSpecifier)};\nconsole.log(resolveModule(target));\n`,
         executes: false,
       },
     ] as const) {
