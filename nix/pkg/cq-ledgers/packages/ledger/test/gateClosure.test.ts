@@ -255,6 +255,43 @@ describe("managed gate closure v1", () => {
     }
   });
 
+  test("rejects an executable computed-member CommonJS require without a declaration", async () => {
+    const fixture = await createFixture();
+    const siblingSource = await addBunRoot(
+      fixture,
+      "nix/pkg/computed-commonjs-sibling-root",
+      "index.cjs",
+    );
+    await fs.writeFile(
+      path.join(fixture.root, siblingSource),
+      'console.log("T2317_COMPUTED_MEMBER_REQUIRE_EXECUTED");\nmodule.exports = true;\n',
+    );
+    const sourcePath = path.join(fixture.targetRoot, "test", "computed-member-require.cjs");
+    const sourceBytes = [
+      'const modulePath = "../../computed-commonjs-sibling-root/index.cjs";',
+      'module["require"](modulePath);',
+      "",
+    ].join("\n");
+    await fs.writeFile(sourcePath, sourceBytes);
+    await writeManifest(fixture);
+
+    const executed = Bun.spawnSync([process.execPath, sourcePath], {
+      cwd: fixture.targetRoot,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const executionOutput = `${new TextDecoder().decode(executed.stdout)}${new TextDecoder().decode(executed.stderr)}`;
+    expect(executed.exitCode).toBe(0);
+    expect(executionOutput).toContain("T2317_COMPUTED_MEMBER_REQUIRE_EXECUTED");
+
+    const resolution = await resolveManagedGateClosure(fixture.root);
+    expect(resolution.status).toBe("invalid");
+    if (resolution.status === "invalid") {
+      expect(resolution.reason).toBe("source-declaration-missing");
+      expect(resolution.detail).toContain("test/computed-member-require.cjs");
+    }
+  });
+
   test("distinguishes pinned CommonJS execution from resolution", async () => {
     const fixture = await createFixture();
     const siblingSource = await addBunRoot(fixture, "nix/pkg/commonjs-family-root", "index.cjs");
