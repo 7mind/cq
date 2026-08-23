@@ -336,11 +336,11 @@ describe("managed gate closure v1", () => {
     for (const [name, sourceBytes] of [
       [
         "fixed-width",
-        "const requ\\u0069reAlias = require;\nvoid requ\\u0069reAlias;\n",
+        'requ\\u0069re("./unclassified-fixed-width.cjs");\n',
       ],
       [
         "code-point",
-        "const \\u{72}esolver = require.resolve;\nvoid \\u{72}esolver;\n",
+        '\\u{72}equire("./unclassified-code-point.cjs");\n',
       ],
       [
         "template-expression",
