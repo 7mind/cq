@@ -84,11 +84,88 @@ async function createStandaloneBunRoot(): Promise<string> {
   return root;
 }
 
+async function createExternalFile(name: string, bytes: string | Uint8Array): Promise<string> {
+  const root = await fs.mkdtemp(path.join(tmpdir(), "t2317-external-input-"));
+  roots.push(root);
+  const file = path.join(root, name);
+  await fs.writeFile(file, bytes);
+  return file;
+}
+
 afterEach(async () => {
   for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true });
 });
 
 describe("managed gate closure v1", () => {
+  test("rejects a gate closure manifest symlink outside the repository", async () => {
+    const fixture = await createFixture();
+    await writeManifest(fixture);
+    const manifestPath = path.join(fixture.root, "cq-gate-closure.json");
+    const externalManifest = await createExternalFile(
+      "cq-gate-closure.json",
+      await fs.readFile(manifestPath),
+    );
+    await fs.rm(manifestPath);
+    await fs.symlink(externalManifest, manifestPath, "file");
+
+    const resolution = await resolveManagedGateClosure(fixture.root);
+    expect(resolution.status).toBe("invalid");
+    if (resolution.status === "invalid") expect(resolution.reason).toBe("path-escape");
+  });
+
+  test("rejects a target Bun lock symlink outside the repository", async () => {
+    const fixture = await createFixture();
+    await writeManifest(fixture);
+    const lockPath = path.join(fixture.targetRoot, "bun.lock");
+    const externalLock = await createExternalFile("bun.lock", "{}\n");
+    await fs.rm(lockPath);
+    await fs.symlink(externalLock, lockPath, "file");
+
+    const resolution = await resolveManagedGateClosure(fixture.root);
+    expect(resolution.status).toBe("invalid");
+    if (resolution.status === "invalid") expect(resolution.reason).toBe("path-escape");
+  });
+
+  test("rejects a manifest-declared source symlink outside the repository", async () => {
+    const fixture = await createFixture();
+    const sourceBytes =
+      "const assetPath = process.env.ASSET_PATH!;\nawait Bun.file(assetPath).text();\n";
+    const sourcePath = path.join(fixture.targetRoot, "test", "external-source.ts");
+    const externalSource = await createExternalFile("external-source.ts", sourceBytes);
+    await fs.symlink(externalSource, sourcePath, "file");
+    await writeManifest(fixture, [
+      {
+        kind: "path",
+        source: path.relative(fixture.root, sourcePath).split(path.sep).join("/"),
+        sha256: digest(sourceBytes),
+        targets: [],
+      },
+    ]);
+
+    const resolution = await resolveManagedGateClosure(fixture.root);
+    expect(resolution.status).toBe("invalid");
+    if (resolution.status === "invalid") expect(resolution.reason).toBe("path-escape");
+  });
+
+  test("accepts manifest and Bun lock symlinks that remain inside the repository", async () => {
+    const fixture = await createFixture();
+    await writeManifest(fixture);
+    const inputsRoot = path.join(fixture.root, "gate-inputs");
+    await fs.mkdir(inputsRoot);
+
+    const manifestPath = path.join(fixture.root, "cq-gate-closure.json");
+    const internalManifest = path.join(inputsRoot, "cq-gate-closure.json");
+    await fs.rename(manifestPath, internalManifest);
+    await fs.symlink(internalManifest, manifestPath, "file");
+
+    const lockPath = path.join(fixture.targetRoot, "bun.lock");
+    const internalLock = path.join(inputsRoot, "bun.lock");
+    await fs.rename(lockPath, internalLock);
+    await fs.symlink(internalLock, lockPath, "file");
+
+    expect((await resolveManagedGateClosure(fixture.root)).status).toBe("resolved");
+  });
+
   test("rejects target script DAG divergence and missing script edges", async () => {
     const fixture = await createFixture();
     await writeManifest(fixture);
