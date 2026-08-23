@@ -170,6 +170,23 @@ describe("managed gate closure v1", () => {
     if (resolution.status === "invalid") expect(resolution.reason).toBe("path-escape");
   });
 
+  test("rejects a static-import root non-file package manifest", async () => {
+    const fixture = await createFixture();
+    const source = await addBunRoot(fixture, "nix/pkg/static-root");
+    const packagePath = path.join(path.dirname(path.join(fixture.root, source)), "package.json");
+    await fs.rm(packagePath);
+    await fs.mkdir(packagePath);
+    await fs.writeFile(
+      path.join(fixture.targetRoot, "test", "gate.test.ts"),
+      'import { edge } from "../../static-root/index.js";\nvoid edge;\n',
+    );
+    await writeManifest(fixture);
+
+    const resolution = await resolveManagedGateClosure(fixture.root);
+    expect(resolution.status).toBe("invalid");
+    if (resolution.status === "invalid") expect(resolution.reason).toBe("bun-root-incomplete");
+  });
+
   test("rejects a declared target root Bun lock symlink outside the repository", async () => {
     const fixture = await createFixture();
     const sourcePath = path.join(fixture.targetRoot, "test", "gate.test.ts");

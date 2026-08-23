@@ -503,10 +503,20 @@ async function nearestBunRoot(
     return { status: "missing" };
   }
   while (true) {
-    if (await pathExists(join(current, "package.json"))) {
-      const lock = await resolveBunLock(repositoryRoot, current);
-      if (lock.status === "path-escape") return lock;
-      if (lock.status === "found") return { status: "found", root: current };
+    const packagePath = join(current, "package.json");
+    const canonicalPackagePath = await canonicalRepositoryPath(repositoryRoot, packagePath);
+    if (canonicalPackagePath !== null) {
+      try {
+        if ((await fs.stat(canonicalPackagePath)).isFile()) {
+          const lock = await resolveBunLock(repositoryRoot, current);
+          if (lock.status === "path-escape") return lock;
+          if (lock.status === "found") return { status: "found", root: current };
+        }
+      } catch {
+        // continue
+      }
+    } else if (await pathExists(packagePath)) {
+      return { status: "path-escape", path: packagePath };
     }
     if (current === repositoryRoot) return { status: "missing" };
     const parent = dirname(current);
@@ -1652,7 +1662,10 @@ export async function resolveManagedGateClosure(
       }
       const root = await nearestBunRoot(repositoryRoot, canonicalTarget);
       if (root.status === "path-escape") {
-        return invalid("path-escape", `resolved Bun lock ${root.path} escapes the repository`);
+        return invalid(
+          "path-escape",
+          `resolved Bun root metadata ${root.path} escapes the repository`,
+        );
       }
       if (root.status === "missing") {
         return invalid(
@@ -1667,7 +1680,10 @@ export async function resolveManagedGateClosure(
   for (const target of declaredTargets) {
     const root = await nearestBunRoot(repositoryRoot, target);
     if (root.status === "path-escape") {
-      return invalid("path-escape", `resolved Bun lock ${root.path} escapes the repository`);
+      return invalid(
+        "path-escape",
+        `resolved Bun root metadata ${root.path} escapes the repository`,
+      );
     }
     if (root.status === "missing") {
       return invalid(
