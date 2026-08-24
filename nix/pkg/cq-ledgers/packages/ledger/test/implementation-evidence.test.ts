@@ -331,6 +331,9 @@ describe("versioned protected implementation evidence [BG]", () => {
         fields: { resultCommit: RESULT, completion: "direct forged completion" },
       }),
     ).rejects.toThrow("protected implementation evidence");
+    await expect(
+      ledger.updateItem(TASKS_LEDGER, "T2345", { status: "abandoned" }),
+    ).rejects.toThrow("protected implementation evidence");
     expect(
       await ledger.createItem(TASKS_LEDGER, milestone.id, {
         id: "T2346",
@@ -410,6 +413,43 @@ describe("versioned protected implementation evidence [BG]", () => {
         fields: { completion: "forged replacement" },
       }),
     ).rejects.toThrow("protected implementation evidence");
+  });
+
+  test("settles the underlying merge admission when the ff-only process leaves HEAD unchanged", async () => {
+    const f = await fixture();
+    const completion = await f.service.prepareCompletion({
+      taskRef: "tasks:T2345",
+      expectedRepositoryHead: BASE,
+      resultCommit: RESULT,
+      workerDispatch: WORKER,
+      reviewAttemptRefs: [f.attemptRef],
+      completion: "implemented",
+      logPaths: [],
+      mergeOperationId: "merge-settlement-failure",
+      operationId: "completion-settlement-failure",
+      author: "parent",
+    });
+    const provider = implementationCompletionMergeAdmissionProviderFromStore({
+      provider: createStrictInMemoryWorksetEffectAdmissionProvider(),
+      store: f.evidence,
+      binding: {
+        kind: "merge",
+        targetRef: "tasks:T2345",
+        repositoryRoot: "/repo",
+        commit: RESULT,
+        completionRef: completion.completionRef,
+        mergeOperationId: "merge-settlement-failure",
+      },
+      repositoryHead: async () => f.getHead(),
+    });
+    const admission = await provider.acquire({ kind: "merge", targetRef: "tasks:T2345" });
+    await admission.registerProcessGroup({ pgid: 456, leaderPid: 456 });
+    await admission.shareWithGuardian({ pgid: 456, leaderPid: 456 });
+    await expect(admission.markSettled()).resolves.toBeUndefined();
+    await admission.releaseAfterSettlement();
+    expect((await f.evidence.snapshot()).completions[completion.completionRef]!.state).toBe(
+      "merge-started",
+    );
   });
 
   test("rolls back the terminal review when the paired task transition fails", async () => {

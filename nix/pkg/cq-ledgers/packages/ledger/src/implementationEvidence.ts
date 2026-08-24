@@ -190,6 +190,7 @@ function assertGenericImplementationTaskMutationAllowed(
   if (!implementationTaskIsActivated(snapshot, taskRef)) return;
   if (
     patch.status === "done" ||
+    patch.status === "abandoned" ||
     (item.status === "done" && typeof item.fields["resultCommit"] === "string")
   ) {
     throw new LedgerError(
@@ -463,6 +464,13 @@ function validateReviewerVerdict(
   const baseAncestry = value["baseAncestry"];
   if (!object(resultEvidence) || !object(baseAncestry)) return false;
   if (value["verdict"] === "approve") {
+    if (
+      value["gateReRan"] !== true ||
+      typeof value["gateDurationMs"] !== "number" ||
+      !Number.isFinite(value["gateDurationMs"]) ||
+      value["gateDurationMs"] <= 0
+    )
+      return false;
     if (value["resultCommitVerified"] !== true) return false;
     if (!exactKeys(resultEvidence, ["status", "resultCommit", "branchTip"])) return false;
     if (resultEvidence["status"] !== "verified") return false;
@@ -484,6 +492,14 @@ function validateReviewerVerdict(
       ![baseAncestry["baseCommit"], baseAncestry["mergeBase"]].every(
         (entry) => typeof entry === "string" && FULL_SHA.test(entry),
       )
+    )
+      return false;
+    if (baseAncestry["mergeBase"] !== baseAncestry["baseCommit"]) return false;
+    if (
+      (baseAncestry["relation"] === "equal" &&
+        baseAncestry["baseCommit"] !== expectedResultCommit) ||
+      (baseAncestry["relation"] === "descendant" &&
+        baseAncestry["baseCommit"] === expectedResultCommit)
     )
       return false;
   }
@@ -852,6 +868,10 @@ export class ImplementationEvidenceService {
         executionRef: attempt.execution.executionRef,
       };
     }
+    if (attempt.terminalState !== null)
+      throw new Error("external review attempt is already terminal");
+    if (attempt.execution !== null)
+      throw new Error("external review attempt already has an execution receipt");
     let observation: ExternalReviewProcessObservation | null = null;
     let unavailable: unknown;
     try {
@@ -909,6 +929,10 @@ export class ImplementationEvidenceService {
           executionRef: current.execution.executionRef,
         };
       }
+      if (current.terminalState !== null)
+        throw new Error("external review attempt is already terminal");
+      if (current.execution !== null)
+        throw new Error("external review attempt already has an execution receipt");
       state.attempts[input.attemptRef] = withOperation(
         { ...current, execution },
         input.operationId,
@@ -1187,6 +1211,13 @@ export class ImplementationEvidenceService {
           );
         if (activeForTask.length !== 1 || activeForTask[0]!.completionRef !== prior.completionRef)
           throw new Error("superseded completion is not the unique active task journal");
+        if (
+          input.resultCommit === prior.resultCommit ||
+          canonical(input.reviewAttemptRefs) === canonical(prior.reviewAttemptRefs)
+        )
+          throw new Error(
+            "superseding completion requires a rebased result and fresh authenticated review",
+          );
         state.completions[prior.completionRef] = { ...prior, state: "superseded" };
       }
       const record: ImplementationCompletionRecord = {
@@ -1810,13 +1841,19 @@ export function implementationCompletionMergeAdmissionProviderFromStore(
           await underlying.shareWithGuardian(guardian, deadline);
         },
         markSettled: async () => {
+          await underlying.markSettled();
+          const observedHead = await options.repositoryHead();
+          const completion = (await options.store.snapshot()).completions[
+            options.binding.completionRef
+          ];
+          if (completion === undefined) throw new Error("merge completion journal disappeared");
+          if (observedHead === completion.repositoryHead) return;
           await markImplementationCompletionMerged(
             options.store,
             options.binding.completionRef,
-            await options.repositoryHead(),
+            observedHead,
             options.now,
           );
-          await underlying.markSettled();
         },
         releaseAfterSettlement: async () => await underlying.releaseAfterSettlement(),
         abandonBeforeRegistration: async () => await underlying.abandonBeforeRegistration(),
