@@ -6,7 +6,10 @@ import type { GetConfigResult } from "../src/mcp/configCapability.js";
 import type { FetchPromptResult } from "../src/mcp/promptCatalogCapability.js";
 import type { FetchDispatchResult, MaterializedDispatchInput } from "@cq/config";
 import { InMemoryLedgerStore } from "../src/store/InMemoryLedgerStore.js";
-import { createLedgerMcpTools, LEDGER_TOOL_NAMES } from "../src/mcp/ledgerTools.js";
+import {
+  createLedgerMcpTools,
+  MANAGEMENT_LEDGER_TOOL_NAMES,
+} from "../src/mcp/ledgerTools.js";
 import {
   COMPACT_ITEM_FIELD_NAMES,
   LEDGER_RESPONSE_CONTRACTS,
@@ -109,7 +112,9 @@ async function initializedStore(): Promise<InMemoryLedgerStore> {
 
 describe("ledger response contract matrix", () => {
   it("covers all 35 ledger tools exactly and classifies every response", () => {
-    expect(Object.keys(LEDGER_RESPONSE_CONTRACTS)).toEqual([...LEDGER_TOOL_NAMES]);
+    expect(Object.keys(LEDGER_RESPONSE_CONTRACTS)).toEqual([
+      ...MANAGEMENT_LEDGER_TOOL_NAMES,
+    ]);
     expect(LEDGER_RESPONSE_CONTRACTS).toMatchObject({
       enumerate_ledgers: { kind: "purpose-built-small" },
       fetch_ledger: {

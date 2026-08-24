@@ -296,9 +296,12 @@ async function withClient(
       throw new Error("D336 uses one native reviewer");
     },
     fetchWorker: async (dispatch) => {
-      const result = await dispatchCapability.fetch(dispatch);
+      if (dispatchCapability.observeEvidence === undefined) {
+        throw new Error("D336 dispatch evidence observation is unavailable");
+      }
+      const result = await dispatchCapability.observeEvidence(dispatch);
       return result.state === "consumed"
-        ? { state: "consumed", output: result.output }
+        ? { state: "consumed", input: result.input, output: result.output }
         : result.state === "aborted"
           ? { state: "aborted" }
           : { state: "missing" };

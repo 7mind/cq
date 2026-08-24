@@ -11,8 +11,8 @@ import {
 } from "../packages/cq-config/src/index.js";
 import {
   InMemoryLedgerStore,
-  LEDGER_TOOL_NAMES,
-  NON_DISPATCH_LEDGER_TOOL_NAMES,
+  MANAGEMENT_LEDGER_TOOL_NAMES,
+  MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES,
   createTrustedWorksetManagementAuthority,
   type DispatchCapability,
 } from "../packages/ledger/src/index.js";
@@ -171,16 +171,16 @@ const DURABLE_DISPATCH_CAPABILITY: DispatchCapability = {
 
 const PROFILE_DEFINITIONS: Record<ToolSurfaceProfileName, ProfileDefinition> = {
   full: {
-    inventorySource: "LEDGER_TOOL_NAMES",
-    expectedInventory: LEDGER_TOOL_NAMES,
+    inventorySource: "MANAGEMENT_LEDGER_TOOL_NAMES",
+    expectedInventory: MANAGEMENT_LEDGER_TOOL_NAMES,
     dispatchCapability: DURABLE_DISPATCH_CAPABILITY,
     contractRequiredTools: [],
     zeroDomainCalls: false,
     managementBound: true,
   },
   "non-dispatch": {
-    inventorySource: "NON_DISPATCH_LEDGER_TOOL_NAMES",
-    expectedInventory: NON_DISPATCH_LEDGER_TOOL_NAMES,
+    inventorySource: "MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES",
+    expectedInventory: MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES,
     contractRequiredTools: [],
     zeroDomainCalls: false,
     managementBound: true,

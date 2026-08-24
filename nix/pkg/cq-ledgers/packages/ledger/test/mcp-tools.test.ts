@@ -14,8 +14,9 @@ import {
   InMemoryLedgerStore,
   IDEAS_LEDGER,
   LEDGER_TOOL_NAMES,
+  MANAGEMENT_LEDGER_TOOL_NAMES,
+  MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES,
   MILESTONES_AMBIENT_ID,
-  NON_DISPATCH_LEDGER_TOOL_NAMES,
   CANONICAL_LEDGERS,
   createLedgerMcpTools,
   createManagementLedgerMcpTools,
@@ -235,11 +236,16 @@ function expectedItemAcknowledgement(item: Item): Record<string, unknown> {
 }
 
 describe("ledger MCP tools", () => {
-  it("exports 46 canonical names and hides both validators", async () => {
+  it("keeps the 39 ordinary names separate from the 46-name management inventory", async () => {
     const store = await buildStore();
     const tools = createManagementLedgerMcpTools(store);
-    expect(tools.map((t) => t.name).sort()).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
-    expect(LEDGER_TOOL_NAMES.length).toBe(46);
+    expect(tools.map((t) => t.name).sort()).toEqual([
+      ...MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES,
+    ].sort());
+    expect(LEDGER_TOOL_NAMES.length).toBe(39);
+    expect(MANAGEMENT_LEDGER_TOOL_NAMES.length).toBe(46);
+    expect(LEDGER_TOOL_NAMES).not.toContain("prepare_implementation_review_panel" as never);
+    expect(MANAGEMENT_LEDGER_TOOL_NAMES).toContain("prepare_implementation_review_panel");
     expect(LEDGER_TOOL_NAMES).toContain("fts_search");
     expect(LEDGER_TOOL_NAMES).toContain("snapshot");
     expect(LEDGER_TOOL_NAMES).toContain("derive_predicates");
@@ -280,7 +286,7 @@ describe("ledger MCP tools", () => {
       prefix,
     );
     expect(tools.map((t) => t.name).sort()).toEqual(
-      NON_DISPATCH_LEDGER_TOOL_NAMES.map((name) => `${prefix}_${name}`).sort(),
+      MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES.map((name) => `${prefix}_${name}`).sort(),
     );
   });
 

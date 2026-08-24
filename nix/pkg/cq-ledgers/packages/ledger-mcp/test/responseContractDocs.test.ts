@@ -10,7 +10,7 @@ import {
   InMemoryLedgerStore,
   ITEM_PROJECTION_DESCRIPTION,
   LEDGER_RESPONSE_CONTRACTS,
-  LEDGER_TOOL_NAMES,
+  MANAGEMENT_LEDGER_TOOL_NAMES,
   type DispatchCapability,
 } from "@cq/ledger";
 import { createLedgerMcpServer } from "../src/main.js";
@@ -76,7 +76,7 @@ function responseMatrixRows(markdown: string): ResponseMatrixRow[] {
 
 function assertCanonicalResponseMatrix(markdown: string): void {
   expect(responseMatrixRows(markdown)).toEqual(
-    LEDGER_TOOL_NAMES.map((tool) => ({
+    MANAGEMENT_LEDGER_TOOL_NAMES.map((tool) => ({
       tool,
       kind: LEDGER_RESPONSE_CONTRACTS[tool].kind,
       response: LEDGER_RESPONSE_CONTRACTS[tool].responseCell,
@@ -229,7 +229,7 @@ describe("public MCP response-contract documentation", () => {
           dispatchCapability,
         ).map((tool) => [tool.name, tool]),
       );
-      for (const toolName of LEDGER_TOOL_NAMES) {
+      for (const toolName of MANAGEMENT_LEDGER_TOOL_NAMES) {
         const tool = toolByName.get(toolName);
         const directTool = directToolByName.get(toolName);
         expect(tool).toBeDefined();

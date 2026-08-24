@@ -463,26 +463,6 @@ export function applyUpdateItem(
     );
   }
   if (
-    ledger.id === TASKS_LEDGER &&
-    patch.status === "done" &&
-    typeof patch.fields?.["resultCommit"] === "string" &&
-    !isAuthorizedImplementationEvidenceMutation(patch)
-  ) {
-    throw new LedgerError(
-      "Git-producing tasks may terminalize only through protected implementation evidence",
-    );
-  }
-  if (
-    ledger.id === TASKS_LEDGER &&
-    item.status === "done" &&
-    typeof item.fields["resultCommit"] === "string" &&
-    !isAuthorizedImplementationEvidenceMutation(patch)
-  ) {
-    throw new LedgerError(
-      "protected implementation evidence tasks may mutate only through completion recording",
-    );
-  }
-  if (
     currentOperatorDirective !== null &&
     patch.status !== undefined &&
     patch.status !== item.status &&

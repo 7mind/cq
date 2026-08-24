@@ -16,8 +16,10 @@ import type {
 import { Lockfile, type LockfileOpts } from "./store/lockfile.js";
 import { REVIEWS_LEDGER, TASKS_LEDGER } from "./constants.js";
 import type { CreateItemInit, LedgerStore, UpdateItemPatch } from "./store/LedgerStore.js";
+import type { WorksetGenericMutationTx } from "./store/genericMutationTransaction.js";
+import type { WorksetRootsEpoch } from "./worksetEffectAdmission.js";
 import type { WorksetOwnedWriteTx } from "./worksetOwnedLifecycle.js";
-import { ItemNotFoundError } from "./types.js";
+import { ItemNotFoundError, LedgerError } from "./types.js";
 
 export const IMPLEMENTATION_EVIDENCE_VERSION = 1 as const;
 
@@ -159,6 +161,106 @@ export interface ImplementationEvidenceStore {
   [mutateEvidence]<T>(
     mutation: (draft: MutableImplementationEvidenceSnapshot) => T | Promise<T>,
   ): Promise<T>;
+}
+
+type AtomicGenericLedgerStore = LedgerStore & {
+  runAtomicGenericMutation<T>(
+    mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
+    readRoots?: () => Promise<WorksetRootsEpoch>,
+  ): Promise<T>;
+};
+
+function implementationTaskIsActivated(
+  snapshot: ImplementationEvidenceSnapshot,
+  taskRef: string,
+): boolean {
+  return (
+    Object.values(snapshot.panels).some((panel) => panel.taskRef === taskRef) ||
+    Object.values(snapshot.completions).some((completion) => completion.taskRef === taskRef)
+  );
+}
+
+function assertGenericImplementationTaskMutationAllowed(
+  snapshot: ImplementationEvidenceSnapshot,
+  item: ReturnType<LedgerStore["fetchItem"]>,
+  patch: UpdateItemPatch,
+): void {
+  if (isAuthorizedImplementationEvidenceMutation(patch)) return;
+  const taskRef = `${TASKS_LEDGER}:${item.id}`;
+  if (!implementationTaskIsActivated(snapshot, taskRef)) return;
+  if (
+    patch.status === "done" ||
+    (item.status === "done" && typeof item.fields["resultCommit"] === "string")
+  ) {
+    throw new LedgerError(
+      `Git-producing task ${taskRef} may mutate only through protected implementation evidence`,
+    );
+  }
+}
+
+/**
+ * Bind protected activation authority to the generic store write boundary.
+ * Legacy tasks remain writable until a review panel or completion journal
+ * activates the task; protected completion uses the separate authorized
+ * atomic-owned mutation path.
+ */
+export function protectLedgerStoreWithImplementationEvidence(
+  store: LedgerStore,
+  evidenceStore: ImplementationEvidenceStore,
+): LedgerStore {
+  const candidate = store as AtomicGenericLedgerStore;
+  const rawAtomicGenericMutation = Reflect.get(candidate, "runAtomicGenericMutation") as
+    | AtomicGenericLedgerStore["runAtomicGenericMutation"]
+    | undefined;
+
+  return new Proxy(candidate, {
+    get(target, property) {
+      if (property === "updateItem") {
+        return async (ledgerId: string, itemId: string, patch: UpdateItemPatch) => {
+          if (ledgerId === TASKS_LEDGER) {
+            const snapshot = await evidenceStore.snapshot();
+            assertGenericImplementationTaskMutationAllowed(
+              snapshot,
+              target.fetchItem(ledgerId, itemId),
+              patch,
+            );
+          }
+          return await target.updateItem(ledgerId, itemId, patch);
+        };
+      }
+      if (property === "runAtomicGenericMutation" && rawAtomicGenericMutation !== undefined) {
+        return async <T>(
+          mutate: (tx: WorksetGenericMutationTx, roots: WorksetRootsEpoch) => T,
+          readRoots?: () => Promise<WorksetRootsEpoch>,
+        ): Promise<T> => {
+          const snapshot = await evidenceStore.snapshot();
+          return (await rawAtomicGenericMutation.call(
+            target,
+            (tx, roots) =>
+              mutate(
+                {
+                  ...tx,
+                  updateItem: (ledgerId, itemId, patch) => {
+                    if (ledgerId === TASKS_LEDGER) {
+                      assertGenericImplementationTaskMutationAllowed(
+                        snapshot,
+                        tx.fetchItem(ledgerId, itemId),
+                        patch,
+                      );
+                    }
+                    return tx.updateItem(ledgerId, itemId, patch);
+                  },
+                },
+                roots,
+              ),
+            readRoots,
+          )) as T;
+        };
+      }
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
 }
 
 function emptyState(): MutableImplementationEvidenceSnapshot {
