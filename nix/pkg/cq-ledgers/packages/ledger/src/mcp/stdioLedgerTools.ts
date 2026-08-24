@@ -27,6 +27,7 @@ import {
   bindWorksetInvocationAuthority,
   createObserveOnlyWorksetInvocationAuthority,
   createTrustedWorksetManagementAuthority,
+  isTrustedWorksetManagementAuthority,
   type WorksetInvocationAuthority,
 } from "../worksetInvocationAuthority.js";
 
@@ -97,6 +98,7 @@ export function registerLedgerStdioTools(
       worktreeManage,
       worksetAuthority,
       implementationEvidence,
+      isTrustedWorksetManagementAuthority(worksetAuthority),
     ),
     profileName,
   );
@@ -116,6 +118,7 @@ export function registerLedgerStdioManagementTools(
   dispatchCapability?: DispatchCapability,
   profileName: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
   worktreeManage?: WorktreeManageCapability,
+  implementationEvidence?: ImplementationEvidenceService,
 ): void {
   registerLedgerStdioTools(
     server,
@@ -129,5 +132,6 @@ export function registerLedgerStdioManagementTools(
     profileName,
     worktreeManage,
     createTrustedWorksetManagementAuthority(),
+    implementationEvidence,
   );
 }

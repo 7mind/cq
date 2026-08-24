@@ -1,7 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { dirname, join } from "node:path";
-import type { DispatchHandle, DispatchJSONValue, DispatchPrepared } from "@cq/config";
+import {
+  implementReviewerSidecar,
+  validateAgainstSchema,
+  type DispatchHandle,
+  type DispatchJSONValue,
+  type DispatchPrepared,
+} from "@cq/config";
 import type {
   MergeEffectBinding,
   WorksetEffectAdmissionProvider,
@@ -10,7 +16,8 @@ import type {
 import { Lockfile, type LockfileOpts } from "./store/lockfile.js";
 import { REVIEWS_LEDGER, TASKS_LEDGER } from "./constants.js";
 import type { CreateItemInit, LedgerStore, UpdateItemPatch } from "./store/LedgerStore.js";
-import { DuplicateIdError } from "./types.js";
+import type { WorksetOwnedWriteTx } from "./worksetOwnedLifecycle.js";
+import { ItemNotFoundError } from "./types.js";
 
 export const IMPLEMENTATION_EVIDENCE_VERSION = 1 as const;
 
@@ -343,35 +350,13 @@ function validateReviewerVerdict(
   expectedResultCommit: string,
 ): value is DispatchJSONValue {
   if (!object(value)) return false;
-  const optional = ["summary", "gateDurationMs", "gateReRanReason", "actualWorktreePath"];
-  const required = [
-    "taskId",
-    "verdict",
-    "criticism",
-    "questions",
-    "defects",
-    "rationale",
-    "gateReRan",
-    "resultCommitVerified",
-    "resultCommitEvidence",
-    "baseAncestry",
-  ];
-  const keys = Object.keys(value);
-  if (keys.some((key) => !required.includes(key) && !optional.includes(key))) return false;
-  if (required.some((key) => !keys.includes(key))) return false;
+  if (!validateAgainstSchema(implementReviewerSidecar.outputSchema, value).ok) return false;
   if (value["taskId"] !== expectedTaskId) return false;
-  if (value["verdict"] !== "approve" && value["verdict"] !== "disapprove") return false;
   if (!stringArray(value["criticism"]) || !stringArray(value["questions"])) return false;
-  if (!Array.isArray(value["defects"]) || typeof value["rationale"] !== "string") return false;
-  if (typeof value["gateReRan"] !== "boolean" || typeof value["resultCommitVerified"] !== "boolean")
-    return false;
-  if (value["gateReRan"] === true && !Number.isInteger(value["gateDurationMs"])) return false;
   if (
-    value["verdict"] === "disapprove" &&
-    value["criticism"].length === 0 &&
-    value["questions"].length === 0
-  )
-    return false;
+    value["verdict"] === "approve" &&
+    (value["criticism"].length !== 0 || value["questions"].length !== 0)
+  ) return false;
   const resultEvidence = value["resultCommitEvidence"];
   const baseAncestry = value["baseAncestry"];
   if (!object(resultEvidence) || !object(baseAncestry)) return false;
@@ -747,6 +732,8 @@ export class ImplementationEvidenceService {
     const attempt = snapshot.attempts[input.attemptRef];
     if (attempt === undefined || attempt.identity.launch !== "adapter")
       throw new Error("attempt is not a configured external review");
+    if (Object.keys(attempt.operations).length === 0)
+      throw new Error("external review attempt was not prepared");
     const panel = snapshot.panels[attempt.panelRef];
     if (panel === undefined) throw new Error("review panel is missing");
     const requestDigest = digest(input);
@@ -778,7 +765,17 @@ export class ImplementationEvidenceService {
             reason: "unavailable" as const,
             detail: unavailable instanceof Error ? unavailable.message : String(unavailable),
           }
-        : parseAdapterVerdict(observation.stdout, taskIdFromRef(panel.taskRef), panel.resultCommit);
+        : observation.adapterIdentity !== attempt.identity.adapterId
+          ? {
+              kind: "operational-abstention" as const,
+              reason: "failed" as const,
+              detail: `configured adapter identity ${attempt.identity.adapterId} resolved as ${observation.adapterIdentity}`,
+            }
+          : parseAdapterVerdict(
+              observation.stdout,
+              taskIdFromRef(panel.taskRef),
+              panel.resultCommit,
+            );
     const executionBase = {
       adapterIdentity: observation?.adapterIdentity ?? attempt.identity.adapterId,
       stdout: observation?.stdout ?? "",
@@ -1169,6 +1166,149 @@ export class ImplementationEvidenceService {
     return await implementationCompletionMergeAcknowledgement(this.deps.store, completionRef);
   }
 
+  private async revalidateCompletion(
+    completion: ImplementationCompletionRecord,
+  ): Promise<ImplementationTaskAuthority> {
+    const task = await this.deps.readTaskAuthority(completion.taskRef);
+    if (
+      task.taskRef !== completion.taskRef ||
+      task.ownerGoalRef !== completion.ownerGoalRef ||
+      task.finalizedManifest !== completion.finalizedManifest ||
+      (task.status !== "wip" && !(completion.state === "recording" && task.status === "done"))
+    ) {
+      throw new Error("task authority changed after completion preparation");
+    }
+    const worker = await this.deps.fetchWorker(completion.workerDispatch);
+    if (
+      worker.state !== "consumed" ||
+      !object(worker.output) ||
+      worker.output["status"] !== "pass" ||
+      worker.output["resultCommit"] !== completion.resultCommit ||
+      canonical(worker.output) !== canonical(completion.workerResult)
+    ) {
+      throw new Error("worker evidence changed after completion preparation");
+    }
+    const snapshot = await this.deps.store.snapshot();
+    const attempts = completion.reviewAttemptRefs.map((ref) => snapshot.attempts[ref]);
+    if (attempts.some((attempt) => attempt === undefined)) {
+      throw new Error("finalized review attempt disappeared after completion preparation");
+    }
+    const boundAttempts = attempts as ImplementationReviewAttemptRecord[];
+    const panelRefs = new Set(boundAttempts.map((attempt) => attempt.panelRef));
+    const panel = panelRefs.size === 1 ? snapshot.panels[boundAttempts[0]!.panelRef] : undefined;
+    if (
+      panel === undefined ||
+      panel.taskRef !== completion.taskRef ||
+      panel.resultCommit !== completion.resultCommit ||
+      !sameHandle(panel.workerDispatch, completion.workerDispatch)
+    ) {
+      throw new Error("review panel changed after completion preparation");
+    }
+    const expectedRefs = [
+      ...panel.attemptRefs,
+      ...(panel.fallbackAttemptRef === null ? [] : [panel.fallbackAttemptRef]),
+    ];
+    if (canonical(expectedRefs) !== canonical(completion.reviewAttemptRefs)) {
+      throw new Error("finalized review attempt order changed after completion preparation");
+    }
+    for (const [index, attempt] of boundAttempts.entries()) {
+      const configured = index < panel.attemptRefs.length;
+      if (
+        attempt.attemptRef !== completion.reviewAttemptRefs[index] ||
+        attempt.panelRef !== panel.panelRef ||
+        attempt.taskRef !== completion.taskRef ||
+        attempt.resultCommit !== completion.resultCommit ||
+        attempt.position !== index ||
+        (configured && canonical(attempt.identity) !== canonical(panel.roster[index])) ||
+        configured === attempt.fallback ||
+        attempt.terminalState === null ||
+        attempt.terminalState === "disapproved"
+      ) {
+        throw new Error("finalized review attempt integrity check failed");
+      }
+      if (attempt.verdict === null) {
+        if (attempt.verdictDigest !== null || attempt.terminalState !== "operational-abstention") {
+          throw new Error("review abstention receipt is inconsistent");
+        }
+      } else {
+        if (
+          attempt.verdictDigest !== digest(attempt.verdict) ||
+          !validateReviewerVerdict(
+            attempt.verdict,
+            taskIdFromRef(completion.taskRef),
+            completion.resultCommit,
+          ) ||
+          attempt.terminalState !==
+            ((attempt.verdict as Record<string, unknown>)["verdict"] === "approve"
+              ? "approved"
+              : "disapproved")
+        ) {
+          throw new Error("review verdict receipt is inconsistent");
+        }
+      }
+    }
+    if (!boundAttempts.some((attempt) => attempt.terminalState === "approved")) {
+      throw new Error("finalized review set no longer contains an approval");
+    }
+    if (
+      panel.fallbackAttemptRef !== null &&
+      boundAttempts
+        .slice(0, panel.attemptRefs.length)
+        .some((attempt) => attempt.terminalState !== "operational-abstention")
+    ) {
+      throw new Error("review fallback is no longer justified by configured abstentions");
+    }
+    const verification = await this.deps.verifyImplementation({
+      task,
+      resultCommit: completion.resultCommit,
+      worker,
+      attempts: boundAttempts,
+    });
+    if (
+      verification.baseCommit !== completion.baseCommit ||
+      verification.startingCommit !== completion.startingCommit ||
+      !verification.clean ||
+      !verification.ancestryVerified ||
+      !verification.receiptsVerified ||
+      !verification.acceptanceVerified ||
+      !verification.gateVerified ||
+      canonical(verification.details) !== canonical(completion.verification)
+    ) {
+      throw new Error("implementation verification changed after completion preparation");
+    }
+    const evidenceFingerprint = digest({
+      version: 1,
+      taskRef: completion.taskRef,
+      ownerGoalRef: task.ownerGoalRef,
+      finalizedManifest: task.finalizedManifest,
+      repositoryHead: completion.repositoryHead,
+      resultCommit: completion.resultCommit,
+      baseCommit: verification.baseCommit,
+      startingCommit: verification.startingCommit,
+      workerDispatch: completion.workerDispatch,
+      workerResult: worker.output,
+      reviewAttemptRefs: completion.reviewAttemptRefs,
+      attempts: boundAttempts.map((attempt) => ({
+        attemptRef: attempt.attemptRef,
+        position: attempt.position,
+        identity: attempt.identity,
+        terminalState: attempt.terminalState,
+        verdictDigest: attempt.verdictDigest,
+        fallback: attempt.fallback,
+        fallbackTrigger: attempt.fallbackTrigger,
+        fallbackExclusions: attempt.fallbackExclusions,
+      })),
+      verification,
+      completion: completion.completion,
+      logPaths: completion.logPaths,
+      mergeOperationId: completion.mergeOperationId,
+    });
+    if (evidenceFingerprint !== completion.evidenceFingerprint) {
+      throw new Error("implementation evidence fingerprint changed before recording");
+    }
+    return task;
+  }
+
   async recordCompletion(input: RecordImplementationCompletionInput) {
     assertOperationId(input.operationId);
     taskIdFromRef(input.taskRef);
@@ -1219,7 +1359,18 @@ export class ImplementationEvidenceService {
           repositoryHead: head,
           evidenceFingerprint: completion.evidenceFingerprint,
         };
+      await this.markMergeStarted(completion.completionRef, head);
+      completion = (await this.deps.store.snapshot()).completions[completion.completionRef]!;
     }
+    if (completion.state === "merge-started" && head === completion.repositoryHead)
+      return {
+        status: "merge-required" as const,
+        completionRef: completion.completionRef,
+        taskRef: completion.taskRef,
+        resultCommit: completion.resultCommit,
+        repositoryHead: head,
+        evidenceFingerprint: completion.evidenceFingerprint,
+      };
     if (head !== completion.resultCommit)
       throw new Error("merge-started or merged completion has an unrelated integration ref");
     if (completion.state === "merge-started") {
@@ -1228,6 +1379,7 @@ export class ImplementationEvidenceService {
     }
     if (completion.state !== "merged" && completion.state !== "recording")
       throw new Error("implementation completion is not recordable");
+    await this.revalidateCompletion(completion);
     completion = await this.deps.store[mutateEvidence](async (state) => {
       const current = state.completions[completion.completionRef];
       if (current === undefined)
@@ -1345,6 +1497,18 @@ export async function markImplementationCompletionMergeStarted(
   await store[mutateEvidence](async (state) => {
     const completion = state.completions[completionRef];
     if (completion === undefined) throw new Error("merge completion journal disappeared");
+    const blocking = Object.values(state.completions).find(
+      (entry) =>
+        entry.completionRef !== completion.completionRef &&
+        (entry.state === "merge-started" ||
+          entry.state === "merged" ||
+          entry.state === "recording"),
+    );
+    if (blocking !== undefined) {
+      throw new Error(
+        `implementation completion ${blocking.completionRef} blocks another repository merge until recording`,
+      );
+    }
     if (
       observedHead === completion.resultCommit &&
       (completion.state === "prepared" || completion.state === "merge-started")
@@ -1358,6 +1522,7 @@ export async function markImplementationCompletionMergeStarted(
       };
       return;
     }
+    if (observedHead === completion.resultCommit && completion.state === "merged") return;
     if (observedHead !== completion.repositoryHead)
       throw new Error("repository HEAD changed before merge launch");
     if (completion.state === "prepared")
@@ -1447,19 +1612,6 @@ export async function recordProtectedImplementationCompletion(
     author: provenance.author,
     ...(provenance.session === undefined ? {} : { session: provenance.session }),
   };
-  authorizedImplementationEvidenceMutations.add(reviewInit);
-  try {
-    const currentTask = store.fetchItem(TASKS_LEDGER, taskId);
-    await store.createItem(REVIEWS_LEDGER, currentTask.milestoneId, reviewInit);
-  } catch (error) {
-    if (!(error instanceof DuplicateIdError)) throw error;
-    const existing = store.fetchItem(REVIEWS_LEDGER, reviewId);
-    if (
-      existing.status !== "go-ahead" ||
-      existing.fields["implementationEvidence"] !== implementationEvidence
-    )
-      throw new Error("terminal implementation review id belongs to different evidence");
-  }
   const patch: UpdateItemPatch = {
     status: "done",
     fields: {
@@ -1470,12 +1622,37 @@ export async function recordProtectedImplementationCompletion(
     author: provenance.author,
     ...(provenance.session === undefined ? {} : { session: provenance.session }),
   };
+  authorizedImplementationEvidenceMutations.add(reviewInit);
   authorizedImplementationEvidenceMutations.add(patch);
-  const current = store.fetchItem(TASKS_LEDGER, taskId);
-  if (current.status !== "done") await store.updateItem(TASKS_LEDGER, taskId, patch);
-  else if (current.fields["resultCommit"] !== completion.resultCommit)
-    throw new Error("done task carries a different resultCommit");
-  return { reviewRef: `${REVIEWS_LEDGER}:${reviewId}` };
+  const atomic = store as LedgerStore & {
+    runAtomicOwnedMutation?<T>(
+      mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>,
+    ): Promise<T>;
+  };
+  if (atomic.runAtomicOwnedMutation === undefined) {
+    throw new Error("protected implementation completion requires an atomic ledger adapter");
+  }
+  return await atomic.runAtomicOwnedMutation((tx) => {
+    const currentTask = tx.fetchItem(TASKS_LEDGER, taskId);
+    let existingReview;
+    try {
+      existingReview = tx.fetchItem(REVIEWS_LEDGER, reviewId);
+    } catch (error) {
+      if (!(error instanceof ItemNotFoundError)) throw error;
+    }
+    if (existingReview === undefined) {
+      tx.createItemOwnerless(REVIEWS_LEDGER, currentTask.milestoneId, reviewInit);
+    } else if (
+      existingReview.status !== "go-ahead" ||
+      existingReview.fields["implementationEvidence"] !== implementationEvidence
+    ) {
+      throw new Error("terminal implementation review id belongs to different evidence");
+    }
+    if (currentTask.status !== "done") tx.updateItem(TASKS_LEDGER, taskId, patch);
+    else if (currentTask.fields["resultCommit"] !== completion.resultCommit)
+      throw new Error("done task carries a different resultCommit");
+    return { reviewRef: `${REVIEWS_LEDGER}:${reviewId}` };
+  });
 }
 
 export function canonicalImplementationCompletionMergeLine(

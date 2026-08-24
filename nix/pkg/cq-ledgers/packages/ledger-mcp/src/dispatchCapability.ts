@@ -1664,6 +1664,28 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         { namespace, actor: "trusted-parent", ...input },
         { now },
       ),
+    observeEvidence: async (input) =>
+      await options.backend.transact({ kind: "handle", handle: input }, (store) => {
+        const row = store.read(input);
+        if (row === undefined || isAttestationTombstone(row)) return { state: "missing" as const };
+        const base = {
+          roleId: row.promptProvenance.roleId,
+          input: structuredClone(row.input),
+          retainedAttestation: row.attestationId,
+        };
+        if (row.state === "consumed") {
+          if (row.output === undefined) {
+            throw new Error("consumed dispatch evidence has no stored output");
+          }
+          return {
+            state: "consumed" as const,
+            ...base,
+            output: structuredClone(row.output),
+          };
+        }
+        if (row.state === "aborted") return { state: "aborted" as const, ...base };
+        return { state: "nonterminal" as const, ...base };
+      }),
     gitCommit: async (input) => {
       if (options.repositoryRoot === undefined) {
         throw new Error("git_commit is unavailable without a local repository root");

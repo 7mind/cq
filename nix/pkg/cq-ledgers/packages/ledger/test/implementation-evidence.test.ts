@@ -75,6 +75,7 @@ async function fixture() {
   const evidence = createInMemoryImplementationEvidenceStore();
   let head = BASE;
   let ledgerWrites = 0;
+  let verificationClean = true;
   const dependencies: ImplementationEvidenceServiceDependencies = {
     store: evidence,
     reviewerRoster: [reviewer],
@@ -113,7 +114,7 @@ async function fixture() {
     verifyImplementation: async () => ({
       baseCommit: BASE,
       startingCommit: BASE,
-      clean: true,
+      clean: verificationClean,
       ancestryVerified: true,
       receiptsVerified: true,
       acceptanceVerified: true,
@@ -148,6 +149,9 @@ async function fixture() {
     getHead: () => head,
     setHead: (value: string) => {
       head = value;
+    },
+    setVerificationClean: (value: boolean) => {
+      verificationClean = value;
     },
     getLedgerWrites: () => ledgerWrites,
   };
@@ -257,6 +261,35 @@ describe("versioned protected implementation evidence [BG]", () => {
     expect(Object.keys((await f.evidence.snapshot()).completions)).toHaveLength(0);
   });
 
+  test("revalidates trusted implementation observations immediately before recording", async () => {
+    const f = await fixture();
+    const completion = await f.service.prepareCompletion({
+      taskRef: "tasks:T2345",
+      expectedRepositoryHead: BASE,
+      resultCommit: RESULT,
+      workerDispatch: WORKER,
+      reviewAttemptRefs: [f.attemptRef],
+      completion: "implemented",
+      logPaths: [],
+      mergeOperationId: "merge-revalidate",
+      operationId: "completion-revalidate",
+      author: "parent",
+    });
+    await f.service.markMergeStarted(completion.completionRef, BASE);
+    f.setHead(RESULT);
+    await f.service.markMerged(completion.completionRef, RESULT);
+    f.setVerificationClean(false);
+    await expect(
+      f.service.recordCompletion({
+        taskRef: "tasks:T2345",
+        expectedRepositoryHead: RESULT,
+        operationId: "record-revalidate",
+        author: "parent",
+      }),
+    ).rejects.toThrow("verification changed");
+    expect(f.getLedgerWrites()).toBe(0);
+  });
+
   test("generic writes cannot terminalize an active Git-producing implementation task", async () => {
     const f = await fixture();
     const preparedCompletion = await f.service.prepareCompletion({
@@ -290,6 +323,12 @@ describe("versioned protected implementation evidence [BG]", () => {
       fields: { headline: "task" },
     });
     await ledger.updateItem(TASKS_LEDGER, "T2345", { status: "wip" });
+    await expect(
+      ledger.updateItem(TASKS_LEDGER, "T2345", {
+        status: "done",
+        fields: { resultCommit: RESULT, completion: "direct forged completion" },
+      }),
+    ).rejects.toThrow("protected implementation evidence");
     expect(
       await ledger.createItem(TASKS_LEDGER, milestone.id, {
         id: "T2346",

@@ -454,11 +454,32 @@ export function applyUpdateItem(
   }
   if (
     ledger.id === REVIEWS_LEDGER &&
-    patch.fields?.["implementationEvidence"] !== undefined &&
+    (item.fields["implementationEvidence"] !== undefined ||
+      patch.fields?.["implementationEvidence"] !== undefined) &&
     !isAuthorizedImplementationEvidenceMutation(patch)
   ) {
     throw new LedgerError(
-      "implementationEvidence may mutate only through protected completion recording",
+      "protected implementation evidence reviews may mutate only through completion recording",
+    );
+  }
+  if (
+    ledger.id === TASKS_LEDGER &&
+    patch.status === "done" &&
+    typeof patch.fields?.["resultCommit"] === "string" &&
+    !isAuthorizedImplementationEvidenceMutation(patch)
+  ) {
+    throw new LedgerError(
+      "Git-producing tasks may terminalize only through protected implementation evidence",
+    );
+  }
+  if (
+    ledger.id === TASKS_LEDGER &&
+    item.status === "done" &&
+    typeof item.fields["resultCommit"] === "string" &&
+    !isAuthorizedImplementationEvidenceMutation(patch)
+  ) {
+    throw new LedgerError(
+      "protected implementation evidence tasks may mutate only through completion recording",
     );
   }
   if (

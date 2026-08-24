@@ -74,6 +74,7 @@ import {
   createWorktreeManageCapability,
   createObserveOnlyWorksetInvocationAuthority,
   createTrustedWorksetManagementAuthority,
+  isTrustedWorksetManagementAuthority,
   validateJsonl,
   bindWorksetInvocationAuthority,
   type WorksetInvocationAuthority,
@@ -82,6 +83,7 @@ import {
 import { loadConfig, resolveRemoteLedgerTokenFromProcess } from "@cq/config";
 import { z } from "zod";
 import { createConfigCapability } from "./configCapability.js";
+import { createProductionImplementationEvidenceService } from "./implementationEvidenceRuntime.js";
 import { serveRemoteStdioProxy } from "./stdioRemoteProxy.js";
 export { connectRemoteMcpProxy, serveRemoteStdioProxy } from "./stdioRemoteProxy.js";
 export { computeConfig } from "./configCapability.js";
@@ -835,6 +837,7 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
       worktreeManage,
       opts.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority(),
       opts.implementationEvidence,
+      isTrustedWorksetManagementAuthority(opts.worksetAuthority),
     ),
     toolProfile,
   );
@@ -1286,6 +1289,14 @@ export async function main(argv: readonly string[]): Promise<void> {
   });
   const dispatchCapability =
     dispatchRuntime.kind === "available" ? dispatchRuntime.capability : undefined;
+  const implementationEvidence =
+    dispatchCapability !== undefined && resolved.implementationEvidenceStore !== undefined
+      ? createProductionImplementationEvidenceService({
+          resolved,
+          dispatchCapability,
+          repositoryRoot: cwd,
+        })
+      : undefined;
 
   if (parentGateFinalize) {
     try {
@@ -1321,6 +1332,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       dispatchCapability,
       toolProfile,
       cwd,
+      implementationEvidence,
     );
     // Watch the ledger for out-of-process advances; push a `changed` frame to
     // subscribed UIs on any change. The watcher is selected by backend (file
@@ -1356,6 +1368,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     ...(dispatchCapability === undefined ? {} : { dispatchCapability }),
     repositoryRoot: cwd,
     toolProfile,
+    ...(implementationEvidence === undefined ? {} : { implementationEvidence }),
   });
   // Even on stdio, watch the ledger so this server's cache stays fresh when
   // another process writes the same ledgers (file watch for fs, ref-sha poll

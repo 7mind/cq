@@ -13,6 +13,7 @@ import {
   InMemoryLedgerStore,
   LEDGER_TOOL_NAMES,
   NON_DISPATCH_LEDGER_TOOL_NAMES,
+  createTrustedWorksetManagementAuthority,
   type DispatchCapability,
 } from "../packages/ledger/src/index.js";
 import {
@@ -24,6 +25,15 @@ import {
 import { createLedgerMcpServer } from "../packages/ledger-mcp/src/main.js";
 
 const CANONICAL_PROFILE_NAMES = ["full", "non-dispatch"] as const;
+const MANAGEMENT_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "prepare_implementation_review_panel",
+  "prepare_implementation_review_attempt",
+  "execute_external_implementation_review_attempt",
+  "finalize_implementation_review_attempt",
+  "prepare_implementation_review_fallback",
+  "prepare_implementation_completion",
+  "record_implementation_completion",
+]);
 const ROLE_PROFILE_NAMES = Object.keys(ROLE_TOOL_CAPABILITY_MATRIX).sort();
 export const PROFILE_NAMES: readonly string[] = Object.freeze([
   ...CANONICAL_PROFILE_NAMES,
@@ -136,6 +146,7 @@ interface ProfileDefinition {
   toolProfile?: string;
   contractRequiredTools: readonly string[];
   zeroDomainCalls: boolean;
+  managementBound?: true;
 }
 
 interface SchemaPathValue {
@@ -165,25 +176,31 @@ const PROFILE_DEFINITIONS: Record<ToolSurfaceProfileName, ProfileDefinition> = {
     dispatchCapability: DURABLE_DISPATCH_CAPABILITY,
     contractRequiredTools: [],
     zeroDomainCalls: false,
+    managementBound: true,
   },
   "non-dispatch": {
     inventorySource: "NON_DISPATCH_LEDGER_TOOL_NAMES",
     expectedInventory: NON_DISPATCH_LEDGER_TOOL_NAMES,
     contractRequiredTools: [],
     zeroDomainCalls: false,
+    managementBound: true,
   },
   ...Object.fromEntries(
     ROLE_PROFILE_NAMES.map((roleId) => {
       const profile = ROLE_TOOL_CAPABILITY_MATRIX[roleId]!;
+      const inventory = exposedLedgerToolsForRole(roleId);
       return [
         roleId,
         {
           inventorySource: `ROLE_TOOL_CAPABILITY_MATRIX:${roleId}`,
-          expectedInventory: exposedLedgerToolsForRole(roleId),
+          expectedInventory: inventory,
           dispatchCapability: DURABLE_DISPATCH_CAPABILITY,
           toolProfile: roleId,
           contractRequiredTools: profile.contractRequiredTools,
           zeroDomainCalls: profile.zeroDomainCalls,
+          ...(inventory.some((name) => MANAGEMENT_ONLY_TOOL_NAMES.has(name))
+            ? { managementBound: true as const }
+            : {}),
         },
       ];
     }),
@@ -401,6 +418,9 @@ async function measureProfile(
     displayName: PROFILE_DISPLAY_NAME,
     dispatchCapability: definition.dispatchCapability,
     toolProfile: definition.toolProfile,
+    ...(definition.managementBound === true
+      ? { worksetAuthority: createTrustedWorksetManagementAuthority() }
+      : {}),
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client(
