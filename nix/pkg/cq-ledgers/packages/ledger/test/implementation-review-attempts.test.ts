@@ -113,6 +113,21 @@ function serviceWith(
 }
 
 describe("protected implementation review attempts [BG]", () => {
+  test("resolves a non-empty roster at panel preparation", async () => {
+    const { service } = serviceWith([], async () => {
+      throw new Error("not called");
+    });
+    await expect(
+      service.prepareReviewPanel({
+        taskRef: "tasks:T2345",
+        resultCommit: RESULT,
+        workerDispatch: WORKER,
+        operationId: "empty-panel",
+        author: "parent",
+      }),
+    ).rejects.toThrow("implementation reviewer roster must not be empty");
+  });
+
   test("snapshots the ordered roster and returns only opaque attempt references", async () => {
     const { service } = serviceWith([native, adapter], async () => {
       throw new Error("not called");
