@@ -117,6 +117,7 @@ import {
   bindWorksetInvocationAuthority,
   createObserveOnlyWorksetInvocationAuthority,
   createTrustedWorksetManagementAuthority,
+  isTrustedWorksetManagementAuthority,
   type WorksetInvocationAuthority,
 } from "../worksetInvocationAuthority.js";
 import { createWorksetOperation, worksetInputShape } from "./worksetTool.js";
@@ -179,6 +180,16 @@ export const DISPATCH_LIFECYCLE_TOOL_NAMES = [
 const DISPATCH_LIFECYCLE_TOOL_NAME_SET: ReadonlySet<string> = new Set(
   DISPATCH_LIFECYCLE_TOOL_NAMES,
 );
+
+const IMPLEMENTATION_EVIDENCE_TOOL_NAME_SET: ReadonlySet<string> = new Set([
+  "prepare_implementation_review_panel",
+  "prepare_implementation_review_attempt",
+  "execute_external_implementation_review_attempt",
+  "finalize_implementation_review_attempt",
+  "prepare_implementation_review_fallback",
+  "prepare_implementation_completion",
+  "record_implementation_completion",
+]);
 
 /** The surface registered when no durable dispatch capability exists. */
 export const NON_DISPATCH_LEDGER_TOOL_NAMES = LEDGER_TOOL_NAMES.filter(
@@ -578,6 +589,7 @@ export function createLedgerMcpToolSpecifications(
   worktreeManage?: WorktreeManageCapability,
   worksetAuthority: WorksetInvocationAuthority = createObserveOnlyWorksetInvocationAuthority(),
   implementationEvidence?: ImplementationEvidenceService,
+  exposeImplementationEvidence = isTrustedWorksetManagementAuthority(worksetAuthority),
 ): LedgerToolSpecification[] {
   let genericMutations: WorksetGenericMutationGateway | null = null;
   const mutationsFor = (toolName: LedgerToolName): WorksetGenericMutationGateway => {
@@ -1645,17 +1657,23 @@ export function createLedgerMcpToolSpecifications(
     ...planLifecycleTools,
     worktreeManageTool,
     ...(dispatchCapability === undefined ? [] : [gitCommitTool, gitResolveContinueTool]),
-    prepareImplementationReviewPanelTool,
-    prepareImplementationReviewAttemptTool,
-    executeExternalImplementationReviewAttemptTool,
-    finalizeImplementationReviewAttemptTool,
-    prepareImplementationReviewFallbackTool,
-    prepareImplementationCompletionTool,
-    recordImplementationCompletionTool,
+    ...(exposeImplementationEvidence
+      ? [
+          prepareImplementationReviewPanelTool,
+          prepareImplementationReviewAttemptTool,
+          executeExternalImplementationReviewAttemptTool,
+          finalizeImplementationReviewAttemptTool,
+          prepareImplementationReviewFallbackTool,
+          prepareImplementationCompletionTool,
+          recordImplementationCompletionTool,
+        ]
+      : []),
   ] as unknown as AnyTool[];
 
   const registeredToolNames = LEDGER_TOOL_NAMES.filter(
-    (name) => dispatchCapability !== undefined || !DISPATCH_LIFECYCLE_TOOL_NAME_SET.has(name),
+    (name) =>
+      (dispatchCapability !== undefined || !DISPATCH_LIFECYCLE_TOOL_NAME_SET.has(name)) &&
+      (exposeImplementationEvidence || !IMPLEMENTATION_EVIDENCE_TOOL_NAME_SET.has(name)),
   );
   return withUsageRecording(
     store,
@@ -1782,6 +1800,7 @@ export function createLedgerMcpTools(
       worktreeManage,
       worksetAuthority,
       implementationEvidence,
+      isTrustedWorksetManagementAuthority(worksetAuthority),
     ),
     profileName,
   );
@@ -1806,6 +1825,7 @@ export function createManagementLedgerMcpTools(
   dispatchCapability?: DispatchCapability,
   profileName: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
   worktreeManage?: WorktreeManageCapability,
+  implementationEvidence?: ImplementationEvidenceService,
 ): AnyTool[] {
   return createLedgerMcpTools(
     store,
@@ -1818,6 +1838,7 @@ export function createManagementLedgerMcpTools(
     profileName,
     worktreeManage,
     createTrustedWorksetManagementAuthority(),
+    implementationEvidence,
   );
 }
 

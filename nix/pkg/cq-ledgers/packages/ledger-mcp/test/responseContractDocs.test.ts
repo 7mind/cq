@@ -5,7 +5,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   COMPACT_ITEM_FIELD_NAMES,
-  createLedgerMcpTools,
+  createManagementLedgerMcpTools,
+  createTrustedWorksetManagementAuthority,
   InMemoryLedgerStore,
   ITEM_PROJECTION_DESCRIPTION,
   LEDGER_RESPONSE_CONTRACTS,
@@ -204,6 +205,7 @@ describe("public MCP response-contract documentation", () => {
       store,
       displayName: "docs-test",
       dispatchCapability,
+      worksetAuthority: createTrustedWorksetManagementAuthority(),
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
@@ -217,7 +219,7 @@ describe("public MCP response-contract documentation", () => {
       const tools = await client.listTools();
       const toolByName = new Map(tools.tools.map((tool) => [tool.name, tool]));
       const directToolByName = new Map(
-        createLedgerMcpTools(
+        createManagementLedgerMcpTools(
           store,
           undefined,
           undefined,

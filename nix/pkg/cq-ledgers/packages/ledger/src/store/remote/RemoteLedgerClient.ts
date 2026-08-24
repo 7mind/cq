@@ -90,6 +90,16 @@ import type {
   PlanReleaseInput,
   PlanReleaseResult,
 } from "../../planLifecycle.js";
+import type {
+  ExecuteExternalImplementationReviewAttemptInput,
+  FinalizeImplementationReviewAttemptInput,
+  ImplementationEvidenceService,
+  PrepareImplementationCompletionInput,
+  PrepareImplementationReviewAttemptInput,
+  PrepareImplementationReviewFallbackInput,
+  PrepareImplementationReviewPanelInput,
+  RecordImplementationCompletionInput,
+} from "../../implementationEvidence.js";
 
 /**
  * Authenticated MCP initialize metadata used to label the project registry
@@ -183,8 +193,8 @@ export class RemoteLedgerClientConfigError extends RemoteLedgerClientError {
 }
 
 export class RemoteManagementScopeError extends RemoteLedgerClientError {
-  constructor() {
-    super("workset set requires a management-bound remote session");
+  constructor(operation = "workset set") {
+    super(`${operation} requires a management-bound remote session`);
     this.name = "RemoteManagementScopeError";
   }
 }
@@ -511,6 +521,10 @@ export class RemoteLedgerClient {
     }
   }
 
+  private requireManagement(operation: string): void {
+    if (this._scope !== "management") throw new RemoteManagementScopeError(operation);
+  }
+
   /**
    * Low-level escape hatch: call ANY tool by name and return its parsed JSON
    * payload with no envelope unwrapping. The routine methods below are the
@@ -526,6 +540,104 @@ export class RemoteLedgerClient {
       throw new RemoteManagementScopeError();
     }
     return await this.call<WorksetResultFor<R>>("workset", { ...request });
+  }
+
+  async prepareImplementationReviewPanel(
+    input: PrepareImplementationReviewPanelInput,
+  ): Promise<Awaited<ReturnType<ImplementationEvidenceService["prepareReviewPanel"]>>> {
+    this.requireManagement("prepare_implementation_review_panel");
+    return await this.call("prepare_implementation_review_panel", {
+      task_ref: input.taskRef,
+      result_commit: input.resultCommit,
+      worker_dispatch: input.workerDispatch,
+      operation_id: input.operationId,
+      author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
+    });
+  }
+
+  async prepareImplementationReviewAttempt(
+    input: PrepareImplementationReviewAttemptInput,
+  ): Promise<Awaited<ReturnType<ImplementationEvidenceService["prepareReviewAttempt"]>>> {
+    this.requireManagement("prepare_implementation_review_attempt");
+    return await this.call("prepare_implementation_review_attempt", {
+      panel_ref: input.panelRef,
+      attempt_ref: input.attemptRef,
+      operation_id: input.operationId,
+      author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
+    });
+  }
+
+  async executeExternalImplementationReviewAttempt(
+    input: ExecuteExternalImplementationReviewAttemptInput,
+  ): Promise<Awaited<ReturnType<ImplementationEvidenceService["executeExternalReviewAttempt"]>>> {
+    this.requireManagement("execute_external_implementation_review_attempt");
+    return await this.call("execute_external_implementation_review_attempt", {
+      attempt_ref: input.attemptRef,
+      operation_id: input.operationId,
+      author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
+    });
+  }
+
+  async finalizeImplementationReviewAttempt(
+    input: FinalizeImplementationReviewAttemptInput,
+  ): Promise<Awaited<ReturnType<ImplementationEvidenceService["finalizeReviewAttempt"]>>> {
+    this.requireManagement("finalize_implementation_review_attempt");
+    return await this.call("finalize_implementation_review_attempt", {
+      attempt_ref: input.attemptRef,
+      operation_id: input.operationId,
+      author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
+    });
+  }
+
+  async prepareImplementationReviewFallback(
+    input: PrepareImplementationReviewFallbackInput,
+  ): Promise<Awaited<ReturnType<ImplementationEvidenceService["prepareReviewFallback"]>>> {
+    this.requireManagement("prepare_implementation_review_fallback");
+    return await this.call("prepare_implementation_review_fallback", {
+      panel_ref: input.panelRef,
+      operation_id: input.operationId,
+      author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
+    });
+  }
+
+  async prepareImplementationCompletion(
+    input: PrepareImplementationCompletionInput,
+  ): Promise<Awaited<ReturnType<ImplementationEvidenceService["prepareCompletion"]>>> {
+    this.requireManagement("prepare_implementation_completion");
+    return await this.call("prepare_implementation_completion", {
+      task_ref: input.taskRef,
+      expected_repository_head: input.expectedRepositoryHead,
+      result_commit: input.resultCommit,
+      worker_dispatch: input.workerDispatch,
+      review_attempt_refs: input.reviewAttemptRefs,
+      completion: input.completion,
+      log_paths: input.logPaths,
+      merge_operation_id: input.mergeOperationId,
+      ...(input.supersedesCompletionRef === undefined
+        ? {}
+        : { supersedes_completion_ref: input.supersedesCompletionRef }),
+      operation_id: input.operationId,
+      author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
+    });
+  }
+
+  async recordImplementationCompletion(
+    input: RecordImplementationCompletionInput,
+  ): Promise<Awaited<ReturnType<ImplementationEvidenceService["recordCompletion"]>>> {
+    this.requireManagement("record_implementation_completion");
+    return await this.call("record_implementation_completion", {
+      task_ref: input.taskRef,
+      expected_repository_head: input.expectedRepositoryHead,
+      operation_id: input.operationId,
+      author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
+    });
   }
 
   async claimPlan(input: PlanClaimInput): Promise<PlanClaimResult> {

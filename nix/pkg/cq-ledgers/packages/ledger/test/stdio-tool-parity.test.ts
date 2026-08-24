@@ -15,6 +15,7 @@ import {
   LEDGER_TOOL_NAMES,
   ledgerToolInputJsonSchema,
   MILESTONES_AMBIENT_ID,
+  registerLedgerStdioManagementTools,
   registerLedgerStdioTools,
   type ConfigCapability,
   type DispatchCapability,
@@ -545,7 +546,20 @@ function directTools(
   capabilities: ToolCapabilities,
   profileName: LedgerToolProfileName = "full",
   implementationEvidence?: ImplementationEvidenceService,
+  management = false,
 ): DirectTools {
+  if (management) return createManagementLedgerMcpTools(
+    store,
+    capabilities.readLog,
+    capabilities.config,
+    capabilities.promptCatalog,
+    prefix,
+    capabilities.listProjects,
+    capabilities.dispatch,
+    profileName,
+    capabilities.worktreeManage,
+    implementationEvidence,
+  );
   return createLedgerMcpTools(
     store,
     capabilities.readLog,
@@ -680,25 +694,42 @@ async function connectStdio(
   capabilities: ToolCapabilities,
   profileName: LedgerToolProfileName = "full",
   implementationEvidence?: ImplementationEvidenceService,
+  management = false,
 ): Promise<StdioConnection> {
   const server = new McpServer(
     { name: "stdio-parity-test", version: "0.0.1" },
     { capabilities: { tools: {} } },
   );
-  registerLedgerStdioTools(
-    server,
-    store,
-    capabilities.readLog,
-    capabilities.config,
-    capabilities.promptCatalog,
-    prefix,
-    capabilities.listProjects,
-    capabilities.dispatch,
-    profileName,
-    capabilities.worktreeManage,
-    undefined,
-    implementationEvidence,
-  );
+  if (management) {
+    registerLedgerStdioManagementTools(
+      server,
+      store,
+      capabilities.readLog,
+      capabilities.config,
+      capabilities.promptCatalog,
+      prefix,
+      capabilities.listProjects,
+      capabilities.dispatch,
+      profileName,
+      capabilities.worktreeManage,
+      implementationEvidence,
+    );
+  } else {
+    registerLedgerStdioTools(
+      server,
+      store,
+      capabilities.readLog,
+      capabilities.config,
+      capabilities.promptCatalog,
+      prefix,
+      capabilities.listProjects,
+      capabilities.dispatch,
+      profileName,
+      capabilities.worktreeManage,
+      undefined,
+      implementationEvidence,
+    );
+  }
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client(
@@ -1638,6 +1669,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       AVAILABLE_CAPABILITIES,
       profileName,
       directFixture.implementationEvidence,
+      true,
     );
     const stdio = await connectStdio(
       stdioFixture.store,
@@ -1645,6 +1677,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       AVAILABLE_CAPABILITIES,
       profileName,
       stdioFixture.implementationEvidence,
+      true,
     );
     try {
       const expectedNames = exposedLedgerToolsForRole(profileName)
@@ -1669,6 +1702,7 @@ describe("stdio/direct ledger tool differential contract", () => {
         AVAILABLE_CAPABILITIES,
         "full",
         directFixture.implementationEvidence,
+        true,
       );
       const stdio = await connectStdio(
         stdioFixture.store,
@@ -1676,6 +1710,7 @@ describe("stdio/direct ledger tool differential contract", () => {
         AVAILABLE_CAPABILITIES,
         "full",
         stdioFixture.implementationEvidence,
+        true,
       );
       try {
         const directDefinitionList = directDefinitions(direct);
@@ -1720,6 +1755,7 @@ describe("stdio/direct ledger tool differential contract", () => {
         AVAILABLE_CAPABILITIES,
         "full",
         directFixture.implementationEvidence,
+        true,
       );
       const stdio = await connectStdio(
         stdioFixture.store,
@@ -1727,6 +1763,7 @@ describe("stdio/direct ledger tool differential contract", () => {
         AVAILABLE_CAPABILITIES,
         "full",
         stdioFixture.implementationEvidence,
+        true,
       );
       const invocations = invocationMatrix(directFixture);
       expect(invocations.map((invocation) => invocation.name).sort()).toEqual(
@@ -1792,6 +1829,7 @@ describe("stdio/direct ledger tool differential contract", () => {
         AVAILABLE_CAPABILITIES,
         "full",
         directFixture.implementationEvidence,
+        true,
       );
       const stdio = await connectStdio(
         stdioFixture.store,
@@ -1799,6 +1837,7 @@ describe("stdio/direct ledger tool differential contract", () => {
         AVAILABLE_CAPABILITIES,
         "full",
         stdioFixture.implementationEvidence,
+        true,
       );
       const invokeBoth = async (invocation: Invocation): Promise<ToolOutcome> => {
         const name = prefixed(prefix, invocation.name);
@@ -1969,6 +2008,7 @@ describe("stdio/direct ledger tool differential contract", () => {
         UNAVAILABLE_CAPABILITIES,
         "full",
         directFixture.implementationEvidence,
+        true,
       );
       const stdio = await connectStdio(
         stdioFixture.store,
@@ -1976,6 +2016,7 @@ describe("stdio/direct ledger tool differential contract", () => {
         UNAVAILABLE_CAPABILITIES,
         "full",
         stdioFixture.implementationEvidence,
+        true,
       );
       const failures: Invocation[] = [
         {

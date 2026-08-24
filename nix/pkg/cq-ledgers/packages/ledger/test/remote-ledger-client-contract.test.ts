@@ -85,6 +85,50 @@ describe("RemoteLedgerClient workset scope (Behavioral-Active Blackbox-Atomic)",
     );
     expect(requests).toBe(0);
   });
+
+  it("keeps protected implementation evidence management-bound with typed client parity", async () => {
+    const calls: string[] = [];
+    const remote = Object.assign(Object.create(RemoteLedgerClient.prototype), {
+      _scope: "ordinary",
+      endpoint: "http://example.invalid/p/project/mcp",
+      client: {
+        callTool: async ({ name }: { name: string }) => {
+          calls.push(name);
+          return { content: [{ type: "text", text: "{}" }] };
+        },
+      },
+    }) as RemoteLedgerClient;
+    await expect(
+      remote.prepareImplementationReviewPanel({
+        taskRef: "tasks:T2345",
+        resultCommit: "b".repeat(40),
+        workerDispatch: { attestationId: "att_worker", generation: 1 },
+        operationId: "panel",
+        author: "parent",
+      }),
+    ).rejects.toBeInstanceOf(RemoteManagementScopeError);
+    expect(calls).toEqual([]);
+
+    Object.assign(remote, { _scope: "management" });
+    await remote.prepareImplementationReviewPanel({
+      taskRef: "tasks:T2345",
+      resultCommit: "b".repeat(40),
+      workerDispatch: { attestationId: "att_worker", generation: 1 },
+      operationId: "panel",
+      author: "parent",
+    });
+    expect(calls).toEqual(["prepare_implementation_review_panel"]);
+    expect(
+      [
+        "prepareImplementationReviewAttempt",
+        "executeExternalImplementationReviewAttempt",
+        "finalizeImplementationReviewAttempt",
+        "prepareImplementationReviewFallback",
+        "prepareImplementationCompletion",
+        "recordImplementationCompletion",
+      ].every((name) => typeof (remote as unknown as Record<string, unknown>)[name] === "function"),
+    ).toBe(true);
+  });
 });
 
 runRemoteLedgerClientContract(inMemoryRemoteClientFactory);

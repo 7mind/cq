@@ -107,6 +107,21 @@ export interface DispatchWorktreeActivityObservation {
   readonly liveLeases: readonly string[];
 }
 
+export type DispatchEvidenceObservation =
+  | {
+      readonly state: "consumed";
+      readonly roleId: string;
+      readonly input: DispatchJSONValue;
+      readonly output: DispatchJSONValue;
+      readonly retainedAttestation: string;
+    }
+  | {
+      readonly state: "aborted" | "missing" | "nonterminal";
+      readonly roleId?: string;
+      readonly input?: DispatchJSONValue;
+      readonly retainedAttestation?: string;
+    };
+
 export interface DispatchCapability {
   prepare(input: PrepareDispatchToolInput): Promise<PrepareDispatchOutcome>;
   fetchInput(input: FetchDispatchInputToolInput): Promise<MaterializedDispatchInput>;
@@ -117,6 +132,8 @@ export interface DispatchCapability {
   ): Promise<ConfirmDispatchCompletionOutcome>;
   abort(input: AbortDispatchToolInput): Promise<AbortedDispatchResult>;
   fetch(input: FetchDispatchResultToolInput): Promise<FetchDispatchResult>;
+  /** Trusted non-materializing observation used only by protected completion evidence. */
+  observeEvidence?(input: DispatchHandle): Promise<DispatchEvidenceObservation>;
   gitCommit?(input: GitCommitToolInput): Promise<GitChangeBrokerReceipt>;
   gitResolveContinue?(input: GitResolveContinueToolInput): Promise<GitConflictContinuationReceipt>;
   observeWorktreeActivity?(worktreePath: string): Promise<DispatchWorktreeActivityObservation>;

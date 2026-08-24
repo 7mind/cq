@@ -18,6 +18,7 @@ import {
   NON_DISPATCH_LEDGER_TOOL_NAMES,
   CANONICAL_LEDGERS,
   createLedgerMcpTools,
+  createManagementLedgerMcpTools,
   derivePredicates,
   deriveWorksetPredicates,
   ledgerToolInputJsonSchema,
@@ -236,7 +237,7 @@ function expectedItemAcknowledgement(item: Item): Record<string, unknown> {
 describe("ledger MCP tools", () => {
   it("exports 46 canonical names and hides both validators", async () => {
     const store = await buildStore();
-    const tools = createLedgerMcpTools(store);
+    const tools = createManagementLedgerMcpTools(store);
     expect(tools.map((t) => t.name).sort()).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
     expect(LEDGER_TOOL_NAMES.length).toBe(46);
     expect(LEDGER_TOOL_NAMES).toContain("fts_search");
@@ -271,7 +272,13 @@ describe("ledger MCP tools", () => {
   it("prefixes every registered non-dispatch tool", async () => {
     const store = await buildStore();
     const prefix = "myproj";
-    const tools = createLedgerMcpTools(store, undefined, undefined, undefined, prefix);
+    const tools = createManagementLedgerMcpTools(
+      store,
+      undefined,
+      undefined,
+      undefined,
+      prefix,
+    );
     expect(tools.map((t) => t.name).sort()).toEqual(
       NON_DISPATCH_LEDGER_TOOL_NAMES.map((name) => `${prefix}_${name}`).sort(),
     );

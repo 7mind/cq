@@ -25,6 +25,7 @@ import {
   bindWorksetInvocationAuthority,
   createObserveOnlyWorksetInvocationAuthority,
   createTrustedWorksetManagementAuthority,
+  isTrustedWorksetManagementAuthority,
   type WorksetInvocationAuthority,
 } from "../worksetInvocationAuthority.js";
 
@@ -68,6 +69,7 @@ export function createLedgerSdkMcpServer(
       options.worktreeManage,
       options.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority(),
       options.implementationEvidence,
+      isTrustedWorksetManagementAuthority(options.worksetAuthority),
     ),
     profileName,
   );
