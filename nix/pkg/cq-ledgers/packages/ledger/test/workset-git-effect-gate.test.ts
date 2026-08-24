@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFile } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,12 +12,18 @@ import {
 } from "@cq/process-control";
 import {
   InMemoryLedgerStore,
+  TASKS_LEDGER,
+  TASKS_SCHEMA,
   WorksetAdmissionError,
   createManagedWorktreeGitEffectRunner,
   createFsWorksetStore,
   requireWorksetStore,
+  resolveUniqueTaskState,
+  type Item,
+  type TaskStateReader,
   worksetEffectAdmissionProviderFromStore,
 } from "../src/index.js";
+import { mintManagedTerminalReleaseBinding } from "../src/managedTerminalReleaseAdmission.js";
 
 const exec = promisify(execFile);
 const roots: string[] = [];
@@ -58,8 +64,170 @@ async function repository(): Promise<{ readonly root: string; readonly head: str
   return { root, head: await git(root, ["rev-parse", "HEAD"]) };
 }
 
+function taskItem(id: string, status: string, milestoneId: string): Item {
+  return {
+    id,
+    milestoneId,
+    status,
+    fields: { headline: `${id} fixture` },
+    createdAt: "2026-08-24T00:00:00.000Z",
+    updatedAt: "2026-08-24T00:00:00.000Z",
+  };
+}
+
+function taskStateReader(input: {
+  readonly active: readonly Item[];
+  readonly archives: readonly { readonly id: string; readonly items: readonly Item[] }[];
+}): { readonly reader: TaskStateReader; readonly archiveReads: string[] } {
+  const archiveReads: string[] = [];
+  const archives = new Map(input.archives.map((archive) => [archive.id, archive.items]));
+  const reader: TaskStateReader = {
+    fetch(ledgerId) {
+      if (ledgerId !== TASKS_LEDGER) throw new Error(`unexpected ledger ${ledgerId}`);
+      return {
+        id: TASKS_LEDGER,
+        schema: TASKS_SCHEMA,
+        counters: { milestone: 1, item: 1 },
+        milestones: [
+          {
+            id: "M-active",
+            milestone: { id: "M-active", status: "open", title: "Active", description: "" },
+            items: [...input.active],
+          },
+        ],
+        archivePointers: input.archives.map((archive) => ({
+          id: archive.id,
+          path: `./archive/tasks/${archive.id}.md`,
+          summary: "fixture",
+          title: "Fixture",
+          status: "done",
+        })),
+      };
+    },
+    async fetchArchive(ledgerId, archiveId) {
+      if (ledgerId !== TASKS_LEDGER) throw new Error(`unexpected ledger ${ledgerId}`);
+      archiveReads.push(archiveId);
+      const items = archives.get(archiveId);
+      if (items === undefined) throw new Error(`missing archive fixture ${archiveId}`);
+      return {
+        kind: "group",
+        milestone: { id: archiveId, title: "", description: "", items: [...items] },
+      };
+    },
+  };
+  return { reader, archiveReads };
+}
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+describe("T2322 unique active-or-archived task state", () => {
+  test("reads every archive and rejects an active plus archived duplicate [Behavioral-Active Blackbox-Atomic]", async () => {
+    const active = taskItem("T2322", "done", "M-active");
+    const fixture = taskStateReader({
+      active: [active],
+      archives: [
+        { id: "M-archived", items: [taskItem("T2322", "done", "M-archived")] },
+        { id: "M-unrelated", items: [taskItem("T9999", "done", "M-unrelated")] },
+      ],
+    });
+    await expect(resolveUniqueTaskState(fixture.reader, "T2322")).rejects.toThrow(
+      "task T2322 resolves to 2 active-or-archived records",
+    );
+    expect(fixture.archiveReads).toEqual(["M-archived", "M-unrelated"]);
+  });
+
+  test("rejects zero and multiple archived records [Behavioral-Active Blackbox-Atomic]", async () => {
+    const missing = taskStateReader({ active: [], archives: [{ id: "M-empty", items: [] }] });
+    await expect(resolveUniqueTaskState(missing.reader, "T2322")).rejects.toThrow(
+      "task T2322 resolves to 0 active-or-archived records",
+    );
+    const duplicated = taskStateReader({
+      active: [],
+      archives: [
+        { id: "M-one", items: [taskItem("T2322", "done", "M-one")] },
+        { id: "M-two", items: [taskItem("T2322", "done", "M-two")] },
+      ],
+    });
+    await expect(resolveUniqueTaskState(duplicated.reader, "T2322")).rejects.toThrow(
+      "task T2322 resolves to 2 active-or-archived records",
+    );
+  });
+
+  test("returns one exact archived record after reading every archive [Behavioral-Active Blackbox-Atomic]", async () => {
+    const archived = taskItem("T2322", "done", "M-two");
+    const fixture = taskStateReader({
+      active: [],
+      archives: [
+        { id: "M-one", items: [taskItem("T9999", "done", "M-one")] },
+        { id: "M-two", items: [archived] },
+      ],
+    });
+    await expect(resolveUniqueTaskState(fixture.reader, "T2322")).resolves.toEqual(archived);
+    expect(fixture.archiveReads).toEqual(["M-one", "M-two"]);
+  });
+
+  test("terminal release runner admits only the equal archived disposition [Behavioral-Active Blackbox-GoodCommunication]", async () => {
+    const repo = await repository();
+    const store = new InMemoryLedgerStore();
+    await store.init();
+    const milestone = await store.createMilestone({ id: "M2322", title: "Archived runner" });
+    await store.createItem(TASKS_LEDGER, milestone.id, {
+      id: "T2322",
+      status: "done",
+      fields: { headline: "Archived release runner" },
+    });
+    await store.updateMilestone(milestone.id, { status: "done" });
+    await store.archiveMilestone(milestone.id, "runner fixture");
+    const branch = "implement/T2322";
+    const worktreePath = join(repo.root, ".claude", "worktrees", "archived-runner");
+    await git(repo.root, ["branch", branch, repo.head]);
+    await git(repo.root, ["worktree", "add", "--quiet", worktreePath, branch]);
+    const bindingInput = {
+      taskId: "T2322",
+      handleToken: "runner-handle",
+      handleFingerprint: "a".repeat(64),
+      repositoryRoot: repo.root,
+      worktreePath,
+      branch,
+    } as const;
+    try {
+      const mismatchRunner = createManagedWorktreeGitEffectRunner({
+        store,
+        taskId: "T2322",
+        repositoryRoot: repo.root,
+        terminalReleaseBinding: mintManagedTerminalReleaseBinding({
+          ...bindingInput,
+          terminalDisposition: "abandoned",
+        }),
+      });
+      await expect(
+        mismatchRunner(repo.root, ["worktree", "remove", "--force", worktreePath]),
+      ).rejects.toThrow("task status done does not equal bound disposition abandoned");
+      expect((await stat(worktreePath)).isDirectory()).toBe(true);
+
+      const equalRunner = createManagedWorktreeGitEffectRunner({
+        store,
+        taskId: "T2322",
+        repositoryRoot: repo.root,
+        terminalReleaseBinding: mintManagedTerminalReleaseBinding({
+          ...bindingInput,
+          terminalDisposition: "done",
+        }),
+      });
+      expect(
+        (await equalRunner(repo.root, ["worktree", "remove", "--force", worktreePath])).code,
+      ).toBe(0);
+      expect(
+        await stat(worktreePath)
+          .then(() => true)
+          .catch(() => false),
+      ).toBe(false);
+    } finally {
+      await store.dispose();
+    }
+  });
 });
 
 describe("T1984 durable Git effect replacement ordering", () => {

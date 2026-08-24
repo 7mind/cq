@@ -42,6 +42,7 @@ import {
 import { observeManagedWorktreeConflictState } from "../gitConflictContinuation.js";
 import { createManagedWorktreeGitEffectRunner } from "../worksetGitEffects.js";
 import { mintManagedTerminalReleaseBinding } from "../managedTerminalReleaseAdmission.js";
+import { resolveUniqueTaskState } from "../taskStateResolver.js";
 import type { LedgerStore } from "../store/LedgerStore.js";
 import { produceWireDto, type ProducedWireDto } from "./wireResponseContract.js";
 
@@ -595,10 +596,7 @@ export const WORKTREE_MANAGE_TOOL_SPEC: WorktreeManageToolSpec = {
     if (terminalDisposition !== "done" && terminalDisposition !== "abandoned") {
       throw new Error("worktree_manage release terminal disposition is not canonical");
     }
-    const task = store.fetchItem(TASKS_LEDGER, release.handle.taskId);
-    if (task.id !== release.handle.taskId) {
-      throw new Error("worktree_manage release task identity changed during authoritative read");
-    }
+    const task = await resolveUniqueTaskState(store, release.handle.taskId);
     if (task.status !== terminalDisposition) {
       throw new Error(
         `worktree_manage release task status ${task.status} does not equal terminalDisposition ${terminalDisposition}`,

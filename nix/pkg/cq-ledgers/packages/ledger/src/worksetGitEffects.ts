@@ -17,6 +17,7 @@ import {
   type ManagedTerminalReleaseBinding,
   type ManagedTerminalReleaseEffect,
 } from "./managedTerminalReleaseAdmission.js";
+import { resolveUniqueTaskState } from "./taskStateResolver.js";
 
 const ZERO_COMMIT = "0".repeat(40);
 
@@ -176,7 +177,16 @@ export function createManagedWorktreeGitEffectRunner(
     resolveCoordinates: () => Promise<WorksetGitEffectBinding> = async () => binding,
   ): Promise<ManagedWorktreeGitResult> {
     const resolveBinding = async (): Promise<WorksetGitEffectBinding> => {
-      assertLiveTask(options.store, options.taskId);
+      if (options.terminalReleaseBinding === undefined) {
+        assertLiveTask(options.store, options.taskId);
+      } else {
+        const task = await resolveUniqueTaskState(options.store, options.taskId);
+        if (task.status !== options.terminalReleaseBinding.terminalDisposition) {
+          throw new Error(
+            `managed terminal release task status ${task.status} does not equal bound disposition ${options.terminalReleaseBinding.terminalDisposition}`,
+          );
+        }
+      }
       return await resolveCoordinates();
     };
     return await runLedgerWorksetGitEffect({
