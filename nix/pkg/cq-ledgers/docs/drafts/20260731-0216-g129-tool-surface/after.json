@@ -32,12 +32,14 @@
         "create_ledger",
         "derive_predicates",
         "enumerate_ledgers",
+        "execute_external_implementation_review_attempt",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
         "fetch_ledger",
         "fetch_ledger_archive",
         "fetch_prompt",
+        "finalize_implementation_review_attempt",
         "finalize_plan",
         "fts_search",
         "get_config",
@@ -48,8 +50,13 @@
         "list_projects",
         "materialize_operator_action",
         "prepare_dispatch",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
         "publish_plan_draft",
         "read_log",
+        "record_implementation_completion",
         "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
@@ -62,7 +69,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 39,
+      "toolCount": 46,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -70,23 +77,44 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48116,
-        "tokens": 11606,
-        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
+        "utf8Bytes": 54156,
+        "tokens": 13048,
+        "sha256": "6d244b2ff1e037bb6875e869d0d857c48c4f0bbebc0640c6f455fac427b16670"
       },
-      "surfaceTokens": 11771,
+      "surfaceTokens": 13213,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11,
+      "deltaTokens": 1431,
+      "additiveToolsExcludedFromBaselineComparison": [
+        "acknowledge_operator_action",
+        "complete_operator_action",
+        "execute_external_implementation_review_attempt",
+        "finalize_implementation_review_attempt",
+        "get_usage_stats",
+        "git_commit",
+        "git_resolve_continue",
+        "materialize_operator_action",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
+        "record_implementation_completion",
+        "record_operator_action_evidence",
+        "revise_operator_action",
+        "workset",
+        "worktree_manage"
+      ],
+      "baselineComparableSurfaceTokens": 7984,
+      "baselineComparableDeltaTokens": -3798,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5177,
+      "domainInputSchemaTokens": 6224,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 936,
-        "allTokens": 1237,
+        "authoritativeResponseTokens": 1144,
+        "allTokens": 1445,
         "deltasAreAdditive": false
       }
     },
@@ -101,10 +129,12 @@
         "create_ledger",
         "derive_predicates",
         "enumerate_ledgers",
+        "execute_external_implementation_review_attempt",
         "fetch_item",
         "fetch_ledger",
         "fetch_ledger_archive",
         "fetch_prompt",
+        "finalize_implementation_review_attempt",
         "finalize_plan",
         "fts_search",
         "get_config",
@@ -112,8 +142,13 @@
         "list_milestone_items",
         "list_projects",
         "materialize_operator_action",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
         "publish_plan_draft",
         "read_log",
+        "record_implementation_completion",
         "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
@@ -125,7 +160,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 31,
+      "toolCount": 38,
       "baselineProfile": "non-dispatch",
       "initialize": {
         "utf8Bytes": 812,
@@ -133,23 +168,42 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 35416,
-        "tokens": 8487,
-        "sha256": "a55a65559bcb89a50222ae98a2fe3d8a5426dd64de5fa18b5d947d91d6565f73"
+        "utf8Bytes": 41785,
+        "tokens": 10009,
+        "sha256": "2d191c331dc5babe78ed797a3805938a111a6023c168fbdc3317d781960191a5"
       },
-      "surfaceTokens": 8652,
+      "surfaceTokens": 10174,
       "baselineSurfaceTokens": 10386,
-      "deltaTokens": -1734,
+      "deltaTokens": -212,
+      "additiveToolsExcludedFromBaselineComparison": [
+        "acknowledge_operator_action",
+        "complete_operator_action",
+        "execute_external_implementation_review_attempt",
+        "finalize_implementation_review_attempt",
+        "get_usage_stats",
+        "materialize_operator_action",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
+        "record_implementation_completion",
+        "record_operator_action_evidence",
+        "revise_operator_action",
+        "workset",
+        "worktree_manage"
+      ],
+      "baselineComparableSurfaceTokens": 6648,
+      "baselineComparableDeltaTokens": -3738,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5177,
+      "domainInputSchemaTokens": 6224,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 747,
-        "allTokens": 1048,
+        "authoritativeResponseTokens": 953,
+        "allTokens": 1254,
         "deltasAreAdditive": false
       }
     },
@@ -166,12 +220,14 @@
         "create_ledger",
         "derive_predicates",
         "enumerate_ledgers",
+        "execute_external_implementation_review_attempt",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
         "fetch_ledger",
         "fetch_ledger_archive",
         "fetch_prompt",
+        "finalize_implementation_review_attempt",
         "finalize_plan",
         "fts_search",
         "get_config",
@@ -182,8 +238,13 @@
         "list_projects",
         "materialize_operator_action",
         "prepare_dispatch",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
         "publish_plan_draft",
         "read_log",
+        "record_implementation_completion",
         "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
@@ -196,7 +257,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 39,
+      "toolCount": 46,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -204,23 +265,44 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48116,
-        "tokens": 11606,
-        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
+        "utf8Bytes": 54156,
+        "tokens": 13048,
+        "sha256": "6d244b2ff1e037bb6875e869d0d857c48c4f0bbebc0640c6f455fac427b16670"
       },
-      "surfaceTokens": 11771,
+      "surfaceTokens": 13213,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11,
+      "deltaTokens": 1431,
+      "additiveToolsExcludedFromBaselineComparison": [
+        "acknowledge_operator_action",
+        "complete_operator_action",
+        "execute_external_implementation_review_attempt",
+        "finalize_implementation_review_attempt",
+        "get_usage_stats",
+        "git_commit",
+        "git_resolve_continue",
+        "materialize_operator_action",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
+        "record_implementation_completion",
+        "record_operator_action_evidence",
+        "revise_operator_action",
+        "workset",
+        "worktree_manage"
+      ],
+      "baselineComparableSurfaceTokens": 7984,
+      "baselineComparableDeltaTokens": -3798,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5177,
+      "domainInputSchemaTokens": 6224,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 936,
-        "allTokens": 1237,
+        "authoritativeResponseTokens": 1144,
+        "allTokens": 1445,
         "deltasAreAdditive": false
       }
     },
@@ -237,12 +319,14 @@
         "create_ledger",
         "derive_predicates",
         "enumerate_ledgers",
+        "execute_external_implementation_review_attempt",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
         "fetch_ledger",
         "fetch_ledger_archive",
         "fetch_prompt",
+        "finalize_implementation_review_attempt",
         "finalize_plan",
         "fts_search",
         "get_config",
@@ -253,8 +337,13 @@
         "list_projects",
         "materialize_operator_action",
         "prepare_dispatch",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
         "publish_plan_draft",
         "read_log",
+        "record_implementation_completion",
         "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
@@ -267,7 +356,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 39,
+      "toolCount": 46,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -275,23 +364,44 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48116,
-        "tokens": 11606,
-        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
+        "utf8Bytes": 54156,
+        "tokens": 13048,
+        "sha256": "6d244b2ff1e037bb6875e869d0d857c48c4f0bbebc0640c6f455fac427b16670"
       },
-      "surfaceTokens": 11771,
+      "surfaceTokens": 13213,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11,
+      "deltaTokens": 1431,
+      "additiveToolsExcludedFromBaselineComparison": [
+        "acknowledge_operator_action",
+        "complete_operator_action",
+        "execute_external_implementation_review_attempt",
+        "finalize_implementation_review_attempt",
+        "get_usage_stats",
+        "git_commit",
+        "git_resolve_continue",
+        "materialize_operator_action",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
+        "record_implementation_completion",
+        "record_operator_action_evidence",
+        "revise_operator_action",
+        "workset",
+        "worktree_manage"
+      ],
+      "baselineComparableSurfaceTokens": 7984,
+      "baselineComparableDeltaTokens": -3798,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5177,
+      "domainInputSchemaTokens": 6224,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 936,
-        "allTokens": 1237,
+        "authoritativeResponseTokens": 1144,
+        "allTokens": 1445,
         "deltasAreAdditive": false
       }
     },
@@ -317,6 +427,11 @@
       "surfaceTokens": 1269,
       "baselineSurfaceTokens": 11782,
       "deltaTokens": -10513,
+      "additiveToolsExcludedFromBaselineComparison": [
+        "git_resolve_continue"
+      ],
+      "baselineComparableSurfaceTokens": 358,
+      "baselineComparableDeltaTokens": -11424,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_dispatch_input",
@@ -352,6 +467,9 @@
       "surfaceTokens": 22,
       "baselineSurfaceTokens": 11782,
       "deltaTokens": -11760,
+      "additiveToolsExcludedFromBaselineComparison": [],
+      "baselineComparableSurfaceTokens": 22,
+      "baselineComparableDeltaTokens": -11760,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -386,6 +504,9 @@
       "surfaceTokens": 350,
       "baselineSurfaceTokens": 11782,
       "deltaTokens": -11432,
+      "additiveToolsExcludedFromBaselineComparison": [],
+      "baselineComparableSurfaceTokens": 350,
+      "baselineComparableDeltaTokens": -11432,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_dispatch_input",
@@ -424,6 +545,11 @@
       "surfaceTokens": 1145,
       "baselineSurfaceTokens": 11782,
       "deltaTokens": -10637,
+      "additiveToolsExcludedFromBaselineComparison": [
+        "git_commit"
+      ],
+      "baselineComparableSurfaceTokens": 353,
+      "baselineComparableDeltaTokens": -11429,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_dispatch_input",
@@ -454,12 +580,14 @@
         "create_ledger",
         "derive_predicates",
         "enumerate_ledgers",
+        "execute_external_implementation_review_attempt",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
         "fetch_ledger",
         "fetch_ledger_archive",
         "fetch_prompt",
+        "finalize_implementation_review_attempt",
         "finalize_plan",
         "fts_search",
         "get_config",
@@ -470,8 +598,13 @@
         "list_projects",
         "materialize_operator_action",
         "prepare_dispatch",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
         "publish_plan_draft",
         "read_log",
+        "record_implementation_completion",
         "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
@@ -484,7 +617,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 39,
+      "toolCount": 46,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -492,23 +625,44 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48116,
-        "tokens": 11606,
-        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
+        "utf8Bytes": 54156,
+        "tokens": 13048,
+        "sha256": "6d244b2ff1e037bb6875e869d0d857c48c4f0bbebc0640c6f455fac427b16670"
       },
-      "surfaceTokens": 11771,
+      "surfaceTokens": 13213,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11,
+      "deltaTokens": 1431,
+      "additiveToolsExcludedFromBaselineComparison": [
+        "acknowledge_operator_action",
+        "complete_operator_action",
+        "execute_external_implementation_review_attempt",
+        "finalize_implementation_review_attempt",
+        "get_usage_stats",
+        "git_commit",
+        "git_resolve_continue",
+        "materialize_operator_action",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
+        "record_implementation_completion",
+        "record_operator_action_evidence",
+        "revise_operator_action",
+        "workset",
+        "worktree_manage"
+      ],
+      "baselineComparableSurfaceTokens": 7984,
+      "baselineComparableDeltaTokens": -3798,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5177,
+      "domainInputSchemaTokens": 6224,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 936,
-        "allTokens": 1237,
+        "authoritativeResponseTokens": 1144,
+        "allTokens": 1445,
         "deltasAreAdditive": false
       }
     },
@@ -525,12 +679,14 @@
         "create_ledger",
         "derive_predicates",
         "enumerate_ledgers",
+        "execute_external_implementation_review_attempt",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
         "fetch_ledger",
         "fetch_ledger_archive",
         "fetch_prompt",
+        "finalize_implementation_review_attempt",
         "finalize_plan",
         "fts_search",
         "get_config",
@@ -541,8 +697,13 @@
         "list_projects",
         "materialize_operator_action",
         "prepare_dispatch",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
         "publish_plan_draft",
         "read_log",
+        "record_implementation_completion",
         "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
@@ -555,7 +716,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 39,
+      "toolCount": 46,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -563,23 +724,44 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48116,
-        "tokens": 11606,
-        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
+        "utf8Bytes": 54156,
+        "tokens": 13048,
+        "sha256": "6d244b2ff1e037bb6875e869d0d857c48c4f0bbebc0640c6f455fac427b16670"
       },
-      "surfaceTokens": 11771,
+      "surfaceTokens": 13213,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11,
+      "deltaTokens": 1431,
+      "additiveToolsExcludedFromBaselineComparison": [
+        "acknowledge_operator_action",
+        "complete_operator_action",
+        "execute_external_implementation_review_attempt",
+        "finalize_implementation_review_attempt",
+        "get_usage_stats",
+        "git_commit",
+        "git_resolve_continue",
+        "materialize_operator_action",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
+        "record_implementation_completion",
+        "record_operator_action_evidence",
+        "revise_operator_action",
+        "workset",
+        "worktree_manage"
+      ],
+      "baselineComparableSurfaceTokens": 7984,
+      "baselineComparableDeltaTokens": -3798,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5177,
+      "domainInputSchemaTokens": 6224,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 936,
-        "allTokens": 1237,
+        "authoritativeResponseTokens": 1144,
+        "allTokens": 1445,
         "deltasAreAdditive": false
       }
     },
@@ -596,12 +778,14 @@
         "create_ledger",
         "derive_predicates",
         "enumerate_ledgers",
+        "execute_external_implementation_review_attempt",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
         "fetch_ledger",
         "fetch_ledger_archive",
         "fetch_prompt",
+        "finalize_implementation_review_attempt",
         "finalize_plan",
         "fts_search",
         "get_config",
@@ -612,8 +796,13 @@
         "list_projects",
         "materialize_operator_action",
         "prepare_dispatch",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
         "publish_plan_draft",
         "read_log",
+        "record_implementation_completion",
         "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
@@ -626,7 +815,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 39,
+      "toolCount": 46,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -634,23 +823,44 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48116,
-        "tokens": 11606,
-        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
+        "utf8Bytes": 54156,
+        "tokens": 13048,
+        "sha256": "6d244b2ff1e037bb6875e869d0d857c48c4f0bbebc0640c6f455fac427b16670"
       },
-      "surfaceTokens": 11771,
+      "surfaceTokens": 13213,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11,
+      "deltaTokens": 1431,
+      "additiveToolsExcludedFromBaselineComparison": [
+        "acknowledge_operator_action",
+        "complete_operator_action",
+        "execute_external_implementation_review_attempt",
+        "finalize_implementation_review_attempt",
+        "get_usage_stats",
+        "git_commit",
+        "git_resolve_continue",
+        "materialize_operator_action",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
+        "record_implementation_completion",
+        "record_operator_action_evidence",
+        "revise_operator_action",
+        "workset",
+        "worktree_manage"
+      ],
+      "baselineComparableSurfaceTokens": 7984,
+      "baselineComparableDeltaTokens": -3798,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5177,
+      "domainInputSchemaTokens": 6224,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 936,
-        "allTokens": 1237,
+        "authoritativeResponseTokens": 1144,
+        "allTokens": 1445,
         "deltasAreAdditive": false
       }
     },
@@ -675,6 +885,9 @@
       "surfaceTokens": 351,
       "baselineSurfaceTokens": 11782,
       "deltaTokens": -11431,
+      "additiveToolsExcludedFromBaselineComparison": [],
+      "baselineComparableSurfaceTokens": 351,
+      "baselineComparableDeltaTokens": -11431,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_dispatch_input",
@@ -712,6 +925,9 @@
       "surfaceTokens": 351,
       "baselineSurfaceTokens": 11782,
       "deltaTokens": -11431,
+      "additiveToolsExcludedFromBaselineComparison": [],
+      "baselineComparableSurfaceTokens": 351,
+      "baselineComparableDeltaTokens": -11431,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_dispatch_input",
@@ -741,12 +957,14 @@
         "create_ledger",
         "derive_predicates",
         "enumerate_ledgers",
+        "execute_external_implementation_review_attempt",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
         "fetch_ledger",
         "fetch_ledger_archive",
         "fetch_prompt",
+        "finalize_implementation_review_attempt",
         "finalize_plan",
         "fts_search",
         "get_config",
@@ -757,8 +975,13 @@
         "list_projects",
         "materialize_operator_action",
         "prepare_dispatch",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
         "publish_plan_draft",
         "read_log",
+        "record_implementation_completion",
         "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
@@ -771,7 +994,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 39,
+      "toolCount": 46,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -779,23 +1002,44 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48116,
-        "tokens": 11606,
-        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
+        "utf8Bytes": 54156,
+        "tokens": 13048,
+        "sha256": "6d244b2ff1e037bb6875e869d0d857c48c4f0bbebc0640c6f455fac427b16670"
       },
-      "surfaceTokens": 11771,
+      "surfaceTokens": 13213,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11,
+      "deltaTokens": 1431,
+      "additiveToolsExcludedFromBaselineComparison": [
+        "acknowledge_operator_action",
+        "complete_operator_action",
+        "execute_external_implementation_review_attempt",
+        "finalize_implementation_review_attempt",
+        "get_usage_stats",
+        "git_commit",
+        "git_resolve_continue",
+        "materialize_operator_action",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
+        "record_implementation_completion",
+        "record_operator_action_evidence",
+        "revise_operator_action",
+        "workset",
+        "worktree_manage"
+      ],
+      "baselineComparableSurfaceTokens": 7984,
+      "baselineComparableDeltaTokens": -3798,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5177,
+      "domainInputSchemaTokens": 6224,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 936,
-        "allTokens": 1237,
+        "authoritativeResponseTokens": 1144,
+        "allTokens": 1445,
         "deltasAreAdditive": false
       }
     },
@@ -812,12 +1056,14 @@
         "create_ledger",
         "derive_predicates",
         "enumerate_ledgers",
+        "execute_external_implementation_review_attempt",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
         "fetch_ledger",
         "fetch_ledger_archive",
         "fetch_prompt",
+        "finalize_implementation_review_attempt",
         "finalize_plan",
         "fts_search",
         "get_config",
@@ -828,8 +1074,13 @@
         "list_projects",
         "materialize_operator_action",
         "prepare_dispatch",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
         "publish_plan_draft",
         "read_log",
+        "record_implementation_completion",
         "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
@@ -842,7 +1093,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 39,
+      "toolCount": 46,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -850,23 +1101,44 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48116,
-        "tokens": 11606,
-        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
+        "utf8Bytes": 54156,
+        "tokens": 13048,
+        "sha256": "6d244b2ff1e037bb6875e869d0d857c48c4f0bbebc0640c6f455fac427b16670"
       },
-      "surfaceTokens": 11771,
+      "surfaceTokens": 13213,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11,
+      "deltaTokens": 1431,
+      "additiveToolsExcludedFromBaselineComparison": [
+        "acknowledge_operator_action",
+        "complete_operator_action",
+        "execute_external_implementation_review_attempt",
+        "finalize_implementation_review_attempt",
+        "get_usage_stats",
+        "git_commit",
+        "git_resolve_continue",
+        "materialize_operator_action",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
+        "record_implementation_completion",
+        "record_operator_action_evidence",
+        "revise_operator_action",
+        "workset",
+        "worktree_manage"
+      ],
+      "baselineComparableSurfaceTokens": 7984,
+      "baselineComparableDeltaTokens": -3798,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5177,
+      "domainInputSchemaTokens": 6224,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 936,
-        "allTokens": 1237,
+        "authoritativeResponseTokens": 1144,
+        "allTokens": 1445,
         "deltasAreAdditive": false
       }
     },
@@ -894,6 +1166,9 @@
       "surfaceTokens": 825,
       "baselineSurfaceTokens": 11782,
       "deltaTokens": -10957,
+      "additiveToolsExcludedFromBaselineComparison": [],
+      "baselineComparableSurfaceTokens": 825,
+      "baselineComparableDeltaTokens": -10957,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_item",
@@ -930,6 +1205,9 @@
       "surfaceTokens": 22,
       "baselineSurfaceTokens": 11782,
       "deltaTokens": -11760,
+      "additiveToolsExcludedFromBaselineComparison": [],
+      "baselineComparableSurfaceTokens": 22,
+      "baselineComparableDeltaTokens": -11760,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -967,6 +1245,9 @@
       "surfaceTokens": 825,
       "baselineSurfaceTokens": 11782,
       "deltaTokens": -10957,
+      "additiveToolsExcludedFromBaselineComparison": [],
+      "baselineComparableSurfaceTokens": 825,
+      "baselineComparableDeltaTokens": -10957,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_item",
@@ -997,12 +1278,14 @@
         "create_ledger",
         "derive_predicates",
         "enumerate_ledgers",
+        "execute_external_implementation_review_attempt",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
         "fetch_ledger",
         "fetch_ledger_archive",
         "fetch_prompt",
+        "finalize_implementation_review_attempt",
         "finalize_plan",
         "fts_search",
         "get_config",
@@ -1013,8 +1296,13 @@
         "list_projects",
         "materialize_operator_action",
         "prepare_dispatch",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
         "publish_plan_draft",
         "read_log",
+        "record_implementation_completion",
         "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
@@ -1027,7 +1315,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 39,
+      "toolCount": 46,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -1035,23 +1323,44 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48116,
-        "tokens": 11606,
-        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
+        "utf8Bytes": 54156,
+        "tokens": 13048,
+        "sha256": "6d244b2ff1e037bb6875e869d0d857c48c4f0bbebc0640c6f455fac427b16670"
       },
-      "surfaceTokens": 11771,
+      "surfaceTokens": 13213,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11,
+      "deltaTokens": 1431,
+      "additiveToolsExcludedFromBaselineComparison": [
+        "acknowledge_operator_action",
+        "complete_operator_action",
+        "execute_external_implementation_review_attempt",
+        "finalize_implementation_review_attempt",
+        "get_usage_stats",
+        "git_commit",
+        "git_resolve_continue",
+        "materialize_operator_action",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
+        "record_implementation_completion",
+        "record_operator_action_evidence",
+        "revise_operator_action",
+        "workset",
+        "worktree_manage"
+      ],
+      "baselineComparableSurfaceTokens": 7984,
+      "baselineComparableDeltaTokens": -3798,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5177,
+      "domainInputSchemaTokens": 6224,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 936,
-        "allTokens": 1237,
+        "authoritativeResponseTokens": 1144,
+        "allTokens": 1445,
         "deltasAreAdditive": false
       }
     },
@@ -1068,12 +1377,14 @@
         "create_ledger",
         "derive_predicates",
         "enumerate_ledgers",
+        "execute_external_implementation_review_attempt",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
         "fetch_ledger",
         "fetch_ledger_archive",
         "fetch_prompt",
+        "finalize_implementation_review_attempt",
         "finalize_plan",
         "fts_search",
         "get_config",
@@ -1084,8 +1395,13 @@
         "list_projects",
         "materialize_operator_action",
         "prepare_dispatch",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
         "publish_plan_draft",
         "read_log",
+        "record_implementation_completion",
         "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
@@ -1098,7 +1414,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 39,
+      "toolCount": 46,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -1106,23 +1422,44 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48116,
-        "tokens": 11606,
-        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
+        "utf8Bytes": 54156,
+        "tokens": 13048,
+        "sha256": "6d244b2ff1e037bb6875e869d0d857c48c4f0bbebc0640c6f455fac427b16670"
       },
-      "surfaceTokens": 11771,
+      "surfaceTokens": 13213,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11,
+      "deltaTokens": 1431,
+      "additiveToolsExcludedFromBaselineComparison": [
+        "acknowledge_operator_action",
+        "complete_operator_action",
+        "execute_external_implementation_review_attempt",
+        "finalize_implementation_review_attempt",
+        "get_usage_stats",
+        "git_commit",
+        "git_resolve_continue",
+        "materialize_operator_action",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
+        "record_implementation_completion",
+        "record_operator_action_evidence",
+        "revise_operator_action",
+        "workset",
+        "worktree_manage"
+      ],
+      "baselineComparableSurfaceTokens": 7984,
+      "baselineComparableDeltaTokens": -3798,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5177,
+      "domainInputSchemaTokens": 6224,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 936,
-        "allTokens": 1237,
+        "authoritativeResponseTokens": 1144,
+        "allTokens": 1445,
         "deltasAreAdditive": false
       }
     },
@@ -1146,6 +1483,9 @@
       "surfaceTokens": 145,
       "baselineSurfaceTokens": 11782,
       "deltaTokens": -11637,
+      "additiveToolsExcludedFromBaselineComparison": [],
+      "baselineComparableSurfaceTokens": 145,
+      "baselineComparableDeltaTokens": -11637,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "get_config"
@@ -1174,12 +1514,14 @@
         "create_ledger",
         "derive_predicates",
         "enumerate_ledgers",
+        "execute_external_implementation_review_attempt",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
         "fetch_ledger",
         "fetch_ledger_archive",
         "fetch_prompt",
+        "finalize_implementation_review_attempt",
         "finalize_plan",
         "fts_search",
         "get_config",
@@ -1190,8 +1532,13 @@
         "list_projects",
         "materialize_operator_action",
         "prepare_dispatch",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
         "publish_plan_draft",
         "read_log",
+        "record_implementation_completion",
         "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
@@ -1204,7 +1551,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 39,
+      "toolCount": 46,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -1212,23 +1559,44 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48116,
-        "tokens": 11606,
-        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
+        "utf8Bytes": 54156,
+        "tokens": 13048,
+        "sha256": "6d244b2ff1e037bb6875e869d0d857c48c4f0bbebc0640c6f455fac427b16670"
       },
-      "surfaceTokens": 11771,
+      "surfaceTokens": 13213,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11,
+      "deltaTokens": 1431,
+      "additiveToolsExcludedFromBaselineComparison": [
+        "acknowledge_operator_action",
+        "complete_operator_action",
+        "execute_external_implementation_review_attempt",
+        "finalize_implementation_review_attempt",
+        "get_usage_stats",
+        "git_commit",
+        "git_resolve_continue",
+        "materialize_operator_action",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
+        "record_implementation_completion",
+        "record_operator_action_evidence",
+        "revise_operator_action",
+        "workset",
+        "worktree_manage"
+      ],
+      "baselineComparableSurfaceTokens": 7984,
+      "baselineComparableDeltaTokens": -3798,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5177,
+      "domainInputSchemaTokens": 6224,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 936,
-        "allTokens": 1237,
+        "authoritativeResponseTokens": 1144,
+        "allTokens": 1445,
         "deltasAreAdditive": false
       }
     },
@@ -1253,6 +1621,9 @@
       "surfaceTokens": 351,
       "baselineSurfaceTokens": 11782,
       "deltaTokens": -11431,
+      "additiveToolsExcludedFromBaselineComparison": [],
+      "baselineComparableSurfaceTokens": 351,
+      "baselineComparableDeltaTokens": -11431,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_dispatch_input",
@@ -1290,6 +1661,9 @@
       "surfaceTokens": 350,
       "baselineSurfaceTokens": 11782,
       "deltaTokens": -11432,
+      "additiveToolsExcludedFromBaselineComparison": [],
+      "baselineComparableSurfaceTokens": 350,
+      "baselineComparableDeltaTokens": -11432,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "fetch_dispatch_input",
@@ -1319,12 +1693,14 @@
         "create_ledger",
         "derive_predicates",
         "enumerate_ledgers",
+        "execute_external_implementation_review_attempt",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
         "fetch_ledger",
         "fetch_ledger_archive",
         "fetch_prompt",
+        "finalize_implementation_review_attempt",
         "finalize_plan",
         "fts_search",
         "get_config",
@@ -1335,8 +1711,13 @@
         "list_projects",
         "materialize_operator_action",
         "prepare_dispatch",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
         "publish_plan_draft",
         "read_log",
+        "record_implementation_completion",
         "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
@@ -1349,7 +1730,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 39,
+      "toolCount": 46,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -1357,23 +1738,44 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48116,
-        "tokens": 11606,
-        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
+        "utf8Bytes": 54156,
+        "tokens": 13048,
+        "sha256": "6d244b2ff1e037bb6875e869d0d857c48c4f0bbebc0640c6f455fac427b16670"
       },
-      "surfaceTokens": 11771,
+      "surfaceTokens": 13213,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11,
+      "deltaTokens": 1431,
+      "additiveToolsExcludedFromBaselineComparison": [
+        "acknowledge_operator_action",
+        "complete_operator_action",
+        "execute_external_implementation_review_attempt",
+        "finalize_implementation_review_attempt",
+        "get_usage_stats",
+        "git_commit",
+        "git_resolve_continue",
+        "materialize_operator_action",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
+        "record_implementation_completion",
+        "record_operator_action_evidence",
+        "revise_operator_action",
+        "workset",
+        "worktree_manage"
+      ],
+      "baselineComparableSurfaceTokens": 7984,
+      "baselineComparableDeltaTokens": -3798,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5177,
+      "domainInputSchemaTokens": 6224,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 936,
-        "allTokens": 1237,
+        "authoritativeResponseTokens": 1144,
+        "allTokens": 1445,
         "deltasAreAdditive": false
       }
     },
@@ -1397,6 +1799,9 @@
       "surfaceTokens": 145,
       "baselineSurfaceTokens": 11782,
       "deltaTokens": -11637,
+      "additiveToolsExcludedFromBaselineComparison": [],
+      "baselineComparableSurfaceTokens": 145,
+      "baselineComparableDeltaTokens": -11637,
       "smallerThanBaseline": true,
       "contractRequiredTools": [
         "get_config"
@@ -1425,12 +1830,14 @@
         "create_ledger",
         "derive_predicates",
         "enumerate_ledgers",
+        "execute_external_implementation_review_attempt",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
         "fetch_ledger",
         "fetch_ledger_archive",
         "fetch_prompt",
+        "finalize_implementation_review_attempt",
         "finalize_plan",
         "fts_search",
         "get_config",
@@ -1441,8 +1848,13 @@
         "list_projects",
         "materialize_operator_action",
         "prepare_dispatch",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
         "publish_plan_draft",
         "read_log",
+        "record_implementation_completion",
         "record_operator_action_evidence",
         "release_plan_claim",
         "reopen_item",
@@ -1455,7 +1867,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 39,
+      "toolCount": 46,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -1463,23 +1875,44 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48116,
-        "tokens": 11606,
-        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
+        "utf8Bytes": 54156,
+        "tokens": 13048,
+        "sha256": "6d244b2ff1e037bb6875e869d0d857c48c4f0bbebc0640c6f455fac427b16670"
       },
-      "surfaceTokens": 11771,
+      "surfaceTokens": 13213,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -11,
+      "deltaTokens": 1431,
+      "additiveToolsExcludedFromBaselineComparison": [
+        "acknowledge_operator_action",
+        "complete_operator_action",
+        "execute_external_implementation_review_attempt",
+        "finalize_implementation_review_attempt",
+        "get_usage_stats",
+        "git_commit",
+        "git_resolve_continue",
+        "materialize_operator_action",
+        "prepare_implementation_completion",
+        "prepare_implementation_review_attempt",
+        "prepare_implementation_review_fallback",
+        "prepare_implementation_review_panel",
+        "record_implementation_completion",
+        "record_operator_action_evidence",
+        "revise_operator_action",
+        "workset",
+        "worktree_manage"
+      ],
+      "baselineComparableSurfaceTokens": 7984,
+      "baselineComparableDeltaTokens": -3798,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 5177,
+      "domainInputSchemaTokens": 6224,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 936,
-        "allTokens": 1237,
+        "authoritativeResponseTokens": 1144,
+        "allTokens": 1445,
         "deltasAreAdditive": false
       }
     }
@@ -1801,8 +2234,8 @@
       "name": "create_item",
       "whole": {
         "baselineTokens": 384,
-        "afterTokens": 404,
-        "deltaTokens": 20
+        "afterTokens": 414,
+        "deltaTokens": 30
       },
       "fields": {
         "name": {
@@ -1825,12 +2258,12 @@
             "marginalTokens": 176
           },
           "after": {
-            "serializedTokens": 57,
-            "marginalTokens": 58
+            "serializedTokens": 67,
+            "marginalTokens": 68
           },
           "delta": {
-            "serializedTokens": -118,
-            "marginalTokens": -118
+            "serializedTokens": -108,
+            "marginalTokens": -108
           }
         },
         "inputSchema": {
@@ -2053,6 +2486,58 @@
           "delta": {
             "serializedTokens": -10,
             "marginalTokens": -11
+          }
+        }
+      }
+    },
+    {
+      "name": "execute_external_implementation_review_attempt",
+      "whole": {
+        "baselineTokens": 0,
+        "afterTokens": 151,
+        "deltaTokens": 151
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 8,
+            "marginalTokens": 9
+          },
+          "delta": {
+            "serializedTokens": 8,
+            "marginalTokens": 9
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 39,
+            "marginalTokens": 40
+          },
+          "delta": {
+            "serializedTokens": 39,
+            "marginalTokens": 40
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 99,
+            "marginalTokens": 100
+          },
+          "delta": {
+            "serializedTokens": 99,
+            "marginalTokens": 100
           }
         }
       }
@@ -2417,6 +2902,58 @@
           "delta": {
             "serializedTokens": 5,
             "marginalTokens": 4
+          }
+        }
+      }
+    },
+    {
+      "name": "finalize_implementation_review_attempt",
+      "whole": {
+        "baselineTokens": 0,
+        "afterTokens": 149,
+        "deltaTokens": 149
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 8,
+            "marginalTokens": 9
+          },
+          "delta": {
+            "serializedTokens": 8,
+            "marginalTokens": 9
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 37,
+            "marginalTokens": 38
+          },
+          "delta": {
+            "serializedTokens": 37,
+            "marginalTokens": 38
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 99,
+            "marginalTokens": 100
+          },
+          "delta": {
+            "serializedTokens": 99,
+            "marginalTokens": 100
           }
         }
       }
@@ -2893,8 +3430,8 @@
       "name": "prepare_dispatch",
       "whole": {
         "baselineTokens": 441,
-        "afterTokens": 537,
-        "deltaTokens": 96
+        "afterTokens": 457,
+        "deltaTokens": 16
       },
       "fields": {
         "name": {
@@ -2917,12 +3454,12 @@
             "marginalTokens": 50
           },
           "after": {
-            "serializedTokens": 39,
-            "marginalTokens": 40
+            "serializedTokens": 47,
+            "marginalTokens": 48
           },
           "delta": {
-            "serializedTokens": -10,
-            "marginalTokens": -10
+            "serializedTokens": -2,
+            "marginalTokens": -2
           }
         },
         "inputSchema": {
@@ -2931,12 +3468,220 @@
             "marginalTokens": 377
           },
           "after": {
-            "serializedTokens": 489,
-            "marginalTokens": 490
+            "serializedTokens": 401,
+            "marginalTokens": 402
           },
           "delta": {
-            "serializedTokens": 114,
-            "marginalTokens": 113
+            "serializedTokens": 26,
+            "marginalTokens": 25
+          }
+        }
+      }
+    },
+    {
+      "name": "prepare_implementation_completion",
+      "whole": {
+        "baselineTokens": 0,
+        "afterTokens": 388,
+        "deltaTokens": 388
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          },
+          "delta": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 44,
+            "marginalTokens": 45
+          },
+          "delta": {
+            "serializedTokens": 44,
+            "marginalTokens": 45
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 333,
+            "marginalTokens": 334
+          },
+          "delta": {
+            "serializedTokens": 333,
+            "marginalTokens": 334
+          }
+        }
+      }
+    },
+    {
+      "name": "prepare_implementation_review_attempt",
+      "whole": {
+        "baselineTokens": 0,
+        "afterTokens": 191,
+        "deltaTokens": 191
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 7,
+            "marginalTokens": 8
+          },
+          "delta": {
+            "serializedTokens": 7,
+            "marginalTokens": 8
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 49,
+            "marginalTokens": 50
+          },
+          "delta": {
+            "serializedTokens": 49,
+            "marginalTokens": 50
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 130,
+            "marginalTokens": 131
+          },
+          "delta": {
+            "serializedTokens": 130,
+            "marginalTokens": 131
+          }
+        }
+      }
+    },
+    {
+      "name": "prepare_implementation_review_fallback",
+      "whole": {
+        "baselineTokens": 0,
+        "afterTokens": 152,
+        "deltaTokens": 152
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 8,
+            "marginalTokens": 9
+          },
+          "delta": {
+            "serializedTokens": 8,
+            "marginalTokens": 9
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 41,
+            "marginalTokens": 42
+          },
+          "delta": {
+            "serializedTokens": 41,
+            "marginalTokens": 42
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 98,
+            "marginalTokens": 99
+          },
+          "delta": {
+            "serializedTokens": 98,
+            "marginalTokens": 99
+          }
+        }
+      }
+    },
+    {
+      "name": "prepare_implementation_review_panel",
+      "whole": {
+        "baselineTokens": 0,
+        "afterTokens": 229,
+        "deltaTokens": 229
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 7,
+            "marginalTokens": 8
+          },
+          "delta": {
+            "serializedTokens": 7,
+            "marginalTokens": 8
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 44,
+            "marginalTokens": 45
+          },
+          "delta": {
+            "serializedTokens": 44,
+            "marginalTokens": 45
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 173,
+            "marginalTokens": 174
+          },
+          "delta": {
+            "serializedTokens": 173,
+            "marginalTokens": 174
           }
         }
       }
@@ -3041,6 +3786,58 @@
           "delta": {
             "serializedTokens": -21,
             "marginalTokens": -23
+          }
+        }
+      }
+    },
+    {
+      "name": "record_implementation_completion",
+      "whole": {
+        "baselineTokens": 0,
+        "afterTokens": 176,
+        "deltaTokens": 176
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          },
+          "delta": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 50,
+            "marginalTokens": 51
+          },
+          "delta": {
+            "serializedTokens": 50,
+            "marginalTokens": 51
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 115,
+            "marginalTokens": 116
+          },
+          "delta": {
+            "serializedTokens": 115,
+            "marginalTokens": 116
           }
         }
       }
@@ -3621,8 +4418,8 @@
       "name": "worktree_manage",
       "whole": {
         "baselineTokens": 0,
-        "afterTokens": 758,
-        "deltaTokens": 758
+        "afterTokens": 834,
+        "deltaTokens": 834
       },
       "fields": {
         "name": {
@@ -3645,12 +4442,12 @@
             "marginalTokens": 0
           },
           "after": {
-            "serializedTokens": 124,
-            "marginalTokens": 125
+            "serializedTokens": 200,
+            "marginalTokens": 201
           },
           "delta": {
-            "serializedTokens": 124,
-            "marginalTokens": 125
+            "serializedTokens": 200,
+            "marginalTokens": 201
           }
         },
         "inputSchema": {
@@ -3945,19 +4742,19 @@
     "ledgerCallingProfiles": [
       {
         "profileName": "full",
-        "remainingG93AttributableTokens": 1237
+        "remainingG93AttributableTokens": 1445
       },
       {
         "profileName": "non-dispatch",
-        "remainingG93AttributableTokens": 1048
+        "remainingG93AttributableTokens": 1254
       },
       {
         "profileName": "advance",
-        "remainingG93AttributableTokens": 1237
+        "remainingG93AttributableTokens": 1445
       },
       {
         "profileName": "begin",
-        "remainingG93AttributableTokens": 1237
+        "remainingG93AttributableTokens": 1445
       },
       {
         "profileName": "implement-conflict-resolver",
@@ -3973,15 +4770,15 @@
       },
       {
         "profileName": "implement/advance",
-        "remainingG93AttributableTokens": 1237
+        "remainingG93AttributableTokens": 1445
       },
       {
         "profileName": "implement/start",
-        "remainingG93AttributableTokens": 1237
+        "remainingG93AttributableTokens": 1445
       },
       {
         "profileName": "investigate",
-        "remainingG93AttributableTokens": 1237
+        "remainingG93AttributableTokens": 1445
       },
       {
         "profileName": "investigate-explorer",
@@ -3993,11 +4790,11 @@
       },
       {
         "profileName": "investigate/advance",
-        "remainingG93AttributableTokens": 1237
+        "remainingG93AttributableTokens": 1445
       },
       {
         "profileName": "plan",
-        "remainingG93AttributableTokens": 1237
+        "remainingG93AttributableTokens": 1445
       },
       {
         "profileName": "plan-advance",
@@ -4009,11 +4806,11 @@
       },
       {
         "profileName": "plan/advance",
-        "remainingG93AttributableTokens": 1237
+        "remainingG93AttributableTokens": 1445
       },
       {
         "profileName": "plan/follow-up",
-        "remainingG93AttributableTokens": 1237
+        "remainingG93AttributableTokens": 1445
       },
       {
         "profileName": "planners",
@@ -4021,7 +4818,7 @@
       },
       {
         "profileName": "research",
-        "remainingG93AttributableTokens": 1237
+        "remainingG93AttributableTokens": 1445
       },
       {
         "profileName": "research-experimenter",
@@ -4033,7 +4830,7 @@
       },
       {
         "profileName": "research/advance",
-        "remainingG93AttributableTokens": 1237
+        "remainingG93AttributableTokens": 1445
       },
       {
         "profileName": "reviewers",
@@ -4041,10 +4838,10 @@
       },
       {
         "profileName": "upstream",
-        "remainingG93AttributableTokens": 1237
+        "remainingG93AttributableTokens": 1445
       }
     ],
-    "maximumRemainingG93AttributableTokens": 1237
+    "maximumRemainingG93AttributableTokens": 1445
   },
   "budgets": {
     "tokenizerMatches": true,

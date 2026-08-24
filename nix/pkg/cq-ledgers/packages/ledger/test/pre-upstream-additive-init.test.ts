@@ -18,7 +18,6 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import {
-
   buildBackupDump,
   CANONICAL_LEDGERS,
   FsLedgerStore,
@@ -133,22 +132,25 @@ function withoutPlanLifecycleSchemaFields(snapshot: PublicSnapshot): PublicSnaps
     for (const field of PLAN_MANAGED_GOAL_FIELD_NAMES) delete goals.schema.fields[field];
   }
   const reviews = compatible[REVIEWS_LEDGER];
-  if (reviews !== undefined) delete reviews.schema.fields[PLAN_REVIEW_DRAFT_FIELD];
+  if (reviews !== undefined) {
+    delete reviews.schema.fields[PLAN_REVIEW_DRAFT_FIELD];
+    delete reviews.schema.fields.implementationEvidence;
+  }
   const ideas = compatible[IDEAS_LEDGER];
   if (ideas !== undefined) delete ideas.schema.fields.ledgerRefs;
   return compatible;
 }
 
-function withoutPlanLifecycleFields(
-  ledgerName: string,
-  schema: LedgerSchema,
-): LedgerSchema {
+function withoutPlanLifecycleFields(ledgerName: string, schema: LedgerSchema): LedgerSchema {
   const compatible = structuredClone(schema);
   for (const field of WORKSET_OWNED_FIELD_NAMES) delete compatible.fields[field];
   if (ledgerName === GOALS_LEDGER) {
     for (const field of PLAN_MANAGED_GOAL_FIELD_NAMES) delete compatible.fields[field];
   }
-  if (ledgerName === REVIEWS_LEDGER) delete compatible.fields[PLAN_REVIEW_DRAFT_FIELD];
+  if (ledgerName === REVIEWS_LEDGER) {
+    delete compatible.fields[PLAN_REVIEW_DRAFT_FIELD];
+    delete compatible.fields.implementationEvidence;
+  }
   if (ledgerName === IDEAS_LEDGER) delete compatible.fields.ledgerRefs;
   return compatible;
 }
@@ -173,8 +175,7 @@ function withoutPlanLifecycleSchemaRows(
     const compatible = withoutPlanLifecycleFields(name, schema);
     return {
       ...row,
-      schema_json:
-        typeof storedSchema === "string" ? JSON.stringify(compatible) : compatible,
+      schema_json: typeof storedSchema === "string" ? JSON.stringify(compatible) : compatible,
     };
   });
 }
@@ -437,9 +438,7 @@ async function captureSqliteState(
           .all(UPSTREAM_LEDGER, OPERATOR_ACTIONS_LEDGER, MEMORIES_LEDGER);
     const ledgers = includeUpstream
       ? ledgerRows
-      : withoutPlanLifecycleSchemaRows(
-          ledgerRows as Array<Record<string, unknown>>,
-        );
+      : withoutPlanLifecycleSchemaRows(ledgerRows as Array<Record<string, unknown>>);
     const tables = Object.fromEntries(
       SQLITE_TABLES.map((table) => [
         table,
@@ -511,9 +510,7 @@ async function capturePostgresState(
           AND name <> ${MEMORIES_LEDGER}
         ORDER BY name
       `;
-  const ledgers = includeUpstream
-    ? ledgerRows
-    : withoutPlanLifecycleSchemaRows(ledgerRows);
+  const ledgers = includeUpstream ? ledgerRows : withoutPlanLifecycleSchemaRows(ledgerRows);
   const groups = await pool<Array<Record<string, unknown>>>`
     SELECT seq::text, ledger, id, title, description
     FROM groups WHERE project_key = ${projectKey} ORDER BY seq
@@ -820,10 +817,7 @@ describe("pre-upstream lifecycle acceptance states", () => {
     expect(await readFile(path.join(summary.backupDir, `${UPSTREAM_LEDGER}.md`), "utf8")).toContain(
       "# upstream",
     );
-    const archivedArtifacts = [
-      "archive/tasks/M42.md",
-      "archive/milestones/M42.md",
-    ];
+    const archivedArtifacts = ["archive/tasks/M42.md", "archive/milestones/M42.md"];
     expect(await captureFiles(summary.backupDir, archivedArtifacts)).toBe(
       await captureFiles(path.join(FS_FIXTURE_ROOT, ".cq"), archivedArtifacts),
     );

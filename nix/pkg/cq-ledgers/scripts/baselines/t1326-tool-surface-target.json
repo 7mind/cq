@@ -295,42 +295,20 @@
           ]
         },
         "implement-conflict-resolver": {
-          "tools": [
-            "fetch_dispatch_input",
-            "store_result",
-            "git_resolve_continue"
-          ],
-          "preservedCapabilities": [
-            "fetch_dispatch_input",
-            "store_result",
-            "git_resolve_continue"
-          ]
+          "tools": ["fetch_dispatch_input", "store_result", "git_resolve_continue"],
+          "preservedCapabilities": ["fetch_dispatch_input", "store_result", "git_resolve_continue"]
         },
         "implement-review": {
           "tools": [],
           "preservedCapabilities": []
         },
         "implement-reviewer": {
-          "tools": [
-            "fetch_dispatch_input",
-            "store_result"
-          ],
-          "preservedCapabilities": [
-            "fetch_dispatch_input",
-            "store_result"
-          ]
+          "tools": ["fetch_dispatch_input", "store_result"],
+          "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
         },
         "implement-worker": {
-          "tools": [
-            "fetch_dispatch_input",
-            "store_result",
-            "git_commit"
-          ],
-          "preservedCapabilities": [
-            "fetch_dispatch_input",
-            "store_result",
-            "git_commit"
-          ]
+          "tools": ["fetch_dispatch_input", "store_result", "git_commit"],
+          "preservedCapabilities": ["fetch_dispatch_input", "store_result", "git_commit"]
         },
         "implement/advance": {
           "tools": [
@@ -585,24 +563,12 @@
           ]
         },
         "investigate-explorer": {
-          "tools": [
-            "fetch_dispatch_input",
-            "store_result"
-          ],
-          "preservedCapabilities": [
-            "fetch_dispatch_input",
-            "store_result"
-          ]
+          "tools": ["fetch_dispatch_input", "store_result"],
+          "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
         },
         "investigate-prober": {
-          "tools": [
-            "fetch_dispatch_input",
-            "store_result"
-          ],
-          "preservedCapabilities": [
-            "fetch_dispatch_input",
-            "store_result"
-          ]
+          "tools": ["fetch_dispatch_input", "store_result"],
+          "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
         },
         "investigate/advance": {
           "tools": [
@@ -979,12 +945,8 @@
           ]
         },
         "planners": {
-          "tools": [
-            "get_config"
-          ],
-          "preservedCapabilities": [
-            "get_config"
-          ]
+          "tools": ["get_config"],
+          "preservedCapabilities": ["get_config"]
         },
         "research": {
           "tools": [
@@ -1071,24 +1033,12 @@
           ]
         },
         "research-experimenter": {
-          "tools": [
-            "fetch_dispatch_input",
-            "store_result"
-          ],
-          "preservedCapabilities": [
-            "fetch_dispatch_input",
-            "store_result"
-          ]
+          "tools": ["fetch_dispatch_input", "store_result"],
+          "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
         },
         "research-explorer": {
-          "tools": [
-            "fetch_dispatch_input",
-            "store_result"
-          ],
-          "preservedCapabilities": [
-            "fetch_dispatch_input",
-            "store_result"
-          ]
+          "tools": ["fetch_dispatch_input", "store_result"],
+          "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
         },
         "research/advance": {
           "tools": [
@@ -1175,12 +1125,8 @@
           ]
         },
         "reviewers": {
-          "tools": [
-            "get_config"
-          ],
-          "preservedCapabilities": [
-            "get_config"
-          ]
+          "tools": ["get_config"],
+          "preservedCapabilities": ["get_config"]
         }
       },
       "measurement": {
@@ -1203,11 +1149,7 @@
       "id": "generic-milestone-crud",
       "proposal": "Remove create/update/fetch milestone methods and route root milestones through generic item operations with explicit root/DAG/response invariants.",
       "publicChanges": {
-        "removed": [
-          "create_milestone",
-          "update_milestone",
-          "fetch_milestone"
-        ],
+        "removed": ["create_milestone", "update_milestone", "fetch_milestone"],
         "renamed": [],
         "replacements": {
           "create_milestone": "create_item",
@@ -1318,6 +1260,10 @@
       "get_config",
       "list_milestone_items",
       "list_projects",
+      "prepare_implementation_completion",
+      "prepare_implementation_review_attempt",
+      "prepare_implementation_review_fallback",
+      "prepare_implementation_review_panel",
       "prepare_dispatch",
       "publish_plan_draft",
       "read_log",
@@ -1333,27 +1279,20 @@
       "materialize_operator_action",
       "acknowledge_operator_action",
       "record_operator_action_evidence",
+      "record_implementation_completion",
       "revise_operator_action",
       "complete_operator_action",
       "worktree_manage",
       "git_commit",
-      "git_resolve_continue"
+      "git_resolve_continue",
+      "execute_external_implementation_review_attempt",
+      "finalize_implementation_review_attempt"
     ],
-    "publicToolCount": 39,
-    "removedPublicTools": [
-      "create_milestone",
-      "update_milestone",
-      "fetch_milestone"
-    ],
+    "publicToolCount": 46,
+    "removedPublicTools": ["create_milestone", "update_milestone", "fetch_milestone"],
     "renamedPublicTools": [],
     "requiredCapabilityCoverage": {
-      "cq": [
-        "snapshot",
-        "derive_predicates",
-        "fetch_item",
-        "create_item",
-        "update_item"
-      ],
+      "cq": ["snapshot", "derive_predicates", "fetch_item", "create_item", "update_item"],
       "frontends": [
         "enumerate_ledgers",
         "fetch_ledger",
@@ -1372,12 +1311,7 @@
         "update_item",
         "archive_milestone"
       ],
-      "lifecycle": [
-        "create_item",
-        "update_item",
-        "reopen_item",
-        "unarchive_item"
-      ],
+      "lifecycle": ["create_item", "update_item", "reopen_item", "unarchive_item"],
       "recovery": [
         "fetch_ledger_archive",
         "reopen_item",
@@ -1386,10 +1320,7 @@
         "fetch_dispatch_result",
         "release_plan_claim"
       ],
-      "referenceCanonicalization": [
-        "create_item",
-        "update_item"
-      ],
+      "referenceCanonicalization": ["create_item", "update_item"],
       "archive": [
         "archive_milestone",
         "fetch_ledger_archive",
@@ -1404,12 +1335,7 @@
         "abort_dispatch",
         "fetch_dispatch_result"
       ],
-      "planFencing": [
-        "claim_plan",
-        "publish_plan_draft",
-        "release_plan_claim",
-        "finalize_plan"
-      ]
+      "planFencing": ["claim_plan", "publish_plan_draft", "release_plan_claim", "finalize_plan"]
     },
     "roleProfiles": {
       "advance": {
@@ -1581,42 +1507,20 @@
         ]
       },
       "implement-conflict-resolver": {
-        "tools": [
-          "fetch_dispatch_input",
-          "store_result",
-          "git_resolve_continue"
-        ],
-        "preservedCapabilities": [
-          "fetch_dispatch_input",
-          "store_result",
-          "git_resolve_continue"
-        ]
+        "tools": ["fetch_dispatch_input", "store_result", "git_resolve_continue"],
+        "preservedCapabilities": ["fetch_dispatch_input", "store_result", "git_resolve_continue"]
       },
       "implement-review": {
         "tools": [],
         "preservedCapabilities": []
       },
       "implement-reviewer": {
-        "tools": [
-          "fetch_dispatch_input",
-          "store_result"
-        ],
-        "preservedCapabilities": [
-          "fetch_dispatch_input",
-          "store_result"
-        ]
+        "tools": ["fetch_dispatch_input", "store_result"],
+        "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
       },
       "implement-worker": {
-        "tools": [
-          "fetch_dispatch_input",
-          "store_result",
-          "git_commit"
-        ],
-        "preservedCapabilities": [
-          "fetch_dispatch_input",
-          "store_result",
-          "git_commit"
-        ]
+        "tools": ["fetch_dispatch_input", "store_result", "git_commit"],
+        "preservedCapabilities": ["fetch_dispatch_input", "store_result", "git_commit"]
       },
       "implement/advance": {
         "tools": [
@@ -1871,24 +1775,12 @@
         ]
       },
       "investigate-explorer": {
-        "tools": [
-          "fetch_dispatch_input",
-          "store_result"
-        ],
-        "preservedCapabilities": [
-          "fetch_dispatch_input",
-          "store_result"
-        ]
+        "tools": ["fetch_dispatch_input", "store_result"],
+        "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
       },
       "investigate-prober": {
-        "tools": [
-          "fetch_dispatch_input",
-          "store_result"
-        ],
-        "preservedCapabilities": [
-          "fetch_dispatch_input",
-          "store_result"
-        ]
+        "tools": ["fetch_dispatch_input", "store_result"],
+        "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
       },
       "investigate/advance": {
         "tools": [
@@ -2265,12 +2157,8 @@
         ]
       },
       "planners": {
-        "tools": [
-          "get_config"
-        ],
-        "preservedCapabilities": [
-          "get_config"
-        ]
+        "tools": ["get_config"],
+        "preservedCapabilities": ["get_config"]
       },
       "research": {
         "tools": [
@@ -2357,24 +2245,12 @@
         ]
       },
       "research-experimenter": {
-        "tools": [
-          "fetch_dispatch_input",
-          "store_result"
-        ],
-        "preservedCapabilities": [
-          "fetch_dispatch_input",
-          "store_result"
-        ]
+        "tools": ["fetch_dispatch_input", "store_result"],
+        "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
       },
       "research-explorer": {
-        "tools": [
-          "fetch_dispatch_input",
-          "store_result"
-        ],
-        "preservedCapabilities": [
-          "fetch_dispatch_input",
-          "store_result"
-        ]
+        "tools": ["fetch_dispatch_input", "store_result"],
+        "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
       },
       "research/advance": {
         "tools": [
@@ -2461,12 +2337,8 @@
         ]
       },
       "reviewers": {
-        "tools": [
-          "get_config"
-        ],
-        "preservedCapabilities": [
-          "get_config"
-        ]
+        "tools": ["get_config"],
+        "preservedCapabilities": ["get_config"]
       }
     },
     "fullToolsListMeasurement": {

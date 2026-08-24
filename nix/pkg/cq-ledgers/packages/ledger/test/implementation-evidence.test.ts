@@ -255,7 +255,7 @@ describe("versioned protected implementation evidence [BG]", () => {
     expect(Object.keys((await f.evidence.snapshot()).completions)).toHaveLength(0);
   });
 
-  test("generic writes cannot attach evidence or terminalize a wip implementation task", async () => {
+  test("generic writes cannot attach protected implementation result evidence", async () => {
     const f = await fixture();
     const preparedCompletion = await f.service.prepareCompletion({
       taskRef: "tasks:T2345",
@@ -288,9 +288,19 @@ describe("versioned protected implementation evidence [BG]", () => {
       fields: { headline: "task" },
     });
     await ledger.updateItem(TASKS_LEDGER, "T2345", { status: "wip" });
-    await expect(ledger.updateItem(TASKS_LEDGER, "T2345", { status: "done" })).rejects.toThrow(
-      "protected implementation evidence",
-    );
+    await expect(
+      ledger.createItem(TASKS_LEDGER, milestone.id, {
+        id: "T2346",
+        status: "planned",
+        fields: { headline: "forged", resultCommit: RESULT },
+      }),
+    ).rejects.toThrow("protected implementation evidence");
+    await expect(
+      ledger.updateItem(TASKS_LEDGER, "T2345", {
+        status: "done",
+        fields: { resultCommit: RESULT, completion: "forged" },
+      }),
+    ).rejects.toThrow("protected implementation evidence");
     await expect(
       ledger.createItem(REVIEWS_LEDGER, milestone.id, {
         status: "go-ahead",

@@ -427,6 +427,10 @@ function stringField(fields: Record<string, FieldValue | undefined>, name: strin
   return typeof value === "string" ? value : "";
 }
 
+function hasImplementationResultFields(fields: Record<string, FieldValue> | undefined): boolean {
+  return fields?.["resultCommit"] !== undefined || fields?.["completion"] !== undefined;
+}
+
 function assertUpstreamFilingClaim(item: Item, patchFields: Record<string, FieldValue>): void {
   if (patchFields["filingOperationId"] === undefined) return;
   const existing = stringField(item.fields, "filingOperationId");
@@ -463,13 +467,11 @@ export function applyUpdateItem(
   }
   if (
     ledger.id === TASKS_LEDGER &&
-    item.status === "wip" &&
-    patch.status === "done" &&
-    currentOperatorDirective === null &&
+    hasImplementationResultFields(patch.fields) &&
     !isAuthorizedImplementationEvidenceMutation(patch)
   ) {
     throw new LedgerError(
-      `Implementation task ${item.id} may complete only through protected implementation evidence`,
+      `Implementation result fields on task ${item.id} may mutate only through protected implementation evidence`,
     );
   }
   if (
@@ -609,6 +611,15 @@ export function applyCreateItem(
   ) {
     throw new LedgerError(
       "implementationEvidence may be attached only through protected completion recording",
+    );
+  }
+  if (
+    ledger.id === TASKS_LEDGER &&
+    hasImplementationResultFields(init.fields) &&
+    !isAuthorizedImplementationEvidenceMutation(init)
+  ) {
+    throw new LedgerError(
+      `Implementation result fields on task ${init.id ?? "<allocated>"} may be attached only through protected implementation evidence`,
     );
   }
   assertAmbientAttachment(ledger.id, milestoneId);
