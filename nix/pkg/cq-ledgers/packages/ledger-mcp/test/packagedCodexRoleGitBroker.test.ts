@@ -24,11 +24,13 @@ import {
   type CodexInstalledRoleBoundaryExecution,
   type CodexRoleBoundaryExecutionResult,
   type ConsumedDispatchResult,
+  type DispatchPrepared,
 } from "@cq/config";
 import {
   createLedgerStore,
   createInMemoryWorksetStore,
   fsAttestationProductionRoot,
+  ImplementationEvidenceService,
   observeManagedRebaseConflict,
   prepareManagedWorktree,
   releaseManagedWorktree,
@@ -38,6 +40,7 @@ import {
   nodeSupervisedWorkerGateRunner,
   TASKS_LEDGER,
   type DispatchBoundGitAuthorization,
+  type ImplementationReviewerIdentity,
   type ManagedWorktreeHandle,
 } from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
@@ -167,6 +170,11 @@ interface PackagedReviewerMatrixRow {
   readonly fastForwardEligible: true;
 }
 
+interface PackagedReviewerGateRun extends PackagedReviewerMatrixRow {
+  readonly dispatch: DispatchPrepared;
+  readonly consumed: ConsumedDispatchResult;
+}
+
 async function runPackagedReviewer(input: {
   readonly repositoryRoot: string;
   readonly managedHandle: ManagedWorktreeHandle;
@@ -176,7 +184,7 @@ async function runPackagedReviewer(input: {
   readonly workerRoute: PackagedWorkerRoute;
   readonly reviewerMode: PackagedReviewerMode;
   readonly workerResult: ConsumedDispatchResult;
-}): Promise<PackagedReviewerMatrixRow> {
+}): Promise<PackagedReviewerGateRun> {
   if (INSTALLED_ROLE === undefined || INSTALLED_CODEX === undefined) {
     throw new Error("installed reviewer gate was not selected");
   }
@@ -422,6 +430,8 @@ async function runPackagedReviewer(input: {
     gateReRan: reviewerMode === "non-sandboxed",
     evidenceForwarded: reviewerMode === "sandboxed",
     fastForwardEligible: true,
+    dispatch: prepared.prepared,
+    consumed: fetched,
   };
 }
 
@@ -649,6 +659,9 @@ describe("packaged cq-codex-role Git broker", () => {
     expect(source).toContain("priorCriticism");
     expect(source).toContain("nativeExecution");
     expect(source).toContain("installedGateTest");
+    expect(source).toMatch(
+      /const completion = await implementationEvidence\.prepareCompletion\([\s\S]*?const mergeRun = await runGitEffect\(\s*"merge",\s*round2ResultCommit,\s*mergeOperationId,\s*completion\.completionRef,\s*\);/u,
+    );
     const workerFixture = await readFile(WORKER_FIXTURE, "utf8");
     expect(workerFixture).toContain('"update-ref"');
     expect(workerFixture).toContain("trusted result-storage boundary");
@@ -1640,6 +1653,10 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         },
       });
       await seededStore.store.updateItem(TASKS_LEDGER, taskId, { status: "wip" });
+      if (seededStore.implementationEvidenceStore === undefined) {
+        throw new Error("installed guarded-rebase fixture lacks protected evidence storage");
+      }
+      const implementationEvidenceStore = seededStore.implementationEvidenceStore;
       await seededStore.store.dispose();
 
       const fixtureRoot = await mkdtemp(path.join(tmpdir(), "t2151-packaged-fake-"));
@@ -1784,6 +1801,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         operation: "rebase" | "merge",
         commit: string,
         operationId?: string,
+        completionRef?: string,
       ) => {
         const child = Bun.spawn(
           [
@@ -1798,6 +1816,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
             taskId,
             "--commit",
             commit,
+            ...(completionRef === undefined ? [] : ["--completion-ref", completionRef]),
             ...(operationId === undefined ? [] : ["--operation-id", operationId]),
           ],
           {
@@ -2105,9 +2124,113 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         });
         expect(await gateRuns()).toBe(4);
 
-        // 8. The existing ff-only guarded merge lands the rebased lineage.
-        const mergeRun = await runGitEffect("merge", round2ResultCommit);
+        // 8. Bind the consumed worker and fresh reviewer dispatches into the
+        // protected completion journal before the ff-only merge.
+        const reviewerIdentity: ImplementationReviewerIdentity = {
+          alias: "t2151-native",
+          harness: "codex",
+          model: "test-model",
+          provider: null,
+          launch: "native",
+          adapterId: "codex:native",
+        };
+        const implementationEvidence = new ImplementationEvidenceService({
+          store: implementationEvidenceStore,
+          reviewerRoster: [reviewerIdentity],
+          nativeFallback: reviewerIdentity,
+          prepareNativeReview: async () => round2Review.dispatch,
+          fetchNativeReview: async (dispatch) => {
+            expect(dispatch).toEqual(round2Review.dispatch);
+            return { state: "consumed", output: round2Review.consumed.output };
+          },
+          executeExternalReview: async () => {
+            throw new Error("T2151 uses one native reviewer");
+          },
+          fetchWorker: async (dispatch) => {
+            expect(dispatch).toEqual(round2.handle);
+            return { state: "consumed", output: round2.consumed.output };
+          },
+          readTaskAuthority: async (taskRef) => ({
+            taskRef,
+            ownerGoalRef: "goals:G2151",
+            status: "wip",
+            finalizedManifest: "T2151 installed guarded-rebase completion manifest\n",
+          }),
+          repositoryHead: async () => await git(repositoryRoot, ["rev-parse", "HEAD"]),
+          verifyImplementation: async () => ({
+            baseCommit: ontoCommit,
+            startingCommit: rebasedStartCommit,
+            clean: true,
+            ancestryVerified: true,
+            receiptsVerified: true,
+            acceptanceVerified: true,
+            gateVerified: true,
+            details: { fixture: "T2151", ffOnly: true },
+          }),
+          recordLedgerCompletion: async () => ({ reviewRef: "reviews:R2151" }),
+        });
+        const panel = await implementationEvidence.prepareReviewPanel({
+          taskRef: `tasks:${taskId}`,
+          resultCommit: round2ResultCommit,
+          workerDispatch: round2.handle,
+          operationId: "t2151_review_panel_round2_v1",
+          author: "t2151-parent",
+        });
+        expect(panel.status).toBe("prepared");
+        const attemptRef = panel.attemptRefs[0]!;
+        const attempt = await implementationEvidence.prepareReviewAttempt({
+          panelRef: panel.panelRef,
+          attemptRef,
+          operationId: "t2151_review_attempt_round2_v1",
+          author: "t2151-parent",
+        });
+        expect(attempt).toMatchObject({
+          status: "prepared",
+          attemptRef,
+          launch: "native",
+          dispatch: round2Review.dispatch,
+        });
+        expect(
+          await implementationEvidence.finalizeReviewAttempt({
+            attemptRef,
+            operationId: "t2151_review_finalize_round2_v1",
+            author: "t2151-parent",
+          }),
+        ).toEqual({ status: "recorded", attemptRef, terminalState: "approved" });
+        const mergeOperationId = "implement-t2151-merge-r2";
+        const completion = await implementationEvidence.prepareCompletion({
+          taskRef: `tasks:${taskId}`,
+          expectedRepositoryHead: ontoCommit,
+          resultCommit: round2ResultCommit,
+          workerDispatch: round2.handle,
+          reviewAttemptRefs: [attemptRef],
+          completion: "T2151 guarded-rebase result merged through protected completion",
+          logPaths: [".cq/logs/t2151-worker.md", ".cq/logs/t2151-reviewer.md"],
+          mergeOperationId,
+          operationId: "t2151_completion_prepare_round2_v1",
+          author: "t2151-parent",
+        });
+
+        // 9. The journal-bound ff-only merge lands the rebased lineage and
+        // emits the exact acknowledgement retained by implement/advance.
+        const mergeRun = await runGitEffect(
+          "merge",
+          round2ResultCommit,
+          mergeOperationId,
+          completion.completionRef,
+        );
         expect(mergeRun.code).toBe(0);
+        expect(mergeRun.stdout.trim()).toBe(
+          `CQ_IMPLEMENTATION_COMPLETION_MERGE=${JSON.stringify({
+            status: "merged",
+            completionRef: completion.completionRef,
+            taskRef: `tasks:${taskId}`,
+            resultCommit: round2ResultCommit,
+            repositoryHead: round2ResultCommit,
+            mergeOperationId,
+            evidenceFingerprint: completion.evidenceFingerprint,
+          })}`,
+        );
         expect(await git(repositoryRoot, ["rev-parse", "HEAD"])).toBe(round2ResultCommit);
         expect(
           await git(managed.handle.absolutePath, [
