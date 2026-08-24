@@ -6,10 +6,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { exposedLedgerToolsForRole } from "@cq/config";
 import {
   createLedgerMcpTools,
+  createInMemoryImplementationEvidenceStore,
   createLedgerSdkMcpServer,
   createManagementLedgerMcpTools,
   GOALS_LEDGER,
   InMemoryLedgerStore,
+  ImplementationEvidenceService,
   LEDGER_TOOL_NAMES,
   ledgerToolInputJsonSchema,
   MILESTONES_AMBIENT_ID,
@@ -24,6 +26,7 @@ import {
   type PromptCatalogCapability,
   type ReadLogCapability,
   type WorktreeManageCapability,
+  type ImplementationReviewerIdentity,
 } from "../src/index.js";
 import { POST_TARGET_ADDITIONS } from "./toolSurfaceTarget.js";
 
@@ -87,6 +90,30 @@ const PARITY_PROVENANCE = {
   author: "parity-owner",
   session: "parity-owner-session",
 } as const;
+const PARITY_IMPLEMENTATION_TASK_REF = "tasks:T9001";
+const PARITY_IMPLEMENTATION_BASE = "a".repeat(40);
+const PARITY_IMPLEMENTATION_RESULT = "b".repeat(40);
+const PARITY_IMPLEMENTATION_WORKER = {
+  attestationId: "att_parity_worker",
+  generation: 1,
+} as const;
+
+const PARITY_ADAPTER_REVIEWER: ImplementationReviewerIdentity = {
+  alias: "parity-adapter",
+  harness: "pi",
+  model: "frontier",
+  provider: null,
+  launch: "adapter",
+  adapterId: "pi:parity-adapter",
+};
+const PARITY_NATIVE_FALLBACK: ImplementationReviewerIdentity = {
+  alias: "parity-native",
+  harness: "codex",
+  model: "frontier",
+  provider: null,
+  launch: "native",
+  adapterId: "codex:parity-native",
+};
 
 const PROJECTS_RESULT = {
   projects: [
@@ -250,6 +277,12 @@ interface ComparableToolDefinition {
 
 interface Fixture {
   store: InMemoryLedgerStore;
+  implementationEvidence: ImplementationEvidenceService;
+  implementationEvidenceRefs: {
+    panelRef: string;
+    attemptRef: string;
+    fallbackAttemptRef: string;
+  };
   ids: {
     activeMilestone: string;
     archivedMilestone: string;
@@ -273,9 +306,157 @@ interface Invocation {
   args: Record<string, unknown>;
 }
 
+function parityApprovedVerdict() {
+  return {
+    taskId: PARITY_IMPLEMENTATION_TASK_REF.slice("tasks:".length),
+    verdict: "approve",
+    criticism: [],
+    questions: [],
+    defects: [],
+    rationale: "stdio parity",
+    gateReRan: true,
+    gateDurationMs: 1,
+    resultCommitVerified: true,
+    resultCommitEvidence: {
+      status: "verified",
+      resultCommit: PARITY_IMPLEMENTATION_RESULT,
+      branchTip: PARITY_IMPLEMENTATION_RESULT,
+    },
+    baseAncestry: {
+      status: "verified",
+      relation: "descendant",
+      baseCommit: PARITY_IMPLEMENTATION_BASE,
+      resultCommit: PARITY_IMPLEMENTATION_RESULT,
+      mergeBase: PARITY_IMPLEMENTATION_BASE,
+    },
+  } as const;
+}
+
+async function buildImplementationEvidenceFixture() {
+  const implementationEvidence = new ImplementationEvidenceService({
+    store: createInMemoryImplementationEvidenceStore(),
+    reviewerRoster: [PARITY_ADAPTER_REVIEWER],
+    nativeFallback: PARITY_NATIVE_FALLBACK,
+    now: () => FIXED_NOW,
+    prepareNativeReview: async ({ attemptRef }) => ({
+      attestationId: `att_${attemptRef.slice(-12)}`,
+      generation: 1,
+      responseStoreNow: FIXED_NOW,
+      childCancelAt: "2026-07-24T12:02:00.000Z",
+      launchDeadline: "2026-07-24T12:01:00.000Z",
+      promptProvenance: {
+        roleId: "implement-reviewer",
+        version: 7,
+        surface: "codex",
+        promptDigest: "c".repeat(64),
+        catalogHash: "d".repeat(64),
+        inputDigest: "e".repeat(64),
+      },
+      inputCapability: { scope: "fetch-input", token: "parity-input" },
+      resultCapability: { scope: "store-result", token: "parity-result" },
+    }),
+    fetchNativeReview: async () => ({
+      state: "consumed",
+      output: parityApprovedVerdict(),
+    }),
+    executeExternalReview: async () => ({
+      adapterIdentity: PARITY_ADAPTER_REVIEWER.adapterId,
+      stdout: "",
+      stderr: "parity adapter unavailable",
+      exitCode: 1,
+    }),
+    fetchWorker: async (dispatch) => ({
+      state:
+        dispatch.attestationId === PARITY_IMPLEMENTATION_WORKER.attestationId &&
+        dispatch.generation === PARITY_IMPLEMENTATION_WORKER.generation
+          ? "consumed"
+          : "missing",
+      output: {
+        taskId: PARITY_IMPLEMENTATION_TASK_REF.slice("tasks:".length),
+        status: "pass",
+        resultCommit: PARITY_IMPLEMENTATION_RESULT,
+        branch: "implement/T9001",
+        actualWorktreePath: "/tmp/parity/T9001",
+        baseVerification: {
+          status: "verified",
+          relation: "descendant",
+          baseCommit: PARITY_IMPLEMENTATION_BASE,
+          headCommit: PARITY_IMPLEMENTATION_RESULT,
+        },
+        gitReceipts: [
+          { oldHead: PARITY_IMPLEMENTATION_BASE, newHead: PARITY_IMPLEMENTATION_RESULT },
+        ],
+        filesTouched: ["parity.txt"],
+        supervisedGateEvidence: { gateExitCode: 0, passCount: 1, failCount: 0 },
+      },
+    }),
+    readTaskAuthority: async () => ({
+      taskRef: PARITY_IMPLEMENTATION_TASK_REF,
+      ownerGoalRef: `goals:${PARITY_GOAL_ID}`,
+      status: "wip",
+      finalizedManifest: "stdio parity manifest\n",
+    }),
+    repositoryHead: async () => PARITY_IMPLEMENTATION_BASE,
+    verifyImplementation: async () => ({
+      baseCommit: PARITY_IMPLEMENTATION_BASE,
+      startingCommit: PARITY_IMPLEMENTATION_BASE,
+      clean: true,
+      ancestryVerified: true,
+      receiptsVerified: true,
+      acceptanceVerified: true,
+      gateVerified: true,
+      details: { parity: true },
+    }),
+    recordLedgerCompletion: async () => ({ reviewRef: "reviews:R9001" }),
+  });
+  const panel = await implementationEvidence.prepareReviewPanel({
+    taskRef: PARITY_IMPLEMENTATION_TASK_REF,
+    resultCommit: PARITY_IMPLEMENTATION_RESULT,
+    workerDispatch: PARITY_IMPLEMENTATION_WORKER,
+    operationId: "parity_evidence_panel",
+    ...PARITY_PROVENANCE,
+  });
+  const attemptRef = panel.attemptRefs[0]!;
+  await implementationEvidence.prepareReviewAttempt({
+    panelRef: panel.panelRef,
+    attemptRef,
+    operationId: "parity_evidence_attempt",
+    ...PARITY_PROVENANCE,
+  });
+  await implementationEvidence.executeExternalReviewAttempt({
+    attemptRef,
+    operationId: "parity_evidence_execute",
+    ...PARITY_PROVENANCE,
+  });
+  await implementationEvidence.finalizeReviewAttempt({
+    attemptRef,
+    operationId: "parity_evidence_finalize",
+    ...PARITY_PROVENANCE,
+  });
+  const fallback = await implementationEvidence.prepareReviewFallback({
+    panelRef: panel.panelRef,
+    operationId: "parity_evidence_fallback",
+    ...PARITY_PROVENANCE,
+  });
+  await implementationEvidence.finalizeReviewAttempt({
+    attemptRef: fallback.attemptRef,
+    operationId: "parity_evidence_finalize_fallback",
+    ...PARITY_PROVENANCE,
+  });
+  return {
+    implementationEvidence,
+    implementationEvidenceRefs: {
+      panelRef: panel.panelRef,
+      attemptRef,
+      fallbackAttemptRef: fallback.attemptRef,
+    },
+  };
+}
+
 async function buildFixture(): Promise<Fixture> {
   const store = new InMemoryLedgerStore({ now: () => FIXED_NOW });
   await store.init();
+  const evidence = await buildImplementationEvidenceFixture();
 
   const activeMilestone = await store.createMilestone({
     title: "Transport parity milestone",
@@ -344,6 +525,7 @@ async function buildFixture(): Promise<Fixture> {
 
   return {
     store,
+    ...evidence,
     ids: {
       activeMilestone: activeMilestone.id,
       archivedMilestone: archivedMilestone.id,
@@ -362,6 +544,7 @@ function directTools(
   prefix: string,
   capabilities: ToolCapabilities,
   profileName: LedgerToolProfileName = "full",
+  implementationEvidence?: ImplementationEvidenceService,
 ): DirectTools {
   return createLedgerMcpTools(
     store,
@@ -373,6 +556,8 @@ function directTools(
     capabilities.dispatch,
     profileName,
     capabilities.worktreeManage,
+    undefined,
+    implementationEvidence,
   );
 }
 
@@ -447,7 +632,9 @@ function refOnlyAllOfWrapperCount(value: unknown): number {
 
 function booleanPropertySchemaPaths(value: unknown, path = "$"): string[] {
   if (Array.isArray(value)) {
-    return value.flatMap((nested, index) => booleanPropertySchemaPaths(nested, `${path}[${index}]`));
+    return value.flatMap((nested, index) =>
+      booleanPropertySchemaPaths(nested, `${path}[${index}]`),
+    );
   }
   if (value === null || typeof value !== "object") return [];
   const object = value as Record<string, unknown>;
@@ -466,15 +653,9 @@ function booleanPropertySchemaPaths(value: unknown, path = "$"): string[] {
   ];
 }
 
-function schemaDescriptionAnnotationCount(
-  value: unknown,
-  propertyMap: boolean = false,
-): number {
+function schemaDescriptionAnnotationCount(value: unknown, propertyMap: boolean = false): number {
   if (Array.isArray(value)) {
-    return value.reduce(
-      (count, nested) => count + schemaDescriptionAnnotationCount(nested),
-      0,
-    );
+    return value.reduce((count, nested) => count + schemaDescriptionAnnotationCount(nested), 0);
   }
   if (value === null || typeof value !== "object") return 0;
   let count = 0;
@@ -498,6 +679,7 @@ async function connectStdio(
   prefix: string,
   capabilities: ToolCapabilities,
   profileName: LedgerToolProfileName = "full",
+  implementationEvidence?: ImplementationEvidenceService,
 ): Promise<StdioConnection> {
   const server = new McpServer(
     { name: "stdio-parity-test", version: "0.0.1" },
@@ -514,6 +696,8 @@ async function connectStdio(
     capabilities.dispatch,
     profileName,
     capabilities.worktreeManage,
+    undefined,
+    implementationEvidence,
   );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -541,6 +725,7 @@ async function connectAnthropicDirect(
   prefix: string,
   capabilities: ToolCapabilities,
   profileName: LedgerToolProfileName = "full",
+  implementationEvidence?: ImplementationEvidenceService,
 ): Promise<StdioConnection> {
   const server = createLedgerSdkMcpServer({
     name: "direct-parity-test",
@@ -548,21 +733,16 @@ async function connectAnthropicDirect(
     toolPrefix: prefix,
     profileName,
     ...(capabilities.readLog === undefined ? {} : { readLog: capabilities.readLog }),
-    ...(capabilities.config === undefined
-      ? {}
-      : { configCapability: capabilities.config }),
+    ...(capabilities.config === undefined ? {} : { configCapability: capabilities.config }),
     ...(capabilities.promptCatalog === undefined
       ? {}
       : { promptCatalog: capabilities.promptCatalog }),
-    ...(capabilities.listProjects === undefined
-      ? {}
-      : { listProjects: capabilities.listProjects }),
-    ...(capabilities.dispatch === undefined
-      ? {}
-      : { dispatchCapability: capabilities.dispatch }),
+    ...(capabilities.listProjects === undefined ? {} : { listProjects: capabilities.listProjects }),
+    ...(capabilities.dispatch === undefined ? {} : { dispatchCapability: capabilities.dispatch }),
     ...(capabilities.worktreeManage === undefined
       ? {}
       : { worktreeManage: capabilities.worktreeManage }),
+    ...(implementationEvidence === undefined ? {} : { implementationEvidence }),
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.instance.connect(serverTransport);
@@ -671,6 +851,7 @@ function decode(outcome: ToolOutcome): unknown {
 
 function invocationMatrix(fixture: Fixture): Invocation[] {
   const { ids } = fixture;
+  const { panelRef, attemptRef, fallbackAttemptRef } = fixture.implementationEvidenceRefs;
   return [
     { name: "enumerate_ledgers", args: {} },
     {
@@ -919,9 +1100,7 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
             todoDigest: "1".repeat(64),
             doneDigest: "2".repeat(64),
           },
-          conflicts: [
-            { path: "parity.txt", stage: 2, mode: "100644", oid: "3".repeat(40) },
-          ],
+          conflicts: [{ path: "parity.txt", stage: 2, mode: "100644", oid: "3".repeat(40) }],
         },
         resolutions: [
           {
@@ -1030,6 +1209,73 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
       },
     },
     {
+      name: "prepare_implementation_review_panel",
+      args: {
+        task_ref: PARITY_IMPLEMENTATION_TASK_REF,
+        result_commit: PARITY_IMPLEMENTATION_RESULT,
+        worker_dispatch: PARITY_IMPLEMENTATION_WORKER,
+        operation_id: "parity_evidence_panel",
+        ...PARITY_PROVENANCE,
+      },
+    },
+    {
+      name: "prepare_implementation_review_attempt",
+      args: {
+        panel_ref: panelRef,
+        attempt_ref: attemptRef,
+        operation_id: "parity_evidence_attempt",
+        ...PARITY_PROVENANCE,
+      },
+    },
+    {
+      name: "execute_external_implementation_review_attempt",
+      args: {
+        attempt_ref: attemptRef,
+        operation_id: "parity_evidence_execute",
+        ...PARITY_PROVENANCE,
+      },
+    },
+    {
+      name: "finalize_implementation_review_attempt",
+      args: {
+        attempt_ref: attemptRef,
+        operation_id: "parity_evidence_finalize",
+        ...PARITY_PROVENANCE,
+      },
+    },
+    {
+      name: "prepare_implementation_review_fallback",
+      args: {
+        panel_ref: panelRef,
+        operation_id: "parity_evidence_fallback",
+        ...PARITY_PROVENANCE,
+      },
+    },
+    {
+      name: "prepare_implementation_completion",
+      args: {
+        task_ref: PARITY_IMPLEMENTATION_TASK_REF,
+        expected_repository_head: PARITY_IMPLEMENTATION_BASE,
+        result_commit: PARITY_IMPLEMENTATION_RESULT,
+        worker_dispatch: PARITY_IMPLEMENTATION_WORKER,
+        review_attempt_refs: [attemptRef, fallbackAttemptRef],
+        completion: "stdio parity completion",
+        log_paths: [".cq/logs/parity.md"],
+        merge_operation_id: "parity_evidence_merge",
+        operation_id: "parity_evidence_completion",
+        ...PARITY_PROVENANCE,
+      },
+    },
+    {
+      name: "record_implementation_completion",
+      args: {
+        task_ref: PARITY_IMPLEMENTATION_TASK_REF,
+        expected_repository_head: PARITY_IMPLEMENTATION_BASE,
+        operation_id: "parity_evidence_record",
+        ...PARITY_PROVENANCE,
+      },
+    },
+    {
       name: "worktree_manage",
       args: {
         operation: "prepare",
@@ -1096,7 +1342,7 @@ function assertRepresentativeContracts(
   expect(responses.get("snapshot")).toMatchObject({
     ledger: {
       tasks: {
-      planned: { count: 2 },
+        planned: { count: 2 },
         wip: { count: 1 },
         done: { count: 1 },
       },
@@ -1221,12 +1467,14 @@ describe("stdio/direct ledger tool differential contract", () => {
         prefix,
         AVAILABLE_CAPABILITIES,
         profileName,
+        directFixture.implementationEvidence,
       );
       const stdio = await connectStdio(
         stdioFixture.store,
         prefix,
         AVAILABLE_CAPABILITIES,
         profileName,
+        stdioFixture.implementationEvidence,
       );
       try {
         expect(direct.definitions, `${profileName}:${prefix}`).toEqual(stdio.definitions);
@@ -1234,23 +1482,24 @@ describe("stdio/direct ledger tool differential contract", () => {
           const publishPlan = direct.definitions.find(
             ({ name }) => name === prefixed(prefix, "publish_plan_draft"),
           );
-          expect(publishPlan?.schema, `${profileName}:${prefix}:description property`).toMatchObject(
-            {
-              properties: {
-                manifest: {
-                  properties: {
-                    milestones: {
-                      items: {
-                        properties: {
-                          description: { type: "string" },
-                        },
+          expect(
+            publishPlan?.schema,
+            `${profileName}:${prefix}:description property`,
+          ).toMatchObject({
+            properties: {
+              manifest: {
+                properties: {
+                  milestones: {
+                    items: {
+                      properties: {
+                        description: { type: "string" },
                       },
                     },
                   },
                 },
               },
             },
-          );
+          });
         }
         const invalid = await direct.client.callTool({
           name: prefixed(prefix, "fetch_item"),
@@ -1276,7 +1525,13 @@ describe("stdio/direct ledger tool differential contract", () => {
     const fixture = await buildFixture();
     try {
       const observeDefinitions = directDefinitions(
-        directTools(fixture.store, "", AVAILABLE_CAPABILITIES),
+        directTools(
+          fixture.store,
+          "",
+          AVAILABLE_CAPABILITIES,
+          "full",
+          fixture.implementationEvidence,
+        ),
       );
       const managementDefinitions = directDefinitions(
         createManagementLedgerMcpTools(
@@ -1382,12 +1637,14 @@ describe("stdio/direct ledger tool differential contract", () => {
       prefix,
       AVAILABLE_CAPABILITIES,
       profileName,
+      directFixture.implementationEvidence,
     );
     const stdio = await connectStdio(
       stdioFixture.store,
       prefix,
       AVAILABLE_CAPABILITIES,
       profileName,
+      stdioFixture.implementationEvidence,
     );
     try {
       const expectedNames = exposedLedgerToolsForRole(profileName)
@@ -1406,8 +1663,20 @@ describe("stdio/direct ledger tool differential contract", () => {
     it(`matches complete definitions for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
-      const direct = directTools(directFixture.store, prefix, AVAILABLE_CAPABILITIES);
-      const stdio = await connectStdio(stdioFixture.store, prefix, AVAILABLE_CAPABILITIES);
+      const direct = directTools(
+        directFixture.store,
+        prefix,
+        AVAILABLE_CAPABILITIES,
+        "full",
+        directFixture.implementationEvidence,
+      );
+      const stdio = await connectStdio(
+        stdioFixture.store,
+        prefix,
+        AVAILABLE_CAPABILITIES,
+        "full",
+        stdioFixture.implementationEvidence,
+      );
       try {
         const directDefinitionList = directDefinitions(direct);
         const expectedNames = LEDGER_TOOL_NAMES.map((name) => prefixed(prefix, name)).sort();
@@ -1415,10 +1684,12 @@ describe("stdio/direct ledger tool differential contract", () => {
         expect(directDefinitionList.map((tool) => tool.name)).toEqual(expectedNames);
         expect(stdio.definitions).toEqual(directDefinitionList);
         const reviseName = prefixed(prefix, "revise_operator_action");
-        const directDescription = directDefinitionList.find(({ name }) => name === reviseName)
-          ?.description;
-        const stdioDescription = stdio.definitions.find(({ name }) => name === reviseName)
-          ?.description;
+        const directDescription = directDefinitionList.find(
+          ({ name }) => name === reviseName,
+        )?.description;
+        const stdioDescription = stdio.definitions.find(
+          ({ name }) => name === reviseName,
+        )?.description;
         expect(stdioDescription).toBe(directDescription);
         expect(directDescription).toContain("validated terminal failure");
         expect(directDescription).toContain("current revision and acknowledgement epoch");
@@ -1436,15 +1707,27 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 39 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 46 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);
       expect(directFixture.ids).toEqual(stdioFixture.ids);
       expect(directFixture.store.snapshot()).toEqual(stdioFixture.store.snapshot());
 
-      const direct = directTools(directFixture.store, prefix, AVAILABLE_CAPABILITIES);
-      const stdio = await connectStdio(stdioFixture.store, prefix, AVAILABLE_CAPABILITIES);
+      const direct = directTools(
+        directFixture.store,
+        prefix,
+        AVAILABLE_CAPABILITIES,
+        "full",
+        directFixture.implementationEvidence,
+      );
+      const stdio = await connectStdio(
+        stdioFixture.store,
+        prefix,
+        AVAILABLE_CAPABILITIES,
+        "full",
+        stdioFixture.implementationEvidence,
+      );
       const invocations = invocationMatrix(directFixture);
       expect(invocations.map((invocation) => invocation.name).sort()).toEqual(
         [...LEDGER_TOOL_NAMES].sort(),
@@ -1503,8 +1786,20 @@ describe("stdio/direct ledger tool differential contract", () => {
     it(`revises failed operator-action evidence and fences reopen for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
-      const direct = directTools(directFixture.store, prefix, AVAILABLE_CAPABILITIES);
-      const stdio = await connectStdio(stdioFixture.store, prefix, AVAILABLE_CAPABILITIES);
+      const direct = directTools(
+        directFixture.store,
+        prefix,
+        AVAILABLE_CAPABILITIES,
+        "full",
+        directFixture.implementationEvidence,
+      );
+      const stdio = await connectStdio(
+        stdioFixture.store,
+        prefix,
+        AVAILABLE_CAPABILITIES,
+        "full",
+        stdioFixture.implementationEvidence,
+      );
       const invokeBoth = async (invocation: Invocation): Promise<ToolOutcome> => {
         const name = prefixed(prefix, invocation.name);
         const directOutcome = await invokeDirect(direct, name, invocation.args);
@@ -1590,9 +1885,9 @@ describe("stdio/direct ledger tool differential contract", () => {
         });
         expect(revised.action.fields["evidence"]).toBeUndefined();
         expect(revised.action.fields["lastFailure"]).toBeUndefined();
-        const history = JSON.parse(
-          (revised.action.fields["revisionHistory"] as string[])[0]!,
-        ) as { action: { fields: Record<string, unknown> } };
+        const history = JSON.parse((revised.action.fields["revisionHistory"] as string[])[0]!) as {
+          action: { fields: Record<string, unknown> };
+        };
         expect(history.action.fields).toMatchObject({
           acknowledgementEpoch: "1",
           evidence: [expect.any(String), expect.any(String)],
@@ -1642,13 +1937,20 @@ describe("stdio/direct ledger tool differential contract", () => {
           });
           expect(outcome).toMatchObject({
             kind: "error",
-            error: { category: "handler", message: expect.stringMatching(/typed operator-action lifecycle/) },
+            error: {
+              category: "handler",
+              message: expect.stringMatching(/typed operator-action lifecycle/),
+            },
           });
         }
         expect(directFixture.store.fetchItem("operatorActions", actionId).status).toBe("verified");
         expect(stdioFixture.store.fetchItem("operatorActions", actionId).status).toBe("verified");
-        expect(directFixture.store.fetchItem("tasks", directFixture.ids.operatorActionTask).status).toBe("done");
-        expect(stdioFixture.store.fetchItem("tasks", stdioFixture.ids.operatorActionTask).status).toBe("done");
+        expect(
+          directFixture.store.fetchItem("tasks", directFixture.ids.operatorActionTask).status,
+        ).toBe("done");
+        expect(
+          stdioFixture.store.fetchItem("tasks", stdioFixture.ids.operatorActionTask).status,
+        ).toBe("done");
       } finally {
         await stdio.close();
         await directFixture.store.dispose();
@@ -1661,8 +1963,20 @@ describe("stdio/direct ledger tool differential contract", () => {
     it(`normalizes validation, handler, and unavailable-capability failures for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
-      const direct = directTools(directFixture.store, prefix, UNAVAILABLE_CAPABILITIES);
-      const stdio = await connectStdio(stdioFixture.store, prefix, UNAVAILABLE_CAPABILITIES);
+      const direct = directTools(
+        directFixture.store,
+        prefix,
+        UNAVAILABLE_CAPABILITIES,
+        "full",
+        directFixture.implementationEvidence,
+      );
+      const stdio = await connectStdio(
+        stdioFixture.store,
+        prefix,
+        UNAVAILABLE_CAPABILITIES,
+        "full",
+        stdioFixture.implementationEvidence,
+      );
       const failures: Invocation[] = [
         {
           name: "fetch_item",

@@ -330,12 +330,21 @@ capturedAt }` with exact tip match, `gateExitCode === 0`, `failCount === 0`, and
 Non-sandboxed reviewers omit the attestation and still re-run the gate
 themselves; their approve path still requires child `gateReRan=true`.
 
-The trusted adapter executor fence-strips and fully validates stdout before
-classifying the process observation. A complete valid verdict remains a vote
-despite nonzero exit. Empty, malformed, failed, or unavailable execution becomes
-an authenticated `operational-abstention`, never caller-authored JSON. Do not
-impose a caller timeout. If and only if every configured attempt has finalized
-as `operational-abstention`, call
+**External reviewer usable-verdict rule.** Fence-strip and validate stdout first.
+A complete, parseable verdict counts as a vote despite a non-zero shell exit;
+log that exit anomaly. Require full-object validation before accepting the
+verdict. Only empty, malformed, failed, unavailable, or off-contract execution
+becomes an authenticated `operational-abstention`, never caller-authored JSON.
+
+**External reviewer no-timeout rule.** No wall-clock timeout is imposed.
+Fence-strip and validate stdout first. A complete, parseable verdict counts as
+a vote despite a non-zero shell exit; log that exit anomaly. A non-zero exit
+causes abstention only when no complete, parseable, fully validated verdict
+exists; a stalled adapter remains an operational failure rather than a silent
+abstention.
+
+If and only if every configured attempt has finalized as
+`operational-abstention`, call
 `prepare_implementation_review_fallback({ panel_ref, operation_id, author,
 session })` once and run/finalize its returned native attempt. The fallback
 receipt binds the trigger and exact excluded adapter identities. Zero approved

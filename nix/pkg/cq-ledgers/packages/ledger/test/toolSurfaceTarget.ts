@@ -330,6 +330,195 @@ export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
       additionalProperties: false,
     },
   },
+  {
+    name: "prepare_implementation_review_panel",
+    description:
+      "Snapshot the configured reviewer roster and create one ordered protected attempt receipt per reviewer identity.\n\nAuthoritative response: Exactly `{ status, panelRef, taskRef, resultCommit, rosterDigest, attemptRefs }`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_ref: { type: "string", pattern: "^tasks:T[0-9]+$" },
+        result_commit: { type: "string", pattern: "^[0-9a-f]{40}$" },
+        worker_dispatch: {
+          type: "object",
+          properties: {
+            attestationId: { type: "string", minLength: 1 },
+            generation: {
+              type: "integer",
+              exclusiveMinimum: 0,
+              maximum: 9007199254740991,
+            },
+          },
+          required: ["attestationId", "generation"],
+          additionalProperties: false,
+        },
+        operation_id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: ["task_ref", "result_commit", "worker_dispatch", "operation_id", "author"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "prepare_implementation_review_attempt",
+    description:
+      "Prepare one opaque review attempt as either a server-bound native dispatch or a trusted parent-side adapter execution.\n\nAuthoritative response: Exactly `{ status, attemptRef, launch, dispatch? }`; `dispatch` exists only for native launch.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        panel_ref: {
+          type: "string",
+          pattern: "^cq-implementation-review-panel:v1:[0-9a-f]{64}$",
+        },
+        attempt_ref: {
+          type: "string",
+          pattern: "^cq-implementation-review-attempt:v1:[0-9a-f]{64}$",
+        },
+        operation_id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: ["panel_ref", "attempt_ref", "operation_id", "author"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "execute_external_implementation_review_attempt",
+    description:
+      "Execute a configured external reviewer in the trusted parent, retaining literal process observations and a typed parse result.\n\nAuthoritative response: Exactly `{ status, attemptRef, executionRef }`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        attempt_ref: {
+          type: "string",
+          pattern: "^cq-implementation-review-attempt:v1:[0-9a-f]{64}$",
+        },
+        operation_id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: ["attempt_ref", "operation_id", "author"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "finalize_implementation_review_attempt",
+    description:
+      "Derive one terminal review-attempt receipt from its consumed native dispatch or trusted external execution.\n\nAuthoritative response: Exactly `{ status, attemptRef, terminalState }`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        attempt_ref: {
+          type: "string",
+          pattern: "^cq-implementation-review-attempt:v1:[0-9a-f]{64}$",
+        },
+        operation_id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: ["attempt_ref", "operation_id", "author"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "prepare_implementation_review_fallback",
+    description:
+      "Prepare the panel's sole native fallback only after every configured attempt terminally abstains.\n\nAuthoritative response: Exactly `{ status, attemptRef, dispatch }` for the sole authenticated native fallback.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        panel_ref: {
+          type: "string",
+          pattern: "^cq-implementation-review-panel:v1:[0-9a-f]{64}$",
+        },
+        operation_id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: ["panel_ref", "operation_id", "author"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "prepare_implementation_completion",
+    description:
+      "Validate and durably bind complete implementation evidence before the journal-bound ff-only merge.\n\nAuthoritative response: Exactly `{ status, completionRef, taskRef, resultCommit, repositoryHead, evidenceFingerprint }`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_ref: { type: "string", pattern: "^tasks:T[0-9]+$" },
+        expected_repository_head: { type: "string", pattern: "^[0-9a-f]{40}$" },
+        result_commit: { type: "string", pattern: "^[0-9a-f]{40}$" },
+        worker_dispatch: {
+          type: "object",
+          properties: {
+            attestationId: { type: "string", minLength: 1 },
+            generation: {
+              type: "integer",
+              exclusiveMinimum: 0,
+              maximum: 9007199254740991,
+            },
+          },
+          required: ["attestationId", "generation"],
+          additionalProperties: false,
+        },
+        review_attempt_refs: {
+          type: "array",
+          items: {
+            type: "string",
+            pattern: "^cq-implementation-review-attempt:v1:[0-9a-f]{64}$",
+          },
+        },
+        completion: { type: "string", minLength: 1 },
+        log_paths: {
+          type: "array",
+          items: { type: "string", minLength: 1 },
+        },
+        merge_operation_id: {
+          type: "string",
+          pattern: "^[A-Za-z0-9_-]{1,128}$",
+        },
+        supersedes_completion_ref: {
+          type: "string",
+          pattern: "^cq-implementation-completion:v1:[0-9a-f]{64}$",
+        },
+        operation_id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: [
+        "task_ref",
+        "expected_repository_head",
+        "result_commit",
+        "worker_dispatch",
+        "review_attempt_refs",
+        "completion",
+        "log_paths",
+        "merge_operation_id",
+        "operation_id",
+        "author",
+      ],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "record_implementation_completion",
+    description:
+      "Recover or atomically record a durably merged implementation journal as one done task and one terminal evidence-bearing review.\n\nAuthoritative response: One typed `merge-required`, `reprepare-required`, `recorded`, or `existing` acknowledgement.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_ref: { type: "string", pattern: "^tasks:T[0-9]+$" },
+        expected_repository_head: { type: "string", pattern: "^[0-9a-f]{40}$" },
+        operation_id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: ["task_ref", "expected_repository_head", "operation_id", "author"],
+      additionalProperties: false,
+    },
+  },
 ]);
 
 const COMPACT_PROJECTION =
