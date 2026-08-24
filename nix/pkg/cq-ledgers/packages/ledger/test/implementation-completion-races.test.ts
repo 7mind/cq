@@ -11,6 +11,26 @@ import {
 } from "./implementationEvidenceTestSupport.js";
 
 describe("implementation completion races [Behavioral-Active Sociable-Atomic]", () => {
+  test("requires a rebased result and fresh review set to supersede a prepared journal", async () => {
+    const fixture = await createImplementationEvidenceFixture();
+    const completion = await prepareImplementationCompletion(fixture);
+    await expect(
+      fixture.service.prepareCompletion({
+        taskRef: "tasks:T2345",
+        expectedRepositoryHead: IMPLEMENTATION_BASE,
+        resultCommit: IMPLEMENTATION_RESULT,
+        workerDispatch: { attestationId: "att_worker", generation: 1 },
+        reviewAttemptRefs: [fixture.attemptRef],
+        completion: "unchanged replacement",
+        logPaths: [],
+        mergeOperationId: "merge-unchanged-replacement",
+        supersedesCompletionRef: completion.completionRef,
+        operationId: "replace-without-rebase",
+        author: "parent",
+      }),
+    ).rejects.toThrow("rebased result");
+  });
+
   test("prevents supersession after merge launch and admits one recording operation", async () => {
     const fixture = await createImplementationEvidenceFixture();
     const completion = await prepareImplementationCompletion(fixture);

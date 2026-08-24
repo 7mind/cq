@@ -203,8 +203,101 @@ describe("protected implementation review attempts [BG]", () => {
           operationId: "finalize-2",
           author: "parent",
         })
-      ).terminalState,
+    ).terminalState,
     ).toBe("approved");
+  });
+
+  test("executes an adapter attempt at most once and does not replace its finalized receipt", async () => {
+    let executions = 0;
+    const { service } = serviceWith([adapter], async () => {
+      executions += 1;
+      return {
+        adapterIdentity: adapter.adapterId,
+        stdout: JSON.stringify(verdict()),
+        stderr: "",
+        exitCode: 0,
+      };
+    });
+    const panel = await service.prepareReviewPanel({
+      taskRef: "tasks:T2345",
+      resultCommit: RESULT,
+      workerDispatch: WORKER,
+      operationId: "panel-single-execution",
+      author: "parent",
+    });
+    const attemptRef = panel.attemptRefs[0]!;
+    await service.prepareReviewAttempt({
+      panelRef: panel.panelRef,
+      attemptRef,
+      operationId: "prepare-single-execution",
+      author: "parent",
+    });
+    await service.executeExternalReviewAttempt({
+      attemptRef,
+      operationId: "execute-single-execution",
+      author: "parent",
+    });
+    await expect(
+      service.executeExternalReviewAttempt({
+        attemptRef,
+        operationId: "execute-single-execution-replacement",
+        author: "parent",
+      }),
+    ).rejects.toThrow("execution receipt");
+    await service.finalizeReviewAttempt({
+      attemptRef,
+      operationId: "finalize-single-execution",
+      author: "parent",
+    });
+    await expect(
+      service.executeExternalReviewAttempt({
+        attemptRef,
+        operationId: "execute-after-finalization",
+        author: "parent",
+      }),
+    ).rejects.toThrow("terminal");
+    expect(executions).toBe(1);
+  });
+
+  test("treats an approval without a green gate or coherent merge base as an abstention", async () => {
+    const malformed = {
+      ...verdict(),
+      gateReRan: false,
+      gateDurationMs: undefined,
+      baseAncestry: { ...verdict().baseAncestry, mergeBase: "c".repeat(40) },
+    };
+    const { service } = serviceWith([adapter], async () => ({
+      adapterIdentity: adapter.adapterId,
+      stdout: JSON.stringify(malformed),
+      stderr: "",
+      exitCode: 0,
+    }));
+    const panel = await service.prepareReviewPanel({
+      taskRef: "tasks:T2345",
+      resultCommit: RESULT,
+      workerDispatch: WORKER,
+      operationId: "panel-malformed-approval",
+      author: "parent",
+    });
+    const attemptRef = panel.attemptRefs[0]!;
+    await service.prepareReviewAttempt({
+      panelRef: panel.panelRef,
+      attemptRef,
+      operationId: "prepare-malformed-approval",
+      author: "parent",
+    });
+    await service.executeExternalReviewAttempt({
+      attemptRef,
+      operationId: "execute-malformed-approval",
+      author: "parent",
+    });
+    await expect(
+      service.finalizeReviewAttempt({
+        attemptRef,
+        operationId: "finalize-malformed-approval",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ terminalState: "operational-abstention" });
   });
 
   test("requires adapter preparation and binds the observed adapter identity", async () => {
