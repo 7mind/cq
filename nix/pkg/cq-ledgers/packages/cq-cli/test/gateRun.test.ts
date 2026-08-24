@@ -11,7 +11,7 @@ import {
   prepareManagedWorktree,
 } from "@cq/ledger";
 import { dispatch, type DispatchIo } from "../src/main.js";
-import { runGateGitEffect } from "../src/gateGitEffect.js";
+import { runGateGitEffect, type GateGitEffectRequest } from "../src/gateGitEffect.js";
 import { GATE_DEADLINE_EXIT_CODE, runGateRun } from "../src/gateRun.js";
 
 const roots: string[] = [];
@@ -309,7 +309,7 @@ describe("cq gate run absolute phase deadline [BA]", () => {
 });
 
 describe("cq gate git-effect [T1984]", () => {
-  test("routes only one typed task-bound rebase or merge request [Behavioral-Active Blackbox-Atomic]", async () => {
+  test("routes a journal-bound merge request with exact completion coordinates [Behavioral-Active Blackbox-Atomic]", async () => {
     const requests: unknown[] = [];
     const outcome = await runGateRun(
       [
@@ -322,6 +322,10 @@ describe("cq gate git-effect [T1984]", () => {
         "T1984",
         "--commit",
         "a".repeat(40),
+        "--completion-ref",
+        "cq-implementation-completion:v1:" + "b".repeat(64),
+        "--operation-id",
+        "implement-t1984-merge-r0",
       ],
       { err: () => undefined },
       {
@@ -339,8 +343,79 @@ describe("cq gate git-effect [T1984]", () => {
         cwd: "/tmp/cq-repository",
         taskId: "T1984",
         commit: "a".repeat(40),
+        completionRef: "cq-implementation-completion:v1:" + "b".repeat(64),
+        operationId: "implement-t1984-merge-r0",
       },
     ]);
+  });
+
+  test("rejects an unjournaled merge before invoking the trusted runner [Behavioral-Active Blackbox-Atomic]", async () => {
+    let calls = 0;
+    await expect(
+      runGateRun(
+        [
+          "git-effect",
+          "--operation",
+          "merge",
+          "--cwd",
+          "/tmp/cq-repository",
+          "--task-id",
+          "T1984",
+          "--commit",
+          "a".repeat(40),
+        ],
+        { err: () => undefined },
+        {
+          gitEffect: async () => {
+            calls += 1;
+            return { exitCode: 0 };
+          },
+        },
+      ),
+    ).rejects.toThrow("--completion-ref is required for merge");
+    expect(calls).toBe(0);
+  });
+
+  test.each([
+    {
+      name: "duplicate completion ref",
+      extra: [
+        "--completion-ref",
+        "cq-implementation-completion:v1:" + "c".repeat(64),
+      ],
+      error: "duplicate --completion-ref",
+    },
+    {
+      name: "completion ref on rebase",
+      operation: "rebase",
+      extra: [],
+      error: "--completion-ref is valid only for merge",
+    },
+  ])("rejects $name before invoking the trusted runner", async ({ operation, extra, error }) => {
+    let calls = 0;
+    await expect(
+      runGateRun(
+        [
+          "git-effect",
+          "--operation",
+          operation ?? "merge",
+          "--cwd",
+          "/tmp/cq-repository",
+          "--task-id",
+          "T1984",
+          "--commit",
+          "a".repeat(40),
+          "--completion-ref",
+          "cq-implementation-completion:v1:" + "b".repeat(64),
+          "--operation-id",
+          "implement-t1984-merge-r0",
+          ...extra,
+        ],
+        { err: () => undefined },
+        { gitEffect: async () => { calls += 1; return { exitCode: 0 }; } },
+      ),
+    ).rejects.toThrow(error);
+    expect(calls).toBe(0);
   });
 
   test("carries one stable guarded-rebase operation id into the typed rebase request [Behavioral-Active Blackbox-Atomic]", async () => {
@@ -380,7 +455,7 @@ describe("cq gate git-effect [T1984]", () => {
     ]);
   });
 
-  test("the trusted runner rejects a merge carrying an operation id before any store access [Behavioral-Active Blackbox-Atomic]", async () => {
+  test("the trusted runner rejects a merge missing its completion ref before any store access [Behavioral-Active Blackbox-Atomic]", async () => {
     await expect(
       runGateGitEffect({
         operation: "merge",
@@ -388,8 +463,8 @@ describe("cq gate git-effect [T1984]", () => {
         taskId: "T1984",
         commit: "a".repeat(40),
         operationId: "implement-t1984-rebase-r0",
-      }),
-    ).rejects.toThrow("--operation-id journals only a rebase");
+      } as unknown as GateGitEffectRequest),
+    ).rejects.toThrow("--completion-ref is required for merge");
   });
 
   test("the trusted runner rejects a malformed guarded-rebase operation id [Behavioral-Active Blackbox-Atomic]", async () => {
@@ -460,7 +535,14 @@ describe("cq gate git-effect [T1984]", () => {
       const liveBefore = await listManagedLiveWorktrees(root, "T1984");
 
       await expect(
-        runGateGitEffect({ operation: "merge", cwd: root, taskId: "T1984", commit: resultCommit }),
+        runGateGitEffect({
+          operation: "merge",
+          cwd: root,
+          taskId: "T1984",
+          commit: resultCommit,
+          completionRef: "cq-implementation-completion:v1:" + "b".repeat(64),
+          operationId: "implement-t1984-merge-r0",
+        }),
       ).rejects.toThrow(/foreign WIP artifact WIP-T223[45]\.md/u);
       expect(git(root, ["rev-parse", "HEAD"])).toBe(base);
       expect(store.store.fetchItem(TASKS_LEDGER, "T1984").status).toBe(taskStatus);

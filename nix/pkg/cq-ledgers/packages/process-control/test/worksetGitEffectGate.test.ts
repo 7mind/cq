@@ -98,6 +98,39 @@ describe("workset Git effect gate [T1984]", () => {
     expect(provider.events()).toEqual(["admission-acquired", "admission-abandoned"]);
   });
 
+  test("binds completion and operation identity across trusted merge re-resolution [Behavioral-Active Blackbox-GoodCommunication]", async () => {
+    const root = await repository();
+    const head = await git(root, ["rev-parse", "HEAD"]);
+    const provider = createStrictInMemoryWorksetEffectAdmissionProvider();
+    const expected: WorksetGitEffectBinding = {
+      kind: "merge",
+      targetRef: "tasks:T1984",
+      repositoryRoot: root,
+      commit: head,
+      completionRef: "cq-implementation-completion:v1:" + "b".repeat(64),
+      mergeOperationId: "implement-t1984-merge-r0",
+    };
+    let resolution = 0;
+
+    await expect(
+      runWorksetGitEffectGate({
+        expected,
+        resolve: async () => {
+          resolution += 1;
+          return resolution === 1
+            ? expected
+            : {
+                ...expected,
+                completionRef: "cq-implementation-completion:v1:" + "c".repeat(64),
+              };
+        },
+        provider,
+      }),
+    ).rejects.toThrow("trusted Git effect binding changed before launch");
+
+    expect(provider.events()).toEqual(["admission-acquired", "admission-abandoned"]);
+  });
+
   test("serializes every named Git/worktree mutation through registered process groups [Behavioral-Active Blackbox-GoodCommunication]", async () => {
     const root = await repository();
     const base = await git(root, ["rev-parse", "HEAD"]);
@@ -148,6 +181,8 @@ describe("workset Git effect gate [T1984]", () => {
       targetRef: "tasks:T1984",
       repositoryRoot: root,
       commit: resultCommit,
+      completionRef: "cq-implementation-completion:v1:" + "b".repeat(64),
+      mergeOperationId: "implement-t1984-merge-r0",
     });
     await run({
       kind: "branch-create",

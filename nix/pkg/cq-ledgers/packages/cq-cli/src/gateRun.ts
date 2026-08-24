@@ -87,7 +87,9 @@ function parseGateGitEffect(argv: readonly string[]): GateGitEffectRequest {
   let cwd: string | undefined;
   let taskId: string | undefined;
   let commit: string | undefined;
+  let completionRef: string | undefined;
   let operationId: string | undefined;
+  const seen = new Set<string>();
   for (let index = 1; index < argv.length; index += 1) {
     const argument = argv[index];
     if (
@@ -95,8 +97,13 @@ function parseGateGitEffect(argv: readonly string[]): GateGitEffectRequest {
       argument === "--cwd" ||
       argument === "--task-id" ||
       argument === "--commit" ||
+      argument === "--completion-ref" ||
       argument === "--operation-id"
     ) {
+      if (seen.has(argument)) {
+        throw new Error(`cq gate git-effect: duplicate ${argument}`);
+      }
+      seen.add(argument);
       const value = argv[index + 1];
       if (value === undefined) throw new Error(`cq gate git-effect: ${argument} requires a value`);
       if (argument === "--operation") {
@@ -107,6 +114,7 @@ function parseGateGitEffect(argv: readonly string[]): GateGitEffectRequest {
       } else if (argument === "--cwd") cwd = value;
       else if (argument === "--task-id") taskId = value;
       else if (argument === "--operation-id") operationId = value;
+      else if (argument === "--completion-ref") completionRef = value;
       else commit = value;
       index += 1;
       continue;
@@ -120,6 +128,18 @@ function parseGateGitEffect(argv: readonly string[]): GateGitEffectRequest {
   }
   if (commit === undefined || commit === "") {
     throw new Error("cq gate git-effect: --commit is required");
+  }
+  if (operation === "merge") {
+    if (completionRef === undefined || completionRef === "") {
+      throw new Error("cq gate git-effect: --completion-ref is required for merge");
+    }
+    if (operationId === undefined || operationId === "") {
+      throw new Error("cq gate git-effect: --operation-id is required for merge");
+    }
+    return { operation, cwd, taskId, commit, completionRef, operationId };
+  }
+  if (completionRef !== undefined) {
+    throw new Error("cq gate git-effect: --completion-ref is valid only for merge");
   }
   return { operation, cwd, taskId, commit, ...(operationId === undefined ? {} : { operationId }) };
 }
