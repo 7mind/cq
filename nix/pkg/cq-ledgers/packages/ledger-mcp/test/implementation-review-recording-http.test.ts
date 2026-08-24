@@ -19,12 +19,14 @@ async function rpc(
   handlers: ReturnType<typeof attachMcpHttp>,
   body: Record<string, unknown>,
   sessionId?: string,
+  token?: string,
 ): Promise<{ response: Response; message: Record<string, unknown> }> {
   const headers: Record<string, string> = {
     accept: "application/json, text/event-stream",
     "content-type": "application/json",
   };
   if (sessionId !== undefined) headers["mcp-session-id"] = sessionId;
+  if (token !== undefined) headers["authorization"] = `Bearer ${token}`;
   const response = await handlers.handle(
     new Request("http://localhost/mcp", {
       method: "POST",
@@ -42,7 +44,7 @@ async function rpc(
 }
 
 describe("implementation evidence HTTP transport [Behavioral-Active Blackbox-GoodCommunication]", () => {
-  test("exposes the same protected operation over Streamable HTTP", async () => {
+  test("exposes protected operations only to authenticated management HTTP", async () => {
     const fixture = await createImplementationEvidenceFixture();
     const ledger = new InMemoryLedgerStore();
     await ledger.init();
@@ -57,12 +59,12 @@ describe("implementation evidence HTTP transport [Behavioral-Active Blackbox-Goo
       undefined,
       "full",
       undefined,
-      undefined,
+      { ordinaryToken: "ordinary", managementToken: "management" },
       "observe",
       false,
       fixture.service,
     );
-    const initialized = await rpc(handlers, {
+    const initialize = {
       jsonrpc: "2.0",
       id: 1,
       method: "initialize",
@@ -71,7 +73,25 @@ describe("implementation evidence HTTP transport [Behavioral-Active Blackbox-Goo
         capabilities: {},
         clientInfo: { name: "implementation-evidence-http", version: "0.0.1" },
       },
-    });
+    };
+    const ordinaryInitialized = await rpc(handlers, initialize, undefined, "ordinary");
+    const ordinarySessionId = ordinaryInitialized.response.headers.get("mcp-session-id");
+    if (ordinarySessionId === null) throw new Error("ordinary initialization returned no session id");
+    const ordinaryTools = await rpc(
+      handlers,
+      { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+      ordinarySessionId,
+      "ordinary",
+    );
+    expect(
+      (
+        ordinaryTools.message["result"] as {
+          tools: Array<{ name: string }>;
+        }
+      ).tools.some((tool) => tool.name === "prepare_implementation_review_panel"),
+    ).toBe(false);
+
+    const initialized = await rpc(handlers, initialize, undefined, "management");
     expect(initialized.response.status).toBe(200);
     const sessionId = initialized.response.headers.get("mcp-session-id");
     if (sessionId === null) throw new Error("HTTP initialization returned no session id");
@@ -93,6 +113,7 @@ describe("implementation evidence HTTP transport [Behavioral-Active Blackbox-Goo
         },
       },
       sessionId,
+      "management",
     );
     expect(called.response.status).toBe(200);
     expect(textPayload(called.message["result"])).toMatchObject({

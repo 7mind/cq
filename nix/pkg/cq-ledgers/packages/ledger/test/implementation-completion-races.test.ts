@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  createInMemoryImplementationEvidenceStore,
+  markImplementationCompletionMergeStarted,
+} from "../src/index.js";
+import {
   IMPLEMENTATION_BASE,
   IMPLEMENTATION_RESULT,
   createImplementationEvidenceFixture,
@@ -46,5 +50,38 @@ describe("implementation completion races [Behavioral-Active Sociable-Atomic]", 
     expect(settled.filter((entry) => entry.status === "fulfilled")).toHaveLength(1);
     expect(settled.filter((entry) => entry.status === "rejected")).toHaveLength(1);
     expect(fixture.getLedgerWrites()).toBe(1);
+  });
+
+  test("atomically admits only one repository-wide merge-started authority", async () => {
+    const fixture = await createImplementationEvidenceFixture();
+    const first = await prepareImplementationCompletion(fixture);
+    const snapshot = await fixture.store.snapshot();
+    const firstRecord = snapshot.completions[first.completionRef]!;
+    const secondRef = `cq-implementation-completion:v1:${"d".repeat(64)}`;
+    const store = createInMemoryImplementationEvidenceStore({
+      ...snapshot,
+      completions: {
+        ...snapshot.completions,
+        [secondRef]: {
+          ...firstRecord,
+          completionRef: secondRef,
+          taskRef: "tasks:T2346",
+          operationId: "prepare-second",
+          requestDigest: "e".repeat(64),
+          mergeOperationId: "merge-second",
+        },
+      },
+    });
+    const settled = await Promise.allSettled([
+      markImplementationCompletionMergeStarted(store, first.completionRef, IMPLEMENTATION_BASE),
+      markImplementationCompletionMergeStarted(store, secondRef, IMPLEMENTATION_BASE),
+    ]);
+    expect(settled.filter((entry) => entry.status === "fulfilled")).toHaveLength(1);
+    expect(settled.filter((entry) => entry.status === "rejected")).toHaveLength(1);
+    expect(
+      Object.values((await store.snapshot()).completions).filter(
+        (entry) => entry.state === "merge-started",
+      ),
+    ).toHaveLength(1);
   });
 });
