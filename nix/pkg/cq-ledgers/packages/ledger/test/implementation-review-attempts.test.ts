@@ -74,6 +74,10 @@ function serviceWith(
   roster: readonly ImplementationReviewerIdentity[],
   execute: (identity: ImplementationReviewerIdentity) => Promise<ExternalReviewProcessObservation>,
   workerOutput: Record<string, DispatchJSONValue> = { status: "pass", resultCommit: RESULT },
+  options: {
+    readonly now?: () => string;
+    readonly executionReservationTimeoutMs?: number;
+  } = {},
 ) {
   const nativeResults = new Map<string, unknown>();
   const store = createInMemoryImplementationEvidenceStore();
@@ -81,7 +85,10 @@ function serviceWith(
     store,
     resolveReviewerRoster: () => roster,
     nativeFallback: native,
-    now: () => "2026-08-24T00:00:00.000Z",
+    now: options.now ?? (() => "2026-08-24T00:00:00.000Z"),
+    ...(options.executionReservationTimeoutMs === undefined
+      ? {}
+      : { executionReservationTimeoutMs: options.executionReservationTimeoutMs }),
     prepareNativeReview: async ({ attemptRef }) => prepared(attemptRef),
     fetchNativeReview: async (dispatch) => ({
       state: "consumed",
@@ -306,6 +313,73 @@ describe("protected implementation review attempts [BG]", () => {
     });
     release();
     await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(executions).toBe(1);
+  });
+
+  test("records an expired adapter reservation as an abstention without relaunching", async () => {
+    let executions = 0;
+    let release!: () => void;
+    let markStarted!: () => void;
+    let now = "2026-08-24T00:00:00.000Z";
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const { service } = serviceWith(
+      [adapter],
+      async () => {
+        executions += 1;
+        markStarted();
+        await blocked;
+        return {
+          adapterIdentity: adapter.adapterId,
+          stdout: JSON.stringify(verdict()),
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+      undefined,
+      { now: () => now, executionReservationTimeoutMs: 1 },
+    );
+    const panel = await service.prepareReviewPanel({
+      taskRef: "tasks:T2345",
+      resultCommit: RESULT,
+      workerDispatch: WORKER,
+      operationId: "panel-expired-reservation",
+      author: "parent",
+    });
+    const attemptRef = panel.attemptRefs[0]!;
+    await service.prepareReviewAttempt({
+      panelRef: panel.panelRef,
+      attemptRef,
+      operationId: "prepare-expired-reservation",
+      author: "parent",
+    });
+    const first = service.executeExternalReviewAttempt({
+      attemptRef,
+      operationId: "execute-expired-reservation",
+      author: "parent",
+    });
+    await started;
+    now = "2026-08-24T00:00:00.001Z";
+    await expect(
+      service.executeExternalReviewAttempt({
+        attemptRef,
+        operationId: "execute-expired-reservation",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ status: "existing", attemptRef });
+    release();
+    await first;
+    await expect(
+      service.finalizeReviewAttempt({
+        attemptRef,
+        operationId: "finalize-expired-reservation",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ terminalState: "operational-abstention" });
     expect(executions).toBe(1);
   });
 
