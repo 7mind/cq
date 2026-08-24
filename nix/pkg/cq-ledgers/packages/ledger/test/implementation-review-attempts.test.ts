@@ -77,7 +77,7 @@ function serviceWith(
   const nativeResults = new Map<string, unknown>();
   const dependencies: ImplementationEvidenceServiceDependencies = {
     store: createInMemoryImplementationEvidenceStore(),
-    reviewerRoster: roster,
+    resolveReviewerRoster: () => roster,
     nativeFallback: native,
     now: () => "2026-08-24T00:00:00.000Z",
     prepareNativeReview: async ({ attemptRef }) => prepared(attemptRef),

@@ -241,7 +241,7 @@ async function withClient(
   let reviewResultCommit: string | null = null;
   const implementationEvidence = new ImplementationEvidenceService({
     store: resolved.implementationEvidenceStore,
-    reviewerRoster: [D336_REVIEWER],
+    resolveReviewerRoster: () => [D336_REVIEWER],
     nativeFallback: D336_REVIEWER,
     prepareNativeReview: async ({ attemptRef, panel }) => {
       reviewResultCommit = panel.resultCommit;

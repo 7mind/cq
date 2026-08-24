@@ -2143,7 +2143,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         };
         const implementationEvidence = new ImplementationEvidenceService({
           store: implementationEvidenceStore,
-          reviewerRoster: [reviewerIdentity],
+          resolveReviewerRoster: () => [reviewerIdentity],
           nativeFallback: reviewerIdentity,
           prepareNativeReview: async () => round2Review.dispatch,
           fetchNativeReview: async (dispatch) => {

@@ -26,7 +26,7 @@ import { serializePromptSurfaceManifest } from "@cq/config";
 import {
   createAttestationStoreForConstruction,
   createLedgerStore,
-  LEDGER_TOOL_NAMES,
+  MANAGEMENT_LEDGER_TOOL_NAMES,
   resolveSingleProjectAttestationNamespace,
 } from "@cq/ledger";
 import { assertDispatchConstructionConformance } from "../../ledger-mcp/test/dispatchConstructionConformance.js";
@@ -220,6 +220,7 @@ describe("ledger-web embedded MCP on a non-loopback bind (same-origin /mcp)", ()
         cell: "embedded-web",
         client,
         surface: "pi",
+        expectedToolNames: MANAGEMENT_LEDGER_TOOL_NAMES,
         rows: async () =>
           (await peer.transact({ kind: "namespace" }, (store) => store.rows())) ?? [],
       });
@@ -240,7 +241,7 @@ describe("ledger-web embedded MCP on a non-loopback bind (same-origin /mcp)", ()
     await client.connect(transport as unknown as Transport);
     try {
       const names = (await client.listTools()).tools.map((t) => t.name).sort();
-      expect(names).toEqual([...LEDGER_TOOL_NAMES].sort());
+      expect(names).toEqual([...MANAGEMENT_LEDGER_TOOL_NAMES].sort());
       const workset = (await client.listTools()).tools.find((tool) => tool.name === "workset");
       expect(
         (workset?.inputSchema.properties?.["op"] as { enum?: string[] } | undefined)?.enum,

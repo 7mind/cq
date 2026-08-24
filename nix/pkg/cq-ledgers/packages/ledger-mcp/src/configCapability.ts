@@ -24,6 +24,7 @@ import {
   resolveActiveHarnessFromProcess,
   HARNESSES,
   AGENT_ROLE_TIERS,
+  type ActiveHarness,
   type CqConfig,
   type Harness,
   type ReviewerToken,
@@ -65,8 +66,11 @@ function resolveDefaultPanel(
  * empty list), returns the ACTIVE harness default panel with `source:
  * "default"` and `configured: false`.
  */
-export function computeReviewers(repoRoot: string): GetReviewersResult {
-  const config = loadConfig(repoRoot);
+export function computeReviewers(
+  repoRoot: string,
+  activeHarness: ActiveHarness = resolveActiveHarnessFromProcess(),
+): GetReviewersResult {
+  const config = loadConfig(repoRoot, activeHarness);
   if (config === null) {
     return {
       configured: false,

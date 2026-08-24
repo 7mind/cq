@@ -110,6 +110,44 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
     expect(source).toContain("{ implementationEvidence }");
   });
 
+  test("defers fail-closed reviewer-panel resolution until an evidence operation", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "implementation-evidence-runtime-config-"));
+    roots.push(root);
+    await writeFile(
+      path.join(root, "cq.toml"),
+      '[ledger]\nbackend = "xdg"\nprojectId = "runtime-config"\n',
+    );
+    const ledger = new InMemoryLedgerStore();
+    await ledger.init();
+    const resolved = {
+      store: ledger,
+      implementationEvidenceStore: createInMemoryImplementationEvidenceStore(),
+    } as unknown as ResolvedLedgerStore;
+    const dispatchCapability = {
+      observeEvidence: async () => ({ state: "missing" as const }),
+    } as unknown as DispatchCapability;
+
+    let service: ReturnType<typeof createProductionImplementationEvidenceService> | undefined;
+    expect(() => {
+      service = createProductionImplementationEvidenceService({
+        resolved,
+        dispatchCapability,
+        repositoryRoot: root,
+        environment: { CQ_HARNESS: "codex" },
+      });
+    }).not.toThrow();
+    if (service === undefined) throw new Error("production evidence service was not constructed");
+    await expect(
+      service.prepareReviewPanel({
+        taskRef: "tasks:T2345",
+        resultCommit: RESULT,
+        workerDispatch: WORKER,
+        operationId: "runtime-invalid-panel",
+        author: "parent",
+      }),
+    ).rejects.toThrow('active harness "codex" requires a [harness.codex] block');
+  });
+
   test("revalidates the exact Git receipt chain against repository objects and paths", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "implementation-evidence-runtime-git-"));
     roots.push(root);

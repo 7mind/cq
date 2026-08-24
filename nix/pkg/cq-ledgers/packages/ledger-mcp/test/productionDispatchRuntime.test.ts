@@ -11,6 +11,7 @@ import {
   attestationNamespaceForTrustedHubProject,
   createAttestationStoreForConstruction,
   InMemoryLedgerStore,
+  LEDGER_TOOL_NAMES,
   type ResolvedLedgerStore,
 } from "@cq/ledger";
 import {
@@ -205,6 +206,7 @@ describe("production dispatch runtime construction", () => {
           cell: "postgres-hub",
           client,
           surface: "claude",
+          expectedToolNames: LEDGER_TOOL_NAMES,
           rows: async () =>
             (await peer.transact({ kind: "namespace" }, (attestations) => attestations.rows())) ??
             [],

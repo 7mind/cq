@@ -609,7 +609,7 @@ export interface ImplementationCompletionLedgerResult {
 
 export interface ImplementationEvidenceServiceDependencies {
   readonly store: ImplementationEvidenceStore;
-  readonly reviewerRoster: readonly ImplementationReviewerIdentity[];
+  readonly resolveReviewerRoster: () => readonly ImplementationReviewerIdentity[];
   readonly nativeFallback: ImplementationReviewerIdentity;
   readonly now?: () => string;
   readonly prepareNativeReview: (input: {
@@ -670,10 +670,14 @@ export class ImplementationEvidenceService {
   constructor(dependencies: ImplementationEvidenceServiceDependencies) {
     this.deps = dependencies;
     this.now = dependencies.now ?? (() => new Date().toISOString());
-    if (dependencies.reviewerRoster.length === 0)
-      throw new Error("implementation reviewer roster must not be empty");
     if (dependencies.nativeFallback.launch !== "native")
       throw new Error("implementation fallback reviewer must be native");
+  }
+
+  private reviewerRoster(): readonly ImplementationReviewerIdentity[] {
+    const roster = structuredClone(this.deps.resolveReviewerRoster());
+    if (roster.length === 0) throw new Error("implementation reviewer roster must not be empty");
+    return roster;
   }
 
   async assertGenericTaskTerminalizationAllowed(taskRef: string): Promise<void> {
@@ -693,7 +697,7 @@ export class ImplementationEvidenceService {
     assertOperationId(input.operationId);
     taskIdFromRef(input.taskRef);
     assertFullSha(input.resultCommit, "result_commit");
-    const roster = structuredClone(this.deps.reviewerRoster);
+    const roster = this.reviewerRoster();
     const rosterDigest = digest(roster);
     const request = { ...input, roster };
     const requestDigest = digest(request);

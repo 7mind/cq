@@ -387,7 +387,7 @@ not sent as a tool argument.
 
 ## Client development and migration
 
-Treat response decoding as a closed 39-tool matrix, not as a generic
+Treat response decoding as a closed 46-tool matrix, not as a generic
 full-entity decoder. Require callers to choose a projection for the five
 item-bearing read tools, model the acknowledgement DTOs independently
 from full items, and retain pagination metadata until `nextOffset` becomes
