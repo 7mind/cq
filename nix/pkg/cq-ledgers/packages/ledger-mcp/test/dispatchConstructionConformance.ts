@@ -5,7 +5,6 @@ import {
   type AttestationRow,
   type PromptSurface,
 } from "@cq/config";
-import { LEDGER_TOOL_NAMES } from "@cq/ledger";
 
 const VALID_INPUT = Object.freeze({
   goalId: "G977",
@@ -50,6 +49,7 @@ export interface DispatchConstructionConformanceFixture {
   readonly cell: string;
   readonly client: Client;
   readonly surface: PromptSurface;
+  readonly expectedToolNames: readonly string[];
   rows(): Promise<readonly AttestationRow[]>;
 }
 
@@ -89,7 +89,7 @@ export async function assertDispatchConstructionConformance(
   fixture: DispatchConstructionConformanceFixture,
 ): Promise<void> {
   const names = (await fixture.client.listTools()).tools.map((tool) => tool.name).sort();
-  expect(names, fixture.cell).toEqual([...LEDGER_TOOL_NAMES].sort());
+  expect(names, fixture.cell).toEqual([...fixture.expectedToolNames].sort());
   expect(names, fixture.cell).toContain("prepare_dispatch");
   expect(names, fixture.cell).toContain("fetch_dispatch_input");
   expect(names, fixture.cell).not.toContain("validate_input");

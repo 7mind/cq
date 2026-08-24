@@ -142,6 +142,7 @@ describe("public MCP response-contract documentation", () => {
     expect(readme).toContain('projection: "complement"');
     expect(readme).toContain("fields(full) = fields(compact) ∪ fields(complement)");
     expect(readme).toContain("After a `compact` read");
+    expect(readme).toContain("closed 46-tool matrix");
   });
 
   // Regression: T678 review round 2 — field-level documentation drift must fail.

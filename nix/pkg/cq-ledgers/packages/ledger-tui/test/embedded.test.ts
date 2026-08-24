@@ -17,6 +17,7 @@ import { serializePromptSurfaceManifest } from "@cq/config";
 import {
   createAttestationStoreForConstruction,
   createLedgerStore,
+  MANAGEMENT_LEDGER_TOOL_NAMES,
   resolveSingleProjectAttestationNamespace,
 } from "@cq/ledger";
 import { buildServer } from "@cq/ledger-mcp";
@@ -215,6 +216,7 @@ describe("McpLedgerClient.embedded (in-process, in-memory transport)", () => {
         cell: "embedded-tui",
         client: (client as unknown as { readonly client: Client }).client,
         surface: "codex",
+        expectedToolNames: MANAGEMENT_LEDGER_TOOL_NAMES,
         rows: async () =>
           (await peer.transact({ kind: "namespace" }, (store) => store.rows())) ?? [],
       });

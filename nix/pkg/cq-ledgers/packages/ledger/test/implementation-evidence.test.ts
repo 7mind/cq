@@ -79,7 +79,7 @@ async function fixture() {
   let verificationClean = true;
   const dependencies: ImplementationEvidenceServiceDependencies = {
     store: evidence,
-    reviewerRoster: [reviewer],
+    resolveReviewerRoster: () => [reviewer],
     nativeFallback: reviewer,
     now: () => "2026-08-24T00:00:00.000Z",
     prepareNativeReview: async ({ attemptRef }) => prepared(attemptRef),

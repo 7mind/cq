@@ -336,7 +336,7 @@ function parityApprovedVerdict() {
 async function buildImplementationEvidenceFixture() {
   const implementationEvidence = new ImplementationEvidenceService({
     store: createInMemoryImplementationEvidenceStore(),
-    reviewerRoster: [PARITY_ADAPTER_REVIEWER],
+    resolveReviewerRoster: () => [PARITY_ADAPTER_REVIEWER],
     nativeFallback: PARITY_NATIVE_FALLBACK,
     now: () => FIXED_NOW,
     prepareNativeReview: async ({ attemptRef }) => ({

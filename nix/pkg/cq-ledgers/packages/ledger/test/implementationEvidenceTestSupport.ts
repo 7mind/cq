@@ -76,7 +76,7 @@ export async function createImplementationEvidenceFixture(
   let ledgerWrites = 0;
   const dependencies: ImplementationEvidenceServiceDependencies = {
     store,
-    reviewerRoster: [REVIEWER],
+    resolveReviewerRoster: () => [REVIEWER],
     nativeFallback: REVIEWER,
     now: () => "2026-08-24T00:00:00.000Z",
     prepareNativeReview: async ({ attemptRef }) => prepared(attemptRef),

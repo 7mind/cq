@@ -12,6 +12,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { serializePromptSurfaceManifest } from "@cq/config";
 import {
   createAttestationStoreForConstruction,
+  LEDGER_TOOL_NAMES,
   resolveSingleProjectAttestationNamespace,
 } from "@cq/ledger";
 import { assertDispatchConstructionConformance } from "./dispatchConstructionConformance.js";
@@ -361,6 +362,7 @@ describe("standalone prompt-surface transports", () => {
         cell: "stdio",
         client,
         surface: "codex",
+        expectedToolNames: LEDGER_TOOL_NAMES,
         rows: async () =>
           (await peer.transact({ kind: "namespace" }, (store) => store.rows())) ?? [],
       });
@@ -415,6 +417,7 @@ describe("standalone prompt-surface transports", () => {
           cell: "http-single-project",
           client,
           surface: "claude",
+          expectedToolNames: LEDGER_TOOL_NAMES,
           rows: async () =>
             (await peer.transact({ kind: "namespace" }, (store) => store.rows())) ?? [],
         });

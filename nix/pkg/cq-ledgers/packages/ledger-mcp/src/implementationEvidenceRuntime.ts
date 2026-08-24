@@ -409,15 +409,15 @@ export function createProductionImplementationEvidenceService(
   const activeHarness = resolveActiveHarness(options.environment ?? process.env);
   const config = loadConfig(options.repositoryRoot);
   const forceShellout = config?.dispatch.forceShellout ?? false;
-  const reviewerRoster = computeReviewers(options.repositoryRoot).reviewers.map((reviewer) =>
-    reviewerIdentity(reviewer, activeHarness, forceShellout),
-  );
   const environment = options.environment ?? process.env;
   const externalReviewRunner = options.externalReviewRunner ?? runExternalReviewer;
   const store = options.resolved.store;
   return new ImplementationEvidenceService({
     store: options.resolved.implementationEvidenceStore,
-    reviewerRoster,
+    resolveReviewerRoster: () =>
+      computeReviewers(options.repositoryRoot, activeHarness).reviewers.map((reviewer) =>
+        reviewerIdentity(reviewer, activeHarness, forceShellout),
+      ),
     nativeFallback: nativeFallbackIdentity(activeHarness),
     prepareNativeReview: async ({ attemptRef, panel, identity, operationId }) => {
       const worker = await observe(panel.workerDispatch);
