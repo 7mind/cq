@@ -9,6 +9,8 @@ import {
   TASKS_LEDGER,
   canonicalImplementationCompletionMergeLine,
   createInMemoryImplementationEvidenceStore,
+  createLedgerMcpTools,
+  createObserveOnlyWorksetInvocationAuthority,
   implementationCompletionMergeAdmissionProviderFromStore,
   recordProtectedImplementationCompletion,
   type ImplementationEvidenceServiceDependencies,
@@ -255,7 +257,7 @@ describe("versioned protected implementation evidence [BG]", () => {
     expect(Object.keys((await f.evidence.snapshot()).completions)).toHaveLength(0);
   });
 
-  test("generic writes cannot attach protected implementation result evidence", async () => {
+  test("generic writes cannot terminalize an active Git-producing implementation task", async () => {
     const f = await fixture();
     const preparedCompletion = await f.service.prepareCompletion({
       taskRef: "tasks:T2345",
@@ -288,18 +290,47 @@ describe("versioned protected implementation evidence [BG]", () => {
       fields: { headline: "task" },
     });
     await ledger.updateItem(TASKS_LEDGER, "T2345", { status: "wip" });
-    await expect(
-      ledger.createItem(TASKS_LEDGER, milestone.id, {
+    expect(
+      await ledger.createItem(TASKS_LEDGER, milestone.id, {
         id: "T2346",
         status: "planned",
-        fields: { headline: "forged", resultCommit: RESULT },
+        fields: { headline: "legacy seed", resultCommit: RESULT },
       }),
-    ).rejects.toThrow("protected implementation evidence");
-    await expect(
-      ledger.updateItem(TASKS_LEDGER, "T2345", {
+    ).toMatchObject({ id: "T2346", status: "planned" });
+    const genericTools = createLedgerMcpTools(
+      ledger,
+      undefined,
+      undefined,
+      undefined,
+      "",
+      undefined,
+      undefined,
+      "full",
+      undefined,
+      createObserveOnlyWorksetInvocationAuthority(),
+      f.service,
+    );
+    const genericUpdate = genericTools.find((tool) => tool.name === "update_item");
+    if (genericUpdate === undefined) throw new Error("update_item tool is absent");
+    await genericUpdate.handler(
+      {
+        ledger_id: TASKS_LEDGER,
+        item_id: "T2346",
         status: "done",
-        fields: { resultCommit: RESULT, completion: "forged" },
-      }),
+        fields: { completion: "legacy seed" },
+      } as never,
+      null,
+    );
+    await expect(
+      genericUpdate.handler(
+        {
+          ledger_id: TASKS_LEDGER,
+          item_id: "T2345",
+          status: "done",
+          fields: { resultCommit: RESULT, completion: "forged" },
+        } as never,
+        null,
+      ),
     ).rejects.toThrow("protected implementation evidence");
     await expect(
       ledger.createItem(REVIEWS_LEDGER, milestone.id, {

@@ -175,6 +175,7 @@ describe("eligibleColumnFields", () => {
       reviews: [
         "new_questions",
         "defects",
+        "implementationEvidence",
         "ledgerRefs",
         "tags",
         "sourceRefs",

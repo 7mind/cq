@@ -54,6 +54,7 @@ import {
   IDEAS_LEDGER,
   MILESTONES_AMBIENT_ID,
   MILESTONES_LEDGER,
+  TASKS_LEDGER,
 } from "../constants.js";
 import type { FieldValue, LedgerSchema } from "../types.js";
 import { LedgerError } from "../types.js";
@@ -734,6 +735,15 @@ export function createLedgerMcpToolSpecifications(
       if (args.fields !== undefined) patch.fields = args.fields as Record<string, FieldValue>;
       if (args.author !== undefined) patch.author = args.author;
       if (args.session !== undefined) patch.session = args.session;
+      if (
+        args.ledger_id === TASKS_LEDGER &&
+        args.status === "done" &&
+        implementationEvidence !== undefined
+      ) {
+        await implementationEvidence.assertGenericTaskTerminalizationAllowed(
+          `${TASKS_LEDGER}:${args.item_id}`,
+        );
+      }
       const item = await mutationsFor("update_item").updateItem(
         args.ledger_id,
         args.item_id,
