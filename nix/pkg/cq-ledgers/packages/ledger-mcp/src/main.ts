@@ -85,6 +85,8 @@ import { loadConfig, resolveRemoteLedgerTokenFromProcess } from "@cq/config";
 import { z } from "zod";
 import { createConfigCapability } from "./configCapability.js";
 import { createProductionImplementationEvidenceService } from "./implementationEvidenceRuntime.js";
+
+export { createProductionImplementationEvidenceService } from "./implementationEvidenceRuntime.js";
 import { serveRemoteStdioProxy } from "./stdioRemoteProxy.js";
 export { connectRemoteMcpProxy, serveRemoteStdioProxy } from "./stdioRemoteProxy.js";
 export { computeConfig } from "./configCapability.js";
@@ -1197,7 +1199,7 @@ export function serveHttp(
     toolProfile,
     repositoryRoot,
     undefined,
-    "observe",
+    "management",
     false,
     implementationEvidence,
   );
@@ -1359,7 +1361,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     return;
   }
 
-  const server = createLedgerMcpServer({
+  const server = createManagementLedgerMcpServer({
     store,
     displayName,
     toolPrefix,
