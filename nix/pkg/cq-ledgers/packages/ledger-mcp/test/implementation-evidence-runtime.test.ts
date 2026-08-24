@@ -1,16 +1,22 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
 import {
   InMemoryLedgerStore,
   createInMemoryImplementationEvidenceStore,
   type DispatchCapability,
   type ResolvedLedgerStore,
 } from "@cq/ledger";
-import { createProductionImplementationEvidenceService } from "../src/implementationEvidenceRuntime.js";
+import {
+  createProductionImplementationEvidenceService,
+  verifyProductionImplementation,
+} from "../src/implementationEvidenceRuntime.js";
 
 const RESULT = "b".repeat(40);
 const WORKER = { attestationId: "att_runtime_worker", generation: 1 } as const;
 const previousHarness = process.env["CQ_HARNESS"];
+const roots: string[] = [];
 
 beforeEach(() => {
   process.env["CQ_HARNESS"] = "codex";
@@ -20,6 +26,17 @@ afterEach(() => {
   if (previousHarness === undefined) delete process.env["CQ_HARNESS"];
   else process.env["CQ_HARNESS"] = previousHarness;
 });
+
+async function git(root: string, args: readonly string[]): Promise<string> {
+  const process = Bun.spawn(["git", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ]);
+  if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr}`);
+  return stdout.trim();
+}
 
 describe("production implementation evidence runtime [Behavioral-Active Blackbox-Atomic]", () => {
   test("wires the default external reviewer to a trusted process seam", async () => {
@@ -92,4 +109,85 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
     expect(source).toContain("implementationEvidence,\n    );");
     expect(source).toContain("{ implementationEvidence }");
   });
+
+  test("revalidates the exact Git receipt chain against repository objects and paths", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "implementation-evidence-runtime-git-"));
+    roots.push(root);
+    await git(root, ["init", "-q", "-b", "implement/T2345"]);
+    await git(root, ["config", "user.name", "runtime-test"]);
+    await git(root, ["config", "user.email", "runtime-test@example.invalid"]);
+    await writeFile(path.join(root, "base.txt"), "base\n");
+    await git(root, ["add", "base.txt"]);
+    await git(root, ["commit", "-q", "-m", "base"]);
+    const baseCommit = await git(root, ["rev-parse", "HEAD"]);
+    await writeFile(path.join(root, "feature.ts"), "export const protectedEvidence = true;\n");
+    await git(root, ["add", "feature.ts"]);
+    await git(root, ["commit", "-q", "-m", "result"]);
+    const resultCommit = await git(root, ["rev-parse", "HEAD"]);
+    const tree = await git(root, ["rev-parse", "HEAD^{tree}"]);
+    const workerInput = {
+      taskId: "T2345",
+      acceptance: "verify the exact receipt chain",
+      branch: "implement/T2345",
+      baseCommit,
+      round: 0,
+      startingCommit: baseCommit,
+    } as const;
+    const receipt = {
+      kind: "cq-git-change-receipt",
+      version: 1,
+      attestationId: "att_runtime_receipt",
+      generation: 1,
+      taskId: "T2345",
+      operationId: "runtime-receipt",
+      requestDigest: "d".repeat(64),
+      oldHead: baseCommit,
+      newHead: resultCommit,
+      tree,
+      objectOids: [resultCommit, tree],
+      paths: ["feature.ts"],
+      committedAt: "2026-08-24T00:00:00.000Z",
+    } as const;
+    const workerOutput = {
+      taskId: "T2345",
+      status: "pass",
+      resultCommit,
+      branch: "implement/T2345",
+      actualWorktreePath: root,
+      filesTouched: ["feature.ts"],
+      gitReceipts: [receipt],
+      checkSummary: "REAL_CHECK_EXIT=0; 1 pass; 0 fail",
+      gateDurationMs: 100,
+      baseVerification: {
+        status: "verified",
+        relation: "descendant",
+        baseCommit,
+        headCommit: resultCommit,
+      },
+      summary: "verified",
+    } as const;
+    expect(
+      (
+        await verifyProductionImplementation(
+          root,
+          resultCommit,
+          workerInput,
+          workerOutput,
+        )
+      ).receiptsVerified,
+    ).toBe(true);
+    expect(
+      (
+        await verifyProductionImplementation(root, resultCommit, workerInput, {
+          ...workerOutput,
+          gitReceipts: [{ ...receipt, tree: baseCommit }],
+        })
+      ).receiptsVerified,
+    ).toBe(false);
+  });
+});
+
+afterEach(async () => {
+  const root = roots.pop();
+  if (root !== undefined) await rm(root, { recursive: true, force: true });
 });
