@@ -1,8 +1,5 @@
 import { resolve } from "node:path";
-import {
-  runWorksetGitEffectGate,
-  type WorksetGitEffectBinding,
-} from "@cq/process-control";
+import { runWorksetGitEffectGate, type WorksetGitEffectBinding } from "@cq/process-control";
 import { TASKS_LEDGER } from "./constants.js";
 import {
   nodeManagedWorktreeGitRunner,
@@ -244,8 +241,11 @@ export function createManagedWorktreeGitEffectRunner(
         branchResult,
         await effect(worktreeBinding, async () => {
           if (
-            (await requiredGit(repositoryRoot, ["rev-parse", `refs/heads/${branch}`], "task branch")) !==
-            commit
+            (await requiredGit(
+              repositoryRoot,
+              ["rev-parse", `refs/heads/${branch}`],
+              "task branch",
+            )) !== commit
           ) {
             throw new Error("managed worktree Git effect branch tip changed before creation");
           }
@@ -253,10 +253,7 @@ export function createManagedWorktreeGitEffectRunner(
         }),
       );
     }
-    if (
-      args.length === 5 &&
-      exactArgs(args.slice(0, 3), ["worktree", "add", "--quiet"])
-    ) {
+    if (args.length === 5 && exactArgs(args.slice(0, 3), ["worktree", "add", "--quiet"])) {
       const branch = assertTaskBranch(args[4]!);
       const branchCommit = await requiredGit(
         repositoryRoot,
@@ -273,18 +270,18 @@ export function createManagedWorktreeGitEffectRunner(
       };
       return await effect(binding, async () => {
         if (
-          (await requiredGit(repositoryRoot, ["rev-parse", `refs/heads/${branch}`], "task branch")) !==
-          branchCommit
+          (await requiredGit(
+            repositoryRoot,
+            ["rev-parse", `refs/heads/${branch}`],
+            "task branch",
+          )) !== branchCommit
         ) {
           throw new Error("managed worktree Git effect branch tip changed before creation");
         }
         return binding;
       });
     }
-    if (
-      args.length === 4 &&
-      exactArgs(args.slice(0, 3), ["worktree", "remove", "--force"])
-    ) {
+    if (args.length === 4 && exactArgs(args.slice(0, 3), ["worktree", "remove", "--force"])) {
       const worktreePath = resolve(args[3]!);
       const headCommit = await requiredGit(worktreePath, ["rev-parse", "HEAD"], "worktree HEAD");
       const binding: WorksetGitEffectBinding = {
@@ -297,8 +294,11 @@ export function createManagedWorktreeGitEffectRunner(
       };
       return await effect(binding, async () => {
         if (
-          (await requiredGit(worktreePath, ["symbolic-ref", "--quiet", "HEAD"], "worktree branch")) !==
-          `refs/heads/${taskBranch}` ||
+          (await requiredGit(
+            worktreePath,
+            ["symbolic-ref", "--quiet", "HEAD"],
+            "worktree branch",
+          )) !== `refs/heads/${taskBranch}` ||
           (await requiredGit(worktreePath, ["rev-parse", "HEAD"], "worktree HEAD")) !== headCommit
         ) {
           throw new Error("managed worktree Git effect worktree binding changed before removal");
@@ -322,8 +322,11 @@ export function createManagedWorktreeGitEffectRunner(
       };
       return await effect(binding, async () => {
         if (
-          (await requiredGit(repositoryRoot, ["rev-parse", `refs/heads/${branch}`], "task branch")) !==
-          expectedCommit
+          (await requiredGit(
+            repositoryRoot,
+            ["rev-parse", `refs/heads/${branch}`],
+            "task branch",
+          )) !== expectedCommit
         ) {
           throw new Error("managed worktree Git effect branch tip changed before removal");
         }

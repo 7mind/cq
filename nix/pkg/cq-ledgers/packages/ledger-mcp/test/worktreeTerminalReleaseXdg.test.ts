@@ -253,7 +253,14 @@ function copyActiveTaskToArchive(dbPath: string, pointerId: string, taskId: stri
   try {
     db.query(
       "INSERT INTO archive_pointers (ledger, id, summary, title, status, archived_at) VALUES (?, ?, ?, ?, ?, ?)",
-    ).run(TASKS_LEDGER, pointerId, "duplicate task authority", "Duplicate", "done", new Date().toISOString());
+    ).run(
+      TASKS_LEDGER,
+      pointerId,
+      "duplicate task authority",
+      "Duplicate",
+      "done",
+      new Date().toISOString(),
+    );
     db.query(
       `INSERT INTO archived_items
          (ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
@@ -275,7 +282,14 @@ function copyArchivedTaskToArchive(
   try {
     db.query(
       "INSERT INTO archive_pointers (ledger, id, summary, title, status, archived_at) VALUES (?, ?, ?, ?, ?, ?)",
-    ).run(TASKS_LEDGER, pointerId, "duplicate task authority", "Duplicate", "done", new Date().toISOString());
+    ).run(
+      TASKS_LEDGER,
+      pointerId,
+      "duplicate task authority",
+      "Duplicate",
+      "done",
+      new Date().toISOString(),
+    );
     db.query(
       `INSERT INTO archived_items
          (ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
@@ -692,7 +706,10 @@ describe("D336 production XDG terminal worktree release", () => {
         );
         expect(activeTasks.items.filter((item) => item.id === ARCHIVED_TASK_ID)).toEqual([]);
         const archive = decode<{
-          archive: { kind: string; milestone: { id: string; items: readonly { id: string; status: string }[] } };
+          archive: {
+            kind: string;
+            milestone: { id: string; items: readonly { id: string; status: string }[] };
+          };
         }>(
           (await client.callTool({
             name: "fetch_ledger_archive",
@@ -701,9 +718,9 @@ describe("D336 production XDG terminal worktree release", () => {
         );
         expect(archive.archive.kind).toBe("group");
         expect(archive.archive.milestone.id).toBe(milestoneId);
-        expect(archive.archive.milestone.items.filter((item) => item.id === ARCHIVED_TASK_ID)).toEqual([
-          expect.objectContaining({ id: ARCHIVED_TASK_ID, status: "done" }),
-        ]);
+        expect(
+          archive.archive.milestone.items.filter((item) => item.id === ARCHIVED_TASK_ID),
+        ).toEqual([expect.objectContaining({ id: ARCHIVED_TASK_ID, status: "done" })]);
 
         const rootsBeforeRelease = await store.worksetStore!().snapshot();
         const released = decode<{

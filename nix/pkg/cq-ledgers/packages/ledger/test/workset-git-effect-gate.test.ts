@@ -27,9 +27,7 @@ import { mintManagedTerminalReleaseBinding } from "../src/managedTerminalRelease
 
 const exec = promisify(execFile);
 const roots: string[] = [];
-const BROKER_FIXTURE = fileURLToPath(
-  new URL("./worksetGitEffectBrokerChild.ts", import.meta.url),
-);
+const BROKER_FIXTURE = fileURLToPath(new URL("./worksetGitEffectBrokerChild.ts", import.meta.url));
 
 function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
   let resolve!: () => void;
@@ -263,7 +261,9 @@ describe("T1984 durable Git effect replacement ordering", () => {
         ).code,
       ).toBe(0);
       expect(await git(worktreePath, ["rev-parse", "HEAD"])).toBe(repo.head);
-      expect((await runner(repo.root, ["worktree", "remove", "--force", worktreePath])).code).toBe(0);
+      expect((await runner(repo.root, ["worktree", "remove", "--force", worktreePath])).code).toBe(
+        0,
+      );
       expect((await runner(repo.root, ["branch", "-D", "implement/T1984"])).code).toBe(0);
     } finally {
       await store.dispose();
