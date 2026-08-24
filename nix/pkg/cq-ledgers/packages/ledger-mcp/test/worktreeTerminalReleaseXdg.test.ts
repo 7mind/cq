@@ -696,6 +696,13 @@ describe("D336 production XDG terminal worktree release", () => {
           })) as ToolResult,
         );
         const attemptRef = panel.attemptRefs[0]!;
+        await expect(
+          store.updateItem(TASKS_LEDGER, TASK_ID, {
+            status: "done",
+            fields: { resultCommit, completion: "forged direct completion" },
+          }),
+        ).rejects.toThrow("protected implementation evidence");
+        expect(store.fetchItem(TASKS_LEDGER, TASK_ID).status).toBe("wip");
         expect(
           decode<{ launch: string }>(
             (await client.callTool({
