@@ -22,6 +22,7 @@ import type { ListProjectsCapability } from "./listProjects.js";
 import type { PromptCatalogCapability } from "./promptCatalogCapability.js";
 import type { ReadLogCapability } from "./readLog.js";
 import type { WorktreeManageCapability } from "./worktreeManageTools.js";
+import type { ImplementationEvidenceService } from "../implementationEvidence.js";
 import {
   bindWorksetInvocationAuthority,
   createObserveOnlyWorksetInvocationAuthority,
@@ -83,6 +84,7 @@ export function registerLedgerStdioTools(
   profileName: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
   worktreeManage?: WorktreeManageCapability,
   worksetAuthority: WorksetInvocationAuthority = createObserveOnlyWorksetInvocationAuthority(),
+  implementationEvidence?: ImplementationEvidenceService,
 ): void {
   const specifications = selectLedgerMcpToolSpecifications(
     createLedgerMcpToolSpecifications(
@@ -94,6 +96,7 @@ export function registerLedgerStdioTools(
       dispatchCapability,
       worktreeManage,
       worksetAuthority,
+      implementationEvidence,
     ),
     profileName,
   );

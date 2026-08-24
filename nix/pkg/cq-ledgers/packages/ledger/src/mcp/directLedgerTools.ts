@@ -20,6 +20,7 @@ import type { ListProjectsCapability } from "./listProjects.js";
 import type { PromptCatalogCapability } from "./promptCatalogCapability.js";
 import type { ReadLogCapability } from "./readLog.js";
 import type { WorktreeManageCapability } from "./worktreeManageTools.js";
+import type { ImplementationEvidenceService } from "../implementationEvidence.js";
 import {
   bindWorksetInvocationAuthority,
   createObserveOnlyWorksetInvocationAuthority,
@@ -42,6 +43,7 @@ export interface CreateLedgerSdkMcpServerOptions {
   readonly profileName?: LedgerToolProfileName;
   readonly worktreeManage?: WorktreeManageCapability;
   readonly worksetAuthority?: WorksetInvocationAuthority;
+  readonly implementationEvidence?: ImplementationEvidenceService;
 }
 
 /**
@@ -65,6 +67,7 @@ export function createLedgerSdkMcpServer(
       options.dispatchCapability,
       options.worktreeManage,
       options.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority(),
+      options.implementationEvidence,
     ),
     profileName,
   );

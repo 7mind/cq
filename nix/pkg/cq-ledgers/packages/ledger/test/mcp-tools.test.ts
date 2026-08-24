@@ -162,9 +162,9 @@ it("create_item defaults an omitted milestone only for ideas", async () => {
         milestone_id: "M900",
       }).ok,
     ).toBe(false);
-    expect(
-      validateAgainstSchema(inputSchema, { ...ownedIdeaGoalInput, id: "G900" }).ok,
-    ).toBe(false);
+    expect(validateAgainstSchema(inputSchema, { ...ownedIdeaGoalInput, id: "G900" }).ok).toBe(
+      false,
+    );
     expect(
       validateAgainstSchema(inputSchema, {
         ledger_id: "goals",
@@ -234,11 +234,11 @@ function expectedItemAcknowledgement(item: Item): Record<string, unknown> {
 }
 
 describe("ledger MCP tools", () => {
-  it("exports 39 canonical names, hides both validators, and omits unwired dispatch handlers", async () => {
+  it("exports 46 canonical names and hides both validators", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
     expect(tools.map((t) => t.name).sort()).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
-    expect(LEDGER_TOOL_NAMES.length).toBe(39);
+    expect(LEDGER_TOOL_NAMES.length).toBe(46);
     expect(LEDGER_TOOL_NAMES).toContain("fts_search");
     expect(LEDGER_TOOL_NAMES).toContain("snapshot");
     expect(LEDGER_TOOL_NAMES).toContain("derive_predicates");
@@ -1538,9 +1538,7 @@ describe("ledger MCP tools", () => {
           todoDigest: "1".repeat(64),
           doneDigest: "2".repeat(64),
         },
-        conflicts: [
-          { path: "new.txt", stage: 2, mode: "100644", oid: "3".repeat(40) },
-        ],
+        conflicts: [{ path: "new.txt", stage: 2, mode: "100644", oid: "3".repeat(40) }],
       },
       resolutions: [
         {

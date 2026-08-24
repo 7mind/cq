@@ -37,12 +37,7 @@ import {
   UnsatisfiedDependencyArchiveError,
   UpstreamFilingClaimedError,
 } from "../types.js";
-import {
-  buildPrefixRegistry,
-  canonicalizeRef,
-  DEPENDENCY_REF_FIELDS,
-  parseRef,
-} from "../refs.js";
+import { buildPrefixRegistry, canonicalizeRef, DEPENDENCY_REF_FIELDS, parseRef } from "../refs.js";
 import {
   GOALS_LEDGER,
   HANDOFFS_LEDGER,
@@ -53,6 +48,7 @@ import {
   MILESTONES_LEDGER,
   MEMORIES_LEDGER,
   OPERATOR_ACTIONS_LEDGER,
+  REVIEWS_LEDGER,
   TASKS_LEDGER,
   UPSTREAM_LEDGER,
 } from "../constants.js";
@@ -61,6 +57,7 @@ import {
   isAuthorizedOperatorActionMutation,
   parseOperatorActionEnvelope,
 } from "../operatorActions.js";
+import { isAuthorizedImplementationEvidenceMutation } from "../implementationEvidence.js";
 import {
   assertWorksetOwnershipFieldsAbsent,
   ownershipFieldsFrom,
@@ -85,9 +82,7 @@ const AMBIENT_ONLY_LEDGERS: readonly string[] = [IDEAS_LEDGER, MEMORIES_LEDGER];
 
 function assertAmbientAttachment(ledgerId: string, milestoneId: string): void {
   if (AMBIENT_ONLY_LEDGERS.includes(ledgerId) && milestoneId !== MILESTONES_AMBIENT_ID) {
-    throw new BootstrapViolationError(
-      `${ledgerId} items must attach to ${MILESTONES_AMBIENT_ID}`,
-    );
+    throw new BootstrapViolationError(`${ledgerId} items must attach to ${MILESTONES_AMBIENT_ID}`);
   }
 }
 
@@ -177,9 +172,7 @@ export function validateSchema(schema: {
   const svSet = new Set(schema.statusValues);
   for (const t of schema.terminalStatuses) {
     if (!svSet.has(t)) {
-      throw new SchemaValidationError(
-        `terminalStatuses entry "${t}" is not in statusValues`,
-      );
+      throw new SchemaValidationError(`terminalStatuses entry "${t}" is not in statusValues`);
     }
   }
   // D98 (G80): a declared `satisfiesDependencyStatuses` must be a SUBSET of
@@ -204,9 +197,7 @@ export function validateSchema(schema: {
       );
     }
     if (!FIELD_NAME_RE.test(name)) {
-      throw new SchemaValidationError(
-        `field name "${name}" must match /^[A-Za-z_][A-Za-z0-9_]*$/`,
-      );
+      throw new SchemaValidationError(`field name "${name}" must match /^[A-Za-z_][A-Za-z0-9_]*$/`);
     }
   }
   // F1: every from-status and to-status referenced by the transition guard
@@ -217,9 +208,7 @@ export function validateSchema(schema: {
     const terminalSet = new Set(schema.terminalStatuses);
     for (const [from, tos] of Object.entries(schema.transitions)) {
       if (!svSet.has(from)) {
-        throw new SchemaValidationError(
-          `transitions key "${from}" is not in statusValues`,
-        );
+        throw new SchemaValidationError(`transitions key "${from}" is not in statusValues`);
       }
       for (const to of tos) {
         if (!svSet.has(to)) {
@@ -438,10 +427,7 @@ function stringField(fields: Record<string, FieldValue | undefined>, name: strin
   return typeof value === "string" ? value : "";
 }
 
-function assertUpstreamFilingClaim(
-  item: Item,
-  patchFields: Record<string, FieldValue>,
-): void {
+function assertUpstreamFilingClaim(item: Item, patchFields: Record<string, FieldValue>): void {
   if (patchFields["filingOperationId"] === undefined) return;
   const existing = stringField(item.fields, "filingOperationId");
   const next = stringField(patchFields, "filingOperationId");
@@ -459,13 +445,33 @@ export function applyUpdateItem(
   refCtx?: RefValidationContext,
 ): Item {
   const { item } = findItem(ledger, itemId);
-  if (ledger.id === OPERATOR_ACTIONS_LEDGER && !isAuthorizedOperatorActionMutation(patch)) {
-    throw new LedgerError("operatorActions may mutate only through the typed lifecycle");
-  }
   const currentOperatorDirective =
     ledger.id === TASKS_LEDGER
       ? parseOperatorActionEnvelope(String(item.fields["description"] ?? ""))
       : null;
+  if (ledger.id === OPERATOR_ACTIONS_LEDGER && !isAuthorizedOperatorActionMutation(patch)) {
+    throw new LedgerError("operatorActions may mutate only through the typed lifecycle");
+  }
+  if (
+    ledger.id === REVIEWS_LEDGER &&
+    patch.fields?.["implementationEvidence"] !== undefined &&
+    !isAuthorizedImplementationEvidenceMutation(patch)
+  ) {
+    throw new LedgerError(
+      "implementationEvidence may mutate only through protected completion recording",
+    );
+  }
+  if (
+    ledger.id === TASKS_LEDGER &&
+    item.status === "wip" &&
+    patch.status === "done" &&
+    currentOperatorDirective === null &&
+    !isAuthorizedImplementationEvidenceMutation(patch)
+  ) {
+    throw new LedgerError(
+      `Implementation task ${item.id} may complete only through protected implementation evidence`,
+    );
+  }
   if (
     currentOperatorDirective !== null &&
     patch.status !== undefined &&
@@ -510,7 +516,9 @@ export function applyUpdateItem(
     // T1951: sealed workset ownership is library-managed — generic update cannot set/change it.
     assertWorksetOwnershipFieldsAbsent(patch.fields, item);
     if (ledger.id === TASKS_LEDGER && patch.fields["description"] !== undefined) {
-      const currentDirective = parseOperatorActionEnvelope(String(item.fields["description"] ?? ""));
+      const currentDirective = parseOperatorActionEnvelope(
+        String(item.fields["description"] ?? ""),
+      );
       const nextDirective = parseOperatorActionEnvelope(String(patch.fields["description"]));
       if (
         currentDirective !== null &&
@@ -593,6 +601,15 @@ export function applyCreateItem(
 ): Item {
   if (ledger.id === OPERATOR_ACTIONS_LEDGER && !isAuthorizedOperatorActionMutation(init)) {
     throw new LedgerError("operatorActions may be created only through the typed lifecycle");
+  }
+  if (
+    ledger.id === REVIEWS_LEDGER &&
+    init.fields["implementationEvidence"] !== undefined &&
+    !isAuthorizedImplementationEvidenceMutation(init)
+  ) {
+    throw new LedgerError(
+      "implementationEvidence may be attached only through protected completion recording",
+    );
   }
   assertAmbientAttachment(ledger.id, milestoneId);
   let milestone: Milestone;
@@ -1051,7 +1068,9 @@ export function applyReopenItem(
 ): Item {
   const { item } = findItem(ledger, itemId);
   if (ledger.id === OPERATOR_ACTIONS_LEDGER) {
-    throw new LedgerError("operatorActions may reopen only through the typed operator-action lifecycle");
+    throw new LedgerError(
+      "operatorActions may reopen only through the typed operator-action lifecycle",
+    );
   }
   if (
     ledger.id === TASKS_LEDGER &&
@@ -1136,9 +1155,7 @@ export function resolveMilestoneView(
       `resolveMilestoneView expects the milestones ledger, got ${milestonesLedger.id}`,
     );
   }
-  const group = milestonesLedger.milestones.find(
-    (m) => m.id === MILESTONES_ACTIVE_GROUP_ID,
-  );
+  const group = milestonesLedger.milestones.find((m) => m.id === MILESTONES_ACTIVE_GROUP_ID);
   if (group === undefined) return null;
   const item = group.items.find((it) => it.id === milestoneId);
   if (item === undefined) return null;
@@ -1218,10 +1235,7 @@ export function assertQuestionAnswerPrecondition(
   toStatus: string,
   effectiveAnswer: FieldValue | undefined,
 ): void {
-  if (
-    toStatus === QUESTIONS_ANSWERED_STATUS &&
-    fromStatus !== QUESTIONS_ANSWERED_STATUS
-  ) {
+  if (toStatus === QUESTIONS_ANSWERED_STATUS && fromStatus !== QUESTIONS_ANSWERED_STATUS) {
     if (typeof effectiveAnswer !== "string" || effectiveAnswer.trim() === "") {
       throw new SchemaValidationError(
         `question ${itemId} cannot enter "${QUESTIONS_ANSWERED_STATUS}" without a non-empty answer`,
@@ -1379,12 +1393,7 @@ function assertStatusAllowed(ledger: Ledger, status: string): void {
  * A from-status with no entry in the map has no permitted outgoing
  * transitions. Callers must only invoke this when `from !== to`.
  */
-function assertTransitionAllowed(
-  ledger: Ledger,
-  itemId: string,
-  from: string,
-  to: string,
-): void {
+function assertTransitionAllowed(ledger: Ledger, itemId: string, from: string, to: string): void {
   const transitions = ledger.schema.transitions;
   if (transitions === undefined) return;
   const allowed = transitions[from] ?? [];

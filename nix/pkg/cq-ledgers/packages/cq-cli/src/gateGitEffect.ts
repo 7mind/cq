@@ -3,7 +3,10 @@ import { isAbsolute, resolve } from "node:path";
 import {
   TASKS_LEDGER,
   assertManagedWorktreeWipClosure,
+  canonicalImplementationCompletionMergeLine,
   createManagementLedgerStore,
+  implementationCompletionMergeAcknowledgement,
+  implementationCompletionMergeAdmissionProviderFromStore,
   listManagedLiveWorktrees,
   nodeManagedWorktreeGitRunner,
   requireWorksetStore,
@@ -39,9 +42,7 @@ export interface MergeGateGitEffectRequest extends GateGitEffectRequestBase {
   readonly operationId: string;
 }
 
-export type GateGitEffectRequest =
-  | RebaseGateGitEffectRequest
-  | MergeGateGitEffectRequest;
+export type GateGitEffectRequest = RebaseGateGitEffectRequest | MergeGateGitEffectRequest;
 
 interface ResolvedGateGitEffectRequest {
   readonly operation: "rebase" | "merge";
@@ -197,7 +198,9 @@ export async function runGateGitEffect(
       throw new Error("cq gate git-effect: --completion-ref is required for merge");
     }
     if (!COMPLETION_REF.test(request.completionRef)) {
-      throw new Error("cq gate git-effect: --completion-ref must be one opaque completion reference");
+      throw new Error(
+        "cq gate git-effect: --completion-ref must be one opaque completion reference",
+      );
     }
   }
   const resolved = await createManagementLedgerStore(request.cwd);
@@ -238,13 +241,39 @@ export async function runGateGitEffect(
     }
     const trustedResolve = async () => await resolveBinding(resolved.store, request, repository);
     const expected = await trustedResolve();
+    const ordinaryProvider = worksetEffectAdmissionProviderFromStore(
+      requireWorksetStore(resolved.store),
+    );
+    const preEffectHead = await gitOutput(repository, ["rev-parse", "HEAD"], "integration HEAD");
+    if (request.operation === "merge" && resolved.implementationEvidenceStore === undefined) {
+      throw new Error("cq gate git-effect: protected implementation evidence store is unavailable");
+    }
+    const provider =
+      request.operation === "merge"
+        ? implementationCompletionMergeAdmissionProviderFromStore({
+            provider: ordinaryProvider,
+            store: resolved.implementationEvidenceStore!,
+            binding: expected as Extract<WorksetGitEffectBinding, { readonly kind: "merge" }>,
+            repositoryHead: async () =>
+              await gitOutput(repository, ["rev-parse", "HEAD"], "integration HEAD"),
+          })
+        : ordinaryProvider;
     const result = await runWorksetGitEffectGate({
       expected,
       resolve: trustedResolve,
-      provider: worksetEffectAdmissionProviderFromStore(requireWorksetStore(resolved.store)),
+      provider,
     });
-    if (result.stdout !== "") process.stdout.write(result.stdout);
     if (result.stderr !== "") process.stderr.write(result.stderr);
+    if (request.operation === "merge" && result.code === 0) {
+      const acknowledgement = await implementationCompletionMergeAcknowledgement(
+        resolved.implementationEvidenceStore!,
+        request.completionRef,
+        preEffectHead === request.commit ? "existing" : "merged",
+      );
+      process.stdout.write(`${canonicalImplementationCompletionMergeLine(acknowledgement)}\n`);
+    } else if (result.stdout !== "") {
+      process.stdout.write(result.stdout);
+    }
     return { exitCode: result.code };
   } finally {
     await resolved.store.dispose();

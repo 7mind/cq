@@ -169,7 +169,7 @@ describe("public MCP response-contract documentation", () => {
       readFile(path.join(repoRoot, "CLAUDE.md"), "utf8"),
     ]);
 
-    expect(rootReadme).toContain("39-tool ledger surface");
+    expect(rootReadme).toContain("46-tool ledger surface");
     expect(rootReadme).toContain("compact/complement/full projection");
     expect(readme).toContain("single breaking cutover");
     expect(readme).toContain("No legacy peer is supported");

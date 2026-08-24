@@ -133,6 +133,7 @@ import {
 } from "../worksetOwnedLifecycle.js";
 import { parseRef } from "../refs.js";
 import type { WorksetStore } from "../worksetStore.js";
+import type { ImplementationEvidenceService } from "../implementationEvidence.js";
 
 const CREATE_ITEM_OWNED_CREATION_KINDS = [
   "idea-to-goal",
@@ -575,6 +576,7 @@ export function createLedgerMcpToolSpecifications(
   dispatchCapability?: DispatchCapability,
   worktreeManage?: WorktreeManageCapability,
   worksetAuthority: WorksetInvocationAuthority = createObserveOnlyWorksetInvocationAuthority(),
+  implementationEvidence?: ImplementationEvidenceService,
 ): LedgerToolSpecification[] {
   let genericMutations: WorksetGenericMutationGateway | null = null;
   const mutationsFor = (toolName: LedgerToolName): WorksetGenericMutationGateway => {
@@ -1195,6 +1197,196 @@ export function createLedgerMcpToolSpecifications(
       }),
   );
 
+  const implementationOperation = {
+    operation_id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+    author: z.string().min(1),
+    session: z.string().min(1).optional(),
+  } as const;
+  const dispatchHandle = z
+    .object({
+      attestationId: z.string().min(1),
+      generation: z.number().int().positive(),
+    })
+    .strict();
+
+  const prepareImplementationReviewPanelTool = tool(
+    "prepare_implementation_review_panel",
+    "Snapshot the configured reviewer roster and create one ordered protected attempt receipt per reviewer identity.",
+    {
+      task_ref: z.string().regex(/^tasks:T[0-9]+$/),
+      result_commit: z.string().regex(/^[0-9a-f]{40}$/),
+      worker_dispatch: dispatchHandle,
+      ...implementationOperation,
+    } as const,
+    async (args) => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(
+        await implementationEvidence.prepareReviewPanel({
+          taskRef: args.task_ref,
+          resultCommit: args.result_commit,
+          workerDispatch: args.worker_dispatch,
+          operationId: args.operation_id,
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      );
+    },
+  );
+
+  const prepareImplementationReviewAttemptTool = tool(
+    "prepare_implementation_review_attempt",
+    "Prepare one opaque review attempt as either a server-bound native dispatch or a trusted parent-side adapter execution.",
+    {
+      panel_ref: z.string().regex(/^cq-implementation-review-panel:v1:[0-9a-f]{64}$/),
+      attempt_ref: z.string().regex(/^cq-implementation-review-attempt:v1:[0-9a-f]{64}$/),
+      ...implementationOperation,
+    } as const,
+    async (args) => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(
+        await implementationEvidence.prepareReviewAttempt({
+          panelRef: args.panel_ref,
+          attemptRef: args.attempt_ref,
+          operationId: args.operation_id,
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      );
+    },
+  );
+
+  const executeExternalImplementationReviewAttemptTool = tool(
+    "execute_external_implementation_review_attempt",
+    "Execute a configured external reviewer in the trusted parent, retaining literal process observations and a typed parse result.",
+    {
+      attempt_ref: z.string().regex(/^cq-implementation-review-attempt:v1:[0-9a-f]{64}$/),
+      ...implementationOperation,
+    } as const,
+    async (args) => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(
+        await implementationEvidence.executeExternalReviewAttempt({
+          attemptRef: args.attempt_ref,
+          operationId: args.operation_id,
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      );
+    },
+  );
+
+  const finalizeImplementationReviewAttemptTool = tool(
+    "finalize_implementation_review_attempt",
+    "Derive one terminal review-attempt receipt from its consumed native dispatch or trusted external execution.",
+    {
+      attempt_ref: z.string().regex(/^cq-implementation-review-attempt:v1:[0-9a-f]{64}$/),
+      ...implementationOperation,
+    } as const,
+    async (args) => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(
+        await implementationEvidence.finalizeReviewAttempt({
+          attemptRef: args.attempt_ref,
+          operationId: args.operation_id,
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      );
+    },
+  );
+
+  const prepareImplementationReviewFallbackTool = tool(
+    "prepare_implementation_review_fallback",
+    "Prepare the panel's sole native fallback only after every configured attempt terminally abstains.",
+    {
+      panel_ref: z.string().regex(/^cq-implementation-review-panel:v1:[0-9a-f]{64}$/),
+      ...implementationOperation,
+    } as const,
+    async (args) => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(
+        await implementationEvidence.prepareReviewFallback({
+          panelRef: args.panel_ref,
+          operationId: args.operation_id,
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      );
+    },
+  );
+
+  const prepareImplementationCompletionTool = tool(
+    "prepare_implementation_completion",
+    "Validate and durably bind complete implementation evidence before the journal-bound ff-only merge.",
+    {
+      task_ref: z.string().regex(/^tasks:T[0-9]+$/),
+      expected_repository_head: z.string().regex(/^[0-9a-f]{40}$/),
+      result_commit: z.string().regex(/^[0-9a-f]{40}$/),
+      worker_dispatch: dispatchHandle,
+      review_attempt_refs: z.array(
+        z.string().regex(/^cq-implementation-review-attempt:v1:[0-9a-f]{64}$/),
+      ),
+      completion: z.string().min(1),
+      log_paths: z.array(z.string().min(1)),
+      merge_operation_id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+      supersedes_completion_ref: z
+        .string()
+        .regex(/^cq-implementation-completion:v1:[0-9a-f]{64}$/)
+        .optional(),
+      ...implementationOperation,
+    } as const,
+    async (args) => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(
+        await implementationEvidence.prepareCompletion({
+          taskRef: args.task_ref,
+          expectedRepositoryHead: args.expected_repository_head,
+          resultCommit: args.result_commit,
+          workerDispatch: args.worker_dispatch,
+          reviewAttemptRefs: args.review_attempt_refs,
+          completion: args.completion,
+          logPaths: args.log_paths,
+          mergeOperationId: args.merge_operation_id,
+          ...(args.supersedes_completion_ref === undefined
+            ? {}
+            : { supersedesCompletionRef: args.supersedes_completion_ref }),
+          operationId: args.operation_id,
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      );
+    },
+  );
+
+  const recordImplementationCompletionTool = tool(
+    "record_implementation_completion",
+    "Recover or atomically record a durably merged implementation journal as one done task and one terminal evidence-bearing review.",
+    {
+      task_ref: z.string().regex(/^tasks:T[0-9]+$/),
+      expected_repository_head: z.string().regex(/^[0-9a-f]{40}$/),
+      ...implementationOperation,
+    } as const,
+    async (args) => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(
+        await implementationEvidence.recordCompletion({
+          taskRef: args.task_ref,
+          expectedRepositoryHead: args.expected_repository_head,
+          operationId: args.operation_id,
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      );
+    },
+  );
+
   // ---- Filesystem read (1) -----------------------------------------------
 
   const readLogTool = tool(
@@ -1443,10 +1635,18 @@ export function createLedgerMcpToolSpecifications(
     ...planLifecycleTools,
     worktreeManageTool,
     ...(dispatchCapability === undefined ? [] : [gitCommitTool, gitResolveContinueTool]),
+    prepareImplementationReviewPanelTool,
+    prepareImplementationReviewAttemptTool,
+    executeExternalImplementationReviewAttemptTool,
+    finalizeImplementationReviewAttemptTool,
+    prepareImplementationReviewFallbackTool,
+    prepareImplementationCompletionTool,
+    recordImplementationCompletionTool,
   ] as unknown as AnyTool[];
 
-  const registeredToolNames =
-    dispatchCapability === undefined ? NON_DISPATCH_LEDGER_TOOL_NAMES : LEDGER_TOOL_NAMES;
+  const registeredToolNames = LEDGER_TOOL_NAMES.filter(
+    (name) => dispatchCapability !== undefined || !DISPATCH_LIFECYCLE_TOOL_NAME_SET.has(name),
+  );
   return withUsageRecording(
     store,
     tools.map((ledgerTool, index) => {
@@ -1558,6 +1758,7 @@ export function createLedgerMcpTools(
   profileName: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
   worktreeManage?: WorktreeManageCapability,
   worksetAuthority: WorksetInvocationAuthority = createObserveOnlyWorksetInvocationAuthority(),
+  implementationEvidence?: ImplementationEvidenceService,
 ): AnyTool[] {
   assertToolPrefix(toolPrefix);
   const specifications = selectLedgerMcpToolSpecifications(
@@ -1570,6 +1771,7 @@ export function createLedgerMcpTools(
       dispatchCapability,
       worktreeManage,
       worksetAuthority,
+      implementationEvidence,
     ),
     profileName,
   );

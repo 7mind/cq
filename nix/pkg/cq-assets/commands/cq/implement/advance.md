@@ -120,6 +120,17 @@ the effect boundaries required by the shared contract.
 
 ## 1. Derive the ready set
 
+Before selecting or dispatching work, recover every active implementation
+completion journal by calling `record_implementation_completion` for its task
+with the exact observed integration head and a stable recovery operation id.
+`merge-required` resumes only the journal-bound merge below;
+`reprepare-required` closes no authority and requires rebase plus a fresh
+authenticated panel before a new prepare naming `supersedes_completion_ref`;
+`recorded|existing` resumes defect reconciliation and release. A
+`merge-started` or merged-but-unrecorded journal blocks every other repository
+merge until this recovery records it. Never fall back to generic task/review
+writes or an unjournaled merge.
+
 Read each target milestone and its full task items, linked questions, milestone
 dependencies, and referenced dependency items.
 
@@ -284,10 +295,27 @@ clean tree, `gateExitCode === 0`, `failCount === 0`, and `passCount > 0` before
 review dispatch. Never accept caller-minted evidence or a passing result that
 still contains caller-supplied `gateDurationMs`.
 
-If reviewers are unconfigured, dispatch one native `implement-reviewer`. If
-configured, dispatch the panel concurrently. Native reviewers use the
-surface-specific dispatch protocol. External reviewers run through their
-configured non-interactive adapter and the shared implement-review rubric.
+Before launching any reviewer, call
+`prepare_implementation_review_panel({ task_ref, result_commit,
+worker_dispatch, operation_id, author, session })`. Retain its exact
+`panelRef`, `rosterDigest`, and ordered opaque `attemptRefs`; never derive,
+reorder, omit, duplicate, or append a ref. The server snapshots the configured
+roster and binds every attempt to the task, result commit, configured position,
+identity, and consumed worker dispatch.
+
+For every returned ref in order call
+`prepare_implementation_review_attempt({ panel_ref, attempt_ref, operation_id,
+author, session })`. A `launch: native` response carries the only
+`DispatchPrepared` that may launch that reviewer; consume it through the native
+dispatch protocol. A `launch: adapter` response authorizes no caller shellout:
+call `execute_external_implementation_review_attempt({ attempt_ref,
+operation_id, author, session })`, which resolves and executes the configured
+adapter and prepare-bound input inside the trusted parent. Call
+`finalize_implementation_review_attempt({ attempt_ref, operation_id, author,
+session })` for every attempt. The finalizer derives its receipt only from the
+bound consumed native dispatch or trusted adapter execution. Callers never
+submit a verdict, abstention, stdout, stderr, exit code, or adapter identity to
+an evidence operation.
 
 **Sandboxed reviewer gate evidence.** Pass a consumed worker's verified
 `supervisedGateEvidence` through to a sandboxed `implement-reviewer` and require
@@ -302,23 +330,18 @@ capturedAt }` with exact tip match, `gateExitCode === 0`, `failCount === 0`, and
 Non-sandboxed reviewers omit the attestation and still re-run the gate
 themselves; their approve path still requires child `gateReRan=true`.
 
-**External reviewer usable-verdict rule.** Fence-strip and validate stdout
-first. A complete, parseable verdict counts as a vote despite a non-zero shell
-exit; log that exit anomaly. Require full-object validation before accepting the
-verdict. Only a returned external failure without such a verdict, empty output,
-malformed result, or off-enum verdict abstains and must be logged.
+The trusted adapter executor fence-strips and fully validates stdout before
+classifying the process observation. A complete valid verdict remains a vote
+despite nonzero exit. Empty, malformed, failed, or unavailable execution becomes
+an authenticated `operational-abstention`, never caller-authored JSON. Do not
+impose a caller timeout. If and only if every configured attempt has finalized
+as `operational-abstention`, call
+`prepare_implementation_review_fallback({ panel_ref, operation_id, author,
+session })` once and run/finalize its returned native attempt. The fallback
+receipt binds the trigger and exact excluded adapter identities. Zero approved
+attempts can never approve a task.
 
-**External reviewer no-timeout rule.** Do not impose a silent timeout.
-Fence-strip and validate stdout first. A complete, parseable verdict counts as a
-vote despite a non-zero shell exit; log that exit anomaly. A non-zero exit
-causes abstention only when no complete, parseable, fully validated verdict
-exists; a genuinely stalled adapter remains an operational failure. If every
-configured reviewer abstains, use one native reviewer; zero successful
-reviewers can never approve a task. Exclude the exact adapter identity from a
-structured `operational-abstention` when selecting that fallback, so the same
-unavailable adapter is not retried.
-
-Reconcile surviving reviews in configured order:
+Reconcile the complete finalized receipt set in configured order:
 
 - any `disapprove` wins; all must approve and the gate must be green for
   `approve`;
@@ -485,14 +508,42 @@ its last receipt must end at the exact live nonterminal conflict state. Then
 create a linked question, set the task `blocked`, keep the worktree/handle, and
 skip its dependants.
 
-After the final checks, merge the exact object:
+After the final checks and fresh approved panel, call
+`prepare_implementation_completion({ task_ref, expected_repository_head,
+result_commit, worker_dispatch, review_attempt_refs, completion, log_paths,
+merge_operation_id, supersedes_completion_ref?, operation_id, author, session })`.
+Retain its exact `{ completionRef, taskRef, resultCommit, repositoryHead,
+evidenceFingerprint }`. This prepare must precede the merge and must bind the
+exact finalized manifest, owner goal, worker result and receipt chain, gate and
+acceptance observations, clean diff, ancestry, immutable roster, complete
+ordered finalized attempts, and intended ff-only merge. Any evidence mismatch
+fails closed without partial mutation.
+
+Merge the exact object only through the prepared journal, using the same stable
+`merge_operation_id` supplied to prepare:
 
 ```sh
-cq gate git-effect --operation merge --cwd <repositoryRoot> --task-id <taskId> --commit <resultCommit>
+cq gate git-effect --operation merge --cwd <repositoryRoot> --task-id <taskId> --commit <resultCommit> --completion-ref <completionRef> --operation-id <merge_operation_id>
 ```
 
-Then mark the task `done` with `resultCommit`, completion summary, and all
-worker/reviewer log paths in the same update. Cleanup uses guarded release only:
+Capture stdout and require exactly one
+`CQ_IMPLEMENTATION_COMPLETION_MERGE=<canonical JSON>` line. Parse and validate
+that its status is `merged|existing` and that `completionRef`, `taskRef`,
+`resultCommit`, `repositoryHead`, `mergeOperationId`, and
+`evidenceFingerprint` exactly equal the retained prepare. Missing, malformed,
+duplicate, mismatched, or lost acknowledgement enters journal recovery; never
+retry with raw Git or the legacy commit-only command.
+
+Immediately call
+`record_implementation_completion({ task_ref, expected_repository_head,
+operation_id, author, session })`. Accept only `recorded|existing` with the
+same completion/task/result/head/fingerprint. This protected transaction, not
+`update_item` or `create_item`, marks the task done with its result, completion,
+and log paths and creates exactly one terminal go-ahead review carrying strict
+versioned `implementationEvidence`. `merge-required` or `reprepare-required`
+returns to recovery and forbids release or defect reconciliation.
+
+Cleanup uses guarded release only:
 
 ```
 worktree_manage({
@@ -514,9 +565,11 @@ dependencies and reverse task links. When all are `done`, set the defect
 `resolved` with a concise fix summary. A discovered task in `planned`, `wip`,
 or `blocked` prevents resolution; never treat task discovery as task completion.
 
-Record exactly one terminal `reviews` item per task from the reconciled result:
-`go-ahead` for approval, otherwise `revise`, with source-tagged findings and
-all reviewer log paths.
+Disapproved review rounds remain protected attempt receipts; file their
+questions/defects through the existing typed owner-scoped paths. Only
+`record_implementation_completion` creates the terminal go-ahead review for a
+merged implementation. Generic writes cannot terminalize a Git-producing task
+or create, attach, alter, supersede, or terminalize `implementationEvidence`.
 
 Re-derive the ready set after every merge and continue until drained.
 

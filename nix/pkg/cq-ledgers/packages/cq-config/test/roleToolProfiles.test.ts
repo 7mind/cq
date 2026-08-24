@@ -80,11 +80,8 @@ interface RoleCorpusEvidence {
   >;
 }
 
-const roleCorpusEvidence = JSON.parse(
-  readFileSync(CORPUS_EVIDENCE, "utf8"),
-) as RoleCorpusEvidence;
-const verifyRawCorpus =
-  process.env["CQ_T1325_VERIFY_RAW_CORPUS"] === "1" ? test : test.skip;
+const roleCorpusEvidence = JSON.parse(readFileSync(CORPUS_EVIDENCE, "utf8")) as RoleCorpusEvidence;
+const verifyRawCorpus = process.env["CQ_T1325_VERIFY_RAW_CORPUS"] === "1" ? test : test.skip;
 
 describe("T1325 role tool capability matrix", () => {
   test("covers every prompt-catalogue command and dispatched role exactly once", () => {
@@ -105,9 +102,7 @@ describe("T1325 role tool capability matrix", () => {
       expect(() => exposedLedgerToolsForRole(name)).toThrow(/unknown role tool profile/);
     }
     expect(exposedLedgerToolsForRole("implement-worker").length).toBeGreaterThan(0);
-    expect(exposedLedgerToolsForRole("implement-worker")).not.toContain(
-      "revise_operator_action",
-    );
+    expect(exposedLedgerToolsForRole("implement-worker")).not.toContain("revise_operator_action");
     expect(exposedLedgerToolsForRole("implement/advance")).toContain("revise_operator_action");
   });
 
@@ -267,24 +262,25 @@ describe("T1325 role tool capability matrix", () => {
     }
   });
 
-  verifyRawCorpus("ON-DEMAND: raw corpus regenerates the checked-in evidence exactly", () => {
-    expect(existsSync(CORPUS_AGGREGATOR)).toBe(true);
-    expect(existsSync(CORPUS_MANIFEST)).toBe(true);
-    const args = [process.execPath, CORPUS_AGGREGATOR, "--manifest", CORPUS_MANIFEST];
-    const corpusRoot = process.env["CQ_T1325_CORPUS_ROOT"];
-    if (corpusRoot !== undefined) args.push("--corpus-root", corpusRoot);
-    const aggregate = Bun.spawnSync(
-      args,
-      {
+  verifyRawCorpus(
+    "ON-DEMAND: raw corpus regenerates the checked-in evidence exactly",
+    () => {
+      expect(existsSync(CORPUS_AGGREGATOR)).toBe(true);
+      expect(existsSync(CORPUS_MANIFEST)).toBe(true);
+      const args = [process.execPath, CORPUS_AGGREGATOR, "--manifest", CORPUS_MANIFEST];
+      const corpusRoot = process.env["CQ_T1325_CORPUS_ROOT"];
+      if (corpusRoot !== undefined) args.push("--corpus-root", corpusRoot);
+      const aggregate = Bun.spawnSync(args, {
         cwd: path.join(REPO_ROOT, "nix", "pkg", "cq-ledgers"),
         stdout: "pipe",
         stderr: "pipe",
-      },
-    );
-    expect(aggregate.exitCode, aggregate.stderr.toString()).toBe(0);
-    const observed = JSON.parse(aggregate.stdout.toString()) as RoleCorpusEvidence;
-    expect(observed).toEqual(roleCorpusEvidence);
-  }, 10_000);
+      });
+      expect(aggregate.exitCode, aggregate.stderr.toString()).toBe(0);
+      const observed = JSON.parse(aggregate.stdout.toString()) as RoleCorpusEvidence;
+      expect(observed).toEqual(roleCorpusEvidence);
+    },
+    10_000,
+  );
 
   test("records pre-context enforcement seams for Claude, Pi, and Codex", () => {
     expect(HARNESS_ROLE_TOOL_ENFORCEMENT.claude).toMatchObject({
@@ -303,7 +299,7 @@ describe("T1325 role tool capability matrix", () => {
       mechanism: "mcp-server-enabled-tools",
       nativePerAgentFiltering: false,
     });
-    expect(LEDGER_CAPABILITY_TOOL_NAMES).toHaveLength(39);
+    expect(LEDGER_CAPABILITY_TOOL_NAMES).toHaveLength(46);
   });
 
   test("ships an executable Codex child-boundary probe, not a configuration-only assertion", () => {
