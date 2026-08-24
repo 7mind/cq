@@ -10,10 +10,7 @@ import {
   serializeToolSurfaceMeasurement,
 } from "./measure-tool-surface.js";
 
-const EVIDENCE_DIR = resolve(
-  import.meta.dir,
-  "../docs/drafts/20260731-0216-g129-tool-surface",
-);
+const EVIDENCE_DIR = resolve(import.meta.dir, "../docs/drafts/20260731-0216-g129-tool-surface");
 const BASELINE_PATH = resolve(EVIDENCE_DIR, "baseline.json");
 const AFTER_PATH = resolve(EVIDENCE_DIR, "after.json");
 const TARGET_PATH = resolve(import.meta.dir, "baselines/t1326-tool-surface-target.json");
@@ -70,15 +67,12 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     budgets: normalized.budgets,
     measuredProfiles: Object.keys(normalized.profiles).length,
     corpusTranscripts: normalized.roleWeightedExposure.transcripts,
-    maximumRemainingG93AttributableTokens:
-      normalized.g93.maximumRemainingG93AttributableTokens,
+    maximumRemainingG93AttributableTokens: normalized.g93.maximumRemainingG93AttributableTokens,
     corpusMedianResponseSavingTokens: normalized.g93.corpusMedianResponseSavingTokens,
     transportTools: normalized.transportOnlyOverhead.tools,
     everyToolHasFieldDeltas: normalized.perToolAndFieldDeltas.every((tool) =>
       ["name", "description", "inputSchema"].every((field) =>
-        Number.isInteger(
-          tool.fields[field as keyof typeof tool.fields].delta.serializedTokens,
-        ),
+        Number.isInteger(tool.fields[field as keyof typeof tool.fields].delta.serializedTokens),
       ),
     ),
   };
@@ -130,9 +124,9 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // partition invariant without repeating the projection field taxonomy.
     // 1294 -> 1277 under T1532: create_ledger no longer repeats its fixed
     // acknowledgement before the authoritative response carrying the same DTO.
-    // 1277 -> 1237 under T2816: worktree and prepare descriptions retain their
-    // typed contracts without repeating operation-specific schema vocabulary.
-    maximumRemainingG93AttributableTokens: 1237,
+    // 1277 -> 1445 under T2345: the protected implementation-evidence tools
+    // add their result contracts to full-parent profiles.
+    maximumRemainingG93AttributableTokens: 1445,
     corpusMedianResponseSavingTokens: 1461,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,
@@ -141,54 +135,60 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
   expect(LEDGER_TOOL_NAMES).toHaveLength(target.target.publicToolCount);
 });
 
-test("every T1331 budget detector rejects its own counterfactual drift", async () => {
-  const measured = await measureToolSurfaces(PROFILE_NAMES);
-  const baseline = historicalMeasurement();
-  const artifact = (
-    current: typeof measured,
-    historical: HistoricalMeasurement = baseline,
-  ) =>
-    buildNormalizedAfterArtifact(
-      current,
-      historical,
-      "docs/drafts/20260731-0216-g129-tool-surface/baseline.json",
-    );
+test(
+  "every T1331 budget detector rejects its own counterfactual drift",
+  async () => {
+    const measured = await measureToolSurfaces(PROFILE_NAMES);
+    const baseline = historicalMeasurement();
+    const artifact = (current: typeof measured, historical: HistoricalMeasurement = baseline) =>
+      buildNormalizedAfterArtifact(
+        current,
+        historical,
+        "docs/drafts/20260731-0216-g129-tool-surface/baseline.json",
+      );
 
-  const tokenizerDrift = artifact(measured, {
-    ...baseline,
-    tokenizer: { ...baseline.tokenizer, version: "3.4.0-mutated" },
-  } as HistoricalMeasurement);
-  const methodDrift = artifact(measured, {
-    ...baseline,
-    method: { ...baseline.method, serialization: "mutated" },
-  } as HistoricalMeasurement);
-  const surfaceDrift = structuredClone(measured);
-  surfaceDrift.profiles.full.toolsList.tokens =
-    baseline.profiles.full.initialize.instructions.tokens +
-    baseline.profiles.full.toolsList.tokens;
-  const requiredCallDrift = structuredClone(measured);
-  requiredCallDrift.profiles["plan-advance"].requiredCallInventoryCovered = false;
-  const zeroDomainDrift = structuredClone(measured);
-  zeroDomainDrift.profiles["implement-worker"].domainInputSchemaTokens = 1;
-  const g93Drift = structuredClone(measured);
-  g93Drift.profiles.full.responseContractCounterfactual.allTokens = 1461;
+    const tokenizerDrift = artifact(measured, {
+      ...baseline,
+      tokenizer: { ...baseline.tokenizer, version: "3.4.0-mutated" },
+    } as HistoricalMeasurement);
+    const methodDrift = artifact(measured, {
+      ...baseline,
+      method: { ...baseline.method, serialization: "mutated" },
+    } as HistoricalMeasurement);
+    const surfaceDrift = structuredClone(measured);
+    const fullTools = JSON.parse(surfaceDrift.profiles.full.toolsList.serialization) as Array<{
+      name: string;
+      description?: string;
+    }>;
+    const baselineTool = fullTools.find((tool) => tool.name === "abort_dispatch");
+    if (baselineTool === undefined) throw new Error("abort_dispatch missing from full profile");
+    baselineTool.description = "counterfactual drift ".repeat(1_000);
+    surfaceDrift.profiles.full.toolsList.serialization = JSON.stringify(fullTools);
+    const requiredCallDrift = structuredClone(measured);
+    requiredCallDrift.profiles["plan-advance"].requiredCallInventoryCovered = false;
+    const zeroDomainDrift = structuredClone(measured);
+    zeroDomainDrift.profiles["implement-worker"].domainInputSchemaTokens = 1;
+    const g93Drift = structuredClone(measured);
+    g93Drift.profiles.full.responseContractCounterfactual.allTokens = 1461;
 
-  expect({
-    tokenizerMatches: tokenizerDrift.budgets.tokenizerMatches,
-    methodMatches: methodDrift.budgets.methodMatches,
-    allSurfacesSmaller: artifact(surfaceDrift).budgets.allSurfacesSmaller,
-    allRequiredCallsCovered: artifact(requiredCallDrift).budgets.allRequiredCallsCovered,
-    zeroDomainProfilesHaveZeroDomainSchemaTokens:
-      artifact(zeroDomainDrift).budgets.zeroDomainProfilesHaveZeroDomainSchemaTokens,
-    g93BelowCorpusMedian: artifact(g93Drift).budgets.g93BelowCorpusMedian,
-  }).toEqual({
-    tokenizerMatches: false,
-    methodMatches: false,
-    allSurfacesSmaller: false,
-    allRequiredCallsCovered: false,
-    zeroDomainProfilesHaveZeroDomainSchemaTokens: false,
-    g93BelowCorpusMedian: false,
-  });
-  // The profiler's synchronous work must yield for Bun to observe this timeout.
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
-}, T1331_COUNTERFACTUAL_TIMEOUT_MS);
+    expect({
+      tokenizerMatches: tokenizerDrift.budgets.tokenizerMatches,
+      methodMatches: methodDrift.budgets.methodMatches,
+      allSurfacesSmaller: artifact(surfaceDrift).budgets.allSurfacesSmaller,
+      allRequiredCallsCovered: artifact(requiredCallDrift).budgets.allRequiredCallsCovered,
+      zeroDomainProfilesHaveZeroDomainSchemaTokens:
+        artifact(zeroDomainDrift).budgets.zeroDomainProfilesHaveZeroDomainSchemaTokens,
+      g93BelowCorpusMedian: artifact(g93Drift).budgets.g93BelowCorpusMedian,
+    }).toEqual({
+      tokenizerMatches: false,
+      methodMatches: false,
+      allSurfacesSmaller: false,
+      allRequiredCallsCovered: false,
+      zeroDomainProfilesHaveZeroDomainSchemaTokens: false,
+      g93BelowCorpusMedian: false,
+    });
+    // The profiler's synchronous work must yield for Bun to observe this timeout.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  },
+  T1331_COUNTERFACTUAL_TIMEOUT_MS,
+);

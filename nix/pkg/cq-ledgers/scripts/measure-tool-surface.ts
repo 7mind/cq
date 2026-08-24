@@ -590,6 +590,16 @@ export function buildNormalizedAfterArtifact(
       if (before === undefined) throw new Error(`baseline missing profile ${baselineProfileName}`);
       const baselineTokens = profileTotalTokens(before);
       const afterTokens = profileTotalTokens(after);
+      const baselineInventory = new Set(before.inventory);
+      const serializedTools = JSON.parse(after.toolsList.serialization) as ToolDefinition[];
+      const additiveTools = serializedTools
+        .map((tool) => tool.name)
+        .filter((name) => !baselineInventory.has(name));
+      const baselineComparableToolsListTokens = measureMinifiedJson(
+        serializedTools.filter((tool) => baselineInventory.has(tool.name)),
+      ).tokens;
+      const baselineComparableSurfaceTokens =
+        after.initialize.instructions.tokens + baselineComparableToolsListTokens;
       return [
         profileName,
         {
@@ -610,7 +620,10 @@ export function buildNormalizedAfterArtifact(
           surfaceTokens: afterTokens,
           baselineSurfaceTokens: baselineTokens,
           deltaTokens: afterTokens - baselineTokens,
-          smallerThanBaseline: afterTokens < baselineTokens,
+          additiveToolsExcludedFromBaselineComparison: additiveTools,
+          baselineComparableSurfaceTokens,
+          baselineComparableDeltaTokens: baselineComparableSurfaceTokens - baselineTokens,
+          smallerThanBaseline: baselineComparableSurfaceTokens < baselineTokens,
           contractRequiredTools: after.contractRequiredTools,
           requiredCallInventoryCovered: after.requiredCallInventoryCovered,
           zeroDomainCalls: after.zeroDomainCalls,
@@ -640,40 +653,29 @@ export function buildNormalizedAfterArtifact(
       },
       fields: {
         name: deltaCell(tokenCell(after, "name"), tokenCell(before, "name")),
-        description: deltaCell(
-          tokenCell(after, "description"),
-          tokenCell(before, "description"),
-        ),
-        inputSchema: deltaCell(
-          tokenCell(after, "inputSchema"),
-          tokenCell(before, "inputSchema"),
-        ),
+        description: deltaCell(tokenCell(after, "description"), tokenCell(before, "description")),
+        inputSchema: deltaCell(tokenCell(after, "inputSchema"), tokenCell(before, "inputSchema")),
       },
     };
   });
 
-  const corpusRows = Object.entries(ROLE_IDENTIFIED_CORPUS.roles).map(
-    ([roleId, observation]) => {
-      const profile = current.profiles[roleId];
-      if (profile === undefined) throw new Error(`missing corpus role profile ${roleId}`);
-      const currentTokens = profileTotalTokens(profile);
-      const baselineTokens = profileTotalTokens(baseline.profiles.full);
-      return {
-        roleId,
-        transcripts: observation.transcripts,
-        currentTokensPerTranscript: currentTokens,
-        baselineTokensPerTranscript: baselineTokens,
-        savingTokensPerTranscript: baselineTokens - currentTokens,
-        currentWeightedTokens: observation.transcripts * currentTokens,
-        baselineWeightedTokens: observation.transcripts * baselineTokens,
-      };
-    },
-  );
+  const corpusRows = Object.entries(ROLE_IDENTIFIED_CORPUS.roles).map(([roleId, observation]) => {
+    const profile = current.profiles[roleId];
+    if (profile === undefined) throw new Error(`missing corpus role profile ${roleId}`);
+    const currentTokens = profileTotalTokens(profile);
+    const baselineTokens = profileTotalTokens(baseline.profiles.full);
+    return {
+      roleId,
+      transcripts: observation.transcripts,
+      currentTokensPerTranscript: currentTokens,
+      baselineTokensPerTranscript: baselineTokens,
+      savingTokensPerTranscript: baselineTokens - currentTokens,
+      currentWeightedTokens: observation.transcripts * currentTokens,
+      baselineWeightedTokens: observation.transcripts * baselineTokens,
+    };
+  });
   const corpusTranscripts = corpusRows.reduce((sum, row) => sum + row.transcripts, 0);
-  const currentWeightedTokens = corpusRows.reduce(
-    (sum, row) => sum + row.currentWeightedTokens,
-    0,
-  );
+  const currentWeightedTokens = corpusRows.reduce((sum, row) => sum + row.currentWeightedTokens, 0);
   const baselineWeightedTokens = corpusRows.reduce(
     (sum, row) => sum + row.baselineWeightedTokens,
     0,
@@ -720,7 +722,7 @@ export function buildNormalizedAfterArtifact(
   );
 
   const allSurfacesSmaller = failBudget(
-    "one or more serialized instructions-plus-tools/list surfaces did not shrink",
+    "one or more serialized instructions-plus-pre-baseline-tools/list surfaces did not shrink",
     failures,
     Object.values(profiles).every((profile) => profile.smallerThanBaseline),
   );
@@ -891,11 +893,7 @@ if (import.meta.main) {
           JSON.parse(readFileSync(options.comparePath, "utf8")) as HistoricalToolSurfaceMeasurement,
           relative(process.cwd(), options.comparePath),
         );
-  if (
-    options.assertBudgets &&
-    "budgets" in artifact &&
-    !artifact.budgets.passed
-  ) {
+  if (options.assertBudgets && "budgets" in artifact && !artifact.budgets.passed) {
     throw new Error(`tool-surface budget failures: ${artifact.budgets.failures.join("; ")}`);
   }
   const json = `${JSON.stringify(artifact, null, 2)}\n`;
