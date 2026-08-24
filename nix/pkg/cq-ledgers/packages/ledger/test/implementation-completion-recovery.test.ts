@@ -44,4 +44,45 @@ describe("implementation completion crash recovery [Behavioral-Active Sociable-A
     ).toMatchObject({ status: "recorded", completionRef: completion.completionRef });
     expect(fixture.getLedgerWrites()).toBe(1);
   });
+
+  test("recovers every exact old-head and exact result-head journal state", async () => {
+    const preparedAtResult = await createImplementationEvidenceFixture();
+    const preparedCompletion = await prepareImplementationCompletion(preparedAtResult);
+    preparedAtResult.setHead(IMPLEMENTATION_RESULT);
+    expect(
+      await preparedAtResult.service.recordCompletion({
+        taskRef: "tasks:T2345",
+        expectedRepositoryHead: IMPLEMENTATION_RESULT,
+        operationId: "record-prepared-at-result",
+        author: "parent",
+      }),
+    ).toMatchObject({ status: "recorded", completionRef: preparedCompletion.completionRef });
+
+    const mergeStartedAtOldHead = await createImplementationEvidenceFixture();
+    const startedCompletion = await prepareImplementationCompletion(mergeStartedAtOldHead);
+    await mergeStartedAtOldHead.service.markMergeStarted(
+      startedCompletion.completionRef,
+      IMPLEMENTATION_BASE,
+    );
+    expect(
+      await mergeStartedAtOldHead.service.recordCompletion({
+        taskRef: "tasks:T2345",
+        expectedRepositoryHead: IMPLEMENTATION_BASE,
+        operationId: "replay-started-at-old-head",
+        author: "parent",
+      }),
+    ).toMatchObject({ status: "merge-required", completionRef: startedCompletion.completionRef });
+
+    const mergedReplay = await createImplementationEvidenceFixture();
+    const mergedCompletion = await prepareImplementationCompletion(mergedReplay);
+    await mergedReplay.service.markMergeStarted(mergedCompletion.completionRef, IMPLEMENTATION_BASE);
+    mergedReplay.setHead(IMPLEMENTATION_RESULT);
+    await mergedReplay.service.markMerged(mergedCompletion.completionRef, IMPLEMENTATION_RESULT);
+    await expect(
+      mergedReplay.service.markMergeStarted(
+        mergedCompletion.completionRef,
+        IMPLEMENTATION_RESULT,
+      ),
+    ).resolves.toBeUndefined();
+  });
 });

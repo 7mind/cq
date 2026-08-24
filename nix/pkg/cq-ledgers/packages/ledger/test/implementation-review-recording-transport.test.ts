@@ -3,6 +3,7 @@ import {
   FULL_LEDGER_TOOL_PROFILE,
   InMemoryLedgerStore,
   createLedgerMcpTools,
+  createManagementLedgerMcpTools,
 } from "../src/index.js";
 import {
   IMPLEMENTATION_RESULT,
@@ -23,7 +24,7 @@ describe("implementation evidence direct transport [Behavioral-Active Blackbox-A
     const fixture = await createImplementationEvidenceFixture();
     const ledger = new InMemoryLedgerStore();
     await ledger.init();
-    const tools = createLedgerMcpTools(
+    const ordinaryTools = createLedgerMcpTools(
       ledger,
       undefined,
       undefined,
@@ -33,6 +34,21 @@ describe("implementation evidence direct transport [Behavioral-Active Blackbox-A
       undefined,
       FULL_LEDGER_TOOL_PROFILE,
       undefined,
+      undefined,
+      fixture.service,
+    );
+    expect(
+      ordinaryTools.some((entry) => entry.name === "prepare_implementation_review_panel"),
+    ).toBe(false);
+    const tools = createManagementLedgerMcpTools(
+      ledger,
+      undefined,
+      undefined,
+      undefined,
+      "",
+      undefined,
+      undefined,
+      FULL_LEDGER_TOOL_PROFILE,
       undefined,
       fixture.service,
     );

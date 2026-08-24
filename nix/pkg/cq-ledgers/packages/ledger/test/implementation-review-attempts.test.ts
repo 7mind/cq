@@ -192,6 +192,96 @@ describe("protected implementation review attempts [BG]", () => {
     ).toBe("approved");
   });
 
+  test("requires adapter preparation and binds the observed adapter identity", async () => {
+    const { service } = serviceWith([adapter], async () => ({
+      adapterIdentity: "pi:process:substituted/reviewer",
+      stdout: JSON.stringify(verdict()),
+      stderr: "",
+      exitCode: 0,
+    }));
+    const panel = await service.prepareReviewPanel({
+      taskRef: "tasks:T2345",
+      resultCommit: RESULT,
+      workerDispatch: WORKER,
+      operationId: "panel-adapter-binding",
+      author: "parent",
+    });
+    const attemptRef = panel.attemptRefs[0]!;
+    await expect(
+      service.executeExternalReviewAttempt({
+        attemptRef,
+        operationId: "execute-before-prepare",
+        author: "parent",
+      }),
+    ).rejects.toThrow("prepared");
+    await service.prepareReviewAttempt({
+      panelRef: panel.panelRef,
+      attemptRef,
+      operationId: "prepare-adapter-binding",
+      author: "parent",
+    });
+    await service.executeExternalReviewAttempt({
+      attemptRef,
+      operationId: "execute-adapter-binding",
+      author: "parent",
+    });
+    expect(
+      (
+        await service.finalizeReviewAttempt({
+          attemptRef,
+          operationId: "finalize-adapter-binding",
+          author: "parent",
+        })
+      ).terminalState,
+    ).toBe("operational-abstention");
+  });
+
+  test("rejects malformed verdict semantics instead of authenticating them", async () => {
+    const malformed = [
+      { ...verdict(), criticism: ["approval cannot carry criticism"] },
+      {
+        ...verdict("disapprove"),
+        defects: [{ headline: "missing required defect fields" }],
+      },
+    ];
+    for (const [index, output] of malformed.entries()) {
+      const { service } = serviceWith([adapter], async () => ({
+        adapterIdentity: adapter.adapterId,
+        stdout: JSON.stringify(output),
+        stderr: "",
+        exitCode: 0,
+      }));
+      const panel = await service.prepareReviewPanel({
+        taskRef: "tasks:T2345",
+        resultCommit: RESULT,
+        workerDispatch: WORKER,
+        operationId: `panel-malformed-${String(index)}`,
+        author: "parent",
+      });
+      const attemptRef = panel.attemptRefs[0]!;
+      await service.prepareReviewAttempt({
+        panelRef: panel.panelRef,
+        attemptRef,
+        operationId: `prepare-malformed-${String(index)}`,
+        author: "parent",
+      });
+      await service.executeExternalReviewAttempt({
+        attemptRef,
+        operationId: `execute-malformed-${String(index)}`,
+        author: "parent",
+      });
+      expect(
+        (
+          await service.finalizeReviewAttempt({
+            attemptRef,
+            operationId: `finalize-malformed-${String(index)}`,
+            author: "parent",
+          })
+        ).terminalState,
+      ).toBe("operational-abstention");
+    }
+  });
+
   test("allows exactly one native fallback only after all configured attempts terminally abstain", async () => {
     const { service } = serviceWith([adapter], async () => ({
       adapterIdentity: adapter.adapterId,

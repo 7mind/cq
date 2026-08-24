@@ -359,5 +359,62 @@ describe("versioned protected implementation evidence [BG]", () => {
     expect(ledger.fetchItem(REVIEWS_LEDGER, "R2345").fields["implementationEvidence"]).toContain(
       preparedCompletion.completionRef,
     );
+    await expect(
+      ledger.updateItem(REVIEWS_LEDGER, "R2345", {
+        fields: { summary: "forged replacement" },
+      }),
+    ).rejects.toThrow("protected implementation evidence");
+    await expect(
+      ledger.updateItem(TASKS_LEDGER, "T2345", {
+        fields: { completion: "forged replacement" },
+      }),
+    ).rejects.toThrow("protected implementation evidence");
+  });
+
+  test("rolls back the terminal review when the paired task transition fails", async () => {
+    const f = await fixture();
+    const preparedCompletion = await f.service.prepareCompletion({
+      taskRef: "tasks:T2345",
+      expectedRepositoryHead: BASE,
+      resultCommit: RESULT,
+      workerDispatch: WORKER,
+      reviewAttemptRefs: [f.attemptRef],
+      completion: "implemented",
+      logPaths: [],
+      mergeOperationId: "merge-atomic-ledger",
+      operationId: "completion-atomic-ledger",
+      author: "parent",
+    });
+    await f.service.markMergeStarted(preparedCompletion.completionRef, BASE);
+    f.setHead(RESULT);
+    await f.service.markMerged(preparedCompletion.completionRef, RESULT);
+    const completion = (await f.evidence.snapshot()).completions[preparedCompletion.completionRef]!;
+    const ledger = new InMemoryLedgerStore();
+    await ledger.init();
+    const milestone = await ledger.createMilestone({ title: "atomic completion" });
+    await ledger.createItem(GOALS_LEDGER, milestone.id, {
+      id: "G1",
+      status: "building",
+      fields: { title: "goal", description: "goal" },
+    });
+    await ledger.createItem(TASKS_LEDGER, milestone.id, {
+      id: "T2345",
+      status: "done",
+      fields: { headline: "task", resultCommit: BASE },
+    });
+    await expect(
+      recordProtectedImplementationCompletion(
+        ledger,
+        {
+          taskRef: "tasks:T2345",
+          ownerGoalRef: "goals:G1",
+          status: "wip",
+          finalizedManifest: "manifest-v1\n",
+        },
+        completion,
+        { author: "parent" },
+      ),
+    ).rejects.toThrow("different resultCommit");
+    expect(() => ledger.fetchItem(REVIEWS_LEDGER, "R2345")).toThrow();
   });
 });
