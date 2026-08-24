@@ -1059,7 +1059,7 @@ describe("packaged cq-codex-role Git broker", () => {
       expect(await capability.fetch(handle)).toMatchObject({
         state: "output-already-materialized",
       });
-      const reviewerMatrix: PackagedReviewerMatrixRow[] = [];
+      const reviewerMatrix: PackagedReviewerGateRun[] = [];
       for (const reviewerMode of ["sandboxed", "non-sandboxed"] as const) {
         reviewerMatrix.push(
           await runPackagedReviewer({
@@ -1286,7 +1286,24 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           }),
         );
       }
-      expect(reviewerMatrix).toEqual([
+      const reviewerSummary = reviewerMatrix.map(
+        ({
+          workerRoute,
+          reviewerMode,
+          verdict,
+          gateReRan,
+          evidenceForwarded,
+          fastForwardEligible,
+        }) => ({
+          workerRoute,
+          reviewerMode,
+          verdict,
+          gateReRan,
+          evidenceForwarded,
+          fastForwardEligible,
+        }),
+      );
+      expect(reviewerSummary).toEqual([
         {
           workerRoute: "native",
           reviewerMode: "sandboxed",
