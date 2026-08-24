@@ -125,11 +125,27 @@ async function runExternalReviewer(input: {
     stdin.write(input.prompt);
     stdin.end();
   }
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(process.stdout).text(),
-    new Response(process.stderr).text(),
-    process.exited,
-  ]);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      process.kill();
+      reject(new Error(`external implementation reviewer timed out after ${IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS}ms`));
+    }, IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS);
+  });
+  let settled: [string, string, number];
+  try {
+    settled = await Promise.race([
+      Promise.all([
+        new Response(process.stdout).text(),
+        new Response(process.stderr).text(),
+        process.exited,
+      ]),
+      timedOut,
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+  const [stdout, stderr, exitCode] = settled;
   return {
     adapterIdentity: input.identity.adapterId,
     stdout,
@@ -520,6 +536,15 @@ export function createProductionImplementationEvidenceService(
     },
     repositoryHead: async () =>
       await gitOutput(options.repositoryRoot, ["rev-parse", "HEAD"], "integration HEAD"),
+    isResultDescendantOfRepositoryHead: async ({ repositoryHead, resultCommit }) => {
+      const result = await nodeGitRunner(options.repositoryRoot)([
+        "merge-base",
+        "--is-ancestor",
+        repositoryHead,
+        resultCommit,
+      ]);
+      return result.code === 0;
+    },
     verifyImplementation: async ({ resultCommit, worker }) => {
       if (worker.state !== "consumed" || !object(worker.input) || !object(worker.output)) {
         throw new Error("worker evidence is not consumed");

@@ -75,8 +75,9 @@ function serviceWith(
   execute: (identity: ImplementationReviewerIdentity) => Promise<ExternalReviewProcessObservation>,
 ) {
   const nativeResults = new Map<string, unknown>();
+  const store = createInMemoryImplementationEvidenceStore();
   const dependencies: ImplementationEvidenceServiceDependencies = {
-    store: createInMemoryImplementationEvidenceStore(),
+    store,
     resolveReviewerRoster: () => roster,
     nativeFallback: native,
     now: () => "2026-08-24T00:00:00.000Z",
@@ -84,6 +85,7 @@ function serviceWith(
     fetchNativeReview: async (dispatch) => ({
       state: "consumed",
       output: nativeResults.get(dispatch.attestationId) as never,
+      retainedAttestation: dispatch.attestationId,
     }),
     executeExternalReview: async ({ identity }) => await execute(identity),
     fetchWorker: async () => ({
@@ -109,7 +111,7 @@ function serviceWith(
     }),
     recordLedgerCompletion: async () => ({ reviewRef: "reviews:R1" }),
   };
-  return { service: new ImplementationEvidenceService(dependencies), nativeResults };
+  return { service: new ImplementationEvidenceService(dependencies), nativeResults, store };
 }
 
 describe("protected implementation review attempts [BG]", () => {
@@ -257,6 +259,82 @@ describe("protected implementation review attempts [BG]", () => {
       }),
     ).rejects.toThrow("terminal");
     expect(executions).toBe(1);
+  });
+
+  test("reserves an adapter execution before launching the trusted shellout", async () => {
+    let executions = 0;
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { service } = serviceWith([adapter], async () => {
+      executions += 1;
+      await blocked;
+      return {
+        adapterIdentity: adapter.adapterId,
+        stdout: JSON.stringify(verdict()),
+        stderr: "",
+        exitCode: 0,
+      };
+    });
+    const panel = await service.prepareReviewPanel({
+      taskRef: "tasks:T2345",
+      resultCommit: RESULT,
+      workerDispatch: WORKER,
+      operationId: "panel-reservation",
+      author: "parent",
+    });
+    const attemptRef = panel.attemptRefs[0]!;
+    await service.prepareReviewAttempt({
+      panelRef: panel.panelRef,
+      attemptRef,
+      operationId: "prepare-reservation",
+      author: "parent",
+    });
+    const first = service.executeExternalReviewAttempt({
+      attemptRef,
+      operationId: "execute-reservation",
+      author: "parent",
+    });
+    await Promise.resolve();
+    const second = service.executeExternalReviewAttempt({
+      attemptRef,
+      operationId: "execute-reservation",
+      author: "parent",
+    });
+    release();
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(executions).toBe(1);
+  });
+
+  test("retains the consumed native dispatch attestation in its terminal receipt", async () => {
+    const { service, nativeResults, store } = serviceWith([native], async () => {
+      throw new Error("not called");
+    });
+    const panel = await service.prepareReviewPanel({
+      taskRef: "tasks:T2345",
+      resultCommit: RESULT,
+      workerDispatch: WORKER,
+      operationId: "panel-native-attestation",
+      author: "parent",
+    });
+    const attemptRef = panel.attemptRefs[0]!;
+    const preparedAttempt = await service.prepareReviewAttempt({
+      panelRef: panel.panelRef,
+      attemptRef,
+      operationId: "prepare-native-attestation",
+      author: "parent",
+    });
+    if (preparedAttempt.launch !== "native") throw new Error("expected native attempt");
+    nativeResults.set(preparedAttempt.dispatch.attestationId, verdict());
+    await service.finalizeReviewAttempt({
+      attemptRef,
+      operationId: "finalize-native-attestation",
+      author: "parent",
+    });
+    expect(
+      (await store.snapshot()).attempts[attemptRef]!.retainedAttestation,
+    ).toBe(preparedAttempt.dispatch.attestationId);
   });
 
   test("treats an approval without a green gate or coherent merge base as an abstention", async () => {
