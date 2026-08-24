@@ -83,7 +83,11 @@ async function fixture() {
     nativeFallback: reviewer,
     now: () => "2026-08-24T00:00:00.000Z",
     prepareNativeReview: async ({ attemptRef }) => prepared(attemptRef),
-    fetchNativeReview: async () => ({ state: "consumed", output: approvedVerdict() }),
+    fetchNativeReview: async (dispatch) => ({
+      state: "consumed",
+      output: approvedVerdict(),
+      retainedAttestation: dispatch.attestationId,
+    }),
     executeExternalReview: async () => {
       throw new Error("not configured");
     },

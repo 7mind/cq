@@ -88,6 +88,15 @@ export interface ImplementationReviewAttemptRecord {
   readonly fallbackTrigger: string | null;
   readonly fallbackExclusions: readonly string[];
   readonly preparedDispatch: DispatchPrepared | null;
+  /** Attestation retained when the bound native dispatch reached a consumed terminal result. */
+  readonly retainedAttestation?: string | null;
+  /** Durable pre-shellout claim: a crash may abstain but must never relaunch the adapter. */
+  readonly executionReservation?: {
+    readonly executionRef: string;
+    readonly operationId: string;
+    readonly requestDigest: string;
+    readonly reservedAt: string;
+  } | null;
   readonly execution: ExternalImplementationReviewExecution | null;
   readonly terminalState: ImplementationReviewTerminalState | null;
   readonly verdictDigest: string | null;
@@ -645,6 +654,11 @@ export interface ImplementationEvidenceServiceDependencies {
   readonly fetchWorker: (dispatch: DispatchHandle) => Promise<ImplementationWorkerObservation>;
   readonly readTaskAuthority: (taskRef: string) => Promise<ImplementationTaskAuthority>;
   readonly repositoryHead: () => Promise<string>;
+  /** Production Git proof used when replacing a stale prepared journal. */
+  readonly isResultDescendantOfRepositoryHead?: (input: {
+    readonly repositoryHead: string;
+    readonly resultCommit: string;
+  }) => Promise<boolean>;
   readonly verifyImplementation: (input: {
     readonly task: ImplementationTaskAuthority;
     readonly resultCommit: string;
@@ -769,6 +783,8 @@ export class ImplementationEvidenceService {
           fallbackTrigger: null,
           fallbackExclusions: [],
           preparedDispatch: null,
+          retainedAttestation: null,
+          executionReservation: null,
           execution: null,
           terminalState: null,
           verdictDigest: null,
@@ -860,8 +876,15 @@ export class ImplementationEvidenceService {
     if (panel === undefined) throw new Error("review panel is missing");
     const requestDigest = digest(input);
     if (operationReplay(attempt.operations, input.operationId, requestDigest)) {
-      if (attempt.execution === null)
-        throw new Error("external review replay has no execution receipt");
+      if (attempt.execution === null) {
+        if (attempt.executionReservation === null || attempt.executionReservation === undefined)
+          throw new Error("external review replay has no durable execution reservation");
+        return {
+          status: "existing" as const,
+          attemptRef: attempt.attemptRef,
+          executionRef: attempt.executionReservation.executionRef,
+        };
+      }
       return {
         status: "existing" as const,
         attemptRef: attempt.attemptRef,
@@ -872,6 +895,47 @@ export class ImplementationEvidenceService {
       throw new Error("external review attempt is already terminal");
     if (attempt.execution !== null)
       throw new Error("external review attempt already has an execution receipt");
+    const reservation = await this.deps.store[mutateEvidence](async (state) => {
+      const current = state.attempts[input.attemptRef];
+      if (current === undefined) throw new Error("review attempt disappeared");
+      if (operationReplay(current.operations, input.operationId, requestDigest)) {
+        if (current.execution !== null) {
+          return { existing: true as const, executionRef: current.execution.executionRef };
+        }
+        if (current.executionReservation !== null && current.executionReservation !== undefined) {
+          return { existing: true as const, executionRef: current.executionReservation.executionRef };
+        }
+        throw new Error("external review replay has no durable execution reservation");
+      }
+      if (current.terminalState !== null)
+        throw new Error("external review attempt is already terminal");
+      if (current.execution !== null)
+        throw new Error("external review attempt already has an execution receipt");
+      if (current.executionReservation !== null && current.executionReservation !== undefined)
+        throw new Error("external review attempt already has a durable execution reservation");
+      const executionRef = opaqueRef("cq-implementation-review-execution", {
+        attemptRef: current.attemptRef,
+        operationId: input.operationId,
+        requestDigest,
+      });
+      state.attempts[input.attemptRef] = withOperation(
+        {
+          ...current,
+          executionReservation: {
+            executionRef,
+            operationId: input.operationId,
+            requestDigest,
+            reservedAt: this.now(),
+          },
+        },
+        input.operationId,
+        requestDigest,
+      );
+      return { existing: false as const, executionRef };
+    });
+    if (reservation.existing) {
+      return { status: "existing" as const, attemptRef: attempt.attemptRef, executionRef: reservation.executionRef };
+    }
     let observation: ExternalReviewProcessObservation | null = null;
     let unavailable: unknown;
     try {
@@ -911,18 +975,15 @@ export class ImplementationEvidenceService {
       executedAt,
     };
     const execution: ExternalImplementationReviewExecution = {
-      executionRef: opaqueRef("cq-implementation-review-execution", {
-        attemptRef: attempt.attemptRef,
-        ...executionBase,
-      }),
+      executionRef: reservation.executionRef,
       ...executionBase,
     };
     return await this.deps.store[mutateEvidence](async (state) => {
       const current = state.attempts[input.attemptRef];
       if (current === undefined) throw new Error("review attempt disappeared");
-      if (operationReplay(current.operations, input.operationId, requestDigest)) {
-        if (current.execution === null)
-          throw new Error("external review replay has no execution receipt");
+      if (current.execution !== null) {
+        if (!operationReplay(current.operations, input.operationId, requestDigest))
+          throw new Error("external review attempt already has an execution receipt");
         return {
           status: "existing" as const,
           attemptRef: current.attemptRef,
@@ -931,13 +992,15 @@ export class ImplementationEvidenceService {
       }
       if (current.terminalState !== null)
         throw new Error("external review attempt is already terminal");
-      if (current.execution !== null)
-        throw new Error("external review attempt already has an execution receipt");
-      state.attempts[input.attemptRef] = withOperation(
-        { ...current, execution },
-        input.operationId,
-        requestDigest,
-      );
+      if (
+        current.executionReservation === null ||
+        current.executionReservation === undefined ||
+        current.executionReservation.executionRef !== reservation.executionRef ||
+        current.executionReservation.operationId !== input.operationId ||
+        current.executionReservation.requestDigest !== requestDigest
+      )
+        throw new Error("external review execution reservation changed before receipt recording");
+      state.attempts[input.attemptRef] = { ...current, execution };
       return {
         status: "executed" as const,
         attemptRef: current.attemptRef,
@@ -962,19 +1025,24 @@ export class ImplementationEvidenceService {
       };
     }
     let verdict: DispatchJSONValue | null = null;
+    let retainedAttestation: string | null = null;
     if (attempt.identity.launch === "native") {
       if (attempt.preparedDispatch === null)
         throw new Error("native review attempt was not prepared");
       const observation = await this.deps.fetchNativeReview(attempt.preparedDispatch);
       if (
         observation.state === "consumed" &&
+        typeof observation.retainedAttestation === "string" &&
+        observation.retainedAttestation === attempt.preparedDispatch.attestationId &&
         validateReviewerVerdict(
           observation.output,
           taskIdFromRef(attempt.taskRef),
           attempt.resultCommit,
         )
-      )
+      ) {
         verdict = observation.output;
+        retainedAttestation = observation.retainedAttestation;
+      }
     } else if (attempt.execution?.parseResult.kind === "valid-verdict")
       verdict = attempt.execution.parseResult.verdict;
     const terminalState: ImplementationReviewTerminalState =
@@ -1001,7 +1069,7 @@ export class ImplementationEvidenceService {
           "implementation review attempt is already terminal under another operation",
         );
       state.attempts[input.attemptRef] = withOperation(
-        { ...current, terminalState, verdictDigest, verdict },
+        { ...current, terminalState, verdictDigest, verdict, retainedAttestation },
         input.operationId,
         requestDigest,
       );
@@ -1051,6 +1119,8 @@ export class ImplementationEvidenceService {
       fallbackTrigger: "all-configured-attempts-operationally-abstained",
       fallbackExclusions: exclusions,
       preparedDispatch: null,
+      retainedAttestation: null,
+      executionReservation: null,
       execution: null,
       terminalState: null,
       verdictDigest: null,
@@ -1094,6 +1164,15 @@ export class ImplementationEvidenceService {
     const repositoryHead = await this.deps.repositoryHead();
     if (repositoryHead !== input.expectedRepositoryHead)
       throw new Error("expected_repository_head does not match the integration ref");
+    if (
+      input.supersedesCompletionRef !== undefined &&
+      this.deps.isResultDescendantOfRepositoryHead !== undefined &&
+      !(await this.deps.isResultDescendantOfRepositoryHead({
+        repositoryHead,
+        resultCommit: input.resultCommit,
+      }))
+    )
+      throw new Error("superseding completion result is not rebased onto the current repository head");
     const task = await this.deps.readTaskAuthority(input.taskRef);
     if (task.taskRef !== input.taskRef || task.status !== "wip")
       throw new Error("implementation completion requires the exact active wip task");
@@ -1172,6 +1251,7 @@ export class ImplementationEvidenceService {
         fallback: attempt.fallback,
         fallbackTrigger: attempt.fallbackTrigger,
         fallbackExclusions: attempt.fallbackExclusions,
+        retainedAttestation: attempt.retainedAttestation ?? null,
       })),
       verification,
       completion: input.completion,
@@ -1368,8 +1448,26 @@ export class ImplementationEvidenceService {
           throw new Error("review abstention receipt is inconsistent");
         }
       } else {
+        let nativeReceiptIsBound = true;
+        if (attempt.identity.launch === "native") {
+          if (attempt.preparedDispatch === null) nativeReceiptIsBound = false;
+          else {
+            const observation = await this.deps.fetchNativeReview(attempt.preparedDispatch);
+            nativeReceiptIsBound =
+              observation.state === "consumed" &&
+              observation.retainedAttestation === attempt.preparedDispatch.attestationId &&
+              attempt.retainedAttestation === observation.retainedAttestation &&
+              canonical(observation.output) === canonical(attempt.verdict);
+          }
+        }
+        const adapterReceiptIsBound =
+          attempt.identity.launch !== "adapter" ||
+          (attempt.execution?.parseResult.kind === "valid-verdict" &&
+            canonical(attempt.execution.parseResult.verdict) === canonical(attempt.verdict));
         if (
           attempt.verdictDigest !== digest(attempt.verdict) ||
+          !nativeReceiptIsBound ||
+          !adapterReceiptIsBound ||
           !validateReviewerVerdict(
             attempt.verdict,
             taskIdFromRef(completion.taskRef),
@@ -1434,6 +1532,7 @@ export class ImplementationEvidenceService {
         fallback: attempt.fallback,
         fallbackTrigger: attempt.fallbackTrigger,
         fallbackExclusions: attempt.fallbackExclusions,
+        retainedAttestation: attempt.retainedAttestation ?? null,
       })),
       verification,
       completion: completion.completion,
