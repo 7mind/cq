@@ -90,6 +90,7 @@ export async function createImplementationEvidenceFixture(
     },
     fetchWorker: async () => ({
       state: "consumed",
+      input: { taskId: "T2345", baseCommit: IMPLEMENTATION_BASE },
       output: {
         status: "pass",
         resultCommit: IMPLEMENTATION_RESULT,

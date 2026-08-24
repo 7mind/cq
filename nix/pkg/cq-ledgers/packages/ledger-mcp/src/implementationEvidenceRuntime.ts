@@ -487,6 +487,7 @@ export function createProductionImplementationEvidenceService(
       if (observation.state === "consumed") {
         return {
           state: "consumed",
+          input: observation.input,
           output: observation.output,
           retainedAttestation: observation.retainedAttestation,
         };
