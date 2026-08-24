@@ -31,6 +31,7 @@ import {
   attachMcpHttp,
   changedFrame,
   createEmbeddedStore,
+  createProductionImplementationEvidenceService,
   createSingleProjectDispatchRuntime,
   LEDGER_TOPIC,
   resolvePromptSurface,
@@ -394,6 +395,14 @@ async function serveEmbedded(
     ...(promptSurface === undefined ? {} : { promptArtifactStore: promptSurface.store }),
     environment: process.env,
   });
+  const implementationEvidence =
+    dispatchRuntime.kind === "available" && resolved.implementationEvidenceStore !== undefined
+      ? createProductionImplementationEvidenceService({
+          resolved,
+          dispatchCapability: dispatchRuntime.capability,
+          repositoryRoot: opts.cwd,
+        })
+      : undefined;
   const { handle, onWsOpen, onWsMessage } = attachMcpHttp(
     store,
     path.basename(opts.cwd),
@@ -407,6 +416,8 @@ async function serveEmbedded(
     opts.cwd,
     undefined,
     "management",
+    false,
+    implementationEvidence,
   );
 
   const server = scanForPort(opts.port, (p) =>

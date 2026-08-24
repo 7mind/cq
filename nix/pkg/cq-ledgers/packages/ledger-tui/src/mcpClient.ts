@@ -15,6 +15,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   createEmbeddedStore,
+  createProductionImplementationEvidenceService,
   createManagementLedgerMcpServer,
   createSingleProjectDispatchRuntime,
   resolvePromptSurface,
@@ -151,15 +152,24 @@ export class McpLedgerClient implements WorksetCapableLedgerClient {
       ...(promptSurface === undefined ? {} : { promptArtifactStore: promptSurface.store }),
       environment: process.env,
     });
+    const implementationEvidence =
+      dispatchRuntime.kind === "available" && resolved.implementationEvidenceStore !== undefined
+        ? createProductionImplementationEvidenceService({
+            resolved,
+            dispatchCapability: dispatchRuntime.capability,
+            repositoryRoot: cwd,
+          })
+        : undefined;
     const server = createManagementLedgerMcpServer({
       store,
       displayName: path.basename(cwd),
       configRoot: resolved.configRoot,
       ...(resolved.projectKey === undefined ? {} : { projectKey: resolved.projectKey }),
       ...(promptSurface?.store === undefined ? {} : { promptArtifactStore: promptSurface.store }),
-      ...(dispatchRuntime.kind === "available"
+    ...(dispatchRuntime.kind === "available"
         ? { dispatchCapability: dispatchRuntime.capability }
         : {}),
+      ...(implementationEvidence === undefined ? {} : { implementationEvidence }),
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);

@@ -239,13 +239,14 @@ async function withClient(
   }
   const repositoryBase = await git(repositoryRoot, ["rev-parse", "HEAD"]);
   let reviewResultCommit: string | null = null;
+  let reviewAttestation: string | null = null;
   const implementationEvidence = new ImplementationEvidenceService({
     store: resolved.implementationEvidenceStore,
     resolveReviewerRoster: () => [D336_REVIEWER],
     nativeFallback: D336_REVIEWER,
     prepareNativeReview: async ({ attemptRef, panel }) => {
       reviewResultCommit = panel.resultCommit;
-      return {
+      const prepared = {
         attestationId: `att_${attemptRef.slice(-12)}`,
         generation: 1,
         responseStoreNow: "2026-08-21T00:00:03.000Z",
@@ -261,12 +262,16 @@ async function withClient(
         },
         inputCapability: { scope: "fetch-input", token: "d336-review-input" },
         resultCapability: { scope: "store-result", token: "d336-review-result" },
-      };
+      } as const;
+      reviewAttestation = prepared.attestationId;
+      return prepared;
     },
     fetchNativeReview: async () => {
       if (reviewResultCommit === null) throw new Error("D336 review was not prepared");
+      if (reviewAttestation === null) throw new Error("D336 review attestation was not retained");
       return {
         state: "consumed",
+        retainedAttestation: reviewAttestation,
         output: {
           taskId: TASK_ID,
           verdict: "approve",
