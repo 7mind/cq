@@ -503,6 +503,9 @@ ledgers:
         defects:
           type: string[]
           required: false
+        implementationEvidence:
+          type: string
+          required: false
         ledgerRefs:
           type: id[]
           required: false

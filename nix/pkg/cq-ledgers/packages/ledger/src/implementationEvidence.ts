@@ -589,6 +589,19 @@ export class ImplementationEvidenceService {
       throw new Error("implementation fallback reviewer must be native");
   }
 
+  async assertGenericTaskTerminalizationAllowed(taskRef: string): Promise<void> {
+    taskIdFromRef(taskRef);
+    const state = await this.deps.store.snapshot();
+    const activated =
+      Object.values(state.panels).some((panel) => panel.taskRef === taskRef) ||
+      Object.values(state.completions).some((completion) => completion.taskRef === taskRef);
+    if (activated) {
+      throw new Error(
+        `Git-producing task ${taskRef} may terminalize only through protected implementation evidence`,
+      );
+    }
+  }
+
   async prepareReviewPanel(input: PrepareImplementationReviewPanelInput) {
     assertOperationId(input.operationId);
     taskIdFromRef(input.taskRef);
