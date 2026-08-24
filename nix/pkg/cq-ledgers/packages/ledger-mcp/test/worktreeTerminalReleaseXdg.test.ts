@@ -7,6 +7,7 @@
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -203,6 +204,7 @@ async function withClient(
     store: Awaited<ReturnType<typeof createLedgerStore>>["store"],
     dispatchCapability: DispatchCapability,
     gateRunner: GreenGateRunner,
+    dbPath: string,
   ) => Promise<void>,
 ): Promise<void> {
   const resolved = await createLedgerStore(repositoryRoot);
@@ -235,11 +237,53 @@ async function withClient(
   try {
     expect(resolved.backend).toBe("xdg");
     expect(resolved.dbPath).toContain(process.env["XDG_STATE_HOME"]!);
-    await run(client, resolved.store, dispatchCapability, gateRunner);
+    if (resolved.dbPath === undefined) {
+      throw new Error("D336 XDG fixture did not resolve a database path");
+    }
+    await run(client, resolved.store, dispatchCapability, gateRunner, resolved.dbPath);
   } finally {
     await client.close();
     await server.close();
     await resolved.store.dispose();
+  }
+}
+
+function copyActiveTaskToArchive(dbPath: string, pointerId: string, taskId: string): void {
+  const db = new Database(dbPath);
+  try {
+    db.query(
+      "INSERT INTO archive_pointers (ledger, id, summary, title, status, archived_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run(TASKS_LEDGER, pointerId, "duplicate task authority", "Duplicate", "done", new Date().toISOString());
+    db.query(
+      `INSERT INTO archived_items
+         (ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
+       SELECT ledger, ?, id, milestone_id, status, fields_json, created_at, updated_at, author, session
+       FROM items WHERE ledger = ? AND id = ?`,
+    ).run(pointerId, TASKS_LEDGER, taskId);
+  } finally {
+    db.close();
+  }
+}
+
+function copyArchivedTaskToArchive(
+  dbPath: string,
+  sourcePointerId: string,
+  pointerId: string,
+  taskId: string,
+): void {
+  const db = new Database(dbPath);
+  try {
+    db.query(
+      "INSERT INTO archive_pointers (ledger, id, summary, title, status, archived_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run(TASKS_LEDGER, pointerId, "duplicate task authority", "Duplicate", "done", new Date().toISOString());
+    db.query(
+      `INSERT INTO archived_items
+         (ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
+       SELECT ledger, ?, id, milestone_id, status, fields_json, created_at, updated_at, author, session
+       FROM archived_items WHERE ledger = ? AND pointer_id = ? AND id = ?`,
+    ).run(pointerId, TASKS_LEDGER, sourcePointerId, taskId);
+  } finally {
+    db.close();
   }
 }
 
@@ -584,8 +628,7 @@ describe("D336 production XDG terminal worktree release", () => {
     }
   });
 
-  // expected-failure: tasks:T2321
-  test.failing("D350 retains an archived done task worktree when release can no longer read it", async () => {
+  test("D350 retains an archived done task worktree when release can no longer read it", async () => {
     const previousStateHome = process.env["XDG_STATE_HOME"];
     const stateHome = await mkdtemp(path.join(tmpdir(), "d350-xdg-archived-state-"));
     roots.push(stateHome);
@@ -662,9 +705,92 @@ describe("D336 production XDG terminal worktree release", () => {
           expect.objectContaining({ id: ARCHIVED_TASK_ID, status: "done" }),
         ]);
 
+        const rootsBeforeRelease = await store.worksetStore!().snapshot();
+        const released = decode<{
+          status: string;
+          handle: ManagedWorktreeHandle;
+          idempotent: boolean;
+          absolutePath: string;
+        }>(
+          (await client.callTool({
+            name: "worktree_manage",
+            arguments: {
+              operation: "release",
+              handle: prepared.handle,
+              terminalDisposition: "done",
+            },
+          })) as ToolResult,
+        );
+        expect(released).toEqual({
+          status: "released",
+          handle: prepared.handle,
+          idempotent: false,
+          absolutePath: prepared.handle.absolutePath,
+        });
+        expect(
+          await stat(prepared.handle.absolutePath)
+            .then(() => true)
+            .catch(() => false),
+        ).toBe(false);
+        expect(
+          await git(repositoryRoot, ["rev-parse", `refs/heads/${prepared.handle.branch}`]).catch(
+            () => null,
+          ),
+        ).toBeNull();
+        expect(
+          await git(repositoryRoot, [
+            "rev-parse",
+            `refs/cq-managed-recovery/${prepared.handle.branch}`,
+          ]),
+        ).toBe(baseCommit);
+        expect(await listManagedLiveWorktrees(repositoryRoot, ARCHIVED_TASK_ID)).toEqual([]);
+        expect(await store.worksetStore!().snapshot()).toEqual(rootsBeforeRelease);
+
+        const repeated = decode<{ status: string; idempotent: boolean }>(
+          (await client.callTool({
+            name: "worktree_manage",
+            arguments: {
+              operation: "release",
+              handle: prepared.handle,
+              terminalDisposition: "done",
+            },
+          })) as ToolResult,
+        );
+        expect(repeated).toMatchObject({ status: "released", idempotent: true });
+      });
+    } finally {
+      if (previousStateHome === undefined) delete process.env["XDG_STATE_HOME"];
+      else process.env["XDG_STATE_HOME"] = previousStateHome;
+    }
+  });
+
+  test("rejects active plus archived task identity ambiguity before release mutation", async () => {
+    const previousStateHome = process.env["XDG_STATE_HOME"];
+    const stateHome = await mkdtemp(path.join(tmpdir(), "d350-xdg-active-archive-state-"));
+    roots.push(stateHome);
+    process.env["XDG_STATE_HOME"] = stateHome;
+    try {
+      const repositoryRoot = await repository();
+      const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+      await seedLedger(repositoryRoot, ARCHIVED_TASK_ID, ARCHIVED_GOAL_ID);
+      await withClient(repositoryRoot, async (client, store, _dispatch, _gate, dbPath) => {
+        const prepared = decode<{ status: string; handle: ManagedWorktreeHandle }>(
+          (await client.callTool({
+            name: "worktree_manage",
+            arguments: { operation: "prepare", taskId: ARCHIVED_TASK_ID, baseCommit },
+          })) as ToolResult,
+        );
+        decode(
+          (await client.callTool({
+            name: "update_item",
+            arguments: { ledger_id: TASKS_LEDGER, item_id: ARCHIVED_TASK_ID, status: "done" },
+          })) as ToolResult,
+        );
+        copyActiveTaskToArchive(dbPath, "M350-duplicate", ARCHIVED_TASK_ID);
+
         const beforeRelease = await releaseState(repositoryRoot, prepared.handle);
         const rootsBeforeRelease = await store.worksetStore!().snapshot();
-        const released = (await client.callTool({
+        const denied = (await client.callTool({
           name: "worktree_manage",
           arguments: {
             operation: "release",
@@ -672,12 +798,67 @@ describe("D336 production XDG terminal worktree release", () => {
             terminalDisposition: "done",
           },
         })) as ToolResult;
-        expect(released.isError, textOf(released)).toBe(true);
-        expect(textOf(released)).toBe(`Item not found in ledger tasks: ${ARCHIVED_TASK_ID}`);
+        expect(denied.isError, textOf(denied)).toBe(true);
+        expect(textOf(denied)).toContain("resolves to 2 active-or-archived records");
         expect(await releaseState(repositoryRoot, prepared.handle)).toEqual(beforeRelease);
         expect(await store.worksetStore!().snapshot()).toEqual(rootsBeforeRelease);
+      });
+    } finally {
+      if (previousStateHome === undefined) delete process.env["XDG_STATE_HOME"];
+      else process.env["XDG_STATE_HOME"] = previousStateHome;
+    }
+  });
 
-        expect(released.isError).toBe(false);
+  test("rejects two archived task records before release mutation", async () => {
+    const previousStateHome = process.env["XDG_STATE_HOME"];
+    const stateHome = await mkdtemp(path.join(tmpdir(), "d350-xdg-two-archive-state-"));
+    roots.push(stateHome);
+    process.env["XDG_STATE_HOME"] = stateHome;
+    try {
+      const repositoryRoot = await repository();
+      const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+      const milestoneId = await seedLedger(repositoryRoot, ARCHIVED_TASK_ID, ARCHIVED_GOAL_ID);
+      await withClient(repositoryRoot, async (client, store, _dispatch, _gate, dbPath) => {
+        const prepared = decode<{ status: string; handle: ManagedWorktreeHandle }>(
+          (await client.callTool({
+            name: "worktree_manage",
+            arguments: { operation: "prepare", taskId: ARCHIVED_TASK_ID, baseCommit },
+          })) as ToolResult,
+        );
+        decode(
+          (await client.callTool({
+            name: "update_item",
+            arguments: { ledger_id: TASKS_LEDGER, item_id: ARCHIVED_TASK_ID, status: "done" },
+          })) as ToolResult,
+        );
+        decode(
+          (await client.callTool({
+            name: "update_item",
+            arguments: { ledger_id: "milestones", item_id: milestoneId, status: "done" },
+          })) as ToolResult,
+        );
+        decode(
+          (await client.callTool({
+            name: "archive_milestone",
+            arguments: { milestone_id: milestoneId, summary: "D350 first archive" },
+          })) as ToolResult,
+        );
+        copyArchivedTaskToArchive(dbPath, milestoneId, "M351-duplicate", ARCHIVED_TASK_ID);
+
+        const beforeRelease = await releaseState(repositoryRoot, prepared.handle);
+        const rootsBeforeRelease = await store.worksetStore!().snapshot();
+        const denied = (await client.callTool({
+          name: "worktree_manage",
+          arguments: {
+            operation: "release",
+            handle: prepared.handle,
+            terminalDisposition: "done",
+          },
+        })) as ToolResult;
+        expect(denied.isError, textOf(denied)).toBe(true);
+        expect(textOf(denied)).toContain("resolves to 2 active-or-archived records");
+        expect(await releaseState(repositoryRoot, prepared.handle)).toEqual(beforeRelease);
+        expect(await store.worksetStore!().snapshot()).toEqual(rootsBeforeRelease);
       });
     } finally {
       if (previousStateHome === undefined) delete process.env["XDG_STATE_HOME"];
