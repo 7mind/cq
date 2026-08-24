@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { exposedLedgerToolsForRole } from "@cq/config";
-import { LEDGER_TOOL_NAMES, prefixedToolNames } from "@cq/ledger";
+import {
+  LEDGER_TOOL_NAMES,
+  MANAGEMENT_LEDGER_TOOL_NAMES,
+  prefixedToolNames,
+} from "@cq/ledger";
 import { buildServerInstructions } from "../src/main.js";
 
 /**
@@ -63,6 +67,12 @@ describe("buildServerInstructions", () => {
     );
     expect(text).toContain(
       "create_item only confirmed durable project facts in memories/M-AMBIENT with useful sourceRefs; exclude transient reasoning/session notes/unconfirmed preferences.",
+    );
+  });
+
+  test("a complete management profile retains the compact canonical instructions", () => {
+    expect(buildServerInstructions("", "begin", MANAGEMENT_LEDGER_TOOL_NAMES)).toBe(
+      ORIGINAL_SERVER_INSTRUCTIONS,
     );
   });
 
