@@ -19,14 +19,37 @@ import { runWorksetGitEffectGate, type WorksetGitEffectBinding } from "@cq/proce
 const FULL_COMMIT = /^[0-9a-f]{40}$/u;
 const TASK_ID = /^T[0-9]+$/u;
 const OPERATION_ID = /^[A-Za-z0-9_-]{1,128}$/u;
+const COMPLETION_REF = /^cq-implementation-completion:v1:[0-9a-f]{64}$/u;
 
-export interface GateGitEffectRequest {
+interface GateGitEffectRequestBase {
+  readonly cwd: string;
+  readonly taskId: string;
+  readonly commit: string;
+}
+
+export interface RebaseGateGitEffectRequest extends GateGitEffectRequestBase {
+  readonly operation: "rebase";
+  /** Parent-supplied stable guarded-rebase operation id (D334/T2150). */
+  readonly operationId?: string;
+}
+
+export interface MergeGateGitEffectRequest extends GateGitEffectRequestBase {
+  readonly operation: "merge";
+  readonly completionRef: string;
+  readonly operationId: string;
+}
+
+export type GateGitEffectRequest =
+  | RebaseGateGitEffectRequest
+  | MergeGateGitEffectRequest;
+
+interface ResolvedGateGitEffectRequest {
   readonly operation: "rebase" | "merge";
   readonly cwd: string;
   readonly taskId: string;
   readonly commit: string;
-  /** Parent-supplied stable guarded-rebase operation id (D334/T2150). */
   readonly operationId?: string;
+  readonly completionRef?: string;
 }
 
 export interface GateGitEffectOutcome {
@@ -59,7 +82,7 @@ async function gitOutput(cwd: string, args: readonly string[], label: string): P
 
 async function resolveManagedBinding(
   store: LedgerStore,
-  request: GateGitEffectRequest,
+  request: ResolvedGateGitEffectRequest,
   repository: string,
 ): Promise<ManagedWorktreeDispatchBinding> {
   const task = store.fetchItem(TASKS_LEDGER, request.taskId);
@@ -85,7 +108,7 @@ async function resolveManagedBinding(
 
 async function resolveBinding(
   store: LedgerStore,
-  request: GateGitEffectRequest,
+  request: ResolvedGateGitEffectRequest,
   repository: string,
 ): Promise<WorksetGitEffectBinding> {
   const binding = await resolveManagedBinding(store, request, repository);
@@ -149,6 +172,8 @@ async function resolveBinding(
     targetRef: `tasks:${request.taskId}`,
     repositoryRoot: repository,
     commit: request.commit,
+    completionRef: request.completionRef!,
+    mergeOperationId: request.operationId!,
   };
 }
 
@@ -167,8 +192,13 @@ export async function runGateGitEffect(
   if (request.operationId !== undefined && !OPERATION_ID.test(request.operationId)) {
     throw new Error("cq gate git-effect: --operation-id must be one stable operation id");
   }
-  if (request.operation === "merge" && request.operationId !== undefined) {
-    throw new Error("cq gate git-effect: --operation-id journals only a rebase");
+  if (request.operation === "merge") {
+    if (request.completionRef === undefined) {
+      throw new Error("cq gate git-effect: --completion-ref is required for merge");
+    }
+    if (!COMPLETION_REF.test(request.completionRef)) {
+      throw new Error("cq gate git-effect: --completion-ref must be one opaque completion reference");
+    }
   }
   const resolved = await createManagementLedgerStore(request.cwd);
   try {

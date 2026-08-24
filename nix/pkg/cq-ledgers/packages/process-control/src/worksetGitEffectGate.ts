@@ -10,6 +10,8 @@ import type { WorksetEffectAdmissionProvider } from "./worksetEffectProtocol.js"
 const FULL_COMMIT = /^[0-9a-f]{40}$/u;
 const ZERO_COMMIT = "0".repeat(40);
 const TASK_REF = /^tasks:T[0-9]+$/u;
+const COMPLETION_REF = /^cq-implementation-completion:v1:[0-9a-f]{64}$/u;
+const OPERATION_ID = /^[A-Za-z0-9_-]{1,128}$/u;
 const MAX_GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 const STRIPPED_GIT_ENVIRONMENT = [
@@ -79,6 +81,8 @@ export type RebaseEffectBinding = RebaseOntoEffectBinding | RebaseContinueEffect
 export interface MergeEffectBinding extends WorksetGitEffectBase {
   readonly kind: "merge";
   readonly commit: string;
+  readonly completionRef: string;
+  readonly mergeOperationId: string;
 }
 
 export type WorksetGitEffectBinding =
@@ -184,6 +188,14 @@ function validateBinding(binding: WorksetGitEffectBinding): WorksetGitEffectBind
       throw new Error("@cq/process-control: trusted Git effect rebase coordinate must be one full SHA");
     }
   }
+  if (binding.kind === "merge") {
+    if (!COMPLETION_REF.test(binding.completionRef)) {
+      throw new Error("@cq/process-control: trusted Git effect completion reference is invalid");
+    }
+    if (!OPERATION_ID.test(binding.mergeOperationId)) {
+      throw new Error("@cq/process-control: trusted Git effect merge operation id is invalid");
+    }
+  }
   if ("worktreePath" in binding) {
     if (!isAbsolute(binding.worktreePath) || resolve(binding.worktreePath) !== binding.worktreePath) {
       throw new Error("@cq/process-control: trusted Git effect worktree path must be canonical and absolute");
@@ -243,7 +255,14 @@ function bindingIdentity(binding: WorksetGitEffectBinding): readonly string[] {
         "ontoCommit" in binding ? binding.ontoCommit : binding.continueAtHead,
       ];
     case "merge":
-      return [binding.kind, binding.targetRef, binding.repositoryRoot, binding.commit];
+      return [
+        binding.kind,
+        binding.targetRef,
+        binding.repositoryRoot,
+        binding.commit,
+        binding.completionRef,
+        binding.mergeOperationId,
+      ];
   }
 }
 
