@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "bun:test";
-import { LEDGER_TOOL_NAMES, NON_DISPATCH_LEDGER_TOOL_NAMES } from "../packages/ledger/src/index.js";
+import {
+  MANAGEMENT_LEDGER_TOOL_NAMES,
+  MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES,
+} from "../packages/ledger/src/index.js";
 import {
   PROFILE_NAMES,
   buildNormalizedAfterArtifact,
@@ -82,7 +85,7 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     repeatIsByteIdentical: true,
     profiles: [...PROFILE_NAMES],
     durableDispatchInventory: [...target.target.publicToolInventory].sort(),
-    nonDispatchInventory: [...NON_DISPATCH_LEDGER_TOOL_NAMES].sort(),
+    nonDispatchInventory: [...MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES].sort(),
     initializeInstructionsIncluded: true,
     toolsListSerializationIncluded: true,
     everyToolDecomposed: true,
@@ -132,7 +135,7 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     everyToolHasFieldDeltas: true,
   });
   expect(first.profiles.full.toolCount).toBe(target.target.publicToolCount);
-  expect(LEDGER_TOOL_NAMES).toHaveLength(target.target.publicToolCount);
+  expect(MANAGEMENT_LEDGER_TOOL_NAMES).toHaveLength(target.target.publicToolCount);
 });
 
 test(

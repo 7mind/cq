@@ -20,7 +20,7 @@
   },
   "profiles": {
     "full": {
-      "inventorySource": "LEDGER_TOOL_NAMES",
+      "inventorySource": "MANAGEMENT_LEDGER_TOOL_NAMES",
       "inventory": [
         "abort_dispatch",
         "acknowledge_operator_action",
@@ -119,7 +119,7 @@
       }
     },
     "non-dispatch": {
-      "inventorySource": "NON_DISPATCH_LEDGER_TOOL_NAMES",
+      "inventorySource": "MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES",
       "inventory": [
         "acknowledge_operator_action",
         "archive_milestone",

@@ -161,9 +161,6 @@ export const FULL_LEDGER_TOOL_PROFILE = "full";
 /** A named tool profile. Role ids resolve through T1325's authoritative matrix. */
 export type LedgerToolProfileName = string;
 
-/** Canonical tool-name order, owned by the T1325 capability inventory. */
-export const LEDGER_TOOL_NAMES = LEDGER_CAPABILITY_TOOL_NAMES;
-
 export type LedgerToolName = LedgerCapabilityToolName;
 
 export const DISPATCH_LIFECYCLE_TOOL_NAMES = [
@@ -181,7 +178,7 @@ const DISPATCH_LIFECYCLE_TOOL_NAME_SET: ReadonlySet<string> = new Set(
   DISPATCH_LIFECYCLE_TOOL_NAMES,
 );
 
-const IMPLEMENTATION_EVIDENCE_TOOL_NAME_SET: ReadonlySet<string> = new Set([
+export const IMPLEMENTATION_EVIDENCE_TOOL_NAMES = [
   "prepare_implementation_review_panel",
   "prepare_implementation_review_attempt",
   "execute_external_implementation_review_attempt",
@@ -189,10 +186,27 @@ const IMPLEMENTATION_EVIDENCE_TOOL_NAME_SET: ReadonlySet<string> = new Set([
   "prepare_implementation_review_fallback",
   "prepare_implementation_completion",
   "record_implementation_completion",
-]);
+] as const satisfies readonly LedgerToolName[];
+
+const IMPLEMENTATION_EVIDENCE_TOOL_NAME_SET: ReadonlySet<string> = new Set(
+  IMPLEMENTATION_EVIDENCE_TOOL_NAMES,
+);
+
+/** Complete trusted-management inventory, including protected evidence operations. */
+export const MANAGEMENT_LEDGER_TOOL_NAMES = LEDGER_CAPABILITY_TOOL_NAMES;
+
+/** Canonical ordinary inventory; protected evidence operations require management authority. */
+export const LEDGER_TOOL_NAMES = MANAGEMENT_LEDGER_TOOL_NAMES.filter(
+  (name) => !IMPLEMENTATION_EVIDENCE_TOOL_NAME_SET.has(name),
+);
 
 /** The surface registered when no durable dispatch capability exists. */
 export const NON_DISPATCH_LEDGER_TOOL_NAMES = LEDGER_TOOL_NAMES.filter(
+  (name) => !DISPATCH_LIFECYCLE_TOOL_NAME_SET.has(name),
+);
+
+/** Trusted-management surface registered when no durable dispatch capability exists. */
+export const MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES = MANAGEMENT_LEDGER_TOOL_NAMES.filter(
   (name) => !DISPATCH_LIFECYCLE_TOOL_NAME_SET.has(name),
 );
 
@@ -1670,7 +1684,9 @@ export function createLedgerMcpToolSpecifications(
       : []),
   ] as unknown as AnyTool[];
 
-  const registeredToolNames = LEDGER_TOOL_NAMES.filter(
+  const registeredToolNames = (
+    exposeImplementationEvidence ? MANAGEMENT_LEDGER_TOOL_NAMES : LEDGER_TOOL_NAMES
+  ).filter(
     (name) =>
       (dispatchCapability !== undefined || !DISPATCH_LIFECYCLE_TOOL_NAME_SET.has(name)) &&
       (exposeImplementationEvidence || !IMPLEMENTATION_EVIDENCE_TOOL_NAME_SET.has(name)),
@@ -1771,6 +1787,7 @@ export function selectLedgerMcpToolSpecifications(
   specifications: readonly LedgerToolSpecification[],
   profileName: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
 ): LedgerToolSpecification[] {
+  if (profileName === FULL_LEDGER_TOOL_PROFILE) return [...specifications];
   const selectedNames = new Set<LedgerToolName>(ledgerToolNamesForProfile(profileName));
   return specifications.filter((specification) => selectedNames.has(specification.name));
 }

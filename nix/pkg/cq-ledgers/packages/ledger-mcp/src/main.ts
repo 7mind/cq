@@ -61,6 +61,7 @@ import {
   createLedgerMcpToolSpecifications,
   FULL_LEDGER_TOOL_PROFILE,
   LEDGER_TOOL_NAMES,
+  MANAGEMENT_LEDGER_TOOL_NAMES,
   ledgerToolNamesForProfile,
   registerLedgerStdioToolSpecifications,
   selectLedgerMcpToolSpecifications,
@@ -479,7 +480,9 @@ export function buildServerInstructions(
   if (
     profileName === FULL_LEDGER_TOOL_PROFILE ||
     (availableToolNames.length === LEDGER_TOOL_NAMES.length &&
-      LEDGER_TOOL_NAMES.every((name) => availableToolNames.includes(name)))
+      LEDGER_TOOL_NAMES.every((name) => availableToolNames.includes(name))) ||
+    (availableToolNames.length === MANAGEMENT_LEDGER_TOOL_NAMES.length &&
+      MANAGEMENT_LEDGER_TOOL_NAMES.every((name) => availableToolNames.includes(name)))
   ) {
     if (toolPrefix === "") return SERVER_INSTRUCTIONS_TEMPLATE;
     const names = [...LEDGER_TOOL_NAMES].sort((a, b) => b.length - a.length);

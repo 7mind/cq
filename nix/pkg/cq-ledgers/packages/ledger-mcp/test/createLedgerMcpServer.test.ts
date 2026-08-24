@@ -265,7 +265,9 @@ describe("createLedgerMcpServer — public builder", () => {
 
   it("filters every narrower named role profile before tools/list serialization", async () => {
     for (const roleId of Object.keys(ROLE_TOOL_CAPABILITY_MATRIX)) {
-      const expected = [...exposedLedgerToolsForRole(roleId)].sort();
+      const expected = exposedLedgerToolsForRole(roleId)
+        .filter((name) => LEDGER_TOOL_NAMES.includes(name))
+        .sort();
       if (expected.length === LEDGER_TOOL_NAMES.length) continue;
       expect(await registeredNames(undefined, roleId), roleId).toEqual(expected);
     }

@@ -12,7 +12,7 @@ import {
   GOALS_LEDGER,
   InMemoryLedgerStore,
   ImplementationEvidenceService,
-  LEDGER_TOOL_NAMES,
+  MANAGEMENT_LEDGER_TOOL_NAMES,
   ledgerToolInputJsonSchema,
   MILESTONES_AMBIENT_ID,
   registerLedgerStdioManagementTools,
@@ -1714,7 +1714,9 @@ describe("stdio/direct ledger tool differential contract", () => {
       );
       try {
         const directDefinitionList = directDefinitions(direct);
-        const expectedNames = LEDGER_TOOL_NAMES.map((name) => prefixed(prefix, name)).sort();
+        const expectedNames = MANAGEMENT_LEDGER_TOOL_NAMES.map((name) =>
+          prefixed(prefix, name),
+        ).sort();
         expect(expectedNames).not.toContain(prefixed(prefix, "validate_input"));
         expect(directDefinitionList.map((tool) => tool.name)).toEqual(expectedNames);
         expect(stdio.definitions).toEqual(directDefinitionList);
@@ -1767,7 +1769,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       );
       const invocations = invocationMatrix(directFixture);
       expect(invocations.map((invocation) => invocation.name).sort()).toEqual(
-        [...LEDGER_TOOL_NAMES].sort(),
+        [...MANAGEMENT_LEDGER_TOOL_NAMES].sort(),
       );
 
       const responses = new Map<LedgerToolName, unknown>();

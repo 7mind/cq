@@ -9,6 +9,7 @@ import {
   TASKS_LEDGER,
   canonicalImplementationCompletionMergeLine,
   createInMemoryImplementationEvidenceStore,
+  protectLedgerStoreWithImplementationEvidence,
   createLedgerMcpTools,
   createObserveOnlyWorksetInvocationAuthority,
   implementationCompletionMergeAdmissionProviderFromStore,
@@ -309,8 +310,9 @@ describe("versioned protected implementation evidence [BG]", () => {
     await f.service.markMerged(preparedCompletion.completionRef, RESULT);
     const completion = (await f.evidence.snapshot()).completions[preparedCompletion.completionRef]!;
 
-    const ledger = new InMemoryLedgerStore();
-    await ledger.init();
+    const rawLedger = new InMemoryLedgerStore();
+    await rawLedger.init();
+    const ledger = protectLedgerStoreWithImplementationEvidence(rawLedger, f.evidence);
     const milestone = await ledger.createMilestone({ title: "protected completion" });
     await ledger.createItem(GOALS_LEDGER, milestone.id, {
       id: "G1",
