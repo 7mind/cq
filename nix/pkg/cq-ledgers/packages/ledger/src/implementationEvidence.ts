@@ -10,6 +10,7 @@ import {
   type DispatchJSONValue,
   type DispatchPrepared,
   type ImplementWorkerSupervisedGateEvidence,
+  IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
   type ParentGateAttestation,
 } from "@cq/config";
 import type {
@@ -100,6 +101,7 @@ export interface ImplementationReviewAttemptRecord {
     readonly operationId: string;
     readonly requestDigest: string;
     readonly reservedAt: string;
+    readonly expiresAt: string;
   } | null;
   readonly execution: ExternalImplementationReviewExecution | null;
   readonly terminalState: ImplementationReviewTerminalState | null;
@@ -704,6 +706,8 @@ export interface ImplementationEvidenceServiceDependencies {
     readonly panel: ImplementationReviewPanelRecord;
     readonly identity: ImplementationReviewerIdentity;
   }) => Promise<ExternalReviewProcessObservation>;
+  /** A persisted reservation must settle after the same timeout as its shellout. */
+  readonly executionReservationTimeoutMs?: number;
   readonly fetchWorker: (dispatch: DispatchHandle) => Promise<ImplementationWorkerObservation>;
   readonly readTaskAuthority: (taskRef: string) => Promise<ImplementationTaskAuthority>;
   readonly repositoryHead: () => Promise<string>;
@@ -749,10 +753,18 @@ function withOperation(
 export class ImplementationEvidenceService {
   private readonly deps: ImplementationEvidenceServiceDependencies;
   private readonly now: () => string;
+  private readonly executionReservationTimeoutMs: number;
 
   constructor(dependencies: ImplementationEvidenceServiceDependencies) {
     this.deps = dependencies;
     this.now = dependencies.now ?? (() => new Date().toISOString());
+    this.executionReservationTimeoutMs =
+      dependencies.executionReservationTimeoutMs ?? IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS;
+    if (
+      !Number.isSafeInteger(this.executionReservationTimeoutMs) ||
+      this.executionReservationTimeoutMs <= 0
+    )
+      throw new Error("implementation reviewer reservation timeout must be a positive integer");
     if (dependencies.nativeFallback.launch !== "native")
       throw new Error("implementation fallback reviewer must be native");
   }
@@ -917,6 +929,45 @@ export class ImplementationEvidenceService {
     };
   }
 
+  private reservationExpired(
+    reservation: NonNullable<ImplementationReviewAttemptRecord["executionReservation"]>,
+  ): boolean {
+    const expiresAt = Date.parse(reservation.expiresAt);
+    const now = Date.parse(this.now());
+    return !Number.isFinite(expiresAt) || !Number.isFinite(now) || now >= expiresAt;
+  }
+
+  private async recoverExpiredExternalReviewExecution(attemptRef: string): Promise<string | null> {
+    return await this.deps.store[mutateEvidence](async (state) => {
+      const current = state.attempts[attemptRef];
+      if (
+        current === undefined ||
+        current.execution !== null ||
+        current.executionReservation === null ||
+        current.executionReservation === undefined ||
+        !this.reservationExpired(current.executionReservation)
+      ) {
+        return null;
+      }
+      const execution: ExternalImplementationReviewExecution = {
+        executionRef: current.executionReservation.executionRef,
+        adapterIdentity: current.identity.adapterId,
+        stdout: "",
+        stderr: "",
+        exitCode: null,
+        parseResult: {
+          kind: "operational-abstention",
+          reason: "unavailable",
+          detail:
+            "external review execution reservation expired before an execution receipt was recorded",
+        },
+        executedAt: this.now(),
+      };
+      state.attempts[attemptRef] = { ...current, execution };
+      return execution.executionRef;
+    });
+  }
+
   async executeExternalReviewAttempt(input: ExecuteExternalImplementationReviewAttemptInput) {
     assertOperationId(input.operationId);
     const snapshot = await this.deps.store.snapshot();
@@ -928,6 +979,14 @@ export class ImplementationEvidenceService {
     const panel = snapshot.panels[attempt.panelRef];
     if (panel === undefined) throw new Error("review panel is missing");
     const requestDigest = digest(input);
+    const expiredExecutionRef = await this.recoverExpiredExternalReviewExecution(input.attemptRef);
+    if (expiredExecutionRef !== null) {
+      return {
+        status: "existing" as const,
+        attemptRef: attempt.attemptRef,
+        executionRef: expiredExecutionRef,
+      };
+    }
     if (operationReplay(attempt.operations, input.operationId, requestDigest)) {
       if (attempt.execution === null) {
         if (attempt.executionReservation === null || attempt.executionReservation === undefined)
@@ -971,6 +1030,10 @@ export class ImplementationEvidenceService {
         operationId: input.operationId,
         requestDigest,
       });
+      const reservedAt = this.now();
+      const reservedAtMs = Date.parse(reservedAt);
+      if (!Number.isFinite(reservedAtMs))
+        throw new Error("implementation reviewer reservation clock returned an invalid timestamp");
       state.attempts[input.attemptRef] = withOperation(
         {
           ...current,
@@ -978,7 +1041,8 @@ export class ImplementationEvidenceService {
             executionRef,
             operationId: input.operationId,
             requestDigest,
-            reservedAt: this.now(),
+            reservedAt,
+            expiresAt: new Date(reservedAtMs + this.executionReservationTimeoutMs).toISOString(),
           },
         },
         input.operationId,
@@ -987,7 +1051,11 @@ export class ImplementationEvidenceService {
       return { existing: false as const, executionRef };
     });
     if (reservation.existing) {
-      return { status: "existing" as const, attemptRef: attempt.attemptRef, executionRef: reservation.executionRef };
+      return {
+        status: "existing" as const,
+        attemptRef: attempt.attemptRef,
+        executionRef: reservation.executionRef,
+      };
     }
     const worker = await this.deps.fetchWorker(panel.workerDispatch);
     const validationContext = reviewerValidationContext(worker);
