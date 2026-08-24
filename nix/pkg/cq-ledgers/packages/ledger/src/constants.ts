@@ -380,6 +380,8 @@ export const REVIEWS_SCHEMA: LedgerSchema = {
     new_questions: { type: "string[]", required: false },
     criticism: { type: "string[]", required: false },
     defects: { type: "string[]", required: false },
+    /** Strict v1 protected implementation completion evidence JSON. */
+    implementationEvidence: { type: "string", required: false },
     ledgerRefs: { type: "id[]", required: false },
     tags: { type: "string[]", required: false },
     sourceRefs: { type: "string[]", required: false },
@@ -420,8 +422,20 @@ export const REVIEWS_SCHEMA: LedgerSchema = {
  *   - sourceRefs: source file / commit / URL references.
  */
 export const HANDOFFS_SCHEMA: LedgerSchema = {
-  statusValues: ["drained", "answers-required", "mixed", "illness-detected", "user-action-required"],
-  terminalStatuses: ["drained", "answers-required", "mixed", "illness-detected", "user-action-required"],
+  statusValues: [
+    "drained",
+    "answers-required",
+    "mixed",
+    "illness-detected",
+    "user-action-required",
+  ],
+  terminalStatuses: [
+    "drained",
+    "answers-required",
+    "mixed",
+    "illness-detected",
+    "user-action-required",
+  ],
   // No satisfiesDependencyStatuses (G80): handoffs are not a dependency
   // target in practice, so this falls under the FALLBACK rule — the
   // resolver would treat every terminalStatuses entry as satisfying.
@@ -751,8 +765,7 @@ export const LEDGER_LOGS_STRIP_RE = new RegExp(
  * everything else for `timestamp`-typed fields and for the intrinsic
  * `createdAt` / `updatedAt`.
  */
-export const ISO_TIMESTAMP_RE =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+export const ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 /**
  * Validate that `value` is a string matching `ISO_TIMESTAMP_RE` AND

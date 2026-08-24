@@ -77,6 +77,7 @@ import {
   validateJsonl,
   bindWorksetInvocationAuthority,
   type WorksetInvocationAuthority,
+  type ImplementationEvidenceService,
 } from "@cq/ledger";
 import { loadConfig, resolveRemoteLedgerTokenFromProcess } from "@cq/config";
 import { z } from "zod";
@@ -749,6 +750,8 @@ export interface CreateLedgerMcpServerOptions {
    * Off by default so the T1326 tools/list inventory does not grow.
    */
   enableLogWrite?: boolean;
+  /** Protected implementation review/completion evidence service. */
+  implementationEvidence?: ImplementationEvidenceService;
 }
 
 /**
@@ -831,6 +834,7 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
       opts.dispatchCapability,
       worktreeManage,
       opts.worksetAuthority ?? createObserveOnlyWorksetInvocationAuthority(),
+      opts.implementationEvidence,
     ),
     toolProfile,
   );
@@ -895,6 +899,7 @@ export function buildServer(
   promptArtifactStore?: PromptArtifactStore,
   dispatchCapability?: DispatchCapability,
   repositoryRoot?: string,
+  implementationEvidence?: ImplementationEvidenceService,
 ): McpServer {
   return createLedgerMcpServer({
     store,
@@ -904,6 +909,7 @@ export function buildServer(
     ...(promptArtifactStore !== undefined ? { promptArtifactStore } : {}),
     ...(dispatchCapability !== undefined ? { dispatchCapability } : {}),
     ...(repositoryRoot !== undefined ? { repositoryRoot } : {}),
+    ...(implementationEvidence !== undefined ? { implementationEvidence } : {}),
   });
 }
 
@@ -1041,6 +1047,7 @@ export function attachMcpHttp(
   credentials?: McpHttpCredentialConfig,
   trustedDefaultScope: McpSessionScope = "observe",
   enableLogWrite = false,
+  implementationEvidence?: ImplementationEvidenceService,
 ): McpHttpHandlers {
   assertMcpHttpCredentialSeparation(credentials);
   const sessions = new Map<string, McpSessionBinding>();
@@ -1105,6 +1112,7 @@ export function attachMcpHttp(
           : createObserveOnlyWorksetInvocationAuthority(),
       toolProfile,
       ...(enableLogWrite ? { enableLogWrite: true } : {}),
+      ...(implementationEvidence !== undefined ? { implementationEvidence } : {}),
     });
     await server.connect(transport);
     // Body already consumed above; hand it back so the transport doesn't
@@ -1169,6 +1177,7 @@ export function serveHttp(
   dispatchCapability?: DispatchCapability,
   toolProfile: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
   repositoryRoot?: string,
+  implementationEvidence?: ImplementationEvidenceService,
 ): ReturnType<typeof Bun.serve> {
   const { handle, onWsOpen, onWsMessage } = attachMcpHttp(
     store,
@@ -1181,6 +1190,10 @@ export function serveHttp(
     dispatchCapability,
     toolProfile,
     repositoryRoot,
+    undefined,
+    "observe",
+    false,
+    implementationEvidence,
   );
 
   return Bun.serve({

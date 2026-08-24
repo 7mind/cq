@@ -56,6 +56,10 @@ import {
   createObserveOnlyWorksetInvocationAuthority,
   createTrustedWorksetManagementAuthority,
 } from "../worksetInvocationAuthority.js";
+import {
+  createFsImplementationEvidenceStore,
+  type ImplementationEvidenceStore,
+} from "../implementationEvidence.js";
 
 /**
  * The xdg backend's database filename within `<stateDir>` (T530). Exported so
@@ -79,6 +83,8 @@ const DEFAULT_BRANCH = "cq-ledger";
 export interface ResolvedLedgerStore {
   /** The initialised store. */
   readonly store: LedgerStore;
+  /** Protected append-only implementation review/completion authority. */
+  readonly implementationEvidenceStore?: ImplementationEvidenceStore;
   /**
    * The cq.toml CONFIG ROOT — the `root` this factory was called with, where
    * cq.toml + .git live (D93). Independent of the store's own data location:
@@ -340,27 +346,42 @@ async function createLedgerStoreWithAuthority(
     backup = new BackupScheduler(async () => {
       await runBackupExport({ store, root, target: backupTarget, branch, logsDir });
     });
-    return { store, configRoot: root, backend, branch, dbPath, logsDir, backup, projectKey };
+    return {
+      store,
+      implementationEvidenceStore: createFsImplementationEvidenceStore({
+        path: join(stateDir, "implementation-evidence.json"),
+      }),
+      configRoot: root,
+      backend,
+      branch,
+      dbPath,
+      logsDir,
+      backup,
+      projectKey,
+    };
   }
-  return { store, configRoot: root, backend, branch, dbPath, logsDir, projectKey };
+  return {
+    store,
+    implementationEvidenceStore: createFsImplementationEvidenceStore({
+      path: join(stateDir, "implementation-evidence.json"),
+    }),
+    configRoot: root,
+    backend,
+    branch,
+    dbPath,
+    logsDir,
+    projectKey,
+  };
 }
 
 /** Ordinary embedded/CLI construction: observe-only workset authority. */
 export async function createLedgerStore(root: string): Promise<ResolvedLedgerStore> {
-  return await createLedgerStoreWithAuthority(
-    root,
-    createObserveOnlyWorksetInvocationAuthority(),
-  );
+  return await createLedgerStoreWithAuthority(root, createObserveOnlyWorksetInvocationAuthority());
 }
 
 /** Dedicated trusted-host construction for direct administrative CLI paths. */
-export async function createManagementLedgerStore(
-  root: string,
-): Promise<ResolvedLedgerStore> {
-  return await createLedgerStoreWithAuthority(
-    root,
-    createTrustedWorksetManagementAuthority(),
-  );
+export async function createManagementLedgerStore(root: string): Promise<ResolvedLedgerStore> {
+  return await createLedgerStoreWithAuthority(root, createTrustedWorksetManagementAuthority());
 }
 
 /**
@@ -397,12 +418,28 @@ export async function openLegacyLedgerStore(
       worksetAuthority,
     });
     await store.init();
-    return { store, configRoot: root, backend, branch };
+    return {
+      store,
+      implementationEvidenceStore: createFsImplementationEvidenceStore({
+        path: join(root, LEDGER_STORAGE_DIRNAME, "protected", "implementation-evidence.json"),
+      }),
+      configRoot: root,
+      backend,
+      branch,
+    };
   }
   if (backend === "fs") {
     const store = new FsLedgerStore({ root, worksetAuthority });
     await store.init();
-    return { store, configRoot: root, backend, branch };
+    return {
+      store,
+      implementationEvidenceStore: createFsImplementationEvidenceStore({
+        path: join(root, LEDGER_STORAGE_DIRNAME, "protected", "implementation-evidence.json"),
+      }),
+      configRoot: root,
+      backend,
+      branch,
+    };
   }
   throw new Error(
     `openLegacyLedgerStore: [ledger] backend = '${backend}' at ${root} is not a legacy ` +

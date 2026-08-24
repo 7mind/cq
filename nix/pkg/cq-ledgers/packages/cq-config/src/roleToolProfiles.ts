@@ -6,7 +6,7 @@ import { PROMPT_CATALOG_PROJECTION } from "./promptCatalog.gen.js";
  *
  * `@cq/config` cannot import `@cq/ledger` because the dependency runs in the
  * other direction. `roleToolProfiles.test.ts` therefore guards this inventory
- * against the prompt catalogue and the maintained 39-tool domain/control surface. T1327 owns
+ * against the prompt catalogue and the maintained 46-tool domain/control surface. T1327 owns
  * moving tool specifications behind one canonical filtered registry.
  */
 export const LEDGER_CAPABILITY_TOOL_NAMES = [
@@ -49,6 +49,13 @@ export const LEDGER_CAPABILITY_TOOL_NAMES = [
   "worktree_manage",
   "git_commit",
   "git_resolve_continue",
+  "prepare_implementation_review_panel",
+  "prepare_implementation_review_attempt",
+  "execute_external_implementation_review_attempt",
+  "finalize_implementation_review_attempt",
+  "prepare_implementation_review_fallback",
+  "prepare_implementation_completion",
+  "record_implementation_completion",
 ] as const;
 
 export type LedgerCapabilityToolName = (typeof LEDGER_CAPABILITY_TOOL_NAMES)[number];
@@ -202,14 +209,22 @@ function profileForCatalogRole({
     );
   }
   if (roleId === "plan-review" || roleId === "implement-review") {
-    return role(roleId, roleKind, ["no-domain-ledger"], [], [
-      `commands/cq/${roleId}.md: write nothing`,
-    ]);
+    return role(
+      roleId,
+      roleKind,
+      ["no-domain-ledger"],
+      [],
+      [`commands/cq/${roleId}.md: write nothing`],
+    );
   }
   if (roleId === "planners" || roleId === "reviewers") {
-    return role(roleId, roleKind, ["config-read"], ["get_config"], [
-      `commands/cq/${roleId}.md and Claude allowed-tools frontmatter`,
-    ]);
+    return role(
+      roleId,
+      roleKind,
+      ["config-read"],
+      ["get_config"],
+      [`commands/cq/${roleId}.md and Claude allowed-tools frontmatter`],
+    );
   }
   return role(roleId, roleKind, ["full-parent-access"], [], FULL_PARENT_EVIDENCE);
 }
@@ -218,9 +233,7 @@ const entries = PROMPT_CATALOG_PROJECTION.catalog.map(profileForCatalogRole);
 
 /** One total, fail-closed role-to-capability matrix for the 25-role prompt catalogue. */
 export const ROLE_TOOL_CAPABILITY_MATRIX: Readonly<Record<string, RoleToolCapabilityProfile>> =
-  Object.freeze(
-    Object.fromEntries(entries.map((entry) => [entry.roleId, entry])),
-  );
+  Object.freeze(Object.fromEntries(entries.map((entry) => [entry.roleId, entry])));
 
 export function exposedLedgerToolsForRole(roleId: string): readonly LedgerCapabilityToolName[] {
   // Object.hasOwn: bare index admits Object.prototype names (D169 / T684 class).

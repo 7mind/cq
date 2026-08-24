@@ -253,6 +253,13 @@ measured savings without another batching schema.
 | `worktree_manage` | `purpose-built-small` | `prepared\|resume-required\|refused`, `conflict-observed`, or `released\|refused`; typed acknowledgements only. |
 | `git_commit` | `purpose-built-small` | A replayable `{ kind, version, attestationId, generation, taskId, operationId, requestDigest, oldHead, newHead, tree, objectOids, paths, committedAt }` receipt. |
 | `git_resolve_continue` | `purpose-built-small` | A replayable durable conflict-continuation receipt carrying attributed objects and either the terminal rebased tip or the exact next parent-bound conflict state. |
+| `prepare_implementation_review_panel` | `purpose-built-small` | Exactly `{ status, panelRef, taskRef, resultCommit, rosterDigest, attemptRefs }`. |
+| `prepare_implementation_review_attempt` | `purpose-built-small` | Exactly `{ status, attemptRef, launch, dispatch? }`; `dispatch` exists only for native launch. |
+| `execute_external_implementation_review_attempt` | `purpose-built-small` | Exactly `{ status, attemptRef, executionRef }`. |
+| `finalize_implementation_review_attempt` | `purpose-built-small` | Exactly `{ status, attemptRef, terminalState }`. |
+| `prepare_implementation_review_fallback` | `purpose-built-small` | Exactly `{ status, attemptRef, dispatch }` for the sole authenticated native fallback. |
+| `prepare_implementation_completion` | `purpose-built-small` | Exactly `{ status, completionRef, taskRef, resultCommit, repositoryHead, evidenceFingerprint }`. |
+| `record_implementation_completion` | `purpose-built-small` | One typed `merge-required`, `reprepare-required`, `recorded`, or `existing` acknowledgement. |
 <!-- ledger-response-contract:end -->
 
 Operator-action probe history remains append-only, but verification counts only

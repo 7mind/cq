@@ -1,0 +1,103 @@
+import { describe, expect, test } from "bun:test";
+import { InMemoryLedgerStore } from "@cq/ledger";
+import {
+  IMPLEMENTATION_RESULT,
+  IMPLEMENTATION_WORKER,
+  createImplementationEvidenceFixture,
+} from "../../ledger/test/implementationEvidenceTestSupport.js";
+import { attachMcpHttp } from "../src/main.js";
+
+function textPayload(result: unknown): unknown {
+  const first = (result as { content?: Array<{ type?: string; text?: string }> }).content?.[0];
+  if (first?.type !== "text" || typeof first.text !== "string") {
+    throw new Error("implementation evidence HTTP response contained no text payload");
+  }
+  return JSON.parse(first.text);
+}
+
+async function rpc(
+  handlers: ReturnType<typeof attachMcpHttp>,
+  body: Record<string, unknown>,
+  sessionId?: string,
+): Promise<{ response: Response; message: Record<string, unknown> }> {
+  const headers: Record<string, string> = {
+    accept: "application/json, text/event-stream",
+    "content-type": "application/json",
+  };
+  if (sessionId !== undefined) headers["mcp-session-id"] = sessionId;
+  const response = await handlers.handle(
+    new Request("http://localhost/mcp", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    }),
+  );
+  const text = await response.text();
+  const data = text
+    .split("\n")
+    .find((line) => line.startsWith("data:"))
+    ?.slice(5)
+    .trim();
+  return { response, message: JSON.parse(data ?? text) as Record<string, unknown> };
+}
+
+describe("implementation evidence HTTP transport [Behavioral-Active Blackbox-GoodCommunication]", () => {
+  test("exposes the same protected operation over Streamable HTTP", async () => {
+    const fixture = await createImplementationEvidenceFixture();
+    const ledger = new InMemoryLedgerStore();
+    await ledger.init();
+    const handlers = attachMcpHttp(
+      ledger,
+      "implementation-evidence-http",
+      "",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "full",
+      undefined,
+      undefined,
+      "observe",
+      false,
+      fixture.service,
+    );
+    const initialized = await rpc(handlers, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-03-26",
+        capabilities: {},
+        clientInfo: { name: "implementation-evidence-http", version: "0.0.1" },
+      },
+    });
+    expect(initialized.response.status).toBe(200);
+    const sessionId = initialized.response.headers.get("mcp-session-id");
+    if (sessionId === null) throw new Error("HTTP initialization returned no session id");
+    const called = await rpc(
+      handlers,
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "prepare_implementation_review_panel",
+          arguments: {
+            task_ref: "tasks:T2345",
+            result_commit: IMPLEMENTATION_RESULT,
+            worker_dispatch: IMPLEMENTATION_WORKER,
+            operation_id: "panel",
+            author: "parent",
+          },
+        },
+      },
+      sessionId,
+    );
+    expect(called.response.status).toBe(200);
+    expect(textPayload(called.message["result"])).toMatchObject({
+      status: "existing",
+      panelRef: fixture.panel.panelRef,
+    });
+  });
+});

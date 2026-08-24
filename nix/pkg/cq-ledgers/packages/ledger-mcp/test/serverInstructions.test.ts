@@ -56,12 +56,8 @@ describe("buildServerInstructions", () => {
 
   test("canonical memory policy is explicit on the unprefixed surface", () => {
     const text = buildServerInstructions("");
-    expect(text).toContain(
-      "fts_search defaults active+filters",
-    );
-    expect(text).toContain(
-      "Writes valid fields+author/session+canonical refs.",
-    );
+    expect(text).toContain("fts_search defaults active+filters");
+    expect(text).toContain("Writes valid fields+author/session+canonical refs.");
     expect(text).toContain(
       "Plan/build: fts_search relevant active memories by ledger/status; fetch_item full matches.",
     );
@@ -109,7 +105,7 @@ describe("buildServerInstructions", () => {
     // prefixedToolNames produces exactly one entry per LEDGER_TOOL_NAMES member.
     expect(allowed.size).toBe(LEDGER_TOOL_NAMES.length);
     // Pin the total registered tool count so any accidental addition/removal fails here.
-    expect(LEDGER_TOOL_NAMES.length).toBe(39);
+    expect(LEDGER_TOOL_NAMES.length).toBe(46);
     for (const tok of emitted) {
       expect(allowed.has(tok)).toBe(true);
     }

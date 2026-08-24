@@ -246,26 +246,24 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     "`{ ledger: Record<ledgerId, Record<status, { count, items: [{ id, status, summary }] }>> }`.",
   ),
   workset: purposeBuiltSmall(
-    "Get/fetch: `{op,graph}`. Set: `{op:\"set\",acknowledgement:{roots,epoch}}`.",
+    'Get/fetch: `{op,graph}`. Set: `{op:"set",acknowledgement:{roots,epoch}}`.',
   ),
   derive_predicates: purposeBuiltSmall(
     "Predicate verdicts `{ value, items }` for `pInvestigate`, `pSeed`, `pPlan`, `pResearch`, `pImplement`, `pOperatorAction`, `openQuestionGate`, `belowFloor`, `planBusy`, and `goalDrift`.",
   ),
   materialize_operator_action: purposeBuiltSmall(
-    "`{ state: \"created\"|\"existing\", action, handoff }` with revision 1.",
+    '`{ state: "created"|"existing", action, handoff }` with revision 1.',
   ),
   acknowledge_operator_action: purposeBuiltSmall(
-    "`{ state: \"acknowledged\"|\"verified\", action }` or identity-mismatch pending, revision-fenced.",
+    '`{ state: "acknowledged"|"verified", action }` or identity-mismatch pending, revision-fenced.',
   ),
   record_operator_action_evidence: purposeBuiltSmall(
-    "Revision-bound append-only `{ state: \"acknowledged\"|\"verified\"|\"pending\", action, reason? }`.",
+    'Revision-bound append-only `{ state: "acknowledged"|"verified"|"pending", action, reason? }`.',
   ),
   revise_operator_action: purposeBuiltSmall(
     "`{ action, task, handoff }`; exact revision, prior snapshots.",
   ),
-  complete_operator_action: purposeBuiltSmall(
-    "`{ task }` after the exact verified revision.",
-  ),
+  complete_operator_action: purposeBuiltSmall("`{ task }` after the exact verified revision."),
   reopen_item: fixedAcknowledgement(
     "item",
     ITEM_MUTATION_ACK_DESCRIPTION,
@@ -298,7 +296,7 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     "One typed fetch state; only the first consumed fetch can carry `output`.",
   ),
   fetch_prompt: requestedFullContent(
-    "Full typed prompt entry under the default `projection: \"full\"`, including prompt text and schemas when available; `projection: \"schema\"` returns exactly `{ roleId, version?, inputSchema?, outputSchema? }` — `{ roleId }` alone for an orchestrator-command role (schema keys ABSENT, never null).",
+    'Full typed prompt entry under the default `projection: "full"`, including prompt text and schemas when available; `projection: "schema"` returns exactly `{ roleId, version?, inputSchema?, outputSchema? }` — `{ roleId }` alone for an orchestrator-command role (schema keys ABSENT, never null).',
   ),
   list_projects: purposeBuiltSmall("`{ projects: [{ key, displayName, createdAt? }] }`."),
   claim_plan: purposeBuiltSmall(
@@ -332,6 +330,27 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   git_resolve_continue: purposeBuiltSmall(
     "A replayable durable conflict-continuation receipt carrying attributed objects and " +
       "either the terminal rebased tip or the exact next parent-bound conflict state.",
+  ),
+  prepare_implementation_review_panel: purposeBuiltSmall(
+    "Exactly `{ status, panelRef, taskRef, resultCommit, rosterDigest, attemptRefs }`.",
+  ),
+  prepare_implementation_review_attempt: purposeBuiltSmall(
+    "Exactly `{ status, attemptRef, launch, dispatch? }`; `dispatch` exists only for native launch.",
+  ),
+  execute_external_implementation_review_attempt: purposeBuiltSmall(
+    "Exactly `{ status, attemptRef, executionRef }`.",
+  ),
+  finalize_implementation_review_attempt: purposeBuiltSmall(
+    "Exactly `{ status, attemptRef, terminalState }`.",
+  ),
+  prepare_implementation_review_fallback: purposeBuiltSmall(
+    "Exactly `{ status, attemptRef, dispatch }` for the sole authenticated native fallback.",
+  ),
+  prepare_implementation_completion: purposeBuiltSmall(
+    "Exactly `{ status, completionRef, taskRef, resultCommit, repositoryHead, evidenceFingerprint }`.",
+  ),
+  record_implementation_completion: purposeBuiltSmall(
+    "One typed `merge-required`, `reprepare-required`, `recorded`, or `existing` acknowledgement.",
   ),
 } as const satisfies Record<LedgerToolName, LedgerResponseContract>;
 
