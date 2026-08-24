@@ -211,7 +211,7 @@ async function gitOutput(
   return result.stdout.trim();
 }
 
-async function verifyImplementation(
+export async function verifyProductionImplementation(
   repositoryRoot: string,
   resultCommit: string,
   workerInput: Record<string, DispatchJSONValue>,
@@ -524,7 +524,7 @@ export function createProductionImplementationEvidenceService(
       if (worker.state !== "consumed" || !object(worker.input) || !object(worker.output)) {
         throw new Error("worker evidence is not consumed");
       }
-      return await verifyImplementation(
+      return await verifyProductionImplementation(
         options.repositoryRoot,
         resultCommit,
         worker.input,
