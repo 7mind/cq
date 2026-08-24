@@ -166,7 +166,14 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -207,7 +214,14 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ]
         },
         "begin": {
@@ -250,7 +264,14 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -291,24 +312,53 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ]
         },
         "implement-conflict-resolver": {
-          "tools": ["fetch_dispatch_input", "store_result", "git_resolve_continue"],
-          "preservedCapabilities": ["fetch_dispatch_input", "store_result", "git_resolve_continue"]
+          "tools": [
+            "fetch_dispatch_input",
+            "store_result",
+            "git_resolve_continue"
+          ],
+          "preservedCapabilities": [
+            "fetch_dispatch_input",
+            "store_result",
+            "git_resolve_continue"
+          ]
         },
         "implement-review": {
           "tools": [],
           "preservedCapabilities": []
         },
         "implement-reviewer": {
-          "tools": ["fetch_dispatch_input", "store_result"],
-          "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
+          "tools": [
+            "fetch_dispatch_input",
+            "store_result"
+          ],
+          "preservedCapabilities": [
+            "fetch_dispatch_input",
+            "store_result"
+          ]
         },
         "implement-worker": {
-          "tools": ["fetch_dispatch_input", "store_result", "git_commit"],
-          "preservedCapabilities": ["fetch_dispatch_input", "store_result", "git_commit"]
+          "tools": [
+            "fetch_dispatch_input",
+            "store_result",
+            "git_commit"
+          ],
+          "preservedCapabilities": [
+            "fetch_dispatch_input",
+            "store_result",
+            "git_commit"
+          ]
         },
         "implement/advance": {
           "tools": [
@@ -350,7 +400,14 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -391,7 +448,14 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ]
         },
         "implement/start": {
@@ -434,7 +498,14 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -475,7 +546,14 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ]
         },
         "investigate": {
@@ -518,7 +596,14 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -559,16 +644,35 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ]
         },
         "investigate-explorer": {
-          "tools": ["fetch_dispatch_input", "store_result"],
-          "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
+          "tools": [
+            "fetch_dispatch_input",
+            "store_result"
+          ],
+          "preservedCapabilities": [
+            "fetch_dispatch_input",
+            "store_result"
+          ]
         },
         "investigate-prober": {
-          "tools": ["fetch_dispatch_input", "store_result"],
-          "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
+          "tools": [
+            "fetch_dispatch_input",
+            "store_result"
+          ],
+          "preservedCapabilities": [
+            "fetch_dispatch_input",
+            "store_result"
+          ]
         },
         "investigate/advance": {
           "tools": [
@@ -610,7 +714,14 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -651,7 +762,14 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ]
         },
         "plan": {
@@ -694,7 +812,14 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -735,7 +860,14 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ]
         },
         "plan-advance": {
@@ -761,7 +893,6 @@
         "plan-reviewer": {
           "tools": [
             "fetch_item",
-            "create_item",
             "fts_search",
             "list_milestone_items",
             "fetch_dispatch_input",
@@ -769,7 +900,6 @@
           ],
           "preservedCapabilities": [
             "fetch_item",
-            "create_item",
             "fts_search",
             "list_milestone_items",
             "fetch_dispatch_input",
@@ -816,7 +946,14 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -857,7 +994,14 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ]
         },
         "plan/follow-up": {
@@ -900,7 +1044,14 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -941,12 +1092,23 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ]
         },
         "planners": {
-          "tools": ["get_config"],
-          "preservedCapabilities": ["get_config"]
+          "tools": [
+            "get_config"
+          ],
+          "preservedCapabilities": [
+            "get_config"
+          ]
         },
         "research": {
           "tools": [
@@ -988,7 +1150,14 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -1029,16 +1198,35 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ]
         },
         "research-experimenter": {
-          "tools": ["fetch_dispatch_input", "store_result"],
-          "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
+          "tools": [
+            "fetch_dispatch_input",
+            "store_result"
+          ],
+          "preservedCapabilities": [
+            "fetch_dispatch_input",
+            "store_result"
+          ]
         },
         "research-explorer": {
-          "tools": ["fetch_dispatch_input", "store_result"],
-          "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
+          "tools": [
+            "fetch_dispatch_input",
+            "store_result"
+          ],
+          "preservedCapabilities": [
+            "fetch_dispatch_input",
+            "store_result"
+          ]
         },
         "research/advance": {
           "tools": [
@@ -1080,7 +1268,14 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ],
           "preservedCapabilities": [
             "enumerate_ledgers",
@@ -1121,35 +1316,148 @@
             "finalize_plan",
             "worktree_manage",
             "git_commit",
-            "git_resolve_continue"
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
           ]
         },
         "reviewers": {
-          "tools": ["get_config"],
-          "preservedCapabilities": ["get_config"]
+          "tools": [
+            "get_config"
+          ],
+          "preservedCapabilities": [
+            "get_config"
+          ]
+        },
+        "upstream": {
+          "tools": [
+            "enumerate_ledgers",
+            "fetch_ledger",
+            "fetch_ledger_archive",
+            "fetch_item",
+            "update_item",
+            "create_item",
+            "create_ledger",
+            "search_items",
+            "fts_search",
+            "archive_milestone",
+            "list_milestone_items",
+            "snapshot",
+            "workset",
+            "derive_predicates",
+            "materialize_operator_action",
+            "acknowledge_operator_action",
+            "record_operator_action_evidence",
+            "revise_operator_action",
+            "complete_operator_action",
+            "reopen_item",
+            "unarchive_item",
+            "read_log",
+            "get_config",
+            "get_usage_stats",
+            "prepare_dispatch",
+            "fetch_dispatch_input",
+            "store_result",
+            "confirm_dispatch_completion",
+            "abort_dispatch",
+            "fetch_dispatch_result",
+            "fetch_prompt",
+            "list_projects",
+            "claim_plan",
+            "publish_plan_draft",
+            "release_plan_claim",
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit",
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
+          ],
+          "preservedCapabilities": [
+            "enumerate_ledgers",
+            "fetch_ledger",
+            "fetch_ledger_archive",
+            "fetch_item",
+            "update_item",
+            "create_item",
+            "create_ledger",
+            "search_items",
+            "fts_search",
+            "archive_milestone",
+            "list_milestone_items",
+            "snapshot",
+            "workset",
+            "derive_predicates",
+            "materialize_operator_action",
+            "acknowledge_operator_action",
+            "record_operator_action_evidence",
+            "revise_operator_action",
+            "complete_operator_action",
+            "reopen_item",
+            "unarchive_item",
+            "read_log",
+            "get_config",
+            "get_usage_stats",
+            "prepare_dispatch",
+            "fetch_dispatch_input",
+            "store_result",
+            "confirm_dispatch_completion",
+            "abort_dispatch",
+            "fetch_dispatch_result",
+            "fetch_prompt",
+            "list_projects",
+            "claim_plan",
+            "publish_plan_draft",
+            "release_plan_claim",
+            "finalize_plan",
+            "worktree_manage",
+            "git_commit",
+            "git_resolve_continue",
+            "prepare_implementation_review_panel",
+            "prepare_implementation_review_attempt",
+            "execute_external_implementation_review_attempt",
+            "finalize_implementation_review_attempt",
+            "prepare_implementation_review_fallback",
+            "prepare_implementation_completion",
+            "record_implementation_completion"
+          ]
         }
       },
       "measurement": {
         "method": "independent whole-value JSON.stringify with o200k_base",
         "current": {
-          "utf8Bytes": 1111103,
-          "tokens": 262049,
-          "sha256": "d90b2a7e2243cb6cb1df542f38a6192089f12437d23cb82494a4b64dbdcfb86f"
+          "utf8Bytes": 1157393,
+          "tokens": 272967,
+          "sha256": "e9c804831dc252de2ca679df0ced0b1f1c59f8fd47ad7b0125d18d9383981685"
         },
         "counterfactual": {
-          "utf8Bytes": 504728,
-          "tokens": 118884,
-          "sha256": "f38fd1463f3cea0e78f8379aa1b873c2ed2552aa7be885f9c680ac7c2cba75cb"
+          "utf8Bytes": 546592,
+          "tokens": 128753,
+          "sha256": "5d1f7d8166c1c0ceca8478a22250a0ca70fe29020a50e6f8f890b3c6fccf3638"
         },
-        "deltaUtf8Bytes": 606375,
-        "deltaTokens": 143165
+        "deltaUtf8Bytes": 610801,
+        "deltaTokens": 144214
       }
     },
     {
       "id": "generic-milestone-crud",
       "proposal": "Remove create/update/fetch milestone methods and route root milestones through generic item operations with explicit root/DAG/response invariants.",
       "publicChanges": {
-        "removed": ["create_milestone", "update_milestone", "fetch_milestone"],
+        "removed": [
+          "create_milestone",
+          "update_milestone",
+          "fetch_milestone"
+        ],
         "renamed": [],
         "replacements": {
           "create_milestone": "create_item",
@@ -1260,10 +1568,6 @@
       "get_config",
       "list_milestone_items",
       "list_projects",
-      "prepare_implementation_completion",
-      "prepare_implementation_review_attempt",
-      "prepare_implementation_review_fallback",
-      "prepare_implementation_review_panel",
       "prepare_dispatch",
       "publish_plan_draft",
       "read_log",
@@ -1279,20 +1583,34 @@
       "materialize_operator_action",
       "acknowledge_operator_action",
       "record_operator_action_evidence",
-      "record_implementation_completion",
       "revise_operator_action",
       "complete_operator_action",
       "worktree_manage",
       "git_commit",
       "git_resolve_continue",
+      "prepare_implementation_review_panel",
+      "prepare_implementation_review_attempt",
       "execute_external_implementation_review_attempt",
-      "finalize_implementation_review_attempt"
+      "finalize_implementation_review_attempt",
+      "prepare_implementation_review_fallback",
+      "prepare_implementation_completion",
+      "record_implementation_completion"
     ],
     "publicToolCount": 46,
-    "removedPublicTools": ["create_milestone", "update_milestone", "fetch_milestone"],
+    "removedPublicTools": [
+      "create_milestone",
+      "update_milestone",
+      "fetch_milestone"
+    ],
     "renamedPublicTools": [],
     "requiredCapabilityCoverage": {
-      "cq": ["snapshot", "derive_predicates", "fetch_item", "create_item", "update_item"],
+      "cq": [
+        "snapshot",
+        "derive_predicates",
+        "fetch_item",
+        "create_item",
+        "update_item"
+      ],
       "frontends": [
         "enumerate_ledgers",
         "fetch_ledger",
@@ -1311,7 +1629,12 @@
         "update_item",
         "archive_milestone"
       ],
-      "lifecycle": ["create_item", "update_item", "reopen_item", "unarchive_item"],
+      "lifecycle": [
+        "create_item",
+        "update_item",
+        "reopen_item",
+        "unarchive_item"
+      ],
       "recovery": [
         "fetch_ledger_archive",
         "reopen_item",
@@ -1320,7 +1643,10 @@
         "fetch_dispatch_result",
         "release_plan_claim"
       ],
-      "referenceCanonicalization": ["create_item", "update_item"],
+      "referenceCanonicalization": [
+        "create_item",
+        "update_item"
+      ],
       "archive": [
         "archive_milestone",
         "fetch_ledger_archive",
@@ -1335,7 +1661,12 @@
         "abort_dispatch",
         "fetch_dispatch_result"
       ],
-      "planFencing": ["claim_plan", "publish_plan_draft", "release_plan_claim", "finalize_plan"]
+      "planFencing": [
+        "claim_plan",
+        "publish_plan_draft",
+        "release_plan_claim",
+        "finalize_plan"
+      ]
     },
     "roleProfiles": {
       "advance": {
@@ -1378,7 +1709,14 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1419,7 +1757,14 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ]
       },
       "begin": {
@@ -1462,7 +1807,14 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1503,24 +1855,53 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ]
       },
       "implement-conflict-resolver": {
-        "tools": ["fetch_dispatch_input", "store_result", "git_resolve_continue"],
-        "preservedCapabilities": ["fetch_dispatch_input", "store_result", "git_resolve_continue"]
+        "tools": [
+          "fetch_dispatch_input",
+          "store_result",
+          "git_resolve_continue"
+        ],
+        "preservedCapabilities": [
+          "fetch_dispatch_input",
+          "store_result",
+          "git_resolve_continue"
+        ]
       },
       "implement-review": {
         "tools": [],
         "preservedCapabilities": []
       },
       "implement-reviewer": {
-        "tools": ["fetch_dispatch_input", "store_result"],
-        "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
+        "tools": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "preservedCapabilities": [
+          "fetch_dispatch_input",
+          "store_result"
+        ]
       },
       "implement-worker": {
-        "tools": ["fetch_dispatch_input", "store_result", "git_commit"],
-        "preservedCapabilities": ["fetch_dispatch_input", "store_result", "git_commit"]
+        "tools": [
+          "fetch_dispatch_input",
+          "store_result",
+          "git_commit"
+        ],
+        "preservedCapabilities": [
+          "fetch_dispatch_input",
+          "store_result",
+          "git_commit"
+        ]
       },
       "implement/advance": {
         "tools": [
@@ -1562,7 +1943,14 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1603,7 +1991,14 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ]
       },
       "implement/start": {
@@ -1646,7 +2041,14 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1687,7 +2089,14 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ]
       },
       "investigate": {
@@ -1730,7 +2139,14 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1771,16 +2187,35 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ]
       },
       "investigate-explorer": {
-        "tools": ["fetch_dispatch_input", "store_result"],
-        "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
+        "tools": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "preservedCapabilities": [
+          "fetch_dispatch_input",
+          "store_result"
+        ]
       },
       "investigate-prober": {
-        "tools": ["fetch_dispatch_input", "store_result"],
-        "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
+        "tools": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "preservedCapabilities": [
+          "fetch_dispatch_input",
+          "store_result"
+        ]
       },
       "investigate/advance": {
         "tools": [
@@ -1822,7 +2257,14 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1863,7 +2305,14 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ]
       },
       "plan": {
@@ -1906,7 +2355,14 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -1947,7 +2403,14 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ]
       },
       "plan-advance": {
@@ -1973,7 +2436,6 @@
       "plan-reviewer": {
         "tools": [
           "fetch_item",
-          "create_item",
           "fts_search",
           "list_milestone_items",
           "fetch_dispatch_input",
@@ -1981,7 +2443,6 @@
         ],
         "preservedCapabilities": [
           "fetch_item",
-          "create_item",
           "fts_search",
           "list_milestone_items",
           "fetch_dispatch_input",
@@ -2028,7 +2489,14 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2069,7 +2537,14 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ]
       },
       "plan/follow-up": {
@@ -2112,7 +2587,14 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2153,12 +2635,23 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ]
       },
       "planners": {
-        "tools": ["get_config"],
-        "preservedCapabilities": ["get_config"]
+        "tools": [
+          "get_config"
+        ],
+        "preservedCapabilities": [
+          "get_config"
+        ]
       },
       "research": {
         "tools": [
@@ -2200,7 +2693,14 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2241,16 +2741,35 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ]
       },
       "research-experimenter": {
-        "tools": ["fetch_dispatch_input", "store_result"],
-        "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
+        "tools": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "preservedCapabilities": [
+          "fetch_dispatch_input",
+          "store_result"
+        ]
       },
       "research-explorer": {
-        "tools": ["fetch_dispatch_input", "store_result"],
-        "preservedCapabilities": ["fetch_dispatch_input", "store_result"]
+        "tools": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "preservedCapabilities": [
+          "fetch_dispatch_input",
+          "store_result"
+        ]
       },
       "research/advance": {
         "tools": [
@@ -2292,7 +2811,14 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ],
         "preservedCapabilities": [
           "enumerate_ledgers",
@@ -2333,12 +2859,121 @@
           "finalize_plan",
           "worktree_manage",
           "git_commit",
-          "git_resolve_continue"
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
         ]
       },
       "reviewers": {
-        "tools": ["get_config"],
-        "preservedCapabilities": ["get_config"]
+        "tools": [
+          "get_config"
+        ],
+        "preservedCapabilities": [
+          "get_config"
+        ]
+      },
+      "upstream": {
+        "tools": [
+          "enumerate_ledgers",
+          "fetch_ledger",
+          "fetch_ledger_archive",
+          "fetch_item",
+          "update_item",
+          "create_item",
+          "create_ledger",
+          "search_items",
+          "fts_search",
+          "archive_milestone",
+          "list_milestone_items",
+          "snapshot",
+          "workset",
+          "derive_predicates",
+          "materialize_operator_action",
+          "acknowledge_operator_action",
+          "record_operator_action_evidence",
+          "revise_operator_action",
+          "complete_operator_action",
+          "reopen_item",
+          "unarchive_item",
+          "read_log",
+          "get_config",
+          "get_usage_stats",
+          "prepare_dispatch",
+          "fetch_dispatch_input",
+          "store_result",
+          "confirm_dispatch_completion",
+          "abort_dispatch",
+          "fetch_dispatch_result",
+          "fetch_prompt",
+          "list_projects",
+          "claim_plan",
+          "publish_plan_draft",
+          "release_plan_claim",
+          "finalize_plan",
+          "worktree_manage",
+          "git_commit",
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
+        ],
+        "preservedCapabilities": [
+          "enumerate_ledgers",
+          "fetch_ledger",
+          "fetch_ledger_archive",
+          "fetch_item",
+          "update_item",
+          "create_item",
+          "create_ledger",
+          "search_items",
+          "fts_search",
+          "archive_milestone",
+          "list_milestone_items",
+          "snapshot",
+          "workset",
+          "derive_predicates",
+          "materialize_operator_action",
+          "acknowledge_operator_action",
+          "record_operator_action_evidence",
+          "revise_operator_action",
+          "complete_operator_action",
+          "reopen_item",
+          "unarchive_item",
+          "read_log",
+          "get_config",
+          "get_usage_stats",
+          "prepare_dispatch",
+          "fetch_dispatch_input",
+          "store_result",
+          "confirm_dispatch_completion",
+          "abort_dispatch",
+          "fetch_dispatch_result",
+          "fetch_prompt",
+          "list_projects",
+          "claim_plan",
+          "publish_plan_draft",
+          "release_plan_claim",
+          "finalize_plan",
+          "worktree_manage",
+          "git_commit",
+          "git_resolve_continue",
+          "prepare_implementation_review_panel",
+          "prepare_implementation_review_attempt",
+          "execute_external_implementation_review_attempt",
+          "finalize_implementation_review_attempt",
+          "prepare_implementation_review_fallback",
+          "prepare_implementation_completion",
+          "record_implementation_completion"
+        ]
       }
     },
     "fullToolsListMeasurement": {
@@ -2349,27 +2984,27 @@
         "sha256": "a7fbc44f6499b7530a51a31a2270feb6e5883b26fc0803e767db2e4ec006c8d7"
       },
       "counterfactual": {
-        "utf8Bytes": 40253,
-        "tokens": 9464,
-        "sha256": "0be4e87178405a849e6a832b97c5ce817e7351cfa94f8019ca2ab2f494b3bfc4"
+        "utf8Bytes": 46201,
+        "tokens": 10900,
+        "sha256": "d0c640cd6cb642d4f600cffbf0d0e33676b202773d9a6708f2bd9ff325cd44ac"
       },
-      "deltaUtf8Bytes": 6025,
-      "deltaTokens": 1452
+      "deltaUtf8Bytes": 77,
+      "deltaTokens": 16
     },
     "completeRoleContextMeasurement": {
       "method": "independent whole-value JSON.stringify with o200k_base",
       "current": {
-        "utf8Bytes": 1114673,
-        "tokens": 262920,
-        "sha256": "a0053e2c068f55dfb32683581ab0fcea415ccd7bf77c0d9c1488b4fc01f0a3e2"
+        "utf8Bytes": 1160963,
+        "tokens": 273838,
+        "sha256": "9dacb7755e96b45a5b1e363d379e88749d99c4cb7ae42c3262cf7b7fc3cd1dc3"
       },
       "counterfactual": {
-        "utf8Bytes": 466043,
-        "tokens": 109144,
-        "sha256": "28639297df7fc814191afc04a11a4bf06db7978f6a9ebe7c7e7972c5180889f3"
+        "utf8Bytes": 576442,
+        "tokens": 135554,
+        "sha256": "84c9ca2e93b6db20fd34adedb8bb52375038ec743adbc6d1309109b1a245c287"
       },
-      "deltaUtf8Bytes": 648630,
-      "deltaTokens": 153776
+      "deltaUtf8Bytes": 584521,
+      "deltaTokens": 138284
     }
   },
   "migrationMap": [

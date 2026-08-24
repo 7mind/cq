@@ -29,14 +29,17 @@ import {
   createLedgerStore,
   createWorktreeManageCapability,
   GOALS_LEDGER,
+  ImplementationEvidenceService,
   listManagedLiveWorktrees,
   MANAGED_GATE_CLOSURE_MANIFEST,
   MANAGED_GATE_CLOSURE_VERSION,
   MILESTONES_AMBIENT_ID,
+  recordProtectedImplementationCompletion,
   TASKS_LEDGER,
   type DispatchCapability,
   type ManagedGateClosureManifestV1,
   type ManagedWorktreeHandle,
+  type ImplementationReviewerIdentity,
   type SupervisedWorkerGateRunRequest,
   type SupervisedWorkerGateRunResult,
   type SupervisedWorkerGateRunner,
@@ -54,6 +57,16 @@ const ARCHIVED_GOAL_ID = "G350";
 const GATE_TARGET_PACKAGE = "nix/pkg/cq-ledgers/package.json";
 const GATE_TARGET_SCRIPT = "check";
 const GATE_TARGET_SCRIPTS = { [GATE_TARGET_SCRIPT]: "bun test" } as const;
+const D336_FINALIZED_MANIFEST = "D336 finalized implementation manifest\n";
+const D336_MERGE_OPERATION_ID = "d336_merge_v1";
+const D336_REVIEWER: ImplementationReviewerIdentity = {
+  alias: "d336-native",
+  harness: "codex",
+  model: "frontier",
+  provider: null,
+  launch: "native",
+  adapterId: "codex:d336-native",
+};
 const cqCli = fileURLToPath(new URL("../../cq-cli/src/main.ts", import.meta.url));
 let dispatchSequence = 0;
 
@@ -221,6 +234,98 @@ async function withClient(
     supervisedWorkerGateRunner: gateRunner,
     randomBytes: sequentialDispatchRandomBytes(dispatchSequence * 32),
   });
+  if (resolved.implementationEvidenceStore === undefined) {
+    throw new Error("D336 XDG fixture did not resolve an implementation evidence store");
+  }
+  const repositoryBase = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+  let reviewResultCommit: string | null = null;
+  const implementationEvidence = new ImplementationEvidenceService({
+    store: resolved.implementationEvidenceStore,
+    reviewerRoster: [D336_REVIEWER],
+    nativeFallback: D336_REVIEWER,
+    prepareNativeReview: async ({ attemptRef, panel }) => {
+      reviewResultCommit = panel.resultCommit;
+      return {
+        attestationId: `att_${attemptRef.slice(-12)}`,
+        generation: 1,
+        responseStoreNow: "2026-08-21T00:00:03.000Z",
+        childCancelAt: "2026-08-21T00:02:03.000Z",
+        launchDeadline: "2026-08-21T00:01:03.000Z",
+        promptProvenance: {
+          roleId: "implement-reviewer",
+          version: 7,
+          surface: "codex",
+          promptDigest: "c".repeat(64),
+          catalogHash: "d".repeat(64),
+          inputDigest: "e".repeat(64),
+        },
+        inputCapability: { scope: "fetch-input", token: "d336-review-input" },
+        resultCapability: { scope: "store-result", token: "d336-review-result" },
+      };
+    },
+    fetchNativeReview: async () => {
+      if (reviewResultCommit === null) throw new Error("D336 review was not prepared");
+      return {
+        state: "consumed",
+        output: {
+          taskId: TASK_ID,
+          verdict: "approve",
+          criticism: [],
+          questions: [],
+          defects: [],
+          rationale: "D336 protected merge evidence is complete",
+          gateReRan: true,
+          gateDurationMs: 1,
+          resultCommitVerified: true,
+          resultCommitEvidence: {
+            status: "verified",
+            resultCommit: reviewResultCommit,
+            branchTip: reviewResultCommit,
+          },
+          baseAncestry: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit: repositoryBase,
+            resultCommit: reviewResultCommit,
+            mergeBase: repositoryBase,
+          },
+        },
+      };
+    },
+    executeExternalReview: async () => {
+      throw new Error("D336 uses one native reviewer");
+    },
+    fetchWorker: async (dispatch) => {
+      const result = await dispatchCapability.fetch(dispatch);
+      return result.state === "consumed"
+        ? { state: "consumed", output: result.output }
+        : result.state === "aborted"
+          ? { state: "aborted" }
+          : { state: "missing" };
+    },
+    readTaskAuthority: async (taskRef) => ({
+      taskRef,
+      ownerGoalRef: `goals:${GOAL_ID}`,
+      status: resolved.store.fetchItem(TASKS_LEDGER, TASK_ID).status,
+      finalizedManifest: D336_FINALIZED_MANIFEST,
+    }),
+    repositoryHead: async () => await git(repositoryRoot, ["rev-parse", "HEAD"]),
+    verifyImplementation: async () => ({
+      baseCommit: repositoryBase,
+      startingCommit: repositoryBase,
+      clean: true,
+      ancestryVerified: true,
+      receiptsVerified: true,
+      acceptanceVerified: true,
+      gateVerified: true,
+      details: { fixture: "D336", ffOnly: true },
+    }),
+    recordLedgerCompletion: async ({ task, completion, author, session }) =>
+      await recordProtectedImplementationCompletion(resolved.store, task, completion, {
+        author,
+        ...(session === undefined ? {} : { session }),
+      }),
+  });
   const server = createManagementLedgerMcpServer({
     store: resolved.store,
     displayName: "D336 XDG fixture",
@@ -229,6 +334,7 @@ async function withClient(
     repositoryRoot,
     dispatchCapability,
     worktreeManage: createWorktreeManageCapability(repositoryRoot, { deps: { skipInstall: true } }),
+    implementationEvidence,
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -336,7 +442,10 @@ async function seedLedger(
     await resolved.store.createItem(TASKS_LEDGER, milestone.id, {
       id: taskId,
       status: "planned",
-      fields: { headline: "Release managed D336 task" },
+      fields: {
+        headline: "Release managed D336 task",
+        ledgerRefs: [`goals:${goalId}`],
+      },
     });
     await resolved.store.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
       id: goalId,
@@ -565,7 +674,74 @@ describe("D336 production XDG terminal worktree release", () => {
             },
           })) as ToolResult,
         );
-        await exec(process.execPath, [
+        const panel = decode<{
+          panelRef: string;
+          attemptRefs: string[];
+        }>(
+          (await client.callTool({
+            name: "prepare_implementation_review_panel",
+            arguments: {
+              task_ref: `tasks:${TASK_ID}`,
+              result_commit: resultCommit,
+              worker_dispatch: {
+                attestationId: dispatch.prepared.attestationId,
+                generation: dispatch.prepared.generation,
+              },
+              operation_id: "d336_review_panel_v1",
+              author: "d336-parent",
+            },
+          })) as ToolResult,
+        );
+        const attemptRef = panel.attemptRefs[0]!;
+        expect(
+          decode<{ launch: string }>(
+            (await client.callTool({
+              name: "prepare_implementation_review_attempt",
+              arguments: {
+                panel_ref: panel.panelRef,
+                attempt_ref: attemptRef,
+                operation_id: "d336_review_attempt_v1",
+                author: "d336-parent",
+              },
+            })) as ToolResult,
+          ).launch,
+        ).toBe("native");
+        expect(
+          decode<{ terminalState: string }>(
+            (await client.callTool({
+              name: "finalize_implementation_review_attempt",
+              arguments: {
+                attempt_ref: attemptRef,
+                operation_id: "d336_review_finalize_v1",
+                author: "d336-parent",
+              },
+            })) as ToolResult,
+          ).terminalState,
+        ).toBe("approved");
+        const completion = decode<{
+          completionRef: string;
+          evidenceFingerprint: string;
+        }>(
+          (await client.callTool({
+            name: "prepare_implementation_completion",
+            arguments: {
+              task_ref: `tasks:${TASK_ID}`,
+              expected_repository_head: baseCommit,
+              result_commit: resultCommit,
+              worker_dispatch: {
+                attestationId: dispatch.prepared.attestationId,
+                generation: dispatch.prepared.generation,
+              },
+              review_attempt_refs: [attemptRef],
+              completion: "D336 merged terminal result",
+              log_paths: [".cq/logs/d336-worker.md", ".cq/logs/d336-reviewer.md"],
+              merge_operation_id: D336_MERGE_OPERATION_ID,
+              operation_id: "d336_completion_prepare_v1",
+              author: "d336-parent",
+            },
+          })) as ToolResult,
+        );
+        const merge = await exec(process.execPath, [
           cqCli,
           "gate",
           "git-effect",
@@ -577,15 +753,39 @@ describe("D336 production XDG terminal worktree release", () => {
           TASK_ID,
           "--commit",
           resultCommit,
+          "--completion-ref",
+          completion.completionRef,
+          "--operation-id",
+          D336_MERGE_OPERATION_ID,
         ]);
+        const acknowledgement = `CQ_IMPLEMENTATION_COMPLETION_MERGE=${JSON.stringify({
+          status: "merged",
+          completionRef: completion.completionRef,
+          taskRef: `tasks:${TASK_ID}`,
+          resultCommit,
+          repositoryHead: resultCommit,
+          mergeOperationId: D336_MERGE_OPERATION_ID,
+          evidenceFingerprint: completion.evidenceFingerprint,
+        })}`;
+        expect(merge.stdout.toString().trim()).toBe(acknowledgement);
 
-        const updated = decode<{ item: { status: string } }>(
+        const recorded = decode<{ status: string; taskRef: string; resultCommit: string }>(
           (await client.callTool({
-            name: "update_item",
-            arguments: { ledger_id: "tasks", item_id: TASK_ID, status: "done" },
+            name: "record_implementation_completion",
+            arguments: {
+              task_ref: `tasks:${TASK_ID}`,
+              expected_repository_head: resultCommit,
+              operation_id: "d336_completion_record_v1",
+              author: "d336-parent",
+            },
           })) as ToolResult,
         );
-        expect(updated.item.status).toBe("done");
+        expect(recorded).toMatchObject({
+          status: "recorded",
+          taskRef: `tasks:${TASK_ID}`,
+          resultCommit,
+        });
+        expect(store.fetchItem(TASKS_LEDGER, TASK_ID).status).toBe("done");
 
         const rootsBefore = await store.worksetStore!().snapshot();
         await expect(
