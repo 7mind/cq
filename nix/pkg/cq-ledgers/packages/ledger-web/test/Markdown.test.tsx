@@ -18,7 +18,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { createElement, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Markdown } from "../src/Markdown";
-import { LEDGER_RESPONSE_CONTRACTS, LEDGER_TOOL_NAMES } from "@cq/ledger";
+import { LEDGER_RESPONSE_CONTRACTS, MANAGEMENT_LEDGER_TOOL_NAMES } from "@cq/ledger";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -124,9 +124,11 @@ describe("ledger response-contract Markdown", () => {
       [...container.querySelectorAll("thead th")].map((cell) => cell.textContent),
     ).toEqual(["Tool", "Category", "Authoritative response"]);
     const rows = [...container.querySelectorAll<HTMLTableRowElement>("tbody tr")];
-    expect(rows).toHaveLength(LEDGER_TOOL_NAMES.length);
-    expect(rows.map((row) => row.cells.length)).toEqual(LEDGER_TOOL_NAMES.map(() => 3));
-    expect(rows.map((row) => row.cells[0]?.textContent)).toEqual([...LEDGER_TOOL_NAMES]);
+    expect(rows).toHaveLength(MANAGEMENT_LEDGER_TOOL_NAMES.length);
+    expect(rows.map((row) => row.cells.length)).toEqual(MANAGEMENT_LEDGER_TOOL_NAMES.map(() => 3));
+    expect(rows.map((row) => row.cells[0]?.textContent)).toEqual([
+      ...MANAGEMENT_LEDGER_TOOL_NAMES,
+    ]);
     for (const tool of [
       "materialize_operator_action",
       "acknowledge_operator_action",
