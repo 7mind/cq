@@ -93,6 +93,7 @@ async function fixture() {
     },
     fetchWorker: async () => ({
       state: "consumed",
+      input: { taskId: "T2345", baseCommit: BASE },
       output: {
         status: "pass",
         resultCommit: RESULT,

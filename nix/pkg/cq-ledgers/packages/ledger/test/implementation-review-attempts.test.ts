@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { DispatchHandle, DispatchPrepared } from "@cq/config";
+import type { DispatchHandle, DispatchJSONValue, DispatchPrepared } from "@cq/config";
 import {
   ImplementationEvidenceService,
   createInMemoryImplementationEvidenceStore,
@@ -73,6 +73,7 @@ function verdict(kind: "approve" | "disapprove" = "approve") {
 function serviceWith(
   roster: readonly ImplementationReviewerIdentity[],
   execute: (identity: ImplementationReviewerIdentity) => Promise<ExternalReviewProcessObservation>,
+  workerOutput: Record<string, DispatchJSONValue> = { status: "pass", resultCommit: RESULT },
 ) {
   const nativeResults = new Map<string, unknown>();
   const store = createInMemoryImplementationEvidenceStore();
@@ -90,7 +91,8 @@ function serviceWith(
     executeExternalReview: async ({ identity }) => await execute(identity),
     fetchWorker: async () => ({
       state: "consumed",
-      output: { status: "pass", resultCommit: RESULT },
+      input: { taskId: "T2345", baseCommit: BASE },
+      output: workerOutput,
     }),
     readTaskAuthority: async () => ({
       taskRef: "tasks:T2345",
@@ -373,6 +375,106 @@ describe("protected implementation review attempts [BG]", () => {
       service.finalizeReviewAttempt({
         attemptRef,
         operationId: "finalize-malformed-approval",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ terminalState: "operational-abstention" });
+  });
+
+  test("accepts a trusted supervised worker gate without a reviewer gate rerun", async () => {
+    const trustedApproval = {
+      ...verdict(),
+      gateReRan: false,
+      gateReRanReason: "trusted supervised worker gate",
+    };
+    delete (trustedApproval as { gateDurationMs?: number }).gateDurationMs;
+    const { service } = serviceWith(
+      [adapter],
+      async () => ({
+        adapterIdentity: adapter.adapterId,
+        stdout: JSON.stringify(trustedApproval),
+        stderr: "",
+        exitCode: 0,
+      }),
+      {
+        status: "pass",
+        resultCommit: RESULT,
+        branch: "implement/T2345",
+        actualWorktreePath: "/repo/.claude/worktrees/T2345",
+        supervisedGateEvidence: {
+          taskId: "T2345",
+          resultCommit: RESULT,
+          branch: "implement/T2345",
+          worktreePath: "/repo/.claude/worktrees/T2345",
+          clean: true,
+          gateExitCode: 0,
+          passCount: 1,
+          failCount: 0,
+        },
+      },
+    );
+    const panel = await service.prepareReviewPanel({
+      taskRef: "tasks:T2345",
+      resultCommit: RESULT,
+      workerDispatch: WORKER,
+      operationId: "panel-trusted-gate",
+      author: "parent",
+    });
+    const attemptRef = panel.attemptRefs[0]!;
+    await service.prepareReviewAttempt({
+      panelRef: panel.panelRef,
+      attemptRef,
+      operationId: "prepare-trusted-gate",
+      author: "parent",
+    });
+    await service.executeExternalReviewAttempt({
+      attemptRef,
+      operationId: "execute-trusted-gate",
+      author: "parent",
+    });
+    await expect(
+      service.finalizeReviewAttempt({
+        attemptRef,
+        operationId: "finalize-trusted-gate",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ terminalState: "approved" });
+  });
+
+  test("binds an approving reviewer's base ancestry to the dispatched base", async () => {
+    const forgedBase = "c".repeat(40);
+    const forgedApproval = {
+      ...verdict(),
+      baseAncestry: { ...verdict().baseAncestry, baseCommit: forgedBase, mergeBase: forgedBase },
+    };
+    const { service } = serviceWith([adapter], async () => ({
+      adapterIdentity: adapter.adapterId,
+      stdout: JSON.stringify(forgedApproval),
+      stderr: "",
+      exitCode: 0,
+    }));
+    const panel = await service.prepareReviewPanel({
+      taskRef: "tasks:T2345",
+      resultCommit: RESULT,
+      workerDispatch: WORKER,
+      operationId: "panel-forged-base",
+      author: "parent",
+    });
+    const attemptRef = panel.attemptRefs[0]!;
+    await service.prepareReviewAttempt({
+      panelRef: panel.panelRef,
+      attemptRef,
+      operationId: "prepare-forged-base",
+      author: "parent",
+    });
+    await service.executeExternalReviewAttempt({
+      attemptRef,
+      operationId: "execute-forged-base",
+      author: "parent",
+    });
+    await expect(
+      service.finalizeReviewAttempt({
+        attemptRef,
+        operationId: "finalize-forged-base",
         author: "parent",
       }),
     ).resolves.toMatchObject({ terminalState: "operational-abstention" });

@@ -4,9 +4,13 @@ import { dirname, join } from "node:path";
 import {
   implementReviewerSidecar,
   validateAgainstSchema,
+  validateParentGateAttestation,
+  validateSupervisedWorkerGateEvidenceForReview,
   type DispatchHandle,
   type DispatchJSONValue,
   type DispatchPrepared,
+  type ImplementWorkerSupervisedGateEvidence,
+  type ParentGateAttestation,
 } from "@cq/config";
 import type {
   MergeEffectBinding,
@@ -456,10 +460,54 @@ function object(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+interface ReviewerValidationContext {
+  readonly baseCommit: string | null;
+  readonly trustedGate: boolean;
+}
+
+function reviewerValidationContext(
+  worker: ImplementationWorkerObservation,
+  reviewerInput?: DispatchJSONValue,
+): ReviewerValidationContext {
+  const workerInput = object(worker.input) ? worker.input : {};
+  const workerOutput = object(worker.output) ? worker.output : {};
+  const baseCommit =
+    typeof workerInput["baseCommit"] === "string" && FULL_SHA.test(workerInput["baseCommit"])
+      ? workerInput["baseCommit"]
+      : null;
+  const branch = workerOutput["branch"];
+  const worktreePath = workerOutput["actualWorktreePath"];
+  const supervisedGate = workerOutput["supervisedGateEvidence"];
+  const trustedSupervisedGate =
+    typeof branch === "string" &&
+    typeof worktreePath === "string" &&
+    object(supervisedGate) &&
+    typeof workerOutput["resultCommit"] === "string" &&
+    validateSupervisedWorkerGateEvidenceForReview(
+      supervisedGate as unknown as ImplementWorkerSupervisedGateEvidence,
+      {
+        taskId: typeof workerInput["taskId"] === "string" ? workerInput["taskId"] : "",
+        resultCommit: workerOutput["resultCommit"],
+        branch,
+        worktreePath,
+      },
+    );
+  const parentGate = object(reviewerInput) ? reviewerInput["parentGateAttestation"] : undefined;
+  const trustedParentGate =
+    object(parentGate) &&
+    typeof workerOutput["resultCommit"] === "string" &&
+    validateParentGateAttestation(
+      parentGate as unknown as ParentGateAttestation,
+      workerOutput["resultCommit"],
+    );
+  return { baseCommit, trustedGate: trustedSupervisedGate || trustedParentGate };
+}
+
 function validateReviewerVerdict(
   value: unknown,
   expectedTaskId: string,
   expectedResultCommit: string,
+  context: ReviewerValidationContext,
 ): value is DispatchJSONValue {
   if (!object(value)) return false;
   if (!validateAgainstSchema(implementReviewerSidecar.outputSchema, value).ok) return false;
@@ -474,10 +522,11 @@ function validateReviewerVerdict(
   if (!object(resultEvidence) || !object(baseAncestry)) return false;
   if (value["verdict"] === "approve") {
     if (
-      value["gateReRan"] !== true ||
-      typeof value["gateDurationMs"] !== "number" ||
-      !Number.isFinite(value["gateDurationMs"]) ||
-      value["gateDurationMs"] <= 0
+      (value["gateReRan"] === true &&
+        (typeof value["gateDurationMs"] !== "number" ||
+          !Number.isFinite(value["gateDurationMs"]) ||
+          value["gateDurationMs"] <= 0)) ||
+      (value["gateReRan"] === false && !context.trustedGate)
     )
       return false;
     if (value["resultCommitVerified"] !== true) return false;
@@ -503,6 +552,8 @@ function validateReviewerVerdict(
       )
     )
       return false;
+    if (context.baseCommit === null || baseAncestry["baseCommit"] !== context.baseCommit)
+      return false;
     if (baseAncestry["mergeBase"] !== baseAncestry["baseCommit"]) return false;
     if (
       (baseAncestry["relation"] === "equal" &&
@@ -519,6 +570,7 @@ function parseAdapterVerdict(
   stdout: string,
   taskId: string,
   resultCommit: string,
+  context: ReviewerValidationContext,
 ): ExternalImplementationReviewExecution["parseResult"] {
   const trimmed = stdout.trim();
   if (trimmed === "")
@@ -535,7 +587,7 @@ function parseAdapterVerdict(
       detail: error instanceof Error ? error.message : String(error),
     };
   }
-  if (!validateReviewerVerdict(parsed, taskId, resultCommit)) {
+  if (!validateReviewerVerdict(parsed, taskId, resultCommit, context)) {
     return {
       kind: "operational-abstention",
       reason: "malformed",
@@ -599,6 +651,7 @@ export interface ImplementationWorkerObservation {
 
 export interface ImplementationReviewObservation {
   readonly state: "consumed" | "aborted" | "missing";
+  readonly input?: DispatchJSONValue;
   readonly output?: DispatchJSONValue;
   readonly retainedAttestation?: string;
 }
@@ -936,6 +989,8 @@ export class ImplementationEvidenceService {
     if (reservation.existing) {
       return { status: "existing" as const, attemptRef: attempt.attemptRef, executionRef: reservation.executionRef };
     }
+    const worker = await this.deps.fetchWorker(panel.workerDispatch);
+    const validationContext = reviewerValidationContext(worker);
     let observation: ExternalReviewProcessObservation | null = null;
     let unavailable: unknown;
     try {
@@ -965,6 +1020,7 @@ export class ImplementationEvidenceService {
               observation.stdout,
               taskIdFromRef(panel.taskRef),
               panel.resultCommit,
+              validationContext,
             );
     const executionBase = {
       adapterIdentity: observation?.adapterIdentity ?? attempt.identity.adapterId,
@@ -1026,6 +1082,9 @@ export class ImplementationEvidenceService {
     }
     let verdict: DispatchJSONValue | null = null;
     let retainedAttestation: string | null = null;
+    const panel = snapshot.panels[attempt.panelRef];
+    if (panel === undefined) throw new Error("review panel is missing");
+    const worker = await this.deps.fetchWorker(panel.workerDispatch);
     if (attempt.identity.launch === "native") {
       if (attempt.preparedDispatch === null)
         throw new Error("native review attempt was not prepared");
@@ -1038,6 +1097,7 @@ export class ImplementationEvidenceService {
           observation.output,
           taskIdFromRef(attempt.taskRef),
           attempt.resultCommit,
+          reviewerValidationContext(worker, observation.input),
         )
       ) {
         verdict = observation.output;
@@ -1449,6 +1509,7 @@ export class ImplementationEvidenceService {
         }
       } else {
         let nativeReceiptIsBound = true;
+        let reviewerInput: DispatchJSONValue | undefined;
         if (attempt.identity.launch === "native") {
           if (attempt.preparedDispatch === null) nativeReceiptIsBound = false;
           else {
@@ -1458,6 +1519,7 @@ export class ImplementationEvidenceService {
               observation.retainedAttestation === attempt.preparedDispatch.attestationId &&
               attempt.retainedAttestation === observation.retainedAttestation &&
               canonical(observation.output) === canonical(attempt.verdict);
+            reviewerInput = observation.input;
           }
         }
         const adapterReceiptIsBound =
@@ -1472,6 +1534,7 @@ export class ImplementationEvidenceService {
             attempt.verdict,
             taskIdFromRef(completion.taskRef),
             completion.resultCommit,
+            reviewerValidationContext(worker, reviewerInput),
           ) ||
           attempt.terminalState !==
             ((attempt.verdict as Record<string, unknown>)["verdict"] === "approve"
