@@ -333,11 +333,24 @@ export class AttestationDriver {
   prepareOutcome(
     overrides: Readonly<Record<string, unknown>> = {},
   ): Promise<PrepareDispatchOutcome> {
-    return prepareDispatchOn(this.backend, this.request(overrides), {
-      mode: "backend",
-      now: this.clock.now,
-      randomBytes: defaultDispatchRandomBytes,
-    });
+    const request = this.request(overrides);
+    return prepareDispatchOn(
+      this.backend,
+      request,
+      request.gitEffectBinding === undefined
+        ? {
+            mode: "backend",
+            now: this.clock.now,
+            randomBytes: defaultDispatchRandomBytes,
+          }
+        : {
+            mode: "manager-bound",
+            now: this.clock.now,
+            randomBytes: defaultDispatchRandomBytes,
+            lineageFenceGuard: async () => null,
+            withLineageLock: async (operation) => await operation(),
+          },
+    );
   }
 
   async prepare(overrides: Readonly<Record<string, unknown>> = {}): Promise<DispatchPrepared> {

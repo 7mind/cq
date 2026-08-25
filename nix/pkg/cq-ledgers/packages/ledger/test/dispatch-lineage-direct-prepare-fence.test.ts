@@ -16,7 +16,6 @@ import {
   type PrepareDispatchRequest,
 } from "@cq/config";
 import {
-  GitObjectLedgerBackend,
   assertAttestationConstructionSupported,
   createDispatchLineageCutoverFence,
   dispatchLineageFenceAuthorizes,
@@ -67,20 +66,6 @@ function request(
     gitEffectBinding: RECOVERY_BINDING,
     ...overrides,
   };
-}
-
-async function git(cwd: string, args: readonly string[]): Promise<void> {
-  const child = Bun.spawn(["git", ...args], {
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-  });
-  const [code, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stderr).text(),
-  ]);
-  if (code !== 0) throw new Error(`git ${args.join(" ")} exited ${String(code)}: ${stderr}`);
 }
 
 describe("direct prepare lineage fence", () => {
@@ -266,21 +251,9 @@ describe("direct prepare lineage fence", () => {
     });
   }
 
-  test("Git-object backend remains an explicit pre-registration exclusion [Behavioral-Active Blackbox-GoodCommunication]", async () => {
-    const root = await fs.mkdtemp(join(tmpdir(), "t2816-git-object-"));
-    try {
-      await git(root, ["init", "-q"]);
-      await git(root, ["config", "user.name", "T2816"]);
-      await git(root, ["config", "user.email", "t2816@example.invalid"]);
-      const backend = new GitObjectLedgerBackend({ repoRoot: root });
-      await backend.init();
-      expect(backend.rootDir).toBe(root);
-      expect(() => assertAttestationConstructionSupported("direct", "git-object")).toThrow(
-        "no row-level compare-and-set",
-      );
-      await backend.dispose();
-    } finally {
-      await fs.rm(root, { recursive: true, force: true });
-    }
+  test("Git-object has no attestation adapter, so this is an explicit matrix incompatibility rather than fence coverage [Behavioral-Active Blackbox-Atomic]", () => {
+    expect(() => assertAttestationConstructionSupported("direct", "git-object")).toThrow(
+      "no row-level compare-and-set",
+    );
   });
 });

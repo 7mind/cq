@@ -850,21 +850,13 @@ export async function prepareDispatchOn(
   request: PrepareDispatchRequest,
   deps: AttestationBackendPrepareDeps | AttestationBackendManagerPrepareDeps,
 ): Promise<PrepareDispatchOutcome> {
-  const managerBound = deps.mode === "manager-bound";
+  const explicitlyManagerBound = deps.mode === "manager-bound";
+  const managerBound = explicitlyManagerBound || request.gitEffectBinding !== undefined;
   const managerDeps = deps as Partial<AttestationBackendManagerPrepareDeps>;
-  if (
-    managerBound &&
-    (managerDeps.lineageFenceGuard === undefined || managerDeps.withLineageLock === undefined)
-  ) {
-    throw new AttestationContractError(
-      "deps",
-      "manager-bound prepare requires a lineage fence guard and lock",
-    );
-  }
-  const operation = async (): Promise<PrepareDispatchOutcome> => {
-    const refusal = managerBound ? await deps.lineageFenceGuard() : null;
-    if (refusal !== undefined && refusal !== null) return refusal;
-    return await backend.transact(prepareLoadScope(request), (store) =>
+  const lineageFenceGuard = managerDeps.lineageFenceGuard;
+  const withLineageLock = managerDeps.withLineageLock;
+  const operation = async (): Promise<PrepareDispatchOutcome> =>
+    await backend.transact(prepareLoadScope(request), (store) =>
       prepareDispatch(request, {
         store,
         now: deps.now,
@@ -872,9 +864,19 @@ export async function prepareDispatchOn(
         ...(deps.stepOrder === undefined ? {} : { stepOrder: deps.stepOrder }),
       }),
     );
-  };
   if (!managerBound) return await operation();
-  return await deps.withLineageLock(operation);
+  if (lineageFenceGuard === undefined || withLineageLock === undefined) {
+    throw new AttestationContractError(
+      "deps",
+      explicitlyManagerBound
+        ? "manager-bound prepare requires a lineage fence guard and lock"
+        : "trusted managed prepare requires a lineage fence guard and lock",
+    );
+  }
+  return await withLineageLock(async () => {
+    const refusal = await lineageFenceGuard();
+    return refusal ?? (await operation());
+  });
 }
 
 export async function storeDispatchResultOn(
