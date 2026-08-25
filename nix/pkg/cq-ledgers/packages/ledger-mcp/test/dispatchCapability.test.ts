@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
 import {
   AttestationKeyReuseError,
   DISPATCH_INPUT_VALIDATION_DEFERRED,
@@ -21,16 +24,22 @@ import {
   type PromptSurface,
 } from "@cq/config";
 import {
+  InMemoryCurrentRecoverySealJournalStore,
   InMemoryLedgerStore,
   MILESTONES_AMBIENT_ID,
   TASKS_LEDGER,
   createDispatchNarrativeSource,
+  dispatchLineageFenceFromRecoveryJournal,
+  journalRecoveryRequiredForFence,
+  prepareManagedWorktree,
+  resolveManagedWorktreeDispatchBinding,
 } from "@cq/ledger";
 import {
   DISPATCH_RUNTIME_DEFERRAL_DISCHARGE,
   createDispatchCapability,
   type DispatchCapabilityOptions,
 } from "../src/dispatchCapability.js";
+import { captureCurrentRecoverySeal } from "../src/dispatchRecoverySeal.js";
 import type {
   PromptArtifactStore,
   PromptArtifactRoleMetadata,
@@ -176,6 +185,22 @@ function reviewerRequest(
     expectedChild: EXPECTED_CHILD,
     ...overrides,
   };
+}
+
+async function git(cwd: string, args: readonly string[]): Promise<string> {
+  const child = Bun.spawn(["git", ...args], {
+    cwd,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [code, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  if (code !== 0) throw new Error(`git ${args.join(" ")} exited ${String(code)}: ${stderr}`);
+  return stdout.trim();
 }
 
 describe("live compact-dispatch capability", () => {
@@ -731,5 +756,127 @@ describe("live compact-dispatch capability", () => {
     expect(JSON.stringify(child.input)).toContain(narrative);
     expect(child.promptProvenance.inputDigest).toBe(prepared.prepared.promptProvenance.inputDigest);
     await ledger.dispose();
+  });
+
+  // Regression: T2816 cached refs replay bypassed a fence installed after terminalization.
+  test("terminal refs prepare replay observes a subsequently committed lineage fence [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), "t2816-refs-fence-"));
+    const ledger = new InMemoryLedgerStore();
+    try {
+      await git(repositoryRoot, ["init", "-q"]);
+      await fs.writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
+      await git(repositoryRoot, ["add", "file.txt"]);
+      await git(repositoryRoot, [
+        "-c",
+        "user.name=T2816",
+        "-c",
+        "user.email=t2816@example.invalid",
+        "commit",
+        "-q",
+        "-m",
+        "seed",
+      ]);
+      const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+      const stateDir = path.join(repositoryRoot, ".manager-state");
+      const managed = await prepareManagedWorktree(
+        { repositoryRoot, taskId: "T2816", baseCommit },
+        { stateDir, skipInstall: true, bunWorkspaceRoot: repositoryRoot },
+      );
+      if (managed.status !== "prepared") throw new Error(`unexpected ${managed.status}`);
+      await ledger.init();
+      await ledger.createItem(TASKS_LEDGER, MILESTONES_AMBIENT_ID, {
+        id: "T2816",
+        status: "wip",
+        fields: {
+          headline: "fence cached refs replay",
+          description: "install journal authority after terminal prepare",
+          acceptance: "same-key replay returns journal recovery refusal",
+        },
+      });
+      const store = new InMemoryAttestationStore(NAMESPACE);
+      const journal = new InMemoryCurrentRecoverySealJournalStore();
+      const capability = createDispatchCapability({
+        backend: new InMemoryAttestationBackend(store),
+        promptArtifactStore: artifactStore("claude"),
+        narrativeSource: createDispatchNarrativeSource(ledger, NAMESPACE.projectKey),
+        repositoryRoot,
+        worktreeStateDir: stateDir,
+        recoveryJournal: journal,
+        now: () => NOW,
+        randomBytes: sequentialDispatchRandomBytes(2816),
+      });
+      const request = {
+        refs: {
+          roleId: "implement-worker",
+          surface: "claude",
+          projectKey: NAMESPACE.projectKey,
+          taskId: "T2816",
+          coordinates: {
+            worktreePath: managed.handle.absolutePath,
+            branch: managed.handle.branch,
+            baseCommit,
+          },
+          round: 0,
+          startingCommit: baseCommit,
+        },
+        idempotencyKey: "T2816-terminal-refs-replay",
+        timeoutMs: 600_000,
+        expectedChild: EXPECTED_CHILD,
+      } as const;
+      const prepared = await capability.prepare(request);
+      if (!prepared.accepted) throw new Error(prepared.detail);
+      await capability.abort({ ...prepared.handle, reason: "deadline-exceeded" });
+      const binding = await resolveManagedWorktreeDispatchBinding(
+        {
+          repositoryRoot,
+          taskId: "T2816",
+          worktreePath: managed.handle.absolutePath,
+          branch: managed.handle.branch,
+        },
+        { stateDir },
+      );
+      if (binding === null) throw new Error("managed binding disappeared");
+      await captureCurrentRecoverySeal(
+        {
+          taskId: "T2816",
+          binding,
+          liveTip: baseCommit,
+          taskDigest: "c".repeat(64),
+          finalizedManifestDigest: "d".repeat(64),
+        },
+        {
+          journal,
+          snapshot: async () => store.snapshot(),
+          resolveReceipts: async (row) => [
+            {
+              kind: "cq-git-change-receipt",
+              version: 1,
+              attestationId: row.attestationId,
+              generation: row.generation,
+              taskId: "T2816",
+              operationId: "terminal-refs-replay-source",
+              requestDigest: "e".repeat(64),
+              oldHead: baseCommit,
+              newHead: baseCommit,
+              tree: baseCommit,
+              objectOids: [baseCommit],
+              paths: ["WIP-T2816.md"],
+              committedAt: NOW,
+            },
+          ],
+          revalidateBinding: async () => {},
+          observeLiveTip: async () => baseCommit,
+          now: () => NOW,
+        },
+      );
+      const fence = dispatchLineageFenceFromRecoveryJournal(await journal.read("T2816"));
+      if (fence === null) throw new Error("capture did not install a lineage fence");
+
+      expect(await capability.prepare(request)).toEqual(journalRecoveryRequiredForFence(fence));
+      expect(store.snapshot()).toHaveLength(1);
+    } finally {
+      await ledger.dispose();
+      await fs.rm(repositoryRoot, { recursive: true, force: true });
+    }
   });
 });

@@ -223,6 +223,45 @@ describe("protected current dispatch-recovery capture", () => {
     expect((await journal.read(RECOVERY_TASK))?.state).toBe("committed");
   });
 
+  // Regression: T2816 successor recapture could demote a committed fence before resealing.
+  test("failed successor recapture preserves committed fence authority [Behavioral-Active Blackbox-Group]", async () => {
+    const journal = new InMemoryCurrentRecoverySealJournalStore();
+    const rows = [abortedEnvelope({ generation: 2 })];
+    await captureCurrentRecoverySeal(coordinates, {
+      journal,
+      snapshot: async () => rows,
+      resolveReceipts: async () => RECOVERY_RECEIPTS,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => RECOVERY_NOW,
+    });
+    const committed = await journal.read(RECOVERY_TASK);
+    const fence = dispatchLineageFenceFromRecoveryJournal(committed);
+    if (fence === null) throw new Error("initial capture did not install a fence");
+    rows.push(abortedEnvelope({ generation: 3 }));
+    let provisionalHookRan = false;
+
+    await expect(
+      captureCurrentRecoverySeal(coordinates, {
+        journal,
+        snapshot: async () => rows,
+        resolveReceipts: async () => RECOVERY_RECEIPTS,
+        revalidateBinding: async () => {},
+        observeLiveTip: async () => RECOVERY_TIP,
+        now: () => RECOVERY_LATER,
+        afterProvisional: async () => {
+          provisionalHookRan = true;
+          throw new Error("simulated recapture crash");
+        },
+      }),
+    ).rejects.toMatchObject({ reason: "journal-conflict" });
+    expect(provisionalHookRan).toBeFalse();
+    expect(await journal.read(RECOVERY_TASK)).toEqual(committed);
+    expect(dispatchLineageFenceFromRecoveryJournal(await journal.read(RECOVERY_TASK))).toEqual(
+      fence,
+    );
+  });
+
   test("an active generation refuses before journal mutation", async () => {
     const journal = new InMemoryCurrentRecoverySealJournalStore();
 
