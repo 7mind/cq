@@ -43,6 +43,13 @@ const jsonValueSchema: z.ZodType<DispatchJSONValue> = z.lazy(() =>
   ]),
 );
 
+const overlayApplicationSchema = z
+  .object({
+    overlayId: z.string().regex(/^[a-z][a-z0-9-]*$/u),
+    data: jsonValueSchema,
+  })
+  .strict();
+
 const namespaceSchema = z
   .object({
     backend: z.enum(["fs", "xdg", "git-object", "remote", "postgres"]),
@@ -116,7 +123,7 @@ const recoverySeedSchema = z
     taskDigest: z.string().regex(SHA256),
     finalizedManifestDigest: z.string().regex(SHA256),
     inputRecipe: jsonValueSchema,
-    overlays: z.array(jsonValueSchema),
+    overlays: z.array(overlayApplicationSchema),
     gitBinding: gitBindingSchema,
     gitReceipts: z.array(gitChangeReceiptSchema).min(1),
     gitReceiptsDigest: z.string().regex(SHA256),

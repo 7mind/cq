@@ -520,6 +520,33 @@ describe("persisted row serialization", () => {
     expect(JSON.parse(persisted.body)).toEqual(row);
   });
 
+  test("a live envelope rehydrates only strict normalized overlay applications", () => {
+    const row = envelope({ overlays: [{ overlayId: "fixture-focus", data: { note: "keep" } }] });
+    const persisted = persistAttestationRow(row);
+    expect(rehydrateAttestationRow(NAMESPACE, persisted.body, persisted.rowDigest)).toEqual(row);
+
+    for (const overlays of [
+      null,
+      {},
+      [{ overlayId: "fixture-focus" }],
+      [{ overlayId: "Fixture", data: {} }],
+      [{ overlayId: "fixture-focus", data: {}, extra: true }],
+      [
+        { overlayId: "fixture-focus", data: {} },
+        { overlayId: "fixture-focus", data: {} },
+      ],
+    ]) {
+      const malformed = { ...row, overlays };
+      expect(() =>
+        rehydrateAttestationRow(
+          NAMESPACE,
+          JSON.stringify(malformed),
+          attestationRowDigest(malformed as unknown as AttestationRow),
+        ),
+      ).toThrow(/overlays/);
+    }
+  });
+
   test("a live worker envelope round-trips its closed Git effect binding and hash", () => {
     const row = envelope({
       gitChangeCapabilityHash: "7".repeat(64),

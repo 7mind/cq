@@ -1242,6 +1242,7 @@ export function rehydrateAttestationRow(
 
 const STORED_ROW_KINDS: ReadonlySet<string> = new Set(["envelope", "tombstone"]);
 const STORED_SHA256_HEX = /^[0-9a-f]{64}$/;
+const STORED_OVERLAY_ID = /^[a-z][a-z0-9-]*$/;
 const STORED_GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const STORED_GIT_RECEIPT_FIELDS = [
   "kind",
@@ -1372,6 +1373,39 @@ function assertStoredGuardedRebaseBridge(value: unknown): void {
  */
 const FORBIDDEN_STORED_ROW_KEYS = ["__proto__", "constructor", "prototype"] as const;
 
+function assertStoredOverlayApplications(value: unknown): void {
+  if (!Array.isArray(value)) {
+    throw new AttestationStorageError(`stored attestation envelope has malformed "overlays"`);
+  }
+  const seen = new Set<string>();
+  for (const [index, application] of value.entries()) {
+    if (typeof application !== "object" || application === null || Array.isArray(application)) {
+      throw new AttestationStorageError(
+        `stored attestation envelope has malformed "overlays[${String(index)}]"`,
+      );
+    }
+    const record = application as Readonly<Record<string, unknown>>;
+    const keys = Object.keys(record);
+    if (
+      keys.length !== 2 ||
+      !Object.hasOwn(record, "overlayId") ||
+      !Object.hasOwn(record, "data") ||
+      typeof record["overlayId"] !== "string" ||
+      !STORED_OVERLAY_ID.test(record["overlayId"])
+    ) {
+      throw new AttestationStorageError(
+        `stored attestation envelope has malformed "overlays[${String(index)}]"`,
+      );
+    }
+    if (seen.has(record["overlayId"])) {
+      throw new AttestationStorageError(
+        `stored attestation envelope has duplicate "overlays[${String(index)}].overlayId"`,
+      );
+    }
+    seen.add(record["overlayId"]);
+  }
+}
+
 /**
  * Minimal shape check on a rehydrated row. `Object.hasOwn` / `Set` throughout:
  * the body is data the store read back, so a `kind` of `"constructor"` must fail
@@ -1420,9 +1454,7 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
         throw new AttestationStorageError(`stored attestation envelope has no "${field}"`);
       }
     }
-    if (!Array.isArray(record["overlays"])) {
-      throw new AttestationStorageError(`stored attestation envelope has malformed "overlays"`);
-    }
+    assertStoredOverlayApplications(record["overlays"]);
     for (const field of ["prepareRequestDigest", "inputCapabilityHash", "resultCapabilityHash"]) {
       if (typeof record[field] !== "string" || !STORED_SHA256_HEX.test(record[field])) {
         throw new AttestationStorageError(`stored attestation envelope has malformed "${field}"`);

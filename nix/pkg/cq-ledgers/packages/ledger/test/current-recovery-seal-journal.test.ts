@@ -6,6 +6,7 @@ import {
   CurrentRecoveryStatusSchema,
   FsCurrentRecoverySealJournalStore,
   InMemoryCurrentRecoverySealJournalStore,
+  createCurrentRecoverySeed,
   currentRecoveryStatus,
   parseCurrentRecoveryStatus,
   parseCurrentRecoverySeal,
@@ -122,7 +123,7 @@ test("every role, input, Git and generation coordinate is authenticated by the s
       seal.seed.sourceAbortReason = "parent-lost";
     },
     (seal) => {
-      seal.seed.overlays = [{ overlayId: "changed" }];
+      seal.seed.overlays = [{ overlayId: "changed", data: {} }];
     },
   ];
 
@@ -148,6 +149,24 @@ test("seal and status schemas are closed and capture no dispatch capability", ()
       extra: true,
     }),
   ).toThrow();
+});
+
+test("the recovery seed accepts only strict normalized overlay applications", () => {
+  const seed = recoverySeal().seed;
+  const {
+    kind: _kind,
+    version: _version,
+    gitReceiptsDigest: _receipts,
+    managedFingerprint: _managed,
+    ...input
+  } = seed;
+  for (const overlays of [
+    [{ overlayId: "fixture-focus" }],
+    [{ overlayId: "Fixture", data: {} }],
+    [{ overlayId: "fixture-focus", data: {}, capability: "cq_git_forbidden" }],
+  ]) {
+    expect(() => createCurrentRecoverySeed({ ...input, overlays } as never)).toThrow();
+  }
 });
 
 test("committed status reference authenticates its declared seal digest", () => {
