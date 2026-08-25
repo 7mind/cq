@@ -55,6 +55,7 @@ import {
   type AttestationBackend,
   type AttestationJournalEntry,
   type AttestationLoadScope,
+  type LoadedAttestationRow,
 } from "./dispatchAttestationBackend.js";
 import { AsyncMutex } from "./asyncMutex.js";
 
@@ -167,7 +168,9 @@ export class PostgresAttestationBackend implements AttestationBackend {
 
   /** The rows of THIS namespace, for a caller inspecting durable state. */
   async storedRows(): Promise<readonly AttestationRow[]> {
-    return this.load(this.pool, { kind: "namespace" });
+    return Object.freeze(
+      (await this.load(this.pool, { kind: "namespace" })).map((loaded) => loaded.row),
+    );
   }
 
   /** Every attestation table in the connected schema. Proves there is no parallel store. */
@@ -243,7 +246,7 @@ export class PostgresAttestationBackend implements AttestationBackend {
   private async load(
     runner: PgRunner,
     scope: AttestationLoadScope,
-  ): Promise<readonly AttestationRow[]> {
+  ): Promise<readonly LoadedAttestationRow[]> {
     const { backend, projectKey } = this.namespace;
     const rows = await ((): Promise<StoredRow[]> => {
       switch (scope.kind) {
@@ -292,7 +295,10 @@ export class PostgresAttestationBackend implements AttestationBackend {
       }
     })();
     return Object.freeze(
-      rows.map((stored) => rehydrateAttestationRow(this.namespace, stored.body, stored.row_digest)),
+      rows.map((stored) => ({
+        row: rehydrateAttestationRow(this.namespace, stored.body, stored.row_digest),
+        rowDigest: stored.row_digest,
+      })),
     );
   }
 

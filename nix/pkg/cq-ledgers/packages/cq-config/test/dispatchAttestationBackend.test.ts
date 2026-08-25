@@ -124,7 +124,11 @@ function buffered(
   scope: AttestationLoadScope,
   loaded: readonly AttestationRow[] = [],
 ): BufferedAttestationStore {
-  return new BufferedAttestationStore(NAMESPACE, loaded, scope);
+  return new BufferedAttestationStore(
+    NAMESPACE,
+    loaded.map((row) => ({ row, rowDigest: attestationRowDigest(row) })),
+    scope,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1038,7 +1042,10 @@ describe("the unit-of-work runner", () => {
       NAMESPACE,
       { kind: "namespace" },
       {
-        load: () => [envelope()],
+        load: () => {
+          const row = envelope();
+          return [{ row, rowDigest: attestationRowDigest(row) }];
+        },
         apply: () => {
           applied += 1;
         },
@@ -1109,21 +1116,26 @@ describe("the unit-of-work runner", () => {
   test("the store-backed load goes through the port's own lookups", () => {
     const store = new InMemoryAttestationStore(NAMESPACE);
     const row = envelope();
+    const loaded = { row, rowDigest: attestationRowDigest(row) };
     store.insert(row);
     expect(loadScopeFromStore(store, { kind: "none" })).toEqual([]);
-    expect(loadScopeFromStore(store, { kind: "namespace" })).toEqual([row]);
-    expect(loadScopeFromStore(store, { kind: "handle", handle: row })).toEqual([row]);
+    expect(loadScopeFromStore(store, { kind: "namespace" })).toEqual([loaded]);
+    expect(loadScopeFromStore(store, { kind: "handle", handle: row })).toEqual([loaded]);
     expect(
       loadScopeFromStore(store, { kind: "handle", handle: { attestationId: ID_B, generation: 1 } }),
     ).toEqual([]);
-    expect(loadScopeFromStore(store, { kind: "capability", capabilityHash: CAP_A })).toEqual([row]);
+    expect(loadScopeFromStore(store, { kind: "capability", capabilityHash: CAP_A })).toEqual([
+      loaded,
+    ]);
     expect(loadScopeFromStore(store, { kind: "capability", capabilityHash: CAP_B })).toEqual([]);
-    expect(loadScopeFromStore(store, { kind: "prepare", idempotencyKey: "key-a" })).toEqual([row]);
+    expect(loadScopeFromStore(store, { kind: "prepare", idempotencyKey: "key-a" })).toEqual([
+      loaded,
+    ]);
     expect(loadScopeFromStore(store, { kind: "prepare", idempotencyKey: "nope" })).toEqual([]);
     // A re-prepare handle that ALSO holds the key is returned once, not twice.
     expect(
       loadScopeFromStore(store, { kind: "prepare", idempotencyKey: "key-a", reprepareOf: row }),
-    ).toEqual([row]);
+    ).toEqual([loaded]);
   });
 });
 

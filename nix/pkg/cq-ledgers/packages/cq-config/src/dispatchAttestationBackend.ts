@@ -399,6 +399,12 @@ export type AttestationJournalEntry =
       readonly expectedDigest: string;
     };
 
+/** One validated row together with the exact durable revision that supplied it. */
+export interface LoadedAttestationRow {
+  readonly row: AttestationRow;
+  readonly rowDigest: string;
+}
+
 /** The handle one journal entry addresses. */
 export function journalEntryHandle(entry: AttestationJournalEntry): DispatchHandle {
   return entry.kind === "insert"
@@ -427,24 +433,27 @@ export class BufferedAttestationStore implements AttestationStore {
   readonly namespace: AttestationNamespace;
 
   private readonly rowsByHandle = new Map<string, AttestationRow>();
+  private readonly loadedDigestsByHandle = new Map<string, string>();
   private readonly entries: AttestationJournalEntry[] = [];
   private readonly touched = new Set<string>();
   private readonly scope: AttestationLoadScope;
 
   constructor(
     namespace: AttestationNamespace,
-    loaded: readonly AttestationRow[],
+    loaded: readonly LoadedAttestationRow[],
     scope: AttestationLoadScope,
   ) {
     this.namespace = assertAttestationNamespace(namespace);
     this.scope = scope;
-    for (const row of loaded) {
+    for (const loadedRow of loaded) {
+      const { row, rowDigest } = loadedRow;
       this.assertOwnNamespace(row);
       const key = handleKey(row);
       if (this.rowsByHandle.has(key)) {
         throw new AttestationStorageError(`duplicate loaded attestation "${key}"`);
       }
       this.rowsByHandle.set(key, row);
+      this.loadedDigestsByHandle.set(key, rowDigest);
     }
   }
 
@@ -540,15 +549,17 @@ export class BufferedAttestationStore implements AttestationStore {
       throw new AttestationStorageError(`replace must not change the idempotency key of "${key}"`);
     }
     this.rowsByHandle.set(key, next);
+    const loadedDigest = this.loadedDigestsByHandle.get(key);
+    if (loadedDigest === undefined) {
+      throw new AttestationStorageError(`attestation "${key}" has no loaded revision digest`);
+    }
     this.record(key, {
       kind: "replace",
       handle: journalHandle(next),
-      // The digest of the revision this unit of work OBSERVED, which — because
-      // `record` allows at most one write per handle — is always the revision as
-      // it was LOADED. (An earlier draft kept a separate map of loaded digests
-      // for this; mutation M14 showed the two values can never differ, so the
-      // map was redundant machinery with no reachable branch.)
-      expectedDigest: currentDigest,
+      // Quote the exact durable revision, not a digest recomputed from the
+      // rehydrated object. Legacy rows normalize missing `overlays` to `[]`, so
+      // those two digests legitimately differ until the next durable write.
+      expectedDigest: loadedDigest,
       row: next,
       digest: attestationRowDigest(next),
     });
@@ -561,11 +572,15 @@ export class BufferedAttestationStore implements AttestationStore {
     if (current === undefined) {
       throw new AttestationStorageError(`no attestation "${key}" to remove`);
     }
+    const loadedDigest = this.loadedDigestsByHandle.get(key);
+    if (loadedDigest === undefined) {
+      throw new AttestationStorageError(`attestation "${key}" has no loaded revision digest`);
+    }
     this.rowsByHandle.delete(key);
     this.record(key, {
       kind: "remove",
       handle: resolved,
-      expectedDigest: attestationRowDigest(current),
+      expectedDigest: loadedDigest,
     });
   }
 
@@ -628,7 +643,9 @@ export interface AttestationBackend {
 /** What a concrete backend must provide inside its own lock/transaction. */
 export interface AttestationBackendIO {
   /** Load the rows `scope` admits. Absent rows are simply not returned. */
-  load(scope: AttestationLoadScope): readonly AttestationRow[] | Promise<readonly AttestationRow[]>;
+  load(
+    scope: AttestationLoadScope,
+  ): readonly LoadedAttestationRow[] | Promise<readonly LoadedAttestationRow[]>;
   /**
    * Apply the journal durably, each entry compare-and-set against its
    * `expectedDigest`. A refused entry must throw {@link AttestationStorageError}
@@ -669,19 +686,21 @@ export async function runAttestationUnitOfWork<T>(
 export function loadScopeFromStore(
   store: AttestationStore,
   scope: AttestationLoadScope,
-): readonly AttestationRow[] {
+): readonly LoadedAttestationRow[] {
+  const loaded = (row: AttestationRow): LoadedAttestationRow =>
+    Object.freeze({ row, rowDigest: attestationRowDigest(row) });
   switch (scope.kind) {
     case "none":
       return Object.freeze([]);
     case "namespace":
-      return Object.freeze([...store.rows()]);
+      return Object.freeze(store.rows().map(loaded));
     case "handle": {
       const row = store.read(scope.handle);
-      return Object.freeze(row === undefined ? [] : [row]);
+      return Object.freeze(row === undefined ? [] : [loaded(row)]);
     }
     case "capability": {
       const row = store.readByCapabilityHash(scope.capabilityHash);
-      return Object.freeze(row === undefined ? [] : [row]);
+      return Object.freeze(row === undefined ? [] : [loaded(row)]);
     }
     case "prepare": {
       const found = new Map<string, AttestationRow>();
@@ -694,7 +713,7 @@ export function loadScopeFromStore(
           found.set(handleKey(row), row);
         }
       }
-      return Object.freeze([...found.values()]);
+      return Object.freeze([...found.values()].map(loaded));
     }
   }
 }

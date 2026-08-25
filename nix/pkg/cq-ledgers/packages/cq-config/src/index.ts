@@ -1091,6 +1091,7 @@ export type {
   AttestationLoadScope,
   AttestationLoadScopeKind,
   AttestationJournalEntry,
+  LoadedAttestationRow,
   AttestationBackend,
   AttestationBackendIO,
   AttestationBackendDeps,

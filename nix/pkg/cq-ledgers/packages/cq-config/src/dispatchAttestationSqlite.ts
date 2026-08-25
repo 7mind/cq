@@ -51,6 +51,7 @@ import {
   type AttestationBackend,
   type AttestationJournalEntry,
   type AttestationLoadScope,
+  type LoadedAttestationRow,
 } from "./dispatchAttestationBackend.js";
 import { AsyncMutex } from "./asyncMutex.js";
 
@@ -239,7 +240,7 @@ export class SqliteAttestationBackend implements AttestationBackend {
 
   /** The rows of THIS namespace, for a caller inspecting durable state. */
   storedRows(): readonly AttestationRow[] {
-    return this.loadScoped({ kind: "namespace" });
+    return Object.freeze(this.loadScoped({ kind: "namespace" }).map((loaded) => loaded.row));
   }
 
   /** Every table this backend owns. Proves there is no parallel output store. */
@@ -306,7 +307,7 @@ export class SqliteAttestationBackend implements AttestationBackend {
     return Promise.resolve();
   }
 
-  private loadScoped(scope: AttestationLoadScope): readonly AttestationRow[] {
+  private loadScoped(scope: AttestationLoadScope): readonly LoadedAttestationRow[] {
     const { backend, projectKey } = this.namespace;
     const where = `backend = ? AND project_key = ?`;
     const rows = ((): readonly StoredRow[] => {
@@ -349,7 +350,10 @@ export class SqliteAttestationBackend implements AttestationBackend {
       }
     })();
     return Object.freeze(
-      rows.map((stored) => rehydrateAttestationRow(this.namespace, stored.body, stored.row_digest)),
+      rows.map((stored) => ({
+        row: rehydrateAttestationRow(this.namespace, stored.body, stored.row_digest),
+        rowDigest: stored.row_digest,
+      })),
     );
   }
 

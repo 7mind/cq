@@ -62,6 +62,7 @@ import {
   type AttestationBackend,
   type AttestationJournalEntry,
   type AttestationLoadScope,
+  type LoadedAttestationRow,
 } from "./dispatchAttestationBackend.js";
 import { AsyncMutex } from "./asyncMutex.js";
 import type { DispatchHandle } from "./compactDispatchProtocol.js";
@@ -132,9 +133,8 @@ export interface FsAttestationBackendOptions {
 }
 
 /** One row file's on-disk identity. */
-interface RowFile {
+interface RowFile extends LoadedAttestationRow {
   readonly path: string;
-  readonly row: AttestationRow;
 }
 
 /**
@@ -232,35 +232,35 @@ export class FsAttestationBackend implements AttestationBackend {
    * files to answer one handle. The correctness half lives in the buffer, where
    * it is reachable and asserted.
    */
-  private loadScoped(scope: AttestationLoadScope): readonly AttestationRow[] {
+  private loadScoped(scope: AttestationLoadScope): readonly LoadedAttestationRow[] {
     switch (scope.kind) {
       case "none":
         return Object.freeze([]);
       case "handle": {
         const found = this.readOne(scope.handle);
-        return Object.freeze(found === undefined ? [] : [found.row]);
+        return Object.freeze(found === undefined ? [] : [found]);
       }
       case "namespace":
-        return Object.freeze(this.readAll().map((entry) => entry.row));
+        return this.readAll();
       case "capability":
         return Object.freeze(
           this.readAll()
-            .map((entry) => entry.row)
             .filter(
-              (row) => row.kind === "envelope" && row.resultCapabilityHash === scope.capabilityHash,
+              (entry) =>
+                entry.row.kind === "envelope" &&
+                entry.row.resultCapabilityHash === scope.capabilityHash,
             ),
         );
       case "prepare": {
         const reprepare = scope.reprepareOf;
         return Object.freeze(
           this.readAll()
-            .map((entry) => entry.row)
             .filter(
-              (row) =>
-                row.idempotencyKey === scope.idempotencyKey ||
+              (entry) =>
+                entry.row.idempotencyKey === scope.idempotencyKey ||
                 (reprepare !== undefined &&
-                  row.attestationId === reprepare.attestationId &&
-                  row.generation === reprepare.generation),
+                  entry.row.attestationId === reprepare.attestationId &&
+                  entry.row.generation === reprepare.generation),
             ),
         );
       }
@@ -277,7 +277,7 @@ export class FsAttestationBackend implements AttestationBackend {
     if (text === undefined) {
       return undefined;
     }
-    return { path, row: this.parseRowFile(path, text) };
+    return { path, ...this.parseRowFile(path, text) };
   }
 
   private readAll(): readonly RowFile[] {
@@ -288,7 +288,7 @@ export class FsAttestationBackend implements AttestationBackend {
       if (text === undefined) {
         continue;
       }
-      entries.push({ path, row: this.parseRowFile(path, text) });
+      entries.push({ path, ...this.parseRowFile(path, text) });
     }
     entries.sort((a, b) =>
       attestationStorageKey(a.row).localeCompare(attestationStorageKey(b.row)),
@@ -323,7 +323,7 @@ export class FsAttestationBackend implements AttestationBackend {
    * against the body exactly as the SQL adapters check their `row_digest`
    * column: a body that does not digest to it is corruption, not a state.
    */
-  private parseRowFile(path: string, text: string): AttestationRow {
+  private parseRowFile(path: string, text: string): LoadedAttestationRow {
     let envelope: unknown;
     try {
       envelope = JSON.parse(text);
@@ -346,7 +346,10 @@ export class FsAttestationBackend implements AttestationBackend {
     if (typeof digest !== "string" || typeof body !== "string") {
       throw new AttestationStorageError(`attestation file "${path}" has a malformed envelope`);
     }
-    return rehydrateAttestationRow(this.namespace, body, digest);
+    return Object.freeze({
+      row: rehydrateAttestationRow(this.namespace, body, digest),
+      rowDigest: digest,
+    });
   }
 
   // --- applying -----------------------------------------------------------
@@ -432,8 +435,7 @@ export class FsAttestationBackend implements AttestationBackend {
       );
     }
     const current = this.parseRowFile(path, text);
-    const digest = persistAttestationRow(current).rowDigest;
-    if (digest !== expectedDigest) {
+    if (current.rowDigest !== expectedDigest) {
       throw new AttestationStorageError(
         `lost update on attestation "${attestationStorageKey(handle)}"`,
       );
