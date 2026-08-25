@@ -340,6 +340,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     const refs = request["refs"];
     if (refs !== null && typeof refs === "object" && !Array.isArray(refs)) {
       const record = refs as Readonly<Record<string, unknown>>;
+      if (record["roleId"] !== "implement-worker") return undefined;
       const coordinates = record["coordinates"];
       if (
         typeof record["taskId"] === "string" &&
@@ -359,6 +360,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       }
       return undefined;
     }
+    if (request["roleId"] !== "implement-worker") return undefined;
     const dispatchInput = request["input"];
     if (
       dispatchInput === null ||
@@ -385,6 +387,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
 
   async function revalidateManagedPrepareBinding(
     binding: ManagedWorktreeDispatchBinding,
+    allowDetachedRebase: boolean,
   ): Promise<ManagedWorktreeDispatchBinding | null> {
     const revalidated = await resolveManagedWorktreeDispatchBinding(
       {
@@ -392,6 +395,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         taskId: binding.taskId,
         worktreePath: binding.worktreePath,
         branch: binding.branch,
+        ...(allowDetachedRebase ? { allowDetachedRebase: true } : {}),
       },
       options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
     );
@@ -400,6 +404,19 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       revalidated.handleFingerprint === binding.handleFingerprint
       ? revalidated
       : null;
+  }
+
+  async function durableCachedWorkerBinding(
+    idempotencyKey: string,
+  ): Promise<ManagedWorktreeDispatchBinding | undefined> {
+    const cached = prepares.get(idempotencyKey);
+    if (cached === undefined) return undefined;
+    const accepted = await cached.promise;
+    const binding = await resolveDispatchGitEffectBindingForHandleOn(
+      options.backend,
+      accepted.handle,
+    );
+    return binding?.conflictStateDigest === undefined ? binding : undefined;
   }
 
   function cacheHandleKey(handle: {
@@ -624,13 +641,19 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           earlyCoordinates,
           options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
         );
-        if (candidate !== null) {
+        const cachedBinding = await durableCachedWorkerBinding(input.idempotencyKey);
+        const lockBinding = candidate ?? cachedBinding;
+        if (lockBinding !== undefined) {
           const preflight = await withManagedWorktreeEffectLock(
-            candidate,
+            lockBinding,
             options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
             async () => {
-              const binding = await revalidateManagedPrepareBinding(candidate);
-              if (binding === null) {
+              const liveBinding =
+                candidate === null
+                  ? null
+                  : await revalidateManagedPrepareBinding(candidate, false);
+              const binding = liveBinding ?? cachedBinding;
+              if (binding === undefined) {
                 return rejectLaunch(
                   "input.worktreePath",
                   "prepare worktree coordinates lost their authoritative manager binding",
@@ -644,11 +667,18 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                 return journalRecoveryRequiredForFence(fence);
               }
               if (callerFingerprint === undefined) return undefined;
-              return await replayCachedPrepare(
+              const replay = await replayCachedPrepare(
                 input.idempotencyKey,
                 callerFingerprint,
                 "caller",
               );
+              if (replay !== undefined) return replay;
+              return liveBinding === null
+                ? rejectLaunch(
+                    "input.worktreePath",
+                    "prepare worktree coordinates lost their authoritative manager binding",
+                  )
+                : undefined;
             },
           );
           if (preflight !== undefined) return preflight;
@@ -1327,7 +1357,10 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       const fingerprint = prepareDispatchRequestDigest(request);
       const allocateOrReplay = async (): Promise<PrepareDispatchOutcome> => {
         if (prepareLockBinding !== undefined) {
-          const binding = await revalidateManagedPrepareBinding(prepareLockBinding);
+          const binding = await revalidateManagedPrepareBinding(
+            prepareLockBinding,
+            roleId === "implement-conflict-resolver",
+          );
           if (binding === null) {
             return rejectLaunch(
               "input.worktreePath",
