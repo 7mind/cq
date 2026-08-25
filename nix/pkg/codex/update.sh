@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Update codex to the latest version published on GitHub.
 #
-# Bumps the `version` field and refreshes the four per-platform SRI hashes in
-# package.nix. Run from anywhere — the script edits the package.nix that sits
-# next to it.
+# Bumps the `version` field and refreshes the CLI and code-mode-host SRI hashes
+# for all four platforms in package.nix. Run from anywhere — the script edits
+# the package.nix that sits next to it.
 #
 # Keep this in sync with the manual instructions in package.nix. If you change
 # one, change the other.
@@ -38,31 +38,46 @@ declare -A assets=(
   [aarch64-darwin]="codex-aarch64-apple-darwin.tar.gz"
 )
 
+declare -A code_mode_host_assets=(
+  [x86_64-linux]="codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz"
+  [aarch64-linux]="codex-code-mode-host-aarch64-unknown-linux-musl.tar.gz"
+  [x86_64-darwin]="codex-code-mode-host-x86_64-apple-darwin.tar.gz"
+  [aarch64-darwin]="codex-code-mode-host-aarch64-apple-darwin.tar.gz"
+)
+
 # Fetch all hashes up-front so a mid-run failure does not leave package.nix in a
 # half-updated state.
 declare -A new_hashes
 for system in "${platforms[@]}"; do
-  asset="${assets[$system]}"
-  url="https://github.com/openai/codex/releases/download/rust-v${latest}/${asset}"
-  echo "fetching ${asset}..."
-  sha=$(nix-prefetch-url --type sha256 "$url" 2>/dev/null)
-  new_hashes[$system]=$(nix hash convert --hash-algo sha256 --to sri "$sha")
-  printf '  %s\n' "${new_hashes[$system]}"
+  for asset in "${assets[$system]}" "${code_mode_host_assets[$system]}"; do
+    url="https://github.com/openai/codex/releases/download/rust-v${latest}/${asset}"
+    echo "fetching ${asset}..."
+    sha=$(nix-prefetch-url --type sha256 "$url" 2>/dev/null)
+    new_hashes[$asset]=$(nix hash convert --hash-algo sha256 --to sri "$sha")
+    printf '  %s\n' "${new_hashes[$asset]}"
+  done
 done
 
 sed -i -E "s|^([[:space:]]*version[[:space:]]*=[[:space:]]*\")[^\"]+(\";)|\1${latest}\2|" "$pkg_nix"
 
 for system in "${platforms[@]}"; do
-  asset="${assets[$system]}"
-  new_sri="${new_hashes[$system]}"
-  old_sri=$(grep -A1 "asset = \"$asset\";" "$pkg_nix" | grep -oE 'sha256-[A-Za-z0-9+/=]+' | head -n1)
-  if [[ -z "$old_sri" ]]; then
-    echo "could not find existing hash for $asset in $pkg_nix" >&2
-    exit 1
-  fi
-  if [[ "$old_sri" != "$new_sri" ]]; then
-    sed -i "s|${old_sri}|${new_sri}|" "$pkg_nix"
-  fi
+  for asset in "${assets[$system]}" "${code_mode_host_assets[$system]}"; do
+    new_sri="${new_hashes[$asset]}"
+    asset_line=$(grep -nF "\"$asset\";" "$pkg_nix" | cut -d: -f1 || true)
+    if [[ ! "$asset_line" =~ ^[0-9]+$ ]]; then
+      echo "could not find exactly one entry for $asset in $pkg_nix" >&2
+      exit 1
+    fi
+    hash_line=$((asset_line + 1))
+    old_sri=$(sed -nE "${hash_line}s|.*(sha256-[A-Za-z0-9+/=]+).*|\1|p" "$pkg_nix")
+    if [[ -z "$old_sri" ]]; then
+      echo "could not find existing hash for $asset in $pkg_nix" >&2
+      exit 1
+    fi
+    if [[ "$old_sri" != "$new_sri" ]]; then
+      sed -i "${hash_line}s|${old_sri}|${new_sri}|" "$pkg_nix"
+    fi
+  done
 done
 
 echo

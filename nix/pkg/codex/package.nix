@@ -1,22 +1,26 @@
 # Updating: run ./update.sh (this dir). The script bumps `version` and refreshes
-# the four per-platform `hash` entries below for the latest GitHub-released
-# static binary. Using the release artefact (vs nixpkgs' rust build) skips a
-# multi-minute Cargo vendor build and tracks alpha tags closely. Keep this in
-# sync with the manual recipe below.
+# the per-platform `hash` and `codeModeHostHash` entries below for the latest
+# GitHub-released static binaries. Using the release artefacts (vs nixpkgs'
+# rust build) skips a multi-minute Cargo vendor build and tracks alpha tags
+# closely. Keep this in sync with the manual recipe below.
 #
 # Manual recipe:
 #   1. Latest version:
 #        curl -fsSL https://api.github.com/repos/openai/codex/releases/latest \
 #          | jq -r '.tag_name | sub("^rust-v"; "")'
-#   2. Bump `version` + the four `hash` fields below. The release assets are the
-#      four `codex-<platform>.tar.gz` archives:
+#   2. Bump `version` + the eight hash fields below. The release assets are the
+#      CLI and code-mode-host archives for each platform:
 #        v=$(curl -fsSL https://api.github.com/repos/openai/codex/releases/latest \
 #          | jq -r '.tag_name | sub("^rust-v"; "")')
 #        for asset in \
 #          codex-x86_64-unknown-linux-musl.tar.gz \
+#          codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz \
 #          codex-aarch64-unknown-linux-musl.tar.gz \
+#          codex-code-mode-host-aarch64-unknown-linux-musl.tar.gz \
 #          codex-x86_64-apple-darwin.tar.gz \
-#          codex-aarch64-apple-darwin.tar.gz; do
+#          codex-code-mode-host-x86_64-apple-darwin.tar.gz \
+#          codex-aarch64-apple-darwin.tar.gz \
+#          codex-code-mode-host-aarch64-apple-darwin.tar.gz; do
 #          url="https://github.com/openai/codex/releases/download/rust-v${v}/${asset}"
 #          sha=$(nix-prefetch-url --type sha256 "$url" 2>/dev/null)
 #          sri=$(nix hash convert --hash-algo sha256 --to sri "$sha")
@@ -41,31 +45,31 @@
 }:
 
 let
-  version = "0.149.0";
+  version = "0.149.1";
   binaryAssets = {
     aarch64-darwin = {
       asset = "codex-aarch64-apple-darwin.tar.gz";
-      hash = "sha256-DO9Plimve2vMS03irbYzN9HnegCoEeZigdpTVuPnT8Y=";
+      hash = "sha256-7WD0dcbdpgRMLAD9fzMnPMPz+YkAzNEgS/3y/pNfNAU=";
       codeModeHostAsset = "codex-code-mode-host-aarch64-apple-darwin.tar.gz";
-      codeModeHostHash = "sha256-FXg8q1Aa7iHOE0Ys9+SK4xxV/X7MNtQxp2Ml0lNq5O8=";
+      codeModeHostHash = "sha256-quHAyUWXAKLol62t1kc1EUCueTOtc72NOvZQXGmk8/0=";
     };
     aarch64-linux = {
       asset = "codex-aarch64-unknown-linux-musl.tar.gz";
-      hash = "sha256-HMPrTC+6sEjIr64L67HlR0X4jZHlJJpEh2XTSiorqbs=";
+      hash = "sha256-FN9oAuOalW3plOhEuQ1R2CVLzIBXtuZvDz47j34tpbA=";
       codeModeHostAsset = "codex-code-mode-host-aarch64-unknown-linux-musl.tar.gz";
-      codeModeHostHash = "sha256-VOXmf3DV/aLQvPpHDqqc7iCmUMCcwC/MDubGL14QP90=";
+      codeModeHostHash = "sha256-li4CnfdytTy5d6AgTsQoTQxpMgeiWkkRBugpSq6N+gQ=";
     };
     x86_64-darwin = {
       asset = "codex-x86_64-apple-darwin.tar.gz";
-      hash = "sha256-x4p1/6R1WyH9ngX7GxBjYOMbS6Vu8IPABQgRiAtCDmU=";
+      hash = "sha256-hf56g363Od1eHMWanJW3toIEjlqs3CYVBbrnaPsSiO8=";
       codeModeHostAsset = "codex-code-mode-host-x86_64-apple-darwin.tar.gz";
-      codeModeHostHash = "sha256-itXJ4uq9/R4S/SKXsGIYvIqagENkUk36NDHEZIUVWoE=";
+      codeModeHostHash = "sha256-OiS8NC6g5gnnB/YhGYfUmcM8CaT3WJGpTdRr7498W74=";
     };
     x86_64-linux = {
       asset = "codex-x86_64-unknown-linux-musl.tar.gz";
-      hash = "sha256-c2iyBV7QIVf+omlbufWvPuew5AxaO+vIHfxZZwQkTP0=";
+      hash = "sha256-4k+3hMfXEUDWevtiD1bpE3SWz39snhkhf6Nmbc8wYng=";
       codeModeHostAsset = "codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz";
-      codeModeHostHash = "sha256-M4pMcYmmmYIhfs8VaEKC5MT7b0WpWWjL75v8nHDyZZ0=";
+      codeModeHostHash = "sha256-YvosPl1LxYcgvXKy7iq4Y24aqp2CNt2uQaHM5ii1mus=";
     };
   };
   system = stdenv.hostPlatform.system;
