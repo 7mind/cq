@@ -873,6 +873,17 @@ describe("live compact-dispatch capability", () => {
       if (fence === null) throw new Error("capture did not install a lineage fence");
 
       expect(await capability.prepare(request)).toEqual(journalRecoveryRequiredForFence(fence));
+      // Regression: T2816 validated these caller fields before entering the
+      // locked production journal/fence preflight.
+      for (const malformed of [
+        { ...request, idempotencyKey: "" },
+        { ...request, timeoutMs: 0 },
+        { ...request, recovery: "legacy-recovery", continuation: "legacy-continuation" },
+      ]) {
+        expect(await capability.prepare(malformed)).toEqual(
+          journalRecoveryRequiredForFence(fence),
+        );
+      }
       expect(store.snapshot()).toHaveLength(1);
     } finally {
       await ledger.dispose();

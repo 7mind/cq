@@ -60,6 +60,19 @@ function request(
 }
 
 describe("direct prepare lineage fence", () => {
+  // Regression: T2816 allowed a manager-bound backend prepare to omit the
+  // lineage fence boundary and allocate directly beside a committed fence.
+  test("manager-bound backend prepare fails closed when its lineage boundary is omitted [Behavioral-Active Blackbox-Atomic]", async () => {
+    const store = new InMemoryAttestationStore(namespace);
+    await expect(
+      prepareDispatchOn(new InMemoryAttestationBackend(store), request(), {
+        now: () => RECOVERY_NOW,
+        randomBytes: sequentialDispatchRandomBytes(0),
+      }),
+    ).rejects.toThrow("manager-bound prepare requires a lineage fence guard and lock");
+    expect(store.snapshot()).toEqual([]);
+  });
+
   test("legacy manager-bound prepare returns the typed refusal before allocation", async () => {
     const store = new InMemoryAttestationStore(namespace);
     const outcome = await prepareDispatchOn(
