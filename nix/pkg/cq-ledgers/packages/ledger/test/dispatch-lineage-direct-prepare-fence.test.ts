@@ -1,14 +1,22 @@
 import { describe, expect, test } from "bun:test";
+import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   DISPATCH_OVERLAY_REGISTRY,
+  FsAttestationBackend,
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
+  SqliteAttestationBackend,
   prepareDispatchOn,
   sequentialDispatchRandomBytes,
+  type AttestationBackend,
   type AttestationNamespace,
   type PrepareDispatchRequest,
 } from "@cq/config";
 import {
+  GitObjectLedgerBackend,
+  assertAttestationConstructionSupported,
   createDispatchLineageCutoverFence,
   dispatchLineageFenceAuthorizes,
   journalRecoveryRequiredForFence,
@@ -42,9 +50,10 @@ const fence = createDispatchLineageCutoverFence({
 
 function request(
   overrides: Partial<PrepareDispatchRequest> = {},
+  requestNamespace: AttestationNamespace = namespace,
 ): PrepareDispatchRequest {
   return {
-    namespace,
+    namespace: requestNamespace,
     roleId: "implement-worker",
     surface: "codex",
     input: { ...RECOVERY_INPUT, round: 18, startingCommit: RECOVERY_BASE },
@@ -57,6 +66,20 @@ function request(
     gitEffectBinding: RECOVERY_BINDING,
     ...overrides,
   };
+}
+
+async function git(cwd: string, args: readonly string[]): Promise<void> {
+  const child = Bun.spawn(["git", ...args], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+  });
+  const [code, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stderr).text(),
+  ]);
+  if (code !== 0) throw new Error(`git ${args.join(" ")} exited ${String(code)}: ${stderr}`);
 }
 
 describe("direct prepare lineage fence", () => {
@@ -149,6 +172,94 @@ describe("direct prepare lineage fence", () => {
       );
       expect(outcome).toEqual(journalRecoveryRequiredForFence(fence));
       expect(store.snapshot()).toEqual([]);
+    }
+  });
+
+  for (const adapter of ["in-memory", "filesystem", "sqlite"] as const) {
+    test(`${adapter} adapter obeys the same locked fence-before-transaction contract [Behavioral-Active Blackbox-GoodCommunication]`, async () => {
+      const root = await fs.mkdtemp(join(tmpdir(), `t2816-${adapter}-`));
+      const adapterNamespace: AttestationNamespace = {
+        backend: adapter === "filesystem" ? "fs" : "xdg",
+        projectKey: `t2816-${adapter}`,
+      };
+      let backend: AttestationBackend;
+      let rows: () => readonly unknown[];
+      if (adapter === "in-memory") {
+        const store = new InMemoryAttestationStore(adapterNamespace);
+        backend = new InMemoryAttestationBackend(store);
+        rows = () => store.snapshot();
+      } else if (adapter === "filesystem") {
+        const store = new FsAttestationBackend({ namespace: adapterNamespace, root });
+        backend = store;
+        rows = () => store.storedRows();
+      } else {
+        const store = new SqliteAttestationBackend({
+          namespace: adapterNamespace,
+          dbPath: join(root, "attestations.db"),
+        });
+        backend = store;
+        rows = () => store.storedRows();
+      }
+      const order: string[] = [];
+      try {
+        const prepared = await prepareDispatchOn(
+          backend,
+          request({ idempotencyKey: `${adapter}-allocated` }, adapterNamespace),
+          {
+            now: () => RECOVERY_NOW,
+            randomBytes: sequentialDispatchRandomBytes(0),
+            withLineageLock: async (operation) => {
+              order.push("lock-enter");
+              try {
+                return await operation();
+              } finally {
+                order.push("lock-exit");
+              }
+            },
+            lineageFenceGuard: async () => {
+              order.push("guard");
+              return null;
+            },
+          },
+        );
+        expect(prepared.accepted).toBe(true);
+        expect(rows()).toHaveLength(1);
+        expect(order).toEqual(["lock-enter", "guard", "lock-exit"]);
+
+        const refused = await prepareDispatchOn(
+          backend,
+          request({ idempotencyKey: `${adapter}-fenced` }, adapterNamespace),
+          {
+            now: () => RECOVERY_NOW,
+            randomBytes: sequentialDispatchRandomBytes(64),
+            withLineageLock: async (operation) => await operation(),
+            lineageFenceGuard: async () => journalRecoveryRequiredForFence(fence),
+          },
+        );
+        expect(refused).toEqual(journalRecoveryRequiredForFence(fence));
+        expect(rows()).toHaveLength(1);
+      } finally {
+        await backend.close();
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  test("Git-object backend remains an explicit pre-registration exclusion [Behavioral-Active Blackbox-GoodCommunication]", async () => {
+    const root = await fs.mkdtemp(join(tmpdir(), "t2816-git-object-"));
+    try {
+      await git(root, ["init", "-q"]);
+      await git(root, ["config", "user.name", "T2816"]);
+      await git(root, ["config", "user.email", "t2816@example.invalid"]);
+      const backend = new GitObjectLedgerBackend({ repoRoot: root });
+      await backend.init();
+      expect(backend.rootDir).toBe(root);
+      expect(() => assertAttestationConstructionSupported("direct", "git-object")).toThrow(
+        "no row-level compare-and-set",
+      );
+      await backend.dispose();
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
     }
   });
 });

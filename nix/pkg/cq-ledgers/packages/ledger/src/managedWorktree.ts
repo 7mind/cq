@@ -141,6 +141,16 @@ export interface ManagedWorktreeDispatchBinding {
   readonly baseCommit: string;
 }
 
+/** Registry identity sufficient to order a prepare with lineage sealing. */
+export interface ManagedWorktreeLineageBinding {
+  readonly taskId: string;
+  readonly handleToken: string;
+  readonly handleFingerprint: string;
+  readonly repositoryRoot: string;
+  readonly worktreePath: string;
+  readonly branch: string;
+}
+
 /** Exact manager-registry identity used only to authorize terminal teardown. */
 export interface ManagedWorktreeTerminalReleaseRegistryBinding {
   readonly registryStatus: "live" | "released";
@@ -3238,6 +3248,49 @@ export interface ResolveManagedWorktreeDispatchBindingRequest {
   readonly allowDetachedRebase?: boolean;
 }
 
+/** Resolve the manager registry identity without consulting mutable Git state. */
+export async function resolveManagedWorktreeLineageBinding(
+  request: ResolveManagedWorktreeDispatchBindingRequest,
+  deps: Pick<ManagedWorktreeDeps, "stateDir" | "lockfile" | "prepareLockTimeoutMs"> = {},
+): Promise<ManagedWorktreeLineageBinding | null> {
+  const repositoryRoot = resolve(request.repositoryRoot);
+  const regRoot = registryRoot(repositoryRoot, deps.stateDir);
+  await fs.mkdir(regRoot, { recursive: true });
+  const lockfile =
+    deps.lockfile ??
+    new Lockfile({
+      ...(deps.prepareLockTimeoutMs === undefined
+        ? {}
+        : { acquireTimeoutMs: deps.prepareLockTimeoutMs }),
+    });
+  const releaseTaskLock = await lockfile.acquire(
+    join(regRoot, PREPARE_LOCKS_DIRNAME),
+    `prepare-${request.taskId}`,
+  );
+  let live: StoredHandleRecord[];
+  try {
+    live = await listLiveHandlesForTask(regRoot, request.taskId, async () => undefined);
+  } finally {
+    await releaseTaskLock();
+  }
+  const matches = live.filter(
+    ({ handle }) =>
+      resolve(handle.repositoryRoot) === repositoryRoot &&
+      resolve(handle.absolutePath) === resolve(request.worktreePath) &&
+      handle.branch === request.branch,
+  );
+  if (matches.length !== 1) return null;
+  const stored = matches[0]!;
+  return Object.freeze({
+    taskId: stored.handle.taskId,
+    handleToken: stored.handle.token,
+    handleFingerprint: stored.fingerprint,
+    repositoryRoot,
+    worktreePath: resolve(stored.handle.absolutePath),
+    branch: stored.handle.branch,
+  });
+}
+
 /** Resolve one live manager record without exposing its resolved task Git directory. */
 export async function resolveManagedWorktreeDispatchBinding(
   request: ResolveManagedWorktreeDispatchBindingRequest,
@@ -3407,7 +3460,7 @@ export async function assertManagedWorktreeConflictDispatchBindingLive(
 
 /** Shared lock order for broker commit, result storage, and guarded release. */
 export async function withManagedWorktreeEffectLock<T>(
-  binding: ManagedWorktreeDispatchBinding,
+  binding: Pick<ManagedWorktreeLineageBinding, "repositoryRoot" | "handleToken">,
   deps: Pick<ManagedWorktreeDeps, "stateDir" | "lockfile" | "effectLockTimeoutMs">,
   effect: () => Promise<T>,
 ): Promise<T> {

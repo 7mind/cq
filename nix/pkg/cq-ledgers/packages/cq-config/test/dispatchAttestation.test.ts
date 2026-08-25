@@ -2759,7 +2759,12 @@ describe("consumed managed-worker continuation authority", () => {
             liveTip,
           },
         }),
-        { now: h.clock.now, randomBytes: sequentialDispatchRandomBytes(seed) },
+        {
+          now: h.clock.now,
+          randomBytes: sequentialDispatchRandomBytes(seed),
+          lineageFenceGuard: async () => null,
+          withLineageLock: async (operation) => await operation(),
+        },
       );
 
     const attempts = await Promise.allSettled([allocate("a", 96), allocate("b", 112)]);
@@ -2835,6 +2840,8 @@ describe("consumed managed-worker continuation authority", () => {
       prepareDispatchOn(backend, retryRequest, {
         now: seeded.clock.now,
         randomBytes: sequentialDispatchRandomBytes(80),
+        lineageFenceGuard: async () => null,
+        withLineageLock: async (operation) => await operation(),
       }),
     ).rejects.toThrow("injected insert failure");
     expect(backend.storedRows()).toHaveLength(1);
@@ -2846,6 +2853,8 @@ describe("consumed managed-worker continuation authority", () => {
     const successor = await prepareDispatchOn(backend, retryRequest, {
       now: seeded.clock.now,
       randomBytes: sequentialDispatchRandomBytes(96),
+      lineageFenceGuard: async () => null,
+      withLineageLock: async (operation) => await operation(),
     });
     expect(successor.accepted).toBe(true);
     expect(backend.storedRows()).toHaveLength(2);

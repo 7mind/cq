@@ -172,7 +172,12 @@ async function completeAuthenticatedManagedTask(
         expectedChild: { childId: "d360-child", runId: "d360-run" },
         gitEffectBinding: binding,
       },
-      { now, randomBytes: sequentialDispatchRandomBytes(0) },
+      {
+        now,
+        randomBytes: sequentialDispatchRandomBytes(0),
+        lineageFenceGuard: async () => null,
+        withLineageLock: async (operation) => await operation(),
+      },
     );
     if (!outcome.accepted) throw new Error("D360 authenticated dispatch was not prepared");
     lifecycle.push("prepared");

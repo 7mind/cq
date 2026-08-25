@@ -765,9 +765,12 @@ export interface AttestationBackendDeps {
 export interface AttestationBackendPrepareDeps extends AttestationBackendDeps {
   readonly randomBytes: DispatchRandomBytes;
   readonly stepOrder?: readonly string[];
-  /** Optional manager-owned fence check, executed inside the matching lineage lock. */
-  readonly lineageFenceGuard?: () => Promise<DispatchJournalRecoveryRequired | null>;
-  readonly withLineageLock?: <T>(operation: () => Promise<T>) => Promise<T>;
+}
+
+/** Mandatory boundary for a prepare carrying a trusted managed-worktree binding. */
+export interface AttestationBackendManagerPrepareDeps extends AttestationBackendPrepareDeps {
+  readonly lineageFenceGuard: () => Promise<DispatchJournalRecoveryRequired | null>;
+  readonly withLineageLock: <T>(operation: () => Promise<T>) => Promise<T>;
 }
 
 /**
@@ -838,10 +841,21 @@ export function handleLoadScope(request: DispatchHandle): AttestationLoadScope {
 export async function prepareDispatchOn(
   backend: AttestationBackend,
   request: PrepareDispatchRequest,
-  deps: AttestationBackendPrepareDeps,
+  deps: AttestationBackendPrepareDeps | AttestationBackendManagerPrepareDeps,
 ): Promise<PrepareDispatchOutcome> {
+  const managerBound = request.gitEffectBinding !== undefined;
+  const managerDeps = deps as Partial<AttestationBackendManagerPrepareDeps>;
+  if (
+    managerBound &&
+    (managerDeps.lineageFenceGuard === undefined || managerDeps.withLineageLock === undefined)
+  ) {
+    throw new AttestationContractError(
+      "deps",
+      "manager-bound prepare requires a lineage fence guard and lock",
+    );
+  }
   const operation = async (): Promise<PrepareDispatchOutcome> => {
-    const refusal = await deps.lineageFenceGuard?.();
+    const refusal = await managerDeps.lineageFenceGuard?.();
     if (refusal !== undefined && refusal !== null) return refusal;
     return await backend.transact(prepareLoadScope(request), (store) =>
       prepareDispatch(request, {
@@ -852,8 +866,8 @@ export async function prepareDispatchOn(
       }),
     );
   };
-  if (deps.withLineageLock === undefined) return await operation();
-  return await deps.withLineageLock(operation);
+  if (managerDeps.withLineageLock === undefined) return await operation();
+  return await managerDeps.withLineageLock(operation);
 }
 
 export async function storeDispatchResultOn(

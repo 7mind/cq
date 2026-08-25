@@ -423,6 +423,7 @@ export {
   rebaseBunWorkspaceIntoWorktree,
   releaseManagedWorktree,
   resolveManagedWorktreeDispatchBinding,
+  resolveManagedWorktreeLineageBinding,
   resolveManagedWorktreeTerminalReleaseRegistryBinding,
   resolveBunInstallCacheDir,
   resolveCqCacheRoot,
@@ -444,6 +445,7 @@ export type {
 } from "./worksetGitEffects.js";
 export type {
   ManagedWorktreeDispatchBinding,
+  ManagedWorktreeLineageBinding,
   ManagedWorktreeDeps,
   ManagedWorktreeFaultBoundary,
   ManagedWorktreeFaultInjector,

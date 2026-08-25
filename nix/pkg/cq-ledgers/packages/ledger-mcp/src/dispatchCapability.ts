@@ -64,6 +64,7 @@ import {
   validateGitConflictContinuationResultEvidence,
   validateGitChangeBrokerResultEvidence,
   resolveManagedWorktreeDispatchBinding,
+  resolveManagedWorktreeLineageBinding,
   observeManagedWorktreeLiveTip,
   resolveInheritedGitChangeReceipts,
   runLedgerWorksetGitEffect,
@@ -571,6 +572,31 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
 
   return {
     prepare: async (input) => {
+      const callerFingerprint = callerPrepareFingerprint(input);
+      const earlyCoordinates = managedPrepareCoordinates(input);
+      if (earlyCoordinates !== undefined) {
+        const lineageBinding = await resolveManagedWorktreeLineageBinding(
+          earlyCoordinates,
+          options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+        );
+        if (lineageBinding !== null) {
+          const refusal = await withManagedWorktreeEffectLock(
+            lineageBinding,
+            options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+            async () => {
+              const fence = await matchingFence(
+                lineageBinding.taskId,
+                lineageBinding.handleFingerprint,
+              );
+              return fence !== null &&
+                !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)
+                ? journalRecoveryRequiredForFence(fence)
+                : undefined;
+            },
+          );
+          if (refusal !== undefined) return refusal;
+        }
+      }
       if (
         typeof input.idempotencyKey !== "string" ||
         input.idempotencyKey.trim() === "" ||
@@ -634,8 +660,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           "journal recovery preparation requires an implement-worker on a local repository and must replace every legacy continuation path",
         );
       }
-      const callerFingerprint = callerPrepareFingerprint(input);
-      const earlyCoordinates = managedPrepareCoordinates(input);
       if (earlyCoordinates !== undefined) {
         const candidate = await resolveManagedWorktreeDispatchBinding(
           earlyCoordinates,
@@ -1391,7 +1415,28 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             }
             continue;
           }
-          const pending = prepareDispatchOn(options.backend, request, { now, randomBytes }).then(
+          const pending = prepareDispatchOn(
+            options.backend,
+            request,
+            prepareLockBinding === undefined
+              ? { now, randomBytes }
+              : {
+                  now,
+                  randomBytes,
+                  lineageFenceGuard: async () => {
+                    const fence = await matchingFence(
+                      prepareLockBinding.taskId,
+                      prepareLockBinding.handleFingerprint,
+                    );
+                    return fence !== null &&
+                      !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)
+                      ? journalRecoveryRequiredForFence(fence)
+                      : null;
+                  },
+                  // allocateOrReplay is inside this binding's effect lock below.
+                  withLineageLock: async (operation) => await operation(),
+                },
+          ).then(
             (outcome: PrepareDispatchOutcome) => {
               if (!outcome.accepted) {
                 if (

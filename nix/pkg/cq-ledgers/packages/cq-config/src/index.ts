@@ -1098,6 +1098,7 @@ export type {
   AttestationBackend,
   AttestationBackendIO,
   AttestationBackendDeps,
+  AttestationBackendManagerPrepareDeps,
   AttestationBackendPrepareDeps,
   AttestationSweepTimer,
   AttestationSweepScheduleOptions,
