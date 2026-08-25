@@ -499,6 +499,16 @@ export async function readCurrentDispatchRecoveryStatus(options: {
   return await currentRecoveryStatus(journal, options.taskId);
 }
 
+export async function readCurrentDispatchRecoveryStatusForLineage(options: {
+  readonly journal: CurrentRecoverySealJournalStore;
+  readonly taskId: string;
+  readonly binding: ManagedWorktreeDispatchBinding;
+  readonly liveTip: string;
+  readonly rows: readonly AttestationRow[];
+}): Promise<CurrentRecoveryStatus> {
+  return await currentRecoveryStatus(options.journal, options.taskId);
+}
+
 export interface SingleProjectRecoverySealOptions {
   readonly construction: SingleProjectConstruction;
   readonly resolved: ResolvedLedgerStore;

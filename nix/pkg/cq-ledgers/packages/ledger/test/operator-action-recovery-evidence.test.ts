@@ -206,6 +206,11 @@ test("lineage-cutover-fence verifies only semantic committed recovery status", a
     const substituted = JSON.parse(statusOutput("committed")) as Record<string, unknown>;
     substituted["sealReference"] = `cq-current-recovery-seal:v1:${"0".repeat(64)}`;
     expect((await record(JSON.stringify(substituted))).state).toBe("pending");
+    const substitutedGeneration = JSON.parse(statusOutput("committed")) as {
+      selectedSourceHandle: { generation: number };
+    };
+    substitutedGeneration.selectedSourceHandle.generation += 1;
+    expect((await record(JSON.stringify(substitutedGeneration))).state).toBe("pending");
     expect((await record(statusOutput("committed"))).state).toBe("verified");
   } finally {
     await store.dispose();

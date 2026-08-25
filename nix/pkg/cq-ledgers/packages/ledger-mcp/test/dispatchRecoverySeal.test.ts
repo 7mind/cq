@@ -1,4 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
+import {
+  attestationRowDigest,
+  rehydrateAttestationRow,
+  type AttestationRow,
+} from "@cq/config";
 import {
   InMemoryCurrentRecoverySealJournalStore,
   PLAN_FINALIZED_MANIFEST_FIELD,
@@ -8,6 +14,7 @@ import {
 import {
   captureCurrentRecoverySeal,
   currentRecoveryTaskEvidence,
+  readCurrentDispatchRecoveryStatusForLineage,
 } from "../src/dispatchRecoverySeal.js";
 import {
   RECOVERY_BINDING,
@@ -155,6 +162,30 @@ describe("protected current dispatch-recovery capture", () => {
     expect(seal.seed.overlays).toEqual(overlays.map((overlay) => ({ ...overlay })));
   });
 
+  test("captures a digest-verified legacy persisted envelope that predates overlays", async () => {
+    const body = await readFile(
+      new URL("./fixtures/legacy-aborted-attestation-no-overlays.json", import.meta.url),
+      "utf8",
+    );
+    const legacy = JSON.parse(body) as AttestationRow;
+    const digest = attestationRowDigest(legacy);
+    const row = rehydrateAttestationRow(legacy.namespace, body, digest);
+    expect(row.overlays).toEqual([]);
+    expect(() => rehydrateAttestationRow(legacy.namespace, body, "0".repeat(64))).toThrow(
+      "digests to",
+    );
+
+    const seal = await captureCurrentRecoverySeal(coordinates, {
+      journal: new InMemoryCurrentRecoverySealJournalStore(),
+      snapshot: async () => [row],
+      resolveReceipts: async () => RECOVERY_RECEIPTS,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => RECOVERY_NOW,
+    });
+    expect(seal.seed.overlays).toEqual([]);
+  });
+
   test("unchanged lineage replays committed authority without provisional demotion", async () => {
     const backing = new InMemoryCurrentRecoverySealJournalStore();
     let writes = 0;
@@ -200,6 +231,30 @@ describe("protected current dispatch-recovery capture", () => {
       }),
     ).rejects.toMatchObject({ reason: "lineage-active" });
     expect(await journal.read(RECOVERY_TASK)).toBeNull();
+  });
+
+  test("committed status rejects a successor allocated after capture", async () => {
+    const journal = new InMemoryCurrentRecoverySealJournalStore();
+    const rows = [abortedEnvelope({ generation: 2 })];
+    await captureCurrentRecoverySeal(coordinates, {
+      journal,
+      snapshot: async () => rows,
+      resolveReceipts: async () => RECOVERY_RECEIPTS,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => RECOVERY_NOW,
+    });
+    rows.push(abortedEnvelope({ generation: 3, state: "prepared" }));
+
+    await expect(
+      readCurrentDispatchRecoveryStatusForLineage({
+        journal,
+        taskId: RECOVERY_TASK,
+        binding: RECOVERY_BINDING,
+        liveTip: RECOVERY_TIP,
+        rows,
+      }),
+    ).rejects.toMatchObject({ reason: "lineage-active" });
   });
 
   test("invalid broker journals and excluded terminal reasons never become sources", async () => {

@@ -14,6 +14,7 @@ import {
   type CurrentRecoverySealJournalStore,
 } from "../src/index.js";
 import {
+  RECOVERY_BINDING,
   RECOVERY_TASK,
   committedJournal,
   provisionalJournal,
@@ -136,6 +137,7 @@ test("every role, input, Git and generation coordinate is authenticated by the s
 
 test("seal and status schemas are closed and capture no dispatch capability", () => {
   const encoded = JSON.stringify(recoverySeal());
+  expect(encoded).not.toContain(RECOVERY_BINDING.handleToken);
   expect(encoded).not.toContain("Capability");
   expect(encoded).not.toContain("cq_input_");
   expect(encoded).not.toContain("cq_result_");
