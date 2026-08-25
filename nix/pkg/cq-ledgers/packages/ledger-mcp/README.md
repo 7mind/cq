@@ -238,7 +238,7 @@ measured savings without another batching schema.
 | `read_log` | `requested-full-content` | `{ path, content, truncated? }`. |
 | `get_config` | `requested-full-content` | The payload selected by `section`; no unrelated section is returned. |
 | `get_usage_stats` | `purpose-built-small` | `{ endpoints: [{ name, callCount, bytesIn, bytesOut }], totals: { callCount, bytesIn, bytesOut } }` |
-| `prepare_dispatch` | `purpose-built-small` | `{ accepted, prepared, handle, executedStepOrder }` or a typed pre-launch rejection. |
+| `prepare_dispatch` | `purpose-built-small` | `{accepted,prepared,handle,executedStepOrder}` or pre-launch rejection. |
 | `fetch_dispatch_input` | `requested-full-content` | The prepare-bound typed input on its first capability-authorized retrieval. |
 | `store_result` | `purpose-built-small` | A handle-only stored-result acknowledgement or typed abort. |
 | `confirm_dispatch_completion` | `purpose-built-small` | A handle-only consumed acknowledgement or typed abort. |
@@ -250,7 +250,7 @@ measured savings without another batching schema.
 | `publish_plan_draft` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { …operation key, manifest, replacedManifest, reviewDefects } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
 | `release_plan_claim` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { kind, …operation key, questions, researches, waitingResearches, tasks, waitingTasks, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
 | `finalize_plan` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { …operation key, reviewId, draft, decisionId, manifest, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
-| `worktree_manage` | `purpose-built-small` | Prepare: `{ status: "prepared"|"resume-required"|"refused", … }`. Observe conflict: `{ status: "conflict-observed", conflictState }`. Release: `{ status: "released"|"refused", … }`. Typed acknowledgements only; never exposes filesystem mutation primitives individually. |
+| `worktree_manage` | `purpose-built-small` | `prepared\|resume-required\|refused`, `conflict-observed`, or `released\|refused`; typed acknowledgements only. |
 | `git_commit` | `purpose-built-small` | A replayable `{ kind, version, attestationId, generation, taskId, operationId, requestDigest, oldHead, newHead, tree, objectOids, paths, committedAt }` receipt. |
 | `git_resolve_continue` | `purpose-built-small` | A replayable durable conflict-continuation receipt carrying attributed objects and either the terminal rebased tip or the exact next parent-bound conflict state. |
 <!-- ledger-response-contract:end -->
