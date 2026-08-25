@@ -24,13 +24,17 @@ import {
   PERSISTED_ATTESTATION_COLUMNS,
   SqliteAttestationBackend,
   SqliteAttestationConnectionRegistry,
+  TERMINAL_ENVELOPE_RETENTION_MS,
+  attestationRowDigest,
   ensureAttestationSchema,
   xdgAttestationDbPath,
   xdgAttestationStateBase,
   type AttestationNamespace,
+  type AttestationRow,
 } from "@cq/config";
 import {
   AttestationDriver,
+  handleOf,
   runAttestationStoreContract,
   type AttestationContractFixture,
 } from "./attestationStoreContract.js";
@@ -119,6 +123,67 @@ runAttestationStoreContract({
 // ---------------------------------------------------------------------------
 
 describe("bun:sqlite attestation backend specifics", () => {
+  // regression: T2815 round 3 — legacy normalization must not change the CAS revision.
+  test("a sweep can replace actual persisted legacy bytes without a false lost update", async () => {
+    const dbPath = join(freshRoot(), ATTESTATION_DB_FILENAME);
+    const namespace: AttestationNamespace = {
+      backend: NAMESPACE_BACKEND,
+      projectKey: "legacy-overlay-sweep",
+    };
+    const backend = new SqliteAttestationBackend({ namespace, dbPath });
+    const clock = new FakeDispatchClock("2026-07-28T09:00:00.000Z");
+    const driver = new AttestationDriver(backend, clock);
+    try {
+      const prepared = await driver.prepare();
+      const aborted = await driver.abort(prepared);
+      const db = new Database(dbPath);
+      try {
+        const stored = db
+          .query(
+            `SELECT body FROM ${ATTESTATION_TABLE}
+              WHERE backend = ? AND project_key = ? AND attestation_id = ? AND generation = ?`,
+          )
+          .get(
+            namespace.backend,
+            namespace.projectKey,
+            prepared.attestationId,
+            prepared.generation,
+          ) as { readonly body: string } | null;
+        if (stored === null) throw new Error("persisted aborted row missing");
+        const legacy = JSON.parse(stored.body) as Record<string, unknown>;
+        delete legacy["overlays"];
+        const legacyBody = JSON.stringify(legacy);
+        const legacyDigest = attestationRowDigest(legacy as unknown as AttestationRow);
+        db.query(
+          `UPDATE ${ATTESTATION_TABLE} SET body = ?, row_digest = ?
+            WHERE backend = ? AND project_key = ? AND attestation_id = ? AND generation = ?`,
+        ).run(
+          legacyBody,
+          legacyDigest,
+          namespace.backend,
+          namespace.projectKey,
+          prepared.attestationId,
+          prepared.generation,
+        );
+      } finally {
+        db.close();
+      }
+
+      clock.set(aborted.abortedAt).advance(TERMINAL_ENVELOPE_RETENTION_MS);
+      const report = await driver.sweep();
+      expect(report.envelopesCollapsed).toEqual([handleOf(prepared)]);
+      expect(backend.storedRows()).toEqual([
+        expect.objectContaining({
+          kind: "tombstone",
+          attestationId: prepared.attestationId,
+          generation: prepared.generation,
+        }),
+      ]);
+    } finally {
+      await backend.close();
+    }
+  });
+
   test("only the xdg backend may be served, and the excluded ones fail at construction", () => {
     const dbPath = join(freshRoot(), ATTESTATION_DB_FILENAME);
     for (const backend of ["fs", "postgres"] as const) {
