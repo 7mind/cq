@@ -101,17 +101,13 @@ describe("direct prepare lineage fence", () => {
 
   test("legacy manager-bound prepare returns the typed refusal before allocation", async () => {
     const store = new InMemoryAttestationStore(namespace);
-    const outcome = await prepareDispatchOn(
-      new InMemoryAttestationBackend(store),
-      request(),
-      {
-        mode: "manager-bound",
-        now: () => RECOVERY_NOW,
-        randomBytes: sequentialDispatchRandomBytes(0),
-        lineageFenceGuard: async () => journalRecoveryRequiredForFence(fence),
-        withLineageLock: async (operation) => await operation(),
-      },
-    );
+    const outcome = await prepareDispatchOn(new InMemoryAttestationBackend(store), request(), {
+      mode: "manager-bound",
+      now: () => RECOVERY_NOW,
+      randomBytes: sequentialDispatchRandomBytes(0),
+      lineageFenceGuard: async () => journalRecoveryRequiredForFence(fence),
+      withLineageLock: async (operation) => await operation(),
+    });
     expect(outcome).toEqual(journalRecoveryRequiredForFence(fence));
     expect(store.snapshot()).toEqual([]);
   });
@@ -185,8 +181,7 @@ describe("direct prepare lineage fence", () => {
     test(`${adapter} adapter obeys the same locked fence-before-transaction contract [Behavioral-Active Blackbox-GoodCommunication]`, async () => {
       const root = await fs.mkdtemp(join(tmpdir(), `t2816-${adapter}-`));
       const adapterNamespace: AttestationNamespace = {
-        backend:
-          adapter === "filesystem" ? "fs" : adapter === "git-object" ? "git-object" : "xdg",
+        backend: adapter === "filesystem" ? "fs" : adapter === "git-object" ? "git-object" : "xdg",
         projectKey: `t2816-${adapter}`,
       };
       let backend: AttestationBackend;
@@ -197,14 +192,12 @@ describe("direct prepare lineage fence", () => {
         backend = new FsAttestationBackend({ namespace: adapterNamespace, root });
       } else if (adapter === "git-object") {
         execFileSync("git", ["init", "--quiet"], { cwd: root });
-        expect(assertAttestationConstructionSupported("direct", "git-object")).toBe(
-          "git-object",
-        );
+        expect(assertAttestationConstructionSupported("direct", "git-object")).toBe("git-object");
         backend = await createAttestationStoreForConstruction({
           backend: "git-object",
           namespace: adapterNamespace,
           repoRoot: root,
-        } as never);
+        });
       } else {
         backend = new SqliteAttestationBackend({
           namespace: adapterNamespace,
@@ -259,5 +252,4 @@ describe("direct prepare lineage fence", () => {
       }
     });
   }
-
 });

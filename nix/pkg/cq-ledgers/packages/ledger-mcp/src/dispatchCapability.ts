@@ -326,9 +326,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     }
   }
 
-  function managedPrepareCoordinates(
-    input: Parameters<DispatchCapability["prepare"]>[0],
-  ):
+  function managedPrepareCoordinates(input: Parameters<DispatchCapability["prepare"]>[0]):
     | {
         readonly repositoryRoot: string;
         readonly taskId: string;
@@ -617,10 +615,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           `expected an integer timeout within [${DISPATCH_TIMEOUT_MIN_MS}, ${DISPATCH_TIMEOUT_MAX_MS}] ms`,
         );
       }
-      if (
-        input.guardedRebase !== undefined &&
-        input.reprepareOf === undefined
-      ) {
+      if (input.guardedRebase !== undefined && input.reprepareOf === undefined) {
         return rejectLaunch(
           "guardedRebase",
           "a guarded-rebase reference requires an implement-worker reprepareOf naming the exact terminal prior worker generation on a local repository",
@@ -673,9 +668,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
             async () => {
               const liveBinding =
-                candidate === null
-                  ? null
-                  : await revalidateManagedPrepareBinding(candidate, false);
+                candidate === null ? null : await revalidateManagedPrepareBinding(candidate, false);
               const binding = liveBinding ?? cachedBinding;
               if (binding === undefined) {
                 return rejectLaunch(
@@ -708,11 +701,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           if (preflight !== undefined) return preflight;
         }
       } else if (callerFingerprint !== undefined) {
-        const replay = await replayCachedPrepare(
-          input.idempotencyKey,
-          callerFingerprint,
-          "caller",
-        );
+        const replay = await replayCachedPrepare(input.idempotencyKey, callerFingerprint, "caller");
         if (replay !== undefined) return replay;
       }
       let roleId: string;
@@ -964,10 +953,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         }
         prepareLockBinding = resolvedGitEffectBinding;
         const fence = await matchingFence(taskId, resolvedGitEffectBinding.handleFingerprint);
-        if (
-          fence !== null &&
-          !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)
-        ) {
+        if (fence !== null && !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)) {
           return journalRecoveryRequiredForFence(fence);
         }
         if (roleId === "implement-conflict-resolver") {
@@ -1374,9 +1360,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         ...(resolvedReprepareOf === undefined ? {} : { reprepareOf: resolvedReprepareOf }),
         ...(gitEffectBinding === undefined ? {} : { gitEffectBinding }),
         ...(continuationClaim === undefined ? {} : { continuationClaim }),
-        ...(journalRecoveryReservation === undefined
-          ? {}
-          : { journalRecoveryReservation }),
+        ...(journalRecoveryReservation === undefined ? {} : { journalRecoveryReservation }),
       } as const;
       const fingerprint = prepareDispatchRequestDigest(request);
       const allocateOrReplay = async (): Promise<PrepareDispatchOutcome> => {
@@ -1392,10 +1376,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             );
           }
           const fence = await matchingFence(binding.taskId, binding.handleFingerprint);
-          if (
-            fence !== null &&
-            !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)
-          ) {
+          if (fence !== null && !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)) {
             return journalRecoveryRequiredForFence(fence);
           }
         }
@@ -1437,23 +1418,21 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                   // allocateOrReplay is inside this binding's effect lock below.
                   withLineageLock: async (operation) => await operation(),
                 },
-          ).then(
-            (outcome: PrepareDispatchOutcome) => {
-              if (!outcome.accepted) {
-                if (
-                  outcome.reason === "journal-recovery-required" &&
-                  "fenceRef" in outcome &&
-                  "taskRef" in outcome
-                ) {
-                  throw new JournalRecoveryRequiredError(
-                    outcome as ReturnType<typeof journalRecoveryRequiredForFence>,
-                  );
-                }
-                throw new Error("validated prepare unexpectedly returned a pre-launch rejection");
+          ).then((outcome: PrepareDispatchOutcome) => {
+            if (!outcome.accepted) {
+              if (
+                outcome.reason === "journal-recovery-required" &&
+                "fenceRef" in outcome &&
+                "taskRef" in outcome
+              ) {
+                throw new JournalRecoveryRequiredError(
+                  outcome as ReturnType<typeof journalRecoveryRequiredForFence>,
+                );
               }
-              return outcome;
-            },
-          );
+              throw new Error("validated prepare unexpectedly returned a pre-launch rejection");
+            }
+            return outcome;
+          });
           const entry: CachedPrepare = {
             callerFingerprint,
             fingerprint,
@@ -1981,6 +1960,14 @@ export async function createSingleProjectDispatchRuntime(
         backend,
         namespace,
         ledgerRoot: options.resolved.configRoot,
+      });
+      break;
+    case "git-object":
+      attestationBackend = await createAttestationStoreForConstruction({
+        backend,
+        namespace,
+        repoRoot: options.resolved.configRoot,
+        ref: options.resolved.branch,
       });
       break;
     default:

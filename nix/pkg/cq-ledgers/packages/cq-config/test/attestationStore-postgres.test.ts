@@ -47,10 +47,7 @@ const PG_URL = process.env["CQ_TEST_PG_URL"];
 const NAMESPACE_BACKEND = "postgres" as const;
 
 /** T2108: required-live mode fails closed instead of skipping. */
-function assertRequiredPostgresDsn(
-  pgUrl: string | undefined,
-  requirePg: string | undefined,
-): void {
+function assertRequiredPostgresDsn(pgUrl: string | undefined, requirePg: string | undefined): void {
   if ((pgUrl === undefined || pgUrl.length === 0) && requirePg === "1") {
     throw new Error("CQ_TEST_REQUIRE_PG=1 requires CQ_TEST_PG_URL to contain a PostgreSQL DSN");
   }
@@ -92,9 +89,7 @@ describe("T2108 PostgreSQL required-mode disposition", () => {
   });
 
   test("selects the supplied CQ_TEST_PG_URL", () => {
-    expect(() =>
-      assertRequiredPostgresDsn("postgres://localhost/cq-test", "1"),
-    ).not.toThrow();
+    expect(() => assertRequiredPostgresDsn("postgres://localhost/cq-test", "1")).not.toThrow();
   });
 });
 
@@ -241,13 +236,13 @@ describe("PostgreSQL attestation backend — offline (no database required)", ()
     // attempted, so these assertions need no reachable server.
     const pool = openAttestationPgPool("postgres://unused@127.0.0.1:1/unused");
     try {
-      for (const backend of ["xdg", "fs"] as const) {
+      for (const backend of ["xdg", "fs", "git-object"] as const) {
         await expect(
           PostgresAttestationBackend.open({ namespace: { backend, projectKey: "p" }, pool }),
           backend,
         ).rejects.toThrow(AttestationStorageError);
       }
-      for (const backend of ["git-object", "remote"] as const) {
+      for (const backend of ["remote"] as const) {
         await expect(
           PostgresAttestationBackend.open({ namespace: { backend, projectKey: "p" }, pool }),
           backend,

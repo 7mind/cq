@@ -1,10 +1,10 @@
 /**
  * The production dispatch-attestation CONSTRUCTION MATRIX (T686, goal G94).
  *
- * T720 built the three namespaced production {@link AttestationBackend} adapters
+ * T720 built the initial namespaced production {@link AttestationBackend} adapters
  * (`@cq/config`'s xdg/sqlite, filesystem and PostgreSQL backends) plus
  * `assertAttestationStoreBackend`, the LEDGER-BACKEND-level registration guard:
- * `git-object`/`remote` are excluded with a declared reason, and the in-memory
+ * `remote` is excluded with a declared reason, and the in-memory
  * test double is excluded as not a backend at all. That guard lives in
  * `@cq/config`, which cannot depend on `@cq/ledger` (the dependency runs the
  * other way — `@cq/ledger` depends on `@cq/config`), so it cannot itself call
@@ -36,7 +36,7 @@
  * per namespace per backend handle, keyed for a SINGLE tenant; nothing in this
  * package gives a local xdg/fs backend Postgres's trusted per-request tenant
  * routing, so a local multi-project hub construction must fail before any
- * ref-first tool is registered, exactly like `git-object`/`remote`/in-memory.
+ * ref-first tool is registered, exactly like `remote`/in-memory.
  *
  * **Namespacing never comes from a request (restated at the construction
  * boundary).** {@link resolveSingleProjectAttestationNamespace} derives its
@@ -69,6 +69,7 @@ import {
 } from "@cq/config";
 import { LEDGER_STORAGE_DIRNAME } from "../constants.js";
 import { resolveProjectKey, type ResolveProjectKeyOpts } from "../projectKey.js";
+import { GitObjectAttestationBackend } from "./git/GitObjectAttestationBackend.js";
 
 // ---------------------------------------------------------------------------
 // The construction kinds
@@ -110,13 +111,9 @@ export const SINGLE_PROJECT_CONSTRUCTIONS = [
 
 export type SingleProjectConstruction = (typeof SINGLE_PROJECT_CONSTRUCTIONS)[number];
 
-const SINGLE_PROJECT_CONSTRUCTION_SET: ReadonlySet<string> = new Set(
-  SINGLE_PROJECT_CONSTRUCTIONS,
-);
+const SINGLE_PROJECT_CONSTRUCTION_SET: ReadonlySet<string> = new Set(SINGLE_PROJECT_CONSTRUCTIONS);
 
-export function isSingleProjectConstruction(
-  value: string,
-): value is SingleProjectConstruction {
+export function isSingleProjectConstruction(value: string): value is SingleProjectConstruction {
   return typeof value === "string" && SINGLE_PROJECT_CONSTRUCTION_SET.has(value);
 }
 
@@ -153,7 +150,7 @@ export class AttestationConstructionUnsupportedError extends AttestationBackendU
  *
  * Returns the narrowed backend on success; throws
  * {@link AttestationConstructionUnsupportedError} otherwise. Delegates the
- * backend-level decision (git-object/remote/in-memory) to
+ * backend-level decision (remote/in-memory) to
  * {@link assertAttestationStoreBackend} so the two layers can never disagree
  * about what a bare backend name means.
  */
@@ -194,7 +191,7 @@ export function assertAttestationConstructionSupported(
       "postgres is private cq serve state; single-project constructions use backend=remote",
     );
   }
-  // Delegate the bare-backend decision (git-object/remote/in-memory/unknown)
+  // Delegate the bare-backend decision (remote/in-memory/unknown)
   // to the one function that owns it. Its `AttestationBackendUnsupportedError`
   // propagates AS-IS — this construction-level gate only ever mints its OWN
   // subclass for the two decisions that are specific to a construction
@@ -224,7 +221,11 @@ export interface AttestationConstructionVerdict {
  * list. Frozen; consult it, don't mutate it.
  */
 export function buildAttestationConstructionCoverage(): readonly AttestationConstructionVerdict[] {
-  const backends: readonly string[] = [...LEDGER_BACKENDS, ATTESTATION_IN_MEMORY_BACKEND, "postgres"];
+  const backends: readonly string[] = [
+    ...LEDGER_BACKENDS,
+    ATTESTATION_IN_MEMORY_BACKEND,
+    "postgres",
+  ];
   const verdicts: AttestationConstructionVerdict[] = [];
   for (const construction of LEDGER_SERVER_CONSTRUCTIONS) {
     for (const backend of backends) {
@@ -253,8 +254,8 @@ export const ATTESTATION_CONSTRUCTION_COVERAGE: readonly AttestationConstruction
   buildAttestationConstructionCoverage();
 
 /**
- * Exactly the supported cells named in T686's acceptance: xdg/fs support the
- * four single-project constructions; postgres additionally supports the hub.
+ * The supported cells: xdg/fs/git-object support the four single-project
+ * constructions; postgres additionally supports the hub.
  * A test asserting against THIS constant (rather than re-deriving it) fails
  * the moment {@link assertAttestationConstructionSupported}'s decisions drift
  * from the declared contract, in either direction.
@@ -284,7 +285,7 @@ export interface SingleProjectNamespaceInput {
 /**
  * Resolve the {@link AttestationNamespace} for one of the four single-project
  * constructions. The registration gate runs FIRST — an excluded backend never
- * reaches {@link resolveProjectKey}, so a git-object/remote root never has its
+ * reaches {@link resolveProjectKey}, so a remote root never has its
  * git plumbing invoked just to build a namespace nothing will use.
  *
  * The derived `projectKey` is BIT-IDENTICAL to `resolveProjectKey`'s own
@@ -314,10 +315,7 @@ export async function resolveSingleProjectAttestationNamespace(
 export function attestationNamespaceForTrustedHubProject(
   trustedProjectKey: string,
 ): AttestationNamespace {
-  const backend = assertAttestationConstructionSupported(
-    ATTESTATION_HUB_CONSTRUCTION,
-    "postgres",
-  );
+  const backend = assertAttestationConstructionSupported(ATTESTATION_HUB_CONSTRUCTION, "postgres");
   if (typeof trustedProjectKey !== "string" || trustedProjectKey.trim() === "") {
     throw new AttestationConstructionUnsupportedError(
       ATTESTATION_HUB_CONSTRUCTION,
@@ -350,6 +348,14 @@ export interface FsAttestationConstructionInput {
   readonly ledgerRoot: string;
 }
 
+export interface GitObjectAttestationConstructionInput {
+  readonly backend: "git-object";
+  readonly namespace: AttestationNamespace;
+  readonly repoRoot: string;
+  /** The ledger orphan branch. Defaults to `cq-ledger`. */
+  readonly ref?: string;
+}
+
 export interface PostgresAttestationConstructionInput {
   readonly backend: "postgres";
   readonly namespace: AttestationNamespace;
@@ -361,6 +367,7 @@ export interface PostgresAttestationConstructionInput {
 export type AttestationConstructionStoreInput =
   | XdgAttestationConstructionInput
   | FsAttestationConstructionInput
+  | GitObjectAttestationConstructionInput
   | PostgresAttestationConstructionInput;
 
 /**
@@ -368,7 +375,8 @@ export type AttestationConstructionStoreInput =
  * namespace (from one of the two functions above). Does NOT re-validate the
  * namespace's backend itself — each concrete adapter's own constructor already
  * does (`SqliteAttestationBackend`/`FsAttestationBackend`/
- * `PostgresAttestationBackend` each call their own `assert*Namespace`), so a
+ * `GitObjectAttestationBackend`/`PostgresAttestationBackend` each call their
+ * own `assert*Namespace`), so a
  * namespace for an excluded backend still refuses here, at the adapter
  * boundary, rather than being silently accepted. A prior revision duplicated
  * that check at this level too; it was REMOVED after mutation-testing showed
@@ -391,6 +399,13 @@ export async function createAttestationStoreForConstruction(
     case "fs": {
       const root = fsAttestationProductionRoot(input.ledgerRoot);
       return new FsAttestationBackend({ namespace: input.namespace, root });
+    }
+    case "git-object": {
+      return new GitObjectAttestationBackend({
+        namespace: input.namespace,
+        repoRoot: input.repoRoot,
+        ...(input.ref === undefined ? {} : { ref: input.ref }),
+      });
     }
     case "postgres": {
       return PostgresAttestationBackend.open({

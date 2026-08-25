@@ -583,6 +583,8 @@ export type {
   RunGuardedRebaseOptions,
 } from "./guardedRebaseContinuation.js";
 export { GitPersistence } from "./store/git/GitPersistence.js";
+export { GitObjectAttestationBackend } from "./store/git/GitObjectAttestationBackend.js";
+export type { GitObjectAttestationBackendOptions } from "./store/git/GitObjectAttestationBackend.js";
 export { GitObjectLedgerBackend } from "./store/git/GitObjectLedgerBackend.js";
 export type { GitObjectLedgerBackendOpts } from "./store/git/GitObjectLedgerBackend.js";
 export { SqliteLedgerStore } from "./store/sqlite/SqliteLedgerStore.js";
@@ -715,6 +717,7 @@ export type {
   SingleProjectNamespaceInput,
   XdgAttestationConstructionInput,
   FsAttestationConstructionInput,
+  GitObjectAttestationConstructionInput,
   PostgresAttestationConstructionInput,
   AttestationConstructionStoreInput,
 } from "./store/attestationConstruction.js";

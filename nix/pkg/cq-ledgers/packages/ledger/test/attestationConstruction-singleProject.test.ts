@@ -3,7 +3,8 @@
  * end-to-end through the PRODUCTION construction matrix: `resolveProjectKey`
  * derives the namespace exactly as the real ledger-store factory does, and
  * {@link createAttestationStoreForConstruction} builds the SAME concrete
- * adapter (`@cq/config`'s xdg/sqlite and filesystem backends) a server would.
+ * adapter (`@cq/config`'s xdg/sqlite and filesystem backends, plus the
+ * ledger-owned Git-object backend) a server would.
  *
  * Reuses the shared T720 40-case contract UNCHANGED — see
  * `packages/cq-config/test/attestationStoreContract.ts` — against a store
@@ -20,6 +21,7 @@
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -100,7 +102,8 @@ for (const construction of SINGLE_PROJECT_CONSTRUCTIONS) {
           extra.push(backend);
           return backend;
         },
-        rows: async () => (await live.transact({ kind: "namespace" }, (store) => store.rows())) ?? [],
+        rows: async () =>
+          (await live.transact({ kind: "namespace" }, (store) => store.rows())) ?? [],
         dump: async () =>
           JSON.stringify(await live.transact({ kind: "namespace" }, (store) => store.rows())),
         artifacts: () => Promise.resolve([`xdg:${stateHome}`]),
@@ -162,7 +165,8 @@ for (const construction of SINGLE_PROJECT_CONSTRUCTIONS) {
           extra.push(backend);
           return backend;
         },
-        rows: async () => (await live.transact({ kind: "namespace" }, (store) => store.rows())) ?? [],
+        rows: async () =>
+          (await live.transact({ kind: "namespace" }, (store) => store.rows())) ?? [],
         dump: async () =>
           JSON.stringify(await live.transact({ kind: "namespace" }, (store) => store.rows())),
         artifacts: () => Promise.resolve([`fs:${fsAttestationProductionRoot(ledgerRoot)}`]),
@@ -189,30 +193,58 @@ describe("fsAttestationProductionRoot", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Git-object, through each single-project construction
+// ---------------------------------------------------------------------------
+
+for (const construction of SINGLE_PROJECT_CONSTRUCTIONS) {
+  test(`git-object constructs through "${construction}"`, async () => {
+    const repoRoot = freshRoot(`cq-t686-git-object-${construction}-`);
+    execFileSync("git", ["init", "--quiet"], { cwd: repoRoot });
+    const namespace = await resolveSingleProjectAttestationNamespace({
+      construction,
+      backend: "git-object",
+      repoRoot,
+      projectId: uniqueProjectId(construction),
+    });
+    const backend = await createAttestationStoreForConstruction({
+      backend: "git-object",
+      namespace,
+      repoRoot,
+    });
+    try {
+      expect(await backend.transact({ kind: "namespace" }, (store) => store.rows())).toEqual([]);
+    } finally {
+      await backend.close();
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Excluded single-project constructions never reach the factory
 // ---------------------------------------------------------------------------
 
 describe("excluded backends refuse before createAttestationStoreForConstruction is ever called", () => {
   for (const construction of SINGLE_PROJECT_CONSTRUCTIONS) {
-    test(`"${construction}" refuses git-object at the resolver, not at store construction`, async () => {
+    test(`"${construction}" refuses remote at the resolver`, async () => {
       await expect(
         resolveSingleProjectAttestationNamespace({
           construction,
-          backend: "git-object",
+          backend: "remote",
           repoRoot: "/irrelevant",
           projectId: "whatever",
         }),
-      ).rejects.toThrow(/row-level compare-and-set/);
+      ).rejects.toThrow(/ledger-service client/);
     });
   }
 
-  test('the local xdg catalog hub construction refuses for xdg outright, before resolveProjectKey runs', async () => {
+  test("the local xdg catalog hub construction refuses for xdg outright, before resolveProjectKey runs", async () => {
     await expect(
       resolveSingleProjectAttestationNamespace({
         // Cast: this construction is not a member of SingleProjectConstruction
         // on purpose — the point of this test is that the gate refuses it
         // even though the type system would not let real code pass it here.
-        construction: ATTESTATION_UNSUPPORTED_LOCAL_HUB_CONSTRUCTION as unknown as SingleProjectConstruction,
+        construction:
+          ATTESTATION_UNSUPPORTED_LOCAL_HUB_CONSTRUCTION as unknown as SingleProjectConstruction,
         backend: "xdg",
         repoRoot: "/irrelevant",
         projectId: "whatever",
@@ -234,6 +266,6 @@ describe("excluded backends refuse before createAttestationStoreForConstruction 
         namespace: { backend: "git-object", projectKey: "whatever-686" },
         env: { XDG_STATE_HOME: stateHome },
       }),
-    ).rejects.toThrow(/row-level compare-and-set/);
+    ).rejects.toThrow(/serves the "xdg" backend/);
   });
 });

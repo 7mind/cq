@@ -6,7 +6,7 @@
  * ({@link DISPATCH_ATTESTATION_DEFERRED}): the namespaced production adapters,
  * real-backend durability and crash recovery, cross-process concurrent key reuse
  * under a REAL lock, and scheduled sweep wiring. This module is the part all
- * three adapters share; the backends themselves are
+ * four adapters share; the config-owned backends themselves are
  * {@link ./dispatchAttestationSqlite}, {@link ./dispatchAttestationFs} and
  * {@link ./dispatchAttestationPostgres}.
  *
@@ -57,7 +57,7 @@
  * resolve each other's capability hashes.
  *
  * **Not every ledger backend can hold attestations.**
- * {@link ATTESTATION_STORE_BACKENDS} names the three that can;
+ * {@link ATTESTATION_STORE_BACKENDS} names the three ledger backends that can;
  * {@link ATTESTATION_EXCLUDED_BACKENDS} names the ones that must fail at
  * REGISTRATION, before a dispatch is ever prepared, rather than half-working.
  */
@@ -144,10 +144,10 @@ import type {
 
 /**
  * The ledger backends with a production attestation adapter: the out-of-tree
- * bun:sqlite XDG primary, the cross-process-safe filesystem store, and
- * PostgreSQL.
+ * bun:sqlite XDG primary, the cross-process-safe filesystem and Git-object
+ * stores, and PostgreSQL.
  */
-export const ATTESTATION_STORE_BACKENDS = ["xdg", "fs"] as const;
+export const ATTESTATION_STORE_BACKENDS = ["xdg", "fs", "git-object"] as const;
 
 export type AttestationStoreBackend = (typeof ATTESTATION_STORE_BACKENDS)[number] | "postgres";
 
@@ -161,14 +161,11 @@ const ATTESTATION_STORE_BACKEND_SET: ReadonlySet<string> = new Set([
  * reason each is refused. Both must fail at registration — before a dispatch is
  * prepared — rather than accept a prepare they cannot serve.
  *
- *  - `git-object` stores whole serialized ledger blobs in git objects. It has no
- *    row-level compare-and-set and no cross-process write lock, so a dispatch
- *    prepared against it could lose a stored result to a concurrent writer.
  *  - `remote` is a CLIENT of a ledger service, not a store. Its attestations
  *    live in the server's own namespace; a local adapter over it would mint
  *    capabilities bound to rows nobody durably holds.
  */
-export const ATTESTATION_EXCLUDED_BACKENDS = ["git-object", "remote"] as const;
+export const ATTESTATION_EXCLUDED_BACKENDS = ["remote"] as const;
 
 export type AttestationExcludedBackend = (typeof ATTESTATION_EXCLUDED_BACKENDS)[number];
 
@@ -180,11 +177,6 @@ export type AttestationExcludedBackend = (typeof ATTESTATION_EXCLUDED_BACKENDS)[
  * nothing. (Found by mutation M1 — see the module note on D174.)
  */
 export const ATTESTATION_EXCLUSION_REASONS: ReadonlyMap<string, string> = new Map([
-  [
-    "git-object",
-    "the git-object backend has no row-level compare-and-set and no cross-process write lock, " +
-      "so a stored result could be lost to a concurrent writer",
-  ],
   [
     "remote",
     "the remote backend is a ledger-service client, not a store: its attestations belong to the " +
@@ -294,9 +286,8 @@ export function assertAttestationStoreBackend(backend: string): AttestationStore
 
 /**
  * Validate a namespace AND its backend's ability to hold attestations. This is
- * the one entry point an adapter constructor uses, so a `git-object`, `remote`
- * or in-memory namespace is refused BEFORE any row, capability or deadline
- * exists.
+ * the one entry point an adapter constructor uses, so a `remote` or in-memory
+ * namespace is refused BEFORE any row, capability or deadline exists.
  */
 export function assertAttestationStoreNamespace(
   namespace: AttestationNamespace,
@@ -773,8 +764,7 @@ export interface AttestationBackendPrepareDeps extends AttestationBackendPrepare
 }
 
 /** Mandatory boundary for a prepare carrying a trusted managed-worktree binding. */
-export interface AttestationBackendManagerPrepareDeps
-  extends AttestationBackendPrepareCommonDeps {
+export interface AttestationBackendManagerPrepareDeps extends AttestationBackendPrepareCommonDeps {
   readonly mode: "manager-bound";
   readonly lineageFenceGuard: () => Promise<DispatchJournalRecoveryRequired | null>;
   readonly withLineageLock: <T>(operation: () => Promise<T>) => Promise<T>;
@@ -792,10 +782,7 @@ export function prepareLoadScope(request: PrepareDispatchRequest): AttestationLo
   if (typeof key !== "string") {
     return { kind: "none" };
   }
-  if (
-    request.continuationClaim !== undefined ||
-    request.journalRecoveryReservation !== undefined
-  ) {
+  if (request.continuationClaim !== undefined || request.journalRecoveryReservation !== undefined) {
     return { kind: "namespace" };
   }
   if (request.reprepareOf === undefined) {
@@ -1679,8 +1666,9 @@ export function attestationStorageKey(handle: DispatchHandle): string {
 export const ATTESTATION_DEFERRAL_DISCHARGE: ReadonlyMap<string, string> = new Map([
   [
     "namespaced-production-attestation-store-adapters",
-    "SqliteAttestationBackend (xdg), FsAttestationBackend (fs) and PostgresAttestationBackend, " +
-      "each bound to ONE AttestationNamespace and sharing this module's unit-of-work engine",
+    "SqliteAttestationBackend (xdg), FsAttestationBackend (fs), the ledger-owned " +
+      "GitObjectAttestationBackend and PostgresAttestationBackend, each bound to ONE " +
+      "AttestationNamespace and sharing this module's unit-of-work engine",
   ],
   [
     "real-backend-durability-and-crash-recovery",

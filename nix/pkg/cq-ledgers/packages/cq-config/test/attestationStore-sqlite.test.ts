@@ -193,13 +193,13 @@ describe("bun:sqlite attestation backend specifics", () => {
 
   test("only the xdg backend may be served, and the excluded ones fail at construction", () => {
     const dbPath = join(freshRoot(), ATTESTATION_DB_FILENAME);
-    for (const backend of ["fs", "postgres"] as const) {
+    for (const backend of ["fs", "git-object", "postgres"] as const) {
       expect(
         () => new SqliteAttestationBackend({ namespace: { backend, projectKey: "p" }, dbPath }),
         backend,
       ).toThrow(AttestationStorageError);
     }
-    for (const backend of ["git-object", "remote"] as const) {
+    for (const backend of ["remote"] as const) {
       expect(
         () => new SqliteAttestationBackend({ namespace: { backend, projectKey: "p" }, dbPath }),
         backend,

@@ -303,6 +303,11 @@ export class GitPlumbing {
     return sha.length > 0 ? sha : null;
   }
 
+  /** Fail unless the bound cwd still has a reachable Git object database. */
+  async assertRepository(): Promise<void> {
+    await this.runOk(["rev-parse", "--git-dir"]);
+  }
+
   /**
    * Read the content of `path` at `ref` WITHOUT any checkout, returning the
    * blob's bytes as a UTF-8 string.

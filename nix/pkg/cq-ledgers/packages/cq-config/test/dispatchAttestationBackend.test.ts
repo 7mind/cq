@@ -150,10 +150,7 @@ describe("attestation backend registration", () => {
         [...LEDGER_BACKENDS, "brand-new"],
         ATTESTATION_STORE_BACKENDS,
         ATTESTATION_EXCLUDED_BACKENDS,
-        new Map([
-          ["git-object", "r"],
-          ["remote", "r"],
-        ]),
+        new Map([["remote", "r"]]),
       ),
     ).toThrow(AttestationContractError);
     // A backend claimed as BOTH adapted and excluded. (The declared list has to
@@ -169,7 +166,7 @@ describe("attestation backend registration", () => {
 
   test("EVERY declared exclusion really throws — the declaration is not decoration", () => {
     // The D174 failure mode, applied to backends: a list of excluded backends
-    // that nothing checks would let a `git-object` dispatch be prepared and then
+    // that nothing checks would let a `remote` dispatch be prepared and then
     // half-work. Each entry is driven, and its reason must reach the caller.
     for (const backend of ATTESTATION_EXCLUDED_BACKENDS) {
       const settled = ((): Error => {
@@ -244,9 +241,10 @@ describe("attestation backend registration", () => {
 
   test("namespace validation runs before the backend check and both must pass", () => {
     expect(assertAttestationStoreNamespace(NAMESPACE)).toEqual(NAMESPACE);
-    expect(() =>
-      assertAttestationStoreNamespace({ backend: "git-object", projectKey: "p" }),
-    ).toThrow(AttestationBackendUnsupportedError);
+    expect(assertAttestationStoreNamespace({ backend: "git-object", projectKey: "p" })).toEqual({
+      backend: "git-object",
+      projectKey: "p",
+    });
     for (const name of PROTOTYPE_NAMES) {
       expect(
         () => assertAttestationStoreNamespace({ backend: name as never, projectKey: "p" }),

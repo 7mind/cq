@@ -70,7 +70,7 @@ describe("production dispatch runtime construction", () => {
     const unsupportedBackend: ResolvedLedgerStore = {
       store,
       configRoot: "/must-not-be-resolved",
-      backend: "git-object",
+      backend: "remote",
       branch: "cq-ledger",
     };
     const backendVerdict = await createSingleProjectDispatchRuntime({
@@ -79,7 +79,7 @@ describe("production dispatch runtime construction", () => {
     });
     expect(backendVerdict.kind).toBe("unavailable");
     if (backendVerdict.kind === "available") throw new Error("expected refusal");
-    expect(backendVerdict.reason).toContain("git-object");
+    expect(backendVerdict.reason).toContain("remote");
 
     const constructionVerdict = refuseDispatchRuntime("xdg-catalog-hub", "xdg");
     expect(constructionVerdict.kind).toBe("unavailable");
@@ -130,61 +130,65 @@ describe("production dispatch runtime construction", () => {
     await store.dispose();
   });
 
-  livePgTest("preserves the T977 dispatch contract through the PostgreSQL hub construction", async () => {
-    const trustedProjectKey = `t977-hub-${crypto.randomUUID()}`;
-    const pool = new SQL({ url: PG_URL!, max: 1 });
-    const store = await inMemoryStore();
-    const promptArtifactStore = workerArtifactStore("claude");
-    const runtime = await createPostgresHubDispatchRuntime({
-      pool,
-      trustedProjectKey,
-      store,
-      promptArtifactStore,
-    });
-    expect(runtime.kind).toBe("available");
-    if (runtime.kind === "unavailable") throw new Error(runtime.reason);
-    const namespace = attestationNamespaceForTrustedHubProject(trustedProjectKey);
-    const peer = await createAttestationStoreForConstruction({
-      backend: "postgres",
-      namespace,
-      pool,
-    });
-    const server = createLedgerMcpServer({
-      store,
-      displayName: trustedProjectKey,
-      projectKey: trustedProjectKey,
-      promptArtifactStore,
-      dispatchCapability: runtime.capability,
-    });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await server.connect(serverTransport);
-    const client = new Client(
-      { name: "postgres-hub-dispatch-contract-test", version: "0.0.1" },
-      { capabilities: {} },
-    );
-    await client.connect(clientTransport);
-    try {
-      await assertDispatchConstructionConformance({
-        cell: "postgres-hub",
-        client,
-        surface: "claude",
-        rows: async () =>
-          (await peer.transact({ kind: "namespace" }, (attestations) => attestations.rows())) ?? [],
+  livePgTest(
+    "preserves the T977 dispatch contract through the PostgreSQL hub construction",
+    async () => {
+      const trustedProjectKey = `t977-hub-${crypto.randomUUID()}`;
+      const pool = new SQL({ url: PG_URL!, max: 1 });
+      const store = await inMemoryStore();
+      const promptArtifactStore = workerArtifactStore("claude");
+      const runtime = await createPostgresHubDispatchRuntime({
+        pool,
+        trustedProjectKey,
+        store,
+        promptArtifactStore,
       });
-    } finally {
-      await client.close();
-      await server.close();
-      await peer.close();
-      await runtime.close();
+      expect(runtime.kind).toBe("available");
+      if (runtime.kind === "unavailable") throw new Error(runtime.reason);
+      const namespace = attestationNamespaceForTrustedHubProject(trustedProjectKey);
+      const peer = await createAttestationStoreForConstruction({
+        backend: "postgres",
+        namespace,
+        pool,
+      });
+      const server = createLedgerMcpServer({
+        store,
+        displayName: trustedProjectKey,
+        projectKey: trustedProjectKey,
+        promptArtifactStore,
+        dispatchCapability: runtime.capability,
+      });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await server.connect(serverTransport);
+      const client = new Client(
+        { name: "postgres-hub-dispatch-contract-test", version: "0.0.1" },
+        { capabilities: {} },
+      );
+      await client.connect(clientTransport);
       try {
-        await pool`
+        await assertDispatchConstructionConformance({
+          cell: "postgres-hub",
+          client,
+          surface: "claude",
+          rows: async () =>
+            (await peer.transact({ kind: "namespace" }, (attestations) => attestations.rows())) ??
+            [],
+        });
+      } finally {
+        await client.close();
+        await server.close();
+        await peer.close();
+        await runtime.close();
+        try {
+          await pool`
           DELETE FROM ${pool(ATTESTATION_TABLE)}
            WHERE backend = 'postgres' AND project_key = ${trustedProjectKey}
         `;
-      } finally {
-        await pool.close();
-        await store.dispose();
+        } finally {
+          await pool.close();
+          await store.dispose();
+        }
       }
-    }
-  });
+    },
+  );
 });

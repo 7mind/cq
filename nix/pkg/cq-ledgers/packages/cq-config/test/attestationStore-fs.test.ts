@@ -186,13 +186,13 @@ describe("filesystem attestation backend specifics", () => {
 
   test("only the fs backend may be served, and the excluded ones fail at construction", () => {
     const root = freshRoot();
-    for (const backend of ["xdg", "postgres"] as const) {
+    for (const backend of ["xdg", "git-object", "postgres"] as const) {
       expect(
         () => new FsAttestationBackend({ namespace: { backend, projectKey: "p" }, root }),
         backend,
       ).toThrow(AttestationStorageError);
     }
-    for (const backend of ["git-object", "remote"] as const) {
+    for (const backend of ["remote"] as const) {
       expect(
         () => new FsAttestationBackend({ namespace: { backend, projectKey: "p" }, root }),
         backend,

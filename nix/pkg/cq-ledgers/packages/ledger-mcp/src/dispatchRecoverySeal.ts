@@ -635,6 +635,13 @@ export async function captureCurrentDispatchRecoveryForProject(
           namespace,
           ledgerRoot: options.resolved.configRoot,
         });
+      case "git-object":
+        return await createAttestationStoreForConstruction({
+          backend: backendKind,
+          namespace,
+          repoRoot: options.resolved.configRoot,
+          ref: options.resolved.branch,
+        });
       default:
         throw new CurrentRecoverySealError(
           "invalid",
@@ -683,6 +690,13 @@ export async function readCurrentDispatchRecoveryStatusForProject(
           backend: backendKind,
           namespace,
           ledgerRoot: options.resolved.configRoot,
+        });
+      case "git-object":
+        return await createAttestationStoreForConstruction({
+          backend: backendKind,
+          namespace,
+          repoRoot: options.resolved.configRoot,
+          ref: options.resolved.branch,
         });
       default:
         throw new CurrentRecoverySealError(

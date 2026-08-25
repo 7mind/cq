@@ -10,7 +10,11 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { ATTESTATION_IN_MEMORY_BACKEND, AttestationBackendUnsupportedError, LEDGER_BACKENDS } from "@cq/config";
+import {
+  ATTESTATION_IN_MEMORY_BACKEND,
+  AttestationBackendUnsupportedError,
+  LEDGER_BACKENDS,
+} from "@cq/config";
 import {
   ATTESTATION_CONSTRUCTION_COVERAGE,
   ATTESTATION_HUB_CONSTRUCTION,
@@ -42,7 +46,7 @@ const ALL_BACKEND_NAMES: readonly string[] = [
  * derived from the task's own prose: "XDG/SQLite and filesystem support the
  * approved single-project constructions using resolveProjectKey; PostgreSQL
  * additionally supports trusted projects.project_key multi-project routing.
- * Git-object, user-facing in-memory, and unsupported local multi-project
+ * Remote, user-facing in-memory, and unsupported local multi-project
  * construction fail". Asserting against a SEPARATELY hand-built table (rather
  * than re-deriving from the same code under test) is what makes this a real
  * check on the matrix rather than a tautology.
@@ -50,7 +54,7 @@ const ALL_BACKEND_NAMES: readonly string[] = [
 function expectedSupported(construction: string, backend: string): boolean {
   if (construction === ATTESTATION_UNSUPPORTED_LOCAL_HUB_CONSTRUCTION) return false;
   if (construction === ATTESTATION_HUB_CONSTRUCTION) return backend === "postgres";
-  return backend === "xdg" || backend === "fs";
+  return backend === "xdg" || backend === "fs" || backend === "git-object";
 }
 
 describe("the two-dimensional construction x backend coverage matrix", () => {
@@ -74,15 +78,15 @@ describe("the two-dimensional construction x backend coverage matrix", () => {
     }
   });
 
-  test("exactly 9 supported cells: 4 single-project constructions x 2 backends, plus the hub", () => {
+  test("exactly 13 supported cells: 4 single-project constructions x 3 backends, plus the hub", () => {
     const cells = supportedConstructionCells();
-    expect(cells.size).toBe(9);
+    expect(cells.size).toBe(13);
     for (const construction of SINGLE_PROJECT_CONSTRUCTIONS) {
-      for (const backend of ["xdg", "fs"]) {
+      for (const backend of ["xdg", "fs", "git-object"]) {
         expect(cells.has(`${construction}:${backend}`)).toBe(true);
       }
       expect(cells.has(`${construction}:postgres`)).toBe(false);
-      for (const backend of ["git-object", "remote", ATTESTATION_IN_MEMORY_BACKEND]) {
+      for (const backend of ["remote", ATTESTATION_IN_MEMORY_BACKEND]) {
         expect(cells.has(`${construction}:${backend}`)).toBe(false);
       }
     }
@@ -95,7 +99,9 @@ describe("the two-dimensional construction x backend coverage matrix", () => {
   test("the local xdg multi-project catalog hub is excluded for EVERY backend, including postgres", () => {
     for (const backend of ALL_BACKEND_NAMES) {
       expect(
-        supportedConstructionCells().has(`${ATTESTATION_UNSUPPORTED_LOCAL_HUB_CONSTRUCTION}:${backend}`),
+        supportedConstructionCells().has(
+          `${ATTESTATION_UNSUPPORTED_LOCAL_HUB_CONSTRUCTION}:${backend}`,
+        ),
       ).toBe(false);
     }
   });
@@ -108,6 +114,7 @@ describe("the two-dimensional construction x backend coverage matrix", () => {
 describe("assertAttestationConstructionSupported", () => {
   test("returns the narrowed backend for a supported cell", () => {
     expect(assertAttestationConstructionSupported("direct", "xdg")).toBe("xdg");
+    expect(assertAttestationConstructionSupported("direct", "git-object")).toBe("git-object");
     expect(assertAttestationConstructionSupported("postgres-hub", "postgres")).toBe("postgres");
   });
 
@@ -143,17 +150,15 @@ describe("assertAttestationConstructionSupported", () => {
     ).toThrow(AttestationConstructionUnsupportedError);
   });
 
-  test("delegates git-object/remote to the bare-backend guard for every single-project construction", () => {
+  test("supports Git-object and delegates remote to the bare-backend guard", () => {
     for (const construction of SINGLE_PROJECT_CONSTRUCTIONS) {
-      expect(() => assertAttestationConstructionSupported(construction, "git-object")).toThrow(
-        /row-level compare-and-set/,
-      );
+      expect(assertAttestationConstructionSupported(construction, "git-object")).toBe("git-object");
       expect(() => assertAttestationConstructionSupported(construction, "remote")).toThrow(
         /ledger-service client/,
       );
-      expect(() => assertAttestationConstructionSupported(construction, ATTESTATION_IN_MEMORY_BACKEND)).toThrow(
-        /test double/,
-      );
+      expect(() =>
+        assertAttestationConstructionSupported(construction, ATTESTATION_IN_MEMORY_BACKEND),
+      ).toThrow(/test double/);
     }
   });
 });
@@ -212,7 +217,7 @@ describe("resolveSingleProjectAttestationNamespace", () => {
     await expect(
       resolveSingleProjectAttestationNamespace({
         construction: "direct",
-        backend: "git-object",
+        backend: "remote",
         repoRoot: "/definitely/does/not/exist/anywhere/on/this/machine",
         projectId: null,
       }),
