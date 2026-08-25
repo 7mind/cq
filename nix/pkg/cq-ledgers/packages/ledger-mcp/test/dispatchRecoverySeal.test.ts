@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
-import {
-  attestationRowDigest,
-  rehydrateAttestationRow,
-  type AttestationRow,
-} from "@cq/config";
+import { attestationRowDigest, rehydrateAttestationRow, type AttestationRow } from "@cq/config";
 import {
   InMemoryCurrentRecoverySealJournalStore,
   PLAN_FINALIZED_MANIFEST_FIELD,

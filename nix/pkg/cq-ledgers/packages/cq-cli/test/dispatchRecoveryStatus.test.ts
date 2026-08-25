@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
 import { CurrentRecoveryStatusSchema } from "@cq/ledger";
 import {
   runDispatchRecoveryCommand,
@@ -31,6 +32,12 @@ function statusDeps(status: unknown): DispatchRecoveryCommandDeps {
 }
 
 describe("cq dispatch-recovery status", () => {
+  test("production status uses the lineage-validating project runtime", async () => {
+    const source = await readFile(new URL("../src/dispatchRecovery.ts", import.meta.url), "utf8");
+    expect(source).toContain("readCurrentDispatchRecoveryStatusForProject");
+    expect(source).not.toContain("readCurrentDispatchRecoveryStatus({ repositoryRoot: cwd");
+  });
+
   test("emits strict committed status as one JSON line", async () => {
     const io = recordingIo();
     const journal = committedJournal();

@@ -518,14 +518,16 @@ export async function readCurrentDispatchRecoveryStatus(options: {
         binding,
         options.stateDir === undefined ? {} : { stateDir: options.stateDir },
       );
-      return await options.backend.transact({ kind: "namespace" }, async (store) =>
-        await readCurrentDispatchRecoveryStatusForLineage({
-          journal,
-          taskId: options.taskId,
-          binding,
-          liveTip,
-          rows: store.rows(),
-        }),
+      return await options.backend.transact(
+        { kind: "namespace" },
+        async (store) =>
+          await readCurrentDispatchRecoveryStatusForLineage({
+            journal,
+            taskId: options.taskId,
+            binding,
+            liveTip,
+            rows: store.rows(),
+          }),
       );
     },
   );

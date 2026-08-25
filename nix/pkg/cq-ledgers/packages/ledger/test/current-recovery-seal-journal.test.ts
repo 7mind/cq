@@ -188,21 +188,53 @@ test("the recovery seed accepts only strict normalized overlay applications", ()
   }
 });
 
-test("committed status reference authenticates its declared seal digest", () => {
+test("committed status rejects every projected-field and embedded-seal substitution", () => {
   const journal = committedJournal();
-  expect(() =>
-    parseCurrentRecoveryStatus({
-      kind: "cq-current-recovery-status",
-      version: 1,
-      taskId: RECOVERY_TASK,
-      state: "committed",
-      selectedSourceHandle: journal.seal.seed.selectedSourceHandle,
-      lineageMaximumGeneration: journal.seal.seed.lineageMaximumGeneration,
-      snapshotDigest: journal.snapshotDigest,
-      liveTip: journal.seal.seed.liveTip,
-      sealReference: journal.seal.sealReference,
-      sealDigest: "0".repeat(64),
-      seal: journal.seal,
-    }),
-  ).toThrow("not authenticated by its seal");
+  const status = {
+    kind: "cq-current-recovery-status" as const,
+    version: 1 as const,
+    taskId: RECOVERY_TASK,
+    state: "committed" as const,
+    selectedSourceHandle: structuredClone(journal.seal.seed.selectedSourceHandle),
+    lineageMaximumGeneration: journal.seal.seed.lineageMaximumGeneration,
+    snapshotDigest: journal.snapshotDigest,
+    liveTip: journal.seal.seed.liveTip,
+    sealReference: journal.seal.sealReference,
+    sealDigest: journal.seal.sealDigest,
+    seal: structuredClone(journal.seal),
+  };
+  const mutations: Array<(candidate: typeof status) => void> = [
+    (candidate) => {
+      candidate.taskId = "T9999";
+    },
+    (candidate) => {
+      candidate.selectedSourceHandle.attestationId = `att_${"z".repeat(32)}`;
+    },
+    (candidate) => {
+      candidate.selectedSourceHandle.generation += 1;
+    },
+    (candidate) => {
+      candidate.lineageMaximumGeneration += 1;
+    },
+    (candidate) => {
+      candidate.snapshotDigest = "0".repeat(64);
+    },
+    (candidate) => {
+      candidate.liveTip = "0".repeat(40);
+    },
+    (candidate) => {
+      candidate.sealReference = `cq-current-recovery-seal:v1:${"0".repeat(64)}`;
+    },
+    (candidate) => {
+      candidate.sealDigest = "0".repeat(64);
+    },
+    (candidate) => {
+      candidate.seal.seed.promptProvenance.version += 1;
+    },
+  ];
+  for (const mutate of mutations) {
+    const candidate = structuredClone(status);
+    mutate(candidate);
+    expect(() => parseCurrentRecoveryStatus(candidate)).toThrow();
+  }
 });
