@@ -127,6 +127,7 @@ import {
   type ResolveDispatchContinuationRequest,
   type ResolvedDispatchContinuation,
 } from "./dispatchAttestation.js";
+import type { DispatchJournalRecoveryRequired } from "./dispatchInputValidation.js";
 import { LEDGER_BACKENDS } from "./types.js";
 import type {
   AbortedDispatchResult,
@@ -764,6 +765,9 @@ export interface AttestationBackendDeps {
 export interface AttestationBackendPrepareDeps extends AttestationBackendDeps {
   readonly randomBytes: DispatchRandomBytes;
   readonly stepOrder?: readonly string[];
+  /** Optional manager-owned fence check, executed inside the matching lineage lock. */
+  readonly lineageFenceGuard?: () => Promise<DispatchJournalRecoveryRequired | null>;
+  readonly withLineageLock?: <T>(operation: () => Promise<T>) => Promise<T>;
 }
 
 /**
@@ -778,7 +782,10 @@ export function prepareLoadScope(request: PrepareDispatchRequest): AttestationLo
   if (typeof key !== "string") {
     return { kind: "none" };
   }
-  if (request.continuationClaim !== undefined) {
+  if (
+    request.continuationClaim !== undefined ||
+    request.journalRecoveryReservation !== undefined
+  ) {
     return { kind: "namespace" };
   }
   if (request.reprepareOf === undefined) {
@@ -833,14 +840,20 @@ export async function prepareDispatchOn(
   request: PrepareDispatchRequest,
   deps: AttestationBackendPrepareDeps,
 ): Promise<PrepareDispatchOutcome> {
-  return backend.transact(prepareLoadScope(request), (store) =>
-    prepareDispatch(request, {
-      store,
-      now: deps.now,
-      randomBytes: deps.randomBytes,
-      ...(deps.stepOrder === undefined ? {} : { stepOrder: deps.stepOrder }),
-    }),
-  );
+  const operation = async (): Promise<PrepareDispatchOutcome> => {
+    const refusal = await deps.lineageFenceGuard?.();
+    if (refusal !== undefined && refusal !== null) return refusal;
+    return await backend.transact(prepareLoadScope(request), (store) =>
+      prepareDispatch(request, {
+        store,
+        now: deps.now,
+        randomBytes: deps.randomBytes,
+        ...(deps.stepOrder === undefined ? {} : { stepOrder: deps.stepOrder }),
+      }),
+    );
+  };
+  if (deps.withLineageLock === undefined) return await operation();
+  return await deps.withLineageLock(operation);
 }
 
 export async function storeDispatchResultOn(

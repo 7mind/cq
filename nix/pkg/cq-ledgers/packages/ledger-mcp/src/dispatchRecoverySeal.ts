@@ -22,6 +22,7 @@ import {
   createAttestationStoreForConstruction,
   createCurrentRecoverySeal,
   createCurrentRecoverySeed,
+  createDispatchLineageCutoverFence,
   currentRecoveryJournalRoot,
   currentRecoveryReceiptClosureDigest,
   currentRecoveryStatusFromJournal,
@@ -268,7 +269,11 @@ export async function captureCurrentRecoverySeal(
     );
     const row = sourceRow(snapshot, source);
     const existing = await deps.journal.read(coordinates.taskId);
-    if (existing?.state === "committed" && existing.snapshotDigest === snapshot.digest) {
+    if (
+      existing?.state === "committed" &&
+      existing.fence !== undefined &&
+      existing.snapshotDigest === snapshot.digest
+    ) {
       const replay = sealForSource(
         coordinates,
         row,
@@ -330,10 +335,26 @@ export async function captureCurrentRecoverySeal(
       await sourceCandidates(finalSnapshot, coordinates, deps),
     );
     if (!sourcesEqual(selectedFinal, source)) continue;
+    const committedAt = deps.now();
+    const fence = createDispatchLineageCutoverFence({
+      namespace: row.namespace,
+      taskId: coordinates.taskId,
+      managedFingerprint: coordinates.binding.handleFingerprint,
+      sourceAttestationId: source.selectedSourceHandle.attestationId,
+      selectedSourceGeneration: source.selectedSourceHandle.generation,
+      lineageMaximumGeneration: source.lineageMaximumGeneration,
+      recoverySeedRef: seal.sealReference,
+      fenceCapability: {
+        scope: "dispatch-lineage-fence",
+        token: coordinates.binding.handleToken,
+      },
+      installedAt: committedAt,
+    });
     await deps.journal.put({
       ...provisional,
       state: "committed",
-      committedAt: deps.now(),
+      committedAt,
+      fence,
     });
     return seal;
   }

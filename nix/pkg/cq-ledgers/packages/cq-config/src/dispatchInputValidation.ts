@@ -121,6 +121,7 @@ export const DISPATCH_PRE_LAUNCH_REJECTION_REASONS = [
   "cross-project-ref",
   "invalid-parent-guidance",
   "invalid-launch-envelope",
+  "journal-recovery-required",
 ] as const;
 
 export type DispatchPreLaunchRejectionReason =
@@ -140,6 +141,13 @@ export interface DispatchPreLaunchRejection {
   readonly detail: string;
   /** Validate-then-allocate: nothing is allocated for input that fails. */
   readonly allocated: false;
+}
+
+/** A sealed lineage refusal exposes references only, never source or capability authority. */
+export interface DispatchJournalRecoveryRequired extends DispatchPreLaunchRejection {
+  readonly reason: "journal-recovery-required";
+  readonly fenceRef: string;
+  readonly taskRef: string;
 }
 
 /**
@@ -463,6 +471,28 @@ export function dispatchPreLaunchRejection(
     path,
     detail,
     allocated: false as const,
+  });
+}
+
+export function dispatchJournalRecoveryRequired(
+  fenceRef: string,
+  taskRef: string,
+): DispatchJournalRecoveryRequired {
+  if (
+    !/^cq-dispatch-lineage-cutover-fence:v1:[0-9a-f]{64}$/u.test(fenceRef) ||
+    !/^tasks:T[0-9]+$/u.test(taskRef)
+  ) {
+    throw new Error("journal recovery refusal references are malformed");
+  }
+  return Object.freeze({
+    accepted: false as const,
+    outcome: DISPATCH_PRE_LAUNCH_OUTCOME,
+    reason: "journal-recovery-required" as const,
+    path: "dispatchLineage",
+    detail: "the managed task lineage is sealed for journal recovery",
+    allocated: false as const,
+    fenceRef,
+    taskRef,
   });
 }
 

@@ -1249,6 +1249,9 @@ export function createLedgerMcpToolSpecifications(
           ...(args.guardedRebase === undefined ? {} : { guardedRebase: args.guardedRebase }),
           ...(args.recovery === undefined ? {} : { recovery: args.recovery }),
           ...(args.continuation === undefined ? {} : { continuation: args.continuation }),
+          ...(args.recoveryPreparation === undefined
+            ? {}
+            : { recoveryPreparation: args.recoveryPreparation }),
         }),
       );
     },

@@ -9,6 +9,7 @@ export * from "./usageStats.js";
 export * from "./planLifecycle.js";
 export * from "./operatorActions.js";
 export * from "./currentRecoverySeal.js";
+export * from "./dispatchLineageCutoverFence.js";
 export type {
   TaskAdoptionEligibilityFence,
   TaskAdoptionEligibilityResult,

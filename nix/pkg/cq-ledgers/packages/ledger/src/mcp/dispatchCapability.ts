@@ -19,6 +19,7 @@ import type {
   StoreDispatchResultOutcome,
 } from "@cq/config";
 import type { GitChangeBrokerReceipt, GitChangeManifestEntry } from "../gitChangeBroker.js";
+import type { DispatchLineageFenceAuthority } from "../dispatchLineageCutoverFence.js";
 import type {
   GitConflictContinuationReceipt,
   GitConflictResolution,
@@ -40,6 +41,8 @@ export interface PrepareDispatchToolInput {
   readonly recovery?: string;
   /** Opaque single-use authority to continue one consumed managed worker generation. */
   readonly continuation?: string;
+  /** Trusted journal-recovery saga authority; legacy recovery paths must omit it. */
+  readonly recoveryPreparation?: DispatchLineageFenceAuthority;
 }
 
 export interface DispatchRecoveryResolution {

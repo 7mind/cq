@@ -302,6 +302,7 @@ describe("the inside-prepare validation entry point", () => {
       "cross-project-ref",
       "invalid-parent-guidance",
       "invalid-launch-envelope",
+      "journal-recovery-required",
     ]);
     const observed = new Set(
       [

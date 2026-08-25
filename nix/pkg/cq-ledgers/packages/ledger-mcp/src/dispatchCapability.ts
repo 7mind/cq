@@ -52,6 +52,7 @@ import { resolve } from "node:path";
 import {
   assertAttestationConstructionSupported,
   attestationNamespaceForTrustedHubProject,
+  currentRecoveryJournalRoot,
   createAttestationStoreForConstruction,
   createDispatchNarrativeSource,
   commitManagedWorktreeChanges,
@@ -69,12 +70,20 @@ import {
   withManagedWorktreeEffectLock,
   superviseImplementWorkerGate,
   resolveSingleProjectAttestationNamespace,
+  dispatchLineageFenceAuthorizes,
+  dispatchLineageFenceFromRecoveryJournal,
+  dispatchLineageFenceMatches,
+  FsCurrentRecoverySealJournalStore,
+  journalRecoveryRequiredForFence,
+  type CurrentRecoverySealJournalStore,
+  type DispatchLineageCutoverFence,
   type DispatchCapability,
   type GitChangeBrokerResultEvidence,
   type GitRebaseConflictState,
   type GitConflictContinuationResultEvidence,
   type LedgerStore,
   type LedgerServerConstruction,
+  type ManagedWorktreeDispatchBinding,
   type ResolvedLedgerStore,
   type SupervisedWorkerGateRunner,
   type SingleProjectConstruction,
@@ -127,6 +136,8 @@ export interface DispatchCapabilityOptions {
   readonly worktreeStateDir?: string;
   /** Host-owned gate adapter; tests inject a deterministic contract dummy. */
   readonly supervisedWorkerGateRunner?: SupervisedWorkerGateRunner;
+  /** Recovery authority journal; defaults to the managed registry when repository-bound. */
+  readonly recoveryJournal?: CurrentRecoverySealJournalStore;
 }
 
 function brokerResultEvidence(
@@ -277,6 +288,32 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
   }
   const prepares = new Map<string, CachedPrepare>();
   const preparesByHandle = new Map<string, CachedPrepare>();
+  const recoveryJournal =
+    options.recoveryJournal ??
+    (options.repositoryRoot === undefined
+      ? undefined
+      : new FsCurrentRecoverySealJournalStore(
+          currentRecoveryJournalRoot(options.repositoryRoot, options.worktreeStateDir),
+        ));
+
+  class JournalRecoveryRequiredError extends Error {
+    constructor(readonly refusal: ReturnType<typeof journalRecoveryRequiredForFence>) {
+      super("journal recovery is required for this dispatch lineage");
+      this.name = "JournalRecoveryRequiredError";
+    }
+  }
+
+  async function matchingFence(
+    taskId: string,
+    managedFingerprint: string,
+  ): Promise<DispatchLineageCutoverFence | null> {
+    if (recoveryJournal === undefined) return null;
+    const fence = dispatchLineageFenceFromRecoveryJournal(await recoveryJournal.read(taskId));
+    return fence !== null &&
+      dispatchLineageFenceMatches(fence, { namespace, taskId, managedFingerprint })
+      ? fence
+      : null;
+  }
 
   function callerPrepareFingerprint(
     input: Parameters<DispatchCapability["prepare"]>[0],
@@ -461,6 +498,40 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         );
       }
       const callerFingerprint = callerPrepareFingerprint(input);
+      if (
+        options.repositoryRoot !== undefined &&
+        typeof input.input === "object" &&
+        input.input !== null &&
+        !Array.isArray(input.input)
+      ) {
+        const raw = input.input as Readonly<Record<string, unknown>>;
+        if (
+          typeof raw["taskId"] === "string" &&
+          typeof raw["worktreePath"] === "string" &&
+          typeof raw["branch"] === "string"
+        ) {
+          const binding = await resolveManagedWorktreeDispatchBinding(
+            {
+              repositoryRoot: options.repositoryRoot,
+              taskId: raw["taskId"],
+              worktreePath: raw["worktreePath"],
+              branch: raw["branch"],
+            },
+            options.worktreeStateDir === undefined
+              ? {}
+              : { stateDir: options.worktreeStateDir },
+          );
+          if (binding !== null) {
+            const fence = await matchingFence(raw["taskId"], binding.handleFingerprint);
+            if (
+              fence !== null &&
+              !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)
+            ) {
+              return journalRecoveryRequiredForFence(fence);
+            }
+          }
+        }
+      }
       if (callerFingerprint !== undefined) {
         const replay = await replayCachedPrepare(
           input.idempotencyKey,
@@ -574,6 +645,21 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         );
       }
 
+      if (
+        input.recoveryPreparation !== undefined &&
+        (roleId !== "implement-worker" ||
+          input.reprepareOf !== undefined ||
+          input.guardedRebase !== undefined ||
+          input.recovery !== undefined ||
+          input.continuation !== undefined ||
+          options.repositoryRoot === undefined)
+      ) {
+        return rejectLaunch(
+          "recoveryPreparation",
+          "journal recovery preparation requires an implement-worker on a local repository and must replace every legacy continuation path",
+        );
+      }
+
       if (roleId === "implement-reviewer") {
         if (input.timeoutMs < IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS) {
           return rejectLaunch(
@@ -661,6 +747,8 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       let gitEffectBinding;
       let resolvedReprepareOf = input.reprepareOf;
       let continuationClaim;
+      let journalRecoveryReservation;
+      let prepareLockBinding: ManagedWorktreeDispatchBinding | undefined;
       if (
         (roleId === "implement-worker" || roleId === "implement-conflict-resolver") &&
         options.repositoryRoot !== undefined
@@ -714,6 +802,14 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             `${roleId} worktree coordinates do not resolve to one live manager handle`,
           );
         }
+        prepareLockBinding = resolvedGitEffectBinding;
+        const fence = await matchingFence(taskId, resolvedGitEffectBinding.handleFingerprint);
+        if (
+          fence !== null &&
+          !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)
+        ) {
+          return journalRecoveryRequiredForFence(fence);
+        }
         if (roleId === "implement-conflict-resolver") {
           const resolverState = conflictState as unknown as GitRebaseConflictState;
           const conflictingFiles = dispatchRecord["conflictingFiles"];
@@ -752,6 +848,63 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             conflictStateDigest: gitRebaseConflictStateDigest(
               conflictState as unknown as GitRebaseConflictState,
             ),
+          };
+        } else if (input.recoveryPreparation !== undefined) {
+          if (fence === null || recoveryJournal === undefined) {
+            return rejectLaunch(
+              "recoveryPreparation",
+              "journal recovery preparation requires one committed lineage fence",
+            );
+          }
+          const journal = await recoveryJournal.read(taskId);
+          if (
+            journal?.state !== "committed" ||
+            journal.fence === undefined ||
+            journal.fence.fenceRef !== fence.fenceRef
+          ) {
+            return journalRecoveryRequiredForFence(fence);
+          }
+          const startingCommit = dispatchRecord["startingCommit"];
+          const baseCommitInput = dispatchRecord["baseCommit"];
+          const liveTip = await observeManagedWorktreeLiveTip(
+            resolvedGitEffectBinding,
+            options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+          );
+          if (typeof startingCommit !== "string" || startingCommit !== liveTip) {
+            return rejectLaunch(
+              "input.startingCommit",
+              "journal recovery startingCommit must equal the live managed-worktree tip",
+            );
+          }
+          if (baseCommitInput !== resolvedGitEffectBinding.baseCommit) {
+            return rejectLaunch(
+              "input.baseCommit",
+              "journal recovery baseCommit differs from the managed binding",
+            );
+          }
+          if (journal.seal.seed.gitReceipts.at(-1)?.newHead !== startingCommit) {
+            return rejectLaunch(
+              "input.startingCommit",
+              "journal recovery seed receipt closure does not end at the live tip",
+            );
+          }
+          resolvedReprepareOf = {
+            attestationId: fence.sourceAttestationId,
+            generation: fence.selectedSourceGeneration,
+          };
+          journalRecoveryReservation = {
+            fenceRef: fence.fenceRef,
+            sourceAttestationId: fence.sourceAttestationId,
+            selectedSourceGeneration: fence.selectedSourceGeneration,
+            lineageMaximumGeneration: fence.lineageMaximumGeneration,
+          };
+          gitEffectBinding = {
+            ...resolvedGitEffectBinding,
+            inheritedGitReceipts: journal.seal.seed.gitReceipts,
+          };
+          dispatchInput = {
+            ...dispatchRecord,
+            inheritedGitReceipts: journal.seal.seed.gitReceipts as unknown as DispatchJSONValue,
           };
         } else if (input.continuation !== undefined) {
           const startingCommit = dispatchRecord["startingCommit"];
@@ -1061,6 +1214,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         ...(resolvedReprepareOf === undefined ? {} : { reprepareOf: resolvedReprepareOf }),
         ...(gitEffectBinding === undefined ? {} : { gitEffectBinding }),
         ...(continuationClaim === undefined ? {} : { continuationClaim }),
+        ...(journalRecoveryReservation === undefined
+          ? {}
+          : { journalRecoveryReservation }),
       } as const;
       const fingerprint = prepareDispatchRequestDigest(request);
       while (true) {
@@ -1082,8 +1238,39 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         const pending = prepareDispatchOn(options.backend, request, {
           now,
           randomBytes,
+          ...(prepareLockBinding === undefined
+            ? {}
+            : {
+                lineageFenceGuard: async () => {
+                  const fence = await matchingFence(
+                    prepareLockBinding.taskId,
+                    prepareLockBinding.handleFingerprint,
+                  );
+                  return fence === null ||
+                    dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)
+                    ? null
+                    : journalRecoveryRequiredForFence(fence);
+                },
+                withLineageLock: async <T>(operation: () => Promise<T>) =>
+                  await withManagedWorktreeEffectLock(
+                    prepareLockBinding,
+                    options.worktreeStateDir === undefined
+                      ? {}
+                      : { stateDir: options.worktreeStateDir },
+                    operation,
+                  ),
+              }),
         }).then((outcome: PrepareDispatchOutcome) => {
           if (!outcome.accepted) {
+            if (
+              outcome.reason === "journal-recovery-required" &&
+              "fenceRef" in outcome &&
+              "taskRef" in outcome
+            ) {
+              throw new JournalRecoveryRequiredError(
+                outcome as ReturnType<typeof journalRecoveryRequiredForFence>,
+              );
+            }
             throw new Error("validated prepare unexpectedly returned a pre-launch rejection");
           }
           return outcome;
@@ -1103,6 +1290,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           if (prepares.get(input.idempotencyKey) === entry) {
             prepares.delete(input.idempotencyKey);
           }
+          if (error instanceof JournalRecoveryRequiredError) return error.refusal;
           throw error;
         }
       }

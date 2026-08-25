@@ -130,6 +130,18 @@ export const PREPARE_DISPATCH_INPUT = {
   guardedRebase: z.string().optional(),
   recovery: z.string().optional(),
   continuation: z.string().optional(),
+  recoveryPreparation: z
+    .object({
+      recoverySeedRef: z.string(),
+      fenceCapability: z
+        .object({
+          scope: z.literal("dispatch-lineage-fence"),
+          token: z.string().min(16),
+        })
+        .strict(),
+    })
+    .strict()
+    .optional(),
 } as const;
 
 export const FETCH_DISPATCH_INPUT_INPUT = {

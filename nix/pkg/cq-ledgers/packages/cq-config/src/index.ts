@@ -572,6 +572,7 @@ export {
 export type {
   DispatchPreLaunchRejectionReason,
   DispatchPreLaunchRejection,
+  DispatchJournalRecoveryRequired,
   PreLaunchRejectionOutcomeIsNotALifecycleState,
   DispatchInputAccepted,
   DispatchInputValidation,
@@ -610,6 +611,7 @@ export {
   DISPATCH_INPUT_VALIDATION_DEFERRED_TO,
   DISPATCH_INPUT_VALIDATION_DEFERRED,
   dispatchPreLaunchRejection,
+  dispatchJournalRecoveryRequired,
 } from "./dispatchInputValidation.js";
 export type {
   DispatchWorktreeCoordinates,
@@ -693,6 +695,7 @@ export type {
   DispatchServiceDeps,
   PrepareDispatchDeps,
   PrepareDispatchRequest,
+  DispatchJournalRecoveryReservation,
   DispatchPrepareAccepted,
   PrepareDispatchOutcome,
   StoreDispatchResultOutcome,

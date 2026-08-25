@@ -5,6 +5,7 @@ import {
   InMemoryCurrentRecoverySealJournalStore,
   PLAN_FINALIZED_MANIFEST_FIELD,
   currentRecoveryStatus,
+  dispatchLineageFenceFromRecoveryJournal,
   type LedgerStore,
 } from "@cq/ledger";
 import {
@@ -81,6 +82,14 @@ describe("protected current dispatch-recovery capture", () => {
     expect(seal.seed.selectedSourceHandle.generation).toBe(2);
     expect(seal.seed.lineageMaximumGeneration).toBe(9);
     expect((await currentRecoveryStatus(journal, RECOVERY_TASK)).state).toBe("committed");
+    expect(dispatchLineageFenceFromRecoveryJournal(await journal.read(RECOVERY_TASK))).toMatchObject(
+      {
+        state: "journal-only",
+        recoverySeedRef: seal.sealReference,
+        selectedSourceGeneration: 2,
+        lineageMaximumGeneration: 9,
+      },
+    );
   });
 
   test("a concurrent terminal generation restarts from a fresh snapshot and converges", async () => {

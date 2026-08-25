@@ -9,6 +9,11 @@ import {
 } from "@cq/config";
 import { z } from "zod";
 import type { GitChangeBrokerReceipt } from "./gitChangeBroker.js";
+import {
+  DispatchLineageCutoverFenceSchema,
+  parseDispatchLineageCutoverFence,
+  type DispatchLineageCutoverFence,
+} from "./dispatchLineageCutoverFence.js";
 
 const TASK_ID = /^T[0-9]+$/u;
 const ATTESTATION_ID = /^att_[A-Za-z0-9_-]{32,}$/u;
@@ -159,6 +164,7 @@ const committedJournalSchema = provisionalJournalSchema
   .extend({
     state: z.literal("committed"),
     committedAt: z.string().regex(ISO_INSTANT),
+    fence: DispatchLineageCutoverFenceSchema.optional(),
   })
   .strict();
 
@@ -435,6 +441,25 @@ export function parseCurrentRecoverySealJournal(value: unknown): CurrentRecovery
     if (journal.taskId !== journal.seal.seed.taskId) {
       throw new CurrentRecoverySealError("invalid", "recovery journal task binding is invalid");
     }
+    if (journal.state === "committed" && journal.fence !== undefined) {
+      const fence = parseDispatchLineageCutoverFence(journal.fence);
+      const seed = journal.seal.seed;
+      if (
+        fence.taskId !== seed.taskId ||
+        fence.namespace.backend !== seed.namespace.backend ||
+        fence.namespace.projectKey !== seed.namespace.projectKey ||
+        fence.managedFingerprint !== seed.managedFingerprint ||
+        fence.sourceAttestationId !== seed.selectedSourceHandle.attestationId ||
+        fence.selectedSourceGeneration !== seed.selectedSourceHandle.generation ||
+        fence.lineageMaximumGeneration !== seed.lineageMaximumGeneration ||
+        fence.recoverySeedRef !== journal.seal.sealReference
+      ) {
+        throw new CurrentRecoverySealError(
+          "invalid",
+          "recovery journal fence does not match its authenticated seed",
+        );
+      }
+    }
     return journal;
   } catch (error) {
     if (error instanceof CurrentRecoverySealError) throw error;
@@ -448,6 +473,8 @@ export function parseCurrentRecoverySealJournal(value: unknown): CurrentRecovery
 export interface CurrentRecoverySealJournalStore {
   read(taskId: string): Promise<CurrentRecoverySealJournal | null>;
   put(journal: CurrentRecoverySealJournal): Promise<void>;
+  /** Guarded terminal worktree release is the only production caller. */
+  remove?(taskId: string): Promise<void>;
 }
 
 function assertJournalTransition(
@@ -485,6 +512,10 @@ export class InMemoryCurrentRecoverySealJournalStore implements CurrentRecoveryS
     const current = this.#journals.get(journal.taskId) ?? null;
     assertJournalTransition(current, journal);
     this.#journals.set(journal.taskId, structuredClone(journal));
+  }
+
+  async remove(taskId: string): Promise<void> {
+    this.#journals.delete(taskId);
   }
 }
 
@@ -531,6 +562,22 @@ export class FsCurrentRecoverySealJournalStore implements CurrentRecoverySealJou
       await directory.close();
     }
   }
+
+  async remove(taskId: string): Promise<void> {
+    const file = this.#path(taskId);
+    try {
+      await fs.unlink(file);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+}
+
+export function dispatchLineageFenceFromRecoveryJournal(
+  journal: CurrentRecoverySealJournal | null,
+): DispatchLineageCutoverFence | null {
+  if (journal?.state !== "committed" || journal.fence === undefined) return null;
+  return parseDispatchLineageCutoverFence(journal.fence);
 }
 
 export function currentRecoveryJournalRoot(repositoryRoot: string, stateDir?: string): string {

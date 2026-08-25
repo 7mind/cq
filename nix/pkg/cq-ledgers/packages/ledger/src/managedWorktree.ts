@@ -79,6 +79,10 @@ import {
   type LegacyWorktreeReconciliationTransaction,
 } from "./legacyWorktreeReconciliation.js";
 import { Lockfile } from "./store/lockfile.js";
+import {
+  currentRecoveryJournalRoot,
+  FsCurrentRecoverySealJournalStore,
+} from "./currentRecoverySeal.js";
 import type {
   TaskAdoptionEligibilityFence,
   TaskAdoptionEligibilityResult,
@@ -2783,6 +2787,9 @@ async function releaseManagedWorktreeUnderEffectLock(
 
     // Idempotent path: already released cleanly.
     if (stored.status === "released") {
+      await new FsCurrentRecoverySealJournalStore(
+        currentRecoveryJournalRoot(repositoryRoot, deps.stateDir),
+      ).remove(stored.handle.taskId);
       return {
         status: "released",
         handle: stored.handle,
@@ -2853,6 +2860,10 @@ async function releaseManagedWorktreeUnderEffectLock(
       if (deleteBranch) {
         await deleteBranchAfterRegistryRelease(git, repositoryRoot, stored.handle.branch);
       }
+
+      await new FsCurrentRecoverySealJournalStore(
+        currentRecoveryJournalRoot(repositoryRoot, deps.stateDir),
+      ).remove(stored.handle.taskId);
 
       return {
         status: "released",
@@ -2940,6 +2951,10 @@ async function releaseManagedWorktreeUnderEffectLock(
     if (deleteBranch) {
       await deleteBranchAfterRegistryRelease(git, repositoryRoot, stored.handle.branch);
     }
+
+    await new FsCurrentRecoverySealJournalStore(
+      currentRecoveryJournalRoot(repositoryRoot, deps.stateDir),
+    ).remove(stored.handle.taskId);
 
     await fault("before-directory-delete", { absolutePath });
     // git worktree remove already deleted the directory; residual cleanup only.

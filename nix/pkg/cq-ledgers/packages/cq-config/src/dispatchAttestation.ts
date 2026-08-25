@@ -1383,6 +1383,15 @@ export interface PrepareDispatchRequest {
   readonly gitEffectBinding?: DispatchGitEffectBinding;
   /** Trusted, server-resolved claim; public callers can supply only the opaque reference. */
   readonly continuationClaim?: DispatchContinuationClaim;
+  /** Trusted fence-authorized generation reservation; never contains the capability token. */
+  readonly journalRecoveryReservation?: DispatchJournalRecoveryReservation;
+}
+
+export interface DispatchJournalRecoveryReservation {
+  readonly fenceRef: string;
+  readonly sourceAttestationId: string;
+  readonly selectedSourceGeneration: number;
+  readonly lineageMaximumGeneration: number;
 }
 
 /**
@@ -1426,6 +1435,15 @@ export function prepareDispatchRequestDigest(request: PrepareDispatchRequest): s
             continuationReference: request.continuationClaim.continuationReference,
             actor: request.continuationClaim.actor,
             liveTip: request.continuationClaim.liveTip,
+          },
+    journalRecoveryReservation:
+      request.journalRecoveryReservation === undefined
+        ? null
+        : {
+            fenceRef: request.journalRecoveryReservation.fenceRef,
+            sourceAttestationId: request.journalRecoveryReservation.sourceAttestationId,
+            selectedSourceGeneration: request.journalRecoveryReservation.selectedSourceGeneration,
+            lineageMaximumGeneration: request.journalRecoveryReservation.lineageMaximumGeneration,
           },
   });
 }
@@ -2194,6 +2212,44 @@ function resolveGeneration(
   deps: PrepareDispatchDeps,
 ): number {
   const reprepareOf = request.reprepareOf;
+  const reservation = request.journalRecoveryReservation;
+  if (reservation !== undefined) {
+    if (
+      reprepareOf === undefined ||
+      reprepareOf.attestationId !== reservation.sourceAttestationId ||
+      reprepareOf.generation !== reservation.selectedSourceGeneration ||
+      !/^cq-dispatch-lineage-cutover-fence:v1:[0-9a-f]{64}$/u.test(reservation.fenceRef) ||
+      !Number.isInteger(reservation.selectedSourceGeneration) ||
+      reservation.selectedSourceGeneration < 1 ||
+      !Number.isInteger(reservation.lineageMaximumGeneration) ||
+      reservation.lineageMaximumGeneration < reservation.selectedSourceGeneration ||
+      request.continuationClaim !== undefined
+    ) {
+      throw new AttestationContractError(
+        "journalRecoveryReservation",
+        "journal recovery reservation is inconsistent with its sealed source lineage",
+      );
+    }
+    const lineageRows = deps.store
+      .rows()
+      .filter((row) => row.attestationId === reservation.sourceAttestationId);
+    const active = lineageRows.find(
+      (row): row is AttestationEnvelope =>
+        !isAttestationTombstone(row) && !TERMINAL_STATE_SET.has(row.state),
+    );
+    if (active !== undefined) {
+      throw new DispatchStateConflictError(
+        "prepare_dispatch",
+        active.state,
+        `journal recovery lineage generation ${String(active.generation)} is still live`,
+      );
+    }
+    const observedMaximum = lineageRows.reduce(
+      (maximum, row) => Math.max(maximum, row.generation),
+      reservation.lineageMaximumGeneration,
+    );
+    return observedMaximum + 1;
+  }
   if (reprepareOf === undefined) {
     if (request.continuationClaim !== undefined) {
       throw new AttestationContractError(
