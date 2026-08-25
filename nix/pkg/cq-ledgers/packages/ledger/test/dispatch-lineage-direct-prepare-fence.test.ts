@@ -98,6 +98,20 @@ describe("direct prepare lineage fence", () => {
     expect(store.snapshot()).toEqual([]);
   });
 
+  // Regression: T2816 trusted a caller-selected backend dependency mode over
+  // the request's manager-resolved Git effect authority and allocated beside a fence.
+  test("trusted managed binding cannot be downgraded to backend mode [Behavioral-Active Blackbox-Atomic]", async () => {
+    const store = new InMemoryAttestationStore(namespace);
+    await expect(
+      prepareDispatchOn(new InMemoryAttestationBackend(store), request(), {
+        mode: "backend",
+        now: () => RECOVERY_NOW,
+        randomBytes: sequentialDispatchRandomBytes(0),
+      }),
+    ).rejects.toThrow("trusted managed prepare requires a lineage fence guard and lock");
+    expect(store.snapshot()).toEqual([]);
+  });
+
   test("legacy manager-bound prepare returns the typed refusal before allocation", async () => {
     const store = new InMemoryAttestationStore(namespace);
     const outcome = await prepareDispatchOn(
