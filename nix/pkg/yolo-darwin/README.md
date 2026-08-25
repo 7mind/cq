@@ -245,6 +245,7 @@ When an agent runs under `yolo-darwin`:
   stable socket is normally `~/.local/share/containers/podman/machine/podman.sock`.
 - **Secret session variables** are read from their configured files into one mode-0600 temporary file, loaded by the child entrypoint without placing secret values in argv, and removed after the session.
 - **Host and sandbox pre-start hooks** run for agent modes only; sandbox hooks run after secrets load and can export environment variables to the agent. `--disable` filters both hook sets by tag.
+- **CodeGraph project indexes** are initialized or synchronized by the same `codegraph`-tagged sandbox pre-start hook as Linux. The agent starts the MCP server on demand; `--disable=codegraph` skips the index bootstrap for one launch.
 - **`--env KEY=VAL` pairs** are applied to the agent process **only**, not to the launcher itself, and not visible in the command-line arguments of the spawned process.
 
 ### Remaining platform-specific gaps

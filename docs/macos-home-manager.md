@@ -322,18 +322,19 @@ yolo cmd git status
 yolo --disable=codegraph claude
 ```
 
-`--disable=<tag>` suppresses matching prompt fragments on Darwin. Linux-only
-resource controls—extra bind mounts, device passthrough, sandbox package sets,
-pre-start hooks, and secret-file composition—do not apply to the Darwin
-Seatbelt wrapper. Use native OAuth where possible and a macOS secret manager or
-launch-shell environment for additional provider keys.
+`--disable=<tag>` suppresses matching prompt fragments and pre-start hooks on
+Darwin. Extra read-only/read-write paths, sandbox package sets, session
+variables, secret-file composition, and pre-start hooks apply to both wrappers.
+Device passthrough remains Linux-specific because Darwin requires
+capability-specific Seatbelt rules.
 
-CodeGraph is installed on the host, but Darwin does not run the Linux yolo
-pre-start indexing hook. Initialize an index manually when desired:
+For agent subcommands (`claude`, `codex`, and `pi`), entering the sandbox runs
+the same `codegraph`-tagged pre-start hook as Linux: it initializes a missing
+project index and synchronizes an existing one. The agent starts the CodeGraph
+MCP server on demand. Skip the index bootstrap for one launch with:
 
 ```sh
-cd ~/src/my-project
-codegraph init
+yolo --disable=codegraph claude
 ```
 
 ## 7. Verify the installation

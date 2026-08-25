@@ -195,7 +195,7 @@ consumer wires from its own system config:
 |---|---|
 | `smind.hm.dev.llm.yolo.promptExtensions` | Add tagged agent prompt fragments; works on Linux and macOS. |
 | `smind.hm.dev.llm.yolo.{extraReadOnlyPaths,extraReadWritePaths,extraDevicePaths}` | Linux bubblewrap binds and device passthrough. |
-| `smind.hm.dev.llm.yolo.{packages,sessionVariables,secretSessionVariables,hooks}` | Linux-only sandbox packages, environment, secret files, and pre-start hooks. |
+| `smind.hm.dev.llm.yolo.{packages,sessionVariables,secretSessionVariables,hooks}` | Sandbox packages, environment, secret files, and pre-start hooks on Linux and macOS. |
 | `smind.hm.dev.llm.podman.{socketPath,socketUri}` | Linux rootless-Podman socket for container access. |
 | `smind.hm.dev.llm.llmSshKeyPath` | Linux SSH-key bind plus an agent prompt fragment. |
 | `smind.hm.dev.llm.pi.mcpDirectTools` | Expose selected MCP servers directly in Pi instead of only through its proxy. |
