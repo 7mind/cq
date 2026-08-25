@@ -325,6 +325,83 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     }
   }
 
+  function managedPrepareCoordinates(
+    input: Parameters<DispatchCapability["prepare"]>[0],
+  ):
+    | {
+        readonly repositoryRoot: string;
+        readonly taskId: string;
+        readonly worktreePath: string;
+        readonly branch: string;
+      }
+    | undefined {
+    if (options.repositoryRoot === undefined) return undefined;
+    const request = input as unknown as Readonly<Record<string, unknown>>;
+    const refs = request["refs"];
+    if (refs !== null && typeof refs === "object" && !Array.isArray(refs)) {
+      const record = refs as Readonly<Record<string, unknown>>;
+      const coordinates = record["coordinates"];
+      if (
+        typeof record["taskId"] === "string" &&
+        coordinates !== null &&
+        typeof coordinates === "object" &&
+        !Array.isArray(coordinates)
+      ) {
+        const values = coordinates as Readonly<Record<string, unknown>>;
+        if (typeof values["worktreePath"] === "string" && typeof values["branch"] === "string") {
+          return {
+            repositoryRoot: options.repositoryRoot,
+            taskId: record["taskId"],
+            worktreePath: values["worktreePath"],
+            branch: values["branch"],
+          };
+        }
+      }
+      return undefined;
+    }
+    const dispatchInput = request["input"];
+    if (
+      dispatchInput === null ||
+      typeof dispatchInput !== "object" ||
+      Array.isArray(dispatchInput)
+    ) {
+      return undefined;
+    }
+    const record = dispatchInput as Readonly<Record<string, unknown>>;
+    if (
+      typeof record["taskId"] !== "string" ||
+      typeof record["worktreePath"] !== "string" ||
+      typeof record["branch"] !== "string"
+    ) {
+      return undefined;
+    }
+    return {
+      repositoryRoot: options.repositoryRoot,
+      taskId: record["taskId"],
+      worktreePath: record["worktreePath"],
+      branch: record["branch"],
+    };
+  }
+
+  async function revalidateManagedPrepareBinding(
+    binding: ManagedWorktreeDispatchBinding,
+  ): Promise<ManagedWorktreeDispatchBinding | null> {
+    const revalidated = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: binding.repositoryRoot,
+        taskId: binding.taskId,
+        worktreePath: binding.worktreePath,
+        branch: binding.branch,
+      },
+      options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+    );
+    return revalidated !== null &&
+      revalidated.handleToken === binding.handleToken &&
+      revalidated.handleFingerprint === binding.handleFingerprint
+      ? revalidated
+      : null;
+  }
+
   function cacheHandleKey(handle: {
     readonly attestationId: string;
     readonly generation: number;
@@ -541,41 +618,42 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         );
       }
       const callerFingerprint = callerPrepareFingerprint(input);
-      if (
-        options.repositoryRoot !== undefined &&
-        typeof input.input === "object" &&
-        input.input !== null &&
-        !Array.isArray(input.input)
-      ) {
-        const raw = input.input as Readonly<Record<string, unknown>>;
-        if (
-          typeof raw["taskId"] === "string" &&
-          typeof raw["worktreePath"] === "string" &&
-          typeof raw["branch"] === "string"
-        ) {
-          const binding = await resolveManagedWorktreeDispatchBinding(
-            {
-              repositoryRoot: options.repositoryRoot,
-              taskId: raw["taskId"],
-              worktreePath: raw["worktreePath"],
-              branch: raw["branch"],
+      const earlyCoordinates = managedPrepareCoordinates(input);
+      if (earlyCoordinates !== undefined) {
+        const candidate = await resolveManagedWorktreeDispatchBinding(
+          earlyCoordinates,
+          options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+        );
+        if (candidate !== null) {
+          const preflight = await withManagedWorktreeEffectLock(
+            candidate,
+            options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+            async () => {
+              const binding = await revalidateManagedPrepareBinding(candidate);
+              if (binding === null) {
+                return rejectLaunch(
+                  "input.worktreePath",
+                  "prepare worktree coordinates lost their authoritative manager binding",
+                );
+              }
+              const fence = await matchingFence(binding.taskId, binding.handleFingerprint);
+              if (
+                fence !== null &&
+                !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)
+              ) {
+                return journalRecoveryRequiredForFence(fence);
+              }
+              if (callerFingerprint === undefined) return undefined;
+              return await replayCachedPrepare(
+                input.idempotencyKey,
+                callerFingerprint,
+                "caller",
+              );
             },
-            options.worktreeStateDir === undefined
-              ? {}
-              : { stateDir: options.worktreeStateDir },
           );
-          if (binding !== null) {
-            const fence = await matchingFence(raw["taskId"], binding.handleFingerprint);
-            if (
-              fence !== null &&
-              !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)
-            ) {
-              return journalRecoveryRequiredForFence(fence);
-            }
-          }
+          if (preflight !== undefined) return preflight;
         }
-      }
-      if (callerFingerprint !== undefined) {
+      } else if (callerFingerprint !== undefined) {
         const replay = await replayCachedPrepare(
           input.idempotencyKey,
           callerFingerprint,
@@ -1247,81 +1325,82 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           : { journalRecoveryReservation }),
       } as const;
       const fingerprint = prepareDispatchRequestDigest(request);
-      while (true) {
-        const existing = prepares.get(input.idempotencyKey);
-        if (existing !== undefined) {
-          const accepted = await existing.promise;
-          if (await cachedPrepareRemainsHeld(input.idempotencyKey, accepted, existing)) {
-            if (existing.fingerprint !== fingerprint) {
-              throw new AttestationKeyReuseError(input.idempotencyKey, accepted.handle);
-            }
-            return accepted;
+      const allocateOrReplay = async (): Promise<PrepareDispatchOutcome> => {
+        if (prepareLockBinding !== undefined) {
+          const binding = await revalidateManagedPrepareBinding(prepareLockBinding);
+          if (binding === null) {
+            return rejectLaunch(
+              "input.worktreePath",
+              "prepare worktree coordinates lost their authoritative manager binding",
+            );
           }
-          if (prepares.get(input.idempotencyKey) === existing) {
-            prepares.delete(input.idempotencyKey);
-            preparesByHandle.delete(cacheHandleKey(accepted.handle));
+          const fence = await matchingFence(binding.taskId, binding.handleFingerprint);
+          if (
+            fence !== null &&
+            !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)
+          ) {
+            return journalRecoveryRequiredForFence(fence);
           }
-          continue;
         }
-        const pending = prepareDispatchOn(options.backend, request, {
-          now,
-          randomBytes,
-          ...(prepareLockBinding === undefined
-            ? {}
-            : {
-                lineageFenceGuard: async () => {
-                  const fence = await matchingFence(
-                    prepareLockBinding.taskId,
-                    prepareLockBinding.handleFingerprint,
+        while (true) {
+          const existing = prepares.get(input.idempotencyKey);
+          if (existing !== undefined) {
+            const accepted = await existing.promise;
+            if (await cachedPrepareRemainsHeld(input.idempotencyKey, accepted, existing)) {
+              if (existing.fingerprint !== fingerprint) {
+                throw new AttestationKeyReuseError(input.idempotencyKey, accepted.handle);
+              }
+              return accepted;
+            }
+            if (prepares.get(input.idempotencyKey) === existing) {
+              prepares.delete(input.idempotencyKey);
+              preparesByHandle.delete(cacheHandleKey(accepted.handle));
+            }
+            continue;
+          }
+          const pending = prepareDispatchOn(options.backend, request, { now, randomBytes }).then(
+            (outcome: PrepareDispatchOutcome) => {
+              if (!outcome.accepted) {
+                if (
+                  outcome.reason === "journal-recovery-required" &&
+                  "fenceRef" in outcome &&
+                  "taskRef" in outcome
+                ) {
+                  throw new JournalRecoveryRequiredError(
+                    outcome as ReturnType<typeof journalRecoveryRequiredForFence>,
                   );
-                  return fence === null ||
-                    dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)
-                    ? null
-                    : journalRecoveryRequiredForFence(fence);
-                },
-                withLineageLock: async <T>(operation: () => Promise<T>) =>
-                  await withManagedWorktreeEffectLock(
-                    prepareLockBinding,
-                    options.worktreeStateDir === undefined
-                      ? {}
-                      : { stateDir: options.worktreeStateDir },
-                    operation,
-                  ),
-              }),
-        }).then((outcome: PrepareDispatchOutcome) => {
-          if (!outcome.accepted) {
-            if (
-              outcome.reason === "journal-recovery-required" &&
-              "fenceRef" in outcome &&
-              "taskRef" in outcome
-            ) {
-              throw new JournalRecoveryRequiredError(
-                outcome as ReturnType<typeof journalRecoveryRequiredForFence>,
-              );
+                }
+                throw new Error("validated prepare unexpectedly returned a pre-launch rejection");
+              }
+              return outcome;
+            },
+          );
+          const entry: CachedPrepare = {
+            callerFingerprint,
+            fingerprint,
+            request,
+            promise: pending,
+          };
+          prepares.set(input.idempotencyKey, entry);
+          try {
+            const accepted = await pending;
+            preparesByHandle.set(cacheHandleKey(accepted.handle), entry);
+            return accepted;
+          } catch (error) {
+            if (prepares.get(input.idempotencyKey) === entry) {
+              prepares.delete(input.idempotencyKey);
             }
-            throw new Error("validated prepare unexpectedly returned a pre-launch rejection");
+            if (error instanceof JournalRecoveryRequiredError) return error.refusal;
+            throw error;
           }
-          return outcome;
-        });
-        const entry: CachedPrepare = {
-          callerFingerprint,
-          fingerprint,
-          request,
-          promise: pending,
-        };
-        prepares.set(input.idempotencyKey, entry);
-        try {
-          const accepted = await pending;
-          preparesByHandle.set(cacheHandleKey(accepted.handle), entry);
-          return accepted;
-        } catch (error) {
-          if (prepares.get(input.idempotencyKey) === entry) {
-            prepares.delete(input.idempotencyKey);
-          }
-          if (error instanceof JournalRecoveryRequiredError) return error.refusal;
-          throw error;
         }
-      }
+      };
+      if (prepareLockBinding === undefined) return await allocateOrReplay();
+      return await withManagedWorktreeEffectLock(
+        prepareLockBinding,
+        options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+        allocateOrReplay,
+      );
     },
     fetchInput: (input) => fetchDispatchInputOn(options.backend, { namespace, ...input }, { now }),
     storeResult: async (input) => {

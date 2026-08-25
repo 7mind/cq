@@ -492,7 +492,13 @@ function assertJournalTransition(
   ) {
     return;
   }
-  if (next.state === "provisional" && current.taskId === next.taskId) return;
+  if (
+    current.state === "provisional" &&
+    next.state === "provisional" &&
+    current.taskId === next.taskId
+  ) {
+    return;
+  }
   throw new CurrentRecoverySealError(
     "journal-conflict",
     "current recovery journal cannot replace committed authority with unrelated state",
