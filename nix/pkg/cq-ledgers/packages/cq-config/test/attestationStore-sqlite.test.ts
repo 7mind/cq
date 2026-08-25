@@ -21,6 +21,7 @@ import {
   AttestationStorageError,
   AttestationTransportError,
   FakeDispatchClock,
+  IDEMPOTENCY_HORIZON_MS,
   PERSISTED_ATTESTATION_COLUMNS,
   SqliteAttestationBackend,
   SqliteAttestationConnectionRegistry,
@@ -124,7 +125,7 @@ runAttestationStoreContract({
 
 describe("bun:sqlite attestation backend specifics", () => {
   // regression: T2815 round 3 — legacy normalization must not change the CAS revision.
-  test("a sweep can replace actual persisted legacy bytes without a false lost update", async () => {
+  test("a sweep can replace and remove actual persisted legacy bytes without false lost updates", async () => {
     const dbPath = join(freshRoot(), ATTESTATION_DB_FILENAME);
     const namespace: AttestationNamespace = {
       backend: NAMESPACE_BACKEND,
@@ -134,49 +135,55 @@ describe("bun:sqlite attestation backend specifics", () => {
     const clock = new FakeDispatchClock("2026-07-28T09:00:00.000Z");
     const driver = new AttestationDriver(backend, clock);
     try {
-      const prepared = await driver.prepare();
-      const aborted = await driver.abort(prepared);
+      const removeAtHorizon = await driver.prepare({ idempotencyKey: "legacy-remove" });
+      await driver.abort(removeAtHorizon);
+      clock.advance(IDEMPOTENCY_HORIZON_MS - TERMINAL_ENVELOPE_RETENTION_MS);
+      const collapseAtRetention = await driver.prepare({ idempotencyKey: "legacy-collapse" });
+      await driver.abort(collapseAtRetention);
       const db = new Database(dbPath);
       try {
-        const stored = db
-          .query(
-            `SELECT body FROM ${ATTESTATION_TABLE}
+        for (const prepared of [removeAtHorizon, collapseAtRetention]) {
+          const stored = db
+            .query(
+              `SELECT body FROM ${ATTESTATION_TABLE}
+                WHERE backend = ? AND project_key = ? AND attestation_id = ? AND generation = ?`,
+            )
+            .get(
+              namespace.backend,
+              namespace.projectKey,
+              prepared.attestationId,
+              prepared.generation,
+            ) as { readonly body: string } | null;
+          if (stored === null) throw new Error("persisted aborted row missing");
+          const legacy = JSON.parse(stored.body) as Record<string, unknown>;
+          delete legacy["overlays"];
+          const legacyBody = JSON.stringify(legacy);
+          const legacyDigest = attestationRowDigest(legacy as unknown as AttestationRow);
+          db.query(
+            `UPDATE ${ATTESTATION_TABLE} SET body = ?, row_digest = ?
               WHERE backend = ? AND project_key = ? AND attestation_id = ? AND generation = ?`,
-          )
-          .get(
+          ).run(
+            legacyBody,
+            legacyDigest,
             namespace.backend,
             namespace.projectKey,
             prepared.attestationId,
             prepared.generation,
-          ) as { readonly body: string } | null;
-        if (stored === null) throw new Error("persisted aborted row missing");
-        const legacy = JSON.parse(stored.body) as Record<string, unknown>;
-        delete legacy["overlays"];
-        const legacyBody = JSON.stringify(legacy);
-        const legacyDigest = attestationRowDigest(legacy as unknown as AttestationRow);
-        db.query(
-          `UPDATE ${ATTESTATION_TABLE} SET body = ?, row_digest = ?
-            WHERE backend = ? AND project_key = ? AND attestation_id = ? AND generation = ?`,
-        ).run(
-          legacyBody,
-          legacyDigest,
-          namespace.backend,
-          namespace.projectKey,
-          prepared.attestationId,
-          prepared.generation,
-        );
+          );
+        }
       } finally {
         db.close();
       }
 
-      clock.set(aborted.abortedAt).advance(TERMINAL_ENVELOPE_RETENTION_MS);
+      clock.advance(TERMINAL_ENVELOPE_RETENTION_MS);
       const report = await driver.sweep();
-      expect(report.envelopesCollapsed).toEqual([handleOf(prepared)]);
+      expect(report.envelopesCollapsed).toEqual([handleOf(collapseAtRetention)]);
+      expect(report.tombstonesRemoved).toEqual([handleOf(removeAtHorizon)]);
       expect(backend.storedRows()).toEqual([
         expect.objectContaining({
           kind: "tombstone",
-          attestationId: prepared.attestationId,
-          generation: prepared.generation,
+          attestationId: collapseAtRetention.attestationId,
+          generation: collapseAtRetention.generation,
         }),
       ]);
     } finally {

@@ -244,24 +244,22 @@ export class FsAttestationBackend implements AttestationBackend {
         return this.readAll();
       case "capability":
         return Object.freeze(
-          this.readAll()
-            .filter(
-              (entry) =>
-                entry.row.kind === "envelope" &&
-                entry.row.resultCapabilityHash === scope.capabilityHash,
-            ),
+          this.readAll().filter(
+            (entry) =>
+              entry.row.kind === "envelope" &&
+              entry.row.resultCapabilityHash === scope.capabilityHash,
+          ),
         );
       case "prepare": {
         const reprepare = scope.reprepareOf;
         return Object.freeze(
-          this.readAll()
-            .filter(
-              (entry) =>
-                entry.row.idempotencyKey === scope.idempotencyKey ||
-                (reprepare !== undefined &&
-                  entry.row.attestationId === reprepare.attestationId &&
-                  entry.row.generation === reprepare.generation),
-            ),
+          this.readAll().filter(
+            (entry) =>
+              entry.row.idempotencyKey === scope.idempotencyKey ||
+              (reprepare !== undefined &&
+                entry.row.attestationId === reprepare.attestationId &&
+                entry.row.generation === reprepare.generation),
+          ),
         );
       }
     }
