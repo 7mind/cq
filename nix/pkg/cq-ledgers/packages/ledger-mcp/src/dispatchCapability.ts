@@ -1419,8 +1419,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             options.backend,
             request,
             prepareLockBinding === undefined
-              ? { now, randomBytes }
+              ? { mode: "backend", now, randomBytes }
               : {
+                  mode: "manager-bound",
                   now,
                   randomBytes,
                   lineageFenceGuard: async () => {

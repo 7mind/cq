@@ -96,6 +96,7 @@ describe.skipIf(SKIP_LIVE)("live PostgreSQL seal/prepare ordering", () => {
         });
       const prepare = async () =>
         await prepareDispatchOn(backend, request(namespace, `pg-race-${winner}`), {
+          mode: "manager-bound",
           now: () => RECOVERY_NOW,
           randomBytes: sequentialDispatchRandomBytes(0),
           withLineageLock: async (operation) => await lock.run(operation),

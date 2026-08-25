@@ -446,6 +446,7 @@ describe.skipIf(LIVE_SUITE_SKIPPED)(
         // T976's validate-then-allocate assertion runs INSIDE the unit of work.
         const settled = await errorFrom(() =>
           prepareDispatchOn(backend, driver.request({ idempotencyKey: "so" }), {
+            mode: "backend",
             now: driver.clock.now,
             randomBytes: defaultDispatchRandomBytes,
             stepOrder: ["mint-result-capability", "resolve-role-contract"],

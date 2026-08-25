@@ -90,6 +90,7 @@ describe.skipIf(SKIP_LIVE)("live PostgreSQL lineage cutover fence", () => {
     };
     try {
       const outcome = await prepareDispatchOn(backend, request(namespace, fence.fenceRef), {
+        mode: "manager-bound",
         now: () => RECOVERY_NOW,
         randomBytes: sequentialDispatchRandomBytes(0),
         withLineageLock: async (operation) => await operation(),

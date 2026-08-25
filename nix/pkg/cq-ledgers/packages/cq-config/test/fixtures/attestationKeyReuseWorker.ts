@@ -78,6 +78,7 @@ let backend: AttestationBackend | undefined;
 try {
   backend = openBackend();
   const outcome = await prepareDispatchOn(backend, request, {
+    mode: "backend",
     now: () => new Date().toISOString(),
     randomBytes: defaultDispatchRandomBytes,
   });

@@ -1016,6 +1016,7 @@ describe("the unit-of-work runner", () => {
         expectedChild: { childId: "reviewer-child", runId: "reviewer-run" },
       },
       {
+        mode: "backend",
         now: () => {
           clockReads += 1;
           return "2026-08-03T10:00:00.000Z";

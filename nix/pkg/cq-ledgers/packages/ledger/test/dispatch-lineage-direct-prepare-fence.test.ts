@@ -11,6 +11,7 @@ import {
   prepareDispatchOn,
   sequentialDispatchRandomBytes,
   type AttestationBackend,
+  type AttestationBackendManagerPrepareDeps,
   type AttestationNamespace,
   type PrepareDispatchRequest,
 } from "@cq/config";
@@ -89,9 +90,10 @@ describe("direct prepare lineage fence", () => {
     const store = new InMemoryAttestationStore(namespace);
     await expect(
       prepareDispatchOn(new InMemoryAttestationBackend(store), request(), {
+        mode: "manager-bound",
         now: () => RECOVERY_NOW,
         randomBytes: sequentialDispatchRandomBytes(0),
-      }),
+      } as unknown as AttestationBackendManagerPrepareDeps),
     ).rejects.toThrow("manager-bound prepare requires a lineage fence guard and lock");
     expect(store.snapshot()).toEqual([]);
   });
@@ -102,6 +104,7 @@ describe("direct prepare lineage fence", () => {
       new InMemoryAttestationBackend(store),
       request(),
       {
+        mode: "manager-bound",
         now: () => RECOVERY_NOW,
         randomBytes: sequentialDispatchRandomBytes(0),
         lineageFenceGuard: async () => journalRecoveryRequiredForFence(fence),
@@ -127,6 +130,7 @@ describe("direct prepare lineage fence", () => {
         },
       }),
       {
+        mode: "manager-bound",
         now: () => RECOVERY_NOW,
         randomBytes: sequentialDispatchRandomBytes(0),
         lineageFenceGuard: async () =>
@@ -161,6 +165,7 @@ describe("direct prepare lineage fence", () => {
         new InMemoryAttestationBackend(store),
         request({ idempotencyKey: `wrong-${authority.fenceCapability.token}` }),
         {
+          mode: "manager-bound",
           now: () => RECOVERY_NOW,
           randomBytes: sequentialDispatchRandomBytes(0),
           lineageFenceGuard: async () =>
@@ -206,6 +211,7 @@ describe("direct prepare lineage fence", () => {
           backend,
           request({ idempotencyKey: `${adapter}-allocated` }, adapterNamespace),
           {
+            mode: "manager-bound",
             now: () => RECOVERY_NOW,
             randomBytes: sequentialDispatchRandomBytes(0),
             withLineageLock: async (operation) => {
@@ -230,6 +236,7 @@ describe("direct prepare lineage fence", () => {
           backend,
           request({ idempotencyKey: `${adapter}-fenced` }, adapterNamespace),
           {
+            mode: "manager-bound",
             now: () => RECOVERY_NOW,
             randomBytes: sequentialDispatchRandomBytes(64),
             withLineageLock: async (operation) => await operation(),

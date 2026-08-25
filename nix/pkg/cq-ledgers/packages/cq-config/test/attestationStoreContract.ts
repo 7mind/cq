@@ -334,6 +334,7 @@ export class AttestationDriver {
     overrides: Readonly<Record<string, unknown>> = {},
   ): Promise<PrepareDispatchOutcome> {
     return prepareDispatchOn(this.backend, this.request(overrides), {
+      mode: "backend",
       now: this.clock.now,
       randomBytes: defaultDispatchRandomBytes,
     });

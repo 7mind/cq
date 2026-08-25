@@ -109,6 +109,7 @@ function fixture() {
     });
   const legacyPrepare = async (idempotencyKey: string) =>
     await prepareDispatchOn(backend, request(idempotencyKey), {
+      mode: "manager-bound",
       now: () => RECOVERY_NOW,
       randomBytes: sequentialDispatchRandomBytes(0),
       withLineageLock: async (operation) => await lock.run(operation),

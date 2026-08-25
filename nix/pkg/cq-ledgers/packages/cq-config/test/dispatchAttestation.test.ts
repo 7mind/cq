@@ -2760,6 +2760,7 @@ describe("consumed managed-worker continuation authority", () => {
           },
         }),
         {
+          mode: "manager-bound",
           now: h.clock.now,
           randomBytes: sequentialDispatchRandomBytes(seed),
           lineageFenceGuard: async () => null,
@@ -2838,6 +2839,7 @@ describe("consumed managed-worker continuation authority", () => {
     failInsert = true;
     await expect(
       prepareDispatchOn(backend, retryRequest, {
+        mode: "manager-bound",
         now: seeded.clock.now,
         randomBytes: sequentialDispatchRandomBytes(80),
         lineageFenceGuard: async () => null,
@@ -2851,6 +2853,7 @@ describe("consumed managed-worker continuation authority", () => {
 
     failInsert = false;
     const successor = await prepareDispatchOn(backend, retryRequest, {
+      mode: "manager-bound",
       now: seeded.clock.now,
       randomBytes: sequentialDispatchRandomBytes(96),
       lineageFenceGuard: async () => null,

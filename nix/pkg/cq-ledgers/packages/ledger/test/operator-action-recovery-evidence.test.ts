@@ -173,6 +173,7 @@ async function completeAuthenticatedManagedTask(
         gitEffectBinding: binding,
       },
       {
+        mode: "manager-bound",
         now,
         randomBytes: sequentialDispatchRandomBytes(0),
         lineageFenceGuard: async () => null,

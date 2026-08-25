@@ -108,6 +108,7 @@ describe("all legacy continuation paths obey the lineage fence", () => {
         close: async () => {},
       };
       const outcome = await prepareDispatchOn(backend, path.request, {
+        mode: "manager-bound",
         now: () => RECOVERY_NOW,
         randomBytes: sequentialDispatchRandomBytes(0),
         withLineageLock: async (operation) => {

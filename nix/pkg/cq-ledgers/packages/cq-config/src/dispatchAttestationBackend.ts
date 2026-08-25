@@ -762,13 +762,20 @@ export interface AttestationBackendDeps {
 }
 
 /** Prepare additionally mints identity and capability. */
-export interface AttestationBackendPrepareDeps extends AttestationBackendDeps {
+interface AttestationBackendPrepareCommonDeps extends AttestationBackendDeps {
   readonly randomBytes: DispatchRandomBytes;
   readonly stepOrder?: readonly string[];
 }
 
+/** An ordinary backend prepare with no manager lineage authority. */
+export interface AttestationBackendPrepareDeps extends AttestationBackendPrepareCommonDeps {
+  readonly mode: "backend";
+}
+
 /** Mandatory boundary for a prepare carrying a trusted managed-worktree binding. */
-export interface AttestationBackendManagerPrepareDeps extends AttestationBackendPrepareDeps {
+export interface AttestationBackendManagerPrepareDeps
+  extends AttestationBackendPrepareCommonDeps {
+  readonly mode: "manager-bound";
   readonly lineageFenceGuard: () => Promise<DispatchJournalRecoveryRequired | null>;
   readonly withLineageLock: <T>(operation: () => Promise<T>) => Promise<T>;
 }
@@ -843,7 +850,7 @@ export async function prepareDispatchOn(
   request: PrepareDispatchRequest,
   deps: AttestationBackendPrepareDeps | AttestationBackendManagerPrepareDeps,
 ): Promise<PrepareDispatchOutcome> {
-  const managerBound = request.gitEffectBinding !== undefined;
+  const managerBound = deps.mode === "manager-bound";
   const managerDeps = deps as Partial<AttestationBackendManagerPrepareDeps>;
   if (
     managerBound &&
@@ -855,7 +862,7 @@ export async function prepareDispatchOn(
     );
   }
   const operation = async (): Promise<PrepareDispatchOutcome> => {
-    const refusal = await managerDeps.lineageFenceGuard?.();
+    const refusal = managerBound ? await deps.lineageFenceGuard() : null;
     if (refusal !== undefined && refusal !== null) return refusal;
     return await backend.transact(prepareLoadScope(request), (store) =>
       prepareDispatch(request, {
@@ -866,8 +873,8 @@ export async function prepareDispatchOn(
       }),
     );
   };
-  if (managerDeps.withLineageLock === undefined) return await operation();
-  return await managerDeps.withLineageLock(operation);
+  if (!managerBound) return await operation();
+  return await deps.withLineageLock(operation);
 }
 
 export async function storeDispatchResultOn(
