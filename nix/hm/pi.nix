@@ -258,7 +258,9 @@ let
   # as a directory closure so the package resolves beside the extension rather
   # than through Pi's ambient package aliases. Darwin additionally needs the
   # proc_pidinfo helper used to fence PID reuse.
-  piDispatchExtensionDir = pkgs.runCommand "cq-pi-subagent-dispatch-extension" { } ''
+  piDispatchExtensionDir = pkgs.runCommand "cq-pi-subagent-dispatch-extension" {
+    nativeBuildInputs = lib.optionals pkgs.stdenv.isDarwin [ pkgs.stdenv.cc ];
+  } ''
     mkdir -p "$out/node_modules/@cq"
     cp -R ${cqSubagentDispatchDir}/. "$out/"
     ln -s ${../pkg/cq-ledgers/packages/process-control} \
