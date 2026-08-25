@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import type { RebaseContinueEffectBinding } from "@cq/process-control";
@@ -203,58 +202,62 @@ function runGit(
   environment?: NodeJS.ProcessEnv,
   input?: Uint8Array,
 ): Promise<GitResult> {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(
+  const child = Bun.spawn(
+    [
       "git",
-      [
-        "-c",
-        "core.hooksPath=/dev/null",
-        "-c",
-        "commit.gpgSign=false",
-        "-c",
-        "commit.cleanup=verbatim",
-        "-c",
-        "commit.status=false",
-        "-c",
-        "tag.gpgSign=false",
-        "-c",
-        "core.attributesFile=/dev/null",
-        "-c",
-        "core.autocrlf=false",
-        "-c",
-        "core.fsmonitor=false",
-        "-c",
-        "core.untrackedCache=false",
-        "-c",
-        "gc.auto=0",
-        "-c",
-        "maintenance.auto=false",
-        "-c",
-        "merge.conflictStyle=merge",
-        "-c",
-        "merge.renormalize=false",
-        "-c",
-        "rebase.updateRefs=false",
-        "-c",
-        "rebase.autoStash=false",
-        "-c",
-        "rerere.enabled=false",
-        "-c",
-        "submodule.recurse=false",
-        ...args,
-      ],
-      { cwd, env: environment ?? trustedGitEnvironment(), stdio: ["pipe", "pipe", "pipe"] },
-    );
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.once("error", reject);
-    child.once("close", (code) => {
-      resolvePromise({ code: code ?? 1, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) });
-    });
-    child.stdin.end(input);
-  });
+      "-c",
+      "core.hooksPath=/dev/null",
+      "-c",
+      "commit.gpgSign=false",
+      "-c",
+      "commit.cleanup=verbatim",
+      "-c",
+      "commit.status=false",
+      "-c",
+      "tag.gpgSign=false",
+      "-c",
+      "core.attributesFile=/dev/null",
+      "-c",
+      "core.autocrlf=false",
+      "-c",
+      "core.fsmonitor=false",
+      "-c",
+      "core.untrackedCache=false",
+      "-c",
+      "gc.auto=0",
+      "-c",
+      "maintenance.auto=false",
+      "-c",
+      "merge.conflictStyle=merge",
+      "-c",
+      "merge.renormalize=false",
+      "-c",
+      "rebase.updateRefs=false",
+      "-c",
+      "rebase.autoStash=false",
+      "-c",
+      "rerere.enabled=false",
+      "-c",
+      "submodule.recurse=false",
+      ...args,
+    ],
+    {
+      cwd,
+      env: environment ?? trustedGitEnvironment(),
+      stdin: input ?? "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  return Promise.all([
+    child.exited,
+    new Response(child.stdout).arrayBuffer(),
+    new Response(child.stderr).arrayBuffer(),
+  ]).then(([code, stdout, stderr]) => ({
+    code,
+    stdout: Buffer.from(stdout),
+    stderr: Buffer.from(stderr),
+  }));
 }
 
 async function checkedGit(
