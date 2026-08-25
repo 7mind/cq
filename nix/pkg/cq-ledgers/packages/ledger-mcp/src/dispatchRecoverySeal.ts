@@ -80,6 +80,8 @@ export interface CurrentRecoveryCaptureDeps {
   readonly now: () => string;
   /** Deterministic race seam used after provisional durability and before the lineage reread. */
   readonly afterProvisional?: () => Promise<void>;
+  /** Deterministic race seam used after reselection and before the final locked reread. */
+  readonly beforeCommit?: () => Promise<void>;
 }
 
 export interface CaptureCurrentDispatchRecoveryOptions {
@@ -91,6 +93,7 @@ export interface CaptureCurrentDispatchRecoveryOptions {
   readonly journal?: CurrentRecoverySealJournalStore;
   readonly now?: () => string;
   readonly afterProvisional?: () => Promise<void>;
+  readonly beforeCommit?: () => Promise<void>;
 }
 
 function bindingMatches(
@@ -119,10 +122,15 @@ function lineageSnapshot(
   const envelopes = rows
     .filter((row): row is AttestationEnvelope => !isAttestationTombstone(row))
     .filter((row) => bindingMatches(row.gitEffectBinding, binding))
-    .sort(
-      (left, right) =>
-        left.attestationId.localeCompare(right.attestationId) || left.generation - right.generation,
-    );
+    .sort((left, right) => {
+      const byId =
+        left.attestationId < right.attestationId
+          ? -1
+          : left.attestationId > right.attestationId
+            ? 1
+            : 0;
+      return byId || left.generation - right.generation;
+    });
   return {
     rows: Object.freeze(envelopes.map((row) => structuredClone(row))),
     digest: dispatchPayloadDigest(envelopes as unknown as DispatchJSONValue),
@@ -196,26 +204,28 @@ function sourceRow(
   return row;
 }
 
-/**
- * Capture business logic. It deliberately knows only the journal and snapshot ports so the
- * retry/selection contract runs unchanged against the in-memory dummy and filesystem adapter.
- */
-export async function captureCurrentRecoverySeal(
+function sourcesEqual(
+  left: CurrentRecoverySourceCandidate,
+  right: CurrentRecoverySourceCandidate,
+): boolean {
+  return (
+    left.selectedSourceHandle.attestationId === right.selectedSourceHandle.attestationId &&
+    left.selectedSourceHandle.generation === right.selectedSourceHandle.generation &&
+    left.lineageMaximumGeneration === right.lineageMaximumGeneration &&
+    left.sourceAbortReason === right.sourceAbortReason &&
+    left.sourceTerminalDigest === right.sourceTerminalDigest &&
+    left.gitReceiptsDigest === right.gitReceiptsDigest
+  );
+}
+
+function sealForSource(
   coordinates: CurrentRecoveryCaptureCoordinates,
-  deps: CurrentRecoveryCaptureDeps,
-): Promise<CurrentRecoverySeal> {
-  let provisionalHookRan = false;
-  for (let attempt = 0; attempt < SNAPSHOT_RETRY_LIMIT; attempt += 1) {
-    const snapshot = lineageSnapshot(await deps.snapshot(), coordinates.binding);
-    assertNoActiveGeneration(snapshot);
-    const source = selectStrictMaximalRecoverySource(
-      coordinates.taskId,
-      coordinates.liveTip,
-      await sourceCandidates(snapshot, coordinates, deps),
-    );
-    const row = sourceRow(snapshot, source);
-    const capturedAt = deps.now();
-    const seed = createCurrentRecoverySeed({
+  row: AttestationEnvelope,
+  source: CurrentRecoverySourceCandidate,
+  capturedAt: string,
+): CurrentRecoverySeal {
+  return createCurrentRecoverySeal(
+    createCurrentRecoverySeed({
       selectedSourceHandle: source.selectedSourceHandle,
       lineageMaximumGeneration: source.lineageMaximumGeneration,
       sourceAbortReason: source.sourceAbortReason,
@@ -227,13 +237,41 @@ export async function captureCurrentRecoverySeal(
       taskDigest: coordinates.taskDigest,
       finalizedManifestDigest: coordinates.finalizedManifestDigest,
       inputRecipe: row.input,
-      overlays: [],
+      overlays: row.overlays,
       gitBinding: coordinates.binding,
       gitReceipts: source.gitReceipts,
       liveTip: coordinates.liveTip,
       capturedAt,
-    });
-    const seal = createCurrentRecoverySeal(seed);
+    }),
+  );
+}
+
+/**
+ * Capture business logic. It deliberately knows only the journal and snapshot ports so the
+ * retry/selection contract runs unchanged against the in-memory dummy and filesystem adapter.
+ */
+export async function captureCurrentRecoverySeal(
+  coordinates: CurrentRecoveryCaptureCoordinates,
+  deps: CurrentRecoveryCaptureDeps,
+): Promise<CurrentRecoverySeal> {
+  let provisionalHookRan = false;
+  let beforeCommitHookRan = false;
+  for (let attempt = 0; attempt < SNAPSHOT_RETRY_LIMIT; attempt += 1) {
+    const snapshot = lineageSnapshot(await deps.snapshot(), coordinates.binding);
+    assertNoActiveGeneration(snapshot);
+    const source = selectStrictMaximalRecoverySource(
+      coordinates.taskId,
+      coordinates.liveTip,
+      await sourceCandidates(snapshot, coordinates, deps),
+    );
+    const row = sourceRow(snapshot, source);
+    const existing = await deps.journal.read(coordinates.taskId);
+    if (existing?.state === "committed" && existing.snapshotDigest === snapshot.digest) {
+      const replay = sealForSource(coordinates, row, source, existing.seal.seed.capturedAt);
+      if (replay.sealDigest === existing.seal.sealDigest) return existing.seal;
+    }
+    const capturedAt = deps.now();
+    const seal = sealForSource(coordinates, row, source, capturedAt);
     const provisional = {
       kind: "cq-current-recovery-seal-journal" as const,
       version: 1 as const,
@@ -263,16 +301,27 @@ export async function captureCurrentRecoverySeal(
       coordinates.liveTip,
       await sourceCandidates(reread, coordinates, deps),
     );
-    if (
-      selectedAgain.selectedSourceHandle.attestationId !==
-        source.selectedSourceHandle.attestationId ||
-      selectedAgain.selectedSourceHandle.generation !== source.selectedSourceHandle.generation ||
-      selectedAgain.lineageMaximumGeneration !== source.lineageMaximumGeneration ||
-      selectedAgain.sourceTerminalDigest !== source.sourceTerminalDigest ||
-      selectedAgain.gitReceiptsDigest !== source.gitReceiptsDigest
-    ) {
-      continue;
+    if (!sourcesEqual(selectedAgain, source)) continue;
+    if (!beforeCommitHookRan && deps.beforeCommit !== undefined) {
+      beforeCommitHookRan = true;
+      await deps.beforeCommit();
     }
+    await deps.revalidateBinding();
+    if ((await deps.observeLiveTip()) !== coordinates.liveTip) {
+      throw new CurrentRecoverySealError(
+        "snapshot-changed",
+        "managed worktree tip changed during recovery capture",
+      );
+    }
+    const finalSnapshot = lineageSnapshot(await deps.snapshot(), coordinates.binding);
+    if (finalSnapshot.digest !== snapshot.digest) continue;
+    assertNoActiveGeneration(finalSnapshot);
+    const selectedFinal = selectStrictMaximalRecoverySource(
+      coordinates.taskId,
+      coordinates.liveTip,
+      await sourceCandidates(finalSnapshot, coordinates, deps),
+    );
+    if (!sourcesEqual(selectedFinal, source)) continue;
     await deps.journal.put({
       ...provisional,
       state: "committed",
@@ -391,45 +440,47 @@ export async function captureCurrentDispatchRecoverySeal(
         options.stateDir === undefined ? {} : { stateDir: options.stateDir },
       );
       const evidence = currentRecoveryTaskEvidence(options.ledgerStore, options.taskId);
-      return await captureCurrentRecoverySeal(
-        { taskId: options.taskId, binding, liveTip, ...evidence },
-        {
-          journal,
-          now: options.now ?? (() => new Date().toISOString()),
-          snapshot: async () =>
-            await options.backend.transact({ kind: "namespace" }, (store) =>
-              store.rows().map((row) => structuredClone(row)),
-            ),
-          resolveReceipts: async (row, tip) =>
-            await resolveInheritedGitChangeReceipts(
-              {
-                ...binding,
-                attestationId: row.attestationId,
-                generation: row.generation,
-                ...(row.gitEffectBinding?.inheritedGitReceipts === undefined
-                  ? {}
-                  : {
-                      inheritedGitReceipts: row.gitEffectBinding
-                        .inheritedGitReceipts as readonly GitChangeBrokerReceipt[],
-                    }),
-              },
-              tip,
-              options.stateDir === undefined ? {} : { stateDir: options.stateDir },
-            ),
-          revalidateBinding: async () =>
-            await assertManagedWorktreeDispatchBindingLive(
-              binding,
-              options.stateDir === undefined ? {} : { stateDir: options.stateDir },
-            ),
-          observeLiveTip: async () =>
-            await observeManagedWorktreeLiveTip(
-              binding,
-              options.stateDir === undefined ? {} : { stateDir: options.stateDir },
-            ),
-          ...(options.afterProvisional === undefined
-            ? {}
-            : { afterProvisional: options.afterProvisional }),
-        },
+      return await options.backend.transact(
+        { kind: "namespace" },
+        async (store) =>
+          await captureCurrentRecoverySeal(
+            { taskId: options.taskId, binding, liveTip, ...evidence },
+            {
+              journal,
+              now: options.now ?? (() => new Date().toISOString()),
+              snapshot: async () => store.rows().map((row) => structuredClone(row)),
+              resolveReceipts: async (row, tip) =>
+                await resolveInheritedGitChangeReceipts(
+                  {
+                    ...binding,
+                    attestationId: row.attestationId,
+                    generation: row.generation,
+                    ...(row.gitEffectBinding?.inheritedGitReceipts === undefined
+                      ? {}
+                      : {
+                          inheritedGitReceipts: row.gitEffectBinding
+                            .inheritedGitReceipts as readonly GitChangeBrokerReceipt[],
+                        }),
+                  },
+                  tip,
+                  options.stateDir === undefined ? {} : { stateDir: options.stateDir },
+                ),
+              revalidateBinding: async () =>
+                await assertManagedWorktreeDispatchBindingLive(
+                  binding,
+                  options.stateDir === undefined ? {} : { stateDir: options.stateDir },
+                ),
+              observeLiveTip: async () =>
+                await observeManagedWorktreeLiveTip(
+                  binding,
+                  options.stateDir === undefined ? {} : { stateDir: options.stateDir },
+                ),
+              ...(options.afterProvisional === undefined
+                ? {}
+                : { afterProvisional: options.afterProvisional }),
+              ...(options.beforeCommit === undefined ? {} : { beforeCommit: options.beforeCommit }),
+            },
+          ),
       );
     },
   );

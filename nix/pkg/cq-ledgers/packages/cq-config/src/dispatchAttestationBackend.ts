@@ -618,7 +618,10 @@ function journalHandle(row: AttestationRow): DispatchHandle {
  */
 export interface AttestationBackend {
   readonly namespace: AttestationNamespace;
-  transact<T>(scope: AttestationLoadScope, body: (store: AttestationStore) => T): Promise<T>;
+  transact<T>(
+    scope: AttestationLoadScope,
+    body: (store: AttestationStore) => T | Promise<T>,
+  ): Promise<T>;
   close(): Promise<void>;
 }
 
@@ -635,7 +638,7 @@ export interface AttestationBackendIO {
 }
 
 /**
- * Run one unit of work: load the scope, run the synchronous service body against
+ * Run one unit of work: load the scope, await the service body against
  * a {@link BufferedAttestationStore}, then apply what it journaled. The caller
  * (a concrete backend) holds the lock/transaction around this call, so the
  * loaded snapshot is still valid when the journal lands.
@@ -644,11 +647,11 @@ export async function runAttestationUnitOfWork<T>(
   namespace: AttestationNamespace,
   scope: AttestationLoadScope,
   io: AttestationBackendIO,
-  body: (store: AttestationStore) => T,
+  body: (store: AttestationStore) => T | Promise<T>,
 ): Promise<T> {
   const loaded = await io.load(scope);
   const store = new BufferedAttestationStore(namespace, loaded, scope);
-  const result = body(store);
+  const result = await body(store);
   const journal = store.journal;
   if (journal.length > 0) {
     await io.apply(journal);
@@ -1406,6 +1409,7 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       "promptProvenance",
       "prepareRequestDigest",
       "input",
+      "overlays",
       "deadlines",
       "expectedChild",
       "inputCapabilityHash",
@@ -1415,6 +1419,9 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       if (!Object.hasOwn(record, field)) {
         throw new AttestationStorageError(`stored attestation envelope has no "${field}"`);
       }
+    }
+    if (!Array.isArray(record["overlays"])) {
+      throw new AttestationStorageError(`stored attestation envelope has malformed "overlays"`);
     }
     for (const field of ["prepareRequestDigest", "inputCapabilityHash", "resultCapabilityHash"]) {
       if (typeof record[field] !== "string" || !STORED_SHA256_HEX.test(record[field])) {

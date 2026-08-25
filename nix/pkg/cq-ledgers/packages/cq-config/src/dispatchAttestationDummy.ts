@@ -374,7 +374,10 @@ export class InMemoryAttestationBackend implements AttestationBackend {
     this.store.replace(current, row);
   }
 
-  transact<T>(scope: AttestationLoadScope, body: (store: AttestationStore) => T): Promise<T> {
+  transact<T>(
+    scope: AttestationLoadScope,
+    body: (store: AttestationStore) => T | Promise<T>,
+  ): Promise<T> {
     return this.mutex.run(async () => {
       if (this.closed) {
         throw new AttestationTransportError("the in-memory attestation store is closed");

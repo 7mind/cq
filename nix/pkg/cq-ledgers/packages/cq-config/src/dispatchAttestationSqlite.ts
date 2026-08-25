@@ -180,8 +180,7 @@ export class SqliteAttestationConnectionRegistry {
 }
 
 /** Process-wide default registry used when a constructor omits `registry`. */
-export const defaultSqliteAttestationConnectionRegistry =
-  new SqliteAttestationConnectionRegistry();
+export const defaultSqliteAttestationConnectionRegistry = new SqliteAttestationConnectionRegistry();
 
 /** Canonical absolute key for interning a db path (realpath when the file exists). */
 export function resolveAttestationDbKey(dbPath: string): string {
@@ -263,7 +262,10 @@ export class SqliteAttestationBackend implements AttestationBackend {
     return JSON.stringify(rows);
   }
 
-  transact<T>(scope: AttestationLoadScope, body: (store: AttestationStore) => T): Promise<T> {
+  transact<T>(
+    scope: AttestationLoadScope,
+    body: (store: AttestationStore) => T | Promise<T>,
+  ): Promise<T> {
     return this.connection.mutex.run(async () => {
       if (this.closed) {
         throw new AttestationTransportError(`attestation store "${this.dbPath}" is closed`);

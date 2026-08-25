@@ -64,6 +64,7 @@ import {
   attestationNamespacesEqual,
   attestationRowDigest,
   collapseAttestationEnvelope,
+  createDispatchOverlayRegistry,
   claimParentGate,
   confirmDispatchCompletion,
   confirmDispatchCompletionOn,
@@ -891,6 +892,60 @@ describe("prepare validates role, input and timeout, then allocates", () => {
       expect(Object.hasOwn(rejection, "resultCapability")).toBe(false);
     }
     expect(h.store.rows()).toHaveLength(0);
+  });
+
+  test("prepare retains normalized overlay applications on the terminal source envelope", () => {
+    const h = harness();
+    const registry = createDispatchOverlayRegistry([
+      {
+        overlayId: "first",
+        inputSchema: {
+          type: "object",
+          properties: { note: { type: "string" } },
+          required: ["note"],
+          additionalProperties: false,
+        },
+        allowedRoles: ["implement-worker"],
+        allowedSurfaces: ["claude"],
+        render: () => "first",
+      },
+      {
+        overlayId: "second",
+        inputSchema: {
+          type: "object",
+          properties: { note: { type: "string" } },
+          required: ["note"],
+          additionalProperties: false,
+        },
+        allowedRoles: ["implement-worker"],
+        allowedSurfaces: ["claude"],
+        render: () => "second",
+      },
+    ]);
+    const applications = [
+      { overlayId: "second", data: { note: "two" } },
+      { overlayId: "first", data: { note: "one" } },
+    ];
+    const prepared = acceptedOf(
+      prepareDispatch(prepareRequest({ overlays: applications, registry }), h.prepareDeps),
+    );
+    (applications[0]!.data as { note: string }).note = "mutated-after-prepare";
+    abortDispatch(
+      {
+        namespace: NAMESPACE,
+        actor: "trusted-parent",
+        ...prepared.handle,
+        reason: "deadline-exceeded",
+      },
+      h.deps,
+    );
+
+    const row = h.store.read(prepared.handle);
+    if (row === undefined || isAttestationTombstone(row)) throw new Error("expected envelope");
+    expect(row.overlays).toEqual([
+      { overlayId: "first", data: { note: "one" } },
+      { overlayId: "second", data: { note: "two" } },
+    ]);
   });
 
   test("an invalid launch envelope is a typed pre-launch rejection, not a state", () => {
@@ -2714,9 +2769,7 @@ describe("consumed managed-worker continuation authority", () => {
     const losers = attempts.filter((attempt) => attempt.status === "rejected");
     expect(winners).toHaveLength(1);
     expect(losers).toHaveLength(1);
-    expect((losers[0] as PromiseRejectedResult).reason).toBeInstanceOf(
-      DispatchContinuationError,
-    );
+    expect((losers[0] as PromiseRejectedResult).reason).toBeInstanceOf(DispatchContinuationError);
     expect(backend.storedRows()).toHaveLength(2);
     expect(
       backend.storedRows().filter((row) => row.dispatchContinuationClaim !== undefined),

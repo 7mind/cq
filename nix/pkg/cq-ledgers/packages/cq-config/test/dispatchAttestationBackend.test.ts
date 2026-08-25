@@ -106,6 +106,7 @@ function envelope(overrides: Partial<AttestationEnvelope> = {}): AttestationEnve
     },
     prepareRequestDigest: "1".repeat(64),
     input: { taskId: "T977" },
+    overlays: [],
     deadlines: {
       responseStoreNow: "2026-07-27T09:09:30.000Z",
       childCancelAt: "2026-07-27T09:10:00.000Z",
@@ -598,9 +599,7 @@ describe("persisted row serialization", () => {
         ),
       ).toThrow(/malformed "gitEffectBinding"/);
     };
-    const mutateReceipt = (
-      mutate: (storedReceipt: Record<string, unknown>) => void,
-    ): void => {
+    const mutateReceipt = (mutate: (storedReceipt: Record<string, unknown>) => void): void => {
       expectMalformedBinding(worker, (stored) => {
         const storedBinding = stored["gitEffectBinding"] as Record<string, unknown>;
         const receipts = storedBinding["inheritedGitReceipts"] as Record<string, unknown>[];

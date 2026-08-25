@@ -1,4 +1,8 @@
-import { dispatchPayloadDigest, type AttestationEnvelope } from "@cq/config";
+import {
+  dispatchPayloadDigest,
+  type AttestationEnvelope,
+  type DispatchOverlayApplication,
+} from "@cq/config";
 import {
   createCurrentRecoverySeal,
   createCurrentRecoverySeed,
@@ -123,6 +127,7 @@ export function abortedEnvelope(input: {
   readonly generation: number;
   readonly reason?: AttestationEnvelope["abortReason"];
   readonly state?: AttestationEnvelope["state"];
+  readonly overlays?: readonly DispatchOverlayApplication[];
 }): AttestationEnvelope {
   const state = input.state ?? "aborted";
   return {
@@ -142,6 +147,7 @@ export function abortedEnvelope(input: {
     },
     prepareRequestDigest: "a".repeat(64),
     input: RECOVERY_INPUT,
+    overlays: input.overlays ?? [],
     deadlines: {
       responseStoreNow: RECOVERY_NOW,
       childCancelAt: RECOVERY_LATER,

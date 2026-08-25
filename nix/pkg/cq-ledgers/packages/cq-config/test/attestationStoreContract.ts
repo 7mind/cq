@@ -474,6 +474,19 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
   }
 
   suite(`AttestationStore contract — ${factory.name}`, () => {
+    // regression: T2815 — an async locked body must finish journaling before durable apply.
+    test("awaits an asynchronous namespace body before applying its journal", () =>
+      withCase(async ({ fixture, driver }) => {
+        await driver.prepare();
+        await fixture.backend.transact({ kind: "namespace" }, async (store) => {
+          const [row] = store.rows();
+          if (row === undefined) throw new Error("prepared row missing");
+          await Promise.resolve();
+          store.remove(row);
+        });
+        expect(await fixture.rows()).toHaveLength(0);
+      }));
+
     // -- the happy path, durably ------------------------------------------
     test("prepared -> result-stored -> consumed survives a restart at every step", () =>
       withCase(async ({ fixture, driver, clock }) => {
@@ -797,9 +810,7 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
         expect(JSON.stringify(first)).not.toContain(p.inputCapability.token);
 
         const afterMaterialize = new AttestationDriver(await fixture.restart(), clock);
-        await expect(afterMaterialize.fetchInput(p)).rejects.toThrow(
-          DispatchStateConflictError,
-        );
+        await expect(afterMaterialize.fetchInput(p)).rejects.toThrow(DispatchStateConflictError);
         const dump = await fixture.dump();
         expect(dump).not.toContain(p.inputCapability.token);
         expect(dump).toContain(inputCapabilityHash(p.inputCapability.token));

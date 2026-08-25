@@ -4,6 +4,7 @@ import {
   dispatchPayloadDigest,
   type AttestationNamespace,
   type DispatchJSONValue,
+  type DispatchOverlayApplication,
   type DispatchPromptProvenance,
 } from "@cq/config";
 import { z } from "zod";
@@ -352,9 +353,9 @@ export function selectStrictMaximalRecoverySource(
     const byGeneration =
       right.selectedSourceHandle.generation - left.selectedSourceHandle.generation;
     if (byGeneration !== 0) return byGeneration;
-    return left.selectedSourceHandle.attestationId.localeCompare(
-      right.selectedSourceHandle.attestationId,
-    );
+    const leftId = left.selectedSourceHandle.attestationId;
+    const rightId = right.selectedSourceHandle.attestationId;
+    return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
   })[0]!;
   if (selected.gitReceipts.at(-1)?.newHead !== liveTip) {
     throw new CurrentRecoverySealError(
@@ -625,7 +626,7 @@ export interface CurrentRecoverySeedInput {
   readonly taskDigest: string;
   readonly finalizedManifestDigest: string;
   readonly inputRecipe: DispatchJSONValue;
-  readonly overlays: readonly DispatchJSONValue[];
+  readonly overlays: readonly DispatchOverlayApplication[];
   readonly gitBinding: CurrentRecoverySeed["gitBinding"];
   readonly gitReceipts: readonly GitChangeBrokerReceipt[];
   readonly liveTip: string;

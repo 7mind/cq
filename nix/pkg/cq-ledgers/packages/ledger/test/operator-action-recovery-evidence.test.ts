@@ -1,11 +1,19 @@
 import { expect, test } from "bun:test";
+import { execFile } from "node:child_process";
+import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import {
   CurrentRecoveryStatusSchema,
   InMemoryLedgerStore,
   LINEAGE_CUTOVER_FENCE_ACTION_KEY,
   acknowledgeOperatorAction,
   materializeOperatorAction,
+  prepareManagedWorktree,
   recordOperatorActionEvidence,
+  releaseManagedWorktree,
+  type ManagedWorktreeInstallRunner,
 } from "../src/index.js";
 import { inMemoryPlanLifecycleFactory } from "./planLifecycleInMemoryAdapter.js";
 import {
@@ -16,6 +24,109 @@ import {
 } from "./recoverySealTestSupport.js";
 
 const COMMAND = `cq dispatch-recovery status --task-id ${RECOVERY_TASK}`;
+const exec = promisify(execFile);
+
+async function git(cwd: string, args: readonly string[]): Promise<string> {
+  const { stdout } = await exec("git", [...args], {
+    cwd,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_AUTHOR_NAME: "D360 fixture",
+      GIT_AUTHOR_EMAIL: "d360@example.invalid",
+      GIT_COMMITTER_NAME: "D360 fixture",
+      GIT_COMMITTER_EMAIL: "d360@example.invalid",
+    },
+  });
+  return stdout.trim();
+}
+
+async function seedManagedRepository(): Promise<{
+  readonly root: string;
+  readonly baseCommit: string;
+  readonly stateDir: string;
+  readonly cacheRoot: string;
+  readonly workspaceRoot: string;
+}> {
+  const root = await fs.mkdtemp(join(tmpdir(), "d360-managed-"));
+  await git(root, ["init", "-q"]);
+  await git(root, ["config", "commit.gpgsign", "false"]);
+  const workspaceRoot = join(root, "nix", "pkg", "cq-ledgers");
+  await fs.mkdir(workspaceRoot, { recursive: true });
+  await fs.writeFile(
+    join(workspaceRoot, "package.json"),
+    `${JSON.stringify({ name: "d360-workspace", private: true, workspaces: [] })}\n`,
+  );
+  await fs.writeFile(join(workspaceRoot, "bun.lock"), "{}\n");
+  await fs.writeFile(
+    join(root, ".gitignore"),
+    "node_modules/\n.test-cache/\n.test-managed-state/\n",
+  );
+  await fs.writeFile(join(root, "README.md"), "D360 managed completion fixture\n");
+  await git(root, ["add", "."]);
+  await git(root, ["commit", "-q", "-m", "seed D360 fixture"]);
+  return {
+    root,
+    baseCommit: await git(root, ["rev-parse", "HEAD"]),
+    stateDir: join(root, ".test-managed-state"),
+    cacheRoot: join(root, ".test-cache"),
+    workspaceRoot,
+  };
+}
+
+async function completeAuthenticatedManagedTask(
+  store: InMemoryLedgerStore,
+  taskId: string,
+  repository: Awaited<ReturnType<typeof seedManagedRepository>>,
+  provenance: { readonly author: string; readonly session: string },
+): Promise<string> {
+  const install: ManagedWorktreeInstallRunner = async (plan) => {
+    await fs.mkdir(join(plan.cwd, "node_modules"), { recursive: true });
+    await fs.writeFile(join(plan.cwd, "node_modules", ".d360"), "installed\n");
+    return { code: 0, stdout: "install-ok\n", stderr: "" };
+  };
+  const deps = {
+    stateDir: repository.stateDir,
+    cacheRoot: repository.cacheRoot,
+    bunWorkspaceRoot: repository.workspaceRoot,
+    install,
+  };
+  const prepared = await prepareManagedWorktree(
+    {
+      repositoryRoot: repository.root,
+      taskId,
+      baseCommit: repository.baseCommit,
+    },
+    deps,
+  );
+  if (prepared.status !== "prepared") {
+    throw new Error(`D360 managed prepare failed: ${prepared.reason}`);
+  }
+  await fs.writeFile(
+    join(prepared.evidence.absolutePath, "capture-current.txt"),
+    "captured current recovery authority\n",
+  );
+  await git(prepared.evidence.absolutePath, ["add", "capture-current.txt"]);
+  await git(prepared.evidence.absolutePath, ["commit", "-q", "-m", "capture current authority"]);
+  const resultCommit = await git(prepared.evidence.absolutePath, ["rev-parse", "HEAD"]);
+  if ((await git(prepared.evidence.absolutePath, ["cat-file", "-t", resultCommit])) !== "commit") {
+    throw new Error("D360 resultCommit is not a commit object");
+  }
+  const released = await releaseManagedWorktree(
+    { handle: prepared.handle, terminalDisposition: "done", resultCommit },
+    deps,
+  );
+  if (released.status !== "released") {
+    throw new Error(`D360 managed release failed: ${released.reason}`);
+  }
+  await store.updateItem("tasks", taskId, {
+    status: "done",
+    fields: { resultCommit },
+    ...provenance,
+  });
+  return resultCommit;
+}
 
 function statusOutput(state: "provisional" | "committed"): string {
   const journal = state === "committed" ? committedJournal() : provisionalJournal();
@@ -103,6 +214,7 @@ test("lineage-cutover-fence verifies only semantic committed recovery status", a
 
 test("D360 corrected finalized manifest keeps capture-current executable and preserves its defect ref", async () => {
   const fixture = await inMemoryPlanLifecycleFactory.build();
+  const repository = await seedManagedRepository();
   const store = (fixture as unknown as { readonly store: InMemoryLedgerStore }).store;
   const provenance = { author: "d360-fixture", session: "d360-fixture" } as const;
   try {
@@ -172,20 +284,22 @@ test("D360 corrected finalized manifest keeps capture-current executable and pre
     expect((await fixture.observe("G360")).tasks.find(({ id }) => id === task.id)?.status).toBe(
       "wip",
     );
-    await store.updateItem("tasks", task.id, {
-      status: "done",
-      fields: { resultCommit: "a".repeat(40) },
-      ...provenance,
-    });
+    const resultCommit = await completeAuthenticatedManagedTask(
+      store,
+      task.id,
+      repository,
+      provenance,
+    );
     const completed = store.fetchItem("tasks", task.id);
     expect(completed).toMatchObject({
       status: "done",
       fields: {
-        resultCommit: "a".repeat(40),
+        resultCommit,
         ledgerRefs: ["goals:G360", "defects:D360"],
       },
     });
   } finally {
     await fixture.dispose();
+    await fs.rm(repository.root, { recursive: true, force: true });
   }
 });

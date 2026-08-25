@@ -1119,6 +1119,8 @@ export interface AttestationEnvelope {
   readonly prepareRequestDigest: string;
   /** Prepare-bound typed input, materialized to the child exactly once. */
   readonly input: DispatchJSONValue;
+  /** Validated overlay applications in canonical registry order; capabilities are never present. */
+  readonly overlays: readonly DispatchOverlayApplication[];
   readonly deadlines: DispatchDeadlines;
   readonly expectedChild: NativeChildIdentity;
   /** HASH of the one-shot input capability. The token itself is never stored. */
@@ -1220,6 +1222,7 @@ export const TOMBSTONE_FORBIDDEN_FIELDS = [
   "gitConflictCapabilityHash",
   "gitEffectBinding",
   "input",
+  "overlays",
   "inputCapabilityHash",
   "inputMaterializedAt",
   "nativeCompletion",
@@ -2045,6 +2048,24 @@ export function prepareDispatch(
   const expectedChild = assertChildIdentity(request.expectedChild, "expectedChild");
   const gitEffectBinding = assertGitEffectBinding(request.gitEffectBinding, validation.roleId);
   const inputDigest = dispatchPayloadDigest(preparedInput);
+  const requestedOverlays = new Map(
+    (request.overlays ?? []).map((application) => [application.overlayId, application]),
+  );
+  const overlays = Object.freeze(
+    validation.appliedOverlayIds.map((overlayId) => {
+      const application = requestedOverlays.get(overlayId);
+      if (application === undefined) {
+        throw new AttestationContractError(
+          "overlays",
+          `validated overlay "${overlayId}" has no source application`,
+        );
+      }
+      return Object.freeze({
+        overlayId,
+        data: structuredClone(application.data),
+      });
+    }),
+  );
 
   // --- allocation phase -------------------------------------------------
   const { at, atMs } = prepareInstant ?? readNow(deps);
@@ -2120,6 +2141,7 @@ export function prepareDispatch(
     promptProvenance,
     prepareRequestDigest,
     input: preparedInput,
+    overlays,
     deadlines,
     expectedChild,
     inputCapabilityHash: inputCapabilityHash(inputCapability.token),
@@ -2684,6 +2706,7 @@ function writeAbort(
     promptProvenance: row.promptProvenance,
     prepareRequestDigest: row.prepareRequestDigest,
     input: row.input,
+    overlays: row.overlays,
     deadlines: row.deadlines,
     expectedChild: row.expectedChild,
     inputCapabilityHash: row.inputCapabilityHash,

@@ -104,7 +104,7 @@ describe("protected current dispatch-recovery capture", () => {
 
     expect(seal.seed.selectedSourceHandle.generation).toBe(10);
     expect(seal.seed.lineageMaximumGeneration).toBe(10);
-    expect(snapshots).toBe(4);
+    expect(snapshots).toBe(5);
   });
 
   test("a generation allocated after the final reread forces a fresh capture", async () => {
@@ -113,26 +113,23 @@ describe("protected current dispatch-recovery capture", () => {
     let snapshots = 0;
     let afterRereadRan = false;
 
-    const seal = await captureCurrentRecoverySeal(
-      coordinates,
-      {
-        journal,
-        snapshot: async () => {
-          snapshots += 1;
-          return rows;
-        },
-        resolveReceipts: async () => RECOVERY_RECEIPTS,
-        revalidateBinding: async () => {},
-        observeLiveTip: async () => RECOVERY_TIP,
-        now: () => RECOVERY_NOW,
-        beforeCommit: async () => {
-          if (!afterRereadRan) {
-            afterRereadRan = true;
-            rows.push(abortedEnvelope({ generation: 10 }));
-          }
-        },
-      } as never,
-    );
+    const seal = await captureCurrentRecoverySeal(coordinates, {
+      journal,
+      snapshot: async () => {
+        snapshots += 1;
+        return rows;
+      },
+      resolveReceipts: async () => RECOVERY_RECEIPTS,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => RECOVERY_NOW,
+      beforeCommit: async () => {
+        if (!afterRereadRan) {
+          afterRereadRan = true;
+          rows.push(abortedEnvelope({ generation: 10 }));
+        }
+      },
+    });
 
     expect(seal.seed.selectedSourceHandle.generation).toBe(10);
     expect(seal.seed.lineageMaximumGeneration).toBe(10);
@@ -144,7 +141,7 @@ describe("protected current dispatch-recovery capture", () => {
     const overlays = [
       { overlayId: "fixture-focus", data: { note: "preserve recovery provenance" } },
     ] as const;
-    const row = { ...abortedEnvelope({ generation: 2 }), overlays };
+    const row = abortedEnvelope({ generation: 2, overlays });
 
     const seal = await captureCurrentRecoverySeal(coordinates, {
       journal,
@@ -155,7 +152,7 @@ describe("protected current dispatch-recovery capture", () => {
       now: () => RECOVERY_NOW,
     });
 
-    expect(seal.seed.overlays).toEqual(overlays);
+    expect(seal.seed.overlays).toEqual(overlays.map((overlay) => ({ ...overlay })));
   });
 
   test("unchanged lineage replays committed authority without provisional demotion", async () => {

@@ -190,7 +190,10 @@ export class PostgresAttestationBackend implements AttestationBackend {
     return JSON.stringify(rows);
   }
 
-  transact<T>(scope: AttestationLoadScope, body: (store: AttestationStore) => T): Promise<T> {
+  transact<T>(
+    scope: AttestationLoadScope,
+    body: (store: AttestationStore) => T | Promise<T>,
+  ): Promise<T> {
     return this.mutex.run(async () => {
       if (this.closed) {
         throw new AttestationTransportError(
