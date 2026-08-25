@@ -72,8 +72,18 @@ async function productionDeps(): Promise<DispatchRecoveryCommandDeps> {
         await resolved.store.dispose();
       }
     },
-    status: async ({ cwd, taskId }) =>
-      await recovery.readCurrentDispatchRecoveryStatus({ repositoryRoot: cwd, taskId }),
+    status: async ({ cwd, taskId }) => {
+      const resolved = await createLedgerStore(cwd);
+      try {
+        return await recovery.readCurrentDispatchRecoveryStatusForProject({
+          construction: "direct",
+          resolved,
+          taskId,
+        });
+      } finally {
+        await resolved.store.dispose();
+      }
+    },
   };
 }
 

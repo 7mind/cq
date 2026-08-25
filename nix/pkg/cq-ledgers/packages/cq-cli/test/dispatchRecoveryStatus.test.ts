@@ -43,9 +43,9 @@ describe("cq dispatch-recovery status", () => {
       lineageMaximumGeneration: journal.seal.seed.lineageMaximumGeneration,
       snapshotDigest: journal.snapshotDigest,
       liveTip: journal.seal.seed.liveTip,
-      updatedAt: journal.committedAt,
       sealReference: journal.seal.sealReference,
       sealDigest: journal.seal.sealDigest,
+      seal: journal.seal,
     });
 
     expect(

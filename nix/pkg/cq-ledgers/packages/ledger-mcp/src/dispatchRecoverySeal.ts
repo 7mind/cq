@@ -24,7 +24,7 @@ import {
   createCurrentRecoverySeed,
   currentRecoveryJournalRoot,
   currentRecoveryReceiptClosureDigest,
-  currentRecoveryStatus,
+  currentRecoveryStatusFromJournal,
   listManagedLiveWorktrees,
   nodeManagedWorktreeGitRunner,
   observeManagedWorktreeLiveTip,
@@ -222,12 +222,14 @@ function sealForSource(
   coordinates: CurrentRecoveryCaptureCoordinates,
   row: AttestationEnvelope,
   source: CurrentRecoverySourceCandidate,
+  snapshotDigest: string,
   capturedAt: string,
 ): CurrentRecoverySeal {
   return createCurrentRecoverySeal(
     createCurrentRecoverySeed({
       selectedSourceHandle: source.selectedSourceHandle,
       lineageMaximumGeneration: source.lineageMaximumGeneration,
+      snapshotDigest,
       sourceAbortReason: source.sourceAbortReason,
       sourceTerminalDigest: source.sourceTerminalDigest,
       namespace: row.namespace,
@@ -267,11 +269,17 @@ export async function captureCurrentRecoverySeal(
     const row = sourceRow(snapshot, source);
     const existing = await deps.journal.read(coordinates.taskId);
     if (existing?.state === "committed" && existing.snapshotDigest === snapshot.digest) {
-      const replay = sealForSource(coordinates, row, source, existing.seal.seed.capturedAt);
+      const replay = sealForSource(
+        coordinates,
+        row,
+        source,
+        snapshot.digest,
+        existing.seal.seed.capturedAt,
+      );
       if (replay.sealDigest === existing.seal.sealDigest) return existing.seal;
     }
     const capturedAt = deps.now();
-    const seal = sealForSource(coordinates, row, source, capturedAt);
+    const seal = sealForSource(coordinates, row, source, snapshot.digest, capturedAt);
     const provisional = {
       kind: "cq-current-recovery-seal-journal" as const,
       version: 1 as const,
@@ -487,16 +495,40 @@ export async function captureCurrentDispatchRecoverySeal(
 }
 
 export async function readCurrentDispatchRecoveryStatus(options: {
+  readonly backend: AttestationBackend;
   readonly repositoryRoot: string;
   readonly taskId: string;
   readonly stateDir?: string;
   readonly journal?: CurrentRecoverySealJournalStore;
 }): Promise<CurrentRecoveryStatus> {
   const repository = await repositoryRoot(options.repositoryRoot);
+  const binding = await resolveManagedBinding(repository, options.taskId, options.stateDir);
   const journal =
     options.journal ??
     new FsCurrentRecoverySealJournalStore(currentRecoveryJournalRoot(repository, options.stateDir));
-  return await currentRecoveryStatus(journal, options.taskId);
+  return await withManagedWorktreeEffectLock(
+    binding,
+    options.stateDir === undefined ? {} : { stateDir: options.stateDir },
+    async () => {
+      await assertManagedWorktreeDispatchBindingLive(
+        binding,
+        options.stateDir === undefined ? {} : { stateDir: options.stateDir },
+      );
+      const liveTip = await observeManagedWorktreeLiveTip(
+        binding,
+        options.stateDir === undefined ? {} : { stateDir: options.stateDir },
+      );
+      return await options.backend.transact({ kind: "namespace" }, async (store) =>
+        await readCurrentDispatchRecoveryStatusForLineage({
+          journal,
+          taskId: options.taskId,
+          binding,
+          liveTip,
+          rows: store.rows(),
+        }),
+      );
+    },
+  );
 }
 
 export async function readCurrentDispatchRecoveryStatusForLineage(options: {
@@ -506,7 +538,41 @@ export async function readCurrentDispatchRecoveryStatusForLineage(options: {
   readonly liveTip: string;
   readonly rows: readonly AttestationRow[];
 }): Promise<CurrentRecoveryStatus> {
-  return await currentRecoveryStatus(options.journal, options.taskId);
+  const journal = await options.journal.read(options.taskId);
+  if (journal?.state === "committed") {
+    const seed = journal.seal.seed;
+    const binding = options.binding;
+    if (
+      seed.taskId !== options.taskId ||
+      seed.managedFingerprint !== binding.handleFingerprint ||
+      seed.gitBinding.taskId !== binding.taskId ||
+      resolve(seed.gitBinding.repositoryRoot) !== binding.repositoryRoot ||
+      seed.gitBinding.repositoryId !== binding.repositoryId ||
+      resolve(seed.gitBinding.commonDir) !== binding.commonDir ||
+      resolve(seed.gitBinding.worktreePath) !== binding.worktreePath ||
+      seed.gitBinding.branch !== binding.branch ||
+      seed.gitBinding.ref !== binding.ref ||
+      seed.gitBinding.baseCommit !== binding.baseCommit ||
+      seed.liveTip !== options.liveTip
+    ) {
+      throw new CurrentRecoverySealError(
+        "snapshot-changed",
+        "committed recovery authority no longer matches the live managed binding",
+      );
+    }
+    const snapshot = lineageSnapshot(options.rows, binding);
+    assertNoActiveGeneration(snapshot);
+    if (
+      snapshot.digest !== journal.snapshotDigest ||
+      seed.snapshotDigest !== journal.snapshotDigest
+    ) {
+      throw new CurrentRecoverySealError(
+        "snapshot-changed",
+        "committed recovery authority no longer matches the dispatch lineage",
+      );
+    }
+  }
+  return currentRecoveryStatusFromJournal(journal, options.taskId);
 }
 
 export interface SingleProjectRecoverySealOptions {
@@ -557,6 +623,54 @@ export async function captureCurrentDispatchRecoveryForProject(
     return await captureCurrentDispatchRecoverySeal({
       backend,
       ledgerStore: options.resolved.store,
+      repositoryRoot: options.resolved.configRoot,
+      taskId: options.taskId,
+      ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
+    });
+  } finally {
+    await backend.close();
+  }
+}
+
+/** Open the production namespace and verify committed authority against its current lineage. */
+export async function readCurrentDispatchRecoveryStatusForProject(
+  options: SingleProjectRecoverySealOptions,
+): Promise<CurrentRecoveryStatus> {
+  const backendKind = assertAttestationConstructionSupported(
+    options.construction,
+    options.resolved.backend,
+  );
+  const projectId = loadConfig(options.resolved.configRoot)?.ledger?.projectId ?? null;
+  const namespace = await resolveSingleProjectAttestationNamespace({
+    construction: options.construction,
+    backend: backendKind,
+    repoRoot: options.resolved.configRoot,
+    projectId,
+  });
+  const backend = await (async () => {
+    switch (backendKind) {
+      case "xdg":
+        return await createAttestationStoreForConstruction({
+          backend: backendKind,
+          namespace,
+          ...(options.environment === undefined ? {} : { env: options.environment }),
+        });
+      case "fs":
+        return await createAttestationStoreForConstruction({
+          backend: backendKind,
+          namespace,
+          ledgerRoot: options.resolved.configRoot,
+        });
+      default:
+        throw new CurrentRecoverySealError(
+          "invalid",
+          `single-project recovery status does not support ${String(backendKind)}`,
+        );
+    }
+  })();
+  try {
+    return await readCurrentDispatchRecoveryStatus({
+      backend,
       repositoryRoot: options.resolved.configRoot,
       taskId: options.taskId,
       ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),

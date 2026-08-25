@@ -1224,20 +1224,23 @@ export function rehydrateAttestationRow(
       `stored attestation body is not JSON: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  const row = assertStoredRowShape(parsed);
-  if (!attestationNamespacesEqual(namespace, row.namespace)) {
+  const storedRow = assertStoredRowShape(parsed);
+  if (!attestationNamespacesEqual(namespace, storedRow.namespace)) {
     throw new AttestationNamespaceError(
-      `stored attestation "${row.attestationId}" belongs to namespace ` +
-        `${formatAttestationNamespace(row.namespace)}, not ${formatAttestationNamespace(namespace)}`,
+      `stored attestation "${storedRow.attestationId}" belongs to namespace ` +
+        `${formatAttestationNamespace(storedRow.namespace)}, not ${formatAttestationNamespace(namespace)}`,
     );
   }
-  const digest = attestationRowDigest(row);
+  const digest = attestationRowDigest(storedRow);
   if (digest !== rowDigest) {
     throw new AttestationStorageError(
-      `stored attestation "${row.attestationId}" digests to ${digest}, not the recorded ${String(rowDigest)}`,
+      `stored attestation "${storedRow.attestationId}" digests to ${digest}, not the recorded ${String(rowDigest)}`,
     );
   }
-  return row;
+  if (isAttestationTombstone(storedRow) || Object.hasOwn(storedRow, "overlays")) {
+    return storedRow;
+  }
+  return Object.freeze({ ...storedRow, overlays: Object.freeze([]) });
 }
 
 const STORED_ROW_KINDS: ReadonlySet<string> = new Set(["envelope", "tombstone"]);
@@ -1443,7 +1446,6 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
       "promptProvenance",
       "prepareRequestDigest",
       "input",
-      "overlays",
       "deadlines",
       "expectedChild",
       "inputCapabilityHash",
@@ -1454,7 +1456,9 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
         throw new AttestationStorageError(`stored attestation envelope has no "${field}"`);
       }
     }
-    assertStoredOverlayApplications(record["overlays"]);
+    if (Object.hasOwn(record, "overlays")) {
+      assertStoredOverlayApplications(record["overlays"]);
+    }
     for (const field of ["prepareRequestDigest", "inputCapabilityHash", "resultCapabilityHash"]) {
       if (typeof record[field] !== "string" || !STORED_SHA256_HEX.test(record[field])) {
         throw new AttestationStorageError(`stored attestation envelope has malformed "${field}"`);

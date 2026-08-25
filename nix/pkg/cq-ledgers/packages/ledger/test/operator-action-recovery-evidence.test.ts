@@ -1,18 +1,39 @@
 import { expect, test } from "bun:test";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
+  DISPATCH_OVERLAY_REGISTRY,
+  InMemoryAttestationBackend,
+  InMemoryAttestationStore,
+  authorizeDispatchGitEffectOn,
+  confirmDispatchCompletionOn,
+  fetchDispatchInputOn,
+  fetchDispatchResultOn,
+  prepareDispatchOn,
+  sequentialDispatchRandomBytes,
+  storeDispatchResultOn,
+  type AttestationNamespace,
+  type DispatchJSONValue,
+} from "@cq/config";
+import {
   CurrentRecoveryStatusSchema,
   InMemoryLedgerStore,
   LINEAGE_CUTOVER_FENCE_ACTION_KEY,
   acknowledgeOperatorAction,
+  commitManagedWorktreeChanges,
   materializeOperatorAction,
+  observeManagedWorktreeLiveTip,
   prepareManagedWorktree,
   recordOperatorActionEvidence,
   releaseManagedWorktree,
+  resolveInheritedGitChangeReceipts,
+  resolveManagedWorktreeDispatchBinding,
+  validateGitChangeBrokerResultEvidence,
+  withManagedWorktreeEffectLock,
   type ManagedWorktreeInstallRunner,
 } from "../src/index.js";
 import { inMemoryPlanLifecycleFactory } from "./planLifecycleInMemoryAdapter.js";
@@ -25,6 +46,11 @@ import {
 
 const COMMAND = `cq dispatch-recovery status --task-id ${RECOVERY_TASK}`;
 const exec = promisify(execFile);
+const D360_DISPATCH_NOW = "2026-08-25T02:00:00.000Z";
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
 
 async function git(cwd: string, args: readonly string[]): Promise<string> {
   const { stdout } = await exec("git", [...args], {
@@ -80,7 +106,10 @@ async function completeAuthenticatedManagedTask(
   taskId: string,
   repository: Awaited<ReturnType<typeof seedManagedRepository>>,
   provenance: { readonly author: string; readonly session: string },
-): Promise<string> {
+): Promise<{
+  readonly resultCommit: string;
+  readonly lifecycle: readonly string[];
+}> {
   const install: ManagedWorktreeInstallRunner = async (plan) => {
     await fs.mkdir(join(plan.cwd, "node_modules"), { recursive: true });
     await fs.writeFile(join(plan.cwd, "node_modules", ".d360"), "installed\n");
@@ -103,29 +132,216 @@ async function completeAuthenticatedManagedTask(
   if (prepared.status !== "prepared") {
     throw new Error(`D360 managed prepare failed: ${prepared.reason}`);
   }
-  await fs.writeFile(
-    join(prepared.evidence.absolutePath, "capture-current.txt"),
-    "captured current recovery authority\n",
+  const binding = await resolveManagedWorktreeDispatchBinding(
+    {
+      repositoryRoot: repository.root,
+      taskId,
+      worktreePath: prepared.evidence.absolutePath,
+      branch: prepared.evidence.branch,
+    },
+    { stateDir: repository.stateDir },
   );
-  await git(prepared.evidence.absolutePath, ["add", "capture-current.txt"]);
-  await git(prepared.evidence.absolutePath, ["commit", "-q", "-m", "capture current authority"]);
-  const resultCommit = await git(prepared.evidence.absolutePath, ["rev-parse", "HEAD"]);
-  if ((await git(prepared.evidence.absolutePath, ["cat-file", "-t", resultCommit])) !== "commit") {
-    throw new Error("D360 resultCommit is not a commit object");
+  if (binding === null) throw new Error("D360 managed dispatch binding did not resolve");
+  const namespace: AttestationNamespace = { backend: "xdg", projectKey: "d360-integration" };
+  const backend = new InMemoryAttestationBackend(new InMemoryAttestationStore(namespace));
+  const now = () => D360_DISPATCH_NOW;
+  const lifecycle: string[] = [];
+  try {
+    const outcome = await prepareDispatchOn(
+      backend,
+      {
+        namespace,
+        roleId: "implement-worker",
+        surface: "claude",
+        input: {
+          taskId,
+          headline: "Capture current recovery authority",
+          description: "complete D360 through the authenticated dispatch lifecycle",
+          acceptance: "the fetched consumed result carries the broker-authenticated commit",
+          worktreePath: prepared.evidence.absolutePath,
+          branch: prepared.evidence.branch,
+          baseCommit: repository.baseCommit,
+          round: 0,
+          startingCommit: repository.baseCommit,
+        },
+        idempotencyKey: `${taskId}-d360-authenticated`,
+        timeoutMs: 600_000,
+        registry: DISPATCH_OVERLAY_REGISTRY,
+        promptDigest: "8".repeat(64),
+        catalogHash: "9".repeat(64),
+        expectedChild: { childId: "d360-child", runId: "d360-run" },
+        gitEffectBinding: binding,
+      },
+      { now, randomBytes: sequentialDispatchRandomBytes(0) },
+    );
+    if (!outcome.accepted) throw new Error("D360 authenticated dispatch was not prepared");
+    lifecycle.push("prepared");
+    const dispatch = outcome.prepared;
+    const gitChangeCapability = dispatch.gitChangeCapability;
+    if (gitChangeCapability === undefined) {
+      throw new Error("D360 authenticated dispatch lacks Git authority");
+    }
+    const handle = { attestationId: dispatch.attestationId, generation: dispatch.generation };
+    await fetchDispatchInputOn(
+      backend,
+      { namespace, ...handle, inputCapability: dispatch.inputCapability },
+      { now },
+    );
+    lifecycle.push("input-materialized");
+
+    const content = "captured current recovery authority\n";
+    const path = "capture-current.txt";
+    await fs.writeFile(join(prepared.evidence.absolutePath, path), content);
+    const authorization = await authorizeDispatchGitEffectOn(
+      backend,
+      { namespace, ...handle, gitChangeCapability },
+      { now },
+    );
+    const receipt = await commitManagedWorktreeChanges(
+      {
+        authorization,
+        operationId: "d360-capture-current",
+        expectedHead: repository.baseCommit,
+        message: "capture current recovery authority",
+        changes: [
+          {
+            kind: "add",
+            path,
+            newState: { mode: "100644", digest: sha256(content) },
+          },
+        ],
+      },
+      {
+        stateDir: repository.stateDir,
+        now: () => new Date(D360_DISPATCH_NOW),
+        authorize: async (candidate) => {
+          const current = await authorizeDispatchGitEffectOn(
+            backend,
+            { namespace, ...handle, gitChangeCapability },
+            { now },
+          );
+          if (
+            current.attestationId !== candidate.attestationId ||
+            current.generation !== candidate.generation ||
+            current.handleFingerprint !== candidate.handleFingerprint
+          ) {
+            throw new Error("D360 Git authorization changed during broker commit");
+          }
+        },
+      },
+    );
+    lifecycle.push("broker-committed");
+    const workerOutput = {
+      taskId,
+      status: "pass",
+      resultCommit: receipt.newHead,
+      branch: prepared.evidence.branch,
+      actualWorktreePath: prepared.evidence.absolutePath,
+      filesTouched: [path],
+      gitReceipts: [receipt],
+      checkSummary: "REAL_CHECK_EXIT=0; D360 integration fixture",
+      gateDurationMs: 100,
+      baseVerification: {
+        status: "verified",
+        relation: "descendant",
+        baseCommit: repository.baseCommit,
+        headCommit: receipt.newHead,
+      },
+      summary: "completed D360 through the authenticated dispatch and Git broker path",
+      mutationTable: [
+        {
+          mutation: "substitute the reported result commit",
+          observed: "broker evidence validation rejects a result not ending at the live tip",
+          restored: "the fetched result uses the broker receipt newHead",
+        },
+      ],
+    } as const;
+    await validateGitChangeBrokerResultEvidence(authorization, workerOutput, {
+      stateDir: repository.stateDir,
+      diffBaseCommit: repository.baseCommit,
+    });
+    const stored = await storeDispatchResultOn(
+      backend,
+      {
+        resultCapability: dispatch.resultCapability,
+        output: workerOutput as unknown as DispatchJSONValue,
+      },
+      { now },
+    );
+    if (stored.state !== "result-stored") {
+      throw new Error(`D360 result storage returned ${stored.state}`);
+    }
+    lifecycle.push("result-stored");
+
+    const liveTip = await observeManagedWorktreeLiveTip(binding, {
+      stateDir: repository.stateDir,
+    });
+    const gitReceipts = await resolveInheritedGitChangeReceipts(
+      { ...binding, ...handle },
+      liveTip,
+      { stateDir: repository.stateDir },
+    );
+    const confirmed = await withManagedWorktreeEffectLock(
+      binding,
+      { stateDir: repository.stateDir },
+      async () =>
+        await confirmDispatchCompletionOn(
+          backend,
+          {
+            namespace,
+            ...handle,
+            nativeCompletion: {
+              kind: "native-completion",
+              actor: "trusted-parent",
+              childId: "d360-child",
+              runId: "d360-run",
+              completedAt: D360_DISPATCH_NOW,
+            },
+            expectedProvenance: {
+              roleId: dispatch.promptProvenance.roleId,
+              version: dispatch.promptProvenance.version,
+              promptDigest: dispatch.promptProvenance.promptDigest,
+              inputDigest: dispatch.promptProvenance.inputDigest,
+            },
+            continuationContext: { liveTip, gitReceipts },
+          },
+          { now },
+        ),
+    );
+    if (confirmed.state !== "consumed") {
+      throw new Error(`D360 native completion returned ${confirmed.state}`);
+    }
+    lifecycle.push("consumed");
+    const fetched = await fetchDispatchResultOn(
+      backend,
+      { namespace, ...handle, actor: "trusted-parent" },
+      { now },
+    );
+    if (fetched.state !== "consumed") {
+      throw new Error(`D360 result fetch returned ${fetched.state}`);
+    }
+    const fetchedOutput = fetched.output as Record<string, unknown>;
+    if (fetchedOutput["resultCommit"] !== receipt.newHead) {
+      throw new Error("D360 fetched resultCommit does not match its broker receipt");
+    }
+    lifecycle.push("result-fetched");
+    const released = await releaseManagedWorktree(
+      { handle: prepared.handle, terminalDisposition: "done", resultCommit: receipt.newHead },
+      deps,
+    );
+    if (released.status !== "released") {
+      throw new Error(`D360 managed release failed: ${released.reason}`);
+    }
+    await store.updateItem("tasks", taskId, {
+      status: "done",
+      fields: { resultCommit: receipt.newHead },
+      ...provenance,
+    });
+    lifecycle.push("task-completed");
+    return { resultCommit: receipt.newHead, lifecycle };
+  } finally {
+    await backend.close();
   }
-  const released = await releaseManagedWorktree(
-    { handle: prepared.handle, terminalDisposition: "done", resultCommit },
-    deps,
-  );
-  if (released.status !== "released") {
-    throw new Error(`D360 managed release failed: ${released.reason}`);
-  }
-  await store.updateItem("tasks", taskId, {
-    status: "done",
-    fields: { resultCommit },
-    ...provenance,
-  });
-  return resultCommit;
 }
 
 function statusOutput(state: "provisional" | "committed"): string {
@@ -138,7 +354,6 @@ function statusOutput(state: "provisional" | "committed"): string {
     lineageMaximumGeneration: journal.seal.seed.lineageMaximumGeneration,
     snapshotDigest: journal.snapshotDigest,
     liveTip: journal.seal.seed.liveTip,
-    updatedAt: state === "committed" ? committedJournal().committedAt : journal.writtenAt,
   };
   return JSON.stringify(
     CurrentRecoveryStatusSchema.parse(
@@ -148,8 +363,9 @@ function statusOutput(state: "provisional" | "committed"): string {
             state,
             sealReference: journal.seal.sealReference,
             sealDigest: journal.seal.sealDigest,
+            seal: journal.seal,
           }
-        : { ...common, state },
+        : { ...common, state, updatedAt: journal.writtenAt },
     ),
   );
 }
@@ -289,17 +505,26 @@ test("D360 corrected finalized manifest keeps capture-current executable and pre
     expect((await fixture.observe("G360")).tasks.find(({ id }) => id === task.id)?.status).toBe(
       "wip",
     );
-    const resultCommit = await completeAuthenticatedManagedTask(
+    const completion = await completeAuthenticatedManagedTask(
       store,
       task.id,
       repository,
       provenance,
     );
+    expect(completion.lifecycle).toEqual([
+      "prepared",
+      "input-materialized",
+      "broker-committed",
+      "result-stored",
+      "consumed",
+      "result-fetched",
+      "task-completed",
+    ]);
     const completed = store.fetchItem("tasks", task.id);
     expect(completed).toMatchObject({
       status: "done",
       fields: {
-        resultCommit,
+        resultCommit: completion.resultCommit,
         ledgerRefs: ["goals:G360", "defects:D360"],
       },
     });

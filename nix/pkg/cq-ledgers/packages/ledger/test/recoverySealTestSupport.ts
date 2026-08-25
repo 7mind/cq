@@ -81,6 +81,7 @@ export function recoverySeal() {
     createCurrentRecoverySeed({
       selectedSourceHandle: { attestationId: RECOVERY_ATTESTATION, generation: 17 },
       lineageMaximumGeneration: 19,
+      snapshotDigest: "d".repeat(64),
       sourceAbortReason: "deadline-exceeded",
       sourceTerminalDigest: "7".repeat(64),
       namespace: { backend: "xdg", projectKey: "project" },

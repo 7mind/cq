@@ -78,8 +78,6 @@ const promptProvenanceSchema = z
 const gitBindingSchema = z
   .object({
     taskId: z.string().regex(TASK_ID),
-    handleToken: z.string().min(1),
-    handleFingerprint: z.string().regex(SHA256),
     repositoryRoot: z.string().min(1),
     repositoryId: z.string().regex(SHA256),
     commonDir: z.string().min(1),
@@ -114,6 +112,7 @@ const recoverySeedSchema = z
     version: z.literal(1),
     selectedSourceHandle: dispatchHandleSchema,
     lineageMaximumGeneration: z.number().int().positive(),
+    snapshotDigest: z.string().regex(SHA256),
     sourceAbortReason: z.enum(CURRENT_RECOVERY_SOURCE_ABORT_REASONS),
     sourceTerminalDigest: z.string().regex(SHA256),
     namespace: namespaceSchema,
@@ -191,12 +190,19 @@ const provisionalStatusSchema = z
   })
   .strict();
 
-const committedStatusSchema = provisionalStatusSchema
-  .omit({ state: true })
-  .extend({
+const committedStatusSchema = z
+  .object({
+    kind: z.literal("cq-current-recovery-status"),
+    version: z.literal(1),
+    taskId: z.string().regex(TASK_ID),
     state: z.literal("committed"),
+    selectedSourceHandle: dispatchHandleSchema,
+    lineageMaximumGeneration: z.number().int().positive(),
+    snapshotDigest: z.string().regex(SHA256),
+    liveTip: z.string().regex(FULL_COMMIT),
     sealReference: z.string().regex(CURRENT_RECOVERY_SEAL_REFERENCE_PATTERN),
     sealDigest: z.string().regex(SHA256),
+    seal: CurrentRecoverySealSchema,
   })
   .strict();
 
@@ -378,7 +384,6 @@ function validateSealSemantics(seal: CurrentRecoverySeal): CurrentRecoverySeal {
   if (
     seed.selectedSourceHandle.generation > seed.lineageMaximumGeneration ||
     seed.taskId !== seed.gitBinding.taskId ||
-    seed.managedFingerprint !== seed.gitBinding.handleFingerprint ||
     seed.liveTip !== seed.gitReceipts.at(-1)?.newHead ||
     seed.promptProvenance.inputDigest !== payloadDigest(seed.inputRecipe) ||
     seed.gitReceiptsDigest !== currentRecoveryReceiptClosureDigest(seed.gitReceipts)
@@ -540,11 +545,10 @@ export async function readCommittedCurrentRecoverySeal(
   return journal?.state === "committed" ? journal.seal : null;
 }
 
-export async function currentRecoveryStatus(
-  store: CurrentRecoverySealJournalStore,
+export function currentRecoveryStatusFromJournal(
+  journal: CurrentRecoverySealJournal | null,
   taskId: string,
-): Promise<CurrentRecoveryStatus> {
-  const journal = await store.read(taskId);
+): CurrentRecoveryStatus {
   if (journal === null) {
     return parseCurrentRecoveryStatus({
       kind: "cq-current-recovery-status",
@@ -552,6 +556,9 @@ export async function currentRecoveryStatus(
       taskId,
       state: "absent",
     });
+  }
+  if (journal.taskId !== taskId) {
+    throw new CurrentRecoverySealError("invalid", "recovery status task binding is invalid");
   }
   const common = {
     kind: "cq-current-recovery-status" as const,
@@ -561,7 +568,6 @@ export async function currentRecoveryStatus(
     lineageMaximumGeneration: journal.seal.seed.lineageMaximumGeneration,
     snapshotDigest: journal.snapshotDigest,
     liveTip: journal.seal.seed.liveTip,
-    updatedAt: journal.state === "committed" ? journal.committedAt : journal.writtenAt,
   };
   return parseCurrentRecoveryStatus(
     journal.state === "committed"
@@ -570,21 +576,42 @@ export async function currentRecoveryStatus(
           state: "committed",
           sealReference: journal.seal.sealReference,
           sealDigest: journal.seal.sealDigest,
+          seal: journal.seal,
         }
-      : { ...common, state: "provisional" },
+      : { ...common, state: "provisional", updatedAt: journal.writtenAt },
   );
+}
+
+export async function currentRecoveryStatus(
+  store: CurrentRecoverySealJournalStore,
+  taskId: string,
+): Promise<CurrentRecoveryStatus> {
+  return currentRecoveryStatusFromJournal(await store.read(taskId), taskId);
 }
 
 export function parseCurrentRecoveryStatus(value: unknown): CurrentRecoveryStatus {
   try {
     const status = CurrentRecoveryStatusSchema.parse(value);
+    if (status.state === "committed") {
+      parseCurrentRecoverySeal(status.seal);
+    }
     if (
       status.state === "committed" &&
-      status.sealReference !== `${CURRENT_RECOVERY_SEAL_REFERENCE_PREFIX}${status.sealDigest}`
+      (status.sealReference !== `${CURRENT_RECOVERY_SEAL_REFERENCE_PREFIX}${status.sealDigest}` ||
+        status.sealReference !== status.seal.sealReference ||
+        status.sealDigest !== status.seal.sealDigest ||
+        status.taskId !== status.seal.seed.taskId ||
+        status.selectedSourceHandle.attestationId !==
+          status.seal.seed.selectedSourceHandle.attestationId ||
+        status.selectedSourceHandle.generation !==
+          status.seal.seed.selectedSourceHandle.generation ||
+        status.lineageMaximumGeneration !== status.seal.seed.lineageMaximumGeneration ||
+        status.snapshotDigest !== status.seal.seed.snapshotDigest ||
+        status.liveTip !== status.seal.seed.liveTip)
     ) {
       throw new CurrentRecoverySealError(
         "invalid",
-        "recovery status seal reference does not authenticate its digest",
+        "recovery status fields are not authenticated by its seal",
       );
     }
     return status;
@@ -624,6 +651,7 @@ export function parseCommittedCurrentRecoveryStatusOutput(
 export interface CurrentRecoverySeedInput {
   readonly selectedSourceHandle: CurrentRecoverySeed["selectedSourceHandle"];
   readonly lineageMaximumGeneration: number;
+  readonly snapshotDigest: string;
   readonly sourceAbortReason: CurrentRecoverySourceAbortReason;
   readonly sourceTerminalDigest: string;
   readonly namespace: AttestationNamespace;
@@ -634,18 +662,31 @@ export interface CurrentRecoverySeedInput {
   readonly finalizedManifestDigest: string;
   readonly inputRecipe: DispatchJSONValue;
   readonly overlays: readonly DispatchOverlayApplication[];
-  readonly gitBinding: CurrentRecoverySeed["gitBinding"];
+  readonly gitBinding: CurrentRecoverySeed["gitBinding"] & {
+    readonly handleFingerprint: string;
+  };
   readonly gitReceipts: readonly GitChangeBrokerReceipt[];
   readonly liveTip: string;
   readonly capturedAt: string;
 }
 
 export function createCurrentRecoverySeed(input: CurrentRecoverySeedInput): CurrentRecoverySeed {
+  const { gitBinding, ...seedInput } = input;
   return recoverySeedSchema.parse({
     kind: "cq-current-recovery-seed",
     version: 1,
-    ...input,
+    ...seedInput,
+    gitBinding: {
+      taskId: gitBinding.taskId,
+      repositoryRoot: gitBinding.repositoryRoot,
+      repositoryId: gitBinding.repositoryId,
+      commonDir: gitBinding.commonDir,
+      worktreePath: gitBinding.worktreePath,
+      branch: gitBinding.branch,
+      ref: gitBinding.ref,
+      baseCommit: gitBinding.baseCommit,
+    },
     gitReceiptsDigest: currentRecoveryReceiptClosureDigest(input.gitReceipts),
-    managedFingerprint: input.gitBinding.handleFingerprint,
+    managedFingerprint: gitBinding.handleFingerprint,
   });
 }

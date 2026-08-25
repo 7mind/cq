@@ -170,6 +170,7 @@ describe("protected current dispatch-recovery capture", () => {
     const legacy = JSON.parse(body) as AttestationRow;
     const digest = attestationRowDigest(legacy);
     const row = rehydrateAttestationRow(legacy.namespace, body, digest);
+    if (row.kind !== "envelope") throw new Error("legacy recovery fixture is not an envelope");
     expect(row.overlays).toEqual([]);
     expect(() => rehydrateAttestationRow(legacy.namespace, body, "0".repeat(64))).toThrow(
       "digests to",

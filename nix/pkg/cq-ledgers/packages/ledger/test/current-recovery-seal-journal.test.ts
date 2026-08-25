@@ -78,9 +78,9 @@ for (const factory of factories) {
         lineageMaximumGeneration: 19,
         snapshotDigest: committed.snapshotDigest,
         liveTip: committed.seal.seed.liveTip,
-        updatedAt: committed.committedAt,
         sealReference: committed.seal.sealReference,
         sealDigest: committed.seal.sealDigest,
+        seal: committed.seal,
       });
     });
 
@@ -115,7 +115,10 @@ test("every role, input, Git and generation coordinate is authenticated by the s
       seal.seed.gitBinding.branch = "implement/T9999";
     },
     (seal) => {
-      seal.seed.gitBinding.handleFingerprint = "0".repeat(64);
+      seal.seed.managedFingerprint = "0".repeat(64);
+    },
+    (seal) => {
+      seal.seed.snapshotDigest = "0".repeat(64);
     },
     (seal) => {
       seal.seed.liveTip = "0".repeat(40);
@@ -142,6 +145,11 @@ test("seal and status schemas are closed and capture no dispatch capability", ()
   expect(encoded).not.toContain("cq_input_");
   expect(encoded).not.toContain("cq_result_");
   expect(encoded).not.toContain("cq_git_");
+  const injected = structuredClone(recoverySeal()) as unknown as {
+    seed: { gitBinding: Record<string, unknown> };
+  };
+  injected.seed.gitBinding["handleToken"] = RECOVERY_BINDING.handleToken;
+  expect(() => parseCurrentRecoverySeal(injected)).toThrow();
   expect(() =>
     CurrentRecoveryStatusSchema.parse({
       kind: "cq-current-recovery-status",
@@ -167,7 +175,16 @@ test("the recovery seed accepts only strict normalized overlay applications", ()
     [{ overlayId: "Fixture", data: {} }],
     [{ overlayId: "fixture-focus", data: {}, capability: "cq_git_forbidden" }],
   ]) {
-    expect(() => createCurrentRecoverySeed({ ...input, overlays } as never)).toThrow();
+    expect(() =>
+      createCurrentRecoverySeed({
+        ...input,
+        gitBinding: {
+          ...input.gitBinding,
+          handleFingerprint: RECOVERY_BINDING.handleFingerprint,
+        },
+        overlays,
+      } as never),
+    ).toThrow();
   }
 });
 
@@ -183,9 +200,9 @@ test("committed status reference authenticates its declared seal digest", () => 
       lineageMaximumGeneration: journal.seal.seed.lineageMaximumGeneration,
       snapshotDigest: journal.snapshotDigest,
       liveTip: journal.seal.seed.liveTip,
-      updatedAt: journal.committedAt,
       sealReference: journal.seal.sealReference,
       sealDigest: "0".repeat(64),
+      seal: journal.seal,
     }),
-  ).toThrow("authenticate its digest");
+  ).toThrow("not authenticated by its seal");
 });

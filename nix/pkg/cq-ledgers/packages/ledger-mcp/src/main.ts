@@ -118,6 +118,7 @@ export {
   captureCurrentRecoverySeal,
   currentRecoveryTaskEvidence,
   readCurrentDispatchRecoveryStatus,
+  readCurrentDispatchRecoveryStatusForProject,
 } from "./dispatchRecoverySeal.js";
 export type {
   CaptureCurrentDispatchRecoveryOptions,
