@@ -112,6 +112,19 @@ export type {
   PostgresHubDispatchRuntimeOptions,
   SingleProjectDispatchRuntimeOptions,
 } from "./dispatchCapability.js";
+export {
+  captureCurrentDispatchRecoveryForProject,
+  captureCurrentDispatchRecoverySeal,
+  captureCurrentRecoverySeal,
+  currentRecoveryTaskEvidence,
+  readCurrentDispatchRecoveryStatus,
+} from "./dispatchRecoverySeal.js";
+export type {
+  CaptureCurrentDispatchRecoveryOptions,
+  CurrentRecoveryCaptureCoordinates,
+  CurrentRecoveryCaptureDeps,
+  SingleProjectRecoverySealOptions,
+} from "./dispatchRecoverySeal.js";
 import {
   createLegacySourcePromptCatalogCapability,
   createPromptCatalogCapability,

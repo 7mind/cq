@@ -6,6 +6,10 @@ import {
 } from "../constants.js";
 import type { Item, Ledger } from "../types.js";
 import { ItemNotFoundError, LedgerError, SchemaValidationError } from "../types.js";
+import {
+  LINEAGE_CUTOVER_FENCE_ACTION_KEY,
+  parseCommittedCurrentRecoveryStatusOutput,
+} from "../currentRecoverySeal.js";
 
 export interface OperatorActionLifecycleProvenance {
   readonly author: string;
@@ -199,7 +203,16 @@ function recordEvidence(
   const identityMatches =
     mutation.evidence.outputIdentity === stringField(action, "expectedOutputIdentity") &&
     mutation.evidence.outputIdentity === stringField(action, "acknowledgedOutputIdentity");
-  if (mutation.evidence.exitCode !== 0 || !identityMatches) {
+  let semanticEvidenceMatches = true;
+  if (stringField(action, "actionKey") === LINEAGE_CUTOVER_FENCE_ACTION_KEY) {
+    try {
+      const status = parseCommittedCurrentRecoveryStatusOutput(mutation.evidence.stdout);
+      semanticEvidenceMatches = status.sealReference === mutation.evidence.outputIdentity;
+    } catch {
+      semanticEvidenceMatches = false;
+    }
+  }
+  if (mutation.evidence.exitCode !== 0 || !identityMatches || !semanticEvidenceMatches) {
     action.status = "pending";
     action.fields["evidence"] = [...prior, encoded];
     action.fields["lastFailure"] = encoded;

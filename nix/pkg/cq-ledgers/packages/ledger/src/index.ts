@@ -8,6 +8,7 @@ export * from "./recordUpstreamIssues.js";
 export * from "./usageStats.js";
 export * from "./planLifecycle.js";
 export * from "./operatorActions.js";
+export * from "./currentRecoverySeal.js";
 export type {
   TaskAdoptionEligibilityFence,
   TaskAdoptionEligibilityResult,

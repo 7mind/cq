@@ -68,6 +68,7 @@ import {
   WORKSET_EFFECT_PROVIDER_CONTROL_MODE,
 } from "./worksetEffectProviderControl.js";
 import { parseLogPutArgs, runLogPut, EXIT_USAGE as LOG_PUT_EXIT_USAGE } from "./logPut.js";
+import { runDispatchRecoveryCommand } from "./dispatchRecovery.js";
 
 import { withRemoteAdminClient } from "./remoteClient.js";
 
@@ -79,7 +80,7 @@ export { type ConfirmIo, type ConfirmOutcome, defaultConfirmIo, confirmDestructi
 export const EXIT_USAGE = 2;
 
 /** The subcommands the dispatcher routes to. */
-export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "counts", "config", "stats", "log", "backup", "restore", "migrate", "gate"] as const;
+export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "counts", "config", "stats", "log", "backup", "restore", "migrate", "gate", "dispatch-recovery"] as const;
 export type Subcommand = (typeof SUBCOMMANDS)[number];
 
 function isSubcommand(s: string): s is Subcommand {
@@ -262,6 +263,10 @@ export const USAGE = [
   "                                                  when redispatching the worker onto the",
   "                                                  rebased managed tree; the server, never",
   "                                                  the caller, materializes the lineage.",
+  "  dispatch-recovery <seal|status> --task-id <Tn> [--cwd <repository>]",
+  "                                                  seal the maximal terminal worker receipt",
+  "                                                  closure, or report its protected journal",
+  "                                                  state. Only committed status grants authority.",
   "",
   "ledger root: --cwd > $LEDGER_ROOT > current working directory",
 ].join("\n");
@@ -1216,6 +1221,10 @@ const HANDLERS: Record<Subcommand, (args: SubcommandArgs, io: DispatchIo) => Pro
     io.err("cq gate: internal error — gate handler called without sub-argv");
     return { exitCode: EXIT_USAGE };
   },
+  "dispatch-recovery": async (_args, io) => {
+    io.err("cq dispatch-recovery: internal error — handler called without sub-argv");
+    return { exitCode: EXIT_USAGE };
+  },
 };
 
 /**
@@ -1247,6 +1256,10 @@ export async function dispatch(
   }
   if (first === "gate") {
     const outcome = await runGateRun(argv.slice(1), io);
+    return { ...outcome, longRunning: false };
+  }
+  if (first === "dispatch-recovery") {
+    const outcome = await runDispatchRecoveryCommand(argv.slice(1), io);
     return { ...outcome, longRunning: false };
   }
   const args = parseSubcommandArgs(argv.slice(1));
