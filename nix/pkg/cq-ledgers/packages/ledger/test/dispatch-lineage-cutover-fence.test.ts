@@ -34,7 +34,7 @@ async function sealedJournal(store: InMemoryCurrentRecoverySealJournalStore) {
     },
     installedAt: RECOVERY_LATER,
   });
-  await store.put({
+  const journal = {
     kind: "cq-current-recovery-seal-journal",
     version: 1,
     state: "committed",
@@ -44,8 +44,9 @@ async function sealedJournal(store: InMemoryCurrentRecoverySealJournalStore) {
     writtenAt: RECOVERY_NOW,
     committedAt: RECOVERY_LATER,
     fence,
-  });
-  return { journal: await store.read(RECOVERY_TASK) };
+  } as const;
+  await store.put(journal);
+  return { journal, fence };
 }
 
 describe("dispatch lineage cutover fence", () => {
@@ -114,10 +115,34 @@ describe("dispatch lineage cutover fence", () => {
     ).toBe(false);
   });
 
+  test("rejects a valid fence that does not authenticate the committed seed", async () => {
+    const { journal, fence } = await sealedJournal(new InMemoryCurrentRecoverySealJournalStore());
+    const mismatchedFence = createDispatchLineageCutoverFence({
+      namespace: fence.namespace,
+      taskId: fence.taskId,
+      managedFingerprint: fence.managedFingerprint,
+      sourceAttestationId: fence.sourceAttestationId,
+      selectedSourceGeneration: fence.selectedSourceGeneration + 1,
+      lineageMaximumGeneration: fence.lineageMaximumGeneration,
+      recoverySeedRef: fence.recoverySeedRef,
+      fenceCapability: {
+        scope: "dispatch-lineage-fence",
+        token: RECOVERY_BINDING.handleToken,
+      },
+      installedAt: fence.installedAt,
+    });
+    const store = new InMemoryCurrentRecoverySealJournalStore();
+    await expect(store.put({ ...journal, fence: mismatchedFence })).rejects.toThrow(
+      "does not match its authenticated seed",
+    );
+  });
+
   test("persists after source deletion and is removed only by the store's release operation", async () => {
     const memory = new InMemoryCurrentRecoverySealJournalStore();
     const { journal } = await sealedJournal(memory);
-    expect(dispatchLineageFenceFromRecoveryJournal(await memory.read(RECOVERY_TASK))).not.toBeNull();
+    expect(
+      dispatchLineageFenceFromRecoveryJournal(await memory.read(RECOVERY_TASK)),
+    ).not.toBeNull();
 
     const root = await fs.mkdtemp(join(tmpdir(), "t2816-fence-"));
     try {

@@ -1072,7 +1072,7 @@ describe("releaseManagedWorktree", () => {
     );
   });
 
-  it("eligible clean terminal release is idempotent", async () => {
+  it("eligible clean terminal release is idempotent and removes recovery authority [Effectual-GoodCommunication]", async () => {
     const repo = await seedRepository();
     const install = recordingInstall();
     const deps = {
@@ -1088,6 +1088,9 @@ describe("releaseManagedWorktree", () => {
     expect(prepared.status).toBe("prepared");
     if (prepared.status !== "prepared") return;
     const head = prepared.evidence.headCommit;
+    const recoveryJournalPath = path.join(repo.stateDir, "current-recovery-seals", "T1500.json");
+    await fs.mkdir(path.dirname(recoveryJournalPath), { recursive: true });
+    await fs.writeFile(recoveryJournalPath, "sealed recovery authority\n");
 
     const first = await releaseManagedWorktree(
       {
@@ -1100,6 +1103,9 @@ describe("releaseManagedWorktree", () => {
     expect(first.status).toBe("released");
     if (first.status === "released") expect(first.idempotent).toBe(false);
     await expect(fs.stat(prepared.evidence.absolutePath)).rejects.toBeDefined();
+    await expect(fs.stat(recoveryJournalPath)).rejects.toBeDefined();
+
+    await fs.writeFile(recoveryJournalPath, "stale recovery authority\n");
 
     const second = await releaseManagedWorktree(
       {
@@ -1111,6 +1117,7 @@ describe("releaseManagedWorktree", () => {
     );
     expect(second.status).toBe("released");
     if (second.status === "released") expect(second.idempotent).toBe(true);
+    await expect(fs.stat(recoveryJournalPath)).rejects.toBeDefined();
   });
 
   it("fault injection before irreversible remove leaves recoverable work intact", async () => {
