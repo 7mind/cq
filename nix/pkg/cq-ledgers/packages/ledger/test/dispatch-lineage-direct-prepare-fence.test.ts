@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +18,7 @@ import {
 } from "@cq/config";
 import {
   assertAttestationConstructionSupported,
+  createAttestationStoreForConstruction,
   createDispatchLineageCutoverFence,
   dispatchLineageFenceAuthorizes,
   journalRecoveryRequiredForFence,
@@ -179,31 +181,38 @@ describe("direct prepare lineage fence", () => {
     }
   });
 
-  for (const adapter of ["in-memory", "filesystem", "sqlite"] as const) {
+  for (const adapter of ["in-memory", "filesystem", "git-object", "sqlite"] as const) {
     test(`${adapter} adapter obeys the same locked fence-before-transaction contract [Behavioral-Active Blackbox-GoodCommunication]`, async () => {
       const root = await fs.mkdtemp(join(tmpdir(), `t2816-${adapter}-`));
       const adapterNamespace: AttestationNamespace = {
-        backend: adapter === "filesystem" ? "fs" : "xdg",
+        backend:
+          adapter === "filesystem" ? "fs" : adapter === "git-object" ? "git-object" : "xdg",
         projectKey: `t2816-${adapter}`,
       };
       let backend: AttestationBackend;
-      let rows: () => readonly unknown[];
       if (adapter === "in-memory") {
         const store = new InMemoryAttestationStore(adapterNamespace);
         backend = new InMemoryAttestationBackend(store);
-        rows = () => store.snapshot();
       } else if (adapter === "filesystem") {
-        const store = new FsAttestationBackend({ namespace: adapterNamespace, root });
-        backend = store;
-        rows = () => store.storedRows();
+        backend = new FsAttestationBackend({ namespace: adapterNamespace, root });
+      } else if (adapter === "git-object") {
+        execFileSync("git", ["init", "--quiet"], { cwd: root });
+        expect(assertAttestationConstructionSupported("direct", "git-object")).toBe(
+          "git-object",
+        );
+        backend = await createAttestationStoreForConstruction({
+          backend: "git-object",
+          namespace: adapterNamespace,
+          repoRoot: root,
+        } as never);
       } else {
-        const store = new SqliteAttestationBackend({
+        backend = new SqliteAttestationBackend({
           namespace: adapterNamespace,
           dbPath: join(root, "attestations.db"),
         });
-        backend = store;
-        rows = () => store.storedRows();
       }
+      const rows = () =>
+        backend.transact({ kind: "namespace" }, (store) => Promise.resolve(store.rows()));
       const order: string[] = [];
       try {
         const prepared = await prepareDispatchOn(
@@ -228,7 +237,7 @@ describe("direct prepare lineage fence", () => {
           },
         );
         expect(prepared.accepted).toBe(true);
-        expect(rows()).toHaveLength(1);
+        expect(await rows()).toHaveLength(1);
         expect(order).toEqual(["lock-enter", "guard", "lock-exit"]);
 
         const refused = await prepareDispatchOn(
@@ -243,7 +252,7 @@ describe("direct prepare lineage fence", () => {
           },
         );
         expect(refused).toEqual(journalRecoveryRequiredForFence(fence));
-        expect(rows()).toHaveLength(1);
+        expect(await rows()).toHaveLength(1);
       } finally {
         await backend.close();
         await fs.rm(root, { recursive: true, force: true });
@@ -251,9 +260,4 @@ describe("direct prepare lineage fence", () => {
     });
   }
 
-  test("Git-object has no attestation adapter, so this is an explicit matrix incompatibility rather than fence coverage [Behavioral-Active Blackbox-Atomic]", () => {
-    expect(() => assertAttestationConstructionSupported("direct", "git-object")).toThrow(
-      "no row-level compare-and-set",
-    );
-  });
 });
