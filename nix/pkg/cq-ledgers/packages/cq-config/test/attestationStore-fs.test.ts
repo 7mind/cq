@@ -8,14 +8,26 @@
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ATTESTATION_LOCKS_DIR,
   AttestationStorageError,
   AttestationTransportError,
+  FakeDispatchClock,
   FsAttestationBackend,
+  IDEMPOTENCY_HORIZON_MS,
+  TERMINAL_ENVELOPE_RETENTION_MS,
+  attestationRowDigest,
   fsAttestationNamespaceDir,
   fsAttestationRowFileContent,
   fsAttestationRowPath,
@@ -23,6 +35,8 @@ import {
   type AttestationRow,
 } from "@cq/config";
 import {
+  AttestationDriver,
+  handleOf,
   runAttestationStoreContract,
   type AttestationContractFixture,
 } from "./attestationStoreContract.js";
@@ -125,6 +139,51 @@ runAttestationStoreContract({
 // ---------------------------------------------------------------------------
 
 describe("filesystem attestation backend specifics", () => {
+  // regression: T2815 round 3 — legacy normalization must not change the CAS revision.
+  test("a sweep can replace and remove actual persisted legacy bytes without false lost updates", async () => {
+    const root = freshRoot();
+    const namespace: AttestationNamespace = {
+      backend: NAMESPACE_BACKEND,
+      projectKey: "legacy-overlay-sweep",
+    };
+    const backend = new FsAttestationBackend({ namespace, root });
+    const clock = new FakeDispatchClock("2026-07-28T09:00:00.000Z");
+    const driver = new AttestationDriver(backend, clock);
+    try {
+      const removeAtHorizon = await driver.prepare({ idempotencyKey: "legacy-remove" });
+      await driver.abort(removeAtHorizon);
+      clock.advance(IDEMPOTENCY_HORIZON_MS - TERMINAL_ENVELOPE_RETENTION_MS);
+      const collapseAtRetention = await driver.prepare({ idempotencyKey: "legacy-collapse" });
+      await driver.abort(collapseAtRetention);
+
+      for (const prepared of [removeAtHorizon, collapseAtRetention]) {
+        const path = fsAttestationRowPath(root, namespace, prepared);
+        const persisted = JSON.parse(readFileSync(path, "utf8")) as {
+          readonly body: string;
+        };
+        const legacy = JSON.parse(persisted.body) as Record<string, unknown>;
+        delete legacy["overlays"];
+        const legacyBody = JSON.stringify(legacy);
+        const legacyDigest = attestationRowDigest(legacy as unknown as AttestationRow);
+        writeFileSync(path, `${JSON.stringify({ rowDigest: legacyDigest, body: legacyBody })}\n`);
+      }
+
+      clock.advance(TERMINAL_ENVELOPE_RETENTION_MS);
+      const report = await driver.sweep();
+      expect(report.envelopesCollapsed).toEqual([handleOf(collapseAtRetention)]);
+      expect(report.tombstonesRemoved).toEqual([handleOf(removeAtHorizon)]);
+      expect(backend.storedRows()).toEqual([
+        expect.objectContaining({
+          kind: "tombstone",
+          attestationId: collapseAtRetention.attestationId,
+          generation: collapseAtRetention.generation,
+        }),
+      ]);
+    } finally {
+      await backend.close();
+    }
+  });
+
   test("only the fs backend may be served, and the excluded ones fail at construction", () => {
     const root = freshRoot();
     for (const backend of ["xdg", "postgres"] as const) {
