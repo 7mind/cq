@@ -1,5 +1,6 @@
 import { SQL } from "bun";
 import { afterEach, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -121,6 +122,40 @@ describe("production dispatch runtime construction", () => {
     expect(runtime.kind).toBe("available");
     if (runtime.kind === "unavailable") throw new Error(runtime.reason);
     const handle = { attestationId: `att_${"a".repeat(32)}`, generation: 1 };
+    expect(await runtime.capability.fetch(handle)).toMatchObject({
+      state: "attestation-not-found",
+      ...handle,
+    });
+    await runtime.close();
+    await expect(runtime.capability.fetch(handle)).rejects.toThrow(/closed/i);
+    await store.dispose();
+  });
+
+  test("constructs and closes the durable Git-object attestation backend", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "ledger-mcp-dispatch-git-runtime-"));
+    roots.push(root);
+    execFileSync("git", ["init", "--quiet"], { cwd: root });
+    await writeFile(
+      path.join(root, "cq.toml"),
+      '[ledger]\nbackend = "git-object"\nprojectId = "git-runtime-close-test"\n',
+      "utf8",
+    );
+    const store = await inMemoryStore();
+    const resolved: ResolvedLedgerStore = {
+      store,
+      configRoot: root,
+      backend: "git-object",
+      branch: "cq-ledger",
+      projectKey: "git-runtime-close-test",
+    };
+    const runtime = await createSingleProjectDispatchRuntime({
+      construction: "direct",
+      resolved,
+      promptArtifactStore: workerArtifactStore("codex"),
+    });
+    expect(runtime.kind).toBe("available");
+    if (runtime.kind === "unavailable") throw new Error(runtime.reason);
+    const handle = { attestationId: `att_${"c".repeat(32)}`, generation: 1 };
     expect(await runtime.capability.fetch(handle)).toMatchObject({
       state: "attestation-not-found",
       ...handle,

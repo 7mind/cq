@@ -96,6 +96,56 @@ runAttestationStoreContract({
 });
 
 describe("Git-object attestation transaction", () => {
+  test("a peer transaction waits for the real namespace lock before entering its body", async () => {
+    const repoRoot = freshRepo();
+    const projectKey = "namespace-lock";
+    const first = open(repoRoot, projectKey);
+    let releaseFirst = (): void => undefined;
+    let firstEntered = (): void => undefined;
+    const firstPermit = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      firstEntered = resolve;
+    });
+    let reportContention = (): void => undefined;
+    const contended = new Promise<"contended">((resolve) => {
+      reportContention = () => resolve("contended");
+    });
+    let reportSecondBody = (): void => undefined;
+    const secondBody = new Promise<"entered">((resolve) => {
+      reportSecondBody = () => resolve("entered");
+    });
+    const second = open(repoRoot, projectKey, {
+      lockfile: {
+        sleep: async () => {
+          reportContention();
+          releaseFirst();
+          await Promise.resolve();
+        },
+      },
+    });
+
+    const firstTransaction = first.transact({ kind: "namespace" }, async (store) => {
+      firstEntered();
+      await firstPermit;
+      return store.rows();
+    });
+    await entered;
+    const secondTransaction = second.transact({ kind: "namespace" }, (store) => {
+      reportSecondBody();
+      return store.rows();
+    });
+    try {
+      expect(await Promise.race([contended, secondBody])).toBe("contended");
+    } finally {
+      releaseFirst();
+      await Promise.allSettled([firstTransaction, secondTransaction]);
+      await first.close();
+      await second.close();
+    }
+  });
+
   test("a non-cooperating ref writer wins the CAS and the attestation write fails closed", async () => {
     const repoRoot = freshRepo();
     const backend = open(repoRoot, "cas-race");
