@@ -284,7 +284,7 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     "`{ endpoints: [{ name, callCount, bytesIn, bytesOut }], totals: { callCount, bytesIn, bytesOut } }`",
   ),
   prepare_dispatch: purposeBuiltSmall(
-    "`{ accepted, prepared, handle, executedStepOrder }` or a typed pre-launch rejection.",
+    "`{accepted,prepared,handle,executedStepOrder}` or pre-launch rejection.",
   ),
   fetch_dispatch_input: requestedFullContent(
     "The prepare-bound typed input on its first capability-authorized retrieval.",
@@ -322,10 +322,8 @@ export const LEDGER_RESPONSE_CONTRACTS = {
       "`{ ok: false, conflict }`; never carries `ownerFenceToken`.",
   ),
   worktree_manage: purposeBuiltSmall(
-    "Prepare: `{ status: \"prepared\"|\"resume-required\"|\"refused\", … }`. " +
-      "Observe conflict: `{ status: \"conflict-observed\", conflictState }`. " +
-      "Release: `{ status: \"released\"|\"refused\", … }`. Typed acknowledgements only; " +
-      "never exposes filesystem mutation primitives individually.",
+    "`prepared|resume-required|refused`, `conflict-observed`, or " +
+      "`released|refused`; typed acknowledgements only.",
   ),
   git_commit: purposeBuiltSmall(
     "A replayable `{ kind, version, attestationId, generation, taskId, operationId, " +

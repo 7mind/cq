@@ -433,14 +433,12 @@ export interface WorktreeManageToolSpec {
 }
 
 const WORKTREE_MANAGE_DESCRIPTION =
-  "Manage one implement-flow worktree: prepare/resume, inspect a rebase conflict, " +
-  "resolve opaque terminal dispatch authority, or release. Prepare mints a UUIDv7 tree under " +
-  "`.claude/worktrees/`; it may resume by handle, return `resume-required`, or adopt one " +
-  "exact legacy tree from paired `adoptWorktreePath` and `expectedHead`. The server " +
-  "derives adoption authority and dependency result-commit closure from `taskId` and " +
-  "the bound ledger; callers cannot supply dependency evidence. Release is guarded " +
-  "(dirty/WIP/terminal checks) and idempotent. Returns a typed acknowledgement; " +
-  "exposes no individual filesystem mutation primitives.";
+  "Manage one implement worktree: prepare/resume/adopt, observe rebase conflict, " +
+  "resolve sealed recovery/continuation authority, or guarded release. Prepare mints " +
+  "a UUIDv7 tree under `.claude/worktrees/`; adoption requires `adoptWorktreePath`+" +
+  "`expectedHead`. The server derives adoption and dependency evidence. Release checks " +
+  "dirty/WIP/terminal state and is idempotent. Returns typed acknowledgements, never " +
+  "filesystem primitives.";
 
 export const WORKTREE_MANAGE_TOOL_SPEC: WorktreeManageToolSpec = {
   name: WORKTREE_MANAGE_TOOL_NAME,

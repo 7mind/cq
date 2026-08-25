@@ -130,7 +130,9 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // partition invariant without repeating the projection field taxonomy.
     // 1294 -> 1277 under T1532: create_ledger no longer repeats its fixed
     // acknowledgement before the authoritative response carrying the same DTO.
-    maximumRemainingG93AttributableTokens: 1277,
+    // 1277 -> 1237 under T2816: worktree and prepare descriptions retain their
+    // typed contracts without repeating operation-specific schema vocabulary.
+    maximumRemainingG93AttributableTokens: 1237,
     corpusMedianResponseSavingTokens: 1461,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,

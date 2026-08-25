@@ -1232,7 +1232,7 @@ export function createLedgerMcpToolSpecifications(
 
   const prepareDispatchTool = tool(
     "prepare_dispatch",
-    "Validate and durably prepare one typed dispatch: handle, deadlines, provenance, and distinct input/result capabilities.",
+    "Durably prepare dispatch: handle, deadlines, provenance, input/result capabilities.",
     PREPARE_DISPATCH_INPUT,
     async (args) => {
       if (dispatchCapability === undefined) throw new Error("unreachable dispatch tool");

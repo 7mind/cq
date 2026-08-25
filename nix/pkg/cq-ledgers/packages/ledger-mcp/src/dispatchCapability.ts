@@ -497,6 +497,49 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           `expected an integer timeout within [${DISPATCH_TIMEOUT_MIN_MS}, ${DISPATCH_TIMEOUT_MAX_MS}] ms`,
         );
       }
+      if (
+        input.guardedRebase !== undefined &&
+        input.reprepareOf === undefined
+      ) {
+        return rejectLaunch(
+          "guardedRebase",
+          "a guarded-rebase reference requires an implement-worker reprepareOf naming the exact terminal prior worker generation on a local repository",
+        );
+      }
+      if (
+        input.recovery !== undefined &&
+        (input.reprepareOf !== undefined ||
+          input.guardedRebase !== undefined ||
+          input.continuation !== undefined)
+      ) {
+        return rejectLaunch(
+          "recovery",
+          "a terminal recovery reference requires an implement-worker on a local repository and must replace, not accompany, reprepareOf or guardedRebase",
+        );
+      }
+      if (
+        input.continuation !== undefined &&
+        (input.reprepareOf !== undefined ||
+          input.guardedRebase !== undefined ||
+          input.recovery !== undefined)
+      ) {
+        return rejectLaunch(
+          "continuation",
+          "a consumed continuation requires an implement-worker on a local repository and must replace, not accompany, reprepareOf, guardedRebase, or recovery",
+        );
+      }
+      if (
+        input.recoveryPreparation !== undefined &&
+        (input.reprepareOf !== undefined ||
+          input.guardedRebase !== undefined ||
+          input.recovery !== undefined ||
+          input.continuation !== undefined)
+      ) {
+        return rejectLaunch(
+          "recoveryPreparation",
+          "journal recovery preparation requires an implement-worker on a local repository and must replace every legacy continuation path",
+        );
+      }
       const callerFingerprint = callerPrepareFingerprint(input);
       if (
         options.repositoryRoot !== undefined &&
@@ -607,9 +650,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
 
       if (
         input.guardedRebase !== undefined &&
-        (roleId !== "implement-worker" ||
-          input.reprepareOf === undefined ||
-          options.repositoryRoot === undefined)
+        (roleId !== "implement-worker" || options.repositoryRoot === undefined)
       ) {
         return rejectLaunch(
           "guardedRebase",
@@ -619,11 +660,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
 
       if (
         input.recovery !== undefined &&
-        (roleId !== "implement-worker" ||
-          input.reprepareOf !== undefined ||
-          input.guardedRebase !== undefined ||
-          input.continuation !== undefined ||
-          options.repositoryRoot === undefined)
+        (roleId !== "implement-worker" || options.repositoryRoot === undefined)
       ) {
         return rejectLaunch(
           "recovery",
@@ -633,11 +670,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
 
       if (
         input.continuation !== undefined &&
-        (roleId !== "implement-worker" ||
-          input.reprepareOf !== undefined ||
-          input.guardedRebase !== undefined ||
-          input.recovery !== undefined ||
-          options.repositoryRoot === undefined)
+        (roleId !== "implement-worker" || options.repositoryRoot === undefined)
       ) {
         return rejectLaunch(
           "continuation",
@@ -647,12 +680,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
 
       if (
         input.recoveryPreparation !== undefined &&
-        (roleId !== "implement-worker" ||
-          input.reprepareOf !== undefined ||
-          input.guardedRebase !== undefined ||
-          input.recovery !== undefined ||
-          input.continuation !== undefined ||
-          options.repositoryRoot === undefined)
+        (roleId !== "implement-worker" || options.repositoryRoot === undefined)
       ) {
         return rejectLaunch(
           "recoveryPreparation",

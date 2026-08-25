@@ -897,7 +897,7 @@ describe("a refs-assembly rejection is T976's rejection, not a lifecycle state",
     // from T685's prepare (covered in dispatchAttestation.test.ts); everything
     // else is here.
     const placementOnly = ["unknown-validator-placement", "undeclared-child-side-validation"];
-    const prepareOnly = ["invalid-launch-envelope"];
+    const prepareOnly = ["invalid-launch-envelope", "journal-recovery-required"];
     expect([...observed, ...placementOnly, ...prepareOnly].sort()).toEqual(
       [...DISPATCH_PRE_LAUNCH_REJECTION_REASONS].sort(),
     );
