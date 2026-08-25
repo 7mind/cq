@@ -107,6 +107,88 @@ describe("protected current dispatch-recovery capture", () => {
     expect(snapshots).toBe(4);
   });
 
+  test("a generation allocated after the final reread forces a fresh capture", async () => {
+    const journal = new InMemoryCurrentRecoverySealJournalStore();
+    const rows = [abortedEnvelope({ generation: 2 })];
+    let snapshots = 0;
+    let afterRereadRan = false;
+
+    const seal = await captureCurrentRecoverySeal(
+      coordinates,
+      {
+        journal,
+        snapshot: async () => {
+          snapshots += 1;
+          return rows;
+        },
+        resolveReceipts: async () => RECOVERY_RECEIPTS,
+        revalidateBinding: async () => {},
+        observeLiveTip: async () => RECOVERY_TIP,
+        now: () => RECOVERY_NOW,
+        beforeCommit: async () => {
+          if (!afterRereadRan) {
+            afterRereadRan = true;
+            rows.push(abortedEnvelope({ generation: 10 }));
+          }
+        },
+      } as never,
+    );
+
+    expect(seal.seed.selectedSourceHandle.generation).toBe(10);
+    expect(seal.seed.lineageMaximumGeneration).toBe(10);
+    expect(snapshots).toBeGreaterThanOrEqual(5);
+  });
+
+  test("preserves normalized non-empty overlay applications from the selected source", async () => {
+    const journal = new InMemoryCurrentRecoverySealJournalStore();
+    const overlays = [
+      { overlayId: "fixture-focus", data: { note: "preserve recovery provenance" } },
+    ] as const;
+    const row = { ...abortedEnvelope({ generation: 2 }), overlays };
+
+    const seal = await captureCurrentRecoverySeal(coordinates, {
+      journal,
+      snapshot: async () => [row],
+      resolveReceipts: async () => RECOVERY_RECEIPTS,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => RECOVERY_NOW,
+    });
+
+    expect(seal.seed.overlays).toEqual(overlays);
+  });
+
+  test("unchanged lineage replays committed authority without provisional demotion", async () => {
+    const backing = new InMemoryCurrentRecoverySealJournalStore();
+    let writes = 0;
+    const journal = {
+      read: async (taskId: string) => await backing.read(taskId),
+      put: async (value: Parameters<typeof backing.put>[0]) => {
+        writes += 1;
+        await backing.put(value);
+      },
+    };
+    const rows = [abortedEnvelope({ generation: 2 })];
+    let now = RECOVERY_NOW;
+    const deps = {
+      journal,
+      snapshot: async () => rows,
+      resolveReceipts: async () => RECOVERY_RECEIPTS,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => now,
+    };
+
+    const first = await captureCurrentRecoverySeal(coordinates, deps);
+    const firstWrites = writes;
+    now = RECOVERY_LATER;
+    const replay = await captureCurrentRecoverySeal(coordinates, deps);
+
+    expect(replay).toEqual(first);
+    expect(writes).toBe(firstWrites);
+    expect((await journal.read(RECOVERY_TASK))?.state).toBe("committed");
+  });
+
   test("an active generation refuses before journal mutation", async () => {
     const journal = new InMemoryCurrentRecoverySealJournalStore();
 

@@ -36,6 +36,18 @@ describe("strict maximal current-recovery source selection", () => {
     ).toEqual({ attestationId: firstId, generation: 7 });
   });
 
+  test("attestation-id tie-breaking is ordinal across case and punctuation", () => {
+    const ordinalFirst = `att_-${"A".repeat(31)}`;
+    const localeFirst = `att_-${"a".repeat(31)}`;
+
+    expect(
+      selectStrictMaximalRecoverySource(RECOVERY_TASK, RECOVERY_TIP, [
+        sourceCandidate({ attestationId: localeFirst, generation: 7 }),
+        sourceCandidate({ attestationId: ordinalFirst, generation: 7 }),
+      ]).selectedSourceHandle.attestationId,
+    ).toBe(ordinalFirst);
+  });
+
   test("persists an independent lineage maximum from a later ineligible generation", () => {
     const olderEligible = sourceCandidate({ generation: 2, lineageMaximumGeneration: 11 });
 
