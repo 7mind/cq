@@ -114,6 +114,37 @@ if (process.argv.includes("__workset-effect-provider")) {
       expect(boundary).toContain("targetRef: effectTargetRef");
       expect(boundary).toContain("parentGateCapability: invocation.parentGateCapability");
       expect(boundary).toContain("createProcessWorksetEffectAdmissionProvider");
+
+      const admitted = await invoke(
+        { ...request, effectTargetRef: "tasks:T2844" },
+        environment,
+      );
+      expect(admitted).toMatchObject({ code: 0, stderr: "" });
+      expect(JSON.parse(admitted.stdout)).toEqual(HANDLE);
+
+      const markerLines = (await readFile(markers, "utf8")).trim().split("\n");
+      expect(markerLines.filter((line) => line === "provider:acquire:tasks:T2844")).toHaveLength(1);
+      expect(markerLines.filter((line) => line === "codex")).toHaveLength(1);
+      expect(markerLines.filter((line) => line === "finalizer")).toHaveLength(1);
+      expect(markerLines.indexOf("provider:acquire:tasks:T2844")).toBeLessThan(
+        markerLines.indexOf("codex"),
+      );
+      expect(markerLines.indexOf("codex")).toBeLessThan(markerLines.indexOf("finalizer"));
+
+      const codexTransport = await readFile(codexCapture, "utf8");
+      for (const forbidden of [
+        "effectTargetRef",
+        "parentGateCapability",
+        "CQ_SERVE_TOKEN",
+        "CQ_SERVE_MANAGEMENT_TOKEN",
+        "CQ_LEDGER_REMOTE_TOKEN",
+      ]) {
+        expect(codexTransport).not.toContain(forbidden);
+      }
+      expect(JSON.parse(await readFile(finalizerCapture, "utf8"))).toEqual({
+        ...HANDLE,
+        parentGateCapability: PARENT_GATE_CAPABILITY,
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
