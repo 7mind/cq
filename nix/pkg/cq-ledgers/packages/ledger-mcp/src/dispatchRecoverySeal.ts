@@ -59,7 +59,7 @@ const SNAPSHOT_RETRY_LIMIT = 16;
 
 interface RecoveryLineageSnapshot {
   readonly digest: string;
-  readonly rows: readonly AttestationEnvelope[];
+  readonly rows: readonly AttestationRow[];
 }
 
 export interface CurrentRecoveryCaptureCoordinates {
@@ -74,7 +74,7 @@ export interface CurrentRecoveryCaptureDeps {
   readonly journal: CurrentRecoverySealJournalStore;
   readonly snapshot: () => Promise<readonly AttestationRow[]>;
   readonly resolveReceipts: (
-    row: AttestationEnvelope,
+    row: AttestationRow,
     liveTip: string,
   ) => Promise<readonly GitChangeBrokerReceipt[]>;
   readonly revalidateBinding: () => Promise<void>;
@@ -121,9 +121,15 @@ function lineageSnapshot(
   rows: readonly AttestationRow[],
   binding: ManagedWorktreeDispatchBinding,
 ): RecoveryLineageSnapshot {
-  const envelopes = rows
-    .filter((row): row is AttestationEnvelope => !isAttestationTombstone(row))
-    .filter((row) => bindingMatches(row.gitEffectBinding, binding))
+  const lineageRows = rows
+    .filter((row) =>
+      bindingMatches(
+        isAttestationTombstone(row)
+          ? row.dispatchContinuationBinding?.gitEffectBinding
+          : row.gitEffectBinding,
+        binding,
+      ),
+    )
     .sort((left, right) => {
       const byId =
         left.attestationId < right.attestationId
@@ -134,13 +140,16 @@ function lineageSnapshot(
       return byId || left.generation - right.generation;
     });
   return {
-    rows: Object.freeze(envelopes.map((row) => structuredClone(row))),
-    digest: dispatchPayloadDigest(envelopes as unknown as DispatchJSONValue),
+    rows: Object.freeze(lineageRows.map((row) => structuredClone(row))),
+    digest: dispatchPayloadDigest(lineageRows as unknown as DispatchJSONValue),
   };
 }
 
 function assertNoActiveGeneration(snapshot: RecoveryLineageSnapshot): void {
-  const active = snapshot.rows.find((row) => !TERMINAL_STATES.has(row.state));
+  const active = snapshot.rows.find(
+    (row): row is AttestationEnvelope =>
+      !isAttestationTombstone(row) && !TERMINAL_STATES.has(row.state),
+  );
   if (active !== undefined) {
     throw new CurrentRecoverySealError(
       "lineage-active",
@@ -160,7 +169,12 @@ async function sourceCandidates(
 ): Promise<readonly CurrentRecoverySourceCandidate[]> {
   const candidates: CurrentRecoverySourceCandidate[] = [];
   for (const row of snapshot.rows) {
+    const continuation = row.dispatchContinuationBinding;
+    const consumed = isAttestationTombstone(row)
+      ? row.terminalKind === "consumed"
+      : row.state === "consumed" && row.promptProvenance.roleId === "implement-worker";
     const source: CurrentRecoverySource | undefined =
+      !isAttestationTombstone(row) &&
       row.state === "aborted" &&
       row.promptProvenance.roleId === "implement-worker" &&
       row.abortReason !== undefined &&
@@ -170,15 +184,14 @@ async function sourceCandidates(
             version: 1,
             abortReason: row.abortReason as CurrentRecoverySourceAbortReason,
           }
-        : row.state === "consumed" &&
-            row.promptProvenance.roleId === "implement-worker" &&
-            row.dispatchContinuationBinding?.attestationId === row.attestationId &&
-            row.dispatchContinuationBinding.generation === row.generation &&
-            row.dispatchContinuationBinding.terminalDigest === row.terminalDigest &&
-            row.dispatchContinuationBinding.terminalAt === row.terminalAt &&
-            row.dispatchContinuationBinding.currentRecoverySource?.kind === "consumed-fail" &&
-            row.dispatchContinuationBinding.currentRecoverySource.status === "fail"
-          ? (row.dispatchContinuationBinding.currentRecoverySource as CurrentRecoverySource)
+        : consumed &&
+            continuation?.attestationId === row.attestationId &&
+            continuation.generation === row.generation &&
+            continuation.terminalDigest === row.terminalDigest &&
+            continuation.terminalAt === row.terminalAt &&
+            continuation.currentRecoverySource?.kind === "consumed-fail" &&
+            continuation.currentRecoverySource.status === "fail"
+          ? (continuation.currentRecoverySource as CurrentRecoverySource)
           : undefined;
     if (source === undefined || row.terminalDigest === undefined) continue;
     let gitReceipts: readonly GitChangeBrokerReceipt[];
@@ -215,7 +228,7 @@ async function sourceCandidates(
 function sourceRow(
   snapshot: RecoveryLineageSnapshot,
   source: CurrentRecoverySourceCandidate,
-): AttestationEnvelope {
+): AttestationRow {
   const row = snapshot.rows.find(
     (candidate) =>
       candidate.attestationId === source.selectedSourceHandle.attestationId &&
@@ -244,30 +257,44 @@ function sourcesEqual(
 
 function sealForSource(
   coordinates: CurrentRecoveryCaptureCoordinates,
-  row: AttestationEnvelope,
+  row: AttestationRow,
   source: CurrentRecoverySourceCandidate,
   snapshotDigest: string,
   capturedAt: string,
 ): CurrentRecoverySeal {
+  const common = {
+    selectedSourceHandle: source.selectedSourceHandle,
+    lineageMaximumGeneration: source.lineageMaximumGeneration,
+    snapshotDigest,
+    sourceTerminalDigest: source.sourceTerminalDigest,
+    namespace: row.namespace,
+    taskId: coordinates.taskId,
+    taskDigest: coordinates.taskDigest,
+    finalizedManifestDigest: coordinates.finalizedManifestDigest,
+    gitBinding: coordinates.binding,
+    gitReceipts: source.gitReceipts,
+    liveTip: coordinates.liveTip,
+    capturedAt,
+  } as const;
+  if (source.source.kind === "consumed-fail") {
+    return createCurrentRecoverySeal(
+      createCurrentRecoverySeed({ ...common, source: source.source }),
+    );
+  }
+  if (isAttestationTombstone(row)) {
+    throw new CurrentRecoverySealError(
+      "source-not-found",
+      "collapsed aborted source no longer retains its recovery recipe",
+    );
+  }
   return createCurrentRecoverySeal(
     createCurrentRecoverySeed({
-      selectedSourceHandle: source.selectedSourceHandle,
-      lineageMaximumGeneration: source.lineageMaximumGeneration,
-      snapshotDigest,
+      ...common,
       source: source.source,
-      sourceTerminalDigest: source.sourceTerminalDigest,
-      namespace: row.namespace,
       promptProvenance: row.promptProvenance,
       prepareRequestDigest: row.prepareRequestDigest,
-      taskId: coordinates.taskId,
-      taskDigest: coordinates.taskDigest,
-      finalizedManifestDigest: coordinates.finalizedManifestDigest,
       inputRecipe: row.input,
       overlays: row.overlays,
-      gitBinding: coordinates.binding,
-      gitReceipts: source.gitReceipts,
-      liveTip: coordinates.liveTip,
-      capturedAt,
     }),
   );
 }
@@ -308,15 +335,26 @@ export async function captureCurrentRecoverySeal(
     }
     const capturedAt = deps.now();
     const seal = sealForSource(coordinates, row, source, snapshot.digest, capturedAt);
-    const provisional = {
-      kind: "cq-current-recovery-seal-journal" as const,
-      version: 1 as const,
-      state: "provisional" as const,
-      taskId: coordinates.taskId,
-      snapshotDigest: snapshot.digest,
-      seal,
-      writtenAt: capturedAt,
-    };
+    const provisional =
+      seal.version === 1
+        ? {
+            kind: "cq-current-recovery-seal-journal" as const,
+            version: 1 as const,
+            state: "provisional" as const,
+            taskId: coordinates.taskId,
+            snapshotDigest: snapshot.digest,
+            seal,
+            writtenAt: capturedAt,
+          }
+        : {
+            kind: "cq-current-recovery-seal-journal" as const,
+            version: 2 as const,
+            state: "provisional" as const,
+            taskId: coordinates.taskId,
+            snapshotDigest: snapshot.digest,
+            seal,
+            writtenAt: capturedAt,
+          };
     await deps.journal.put(provisional);
     if (!provisionalHookRan && deps.afterProvisional !== undefined) {
       provisionalHookRan = true;
@@ -507,11 +545,15 @@ export async function captureCurrentDispatchRecoverySeal(
                     ...binding,
                     attestationId: row.attestationId,
                     generation: row.generation,
-                    ...(row.gitEffectBinding?.inheritedGitReceipts === undefined
+                    ...((isAttestationTombstone(row)
+                      ? row.dispatchContinuationBinding?.gitEffectBinding.inheritedGitReceipts
+                      : row.gitEffectBinding?.inheritedGitReceipts) === undefined
                       ? {}
                       : {
-                          inheritedGitReceipts: row.gitEffectBinding
-                            .inheritedGitReceipts as readonly GitChangeBrokerReceipt[],
+                          inheritedGitReceipts: (isAttestationTombstone(row)
+                            ? row.dispatchContinuationBinding!.gitEffectBinding
+                                .inheritedGitReceipts
+                            : row.gitEffectBinding!.inheritedGitReceipts) as readonly GitChangeBrokerReceipt[],
                         }),
                   },
                   tip,

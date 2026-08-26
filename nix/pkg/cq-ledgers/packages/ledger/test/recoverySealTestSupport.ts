@@ -9,6 +9,7 @@ import {
   currentRecoveryReceiptClosureDigest,
   type CurrentRecoveryCommittedJournal,
   type CurrentRecoveryProvisionalJournal,
+  type CurrentRecoverySeal,
   type GitChangeBrokerReceipt,
   type ManagedWorktreeDispatchBinding,
 } from "../src/index.js";
@@ -76,8 +77,8 @@ export const RECOVERY_INPUT = {
   resolvedModel: "gpt-5.6-sol",
 } as const;
 
-export function recoverySeal() {
-  return createCurrentRecoverySeal(
+export function recoverySeal(): Extract<CurrentRecoverySeal, { readonly version: 1 }> {
+  const seal = createCurrentRecoverySeal(
     createCurrentRecoverySeed({
       selectedSourceHandle: { attestationId: RECOVERY_ATTESTATION, generation: 17 },
       lineageMaximumGeneration: 19,
@@ -105,9 +106,14 @@ export function recoverySeal() {
       capturedAt: RECOVERY_NOW,
     }),
   );
+  if (seal.version !== 1) throw new Error("aborted recovery fixture did not create a v1 seal");
+  return seal;
 }
 
-export function provisionalJournal(): CurrentRecoveryProvisionalJournal {
+export function provisionalJournal(): Extract<
+  CurrentRecoveryProvisionalJournal,
+  { readonly version: 1 }
+> {
   return {
     kind: "cq-current-recovery-seal-journal",
     version: 1,
@@ -119,7 +125,10 @@ export function provisionalJournal(): CurrentRecoveryProvisionalJournal {
   };
 }
 
-export function committedJournal(): CurrentRecoveryCommittedJournal {
+export function committedJournal(): Extract<
+  CurrentRecoveryCommittedJournal,
+  { readonly version: 1 }
+> {
   return { ...provisionalJournal(), state: "committed", committedAt: RECOVERY_LATER };
 }
 

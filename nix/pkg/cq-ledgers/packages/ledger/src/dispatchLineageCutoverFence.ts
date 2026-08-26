@@ -13,7 +13,7 @@ const ATTESTATION_ID = /^att_[A-Za-z0-9_-]{32,}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const ISO_INSTANT =
   /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z$/u;
-const RECOVERY_SEED_REFERENCE = /^cq-current-recovery-seal:v1:[0-9a-f]{64}$/u;
+const RECOVERY_SEED_REFERENCE = /^cq-current-recovery-seal:v[12]:[0-9a-f]{64}$/u;
 
 export const DISPATCH_LINEAGE_CUTOVER_FENCE_REFERENCE_PREFIX =
   "cq-dispatch-lineage-cutover-fence:v1:";

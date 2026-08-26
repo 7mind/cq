@@ -22,9 +22,10 @@ const FULL_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const ISO_INSTANT = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z$/u;
 
-export const CURRENT_RECOVERY_SEAL_REFERENCE_PREFIX = "cq-current-recovery-seal:v1:";
+const LEGACY_RECOVERY_SEAL_REFERENCE_PREFIX = "cq-current-recovery-seal:v1:";
+export const CURRENT_RECOVERY_SEAL_REFERENCE_PREFIX = "cq-current-recovery-seal:v2:";
 export const CURRENT_RECOVERY_SEAL_REFERENCE_PATTERN =
-  /^cq-current-recovery-seal:v1:[0-9a-f]{64}$/u;
+  /^cq-current-recovery-seal:v[12]:[0-9a-f]{64}$/u;
 export const LINEAGE_CUTOVER_FENCE_ACTION_KEY = "lineage-cutover-fence" as const;
 
 export const CURRENT_RECOVERY_SOURCE_ABORT_REASONS = [
@@ -128,55 +129,102 @@ const gitChangeReceiptSchema = z
   })
   .strict();
 
-const recoverySeedSchema = z
-  .object({
-    kind: z.literal("cq-current-recovery-seed"),
+const recoverySeedCommonSchema = z.object({
+  kind: z.literal("cq-current-recovery-seed"),
+  selectedSourceHandle: dispatchHandleSchema,
+  lineageMaximumGeneration: z.number().int().positive(),
+  snapshotDigest: z.string().regex(SHA256),
+  sourceTerminalDigest: z.string().regex(SHA256),
+  namespace: namespaceSchema,
+  taskId: z.string().regex(TASK_ID),
+  taskDigest: z.string().regex(SHA256),
+  finalizedManifestDigest: z.string().regex(SHA256),
+  gitBinding: gitBindingSchema,
+  gitReceipts: z.array(gitChangeReceiptSchema).min(1),
+  gitReceiptsDigest: z.string().regex(SHA256),
+  liveTip: z.string().regex(FULL_COMMIT),
+  managedFingerprint: z.string().regex(SHA256),
+  capturedAt: z.string().regex(ISO_INSTANT),
+});
+
+const legacyRecoverySeedSchema = recoverySeedCommonSchema
+  .extend({
     version: z.literal(1),
-    selectedSourceHandle: dispatchHandleSchema,
-    lineageMaximumGeneration: z.number().int().positive(),
-    snapshotDigest: z.string().regex(SHA256),
-    source: currentRecoverySourceSchema,
-    sourceTerminalDigest: z.string().regex(SHA256),
-    namespace: namespaceSchema,
+    sourceAbortReason: z.enum(CURRENT_RECOVERY_SOURCE_ABORT_REASONS),
     promptProvenance: promptProvenanceSchema,
     prepareRequestDigest: z.string().regex(SHA256),
-    taskId: z.string().regex(TASK_ID),
-    taskDigest: z.string().regex(SHA256),
-    finalizedManifestDigest: z.string().regex(SHA256),
     inputRecipe: jsonValueSchema,
     overlays: z.array(overlayApplicationSchema),
-    gitBinding: gitBindingSchema,
-    gitReceipts: z.array(gitChangeReceiptSchema).min(1),
-    gitReceiptsDigest: z.string().regex(SHA256),
-    liveTip: z.string().regex(FULL_COMMIT),
-    managedFingerprint: z.string().regex(SHA256),
-    capturedAt: z.string().regex(ISO_INSTANT),
   })
   .strict();
 
-export const CurrentRecoverySealSchema = z
+const consumedFailureRecoverySeedSchema = recoverySeedCommonSchema
+  .extend({
+    version: z.literal(2),
+    source: z
+      .object({
+        kind: z.literal("consumed-fail"),
+        version: z.literal(1),
+        status: z.literal("fail"),
+      })
+      .strict(),
+  })
+  .strict();
+
+const recoverySeedSchema = z.discriminatedUnion("version", [
+  legacyRecoverySeedSchema,
+  consumedFailureRecoverySeedSchema,
+]);
+
+const legacyRecoverySealSchema = z
   .object({
     kind: z.literal("cq-current-recovery-seal"),
     version: z.literal(1),
     sealDigest: z.string().regex(SHA256),
-    sealReference: z.string().regex(CURRENT_RECOVERY_SEAL_REFERENCE_PATTERN),
-    seed: recoverySeedSchema,
+    sealReference: z.string().regex(/^cq-current-recovery-seal:v1:[0-9a-f]{64}$/u),
+    seed: legacyRecoverySeedSchema,
   })
   .strict();
 
-const provisionalJournalSchema = z
+const consumedFailureRecoverySealSchema = z
   .object({
-    kind: z.literal("cq-current-recovery-seal-journal"),
+    kind: z.literal("cq-current-recovery-seal"),
+    version: z.literal(2),
+    sealDigest: z.string().regex(SHA256),
+    sealReference: z.string().regex(/^cq-current-recovery-seal:v2:[0-9a-f]{64}$/u),
+    seed: consumedFailureRecoverySeedSchema,
+  })
+  .strict();
+
+export const CurrentRecoverySealSchema = z.discriminatedUnion("version", [
+  legacyRecoverySealSchema,
+  consumedFailureRecoverySealSchema,
+]);
+
+const journalCommonSchema = z.object({
+  kind: z.literal("cq-current-recovery-seal-journal"),
+  taskId: z.string().regex(TASK_ID),
+  snapshotDigest: z.string().regex(SHA256),
+  writtenAt: z.string().regex(ISO_INSTANT),
+});
+
+const legacyProvisionalJournalSchema = journalCommonSchema
+  .extend({
     version: z.literal(1),
     state: z.literal("provisional"),
-    taskId: z.string().regex(TASK_ID),
-    snapshotDigest: z.string().regex(SHA256),
-    seal: CurrentRecoverySealSchema,
-    writtenAt: z.string().regex(ISO_INSTANT),
+    seal: legacyRecoverySealSchema,
   })
   .strict();
 
-const committedJournalSchema = provisionalJournalSchema
+const consumedFailureProvisionalJournalSchema = journalCommonSchema
+  .extend({
+    version: z.literal(2),
+    state: z.literal("provisional"),
+    seal: consumedFailureRecoverySealSchema,
+  })
+  .strict();
+
+const legacyCommittedJournalSchema = legacyProvisionalJournalSchema
   .omit({ state: true })
   .extend({
     state: z.literal("committed"),
@@ -185,9 +233,20 @@ const committedJournalSchema = provisionalJournalSchema
   })
   .strict();
 
-export const CurrentRecoverySealJournalSchema = z.discriminatedUnion("state", [
-  provisionalJournalSchema,
-  committedJournalSchema,
+const consumedFailureCommittedJournalSchema = consumedFailureProvisionalJournalSchema
+  .omit({ state: true })
+  .extend({
+    state: z.literal("committed"),
+    committedAt: z.string().regex(ISO_INSTANT),
+    fence: DispatchLineageCutoverFenceSchema.optional(),
+  })
+  .strict();
+
+export const CurrentRecoverySealJournalSchema = z.union([
+  legacyProvisionalJournalSchema,
+  consumedFailureProvisionalJournalSchema,
+  legacyCommittedJournalSchema,
+  consumedFailureCommittedJournalSchema,
 ]);
 
 const absentStatusSchema = z
@@ -202,7 +261,7 @@ const absentStatusSchema = z
 const provisionalStatusSchema = z
   .object({
     kind: z.literal("cq-current-recovery-status"),
-    version: z.literal(1),
+    version: z.literal(2),
     taskId: z.string().regex(TASK_ID),
     state: z.literal("provisional"),
     selectedSourceHandle: dispatchHandleSchema,
@@ -217,7 +276,7 @@ const provisionalStatusSchema = z
 const committedStatusSchema = z
   .object({
     kind: z.literal("cq-current-recovery-status"),
-    version: z.literal(1),
+    version: z.literal(2),
     taskId: z.string().regex(TASK_ID),
     state: z.literal("committed"),
     selectedSourceHandle: dispatchHandleSchema,
@@ -231,8 +290,20 @@ const committedStatusSchema = z
   })
   .strict();
 
-export const CurrentRecoveryStatusSchema = z.discriminatedUnion("state", [
+const legacyProvisionalStatusSchema = provisionalStatusSchema
+  .omit({ version: true, source: true })
+  .extend({ version: z.literal(1) })
+  .strict();
+
+const legacyCommittedStatusSchema = committedStatusSchema
+  .omit({ version: true, source: true, seal: true })
+  .extend({ version: z.literal(1), seal: legacyRecoverySealSchema })
+  .strict();
+
+export const CurrentRecoveryStatusSchema = z.union([
   absentStatusSchema,
+  legacyProvisionalStatusSchema,
+  legacyCommittedStatusSchema,
   provisionalStatusSchema,
   committedStatusSchema,
 ]);
@@ -406,19 +477,24 @@ export function selectStrictMaximalRecoverySource(
 function validateSealSemantics(seal: CurrentRecoverySeal): CurrentRecoverySeal {
   const seed = seal.seed;
   if (
+    seal.version !== seed.version ||
     seed.selectedSourceHandle.generation > seed.lineageMaximumGeneration ||
     seed.taskId !== seed.gitBinding.taskId ||
     seed.liveTip !== seed.gitReceipts.at(-1)?.newHead ||
-    seed.promptProvenance.inputDigest !== payloadDigest(seed.inputRecipe) ||
+    (seed.version === 1 && seed.promptProvenance.inputDigest !== payloadDigest(seed.inputRecipe)) ||
     seed.gitReceiptsDigest !== currentRecoveryReceiptClosureDigest(seed.gitReceipts)
   ) {
     throw new CurrentRecoverySealError("invalid", "recovery seal has inconsistent seed bindings");
   }
   assertReceiptChain(seed.taskId, seed.gitReceipts, seed.liveTip);
   const sealDigest = payloadDigest(seed);
+  const referencePrefix =
+    seed.version === 1
+      ? LEGACY_RECOVERY_SEAL_REFERENCE_PREFIX
+      : CURRENT_RECOVERY_SEAL_REFERENCE_PREFIX;
   if (
     seal.sealDigest !== sealDigest ||
-    seal.sealReference !== `${CURRENT_RECOVERY_SEAL_REFERENCE_PREFIX}${sealDigest}`
+    seal.sealReference !== `${referencePrefix}${sealDigest}`
   ) {
     throw new CurrentRecoverySealError(
       "invalid",
@@ -443,11 +519,15 @@ export function parseCurrentRecoverySeal(value: unknown): CurrentRecoverySeal {
 export function createCurrentRecoverySeal(seed: CurrentRecoverySeed): CurrentRecoverySeal {
   const parsedSeed = recoverySeedSchema.parse(seed);
   const sealDigest = payloadDigest(parsedSeed);
+  const referencePrefix =
+    parsedSeed.version === 1
+      ? LEGACY_RECOVERY_SEAL_REFERENCE_PREFIX
+      : CURRENT_RECOVERY_SEAL_REFERENCE_PREFIX;
   return parseCurrentRecoverySeal({
     kind: "cq-current-recovery-seal",
-    version: 1,
+    version: parsedSeed.version,
     sealDigest,
-    sealReference: `${CURRENT_RECOVERY_SEAL_REFERENCE_PREFIX}${sealDigest}`,
+    sealReference: `${referencePrefix}${sealDigest}`,
     seed: parsedSeed,
   });
 }
@@ -456,7 +536,7 @@ export function parseCurrentRecoverySealJournal(value: unknown): CurrentRecovery
   try {
     const journal = CurrentRecoverySealJournalSchema.parse(value);
     parseCurrentRecoverySeal(journal.seal);
-    if (journal.taskId !== journal.seal.seed.taskId) {
+    if (journal.version !== journal.seal.version || journal.taskId !== journal.seal.seed.taskId) {
       throw new CurrentRecoverySealError("invalid", "recovery journal task binding is invalid");
     }
     if (journal.state === "committed" && journal.fence !== undefined) {
@@ -633,13 +713,13 @@ export function currentRecoveryStatusFromJournal(
   }
   const common = {
     kind: "cq-current-recovery-status" as const,
-    version: 1 as const,
+    version: journal.version,
     taskId,
     selectedSourceHandle: journal.seal.seed.selectedSourceHandle,
     lineageMaximumGeneration: journal.seal.seed.lineageMaximumGeneration,
     snapshotDigest: journal.snapshotDigest,
     liveTip: journal.seal.seed.liveTip,
-    source: journal.seal.seed.source,
+    ...(journal.seal.seed.version === 1 ? {} : { source: journal.seal.seed.source }),
   };
   return parseCurrentRecoveryStatus(
     journal.state === "committed"
@@ -669,7 +749,9 @@ export function parseCurrentRecoveryStatus(value: unknown): CurrentRecoveryStatu
     }
     if (
       status.state === "committed" &&
-      (status.sealReference !== `${CURRENT_RECOVERY_SEAL_REFERENCE_PREFIX}${status.sealDigest}` ||
+      (status.version !== status.seal.version ||
+        status.sealReference !==
+          `${status.version === 1 ? LEGACY_RECOVERY_SEAL_REFERENCE_PREFIX : CURRENT_RECOVERY_SEAL_REFERENCE_PREFIX}${status.sealDigest}` ||
         status.sealReference !== status.seal.sealReference ||
         status.sealDigest !== status.seal.sealDigest ||
         status.taskId !== status.seal.seed.taskId ||
@@ -680,7 +762,9 @@ export function parseCurrentRecoveryStatus(value: unknown): CurrentRecoveryStatu
         status.lineageMaximumGeneration !== status.seal.seed.lineageMaximumGeneration ||
         status.snapshotDigest !== status.seal.seed.snapshotDigest ||
         status.liveTip !== status.seal.seed.liveTip ||
-        payloadDigest(status.source) !== payloadDigest(status.seal.seed.source))
+        (status.version === 2 &&
+          (status.seal.seed.version !== 2 ||
+            payloadDigest(status.source) !== payloadDigest(status.seal.seed.source))))
     ) {
       throw new CurrentRecoverySealError(
         "invalid",
@@ -721,20 +805,15 @@ export function parseCommittedCurrentRecoveryStatusOutput(
   return status;
 }
 
-export interface CurrentRecoverySeedInput {
+interface CurrentRecoverySeedInputCommon {
   readonly selectedSourceHandle: CurrentRecoverySeed["selectedSourceHandle"];
   readonly lineageMaximumGeneration: number;
   readonly snapshotDigest: string;
-  readonly source: CurrentRecoverySource;
   readonly sourceTerminalDigest: string;
   readonly namespace: AttestationNamespace;
-  readonly promptProvenance: DispatchPromptProvenance;
-  readonly prepareRequestDigest: string;
   readonly taskId: string;
   readonly taskDigest: string;
   readonly finalizedManifestDigest: string;
-  readonly inputRecipe: DispatchJSONValue;
-  readonly overlays: readonly DispatchOverlayApplication[];
   readonly gitBinding: CurrentRecoverySeed["gitBinding"] & {
     readonly handleFingerprint: string;
   };
@@ -743,12 +822,32 @@ export interface CurrentRecoverySeedInput {
   readonly capturedAt: string;
 }
 
+export type CurrentRecoverySeedInput = CurrentRecoverySeedInputCommon &
+  (
+    | {
+        readonly source: Extract<CurrentRecoverySource, { readonly kind: "aborted" }>;
+        readonly promptProvenance: DispatchPromptProvenance;
+        readonly prepareRequestDigest: string;
+        readonly inputRecipe: DispatchJSONValue;
+        readonly overlays: readonly DispatchOverlayApplication[];
+      }
+    | {
+        readonly source: Extract<CurrentRecoverySource, { readonly kind: "consumed-fail" }>;
+      }
+  );
+
 export function createCurrentRecoverySeed(input: CurrentRecoverySeedInput): CurrentRecoverySeed {
-  const { gitBinding, ...seedInput } = input;
-  return recoverySeedSchema.parse({
+  const { gitBinding } = input;
+  const common = {
     kind: "cq-current-recovery-seed",
-    version: 1,
-    ...seedInput,
+    selectedSourceHandle: input.selectedSourceHandle,
+    lineageMaximumGeneration: input.lineageMaximumGeneration,
+    snapshotDigest: input.snapshotDigest,
+    sourceTerminalDigest: input.sourceTerminalDigest,
+    namespace: input.namespace,
+    taskId: input.taskId,
+    taskDigest: input.taskDigest,
+    finalizedManifestDigest: input.finalizedManifestDigest,
     gitBinding: {
       taskId: gitBinding.taskId,
       repositoryRoot: gitBinding.repositoryRoot,
@@ -761,5 +860,27 @@ export function createCurrentRecoverySeed(input: CurrentRecoverySeedInput): Curr
     },
     gitReceiptsDigest: currentRecoveryReceiptClosureDigest(input.gitReceipts),
     managedFingerprint: gitBinding.handleFingerprint,
-  });
+    gitReceipts: input.gitReceipts,
+    liveTip: input.liveTip,
+    capturedAt: input.capturedAt,
+  } as const;
+  if (input.source.kind === "aborted") {
+    const legacyInput = input as CurrentRecoverySeedInputCommon & {
+      readonly source: Extract<CurrentRecoverySource, { readonly kind: "aborted" }>;
+      readonly promptProvenance: DispatchPromptProvenance;
+      readonly prepareRequestDigest: string;
+      readonly inputRecipe: DispatchJSONValue;
+      readonly overlays: readonly DispatchOverlayApplication[];
+    };
+    return legacyRecoverySeedSchema.parse({
+        ...common,
+        version: 1,
+        sourceAbortReason: legacyInput.source.abortReason,
+        promptProvenance: legacyInput.promptProvenance,
+        prepareRequestDigest: legacyInput.prepareRequestDigest,
+        inputRecipe: legacyInput.inputRecipe,
+        overlays: legacyInput.overlays,
+      });
+  }
+  return consumedFailureRecoverySeedSchema.parse({ ...common, version: 2, source: input.source });
 }
