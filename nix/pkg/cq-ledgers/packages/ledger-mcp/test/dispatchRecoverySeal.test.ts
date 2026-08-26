@@ -337,6 +337,59 @@ describe("protected current dispatch-recovery capture", () => {
         rows,
       }),
     ).resolves.toMatchObject({ state: "committed", version: 2 });
+    await expect(
+      captureCurrentRecoverySeal(coordinates, {
+        journal,
+        snapshot: async () => rows,
+        resolveReceipts: async () => consumedFail.receipts,
+        revalidateBinding: async () => {},
+        observeLiveTip: async () => RECOVERY_TIP,
+        now: () => RECOVERY_NOW,
+      }),
+    ).resolves.toEqual(seal);
+  });
+
+  test("a v2 provisional journal downgrades to v1 with envelope-only membership", async () => {
+    const journal = new InMemoryCurrentRecoverySealJournalStore();
+    const consumedFail = authenticatedConsumedResult("fail");
+    const rows: AttestationRow[] = [consumedFail.row];
+    const deps = {
+      journal,
+      snapshot: async () => rows,
+      resolveReceipts: async () => consumedFail.receipts,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => RECOVERY_NOW,
+    };
+
+    await expect(
+      captureCurrentRecoverySeal(coordinates, {
+        ...deps,
+        afterProvisional: async () => {
+          throw new Error("simulated v2 provisional crash");
+        },
+      }),
+    ).rejects.toThrow("simulated v2 provisional crash");
+    expect(await journal.read(RECOVERY_TASK)).toMatchObject({ state: "provisional", version: 2 });
+    rows.push(
+      abortedEnvelope({
+        attestationId: `att_${"f".repeat(32)}`,
+        generation: 2,
+      }),
+    );
+
+    const seal = await captureCurrentRecoverySeal(coordinates, deps);
+    expect(seal.version).toBe(1);
+    await expect(
+      readCurrentDispatchRecoveryStatusForLineage({
+        journal,
+        taskId: RECOVERY_TASK,
+        binding: RECOVERY_BINDING,
+        liveTip: RECOVERY_TIP,
+        rows,
+      }),
+    ).resolves.toMatchObject({ state: "committed", version: 1 });
+    await expect(captureCurrentRecoverySeal(coordinates, deps)).resolves.toEqual(seal);
   });
 
   // Regression: D361 consumed failures used to disappear from source enumeration,
@@ -393,6 +446,7 @@ describe("protected current dispatch-recovery capture", () => {
           generation: 3,
           terminalDigest: String(3).padStart(64, "0"),
           terminalAt: RECOVERY_LATER,
+          liveTip: RECOVERY_TIP,
           gitReceipts: receipts,
           ...(source === undefined ? {} : { currentRecoverySource: source }),
         },
