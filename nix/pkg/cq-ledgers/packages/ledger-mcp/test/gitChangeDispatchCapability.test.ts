@@ -13,6 +13,7 @@ import {
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
   FsAttestationBackend,
+  codexCompletionActor,
   sequentialDispatchRandomBytes,
   type AttestationNamespace,
   type DispatchJSONValue,
@@ -1213,7 +1214,7 @@ describe("dispatch-bound Git change capability", () => {
     await backend.close();
   });
 
-  test("a consumed parked worker resumes through restart-stable continuation authority [Behavioral-Progression Blackbox-GoodCommunication]", async () => {
+  test("a parent resumes a trusted-extension completion through managed continuation authority [Behavioral-Active Blackbox-GoodCommunication]", async () => {
     const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), "t2310-consumed-continuation-"));
     roots.push(repositoryRoot);
     await git(repositoryRoot, ["init", "-q"]);
@@ -1330,12 +1331,13 @@ describe("dispatch-bound Git change capability", () => {
       ...first.handle,
       nativeCompletion: {
         kind: "native-completion",
-        actor: "trusted-parent",
+        actor: codexCompletionActor("exec-intercepted"),
         ...firstChild,
         completedAt: "2026-08-22T20:00:03.000Z",
       },
       expectedProvenance: first.prepared.promptProvenance,
     });
+    expect(await capability.fetch(first.handle)).toMatchObject({ state: "consumed", output });
 
     // The orchestrator parks the task by retaining its manager handle, while
     // the process-local capability and every cached attestation projection die.
