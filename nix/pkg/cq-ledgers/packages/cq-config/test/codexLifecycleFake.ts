@@ -73,11 +73,19 @@ if (process.platform === "linux") {
   if (processGroup === undefined) throw new Error("fake Codex read no PGID from /proc stat");
   processGroupText = processGroup;
 } else {
-  const processGroup = spawnSync("ps", ["-o", "pgid=", "-p", String(process.pid)], {
-    encoding: "utf8",
-  });
-  if (processGroup.status !== 0) {
-    throw new Error(`fake Codex could not resolve its PGID: ${processGroup.stderr.trim()}`);
+  const configuredHelper = process.env["CQ_PROCESS_IDENTITY_HELPER"];
+  const helper =
+    configuredHelper === undefined || configuredHelper === "" ? null : configuredHelper;
+  const processGroup =
+    helper === null
+      ? spawnSync("ps", ["-o", "pgid=", "-p", String(process.pid)], { encoding: "utf8" })
+      : spawnSync(helper, ["--process-group", String(process.pid)], { encoding: "utf8" });
+  if (processGroup.status !== 0 || typeof processGroup.stdout !== "string") {
+    const detail =
+      typeof processGroup.stderr === "string"
+        ? processGroup.stderr.trim()
+        : (processGroup.error?.message ?? "");
+    throw new Error(`fake Codex could not resolve its PGID: ${detail}`);
   }
   processGroupText = processGroup.stdout;
 }

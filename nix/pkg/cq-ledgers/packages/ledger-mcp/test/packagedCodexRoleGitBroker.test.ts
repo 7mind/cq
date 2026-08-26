@@ -243,6 +243,7 @@ async function runPackagedReviewer(input: {
   const reviewerStderrPath = path.join(fixtureRoot, "reviewer.stderr");
   const sandboxStdoutPath = path.join(fixtureRoot, "sandbox.stdout");
   const sandboxStderrPath = path.join(fixtureRoot, "sandbox.stderr");
+  const sandboxLaunchStderrPath = path.join(fixtureRoot, "sandbox-launch.stderr");
   const sandboxCapture = path.join(fixtureRoot, "sandbox-capture");
   await writeFile(
     sandboxCapture,
@@ -266,12 +267,14 @@ async function runPackagedReviewer(input: {
       `export CQ_T2081_SANDBOX_CAPTURE=${JSON.stringify(sandboxCapture)}`,
       `export CQ_T2081_SANDBOX_STDOUT=${JSON.stringify(sandboxStdoutPath)}`,
       `export CQ_T2081_SANDBOX_STDERR=${JSON.stringify(sandboxStderrPath)}`,
+      `export CQ_T2081_SANDBOX_LAUNCH_STDERR=${JSON.stringify(sandboxLaunchStderrPath)}`,
       "run_sandbox() {",
-      '  rm -f "$CQ_T2081_SANDBOX_STDOUT" "$CQ_T2081_SANDBOX_STDERR"',
-      '  "$CQ_T2081_INSTALLED_CODEX" -c \'default_permissions="t2081"\' -c "$CQ_T2081_SANDBOX_PROFILE" sandbox -P t2081 -C "$CQ_T2081_REVIEW_WORKTREE" -- "$CQ_T2081_SANDBOX_CAPTURE" "$@"',
+      '  rm -f "$CQ_T2081_SANDBOX_STDOUT" "$CQ_T2081_SANDBOX_STDERR" "$CQ_T2081_SANDBOX_LAUNCH_STDERR"',
+      '  "$CQ_T2081_INSTALLED_CODEX" -c \'default_permissions="t2081"\' -c "$CQ_T2081_SANDBOX_PROFILE" sandbox -P t2081 -C "$CQ_T2081_REVIEW_WORKTREE" -- "$CQ_T2081_SANDBOX_CAPTURE" "$@" 2>"$CQ_T2081_SANDBOX_LAUNCH_STDERR"',
       "  status=$?",
       '  test ! -e "$CQ_T2081_SANDBOX_STDOUT" || cat "$CQ_T2081_SANDBOX_STDOUT"',
       '  test ! -e "$CQ_T2081_SANDBOX_STDERR" || cat "$CQ_T2081_SANDBOX_STDERR" >&2',
+      '  test ! -e "$CQ_T2081_SANDBOX_LAUNCH_STDERR" || cat "$CQ_T2081_SANDBOX_LAUNCH_STDERR" >&2',
       "  return $status",
       "}",
       'if test "$1" = sandbox; then',
@@ -344,8 +347,15 @@ async function runPackagedReviewer(input: {
       codexWorksetEffect("tasks:T2081"),
     );
   } catch (error) {
-    const fixtureStderr = await readFile(reviewerStderrPath, "utf8").catch(() => "");
-    throw new Error(`${error instanceof Error ? error.message : String(error)}\n${fixtureStderr}`);
+    const [fixtureStderr, sandboxStderr, sandboxLaunchStderr] = await Promise.all([
+      readFile(reviewerStderrPath, "utf8").catch(() => ""),
+      readFile(sandboxStderrPath, "utf8").catch(() => ""),
+      readFile(sandboxLaunchStderrPath, "utf8").catch(() => ""),
+    ]);
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}\n` +
+        `${fixtureStderr}${sandboxStderr}${sandboxLaunchStderr}`,
+    );
   }
   const confirmed = await capability.confirmCompletion({
     ...handle,

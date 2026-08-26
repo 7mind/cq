@@ -14,15 +14,15 @@ import { realpath } from "node:fs/promises";
  * `codex sandbox -c sandbox_mode="read-only"` the reviewer dispatch will use,
  * before any model turn, and fails fast with a typed environmental verdict.
  *
- * TMPDIR: the read-only sandbox mounts /tmp read-only, which breaks
+ * TMPDIR: the Linux read-only sandbox mounts /tmp read-only, which breaks
  * registeredLaunch's mkdtemp for the reviewer's gate. Codex mounts a fresh,
- * empty, writable tmpfs at /dev/shm per sandbox instance (verified live
- * against codex 0.146: host-created /dev/shm content is NOT visible inside),
- * so TMPDIR=/dev/shm is the writable, per-instance-isolated, self-cleaning
- * shape. The injection uses `-c shell_environment_policy.set.TMPDIR=...`,
- * which reaches sandboxed shell commands regardless of the configured inherit
- * policy; the probe asserts the value actually landed (os.tmpdir() inside the
- * sandbox) rather than trusting the override.
+ * empty, writable tmpfs at /dev/shm per Linux sandbox instance (verified live
+ * against codex 0.146: host-created /dev/shm content is NOT visible inside).
+ * Darwin has no /dev/shm and its sandbox permits /tmp. The injection uses `-c
+ * shell_environment_policy.set.TMPDIR=...`, which reaches sandboxed shell
+ * commands regardless of the configured inherit policy; the probe asserts the
+ * value actually landed (os.tmpdir() inside the sandbox) rather than trusting
+ * the override.
  *
  * Probe cadence: once per read-only reviewer dispatch, not cached per process.
  * The probe doubles as the per-dispatch TMPDIR verification and costs ~100 ms
@@ -53,12 +53,8 @@ export class SandboxPipeProbeError extends Error {
 /** The reviewer roles this pre-flight is scoped to (D266); workers never run read-only. */
 export const CODEX_REVIEWER_ROLE_SUFFIX = "-reviewer";
 
-/**
- * Writable tmpfs Codex's linux sandbox provides per sandbox instance. Do not
- * pre-create directories here from the host: the sandbox tmpfs is fresh and
- * host content is invisible inside.
- */
-export const CODEX_READ_ONLY_SANDBOX_TMPDIR = "/dev/shm";
+/** Writable temporary root available inside Codex's platform sandbox. */
+export const CODEX_READ_ONLY_SANDBOX_TMPDIR = process.platform === "darwin" ? "/tmp" : "/dev/shm";
 
 export const CODEX_SANDBOX_PIPE_PROBE_TIMEOUT_MS = 60_000;
 

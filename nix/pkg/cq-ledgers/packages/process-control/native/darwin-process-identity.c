@@ -19,6 +19,19 @@ static int printIdentity(long candidate) {
   return 0;
 }
 
+static int printProcessGroup(long candidate) {
+  struct proc_bsdinfo info;
+  int bytes = proc_pidinfo((int)candidate, PROC_PIDTBSDINFO, 0, &info, sizeof(info));
+  if (bytes == 0) return 3;
+  if (bytes != sizeof(info)) {
+    fputs("short proc_pidinfo result\n", stderr);
+    return 4;
+  }
+
+  printf("%" PRIu32 "\n", info.pbi_pgid);
+  return 0;
+}
+
 static int listGroups(void) {
   int listedBytes = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
   if (listedBytes <= 0) {
@@ -57,18 +70,20 @@ int main(int argc, char **argv) {
     return listGroups();
   }
 
-  if (argc != 2) {
-    fputs("usage: cq-process-identity <pid> | --list-groups\n", stderr);
+  int processGroupMode = argc == 3 && strcmp(argv[1], "--process-group") == 0;
+  if (argc != 2 && !processGroupMode) {
+    fputs("usage: cq-process-identity <pid> | --process-group <pid> | --list-groups\n", stderr);
     return 2;
   }
 
+  const char *candidateArgument = processGroupMode ? argv[2] : argv[1];
   char *end = NULL;
   errno = 0;
-  long candidate = strtol(argv[1], &end, 10);
-  if (errno != 0 || end == argv[1] || *end != '\0' || candidate <= 1) {
+  long candidate = strtol(candidateArgument, &end, 10);
+  if (errno != 0 || end == candidateArgument || *end != '\0' || candidate <= 1) {
     fputs("invalid pid\n", stderr);
     return 2;
   }
 
-  return printIdentity(candidate);
+  return processGroupMode ? printProcessGroup(candidate) : printIdentity(candidate);
 }

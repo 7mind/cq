@@ -265,22 +265,49 @@ async function waitForPendingRegistrations(gateDir: string): Promise<void> {
   }
 }
 
+async function readCallerProcessGroup(): Promise<number> {
+  let rawProcessGroup: string;
+  if (assertSupportedPlatform() === "linux") {
+    const stat = await readFile(`/proc/${process.pid}/stat`, "utf8");
+    const commandEnd = stat.lastIndexOf(")");
+    if (commandEnd < 0) {
+      throw new Error("cq gate: could not resolve the caller process group");
+    }
+    const processGroup = stat
+      .slice(commandEnd + 1)
+      .trim()
+      .split(/\s+/u)[2];
+    if (processGroup === undefined) {
+      throw new Error("cq gate: could not resolve the caller process group");
+    }
+    rawProcessGroup = processGroup;
+  } else {
+    const configuredHelper = process.env["CQ_PROCESS_IDENTITY_HELPER"];
+    const helper =
+      configuredHelper === undefined || configuredHelper === "" ? null : configuredHelper;
+    const callerGroup =
+      helper === null
+        ? spawnSync("ps", ["-o", "pgid=", "-p", String(process.pid)], { encoding: "utf8" })
+        : spawnSync(helper, ["--process-group", String(process.pid)], { encoding: "utf8" });
+    if (callerGroup.status !== 0 || typeof callerGroup.stdout !== "string") {
+      throw new Error("cq gate: could not resolve the caller process group");
+    }
+    rawProcessGroup = callerGroup.stdout;
+  }
+
+  const callerPgid = Number(rawProcessGroup.trim());
+  if (!Number.isSafeInteger(callerPgid) || callerPgid < 1) {
+    throw new Error("cq gate: could not resolve the caller process group");
+  }
+  return callerPgid;
+}
+
 async function settleRegisteredProcessGroups(
   lease: WorktreeGateCapability,
   options: SettleProcessGroupsOptions,
 ): Promise<SettleProcessGroupsResult> {
   await waitForPendingRegistrations(lease.gateDir);
-  const callerGroup = spawnSync("ps", ["-o", "pgid=", "-p", String(process.pid)], {
-    encoding: "utf8",
-  });
-  const callerPgid = Number(callerGroup.stdout.trim());
-  if (
-    callerGroup.status !== 0 ||
-    !Number.isSafeInteger(callerPgid) ||
-    callerPgid < 1
-  ) {
-    throw new Error("cq gate: could not resolve the caller process group");
-  }
+  const callerPgid = await readCallerProcessGroup();
   const registrations = (await readRegisteredProcessGroups(lease)).filter(
     ({ pgid }) => pgid !== callerPgid,
   );

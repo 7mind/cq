@@ -964,16 +964,20 @@ EOF
             fi
             touch "$TMPDIR/gate-release"
             wait "$firstGate"
+            ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+              export CQ_PROCESS_IDENTITY_HELPER=$out/libexec/cq-process-identity
+            ''}
             ${pkgs.bun}/bin/bun test \
               "$WORKSPACE/packages/cq-config/test/dispatchTransportRouter.test.ts" \
               --test-name-pattern T2045
+            ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+              export CQ_TEST_CODEX_SANDBOX_EXECUTABLE=${codexPackage}/bin/codex
+            ''}
             PATH=$out/bin:${pkgs.lib.makeBinPath ([ pkgs.bun pkgs.nodejs_22 pkgs.git ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.procps ])}:$PATH \
               CQ_TEST_CODEX_ROLE_EXECUTABLE=$out/bin/cq-codex-role \
               CQ_TEST_SUBSTITUTED_CODEX_ROLE_EXECUTABLE=${substitutedCodexRole}/bin/cq-codex-role \
-              CQ_TEST_CODEX_SANDBOX_EXECUTABLE=${codexPackage}/bin/codex \
               CQ_TEST_GIT_EXECUTABLE=${pkgs.git}/bin/git \
-              ${pkgs.lib.optionalString pkgs.stdenv.isLinux "${pkgs.util-linux}/bin/setsid"} \
-              ${pkgs.bun}/bin/bun test \
+              ${pkgs.lib.optionalString pkgs.stdenv.isLinux "${pkgs.util-linux}/bin/setsid "}${pkgs.bun}/bin/bun test \
                 "$WORKSPACE/packages/cq-config/test/codexGateIntegration.test.ts" \
                 "$WORKSPACE/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts" \
                 "$WORKSPACE/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts"
@@ -1055,13 +1059,13 @@ EOF
               set -eu
               mkdir -p "$out"
 
-              positiveLedger=${cqCli}/share/cq/packages/ledger
+              positiveRoot=${cqCli}/share/cq
+              positiveLedger="$positiveRoot/packages/ledger"
               ${pkgs.bun}/bin/bun run ${nodeGypRuntimeProbe} "$positiveLedger" \
                 > "$out/positive.json"
 
               negativeRoot="$TMPDIR/negative-artifact"
-              mkdir -p "$negativeRoot/packages"
-              cp -a "$positiveLedger" "$negativeRoot/packages/ledger"
+              cp -a "$positiveRoot" "$negativeRoot"
               chmod -R u+w "$negativeRoot/packages/ledger"
               rm -f \
                 "$negativeRoot/packages/ledger/node_modules/node-gyp" \
@@ -1137,10 +1141,16 @@ EOF
                 for package in cq-cli cq-config ledger; do
                   cp -r "${bunNodeModules}/packages/$package/node_modules" \
                     "$cqLedgersRoot/packages/$package/node_modules"
+                  chmod -R u+w "$cqLedgersRoot/packages/$package/node_modules"
                 done
+                mkdir -p "$cqLedgersRoot/packages/cq-config/node_modules/@cq"
+                ln -s "$cqLedgersRoot/packages/process-control" \
+                  "$cqLedgersRoot/packages/cq-config/node_modules/@cq/process-control"
                 mkdir -p "$piExtensionsRoot/node_modules/@cq"
                 ln -s "$cqLedgersRoot/packages/process-control" \
                   "$piExtensionsRoot/node_modules/@cq/process-control"
+                ln -s "$cqLedgersRoot/packages/ledger" \
+                  "$piExtensionsRoot/node_modules/@cq/ledger"
                 # The [agent_efforts] equivalence test (D209) in
                 # cq-subagent-dispatch.test.ts imports @cq/config (test-time
                 # only — the extension itself stays copy-not-import).
@@ -1168,8 +1178,8 @@ EOF
                 while IFS= read -r testPath; do
                   set -- "$@" "$testPath"
                 done < "$testManifest"
-                if [ "$#" -ne 10 ]; then
-                  echo "expected ten Pi extension test arguments, got $#" >&2
+                if [ "$#" -ne 11 ]; then
+                  echo "expected eleven Pi extension test arguments, got $#" >&2
                   exit 1
                 fi
                 set -x
@@ -1182,7 +1192,10 @@ EOF
             };
             pi-extensions-typecheck = piExtensionsTypecheck;
             yolo-profile =
-              pkgs.runCommand "yolo-profile"
+              if pkgs.stdenv.hostPlatform.isDarwin then
+                self.checks.${system}.yolo-darwin-profile
+              else
+                pkgs.runCommand "yolo-profile"
                 {
                   nativeBuildInputs = [
                     pkgs.shellcheck
@@ -1312,17 +1325,37 @@ EOF
                   projectId = "codex-mcp-harness-selection"
                   EOF
 
+                  : > responses.jsonl
+                  coproc MCP_SERVER {
+                    env -i \
+                      HOME="$NIX_BUILD_TOP/home" \
+                      XDG_STATE_HOME="$state" \
+                      ${pkgs.lib.escapeShellArgs registrationEnvArgs} \
+                      ${registration.command} ${pkgs.lib.escapeShellArgs registration.args} --cwd "$root" \
+                      2>&2
+                  }
+                  serverReadFd="''${MCP_SERVER[0]}"
+                  serverWriteFd="''${MCP_SERVER[1]}"
+                  serverPid="$MCP_SERVER_PID"
+                  responseTimeoutSeconds=60
                   {
                     printf '%s\n' \
                       '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"codex-mcp-harness-selection","version":"1"}}}' \
                       '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_config","arguments":{"section":"planners"}}}' \
-                      '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"prepare_dispatch","arguments":{"roleId":"implement-worker","input":{"taskId":"T1627","headline":"Bind Codex preparation to the exact Codex prompt artifact","description":"Verify the materialized registration provenance.","acceptance":"Persist the exact Codex prompt digest.","worktreePath":"/tmp/wt-T1627","branch":"implement/T1627","baseCommit":"1c0405a6a3c287eab42502520ed5f2807d6d3f7b"},"idempotencyKey":"T1627-nix-codex-provenance","timeoutMs":600000,"expectedChild":{"childId":"nix-check-child","runId":"nix-check-run"}}}}'
-                  } | env -i \
-                    HOME="$NIX_BUILD_TOP/home" \
-                    XDG_STATE_HOME="$state" \
-                    ${pkgs.lib.escapeShellArgs registrationEnvArgs} \
-                    ${registration.command} ${pkgs.lib.escapeShellArgs registration.args} --cwd "$root" \
-                    > responses.jsonl
+                      '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"prepare_dispatch","arguments":{"roleId":"plan-advance","input":{"goalId":"G1627"},"idempotencyKey":"T1627-nix-codex-provenance","timeoutMs":600000,"expectedChild":{"childId":"nix-check-child","runId":"nix-check-run"}}}}'
+                  } >&"$serverWriteFd"
+                  for responseIndex in 1 2 3; do
+                    if ! IFS= read -r -t "$responseTimeoutSeconds" -u "$serverReadFd" response; then
+                      echo "MCP server emitted fewer than three responses before the 60 second deadline" >&2
+                      cat responses.jsonl >&2
+                      kill "$serverPid" 2>/dev/null || true
+                      wait "$serverPid" || true
+                      exit 1
+                    fi
+                    printf '%s\n' "$response" >> responses.jsonl
+                  done
+                  exec {serverWriteFd}>&-
+                  wait "$serverPid"
 
                   planner_payload="$(
                     ${pkgs.jq}/bin/jq -r '
@@ -1337,7 +1370,7 @@ EOF
                     ' responses.jsonl
                   )"
                   expected_prompt_digest="$(${pkgs.coreutils}/bin/sha256sum \
-                    ${codexPromptRoot}/roles/implement-worker.md | ${pkgs.coreutils}/bin/cut -d ' ' -f 1)"
+                    ${codexPromptRoot}/roles/plan-advance.md | ${pkgs.coreutils}/bin/cut -d ' ' -f 1)"
                   ${pkgs.jq}/bin/jq -e '
                     .command == ${builtins.toJSON registration.command}
                     and .args == [

@@ -126,7 +126,7 @@ in
             --set CQ_PROMPT_ROOT ${claudePromptRoot}
         '';
       };
-      plugins = lib.mkIf cfg.openaiCodexPlugin.enable {
+      plugins = lib.optionalAttrs cfg.openaiCodexPlugin.enable {
         codex = "${codexPluginCc}/plugins/codex";
       };
       settings = {

@@ -78,7 +78,9 @@ let
     ];
   };
 
-  evaluated = evaluate { };
+  evaluated = evaluate {
+    config.smind.hm.dev.llm.openaiCodexPlugin.enable = true;
+  };
   disabledEvaluation = evaluate {
     config.smind.hm.dev.llm.openaiCodexPlugin.enable = false;
   };
@@ -130,12 +132,12 @@ pkgs.runCommand "claude-prompt-home-check"
     ${lib.concatMapStringsSep "\n" checkRole promptCatalog}
 
     test ${toString (builtins.length promptCatalog)} -eq 25
-    test ${toString commandCount} -eq 15
+    test ${toString commandCount} -eq 16
     test ${toString agentCount} -eq 9
     test ${lib.escapeShellArg claudeConfig.package.promptSurface} = claude
     test ${lib.escapeShellArg (toString claudeConfig.package.promptRoot)} = ${lib.escapeShellArg (toString claudePromptRoot)}
-    test ${toString (builtins.length claudeConfig.plugins)} -eq 1
-    test ${toString (builtins.length disabledClaudeConfig.plugins)} -eq 0
+    test ${toString (builtins.length (builtins.attrNames claudeConfig.plugins))} -eq 1
+    test ${toString (builtins.length (builtins.attrNames disabledClaudeConfig.plugins))} -eq 0
     rg -q 'CQ_PROMPT_SURFACE.*claude' ${claudeConfig.package}/bin/claude
     rg -q ${lib.escapeShellArg (toString claudePromptRoot)} ${claudeConfig.package}/bin/claude
     test "$(find "$out/home/${lib.removePrefix "${homeDirectory}/" configDir}/commands/cq" -type f -name '*.md' | wc -l)" -eq ${toString commandCount}

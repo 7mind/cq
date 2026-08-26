@@ -255,10 +255,18 @@ async function readProcessGroup(pid: number): Promise<number> {
     }
     return Number.parseInt(processGroup, 10);
   }
-  const processGroup = spawnSync("ps", ["-o", "pgid=", "-p", String(pid)], {
-    encoding: "utf8",
-  });
-  if (processGroup.status !== 0 || processGroup.stdout.trim() === "") {
+  const configuredHelper = process.env["CQ_PROCESS_IDENTITY_HELPER"];
+  const helper =
+    configuredHelper === undefined || configuredHelper === "" ? null : configuredHelper;
+  const processGroup =
+    helper === null
+      ? spawnSync("ps", ["-o", "pgid=", "-p", String(pid)], { encoding: "utf8" })
+      : spawnSync(helper, ["--process-group", String(pid)], { encoding: "utf8" });
+  if (
+    processGroup.status !== 0 ||
+    typeof processGroup.stdout !== "string" ||
+    processGroup.stdout.trim() === ""
+  ) {
     throw new Error(`could not resolve process group for ${String(pid)}`);
   }
   return Number.parseInt(processGroup.stdout.trim(), 10);

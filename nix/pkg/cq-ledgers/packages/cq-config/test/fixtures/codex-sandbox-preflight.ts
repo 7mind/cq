@@ -40,13 +40,14 @@ if (argv[0] === "sandbox") {
     process.exit(1);
   }
   if (mode === "broken-tmpdir") {
+    const brokenTmpdir = process.platform === "darwin" ? "/dev/shm" : "/tmp";
     process.stdout.write(
       `${JSON.stringify({
         pipeStdout: "1\n",
         pipeStatus: 0,
         pipeError: null,
-        tmpdir: "/tmp",
-        mkdtemp: "/tmp/cq-sandbox-preflight-fake",
+        tmpdir: brokenTmpdir,
+        mkdtemp: `${brokenTmpdir}/cq-sandbox-preflight-fake`,
       })}\n`,
     );
     process.exit(1);
