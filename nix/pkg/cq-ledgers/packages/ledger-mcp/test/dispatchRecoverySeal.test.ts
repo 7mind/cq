@@ -313,7 +313,6 @@ describe("protected current dispatch-recovery capture", () => {
     });
     const consumedPass = authenticatedConsumedResult("pass", { randomSeed: 41 });
     const consumedFail = authenticatedConsumedResult("fail", {
-      collapse: false,
       randomSeed: 73,
     });
     const rows = [predecessor, consumedPass.row, consumedFail.row];

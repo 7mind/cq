@@ -315,7 +315,8 @@ export async function captureCurrentRecoverySeal(
   for (let attempt = 0; attempt < SNAPSHOT_RETRY_LIMIT; attempt += 1) {
     const existing = await deps.journal.read(coordinates.taskId);
     const rows = await deps.snapshot();
-    let includeContinuationTombstones = existing?.version !== 1;
+    let includeContinuationTombstones =
+      existing?.state === "committed" ? existing.version !== 1 : true;
     let snapshot = lineageSnapshot(rows, coordinates.binding, includeContinuationTombstones);
     assertNoActiveGeneration(snapshot);
     let source = selectStrictMaximalRecoverySource(
