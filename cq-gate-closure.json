@@ -96,7 +96,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/dispatchRecoveryStatus.test.ts",
-      "sha256": "dc1827d5092d6e1afe6bba21260623a2c15886782d24eac8598e8a8be3e937d0",
+      "sha256": "0f0745047e7ebf07779fb25d323ddd16357057a57afe22e99633b7334a241b24",
       "targets": ["nix/pkg/cq-ledgers/packages/cq-cli/src/dispatchRecovery.ts"]
     },
     {
