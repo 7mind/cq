@@ -420,7 +420,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/dispatchRecoverySeal.test.ts",
-      "sha256": "5d1d726aee6a264af78a4d306b39b0b42ce8e33c638bd41215b9489ce8ecac55",
+      "sha256": "564a0310dfe3a24772ace5cea99da7ecdb80f723968d1204471277665b4b6f10",
       "targets": ["nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/legacy-aborted-attestation-no-overlays.json"]
     },
     {
@@ -1398,7 +1398,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/currentRecoverySeal.ts",
-      "sha256": "eba978098a4d1f5c4468f77bdb00b19901c45e7b8560b882b8e8c1104c6c7eb4",
+      "sha256": "37b5be20e50d332b437958c4721fef2421b831a3c549cf20b3ce44a640314876",
       "targets": []
     },
     {
