@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -78,7 +78,6 @@ for (const factory of factories) {
         lineageMaximumGeneration: 19,
         snapshotDigest: committed.snapshotDigest,
         liveTip: committed.seal.seed.liveTip,
-        source: committed.seal.seed.source,
         sealReference: committed.seal.sealReference,
         sealDigest: committed.seal.sealDigest,
         seal: committed.seal,
@@ -125,7 +124,7 @@ test("every role, input, Git and generation coordinate is authenticated by the s
       seal.seed.liveTip = "0".repeat(40);
     },
     (seal) => {
-      seal.seed.source = { kind: "aborted", version: 1, abortReason: "parent-lost" };
+      seal.seed.sourceAbortReason = "parent-lost";
     },
     (seal) => {
       seal.seed.overlays = [{ overlayId: "changed", data: {} }];
@@ -238,4 +237,29 @@ test("committed status rejects every projected-field and embedded-seal substitut
     mutate(candidate);
     expect(() => parseCurrentRecoveryStatus(candidate)).toThrow();
   }
+});
+
+test("the filesystem adapter reads an authenticated pre-source v1 journal and projects its v1 status", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cq-current-recovery-v1-"));
+  roots.push(root);
+  const legacy = committedJournal();
+  const directory = join(root, "current-recovery-seals");
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, `${RECOVERY_TASK}.json`), `${JSON.stringify(legacy)}\n`, "utf8");
+
+  const store = new FsCurrentRecoverySealJournalStore(root);
+  expect(await store.read(RECOVERY_TASK)).toEqual(legacy);
+  expect(await currentRecoveryStatus(store, RECOVERY_TASK)).toEqual({
+    kind: "cq-current-recovery-status",
+    version: 1,
+    taskId: RECOVERY_TASK,
+    state: "committed",
+    selectedSourceHandle: legacy.seal.seed.selectedSourceHandle,
+    lineageMaximumGeneration: legacy.seal.seed.lineageMaximumGeneration,
+    snapshotDigest: legacy.snapshotDigest,
+    liveTip: legacy.seal.seed.liveTip,
+    sealReference: legacy.seal.sealReference,
+    sealDigest: legacy.seal.sealDigest,
+    seal: legacy.seal,
+  });
 });

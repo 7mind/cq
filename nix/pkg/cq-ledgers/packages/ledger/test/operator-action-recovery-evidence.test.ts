@@ -360,7 +360,6 @@ function statusOutput(state: "provisional" | "committed"): string {
     lineageMaximumGeneration: journal.seal.seed.lineageMaximumGeneration,
     snapshotDigest: journal.snapshotDigest,
     liveTip: journal.seal.seed.liveTip,
-    source: journal.seal.seed.source,
   };
   return JSON.stringify(
     CurrentRecoveryStatusSchema.parse(

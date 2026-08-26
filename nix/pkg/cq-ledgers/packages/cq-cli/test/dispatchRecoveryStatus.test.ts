@@ -50,7 +50,6 @@ describe("cq dispatch-recovery status", () => {
       lineageMaximumGeneration: journal.seal.seed.lineageMaximumGeneration,
       snapshotDigest: journal.snapshotDigest,
       liveTip: journal.seal.seed.liveTip,
-      source: journal.seal.seed.source,
       sealReference: journal.seal.sealReference,
       sealDigest: journal.seal.sealDigest,
       seal: journal.seal,
@@ -79,7 +78,6 @@ describe("cq dispatch-recovery status", () => {
       lineageMaximumGeneration: journal.seal.seed.lineageMaximumGeneration,
       snapshotDigest: journal.snapshotDigest,
       liveTip: journal.seal.seed.liveTip,
-      source: journal.seal.seed.source,
       updatedAt: journal.writtenAt,
     });
 

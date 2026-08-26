@@ -1,6 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
-import { attestationRowDigest, rehydrateAttestationRow, type AttestationRow } from "@cq/config";
+import {
+  DISPATCH_OVERLAY_REGISTRY,
+  FakeDispatchClock,
+  InMemoryAttestationStore,
+  attestationRowDigest,
+  claimParentGate,
+  collapseAttestationEnvelope,
+  completeParentGate,
+  confirmDispatchCompletion,
+  prepareDispatch,
+  provenanceBindingOf,
+  rehydrateAttestationRow,
+  sequentialDispatchRandomBytes,
+  storeDispatchResult,
+  type AttestationRow,
+  type DispatchJSONValue,
+} from "@cq/config";
 import {
   InMemoryCurrentRecoverySealJournalStore,
   PLAN_FINALIZED_MANIFEST_FIELD,
@@ -16,6 +32,8 @@ import {
 import {
   RECOVERY_BINDING,
   RECOVERY_ATTESTATION,
+  RECOVERY_BASE,
+  RECOVERY_INPUT,
   RECOVERY_LATER,
   RECOVERY_NOW,
   RECOVERY_RECEIPTS,
@@ -31,6 +49,133 @@ const coordinates = {
   taskDigest: "b".repeat(64),
   finalizedManifestDigest: "c".repeat(64),
 } as const;
+
+function authenticatedCollapsedConsumedResult(status: "pass" | "fail") {
+  const namespace = { backend: "xdg" as const, projectKey: "project" };
+  const clock = new FakeDispatchClock(RECOVERY_NOW);
+  const store = new InMemoryAttestationStore(namespace);
+  const prepared = prepareDispatch(
+    {
+      namespace,
+      roleId: "implement-worker",
+      surface: "codex",
+      input: RECOVERY_INPUT,
+      idempotencyKey: "D361-collapsed-consumed-fail",
+      timeoutMs: 600_000,
+      registry: DISPATCH_OVERLAY_REGISTRY,
+      promptDigest: "8".repeat(64),
+      catalogHash: "9".repeat(64),
+      expectedChild: { childId: "child", runId: "run" },
+      gitEffectBinding: RECOVERY_BINDING,
+    },
+    { store, now: clock.now, randomBytes: sequentialDispatchRandomBytes(17) },
+  );
+  if (!prepared.accepted) throw new Error(`fixture prepare rejected: ${prepared.detail}`);
+  const handle = prepared.prepared;
+  const receipts = RECOVERY_RECEIPTS.map((receipt) => ({
+    ...receipt,
+    attestationId: handle.attestationId,
+    generation: handle.generation,
+  }));
+  const output = (status === "fail"
+    ? {
+        taskId: RECOVERY_TASK,
+        status,
+        resultCommit: null,
+        branch: RECOVERY_BINDING.branch,
+        actualWorktreePath: RECOVERY_BINDING.worktreePath,
+        filesTouched: [],
+        checkSummary: "controlled consumed failure",
+        summary: "the trusted parent captured the failed output",
+        blockedReason: "controlled D361 reproduction",
+        baseVerification: {
+          status: "unresolvable",
+          reason: "base-missing",
+          baseCommit: null,
+          headCommit: null,
+        },
+      }
+    : {
+        taskId: RECOVERY_TASK,
+        status,
+        resultCommit: RECOVERY_TIP,
+        branch: RECOVERY_BINDING.branch,
+        actualWorktreePath: RECOVERY_BINDING.worktreePath,
+        filesTouched: ["file.txt"],
+        gitReceipts: receipts,
+        checkSummary: "controlled consumed pass",
+        summary: "the trusted parent captured the passing output",
+        baseVerification: {
+          status: "verified",
+          relation: "descendant",
+          baseCommit: RECOVERY_BASE,
+          headCommit: RECOVERY_TIP,
+        },
+      }) as DispatchJSONValue;
+  const stored = storeDispatchResult(
+    {
+      resultCapability: handle.resultCapability,
+      output,
+    },
+    { store, now: clock.now },
+  );
+  if (stored.state === "aborted") {
+    throw new Error(`fixture result rejected: ${JSON.stringify(stored.result)}`);
+  }
+  if (handle.parentGateCapability === undefined) {
+    throw new Error("fixture did not receive parent-gate authority");
+  }
+  const claimed = claimParentGate(
+    {
+      attestationId: handle.attestationId,
+      generation: handle.generation,
+      parentGateCapability: handle.parentGateCapability,
+    },
+    { store, now: clock.now },
+  );
+  if (claimed.state !== "gate-running") throw new Error("fixture parent gate did not stage");
+  completeParentGate(
+    {
+      attestationId: handle.attestationId,
+      generation: handle.generation,
+      parentGateCapability: handle.parentGateCapability,
+      gateEpoch: claimed.gateEpoch,
+      output:
+        status === "pass"
+          ? ({ ...(output as Record<string, DispatchJSONValue>), gateDurationMs: 1 } as DispatchJSONValue)
+          : output,
+    },
+    { store, now: clock.now },
+  );
+  clock.set(RECOVERY_LATER);
+  confirmDispatchCompletion(
+    {
+      namespace,
+      attestationId: handle.attestationId,
+      generation: handle.generation,
+      nativeCompletion: {
+        kind: "native-completion",
+        actor: "trusted-parent",
+        childId: "child",
+        runId: "run",
+        completedAt: RECOVERY_LATER,
+      },
+      expectedProvenance: provenanceBindingOf(handle),
+      continuationContext: { liveTip: RECOVERY_TIP, gitReceipts: receipts },
+    },
+    { store, now: clock.now },
+  );
+  const consumed = store.rows()[0];
+  if (consumed === undefined || consumed.kind !== "envelope") {
+    throw new Error("fixture did not retain a consumed envelope");
+  }
+  const collapsed = collapseAttestationEnvelope(consumed);
+  const body = JSON.stringify(collapsed);
+  return {
+    receipts,
+    row: rehydrateAttestationRow(namespace, body, attestationRowDigest(collapsed)),
+  };
+}
 
 describe("protected current dispatch-recovery capture", () => {
   test("task evidence requires membership in the exact finalized manifest", () => {
@@ -123,6 +268,7 @@ describe("protected current dispatch-recovery capture", () => {
       now: () => RECOVERY_NOW,
     });
 
+    if (seal.version !== 2) throw new Error("consumed-fail source did not create a v2 seal");
     expect(seal.seed.selectedSourceHandle.generation).toBe(3);
     expect(seal.seed.source).toEqual({ kind: "consumed-fail", version: 1, status: "fail" });
     expect(await currentRecoveryStatus(journal, RECOVERY_TASK)).toMatchObject({
@@ -166,6 +312,48 @@ describe("protected current dispatch-recovery capture", () => {
         }),
       ).rejects.toMatchObject({ reason: "source-not-found" });
     }
+  });
+
+  test("seals an authenticated consumed-fail source after collapse and storage rehydration", async () => {
+    const fixture = authenticatedCollapsedConsumedResult("fail");
+    expect(fixture.row.kind).toBe("tombstone");
+
+    const seal = await captureCurrentRecoverySeal(coordinates, {
+      journal: new InMemoryCurrentRecoverySealJournalStore(),
+      snapshot: async () => [fixture.row],
+      resolveReceipts: async () => fixture.receipts,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => RECOVERY_NOW,
+    });
+
+    if (seal.version !== 2) throw new Error("collapsed consumed-fail source did not create v2");
+    expect(seal.sealReference).toMatch(/^cq-current-recovery-seal:v2:[0-9a-f]{64}$/u);
+    expect(seal.seed).not.toHaveProperty("inputRecipe");
+    expect(seal.seed).not.toHaveProperty("promptProvenance");
+    expect(seal.seed).not.toHaveProperty("overlays");
+    expect(seal.seed.selectedSourceHandle).toEqual({
+      attestationId: fixture.row.attestationId,
+      generation: fixture.row.generation,
+    });
+    expect(seal.seed.source).toEqual({ kind: "consumed-fail", version: 1, status: "fail" });
+  });
+
+  test("a collapsed authenticated consumed pass grants no recovery source", async () => {
+    const fixture = authenticatedCollapsedConsumedResult("pass");
+    if (fixture.row.kind !== "tombstone") throw new Error("pass fixture did not collapse");
+    expect(fixture.row.dispatchContinuationBinding?.currentRecoverySource).toBeUndefined();
+
+    await expect(
+      captureCurrentRecoverySeal(coordinates, {
+        journal: new InMemoryCurrentRecoverySealJournalStore(),
+        snapshot: async () => [fixture.row],
+        resolveReceipts: async () => fixture.receipts,
+        revalidateBinding: async () => {},
+        observeLiveTip: async () => RECOVERY_TIP,
+        now: () => RECOVERY_NOW,
+      }),
+    ).rejects.toMatchObject({ reason: "source-not-found" });
   });
 
   test("a concurrent terminal generation restarts from a fresh snapshot and converges", async () => {
@@ -240,6 +428,7 @@ describe("protected current dispatch-recovery capture", () => {
       now: () => RECOVERY_NOW,
     });
 
+    if (seal.version !== 1) throw new Error("aborted source did not preserve the v1 seal");
     expect(seal.seed.overlays).toEqual(overlays.map((overlay) => ({ ...overlay })));
   });
 
@@ -265,6 +454,7 @@ describe("protected current dispatch-recovery capture", () => {
       observeLiveTip: async () => RECOVERY_TIP,
       now: () => RECOVERY_NOW,
     });
+    if (seal.version !== 1) throw new Error("legacy aborted source did not preserve v1");
     expect(seal.seed.overlays).toEqual([]);
   });
 
