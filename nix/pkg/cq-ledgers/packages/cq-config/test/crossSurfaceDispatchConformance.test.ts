@@ -702,7 +702,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     });
   }
 
-  it("T1491 sends the complete private Codex boundary request on every parent edge", () => {
+  it("T1491 renders every CodexRoleBoundaryInvocation field on every parent edge", () => {
     for (const edge of DISPATCH_EDGE_INPUTS) {
       const body = normalize(renderedOf("codex", edge.flowRoleId));
       for (const field of [
@@ -710,6 +710,10 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
         "handle:{attestationId,generation}",
         "inputCapability",
         "resultCapability",
+        "effectTargetRef",
+        "parentGateCapability?",
+        "gitChangeCapability?",
+        "gitConflictCapability?",
         "cwd",
         "ledgerCwd",
         "model",
@@ -724,8 +728,14 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       expect(body).toContain("child execution worktree");
       expect(body).toContain("capabilities off");
       expect(body).toContain("argv");
+      expect(body).toContain("canonical");
+      expect(body).toContain("identity");
       expect(body).not.toContain("{ attestationId, generation, inputCapability }");
     }
+    const implement = normalize(renderedOf("codex", "implement-worker"));
+    expect(implement).toContain("parentGateCapability");
+    expect(implement).toContain("returned by prepare_dispatch");
+    expect(implement).toContain("forward that exact parent-only capability");
   });
 
   it("T2045 binds each Codex Git role to its sole broker operation and receipt family", () => {
