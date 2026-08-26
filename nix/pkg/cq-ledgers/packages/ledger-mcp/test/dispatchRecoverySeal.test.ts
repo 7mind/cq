@@ -9,6 +9,7 @@ import {
   collapseAttestationEnvelope,
   completeParentGate,
   confirmDispatchCompletion,
+  dispatchPayloadDigest,
   prepareDispatch,
   provenanceBindingOf,
   rehydrateAttestationRow,
@@ -35,6 +36,7 @@ import {
   RECOVERY_BASE,
   RECOVERY_INPUT,
   RECOVERY_LATER,
+  RECOVERY_MIDDLE,
   RECOVERY_NOW,
   RECOVERY_RECEIPTS,
   RECOVERY_TASK,
@@ -238,38 +240,62 @@ describe("protected current dispatch-recovery capture", () => {
     );
   });
 
+  test("v1 committed status retains the legacy envelope-only lineage digest", async () => {
+    const journal = new InMemoryCurrentRecoverySealJournalStore();
+    const predecessor = abortedEnvelope({ generation: 2 });
+    await captureCurrentRecoverySeal(coordinates, {
+      journal,
+      snapshot: async () => [predecessor],
+      resolveReceipts: async () => RECOVERY_RECEIPTS,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => RECOVERY_NOW,
+    });
+    const successor = authenticatedCollapsedConsumedResult("fail");
+
+    await expect(
+      readCurrentDispatchRecoveryStatusForLineage({
+        journal,
+        taskId: RECOVERY_TASK,
+        binding: RECOVERY_BINDING,
+        liveTip: RECOVERY_TIP,
+        rows: [predecessor, successor.row],
+      }),
+    ).resolves.toMatchObject({ state: "committed", version: 1 });
+  });
+
   // Regression: D361 consumed failures used to disappear from source enumeration,
   // allowing an older aborted closure to win after the live tip had advanced.
   test("selects the consumed-fail successor whose durable receipt closure owns the live tip [Behavioral-Active Blackbox-Group]", async () => {
     const journal = new InMemoryCurrentRecoverySealJournalStore();
-    const predecessor = abortedEnvelope({ generation: 2 });
-    const successor = {
-      ...abortedEnvelope({ generation: 3 }),
-      state: "consumed" as const,
-      consumedAt: RECOVERY_LATER,
-      output: { status: "fail", blockedReason: "captured by the trusted parent" },
-      dispatchContinuationBinding: {
-        attestationId: RECOVERY_ATTESTATION,
-        generation: 3,
-        terminalDigest: String(3).padStart(64, "0"),
-        terminalAt: RECOVERY_LATER,
-        gitReceipts: RECOVERY_RECEIPTS,
-        currentRecoverySource: { kind: "consumed-fail", version: 1, status: "fail" },
-      },
-    } as never;
+    const predecessor = abortedEnvelope({
+      attestationId: `att_${"b".repeat(32)}`,
+      generation: 1,
+    });
+    const predecessorBody = JSON.stringify(predecessor);
+    const persistedPredecessor = rehydrateAttestationRow(
+      predecessor.namespace,
+      predecessorBody,
+      attestationRowDigest(predecessor),
+    );
+    const successor = authenticatedCollapsedConsumedResult("fail");
+    const predecessorReceipts = [successor.receipts[0]!];
 
     const seal = await captureCurrentRecoverySeal(coordinates, {
       journal,
-      snapshot: async () => [predecessor, successor],
+      snapshot: async () => [persistedPredecessor, successor.row],
       resolveReceipts: async (row) =>
-        row.generation === predecessor.generation ? [RECOVERY_RECEIPTS[0]!] : RECOVERY_RECEIPTS,
+        row.attestationId === predecessor.attestationId ? predecessorReceipts : successor.receipts,
       revalidateBinding: async () => {},
       observeLiveTip: async () => RECOVERY_TIP,
       now: () => RECOVERY_NOW,
     });
 
     if (seal.version !== 2) throw new Error("consumed-fail source did not create a v2 seal");
-    expect(seal.seed.selectedSourceHandle.generation).toBe(3);
+    expect(seal.seed.selectedSourceHandle).toEqual({
+      attestationId: successor.row.attestationId,
+      generation: successor.row.generation,
+    });
     expect(seal.seed.source).toEqual({ kind: "consumed-fail", version: 1, status: "fail" });
     expect(await currentRecoveryStatus(journal, RECOVERY_TASK)).toMatchObject({
       state: "committed",
@@ -354,6 +380,34 @@ describe("protected current dispatch-recovery capture", () => {
         now: () => RECOVERY_NOW,
       }),
     ).rejects.toMatchObject({ reason: "source-not-found" });
+  });
+
+  test("storage rejects a continuation whose receipt closure disagrees with its bound live tip", () => {
+    const fixture = authenticatedCollapsedConsumedResult("fail");
+    if (fixture.row.kind !== "tombstone" || fixture.row.dispatchContinuationBinding === undefined) {
+      throw new Error("failure fixture has no collapsed continuation binding");
+    }
+    const { continuationReference: _reference, ...association } =
+      fixture.row.dispatchContinuationBinding;
+    const substitutedAssociation = { ...association, liveTip: RECOVERY_MIDDLE };
+    const substituted = {
+      ...fixture.row,
+      dispatchContinuationBinding: {
+        ...substitutedAssociation,
+        continuationReference: `cq-dispatch-continuation:v1:${dispatchPayloadDigest(
+          substitutedAssociation as unknown as DispatchJSONValue,
+        )}`,
+      },
+    };
+    const body = JSON.stringify(substituted);
+
+    expect(() =>
+      rehydrateAttestationRow(
+        substituted.namespace,
+        body,
+        attestationRowDigest(substituted as AttestationRow),
+      ),
+    ).toThrow("does not end at its authenticated live tip");
   });
 
   test("a concurrent terminal generation restarts from a fresh snapshot and converges", async () => {
