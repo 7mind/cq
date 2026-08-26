@@ -394,28 +394,85 @@ describe("protected current dispatch-recovery capture", () => {
   test("committed v2 authority survives ordinary terminal-envelope collapse", async () => {
     const journal = new InMemoryCurrentRecoverySealJournalStore();
     const consumedFail = authenticatedConsumedResult("fail", { collapse: false });
-    const rows: AttestationRow[] = [consumedFail.row];
+    const predecessor = abortedEnvelope({
+      attestationId: `att_${"f".repeat(32)}`,
+      generation: 2,
+    });
+    const rows: AttestationRow[] = [predecessor, consumedFail.row];
     const deps = {
       journal,
       snapshot: async () => rows,
-      resolveReceipts: async () => consumedFail.receipts,
+      resolveReceipts: async (row: AttestationRow) =>
+        row.attestationId === predecessor.attestationId
+          ? [consumedFail.receipts[0]!]
+          : consumedFail.receipts,
       revalidateBinding: async () => {},
       observeLiveTip: async () => RECOVERY_TIP,
       now: () => RECOVERY_NOW,
     };
     const seal = await captureCurrentRecoverySeal(coordinates, deps);
     if (seal.version !== 2) throw new Error("consumed-fail source did not create v2 authority");
-    const envelope = rows[0];
-    if (envelope === undefined || envelope.kind !== "envelope") {
-      throw new Error("fixture did not retain the terminal envelope");
+    for (const [index, row] of rows.entries()) {
+      if (row.kind !== "envelope") throw new Error("fixture did not retain terminal envelopes");
+      const collapsed = collapseAttestationEnvelope(row);
+      rows[index] = rehydrateAttestationRow(
+        collapsed.namespace,
+        JSON.stringify(collapsed),
+        attestationRowDigest(collapsed),
+      );
     }
-    const collapsed = collapseAttestationEnvelope(envelope);
-    rows[0] = rehydrateAttestationRow(
-      collapsed.namespace,
-      JSON.stringify(collapsed),
-      attestationRowDigest(collapsed),
-    );
 
+    await expect(
+      readCurrentDispatchRecoveryStatusForLineage({
+        journal,
+        taskId: RECOVERY_TASK,
+        binding: RECOVERY_BINDING,
+        liveTip: RECOVERY_TIP,
+        rows,
+      }),
+    ).resolves.toMatchObject({ state: "committed", version: 2 });
+    await expect(captureCurrentRecoverySeal(coordinates, deps)).resolves.toEqual(seal);
+  });
+
+  test("v2 provisional retries preserve the pre-collapse lineage maximum", async () => {
+    const journal = new InMemoryCurrentRecoverySealJournalStore();
+    const consumedFail = authenticatedConsumedResult("fail", { collapse: false });
+    const predecessor = abortedEnvelope({
+      attestationId: `att_${"f".repeat(32)}`,
+      generation: 2,
+    });
+    const rows: AttestationRow[] = [predecessor, consumedFail.row];
+    const deps = {
+      journal,
+      snapshot: async () => rows,
+      resolveReceipts: async (row: AttestationRow) =>
+        row.attestationId === predecessor.attestationId
+          ? [consumedFail.receipts[0]!]
+          : consumedFail.receipts,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => RECOVERY_NOW,
+    };
+
+    const seal = await captureCurrentRecoverySeal(coordinates, {
+      ...deps,
+      afterProvisional: async () => {
+        for (const [index, row] of rows.entries()) {
+          if (row.kind !== "envelope") {
+            throw new Error("fixture did not retain terminal envelopes");
+          }
+          const collapsed = collapseAttestationEnvelope(row);
+          rows[index] = rehydrateAttestationRow(
+            collapsed.namespace,
+            JSON.stringify(collapsed),
+            attestationRowDigest(collapsed),
+          );
+        }
+      },
+    });
+
+    if (seal.version !== 2) throw new Error("consumed-fail source did not create v2 authority");
+    expect(seal.seed.lineageMaximumGeneration).toBe(2);
     await expect(
       readCurrentDispatchRecoveryStatusForLineage({
         journal,

@@ -143,11 +143,12 @@ function lineageSnapshot(
       return byId || left.generation - right.generation;
     });
   const digestRows = includeContinuationTombstones
-    ? lineageRows.map((row) =>
-        !isAttestationTombstone(row) && TERMINAL_STATES.has(row.state)
-          ? collapseAttestationEnvelope(row)
-          : row,
-      )
+    ? lineageRows.flatMap((row) => {
+        if (isAttestationTombstone(row) || !TERMINAL_STATES.has(row.state)) return [row];
+        return row.dispatchContinuationBinding === undefined
+          ? []
+          : [collapseAttestationEnvelope(row)];
+      })
     : lineageRows;
   return {
     rows: Object.freeze(lineageRows.map((row) => structuredClone(row))),
@@ -354,6 +355,14 @@ export async function captureCurrentRecoverySeal(
       }
     }
     const row = sourceRow(snapshot, source);
+    const authoritySource =
+      existing !== null &&
+      source.lineageMaximumGeneration < existing.seal.seed.lineageMaximumGeneration
+        ? {
+            ...source,
+            lineageMaximumGeneration: existing.seal.seed.lineageMaximumGeneration,
+          }
+        : source;
     if (
       existing?.state === "committed" &&
       existing.fence !== undefined &&
@@ -362,14 +371,14 @@ export async function captureCurrentRecoverySeal(
       const replay = sealForSource(
         coordinates,
         row,
-        source,
+        authoritySource,
         snapshot.digest,
         existing.seal.seed.capturedAt,
       );
       if (replay.sealDigest === existing.seal.sealDigest) return existing.seal;
     }
     const capturedAt = deps.now();
-    const seal = sealForSource(coordinates, row, source, snapshot.digest, capturedAt);
+    const seal = sealForSource(coordinates, row, authoritySource, snapshot.digest, capturedAt);
     const provisional =
       seal.version === 1
         ? {
@@ -446,7 +455,7 @@ export async function captureCurrentRecoverySeal(
       managedFingerprint: coordinates.binding.handleFingerprint,
       sourceAttestationId: source.selectedSourceHandle.attestationId,
       selectedSourceGeneration: source.selectedSourceHandle.generation,
-      lineageMaximumGeneration: source.lineageMaximumGeneration,
+      lineageMaximumGeneration: authoritySource.lineageMaximumGeneration,
       recoverySeedRef: seal.sealReference,
       fenceCapability: {
         scope: "dispatch-lineage-fence",
