@@ -7,8 +7,8 @@
 > gitConflictCapability?, cwd, ledgerCwd, model, reasoningEffort, sandboxMode,
 > timeoutMs }`, where `effectTargetRef` is the canonical
 > `tasks:` / `goals:` / `defects:` / `researches:` identity admitted by the
-> workset provider, never an admission capability; `cwd` is the child execution
-> worktree and `ledgerCwd` is
+> workset provider, never an admission capability; `cwd` is the child execution worktree
+> and `ledgerCwd` is
 > the parent project that owns the prepared dispatch. Keep capabilities off
 > argv.
 > The adapter supplies the packaged role body as native developer instructions,

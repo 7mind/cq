@@ -732,9 +732,9 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       expect(body).toContain("identity");
       expect(body).not.toContain("{ attestationId, generation, inputCapability }");
     }
-    const implement = normalize(renderedOf("codex", "implement-worker"));
+    const implement = normalize(renderedOf("codex", "implement/advance"));
     expect(implement).toContain("parentGateCapability");
-    expect(implement).toContain("returned by prepare_dispatch");
+    expect(implement).toContain("prepare_dispatch");
     expect(implement).toContain("forward that exact parent-only capability");
   });
 
