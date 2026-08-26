@@ -1,6 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
+  collapseAttestationEnvelope,
   dispatchPayloadDigest,
   isAttestationTombstone,
   loadConfig,
@@ -141,9 +142,16 @@ function lineageSnapshot(
             : 0;
       return byId || left.generation - right.generation;
     });
+  const digestRows = includeContinuationTombstones
+    ? lineageRows.map((row) =>
+        !isAttestationTombstone(row) && TERMINAL_STATES.has(row.state)
+          ? collapseAttestationEnvelope(row)
+          : row,
+      )
+    : lineageRows;
   return {
     rows: Object.freeze(lineageRows.map((row) => structuredClone(row))),
-    digest: dispatchPayloadDigest(lineageRows as unknown as DispatchJSONValue),
+    digest: dispatchPayloadDigest(digestRows as unknown as DispatchJSONValue),
   };
 }
 
