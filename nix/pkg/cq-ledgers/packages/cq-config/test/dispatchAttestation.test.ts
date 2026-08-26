@@ -125,6 +125,7 @@ import {
   type PrepareDispatchOutcome,
   type ResultCapability,
   type StoreDispatchResult,
+  type TrustedDispatchContinuationClaimant,
 } from "@cq/config";
 import { TEST_GIT_CONFLICT_STATE } from "./fixtures/gitConflictState.js";
 
@@ -2924,7 +2925,9 @@ describe("consumed managed-worker continuation authority", () => {
     expect(() =>
       resolve({ continuationReference: `cq-dispatch-continuation:v1:${"f".repeat(64)}` }),
     ).toThrow(DispatchContinuationError);
-    expect(() => resolve({ actor: "trusted-extension" })).toThrow(DispatchAuthorizationError);
+    expect(() =>
+      resolve({ actor: "trusted-extension" as TrustedDispatchContinuationClaimant }),
+    ).toThrow(DispatchAuthorizationError);
     for (const [field, value] of [
       ["taskId", "T999"],
       ["handleToken", "foreign-handle"],
