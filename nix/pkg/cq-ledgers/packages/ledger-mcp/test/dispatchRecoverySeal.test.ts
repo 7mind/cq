@@ -264,6 +264,34 @@ describe("protected current dispatch-recovery capture", () => {
     ).resolves.toMatchObject({ state: "committed", version: 1 });
   });
 
+  test("first v1 capture excludes an ineligible consumed-pass tombstone from its durable digest", async () => {
+    const journal = new InMemoryCurrentRecoverySealJournalStore();
+    const predecessor = abortedEnvelope({ generation: 2 });
+    const consumedPass = authenticatedCollapsedConsumedResult("pass");
+    const rows = [predecessor, consumedPass.row];
+    const deps = {
+      journal,
+      snapshot: async () => rows,
+      resolveReceipts: async () => RECOVERY_RECEIPTS,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => RECOVERY_NOW,
+    };
+
+    const seal = await captureCurrentRecoverySeal(coordinates, deps);
+    expect(seal.version).toBe(1);
+    await expect(
+      readCurrentDispatchRecoveryStatusForLineage({
+        journal,
+        taskId: RECOVERY_TASK,
+        binding: RECOVERY_BINDING,
+        liveTip: RECOVERY_TIP,
+        rows,
+      }),
+    ).resolves.toMatchObject({ state: "committed", version: 1 });
+    await expect(captureCurrentRecoverySeal(coordinates, deps)).resolves.toEqual(seal);
+  });
+
   // Regression: D361 consumed failures used to disappear from source enumeration,
   // allowing an older aborted closure to win after the live tip had advanced.
   test("selects the consumed-fail successor whose durable receipt closure owns the live tip [Behavioral-Active Blackbox-Group]", async () => {

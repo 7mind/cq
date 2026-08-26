@@ -159,6 +159,21 @@ test("seal and status schemas are closed and capture no dispatch capability", ()
       extra: true,
     }),
   ).toThrow();
+  const seed = recoverySeal().seed;
+  expect(() =>
+    CurrentRecoveryStatusSchema.parse({
+      kind: "cq-current-recovery-status",
+      version: 2,
+      taskId: RECOVERY_TASK,
+      state: "provisional",
+      selectedSourceHandle: seed.selectedSourceHandle,
+      lineageMaximumGeneration: seed.lineageMaximumGeneration,
+      snapshotDigest: seed.snapshotDigest,
+      liveTip: seed.liveTip,
+      source: { kind: "aborted", version: 1, abortReason: "parent-lost" },
+      updatedAt: seed.capturedAt,
+    }),
+  ).toThrow();
 });
 
 test("the recovery seed accepts only strict normalized overlay applications", () => {

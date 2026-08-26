@@ -314,18 +314,25 @@ export async function captureCurrentRecoverySeal(
   let beforeCommitHookRan = false;
   for (let attempt = 0; attempt < SNAPSHOT_RETRY_LIMIT; attempt += 1) {
     const existing = await deps.journal.read(coordinates.taskId);
-    const includeContinuationTombstones = existing?.version !== 1;
-    const snapshot = lineageSnapshot(
-      await deps.snapshot(),
-      coordinates.binding,
-      includeContinuationTombstones,
-    );
+    const rows = await deps.snapshot();
+    let includeContinuationTombstones = existing?.version !== 1;
+    let snapshot = lineageSnapshot(rows, coordinates.binding, includeContinuationTombstones);
     assertNoActiveGeneration(snapshot);
-    const source = selectStrictMaximalRecoverySource(
+    let source = selectStrictMaximalRecoverySource(
       coordinates.taskId,
       coordinates.liveTip,
       await sourceCandidates(snapshot, coordinates, deps),
     );
+    if (existing === null && source.source.kind === "aborted") {
+      includeContinuationTombstones = false;
+      snapshot = lineageSnapshot(rows, coordinates.binding, includeContinuationTombstones);
+      assertNoActiveGeneration(snapshot);
+      source = selectStrictMaximalRecoverySource(
+        coordinates.taskId,
+        coordinates.liveTip,
+        await sourceCandidates(snapshot, coordinates, deps),
+      );
+    }
     const row = sourceRow(snapshot, source);
     if (
       existing?.state === "committed" &&

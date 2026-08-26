@@ -38,21 +38,25 @@ export const CURRENT_RECOVERY_SOURCE_ABORT_REASONS = [
 export type CurrentRecoverySourceAbortReason =
   (typeof CURRENT_RECOVERY_SOURCE_ABORT_REASONS)[number];
 
+const abortedRecoverySourceSchema = z
+  .object({
+    kind: z.literal("aborted"),
+    version: z.literal(1),
+    abortReason: z.enum(CURRENT_RECOVERY_SOURCE_ABORT_REASONS),
+  })
+  .strict();
+
+const consumedFailureRecoverySourceSchema = z
+  .object({
+    kind: z.literal("consumed-fail"),
+    version: z.literal(1),
+    status: z.literal("fail"),
+  })
+  .strict();
+
 const currentRecoverySourceSchema = z.discriminatedUnion("kind", [
-  z
-    .object({
-      kind: z.literal("aborted"),
-      version: z.literal(1),
-      abortReason: z.enum(CURRENT_RECOVERY_SOURCE_ABORT_REASONS),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("consumed-fail"),
-      version: z.literal(1),
-      status: z.literal("fail"),
-    })
-    .strict(),
+  abortedRecoverySourceSchema,
+  consumedFailureRecoverySourceSchema,
 ]);
 
 const jsonValueSchema: z.ZodType<DispatchJSONValue> = z.lazy(() =>
@@ -161,13 +165,7 @@ const legacyRecoverySeedSchema = recoverySeedCommonSchema
 const consumedFailureRecoverySeedSchema = recoverySeedCommonSchema
   .extend({
     version: z.literal(2),
-    source: z
-      .object({
-        kind: z.literal("consumed-fail"),
-        version: z.literal(1),
-        status: z.literal("fail"),
-      })
-      .strict(),
+    source: consumedFailureRecoverySourceSchema,
   })
   .strict();
 
@@ -268,7 +266,7 @@ const provisionalStatusSchema = z
     lineageMaximumGeneration: z.number().int().positive(),
     snapshotDigest: z.string().regex(SHA256),
     liveTip: z.string().regex(FULL_COMMIT),
-    source: currentRecoverySourceSchema,
+    source: consumedFailureRecoverySourceSchema,
     updatedAt: z.string().regex(ISO_INSTANT),
   })
   .strict();
@@ -283,7 +281,7 @@ const committedStatusSchema = z
     lineageMaximumGeneration: z.number().int().positive(),
     snapshotDigest: z.string().regex(SHA256),
     liveTip: z.string().regex(FULL_COMMIT),
-    source: currentRecoverySourceSchema,
+    source: consumedFailureRecoverySourceSchema,
     sealReference: z.string().regex(CURRENT_RECOVERY_SEAL_REFERENCE_PATTERN),
     sealDigest: z.string().regex(SHA256),
     seal: CurrentRecoverySealSchema,
