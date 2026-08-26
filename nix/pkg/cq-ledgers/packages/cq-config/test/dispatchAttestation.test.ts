@@ -2662,6 +2662,29 @@ describe("consumed managed-worker continuation authority", () => {
     ).toEqual(continuation);
   });
 
+  test("a server-validated consumed failure retains recovery classification and receipt closure through collapse", () => {
+    const h = harness();
+    const p = prepared(h, { gitEffectBinding: GIT_EFFECT_BINDING });
+    storeOne(h, p, OTHER_OUTPUT);
+    confirmDispatchCompletion(confirmation(p, { continuationContext }), h.deps);
+
+    expect(envelopeOf(h, p).dispatchContinuationBinding).toMatchObject({
+      gitReceipts: continuationContext.gitReceipts,
+      currentRecoverySource: { kind: "consumed-fail", version: 1, status: "fail" },
+    });
+    h.clock.advance(TERMINAL_ENVELOPE_RETENTION_MS);
+    sweepAttestations(h.deps);
+    const collapsed = h.store.rows()[0];
+    if (collapsed === undefined || !isAttestationTombstone(collapsed)) {
+      throw new Error("expected a collapsed terminal envelope");
+    }
+    expect(collapsed.dispatchContinuationBinding?.currentRecoverySource).toEqual({
+      kind: "consumed-fail",
+      version: 1,
+      status: "fail",
+    });
+  });
+
   test("claim and successor allocation are one single-use transaction", () => {
     const h = harness();
     const first = prepared(h, { gitEffectBinding: GIT_EFFECT_BINDING });

@@ -82,6 +82,7 @@ import {
 } from "./dispatchInputValidation.js";
 import { canonicalDispatchInputBytes, DispatchRefAssemblyError } from "./dispatchRefAssembly.js";
 import {
+  DISPATCH_ABORT_REASONS,
   DISPATCH_PROTOCOL_OPERATIONS,
   type AbortDispatch,
   type AbortedDispatchResult,
@@ -992,6 +993,23 @@ export interface DispatchRecoveryContext {
 export type DispatchContinuationContext = DispatchRecoveryContext;
 
 /**
+ * Terminal source authority retained for current-recovery sealing.  The
+ * discriminator is persisted instead of rediscovering a failure from a
+ * caller-provided result after the terminal envelope has collapsed.
+ */
+export type DispatchCurrentRecoverySource =
+  | {
+      readonly kind: "aborted";
+      readonly version: 1;
+      readonly abortReason: DispatchAbortReason;
+    }
+  | {
+      readonly kind: "consumed-fail";
+      readonly version: 1;
+      readonly status: "fail";
+    };
+
+/**
  * Durable authority for one parent-lost implement-worker generation. The
  * reference is public and opaque; this server-held association is the authority.
  */
@@ -1035,6 +1053,8 @@ export interface DispatchContinuationBinding {
   readonly gitEffectBinding: DispatchGitEffectBinding;
   readonly liveTip: string;
   readonly gitReceipts: readonly DispatchGitChangeReceipt[];
+  /** Present only when the server-validated consumed worker output was a failure. */
+  readonly currentRecoverySource?: DispatchCurrentRecoverySource;
   readonly callerLineage: DispatchContinuationCallerLineage;
 }
 
@@ -1747,6 +1767,25 @@ function dispatchContinuationReferenceOf(
   )}`;
 }
 
+export function assertDispatchCurrentRecoverySource(
+  value: DispatchCurrentRecoverySource,
+  path = "currentRecoverySource",
+): DispatchCurrentRecoverySource {
+  if (value?.version !== 1) {
+    throw new AttestationContractError(`${path}.version`, "expected current-recovery source version 1");
+  }
+  if (value.kind === "aborted") {
+    if (!DISPATCH_ABORT_REASONS.includes(value.abortReason)) {
+      throw new AttestationContractError(`${path}.abortReason`, "expected one dispatch abort reason");
+    }
+    return Object.freeze({ kind: "aborted" as const, version: 1 as const, abortReason: value.abortReason });
+  }
+  if (value.kind === "consumed-fail" && value.status === "fail") {
+    return Object.freeze({ kind: "consumed-fail" as const, version: 1 as const, status: "fail" as const });
+  }
+  throw new AttestationContractError(path, "expected a recognized current-recovery source");
+}
+
 /** Validate one persisted consumed-continuation association and its opaque reference. */
 export function assertDispatchContinuationBinding(
   value: DispatchContinuationBinding,
@@ -1788,6 +1827,13 @@ export function assertDispatchContinuationBinding(
     throw new AttestationContractError(`${path}.callerLineage.actor`, "expected a trusted actor");
   }
   const child = assertChildIdentity(value.callerLineage, `${path}.callerLineage`);
+  const currentRecoverySource =
+    value.currentRecoverySource === undefined
+      ? undefined
+      : assertDispatchCurrentRecoverySource(
+          value.currentRecoverySource,
+          `${path}.currentRecoverySource`,
+        );
   const normalizedWithoutReference = Object.freeze({
     kind: "cq-dispatch-continuation-binding" as const,
     version: 1 as const,
@@ -1798,6 +1844,7 @@ export function assertDispatchContinuationBinding(
     gitEffectBinding,
     liveTip: value.liveTip,
     gitReceipts: Object.freeze([...receipts]),
+    ...(currentRecoverySource === undefined ? {} : { currentRecoverySource }),
     callerLineage: Object.freeze({ actor: value.callerLineage.actor, ...child }),
   });
   const expectedReference = dispatchContinuationReferenceOf(normalizedWithoutReference);
@@ -1935,6 +1982,16 @@ function createDispatchContinuationBinding(
   context: DispatchContinuationContext,
 ): DispatchContinuationBinding {
   const validated = createDispatchRecoveryBinding(row, terminalAt, terminalDigest, context);
+  const currentRecoverySource =
+    row.output !== null && typeof row.output === "object" && !Array.isArray(row.output)
+      ? (row.output as Readonly<Record<string, DispatchJSONValue>>)["status"] === "fail"
+        ? assertDispatchCurrentRecoverySource({
+            kind: "consumed-fail",
+            version: 1,
+            status: "fail",
+          })
+        : undefined
+      : undefined;
   const withoutReference = Object.freeze({
     kind: "cq-dispatch-continuation-binding" as const,
     version: 1 as const,
@@ -1945,6 +2002,7 @@ function createDispatchContinuationBinding(
     gitEffectBinding: validated.gitEffectBinding,
     liveTip: validated.liveTip,
     gitReceipts: validated.gitReceipts,
+    ...(currentRecoverySource === undefined ? {} : { currentRecoverySource }),
     callerLineage: Object.freeze({
       actor: proof.actor,
       childId: proof.childId,

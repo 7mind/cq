@@ -36,6 +36,7 @@ import {
   withManagedWorktreeEffectLock,
   type CurrentRecoverySeal,
   type CurrentRecoverySealJournalStore,
+  type CurrentRecoverySource,
   type CurrentRecoverySourceAbortReason,
   type CurrentRecoverySourceCandidate,
   type CurrentRecoveryStatus,
@@ -159,15 +160,27 @@ async function sourceCandidates(
 ): Promise<readonly CurrentRecoverySourceCandidate[]> {
   const candidates: CurrentRecoverySourceCandidate[] = [];
   for (const row of snapshot.rows) {
-    if (
-      row.state !== "aborted" ||
-      row.promptProvenance.roleId !== "implement-worker" ||
-      row.abortReason === undefined ||
-      !ELIGIBLE_ABORT_REASONS.has(row.abortReason) ||
-      row.terminalDigest === undefined
-    ) {
-      continue;
-    }
+    const source: CurrentRecoverySource | undefined =
+      row.state === "aborted" &&
+      row.promptProvenance.roleId === "implement-worker" &&
+      row.abortReason !== undefined &&
+      ELIGIBLE_ABORT_REASONS.has(row.abortReason)
+        ? {
+            kind: "aborted",
+            version: 1,
+            abortReason: row.abortReason as CurrentRecoverySourceAbortReason,
+          }
+        : row.state === "consumed" &&
+            row.promptProvenance.roleId === "implement-worker" &&
+            row.dispatchContinuationBinding?.attestationId === row.attestationId &&
+            row.dispatchContinuationBinding.generation === row.generation &&
+            row.dispatchContinuationBinding.terminalDigest === row.terminalDigest &&
+            row.dispatchContinuationBinding.terminalAt === row.terminalAt &&
+            row.dispatchContinuationBinding.currentRecoverySource?.kind === "consumed-fail" &&
+            row.dispatchContinuationBinding.currentRecoverySource.status === "fail"
+          ? (row.dispatchContinuationBinding.currentRecoverySource as CurrentRecoverySource)
+          : undefined;
+    if (source === undefined || row.terminalDigest === undefined) continue;
     let gitReceipts: readonly GitChangeBrokerReceipt[];
     try {
       gitReceipts = await deps.resolveReceipts(row, coordinates.liveTip);
@@ -175,13 +188,22 @@ async function sourceCandidates(
       continue;
     }
     if (gitReceipts.length === 0) continue;
+    if (
+      source.kind === "consumed-fail" &&
+      dispatchPayloadDigest(gitReceipts as unknown as DispatchJSONValue) !==
+        dispatchPayloadDigest(
+          row.dispatchContinuationBinding!.gitReceipts as unknown as DispatchJSONValue,
+        )
+    ) {
+      continue;
+    }
     candidates.push({
       selectedSourceHandle: {
         attestationId: row.attestationId,
         generation: row.generation,
       },
       lineageMaximumGeneration: lineageMaximumGeneration(snapshot),
-      sourceAbortReason: row.abortReason as CurrentRecoverySourceAbortReason,
+      source,
       sourceTerminalDigest: row.terminalDigest,
       gitReceipts,
       gitReceiptsDigest: currentRecoveryReceiptClosureDigest(gitReceipts),
@@ -213,7 +235,8 @@ function sourcesEqual(
     left.selectedSourceHandle.attestationId === right.selectedSourceHandle.attestationId &&
     left.selectedSourceHandle.generation === right.selectedSourceHandle.generation &&
     left.lineageMaximumGeneration === right.lineageMaximumGeneration &&
-    left.sourceAbortReason === right.sourceAbortReason &&
+    dispatchPayloadDigest(left.source as unknown as DispatchJSONValue) ===
+      dispatchPayloadDigest(right.source as unknown as DispatchJSONValue) &&
     left.sourceTerminalDigest === right.sourceTerminalDigest &&
     left.gitReceiptsDigest === right.gitReceiptsDigest
   );
@@ -231,7 +254,7 @@ function sealForSource(
       selectedSourceHandle: source.selectedSourceHandle,
       lineageMaximumGeneration: source.lineageMaximumGeneration,
       snapshotDigest,
-      sourceAbortReason: source.sourceAbortReason,
+      source: source.source,
       sourceTerminalDigest: source.sourceTerminalDigest,
       namespace: row.namespace,
       promptProvenance: row.promptProvenance,

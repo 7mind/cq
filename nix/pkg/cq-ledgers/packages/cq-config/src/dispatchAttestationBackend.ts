@@ -1599,10 +1599,26 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
   }
   if (Object.hasOwn(record, "dispatchContinuationBinding")) {
     try {
-      assertDispatchContinuationBinding(
+      const continuation = assertDispatchContinuationBinding(
         record["dispatchContinuationBinding"] as never,
         "storedRow.dispatchContinuationBinding",
       );
+      if (continuation.currentRecoverySource !== undefined) {
+        const envelopeFailure =
+          record["kind"] === "envelope" &&
+          record["state"] === "consumed" &&
+          typeof record["output"] === "object" &&
+          record["output"] !== null &&
+          !Array.isArray(record["output"]) &&
+          (record["output"] as Readonly<Record<string, unknown>>)["status"] === "fail";
+        const collapsedFailure =
+          record["kind"] === "tombstone" && record["terminalKind"] === "consumed";
+        if (!envelopeFailure && !collapsedFailure) {
+          throw new AttestationStorageError(
+            'stored current-recovery failure classification is not bound to a consumed fail result',
+          );
+        }
+      }
     } catch (error) {
       throw new AttestationStorageError(
         `stored attestation body has malformed "dispatchContinuationBinding": ${

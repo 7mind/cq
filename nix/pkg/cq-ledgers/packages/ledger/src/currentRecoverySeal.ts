@@ -37,6 +37,23 @@ export const CURRENT_RECOVERY_SOURCE_ABORT_REASONS = [
 export type CurrentRecoverySourceAbortReason =
   (typeof CURRENT_RECOVERY_SOURCE_ABORT_REASONS)[number];
 
+const currentRecoverySourceSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("aborted"),
+      version: z.literal(1),
+      abortReason: z.enum(CURRENT_RECOVERY_SOURCE_ABORT_REASONS),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("consumed-fail"),
+      version: z.literal(1),
+      status: z.literal("fail"),
+    })
+    .strict(),
+]);
+
 const jsonValueSchema: z.ZodType<DispatchJSONValue> = z.lazy(() =>
   z.union([
     z.string(),
@@ -118,7 +135,7 @@ const recoverySeedSchema = z
     selectedSourceHandle: dispatchHandleSchema,
     lineageMaximumGeneration: z.number().int().positive(),
     snapshotDigest: z.string().regex(SHA256),
-    sourceAbortReason: z.enum(CURRENT_RECOVERY_SOURCE_ABORT_REASONS),
+    source: currentRecoverySourceSchema,
     sourceTerminalDigest: z.string().regex(SHA256),
     namespace: namespaceSchema,
     promptProvenance: promptProvenanceSchema,
@@ -192,6 +209,7 @@ const provisionalStatusSchema = z
     lineageMaximumGeneration: z.number().int().positive(),
     snapshotDigest: z.string().regex(SHA256),
     liveTip: z.string().regex(FULL_COMMIT),
+    source: currentRecoverySourceSchema,
     updatedAt: z.string().regex(ISO_INSTANT),
   })
   .strict();
@@ -206,6 +224,7 @@ const committedStatusSchema = z
     lineageMaximumGeneration: z.number().int().positive(),
     snapshotDigest: z.string().regex(SHA256),
     liveTip: z.string().regex(FULL_COMMIT),
+    source: currentRecoverySourceSchema,
     sealReference: z.string().regex(CURRENT_RECOVERY_SEAL_REFERENCE_PATTERN),
     sealDigest: z.string().regex(SHA256),
     seal: CurrentRecoverySealSchema,
@@ -219,6 +238,7 @@ export const CurrentRecoveryStatusSchema = z.discriminatedUnion("state", [
 ]);
 
 export type CurrentRecoverySeed = z.infer<typeof recoverySeedSchema>;
+export type CurrentRecoverySource = z.infer<typeof currentRecoverySourceSchema>;
 export type CurrentRecoverySeal = z.infer<typeof CurrentRecoverySealSchema>;
 export type CurrentRecoverySealJournal = z.infer<typeof CurrentRecoverySealJournalSchema>;
 export type CurrentRecoveryStatus = z.infer<typeof CurrentRecoveryStatusSchema>;
@@ -296,7 +316,7 @@ export interface CurrentRecoverySourceCandidate {
     readonly generation: number;
   };
   readonly lineageMaximumGeneration: number;
-  readonly sourceAbortReason: CurrentRecoverySourceAbortReason;
+  readonly source: CurrentRecoverySource;
   readonly sourceTerminalDigest: string;
   readonly gitReceipts: readonly GitChangeBrokerReceipt[];
   readonly gitReceiptsDigest: string;
@@ -333,9 +353,7 @@ export function selectStrictMaximalRecoverySource(
         "lineage maximum generation precedes its selected source",
       );
     }
-    if (!CURRENT_RECOVERY_SOURCE_ABORT_REASONS.includes(candidate.sourceAbortReason)) {
-      throw new CurrentRecoverySealError("invalid", "recovery source abort reason is ineligible");
-    }
+    currentRecoverySourceSchema.parse(candidate.source);
     if (!SHA256.test(candidate.sourceTerminalDigest)) {
       throw new CurrentRecoverySealError("invalid", "recovery source terminal digest is malformed");
     }
@@ -621,6 +639,7 @@ export function currentRecoveryStatusFromJournal(
     lineageMaximumGeneration: journal.seal.seed.lineageMaximumGeneration,
     snapshotDigest: journal.snapshotDigest,
     liveTip: journal.seal.seed.liveTip,
+    source: journal.seal.seed.source,
   };
   return parseCurrentRecoveryStatus(
     journal.state === "committed"
@@ -660,7 +679,8 @@ export function parseCurrentRecoveryStatus(value: unknown): CurrentRecoveryStatu
           status.seal.seed.selectedSourceHandle.generation ||
         status.lineageMaximumGeneration !== status.seal.seed.lineageMaximumGeneration ||
         status.snapshotDigest !== status.seal.seed.snapshotDigest ||
-        status.liveTip !== status.seal.seed.liveTip)
+        status.liveTip !== status.seal.seed.liveTip ||
+        payloadDigest(status.source) !== payloadDigest(status.seal.seed.source))
     ) {
       throw new CurrentRecoverySealError(
         "invalid",
@@ -705,7 +725,7 @@ export interface CurrentRecoverySeedInput {
   readonly selectedSourceHandle: CurrentRecoverySeed["selectedSourceHandle"];
   readonly lineageMaximumGeneration: number;
   readonly snapshotDigest: string;
-  readonly sourceAbortReason: CurrentRecoverySourceAbortReason;
+  readonly source: CurrentRecoverySource;
   readonly sourceTerminalDigest: string;
   readonly namespace: AttestationNamespace;
   readonly promptProvenance: DispatchPromptProvenance;
