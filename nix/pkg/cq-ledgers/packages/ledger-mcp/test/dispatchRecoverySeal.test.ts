@@ -132,7 +132,10 @@ describe("protected current dispatch-recovery capture", () => {
   });
 
   test("rejects consumed pass, absent classification, and stale durable receipt closures", async () => {
-    const consumed = (source: unknown, receipts = RECOVERY_RECEIPTS) =>
+    const consumed = (
+      source: unknown,
+      receipts: readonly (typeof RECOVERY_RECEIPTS)[number][] = RECOVERY_RECEIPTS,
+    ) =>
       ({
         ...abortedEnvelope({ generation: 3 }),
         state: "consumed" as const,
