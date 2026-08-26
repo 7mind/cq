@@ -479,9 +479,6 @@ in
     # Darwin-only claude-code-sandbox package attribute.
     (lib.mkIf (cfg.enable && isDarwin) {
       home.packages = [
-        # Prefer Nix Git inside Seatbelt. macOS' /usr/bin/git delegates into
-        # Xcode paths outside the policy and otherwise fails with EPERM.
-        pkgs.git
         (pkgs.callPackage ../pkg/yolo-darwin/default.nix {
           claude-code-sandbox = inputs.claude-code-sandbox.packages.${system}.default;
           podmanSocketPath = cfg.podman.socketPath;
