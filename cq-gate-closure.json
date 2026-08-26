@@ -227,6 +227,18 @@
     },
     {
       "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRenderedEnvelopeBoundary.test.ts",
+      "sha256": "72305bd56ad73a7bac5bac43658e284f4b51eed3499382e13f212a0f59ad21f7",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRenderedEnvelopeBoundary.test.ts",
+      "sha256": "72305bd56ad73a7bac5bac43658e284f4b51eed3499382e13f212a0f59ad21f7",
+      "targets": []
+    },
+    {
+      "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRoleBoundary.test.ts",
       "sha256": "2f0963044393dc6a5ffa70391f1a530c98abaac43198a9395b878e8c4a844bd8",
       "targets": []
@@ -246,7 +258,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/crossSurfaceDispatchConformance.test.ts",
-      "sha256": "6d7daf01af048d54f65006308e5a909522cc859c4f4da4e99beea201dcf91230",
+      "sha256": "679166804cc38c49d1cb88d4eb006b83a8dee658a8a9e10e1758107ae704a86d",
       "targets": []
     },
     {
@@ -918,7 +930,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/crossSurfaceDispatchConformance.test.ts",
-      "sha256": "6d7daf01af048d54f65006308e5a909522cc859c4f4da4e99beea201dcf91230",
+      "sha256": "679166804cc38c49d1cb88d4eb006b83a8dee658a8a9e10e1758107ae704a86d",
       "targets": []
     },
     {
