@@ -668,6 +668,29 @@ describe("dispatch-bound Git change capability", () => {
       generation: prepared.prepared.generation,
       inputCapability: prepared.prepared.inputCapability,
     });
+    await expect(
+      capability.storeResult({
+        resultCapability: prepared.prepared.resultCapability,
+        output: {
+          taskId: "T2042",
+          status: "pass",
+          resultCommit: baseCommit,
+          branch: managed.handle.branch,
+          actualWorktreePath: managed.handle.absolutePath,
+          filesTouched: [],
+          gitReceipts: [],
+          checkSummary: "REAL_CHECK_EXIT=0",
+          summary: "no protected or current receipts",
+          gateDurationMs: 1,
+          baseVerification: {
+            status: "verified",
+            relation: "equal",
+            baseCommit,
+            headCommit: baseCommit,
+          },
+        },
+      }),
+    ).rejects.toThrow("broker-capable worker result requires a non-empty receipt chain");
     await fs.writeFile(path.join(managed.handle.absolutePath, "file.txt"), "after\n");
     if (capability.gitCommit === undefined) throw new Error("git_commit was not wired");
     const receipt = await capability.gitCommit({
