@@ -78,6 +78,7 @@ for (const factory of factories) {
         lineageMaximumGeneration: 19,
         snapshotDigest: committed.snapshotDigest,
         liveTip: committed.seal.seed.liveTip,
+        source: committed.seal.seed.source,
         sealReference: committed.seal.sealReference,
         sealDigest: committed.seal.sealDigest,
         seal: committed.seal,
@@ -124,7 +125,7 @@ test("every role, input, Git and generation coordinate is authenticated by the s
       seal.seed.liveTip = "0".repeat(40);
     },
     (seal) => {
-      seal.seed.sourceAbortReason = "parent-lost";
+      seal.seed.source = { kind: "aborted", version: 1, abortReason: "parent-lost" };
     },
     (seal) => {
       seal.seed.overlays = [{ overlayId: "changed", data: {} }];

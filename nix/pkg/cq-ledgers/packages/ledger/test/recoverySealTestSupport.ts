@@ -82,7 +82,7 @@ export function recoverySeal() {
       selectedSourceHandle: { attestationId: RECOVERY_ATTESTATION, generation: 17 },
       lineageMaximumGeneration: 19,
       snapshotDigest: "d".repeat(64),
-      sourceAbortReason: "deadline-exceeded",
+      source: { kind: "aborted", version: 1, abortReason: "deadline-exceeded" },
       sourceTerminalDigest: "7".repeat(64),
       namespace: { backend: "xdg", projectKey: "project" },
       promptProvenance: {
@@ -184,7 +184,7 @@ export function sourceCandidate(input: {
       generation: input.generation,
     },
     lineageMaximumGeneration: input.lineageMaximumGeneration ?? input.generation,
-    sourceAbortReason: "deadline-exceeded" as const,
+    source: { kind: "aborted" as const, version: 1 as const, abortReason: "deadline-exceeded" as const },
     sourceTerminalDigest: "7".repeat(64),
     gitReceipts: receipts,
     gitReceiptsDigest: currentRecoveryReceiptClosureDigest(receipts),
