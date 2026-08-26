@@ -501,15 +501,8 @@ async function completeGuardedContinuation(
     throw new Error(`guarded-rebase lineage mismatch: ${JSON.stringify(injected)}`);
   }
   const inherited = input["inheritedGitReceipts"];
-  if (round === 1 && inherited !== undefined) {
-    throw new Error("a pre-rebase receipt must never be inherited across a guarded rebase");
-  }
-  if (
-    round > 1 &&
-    (inherited === undefined ||
-      JSON.stringify(inherited) !== JSON.stringify(correction.baseReceipts))
-  ) {
-    throw new Error("a guarded correction lost its exact post-rebase receipt prefix");
+  if (inherited !== undefined) {
+    throw new Error("a protected receipt prefix must never enter guarded worker input");
   }
   await fs.writeFile(
     path.join(fixture.managed.handle.absolutePath, GUARDED_FIXTURE_PATH),
@@ -549,7 +542,7 @@ async function completeGuardedContinuation(
       branch: fixture.managed.handle.branch,
       actualWorktreePath: fixture.managed.handle.absolutePath,
       filesTouched: [GUARDED_FIXTURE_PATH],
-      gitReceipts: receipts,
+      gitReceipts: [currentReceipt],
       gitLineage: {
         kind: "guarded-rebase",
         guardedRebase: context.guardedRebase,
@@ -934,9 +927,7 @@ describe("dispatch-bound Git change capability", () => {
       ...second.handle,
       inputCapability: second.prepared.inputCapability,
     });
-    expect((materialized.input as Record<string, unknown>)["inheritedGitReceipts"]).toEqual([
-      receipt,
-    ]);
+    expect((materialized.input as Record<string, unknown>)["inheritedGitReceipts"]).toBeUndefined();
     const output = {
       taskId: "T2082",
       status: "pass" as const,
@@ -944,7 +935,7 @@ describe("dispatch-bound Git change capability", () => {
       branch: managed.handle.branch,
       actualWorktreePath: managed.handle.absolutePath,
       filesTouched: ["file.txt"],
-      gitReceipts: [receipt],
+      gitReceipts: [],
       checkSummary: "trusted gate delegated to result storage",
       baseVerification: {
         status: "verified" as const,
@@ -967,17 +958,11 @@ describe("dispatch-bound Git change capability", () => {
         }),
       ).rejects.toThrow(/receipt/);
     }
-    await expect(
-      capability.storeResult({
-        resultCapability: second.prepared.resultCapability,
-        output: { ...output, filesTouched: [] } as unknown as DispatchJSONValue,
-      }),
-    ).rejects.toThrow(/filesTouched|receipt paths/);
     expect(gateRuns).toBe(0);
     await expect(
       capability.storeResult({
         resultCapability: second.prepared.resultCapability,
-        output: output as unknown as DispatchJSONValue,
+        output: { ...output, filesTouched: [] } as unknown as DispatchJSONValue,
       }),
     ).resolves.toMatchObject({ state: "gate-pending" });
     expect(gateRuns).toBe(0);
@@ -995,7 +980,7 @@ describe("dispatch-bound Git change capability", () => {
     expect(receipt.generation).toBe(first.handle.generation);
   });
 
-  test("rehydrates a prepared worker's inherited receipt prefix after a broker restart", async () => {
+  test("keeps a reloaded inherited prefix server-side and normalizes a suffix-only result", async () => {
     const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), "t2119-inherited-reload-"));
     roots.push(repositoryRoot);
     await git(repositoryRoot, ["init", "-q"]);
@@ -1082,7 +1067,7 @@ describe("dispatch-bound Git change capability", () => {
       resultCommit: firstReceipt.newHead,
       branch: managed.handle.branch,
       actualWorktreePath: managed.handle.absolutePath,
-      filesTouched: ["file.txt"],
+      filesTouched: [],
       gitReceipts: [firstReceipt],
       checkSummary: "trusted gate delegated to result storage",
       baseVerification: {
@@ -1139,9 +1124,7 @@ describe("dispatch-bound Git change capability", () => {
       ...second.handle,
       inputCapability: second.prepared.inputCapability,
     });
-    expect((inherited.input as Record<string, unknown>)["inheritedGitReceipts"]).toEqual([
-      firstReceipt,
-    ]);
+    expect((inherited.input as Record<string, unknown>)["inheritedGitReceipts"]).toBeUndefined();
     await expect(
       capability.fetchInput({
         ...second.handle,
@@ -1170,7 +1153,7 @@ describe("dispatch-bound Git change capability", () => {
     const secondOutput = {
       ...firstOutput,
       resultCommit: secondReceipt.newHead,
-      gitReceipts: [firstReceipt, secondReceipt],
+      gitReceipts: [secondReceipt],
       baseVerification: {
         ...firstOutput.baseVerification,
         headCommit: secondReceipt.newHead,
@@ -1205,7 +1188,14 @@ describe("dispatch-bound Git change capability", () => {
       }),
     ).resolves.toMatchObject({ state: "consumed" });
     const consumed = await capability.fetch(second.handle);
-    expect(consumed).toMatchObject({ state: "consumed", output: secondOutput });
+    expect(consumed).toMatchObject({
+      state: "consumed",
+      output: {
+        ...secondOutput,
+        filesTouched: ["file.txt"],
+        gitReceipts: [firstReceipt, secondReceipt],
+      },
+    });
     if (consumed.state !== "consumed") throw new Error(`unexpected state ${consumed.state}`);
     expect((consumed.output as Record<string, unknown>)["gitReceipts"]).toEqual([
       firstReceipt,
@@ -1390,9 +1380,7 @@ describe("dispatch-bound Git change capability", () => {
       ...second.handle,
       inputCapability: second.prepared.inputCapability,
     });
-    expect((materialized.input as Record<string, unknown>)["inheritedGitReceipts"]).toEqual([
-      receipt,
-    ]);
+    expect((materialized.input as Record<string, unknown>)["inheritedGitReceipts"]).toBeUndefined();
   });
 
   test("successful continuation prepare and consumed confirm replay without mutable manager state [Behavioral-Active Blackbox-GoodCommunication]", async () => {
@@ -1992,7 +1980,7 @@ describe("dispatch-bound Git change capability", () => {
           {
             label: "pre-rebase-receipt",
             output: { ...baseOutput, gitReceipts: [d334Negative.firstReceipt] },
-            error: "guarded receipt suffix must begin at the journaled rebased head",
+            error: "broker receipt suffix omits or invents a durable operation",
           },
           {
             label: "lineage-omission",

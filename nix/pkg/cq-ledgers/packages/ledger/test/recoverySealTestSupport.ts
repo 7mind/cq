@@ -88,7 +88,7 @@ export function recoverySeal(): Extract<CurrentRecoverySeal, { readonly version:
       namespace: { backend: "xdg", projectKey: "project" },
       promptProvenance: {
         roleId: "implement-worker",
-        version: 9,
+        version: 10,
         surface: "codex",
         promptDigest: "8".repeat(64),
         catalogHash: "9".repeat(64),
@@ -149,7 +149,7 @@ export function abortedEnvelope(input: {
     state,
     promptProvenance: {
       roleId: "implement-worker",
-      version: 9,
+      version: 10,
       surface: "codex",
       promptDigest: "8".repeat(64),
       catalogHash: "9".repeat(64),

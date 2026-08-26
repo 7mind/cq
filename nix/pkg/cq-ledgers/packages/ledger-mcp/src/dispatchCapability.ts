@@ -1048,10 +1048,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             ...resolvedGitEffectBinding,
             inheritedGitReceipts: journal.seal.seed.gitReceipts,
           };
-          dispatchInput = {
-            ...dispatchRecord,
-            inheritedGitReceipts: journal.seal.seed.gitReceipts as unknown as DispatchJSONValue,
-          };
         } else if (input.continuation !== undefined) {
           const startingCommit = dispatchRecord["startingCommit"];
           const baseCommitInput = dispatchRecord["baseCommit"];
@@ -1112,12 +1108,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                   ...resolvedGitEffectBinding,
                   inheritedGitReceipts: continuation.gitReceipts,
                 };
-          if (continuation.gitReceipts.length > 0) {
-            dispatchInput = {
-              ...dispatchRecord,
-              inheritedGitReceipts: continuation.gitReceipts as unknown as DispatchJSONValue,
-            };
-          }
         } else if (input.recovery !== undefined) {
           if (manifestSurface !== "codex") {
             return rejectLaunch(
@@ -1160,12 +1150,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             recovery.gitReceipts.length === 0
               ? resolvedGitEffectBinding
               : { ...resolvedGitEffectBinding, inheritedGitReceipts: recovery.gitReceipts };
-          if (recovery.gitReceipts.length > 0) {
-            dispatchInput = {
-              ...dispatchRecord,
-              inheritedGitReceipts: recovery.gitReceipts as unknown as DispatchJSONValue,
-            };
-          }
         } else if (input.reprepareOf === undefined) {
           // D332: a lineage-free prepare may only build on the tip it declares as
           // its diff base. When startingCommit has advanced past baseCommit, the
@@ -1301,12 +1285,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                 inheritedGitReceipts.length === 0
                   ? resolvedGitEffectBinding
                   : { ...resolvedGitEffectBinding, inheritedGitReceipts };
-              if (inheritedGitReceipts.length > 0) {
-                dispatchInput = {
-                  ...dispatchRecord,
-                  inheritedGitReceipts: inheritedGitReceipts as unknown as DispatchJSONValue,
-                };
-              }
             } else {
               // Later correction on a guarded lineage: the verified bridge is
               // carried from the prior generation's persisted binding and
@@ -1336,9 +1314,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               };
               dispatchInput = {
                 ...dispatchRecord,
-                ...(inheritedGitReceipts.length === 0
-                  ? {}
-                  : { inheritedGitReceipts: inheritedGitReceipts as unknown as DispatchJSONValue }),
                 guardedRebaseLineage: guardedRebaseLineageOf(bridge),
               };
             }
@@ -1486,7 +1461,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         throw new Error("Codex store_result exceeded its synchronous phase deadline");
       }
       const store = async (synchronousDeadlineMs: number) => {
-        const output = input.output;
+        let output = input.output;
         // An unbound dispatch has no trusted parent that could have minted this evidence.
         if (
           output !== null &&
@@ -1501,7 +1476,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         if (binding?.roleId === "implement-worker") {
           const evidence = brokerResultEvidence(output);
           if (evidence !== undefined) {
-            await withinStagingDeadline(
+            const normalized = await withinStagingDeadline(
               async () =>
                 await validateGitChangeBrokerResultEvidence(binding, evidence, {
                   ...(options.worktreeStateDir === undefined
@@ -1515,6 +1490,11 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               synchronousDeadlineMs,
               "synchronous phase",
             );
+            output = {
+              ...(output as Readonly<Record<string, DispatchJSONValue>>),
+              filesTouched: normalized.filesTouched as unknown as DispatchJSONValue,
+              gitReceipts: normalized.gitReceipts as unknown as DispatchJSONValue,
+            };
           }
         } else if (binding?.roleId === "implement-conflict-resolver") {
           await withinStagingDeadline(

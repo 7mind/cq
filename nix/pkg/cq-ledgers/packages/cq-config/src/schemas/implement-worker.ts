@@ -354,13 +354,6 @@ const inputSchema = {
       items: { type: "string" },
       description: "Prior-round reviewer criticism[] on a re-dispatch after review.",
     },
-    inheritedGitReceipts: {
-      type: "array",
-      minItems: 1,
-      items: gitChangeReceiptSchema,
-      description:
-        "Server-bound immutable receipt prefix from terminal prior generations. Callers must omit it; a brokered retry prepends it unchanged to the final receipt chain without replaying Git effects.",
-    },
     guardedRebaseLineage: {
       type: "object",
       description:
@@ -424,12 +417,6 @@ const inputSchema = {
  * conditional, not an always-required field). `blockedReason` is present only
  * on fail.
  */
-/** Ordinary-arm receipt floor: a lineage-free worker reports a non-empty complete chain. */
-const ordinaryReceiptFloorArm = {
-  if: { not: { required: ["gitLineage"] } },
-  then: { properties: { gitReceipts: { minItems: 1 } } },
-} as const;
-
 /** Guarded arm: the fresh post-rebase suffix is mandatory (empty only in exact-tip mode). */
 const guardedReceiptSuffixArm = {
   if: { required: ["gitLineage"] },
@@ -484,7 +471,7 @@ const outputSchema = {
     gitReceipts: {
       type: "array",
       description:
-        "Durable dispatch-bound broker receipts retained when the worker performed brokered commits. The ordinary arm (no gitLineage) keeps a non-empty complete chain; the guarded-rebase arm reports only the fresh post-rebase suffix, which may be empty only in the server-resolved exact-tip mode.",
+        "Fresh dispatch-bound broker receipts returned to this worker generation. Both ordinary and guarded correction rounds omit the protected inherited prefix; the server reconstructs and validates the complete durable chain. The suffix may be empty when the generation performs no Git effect; the server rejects an empty complete chain.",
       items: {
         ...gitChangeReceiptSchema,
       },
@@ -588,7 +575,6 @@ const outputSchema = {
         required: ["status"],
       },
     },
-    ordinaryReceiptFloorArm,
     guardedReceiptSuffixArm,
   ],
 } as const;
@@ -613,22 +599,21 @@ export const implementWorkerStagedOutputSchema = {
       },
     },
     outputMutationTableArm,
-    ordinaryReceiptFloorArm,
     guardedReceiptSuffixArm,
   ],
 } as const;
 
 /**
  * The implement-worker per-role schema sidecar (storage-format decision 3).
- * `version: 9` (bumped from 8, T2150): the input contract gains the closed
- * server-injected `guardedRebaseLineage` bridge and the output contract gains
- * the closed `gitLineage` guarded-rebase discriminant (D334). A stale deployed
- * root rendered against the v8 contract must not be mistaken for this one.
+ * `version: 10` (bumped from 9, T2852): inherited receipts leave the worker
+ * input and every correction output carries only its fresh receipt suffix.
+ * The server reconstructs and validates the complete durable chain. A stale
+ * deployed root rendered against the v9 contract must not be mistaken for this one.
  * DISPATCHED_ROLE_VERSIONS derives this automatically; it is not hand-edited.
  */
 export const implementWorkerSidecar: RoleSchemaSidecar = {
   id: "implement-worker",
-  version: 9,
+  version: 10,
   inputSchema,
   outputSchema,
 };

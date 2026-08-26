@@ -10,7 +10,7 @@ description: Implement exactly one task in an isolated worktree, prove its guard
 
 ```yaml
 inputs:
-  - "task specification, optional advisory worktreePath, branch, verified full-SHA base, required round, authoritative starting commit, optional priorResultCommit, optional prior criticism, optional server-bound inherited Git receipts, optional server-injected guarded-rebase lineage"
+  - "task specification, optional advisory worktreePath, branch, verified full-SHA base, required round, authoritative starting commit, optional priorResultCommit, optional prior criticism, optional server-injected guarded-rebase lineage"
 outputs:
   - "one verified task commit, parent-verifiable git receipts, actualWorktreePath, required baseVerification evidence, green legacy or trusted supervised gate evidence, stored structured result, and handle-only final reply"
 ioSchema:
@@ -36,13 +36,12 @@ specification. Address every supplied prior criticism. `round` is required on
 every dispatch (zero-based). Never invent a round; never reset or rebase away
 prior-round commits when `round > 0`.
 
-When fetched input carries `inheritedGitReceipts`, treat that non-empty array as
-an immutable server-bound prefix from terminal prior generations. Initialize
-the result's `gitReceipts` with those exact entries, require its last `newHead`
-to equal `startingCommit`, and append only receipts returned by this generation's
-`git_commit` calls. Do not replay or synthesize a Git effect merely to replace
-an inherited receipt. `filesTouched` must equal the sorted union of paths from
-the complete inherited-plus-current receipt chain.
+The protected inherited receipt prefix is never placed in fetched input. Report
+in `gitReceipts` only the fresh receipts returned by this generation's
+`git_commit` calls. The server reconstructs and validates the complete durable
+chain. Do not replay or synthesize a Git effect merely to reproduce a prior
+generation's receipt. `filesTouched` must equal the sorted
+`git diff --name-only <baseCommit>..<resultCommit>` set.
 
 When fetched input carries `guardedRebaseLineage`, the dispatch is a
 guarded-rebase continuation: the server resolved the opaque
@@ -123,8 +122,10 @@ path union.
    gitlinks, undeclared paths, inferred renames, or a manifest assembled before
    the final byte/mode measurement. Retry a lost response with the exact same
    operation id and request; retain the returned receipt verbatim in
-   `gitReceipts`. A broker-capable passing result requires the complete,
-   non-empty receipt chain in commit order. A changed request requires a new
+   `gitReceipts`. A broker-capable passing result reports this generation's
+   fresh receipt suffix in commit order; it may be empty when this generation
+   performed no Git effect and protected prior receipts already form the
+   complete chain. A changed request requires a new
    operation id.
 
    **Early skeleton write (load-bearing durability).** The first substantive

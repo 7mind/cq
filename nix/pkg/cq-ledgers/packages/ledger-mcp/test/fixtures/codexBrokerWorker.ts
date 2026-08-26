@@ -142,13 +142,9 @@ const taskId = String(input["taskId"]);
 const branch = String(input["branch"]);
 const round = Number(input["round"]);
 const inheritedGitReceipts = input["inheritedGitReceipts"];
-if (
-  inheritedGitReceipts !== undefined &&
-  (!Array.isArray(inheritedGitReceipts) || inheritedGitReceipts.length === 0)
-) {
-  throw new Error("packaged worker received a malformed inherited receipt prefix");
+if (inheritedGitReceipts !== undefined) {
+  throw new Error("packaged worker received a protected inherited receipt prefix");
 }
-const inheritedReceipts = (inheritedGitReceipts ?? []) as Record<string, unknown>[];
 
 function directGitProbe(): { exitCode: number | null; stderr: Buffer } {
   const probe = Bun.spawnSync(
@@ -231,12 +227,6 @@ if (guardedLineageInput !== undefined) {
   });
   if (liveHead.exitCode !== 0 || liveHead.stdout.toString().trim() !== rebasedStartCommit) {
     throw new Error("guarded worktree HEAD is not the rebased start commit");
-  }
-  if (
-    inheritedReceipts.length > 0 &&
-    inheritedReceipts[0]!["oldHead"] !== rebasedStartCommit
-  ) {
-    throw new Error("guarded inherited suffix does not begin at the rebased head");
   }
   const priorResultCommit = input["priorResultCommit"];
   const guardedMode = process.env["CQ_T2151_GUARDED_MODE"];
@@ -344,9 +334,6 @@ if (guardedLineageInput !== undefined) {
     }
     if (!exactTip) {
       throw new Error("the server did not resolve the exact-tip mode for this control");
-    }
-    if (inheritedReceipts.length !== 0) {
-      throw new Error("the exact-tip bridge round carries no inherited suffix");
     }
     const directGit = directGitProbe();
     await guardedFinish(
@@ -458,7 +445,7 @@ if (guardedLineageInput !== undefined) {
         branch,
         actualWorktreePath: worktreePath,
         filesTouched: guardedFilesTouched(String(change["newHead"])),
-        gitReceipts: [...inheritedReceipts, wip, change],
+        gitReceipts: [wip, change],
         gitLineage,
         checkSummary: "canonical gate delegated to trusted result-storage boundary",
         baseVerification: {
@@ -713,13 +700,8 @@ const output = {
   resultCommit: second["newHead"],
   branch,
   actualWorktreePath: worktreePath,
-  filesTouched: [
-    ...new Set([
-      ...inheritedReceipts.flatMap((receipt) => receipt["paths"] as string[]),
-      "file.txt",
-    ]),
-  ].sort(),
-  gitReceipts: [...inheritedReceipts, first, second],
+  filesTouched: ["file.txt"],
+  gitReceipts: [first, second],
   checkSummary: "canonical gate delegated to trusted result-storage boundary",
   baseVerification: {
     status: "verified",

@@ -1149,7 +1149,7 @@ export async function validateGitChangeBrokerResultEvidence(
   authorization: DispatchBoundGitAuthorization,
   evidence: GitChangeBrokerResultEvidence,
   deps: GitChangeBrokerEvidenceDeps = {},
-): Promise<void> {
+): Promise<GitChangeBrokerResultEvidence> {
   if (evidence.resultCommit === null || !FULL_OID.test(evidence.resultCommit)) {
     throw new Error("broker receipt chain requires a full resultCommit oid");
   }
@@ -1165,12 +1165,27 @@ export async function validateGitChangeBrokerResultEvidence(
   ) {
     throw new Error("broker receipt worktree path does not match the dispatch binding");
   }
+  const inheritedReceipts = authorization.inheritedGitReceipts ?? [];
+  const currentReceipts = await committedDispatchReceipts(
+    authorization,
+    evidence.resultCommit,
+    deps,
+  );
+  if (currentReceipts.length !== evidence.gitReceipts.length) {
+    throw new Error("broker receipt suffix omits or invents a durable operation");
+  }
+  for (const [index, receipt] of evidence.gitReceipts.entries()) {
+    if (canonical(receipt) !== canonical(currentReceipts[index])) {
+      throw new Error(`broker receipt suffix entry ${index} does not match its durable journal`);
+    }
+  }
+  const durableReceipts = [...inheritedReceipts, ...currentReceipts];
   const bridge = authorization.guardedRebaseBridge;
   if (bridge === undefined) {
     if (evidence.gitLineage !== undefined) {
       throw new Error("an ordinary worker result cannot carry a guarded-rebase lineage");
     }
-    if (evidence.gitReceipts.length === 0) {
+    if (durableReceipts.length === 0) {
       throw new Error("broker-capable worker result requires a non-empty receipt chain");
     }
   } else {
@@ -1185,13 +1200,13 @@ export async function validateGitChangeBrokerResultEvidence(
     ) {
       throw new Error("guarded worker result omitted or substituted its resolved lineage");
     }
-    if (evidence.gitReceipts.length === 0) {
+    if (durableReceipts.length === 0) {
       if (evidence.resultCommit !== bridge.rebasedStartCommit || !bridge.exactTip) {
         throw new Error(
           "an empty guarded receipt suffix is authorized only by the resolved exact-tip mode",
         );
       }
-    } else if (evidence.gitReceipts[0]!.oldHead !== bridge.rebasedStartCommit) {
+    } else if (durableReceipts[0]!.oldHead !== bridge.rebasedStartCommit) {
       throw new Error("guarded receipt suffix must begin at the journaled rebased head");
     }
   }
@@ -1200,35 +1215,9 @@ export async function validateGitChangeBrokerResultEvidence(
   const runEvidenceGit = async (args: readonly string[]): Promise<GitResult> =>
     await runGit(authorization.worktreePath, args, undefined, undefined, deps.deadlineMs);
 
-  const inheritedReceipts = authorization.inheritedGitReceipts ?? [];
-  const currentReceipts = await committedDispatchReceipts(
-    authorization,
-    evidence.resultCommit,
-    deps,
-  );
-  const durableReceipts = [...inheritedReceipts, ...currentReceipts];
-  if (durableReceipts.length !== evidence.gitReceipts.length) {
-    throw new Error("broker receipt chain omits or invents a durable operation");
-  }
-  for (const [index, receipt] of evidence.gitReceipts.entries()) {
-    if (canonical(receipt) !== canonical(durableReceipts[index])) {
-      throw new Error(`broker receipt chain entry ${index} does not match its durable journal`);
-    }
-  }
-
-  const touched = [
-    ...new Set(
-      evidence.filesTouched.map((entryPath, index) =>
-        assertPath(entryPath, `filesTouched[${index}]`),
-      ),
-    ),
-  ].sort();
-  if (touched.length !== evidence.filesTouched.length) {
-    throw new Error("broker result filesTouched contains duplicate paths");
-  }
   const receiptPaths = new Set<string>();
   let previousHead: string | undefined;
-  for (const [index, receipt] of evidence.gitReceipts.entries()) {
+  for (const [index, receipt] of durableReceipts.entries()) {
     if (receipt.kind !== "cq-git-change-receipt" || receipt.version !== 1) {
       throw new Error(`broker receipt chain entry ${index} has an unsupported kind or version`);
     }
@@ -1304,7 +1293,7 @@ export async function validateGitChangeBrokerResultEvidence(
     previousHead = receipt.newHead;
   }
 
-  const first = evidence.gitReceipts[0];
+  const first = durableReceipts[0];
   const diffBaseCommit = deps.diffBaseCommit ?? authorization.baseCommit;
   if (!FULL_OID.test(diffBaseCommit)) {
     throw new Error("broker result diff base is not a full Git oid");
@@ -1320,14 +1309,10 @@ export async function validateGitChangeBrokerResultEvidence(
       throw new Error("broker receipt chain begins outside the dispatch base ancestry");
     }
   }
-  if (evidence.gitReceipts.length > 0 && previousHead !== evidence.resultCommit) {
+  if (durableReceipts.length > 0 && previousHead !== evidence.resultCommit) {
     throw new Error("broker receipt chain head does not match resultCommit");
   }
-  if (bridge === undefined) {
-    if (canonical([...receiptPaths].sort()) !== canonical(touched)) {
-      throw new Error("broker receipt paths do not match filesTouched");
-    }
-  } else if (diffBaseCommit !== bridge.ontoCommit) {
+  if (bridge !== undefined && diffBaseCommit !== bridge.ontoCommit) {
     throw new Error("guarded worker result diff base does not equal the journaled ontoCommit");
   }
   const actualResultPaths = (
@@ -1345,13 +1330,15 @@ export async function validateGitChangeBrokerResultEvidence(
     .split("\0")
     .filter(Boolean)
     .sort();
-  if (
-    actualResultPaths.length !== touched.length ||
-    actualResultPaths.some((entryPath, index) => entryPath !== touched[index])
-  ) {
-    throw new Error("broker filesTouched does not equal the actual base-to-result diff");
+  if (bridge === undefined && canonical([...receiptPaths].sort()) !== canonical(actualResultPaths)) {
+    throw new Error("broker receipt paths do not equal the actual base-to-result diff");
   }
   if ((await currentHead(authorization, deps.deadlineMs)) !== evidence.resultCommit) {
     throw new Error("broker receipt resultCommit does not match the manager-bound branch tip");
   }
+  return Object.freeze({
+    ...evidence,
+    filesTouched: Object.freeze(actualResultPaths),
+    gitReceipts: Object.freeze(durableReceipts),
+  });
 }
