@@ -199,12 +199,12 @@ describe("T894 implement-worker outputSchema", () => {
     };
   }
 
-  test("(f) the ordinary arm still rejects an empty receipt chain", () => {
+  test("(f) the ordinary arm admits an empty fresh suffix for trusted runtime validation", () => {
     const result = validateAgainstSchema(
       implementWorkerSidecar.outputSchema,
       basePassPayload({ gitReceipts: [] }),
     );
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
   });
 
   test("(f) the guarded arm accepts the empty fresh suffix in exact-tip mode", () => {
