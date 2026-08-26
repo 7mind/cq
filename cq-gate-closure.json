@@ -432,13 +432,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts",
-      "sha256": "1e6c5f30daa294461c4052881e73db99db3f2df2fcf28792612e6601650a29cd",
+      "sha256": "d98415cd8ffb1f9e1c73d3b0e4fe0159a8ba73774e6875f4fb27ae699489a74a",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts",
-      "sha256": "1e6c5f30daa294461c4052881e73db99db3f2df2fcf28792612e6601650a29cd",
+      "sha256": "d98415cd8ffb1f9e1c73d3b0e4fe0159a8ba73774e6875f4fb27ae699489a74a",
       "targets": []
     },
     {
