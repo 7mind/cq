@@ -462,6 +462,16 @@ export type TrustedDispatchActor = (typeof TRUSTED_DISPATCH_ACTORS)[number];
 
 const TRUSTED_ACTOR_SET: ReadonlySet<string> = new Set(TRUSTED_DISPATCH_ACTORS);
 
+/** The parent service is the sole claimant for managed-worker continuations. */
+export const TRUSTED_DISPATCH_CONTINUATION_CLAIMANTS = ["trusted-parent"] as const;
+
+export type TrustedDispatchContinuationClaimant =
+  (typeof TRUSTED_DISPATCH_CONTINUATION_CLAIMANTS)[number];
+
+const TRUSTED_CONTINUATION_CLAIMANT_SET: ReadonlySet<string> = new Set(
+  TRUSTED_DISPATCH_CONTINUATION_CLAIMANTS,
+);
+
 /**
  * Which authorization scope each ordinary-flow operation requires, as a Map so
  * no `Object.prototype` name resolves a scope.
@@ -1047,7 +1057,7 @@ export interface ResolvedDispatchContinuation {
 /** Server-only continuation claim carried into the allocation transaction. */
 export interface DispatchContinuationClaim {
   readonly continuationReference: string;
-  readonly actor: TrustedDispatchActor;
+  readonly actor: TrustedDispatchContinuationClaimant;
   readonly liveTip: string;
 }
 
@@ -2278,10 +2288,10 @@ function resolveGeneration(
       "expected an opaque cq-dispatch-continuation:v1 reference",
     );
   }
-  if (!TRUSTED_ACTOR_SET.has(claim.actor)) {
+  if (!TRUSTED_CONTINUATION_CLAIMANT_SET.has(claim.actor)) {
     throw new DispatchContinuationError(
       "unauthorized-lineage",
-      `untrusted continuation actor "${String(claim.actor)}"`,
+      `untrusted continuation claimant "${String(claim.actor)}"`,
     );
   }
   if (!/^[0-9a-f]{40}$/.test(claim.liveTip)) {
@@ -2301,12 +2311,6 @@ function resolveGeneration(
     throw new DispatchContinuationError(
       "already-claimed",
       "dispatch continuation has already allocated its successor generation",
-    );
-  }
-  if (association.callerLineage.actor !== claim.actor) {
-    throw new DispatchContinuationError(
-      "unauthorized-lineage",
-      "dispatch continuation caller lineage does not authorize this actor",
     );
   }
   if (
@@ -3980,7 +3984,7 @@ export function resolveDispatchRecovery(
 
 export interface DiscoverDispatchContinuationRequest {
   readonly namespace: AttestationNamespace;
-  readonly actor: TrustedDispatchActor;
+  readonly actor: TrustedDispatchContinuationClaimant;
   readonly gitEffectBinding: DispatchGitEffectBinding;
   readonly liveTip: string;
 }
@@ -3994,10 +3998,10 @@ function assertContinuationRequest(
   deps: Deps,
 ): DispatchGitEffectBinding {
   assertTrustedNamespace(request.namespace, deps, "prepare_dispatch");
-  if (!TRUSTED_ACTOR_SET.has(request.actor)) {
+  if (!TRUSTED_CONTINUATION_CLAIMANT_SET.has(request.actor)) {
     throw new DispatchAuthorizationError(
       "prepare_dispatch",
-      `untrusted continuation actor "${String(request.actor)}"`,
+      `untrusted continuation claimant "${String(request.actor)}"`,
     );
   }
   if (!/^[0-9a-f]{40}$/.test(request.liveTip)) {
@@ -4107,7 +4111,6 @@ export function discoverDispatchContinuation(
       (binding): binding is DispatchContinuationBinding =>
         binding !== undefined &&
         continuationClaimedBy(binding.continuationReference, deps) === undefined &&
-        binding.callerLineage.actor === request.actor &&
         continuationMatchesLiveBinding(binding, current, request.liveTip),
     );
   if (candidates.length === 0) {
@@ -4166,12 +4169,6 @@ export function resolveDispatchContinuation(
     throw new DispatchContinuationError(
       "already-claimed",
       "dispatch continuation has already allocated its successor generation",
-    );
-  }
-  if (binding.callerLineage.actor !== request.actor) {
-    throw new DispatchContinuationError(
-      "unauthorized-lineage",
-      "dispatch continuation caller lineage does not authorize this actor",
     );
   }
   if (!continuationMatchesLiveBinding(binding, current, request.liveTip)) {

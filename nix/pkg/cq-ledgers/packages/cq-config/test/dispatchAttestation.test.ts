@@ -2866,6 +2866,32 @@ describe("consumed managed-worker continuation authority", () => {
     ).toHaveLength(1);
   });
 
+  test("a trusted-extension completion remains attributable while its continuation is claimed by the parent", () => {
+    const h = harness();
+    const p = prepared(h, { gitEffectBinding: GIT_EFFECT_BINDING });
+    storeOne(h, p);
+    confirmDispatchCompletion(
+      confirmation(p, {
+        nativeCompletion: { ...COMPLETION, actor: "trusted-extension" },
+        continuationContext,
+      }),
+      h.deps,
+    );
+
+    expect(envelopeOf(h, p).nativeCompletion?.actor).toBe("trusted-extension");
+    expect(
+      discoverDispatchContinuation(
+        {
+          namespace: NAMESPACE,
+          actor: "trusted-parent",
+          gitEffectBinding: GIT_EFFECT_BINDING,
+          liveTip,
+        },
+        h.deps,
+      ).reprepareOf,
+    ).toEqual(handleOf(p));
+  });
+
   test("resolution denies every candidate and binding substitution without mutation", () => {
     const h = harness();
     const p = prepared(h, { gitEffectBinding: GIT_EFFECT_BINDING });
@@ -2898,7 +2924,7 @@ describe("consumed managed-worker continuation authority", () => {
     expect(() =>
       resolve({ continuationReference: `cq-dispatch-continuation:v1:${"f".repeat(64)}` }),
     ).toThrow(DispatchContinuationError);
-    expect(() => resolve({ actor: "trusted-extension" })).toThrow(DispatchContinuationError);
+    expect(() => resolve({ actor: "trusted-extension" })).toThrow(DispatchAuthorizationError);
     for (const [field, value] of [
       ["taskId", "T999"],
       ["handleToken", "foreign-handle"],
