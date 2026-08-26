@@ -42,6 +42,7 @@ import {
   RECOVERY_TASK,
   RECOVERY_TIP,
   abortedEnvelope,
+  provisionalJournal,
 } from "../../ledger/test/recoverySealTestSupport.js";
 
 const coordinates = {
@@ -52,7 +53,10 @@ const coordinates = {
   finalizedManifestDigest: "c".repeat(64),
 } as const;
 
-function authenticatedCollapsedConsumedResult(status: "pass" | "fail") {
+function authenticatedConsumedResult(
+  status: "pass" | "fail",
+  options: { readonly collapse?: boolean; readonly randomSeed?: number } = {},
+) {
   const namespace = { backend: "xdg" as const, projectKey: "project" };
   const clock = new FakeDispatchClock(RECOVERY_NOW);
   const store = new InMemoryAttestationStore(namespace);
@@ -70,7 +74,11 @@ function authenticatedCollapsedConsumedResult(status: "pass" | "fail") {
       expectedChild: { childId: "child", runId: "run" },
       gitEffectBinding: RECOVERY_BINDING,
     },
-    { store, now: clock.now, randomBytes: sequentialDispatchRandomBytes(17) },
+    {
+      store,
+      now: clock.now,
+      randomBytes: sequentialDispatchRandomBytes(options.randomSeed ?? 17),
+    },
   );
   if (!prepared.accepted) throw new Error(`fixture prepare rejected: ${prepared.detail}`);
   const handle = prepared.prepared;
@@ -171,12 +179,16 @@ function authenticatedCollapsedConsumedResult(status: "pass" | "fail") {
   if (consumed === undefined || consumed.kind !== "envelope") {
     throw new Error("fixture did not retain a consumed envelope");
   }
-  const collapsed = collapseAttestationEnvelope(consumed);
-  const body = JSON.stringify(collapsed);
+  const persisted = options.collapse === false ? consumed : collapseAttestationEnvelope(consumed);
+  const body = JSON.stringify(persisted);
   return {
     receipts,
-    row: rehydrateAttestationRow(namespace, body, attestationRowDigest(collapsed)),
+    row: rehydrateAttestationRow(namespace, body, attestationRowDigest(persisted)),
   };
+}
+
+function authenticatedCollapsedConsumedResult(status: "pass" | "fail") {
+  return authenticatedConsumedResult(status);
 }
 
 describe("protected current dispatch-recovery capture", () => {
@@ -290,6 +302,41 @@ describe("protected current dispatch-recovery capture", () => {
       }),
     ).resolves.toMatchObject({ state: "committed", version: 1 });
     await expect(captureCurrentRecoverySeal(coordinates, deps)).resolves.toEqual(seal);
+  });
+
+  test("a v1 provisional journal upgrades to v2 with tombstone-inclusive membership", async () => {
+    const journal = new InMemoryCurrentRecoverySealJournalStore();
+    await journal.put(provisionalJournal());
+    const predecessor = abortedEnvelope({
+      attestationId: `att_${"f".repeat(32)}`,
+      generation: 1,
+    });
+    const consumedPass = authenticatedConsumedResult("pass", { randomSeed: 41 });
+    const consumedFail = authenticatedConsumedResult("fail", {
+      collapse: false,
+      randomSeed: 73,
+    });
+    const rows = [predecessor, consumedPass.row, consumedFail.row];
+
+    const seal = await captureCurrentRecoverySeal(coordinates, {
+      journal,
+      snapshot: async () => rows,
+      resolveReceipts: async () => consumedFail.receipts,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => RECOVERY_NOW,
+    });
+
+    expect(seal.version).toBe(2);
+    await expect(
+      readCurrentDispatchRecoveryStatusForLineage({
+        journal,
+        taskId: RECOVERY_TASK,
+        binding: RECOVERY_BINDING,
+        liveTip: RECOVERY_TIP,
+        rows,
+      }),
+    ).resolves.toMatchObject({ state: "committed", version: 2 });
   });
 
   // Regression: D361 consumed failures used to disappear from source enumeration,

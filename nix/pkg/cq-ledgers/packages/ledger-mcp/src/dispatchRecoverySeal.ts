@@ -323,8 +323,13 @@ export async function captureCurrentRecoverySeal(
       coordinates.liveTip,
       await sourceCandidates(snapshot, coordinates, deps),
     );
-    if (existing === null && source.source.kind === "aborted") {
-      includeContinuationTombstones = false;
+    const membershipPinned = existing?.state === "committed";
+    const sourceRequiresContinuationTombstones = source.source.kind === "consumed-fail";
+    if (
+      !membershipPinned &&
+      includeContinuationTombstones !== sourceRequiresContinuationTombstones
+    ) {
+      includeContinuationTombstones = sourceRequiresContinuationTombstones;
       snapshot = lineageSnapshot(rows, coordinates.binding, includeContinuationTombstones);
       assertNoActiveGeneration(snapshot);
       source = selectStrictMaximalRecoverySource(
@@ -332,6 +337,12 @@ export async function captureCurrentRecoverySeal(
         coordinates.liveTip,
         await sourceCandidates(snapshot, coordinates, deps),
       );
+      if ((source.source.kind === "consumed-fail") !== includeContinuationTombstones) {
+        throw new CurrentRecoverySealError(
+          "snapshot-changed",
+          "recovery source and snapshot membership did not converge",
+        );
+      }
     }
     const row = sourceRow(snapshot, source);
     if (
