@@ -3,8 +3,12 @@
 > Call `prepare_dispatch` with the role's typed input first.
 > Write one JSON request to its stdin:
 > `{ roleId, handle:{attestationId,generation}, inputCapability,
-> resultCapability, gitChangeCapability?, gitConflictCapability?, cwd, ledgerCwd,
-> model, reasoningEffort, sandboxMode, timeoutMs }`, where `cwd` is the child execution worktree and `ledgerCwd` is
+> resultCapability, effectTargetRef, parentGateCapability?, gitChangeCapability?,
+> gitConflictCapability?, cwd, ledgerCwd, model, reasoningEffort, sandboxMode,
+> timeoutMs }`, where `effectTargetRef` is the canonical
+> `tasks:` / `goals:` / `defects:` / `researches:` identity admitted by the
+> workset provider, never an admission capability; `cwd` is the child execution
+> worktree and `ledgerCwd` is
 > the parent project that owns the prepared dispatch. Keep capabilities off
 > argv.
 > The adapter supplies the packaged role body as native developer instructions,

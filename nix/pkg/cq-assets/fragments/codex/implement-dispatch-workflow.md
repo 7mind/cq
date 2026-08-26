@@ -15,9 +15,13 @@
 > then call `prepare_dispatch`. The server reads the task/review narrative and
 > validates the assembled input against the role's typed `inputSchema`. Dispatch
 > `CQ_SUBAGENT` by writing the complete private request described above to the
-> adapter's stdin. Retain the prepared handle, `inputCapability`, and
-> `resultCapability`, and worker-only `gitChangeCapability`; set `cwd` to the managed worktree path and `ledgerCwd` to the
-> parent project. The child calls `fetch_dispatch_input` exactly once before
+> adapter's stdin. Retain the prepared handle, `inputCapability`,
+> `resultCapability`, and the `parentGateCapability` returned by
+> `prepare_dispatch`; forward that exact parent-only capability in the private
+> implement-worker request, alongside the exact prepared `effectTargetRef`.
+> Retain worker-only `gitChangeCapability`; set `cwd` to the managed worktree
+> path and `ledgerCwd` to the parent project. The child calls
+> `fetch_dispatch_input` exactly once before
 > work, so no parent-rendered task narrative enters the launch. Await its
 > handle-only final response after its capability-scoped `store_result`, confirm
 > the observed native completion, and call `fetch_dispatch_result` exactly once
