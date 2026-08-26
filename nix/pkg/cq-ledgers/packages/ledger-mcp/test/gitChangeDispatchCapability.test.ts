@@ -976,6 +976,27 @@ describe("dispatch-bound Git change capability", () => {
       }),
     ).resolves.toMatchObject({ state: "result-stored" });
     expect(gateRuns).toBe(1);
+    await expect(
+      capability.confirmCompletion({
+        ...second.handle,
+        nativeCompletion: {
+          kind: "native-completion",
+          actor: "trusted-parent",
+          childId: "lost-r1",
+          runId: "lost-r1",
+          completedAt: "2026-08-13T09:00:02.000Z",
+        },
+        expectedProvenance: second.prepared.promptProvenance,
+      }),
+    ).resolves.toMatchObject({ state: "consumed" });
+    await expect(capability.fetch(second.handle)).resolves.toMatchObject({
+      state: "consumed",
+      output: {
+        ...output,
+        filesTouched: ["file.txt"],
+        gitReceipts: [receipt],
+      },
+    });
     expect(await git(managed.handle.absolutePath, ["rev-parse", "HEAD"])).toBe(receipt.newHead);
     expect(receipt.generation).toBe(first.handle.generation);
   });

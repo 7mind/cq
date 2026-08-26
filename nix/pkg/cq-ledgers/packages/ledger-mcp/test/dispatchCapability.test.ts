@@ -836,7 +836,7 @@ describe("live compact-dispatch capability", () => {
         { stateDir },
       );
       if (binding === null) throw new Error("managed binding disappeared");
-      await captureCurrentRecoverySeal(
+      const seal = await captureCurrentRecoverySeal(
         {
           taskId: "T2816",
           binding,
@@ -885,6 +885,26 @@ describe("live compact-dispatch capability", () => {
         );
       }
       expect(store.snapshot()).toHaveLength(1);
+      const recovered = await capability.prepare({
+        ...request,
+        idempotencyKey: "T2816-journal-recovery",
+        recoveryPreparation: {
+          recoverySeedRef: seal.sealReference,
+          fenceCapability: {
+            scope: "dispatch-lineage-fence",
+            token: managed.handle.token,
+          },
+        },
+      });
+      if (!recovered.accepted) throw new Error(recovered.detail);
+      const recoveredInput = await capability.fetchInput({
+        ...recovered.handle,
+        inputCapability: recovered.prepared.inputCapability,
+      });
+      expect(
+        (recoveredInput.input as Readonly<Record<string, unknown>>)["inheritedGitReceipts"],
+      ).toBeUndefined();
+      await capability.abort({ ...recovered.handle, reason: "parent-lost" });
     } finally {
       await ledger.dispose();
       await fs.rm(repositoryRoot, { recursive: true, force: true });

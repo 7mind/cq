@@ -144,13 +144,17 @@ path union.
    synonyms such as `full-gate` do not qualify. A committed partial is worth
    more than an uncommitted complete deliverable. Do not defer the first write
    until the end of the turn.
-   The early WIP-skeleton commit and the non-empty new-receipt requirement are
-   exempted ONLY for the server-resolved exact-tip/no-new-commit mode of a
-   guarded-rebase continuation (`guardedRebaseLineage.exactTip === true` and
-   no change to make): then `resultCommit` must equal `rebasedStartCommit`,
-   the fresh suffix is empty, and no `git_commit` call is made at all. Any
-   guarded correction that advances the tip keeps early persistence and a
-   non-empty contiguous suffix beginning at `rebasedStartCommit`.
+   The early WIP-skeleton commit and non-empty new-receipt requirement have two
+   no-effect exemptions. First, a correction round (`round > 0`) with no
+   repository change remaining reports `resultCommit === startingCommit` and
+   an empty fresh suffix; the server accepts it only when a protected prior
+   receipt chain already reaches that exact tip. Second, the server-resolved
+   exact-tip mode of a guarded-rebase continuation
+   (`guardedRebaseLineage.exactTip === true`) likewise reports
+   `resultCommit === rebasedStartCommit`, an empty fresh suffix, and performs no
+   `git_commit` call. Never synthesize a commit solely to avoid an empty suffix.
+   Any correction that advances the tip keeps early persistence and a
+   non-empty contiguous fresh suffix.
    **Incremental persistence.** Reproduce a defect before correcting it. Match
    project conventions and do not repair unrelated faults. At natural
    checkpoints — after each measurement, probe, acceptance clause, or
