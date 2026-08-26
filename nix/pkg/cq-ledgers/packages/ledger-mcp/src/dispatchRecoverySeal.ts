@@ -120,8 +120,10 @@ function bindingMatches(
 function lineageSnapshot(
   rows: readonly AttestationRow[],
   binding: ManagedWorktreeDispatchBinding,
+  includeContinuationTombstones: boolean,
 ): RecoveryLineageSnapshot {
   const lineageRows = rows
+    .filter((row) => includeContinuationTombstones || !isAttestationTombstone(row))
     .filter((row) =>
       bindingMatches(
         isAttestationTombstone(row)
@@ -189,6 +191,7 @@ async function sourceCandidates(
             continuation.generation === row.generation &&
             continuation.terminalDigest === row.terminalDigest &&
             continuation.terminalAt === row.terminalAt &&
+            continuation.liveTip === coordinates.liveTip &&
             continuation.currentRecoverySource?.kind === "consumed-fail" &&
             continuation.currentRecoverySource.status === "fail"
           ? (continuation.currentRecoverySource as CurrentRecoverySource)
@@ -310,7 +313,13 @@ export async function captureCurrentRecoverySeal(
   let provisionalHookRan = false;
   let beforeCommitHookRan = false;
   for (let attempt = 0; attempt < SNAPSHOT_RETRY_LIMIT; attempt += 1) {
-    const snapshot = lineageSnapshot(await deps.snapshot(), coordinates.binding);
+    const existing = await deps.journal.read(coordinates.taskId);
+    const includeContinuationTombstones = existing?.version !== 1;
+    const snapshot = lineageSnapshot(
+      await deps.snapshot(),
+      coordinates.binding,
+      includeContinuationTombstones,
+    );
     assertNoActiveGeneration(snapshot);
     const source = selectStrictMaximalRecoverySource(
       coordinates.taskId,
@@ -318,7 +327,6 @@ export async function captureCurrentRecoverySeal(
       await sourceCandidates(snapshot, coordinates, deps),
     );
     const row = sourceRow(snapshot, source);
-    const existing = await deps.journal.read(coordinates.taskId);
     if (
       existing?.state === "committed" &&
       existing.fence !== undefined &&
@@ -367,7 +375,11 @@ export async function captureCurrentRecoverySeal(
         "managed worktree tip changed during recovery capture",
       );
     }
-    const reread = lineageSnapshot(await deps.snapshot(), coordinates.binding);
+    const reread = lineageSnapshot(
+      await deps.snapshot(),
+      coordinates.binding,
+      includeContinuationTombstones,
+    );
     if (reread.digest !== snapshot.digest) continue;
     assertNoActiveGeneration(reread);
     const selectedAgain = selectStrictMaximalRecoverySource(
@@ -387,7 +399,11 @@ export async function captureCurrentRecoverySeal(
         "managed worktree tip changed during recovery capture",
       );
     }
-    const finalSnapshot = lineageSnapshot(await deps.snapshot(), coordinates.binding);
+    const finalSnapshot = lineageSnapshot(
+      await deps.snapshot(),
+      coordinates.binding,
+      includeContinuationTombstones,
+    );
     if (finalSnapshot.digest !== snapshot.digest) continue;
     assertNoActiveGeneration(finalSnapshot);
     const selectedFinal = selectStrictMaximalRecoverySource(
@@ -648,7 +664,7 @@ export async function readCurrentDispatchRecoveryStatusForLineage(options: {
         "committed recovery authority no longer matches the live managed binding",
       );
     }
-    const snapshot = lineageSnapshot(options.rows, binding);
+    const snapshot = lineageSnapshot(options.rows, binding, journal.version !== 1);
     assertNoActiveGeneration(snapshot);
     if (
       snapshot.digest !== journal.snapshotDigest ||

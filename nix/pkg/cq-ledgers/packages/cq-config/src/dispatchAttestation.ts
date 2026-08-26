@@ -1735,6 +1735,12 @@ export function assertDispatchRecoveryBinding(
           { ...gitEffectBinding, inheritedGitReceipts: value.gitReceipts },
           "implement-worker",
         )?.inheritedGitReceipts ?? Object.freeze([]));
+  if (receipts.length > 0 && receipts.at(-1)?.newHead !== value.liveTip) {
+    throw new AttestationBindingError(
+      `${path}.liveTip`,
+      "recovery receipt closure does not end at its authenticated live tip",
+    );
+  }
   const normalizedWithoutReference = Object.freeze({
     kind: "cq-dispatch-recovery-binding" as const,
     version: 1 as const,
@@ -1823,6 +1829,12 @@ export function assertDispatchContinuationBinding(
           { ...gitEffectBinding, inheritedGitReceipts: value.gitReceipts },
           "implement-worker",
         )?.inheritedGitReceipts ?? Object.freeze([]));
+  if (receipts.length > 0 && receipts.at(-1)?.newHead !== value.liveTip) {
+    throw new AttestationBindingError(
+      `${path}.liveTip`,
+      "continuation receipt closure does not end at its authenticated live tip",
+    );
+  }
   if (!TRUSTED_ACTOR_SET.has(value.callerLineage?.actor)) {
     throw new AttestationContractError(`${path}.callerLineage.actor`, "expected a trusted actor");
   }
