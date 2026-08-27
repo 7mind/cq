@@ -176,9 +176,7 @@ function lineageMaximumGeneration(snapshot: RecoveryLineageSnapshot): number {
   return Math.max(...snapshot.rows.map((row) => row.generation));
 }
 
-function preCutoverConsumedFailureSource(
-  row: AttestationRow,
-): CurrentRecoverySource | undefined {
+function preCutoverConsumedFailureSource(row: AttestationRow): CurrentRecoverySource | undefined {
   if (
     isAttestationTombstone(row) ||
     row.state !== "consumed" ||
@@ -243,9 +241,7 @@ async function sourceCandidates(
       source.kind === "consumed-fail" &&
       continuation !== undefined &&
       dispatchPayloadDigest(gitReceipts as unknown as DispatchJSONValue) !==
-        dispatchPayloadDigest(
-          continuation.gitReceipts as unknown as DispatchJSONValue,
-        )
+        dispatchPayloadDigest(continuation.gitReceipts as unknown as DispatchJSONValue)
     ) {
       continue;
     }
@@ -464,10 +460,7 @@ async function journalSuccessorSource(
   }
   const detailsDigest =
     row.abortDetails === undefined ? null : dispatchPayloadDigest(row.abortDetails);
-  if (
-    row.abortDetailsDigest !== undefined &&
-    row.abortDetailsDigest !== detailsDigest
-  ) {
+  if (row.abortDetailsDigest !== undefined && row.abortDetailsDigest !== detailsDigest) {
     throw new CurrentRecoverySealError(
       "journal-conflict",
       "journal recovery successor abort details digest is invalid",
@@ -493,27 +486,23 @@ async function journalSuccessorSource(
       `journal recovery successor receipt closure is unavailable: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  const candidate = selectStrictMaximalRecoverySource(
-    coordinates.taskId,
-    coordinates.liveTip,
-    [
-      {
-        selectedSourceHandle: {
-          attestationId: row.attestationId,
-          generation: row.generation,
-        },
-        lineageMaximumGeneration: row.generation,
-        source: {
-          kind: "aborted",
-          version: 1,
-          abortReason: row.abortReason as CurrentRecoverySourceAbortReason,
-        },
-        sourceTerminalDigest: terminalDigest,
-        gitReceipts: receipts,
-        gitReceiptsDigest: currentRecoveryReceiptClosureDigest(receipts),
+  const candidate = selectStrictMaximalRecoverySource(coordinates.taskId, coordinates.liveTip, [
+    {
+      selectedSourceHandle: {
+        attestationId: row.attestationId,
+        generation: row.generation,
       },
-    ],
-  );
+      lineageMaximumGeneration: row.generation,
+      source: {
+        kind: "aborted",
+        version: 1,
+        abortReason: row.abortReason as CurrentRecoverySourceAbortReason,
+      },
+      sourceTerminalDigest: terminalDigest,
+      gitReceipts: receipts,
+      gitReceiptsDigest: currentRecoveryReceiptClosureDigest(receipts),
+    },
+  ]);
   const suffix = candidate.gitReceipts.slice(seed.gitReceipts.length);
   if (
     candidate.gitReceipts.length <= seed.gitReceipts.length ||
@@ -590,12 +579,7 @@ export async function captureCurrentRecoverySeal(
       );
       if (reread.digest !== snapshot.digest) continue;
       assertNoActiveGeneration(reread);
-      const selectedAgain = await journalSuccessorSource(
-        rereadRows,
-        existing,
-        coordinates,
-        deps,
-      );
+      const selectedAgain = await journalSuccessorSource(rereadRows, existing, coordinates, deps);
       if (selectedAgain === null || !sourcesEqual(selectedAgain, source)) continue;
       if (!beforeCommitHookRan && deps.beforeCommit !== undefined) {
         beforeCommitHookRan = true;
@@ -616,12 +600,7 @@ export async function captureCurrentRecoverySeal(
       );
       if (finalSnapshot.digest !== snapshot.digest) continue;
       assertNoActiveGeneration(finalSnapshot);
-      const selectedFinal = await journalSuccessorSource(
-        finalRows,
-        existing,
-        coordinates,
-        deps,
-      );
+      const selectedFinal = await journalSuccessorSource(finalRows, existing, coordinates, deps);
       if (selectedFinal === null || !sourcesEqual(selectedFinal, source)) continue;
       const committedAt = deps.now();
       const fence = createDispatchLineageCutoverFence({
@@ -657,9 +636,7 @@ export async function captureCurrentRecoverySeal(
       await sourceCandidates(snapshot, coordinates, deps),
     );
     const sourceRequiresContinuationTombstones = source.source.kind === "consumed-fail";
-    if (
-      includeContinuationTombstones !== sourceRequiresContinuationTombstones
-    ) {
+    if (includeContinuationTombstones !== sourceRequiresContinuationTombstones) {
       includeContinuationTombstones = sourceRequiresContinuationTombstones;
       snapshot = lineageSnapshot(rows, coordinates.binding, includeContinuationTombstones);
       assertNoActiveGeneration(snapshot);
@@ -910,9 +887,9 @@ export async function captureCurrentDispatchRecoverySeal(
                       ? {}
                       : {
                           inheritedGitReceipts: (isAttestationTombstone(row)
-                            ? row.dispatchContinuationBinding!.gitEffectBinding
-                                .inheritedGitReceipts
-                            : row.gitEffectBinding!.inheritedGitReceipts) as readonly GitChangeBrokerReceipt[],
+                            ? row.dispatchContinuationBinding!.gitEffectBinding.inheritedGitReceipts
+                            : row.gitEffectBinding!
+                                .inheritedGitReceipts) as readonly GitChangeBrokerReceipt[],
                         }),
                   },
                   tip,

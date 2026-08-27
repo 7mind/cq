@@ -525,10 +525,7 @@ function validateSealSemantics(seal: CurrentRecoverySeal): CurrentRecoverySeal {
     seed.version === 1
       ? LEGACY_RECOVERY_SEAL_REFERENCE_PREFIX
       : CURRENT_RECOVERY_SEAL_REFERENCE_PREFIX;
-  if (
-    seal.sealDigest !== sealDigest ||
-    seal.sealReference !== `${referencePrefix}${sealDigest}`
-  ) {
+  if (seal.sealDigest !== sealDigest || seal.sealReference !== `${referencePrefix}${sealDigest}`) {
     throw new CurrentRecoverySealError(
       "invalid",
       "recovery seal digest is not self-authenticating",
@@ -913,14 +910,14 @@ export function createCurrentRecoverySeed(input: CurrentRecoverySeedInput): Curr
       readonly overlays: readonly DispatchOverlayApplication[];
     };
     return legacyRecoverySeedSchema.parse({
-        ...common,
-        version: 1,
-        sourceAbortReason: legacyInput.source.abortReason,
-        promptProvenance: legacyInput.promptProvenance,
-        prepareRequestDigest: legacyInput.prepareRequestDigest,
-        inputRecipe: legacyInput.inputRecipe,
-        overlays: legacyInput.overlays,
-      });
+      ...common,
+      version: 1,
+      sourceAbortReason: legacyInput.source.abortReason,
+      promptProvenance: legacyInput.promptProvenance,
+      prepareRequestDigest: legacyInput.prepareRequestDigest,
+      inputRecipe: legacyInput.inputRecipe,
+      overlays: legacyInput.overlays,
+    });
   }
   return consumedFailureRecoverySeedSchema.parse({ ...common, version: 2, source: input.source });
 }
