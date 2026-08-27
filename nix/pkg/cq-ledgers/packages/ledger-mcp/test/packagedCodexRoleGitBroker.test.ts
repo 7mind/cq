@@ -174,6 +174,7 @@ interface PackagedReviewerMatrixRow {
 interface PackagedReviewerGateRun extends PackagedReviewerMatrixRow {
   readonly dispatch: DispatchPrepared;
   readonly input: DispatchJSONValue;
+  readonly retainedAttestation: string;
   readonly consumed: ConsumedDispatchResult;
 }
 
@@ -381,6 +382,10 @@ async function runPackagedReviewer(input: {
   expect(confirmed.state).toBe("consumed");
   const fetched = await capability.fetch(handle);
   if (fetched.state !== "consumed") throw new Error(`unexpected reviewer state ${fetched.state}`);
+  const observed = await capability.observeEvidence(handle);
+  if (observed.state !== "consumed") {
+    throw new Error(`unexpected reviewer observation ${observed.state}`);
+  }
   const capture = JSON.parse(await readFile(capturePath, "utf8")) as {
     boundary: { listedTools: string[]; sandboxMode: string; directGitDenied: boolean };
     inputEvidence: { supervised: boolean; parent: boolean };
@@ -434,7 +439,8 @@ async function runPackagedReviewer(input: {
     evidenceForwarded: reviewerMode === "sandboxed",
     fastForwardEligible: true,
     dispatch: prepared.prepared,
-    input: reviewerInput,
+    input: observed.input,
+    retainedAttestation: observed.retainedAttestation,
     consumed: fetched,
   };
 }
@@ -2169,7 +2175,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
               state: "consumed",
               input: round2Review.input,
               output: round2Review.consumed.output,
-              retainedAttestation: round2Review.dispatch.attestationId,
+              retainedAttestation: round2Review.retainedAttestation,
             };
           },
           executeExternalReview: async () => {
@@ -2177,7 +2183,15 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           },
           fetchWorker: async (dispatch) => {
             expect(dispatch).toEqual(round2.handle);
-            return { state: "consumed", output: round2.consumed.output };
+            const observation = await capability.observeEvidence(dispatch);
+            if (observation.state !== "consumed") {
+              throw new Error(`unexpected worker observation ${observation.state}`);
+            }
+            return {
+              state: "consumed",
+              input: observation.input,
+              output: observation.output,
+            };
           },
           readTaskAuthority: async (taskRef) => ({
             taskRef,
