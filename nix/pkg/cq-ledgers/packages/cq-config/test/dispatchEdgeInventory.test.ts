@@ -23,6 +23,7 @@ const EXPECTED_DISPATCH = [
   "research/advance::dispatch::research-experimenter",
   "implement/advance::dispatch::implement-worker",
   "implement/advance::dispatch::implement-reviewer",
+  "implement/advance::dispatch::implementation-auditor",
   "implement/advance::dispatch::implement-conflict-resolver",
 ] as const;
 
@@ -87,6 +88,7 @@ describe("T721 ref-first dispatch edge inventory", () => {
       "implement-conflict-resolver",
       "implement-reviewer",
       "implement-worker",
+      "implementation-auditor",
     ]);
     expect(recursionEdges().every((edge) => edge.piInline && edge.mechanism === "inline-command-recursion")).toBe(
       true,
