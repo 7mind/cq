@@ -30,11 +30,32 @@ describe("implementation evidence store adapters [Behavioral-Active Blackbox-Ato
     await contract(createInMemoryImplementationEvidenceStore());
   });
 
-  test("runs the shared contract against durable storage and survives reconstruction", async () => {
+  // regression: R1489 — protected authority was one replaceable JSON snapshot.
+  test("persists authenticated append-only records and survives reconstruction [Behavioral-Active Effectual-GoodCommunication]", async () => {
     const root = await fs.mkdtemp("/tmp/cq-t2345-evidence-");
     temporaryRoots.push(root);
-    const path = join(root, "implementation-evidence.json");
+    const path = join(root, "implementation-evidence.journal");
     await contract(createFsImplementationEvidenceStore({ path }));
+
+    const entries = (await fs.readdir(path)).sort();
+    expect(entries).toHaveLength(3);
+    const records = await Promise.all(
+      entries.map(async (entry) =>
+        JSON.parse(await fs.readFile(join(path, entry), "utf8")) as Record<string, unknown>,
+      ),
+    );
+    expect(records.map((record) => record["kind"])).toEqual([
+      "cq-implementation-evidence-journal-entry",
+      "cq-implementation-evidence-journal-entry",
+      "cq-implementation-evidence-journal-entry",
+    ]);
+    expect(records.map((record) => record["sequence"])).toEqual([1, 2, 3]);
+    expect(records.map((record) => record["priorDigest"])).toEqual([
+      null,
+      records[0]?.["digest"],
+      records[1]?.["digest"],
+    ]);
+
     const reopened = createFsImplementationEvidenceStore({ path });
     expect(Object.keys((await reopened.snapshot()).panels)).toHaveLength(1);
   });
