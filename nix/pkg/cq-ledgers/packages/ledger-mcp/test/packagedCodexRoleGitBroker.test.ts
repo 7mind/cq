@@ -382,6 +382,9 @@ async function runPackagedReviewer(input: {
   expect(confirmed.state).toBe("consumed");
   const fetched = await capability.fetch(handle);
   if (fetched.state !== "consumed") throw new Error(`unexpected reviewer state ${fetched.state}`);
+  if (capability.observeEvidence === undefined) {
+    throw new Error("packaged reviewer evidence observation is unavailable");
+  }
   const observed = await capability.observeEvidence(handle);
   if (observed.state !== "consumed") {
     throw new Error(`unexpected reviewer observation ${observed.state}`);
@@ -2183,6 +2186,9 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           },
           fetchWorker: async (dispatch) => {
             expect(dispatch).toEqual(round2.handle);
+            if (capability.observeEvidence === undefined) {
+              throw new Error("installed worker evidence observation is unavailable");
+            }
             const observation = await capability.observeEvidence(dispatch);
             if (observation.state !== "consumed") {
               throw new Error(`unexpected worker observation ${observation.state}`);
