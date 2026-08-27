@@ -25,9 +25,7 @@ const HANDLE = {
 const DISPATCH_SCRIPT = fileURLToPath(
   new URL("../scripts/codex-role-dispatch.ts", import.meta.url),
 );
-const CQ_CLI_SOURCE = fileURLToPath(
-  new URL("../../cq-cli/src/main.ts", import.meta.url),
-);
+const CQ_CLI_SOURCE = fileURLToPath(new URL("../../cq-cli/src/main.ts", import.meta.url));
 const INSTALLED_DISPATCH = process.env["CQ_TEST_CODEX_ROLE_EXECUTABLE"];
 const GIT_EXECUTABLE = process.env["CQ_TEST_GIT_EXECUTABLE"] ?? "git";
 const FAKE_CODEX_SOURCE = fileURLToPath(new URL("./codexLifecycleFake.ts", import.meta.url));
@@ -371,6 +369,16 @@ async function settleDispatchFixture(dispatch: DispatchProcess | undefined): Pro
 }
 
 describe("T1625 Codex and canonical-worktree gate lifecycle [Effectual-GoodCommunication]", () => {
+  test("the test process boundary disables inherited Git fsmonitor", () => {
+    const configured = spawnSync(
+      GIT_EXECUTABLE,
+      ["config", "--default", "false", "--get", "--bool", "core.fsmonitor"],
+      { encoding: "utf8" },
+    );
+    expect(configured.status).toBe(0);
+    expect(configured.stdout.trim()).toBe("false");
+  });
+
   test(
     "a stored-result handle with a live gate emits nothing and settles only owned groups",
     async () => {
