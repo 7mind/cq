@@ -713,6 +713,7 @@ interface ManagedWorktreeTrustedGateProjection {
   readonly worktreePath: string;
   readonly branch: string;
   readonly resultCommit: string;
+  readonly integrationBaseCommit?: string;
   readonly gateExitCode: 0;
   readonly passCount: number;
   readonly failCount: 0;
@@ -858,6 +859,8 @@ function isManagedWorktreeTrustedGateProjection(
     projection.branch === record.handle.branch &&
     typeof projection.resultCommit === "string" &&
     /^[0-9a-f]{40}$/u.test(projection.resultCommit) &&
+    (projection.integrationBaseCommit === undefined ||
+      /^[0-9a-f]{40}$/u.test(projection.integrationBaseCommit)) &&
     projection.gateExitCode === 0 &&
     Number.isSafeInteger(projection.passCount) &&
     (projection.passCount ?? 0) > 0 &&
@@ -2969,7 +2972,7 @@ async function releaseManagedWorktreeUnderEffectLock(
       candidateNames = await recoverableWipCandidateNames(
         git,
         absolutePath,
-        stored.headAtPrepare,
+        projection?.integrationBaseCommit ?? stored.headAtPrepare,
         head,
       );
     } catch (error) {
@@ -3102,11 +3105,15 @@ export async function listManagedLiveWorktrees(
   }
 }
 
+type TrustedWipClosureProjection = WipClosureProjection & {
+  readonly integrationBaseCommit?: string;
+};
+
 function trustedWipProjectionForRecord(
   stored: StoredHandleRecord,
   head: string,
   requestedResultCommit: string | null | undefined,
-): WipClosureProjection | undefined {
+): TrustedWipClosureProjection | undefined {
   const projection = stored.trustedGateProjection;
   if (
     projection === undefined ||
@@ -3124,7 +3131,12 @@ function trustedWipProjectionForRecord(
   ) {
     return undefined;
   }
-  return { taskId: projection.taskId };
+  return {
+    taskId: projection.taskId,
+    ...(projection.integrationBaseCommit === undefined
+      ? {}
+      : { integrationBaseCommit: projection.integrationBaseCommit }),
+  };
 }
 
 /** Persist a runner-minted exact-tip projection outside the Git worktree. */
@@ -3150,6 +3162,19 @@ export async function recordManagedWorktreeSupervisedGateEvidence(
   const head = await revParse(git, binding.worktreePath, "HEAD");
   if (head === null || head !== evidence.resultCommit) {
     throw new Error("supervised gate evidence is stale for the managed worktree tip");
+  }
+  const integrationBaseCommit = await revParse(git, binding.repositoryRoot, "HEAD");
+  if (integrationBaseCommit === null) {
+    throw new Error("supervised gate evidence cannot resolve the integration tip");
+  }
+  const integrationAncestry = await git(binding.repositoryRoot, [
+    "merge-base",
+    "--is-ancestor",
+    integrationBaseCommit,
+    evidence.resultCommit,
+  ]);
+  if (integrationAncestry.code !== 0) {
+    throw new Error("supervised gate result does not contain the authenticated integration tip");
   }
 
   const regRoot = registryRoot(binding.repositoryRoot, deps.stateDir);
@@ -3190,6 +3215,7 @@ export async function recordManagedWorktreeSupervisedGateEvidence(
       worktreePath: binding.worktreePath,
       branch: binding.branch,
       resultCommit: evidence.resultCommit,
+      integrationBaseCommit,
       gateExitCode: 0,
       passCount: evidence.passCount,
       failCount: 0,
@@ -3237,7 +3263,7 @@ export async function assertManagedWorktreeWipClosure(
   const candidateNames = await recoverableWipCandidateNames(
     git,
     binding.worktreePath,
-    stored.headAtPrepare,
+    projection?.integrationBaseCommit ?? stored.headAtPrepare,
     resultCommit,
   );
   const assessment = await findOpenWipCheckpoints(
