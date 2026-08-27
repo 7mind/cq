@@ -1522,6 +1522,7 @@ async function recoverableWipCandidateNames(
   worktreePath: string,
   taskStartCommit: string,
   resultCommit: string,
+  taskId: string,
 ): Promise<ReadonlySet<string>> {
   const start = await revParse(git, worktreePath, taskStartCommit);
   if (start === null) throw new Error("managed WIP closure requires the task starting commit");
@@ -1548,7 +1549,11 @@ async function recoverableWipCandidateNames(
       `managed WIP closure could not inspect untracked artifacts: ${untracked.stderr.trim() || untracked.stdout.trim()}`,
     );
   }
-  return new Set([...rootWipNames(changed.stdout), ...rootWipNames(untracked.stdout)]);
+  return new Set([
+    `WIP-${taskId}.md`,
+    ...rootWipNames(changed.stdout),
+    ...rootWipNames(untracked.stdout),
+  ]);
 }
 
 async function branchCheckedOutPaths(
@@ -2974,6 +2979,7 @@ async function releaseManagedWorktreeUnderEffectLock(
         absolutePath,
         projection?.integrationBaseCommit ?? stored.headAtPrepare,
         head,
+        stored.handle.taskId,
       );
     } catch (error) {
       return refusedRelease("ambiguous", error instanceof Error ? error.message : String(error), {
@@ -3265,6 +3271,7 @@ export async function assertManagedWorktreeWipClosure(
     binding.worktreePath,
     projection?.integrationBaseCommit ?? stored.headAtPrepare,
     resultCommit,
+    binding.taskId,
   );
   const assessment = await findOpenWipCheckpoints(
     binding.worktreePath,
