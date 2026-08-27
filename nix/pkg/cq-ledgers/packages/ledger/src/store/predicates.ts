@@ -20,14 +20,17 @@
  *  - P-investigate — an ACTIONABLE defect (open/wip/inconclusive) that is NOT
  *    solely blocked on an open linked question AND NOT owned by a goal in a
  *    movable planning phase (clarifying/planning).
- *  - P-seed (Q259 option A, fixes D94) — a `root-caused` defect at/above the
+ *  - P-seed (Q259 option A, fixes D94; D359 bootstrap repair) — a `root-caused` defect at/above the
  *    severity floor (critical/high, matched case-insensitively after trim) that
  *    is NOT owned by any LIVE goal (clarifying/planning/planned/building,
  *    bidirectionally: the defect's `ledgerRefs` naming a live `goals:<G>`, OR a
  *    live goal's `ledgerRefs`/`sourceRefs` naming this `defects:<D>`) AND NOT
  *    gated by an open linked question. This is the fix-owning gap: a root-caused
  *    defect owned by no clarifying/planning goal matched NONE of the other three
- *    predicates, so the flow falsely reported DRAINED.
+ *    predicates, so the flow falsely reported DRAINED. The one ownership exception
+ *    is a defect blocking the sole active task of a finalized building goal: it is
+ *    actionable until one canonical fix-goal lineage becomes active, and again if
+ *    that lineage terminates before the defect does.
  *  - P-plan — a goal in `clarifying` with NO open linked question, OR a goal in
  *    `planning`; in BOTH cases the goal must carry NO active plan claim (G99 /
  *    D134: an active claim means a planner already owns the goal's planning
@@ -123,6 +126,7 @@ import {
 import { buildPrefixRegistry, canonicalizeRef, parseRef } from "../refs.js";
 import type { LedgerStore } from "./LedgerStore.js";
 import { operatorActionDirectiveForTask } from "../operatorActions.js";
+import { readCanonicalOwnership } from "../worksetOwnerEdges.js";
 import {
   buildActiveStateFromLedgerStore,
   requireWorksetStore,
@@ -378,6 +382,76 @@ function goalPlanGate(goal: Item): GoalPlanGate {
   return { managed, claimActive, finalizedTaskIds, legacyMilestoneIds };
 }
 
+function hasRef(item: Item, field: string, ledger: string, id: string): boolean {
+  const bare = id;
+  const canonical = `${ledger}:${id}`;
+  return refList(item, field).some((ref) => ref === bare || ref === canonical);
+}
+
+function rootCauseBlocksOnlyFinalizedTask(
+  defect: Item,
+  goals: readonly Item[],
+  tasks: readonly Item[],
+): boolean {
+  for (const goal of goals) {
+    if (!GOAL_BUILDABLE_STATUSES.has(goal.status)) continue;
+    const gate = goalPlanGate(goal);
+    if (!gate.managed || gate.finalizedTaskIds === null) continue;
+    const activeFinalized = tasks.filter(
+      (task) =>
+        gate.finalizedTaskIds?.has(task.id) === true &&
+        !TASK_TERMINAL_STATUSES.has(task.status),
+    );
+    if (activeFinalized.length !== 1) continue;
+    const [blockedTask] = activeFinalized;
+    if (blockedTask?.status !== TASK_BLOCKED_STATUS) continue;
+    if (!hasRef(blockedTask, "ledgerRefs", GOALS_LEDGER, goal.id)) continue;
+    const defectOwnsGoal =
+      hasRef(defect, "ledgerRefs", GOALS_LEDGER, goal.id) ||
+      hasRef(defect, "sourceRefs", GOALS_LEDGER, goal.id) ||
+      hasRef(goal, "ledgerRefs", DEFECTS_LEDGER, defect.id) ||
+      hasRef(goal, "sourceRefs", DEFECTS_LEDGER, defect.id);
+    const defectBlocksTask =
+      hasRef(blockedTask, "blockedBy", DEFECTS_LEDGER, defect.id) ||
+      hasRef(blockedTask, "dependsOn", DEFECTS_LEDGER, defect.id) ||
+      hasRef(blockedTask, "ledgerRefs", DEFECTS_LEDGER, defect.id) ||
+      hasRef(defect, "ledgerRefs", TASKS_LEDGER, blockedTask.id) ||
+      hasRef(defect, "sourceRefs", TASKS_LEDGER, blockedTask.id);
+    if (defectOwnsGoal && defectBlocksTask) return true;
+  }
+  return false;
+}
+
+function activeFixGoalOwnsDefect(
+  defectId: string,
+  goals: readonly Item[],
+  tasks: readonly Item[],
+): boolean {
+  for (const goal of goals) {
+    const ownership = readCanonicalOwnership(goal);
+    if (
+      ownership?.ownerRef !== `${DEFECTS_LEDGER}:${defectId}` ||
+      ownership.edgeKind !== "fix-goal"
+    ) {
+      continue;
+    }
+    if (goal.status === GOAL_CLARIFYING_STATUS || goal.status === GOAL_PLANNING_STATUS) {
+      return true;
+    }
+    if (!GOAL_BUILDABLE_STATUSES.has(goal.status)) continue;
+    if (
+      tasks.some(
+        (task) =>
+          !TASK_TERMINAL_STATUSES.has(task.status) &&
+          hasRef(task, "ledgerRefs", GOALS_LEDGER, goal.id),
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function buildTaskDependencyReadiness(
   store: PredicateStoreReader,
   tasks: readonly Item[],
@@ -537,7 +611,9 @@ function deriveEligiblePredicates(
 
   // --- P-seed + belowFloor -------------------------------------------------
   // A P-seed is a root-caused defect at/above the severity floor that no LIVE
-  // goal owns and no open question gates — the fix-owning gap D94. Ownership is
+  // goal owns and no open question gates — the fix-owning gap D94. D359's one
+  // exception re-exposes a blocker of the sole active finalized task when no
+  // canonical fix-goal lineage is active. Ownership is
   // BIDIRECTIONAL: the defect's ledgerRefs naming a live goals:<G>, OR a live
   // goal's ledgerRefs/sourceRefs naming this defects:<D> (real investigate-seeded
   // goals carry only the goal-side link). belowFloor mirrors P-seed for
@@ -566,7 +642,11 @@ function deriveEligiblePredicates(
         if (!ref.startsWith(`${GOALS_LEDGER}:`)) return false;
         return liveGoalIds.has(ref.slice(GOALS_LEDGER.length + 1));
       }) || goalOwnedDefectIds.has(d.id);
-    if (ownedByLiveGoal) continue;
+    const bootstrapRepair =
+      ownedByLiveGoal &&
+      rootCauseBlocksOnlyFinalizedTask(d, goals, tasks) &&
+      !activeFixGoalOwnsDefect(d.id, goals, tasks);
+    if (ownedByLiveGoal && !bootstrapRepair) continue;
     const atFloor = SEED_SEVERITY_FLOOR.has(stringField(d, "severity").trim().toLowerCase());
     // Gated by an open linked question (mirror P-investigate). ONLY a seed-
     // eligible (at-floor) candidate surfaces its question in the gate; a

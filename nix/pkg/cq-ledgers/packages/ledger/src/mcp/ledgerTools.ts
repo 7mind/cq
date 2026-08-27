@@ -743,7 +743,7 @@ export function createLedgerMcpToolSpecifications(
 
   const createItem = tool(
     "create_item",
-    "Create milestone (status=open, title, no milestone_id; allocates M<n>; validates dependency DAG) or item (active nonterminal milestone_id); ideas: omission uses M-AMBIENT. owner_ref+creation_kind makes owned creation atomic. Validates schema, canonicalizes refs, rejects new dangling known refs, records provenance.",
+    "Create milestone (status=open, title, no milestone_id; allocates M<n>; validates dependency DAG) or item (active nonterminal milestone_id); ideas: omission uses M-AMBIENT. owner_ref+creation_kind makes owned creation atomic; fix-goal returns the one canonical correction lineage on replay or concurrent creation. Validates schema, canonicalizes refs, rejects new dangling known refs, records provenance.",
     {
       ledger_id: z.string(),
       milestone_id: safeIdSchema.optional(),
