@@ -975,6 +975,44 @@ describe("prepareManagedWorktree", () => {
 });
 
 describe("releaseManagedWorktree", () => {
+  // Regression: D366 — integration history may itself contain a recoverable WIP artifact.
+  // An unchanged inherited artifact is not work produced by the releasing task.
+  it("releases a clean terminal tree with unchanged inherited WIP [Behavioral-Active Blackbox-GoodCommunication]", async () => {
+    const repo = await seedRepository();
+    const inheritedWip = serializeWipArtifact({
+      id: "T9999",
+      role: "implement-worker",
+      baseCommit: repo.base,
+      startedAt: "2026-08-07T00:00:00.000Z",
+      checkpoints: [{ name: "inherited", status: "todo", body: "owned elsewhere\n" }],
+      complete: false,
+      openCheckpoints: ["inherited"],
+    });
+    await fs.writeFile(path.join(repo.cwd, "WIP-T9999.md"), inheritedWip);
+    await git(repo.cwd, ["add", "WIP-T9999.md"]);
+    await git(repo.cwd, ["commit", "-q", "-m", "inherited recovery artifact"]);
+    const baseCommit = await git(repo.cwd, ["rev-parse", "HEAD"]);
+    const install = recordingInstall();
+    const deps = {
+      stateDir: repo.stateDir,
+      cacheRoot: repo.cacheRoot,
+      install: install.runner,
+      bunWorkspaceRoot: repo.workspace,
+    };
+    const prepared = await prepareManagedWorktree(
+      { repositoryRoot: repo.cwd, taskId: "T1400", baseCommit },
+      deps,
+    );
+    expect(prepared.status).toBe("prepared");
+    if (prepared.status !== "prepared") return;
+
+    const released = await releaseManagedWorktree(
+      { handle: prepared.handle, terminalDisposition: "done", resultCommit: baseCommit },
+      deps,
+    );
+    expect(released.status).toBe("released");
+  });
+
   it("leaves dirty, unmerged-result, and WIP-partial trees intact", async () => {
     const repo = await seedRepository();
     const install = recordingInstall();

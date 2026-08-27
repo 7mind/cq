@@ -15,6 +15,7 @@ import {
 } from "@cq/config";
 import {
   InMemoryCurrentRecoverySealJournalStore,
+  createDispatchLineageCutoverFence,
   currentRecoveryReceiptClosureDigest,
   dispatchLineageFenceFromRecoveryJournal,
   journalRecoveryRequiredForFence,
@@ -188,6 +189,57 @@ function promotedReceipts(): readonly GitChangeBrokerReceipt[] {
 }
 
 describe("journal recovery epoch promotion", () => {
+  // Regression: D369 — journals committed before task-identity schemes were persisted carry
+  // the former lifecycle-sensitive digest and must be authenticated before one atomic migration.
+  test("serialized pre-scheme journal migrates once while promoting generation 18 [Behavioral-Active Blackbox-Group]", async () => {
+    const seeded = await generation17Journal();
+    const committed = await seeded.journal.read(RECOVERY_TASK);
+    if (committed?.state !== "committed" || committed.version !== 1) {
+      throw new Error("generation 17 fixture did not commit v1 recovery authority");
+    }
+    const legacy = structuredClone(committed) as typeof committed & {
+      seal: typeof committed.seal & {
+        seed: typeof committed.seal.seed & { taskIdentityScheme?: string };
+      };
+    };
+    delete legacy.seal.seed.taskIdentityScheme;
+    legacy.seal.seed.taskDigest = "0".repeat(64);
+    legacy.seal.sealDigest = dispatchPayloadDigest(legacy.seal.seed);
+    legacy.seal.sealReference = `cq-current-recovery-seal:v1:${legacy.seal.sealDigest}`;
+    if (legacy.fence !== undefined) {
+      legacy.fence = createDispatchLineageCutoverFence({
+        namespace: legacy.seal.seed.namespace,
+        taskId: RECOVERY_TASK,
+        managedFingerprint: legacy.seal.seed.managedFingerprint,
+        sourceAttestationId: legacy.seal.seed.selectedSourceHandle.attestationId,
+        selectedSourceGeneration: legacy.seal.seed.selectedSourceHandle.generation,
+        lineageMaximumGeneration: legacy.seal.seed.lineageMaximumGeneration,
+        recoverySeedRef: legacy.seal.sealReference,
+        fenceCapability: {
+          scope: "dispatch-lineage-fence",
+          token: RECOVERY_BINDING.handleToken,
+        },
+        installedAt: legacy.fence.installedAt,
+      });
+    }
+    const journal = new InMemoryCurrentRecoverySealJournalStore();
+    await journal.put(JSON.parse(JSON.stringify(legacy)) as typeof committed);
+
+    const successor = journalDerivedAbort();
+    const deps = {
+      journal,
+      snapshot: async () => [seeded.generation17, successor],
+      resolveReceipts: async () => promotedReceipts(),
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => PROMOTED_TIP,
+      now: () => LATER,
+    };
+    const promoted = await captureCurrentRecoverySeal(promotionCoordinates(), deps);
+    expect(promoted.seed.selectedSourceHandle.generation).toBe(18);
+    expect(promoted.seed.taskDigest).toBe(promotionCoordinates().taskDigest);
+    expect(await captureCurrentRecoverySeal(promotionCoordinates(), deps)).toEqual(promoted);
+  });
+
   // Regression: D365 left the first committed journal epoch immutable, so a
   // journal-derived terminal successor could not authorize the next generation.
   test("seal generation 17 -> journal generation 18 -> promoted epoch -> journal generation 19 [Behavioral-Active Effectual-GoodCommunication]", async () => {
