@@ -24,7 +24,10 @@ import {
   type GitChangeBrokerReceipt,
 } from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
-import { captureCurrentRecoverySeal } from "../src/dispatchRecoverySeal.js";
+import {
+  captureCurrentRecoverySeal,
+  currentRecoveryTaskEvidence,
+} from "../src/dispatchRecoverySeal.js";
 import type {
   PromptArtifactRoleMetadata,
   PromptArtifactStore,
@@ -293,12 +296,41 @@ describe("journal recovery epoch promotion", () => {
         terminalDigest,
       };
       store.insert(generation17);
+      const recoveryTask = {
+        id: TASK_ID,
+        milestoneId: "M1",
+        status: "planned",
+        fields: {
+          headline: input17.headline,
+          description: input17.description,
+          acceptance: input17.acceptance,
+          ledgerRefs: ["goals:G1"],
+          worksetOwnerRef: "goals:G1",
+          worksetOwnerEdgeKind: "active-current-draft",
+        },
+        createdAt: NOW,
+        updatedAt: NOW,
+        author: "planner",
+        session: "planning-session",
+      };
+      const recoveryGoal = {
+        fields: {
+          planFinalizedManifest: JSON.stringify({
+            revision: 1,
+            milestones: [{ key: "implementation", id: "M1" }],
+            tasks: [{ key: "recovery", id: TASK_ID }],
+          }),
+        },
+      };
+      const ledgerStore = {
+        fetchItem: (ledgerId: string) => (ledgerId === "tasks" ? recoveryTask : recoveryGoal),
+      } as never;
+      const plannedEvidence = currentRecoveryTaskEvidence(ledgerStore, TASK_ID);
       const coordinates = {
         taskId: TASK_ID,
         binding,
         liveTip: baseCommit,
-        taskDigest: "6".repeat(64),
-        finalizedManifestDigest: "7".repeat(64),
+        ...plannedEvidence,
       } as const;
       const seal17 = await captureCurrentRecoverySeal(coordinates, {
         journal: ledgerState,
@@ -362,6 +394,12 @@ describe("journal recovery epoch promotion", () => {
       });
       await capability.abort({ ...generation18.handle, reason: "parent-lost" });
 
+      // regression: D367 — production advances the task while the sealed worker runs.
+      recoveryTask.status = "wip";
+      recoveryTask.updatedAt = LATER;
+      recoveryTask.author = "implementer";
+      recoveryTask.session = "implementation-session";
+
       const promotionDeps = {
         journal: ledgerState,
         snapshot: async () => store.snapshot(),
@@ -386,6 +424,7 @@ describe("journal recovery epoch promotion", () => {
       const livePromotionCoordinates = {
         ...coordinates,
         liveTip: generation18Receipt.newHead,
+        ...currentRecoveryTaskEvidence(ledgerStore, TASK_ID),
       };
       const promoted = await captureCurrentRecoverySeal(livePromotionCoordinates, promotionDeps);
       expect(promoted.seed.selectedSourceHandle).toEqual({ attestationId, generation: 18 });

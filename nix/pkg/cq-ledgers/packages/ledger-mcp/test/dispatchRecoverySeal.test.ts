@@ -194,10 +194,27 @@ function authenticatedCollapsedConsumedResult(status: "pass" | "fail") {
 describe("protected current dispatch-recovery capture", () => {
   test("task evidence requires membership in the exact finalized manifest", () => {
     let manifestTaskId = RECOVERY_TASK;
+    const task = {
+      id: RECOVERY_TASK,
+      milestoneId: "M1",
+      status: "planned",
+      fields: {
+        headline: "protected recovery",
+        description: "capture the current receipt closure",
+        acceptance: "committed status",
+        ledgerRefs: ["goals:G1", "defects:D360"],
+        worksetOwnerRef: "goals:G1",
+        worksetOwnerEdgeKind: "active-current-draft",
+      },
+      createdAt: RECOVERY_NOW,
+      updatedAt: RECOVERY_NOW,
+      author: "planner",
+      session: "plan-session",
+    };
     const store = {
       fetchItem: (ledgerId: string) =>
         ledgerId === "tasks"
-          ? { fields: { ledgerRefs: ["goals:G1", "defects:D360"] } }
+          ? task
           : {
               fields: {
                 [PLAN_FINALIZED_MANIFEST_FIELD]: JSON.stringify({
@@ -209,10 +226,28 @@ describe("protected current dispatch-recovery capture", () => {
             },
     } as unknown as LedgerStore;
 
-    expect(currentRecoveryTaskEvidence(store, RECOVERY_TASK)).toMatchObject({
+    const planned = currentRecoveryTaskEvidence(store, RECOVERY_TASK);
+    expect(planned).toMatchObject({
       taskDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
       finalizedManifestDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
     });
+    // regression: D367 — lifecycle metadata drift must not invalidate a sealed epoch.
+    task.status = "wip";
+    task.updatedAt = RECOVERY_LATER;
+    task.author = "implementer";
+    task.session = "implement-session";
+    expect(currentRecoveryTaskEvidence(store, RECOVERY_TASK)).toEqual(planned);
+
+    task.fields.headline = "changed specification";
+    expect(currentRecoveryTaskEvidence(store, RECOVERY_TASK).taskDigest).not.toBe(
+      planned.taskDigest,
+    );
+    task.fields.headline = "protected recovery";
+    task.fields.worksetOwnerRef = "goals:G2";
+    expect(currentRecoveryTaskEvidence(store, RECOVERY_TASK).taskDigest).not.toBe(
+      planned.taskDigest,
+    );
+    task.fields.worksetOwnerRef = "goals:G1";
     manifestTaskId = "T9999";
     expect(() => currentRecoveryTaskEvidence(store, RECOVERY_TASK)).toThrow(
       "does not belong to the finalized manifest",
