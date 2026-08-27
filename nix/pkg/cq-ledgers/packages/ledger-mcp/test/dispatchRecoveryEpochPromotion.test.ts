@@ -113,6 +113,13 @@ function journalDerivedAbort(
 }
 
 function preCutoverConsumedFailure(): AttestationEnvelope {
+  const nativeCompletion = {
+    kind: "native-completion",
+    actor: "trusted-parent",
+    childId: "generation-17",
+    runId: "generation-17",
+    completedAt: LATER,
+  } as const;
   const output = {
     taskId: RECOVERY_TASK,
     status: "fail",
@@ -144,10 +151,14 @@ function preCutoverConsumedFailure(): AttestationEnvelope {
     output,
     outputDigest,
     consumedAt: LATER,
+    nativeCompletion,
     terminalAt: LATER,
     terminalDigest: dispatchPayloadDigest({
       terminalKind: "consumed",
-      resultDigest: outputDigest,
+      outputDigest,
+      childId: nativeCompletion.childId,
+      runId: nativeCompletion.runId,
+      completedAt: nativeCompletion.completedAt,
     }),
   };
 }
@@ -214,6 +225,54 @@ async function preSchemeGeneration17Journal() {
   return { journal, generation17: seeded.generation17 };
 }
 
+async function preSchemeConsumedFailureJournal() {
+  const generation17 = preCutoverConsumedFailure();
+  const seeded = new InMemoryCurrentRecoverySealJournalStore();
+  await captureCurrentRecoverySeal(
+    { ...promotionCoordinates(), liveTip: RECOVERY_TIP },
+    {
+      journal: seeded,
+      snapshot: async () => [generation17],
+      resolveReceipts: async () => RECOVERY_RECEIPTS,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => NOW,
+    },
+  );
+  const committed = await seeded.read(RECOVERY_TASK);
+  if (committed?.state !== "committed" || committed.version !== 2) {
+    throw new Error("generation 17 consumed-fail fixture did not commit v2 recovery authority");
+  }
+  const legacy = structuredClone(committed) as typeof committed & {
+    seal: typeof committed.seal & {
+      seed: typeof committed.seal.seed & { taskIdentityScheme?: string };
+    };
+  };
+  delete legacy.seal.seed.taskIdentityScheme;
+  legacy.seal.seed.taskDigest = "0".repeat(64);
+  legacy.seal.sealDigest = dispatchPayloadDigest(legacy.seal.seed);
+  legacy.seal.sealReference = `cq-current-recovery-seal:v2:${legacy.seal.sealDigest}`;
+  if (legacy.fence !== undefined) {
+    legacy.fence = createDispatchLineageCutoverFence({
+      namespace: legacy.seal.seed.namespace,
+      taskId: RECOVERY_TASK,
+      managedFingerprint: legacy.seal.seed.managedFingerprint,
+      sourceAttestationId: legacy.seal.seed.selectedSourceHandle.attestationId,
+      selectedSourceGeneration: legacy.seal.seed.selectedSourceHandle.generation,
+      lineageMaximumGeneration: legacy.seal.seed.lineageMaximumGeneration,
+      recoverySeedRef: legacy.seal.sealReference,
+      fenceCapability: {
+        scope: "dispatch-lineage-fence",
+        token: RECOVERY_BINDING.handleToken,
+      },
+      installedAt: legacy.fence.installedAt,
+    });
+  }
+  const journal = new InMemoryCurrentRecoverySealJournalStore();
+  await journal.put(JSON.parse(JSON.stringify(legacy)) as typeof committed);
+  return { journal, generation17 };
+}
+
 function promotionCoordinates() {
   return {
     taskId: RECOVERY_TASK,
@@ -237,6 +296,26 @@ function promotedReceipts(): readonly GitChangeBrokerReceipt[] {
 }
 
 describe("journal recovery epoch promotion", () => {
+  // Regression: D370 — production's consumed transition binds native completion identity into
+  // the terminal digest. Retained pre-scheme FAIL authority must authenticate that exact shape.
+  test("pre-scheme consumed FAIL migrates with its authentic native-completion digest [Behavioral-Active Blackbox-Group]", async () => {
+    const seeded = await preSchemeConsumedFailureJournal();
+    const coordinates = { ...promotionCoordinates(), liveTip: RECOVERY_TIP };
+    const deps = {
+      journal: seeded.journal,
+      snapshot: async () => [seeded.generation17],
+      resolveReceipts: async () => RECOVERY_RECEIPTS,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => LATER,
+    };
+
+    const migrated = await captureCurrentRecoverySeal(coordinates, deps);
+    expect(migrated.seed.selectedSourceHandle.generation).toBe(17);
+    expect(migrated.seed.taskIdentityScheme).toBe(CURRENT_RECOVERY_TASK_IDENTITY_SCHEME);
+    expect(await captureCurrentRecoverySeal(coordinates, deps)).toEqual(migrated);
+  });
+
   // Regression: D369 — journals committed before task-identity schemes were persisted carry
   // the former lifecycle-sensitive digest and must be authenticated before one atomic migration.
   test("serialized pre-scheme journal migrates once while promoting generation 18 [Behavioral-Active Blackbox-Group]", async () => {
