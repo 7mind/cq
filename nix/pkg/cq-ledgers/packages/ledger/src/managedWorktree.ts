@@ -3192,11 +3192,7 @@ export async function assertManagedWorktreeWipClosure(
       .split(/\r?\n/u)
       .filter((name) => !name.includes("/") && name.startsWith("WIP-") && name.endsWith(".md")),
   );
-  const assessment = await findOpenWipCheckpoints(
-    binding.worktreePath,
-    projection,
-    candidateNames,
-  );
+  const assessment = await findOpenWipCheckpoints(binding.worktreePath, projection, candidateNames);
   if (assessment.status === "malformed") {
     throw new Error(
       `managed WIP closure denied malformed artifact ${assessment.path}: ${assessment.detail}`,

@@ -423,8 +423,7 @@ for (const factory of factories) {
             status: "planned",
             fields: {
               headline: "duplicate",
-              description:
-                "CQ-OPERATOR-ACTION v1 action. CQ-OPERATOR-ACTION v1 second.",
+              description: "CQ-OPERATOR-ACTION v1 action. CQ-OPERATOR-ACTION v1 second.",
               ledgerRefs: [`goals:${goal.id}`],
             },
           }),
@@ -874,9 +873,7 @@ test("filesystem restart reuses the durable action and handoff", async () => {
     expect(resumed.state).toBe("existing");
     expect(resumed.action.id).toBe(created.action.id);
     expect(resumed.handoff.id).toBe(created.handoff.id);
-    expect(
-      store.fetch("handoffs").milestones.flatMap((group) => group.items),
-    ).toHaveLength(1);
+    expect(store.fetch("handoffs").milestones.flatMap((group) => group.items)).toHaveLength(1);
   } finally {
     await store.dispose();
   }
