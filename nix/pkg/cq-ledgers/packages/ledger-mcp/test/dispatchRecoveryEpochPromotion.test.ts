@@ -14,6 +14,7 @@ import {
   type PromptSurface,
 } from "@cq/config";
 import {
+  CURRENT_RECOVERY_TASK_IDENTITY_SCHEME,
   InMemoryCurrentRecoverySealJournalStore,
   createDispatchLineageCutoverFence,
   currentRecoveryReceiptClosureDigest,
@@ -153,7 +154,10 @@ function preCutoverConsumedFailure(): AttestationEnvelope {
 
 async function generation17Journal() {
   const journal = new InMemoryCurrentRecoverySealJournalStore();
-  const generation17 = abortedEnvelope({ generation: 17 });
+  const generation17 = {
+    ...abortedEnvelope({ generation: 17 }),
+    terminalDigest: terminalAbortDigest("deadline-exceeded"),
+  };
   await captureCurrentRecoverySeal(
     {
       taskId: RECOVERY_TASK,
@@ -174,12 +178,56 @@ async function generation17Journal() {
   return { journal, generation17 };
 }
 
+async function preSchemeGeneration17Journal() {
+  const seeded = await generation17Journal();
+  const committed = await seeded.journal.read(RECOVERY_TASK);
+  if (committed?.state !== "committed" || committed.version !== 1) {
+    throw new Error("generation 17 fixture did not commit v1 recovery authority");
+  }
+  const legacy = structuredClone(committed) as typeof committed & {
+    seal: typeof committed.seal & {
+      seed: typeof committed.seal.seed & { taskIdentityScheme?: string };
+    };
+  };
+  delete legacy.seal.seed.taskIdentityScheme;
+  legacy.seal.seed.taskDigest = "0".repeat(64);
+  legacy.seal.sealDigest = dispatchPayloadDigest(legacy.seal.seed);
+  legacy.seal.sealReference = `cq-current-recovery-seal:v1:${legacy.seal.sealDigest}`;
+  if (legacy.fence !== undefined) {
+    legacy.fence = createDispatchLineageCutoverFence({
+      namespace: legacy.seal.seed.namespace,
+      taskId: RECOVERY_TASK,
+      managedFingerprint: legacy.seal.seed.managedFingerprint,
+      sourceAttestationId: legacy.seal.seed.selectedSourceHandle.attestationId,
+      selectedSourceGeneration: legacy.seal.seed.selectedSourceHandle.generation,
+      lineageMaximumGeneration: legacy.seal.seed.lineageMaximumGeneration,
+      recoverySeedRef: legacy.seal.sealReference,
+      fenceCapability: {
+        scope: "dispatch-lineage-fence",
+        token: RECOVERY_BINDING.handleToken,
+      },
+      installedAt: legacy.fence.installedAt,
+    });
+  }
+  const journal = new InMemoryCurrentRecoverySealJournalStore();
+  await journal.put(JSON.parse(JSON.stringify(legacy)) as typeof committed);
+  return { journal, generation17: seeded.generation17 };
+}
+
 function promotionCoordinates() {
   return {
     taskId: RECOVERY_TASK,
     binding: RECOVERY_BINDING,
     liveTip: PROMOTED_TIP,
     taskDigest: "b".repeat(64),
+    taskSpecificationDigest: dispatchPayloadDigest({
+      kind: "cq-current-recovery-task-specification",
+      version: 1,
+      taskId: RECOVERY_INPUT.taskId,
+      headline: RECOVERY_INPUT.headline,
+      description: RECOVERY_INPUT.description,
+      acceptance: RECOVERY_INPUT.acceptance,
+    }),
     finalizedManifestDigest: "c".repeat(64),
   } as const;
 }
@@ -192,52 +240,123 @@ describe("journal recovery epoch promotion", () => {
   // Regression: D369 — journals committed before task-identity schemes were persisted carry
   // the former lifecycle-sensitive digest and must be authenticated before one atomic migration.
   test("serialized pre-scheme journal migrates once while promoting generation 18 [Behavioral-Active Blackbox-Group]", async () => {
-    const seeded = await generation17Journal();
-    const committed = await seeded.journal.read(RECOVERY_TASK);
-    if (committed?.state !== "committed" || committed.version !== 1) {
-      throw new Error("generation 17 fixture did not commit v1 recovery authority");
-    }
-    const legacy = structuredClone(committed) as typeof committed & {
-      seal: typeof committed.seal & {
-        seed: typeof committed.seal.seed & { taskIdentityScheme?: string };
-      };
-    };
-    delete legacy.seal.seed.taskIdentityScheme;
-    legacy.seal.seed.taskDigest = "0".repeat(64);
-    legacy.seal.sealDigest = dispatchPayloadDigest(legacy.seal.seed);
-    legacy.seal.sealReference = `cq-current-recovery-seal:v1:${legacy.seal.sealDigest}`;
-    if (legacy.fence !== undefined) {
-      legacy.fence = createDispatchLineageCutoverFence({
-        namespace: legacy.seal.seed.namespace,
-        taskId: RECOVERY_TASK,
-        managedFingerprint: legacy.seal.seed.managedFingerprint,
-        sourceAttestationId: legacy.seal.seed.selectedSourceHandle.attestationId,
-        selectedSourceGeneration: legacy.seal.seed.selectedSourceHandle.generation,
-        lineageMaximumGeneration: legacy.seal.seed.lineageMaximumGeneration,
-        recoverySeedRef: legacy.seal.sealReference,
-        fenceCapability: {
-          scope: "dispatch-lineage-fence",
-          token: RECOVERY_BINDING.handleToken,
-        },
-        installedAt: legacy.fence.installedAt,
-      });
-    }
-    const journal = new InMemoryCurrentRecoverySealJournalStore();
-    await journal.put(JSON.parse(JSON.stringify(legacy)) as typeof committed);
+    const seeded = await preSchemeGeneration17Journal();
+    const { journal } = seeded;
 
     const successor = journalDerivedAbort();
     const deps = {
       journal,
       snapshot: async () => [seeded.generation17, successor],
-      resolveReceipts: async () => promotedReceipts(),
+      resolveReceipts: async (_row: AttestationRow, liveTip: string) =>
+        liveTip === RECOVERY_TIP ? RECOVERY_RECEIPTS : promotedReceipts(),
       revalidateBinding: async () => {},
       observeLiveTip: async () => PROMOTED_TIP,
       now: () => LATER,
     };
     const promoted = await captureCurrentRecoverySeal(promotionCoordinates(), deps);
     expect(promoted.seed.selectedSourceHandle.generation).toBe(18);
+    expect(promoted.seed.taskIdentityScheme).toBe(CURRENT_RECOVERY_TASK_IDENTITY_SCHEME);
     expect(promoted.seed.taskDigest).toBe(promotionCoordinates().taskDigest);
     expect(await captureCurrentRecoverySeal(promotionCoordinates(), deps)).toEqual(promoted);
+  });
+
+  test("serialized pre-scheme journal replaces only its legacy digest on stable replay [Behavioral-Active Blackbox-Group]", async () => {
+    const seeded = await preSchemeGeneration17Journal();
+    const coordinates = { ...promotionCoordinates(), liveTip: RECOVERY_TIP };
+    const deps = {
+      journal: seeded.journal,
+      snapshot: async () => [seeded.generation17],
+      resolveReceipts: async () => RECOVERY_RECEIPTS,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => LATER,
+    };
+
+    const migrated = await captureCurrentRecoverySeal(coordinates, deps);
+    expect(migrated.seed.selectedSourceHandle.generation).toBe(17);
+    expect(migrated.seed.taskIdentityScheme).toBe(CURRENT_RECOVERY_TASK_IDENTITY_SCHEME);
+    expect(migrated.seed.taskDigest).toBe(coordinates.taskDigest);
+    expect(await captureCurrentRecoverySeal(coordinates, deps)).toEqual(migrated);
+  });
+
+  test("pre-scheme migration rejects every competing authority without mutation [Behavioral-Active Blackbox-Group]", async () => {
+    const validSuccessor = journalDerivedAbort();
+    const controls: readonly {
+      readonly label: string;
+      readonly coordinates?: ReturnType<typeof promotionCoordinates>;
+      readonly rows?: (generation17: AttestationEnvelope) => readonly AttestationEnvelope[];
+      readonly receipts?: (
+        row: AttestationRow,
+        liveTip: string,
+      ) => readonly GitChangeBrokerReceipt[];
+    }[] = [
+      {
+        label: "changed-task-specification",
+        coordinates: { ...promotionCoordinates(), taskSpecificationDigest: "f".repeat(64) },
+      },
+      {
+        label: "changed-manifest",
+        coordinates: { ...promotionCoordinates(), finalizedManifestDigest: "f".repeat(64) },
+      },
+      {
+        label: "foreign-binding",
+        coordinates: {
+          ...promotionCoordinates(),
+          binding: { ...RECOVERY_BINDING, handleFingerprint: "f".repeat(64) },
+        },
+      },
+      {
+        label: "active-lineage",
+        rows: (generation17) => [
+          generation17,
+          { ...validSuccessor, state: "prepared" } as AttestationEnvelope,
+        ],
+      },
+      {
+        label: "competing-lineage",
+        rows: (generation17) => [
+          generation17,
+          validSuccessor,
+          { ...validSuccessor, attestationId: `att_${"e".repeat(32)}`, generation: 19 },
+        ],
+      },
+      {
+        label: "changed-snapshot",
+        rows: (generation17) => [
+          { ...generation17, terminalDigest: "f".repeat(64) },
+          validSuccessor,
+        ],
+      },
+      {
+        label: "moved-live-tip",
+        coordinates: { ...promotionCoordinates(), liveTip: "5".repeat(40) },
+      },
+      {
+        label: "incomplete-receipt-closure",
+        receipts: (_row, liveTip) =>
+          liveTip === RECOVERY_TIP ? [RECOVERY_RECEIPTS[0]!] : promotedReceipts(),
+      },
+    ];
+
+    for (const control of controls) {
+      const seeded = await preSchemeGeneration17Journal();
+      const before = await seeded.journal.read(RECOVERY_TASK);
+      await expect(
+        captureCurrentRecoverySeal(control.coordinates ?? promotionCoordinates(), {
+          journal: seeded.journal,
+          snapshot: async () =>
+            control.rows?.(seeded.generation17) ?? [seeded.generation17, validSuccessor],
+          resolveReceipts: async (row, liveTip) =>
+            control.receipts?.(row, liveTip) ??
+            (liveTip === RECOVERY_TIP ? RECOVERY_RECEIPTS : promotedReceipts()),
+          revalidateBinding: async () => {},
+          observeLiveTip: async () => (control.coordinates ?? promotionCoordinates()).liveTip,
+          now: () => LATER,
+        }),
+        control.label,
+      ).rejects.toBeInstanceOf(Error);
+      expect(await seeded.journal.read(RECOVERY_TASK), control.label).toEqual(before);
+    }
   });
 
   // Regression: D365 left the first committed journal epoch immutable, so a

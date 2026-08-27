@@ -26,6 +26,7 @@ const LEGACY_RECOVERY_SEAL_REFERENCE_PREFIX = "cq-current-recovery-seal:v1:";
 export const CURRENT_RECOVERY_SEAL_REFERENCE_PREFIX = "cq-current-recovery-seal:v2:";
 export const CURRENT_RECOVERY_SEAL_REFERENCE_PATTERN =
   /^cq-current-recovery-seal:v[12]:[0-9a-f]{64}$/u;
+export const CURRENT_RECOVERY_TASK_IDENTITY_SCHEME = "finalized-task-membership-v1" as const;
 export const LINEAGE_CUTOVER_FENCE_ACTION_KEY = "lineage-cutover-fence" as const;
 
 export const CURRENT_RECOVERY_SOURCE_ABORT_REASONS = [
@@ -141,6 +142,7 @@ const recoverySeedCommonSchema = z.object({
   sourceTerminalDigest: z.string().regex(SHA256),
   namespace: namespaceSchema,
   taskId: z.string().regex(TASK_ID),
+  taskIdentityScheme: z.literal(CURRENT_RECOVERY_TASK_IDENTITY_SCHEME).optional(),
   taskDigest: z.string().regex(SHA256),
   finalizedManifestDigest: z.string().regex(SHA256),
   gitBinding: gitBindingSchema,
@@ -408,6 +410,7 @@ function chainIsPrefix(
 function isCommittedRecoveryEpochPromotion(
   current: CurrentRecoveryCommittedJournal,
   next: CurrentRecoveryCommittedJournal,
+  taskIdentityMigration = false,
 ): boolean {
   const currentFence = current.fence;
   const nextFence = next.fence;
@@ -423,7 +426,11 @@ function isCommittedRecoveryEpochPromotion(
   return (
     nextSeed.version === 1 &&
     currentSeed.taskId === nextSeed.taskId &&
-    currentSeed.taskDigest === nextSeed.taskDigest &&
+    (taskIdentityMigration
+      ? currentSeed.taskIdentityScheme === undefined &&
+        nextSeed.taskIdentityScheme === CURRENT_RECOVERY_TASK_IDENTITY_SCHEME
+      : currentSeed.taskIdentityScheme === nextSeed.taskIdentityScheme &&
+        currentSeed.taskDigest === nextSeed.taskDigest) &&
     currentSeed.finalizedManifestDigest === nextSeed.finalizedManifestDigest &&
     payloadDigest(currentSeed.namespace) === payloadDigest(nextSeed.namespace) &&
     payloadDigest(currentSeed.gitBinding) === payloadDigest(nextSeed.gitBinding) &&
@@ -441,6 +448,43 @@ function isCommittedRecoveryEpochPromotion(
     ) &&
     currentFence.fenceCapabilityHash === nextFence.fenceCapabilityHash &&
     currentFence.sourceAttestationId === nextFence.sourceAttestationId
+  );
+}
+
+function isCommittedRecoveryTaskIdentityMigration(
+  current: CurrentRecoveryCommittedJournal,
+  next: CurrentRecoveryCommittedJournal,
+): boolean {
+  if (
+    current.seal.seed.taskIdentityScheme !== undefined ||
+    next.seal.seed.taskIdentityScheme !== CURRENT_RECOVERY_TASK_IDENTITY_SCHEME ||
+    current.taskId !== next.taskId ||
+    current.state !== "committed" ||
+    next.state !== "committed"
+  ) {
+    return false;
+  }
+  const expectedSeed = {
+    ...current.seal.seed,
+    taskIdentityScheme: CURRENT_RECOVERY_TASK_IDENTITY_SCHEME,
+    taskDigest: next.seal.seed.taskDigest,
+  };
+  const sameEpoch =
+    current.version === next.version &&
+    current.snapshotDigest === next.snapshotDigest &&
+    current.writtenAt === next.writtenAt &&
+    current.committedAt === next.committedAt &&
+    payloadDigest(expectedSeed) === payloadDigest(next.seal.seed);
+  const promotedEpoch = isCommittedRecoveryEpochPromotion(current, next, true);
+  if (!sameEpoch && !promotedEpoch) return false;
+  if (current.fence === undefined || next.fence === undefined) return false;
+  return (
+    current.fence.taskId === next.fence.taskId &&
+    payloadDigest(current.fence.namespace) === payloadDigest(next.fence.namespace) &&
+    current.fence.managedFingerprint === next.fence.managedFingerprint &&
+    current.fence.sourceAttestationId === next.fence.sourceAttestationId &&
+    current.fence.fenceCapabilityHash === next.fence.fenceCapabilityHash &&
+    next.fence.recoverySeedRef === next.seal.sealReference
   );
 }
 
@@ -605,6 +649,10 @@ export function parseCurrentRecoverySealJournal(value: unknown): CurrentRecovery
 export interface CurrentRecoverySealJournalStore {
   read(taskId: string): Promise<CurrentRecoverySealJournal | null>;
   put(journal: CurrentRecoverySealJournal): Promise<void>;
+  migrateCommittedTaskIdentity?(
+    expected: CurrentRecoveryCommittedJournal,
+    next: CurrentRecoveryCommittedJournal,
+  ): Promise<void>;
   /** Guarded terminal worktree release is the only production caller. */
   remove?(taskId: string): Promise<void>;
 }
@@ -659,6 +707,34 @@ export class InMemoryCurrentRecoverySealJournalStore implements CurrentRecoveryS
     this.#journals.set(journal.taskId, structuredClone(journal));
   }
 
+  async migrateCommittedTaskIdentity(
+    expectedValue: CurrentRecoveryCommittedJournal,
+    nextValue: CurrentRecoveryCommittedJournal,
+  ): Promise<void> {
+    const expected = parseCurrentRecoverySealJournal(expectedValue);
+    const next = parseCurrentRecoverySealJournal(nextValue);
+    if (expected.state !== "committed" || next.state !== "committed") {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "identity migration requires committed journals",
+      );
+    }
+    const current = this.#journals.get(expected.taskId);
+    if (current !== undefined && payloadDigest(current) === payloadDigest(next)) return;
+    if (
+      current === undefined ||
+      current.state !== "committed" ||
+      payloadDigest(current) !== payloadDigest(expected) ||
+      !isCommittedRecoveryTaskIdentityMigration(expected, next)
+    ) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "committed recovery task identity migration lost its exact legacy authority",
+      );
+    }
+    this.#journals.set(next.taskId, structuredClone(next));
+  }
+
   async remove(taskId: string): Promise<void> {
     this.#journals.delete(taskId);
   }
@@ -695,6 +771,49 @@ export class FsCurrentRecoverySealJournalStore implements CurrentRecoverySealJou
     const handle = await fs.open(temporary, "w", 0o600);
     try {
       await handle.writeFile(`${JSON.stringify(journal)}\n`, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await fs.rename(temporary, file);
+    const directory = await fs.open(dirname(file), "r");
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
+  }
+
+  async migrateCommittedTaskIdentity(
+    expectedValue: CurrentRecoveryCommittedJournal,
+    nextValue: CurrentRecoveryCommittedJournal,
+  ): Promise<void> {
+    const expected = parseCurrentRecoverySealJournal(expectedValue);
+    const next = parseCurrentRecoverySealJournal(nextValue);
+    if (expected.state !== "committed" || next.state !== "committed") {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "identity migration requires committed journals",
+      );
+    }
+    const current = await this.read(expected.taskId);
+    if (current !== null && payloadDigest(current) === payloadDigest(next)) return;
+    if (
+      current?.state !== "committed" ||
+      payloadDigest(current) !== payloadDigest(expected) ||
+      !isCommittedRecoveryTaskIdentityMigration(expected, next)
+    ) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "committed recovery task identity migration lost its exact legacy authority",
+      );
+    }
+    const file = this.#path(next.taskId);
+    await fs.mkdir(dirname(file), { recursive: true });
+    const temporary = `${file}.tmp-${process.pid}`;
+    const handle = await fs.open(temporary, "wx", 0o600);
+    try {
+      await handle.writeFile(`${JSON.stringify(next)}\n`, "utf8");
       await handle.sync();
     } finally {
       await handle.close();
@@ -887,6 +1006,7 @@ export function createCurrentRecoverySeed(input: CurrentRecoverySeedInput): Curr
     sourceTerminalDigest: input.sourceTerminalDigest,
     namespace: input.namespace,
     taskId: input.taskId,
+    taskIdentityScheme: CURRENT_RECOVERY_TASK_IDENTITY_SCHEME,
     taskDigest: input.taskDigest,
     finalizedManifestDigest: input.finalizedManifestDigest,
     gitBinding: {

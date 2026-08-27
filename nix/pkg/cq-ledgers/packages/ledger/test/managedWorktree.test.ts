@@ -1013,6 +1013,71 @@ describe("releaseManagedWorktree", () => {
     expect(released.status).toBe("released");
   });
 
+  it("preserves modified foreign and introduced malformed WIP [Behavioral-Active Blackbox-GoodCommunication]", async () => {
+    const repo = await seedRepository();
+    const inheritedWip = serializeWipArtifact({
+      id: "T9999",
+      role: "implement-worker",
+      baseCommit: repo.base,
+      startedAt: "2026-08-07T00:00:00.000Z",
+      checkpoints: [{ name: "foreign", status: "done", body: "closed elsewhere\n" }],
+      complete: true,
+      openCheckpoints: [],
+    });
+    await fs.writeFile(path.join(repo.cwd, "WIP-T9999.md"), inheritedWip);
+    await git(repo.cwd, ["add", "WIP-T9999.md"]);
+    await git(repo.cwd, ["commit", "-q", "-m", "inherited closed artifact"]);
+    const baseCommit = await git(repo.cwd, ["rev-parse", "HEAD"]);
+    const install = recordingInstall();
+    const deps = {
+      stateDir: repo.stateDir,
+      cacheRoot: repo.cacheRoot,
+      install: install.runner,
+      bunWorkspaceRoot: repo.workspace,
+    };
+
+    const foreign = await prepareManagedWorktree(
+      { repositoryRoot: repo.cwd, taskId: "T1404", baseCommit },
+      deps,
+    );
+    expect(foreign.status).toBe("prepared");
+    if (foreign.status !== "prepared") return;
+    await fs.writeFile(
+      path.join(foreign.handle.absolutePath, "WIP-T9999.md"),
+      inheritedWip.replace("closed elsewhere", "changed by foreign task"),
+    );
+    await git(foreign.handle.absolutePath, ["add", "WIP-T9999.md"]);
+    await git(foreign.handle.absolutePath, ["commit", "-q", "-m", "modify foreign WIP"]);
+    const foreignTip = await git(foreign.handle.absolutePath, ["rev-parse", "HEAD"]);
+    const foreignRelease = await releaseManagedWorktree(
+      { handle: foreign.handle, terminalDisposition: "done", resultCommit: foreignTip },
+      deps,
+    );
+    expect(foreignRelease).toMatchObject({ status: "refused", reason: "wip-malformed" });
+    expect(
+      await fs.readFile(path.join(foreign.handle.absolutePath, "WIP-T9999.md"), "utf8"),
+    ).toContain("changed by foreign task");
+
+    const malformed = await prepareManagedWorktree(
+      { repositoryRoot: repo.cwd, taskId: "T1405", baseCommit },
+      deps,
+    );
+    expect(malformed.status).toBe("prepared");
+    if (malformed.status !== "prepared") return;
+    await fs.writeFile(path.join(malformed.handle.absolutePath, "WIP-T1405.md"), "not a WIP\n");
+    await git(malformed.handle.absolutePath, ["add", "WIP-T1405.md"]);
+    await git(malformed.handle.absolutePath, ["commit", "-q", "-m", "malformed WIP"]);
+    const malformedTip = await git(malformed.handle.absolutePath, ["rev-parse", "HEAD"]);
+    const malformedRelease = await releaseManagedWorktree(
+      { handle: malformed.handle, terminalDisposition: "done", resultCommit: malformedTip },
+      deps,
+    );
+    expect(malformedRelease).toMatchObject({ status: "refused", reason: "wip-malformed" });
+    expect(
+      await fs.readFile(path.join(malformed.handle.absolutePath, "WIP-T1405.md"), "utf8"),
+    ).toBe("not a WIP\n");
+  });
+
   it("leaves dirty, unmerged-result, and WIP-partial trees intact", async () => {
     const repo = await seedRepository();
     const install = recordingInstall();

@@ -15,6 +15,7 @@ import {
 } from "@cq/config";
 import {
   CurrentRecoverySealError,
+  CURRENT_RECOVERY_TASK_IDENTITY_SCHEME,
   FsCurrentRecoverySealJournalStore,
   GOALS_LEDGER,
   PLAN_FINALIZED_MANIFEST_FIELD,
@@ -71,6 +72,7 @@ export interface CurrentRecoveryCaptureCoordinates {
   readonly binding: ManagedWorktreeDispatchBinding;
   readonly liveTip: string;
   readonly taskDigest: string;
+  readonly taskSpecificationDigest?: string;
   readonly finalizedManifestDigest: string;
 }
 
@@ -344,7 +346,33 @@ function receiptClosuresEqual(
   );
 }
 
-function assertCommittedCoordinates(
+function taskSpecificationDigest(input: unknown): string {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    throw new CurrentRecoverySealError("journal-conflict", "recovery task specification is absent");
+  }
+  const record = input as Readonly<Record<string, unknown>>;
+  if (
+    typeof record["taskId"] !== "string" ||
+    typeof record["headline"] !== "string" ||
+    typeof record["description"] !== "string" ||
+    typeof record["acceptance"] !== "string"
+  ) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "recovery task specification is incomplete",
+    );
+  }
+  return dispatchPayloadDigest({
+    kind: "cq-current-recovery-task-specification",
+    version: 1,
+    taskId: record["taskId"],
+    headline: record["headline"],
+    description: record["description"],
+    acceptance: record["acceptance"],
+  });
+}
+
+function assertCommittedBindingAndManifest(
   journal: CurrentRecoveryCommittedJournal,
   coordinates: CurrentRecoveryCaptureCoordinates,
 ): void {
@@ -352,7 +380,6 @@ function assertCommittedCoordinates(
   const binding = coordinates.binding;
   if (
     seed.taskId !== coordinates.taskId ||
-    seed.taskDigest !== coordinates.taskDigest ||
     seed.finalizedManifestDigest !== coordinates.finalizedManifestDigest ||
     seed.managedFingerprint !== binding.handleFingerprint ||
     seed.gitBinding.taskId !== binding.taskId ||
@@ -366,9 +393,209 @@ function assertCommittedCoordinates(
   ) {
     throw new CurrentRecoverySealError(
       "journal-conflict",
-      "committed recovery epoch identity differs from the live task, manifest, or managed binding",
+      "committed recovery epoch differs from the live task manifest or managed binding",
     );
   }
+}
+
+function assertLegacySelectedSourceAuthentic(
+  journal: CurrentRecoveryCommittedJournal,
+  row: AttestationRow,
+  binding: ManagedWorktreeDispatchBinding,
+): DispatchJSONValue {
+  const seed = journal.seal.seed;
+  if (isAttestationTombstone(row)) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "pre-scheme recovery source no longer retains authenticated task input",
+    );
+  }
+  if (
+    row.namespace.backend !== seed.namespace.backend ||
+    row.namespace.projectKey !== seed.namespace.projectKey ||
+    row.attestationId !== seed.selectedSourceHandle.attestationId ||
+    row.generation !== seed.selectedSourceHandle.generation ||
+    !bindingMatches(row.gitEffectBinding, binding)
+  ) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "pre-scheme recovery source identity or managed binding changed",
+    );
+  }
+  if (seed.version === 1) {
+    const detailsDigest =
+      row.abortDetails === undefined ? null : dispatchPayloadDigest(row.abortDetails);
+    if (
+      row.state !== "aborted" ||
+      row.abortReason !== seed.sourceAbortReason ||
+      !ELIGIBLE_ABORT_REASONS.has(row.abortReason) ||
+      row.terminalAt === undefined ||
+      row.abortedAt !== row.terminalAt ||
+      (row.abortDetailsDigest !== undefined && row.abortDetailsDigest !== detailsDigest) ||
+      row.terminalDigest !==
+        dispatchPayloadDigest({
+          terminalKind: "aborted",
+          reason: row.abortReason,
+          detailsDigest,
+        }) ||
+      dispatchPayloadDigest(row.promptProvenance as unknown as DispatchJSONValue) !==
+        dispatchPayloadDigest(seed.promptProvenance as unknown as DispatchJSONValue) ||
+      row.prepareRequestDigest !== seed.prepareRequestDigest ||
+      row.promptProvenance.inputDigest !== dispatchPayloadDigest(row.input) ||
+      dispatchPayloadDigest(row.input) !== dispatchPayloadDigest(seed.inputRecipe) ||
+      dispatchPayloadDigest(row.overlays as unknown as DispatchJSONValue) !==
+        dispatchPayloadDigest(seed.overlays as unknown as DispatchJSONValue)
+    ) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "pre-scheme aborted source is not the complete authenticated sealed recipe",
+      );
+    }
+    return seed.inputRecipe;
+  }
+  if (
+    preCutoverConsumedFailureSource(row) === undefined ||
+    row.outputDigest === undefined ||
+    row.terminalDigest !==
+      dispatchPayloadDigest({ terminalKind: "consumed", resultDigest: row.outputDigest }) ||
+    row.promptProvenance.inputDigest !== dispatchPayloadDigest(row.input)
+  ) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "pre-scheme consumed source is not completely authenticated",
+    );
+  }
+  return row.input;
+}
+
+function assertCommittedCoordinates(
+  journal: CurrentRecoveryCommittedJournal,
+  coordinates: CurrentRecoveryCaptureCoordinates,
+): void {
+  const seed = journal.seal.seed;
+  assertCommittedBindingAndManifest(journal, coordinates);
+  if (
+    seed.taskIdentityScheme !== undefined &&
+    (seed.taskIdentityScheme !== CURRENT_RECOVERY_TASK_IDENTITY_SCHEME ||
+      seed.taskDigest !== coordinates.taskDigest)
+  ) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "committed recovery epoch task identity differs from the live finalized task",
+    );
+  }
+}
+
+async function assertLegacyCommittedMigration(
+  journal: CurrentRecoveryCommittedJournal,
+  rows: readonly AttestationRow[],
+  coordinates: CurrentRecoveryCaptureCoordinates,
+  deps: CurrentRecoveryCaptureDeps,
+): Promise<void> {
+  const expectedTaskSpecificationDigest = coordinates.taskSpecificationDigest;
+  if (expectedTaskSpecificationDigest === undefined) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "pre-scheme recovery migration requires finalized task specification evidence",
+    );
+  }
+  assertCommittedBindingAndManifest(journal, coordinates);
+  const seed = journal.seal.seed;
+  const sealedRows = rows.filter((row) => row.generation <= seed.lineageMaximumGeneration);
+  const snapshot = lineageSnapshot(sealedRows, coordinates.binding, journal.version !== 1);
+  assertNoActiveGeneration(snapshot);
+  if (snapshot.digest !== journal.snapshotDigest || snapshot.digest !== seed.snapshotDigest) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "pre-scheme recovery snapshot no longer matches committed authority",
+    );
+  }
+  const selected = selectStrictMaximalRecoverySource(
+    seed.taskId,
+    seed.liveTip,
+    await sourceCandidates(snapshot, { ...coordinates, liveTip: seed.liveTip }, deps),
+  );
+  const expectedSource =
+    seed.version === 1
+      ? ({ kind: "aborted", version: 1, abortReason: seed.sourceAbortReason } as const)
+      : seed.source;
+  if (
+    !sourcesEqual(selected, {
+      selectedSourceHandle: seed.selectedSourceHandle,
+      lineageMaximumGeneration: seed.lineageMaximumGeneration,
+      source: expectedSource,
+      sourceTerminalDigest: seed.sourceTerminalDigest,
+      gitReceipts: seed.gitReceipts,
+      gitReceiptsDigest: seed.gitReceiptsDigest,
+    })
+  ) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "pre-scheme recovery source, receipt closure, or terminal lineage changed",
+    );
+  }
+  const selectedRow = sourceRow(snapshot, selected);
+  const identityInput = assertLegacySelectedSourceAuthentic(
+    journal,
+    selectedRow,
+    coordinates.binding,
+  );
+  if (taskSpecificationDigest(identityInput) !== expectedTaskSpecificationDigest) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "pre-scheme recovery task specification differs from the current finalized task",
+    );
+  }
+}
+
+function migratedCommittedJournal(
+  journal: CurrentRecoveryCommittedJournal,
+  coordinates: CurrentRecoveryCaptureCoordinates,
+): CurrentRecoveryCommittedJournal {
+  const seal = createCurrentRecoverySeal({
+    ...journal.seal.seed,
+    taskIdentityScheme: CURRENT_RECOVERY_TASK_IDENTITY_SCHEME,
+    taskDigest: coordinates.taskDigest,
+  });
+  const fence = journal.fence;
+  if (fence === undefined) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "pre-scheme committed recovery authority has no lineage fence",
+    );
+  }
+  return {
+    ...journal,
+    seal,
+    fence: createDispatchLineageCutoverFence({
+      namespace: seal.seed.namespace,
+      taskId: seal.seed.taskId,
+      managedFingerprint: seal.seed.managedFingerprint,
+      sourceAttestationId: seal.seed.selectedSourceHandle.attestationId,
+      selectedSourceGeneration: seal.seed.selectedSourceHandle.generation,
+      lineageMaximumGeneration: seal.seed.lineageMaximumGeneration,
+      recoverySeedRef: seal.sealReference,
+      fenceCapability: {
+        scope: "dispatch-lineage-fence",
+        token: coordinates.binding.handleToken,
+      },
+      installedAt: fence.installedAt,
+    }),
+  } as CurrentRecoveryCommittedJournal;
+}
+
+async function persistCommittedIdentityMigration(
+  journal: CurrentRecoverySealJournalStore,
+  expected: CurrentRecoveryCommittedJournal,
+  next: CurrentRecoveryCommittedJournal,
+): Promise<void> {
+  if (journal.migrateCommittedTaskIdentity === undefined) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "recovery journal adapter cannot atomically migrate pre-scheme authority",
+    );
+  }
+  await journal.migrateCommittedTaskIdentity(expected, next);
 }
 
 function journalSuccessorRows(
@@ -543,6 +770,10 @@ export async function captureCurrentRecoverySeal(
     let snapshot = lineageSnapshot(rows, coordinates.binding, includeContinuationTombstones);
     assertNoActiveGeneration(snapshot);
     if (existing?.state === "committed") {
+      const migratesTaskIdentity = existing.seal.seed.taskIdentityScheme === undefined;
+      if (migratesTaskIdentity) {
+        await assertLegacyCommittedMigration(existing, rows, coordinates, deps);
+      }
       const source = await journalSuccessorSource(rows, existing, coordinates, deps);
       if (source === null) {
         if (
@@ -554,6 +785,11 @@ export async function captureCurrentRecoverySeal(
             "journal-conflict",
             "committed recovery epoch changed without one authenticated terminal successor",
           );
+        }
+        if (migratesTaskIdentity) {
+          const migrated = migratedCommittedJournal(existing, coordinates);
+          await persistCommittedIdentityMigration(deps.journal, existing, migrated);
+          return migrated.seal;
         }
         return existing.seal;
       }
@@ -623,7 +859,7 @@ export async function captureCurrentRecoverySeal(
         },
         installedAt: committedAt,
       });
-      await deps.journal.put({
+      const promotedJournal = {
         kind: "cq-current-recovery-seal-journal",
         version: 1,
         state: "committed",
@@ -633,7 +869,12 @@ export async function captureCurrentRecoverySeal(
         writtenAt: capturedAt,
         committedAt,
         fence,
-      });
+      } as const;
+      if (migratesTaskIdentity) {
+        await persistCommittedIdentityMigration(deps.journal, existing, promotedJournal);
+      } else {
+        await deps.journal.put(promotedJournal);
+      }
       return seal;
     }
     let source = selectStrictMaximalRecoverySource(
@@ -810,7 +1051,9 @@ export function currentRecoveryTaskEvidence(
   store: LedgerStore,
   taskId: string,
 ): {
+  readonly taskIdentityScheme: typeof CURRENT_RECOVERY_TASK_IDENTITY_SCHEME;
   readonly taskDigest: string;
+  readonly taskSpecificationDigest: string;
   readonly finalizedManifestDigest: string;
 } {
   const task = store.fetchItem(TASKS_LEDGER, taskId);
@@ -852,8 +1095,16 @@ export function currentRecoveryTaskEvidence(
     finalizedGoalRef: goalRefs[0]!,
     manifestMembership,
   } as const;
+  const taskSpecification = {
+    taskId: task.id,
+    headline: task.fields["headline"],
+    description: task.fields["description"],
+    acceptance: task.fields["acceptance"],
+  };
   return {
+    taskIdentityScheme: CURRENT_RECOVERY_TASK_IDENTITY_SCHEME,
     taskDigest: dispatchPayloadDigest(taskIdentity as unknown as DispatchJSONValue),
+    taskSpecificationDigest: taskSpecificationDigest(taskSpecification),
     finalizedManifestDigest: dispatchPayloadDigest(decodedManifest),
   };
 }
