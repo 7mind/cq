@@ -504,6 +504,33 @@ describe("journal recovery epoch promotion", () => {
     }
   });
 
+  // Regression: a journal-derived worker may terminalize before producing a new Git receipt.
+  test("terminal abort with no current-generation receipt promotes the unchanged closure [Behavioral-Active Blackbox-Group]", async () => {
+    const { journal, generation17 } = await generation17Journal();
+    const successor = journalDerivedAbort();
+    const coordinates = {
+      ...promotionCoordinates(),
+      liveTip: RECOVERY_TIP,
+    };
+    const deps = {
+      journal,
+      snapshot: async () => [generation17, successor],
+      resolveReceipts: async () => RECOVERY_RECEIPTS,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => LATER,
+    };
+
+    const promoted = await captureCurrentRecoverySeal(coordinates, deps);
+    expect(promoted.seed.selectedSourceHandle).toEqual({
+      attestationId: RECOVERY_ATTESTATION,
+      generation: 18,
+    });
+    expect(promoted.seed.gitReceipts).toEqual(RECOVERY_RECEIPTS);
+    expect(promoted.seed.liveTip).toBe(RECOVERY_TIP);
+    expect(await captureCurrentRecoverySeal(coordinates, deps)).toEqual(promoted);
+  });
+
   // Regression: a v2 journal hashes continuation tombstones, while the v1 journal written by
   // abort promotion hashes terminal envelopes. Promotion must commit the membership it will reread.
   test("committed v2 promotion remains replay-idempotent after the journal becomes v1 [Behavioral-Active Blackbox-Group]", async () => {
