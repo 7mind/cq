@@ -297,7 +297,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
   it(
     "renders all three surfaces from one catalog: 9 dispatched roles + 16 orchestrator commands",
     () => {
-      expect(DISPATCHED_ROLES).toHaveLength(9);
+      expect(DISPATCHED_ROLES).toHaveLength(10);
       expect(COMMAND_ROLES).toHaveLength(16);
       // The dispatched-role SET is identical per surface — the precondition for
       // comparing the surfaces at all.
@@ -762,7 +762,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
   });
 
   it("T1492 gives every dispatched Codex role one complete result-delivery contract", () => {
-    expect(DISPATCHED_ROLES.map(({ roleId }) => roleId)).toHaveLength(9);
+    expect(DISPATCHED_ROLES.map(({ roleId }) => roleId)).toHaveLength(10);
     for (const { roleId } of DISPATCHED_ROLES) {
       const body = normalize(renderedOf("codex", roleId));
       expect(countOccurrences(body, "fetch_dispatch_input")).toBe(1);

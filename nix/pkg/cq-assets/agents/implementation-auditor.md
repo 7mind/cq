@@ -36,6 +36,6 @@ required observation verified. A disapproval requires criticism or questions.
 Do not invent Git objects, gate results, reviews, task membership, or archive
 facts.
 
-Store the verdict exactly once through `store_result`. Only a `result-stored`
-acknowledgement permits the final response. Then return only the prepared
-dispatch handle.
+Store the verdict exactly once through the dispatch-scoped `resultCapability`
+using `store_result`. Only a `result-stored` acknowledgement permits the final
+response. Then return only the prepared dispatch handle.

@@ -134,7 +134,7 @@ describe("packaged Codex prompt root and command skills", () => {
       );
 
       expect(commands).toHaveLength(16);
-      expect(dispatched).toHaveLength(9);
+      expect(dispatched).toHaveLength(10);
       expect(dispatched.map(({ sidecar }) => sidecar?.schemaRoleId)).toEqual(
         dispatched.map(({ roleId }) => roleId),
       );

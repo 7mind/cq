@@ -491,6 +491,7 @@ let
     (mkCommand "implement/advance" [ I T O D W E ] [
       (dispatch "implement-worker")
       (dispatch "implement-reviewer")
+      (dispatch "implementation-auditor")
       (dispatch "implement-conflict-resolver")
     ])
     (mkCommand "plan-review" [ T ] [ ])

@@ -231,7 +231,7 @@ describe("ledger-mcp stdio under a packaged CQ_HARNESS=codex environment (T865)"
 
       // Per-role mappings: the same ladder, resolved through [agent_tiers].
       const agents = await agentModels(client);
-      expect(agents).toHaveLength(25);
+      expect(agents).toHaveLength(26);
       expect(agent(agents, "plan-advance").modelClass).toBe("frontier");
       expect(agent(agents, "plan-advance").modelMappings).toEqual({
         pi: ["openai-codex/gpt-5.6-sol:xhigh"],

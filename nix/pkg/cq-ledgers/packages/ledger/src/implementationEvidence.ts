@@ -37,10 +37,6 @@ const PANEL_REF = /^cq-implementation-review-panel:v1:[0-9a-f]{64}$/u;
 const ATTEMPT_REF = /^cq-implementation-review-attempt:v1:[0-9a-f]{64}$/u;
 const AUDIT_PANEL_REF = /^cq-implementation-audit-panel:v1:[0-9a-f]{64}$/u;
 const AUDIT_ATTEMPT_REF = /^cq-implementation-audit-attempt:v1:[0-9a-f]{64}$/u;
-const AUDIT_REF = /^cq-implementation-audit:v1:[0-9a-f]{64}$/u;
-const ACTIVATION_REQUIREMENT_REF =
-  /^cq-implementation-evidence-activation-requirement:v1:[0-9a-f]{64}$/u;
-const ACTIVATION_REF = /^cq-implementation-evidence-activation:v1:[0-9a-f]{64}$/u;
 
 export type ImplementationReviewTerminalState =
   "approved" | "disapproved" | "operational-abstention";
@@ -1630,13 +1626,14 @@ export class ImplementationEvidenceService {
     }
     if (observation.adapterIdentity !== attempt.identity.adapterId)
       throw new Error("external audit adapter identity changed");
+    const parsed = parseAuditAdapterVerdict(observation.stdout, panel);
     const parseResult =
-      observation.exitCode === 0
-        ? parseAuditAdapterVerdict(observation.stdout, panel)
+      parsed.kind === "valid-verdict" || observation.exitCode === 0
+        ? parsed
         : {
             kind: "operational-abstention" as const,
             reason: "failed" as const,
-            detail: `adapter exited ${String(observation.exitCode)}`,
+            detail: `adapter exited ${String(observation.exitCode)}: ${parsed.detail}`,
           };
     await this.deps.store[mutateEvidence](async (state) => {
       const current = state.auditAttempts[input.attemptRef];

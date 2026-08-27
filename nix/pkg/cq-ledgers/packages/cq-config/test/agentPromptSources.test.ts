@@ -92,7 +92,7 @@ describe("dispatched-role prompt sources", () => {
     const completeRoleIds = new Set(completeCatalog.map(({ roleId }) => roleId));
 
     expect(catalog.map(({ roleId }) => roleId)).toEqual([...DISPATCHED_ROLE_IDS]);
-    expect(catalog).toHaveLength(9);
+    expect(catalog).toHaveLength(10);
     expect(fragmentSources.filter(({ roleId }) => DISPATCHED_ROLE_IDS.includes(roleId))).toHaveLength(
       catalog.reduce((count, role) => count + role.fragmentBindings.length, 0) *
         PROMPT_SURFACES.length,

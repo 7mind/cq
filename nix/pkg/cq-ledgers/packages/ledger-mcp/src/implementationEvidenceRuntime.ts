@@ -20,6 +20,7 @@ import {
   nodeGitRunner,
   readCanonicalOwnership,
   operatorActionDirectiveForTask,
+  resolveImplementationEvidenceActivationTaskMappings,
   recordProtectedImplementationCompletion,
   type DispatchCapability,
   type ImplementationEvidenceServiceDependencies,
@@ -635,16 +636,13 @@ export function createProductionImplementationEvidenceService(
         throw new Error("goal finalized manifest is not canonical JSON");
       }
       const published = PlanPublishedManifestSchema.parse(parsed);
-      const mapping = new Map(published.tasks.map(({ key, id }) => [key, id]));
-      const evidenceTaskId = mapping.get(manifest.activation.evidenceTaskKey);
-      const auditTaskId = mapping.get(manifest.activation.auditTaskKey);
-      const activationTaskId = mapping.get(manifest.activation.activationTaskKey);
-      if (
-        evidenceTaskId === undefined ||
-        auditTaskId === undefined ||
-        activationTaskId === undefined
-      )
-        throw new Error("finalized manifest omits an implementation evidence bootstrap mapping");
+      const mappings = resolveImplementationEvidenceActivationTaskMappings(
+        published,
+        manifest.activation,
+      );
+      const evidenceTaskId = mappings.evidenceTaskRef.slice(`${TASKS_LEDGER}:`.length);
+      const auditTaskId = mappings.auditTaskRef.slice(`${TASKS_LEDGER}:`.length);
+      const activationTaskId = mappings.activationTaskRef.slice(`${TASKS_LEDGER}:`.length);
       const activationTask = store.fetchItem(TASKS_LEDGER, activationTaskId);
       if (operatorActionDirectiveForTask(activationTask)?.actionKey !== "implementation-evidence-activation")
         throw new Error("activation task lacks the strict implementation-evidence operator envelope");
