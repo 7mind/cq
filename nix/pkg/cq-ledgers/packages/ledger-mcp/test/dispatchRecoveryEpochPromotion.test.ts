@@ -10,11 +10,13 @@ import {
   sequentialDispatchRandomBytes,
   type AttestationEnvelope,
   type AttestationNamespace,
+  type AttestationRow,
   type PromptSurface,
 } from "@cq/config";
 import {
   InMemoryCurrentRecoverySealJournalStore,
   dispatchLineageFenceFromRecoveryJournal,
+  journalRecoveryRequiredForFence,
   prepareManagedWorktree,
   resolveInheritedGitChangeReceipts,
   resolveManagedWorktreeDispatchBinding,
@@ -26,12 +28,23 @@ import type {
   PromptArtifactRoleMetadata,
   PromptArtifactStore,
 } from "../src/promptArtifactStore.js";
+import {
+  RECOVERY_ATTESTATION,
+  RECOVERY_BINDING,
+  RECOVERY_INPUT,
+  RECOVERY_RECEIPTS,
+  RECOVERY_TASK,
+  RECOVERY_TIP,
+  abortedEnvelope,
+  receipt,
+} from "../../ledger/test/recoverySealTestSupport.js";
 
 const TASK_ID = "T2345";
 const NOW = "2026-08-25T01:00:00.000Z";
 const LATER = "2026-08-25T01:00:01.000Z";
 const PROMPT_DIGEST = "8".repeat(64);
 const CATALOG_HASH = "9".repeat(64);
+const PROMOTED_TIP = "4".repeat(40);
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -67,6 +80,68 @@ function artifactStore(surface: PromptSurface): PromptArtifactStore {
     }),
     readRole: () => ({ metadata, bytes: new Uint8Array([1]) }),
   };
+}
+
+function terminalAbortDigest(reason: string): string {
+  return dispatchPayloadDigest({ terminalKind: "aborted", reason, detailsDigest: null });
+}
+
+function journalDerivedAbort(
+  reason: "invalid-output" | "missing-result" | "deadline-exceeded" | "parent-lost" =
+    "parent-lost",
+): AttestationEnvelope {
+  const input = { ...RECOVERY_INPUT, round: 18 };
+  const row = abortedEnvelope({ generation: 18, reason });
+  return {
+    ...row,
+    promptProvenance: {
+      ...row.promptProvenance,
+      inputDigest: dispatchPayloadDigest(input),
+    },
+    input,
+    gitEffectBinding: {
+      ...RECOVERY_BINDING,
+      inheritedGitReceipts: RECOVERY_RECEIPTS,
+    },
+    terminalDigest: terminalAbortDigest(reason),
+  };
+}
+
+async function generation17Journal() {
+  const journal = new InMemoryCurrentRecoverySealJournalStore();
+  const generation17 = abortedEnvelope({ generation: 17 });
+  await captureCurrentRecoverySeal(
+    {
+      taskId: RECOVERY_TASK,
+      binding: RECOVERY_BINDING,
+      liveTip: RECOVERY_TIP,
+      taskDigest: "b".repeat(64),
+      finalizedManifestDigest: "c".repeat(64),
+    },
+    {
+      journal,
+      snapshot: async () => [generation17],
+      resolveReceipts: async () => RECOVERY_RECEIPTS,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => NOW,
+    },
+  );
+  return { journal, generation17 };
+}
+
+function promotionCoordinates() {
+  return {
+    taskId: RECOVERY_TASK,
+    binding: RECOVERY_BINDING,
+    liveTip: PROMOTED_TIP,
+    taskDigest: "b".repeat(64),
+    finalizedManifestDigest: "c".repeat(64),
+  } as const;
+}
+
+function promotedReceipts(): readonly GitChangeBrokerReceipt[] {
+  return [...RECOVERY_RECEIPTS, receipt(18, RECOVERY_TIP, PROMOTED_TIP)];
 }
 
 describe("journal recovery epoch promotion", () => {
@@ -247,35 +322,87 @@ describe("journal recovery epoch promotion", () => {
       });
       await capability.abort({ ...generation18.handle, reason: "parent-lost" });
 
-      const promoted = await captureCurrentRecoverySeal(
-        { ...coordinates, liveTip: generation18Receipt.newHead },
-        {
-          journal: ledgerState,
-          snapshot: async () => store.snapshot(),
-          resolveReceipts: async (row, liveTip) =>
-            await resolveInheritedGitChangeReceipts(
-              {
-                ...binding,
-                attestationId: row.attestationId,
-                generation: row.generation,
-                ...(row.kind === "envelope" &&
-                row.gitEffectBinding?.inheritedGitReceipts !== undefined
-                  ? { inheritedGitReceipts: row.gitEffectBinding.inheritedGitReceipts }
-                  : {}),
-              },
-              liveTip,
-              { stateDir },
-            ),
-          revalidateBinding: async () => {},
-          observeLiveTip: async () => generation18Receipt.newHead,
-          now: () => LATER,
-        },
-      );
+      const promotionDeps = {
+        journal: ledgerState,
+        snapshot: async () => store.snapshot(),
+        resolveReceipts: async (row: AttestationRow, liveTip: string) =>
+          await resolveInheritedGitChangeReceipts(
+            {
+              ...binding,
+              attestationId: row.attestationId,
+              generation: row.generation,
+              ...(row.kind === "envelope" &&
+              row.gitEffectBinding?.inheritedGitReceipts !== undefined
+                ? { inheritedGitReceipts: row.gitEffectBinding.inheritedGitReceipts }
+                : {}),
+            },
+            liveTip,
+            { stateDir },
+          ),
+        revalidateBinding: async () => {},
+        observeLiveTip: async () => generation18Receipt.newHead,
+        now: () => LATER,
+      };
+      const livePromotionCoordinates = {
+        ...coordinates,
+        liveTip: generation18Receipt.newHead,
+      };
+      const promoted = await captureCurrentRecoverySeal(livePromotionCoordinates, promotionDeps);
       expect(promoted.seed.selectedSourceHandle).toEqual({ attestationId, generation: 18 });
-      expect(promoted.seed.gitReceipts).toEqual([seedReceipt, generation18Receipt]);
+      expect(promoted.seed.gitReceipts).toHaveLength(2);
+      expect(promoted.seed.gitReceipts[0]?.requestDigest).toBe(seedReceipt.requestDigest);
+      expect(promoted.seed.gitReceipts[1]?.requestDigest).toBe(
+        generation18Receipt.requestDigest,
+      );
+      const committed18 = await ledgerState.read(TASK_ID);
+      expect(await captureCurrentRecoverySeal(livePromotionCoordinates, promotionDeps)).toEqual(
+        promoted,
+      );
+      expect(await ledgerState.read(TASK_ID)).toEqual(committed18);
 
       const fence18 = dispatchLineageFenceFromRecoveryJournal(await ledgerState.read(TASK_ID));
       if (fence18 === null) throw new Error("promoted recovery epoch has no fence");
+      const fencedRowCount = store.snapshot().length;
+      for (const [label, requestFields] of [
+        ["ordinary", {}],
+        ["reprepare", { reprepareOf: generation18.handle }],
+        ["legacy-recovery", { recovery: `cq-dispatch-recovery:v1:${"a".repeat(64)}` }],
+        ["continuation", { continuation: `cq-dispatch-continuation:v1:${"b".repeat(64)}` }],
+        [
+          "guarded-rebase",
+          {
+            reprepareOf: generation18.handle,
+            guardedRebase: `cq-guarded-rebase:v1:${"c".repeat(64)}`,
+          },
+        ],
+      ] as const) {
+        expect(
+          await capability.prepare({
+            ...generation18Request,
+            idempotencyKey: `T2345-fenced-${label}`,
+            ...requestFields,
+          }),
+        ).toEqual(journalRecoveryRequiredForFence(fence18));
+      }
+      for (const recoveryPreparation of [
+        recoveryAuthority17,
+        {
+          recoverySeedRef: promoted.sealReference,
+          fenceCapability: {
+            scope: "dispatch-lineage-fence" as const,
+            token: "foreign-managed-handle-token",
+          },
+        },
+      ]) {
+        expect(
+          await capability.prepare({
+            ...generation18Request,
+            idempotencyKey: `T2345-rejected-${recoveryPreparation.recoverySeedRef}`,
+            recoveryPreparation,
+          }),
+        ).toEqual(journalRecoveryRequiredForFence(fence18));
+      }
+      expect(store.snapshot()).toHaveLength(fencedRowCount);
       const generation19Request = {
         ...generation18Request,
         input: {
@@ -312,6 +439,169 @@ describe("journal recovery epoch promotion", () => {
     } finally {
       await backend.close();
       await fs.rm(repositoryRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("all four authenticated terminal abort reasons promote one epoch [Behavioral-Active Blackbox-Group]", async () => {
+    for (const reason of [
+      "invalid-output",
+      "missing-result",
+      "deadline-exceeded",
+      "parent-lost",
+    ] as const) {
+      const { journal, generation17 } = await generation17Journal();
+      const successor = journalDerivedAbort(reason);
+      const promoted = await captureCurrentRecoverySeal(promotionCoordinates(), {
+        journal,
+        snapshot: async () => [generation17, successor],
+        resolveReceipts: async () => promotedReceipts(),
+        revalidateBinding: async () => {},
+        observeLiveTip: async () => PROMOTED_TIP,
+        now: () => LATER,
+      });
+      expect(promoted.seed.selectedSourceHandle).toEqual({
+        attestationId: RECOVERY_ATTESTATION,
+        generation: 18,
+      });
+      expect(promoted.version === 1 ? promoted.seed.sourceAbortReason : undefined).toBe(reason);
+    }
+  });
+
+  test("promotion rejects every unauthenticated or competing successor control [Behavioral-Active Blackbox-Group]", async () => {
+    const valid = journalDerivedAbort();
+    const cases: readonly {
+      readonly label: string;
+      readonly reason: string;
+      readonly rows: (generation17: AttestationEnvelope) => readonly AttestationEnvelope[];
+      readonly receipts?: readonly GitChangeBrokerReceipt[];
+      readonly liveTip?: string;
+      readonly taskDigest?: string;
+      readonly finalizedManifestDigest?: string;
+    }[] = [
+      {
+        label: "nonterminal",
+        reason: "lineage-active",
+        rows: (generation17) => {
+          const {
+            abortedAt: _abortedAt,
+            abortReason: _abortReason,
+            terminalAt: _terminalAt,
+            terminalDigest: _terminalDigest,
+            ...prepared
+          } = valid;
+          return [generation17, { ...prepared, state: "prepared" }];
+        },
+      },
+      {
+        label: "consumed-pass",
+        reason: "source-not-found",
+        rows: (generation17) => [
+          generation17,
+          { ...valid, state: "consumed", consumedAt: LATER } as AttestationEnvelope,
+        ],
+      },
+      {
+        label: "foreign-binding",
+        reason: "journal-conflict",
+        rows: (generation17) => [
+          generation17,
+          {
+            ...valid,
+            gitEffectBinding: {
+              ...valid.gitEffectBinding!,
+              handleFingerprint: "f".repeat(64),
+            },
+          },
+        ],
+      },
+      {
+        label: "foreign-handle",
+        reason: "source-not-found",
+        rows: (generation17) => [
+          generation17,
+          { ...valid, attestationId: `att_${"f".repeat(32)}` },
+        ],
+      },
+      {
+        label: "moved-tip",
+        reason: "snapshot-changed",
+        rows: (generation17) => [generation17, valid],
+        liveTip: RECOVERY_TIP,
+      },
+      {
+        label: "incomplete-receipts",
+        reason: "source-not-found",
+        rows: (generation17) => [generation17, valid],
+        receipts: RECOVERY_RECEIPTS,
+      },
+      {
+        label: "divergent-receipts",
+        reason: "invalid",
+        rows: (generation17) => [generation17, valid],
+        receipts: [
+          ...RECOVERY_RECEIPTS,
+          receipt(18, RECOVERY_RECEIPTS[0]!.newHead, PROMOTED_TIP),
+        ],
+      },
+      {
+        label: "competing-terminal-sources",
+        reason: "source-ambiguous",
+        rows: (generation17) => [
+          generation17,
+          valid,
+          {
+            ...valid,
+            attestationId: `att_${"e".repeat(32)}`,
+            generation: 19,
+          },
+        ],
+      },
+      {
+        label: "changed-task-identity",
+        reason: "journal-conflict",
+        rows: (generation17) => [generation17, valid],
+        taskDigest: "0".repeat(64),
+      },
+      {
+        label: "changed-finalized-manifest",
+        reason: "journal-conflict",
+        rows: (generation17) => [generation17, valid],
+        finalizedManifestDigest: "0".repeat(64),
+      },
+      {
+        label: "changed-terminal-digest",
+        reason: "journal-conflict",
+        rows: (generation17) => [
+          generation17,
+          { ...valid, terminalDigest: "0".repeat(64) },
+        ],
+      },
+    ];
+
+    for (const control of cases) {
+      const { journal, generation17 } = await generation17Journal();
+      const coordinates = {
+        ...promotionCoordinates(),
+        ...(control.taskDigest === undefined ? {} : { taskDigest: control.taskDigest }),
+        ...(control.finalizedManifestDigest === undefined
+          ? {}
+          : { finalizedManifestDigest: control.finalizedManifestDigest }),
+      };
+      await expect(
+        captureCurrentRecoverySeal(coordinates, {
+          journal,
+          snapshot: async () => control.rows(generation17),
+          resolveReceipts: async () => control.receipts ?? promotedReceipts(),
+          revalidateBinding: async () => {},
+          observeLiveTip: async () => control.liveTip ?? PROMOTED_TIP,
+          now: () => LATER,
+        }),
+        control.label,
+      ).rejects.toMatchObject({ reason: control.reason });
+      expect(
+        (await journal.read(RECOVERY_TASK))?.seal.seed.selectedSourceHandle.generation,
+        control.label,
+      ).toBe(17);
     }
   });
 });

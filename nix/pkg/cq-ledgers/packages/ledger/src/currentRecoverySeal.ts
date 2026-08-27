@@ -405,6 +405,41 @@ function chainIsPrefix(
   );
 }
 
+function isCommittedRecoveryEpochPromotion(
+  current: CurrentRecoveryCommittedJournal,
+  next: CurrentRecoveryCommittedJournal,
+): boolean {
+  const currentFence = current.fence;
+  const nextFence = next.fence;
+  if (currentFence === undefined || nextFence === undefined) return false;
+  const currentSeed = current.seal.seed;
+  const nextSeed = next.seal.seed;
+  const promotedGeneration = nextSeed.selectedSourceHandle.generation;
+  const suffix = nextSeed.gitReceipts.slice(currentSeed.gitReceipts.length);
+  return (
+    nextSeed.version === 1 &&
+    currentSeed.taskId === nextSeed.taskId &&
+    currentSeed.taskDigest === nextSeed.taskDigest &&
+    currentSeed.finalizedManifestDigest === nextSeed.finalizedManifestDigest &&
+    payloadDigest(currentSeed.namespace) === payloadDigest(nextSeed.namespace) &&
+    payloadDigest(currentSeed.gitBinding) === payloadDigest(nextSeed.gitBinding) &&
+    currentSeed.managedFingerprint === nextSeed.managedFingerprint &&
+    currentSeed.selectedSourceHandle.attestationId ===
+      nextSeed.selectedSourceHandle.attestationId &&
+    promotedGeneration > currentSeed.lineageMaximumGeneration &&
+    nextSeed.lineageMaximumGeneration === promotedGeneration &&
+    currentSeed.gitReceipts.length < nextSeed.gitReceipts.length &&
+    chainIsPrefix(currentSeed.gitReceipts, nextSeed.gitReceipts) &&
+    suffix.every(
+      (receipt) =>
+        receipt.attestationId === nextSeed.selectedSourceHandle.attestationId &&
+        receipt.generation === promotedGeneration,
+    ) &&
+    currentFence.fenceCapabilityHash === nextFence.fenceCapabilityHash &&
+    currentFence.sourceAttestationId === nextFence.sourceAttestationId
+  );
+}
+
 /** Select the one strict maximal valid closure; only byte-identical maxima use generation/id tie-breaks. */
 export function selectStrictMaximalRecoverySource(
   taskId: string,
@@ -592,6 +627,13 @@ function assertJournalTransition(
     current.state === "provisional" &&
     next.state === "provisional" &&
     current.taskId === next.taskId
+  ) {
+    return;
+  }
+  if (
+    current.state === "committed" &&
+    next.state === "committed" &&
+    isCommittedRecoveryEpochPromotion(current, next)
   ) {
     return;
   }
