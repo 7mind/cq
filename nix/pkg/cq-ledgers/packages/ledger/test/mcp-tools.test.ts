@@ -188,7 +188,7 @@ it("create_item defaults an omitted milestone only for ideas", async () => {
         fields: { headline: "Missing milestone" },
       }).ok,
     ).toBe(false);
-    expect(createItem.description).toContain("ideas: omission uses M-AMBIENT");
+    expect(createItem.description).toContain("ideas may omit milestone_id for M-AMBIENT");
 
     const created = decode<{ item: { id: string; milestoneId: string } }>(
       await callTool(tools, "create_item", ideaInput),
