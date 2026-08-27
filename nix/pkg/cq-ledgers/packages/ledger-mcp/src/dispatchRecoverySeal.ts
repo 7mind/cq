@@ -505,7 +505,9 @@ async function journalSuccessorSource(
   ]);
   const suffix = candidate.gitReceipts.slice(seed.gitReceipts.length);
   if (
-    candidate.gitReceipts.length <= seed.gitReceipts.length ||
+    candidate.gitReceipts.length < seed.gitReceipts.length ||
+    (candidate.gitReceipts.length === seed.gitReceipts.length &&
+      coordinates.liveTip !== seed.liveTip) ||
     !receiptClosuresEqual(
       candidate.gitReceipts.slice(0, seed.gitReceipts.length),
       seed.gitReceipts,
