@@ -685,6 +685,15 @@ async function journalSuccessorSource(
       "journal recovery successor input is not bound to the committed epoch",
     );
   }
+  if (
+    coordinates.taskSpecificationDigest === undefined ||
+    taskSpecificationDigest(input) !== coordinates.taskSpecificationDigest
+  ) {
+    throw new CurrentRecoverySealError(
+      "journal-conflict",
+      "journal recovery successor task specification differs from the current finalized task",
+    );
+  }
   const detailsDigest =
     row.abortDetails === undefined ? null : dispatchPayloadDigest(row.abortDetails);
   if (row.abortDetailsDigest !== undefined && row.abortDetailsDigest !== detailsDigest) {
