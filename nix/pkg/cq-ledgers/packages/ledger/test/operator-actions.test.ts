@@ -380,7 +380,7 @@ for (const factory of factories) {
       }
     });
 
-    test("rejects malformed and duplicate envelopes while ordinary tasks remain unchanged", async () => {
+    test("rejects true malformed and duplicate envelopes while inline mentions remain mutable [Behavioral-Active Blackbox-Group]", async () => {
       const store = await factory.build();
       try {
         const milestone = await store.createMilestone({ title: "tasks" });
@@ -393,16 +393,21 @@ for (const factory of factories) {
           fields: { headline: "ordinary", ledgerRefs: [`goals:${goal.id}`] },
         });
         expect(derivePredicates(store).pImplement.items).toEqual([ordinary.id]);
+        // regression: D368 — an inline marker is ordinary prose, not an envelope.
+        const inlineMention = await store.createItem("tasks", milestone.id, {
+          status: "planned",
+          fields: {
+            headline: "ordinary inline mention",
+            description: "prefix CQ-OPERATOR-ACTION v1 action.",
+            ledgerRefs: [`goals:${goal.id}`],
+          },
+        });
         await expect(
-          store.createItem("tasks", milestone.id, {
-            status: "planned",
-            fields: {
-              headline: "bad",
-              description: "prefix CQ-OPERATOR-ACTION v1 action.",
-              ledgerRefs: [`goals:${goal.id}`],
-            },
+          store.updateItem("tasks", inlineMention.id, {
+            fields: { description: "updated prose mentioning CQ-OPERATOR-ACTION" },
           }),
-        ).rejects.toBeInstanceOf(OperatorActionEnvelopeError);
+        ).resolves.toMatchObject({ id: inlineMention.id });
+        expect(derivePredicates(store).pImplement.items).toContain(inlineMention.id);
         await expect(
           store.createItem("tasks", milestone.id, {
             status: "planned",
