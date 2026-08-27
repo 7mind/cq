@@ -361,15 +361,24 @@ function parityAuditRecord(recordKey: string, taskRef: string, resultCommit: str
   } as const;
 }
 
+const parityAuditInputSchema = z.object({
+  baseCommit: z.string().regex(/^[0-9a-f]{40}$/u),
+  resultCommit: z.string().regex(/^[0-9a-f]{40}$/u),
+  requiredObservations: z.array(z.string().min(1)).min(1),
+});
+
 function parityAuditVerdict(panel: ImplementationAuditPanelRecord) {
-  const input = panel.auditInput as Record<string, unknown>;
-  const required = input.requiredObservations as readonly string[];
+  const input = parityAuditInputSchema.parse(panel.auditInput);
   return {
     taskId: panel.taskRef.slice("tasks:".length),
-    verdict: "approve",
+    verdict: "approve" as const,
     criticism: [],
     questions: [],
-    observations: required.map((name) => ({ name, status: "verified", detail: `${name} checked` })),
+    observations: input.requiredObservations.map((name) => ({
+      name,
+      status: "verified" as const,
+      detail: `${name} checked`,
+    })),
     rationale: "stdio parity audit",
     manifestDigest: panel.manifestDigest,
     baseCommit: input.baseCommit,
