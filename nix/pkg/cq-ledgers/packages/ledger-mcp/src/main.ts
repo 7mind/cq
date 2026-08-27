@@ -1199,7 +1199,7 @@ export function serveHttp(
     toolProfile,
     repositoryRoot,
     undefined,
-    "management",
+    "observe",
     false,
     implementationEvidence,
   );
@@ -1361,7 +1361,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     return;
   }
 
-  const server = createManagementLedgerMcpServer({
+  const server = createLedgerMcpServer({
     store,
     displayName,
     toolPrefix,
