@@ -70,13 +70,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48163,
-        "tokens": 11616,
-        "sha256": "a9d8621667804858e9e322b87290647b38cd4d627d4a8fea902497b3cb7500f5"
+        "utf8Bytes": 48116,
+        "tokens": 11606,
+        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
       },
-      "surfaceTokens": 11781,
+      "surfaceTokens": 11771,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1,
+      "deltaTokens": -11,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -133,13 +133,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 35463,
-        "tokens": 8497,
-        "sha256": "5eeb78a4b3a615ac0418f8c18fdc40f4a743c61c2de3a7950785d969405acfed"
+        "utf8Bytes": 35416,
+        "tokens": 8487,
+        "sha256": "a55a65559bcb89a50222ae98a2fe3d8a5426dd64de5fa18b5d947d91d6565f73"
       },
-      "surfaceTokens": 8662,
+      "surfaceTokens": 8652,
       "baselineSurfaceTokens": 10386,
-      "deltaTokens": -1724,
+      "deltaTokens": -1734,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -204,13 +204,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48163,
-        "tokens": 11616,
-        "sha256": "a9d8621667804858e9e322b87290647b38cd4d627d4a8fea902497b3cb7500f5"
+        "utf8Bytes": 48116,
+        "tokens": 11606,
+        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
       },
-      "surfaceTokens": 11781,
+      "surfaceTokens": 11771,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1,
+      "deltaTokens": -11,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -275,13 +275,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48163,
-        "tokens": 11616,
-        "sha256": "a9d8621667804858e9e322b87290647b38cd4d627d4a8fea902497b3cb7500f5"
+        "utf8Bytes": 48116,
+        "tokens": 11606,
+        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
       },
-      "surfaceTokens": 11781,
+      "surfaceTokens": 11771,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1,
+      "deltaTokens": -11,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -492,13 +492,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48163,
-        "tokens": 11616,
-        "sha256": "a9d8621667804858e9e322b87290647b38cd4d627d4a8fea902497b3cb7500f5"
+        "utf8Bytes": 48116,
+        "tokens": 11606,
+        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
       },
-      "surfaceTokens": 11781,
+      "surfaceTokens": 11771,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1,
+      "deltaTokens": -11,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -563,13 +563,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48163,
-        "tokens": 11616,
-        "sha256": "a9d8621667804858e9e322b87290647b38cd4d627d4a8fea902497b3cb7500f5"
+        "utf8Bytes": 48116,
+        "tokens": 11606,
+        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
       },
-      "surfaceTokens": 11781,
+      "surfaceTokens": 11771,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1,
+      "deltaTokens": -11,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -634,13 +634,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48163,
-        "tokens": 11616,
-        "sha256": "a9d8621667804858e9e322b87290647b38cd4d627d4a8fea902497b3cb7500f5"
+        "utf8Bytes": 48116,
+        "tokens": 11606,
+        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
       },
-      "surfaceTokens": 11781,
+      "surfaceTokens": 11771,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1,
+      "deltaTokens": -11,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -779,13 +779,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48163,
-        "tokens": 11616,
-        "sha256": "a9d8621667804858e9e322b87290647b38cd4d627d4a8fea902497b3cb7500f5"
+        "utf8Bytes": 48116,
+        "tokens": 11606,
+        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
       },
-      "surfaceTokens": 11781,
+      "surfaceTokens": 11771,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1,
+      "deltaTokens": -11,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -850,13 +850,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48163,
-        "tokens": 11616,
-        "sha256": "a9d8621667804858e9e322b87290647b38cd4d627d4a8fea902497b3cb7500f5"
+        "utf8Bytes": 48116,
+        "tokens": 11606,
+        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
       },
-      "surfaceTokens": 11781,
+      "surfaceTokens": 11771,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1,
+      "deltaTokens": -11,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1035,13 +1035,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48163,
-        "tokens": 11616,
-        "sha256": "a9d8621667804858e9e322b87290647b38cd4d627d4a8fea902497b3cb7500f5"
+        "utf8Bytes": 48116,
+        "tokens": 11606,
+        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
       },
-      "surfaceTokens": 11781,
+      "surfaceTokens": 11771,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1,
+      "deltaTokens": -11,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1106,13 +1106,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48163,
-        "tokens": 11616,
-        "sha256": "a9d8621667804858e9e322b87290647b38cd4d627d4a8fea902497b3cb7500f5"
+        "utf8Bytes": 48116,
+        "tokens": 11606,
+        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
       },
-      "surfaceTokens": 11781,
+      "surfaceTokens": 11771,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1,
+      "deltaTokens": -11,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1212,13 +1212,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48163,
-        "tokens": 11616,
-        "sha256": "a9d8621667804858e9e322b87290647b38cd4d627d4a8fea902497b3cb7500f5"
+        "utf8Bytes": 48116,
+        "tokens": 11606,
+        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
       },
-      "surfaceTokens": 11781,
+      "surfaceTokens": 11771,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1,
+      "deltaTokens": -11,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1357,13 +1357,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48163,
-        "tokens": 11616,
-        "sha256": "a9d8621667804858e9e322b87290647b38cd4d627d4a8fea902497b3cb7500f5"
+        "utf8Bytes": 48116,
+        "tokens": 11606,
+        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
       },
-      "surfaceTokens": 11781,
+      "surfaceTokens": 11771,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1,
+      "deltaTokens": -11,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1463,13 +1463,13 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 48163,
-        "tokens": 11616,
-        "sha256": "a9d8621667804858e9e322b87290647b38cd4d627d4a8fea902497b3cb7500f5"
+        "utf8Bytes": 48116,
+        "tokens": 11606,
+        "sha256": "f089a9d2579954a81f7e6f8a171085a4f08a73b5b55d5ea44c146823fbddfcfd"
       },
-      "surfaceTokens": 11781,
+      "surfaceTokens": 11771,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": -1,
+      "deltaTokens": -11,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1801,8 +1801,8 @@
       "name": "create_item",
       "whole": {
         "baselineTokens": 384,
-        "afterTokens": 414,
-        "deltaTokens": 30
+        "afterTokens": 404,
+        "deltaTokens": 20
       },
       "fields": {
         "name": {
@@ -1825,12 +1825,12 @@
             "marginalTokens": 176
           },
           "after": {
-            "serializedTokens": 67,
-            "marginalTokens": 68
+            "serializedTokens": 57,
+            "marginalTokens": 58
           },
           "delta": {
-            "serializedTokens": -108,
-            "marginalTokens": -108
+            "serializedTokens": -118,
+            "marginalTokens": -118
           }
         },
         "inputSchema": {

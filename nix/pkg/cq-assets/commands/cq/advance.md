@@ -73,7 +73,7 @@ Repeat the following order. Re-read predicates after each numbered stage.
    defect; another defect may remain actionable.
 
 2. **Seed fixes.** For `pSeed.items`, fetch the full root-caused defects and
-   separate D359 bootstrap-repair blockers from ordinary unowned defects.
+   separate guarded bootstrap-repair blockers from ordinary unowned defects.
 
    A bootstrap-repair blocker is already owned by a `planned`/`building` goal,
    blocks that goal's sole active finalized task, and has no live canonical

@@ -19,7 +19,9 @@
     {
       "source": "commands/cq/advance.md",
       "family": "advance",
-      "calls": []
+      "calls": [
+        "Cycle::create_item#1|ack"
+      ]
     },
     {
       "source": "commands/cq/begin.md",
