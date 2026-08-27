@@ -450,7 +450,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts",
-      "sha256": "abfeb4b966f76810cf084d6d5df0c9fae353cbfcb6114f8e9307764e9b649a27",
+      "sha256": "4c2740aa00176ce5564b0b3268c3283073ea8bd52b1ac76a2ec3e8c47983eb5b",
       "targets": []
     },
     {
@@ -1278,7 +1278,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/packagedCodexRoleGitBroker.test.ts",
-      "sha256": "abfeb4b966f76810cf084d6d5df0c9fae353cbfcb6114f8e9307764e9b649a27",
+      "sha256": "4c2740aa00176ce5564b0b3268c3283073ea8bd52b1ac76a2ec3e8c47983eb5b",
       "targets": []
     },
     {
