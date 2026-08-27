@@ -196,6 +196,7 @@ type WipFixtureMode =
   | false
   | "exact"
   | "inherited"
+  | "inherited-current-open"
   | "after-prepare-inherited"
   | "foreign"
   | "modified-foreign"
@@ -248,6 +249,22 @@ async function fixtureWithDispatchBase(
     await fs.writeFile(path.join(repositoryRoot, inheritedPath), inheritedBody);
     await git(repositoryRoot, ["add", inheritedPath]);
     await git(repositoryRoot, ["commit", "-q", "-m", "retain earlier task WIP evidence"]);
+    baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+  }
+  if (wipFixture === "inherited-current-open") {
+    const currentPath = "WIP-T2081.md";
+    const currentBody = serializeWipArtifact({
+      id: "T2081",
+      role: "implement-worker",
+      baseCommit,
+      startedAt: "2026-08-12T20:00:00.000Z",
+      checkpoints: [{ name: "implementation", status: "todo", body: "Still open.\n" }],
+      complete: false,
+      openCheckpoints: ["implementation"],
+    });
+    await fs.writeFile(path.join(repositoryRoot, currentPath), currentBody);
+    await git(repositoryRoot, ["add", currentPath]);
+    await git(repositoryRoot, ["commit", "-q", "-m", "retain current task WIP evidence"]);
     baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
   }
   const stateDir = path.join(repositoryRoot, ".manager-state");
@@ -895,6 +912,33 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     }
   });
 
+  // Regression: T2823 — task ownership is authoritative even when the integration diff is empty.
+  test("pre-merge WIP closure inspects unchanged task-owned artifacts [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const subject = await fixtureWithDispatchBase(
+      new GateDummy(),
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      "inherited-current-open",
+    );
+    expect(await stageAndFinalize(subject)).toMatchObject({ state: "result-stored" });
+    const binding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot: subject.managed.handle.repositoryRoot,
+        taskId: subject.managed.handle.taskId,
+        worktreePath: subject.managed.handle.absolutePath,
+        branch: subject.managed.handle.branch,
+      },
+      { stateDir: subject.stateDir },
+    );
+    if (binding === null) throw new Error("expected live managed binding");
+
+    await expect(
+      assertManagedWorktreeWipClosure(binding, subject.receipt.newHead, {
+        stateDir: subject.stateDir,
+      }),
+    ).rejects.toThrow("open checkpoints: implementation");
+  });
+
   // Regression: D366 — integration can advance with retained WIP after task preparation.
   test("terminal release ignores unchanged WIP from authenticated post-prepare integration [Behavioral-Active Effectual-GoodCommunication]", async () => {
     const subject = await fixtureWithDispatchBase(
@@ -914,6 +958,34 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       { stateDir: subject.stateDir },
     );
     expect(released).toMatchObject({ status: "released" });
+  });
+
+  // Regression: T2823 — release must preserve the current task's open recovery artifact.
+  test("terminal release inspects unchanged task-owned artifacts [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const subject = await fixtureWithDispatchBase(
+      new GateDummy(),
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      "inherited-current-open",
+    );
+    expect(await stageAndFinalize(subject)).toMatchObject({ state: "result-stored" });
+
+    const released = await releaseManagedWorktree(
+      {
+        handle: subject.managed.handle,
+        terminalDisposition: "done",
+        resultCommit: subject.receipt.newHead,
+      },
+      { stateDir: subject.stateDir },
+    );
+    expect(released).toMatchObject({
+      status: "refused",
+      reason: "wip-open",
+      openCheckpoints: ["implementation"],
+    });
+    expect(await fs.stat(subject.managed.handle.absolutePath).then((entry) => entry.isDirectory())).toBe(
+      true,
+    );
   });
 
   test("gate projection rejects integration history outside the exact result ancestry [Behavioral-Active Effectual-GoodCommunication]", async () => {
