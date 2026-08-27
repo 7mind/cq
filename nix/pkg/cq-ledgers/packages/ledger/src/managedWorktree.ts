@@ -1510,10 +1510,8 @@ async function revParse(
 function rootWipNames(output: string): readonly string[] {
   return output
     .split("\0")
-    .filter(
-      (name) =>
-        name !== "" && !name.includes("/") && name.startsWith("WIP-") && name.endsWith(".md"),
-    );
+    .map((name) => name.split("/", 1)[0] ?? "")
+    .filter((name) => name.startsWith("WIP-") && name.endsWith(".md"));
 }
 
 async function recoverableWipCandidateNames(

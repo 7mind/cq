@@ -404,7 +404,7 @@ describe("cq gate git-effect [T1984]", () => {
     ).rejects.toThrow("--operation-id must be one stable operation id");
   });
 
-  test("guarded merge rejects the inherited T2234/T2235 WIP tree before mutating integration, task, worktree, branch, or registry", async () => {
+  test("guarded merge rejects the candidate T2234/T2235 WIP tree before mutating integration, task, worktree, branch, or registry", async () => {
     const previousStateHome = process.env["XDG_STATE_HOME"];
     const stateHome = await mkdtemp(join(tmpdir(), "cq-gate-merge-xdg-"));
     roots.push(stateHome);
@@ -461,7 +461,7 @@ describe("cq gate git-effect [T1984]", () => {
 
       await expect(
         runGateGitEffect({ operation: "merge", cwd: root, taskId: "T1984", commit: resultCommit }),
-      ).rejects.toThrow("managed WIP closure denied open checkpoints");
+      ).rejects.toThrow(/foreign WIP artifact WIP-T223[45]\.md/u);
       expect(git(root, ["rev-parse", "HEAD"])).toBe(base);
       expect(store.store.fetchItem(TASKS_LEDGER, "T1984").status).toBe(taskStatus);
       expect(await stat(prepared.handle.absolutePath).then((entry) => entry.isDirectory())).toBe(
