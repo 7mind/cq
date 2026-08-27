@@ -356,9 +356,10 @@ async function buildImplementationEvidenceFixture() {
       inputCapability: { scope: "fetch-input", token: "parity-input" },
       resultCapability: { scope: "store-result", token: "parity-result" },
     }),
-    fetchNativeReview: async () => ({
+    fetchNativeReview: async (dispatch) => ({
       state: "consumed",
       output: parityApprovedVerdict(),
+      retainedAttestation: dispatch.attestationId,
     }),
     executeExternalReview: async () => ({
       adapterIdentity: PARITY_ADAPTER_REVIEWER.adapterId,
@@ -372,6 +373,10 @@ async function buildImplementationEvidenceFixture() {
         dispatch.generation === PARITY_IMPLEMENTATION_WORKER.generation
           ? "consumed"
           : "missing",
+      input: {
+        taskId: PARITY_IMPLEMENTATION_TASK_REF.slice("tasks:".length),
+        baseCommit: PARITY_IMPLEMENTATION_BASE,
+      },
       output: {
         taskId: PARITY_IMPLEMENTATION_TASK_REF.slice("tasks:".length),
         status: "pass",
