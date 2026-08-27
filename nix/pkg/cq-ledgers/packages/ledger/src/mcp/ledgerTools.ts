@@ -184,6 +184,14 @@ export const IMPLEMENTATION_EVIDENCE_TOOL_NAMES = [
   "execute_external_implementation_review_attempt",
   "finalize_implementation_review_attempt",
   "prepare_implementation_review_fallback",
+  "prepare_implementation_audit_panel",
+  "prepare_implementation_audit_attempt",
+  "execute_external_implementation_audit_attempt",
+  "finalize_implementation_audit_attempt",
+  "prepare_implementation_audit_fallback",
+  "arm_implementation_evidence_activation",
+  "apply_implementation_audit_manifest",
+  "get_implementation_evidence_activation_status",
   "prepare_implementation_completion",
   "record_implementation_completion",
 ] as const satisfies readonly LedgerToolName[];
@@ -1356,6 +1364,194 @@ export function createLedgerMcpToolSpecifications(
     },
   );
 
+  const prepareImplementationAuditPanelTool = tool(
+    "prepare_implementation_audit_panel",
+    "Resolve one immutable packaged historical record and snapshot its configured read-only auditor roster.",
+    {
+      manifest_id: z.string().min(1),
+      manifest_digest: z.string().regex(/^[0-9a-f]{64}$/),
+      record_key: z.string().min(1),
+      expected_repository_head: z.string().regex(/^[0-9a-f]{40}$/),
+      ...implementationOperation,
+    } as const,
+    async (args) => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(
+        await implementationEvidence.prepareAuditPanel({
+          manifestId: args.manifest_id,
+          manifestDigest: args.manifest_digest,
+          recordKey: args.record_key,
+          expectedRepositoryHead: args.expected_repository_head,
+          operationId: args.operation_id,
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      );
+    },
+  );
+
+  const prepareImplementationAuditAttemptTool = tool(
+    "prepare_implementation_audit_attempt",
+    "Prepare one opaque historical audit attempt from its server-assembled packaged input.",
+    {
+      panel_ref: z.string().regex(/^cq-implementation-audit-panel:v1:[0-9a-f]{64}$/),
+      attempt_ref: z.string().regex(/^cq-implementation-audit-attempt:v1:[0-9a-f]{64}$/),
+      ...implementationOperation,
+    } as const,
+    async (args) => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(
+        await implementationEvidence.prepareAuditAttempt({
+          panelRef: args.panel_ref,
+          attemptRef: args.attempt_ref,
+          operationId: args.operation_id,
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      );
+    },
+  );
+
+  const executeExternalImplementationAuditAttemptTool = tool(
+    "execute_external_implementation_audit_attempt",
+    "Execute a configured historical auditor through the authenticated parent adapter boundary.",
+    {
+      attempt_ref: z.string().regex(/^cq-implementation-audit-attempt:v1:[0-9a-f]{64}$/),
+      ...implementationOperation,
+    } as const,
+    async (args) => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(
+        await implementationEvidence.executeExternalAuditAttempt({
+          attemptRef: args.attempt_ref,
+          operationId: args.operation_id,
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      );
+    },
+  );
+
+  const finalizeImplementationAuditAttemptTool = tool(
+    "finalize_implementation_audit_attempt",
+    "Finalize one audit attempt only from its consumed native result or retained adapter execution.",
+    {
+      attempt_ref: z.string().regex(/^cq-implementation-audit-attempt:v1:[0-9a-f]{64}$/),
+      ...implementationOperation,
+    } as const,
+    async (args) => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(
+        await implementationEvidence.finalizeAuditAttempt({
+          attemptRef: args.attempt_ref,
+          operationId: args.operation_id,
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      );
+    },
+  );
+
+  const prepareImplementationAuditFallbackTool = tool(
+    "prepare_implementation_audit_fallback",
+    "Prepare one authenticated native audit fallback only after the configured roster terminally abstains.",
+    {
+      panel_ref: z.string().regex(/^cq-implementation-audit-panel:v1:[0-9a-f]{64}$/),
+      ...implementationOperation,
+    } as const,
+    async (args) => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(
+        await implementationEvidence.prepareAuditFallback({
+          panelRef: args.panel_ref,
+          operationId: args.operation_id,
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      );
+    },
+  );
+
+  const armImplementationEvidenceActivationTool = tool(
+    "arm_implementation_evidence_activation",
+    "Freeze the exact finalized-manifest bootstrap mappings, pre-activation boundary, and qualifying evidence cohort.",
+    {
+      goal_ref: z.string().regex(/^goals:G[0-9]+$/),
+      manifest_id: z.string().min(1),
+      expected_repository_head: z.string().regex(/^[0-9a-f]{40}$/),
+      ...implementationOperation,
+    } as const,
+    async (args) => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(
+        await implementationEvidence.armEvidenceActivation({
+          goalRef: args.goal_ref,
+          manifestId: args.manifest_id,
+          expectedRepositoryHead: args.expected_repository_head,
+          operationId: args.operation_id,
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      );
+    },
+  );
+
+  const applyImplementationAuditManifestTool = tool(
+    "apply_implementation_audit_manifest",
+    "Atomically append every packaged historical audit and fulfill an exact matching activation requirement.",
+    {
+      manifest_id: z.string().min(1),
+      manifest_digest: z.string().regex(/^[0-9a-f]{64}$/),
+      expected_repository_head: z.string().regex(/^[0-9a-f]{40}$/),
+      audit_attempt_refs: z.array(
+        z.string().regex(/^cq-implementation-audit-attempt:v1:[0-9a-f]{64}$/),
+      ),
+      ...implementationOperation,
+    } as const,
+    async (args) => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(
+        await implementationEvidence.applyAuditManifest({
+          manifestId: args.manifest_id,
+          manifestDigest: args.manifest_digest,
+          expectedRepositoryHead: args.expected_repository_head,
+          auditAttemptRefs: args.audit_attempt_refs,
+          operationId: args.operation_id,
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      );
+    },
+  );
+
+  const getImplementationEvidenceActivationStatusTool = tool(
+    "get_implementation_evidence_activation_status",
+    "Return the bounded absent, pending, stale, or active state for one goal and canonical activation manifest.",
+    {
+      goal_ref: z.string().regex(/^goals:G[0-9]+$/),
+      manifest_id: z.string().min(1),
+      expected_repository_head: z.string().regex(/^[0-9a-f]{40}$/),
+    } as const,
+    async (args) => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(
+        await implementationEvidence.evidenceActivationStatus({
+          goalRef: args.goal_ref,
+          manifestId: args.manifest_id,
+          expectedRepositoryHead: args.expected_repository_head,
+        }),
+      );
+    },
+  );
+
   const prepareImplementationCompletionTool = tool(
     "prepare_implementation_completion",
     "Validate and durably bind complete implementation evidence before the journal-bound ff-only merge.",
@@ -1678,6 +1874,14 @@ export function createLedgerMcpToolSpecifications(
           executeExternalImplementationReviewAttemptTool,
           finalizeImplementationReviewAttemptTool,
           prepareImplementationReviewFallbackTool,
+          prepareImplementationAuditPanelTool,
+          prepareImplementationAuditAttemptTool,
+          executeExternalImplementationAuditAttemptTool,
+          finalizeImplementationAuditAttemptTool,
+          prepareImplementationAuditFallbackTool,
+          armImplementationEvidenceActivationTool,
+          applyImplementationAuditManifestTool,
+          getImplementationEvidenceActivationStatusTool,
           prepareImplementationCompletionTool,
           recordImplementationCompletionTool,
         ]

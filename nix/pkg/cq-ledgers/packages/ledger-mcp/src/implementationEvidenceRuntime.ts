@@ -2,6 +2,7 @@ import {
   IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
   defaultPanelFor,
   implementReviewerSidecar,
+  implementationAuditorSidecar,
   implementWorkerSidecar,
   implementWorkerSupervisedGateEvidenceSchema,
   loadConfig,
@@ -14,13 +15,16 @@ import {
   GOALS_LEDGER,
   ImplementationEvidenceService,
   PLAN_FINALIZED_MANIFEST_FIELD,
+  PlanPublishedManifestSchema,
   TASKS_LEDGER,
   nodeGitRunner,
   readCanonicalOwnership,
+  operatorActionDirectiveForTask,
   recordProtectedImplementationCompletion,
   type DispatchCapability,
   type ImplementationEvidenceServiceDependencies,
   type ImplementationReviewerIdentity,
+  type PackagedImplementationAuditManifest,
   type ExternalReviewProcessObservation,
   type ResolvedLedgerStore,
 } from "@cq/ledger";
@@ -168,6 +172,18 @@ function externalReviewPrompt(
     `Acceptance: ${typeof workerInput["acceptance"] === "string" ? workerInput["acceptance"] : ""}`,
     `Worker result: ${JSON.stringify(workerOutput)}`,
     `Output JSON Schema: ${JSON.stringify(implementReviewerSidecar.outputSchema)}`,
+  ].join("\n\n");
+}
+
+function externalAuditPrompt(panel: {
+  readonly auditInput: DispatchJSONValue;
+}): string {
+  return [
+    "Act as the CQ implementation-auditor for the trusted packaged historical record below.",
+    "This is read-only historical verification, not an implement-reviewer worktree review.",
+    "Return only one JSON object matching the supplied output schema.",
+    `Audit input: ${JSON.stringify(panel.auditInput)}`,
+    `Output JSON Schema: ${JSON.stringify(implementationAuditorSidecar.outputSchema)}`,
   ].join("\n\n");
 }
 
@@ -409,6 +425,10 @@ export interface CreateProductionImplementationEvidenceServiceOptions {
   readonly environment?: Readonly<Record<string, string | undefined>>;
   /** Trusted process seam; production defaults to the selected harness executable. */
   readonly externalReviewRunner?: ExternalReviewRunner;
+  /** Trusted packaged registry seam; production packaging supplies canonical manifests. */
+  readonly readAuditManifest?: (
+    manifestId: string,
+  ) => Promise<PackagedImplementationAuditManifest>;
 }
 
 /** Bind the protected journal to the same local store and durable dispatch runtime as MCP. */
@@ -431,6 +451,10 @@ export function createProductionImplementationEvidenceService(
   return new ImplementationEvidenceService({
     store: options.resolved.implementationEvidenceStore,
     resolveReviewerRoster: () =>
+      computeReviewers(options.repositoryRoot, activeHarness).reviewers.map((reviewer) =>
+        reviewerIdentity(reviewer, activeHarness, forceShellout),
+      ),
+    resolveAuditRoster: () =>
       computeReviewers(options.repositoryRoot, activeHarness).reviewers.map((reviewer) =>
         reviewerIdentity(reviewer, activeHarness, forceShellout),
       ),
@@ -497,6 +521,49 @@ export function createProductionImplementationEvidenceService(
       }
       return { state: observation.state === "aborted" ? "aborted" : "missing" };
     },
+    ...(options.readAuditManifest === undefined
+      ? {}
+      : { readAuditManifest: options.readAuditManifest }),
+    prepareNativeAudit: async ({ attemptRef, panel, identity, operationId }) => {
+      const prepared = await options.dispatchCapability.prepare({
+        roleId: "implementation-auditor",
+        input: panel.auditInput,
+        idempotencyKey: `implementation-audit-${operationId}-${attemptRef.slice(-16)}`,
+        timeoutMs: IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
+        expectedChild: {
+          childId: `implementation-audit-${attemptRef.slice(-12)}`,
+          runId: `implementation-audit-${attemptRef.slice(-12)}-${identity.alias}`,
+        },
+      });
+      if (!prepared.accepted) {
+        throw new Error(`implementation auditor dispatch was rejected: ${prepared.reason}`);
+      }
+      return prepared.prepared;
+    },
+    fetchNativeAudit: async (dispatch) => {
+      const observation = await observe({
+        attestationId: dispatch.attestationId,
+        generation: dispatch.generation,
+      });
+      if (observation.state === "consumed") {
+        return {
+          state: "consumed",
+          input: observation.input,
+          output: observation.output,
+          retainedAttestation: observation.retainedAttestation,
+        };
+      }
+      if (observation.state === "nonterminal")
+        throw new Error("implementation auditor dispatch is not terminal");
+      return { state: observation.state === "aborted" ? "aborted" : "missing" };
+    },
+    executeExternalAudit: async ({ panel, identity }) =>
+      await externalReviewRunner({
+        identity,
+        prompt: externalAuditPrompt(panel),
+        repositoryRoot: options.repositoryRoot,
+        environment,
+      }),
     executeExternalReview: async ({ panel, identity }) => {
       const worker = await observe(panel.workerDispatch);
       if (worker.state !== "consumed" || !object(worker.input) || !object(worker.output)) {
@@ -545,6 +612,74 @@ export function createProductionImplementationEvidenceService(
         resultCommit,
       ]);
       return result.code === 0;
+    },
+    isCommitRetained: async ({ repositoryHead, resultCommit }) => {
+      const result = await nodeGitRunner(options.repositoryRoot)([
+        "merge-base",
+        "--is-ancestor",
+        resultCommit,
+        repositoryHead,
+      ]);
+      return result.code === 0;
+    },
+    resolveActivationCohort: async ({ goalRef, manifest, repositoryHead }) => {
+      if (manifest.activation === null || manifest.activation.goalRef !== goalRef)
+        throw new Error("activation manifest does not bind the requested goal");
+      const goal = store.fetchItem(GOALS_LEDGER, goalRef.slice(`${GOALS_LEDGER}:`.length));
+      const finalized = goal.fields[PLAN_FINALIZED_MANIFEST_FIELD];
+      if (typeof finalized !== "string") throw new Error("goal has no exact finalized manifest");
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(finalized);
+      } catch {
+        throw new Error("goal finalized manifest is not canonical JSON");
+      }
+      const published = PlanPublishedManifestSchema.parse(parsed);
+      const mapping = new Map(published.tasks.map(({ key, id }) => [key, id]));
+      const evidenceTaskId = mapping.get(manifest.activation.evidenceTaskKey);
+      const auditTaskId = mapping.get(manifest.activation.auditTaskKey);
+      const activationTaskId = mapping.get(manifest.activation.activationTaskKey);
+      if (
+        evidenceTaskId === undefined ||
+        auditTaskId === undefined ||
+        activationTaskId === undefined
+      )
+        throw new Error("finalized manifest omits an implementation evidence bootstrap mapping");
+      const activationTask = store.fetchItem(TASKS_LEDGER, activationTaskId);
+      if (operatorActionDirectiveForTask(activationTask)?.actionKey !== "implementation-evidence-activation")
+        throw new Error("activation task lacks the strict implementation-evidence operator envelope");
+      const taskRefs: string[] = [];
+      for (const { id } of published.tasks) {
+        const task = store.fetchItem(TASKS_LEDGER, id);
+        const ownership = readCanonicalOwnership(task);
+        const resultCommit = task.fields["resultCommit"];
+        if (
+          ownership?.ownerRef !== goalRef ||
+          task.status !== "done" ||
+          typeof resultCommit !== "string" ||
+          !FULL_SHA.test(resultCommit)
+        )
+          continue;
+        const retained = await nodeGitRunner(options.repositoryRoot)([
+          "merge-base",
+          "--is-ancestor",
+          resultCommit,
+          repositoryHead,
+        ]);
+        if (retained.code === 0) taskRefs.push(`${TASKS_LEDGER}:${id}`);
+      }
+      taskRefs.sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+      const finalizedManifestDigest = new Bun.CryptoHasher("sha256").update(finalized).digest("hex");
+      if (finalizedManifestDigest !== manifest.activation.finalizedManifestDigest)
+        throw new Error("packaged activation rule does not match the finalized manifest digest");
+      return {
+        finalizedManifestDigest,
+        evidenceTaskRef: `${TASKS_LEDGER}:${evidenceTaskId}`,
+        auditTaskRef: `${TASKS_LEDGER}:${auditTaskId}`,
+        activationTaskRef: `${TASKS_LEDGER}:${activationTaskId}`,
+        boundaryCommit: repositoryHead,
+        taskRefs,
+      };
     },
     verifyImplementation: async ({ resultCommit, worker }) => {
       if (worker.state !== "consumed" || !object(worker.input) || !object(worker.output)) {

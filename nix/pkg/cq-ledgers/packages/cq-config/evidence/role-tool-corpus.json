@@ -67,6 +67,11 @@
         "list_milestone_items": 2
       }
     },
+    "implementation-auditor": {
+      "transcripts": 0,
+      "zeroLedgerTranscripts": 0,
+      "ledgerCalls": {}
+    },
     "investigate-explorer": {
       "transcripts": 23,
       "zeroLedgerTranscripts": 20,

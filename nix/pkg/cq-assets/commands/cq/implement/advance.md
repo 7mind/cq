@@ -118,6 +118,42 @@ the effect boundaries required by the shared contract.
   intact, and cannot become a worker failure, reviewer abstention, or resolver
   verdict.
 
+## 0. Activate protected historical implementation evidence
+
+After the ledger service is available and before deriving ready work, probe
+`d347-implementation-evidence-activation-v1` with
+`get_implementation_evidence_activation_status({ goal_ref: "goals:G176",
+manifest_id, expected_repository_head })`, binding the full observed integration
+HEAD. Continue to ordinary reconciliation only from `active`.
+
+For `absent`, call `arm_implementation_evidence_activation` with the same goal,
+manifest, head, one stable operation id, author, and session. Accept only the
+exact finalized-manifest mappings returned for `t-evidence`,
+`t-historical-evidence`, and `t-activate-evidence`; never substitute predecessor
+task literals. The first two tasks must already be done, the activation task
+must carry the strict `CQ-OPERATOR-ACTION v1
+implementation-evidence-activation.` envelope, and the frozen boundary must
+equal the observed head.
+
+For every packaged record not already backed by a mechanically sufficient
+authenticated implementation review, call
+`prepare_implementation_audit_panel`, then prepare each ordered opaque attempt.
+Native attempts dispatch only the returned `implementation-auditor` payload;
+adapter attempts run only through
+`execute_external_implementation_audit_attempt`. Finalize every attempt through
+`finalize_implementation_audit_attempt`. If and only if the entire configured
+roster terminally abstains, use `prepare_implementation_audit_fallback` once
+and finalize that authenticated native attempt. Never manufacture a verdict or
+send the ordinary implement-reviewer worktree contract.
+
+Call `apply_implementation_audit_manifest` with the exact manifest id/digest,
+head, and complete ordered attempt-ref set. Missing, surplus, reordered,
+foreign, or nonterminal refs block the whole application. Re-probe status and
+require `active` before deriving ready work. `pending`, `stale`, incomplete, or
+any preparation/application refusal stops this pass closed; do not dispatch
+reconciliation, use generic writes, or infer activation from task prose,
+reviews, logs, tags, or resultCommit text.
+
 ## 1. Derive the ready set
 
 Before selecting or dispatching work, recover every active implementation

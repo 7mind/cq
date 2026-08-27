@@ -346,6 +346,30 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   prepare_implementation_review_fallback: purposeBuiltSmall(
     "Exactly `{ status, attemptRef, dispatch }` for the sole authenticated native fallback.",
   ),
+  prepare_implementation_audit_panel: purposeBuiltSmall(
+    "Exactly `{ status, panelRef, manifestId, recordKey, taskRef, rosterDigest, attemptRefs }`.",
+  ),
+  prepare_implementation_audit_attempt: purposeBuiltSmall(
+    "Exactly `{ status, attemptRef, launch, dispatch? }`; `dispatch` exists only for native launch.",
+  ),
+  execute_external_implementation_audit_attempt: purposeBuiltSmall(
+    "Exactly `{ status, attemptRef, executionRef }`.",
+  ),
+  finalize_implementation_audit_attempt: purposeBuiltSmall(
+    "Exactly `{ status, attemptRef, terminalState }`.",
+  ),
+  prepare_implementation_audit_fallback: purposeBuiltSmall(
+    "Exactly `{ status, attemptRef, dispatch }` for the sole authenticated native fallback.",
+  ),
+  arm_implementation_evidence_activation: purposeBuiltSmall(
+    "Exactly `{ status, requirementRef, manifestId, goalRef, finalizedManifestDigest, evidenceTaskRef, auditTaskRef, activationTaskRef, boundaryCommit, taskRefs }`.",
+  ),
+  apply_implementation_audit_manifest: purposeBuiltSmall(
+    "Exactly `{ status, manifestId, manifestDigest, repositoryHead, activation, requirementRef, evidenceFingerprint, auditRefs, taskRefs }`.",
+  ),
+  get_implementation_evidence_activation_status: purposeBuiltSmall(
+    "Exactly one bounded absent, pending, stale, or active activation status acknowledgement.",
+  ),
   prepare_implementation_completion: purposeBuiltSmall(
     "Exactly `{ status, completionRef, taskRef, resultCommit, repositoryHead, evidenceFingerprint }`.",
   ),
