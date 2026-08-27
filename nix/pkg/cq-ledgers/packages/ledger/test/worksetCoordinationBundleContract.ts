@@ -24,8 +24,7 @@ import {
 } from "../src/index.js";
 
 export type WorksetCoordinationBundleContractClassification =
-  | "Behavioral-Active Blackbox-Atomic"
-  | "Behavioral-Active Blackbox-GoodCommunication";
+  "Behavioral-Active Blackbox-Atomic" | "Behavioral-Active Blackbox-GoodCommunication";
 
 export type WorksetCoordinationBundleContractBuildOptions =
   CreateInMemoryWorksetOwnedGuardedLedgerOptions;
@@ -53,10 +52,7 @@ async function expectOwnedRejection(
   }
 }
 
-function memberRefsForRoot(
-  ledger: WorksetOwnedGuardedLedger,
-  root: string,
-): ReadonlySet<string> {
+function memberRefsForRoot(ledger: WorksetOwnedGuardedLedger, root: string): ReadonlySet<string> {
   const state = buildActiveStateFromLedgerStore(ledger);
   const graph = closeWorkset([root], state);
   return worksetMemberRefSet(graph);
@@ -146,8 +142,16 @@ export function runWorksetCoordinationBundleContract(
       } as const;
 
       const claims = await Promise.all(
-        Array.from({ length: 8 }, async () =>
-          await ledger.bundles.bootstrapDefectToFixGoal(input),
+        Array.from(
+          { length: 8 },
+          async (_, index) =>
+            await ledger.bundles.bootstrapDefectToFixGoal({
+              ...input,
+              goal: {
+                title: `${input.goal.title} ${String(index)}`,
+                description: `${input.goal.description} claim ${String(index)}`,
+              },
+            }),
         ),
       );
       expect(new Set(claims.map(({ goal }) => goal.id)).size).toBe(1);
