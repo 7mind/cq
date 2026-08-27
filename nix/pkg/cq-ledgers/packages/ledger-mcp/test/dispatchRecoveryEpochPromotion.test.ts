@@ -225,8 +225,7 @@ async function preSchemeGeneration17Journal() {
   return { journal, generation17: seeded.generation17 };
 }
 
-async function preSchemeConsumedFailureJournal() {
-  const generation17 = preCutoverConsumedFailure();
+async function preSchemeConsumedFailureJournal(generation17: AttestationEnvelope) {
   const seeded = new InMemoryCurrentRecoverySealJournalStore();
   await captureCurrentRecoverySeal(
     { ...promotionCoordinates(), liveTip: RECOVERY_TIP },
@@ -299,7 +298,7 @@ describe("journal recovery epoch promotion", () => {
   // Regression: D370 — production's consumed transition binds native completion identity into
   // the terminal digest. Retained pre-scheme FAIL authority must authenticate that exact shape.
   test("pre-scheme consumed FAIL migrates with its authentic native-completion digest [Behavioral-Active Blackbox-Group]", async () => {
-    const seeded = await preSchemeConsumedFailureJournal();
+    const seeded = await preSchemeConsumedFailureJournal(preCutoverConsumedFailure());
     const coordinates = { ...promotionCoordinates(), liveTip: RECOVERY_TIP };
     const deps = {
       journal: seeded.journal,
@@ -314,6 +313,39 @@ describe("journal recovery epoch promotion", () => {
     expect(migrated.seed.selectedSourceHandle.generation).toBe(17);
     expect(migrated.seed.taskIdentityScheme).toBe(CURRENT_RECOVERY_TASK_IDENTITY_SCHEME);
     expect(await captureCurrentRecoverySeal(coordinates, deps)).toEqual(migrated);
+  });
+
+  test("pre-scheme consumed FAIL rejects mutated completion proof or digest without migration [Behavioral-Active Blackbox-Group]", async () => {
+    const authentic = preCutoverConsumedFailure();
+    if (authentic.nativeCompletion === undefined) {
+      throw new Error("consumed-fail fixture has no native completion proof");
+    }
+    for (const [label, generation17] of [
+      [
+        "mutated-proof",
+        {
+          ...authentic,
+          nativeCompletion: { ...authentic.nativeCompletion, runId: "competing-run" },
+        },
+      ],
+      ["mutated-digest", { ...authentic, terminalDigest: "f".repeat(64) }],
+    ] as const) {
+      const seeded = await preSchemeConsumedFailureJournal(generation17);
+      const before = await seeded.journal.read(RECOVERY_TASK);
+      const coordinates = { ...promotionCoordinates(), liveTip: RECOVERY_TIP };
+      await expect(
+        captureCurrentRecoverySeal(coordinates, {
+          journal: seeded.journal,
+          snapshot: async () => [seeded.generation17],
+          resolveReceipts: async () => RECOVERY_RECEIPTS,
+          revalidateBinding: async () => {},
+          observeLiveTip: async () => RECOVERY_TIP,
+          now: () => LATER,
+        }),
+        label,
+      ).rejects.toBeInstanceOf(Error);
+      expect(await seeded.journal.read(RECOVERY_TASK), label).toEqual(before);
+    }
   });
 
   // Regression: D369 — journals committed before task-identity schemes were persisted carry

@@ -456,8 +456,15 @@ function assertLegacySelectedSourceAuthentic(
   if (
     preCutoverConsumedFailureSource(row) === undefined ||
     row.outputDigest === undefined ||
+    row.nativeCompletion === undefined ||
     row.terminalDigest !==
-      dispatchPayloadDigest({ terminalKind: "consumed", resultDigest: row.outputDigest }) ||
+      dispatchPayloadDigest({
+        terminalKind: "consumed",
+        outputDigest: row.outputDigest,
+        childId: row.nativeCompletion.childId,
+        runId: row.nativeCompletion.runId,
+        completedAt: row.nativeCompletion.completedAt,
+      }) ||
     row.promptProvenance.inputDigest !== dispatchPayloadDigest(row.input)
   ) {
     throw new CurrentRecoverySealError(
