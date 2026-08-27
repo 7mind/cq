@@ -457,6 +457,8 @@ function assertLegacySelectedSourceAuthentic(
     preCutoverConsumedFailureSource(row) === undefined ||
     row.outputDigest === undefined ||
     row.nativeCompletion === undefined ||
+    row.nativeCompletion.childId !== row.expectedChild.childId ||
+    row.nativeCompletion.runId !== row.expectedChild.runId ||
     row.terminalDigest !==
       dispatchPayloadDigest({
         terminalKind: "consumed",

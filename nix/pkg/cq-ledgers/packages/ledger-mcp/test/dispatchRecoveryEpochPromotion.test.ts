@@ -147,6 +147,10 @@ function preCutoverConsumedFailure(): AttestationEnvelope {
   } = abortedEnvelope({ generation: 17 });
   return {
     ...prepared,
+    expectedChild: {
+      childId: nativeCompletion.childId,
+      runId: nativeCompletion.runId,
+    },
     state: "consumed",
     output,
     outputDigest,
@@ -317,15 +321,33 @@ describe("journal recovery epoch promotion", () => {
 
   test("pre-scheme consumed FAIL rejects mutated completion proof or digest without migration [Behavioral-Active Blackbox-Group]", async () => {
     const authentic = preCutoverConsumedFailure();
-    if (authentic.nativeCompletion === undefined) {
-      throw new Error("consumed-fail fixture has no native completion proof");
+    if (authentic.nativeCompletion === undefined || authentic.outputDigest === undefined) {
+      throw new Error("consumed-fail fixture has no native completion proof or output digest");
     }
+    const mismatchedCompletion = {
+      ...authentic.nativeCompletion,
+      runId: "competing-run",
+    };
     for (const [label, generation17] of [
       [
         "mutated-proof",
         {
           ...authentic,
-          nativeCompletion: { ...authentic.nativeCompletion, runId: "competing-run" },
+          nativeCompletion: mismatchedCompletion,
+        },
+      ],
+      [
+        "mutated-proof-and-digest",
+        {
+          ...authentic,
+          nativeCompletion: mismatchedCompletion,
+          terminalDigest: dispatchPayloadDigest({
+            terminalKind: "consumed",
+            outputDigest: authentic.outputDigest,
+            childId: mismatchedCompletion.childId,
+            runId: mismatchedCompletion.runId,
+            completedAt: mismatchedCompletion.completedAt,
+          }),
         },
       ],
       ["mutated-digest", { ...authentic, terminalDigest: "f".repeat(64) }],
