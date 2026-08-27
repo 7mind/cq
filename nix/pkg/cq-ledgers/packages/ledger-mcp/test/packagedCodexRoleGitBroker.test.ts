@@ -24,6 +24,7 @@ import {
   type CodexInstalledRoleBoundaryExecution,
   type CodexRoleBoundaryExecutionResult,
   type ConsumedDispatchResult,
+  type DispatchJSONValue,
   type DispatchPrepared,
 } from "@cq/config";
 import {
@@ -172,6 +173,7 @@ interface PackagedReviewerMatrixRow {
 
 interface PackagedReviewerGateRun extends PackagedReviewerMatrixRow {
   readonly dispatch: DispatchPrepared;
+  readonly input: DispatchJSONValue;
   readonly consumed: ConsumedDispatchResult;
 }
 
@@ -222,22 +224,23 @@ async function runPackagedReviewer(input: {
     childId: `t2081-review-${workerRoute}-${reviewerMode}-child`,
     runId: `t2081-review-${workerRoute}-${reviewerMode}-run`,
   };
+  const reviewerInput = JSON.parse(
+    JSON.stringify({
+      taskId: managedHandle.taskId,
+      headline: "installed worker and reviewer matrix",
+      description: "review one consumed exact-tip worker result",
+      acceptance: "only a green exact-tip worker result receives approval",
+      worktreePath: managedHandle.absolutePath,
+      branch: managedHandle.branch,
+      baseCommit,
+      workerResult: workerOutput,
+      round: 1,
+      ...(reviewerMode === "sandboxed" ? { supervisedGateEvidence } : {}),
+    }),
+  ) as DispatchJSONValue;
   const prepared = await capability.prepare({
     roleId: "implement-reviewer",
-    input: JSON.parse(
-      JSON.stringify({
-        taskId: managedHandle.taskId,
-        headline: "installed worker and reviewer matrix",
-        description: "review one consumed exact-tip worker result",
-        acceptance: "only a green exact-tip worker result receives approval",
-        worktreePath: managedHandle.absolutePath,
-        branch: managedHandle.branch,
-        baseCommit,
-        workerResult: workerOutput,
-        round: 1,
-        ...(reviewerMode === "sandboxed" ? { supervisedGateEvidence } : {}),
-      }),
-    ),
+    input: reviewerInput,
     idempotencyKey: `T2081-review-${workerRoute}-${reviewerMode}`,
     timeoutMs: 600_000,
     expectedChild,
@@ -431,6 +434,7 @@ async function runPackagedReviewer(input: {
     evidenceForwarded: reviewerMode === "sandboxed",
     fastForwardEligible: true,
     dispatch: prepared.prepared,
+    input: reviewerInput,
     consumed: fetched,
   };
 }
@@ -2140,6 +2144,9 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           fastForwardEligible: true,
         });
         expect(await gateRuns()).toBe(4);
+        expect(
+          (round2Review.consumed.output as Record<string, unknown>)["gateDurationMs"],
+        ).toBeGreaterThan(0);
 
         // 8. Bind the consumed worker and fresh reviewer dispatches into the
         // protected completion journal before the ff-only merge.
@@ -2158,7 +2165,12 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           prepareNativeReview: async () => round2Review.dispatch,
           fetchNativeReview: async (dispatch) => {
             expect(dispatch).toEqual(round2Review.dispatch);
-            return { state: "consumed", output: round2Review.consumed.output };
+            return {
+              state: "consumed",
+              input: round2Review.input,
+              output: round2Review.consumed.output,
+              retainedAttestation: round2Review.dispatch.attestationId,
+            };
           },
           executeExternalReview: async () => {
             throw new Error("T2151 uses one native reviewer");
