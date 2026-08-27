@@ -295,6 +295,26 @@ describe("journal recovery epoch promotion", () => {
         coordinates: { ...promotionCoordinates(), taskSpecificationDigest: "f".repeat(64) },
       },
       {
+        label: "competing-successor-specification",
+        rows: (generation17) => {
+          const input = {
+            ...validSuccessor.input,
+            acceptance: "promote a competing finalized task specification",
+          };
+          return [
+            generation17,
+            {
+              ...validSuccessor,
+              input,
+              promptProvenance: {
+                ...validSuccessor.promptProvenance,
+                inputDigest: dispatchPayloadDigest(input),
+              },
+            },
+          ];
+        },
+      },
+      {
         label: "changed-manifest",
         coordinates: { ...promotionCoordinates(), finalizedManifestDigest: "f".repeat(64) },
       },
