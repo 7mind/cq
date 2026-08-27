@@ -92,8 +92,16 @@ import type {
 } from "../../planLifecycle.js";
 import type {
   ExecuteExternalImplementationReviewAttemptInput,
+  ExecuteExternalImplementationAuditAttemptInput,
   FinalizeImplementationReviewAttemptInput,
+  FinalizeImplementationAuditAttemptInput,
   ImplementationEvidenceService,
+  ImplementationEvidenceActivationStatusInput,
+  ApplyImplementationAuditManifestInput,
+  ArmImplementationEvidenceActivationInput,
+  PrepareImplementationAuditAttemptInput,
+  PrepareImplementationAuditFallbackInput,
+  PrepareImplementationAuditPanelInput,
   PrepareImplementationCompletionInput,
   PrepareImplementationReviewAttemptInput,
   PrepareImplementationReviewFallbackInput,
@@ -602,6 +610,110 @@ export class RemoteLedgerClient {
       operation_id: input.operationId,
       author: input.author,
       ...(input.session === undefined ? {} : { session: input.session }),
+    });
+  }
+
+  async prepareImplementationAuditPanel(
+    input: PrepareImplementationAuditPanelInput,
+  ): Promise<Awaited<ReturnType<ImplementationEvidenceService["prepareAuditPanel"]>>> {
+    this.requireManagement("prepare_implementation_audit_panel");
+    return await this.call("prepare_implementation_audit_panel", {
+      manifest_id: input.manifestId,
+      manifest_digest: input.manifestDigest,
+      record_key: input.recordKey,
+      expected_repository_head: input.expectedRepositoryHead,
+      operation_id: input.operationId,
+      author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
+    });
+  }
+
+  async prepareImplementationAuditAttempt(
+    input: PrepareImplementationAuditAttemptInput,
+  ): Promise<Awaited<ReturnType<ImplementationEvidenceService["prepareAuditAttempt"]>>> {
+    this.requireManagement("prepare_implementation_audit_attempt");
+    return await this.call("prepare_implementation_audit_attempt", {
+      panel_ref: input.panelRef,
+      attempt_ref: input.attemptRef,
+      operation_id: input.operationId,
+      author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
+    });
+  }
+
+  async executeExternalImplementationAuditAttempt(
+    input: ExecuteExternalImplementationAuditAttemptInput,
+  ): Promise<Awaited<ReturnType<ImplementationEvidenceService["executeExternalAuditAttempt"]>>> {
+    this.requireManagement("execute_external_implementation_audit_attempt");
+    return await this.call("execute_external_implementation_audit_attempt", {
+      attempt_ref: input.attemptRef,
+      operation_id: input.operationId,
+      author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
+    });
+  }
+
+  async finalizeImplementationAuditAttempt(
+    input: FinalizeImplementationAuditAttemptInput,
+  ): Promise<Awaited<ReturnType<ImplementationEvidenceService["finalizeAuditAttempt"]>>> {
+    this.requireManagement("finalize_implementation_audit_attempt");
+    return await this.call("finalize_implementation_audit_attempt", {
+      attempt_ref: input.attemptRef,
+      operation_id: input.operationId,
+      author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
+    });
+  }
+
+  async prepareImplementationAuditFallback(
+    input: PrepareImplementationAuditFallbackInput,
+  ): Promise<Awaited<ReturnType<ImplementationEvidenceService["prepareAuditFallback"]>>> {
+    this.requireManagement("prepare_implementation_audit_fallback");
+    return await this.call("prepare_implementation_audit_fallback", {
+      panel_ref: input.panelRef,
+      operation_id: input.operationId,
+      author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
+    });
+  }
+
+  async armImplementationEvidenceActivation(
+    input: ArmImplementationEvidenceActivationInput,
+  ): Promise<Awaited<ReturnType<ImplementationEvidenceService["armEvidenceActivation"]>>> {
+    this.requireManagement("arm_implementation_evidence_activation");
+    return await this.call("arm_implementation_evidence_activation", {
+      goal_ref: input.goalRef,
+      manifest_id: input.manifestId,
+      expected_repository_head: input.expectedRepositoryHead,
+      operation_id: input.operationId,
+      author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
+    });
+  }
+
+  async applyImplementationAuditManifest(
+    input: ApplyImplementationAuditManifestInput,
+  ): Promise<Awaited<ReturnType<ImplementationEvidenceService["applyAuditManifest"]>>> {
+    this.requireManagement("apply_implementation_audit_manifest");
+    return await this.call("apply_implementation_audit_manifest", {
+      manifest_id: input.manifestId,
+      manifest_digest: input.manifestDigest,
+      expected_repository_head: input.expectedRepositoryHead,
+      audit_attempt_refs: input.auditAttemptRefs,
+      operation_id: input.operationId,
+      author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
+    });
+  }
+
+  async getImplementationEvidenceActivationStatus(
+    input: ImplementationEvidenceActivationStatusInput,
+  ): Promise<Awaited<ReturnType<ImplementationEvidenceService["evidenceActivationStatus"]>>> {
+    this.requireManagement("get_implementation_evidence_activation_status");
+    return await this.call("get_implementation_evidence_activation_status", {
+      goal_ref: input.goalRef,
+      manifest_id: input.manifestId,
+      expected_repository_head: input.expectedRepositoryHead,
     });
   }
 

@@ -26,6 +26,7 @@ import { planAdvanceSidecar } from "./schemas/plan-advance.js";
 import { planReviewerSidecar } from "./schemas/plan-reviewer.js";
 import { implementWorkerSidecar } from "./schemas/implement-worker.js";
 import { implementReviewerSidecar } from "./schemas/implement-reviewer.js";
+import { implementationAuditorSidecar } from "./schemas/implementation-auditor.js";
 import { implementConflictResolverSidecar } from "./schemas/implement-conflict-resolver.js";
 import { investigateExplorerSidecar } from "./schemas/investigate-explorer.js";
 import { investigateProberSidecar } from "./schemas/investigate-prober.js";
@@ -42,6 +43,7 @@ export const DISPATCHED_ROLE_SIDECARS = {
   "plan-reviewer": planReviewerSidecar,
   "implement-worker": implementWorkerSidecar,
   "implement-reviewer": implementReviewerSidecar,
+  "implementation-auditor": implementationAuditorSidecar,
   "implement-conflict-resolver": implementConflictResolverSidecar,
   "investigate-explorer": investigateExplorerSidecar,
   "investigate-prober": investigateProberSidecar,

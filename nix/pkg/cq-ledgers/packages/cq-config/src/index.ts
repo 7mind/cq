@@ -474,6 +474,7 @@ export type {
   ImplementReviewerResultCommitUnresolvableReason,
   ImplementReviewerBaseAncestryUnresolvableReason,
 } from "./schemas/implement-reviewer.js";
+export { implementationAuditorSidecar } from "./schemas/implementation-auditor.js";
 export {
   implementConflictResolverSidecar,
   CONFLICT_RESOLVER_STATUSES,

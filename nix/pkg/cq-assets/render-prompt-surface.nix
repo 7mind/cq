@@ -39,6 +39,7 @@ let
       (configRoot + "/src/schemas/implement-conflict-resolver.ts")
       (configRoot + "/src/schemas/implement-reviewer.ts")
       (configRoot + "/src/schemas/implement-worker.ts")
+      (configRoot + "/src/schemas/implementation-auditor.ts")
       (configRoot + "/src/schemas/investigate-evidence.ts")
       (configRoot + "/src/schemas/investigate-explorer.ts")
       (configRoot + "/src/schemas/investigate-prober.ts")

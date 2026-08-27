@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   implementReviewerSidecar,
+  implementationAuditorSidecar,
   validateAgainstSchema,
   validateParentGateAttestation,
   validateSupervisedWorkerGateEvidenceForReview,
@@ -34,6 +35,12 @@ const TASK_REF = /^tasks:(T[0-9]+)$/u;
 const COMPLETION_REF = /^cq-implementation-completion:v1:[0-9a-f]{64}$/u;
 const PANEL_REF = /^cq-implementation-review-panel:v1:[0-9a-f]{64}$/u;
 const ATTEMPT_REF = /^cq-implementation-review-attempt:v1:[0-9a-f]{64}$/u;
+const AUDIT_PANEL_REF = /^cq-implementation-audit-panel:v1:[0-9a-f]{64}$/u;
+const AUDIT_ATTEMPT_REF = /^cq-implementation-audit-attempt:v1:[0-9a-f]{64}$/u;
+const AUDIT_REF = /^cq-implementation-audit:v1:[0-9a-f]{64}$/u;
+const ACTIVATION_REQUIREMENT_REF =
+  /^cq-implementation-evidence-activation-requirement:v1:[0-9a-f]{64}$/u;
+const ACTIVATION_REF = /^cq-implementation-evidence-activation:v1:[0-9a-f]{64}$/u;
 
 export type ImplementationReviewTerminalState =
   "approved" | "disapproved" | "operational-abstention";
@@ -148,11 +155,171 @@ export interface ImplementationCompletionRecord {
   readonly recordOperationId: string | null;
 }
 
+export interface PackagedImplementationAuditRecord {
+  readonly recordKey: string;
+  readonly taskRef: string;
+  readonly ownerGoalRef: string;
+  readonly finalizedManifest: string;
+  readonly historicalReview: DispatchJSONValue | null;
+  readonly baseCommit: string;
+  readonly resultCommit: string;
+  readonly repositoryHead: string;
+  readonly diff: string;
+  readonly acceptance: DispatchJSONValue;
+  readonly gateObservations: DispatchJSONValue;
+  readonly requiredObservations: readonly string[];
+}
+
+export interface PackagedImplementationEvidenceActivation {
+  readonly goalRef: string;
+  readonly finalizedManifestDigest: string;
+  readonly evidenceTaskKey: "t-evidence";
+  readonly auditTaskKey: "t-historical-evidence";
+  readonly activationTaskKey: "t-activate-evidence";
+}
+
+export interface PackagedImplementationAuditManifest {
+  readonly version: 1;
+  readonly manifestId: string;
+  readonly sourceDigest: string;
+  readonly records: readonly PackagedImplementationAuditRecord[];
+  readonly activation: PackagedImplementationEvidenceActivation | null;
+}
+
+export interface ImplementationAuditPanelRecord {
+  readonly version: 1;
+  readonly panelRef: string;
+  readonly manifestId: string;
+  readonly manifestDigest: string;
+  readonly recordKey: string;
+  readonly taskRef: string;
+  readonly repositoryHead: string;
+  readonly rosterDigest: string;
+  readonly roster: readonly ImplementationReviewerIdentity[];
+  readonly attemptRefs: readonly string[];
+  readonly fallbackAttemptRef: string | null;
+  readonly auditInput: DispatchJSONValue;
+  readonly operationId: string;
+  readonly requestDigest: string;
+  readonly author: string;
+  readonly session: string | null;
+  readonly createdAt: string;
+}
+
+export interface ExternalImplementationAuditExecution {
+  readonly executionRef: string;
+  readonly adapterIdentity: string;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode: number | null;
+  readonly parseResult:
+    | { readonly kind: "valid-verdict"; readonly verdict: DispatchJSONValue }
+    | {
+        readonly kind: "operational-abstention";
+        readonly reason: "unavailable" | "failed" | "empty" | "malformed";
+        readonly detail: string;
+      };
+  readonly executedAt: string;
+}
+
+export interface ImplementationAuditAttemptRecord {
+  readonly version: 1;
+  readonly attemptRef: string;
+  readonly panelRef: string;
+  readonly taskRef: string;
+  readonly position: number;
+  readonly identity: ImplementationReviewerIdentity;
+  readonly fallback: boolean;
+  readonly fallbackTrigger: string | null;
+  readonly fallbackExclusions: readonly string[];
+  readonly preparedDispatch: DispatchPrepared | null;
+  readonly retainedAttestation: string | null;
+  readonly executionReservation: {
+    readonly executionRef: string;
+    readonly operationId: string;
+    readonly requestDigest: string;
+    readonly reservedAt: string;
+  } | null;
+  readonly execution: ExternalImplementationAuditExecution | null;
+  readonly terminalState: ImplementationReviewTerminalState | null;
+  readonly verdictDigest: string | null;
+  readonly verdict: DispatchJSONValue | null;
+  readonly operations: Readonly<Record<string, string>>;
+  readonly author: string;
+  readonly session: string | null;
+  readonly createdAt: string;
+}
+
+export interface ImplementationAuditRecord {
+  readonly version: 1;
+  readonly auditRef: string;
+  readonly manifestId: string;
+  readonly manifestDigest: string;
+  readonly recordKey: string;
+  readonly taskRef: string;
+  readonly ownerGoalRef: string;
+  readonly finalizedManifest: string;
+  readonly historicalReview: DispatchJSONValue | null;
+  readonly baseCommit: string;
+  readonly resultCommit: string;
+  readonly repositoryHead: string;
+  readonly sourceDigest: string;
+  readonly evidenceFingerprint: string;
+  readonly attemptRefs: readonly string[];
+  readonly terminalState: ImplementationReviewTerminalState;
+  readonly author: string;
+  readonly session: string | null;
+  readonly appliedAt: string;
+}
+
+export interface ImplementationEvidenceActivationRequirementRecord {
+  readonly version: 1;
+  readonly requirementRef: string;
+  readonly manifestId: string;
+  readonly goalRef: string;
+  readonly finalizedManifestDigest: string;
+  readonly evidenceTaskRef: string;
+  readonly auditTaskRef: string;
+  readonly activationTaskRef: string;
+  readonly boundaryCommit: string;
+  readonly taskRefs: readonly string[];
+  readonly state: "armed" | "fulfilled";
+  readonly activationRef: string | null;
+  readonly operationId: string;
+  readonly requestDigest: string;
+  readonly author: string;
+  readonly session: string | null;
+  readonly armedAt: string;
+  readonly fulfilledAt: string | null;
+}
+
+export interface ImplementationEvidenceActivationRecord {
+  readonly version: 1;
+  readonly activationRef: string;
+  readonly requirementRef: string;
+  readonly manifestId: string;
+  readonly manifestDigest: string;
+  readonly repositoryHead: string;
+  readonly evidenceFingerprint: string;
+  readonly auditRefs: readonly string[];
+  readonly taskRefs: readonly string[];
+  readonly author: string;
+  readonly session: string | null;
+  readonly activatedAt: string;
+}
+
 export interface ImplementationEvidenceSnapshot {
   readonly version: 1;
   readonly panels: Readonly<Record<string, ImplementationReviewPanelRecord>>;
   readonly attempts: Readonly<Record<string, ImplementationReviewAttemptRecord>>;
   readonly completions: Readonly<Record<string, ImplementationCompletionRecord>>;
+  readonly auditPanels: Readonly<Record<string, ImplementationAuditPanelRecord>>;
+  readonly auditAttempts: Readonly<Record<string, ImplementationAuditAttemptRecord>>;
+  readonly implementationAudits: Readonly<Record<string, ImplementationAuditRecord>>;
+  readonly activationRequirements: Readonly<
+    Record<string, ImplementationEvidenceActivationRequirementRecord>
+  >;
+  readonly activations: Readonly<Record<string, ImplementationEvidenceActivationRecord>>;
 }
 
 interface MutableImplementationEvidenceSnapshot {
@@ -160,6 +327,11 @@ interface MutableImplementationEvidenceSnapshot {
   panels: Record<string, ImplementationReviewPanelRecord>;
   attempts: Record<string, ImplementationReviewAttemptRecord>;
   completions: Record<string, ImplementationCompletionRecord>;
+  auditPanels: Record<string, ImplementationAuditPanelRecord>;
+  auditAttempts: Record<string, ImplementationAuditAttemptRecord>;
+  implementationAudits: Record<string, ImplementationAuditRecord>;
+  activationRequirements: Record<string, ImplementationEvidenceActivationRequirementRecord>;
+  activations: Record<string, ImplementationEvidenceActivationRecord>;
 }
 
 const mutateEvidence = Symbol("cq.implementation-evidence.mutate");
@@ -191,7 +363,12 @@ function implementationTaskIsActivated(
 ): boolean {
   return (
     Object.values(snapshot.panels).some((panel) => panel.taskRef === taskRef) ||
-    Object.values(snapshot.completions).some((completion) => completion.taskRef === taskRef)
+    Object.values(snapshot.completions).some((completion) => completion.taskRef === taskRef) ||
+    Object.values(snapshot.auditPanels).some((panel) => panel.taskRef === taskRef) ||
+    Object.values(snapshot.implementationAudits).some((audit) => audit.taskRef === taskRef) ||
+    Object.values(snapshot.activationRequirements).some((requirement) =>
+      requirement.taskRefs.includes(taskRef),
+    )
   );
 }
 
@@ -279,7 +456,17 @@ export function protectLedgerStoreWithImplementationEvidence(
 }
 
 function emptyState(): MutableImplementationEvidenceSnapshot {
-  return { version: IMPLEMENTATION_EVIDENCE_VERSION, panels: {}, attempts: {}, completions: {} };
+  return {
+    version: IMPLEMENTATION_EVIDENCE_VERSION,
+    panels: {},
+    attempts: {},
+    completions: {},
+    auditPanels: {},
+    auditAttempts: {},
+    implementationAudits: {},
+    activationRequirements: {},
+    activations: {},
+  };
 }
 
 function cloneState(state: ImplementationEvidenceSnapshot): MutableImplementationEvidenceSnapshot {
@@ -333,11 +520,27 @@ function parseStoredState(value: unknown): MutableImplementationEvidenceSnapshot
     value["version"] !== 1 ||
     !object(value["panels"]) ||
     !object(value["attempts"]) ||
-    !object(value["completions"])
+    !object(value["completions"]) ||
+    (value["auditPanels"] !== undefined && !object(value["auditPanels"])) ||
+    (value["auditAttempts"] !== undefined && !object(value["auditAttempts"])) ||
+    (value["implementationAudits"] !== undefined && !object(value["implementationAudits"])) ||
+    (value["activationRequirements"] !== undefined && !object(value["activationRequirements"])) ||
+    (value["activations"] !== undefined && !object(value["activations"]))
   ) {
     throw new Error("implementation evidence store has an unsupported or malformed version");
   }
-  return structuredClone(value) as unknown as MutableImplementationEvidenceSnapshot;
+  const stored = structuredClone(value) as unknown as Partial<MutableImplementationEvidenceSnapshot>;
+  return {
+    version: 1,
+    panels: stored.panels ?? {},
+    attempts: stored.attempts ?? {},
+    completions: stored.completions ?? {},
+    auditPanels: stored.auditPanels ?? {},
+    auditAttempts: stored.auditAttempts ?? {},
+    implementationAudits: stored.implementationAudits ?? {},
+    activationRequirements: stored.activationRequirements ?? {},
+    activations: stored.activations ?? {},
+  };
 }
 
 export interface CreateFsImplementationEvidenceStoreOptions {
@@ -701,6 +904,145 @@ function parseAdapterVerdict(
   return { kind: "valid-verdict", verdict: parsed };
 }
 
+export function implementationAuditManifestDigest(
+  manifest: PackagedImplementationAuditManifest,
+): string {
+  return digest(manifest);
+}
+
+function assertPackagedAuditManifest(
+  manifest: PackagedImplementationAuditManifest,
+  manifestId: string,
+): void {
+  if (
+    manifest.version !== 1 ||
+    manifest.manifestId !== manifestId ||
+    !/^[0-9a-f]{64}$/u.test(manifest.sourceDigest) ||
+    manifest.records.length === 0
+  ) {
+    throw new Error("packaged implementation audit manifest is malformed");
+  }
+  const recordKeys = new Set<string>();
+  const taskRefs = new Set<string>();
+  for (const record of manifest.records) {
+    taskIdFromRef(record.taskRef);
+    if (!/^goals:G[0-9]+$/u.test(record.ownerGoalRef))
+      throw new Error("packaged audit owner goal ref is malformed");
+    assertFullSha(record.baseCommit, "audit base_commit");
+    assertFullSha(record.resultCommit, "audit result_commit");
+    assertFullSha(record.repositoryHead, "audit repository_head");
+    if (
+      record.recordKey.length === 0 ||
+      record.finalizedManifest.length === 0 ||
+      recordKeys.has(record.recordKey) ||
+      taskRefs.has(record.taskRef) ||
+      record.requiredObservations.length === 0 ||
+      new Set(record.requiredObservations).size !== record.requiredObservations.length
+    ) {
+      throw new Error("packaged implementation audit records are incomplete or duplicated");
+    }
+    recordKeys.add(record.recordKey);
+    taskRefs.add(record.taskRef);
+  }
+  const sorted = [...manifest.records].sort((left, right) =>
+    left.taskRef.localeCompare(right.taskRef, undefined, { numeric: true }),
+  );
+  if (sorted.some((record, index) => record.recordKey !== manifest.records[index]?.recordKey))
+    throw new Error("packaged implementation audit records must be in sorted task order");
+  if (manifest.activation !== null) {
+    const activation = manifest.activation;
+    if (
+      !/^goals:G[0-9]+$/u.test(activation.goalRef) ||
+      !/^[0-9a-f]{64}$/u.test(activation.finalizedManifestDigest) ||
+      activation.evidenceTaskKey !== "t-evidence" ||
+      activation.auditTaskKey !== "t-historical-evidence" ||
+      activation.activationTaskKey !== "t-activate-evidence"
+    ) {
+      throw new Error("packaged implementation evidence activation is malformed");
+    }
+  }
+}
+
+function implementationAuditInput(
+  manifest: PackagedImplementationAuditManifest,
+  manifestDigest: string,
+  record: PackagedImplementationAuditRecord,
+  roster: readonly ImplementationReviewerIdentity[],
+): DispatchJSONValue {
+  return {
+    manifestId: manifest.manifestId,
+    manifestDigest,
+    recordKey: record.recordKey,
+    taskId: taskIdFromRef(record.taskRef),
+    taskRef: record.taskRef,
+    ownerGoalRef: record.ownerGoalRef,
+    finalizedManifest: record.finalizedManifest,
+    historicalReview: record.historicalReview,
+    baseCommit: record.baseCommit,
+    resultCommit: record.resultCommit,
+    repositoryHead: record.repositoryHead,
+    diff: record.diff,
+    acceptance: record.acceptance,
+    gateObservations: record.gateObservations,
+    auditRoster: structuredClone(roster) as unknown as DispatchJSONValue,
+    requiredObservations: [...record.requiredObservations],
+  };
+}
+
+function validateAuditorVerdict(
+  value: unknown,
+  panel: ImplementationAuditPanelRecord,
+): value is DispatchJSONValue {
+  if (!object(value) || !object(panel.auditInput)) return false;
+  if (!validateAgainstSchema(implementationAuditorSidecar.outputSchema, value).ok) return false;
+  if (
+    value["taskId"] !== taskIdFromRef(panel.taskRef) ||
+    value["manifestDigest"] !== panel.manifestDigest ||
+    value["baseCommit"] !== panel.auditInput["baseCommit"] ||
+    value["resultCommit"] !== panel.auditInput["resultCommit"] ||
+    value["repositoryHead"] !== panel.repositoryHead
+  )
+    return false;
+  const required = panel.auditInput["requiredObservations"];
+  const observations = value["observations"];
+  if (!stringArray(required) || !Array.isArray(observations)) return false;
+  const names = observations.map((entry) => (object(entry) ? entry["name"] : null));
+  if (JSON.stringify(names) !== JSON.stringify(required)) return false;
+  return (
+    value["verdict"] !== "approve" ||
+    observations.every((entry) => object(entry) && entry["status"] === "verified")
+  );
+}
+
+function parseAuditAdapterVerdict(
+  stdout: string,
+  panel: ImplementationAuditPanelRecord,
+): ExternalImplementationAuditExecution["parseResult"] {
+  const trimmed = stdout.trim();
+  if (trimmed === "")
+    return { kind: "operational-abstention", reason: "empty", detail: "adapter stdout was empty" };
+  const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n```$/u.exec(trimmed);
+  const payload = fenced?.[1]?.trim() ?? trimmed;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload);
+  } catch (error) {
+    return {
+      kind: "operational-abstention",
+      reason: "malformed",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+  if (!validateAuditorVerdict(parsed, panel)) {
+    return {
+      kind: "operational-abstention",
+      reason: "malformed",
+      detail: "adapter result did not satisfy the implementation-auditor contract",
+    };
+  }
+  return { kind: "valid-verdict", verdict: parsed };
+}
+
 interface OperationProvenance {
   readonly operationId: string;
   readonly author: string;
@@ -745,6 +1087,65 @@ export interface PrepareImplementationCompletionInput extends OperationProvenanc
 export interface RecordImplementationCompletionInput extends OperationProvenance {
   readonly taskRef: string;
   readonly expectedRepositoryHead: string;
+}
+
+export interface PrepareImplementationAuditPanelInput extends OperationProvenance {
+  readonly manifestId: string;
+  readonly manifestDigest: string;
+  readonly recordKey: string;
+  readonly expectedRepositoryHead: string;
+}
+
+export interface PrepareImplementationAuditAttemptInput extends OperationProvenance {
+  readonly panelRef: string;
+  readonly attemptRef: string;
+}
+
+export interface ExecuteExternalImplementationAuditAttemptInput extends OperationProvenance {
+  readonly attemptRef: string;
+}
+
+export interface FinalizeImplementationAuditAttemptInput extends OperationProvenance {
+  readonly attemptRef: string;
+}
+
+export interface PrepareImplementationAuditFallbackInput extends OperationProvenance {
+  readonly panelRef: string;
+}
+
+export interface ArmImplementationEvidenceActivationInput extends OperationProvenance {
+  readonly goalRef: string;
+  readonly manifestId: string;
+  readonly expectedRepositoryHead: string;
+}
+
+export interface ApplyImplementationAuditManifestInput extends OperationProvenance {
+  readonly manifestId: string;
+  readonly manifestDigest: string;
+  readonly expectedRepositoryHead: string;
+  readonly auditAttemptRefs: readonly string[];
+}
+
+export interface ImplementationEvidenceActivationStatusInput {
+  readonly goalRef: string;
+  readonly manifestId: string;
+  readonly expectedRepositoryHead: string;
+}
+
+export interface ImplementationAuditObservation {
+  readonly state: "consumed" | "aborted" | "missing";
+  readonly input?: DispatchJSONValue;
+  readonly output?: DispatchJSONValue;
+  readonly retainedAttestation?: string;
+}
+
+export interface ImplementationActivationCohort {
+  readonly finalizedManifestDigest: string;
+  readonly evidenceTaskRef: string;
+  readonly auditTaskRef: string;
+  readonly activationTaskRef: string;
+  readonly boundaryCommit: string;
+  readonly taskRefs: readonly string[];
 }
 
 export interface ImplementationWorkerObservation {
@@ -830,6 +1231,33 @@ export interface ImplementationEvidenceServiceDependencies {
     readonly author: string;
     readonly session?: string;
   }) => Promise<ImplementationCompletionLedgerResult>;
+  readonly resolveAuditRoster?: () => readonly ImplementationReviewerIdentity[];
+  readonly readAuditManifest?: (
+    manifestId: string,
+  ) => Promise<PackagedImplementationAuditManifest>;
+  readonly prepareNativeAudit?: (input: {
+    readonly attemptRef: string;
+    readonly panel: ImplementationAuditPanelRecord;
+    readonly identity: ImplementationReviewerIdentity;
+    readonly operationId: string;
+  }) => Promise<DispatchPrepared>;
+  readonly fetchNativeAudit?: (
+    dispatch: DispatchPrepared,
+  ) => Promise<ImplementationAuditObservation>;
+  readonly executeExternalAudit?: (input: {
+    readonly attemptRef: string;
+    readonly panel: ImplementationAuditPanelRecord;
+    readonly identity: ImplementationReviewerIdentity;
+  }) => Promise<ExternalReviewProcessObservation>;
+  readonly resolveActivationCohort?: (input: {
+    readonly goalRef: string;
+    readonly manifest: PackagedImplementationAuditManifest;
+    readonly repositoryHead: string;
+  }) => Promise<ImplementationActivationCohort>;
+  readonly isCommitRetained?: (input: {
+    readonly repositoryHead: string;
+    readonly resultCommit: string;
+  }) => Promise<boolean>;
 }
 
 function operationReplay(
@@ -850,6 +1278,71 @@ function withOperation(
   requestDigest: string,
 ): ImplementationReviewAttemptRecord {
   return { ...attempt, operations: { ...attempt.operations, [operationId]: requestDigest } };
+}
+
+function sortedUniqueTaskRefs(taskRefs: readonly string[], label: string): readonly string[] {
+  if (taskRefs.length === 0 || new Set(taskRefs).size !== taskRefs.length)
+    throw new Error(`${label} must be one non-empty unique task cohort`);
+  taskRefs.forEach(taskIdFromRef);
+  const sorted = [...taskRefs].sort((left, right) =>
+    left.localeCompare(right, undefined, { numeric: true }),
+  );
+  if (sorted.some((taskRef, index) => taskRef !== taskRefs[index]))
+    throw new Error(`${label} must be in sorted task order`);
+  return sorted;
+}
+
+function qualifyingHistoricalReview(
+  review: DispatchJSONValue | null,
+  taskRef: string,
+): boolean {
+  return (
+    object(review) &&
+    review["taskId"] === taskIdFromRef(taskRef) &&
+    review["verdict"] === "approve" &&
+    validateAgainstSchema(implementReviewerSidecar.outputSchema, review).ok
+  );
+}
+
+export async function implementationEvidenceActivationStatusFromStore(
+  store: ImplementationEvidenceStore,
+  input: ImplementationEvidenceActivationStatusInput,
+  repositoryHead: string,
+) {
+  const state = await store.snapshot();
+  const requirement = Object.values(state.activationRequirements).find(
+    (candidate) => candidate.goalRef === input.goalRef && candidate.manifestId === input.manifestId,
+  );
+  if (requirement === undefined) {
+    return {
+      status: "absent" as const,
+      manifestId: input.manifestId,
+      goalRef: input.goalRef,
+      repositoryHead,
+      requirementRef: null,
+      activationRef: null,
+      taskRefs: [],
+    };
+  }
+  if (requirement.boundaryCommit !== repositoryHead)
+    return {
+      status: "stale" as const,
+      manifestId: input.manifestId,
+      goalRef: input.goalRef,
+      repositoryHead,
+      requirementRef: requirement.requirementRef,
+      activationRef: requirement.activationRef,
+      taskRefs: requirement.taskRefs,
+    };
+  return {
+    status: requirement.state === "fulfilled" ? ("active" as const) : ("pending" as const),
+    manifestId: input.manifestId,
+    goalRef: input.goalRef,
+    repositoryHead,
+    requirementRef: requirement.requirementRef,
+    activationRef: requirement.activationRef,
+    taskRefs: requirement.taskRefs,
+  };
 }
 
 export class ImplementationEvidenceService {
@@ -877,12 +1370,737 @@ export class ImplementationEvidenceService {
     return roster;
   }
 
+  private auditRoster(): readonly ImplementationReviewerIdentity[] {
+    const roster = structuredClone(
+      this.deps.resolveAuditRoster?.() ?? this.deps.resolveReviewerRoster(),
+    );
+    if (roster.length === 0) throw new Error("implementation auditor roster must not be empty");
+    return roster;
+  }
+
+  private async auditManifest(
+    manifestId: string,
+    expectedDigest?: string,
+  ): Promise<{ manifest: PackagedImplementationAuditManifest; manifestDigest: string }> {
+    if (manifestId.length === 0) throw new Error("manifest_id must not be empty");
+    if (this.deps.readAuditManifest === undefined)
+      throw new Error("packaged implementation audit registry is unavailable");
+    const manifest = structuredClone(await this.deps.readAuditManifest(manifestId));
+    assertPackagedAuditManifest(manifest, manifestId);
+    const manifestDigest = implementationAuditManifestDigest(manifest);
+    if (expectedDigest !== undefined && manifestDigest !== expectedDigest)
+      throw new Error("packaged implementation audit manifest digest changed");
+    return { manifest, manifestDigest };
+  }
+
+  async prepareAuditPanel(input: PrepareImplementationAuditPanelInput) {
+    assertOperationId(input.operationId);
+    assertFullSha(input.expectedRepositoryHead, "expected_repository_head");
+    if (!/^[0-9a-f]{64}$/u.test(input.manifestDigest))
+      throw new Error("manifest_digest must be one lowercase SHA-256 digest");
+    const { manifest, manifestDigest } = await this.auditManifest(
+      input.manifestId,
+      input.manifestDigest,
+    );
+    const repositoryHead = await this.deps.repositoryHead();
+    if (repositoryHead !== input.expectedRepositoryHead)
+      throw new Error("repository head changed before implementation audit preparation");
+    const record = manifest.records.find((candidate) => candidate.recordKey === input.recordKey);
+    if (record === undefined) throw new Error("packaged implementation audit record is missing");
+    if (record.repositoryHead !== repositoryHead)
+      throw new Error("packaged implementation audit repository head is stale");
+    if (
+      this.deps.isCommitRetained !== undefined &&
+      !(await this.deps.isCommitRetained({
+        repositoryHead,
+        resultCommit: record.resultCommit,
+      }))
+    )
+      throw new Error("historical implementation result commit is not retained");
+    const roster = this.auditRoster();
+    const rosterDigest = digest(roster);
+    const request = { ...input, manifestDigest, record, roster };
+    const requestDigest = digest(request);
+    const panelRef = opaqueRef("cq-implementation-audit-panel", request);
+    const attemptRefs = roster.map((identity, position) =>
+      opaqueRef("cq-implementation-audit-attempt", { panelRef, position, identity }),
+    );
+    const auditInput = implementationAuditInput(manifest, manifestDigest, record, roster);
+    return await this.deps.store[mutateEvidence](async (state) => {
+      for (const panel of Object.values(state.auditPanels)) {
+        if (panel.operationId !== input.operationId) continue;
+        if (panel.requestDigest !== requestDigest)
+          throw new Error(
+            `operation_id ${input.operationId} was reused with a different audit panel`,
+          );
+        return {
+          status: "existing" as const,
+          panelRef: panel.panelRef,
+          manifestId: panel.manifestId,
+          recordKey: panel.recordKey,
+          taskRef: panel.taskRef,
+          rosterDigest: panel.rosterDigest,
+          attemptRefs: panel.attemptRefs,
+        };
+      }
+      const createdAt = this.now();
+      const panel: ImplementationAuditPanelRecord = {
+        version: 1,
+        panelRef,
+        manifestId: manifest.manifestId,
+        manifestDigest,
+        recordKey: record.recordKey,
+        taskRef: record.taskRef,
+        repositoryHead,
+        rosterDigest,
+        roster,
+        attemptRefs,
+        fallbackAttemptRef: null,
+        auditInput,
+        operationId: input.operationId,
+        requestDigest,
+        author: input.author,
+        session: input.session ?? null,
+        createdAt,
+      };
+      state.auditPanels[panelRef] = panel;
+      roster.forEach((identity, position) => {
+        const attemptRef = attemptRefs[position]!;
+        state.auditAttempts[attemptRef] = {
+          version: 1,
+          attemptRef,
+          panelRef,
+          taskRef: record.taskRef,
+          position,
+          identity,
+          fallback: false,
+          fallbackTrigger: null,
+          fallbackExclusions: [],
+          preparedDispatch: null,
+          retainedAttestation: null,
+          executionReservation: null,
+          execution: null,
+          terminalState: null,
+          verdictDigest: null,
+          verdict: null,
+          operations: {},
+          author: input.author,
+          session: input.session ?? null,
+          createdAt,
+        };
+      });
+      return {
+        status: "prepared" as const,
+        panelRef,
+        manifestId: manifest.manifestId,
+        recordKey: record.recordKey,
+        taskRef: record.taskRef,
+        rosterDigest,
+        attemptRefs,
+      };
+    });
+  }
+
+  async prepareAuditAttempt(input: PrepareImplementationAuditAttemptInput) {
+    assertOperationId(input.operationId);
+    if (!AUDIT_PANEL_REF.test(input.panelRef) || !AUDIT_ATTEMPT_REF.test(input.attemptRef))
+      throw new Error("invalid implementation audit reference");
+    const snapshot = await this.deps.store.snapshot();
+    const panel = snapshot.auditPanels[input.panelRef];
+    const attempt = snapshot.auditAttempts[input.attemptRef];
+    if (panel === undefined || attempt === undefined || attempt.panelRef !== panel.panelRef)
+      throw new Error("audit attempt does not belong to the panel");
+    const requestDigest = digest(input);
+    if (operationReplay(attempt.operations, input.operationId, requestDigest))
+      return this.preparedAuditAttemptResponse("existing", attempt);
+    let preparedDispatch: DispatchPrepared | null = null;
+    if (attempt.identity.launch === "native") {
+      if (this.deps.prepareNativeAudit === undefined)
+        throw new Error("native implementation audit dispatch is unavailable");
+      preparedDispatch = await this.deps.prepareNativeAudit({
+        attemptRef: attempt.attemptRef,
+        panel,
+        identity: attempt.identity,
+        operationId: input.operationId,
+      });
+    }
+    return await this.deps.store[mutateEvidence](async (state) => {
+      const current = state.auditAttempts[input.attemptRef];
+      if (current === undefined || current.panelRef !== input.panelRef)
+        throw new Error("audit attempt changed during preparation");
+      if (operationReplay(current.operations, input.operationId, requestDigest))
+        return this.preparedAuditAttemptResponse("existing", current);
+      if (
+        current.preparedDispatch !== null &&
+        preparedDispatch !== null &&
+        !sameHandle(handleOf(current.preparedDispatch), handleOf(preparedDispatch))
+      )
+        throw new Error("audit attempt dispatch identity changed");
+      const updated: ImplementationAuditAttemptRecord = {
+        ...current,
+        preparedDispatch: current.preparedDispatch ?? preparedDispatch,
+        operations: { ...current.operations, [input.operationId]: requestDigest },
+      };
+      state.auditAttempts[input.attemptRef] = updated;
+      return this.preparedAuditAttemptResponse("prepared", updated);
+    });
+  }
+
+  private preparedAuditAttemptResponse(
+    status: "prepared" | "existing",
+    attempt: ImplementationAuditAttemptRecord,
+  ) {
+    if (attempt.identity.launch === "adapter")
+      return { status, attemptRef: attempt.attemptRef, launch: "adapter" as const };
+    if (attempt.preparedDispatch === null)
+      throw new Error("native audit attempt has no bound dispatch");
+    return {
+      status,
+      attemptRef: attempt.attemptRef,
+      launch: "native" as const,
+      dispatch: attempt.preparedDispatch,
+    };
+  }
+
+  async executeExternalAuditAttempt(input: ExecuteExternalImplementationAuditAttemptInput) {
+    assertOperationId(input.operationId);
+    const snapshot = await this.deps.store.snapshot();
+    const attempt = snapshot.auditAttempts[input.attemptRef];
+    if (attempt === undefined || attempt.identity.launch !== "adapter")
+      throw new Error("attempt is not a configured external audit");
+    const panel = snapshot.auditPanels[attempt.panelRef];
+    if (panel === undefined) throw new Error("audit panel is missing");
+    if (Object.keys(attempt.operations).length === 0)
+      throw new Error("external audit attempt was not prepared");
+    const requestDigest = digest(input);
+    if (operationReplay(attempt.operations, input.operationId, requestDigest)) {
+      const executionRef =
+        attempt.execution?.executionRef ?? attempt.executionReservation?.executionRef;
+      if (executionRef === undefined) throw new Error("external audit replay has no receipt");
+      return { status: "existing" as const, attemptRef: attempt.attemptRef, executionRef };
+    }
+    const executionRef = opaqueRef("cq-implementation-audit-execution", {
+      attemptRef: attempt.attemptRef,
+      operationId: input.operationId,
+      requestDigest,
+    });
+    const reservation = await this.deps.store[mutateEvidence](async (state) => {
+      const current = state.auditAttempts[input.attemptRef];
+      if (current === undefined) throw new Error("audit attempt disappeared");
+      if (operationReplay(current.operations, input.operationId, requestDigest))
+        return { existing: true as const, attempt: current };
+      if (current.terminalState !== null || current.execution !== null)
+        throw new Error("external audit attempt is already settled");
+      const updated: ImplementationAuditAttemptRecord = {
+        ...current,
+        executionReservation: {
+          executionRef,
+          operationId: input.operationId,
+          requestDigest,
+          reservedAt: this.now(),
+        },
+        operations: { ...current.operations, [input.operationId]: requestDigest },
+      };
+      state.auditAttempts[input.attemptRef] = updated;
+      return { existing: false as const, attempt: updated };
+    });
+    if (reservation.existing) {
+      const existingRef =
+        reservation.attempt.execution?.executionRef ??
+        reservation.attempt.executionReservation?.executionRef;
+      if (existingRef === undefined) throw new Error("external audit replay has no receipt");
+      return { status: "existing" as const, attemptRef: attempt.attemptRef, executionRef: existingRef };
+    }
+    let observation: ExternalReviewProcessObservation;
+    try {
+      if (this.deps.executeExternalAudit === undefined)
+        throw new Error("external implementation audit adapter is unavailable");
+      observation = await this.deps.executeExternalAudit({
+        attemptRef: attempt.attemptRef,
+        panel,
+        identity: attempt.identity,
+      });
+    } catch (error) {
+      observation = {
+        adapterIdentity: attempt.identity.adapterId,
+        stdout: "",
+        stderr: error instanceof Error ? error.message : String(error),
+        exitCode: 1,
+      };
+    }
+    if (observation.adapterIdentity !== attempt.identity.adapterId)
+      throw new Error("external audit adapter identity changed");
+    const parseResult =
+      observation.exitCode === 0
+        ? parseAuditAdapterVerdict(observation.stdout, panel)
+        : {
+            kind: "operational-abstention" as const,
+            reason: "failed" as const,
+            detail: `adapter exited ${String(observation.exitCode)}`,
+          };
+    await this.deps.store[mutateEvidence](async (state) => {
+      const current = state.auditAttempts[input.attemptRef];
+      if (
+        current === undefined ||
+        current.executionReservation?.executionRef !== executionRef ||
+        current.execution !== null
+      )
+        throw new Error("external audit reservation changed before settlement");
+      state.auditAttempts[input.attemptRef] = {
+        ...current,
+        execution: {
+          executionRef,
+          adapterIdentity: observation.adapterIdentity,
+          stdout: observation.stdout,
+          stderr: observation.stderr,
+          exitCode: observation.exitCode,
+          parseResult,
+          executedAt: this.now(),
+        },
+      };
+    });
+    return { status: "executed" as const, attemptRef: attempt.attemptRef, executionRef };
+  }
+
+  async finalizeAuditAttempt(input: FinalizeImplementationAuditAttemptInput) {
+    assertOperationId(input.operationId);
+    const snapshot = await this.deps.store.snapshot();
+    const attempt = snapshot.auditAttempts[input.attemptRef];
+    if (attempt === undefined) throw new Error("implementation audit attempt is missing");
+    const panel = snapshot.auditPanels[attempt.panelRef];
+    if (panel === undefined) throw new Error("implementation audit panel is missing");
+    const requestDigest = digest(input);
+    if (operationReplay(attempt.operations, input.operationId, requestDigest)) {
+      if (attempt.terminalState === null) throw new Error("audit finalization replay is incomplete");
+      return {
+        status: "existing" as const,
+        attemptRef: attempt.attemptRef,
+        terminalState: attempt.terminalState,
+      };
+    }
+    let verdict: DispatchJSONValue | null = null;
+    let retainedAttestation: string | null = null;
+    let terminalState: ImplementationReviewTerminalState = "operational-abstention";
+    if (attempt.identity.launch === "native") {
+      if (attempt.preparedDispatch === null || this.deps.fetchNativeAudit === undefined)
+        throw new Error("native implementation audit attempt was not prepared");
+      const observation = await this.deps.fetchNativeAudit(attempt.preparedDispatch);
+      if (
+        observation.state === "consumed" &&
+        observation.output !== undefined &&
+        validateAuditorVerdict(observation.output, panel)
+      ) {
+        verdict = observation.output;
+        retainedAttestation = observation.retainedAttestation ?? null;
+        terminalState = object(verdict) && verdict["verdict"] === "approve" ? "approved" : "disapproved";
+      }
+    } else if (attempt.execution?.parseResult.kind === "valid-verdict") {
+      verdict = attempt.execution.parseResult.verdict;
+      terminalState = object(verdict) && verdict["verdict"] === "approve" ? "approved" : "disapproved";
+    }
+    return await this.deps.store[mutateEvidence](async (state) => {
+      const current = state.auditAttempts[input.attemptRef];
+      if (current === undefined) throw new Error("audit attempt disappeared");
+      if (operationReplay(current.operations, input.operationId, requestDigest)) {
+        if (current.terminalState === null) throw new Error("audit finalization replay is incomplete");
+        return {
+          status: "existing" as const,
+          attemptRef: current.attemptRef,
+          terminalState: current.terminalState,
+        };
+      }
+      const updated: ImplementationAuditAttemptRecord = {
+        ...current,
+        retainedAttestation,
+        terminalState,
+        verdict,
+        verdictDigest: verdict === null ? null : digest(verdict),
+        operations: { ...current.operations, [input.operationId]: requestDigest },
+      };
+      state.auditAttempts[input.attemptRef] = updated;
+      return {
+        status: "finalized" as const,
+        attemptRef: updated.attemptRef,
+        terminalState,
+      };
+    });
+  }
+
+  async prepareAuditFallback(input: PrepareImplementationAuditFallbackInput) {
+    assertOperationId(input.operationId);
+    if (!AUDIT_PANEL_REF.test(input.panelRef)) throw new Error("invalid implementation audit panel ref");
+    const snapshot = await this.deps.store.snapshot();
+    const panel = snapshot.auditPanels[input.panelRef];
+    if (panel === undefined) throw new Error("implementation audit panel is missing");
+    const configured = panel.attemptRefs.map((ref) => snapshot.auditAttempts[ref]);
+    if (
+      configured.some(
+        (attempt) => attempt === undefined || attempt.terminalState !== "operational-abstention",
+      )
+    )
+      throw new Error("native audit fallback requires terminal abstention by the entire roster");
+    const requestDigest = digest(input);
+    const fallbackRef = opaqueRef("cq-implementation-audit-attempt", {
+      panelRef: panel.panelRef,
+      fallback: true,
+      identity: this.deps.nativeFallback,
+    });
+    const existing = snapshot.auditAttempts[fallbackRef];
+    if (existing !== undefined && operationReplay(existing.operations, input.operationId, requestDigest)) {
+      if (existing.preparedDispatch === null) throw new Error("audit fallback dispatch is missing");
+      return { status: "existing" as const, attemptRef: fallbackRef, dispatch: existing.preparedDispatch };
+    }
+    if (this.deps.prepareNativeAudit === undefined)
+      throw new Error("native implementation audit dispatch is unavailable");
+    const preparedDispatch = await this.deps.prepareNativeAudit({
+      attemptRef: fallbackRef,
+      panel,
+      identity: this.deps.nativeFallback,
+      operationId: input.operationId,
+    });
+    return await this.deps.store[mutateEvidence](async (state) => {
+      const currentPanel = state.auditPanels[input.panelRef];
+      if (currentPanel === undefined) throw new Error("implementation audit panel disappeared");
+      const current = state.auditAttempts[fallbackRef];
+      if (current !== undefined) {
+        if (!operationReplay(current.operations, input.operationId, requestDigest))
+          throw new Error("implementation audit fallback identity already exists");
+        if (current.preparedDispatch === null) throw new Error("audit fallback dispatch is missing");
+        return { status: "existing" as const, attemptRef: fallbackRef, dispatch: current.preparedDispatch };
+      }
+      const createdAt = this.now();
+      state.auditAttempts[fallbackRef] = {
+        version: 1,
+        attemptRef: fallbackRef,
+        panelRef: currentPanel.panelRef,
+        taskRef: currentPanel.taskRef,
+        position: currentPanel.attemptRefs.length,
+        identity: this.deps.nativeFallback,
+        fallback: true,
+        fallbackTrigger: "all-configured-auditors-abstained",
+        fallbackExclusions: [...currentPanel.attemptRefs],
+        preparedDispatch,
+        retainedAttestation: null,
+        executionReservation: null,
+        execution: null,
+        terminalState: null,
+        verdictDigest: null,
+        verdict: null,
+        operations: { [input.operationId]: requestDigest },
+        author: input.author,
+        session: input.session ?? null,
+        createdAt,
+      };
+      state.auditPanels[input.panelRef] = { ...currentPanel, fallbackAttemptRef: fallbackRef };
+      return { status: "prepared" as const, attemptRef: fallbackRef, dispatch: preparedDispatch };
+    });
+  }
+
+  async armEvidenceActivation(input: ArmImplementationEvidenceActivationInput) {
+    assertOperationId(input.operationId);
+    if (!/^goals:G[0-9]+$/u.test(input.goalRef))
+      throw new Error("goal_ref must be one canonical goal ref");
+    assertFullSha(input.expectedRepositoryHead, "expected_repository_head");
+    const { manifest } = await this.auditManifest(input.manifestId);
+    if (manifest.activation === null || manifest.activation.goalRef !== input.goalRef)
+      throw new Error("packaged manifest has no matching implementation evidence activation");
+    const repositoryHead = await this.deps.repositoryHead();
+    if (repositoryHead !== input.expectedRepositoryHead)
+      throw new Error("repository head changed before implementation evidence activation arm");
+    if (this.deps.resolveActivationCohort === undefined)
+      throw new Error("finalized-manifest activation resolver is unavailable");
+    const cohort = await this.deps.resolveActivationCohort({
+      goalRef: input.goalRef,
+      manifest,
+      repositoryHead,
+    });
+    assertFullSha(cohort.boundaryCommit, "activation boundary_commit");
+    if (
+      cohort.boundaryCommit !== repositoryHead ||
+      cohort.finalizedManifestDigest !== manifest.activation.finalizedManifestDigest
+    )
+      throw new Error("finalized implementation manifest or activation boundary changed");
+    const taskRefs = sortedUniqueTaskRefs(cohort.taskRefs, "activation taskRefs");
+    if (
+      !taskRefs.includes(cohort.evidenceTaskRef) ||
+      !taskRefs.includes(cohort.auditTaskRef) ||
+      cohort.activationTaskRef === cohort.evidenceTaskRef ||
+      cohort.activationTaskRef === cohort.auditTaskRef
+    )
+      throw new Error("activation cohort does not bind the finalized bootstrap task mappings");
+    for (const taskRef of [
+      cohort.evidenceTaskRef,
+      cohort.auditTaskRef,
+      cohort.activationTaskRef,
+    ])
+      taskIdFromRef(taskRef);
+    for (const taskRef of [cohort.evidenceTaskRef, cohort.auditTaskRef]) {
+      const task = await this.deps.readTaskAuthority(taskRef);
+      if (task.taskRef !== taskRef || task.status !== "done")
+        throw new Error("implementation evidence bootstrap tasks must be done before arming");
+    }
+    const activationTask = await this.deps.readTaskAuthority(cohort.activationTaskRef);
+    if (activationTask.taskRef !== cohort.activationTaskRef || activationTask.status === "done")
+      throw new Error("implementation evidence activation task is not actionable");
+    const request = { ...input, finalizedManifestDigest: cohort.finalizedManifestDigest, taskRefs };
+    const requestDigest = digest(request);
+    const requirementRef = opaqueRef("cq-implementation-evidence-activation-requirement", request);
+    return await this.deps.store[mutateEvidence](async (state) => {
+      for (const requirement of Object.values(state.activationRequirements)) {
+        if (requirement.operationId !== input.operationId) continue;
+        if (requirement.requestDigest !== requestDigest)
+          throw new Error(
+            `operation_id ${input.operationId} was reused with a different activation requirement`,
+          );
+        return {
+          status: "existing" as const,
+          requirementRef: requirement.requirementRef,
+          manifestId: requirement.manifestId,
+          goalRef: requirement.goalRef,
+          finalizedManifestDigest: requirement.finalizedManifestDigest,
+          evidenceTaskRef: requirement.evidenceTaskRef,
+          auditTaskRef: requirement.auditTaskRef,
+          activationTaskRef: requirement.activationTaskRef,
+          boundaryCommit: requirement.boundaryCommit,
+          taskRefs: requirement.taskRefs,
+        };
+      }
+      const blocking = Object.values(state.activationRequirements).find(
+        (requirement) =>
+          requirement.goalRef === input.goalRef &&
+          requirement.manifestId === input.manifestId &&
+          requirement.state === "armed",
+      );
+      if (blocking !== undefined)
+        throw new Error("a different implementation evidence activation requirement is pending");
+      state.activationRequirements[requirementRef] = {
+        version: 1,
+        requirementRef,
+        manifestId: manifest.manifestId,
+        goalRef: input.goalRef,
+        finalizedManifestDigest: cohort.finalizedManifestDigest,
+        evidenceTaskRef: cohort.evidenceTaskRef,
+        auditTaskRef: cohort.auditTaskRef,
+        activationTaskRef: cohort.activationTaskRef,
+        boundaryCommit: cohort.boundaryCommit,
+        taskRefs,
+        state: "armed",
+        activationRef: null,
+        operationId: input.operationId,
+        requestDigest,
+        author: input.author,
+        session: input.session ?? null,
+        armedAt: this.now(),
+        fulfilledAt: null,
+      };
+      return {
+        status: "armed" as const,
+        requirementRef,
+        manifestId: manifest.manifestId,
+        goalRef: input.goalRef,
+        finalizedManifestDigest: cohort.finalizedManifestDigest,
+        evidenceTaskRef: cohort.evidenceTaskRef,
+        auditTaskRef: cohort.auditTaskRef,
+        activationTaskRef: cohort.activationTaskRef,
+        boundaryCommit: cohort.boundaryCommit,
+        taskRefs,
+      };
+    });
+  }
+
+  async applyAuditManifest(input: ApplyImplementationAuditManifestInput) {
+    assertOperationId(input.operationId);
+    assertFullSha(input.expectedRepositoryHead, "expected_repository_head");
+    if (!/^[0-9a-f]{64}$/u.test(input.manifestDigest))
+      throw new Error("manifest_digest must be one lowercase SHA-256 digest");
+    const { manifest, manifestDigest } = await this.auditManifest(
+      input.manifestId,
+      input.manifestDigest,
+    );
+    const repositoryHead = await this.deps.repositoryHead();
+    if (repositoryHead !== input.expectedRepositoryHead)
+      throw new Error("repository head changed before audit manifest application");
+    const snapshot = await this.deps.store.snapshot();
+    const expectedAttemptRefs: string[] = [];
+    const auditCandidates: Array<{
+      readonly record: PackagedImplementationAuditRecord;
+      readonly attemptRefs: readonly string[];
+      readonly terminalState: ImplementationReviewTerminalState;
+    }> = [];
+    for (const record of manifest.records) {
+      if (
+        this.deps.isCommitRetained !== undefined &&
+        !(await this.deps.isCommitRetained({ repositoryHead, resultCommit: record.resultCommit }))
+      )
+        throw new Error(`historical implementation result commit for ${record.taskRef} is not retained`);
+      if (qualifyingHistoricalReview(record.historicalReview, record.taskRef)) {
+        auditCandidates.push({ record, attemptRefs: [], terminalState: "approved" });
+        continue;
+      }
+      const panels = Object.values(snapshot.auditPanels).filter(
+        (panel) =>
+          panel.manifestId === manifest.manifestId &&
+          panel.manifestDigest === manifestDigest &&
+          panel.recordKey === record.recordKey &&
+          panel.taskRef === record.taskRef &&
+          panel.repositoryHead === repositoryHead,
+      );
+      if (panels.length !== 1)
+        throw new Error(`exactly one finalized audit panel is required for ${record.taskRef}`);
+      const panel = panels[0]!;
+      const refs = [
+        ...panel.attemptRefs,
+        ...(panel.fallbackAttemptRef === null ? [] : [panel.fallbackAttemptRef]),
+      ];
+      const attempts = refs.map((ref) => snapshot.auditAttempts[ref]);
+      if (attempts.some((attempt) => attempt === undefined || attempt.terminalState === null))
+        throw new Error(`audit panel for ${record.taskRef} is nonterminal`);
+      const terminals = attempts.map((attempt) => attempt!.terminalState!);
+      if (terminals.includes("disapproved"))
+        throw new Error(`audit panel for ${record.taskRef} was disapproved`);
+      if (!terminals.includes("approved"))
+        throw new Error(`audit panel for ${record.taskRef} has no authenticated approval`);
+      expectedAttemptRefs.push(...refs);
+      auditCandidates.push({ record, attemptRefs: refs, terminalState: "approved" });
+    }
+    if (JSON.stringify(input.auditAttemptRefs) !== JSON.stringify(expectedAttemptRefs))
+      throw new Error("audit_attempt_refs must be the complete ordered manifest attempt set");
+    const auditRefs = auditCandidates.map(({ record, attemptRefs }) =>
+      opaqueRef("cq-implementation-audit", {
+        manifestId: manifest.manifestId,
+        manifestDigest,
+        sourceDigest: manifest.sourceDigest,
+        record,
+        attemptRefs,
+      }),
+    );
+    const evidenceFingerprint = digest({
+      manifestId: manifest.manifestId,
+      manifestDigest,
+      sourceDigest: manifest.sourceDigest,
+      repositoryHead,
+      auditRefs,
+      taskRefs: manifest.records.map((record) => record.taskRef),
+    });
+    return await this.deps.store[mutateEvidence](async (state) => {
+      let existingCount = 0;
+      auditCandidates.forEach(({ record, attemptRefs, terminalState }, index) => {
+        const auditRef = auditRefs[index]!;
+        const existing = state.implementationAudits[auditRef];
+        if (existing !== undefined) {
+          if (existing.evidenceFingerprint !== digest({ record, attemptRefs, manifestDigest }))
+            throw new Error("stored implementation audit does not match the packaged record");
+          existingCount += 1;
+          return;
+        }
+        state.implementationAudits[auditRef] = {
+          version: 1,
+          auditRef,
+          manifestId: manifest.manifestId,
+          manifestDigest,
+          recordKey: record.recordKey,
+          taskRef: record.taskRef,
+          ownerGoalRef: record.ownerGoalRef,
+          finalizedManifest: record.finalizedManifest,
+          historicalReview: record.historicalReview,
+          baseCommit: record.baseCommit,
+          resultCommit: record.resultCommit,
+          repositoryHead: record.repositoryHead,
+          sourceDigest: manifest.sourceDigest,
+          evidenceFingerprint: digest({ record, attemptRefs, manifestDigest }),
+          attemptRefs,
+          terminalState,
+          author: input.author,
+          session: input.session ?? null,
+          appliedAt: this.now(),
+        };
+      });
+      const requirement = Object.values(state.activationRequirements).find(
+        (candidate) =>
+          candidate.manifestId === manifest.manifestId && candidate.boundaryCommit === repositoryHead,
+      );
+      let activation: "none" | "activated" | "existing" = "none";
+      let requirementRef: string | null = null;
+      if (requirement !== undefined) {
+        requirementRef = requirement.requirementRef;
+        const taskRefs = manifest.records.map((record) => record.taskRef);
+        if (JSON.stringify(taskRefs) !== JSON.stringify(requirement.taskRefs))
+          throw new Error("audit manifest cohort does not exactly fulfill the activation requirement");
+        const activationRef = opaqueRef("cq-implementation-evidence-activation", {
+          requirementRef,
+          manifestId: manifest.manifestId,
+          manifestDigest,
+          repositoryHead,
+          evidenceFingerprint,
+          auditRefs,
+          taskRefs,
+        });
+        const existingActivation = state.activations[activationRef];
+        if (existingActivation === undefined) {
+          state.activations[activationRef] = {
+            version: 1,
+            activationRef,
+            requirementRef,
+            manifestId: manifest.manifestId,
+            manifestDigest,
+            repositoryHead,
+            evidenceFingerprint,
+            auditRefs,
+            taskRefs,
+            author: input.author,
+            session: input.session ?? null,
+            activatedAt: this.now(),
+          };
+          activation = "activated";
+        } else {
+          activation = "existing";
+        }
+        state.activationRequirements[requirementRef] = {
+          ...requirement,
+          state: "fulfilled",
+          activationRef,
+          fulfilledAt: requirement.fulfilledAt ?? this.now(),
+        };
+      }
+      return {
+        status: existingCount === auditCandidates.length ? ("existing" as const) : ("applied" as const),
+        manifestId: manifest.manifestId,
+        manifestDigest,
+        repositoryHead,
+        activation,
+        requirementRef,
+        evidenceFingerprint,
+        auditRefs,
+        taskRefs: manifest.records.map((record) => record.taskRef),
+      };
+    });
+  }
+
+  async evidenceActivationStatus(input: ImplementationEvidenceActivationStatusInput) {
+    if (!/^goals:G[0-9]+$/u.test(input.goalRef))
+      throw new Error("goal_ref must be one canonical goal ref");
+    assertFullSha(input.expectedRepositoryHead, "expected_repository_head");
+    const repositoryHead = await this.deps.repositoryHead();
+    if (repositoryHead !== input.expectedRepositoryHead)
+      throw new Error("repository head does not match the bounded activation status probe");
+    return await implementationEvidenceActivationStatusFromStore(
+      this.deps.store,
+      input,
+      repositoryHead,
+    );
+  }
+
   async assertGenericTaskTerminalizationAllowed(taskRef: string): Promise<void> {
     taskIdFromRef(taskRef);
     const state = await this.deps.store.snapshot();
     const activated =
       Object.values(state.panels).some((panel) => panel.taskRef === taskRef) ||
-      Object.values(state.completions).some((completion) => completion.taskRef === taskRef);
+      Object.values(state.completions).some((completion) => completion.taskRef === taskRef) ||
+      Object.values(state.auditPanels).some((panel) => panel.taskRef === taskRef) ||
+      Object.values(state.implementationAudits).some((audit) => audit.taskRef === taskRef) ||
+      Object.values(state.activationRequirements).some((requirement) =>
+        requirement.taskRefs.includes(taskRef),
+      );
     if (activated) {
       throw new Error(
         `Git-producing task ${taskRef} may terminalize only through protected implementation evidence`,

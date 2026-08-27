@@ -439,6 +439,7 @@ let
     (mkAgent "plan-reviewer" [ I T Y ])
     (mkAgent "implement-worker" [ I T X ])
     (mkAgent "implement-reviewer" [ I T X ])
+    (mkAgent "implementation-auditor" [ T X ])
     (mkAgent "implement-conflict-resolver" [ I T X ])
     (mkAgent "investigate-explorer" [ I T S Y ])
     (mkAgent "investigate-prober" [ I T Y ])

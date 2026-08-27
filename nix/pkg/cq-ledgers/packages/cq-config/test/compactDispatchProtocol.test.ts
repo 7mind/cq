@@ -86,6 +86,34 @@ const ROLE_INPUTS = {
     },
     round: 1,
   },
+  "implementation-auditor": {
+    manifestId: "historical-v1",
+    manifestDigest: "a".repeat(64),
+    recordKey: "task-T682",
+    taskId: "T682",
+    taskRef: "tasks:T682",
+    ownerGoalRef: "goals:G94",
+    finalizedManifest: "manifest-v1",
+    historicalReview: null,
+    baseCommit: "9".repeat(40),
+    resultCommit: "8".repeat(40),
+    repositoryHead: "7".repeat(40),
+    diff: "diff --git a/a b/a",
+    acceptance: "Historical acceptance passed.",
+    gateObservations: { exitCode: 0, passCount: 1 },
+    auditRoster: [
+      {
+        alias: "native",
+        harness: "codex",
+        model: "frontier",
+        provider: null,
+        effort: null,
+        launch: "native",
+        adapterId: "codex:native",
+      },
+    ],
+    requiredObservations: ["commit-retained"],
+  },
   "implement-conflict-resolver": {
     taskId: "T682",
     worktreePath: "/tmp/wt-T682",
@@ -132,7 +160,7 @@ function rejects(schema: Parameters<typeof validateAgainstSchema>[0], value: unk
 
 describe("compact dispatched-subagent launch contract", () => {
   test("accepts every dispatched-role sidecar through roleId plus structured input", () => {
-    expect(Object.keys(ROLE_INPUTS)).toHaveLength(9);
+    expect(Object.keys(ROLE_INPUTS)).toHaveLength(10);
     for (const [roleId, input] of Object.entries(ROLE_INPUTS) as [
       DispatchedRoleId,
       DispatchJSONValue,

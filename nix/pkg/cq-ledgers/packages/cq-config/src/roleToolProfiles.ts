@@ -54,6 +54,14 @@ export const LEDGER_CAPABILITY_TOOL_NAMES = [
   "execute_external_implementation_review_attempt",
   "finalize_implementation_review_attempt",
   "prepare_implementation_review_fallback",
+  "prepare_implementation_audit_panel",
+  "prepare_implementation_audit_attempt",
+  "execute_external_implementation_audit_attempt",
+  "finalize_implementation_audit_attempt",
+  "prepare_implementation_audit_fallback",
+  "arm_implementation_evidence_activation",
+  "apply_implementation_audit_manifest",
+  "get_implementation_evidence_activation_status",
   "prepare_implementation_completion",
   "record_implementation_completion",
 ] as const;
@@ -423,6 +431,15 @@ export const ROLE_IDENTIFIED_CORPUS = Object.freeze({
         retiredCalls: { get_reviewers: 1 },
       },
       ["fetch_item", "fts_search", "get_config", "fetch_ledger", "list_milestone_items"],
+    ),
+    "implementation-auditor": corpusRole(
+      {
+        transcripts: 0,
+        zeroLedgerTranscripts: 0,
+        currentLedgerCalls: {},
+        retiredCalls: {},
+      },
+      [],
     ),
     "investigate-explorer": corpusRole(
       {
