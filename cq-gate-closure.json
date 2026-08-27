@@ -396,13 +396,13 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/codexBrokerWorker.ts",
-      "sha256": "04bdcea3e42347288b6a14716b60b5e4c306bb86be54596eac9e124820c72f47",
+      "sha256": "10b3c24d8aeac6e1de85b6edc9b98d26f85c91776b7b09ef5c18592a19933bb9",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/codexBrokerWorker.ts",
-      "sha256": "04bdcea3e42347288b6a14716b60b5e4c306bb86be54596eac9e124820c72f47",
+      "sha256": "10b3c24d8aeac6e1de85b6edc9b98d26f85c91776b7b09ef5c18592a19933bb9",
       "targets": []
     },
     {
