@@ -298,7 +298,8 @@ describe("journal recovery epoch promotion", () => {
         label: "competing-successor-specification",
         rows: (generation17) => {
           const input = {
-            ...validSuccessor.input,
+            ...RECOVERY_INPUT,
+            round: 18,
             acceptance: "promote a competing finalized task specification",
           };
           return [
