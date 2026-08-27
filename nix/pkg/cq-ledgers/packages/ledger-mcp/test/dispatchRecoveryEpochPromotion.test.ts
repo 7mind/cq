@@ -87,8 +87,7 @@ function terminalAbortDigest(reason: string): string {
 }
 
 function journalDerivedAbort(
-  reason: "invalid-output" | "missing-result" | "deadline-exceeded" | "parent-lost" =
-    "parent-lost",
+  reason: "invalid-output" | "missing-result" | "deadline-exceeded" | "parent-lost" = "parent-lost",
 ): AttestationEnvelope {
   const input = { ...RECOVERY_INPUT, round: 18 };
   const row = abortedEnvelope({ generation: 18, reason });
@@ -351,9 +350,7 @@ describe("journal recovery epoch promotion", () => {
       expect(promoted.seed.selectedSourceHandle).toEqual({ attestationId, generation: 18 });
       expect(promoted.seed.gitReceipts).toHaveLength(2);
       expect(promoted.seed.gitReceipts[0]?.requestDigest).toBe(seedReceipt.requestDigest);
-      expect(promoted.seed.gitReceipts[1]?.requestDigest).toBe(
-        generation18Receipt.requestDigest,
-      );
+      expect(promoted.seed.gitReceipts[1]?.requestDigest).toBe(generation18Receipt.requestDigest);
       const committed18 = await ledgerState.read(TASK_ID);
       expect(await captureCurrentRecoverySeal(livePromotionCoordinates, promotionDeps)).toEqual(
         promoted,
@@ -424,9 +421,9 @@ describe("journal recovery epoch promotion", () => {
       const row19 = store
         .snapshot()
         .find((row) => row.attestationId === attestationId && row.generation === 19);
-      expect(row19?.kind === "envelope" ? row19.gitEffectBinding?.inheritedGitReceipts : []).toEqual(
-        [seedReceipt, generation18Receipt],
-      );
+      expect(
+        row19?.kind === "envelope" ? row19.gitEffectBinding?.inheritedGitReceipts : [],
+      ).toEqual([seedReceipt, generation18Receipt]);
       expect(
         row19?.kind === "envelope"
           ? row19.gitEffectBinding?.inheritedGitReceipts?.at(-1)?.newHead
@@ -538,10 +535,7 @@ describe("journal recovery epoch promotion", () => {
         label: "divergent-receipts",
         reason: "invalid",
         rows: (generation17) => [generation17, valid],
-        receipts: [
-          ...RECOVERY_RECEIPTS,
-          receipt(18, RECOVERY_RECEIPTS[0]!.newHead, PROMOTED_TIP),
-        ],
+        receipts: [...RECOVERY_RECEIPTS, receipt(18, RECOVERY_RECEIPTS[0]!.newHead, PROMOTED_TIP)],
       },
       {
         label: "competing-terminal-sources",
@@ -571,10 +565,7 @@ describe("journal recovery epoch promotion", () => {
       {
         label: "changed-terminal-digest",
         reason: "journal-conflict",
-        rows: (generation17) => [
-          generation17,
-          { ...valid, terminalDigest: "0".repeat(64) },
-        ],
+        rows: (generation17) => [generation17, { ...valid, terminalDigest: "0".repeat(64) }],
       },
     ];
 
