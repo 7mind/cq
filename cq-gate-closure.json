@@ -1035,7 +1035,7 @@
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/implementationAuditorPromptContract.test.ts",
       "sha256": "fb055cde353feed62d49e2d95bbb4e6c31576509c84b447a51f6c5105943b633",
-      "targets": ["nix/pkg/cq-assets/agents/implementation-auditor.md"]
+      "targets": []
     },
     {
       "kind": "path",
