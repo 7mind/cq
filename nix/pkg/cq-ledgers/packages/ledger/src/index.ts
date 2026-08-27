@@ -11,6 +11,7 @@ export * from "./operatorActions.js";
 export * from "./currentRecoverySeal.js";
 export * from "./dispatchLineageCutoverFence.js";
 export * from "./implementationEvidence.js";
+export * from "./historicalImplementationEvidenceFixtures.js";
 export type {
   TaskAdoptionEligibilityFence,
   TaskAdoptionEligibilityResult,

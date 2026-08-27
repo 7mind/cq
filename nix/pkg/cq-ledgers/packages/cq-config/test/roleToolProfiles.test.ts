@@ -87,12 +87,12 @@ describe("T1325 role tool capability matrix", () => {
   test("covers every prompt-catalogue command and dispatched role exactly once", () => {
     const catalogRoles = PROMPT_CATALOG_PROJECTION.catalog.map(({ roleId }) => roleId).sort();
     expect(Object.keys(ROLE_TOOL_CAPABILITY_MATRIX).sort()).toEqual(catalogRoles);
-    expect(catalogRoles).toHaveLength(25);
+    expect(catalogRoles).toHaveLength(26);
     expect(
       Object.values(ROLE_TOOL_CAPABILITY_MATRIX).filter(
         ({ roleKind }) => roleKind === "dispatched-subagent",
       ),
-    ).toHaveLength(9);
+    ).toHaveLength(10);
   });
 
   // D169 sibling sweep: ROLE_TOOL_CAPABILITY_MATRIX is a plain-prototype map;

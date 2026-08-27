@@ -374,13 +374,13 @@ afterEach(() => {
 });
 
 describe("packaged Pi prompt root", () => {
-  test("projects the direct Nix catalog into the exact 25-role Pi runtime tree", () => {
+  test("projects the direct Nix catalog into the exact 26-role Pi runtime tree", () => {
     const output = buildPiPromptRoot();
     const catalogJson = evaluateRaw("catalogJson");
     const catalog = JSON.parse(catalogJson) as readonly CatalogRole[];
     const direct = directPiTree(catalogJson);
 
-    expect(catalog).toHaveLength(25);
+    expect(catalog).toHaveLength(26);
     expect(readdirSync(output).sort()).toEqual([
       "catalog.json",
       PI_ROLE_TOOL_PROFILE_MANIFEST_PATH,
@@ -465,7 +465,7 @@ describe("packaged Pi prompt root", () => {
     expect(rendered).not.toContain("Agent(");
 
     const dispatched = catalog.filter(({ roleKind }) => roleKind === "dispatched-subagent");
-    expect(dispatched).toHaveLength(9);
+    expect(dispatched).toHaveLength(10);
     expect(dispatched.every(({ roleId, sidecar }) => sidecar?.schemaRoleId === roleId)).toBe(true);
     expect(
       catalog

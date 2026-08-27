@@ -586,6 +586,113 @@ export const PROMPT_CATALOG_PROJECTION = {
       ]
     },
     {
+      "canonicalSource": "agents/implementation-auditor.md",
+      "dispatchRelations": [],
+      "fragmentBindings": [
+        {
+          "forbiddenVocabulary": {
+            "claude": [
+              "dispatch_agent(",
+              "$cq-"
+            ],
+            "codex": [
+              "allowed-tools:",
+              "disallowedTools:",
+              "mcp__ledger__",
+              "Agent"
+            ],
+            "pi": [
+              "Agent",
+              "$cq-"
+            ]
+          },
+          "fragment": "host-tool-vocabulary",
+          "intentionalDifference": {
+            "kind": "tool-vocabulary",
+            "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "frontmatter host tool and isolation capabilities",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [
+              "input delivered via dispatch prompt"
+            ],
+            "codex": [
+              "input delivered via dispatch prompt"
+            ],
+            "pi": [
+              "fetch_dispatch_input",
+              "inputCapability",
+              "prepare_dispatch"
+            ]
+          },
+          "fragment": "dispatch-input-delivery",
+          "intentionalDifference": {
+            "kind": "dispatch-protocol",
+            "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "implementation child-side input retrieval procedure",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        }
+      ],
+      "intentionalDifferences": [
+        {
+          "kind": "tool-vocabulary",
+          "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "dispatch-protocol",
+          "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        }
+      ],
+      "name": "implementation-auditor",
+      "roleId": "implementation-auditor",
+      "roleKind": "dispatched-subagent",
+      "sharedSourceBlock": {
+        "classification": "shared-prose",
+        "sourceBlock": "all prose outside the classified surface-sensitive blocks",
+        "targetFragment": null
+      },
+      "sidecar": {
+        "schemaRoleId": "implementation-auditor"
+      },
+      "surfaces": [
+        "claude",
+        "codex",
+        "pi"
+      ]
+    },
+    {
       "canonicalSource": "agents/implement-conflict-resolver.md",
       "dispatchRelations": [],
       "fragmentBindings": [
@@ -3404,6 +3511,10 @@ export const PROMPT_CATALOG_PROJECTION = {
         },
         {
           "kind": "dispatch",
+          "targetRoleId": "implementation-auditor"
+        },
+        {
+          "kind": "dispatch",
           "targetRoleId": "implement-conflict-resolver"
         }
       ],
@@ -4088,7 +4199,7 @@ export const PROMPT_CATALOG_PROJECTION = {
       ]
     }
   ],
-  "catalogMetadataHash": "7f9d3b0a2866083f0ed5ca6db92dd31dea78cd261c5018fd1dd203cbc3832c85",
+  "catalogMetadataHash": "b247175d164001cd66ded0d89e5d8923faeb69d42530b5b22611ddfc5b0d3126",
   "fragmentContracts": [
     {
       "forbiddenVocabulary": {

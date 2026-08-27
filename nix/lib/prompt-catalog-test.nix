@@ -20,7 +20,7 @@ let
 
   withBegin =
     update:
-    replaceAt 9 (role: role // update role) catalog;
+    replaceAt 10 (role: role // update role) catalog;
 
   invalidFragmentCatalog = withFirst (role: {
     fragmentBindings = replaceAt 0 (
@@ -34,10 +34,10 @@ let
     ) role.dispatchRelations;
   });
 
-  begin = builtins.elemAt catalog 9;
+  begin = builtins.elemAt catalog 10;
   assetsSource = builtins.readFile ../pkg/cq-assets/assets.nix;
 in
-assert builtins.length catalog == 25;
+assert builtins.length catalog == 26;
 assert first.roleId == "plan-advance";
 assert (lib.last catalog).roleId == "upstream";
 assert begin.canonicalSource == "commands/cq/begin.md";
@@ -53,7 +53,7 @@ assert assets.promptCatalogProjection == {
 };
 assert assets.catalogMetadataHash == builtins.hashString "sha256" assets.catalogJson;
 assert assets.catalogMetadataHash
-  == "7f9d3b0a2866083f0ed5ca6db92dd31dea78cd261c5018fd1dd203cbc3832c85";
+  == "b247175d164001cd66ded0d89e5d8923faeb69d42530b5b22611ddfc5b0d3126";
 assert assets.promptSurfaceLayout == map (
   surface:
   let

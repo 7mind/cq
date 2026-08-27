@@ -347,7 +347,7 @@ ${entries}
  * the ledger-mcp `computeAgentModels` capability resolves over). The shared
  * roster is the single source of truth for the join keys; this script owns only
  * the per-role display metadata (`name`/`kind`/`source`). They must agree on the
- * 24 ids, their order, and which carry an `[agent_tiers]` key.
+ * ids, their order, and which carry an `[agent_tiers]` key.
  */
 function assertRosterMatchesShared(): void {
   const local = ROLES.map((r) => `${r.id}=${r.agentTierKey ?? "null"}`);
