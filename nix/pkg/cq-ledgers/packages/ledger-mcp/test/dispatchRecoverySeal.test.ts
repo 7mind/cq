@@ -524,7 +524,43 @@ describe("protected current dispatch-recovery capture", () => {
     });
   });
 
-  test("rejects consumed pass, absent classification, and stale durable receipt closures", async () => {
+  test("seals a pre-cutover consumed-fail envelope from its authenticated stored output", async () => {
+    const fixture = authenticatedConsumedResult("fail", { collapse: false });
+    if (fixture.row.kind !== "envelope") throw new Error("failure fixture did not retain an envelope");
+    const { dispatchContinuationBinding: _classification, ...preCutoverBody } = fixture.row;
+    const preCutover = rehydrateAttestationRow(
+      fixture.row.namespace,
+      JSON.stringify(preCutoverBody),
+      attestationRowDigest(preCutoverBody as AttestationRow),
+    );
+    expect(preCutover.dispatchContinuationBinding).toBeUndefined();
+
+    const seal = await captureCurrentRecoverySeal(coordinates, {
+      journal: new InMemoryCurrentRecoverySealJournalStore(),
+      snapshot: async () => [preCutover],
+      resolveReceipts: async () => fixture.receipts,
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => RECOVERY_TIP,
+      now: () => RECOVERY_NOW,
+    });
+
+    if (seal.version !== 2) throw new Error("pre-cutover consumed-fail source did not create v2");
+    expect(seal.seed.selectedSourceHandle).toEqual({
+      attestationId: preCutover.attestationId,
+      generation: preCutover.generation,
+    });
+    expect(seal.seed.source).toEqual({ kind: "consumed-fail", version: 1, status: "fail" });
+  });
+
+  test("rejects pre-cutover pass, malformed failure output, and stale durable receipt closures", async () => {
+    const passFixture = authenticatedConsumedResult("pass", { collapse: false });
+    if (passFixture.row.kind !== "envelope") throw new Error("pass fixture did not retain an envelope");
+    const { dispatchContinuationBinding: _classification, ...preCutoverPassBody } = passFixture.row;
+    const preCutoverPass = rehydrateAttestationRow(
+      passFixture.row.namespace,
+      JSON.stringify(preCutoverPassBody),
+      attestationRowDigest(preCutoverPassBody as AttestationRow),
+    );
     const consumed = (
       source: unknown,
       receipts: readonly (typeof RECOVERY_RECEIPTS)[number][] = RECOVERY_RECEIPTS,
@@ -545,6 +581,7 @@ describe("protected current dispatch-recovery capture", () => {
         },
       }) as never;
     for (const row of [
+      preCutoverPass,
       consumed({ kind: "consumed-fail", version: 1, status: "pass" }),
       consumed(undefined),
       consumed({ kind: "consumed-fail", version: 1, status: "fail" }, [RECOVERY_RECEIPTS[0]!]),

@@ -3,8 +3,10 @@ import { resolve } from "node:path";
 import {
   collapseAttestationEnvelope,
   dispatchPayloadDigest,
+  implementWorkerSidecar,
   isAttestationTombstone,
   loadConfig,
+  validateAgainstSchema,
   type AttestationBackend,
   type AttestationEnvelope,
   type AttestationRow,
@@ -173,6 +175,28 @@ function lineageMaximumGeneration(snapshot: RecoveryLineageSnapshot): number {
   return Math.max(...snapshot.rows.map((row) => row.generation));
 }
 
+function preCutoverConsumedFailureSource(
+  row: AttestationRow,
+): CurrentRecoverySource | undefined {
+  if (
+    isAttestationTombstone(row) ||
+    row.state !== "consumed" ||
+    row.promptProvenance.roleId !== "implement-worker" ||
+    row.dispatchContinuationBinding?.currentRecoverySource !== undefined ||
+    row.output === undefined ||
+    row.outputDigest === undefined ||
+    row.outputDigest !== dispatchPayloadDigest(row.output) ||
+    !validateAgainstSchema(implementWorkerSidecar.outputSchema, row.output).ok ||
+    row.output === null ||
+    typeof row.output !== "object" ||
+    Array.isArray(row.output) ||
+    (row.output as Readonly<Record<string, DispatchJSONValue>>)["status"] !== "fail"
+  ) {
+    return undefined;
+  }
+  return { kind: "consumed-fail", version: 1, status: "fail" };
+}
+
 async function sourceCandidates(
   snapshot: RecoveryLineageSnapshot,
   coordinates: CurrentRecoveryCaptureCoordinates,
@@ -184,6 +208,7 @@ async function sourceCandidates(
     const consumed = isAttestationTombstone(row)
       ? row.terminalKind === "consumed"
       : row.state === "consumed" && row.promptProvenance.roleId === "implement-worker";
+    const preCutoverConsumedFailure = preCutoverConsumedFailureSource(row);
     const source: CurrentRecoverySource | undefined =
       !isAttestationTombstone(row) &&
       row.state === "aborted" &&
@@ -204,7 +229,7 @@ async function sourceCandidates(
             continuation.currentRecoverySource?.kind === "consumed-fail" &&
             continuation.currentRecoverySource.status === "fail"
           ? (continuation.currentRecoverySource as CurrentRecoverySource)
-          : undefined;
+          : preCutoverConsumedFailure;
     if (source === undefined || row.terminalDigest === undefined) continue;
     let gitReceipts: readonly GitChangeBrokerReceipt[];
     try {
@@ -215,9 +240,10 @@ async function sourceCandidates(
     if (gitReceipts.length === 0) continue;
     if (
       source.kind === "consumed-fail" &&
+      continuation !== undefined &&
       dispatchPayloadDigest(gitReceipts as unknown as DispatchJSONValue) !==
         dispatchPayloadDigest(
-          row.dispatchContinuationBinding!.gitReceipts as unknown as DispatchJSONValue,
+          continuation.gitReceipts as unknown as DispatchJSONValue,
         )
     ) {
       continue;
