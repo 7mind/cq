@@ -127,10 +127,7 @@ import { buildPrefixRegistry, canonicalizeRef, parseRef } from "../refs.js";
 import type { LedgerStore } from "./LedgerStore.js";
 import { operatorActionDirectiveForTask } from "../operatorActions.js";
 import { readCanonicalOwnership } from "../worksetOwnerEdges.js";
-import {
-  buildActiveStateFromLedgerStore,
-  requireWorksetStore,
-} from "../worksetAccess.js";
+import { buildActiveStateFromLedgerStore, requireWorksetStore } from "../worksetAccess.js";
 import { closeWorkset } from "../worksetGraph.js";
 import { readWorksetRootsEpoch } from "../worksetStore.js";
 
@@ -279,19 +276,14 @@ function stringField(item: Item, name: string): string {
  * archived researches are absent from `activeResearches`, so they resume
  * planning along with the explicit concluded/abandoned terminal statuses.
  */
-export function activePlanResearchWaits(
-  goal: Item,
-  activeResearches: readonly Item[],
-): string[] {
+export function activePlanResearchWaits(goal: Item, activeResearches: readonly Item[]): string[] {
   const raw = goal.fields[PLAN_WAITING_RESEARCHES_FIELD];
   if (!Array.isArray(raw) || raw.length === 0) return [];
   const byId = new Map(activeResearches.map((research) => [research.id, research]));
   const activeStatuses = new Set(["open", "wip", "inconclusive"]);
   return raw
     .map((ref) =>
-      ref.startsWith(`${RESEARCHES_LEDGER}:`)
-        ? ref.slice(RESEARCHES_LEDGER.length + 1)
-        : ref,
+      ref.startsWith(`${RESEARCHES_LEDGER}:`) ? ref.slice(RESEARCHES_LEDGER.length + 1) : ref,
     )
     .filter((id) => {
       const research = byId.get(id);
@@ -305,20 +297,13 @@ export function activePlanResearchWaits(
  * missing and archived tasks are absent from `activeTasks`, so they resume
  * planning the same way a deleted research wait does.
  */
-export function activePlanTaskWaits(
-  goal: Item,
-  activeTasks: readonly Item[],
-): string[] {
+export function activePlanTaskWaits(goal: Item, activeTasks: readonly Item[]): string[] {
   const raw = goal.fields[PLAN_WAITING_TASKS_FIELD];
   if (!Array.isArray(raw) || raw.length === 0) return [];
   const byId = new Map(activeTasks.map((task) => [task.id, task]));
   const activeStatuses = new Set(["planned", "wip", "blocked"]);
   return raw
-    .map((ref) =>
-      ref.startsWith(`${TASKS_LEDGER}:`)
-        ? ref.slice(TASKS_LEDGER.length + 1)
-        : ref,
-    )
+    .map((ref) => (ref.startsWith(`${TASKS_LEDGER}:`) ? ref.slice(TASKS_LEDGER.length + 1) : ref))
     .filter((id) => {
       const task = byId.get(id);
       return task !== undefined && activeStatuses.has(task.status);
@@ -399,8 +384,7 @@ function rootCauseBlocksOnlyFinalizedTask(
     if (!gate.managed || gate.finalizedTaskIds === null) continue;
     const activeFinalized = tasks.filter(
       (task) =>
-        gate.finalizedTaskIds?.has(task.id) === true &&
-        !TASK_TERMINAL_STATUSES.has(task.status),
+        gate.finalizedTaskIds?.has(task.id) === true && !TASK_TERMINAL_STATUSES.has(task.status),
     );
     if (activeFinalized.length !== 1) continue;
     const [blockedTask] = activeFinalized;
@@ -525,10 +509,7 @@ function buildTaskDependencyReadiness(
   };
 }
 
-export function taskDependenciesSatisfied(
-  store: PredicateStoreReader,
-  task: Item,
-): boolean {
+export function taskDependenciesSatisfied(store: PredicateStoreReader, task: Item): boolean {
   return buildTaskDependencyReadiness(
     store,
     activeItems(store, TASKS_LEDGER, undefined),
@@ -705,11 +686,7 @@ function deriveEligiblePredicates(
   }
 
   // --- P-implement ---------------------------------------------------------
-  const dependenciesSatisfied = buildTaskDependencyReadiness(
-    store,
-    tasks,
-    milestones,
-  );
+  const dependenciesSatisfied = buildTaskDependencyReadiness(store, tasks, milestones);
 
   const buildableGoalIds = new Set(
     goals.filter((g) => GOAL_BUILDABLE_STATUSES.has(g.status)).map((g) => g.id),
@@ -745,9 +722,7 @@ function deriveEligiblePredicates(
       const gate = planGateFor(goalId);
       if (gate === undefined) return false;
       if (!gate.managed) {
-        return (
-          gate.legacyMilestoneIds === null || gate.legacyMilestoneIds.has(t.milestoneId)
-        );
+        return gate.legacyMilestoneIds === null || gate.legacyMilestoneIds.has(t.milestoneId);
       }
       if (gate.claimActive) return false;
       return gate.finalizedTaskIds?.has(t.id) === true;

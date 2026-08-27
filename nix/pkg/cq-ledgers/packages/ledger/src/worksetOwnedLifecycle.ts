@@ -43,11 +43,7 @@ import {
   type WorksetLedgerReadSurface,
   type CreateInMemoryWorksetGuardedLedgerOptions,
 } from "./worksetGenericMutation.js";
-import {
-  closeWorkset,
-  type WorksetActiveState,
-  type WorksetGraph,
-} from "./worksetGraph.js";
+import { closeWorkset, type WorksetActiveState, type WorksetGraph } from "./worksetGraph.js";
 import {
   deriveCanonicalOwnership,
   readCanonicalOwnership,
@@ -61,14 +57,8 @@ import {
   type WorksetLedgerMutationAdmission,
   type WorksetRootsEpoch,
 } from "./worksetEffectAdmission.js";
-import {
-  createInMemoryWorksetStore,
-  readWorksetRootsEpoch,
-} from "./worksetStore.js";
-import {
-  InMemoryLedgerStore,
-  type InMemoryOwnedWriteTx,
-} from "./store/InMemoryLedgerStore.js";
+import { createInMemoryWorksetStore, readWorksetRootsEpoch } from "./worksetStore.js";
+import { InMemoryLedgerStore, type InMemoryOwnedWriteTx } from "./store/InMemoryLedgerStore.js";
 import type {
   CreateItemInit,
   CreateMilestoneItemInit,
@@ -203,9 +193,7 @@ export interface WorksetOwnedWriteGateway {
 export interface WorksetCoordinationBundleGateway {
   readonly form: "workset-coordination-bundle-gateway";
   bootstrapIdeaToGoal(input: IdeaToGoalBundleInput): Promise<IdeaToGoalBundleResult>;
-  bootstrapDefectToFixGoal(
-    input: DefectToFixGoalBundleInput,
-  ): Promise<DefectToFixGoalBundleResult>;
+  bootstrapDefectToFixGoal(input: DefectToFixGoalBundleInput): Promise<DefectToFixGoalBundleResult>;
 }
 
 /**
@@ -246,11 +234,7 @@ export interface WorksetOwnedWriteTx {
     sealedOwnership: CanonicalOwnership,
   ): Item;
   /** Empty-roots ownerless intake — no sealed ownership written. */
-  createItemOwnerless(
-    ledgerId: string,
-    milestoneId: string,
-    init: CreateItemInit,
-  ): Item;
+  createItemOwnerless(ledgerId: string, milestoneId: string, init: CreateItemInit): Item;
   createMilestoneOwnerless(init: CreateMilestoneItemInit): Item;
   updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Item;
 }
@@ -308,10 +292,7 @@ function resolveAllowedOwnership(
     creationKind,
   });
   if (resolution.decision === "deny") {
-    throw new WorksetOwnedLifecycleError(
-      "owner-policy-denied",
-      resolution.reason,
-    );
+    throw new WorksetOwnedLifecycleError("owner-policy-denied", resolution.reason);
   }
   return deriveCanonicalOwnership(ownerLedger, owner.id, resolution);
 }
@@ -362,10 +343,7 @@ export function createWorksetOwnedWriteGateway(
       });
     } catch (error) {
       if (error instanceof WorksetAdmissionError && error.code === "target-excluded") {
-        throw new WorksetOwnedLifecycleError(
-          "owner-excluded",
-          error.message,
-        );
+        throw new WorksetOwnedLifecycleError("owner-excluded", error.message);
       }
       throw error;
     }
@@ -398,10 +376,7 @@ export function createWorksetOwnedWriteGateway(
     async createOwned(input) {
       assertNoForgedOwnership(input.child.fields);
       const creationKind = input.creationKind as LifecycleCreationKind;
-      if (
-        creationKind === "active-current-draft" ||
-        creationKind === "finalized-manifest"
-      ) {
+      if (creationKind === "active-current-draft" || creationKind === "finalized-manifest") {
         throw new WorksetOwnedLifecycleError(
           "owner-policy-denied",
           `${creationKind} requires the guarded PlanLifecycleStore publication path`,
@@ -429,11 +404,7 @@ export function createWorksetOwnedWriteGateway(
               `owner "${ownerRef}" does not exist`,
             );
           }
-          const ownership = resolveAllowedOwnership(
-            owner,
-            input.owner.ledgerId,
-            creationKind,
-          );
+          const ownership = resolveAllowedOwnership(owner, input.owner.ledgerId, creationKind);
           assertChildLedgerAllowed(
             ownership,
             input.child.ledgerId,
@@ -724,8 +695,7 @@ export function createWorksetOwnedGuardedLedger(
 // In-memory dummy
 // ---------------------------------------------------------------------------
 
-export interface CreateInMemoryWorksetOwnedGuardedLedgerOptions
-  extends CreateInMemoryWorksetGuardedLedgerOptions {
+export interface CreateInMemoryWorksetOwnedGuardedLedgerOptions extends CreateInMemoryWorksetGuardedLedgerOptions {
   readonly afterOwnedAdmit?: () => Promise<void> | void;
 }
 
@@ -767,9 +737,7 @@ export function createInMemoryWorksetOwnedGuardedLedger(
     ...(options.afterGenericAdmit !== undefined
       ? { afterGenericAdmit: options.afterGenericAdmit }
       : {}),
-    ...(options.afterOwnedAdmit !== undefined
-      ? { afterOwnedAdmit: options.afterOwnedAdmit }
-      : {}),
+    ...(options.afterOwnedAdmit !== undefined ? { afterOwnedAdmit: options.afterOwnedAdmit } : {}),
     runOwnedTransaction: async (mutate) =>
       rawStore.runAtomicOwnedMutation((baseTx: InMemoryOwnedWriteTx) => mutate(baseTx)),
   };
@@ -812,13 +780,10 @@ export const WORKSET_OWNED_WRITE_CREATION_KINDS = [
   "handoff",
 ] as const satisfies readonly LifecycleCreationKind[];
 
-export type WorksetOwnedWriteCreationKind =
-  (typeof WORKSET_OWNED_WRITE_CREATION_KINDS)[number];
+export type WorksetOwnedWriteCreationKind = (typeof WORKSET_OWNED_WRITE_CREATION_KINDS)[number];
 
 /** Default child ledger for single-child kinds (not multi-ledger draft kinds). */
-export function defaultChildLedgerForCreationKind(
-  kind: WorksetOwnedWriteCreationKind,
-): string {
+export function defaultChildLedgerForCreationKind(kind: WorksetOwnedWriteCreationKind): string {
   switch (kind) {
     case "idea-to-goal":
     case "fix-goal":

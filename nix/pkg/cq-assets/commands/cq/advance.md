@@ -13,6 +13,7 @@ Effect-boundary authority follows this shared contract:
 {{cq:fragment:workset-effect-discipline}}
 
 ## Catalogue
+
 ```yaml
 inputs:
   - "no arguments; current ledger state"

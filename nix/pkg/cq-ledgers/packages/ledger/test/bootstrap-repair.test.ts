@@ -157,4 +157,47 @@ describe("guarded bootstrap repair", () => {
       await fixture.dispose();
     }
   });
+
+  test("multiple active tasks keep ordinary implementation readiness unchanged [Behavioral-Active Blackbox-Group]", async () => {
+    const fixture = (await inMemoryPlanLifecycleFactory.build()) as Awaited<
+      ReturnType<typeof inMemoryPlanLifecycleFactory.build>
+    > & { readonly store: InMemoryLedgerStore };
+    const { store } = fixture;
+    try {
+      await fixture.seedGoal({ goalId: "G1", phase: "building", generation: 1 });
+      await fixture.seedWork("G1", {
+        taskStatuses: ["blocked", "planned"],
+        openQuestionCount: 0,
+        legacy: false,
+      });
+      const [blocked, ordinary] = (await fixture.observe("G1")).tasks;
+      if (blocked === undefined || ordinary === undefined) {
+        throw new Error("multiple-task fixture was not allocated");
+      }
+      const defect = await store.createItem(DEFECTS_LEDGER, MILESTONES_AMBIENT_ID, {
+        status: "root-caused",
+        fields: {
+          headline: "one task is blocked",
+          severity: "high",
+          rootCause: "a local implementation defect",
+          ledgerRefs: ["goals:G1", `tasks:${blocked.id}`],
+        },
+        ...PROVENANCE,
+      });
+      await store.updateItem(TASKS_LEDGER, blocked.id, {
+        fields: { blockedBy: [`defects:${defect.id}`] },
+        ...PROVENANCE,
+      });
+      await store.updateItem(TASKS_LEDGER, ordinary.id, {
+        fields: { dependsOn: [] },
+        ...PROVENANCE,
+      });
+
+      const predicates = derivePredicates(store);
+      expect(predicates.pSeed).toEqual({ value: false, items: [] });
+      expect(predicates.pImplement).toEqual({ value: true, items: [ordinary.id] });
+    } finally {
+      await fixture.dispose();
+    }
+  });
 });
