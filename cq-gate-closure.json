@@ -420,13 +420,13 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/dispatchRecoveryEpochPromotion.test.ts",
-      "sha256": "fd4753cd7fd082536fdc63a8d5a017a2da9f6c950eab5013e100f9f5b29d142b",
+      "sha256": "591b2a9792e672dfc3129246c5ca52c45a611037be2b3557981ce6891f79243f",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/dispatchRecoverySeal.test.ts",
-      "sha256": "3af58d851e1c883e3704ee18092ab30a4057c9d9e57b81e75d6767958cbd982d",
+      "sha256": "6dbd0d2802450c107b762812ee5889da7586c5f30ef0b767fe5dc1aed7cb0087",
       "targets": [
         "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/legacy-aborted-attestation-no-overlays.json"
       ]
@@ -464,7 +464,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts",
-      "sha256": "f818c6166ddb9d6967d9db65a7a2e820e6be20c8c77db15119b5d9d4a10588a2",
+      "sha256": "f32b380eb5c1c0c3c121eddd3b050af3bfb8a605ec902acf5bcccaabe469584d",
       "targets": []
     },
     {
@@ -1460,13 +1460,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/managedWorktree.ts",
-      "sha256": "eaca16916067a7063c79d10ff09e36da08c4906a49a5f94e4fb516c8fad0dca5",
+      "sha256": "de7e66aa7d95e904712fc34976c2e22a701a403b424a3882205de4e8875c60d4",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/managedWorktree.ts",
-      "sha256": "eaca16916067a7063c79d10ff09e36da08c4906a49a5f94e4fb516c8fad0dca5",
+      "sha256": "de7e66aa7d95e904712fc34976c2e22a701a403b424a3882205de4e8875c60d4",
       "targets": []
     },
     {
@@ -1748,7 +1748,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/operator-actions.test.ts",
-      "sha256": "ed7b6d97a79fab13613a83812bf5f3b0877d91d9adccd540c13a2adfa35ffaeb",
+      "sha256": "b8b5205cc0ca877be635499010596f3ba6cded7c05923bfcb42111e828f7aad7",
       "targets": []
     },
     {
