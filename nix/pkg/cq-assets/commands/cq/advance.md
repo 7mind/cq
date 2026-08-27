@@ -72,7 +72,23 @@ Repeat the following order. Re-read predicates after each numbered stage.
    defect; another defect may remain actionable.
 
 2. **Seed fixes.** For `pSeed.items`, fetch the full root-caused defects and
-   process deterministic chunks of at most five. For each chunk:
+   separate D359 bootstrap-repair blockers from ordinary unowned defects.
+
+   A bootstrap-repair blocker is already owned by a `planned`/`building` goal,
+   blocks that goal's sole active finalized task, and has no live canonical
+   `fix-goal` correction lineage. For each such defect, call `create_item` with
+   `ledger_id: "goals"`, `owner_ref: "defects:<D>"`,
+   `creation_kind: "fix-goal"`, no explicit milestone/id, status `planning`,
+   and correction-specific title, description, and source refs. The guarded
+   bundle returns the same correction goal on exact replay and concurrent
+   claims. Never call ordinary plan follow-up on the blocked goal and never
+   replace or mutate its task, worktree, finalized manifest, dispatch evidence,
+   receipts, or completion journal. If the returned correction lineage is
+   already `done`, resolve the defect; if it is `abandoned`, mark the defect
+   `wontfix`. Until then, its normal plan/implement predicates own progress.
+
+   Process remaining ordinary seed candidates in deterministic chunks of at
+   most five. For each chunk:
 
    - create one coordination milestone;
    - create one `goals` item in `planning`, with a title/description covering
@@ -81,9 +97,10 @@ Repeat the following order. Re-read predicates after each numbered stage.
    - append `goals:<new-goal>` to each defect's `ledgerRefs`, preserving existing
      refs.
 
-   A root-caused defect already owned by a goal must not seed another. Defects
-   below the configured severity floor remain visible through `belowFloor` but
-   do not seed automatically.
+   Except for the guarded bootstrap-repair case above, a root-caused defect
+   already owned by a goal must not seed another. Defects below the configured
+   severity floor remain visible through `belowFloor` but do not seed
+   automatically.
 
 3. **Plan.** If `pPlan.value`, run `CQ::plan/advance` INLINE once; that command
    advances every unlocked planning goal and owns auto-investigation of defects

@@ -50,6 +50,7 @@ import {
 } from "./worksetGraph.js";
 import {
   deriveCanonicalOwnership,
+  readCanonicalOwnership,
   resolveOwnerEdgePolicy,
   type CanonicalOwnership,
   type LifecycleCreationKind,
@@ -646,6 +647,14 @@ export function createWorksetCoordinationBundleGateway(
             );
           }
           const ownership = resolveAllowedOwnership(defect, DEFECTS_LEDGER, "fix-goal");
+          const existing = [...tx.activeState().byRef.entries()].find(([ref, item]) => {
+            if (!ref.startsWith(`${GOALS_LEDGER}:`)) return false;
+            const sealed = readCanonicalOwnership(item);
+            return sealed?.ownerRef === ownerRef && sealed.edgeKind === "fix-goal";
+          })?.[1];
+          if (existing !== undefined) {
+            return { defect, goal: existing, ownership };
+          }
           const goalFields: Record<string, FieldValue> = {
             title: input.goal.title,
             description: input.goal.description,

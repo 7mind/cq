@@ -112,16 +112,50 @@ export function runWorksetCoordinationBundleContract(
         status: "open",
         fields: { headline: "root cause me", severity: "high" },
       });
-      const result = await ledger.bundles.bootstrapDefectToFixGoal({
+      const input = {
         defectId: defect.id,
         goal: { title: "fix", description: "address the defect" },
-      });
+      } as const;
+      const result = await ledger.bundles.bootstrapDefectToFixGoal(input);
+      const replay = await ledger.bundles.bootstrapDefectToFixGoal(input);
       const ownership = readCanonicalOwnership(result.goal);
       expect(ownership).not.toBeNull();
       expect(ownership!.ownerRef).toBe(`${DEFECTS_LEDGER}:${defect.id}`);
       expect(ownership!.edgeKind).toBe("fix-goal");
       const members = memberRefsForRoot(ledger, `${DEFECTS_LEDGER}:${defect.id}`);
       expect(members.has(`${GOALS_LEDGER}:${result.goal.id}`)).toBe(true);
+      expect(replay.goal).toEqual(result.goal);
+      expect(replay.defect).toEqual(result.defect);
+    });
+
+    it("concurrent defect repair bootstraps return one correction lineage", async () => {
+      const ledger = await factory.build();
+      await ledger.init();
+      const defect = await ledger.owned.createOwnerless({
+        ledgerId: DEFECTS_LEDGER,
+        status: "root-caused",
+        fields: {
+          headline: "implementation infrastructure blocker",
+          severity: "high",
+          rootCause: "the active implementation cannot repair its own bootstrap",
+        },
+      });
+      const input = {
+        defectId: defect.id,
+        goal: { title: "bootstrap repair", description: "correct the infrastructure defect" },
+      } as const;
+
+      const claims = await Promise.all(
+        Array.from({ length: 8 }, async () =>
+          await ledger.bundles.bootstrapDefectToFixGoal(input),
+        ),
+      );
+      expect(new Set(claims.map(({ goal }) => goal.id)).size).toBe(1);
+      expect(claims.every(({ defect: observed }) => observed.id === defect.id)).toBe(true);
+      expect(readCanonicalOwnership(claims[0]!.goal)).toMatchObject({
+        ownerRef: `${DEFECTS_LEDGER}:${defect.id}`,
+        edgeKind: "fix-goal",
+      });
     });
 
     it("excluded owner under restrictive roots produces zero bundle mutation", async () => {

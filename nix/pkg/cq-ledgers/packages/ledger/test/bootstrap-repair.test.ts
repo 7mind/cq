@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFECTS_LEDGER,
+  GOALS_LEDGER,
   MILESTONES_AMBIENT_ID,
+  TASKS_LEDGER,
+  createInMemoryWorksetStore,
+  createWorksetOwnedGuardedLedger,
   derivePredicates,
-  type DerivedPredicates,
   type InMemoryLedgerStore,
 } from "../src/index.js";
 import { inMemoryPlanLifecycleFactory } from "./planLifecycleInMemoryAdapter.js";
@@ -11,16 +14,14 @@ import { inMemoryPlanLifecycleFactory } from "./planLifecycleInMemoryAdapter.js"
 const OWNER = "bootstraprepairfencetoken";
 const PROVENANCE = { author: "bootstrap-repair", session: "d359" } as const;
 
-type RepairPredicates = DerivedPredicates & {
-  readonly pBootstrapRepair: { readonly value: boolean; readonly items: readonly string[] };
-};
-
 describe("guarded bootstrap repair", () => {
   // Regression: D359 — an owned root-caused defect blocking the only active finalized task
   // previously made every advance action false while ordinary follow-up correctly refused it.
   test("root-caused blocker is actionable without superseding its blocked task [Behavioral-Active Blackbox-Group]", async () => {
-    const fixture = await inMemoryPlanLifecycleFactory.build();
-    const store = fixture.store as InMemoryLedgerStore;
+    const fixture = (await inMemoryPlanLifecycleFactory.build()) as Awaited<
+      ReturnType<typeof inMemoryPlanLifecycleFactory.build>
+    > & { readonly store: InMemoryLedgerStore };
+    const { store } = fixture;
     try {
       await fixture.seedGoal({ goalId: "G1", phase: "building", generation: 1 });
       await fixture.seedWork("G1", {
@@ -48,10 +49,9 @@ describe("guarded bootstrap repair", () => {
       });
 
       const before = structuredClone(store.snapshot());
-      const predicates = derivePredicates(store) as RepairPredicates;
+      const predicates = derivePredicates(store);
       for (const action of [
         predicates.pInvestigate,
-        predicates.pSeed,
         predicates.pPlan,
         predicates.pResearch,
         predicates.pImplement,
@@ -77,7 +77,82 @@ describe("guarded bootstrap repair", () => {
       });
       expect(store.snapshot()).toEqual(before);
 
-      expect(predicates.pBootstrapRepair).toEqual({ value: true, items: [defect.id] });
+      expect(predicates.pSeed).toEqual({ value: true, items: [defect.id] });
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  test("repair lineage keeps advance actionable until the blocker is terminal [Behavioral-Active Blackbox-Group]", async () => {
+    const fixture = (await inMemoryPlanLifecycleFactory.build()) as Awaited<
+      ReturnType<typeof inMemoryPlanLifecycleFactory.build>
+    > & { readonly store: InMemoryLedgerStore };
+    const { store } = fixture;
+    try {
+      await fixture.seedGoal({ goalId: "G1", phase: "building", generation: 1 });
+      await fixture.seedWork("G1", {
+        taskStatuses: ["blocked"],
+        openQuestionCount: 0,
+        legacy: false,
+      });
+      const blockedTask = (await fixture.observe("G1")).tasks[0];
+      if (blockedTask === undefined) throw new Error("blocked task fixture was not allocated");
+      const defect = await store.createItem(DEFECTS_LEDGER, MILESTONES_AMBIENT_ID, {
+        status: "root-caused",
+        fields: {
+          headline: "implementation infrastructure blocker",
+          severity: "high",
+          rootCause: "the active implementation cannot repair its own bootstrap",
+          ledgerRefs: ["goals:G1", `tasks:${blockedTask.id}`],
+        },
+        ...PROVENANCE,
+      });
+      await store.updateItem(TASKS_LEDGER, blockedTask.id, {
+        fields: { blockedBy: [`defects:${defect.id}`] },
+        ...PROVENANCE,
+      });
+      const preservedGoal = structuredClone(store.fetchItem(GOALS_LEDGER, "G1"));
+      const preservedTask = structuredClone(store.fetchItem(TASKS_LEDGER, blockedTask.id));
+
+      const worksetStore = createInMemoryWorksetStore({
+        isTargetAdmitted: () => true,
+      });
+      const guarded = createWorksetOwnedGuardedLedger({
+        rawStore: store,
+        worksetStore,
+        runOwnedTransaction: async (mutate) => await store.runAtomicOwnedMutation(mutate),
+      });
+      const { goal: repairGoal } = await guarded.bundles.bootstrapDefectToFixGoal({
+        defectId: defect.id,
+        goal: {
+          title: "bootstrap repair",
+          description: "correct the infrastructure defect",
+          status: "planning",
+          fields: { sourceRefs: [`defects:${defect.id}`] },
+          ...PROVENANCE,
+        },
+      });
+      let predicates = derivePredicates(store);
+      expect(predicates.pSeed).toEqual({ value: false, items: [] });
+      expect(predicates.pPlan.items).toEqual([repairGoal.id]);
+
+      await store.updateItem(GOALS_LEDGER, repairGoal.id, {
+        status: "abandoned",
+        ...PROVENANCE,
+      });
+      predicates = derivePredicates(store);
+      expect(predicates.pSeed).toEqual({ value: true, items: [defect.id] });
+
+      await store.updateItem(DEFECTS_LEDGER, defect.id, {
+        status: "resolved",
+        ...PROVENANCE,
+      });
+      predicates = derivePredicates(store);
+      expect(predicates.pSeed).toEqual({ value: false, items: [] });
+      expect(predicates.pPlan).toEqual({ value: false, items: [] });
+      expect(predicates.pImplement).toEqual({ value: false, items: [] });
+      expect(store.fetchItem(GOALS_LEDGER, "G1")).toEqual(preservedGoal);
+      expect(store.fetchItem(TASKS_LEDGER, blockedTask.id)).toEqual(preservedTask);
     } finally {
       await fixture.dispose();
     }
