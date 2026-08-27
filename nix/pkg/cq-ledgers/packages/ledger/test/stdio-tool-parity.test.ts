@@ -12,6 +12,7 @@ import {
   GOALS_LEDGER,
   InMemoryLedgerStore,
   ImplementationEvidenceService,
+  implementationAuditManifestDigest,
   MANAGEMENT_LEDGER_TOOL_NAMES,
   ledgerToolInputJsonSchema,
   MILESTONES_AMBIENT_ID,
@@ -28,6 +29,8 @@ import {
   type ReadLogCapability,
   type WorktreeManageCapability,
   type ImplementationReviewerIdentity,
+  type ImplementationAuditPanelRecord,
+  type PackagedImplementationAuditManifest,
 } from "../src/index.js";
 import { POST_TARGET_ADDITIONS } from "./toolSurfaceTarget.js";
 
@@ -94,6 +97,9 @@ const PARITY_PROVENANCE = {
 const PARITY_IMPLEMENTATION_TASK_REF = "tasks:T9001";
 const PARITY_IMPLEMENTATION_BASE = "a".repeat(40);
 const PARITY_IMPLEMENTATION_RESULT = "b".repeat(40);
+const PARITY_AUDIT_HEAD = PARITY_IMPLEMENTATION_BASE;
+const PARITY_AUDIT_MANIFEST_ID = "stdio-parity-audit-v1";
+const PARITY_AUDIT_FINALIZED_MANIFEST_DIGEST = "e".repeat(64);
 const PARITY_IMPLEMENTATION_WORKER = {
   attestationId: "att_parity_worker",
   generation: 1,
@@ -283,6 +289,11 @@ interface Fixture {
     panelRef: string;
     attemptRef: string;
     fallbackAttemptRef: string;
+    auditManifestDigest: string;
+    auditPanelRef: string;
+    auditAttemptRef: string;
+    auditFallbackPanelRef: string;
+    auditAttemptRefs: readonly string[];
   };
   ids: {
     activeMilestone: string;
@@ -333,7 +344,59 @@ function parityApprovedVerdict() {
   } as const;
 }
 
+function parityAuditRecord(recordKey: string, taskRef: string, resultCommit: string) {
+  return {
+    recordKey,
+    taskRef,
+    ownerGoalRef: `goals:${PARITY_GOAL_ID}`,
+    finalizedManifest: "stdio parity audit finalized manifest",
+    historicalReview: null,
+    baseCommit: PARITY_IMPLEMENTATION_BASE,
+    resultCommit,
+    repositoryHead: PARITY_AUDIT_HEAD,
+    diff: `diff for ${taskRef}`,
+    acceptance: { clauses: ["stdio parity audit"] },
+    gateObservations: { exitCode: 0, passCount: 1, failCount: 0 },
+    requiredObservations: ["commit-retained", "gate-green"],
+  } as const;
+}
+
+function parityAuditVerdict(panel: ImplementationAuditPanelRecord) {
+  const input = panel.auditInput as Record<string, unknown>;
+  const required = input.requiredObservations as readonly string[];
+  return {
+    taskId: panel.taskRef.slice("tasks:".length),
+    verdict: "approve",
+    criticism: [],
+    questions: [],
+    observations: required.map((name) => ({ name, status: "verified", detail: `${name} checked` })),
+    rationale: "stdio parity audit",
+    manifestDigest: panel.manifestDigest,
+    baseCommit: input.baseCommit,
+    resultCommit: input.resultCommit,
+    repositoryHead: panel.repositoryHead,
+  };
+}
+
 async function buildImplementationEvidenceFixture() {
+  const auditManifest: PackagedImplementationAuditManifest = {
+    version: 1,
+    manifestId: PARITY_AUDIT_MANIFEST_ID,
+    sourceDigest: "f".repeat(64),
+    records: [
+      parityAuditRecord("audit-one", "tasks:T9101", "1".repeat(40)),
+      parityAuditRecord("audit-two", "tasks:T9102", "2".repeat(40)),
+      parityAuditRecord("audit-fallback", "tasks:T9103", "3".repeat(40)),
+    ],
+    activation: {
+      goalRef: `goals:${PARITY_GOAL_ID}`,
+      finalizedManifestDigest: PARITY_AUDIT_FINALIZED_MANIFEST_DIGEST,
+      evidenceTaskKey: "t-evidence",
+      auditTaskKey: "t-historical-evidence",
+      activationTaskKey: "t-activate-evidence",
+    },
+  };
+  const nativeAuditPanels = new Map<string, ImplementationAuditPanelRecord>();
   const implementationEvidence = new ImplementationEvidenceService({
     store: createInMemoryImplementationEvidenceStore(),
     resolveReviewerRoster: () => [PARITY_ADAPTER_REVIEWER],
@@ -396,10 +459,15 @@ async function buildImplementationEvidenceFixture() {
         supervisedGateEvidence: { gateExitCode: 0, passCount: 1, failCount: 0 },
       },
     }),
-    readTaskAuthority: async () => ({
-      taskRef: PARITY_IMPLEMENTATION_TASK_REF,
+    readTaskAuthority: async (taskRef) => ({
+      taskRef,
       ownerGoalRef: `goals:${PARITY_GOAL_ID}`,
-      status: "wip",
+      status:
+        taskRef === "tasks:T9104"
+          ? "planned"
+          : taskRef.startsWith("tasks:T910")
+            ? "done"
+            : "wip",
       finalizedManifest: "stdio parity manifest\n",
     }),
     repositoryHead: async () => PARITY_IMPLEMENTATION_BASE,
@@ -414,6 +482,58 @@ async function buildImplementationEvidenceFixture() {
       details: { parity: true },
     }),
     recordLedgerCompletion: async () => ({ reviewRef: "reviews:R9001" }),
+    resolveAuditRoster: () => [PARITY_ADAPTER_REVIEWER],
+    readAuditManifest: async (manifestId) => {
+      if (manifestId !== auditManifest.manifestId) throw new Error("missing parity audit manifest");
+      return structuredClone(auditManifest);
+    },
+    prepareNativeAudit: async ({ attemptRef, panel }) => {
+      const dispatch = {
+        attestationId: `att_${attemptRef.slice(-12)}`,
+        generation: 1,
+        responseStoreNow: FIXED_NOW,
+        childCancelAt: "2026-07-24T12:02:00.000Z",
+        launchDeadline: "2026-07-24T12:01:00.000Z",
+        promptProvenance: {
+          roleId: "implementation-auditor" as const,
+          version: 1,
+          surface: "codex" as const,
+          promptDigest: "c".repeat(64),
+          catalogHash: "d".repeat(64),
+          inputDigest: "e".repeat(64),
+        },
+        inputCapability: { scope: "fetch-input" as const, token: "parity-audit-input" },
+        resultCapability: { scope: "store-result" as const, token: "parity-audit-result" },
+      };
+      nativeAuditPanels.set(dispatch.attestationId, panel);
+      return dispatch;
+    },
+    fetchNativeAudit: async (dispatch) => {
+      const panel = nativeAuditPanels.get(dispatch.attestationId);
+      if (panel === undefined) return { state: "missing" as const };
+      return {
+        state: "consumed" as const,
+        input: panel.auditInput,
+        output: parityAuditVerdict(panel),
+        retainedAttestation: dispatch.attestationId,
+      };
+    },
+    executeExternalAudit: async ({ panel, identity }) => ({
+      adapterIdentity: identity.adapterId,
+      stdout:
+        panel.taskRef === "tasks:T9103" ? "" : JSON.stringify(parityAuditVerdict(panel)),
+      stderr: panel.taskRef === "tasks:T9103" ? "parity audit adapter unavailable" : "",
+      exitCode: panel.taskRef === "tasks:T9103" ? 1 : 0,
+    }),
+    resolveActivationCohort: async () => ({
+      finalizedManifestDigest: PARITY_AUDIT_FINALIZED_MANIFEST_DIGEST,
+      evidenceTaskRef: "tasks:T9101",
+      auditTaskRef: "tasks:T9102",
+      activationTaskRef: "tasks:T9104",
+      boundaryCommit: PARITY_AUDIT_HEAD,
+      taskRefs: ["tasks:T9101", "tasks:T9102", "tasks:T9103"],
+    }),
+    isCommitRetained: async () => true,
   });
   const panel = await implementationEvidence.prepareReviewPanel({
     taskRef: PARITY_IMPLEMENTATION_TASK_REF,
@@ -449,12 +569,66 @@ async function buildImplementationEvidenceFixture() {
     operationId: "parity_evidence_finalize_fallback",
     ...PARITY_PROVENANCE,
   });
+  const auditManifestDigest = implementationAuditManifestDigest(auditManifest);
+  const auditPanels = await Promise.all(
+    auditManifest.records.map((record) =>
+      implementationEvidence.prepareAuditPanel({
+        manifestId: auditManifest.manifestId,
+        manifestDigest: auditManifestDigest,
+        recordKey: record.recordKey,
+        expectedRepositoryHead: PARITY_AUDIT_HEAD,
+        operationId: `parity_audit_panel_${record.recordKey}`,
+        ...PARITY_PROVENANCE,
+      }),
+    ),
+  );
+  const auditAttemptRefs = auditPanels.map((panel) => panel.attemptRefs[0]!);
+  for (const [index, panel] of auditPanels.entries()) {
+    await implementationEvidence.prepareAuditAttempt({
+      panelRef: panel.panelRef,
+      attemptRef: auditAttemptRefs[index]!,
+      operationId: `parity_audit_prepare_${auditManifest.records[index]!.recordKey}`,
+      ...PARITY_PROVENANCE,
+    });
+  }
+  for (const index of [1, 2]) {
+    await implementationEvidence.executeExternalAuditAttempt({
+      attemptRef: auditAttemptRefs[index]!,
+      operationId: `parity_audit_execute_${auditManifest.records[index]!.recordKey}`,
+      ...PARITY_PROVENANCE,
+    });
+    await implementationEvidence.finalizeAuditAttempt({
+      attemptRef: auditAttemptRefs[index]!,
+      operationId: `parity_audit_finalize_${auditManifest.records[index]!.recordKey}`,
+      ...PARITY_PROVENANCE,
+    });
+  }
+  const auditFallback = await implementationEvidence.prepareAuditFallback({
+    panelRef: auditPanels[2]!.panelRef,
+    operationId: "parity_audit_fallback",
+    ...PARITY_PROVENANCE,
+  });
+  await implementationEvidence.finalizeAuditAttempt({
+    attemptRef: auditFallback.attemptRef,
+    operationId: "parity_audit_finalize_fallback",
+    ...PARITY_PROVENANCE,
+  });
   return {
     implementationEvidence,
     implementationEvidenceRefs: {
       panelRef: panel.panelRef,
       attemptRef,
       fallbackAttemptRef: fallback.attemptRef,
+      auditManifestDigest,
+      auditPanelRef: auditPanels[0]!.panelRef,
+      auditAttemptRef: auditAttemptRefs[0]!,
+      auditFallbackPanelRef: auditPanels[2]!.panelRef,
+      auditAttemptRefs: [
+        auditAttemptRefs[0]!,
+        auditAttemptRefs[1]!,
+        auditAttemptRefs[2]!,
+        auditFallback.attemptRef,
+      ],
     },
   };
 }
@@ -887,7 +1061,16 @@ function decode(outcome: ToolOutcome): unknown {
 
 function invocationMatrix(fixture: Fixture): Invocation[] {
   const { ids } = fixture;
-  const { panelRef, attemptRef, fallbackAttemptRef } = fixture.implementationEvidenceRefs;
+  const {
+    panelRef,
+    attemptRef,
+    fallbackAttemptRef,
+    auditManifestDigest,
+    auditPanelRef,
+    auditAttemptRef,
+    auditFallbackPanelRef,
+    auditAttemptRefs,
+  } = fixture.implementationEvidenceRefs;
   return [
     { name: "enumerate_ledgers", args: {} },
     {
@@ -1285,6 +1468,79 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
         panel_ref: panelRef,
         operation_id: "parity_evidence_fallback",
         ...PARITY_PROVENANCE,
+      },
+    },
+    {
+      name: "prepare_implementation_audit_panel",
+      args: {
+        manifest_id: PARITY_AUDIT_MANIFEST_ID,
+        manifest_digest: auditManifestDigest,
+        record_key: "audit-one",
+        expected_repository_head: PARITY_AUDIT_HEAD,
+        operation_id: "parity_audit_panel_audit-one",
+        ...PARITY_PROVENANCE,
+      },
+    },
+    {
+      name: "prepare_implementation_audit_attempt",
+      args: {
+        panel_ref: auditPanelRef,
+        attempt_ref: auditAttemptRef,
+        operation_id: "parity_audit_prepare_audit-one",
+        ...PARITY_PROVENANCE,
+      },
+    },
+    {
+      name: "execute_external_implementation_audit_attempt",
+      args: {
+        attempt_ref: auditAttemptRef,
+        operation_id: "parity_audit_execute_audit-one",
+        ...PARITY_PROVENANCE,
+      },
+    },
+    {
+      name: "finalize_implementation_audit_attempt",
+      args: {
+        attempt_ref: auditAttemptRef,
+        operation_id: "parity_audit_finalize_audit-one",
+        ...PARITY_PROVENANCE,
+      },
+    },
+    {
+      name: "prepare_implementation_audit_fallback",
+      args: {
+        panel_ref: auditFallbackPanelRef,
+        operation_id: "parity_audit_fallback",
+        ...PARITY_PROVENANCE,
+      },
+    },
+    {
+      name: "arm_implementation_evidence_activation",
+      args: {
+        goal_ref: `goals:${PARITY_GOAL_ID}`,
+        manifest_id: PARITY_AUDIT_MANIFEST_ID,
+        expected_repository_head: PARITY_AUDIT_HEAD,
+        operation_id: "parity_audit_arm",
+        ...PARITY_PROVENANCE,
+      },
+    },
+    {
+      name: "apply_implementation_audit_manifest",
+      args: {
+        manifest_id: PARITY_AUDIT_MANIFEST_ID,
+        manifest_digest: auditManifestDigest,
+        expected_repository_head: PARITY_AUDIT_HEAD,
+        audit_attempt_refs: auditAttemptRefs,
+        operation_id: "parity_audit_apply",
+        ...PARITY_PROVENANCE,
+      },
+    },
+    {
+      name: "get_implementation_evidence_activation_status",
+      args: {
+        goal_ref: `goals:${PARITY_GOAL_ID}`,
+        manifest_id: PARITY_AUDIT_MANIFEST_ID,
+        expected_repository_head: PARITY_AUDIT_HEAD,
       },
     },
     {
