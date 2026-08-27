@@ -1204,10 +1204,9 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
       expect(retryCapture.inheritedWorksetCredentials).toEqual([]);
       expect((await readFile(finalizerAttemptsPath, "utf8")).trim().split("\n")).toHaveLength(2);
       expect((await readFile(gateCountPath, "utf8")).trim().split("\n")).toHaveLength(1);
-      expect(retryReceipts).toHaveLength(4);
-      expect(retryReceipts[1]?.["newHead"]).toBe(firstResultCommit);
-      expect(retryReceipts[2]?.["oldHead"]).toBe(firstResultCommit);
-      expect(retryReceipts[3]?.["newHead"]).toBe(retryCapture.output["resultCommit"]);
+      expect(retryReceipts).toHaveLength(2);
+      expect(retryReceipts[0]?.["oldHead"]).toBe(firstResultCommit);
+      expect(retryReceipts[1]?.["newHead"]).toBe(retryCapture.output["resultCommit"]);
       await git(managed.handle.absolutePath, [
         "merge-base",
         "--is-ancestor",
@@ -1226,8 +1225,18 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
       });
       expect(retryConfirmed.state).toBe("consumed");
       const retryFetched = await capability.fetch(retryHandle);
-      expect(retryFetched).toMatchObject({ state: "consumed", output: retryCapture.output });
+      expect(retryFetched).toMatchObject({
+        state: "consumed",
+        output: {
+          ...retryCapture.output,
+          gitReceipts: [...receipts, ...retryReceipts],
+        },
+      });
       const retryConsumed = retryFetched as ConsumedDispatchResult;
+      expect((retryConsumed.output as Record<string, unknown>)["gitReceipts"]).toEqual([
+        ...receipts,
+        ...retryReceipts,
+      ]);
       expect(retryCapture.output).not.toHaveProperty("supervisedGateEvidence");
       expect(retryConsumed.output).toMatchObject({
         supervisedGateEvidence: {
