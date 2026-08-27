@@ -100,7 +100,7 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
       passed: true,
       failures: [],
     },
-    measuredProfiles: 27,
+    measuredProfiles: 28,
     corpusTranscripts: 357,
     // 817 -> 886 under T1993: fetch_prompt gained the optional projection
     // argument (D269 schema projection). Decomposition (after.json):
@@ -129,10 +129,12 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // acknowledgement before the authoritative response carrying the same DTO.
     // 1277 -> 1237 under T2816: worktree and prepare descriptions retain their
     // typed contracts without repeating operation-specific schema vocabulary.
-    // 1237 -> 1405 under T2345: the protected implementation-evidence tools
-    // add their result contracts to full-parent profiles.
-    maximumRemainingG93AttributableTokens: 1405,
-    corpusMedianResponseSavingTokens: 1461,
+    // 1237 -> 1405 under T2345: protected implementation-evidence tools add
+    // their result contracts to full-parent profiles.
+    // 1405 -> 1621 under T2346: historical-audit and activation operations add
+    // protected management contracts. The refreshed threshold remains strict.
+    maximumRemainingG93AttributableTokens: 1621,
+    corpusMedianResponseSavingTokens: 1622,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,
   });
@@ -174,7 +176,7 @@ test(
     const zeroDomainDrift = structuredClone(measured);
     zeroDomainDrift.profiles["implement-worker"].domainInputSchemaTokens = 1;
     const g93Drift = structuredClone(measured);
-    g93Drift.profiles.full.responseContractCounterfactual.allTokens = 1461;
+    g93Drift.profiles.full.responseContractCounterfactual.allTokens = 1622;
 
     expect({
       tokenizerMatches: tokenizerDrift.budgets.tokenizerMatches,
