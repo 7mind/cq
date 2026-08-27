@@ -1749,7 +1749,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 46 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 54 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);

@@ -31,6 +31,7 @@ const CLOSED_DISPATCH = [
   "research/advance::dispatch::research-experimenter",
   "implement/advance::dispatch::implement-worker",
   "implement/advance::dispatch::implement-reviewer",
+  "implement/advance::dispatch::implementation-auditor",
   "implement/advance::dispatch::implement-conflict-resolver",
 ] as const;
 

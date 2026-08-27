@@ -44,6 +44,7 @@ const SIDECAR_SCHEMA_PATHS = [
   "nix/pkg/cq-ledgers/packages/cq-config/src/schemas/plan-reviewer.ts",
   "nix/pkg/cq-ledgers/packages/cq-config/src/schemas/implement-worker.ts",
   "nix/pkg/cq-ledgers/packages/cq-config/src/schemas/implement-reviewer.ts",
+  "nix/pkg/cq-ledgers/packages/cq-config/src/schemas/implementation-auditor.ts",
   "nix/pkg/cq-ledgers/packages/cq-config/src/schemas/implement-conflict-resolver.ts",
   "nix/pkg/cq-ledgers/packages/cq-config/src/schemas/investigate-explorer.ts",
   "nix/pkg/cq-ledgers/packages/cq-config/src/schemas/investigate-prober.ts",
@@ -69,6 +70,10 @@ const SCHEMA_PINS_JSON = String.raw`{
   "implement-reviewer": {
     "version": 7,
     "digest": "fdc47a55f6da749ba854dac1e8b69a382f8ec339a33a67e0a845fad40e2334a9"
+  },
+  "implementation-auditor": {
+    "version": 1,
+    "digest": "f85170dad0c1fe3b2a8262d9b3d80c61f4235f04e0984d47e24285cad921e6fa"
   },
   "implement-conflict-resolver": {
     "version": 4,
@@ -434,8 +439,8 @@ describe("typed prompt-catalog store — roster cross-check (T341)", () => {
     expect(Object.keys(DISPATCHED_ROLE_SIDECARS)).toEqual(ROSTER_DISPATCHED_IDS);
   });
 
-  test("there are exactly 9 dispatched-subagent roles", () => {
-    expect(ROSTER_DISPATCHED_IDS.length).toBe(9);
+  test("there are exactly 10 dispatched-subagent roles", () => {
+    expect(ROSTER_DISPATCHED_IDS.length).toBe(10);
   });
 
   test("every orchestrator-command role has NO sidecar", () => {

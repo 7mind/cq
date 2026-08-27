@@ -121,9 +121,8 @@ the effect boundaries required by the shared contract.
 ## 0. Activate protected historical implementation evidence
 
 After the ledger service is available and before deriving ready work, probe
-`d347-implementation-evidence-activation-v1` with
-`get_implementation_evidence_activation_status({ goal_ref: "goals:G176",
-manifest_id, expected_repository_head })`, binding the full observed integration
+`d347-implementation-evidence-activation-v1` with the current goal reference,
+manifest id, and expected repository head, binding the full observed integration
 HEAD. Continue to ordinary reconciliation only from `active`.
 
 For `absent`, call `arm_implementation_evidence_activation` with the same goal,
