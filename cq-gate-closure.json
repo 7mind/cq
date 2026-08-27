@@ -418,10 +418,18 @@
       "targets": []
     },
     {
+      "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/dispatchRecoveryEpochPromotion.test.ts",
+      "sha256": "19781b2a41398386c54f532e9b42b4b2e3ad7dc6952574ff9ffebc3de5a34965",
+      "targets": []
+    },
+    {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/dispatchRecoverySeal.test.ts",
       "sha256": "3af58d851e1c883e3704ee18092ab30a4057c9d9e57b81e75d6767958cbd982d",
-      "targets": ["nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/legacy-aborted-attestation-no-overlays.json"]
+      "targets": [
+        "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/legacy-aborted-attestation-no-overlays.json"
+      ]
     },
     {
       "kind": "spawn",
