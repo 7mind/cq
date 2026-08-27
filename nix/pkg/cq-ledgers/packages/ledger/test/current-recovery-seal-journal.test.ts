@@ -2,11 +2,14 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { dispatchPayloadDigest } from "@cq/config";
 import {
+  CURRENT_RECOVERY_TASK_IDENTITY_SCHEME,
   CurrentRecoveryStatusSchema,
   FsCurrentRecoverySealJournalStore,
   InMemoryCurrentRecoverySealJournalStore,
   createCurrentRecoverySeed,
+  createDispatchLineageCutoverFence,
   currentRecoveryStatus,
   parseCurrentRecoveryStatus,
   parseCurrentRecoverySeal,
@@ -22,6 +25,51 @@ import {
 } from "./recoverySealTestSupport.js";
 
 const roots: string[] = [];
+
+function taskIdentityMigrationJournals() {
+  const current = committedJournal();
+  const next = {
+    ...current,
+    fence: createDispatchLineageCutoverFence({
+      namespace: current.seal.seed.namespace,
+      taskId: RECOVERY_TASK,
+      managedFingerprint: current.seal.seed.managedFingerprint,
+      sourceAttestationId: current.seal.seed.selectedSourceHandle.attestationId,
+      selectedSourceGeneration: current.seal.seed.selectedSourceHandle.generation,
+      lineageMaximumGeneration: current.seal.seed.lineageMaximumGeneration,
+      recoverySeedRef: current.seal.sealReference,
+      fenceCapability: {
+        scope: "dispatch-lineage-fence" as const,
+        token: RECOVERY_BINDING.handleToken,
+      },
+      installedAt: current.committedAt,
+    }),
+  };
+  const legacy = structuredClone(next) as typeof next & {
+    seal: typeof next.seal & {
+      seed: typeof next.seal.seed & { taskIdentityScheme?: string };
+    };
+  };
+  delete legacy.seal.seed.taskIdentityScheme;
+  legacy.seal.seed.taskDigest = "0".repeat(64);
+  legacy.seal.sealDigest = dispatchPayloadDigest(legacy.seal.seed);
+  legacy.seal.sealReference = `cq-current-recovery-seal:v1:${legacy.seal.sealDigest}`;
+  legacy.fence = createDispatchLineageCutoverFence({
+    namespace: legacy.seal.seed.namespace,
+    taskId: RECOVERY_TASK,
+    managedFingerprint: legacy.seal.seed.managedFingerprint,
+    sourceAttestationId: legacy.seal.seed.selectedSourceHandle.attestationId,
+    selectedSourceGeneration: legacy.seal.seed.selectedSourceHandle.generation,
+    lineageMaximumGeneration: legacy.seal.seed.lineageMaximumGeneration,
+    recoverySeedRef: legacy.seal.sealReference,
+    fenceCapability: {
+      scope: "dispatch-lineage-fence" as const,
+      token: RECOVERY_BINDING.handleToken,
+    },
+    installedAt: legacy.committedAt,
+  });
+  return { legacy, next };
+}
 
 afterAll(async () => {
   await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
@@ -90,6 +138,21 @@ for (const factory of factories) {
         store.put({ ...provisionalJournal(), capability: "must-not-land" } as never),
       ).rejects.toThrow();
       expect(await store.read(RECOVERY_TASK)).toBeNull();
+    });
+
+    test("pre-scheme committed identity migration is atomic and replay-idempotent", async () => {
+      const store = await factory.make();
+      const { legacy, next } = taskIdentityMigrationJournals();
+      await store.put(legacy);
+      await expect(store.put(next)).rejects.toThrow("cannot replace committed authority");
+      expect(await store.read(RECOVERY_TASK)).toEqual(legacy);
+      if (store.migrateCommittedTaskIdentity === undefined) {
+        throw new Error("journal adapter omitted committed identity migration");
+      }
+      await store.migrateCommittedTaskIdentity(legacy, next);
+      await store.migrateCommittedTaskIdentity(legacy, next);
+      expect(await store.read(RECOVERY_TASK)).toEqual(next);
+      expect(next.seal.seed.taskIdentityScheme).toBe(CURRENT_RECOVERY_TASK_IDENTITY_SCHEME);
     });
   });
 }

@@ -1425,6 +1425,7 @@ export async function findOpenWipCheckpoints(
   worktreePath: string,
   projection?: WipClosureProjection,
   candidateNames?: ReadonlySet<string>,
+  candidateTaskId?: string,
 ): Promise<
   | { readonly status: "clean" }
   | { readonly status: "open"; readonly findings: readonly WipOpenCheckpointFinding[] }
@@ -1458,6 +1459,18 @@ export async function findOpenWipCheckpoints(
     }
     try {
       const artifact = parseWipArtifact(full, content);
+      if (
+        candidateTaskId !== undefined &&
+        (name !== `WIP-${candidateTaskId}.md` ||
+          artifact.id !== candidateTaskId ||
+          artifact.role !== "implement-worker")
+      ) {
+        return {
+          status: "malformed",
+          path: full,
+          detail: `foreign WIP artifact ${name} does not belong to ${candidateTaskId}`,
+        };
+      }
       const assessment = assessWipArtifactClosure(full, artifact, projection);
       if (assessment.status === "foreign") {
         return { status: "malformed", path: full, detail: assessment.detail };
@@ -1492,6 +1505,49 @@ async function revParse(
   const result = await git(cwd, ["rev-parse", "--verify", "--quiet", `${rev}^{commit}`]);
   if (result.code !== 0) return null;
   return result.stdout.trim();
+}
+
+function rootWipNames(output: string): readonly string[] {
+  return output
+    .split("\0")
+    .filter(
+      (name) =>
+        name !== "" && !name.includes("/") && name.startsWith("WIP-") && name.endsWith(".md"),
+    );
+}
+
+async function recoverableWipCandidateNames(
+  git: ManagedWorktreeGitRunner,
+  worktreePath: string,
+  taskStartCommit: string,
+  resultCommit: string,
+): Promise<ReadonlySet<string>> {
+  const start = await revParse(git, worktreePath, taskStartCommit);
+  if (start === null) throw new Error("managed WIP closure requires the task starting commit");
+  const ancestor = await git(worktreePath, ["merge-base", "--is-ancestor", start, resultCommit]);
+  if (ancestor.code !== 0) {
+    throw new Error("managed WIP closure candidate diverges from the task starting commit");
+  }
+  const changed = await git(worktreePath, [
+    "diff",
+    "--name-only",
+    "-z",
+    "--diff-filter=ACMRTUXB",
+    `${start}..${resultCommit}`,
+    "--",
+  ]);
+  if (changed.code !== 0) {
+    throw new Error(
+      `managed WIP closure could not compare the candidate to its task start: ${changed.stderr.trim() || changed.stdout.trim()}`,
+    );
+  }
+  const untracked = await git(worktreePath, ["ls-files", "--others", "--exclude-standard", "-z"]);
+  if (untracked.code !== 0) {
+    throw new Error(
+      `managed WIP closure could not inspect untracked artifacts: ${untracked.stderr.trim() || untracked.stdout.trim()}`,
+    );
+  }
+  return new Set([...rootWipNames(changed.stdout), ...rootWipNames(untracked.stdout)]);
 }
 
 async function branchCheckedOutPaths(
@@ -2910,7 +2966,25 @@ async function releaseManagedWorktreeUnderEffectLock(
     }
 
     const projection = trustedWipProjectionForRecord(stored, head, request.resultCommit);
-    const wip = await findOpenWipCheckpoints(absolutePath, projection);
+    let candidateNames: ReadonlySet<string>;
+    try {
+      candidateNames = await recoverableWipCandidateNames(
+        git,
+        absolutePath,
+        stored.headAtPrepare,
+        head,
+      );
+    } catch (error) {
+      return refusedRelease("ambiguous", error instanceof Error ? error.message : String(error), {
+        absolutePath,
+      });
+    }
+    const wip = await findOpenWipCheckpoints(
+      absolutePath,
+      projection,
+      candidateNames,
+      stored.handle.taskId,
+    );
     if (wip.status === "malformed") {
       return refusedRelease(
         "wip-malformed",
@@ -3162,37 +3236,18 @@ export async function assertManagedWorktreeWipClosure(
     throw new Error("managed WIP closure registry binding changed");
   }
   const projection = trustedWipProjectionForRecord(stored, head, resultCommit);
-  const integrationBase = await revParse(git, binding.repositoryRoot, "HEAD");
-  if (integrationBase === null) {
-    throw new Error("managed WIP closure requires the integration base");
-  }
-  const ancestor = await git(binding.worktreePath, [
-    "merge-base",
-    "--is-ancestor",
-    integrationBase,
+  const candidateNames = await recoverableWipCandidateNames(
+    git,
+    binding.worktreePath,
+    stored.headAtPrepare,
     resultCommit,
-  ]);
-  if (ancestor.code !== 0) {
-    throw new Error("managed WIP closure candidate does not descend from the integration base");
-  }
-  const changed = await git(binding.worktreePath, [
-    "diff",
-    "--name-only",
-    "--diff-filter=ACMRTUXB",
-    `${integrationBase}..${resultCommit}`,
-    "--",
-  ]);
-  if (changed.code !== 0) {
-    throw new Error(
-      `managed WIP closure could not compare the candidate to the integration base: ${changed.stderr.trim() || changed.stdout.trim()}`,
-    );
-  }
-  const candidateNames = new Set(
-    changed.stdout
-      .split(/\r?\n/u)
-      .filter((name) => !name.includes("/") && name.startsWith("WIP-") && name.endsWith(".md")),
   );
-  const assessment = await findOpenWipCheckpoints(binding.worktreePath, projection, candidateNames);
+  const assessment = await findOpenWipCheckpoints(
+    binding.worktreePath,
+    projection,
+    candidateNames,
+    binding.taskId,
+  );
   if (assessment.status === "malformed") {
     throw new Error(
       `managed WIP closure denied malformed artifact ${assessment.path}: ${assessment.detail}`,
