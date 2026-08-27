@@ -107,8 +107,8 @@ export function isAuthorizedOperatorActionMutation(mutation: object): boolean {
 }
 
 export function parseOperatorActionEnvelope(description: string): OperatorActionDirective | null {
+  if (!description.startsWith(OPERATOR_ACTION_ENVELOPE_PREFIX)) return null;
   const occurrences = description.split(OPERATOR_ACTION_ENVELOPE_PREFIX).length - 1;
-  if (occurrences === 0) return null;
   if (occurrences !== 1) {
     throw new OperatorActionEnvelopeError("exactly one envelope is required");
   }

@@ -1424,6 +1424,7 @@ export interface WipOpenCheckpointFinding {
 export async function findOpenWipCheckpoints(
   worktreePath: string,
   projection?: WipClosureProjection,
+  candidateNames?: ReadonlySet<string>,
 ): Promise<
   | { readonly status: "clean" }
   | { readonly status: "open"; readonly findings: readonly WipOpenCheckpointFinding[] }
@@ -1442,6 +1443,7 @@ export async function findOpenWipCheckpoints(
   const findings: WipOpenCheckpointFinding[] = [];
   for (const name of names) {
     if (!name.startsWith("WIP-") || !name.endsWith(".md")) continue;
+    if (candidateNames !== undefined && !candidateNames.has(name)) continue;
     const full = join(worktreePath, name);
     let content: string;
     try {
@@ -3160,7 +3162,41 @@ export async function assertManagedWorktreeWipClosure(
     throw new Error("managed WIP closure registry binding changed");
   }
   const projection = trustedWipProjectionForRecord(stored, head, resultCommit);
-  const assessment = await findOpenWipCheckpoints(binding.worktreePath, projection);
+  const integrationBase = await revParse(git, binding.repositoryRoot, "HEAD");
+  if (integrationBase === null) {
+    throw new Error("managed WIP closure requires the integration base");
+  }
+  const ancestor = await git(binding.worktreePath, [
+    "merge-base",
+    "--is-ancestor",
+    integrationBase,
+    resultCommit,
+  ]);
+  if (ancestor.code !== 0) {
+    throw new Error("managed WIP closure candidate does not descend from the integration base");
+  }
+  const changed = await git(binding.worktreePath, [
+    "diff",
+    "--name-only",
+    "--diff-filter=ACMRTUXB",
+    `${integrationBase}..${resultCommit}`,
+    "--",
+  ]);
+  if (changed.code !== 0) {
+    throw new Error(
+      `managed WIP closure could not compare the candidate to the integration base: ${changed.stderr.trim() || changed.stdout.trim()}`,
+    );
+  }
+  const candidateNames = new Set(
+    changed.stdout
+      .split(/\r?\n/u)
+      .filter((name) => !name.includes("/") && name.startsWith("WIP-") && name.endsWith(".md")),
+  );
+  const assessment = await findOpenWipCheckpoints(
+    binding.worktreePath,
+    projection,
+    candidateNames,
+  );
   if (assessment.status === "malformed") {
     throw new Error(
       `managed WIP closure denied malformed artifact ${assessment.path}: ${assessment.detail}`,
