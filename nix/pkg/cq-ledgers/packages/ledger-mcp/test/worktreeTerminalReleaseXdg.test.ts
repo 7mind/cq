@@ -163,7 +163,7 @@ function releaseEvidenceRemains(evidence: ReleaseEvidence): boolean {
 async function repository(): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), "d336-worktree-release-"));
   roots.push(root);
-  await git(root, ["init", "-q"]);
+  await git(root, ["init", "-q", "--initial-branch=main"]);
   await git(root, ["config", "user.email", "d336@example.invalid"]);
   await git(root, ["config", "user.name", "D336"]);
   await git(root, ["config", "commit.gpgsign", "false"]);
