@@ -916,6 +916,26 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     expect(released).toMatchObject({ status: "released" });
   });
 
+  test("gate projection rejects integration history outside the exact result ancestry [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const subject = await fixtureWithDispatchBase(new GateDummy(), "managed");
+    expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
+    await fs.writeFile(
+      path.join(subject.managed.handle.repositoryRoot, "integration-only.txt"),
+      "advanced after dispatch\n",
+    );
+    await git(subject.managed.handle.repositoryRoot, ["add", "integration-only.txt"]);
+    await git(subject.managed.handle.repositoryRoot, [
+      "commit",
+      "-q",
+      "-m",
+      "advance integration outside candidate",
+    ]);
+
+    await expect(finalize(subject)).rejects.toThrow(
+      "supervised gate result does not contain the authenticated integration tip",
+    );
+  });
+
   test("pre-merge WIP closure denies missing, malformed, stale, and coordinate-mismatched evidence", async () => {
     const missing = await fixtureWithDispatchBase(
       new GateDummy(),
