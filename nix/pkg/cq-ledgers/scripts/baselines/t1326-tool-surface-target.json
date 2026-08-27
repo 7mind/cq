@@ -172,6 +172,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ],
@@ -220,6 +228,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ]
@@ -270,6 +286,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ],
@@ -318,6 +342,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ]
@@ -406,6 +438,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ],
@@ -454,6 +494,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ]
@@ -504,6 +552,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ],
@@ -552,8 +608,26 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
+          ]
+        },
+        "implementation-auditor": {
+          "tools": [
+            "fetch_dispatch_input",
+            "store_result"
+          ],
+          "preservedCapabilities": [
+            "fetch_dispatch_input",
+            "store_result"
           ]
         },
         "investigate": {
@@ -602,6 +676,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ],
@@ -650,6 +732,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ]
@@ -720,6 +810,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ],
@@ -768,6 +866,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ]
@@ -818,6 +924,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ],
@@ -866,6 +980,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ]
@@ -952,6 +1074,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ],
@@ -1000,6 +1130,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ]
@@ -1050,6 +1188,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ],
@@ -1098,6 +1244,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ]
@@ -1156,6 +1310,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ],
@@ -1204,6 +1366,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ]
@@ -1274,6 +1444,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ],
@@ -1322,6 +1500,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ]
@@ -1380,6 +1566,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ],
@@ -1428,6 +1622,14 @@
             "execute_external_implementation_review_attempt",
             "finalize_implementation_review_attempt",
             "prepare_implementation_review_fallback",
+            "prepare_implementation_audit_panel",
+            "prepare_implementation_audit_attempt",
+            "execute_external_implementation_audit_attempt",
+            "finalize_implementation_audit_attempt",
+            "prepare_implementation_audit_fallback",
+            "arm_implementation_evidence_activation",
+            "apply_implementation_audit_manifest",
+            "get_implementation_evidence_activation_status",
             "prepare_implementation_completion",
             "record_implementation_completion"
           ]
@@ -1436,17 +1638,17 @@
       "measurement": {
         "method": "independent whole-value JSON.stringify with o200k_base",
         "current": {
-          "utf8Bytes": 1157393,
-          "tokens": 272967,
-          "sha256": "e9c804831dc252de2ca679df0ced0b1f1c59f8fd47ad7b0125d18d9383981685"
+          "utf8Bytes": 1203697,
+          "tokens": 283887,
+          "sha256": "93e97e53374c7e5a23e97a2d58953b6d91dae86bd34a8fb7a538ff044e1373e0"
         },
         "counterfactual": {
-          "utf8Bytes": 546592,
-          "tokens": 128753,
-          "sha256": "5d1f7d8166c1c0ceca8478a22250a0ca70fe29020a50e6f8f890b3c6fccf3638"
+          "utf8Bytes": 548679,
+          "tokens": 129201,
+          "sha256": "55ee68d20c443e9769b32b1c4d325777dad6db2a1097704911ceaa4dcd79a146"
         },
-        "deltaUtf8Bytes": 610801,
-        "deltaTokens": 144214
+        "deltaUtf8Bytes": 655018,
+        "deltaTokens": 154686
       }
     },
     {
@@ -1594,9 +1796,17 @@
       "finalize_implementation_review_attempt",
       "prepare_implementation_review_fallback",
       "prepare_implementation_completion",
-      "record_implementation_completion"
+      "record_implementation_completion",
+      "prepare_implementation_audit_panel",
+      "prepare_implementation_audit_attempt",
+      "execute_external_implementation_audit_attempt",
+      "finalize_implementation_audit_attempt",
+      "prepare_implementation_audit_fallback",
+      "arm_implementation_evidence_activation",
+      "apply_implementation_audit_manifest",
+      "get_implementation_evidence_activation_status"
     ],
-    "publicToolCount": 46,
+    "publicToolCount": 54,
     "removedPublicTools": [
       "create_milestone",
       "update_milestone",
@@ -1715,6 +1925,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ],
@@ -1763,6 +1981,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ]
@@ -1813,6 +2039,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ],
@@ -1861,6 +2095,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ]
@@ -1949,6 +2191,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ],
@@ -1997,6 +2247,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ]
@@ -2047,6 +2305,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ],
@@ -2095,8 +2361,26 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
+        ]
+      },
+      "implementation-auditor": {
+        "tools": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "preservedCapabilities": [
+          "fetch_dispatch_input",
+          "store_result"
         ]
       },
       "investigate": {
@@ -2145,6 +2429,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ],
@@ -2193,6 +2485,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ]
@@ -2263,6 +2563,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ],
@@ -2311,6 +2619,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ]
@@ -2361,6 +2677,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ],
@@ -2409,6 +2733,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ]
@@ -2495,6 +2827,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ],
@@ -2543,6 +2883,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ]
@@ -2593,6 +2941,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ],
@@ -2641,6 +2997,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ]
@@ -2699,6 +3063,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ],
@@ -2747,6 +3119,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ]
@@ -2817,6 +3197,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ],
@@ -2865,6 +3253,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ]
@@ -2923,6 +3319,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ],
@@ -2971,6 +3375,14 @@
           "execute_external_implementation_review_attempt",
           "finalize_implementation_review_attempt",
           "prepare_implementation_review_fallback",
+          "prepare_implementation_audit_panel",
+          "prepare_implementation_audit_attempt",
+          "execute_external_implementation_audit_attempt",
+          "finalize_implementation_audit_attempt",
+          "prepare_implementation_audit_fallback",
+          "arm_implementation_evidence_activation",
+          "apply_implementation_audit_manifest",
+          "get_implementation_evidence_activation_status",
           "prepare_implementation_completion",
           "record_implementation_completion"
         ]
@@ -2984,27 +3396,27 @@
         "sha256": "a7fbc44f6499b7530a51a31a2270feb6e5883b26fc0803e767db2e4ec006c8d7"
       },
       "counterfactual": {
-        "utf8Bytes": 46201,
-        "tokens": 10900,
-        "sha256": "d0c640cd6cb642d4f600cffbf0d0e33676b202773d9a6708f2bd9ff325cd44ac"
+        "utf8Bytes": 32126,
+        "tokens": 7567,
+        "sha256": "9e7384c41ddd11f7f5b1d2eeeec95079d5283382a15a94e393263c989cdf1704"
       },
-      "deltaUtf8Bytes": 77,
-      "deltaTokens": 16
+      "deltaUtf8Bytes": 14152,
+      "deltaTokens": 3349
     },
     "completeRoleContextMeasurement": {
       "method": "independent whole-value JSON.stringify with o200k_base",
       "current": {
-        "utf8Bytes": 1160963,
-        "tokens": 273838,
-        "sha256": "9dacb7755e96b45a5b1e363d379e88749d99c4cb7ae42c3262cf7b7fc3cd1dc3"
+        "utf8Bytes": 1207267,
+        "tokens": 284758,
+        "sha256": "716250b16b5833d6501740187ffc1bfe3febadbc24e64f9e9d4ca7e32f5b6649"
       },
       "counterfactual": {
-        "utf8Bytes": 576442,
-        "tokens": 135554,
-        "sha256": "84c9ca2e93b6db20fd34adedb8bb52375038ec743adbc6d1309109b1a245c287"
+        "utf8Bytes": 407161,
+        "tokens": 95419,
+        "sha256": "60e221e47932341cff2f391d71445e4770a64eb7e5d51dedf7df52fa7fea6cf8"
       },
-      "deltaUtf8Bytes": 584521,
-      "deltaTokens": 138284
+      "deltaUtf8Bytes": 800106,
+      "deltaTokens": 189339
     }
   },
   "migrationMap": [

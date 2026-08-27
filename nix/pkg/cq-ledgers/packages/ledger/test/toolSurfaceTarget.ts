@@ -519,6 +519,168 @@ export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
       additionalProperties: false,
     },
   },
+  {
+    name: "prepare_implementation_audit_panel",
+    description:
+      "Resolve one immutable packaged historical record and snapshot its configured read-only auditor roster.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        manifest_id: { type: "string", minLength: 1 },
+        manifest_digest: { type: "string", pattern: "^[0-9a-f]{64}$" },
+        record_key: { type: "string", minLength: 1 },
+        expected_repository_head: { type: "string", pattern: "^[0-9a-f]{40}$" },
+        operation_id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: [
+        "manifest_id",
+        "manifest_digest",
+        "record_key",
+        "expected_repository_head",
+        "operation_id",
+        "author",
+      ],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "prepare_implementation_audit_attempt",
+    description:
+      "Prepare one opaque historical audit attempt from its server-assembled packaged input.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        panel_ref: { type: "string", pattern: "^cq-implementation-audit-panel:v1:[0-9a-f]{64}$" },
+        attempt_ref: {
+          type: "string",
+          pattern: "^cq-implementation-audit-attempt:v1:[0-9a-f]{64}$",
+        },
+        operation_id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: ["panel_ref", "attempt_ref", "operation_id", "author"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "execute_external_implementation_audit_attempt",
+    description:
+      "Execute a configured historical auditor through the authenticated parent adapter boundary.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        attempt_ref: {
+          type: "string",
+          pattern: "^cq-implementation-audit-attempt:v1:[0-9a-f]{64}$",
+        },
+        operation_id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: ["attempt_ref", "operation_id", "author"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "finalize_implementation_audit_attempt",
+    description:
+      "Finalize one audit attempt only from its consumed native result or retained adapter execution.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        attempt_ref: {
+          type: "string",
+          pattern: "^cq-implementation-audit-attempt:v1:[0-9a-f]{64}$",
+        },
+        operation_id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: ["attempt_ref", "operation_id", "author"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "prepare_implementation_audit_fallback",
+    description:
+      "Prepare one authenticated native audit fallback only after the configured roster terminally abstains.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        panel_ref: { type: "string", pattern: "^cq-implementation-audit-panel:v1:[0-9a-f]{64}$" },
+        operation_id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: ["panel_ref", "operation_id", "author"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "arm_implementation_evidence_activation",
+    description:
+      "Freeze the exact finalized-manifest bootstrap mappings, pre-activation boundary, and qualifying evidence cohort.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        goal_ref: { type: "string", pattern: "^goals:G[0-9]+$" },
+        manifest_id: { type: "string", minLength: 1 },
+        expected_repository_head: { type: "string", pattern: "^[0-9a-f]{40}$" },
+        operation_id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: ["goal_ref", "manifest_id", "expected_repository_head", "operation_id", "author"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "apply_implementation_audit_manifest",
+    description:
+      "Atomically append every packaged historical audit and fulfill an exact matching activation requirement.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        manifest_id: { type: "string", minLength: 1 },
+        manifest_digest: { type: "string", pattern: "^[0-9a-f]{64}$" },
+        expected_repository_head: { type: "string", pattern: "^[0-9a-f]{40}$" },
+        audit_attempt_refs: {
+          type: "array",
+          items: { type: "string", pattern: "^cq-implementation-audit-attempt:v1:[0-9a-f]{64}$" },
+        },
+        operation_id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: [
+        "manifest_id",
+        "manifest_digest",
+        "expected_repository_head",
+        "audit_attempt_refs",
+        "operation_id",
+        "author",
+      ],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_implementation_evidence_activation_status",
+    description:
+      "Return the bounded absent, pending, stale, or active state for one goal and canonical activation manifest.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        goal_ref: { type: "string", pattern: "^goals:G[0-9]+$" },
+        manifest_id: { type: "string", minLength: 1 },
+        expected_repository_head: { type: "string", pattern: "^[0-9a-f]{40}$" },
+      },
+      required: ["goal_ref", "manifest_id", "expected_repository_head"],
+      additionalProperties: false,
+    },
+  },
 ]);
 
 const COMPACT_PROJECTION =
@@ -1056,13 +1218,17 @@ export async function measureToolSurfaceTarget() {
   const descriptionTarget = withDescriptionTargets(currentTools);
   const schemaTarget = withSimplifiedSchemas(currentTools);
   const milestoneCrudTarget = withMilestoneCrudGenericized(currentTools);
-  const combinedTarget = [
-    ...withMilestoneCrudGenericized(withSimplifiedSchemas(withDescriptionTargets(currentTools))),
-    ...POST_TARGET_ADDITIONS,
-  ];
+  const breakingSurfaceTarget = withMilestoneCrudGenericized(
+    withSimplifiedSchemas(withDescriptionTargets(currentTools)),
+  );
+  const combinedTarget = [...breakingSurfaceTarget, ...POST_TARGET_ADDITIONS];
   const profiles = targetRoleProfiles(combinedTarget);
+  const breakingSurfaceProfiles = targetRoleProfiles(breakingSurfaceTarget);
   const currentRoleSurface = currentDefaultRoleSurface(currentTools);
-  const targetRoleSurface = filteredTargetRoleSurface(combinedTarget, profiles);
+  const targetRoleSurface = filteredTargetRoleSurface(
+    breakingSurfaceTarget,
+    breakingSurfaceProfiles,
+  );
   const targetInventory = combinedTarget.map((tool) => tool.name);
 
   return {
@@ -1188,7 +1354,7 @@ export async function measureToolSurfaceTarget() {
       renamedPublicTools: [],
       requiredCapabilityCoverage: REQUIRED_CAPABILITY_COVERAGE,
       roleProfiles: profiles,
-      fullToolsListMeasurement: counterfactual(currentTools, combinedTarget),
+      fullToolsListMeasurement: counterfactual(currentTools, breakingSurfaceTarget),
       completeRoleContextMeasurement: counterfactual(
         {
           instructions: currentInstructions,

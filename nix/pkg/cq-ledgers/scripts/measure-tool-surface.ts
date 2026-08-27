@@ -534,7 +534,7 @@ export function serializeToolSurfaceMeasurement(result: ToolSurfaceMeasurement):
   return `${JSON.stringify(result, null, 2)}\n`;
 }
 
-const G93_MEDIAN_RESPONSE_SAVING_TOKENS = 1461;
+const G93_MEDIAN_RESPONSE_SAVING_TOKENS = 1622;
 const G93_EVIDENCE_PATH = "docs/drafts/20260725-2130-t679-rs3-remeasurement.md";
 
 interface HistoricalToolSurfaceMeasurement {
