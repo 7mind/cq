@@ -348,7 +348,7 @@ async function createLedgerStoreWithAuthority(
       await runBackupExport({ store, root, target: backupTarget, branch, logsDir });
     });
     const implementationEvidenceStore = createFsImplementationEvidenceStore({
-      path: join(stateDir, "implementation-evidence.json"),
+      path: join(stateDir, "implementation-evidence.journal"),
     });
     return {
       store: protectLedgerStoreWithImplementationEvidence(store, implementationEvidenceStore),
@@ -363,7 +363,7 @@ async function createLedgerStoreWithAuthority(
     };
   }
   const implementationEvidenceStore = createFsImplementationEvidenceStore({
-    path: join(stateDir, "implementation-evidence.json"),
+    path: join(stateDir, "implementation-evidence.journal"),
   });
   return {
     store: protectLedgerStoreWithImplementationEvidence(store, implementationEvidenceStore),
@@ -422,7 +422,7 @@ export async function openLegacyLedgerStore(
     });
     await store.init();
     const implementationEvidenceStore = createFsImplementationEvidenceStore({
-      path: join(root, LEDGER_STORAGE_DIRNAME, "protected", "implementation-evidence.json"),
+      path: join(root, LEDGER_STORAGE_DIRNAME, "protected", "implementation-evidence.journal"),
     });
     return {
       store: protectLedgerStoreWithImplementationEvidence(store, implementationEvidenceStore),
@@ -436,7 +436,7 @@ export async function openLegacyLedgerStore(
     const store = new FsLedgerStore({ root, worksetAuthority });
     await store.init();
     const implementationEvidenceStore = createFsImplementationEvidenceStore({
-      path: join(root, LEDGER_STORAGE_DIRNAME, "protected", "implementation-evidence.json"),
+      path: join(root, LEDGER_STORAGE_DIRNAME, "protected", "implementation-evidence.journal"),
     });
     return {
       store: protectLedgerStoreWithImplementationEvidence(store, implementationEvidenceStore),
