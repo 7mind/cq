@@ -15,6 +15,7 @@ import {
 } from "@cq/config";
 import {
   InMemoryCurrentRecoverySealJournalStore,
+  currentRecoveryReceiptClosureDigest,
   dispatchLineageFenceFromRecoveryJournal,
   journalRecoveryRequiredForFence,
   prepareManagedWorktree,
@@ -526,7 +527,9 @@ describe("journal recovery epoch promotion", () => {
       attestationId: RECOVERY_ATTESTATION,
       generation: 18,
     });
-    expect(promoted.seed.gitReceipts).toEqual(RECOVERY_RECEIPTS);
+    expect(currentRecoveryReceiptClosureDigest(promoted.seed.gitReceipts)).toBe(
+      currentRecoveryReceiptClosureDigest(RECOVERY_RECEIPTS),
+    );
     expect(promoted.seed.liveTip).toBe(RECOVERY_TIP);
     expect(await captureCurrentRecoverySeal(coordinates, deps)).toEqual(promoted);
   });
