@@ -836,14 +836,24 @@ export function currentRecoveryTaskEvidence(
   } catch {
     throw new CurrentRecoverySealError("invalid", `task ${taskId} finalized manifest is malformed`);
   }
-  if (!decodedManifest.tasks.some(({ id }) => id === taskId)) {
+  const manifestMembership = decodedManifest.tasks.find(({ id }) => id === taskId);
+  if (manifestMembership === undefined) {
     throw new CurrentRecoverySealError(
       "invalid",
       `task ${taskId} does not belong to the finalized manifest`,
     );
   }
+  const taskIdentity = {
+    kind: "cq-current-recovery-task-identity",
+    version: 1,
+    taskId: task.id,
+    milestoneId: task.milestoneId,
+    taskFields: task.fields,
+    finalizedGoalRef: goalRefs[0]!,
+    manifestMembership,
+  } as const;
   return {
-    taskDigest: dispatchPayloadDigest(task as unknown as DispatchJSONValue),
+    taskDigest: dispatchPayloadDigest(taskIdentity as unknown as DispatchJSONValue),
     finalizedManifestDigest: dispatchPayloadDigest(decodedManifest),
   };
 }

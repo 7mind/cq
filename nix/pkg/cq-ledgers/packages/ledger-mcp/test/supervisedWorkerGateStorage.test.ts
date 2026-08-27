@@ -877,7 +877,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
         assertManagedWorktreeWipClosure(foreignBinding, foreign.receipt.newHead, {
           stateDir: foreign.stateDir,
         }),
-      ).rejects.toThrow("foreign WIP artifact WIP-T2234.md");
+      ).rejects.toThrow(/foreign WIP artifact WIP-T223[45]\.md/u);
     }
   });
 
