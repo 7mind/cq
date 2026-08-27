@@ -42,10 +42,13 @@ if (
 }
 if (
   !normalizedRoleInstructions.includes(
-    "exempted ONLY for the server-resolved exact-tip/no-new-commit mode",
+    "The protected inherited receipt prefix is never placed in fetched input",
   ) ||
   !normalizedRoleInstructions.includes(
     "the result reports the lineage verbatim as `gitLineage`",
+  ) ||
+  !normalizedRoleInstructions.includes(
+    "an empty fresh suffix, and performs no `git_commit` call",
   )
 ) {
   throw new Error("installed worker instructions lack the guarded-rebase continuation contract");
