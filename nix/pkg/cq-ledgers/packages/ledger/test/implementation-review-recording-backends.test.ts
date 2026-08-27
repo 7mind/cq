@@ -40,8 +40,9 @@ describe("implementation evidence store adapters [Behavioral-Active Blackbox-Ato
     const entries = (await fs.readdir(path)).sort();
     expect(entries).toHaveLength(3);
     const records = await Promise.all(
-      entries.map(async (entry) =>
-        JSON.parse(await fs.readFile(join(path, entry), "utf8")) as Record<string, unknown>,
+      entries.map(
+        async (entry) =>
+          JSON.parse(await fs.readFile(join(path, entry), "utf8")) as Record<string, unknown>,
       ),
     );
     expect(records.map((record) => record["kind"])).toEqual([

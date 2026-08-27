@@ -226,8 +226,7 @@ export function protectLedgerStoreWithImplementationEvidence(
 ): LedgerStore {
   const candidate = store as AtomicGenericLedgerStore;
   const rawAtomicGenericMutation = Reflect.get(candidate, "runAtomicGenericMutation") as
-    | AtomicGenericLedgerStore["runAtomicGenericMutation"]
-    | undefined;
+    AtomicGenericLedgerStore["runAtomicGenericMutation"] | undefined;
 
   return new Proxy(candidate, {
     get(target, property) {
@@ -346,7 +345,55 @@ export interface CreateFsImplementationEvidenceStoreOptions {
   readonly lockfile?: LockfileOpts;
 }
 
-/** Durable sidecar adapter; the file is not reachable through generic ledger fields. */
+interface ImplementationEvidenceJournalPayload {
+  readonly kind: "cq-implementation-evidence-journal-entry";
+  readonly version: 1;
+  readonly sequence: number;
+  readonly priorDigest: string | null;
+  readonly snapshot: MutableImplementationEvidenceSnapshot;
+}
+
+interface ImplementationEvidenceJournalEntry extends ImplementationEvidenceJournalPayload {
+  readonly digest: string;
+}
+
+interface ImplementationEvidenceJournalTip {
+  readonly state: MutableImplementationEvidenceSnapshot;
+  readonly sequence: number;
+  readonly digest: string | null;
+}
+
+const IMPLEMENTATION_EVIDENCE_JOURNAL_ENTRY = /^([0-9]{16})-([0-9a-f]{64})\.json$/u;
+
+function parseJournalEntry(value: unknown, filename: string): ImplementationEvidenceJournalEntry {
+  if (
+    !object(value) ||
+    !exactKeys(value, ["kind", "version", "sequence", "priorDigest", "snapshot", "digest"]) ||
+    value["kind"] !== "cq-implementation-evidence-journal-entry" ||
+    value["version"] !== 1 ||
+    typeof value["sequence"] !== "number" ||
+    !Number.isSafeInteger(value["sequence"]) ||
+    (typeof value["priorDigest"] !== "string" && value["priorDigest"] !== null) ||
+    typeof value["digest"] !== "string"
+  ) {
+    throw new Error(`implementation evidence journal entry ${filename} is malformed`);
+  }
+  const snapshot = parseStoredState(value["snapshot"]);
+  const payload: ImplementationEvidenceJournalPayload = {
+    kind: "cq-implementation-evidence-journal-entry",
+    version: 1,
+    sequence: value["sequence"] as number,
+    priorDigest: value["priorDigest"] as string | null,
+    snapshot,
+  };
+  const expectedDigest = digest(payload);
+  if (value["digest"] !== expectedDigest) {
+    throw new Error(`implementation evidence journal entry ${filename} failed authentication`);
+  }
+  return { ...payload, digest: expectedDigest };
+}
+
+/** Protected append-only journal adapter; generic ledger fields cannot reach its entries. */
 export function createFsImplementationEvidenceStore(
   options: CreateFsImplementationEvidenceStoreOptions,
 ): ImplementationEvidenceStore {
@@ -354,31 +401,84 @@ export function createFsImplementationEvidenceStore(
   const lockfile = new Lockfile(options.lockfile);
   const parent = dirname(options.path);
   const locks = join(parent, ".locks");
-  const read = async (): Promise<MutableImplementationEvidenceSnapshot> => {
-    let bytes: string;
+  const read = async (): Promise<ImplementationEvidenceJournalTip> => {
+    let names: string[];
     try {
-      bytes = await fs.readFile(options.path, "utf8");
+      names = await fs.readdir(options.path);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return emptyState();
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return { state: emptyState(), sequence: 0, digest: null };
+      }
       throw error;
     }
-    return parseStoredState(JSON.parse(bytes));
+    const unexpected = names.filter(
+      (name) => !IMPLEMENTATION_EVIDENCE_JOURNAL_ENTRY.test(name) && !name.startsWith(".tmp-"),
+    );
+    if (unexpected.length !== 0) {
+      throw new Error(
+        `implementation evidence journal contains unexpected entries: ${unexpected.join(", ")}`,
+      );
+    }
+    const entries = names.filter((name) => IMPLEMENTATION_EVIDENCE_JOURNAL_ENTRY.test(name)).sort();
+    let sequence = 0;
+    let priorDigest: string | null = null;
+    let state = emptyState();
+    for (const filename of entries) {
+      const match = IMPLEMENTATION_EVIDENCE_JOURNAL_ENTRY.exec(filename);
+      if (match === null)
+        throw new Error(`implementation evidence journal entry ${filename} is malformed`);
+      const entry = parseJournalEntry(
+        JSON.parse(await fs.readFile(join(options.path, filename), "utf8")),
+        filename,
+      );
+      const expectedSequence = sequence + 1;
+      if (
+        entry.sequence !== expectedSequence ||
+        Number(match[1]) !== expectedSequence ||
+        match[2] !== entry.digest ||
+        entry.priorDigest !== priorDigest
+      ) {
+        throw new Error(`implementation evidence journal entry ${filename} breaks the hash chain`);
+      }
+      sequence = entry.sequence;
+      priorDigest = entry.digest;
+      state = entry.snapshot;
+    }
+    return { state, sequence, digest: priorDigest };
   };
-  const write = async (state: MutableImplementationEvidenceSnapshot): Promise<void> => {
-    await fs.mkdir(parent, { recursive: true });
-    const temporary = `${options.path}.tmp-${process.pid}-${randomUUID()}`;
+  const append = async (
+    state: MutableImplementationEvidenceSnapshot,
+    prior: ImplementationEvidenceJournalTip,
+  ): Promise<void> => {
+    await fs.mkdir(options.path, { recursive: true });
+    const payload: ImplementationEvidenceJournalPayload = {
+      kind: "cq-implementation-evidence-journal-entry",
+      version: 1,
+      sequence: prior.sequence + 1,
+      priorDigest: prior.digest,
+      snapshot: state,
+    };
+    const entry: ImplementationEvidenceJournalEntry = { ...payload, digest: digest(payload) };
+    const filename = `${String(entry.sequence).padStart(16, "0")}-${entry.digest}.json`;
+    const temporary = join(options.path, `.tmp-${process.pid}-${randomUUID()}`);
     const handle = await fs.open(temporary, "wx", 0o600);
     try {
-      await handle.writeFile(`${JSON.stringify(state)}\n`, "utf8");
+      await handle.writeFile(`${JSON.stringify(entry)}\n`, "utf8");
       await handle.sync();
     } finally {
       await handle.close();
     }
-    await fs.rename(temporary, options.path);
+    await fs.rename(temporary, join(options.path, filename));
+    const directory = await fs.open(options.path, "r");
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
   };
   return {
     async snapshot() {
-      return await read();
+      return cloneState((await read()).state);
     },
     async [mutateEvidence]<T>(
       mutation: (draft: MutableImplementationEvidenceSnapshot) => T | Promise<T>,
@@ -386,9 +486,10 @@ export function createFsImplementationEvidenceStore(
       return await boundary.run(async () => {
         const release = await lockfile.acquire(locks, "implementation-evidence");
         try {
-          const draft = await read();
+          const prior = await read();
+          const draft = cloneState(prior.state);
           const result = await mutation(draft);
-          await write(draft);
+          await append(draft, prior);
           return result;
         } finally {
           await release();
@@ -518,7 +619,8 @@ function validateReviewerVerdict(
   if (
     value["verdict"] === "approve" &&
     (value["criticism"].length !== 0 || value["questions"].length !== 0)
-  ) return false;
+  )
+    return false;
   const resultEvidence = value["resultCommitEvidence"];
   const baseAncestry = value["baseAncestry"];
   if (!object(resultEvidence) || !object(baseAncestry)) return false;
@@ -1015,7 +1117,10 @@ export class ImplementationEvidenceService {
           return { existing: true as const, executionRef: current.execution.executionRef };
         }
         if (current.executionReservation !== null && current.executionReservation !== undefined) {
-          return { existing: true as const, executionRef: current.executionReservation.executionRef };
+          return {
+            existing: true as const,
+            executionRef: current.executionReservation.executionRef,
+          };
         }
         throw new Error("external review replay has no durable execution reservation");
       }
@@ -1300,7 +1405,9 @@ export class ImplementationEvidenceService {
         resultCommit: input.resultCommit,
       }))
     )
-      throw new Error("superseding completion result is not rebased onto the current repository head");
+      throw new Error(
+        "superseding completion result is not rebased onto the current repository head",
+      );
     const task = await this.deps.readTaskAuthority(input.taskRef);
     if (task.taskRef !== input.taskRef || task.status !== "wip")
       throw new Error("implementation completion requires the exact active wip task");
@@ -1992,9 +2099,7 @@ export async function recordProtectedImplementationCompletion(
   authorizedImplementationEvidenceMutations.add(reviewInit);
   authorizedImplementationEvidenceMutations.add(patch);
   const atomic = store as LedgerStore & {
-    runAtomicOwnedMutation?<T>(
-      mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>,
-    ): Promise<T>;
+    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>): Promise<T>;
   };
   if (atomic.runAtomicOwnedMutation === undefined) {
     throw new Error("protected implementation completion requires an atomic ledger adapter");
