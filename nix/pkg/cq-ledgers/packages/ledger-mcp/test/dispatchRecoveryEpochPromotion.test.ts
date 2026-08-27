@@ -106,6 +106,46 @@ function journalDerivedAbort(
   };
 }
 
+function preCutoverConsumedFailure(): AttestationEnvelope {
+  const output = {
+    taskId: RECOVERY_TASK,
+    status: "fail",
+    resultCommit: null,
+    branch: RECOVERY_BINDING.branch,
+    actualWorktreePath: RECOVERY_BINDING.worktreePath,
+    filesTouched: [],
+    checkSummary: "controlled consumed failure",
+    summary: "the trusted parent captured the failed output",
+    blockedReason: "controlled v2 recovery authority",
+    baseVerification: {
+      status: "unresolvable",
+      reason: "base-missing",
+      baseCommit: null,
+      headCommit: null,
+    },
+  } as const;
+  const outputDigest = dispatchPayloadDigest(output);
+  const {
+    abortedAt: _abortedAt,
+    abortReason: _abortReason,
+    terminalAt: _terminalAt,
+    terminalDigest: _terminalDigest,
+    ...prepared
+  } = abortedEnvelope({ generation: 17 });
+  return {
+    ...prepared,
+    state: "consumed",
+    output,
+    outputDigest,
+    consumedAt: LATER,
+    terminalAt: LATER,
+    terminalDigest: dispatchPayloadDigest({
+      terminalKind: "consumed",
+      resultDigest: outputDigest,
+    }),
+  };
+}
+
 async function generation17Journal() {
   const journal = new InMemoryCurrentRecoverySealJournalStore();
   const generation17 = abortedEnvelope({ generation: 17 });
@@ -462,6 +502,47 @@ describe("journal recovery epoch promotion", () => {
       });
       expect(promoted.version === 1 ? promoted.seed.sourceAbortReason : undefined).toBe(reason);
     }
+  });
+
+  // Regression: a v2 journal hashes continuation tombstones, while the v1 journal written by
+  // abort promotion hashes terminal envelopes. Promotion must commit the membership it will reread.
+  test("committed v2 promotion remains replay-idempotent after the journal becomes v1 [Behavioral-Active Blackbox-Group]", async () => {
+    const journal = new InMemoryCurrentRecoverySealJournalStore();
+    const generation17 = preCutoverConsumedFailure();
+    const rows: AttestationRow[] = [generation17];
+    const initial = await captureCurrentRecoverySeal(
+      {
+        ...promotionCoordinates(),
+        liveTip: RECOVERY_TIP,
+      },
+      {
+        journal,
+        snapshot: async () => rows,
+        resolveReceipts: async () => RECOVERY_RECEIPTS,
+        revalidateBinding: async () => {},
+        observeLiveTip: async () => RECOVERY_TIP,
+        now: () => NOW,
+      },
+    );
+    if (initial.version !== 2) throw new Error("consumed failure did not create v2 authority");
+
+    rows.push(journalDerivedAbort());
+    const deps = {
+      journal,
+      snapshot: async () => rows,
+      resolveReceipts: async () => promotedReceipts(),
+      revalidateBinding: async () => {},
+      observeLiveTip: async () => PROMOTED_TIP,
+      now: () => LATER,
+    };
+    const promoted = await captureCurrentRecoverySeal(promotionCoordinates(), deps);
+    if (promoted.version !== 1) throw new Error("terminal abort did not create v1 authority");
+    const committed = await journal.read(RECOVERY_TASK);
+
+    await expect(captureCurrentRecoverySeal(promotionCoordinates(), deps)).resolves.toEqual(
+      promoted,
+    );
+    expect(await journal.read(RECOVERY_TASK)).toEqual(committed);
   });
 
   test("promotion rejects every unauthenticated or competing successor control [Behavioral-Active Blackbox-Group]", async () => {

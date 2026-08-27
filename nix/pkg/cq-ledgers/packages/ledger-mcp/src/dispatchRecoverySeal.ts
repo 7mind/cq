@@ -555,6 +555,10 @@ export async function captureCurrentRecoverySeal(
         }
         return existing.seal;
       }
+      // Promotion always writes a v1 journal, so commit the membership that v1 replay uses.
+      includeContinuationTombstones = false;
+      snapshot = lineageSnapshot(rows, coordinates.binding, includeContinuationTombstones);
+      assertNoActiveGeneration(snapshot);
       const row = sourceRow(snapshot, source);
       const capturedAt = deps.now();
       const seal = sealForSource(coordinates, row, source, snapshot.digest, capturedAt);
