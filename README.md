@@ -49,7 +49,7 @@ diffable and git-friendly. Milestones form a dependency DAG via their
 | Package | What it is |
 |---|---|
 | `@cq/ledger` | The library: parser, `FsLedgerStore`, schema/registry, FTS index, and the MCP tool definitions. |
-| `@cq/ledger-mcp` | Standalone MCP server exposing the 46-tool ledger surface over **stdio** or **Streamable HTTP**. |
+| `@cq/ledger-mcp` | Standalone MCP server exposing the 54-tool ledger surface over **stdio** or **Streamable HTTP**. |
 | `@cq/ledger-tui` | Ink terminal UI — a pure MCP client. Runs against a remote `cq mcp --http` (`--mcp-url`) or, by default, with the MCP server **embedded in-process** (`--cwd`). |
 | `@cq/ledger-web` | Browser explorer/editor + milestone **DAG view** — a pure MCP client served as a static bundle. Reverse-proxies to a remote `cq mcp` (`--mcp-url`) or, by default, **embeds the MCP server in-process** (`--cwd`). |
 
@@ -78,7 +78,7 @@ attested prompt surface. A server that cannot satisfy those prerequisites
 omits those six names; broker availability similarly controls the two git
 tools, leaving 31 tools instead of advertising handlers that can only fail.
 
-The 46-tool ledger surface uses a single breaking wire-response contract:
+The 54-tool ledger surface uses a single breaking wire-response contract:
 item-bearing reads require an explicit compact/complement/full projection and eligible
 mutations return acknowledgements rather than full entities. See the
 [`@cq/ledger-mcp` response matrix](nix/pkg/cq-ledgers/packages/ledger-mcp/README.md#wire-response-contract)

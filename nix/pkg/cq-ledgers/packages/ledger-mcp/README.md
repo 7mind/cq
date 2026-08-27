@@ -258,6 +258,14 @@ measured savings without another batching schema.
 | `execute_external_implementation_review_attempt` | `purpose-built-small` | Exactly `{ status, attemptRef, executionRef }`. |
 | `finalize_implementation_review_attempt` | `purpose-built-small` | Exactly `{ status, attemptRef, terminalState }`. |
 | `prepare_implementation_review_fallback` | `purpose-built-small` | Exactly `{ status, attemptRef, dispatch }` for the sole authenticated native fallback. |
+| `prepare_implementation_audit_panel` | `purpose-built-small` | Exactly `{ status, panelRef, manifestId, recordKey, taskRef, rosterDigest, attemptRefs }`. |
+| `prepare_implementation_audit_attempt` | `purpose-built-small` | Exactly `{ status, attemptRef, launch, dispatch? }`; `dispatch` exists only for native launch. |
+| `execute_external_implementation_audit_attempt` | `purpose-built-small` | Exactly `{ status, attemptRef, executionRef }`. |
+| `finalize_implementation_audit_attempt` | `purpose-built-small` | Exactly `{ status, attemptRef, terminalState }`. |
+| `prepare_implementation_audit_fallback` | `purpose-built-small` | Exactly `{ status, attemptRef, dispatch }` for the sole authenticated native fallback. |
+| `arm_implementation_evidence_activation` | `purpose-built-small` | Exactly `{ status, requirementRef, manifestId, goalRef, finalizedManifestDigest, evidenceTaskRef, auditTaskRef, activationTaskRef, boundaryCommit, taskRefs }`. |
+| `apply_implementation_audit_manifest` | `purpose-built-small` | Exactly `{ status, manifestId, manifestDigest, repositoryHead, activation, requirementRef, evidenceFingerprint, auditRefs, taskRefs }`. |
+| `get_implementation_evidence_activation_status` | `purpose-built-small` | Exactly one bounded absent, pending, stale, or active activation status acknowledgement. |
 | `prepare_implementation_completion` | `purpose-built-small` | Exactly `{ status, completionRef, taskRef, resultCommit, repositoryHead, evidenceFingerprint }`. |
 | `record_implementation_completion` | `purpose-built-small` | One typed `merge-required`, `reprepare-required`, `recorded`, or `existing` acknowledgement. |
 <!-- ledger-response-contract:end -->
@@ -387,7 +395,7 @@ not sent as a tool argument.
 
 ## Client development and migration
 
-Treat response decoding as a closed 46-tool matrix, not as a generic
+Treat response decoding as a closed 54-tool matrix, not as a generic
 full-entity decoder. Require callers to choose a projection for the five
 item-bearing read tools, model the acknowledgement DTOs independently
 from full items, and retain pagination metadata until `nextOffset` becomes
