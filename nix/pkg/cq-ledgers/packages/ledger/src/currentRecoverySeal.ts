@@ -416,6 +416,10 @@ function isCommittedRecoveryEpochPromotion(
   const nextSeed = next.seal.seed;
   const promotedGeneration = nextSeed.selectedSourceHandle.generation;
   const suffix = nextSeed.gitReceipts.slice(currentSeed.gitReceipts.length);
+  const receiptsAdvanceOrPreserveTip =
+    currentSeed.gitReceipts.length < nextSeed.gitReceipts.length ||
+    (currentSeed.gitReceipts.length === nextSeed.gitReceipts.length &&
+      currentSeed.liveTip === nextSeed.liveTip);
   return (
     nextSeed.version === 1 &&
     currentSeed.taskId === nextSeed.taskId &&
@@ -428,7 +432,7 @@ function isCommittedRecoveryEpochPromotion(
       nextSeed.selectedSourceHandle.attestationId &&
     promotedGeneration > currentSeed.lineageMaximumGeneration &&
     nextSeed.lineageMaximumGeneration === promotedGeneration &&
-    currentSeed.gitReceipts.length < nextSeed.gitReceipts.length &&
+    receiptsAdvanceOrPreserveTip &&
     chainIsPrefix(currentSeed.gitReceipts, nextSeed.gitReceipts) &&
     suffix.every(
       (receipt) =>
