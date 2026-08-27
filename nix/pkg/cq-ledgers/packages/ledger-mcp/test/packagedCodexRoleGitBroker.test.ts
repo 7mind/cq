@@ -62,6 +62,13 @@ function codexWorksetEffect(targetRef: string) {
     targetRef,
   } as const;
 }
+
+function evidenceObserverOf(capability: ReturnType<typeof createDispatchCapability>) {
+  if (capability.observeEvidence === undefined) {
+    throw new Error("packaged dispatch evidence observation is unavailable");
+  }
+  return capability.observeEvidence;
+}
 const WORKER_FIXTURE = fileURLToPath(new URL("./fixtures/codexBrokerWorker.ts", import.meta.url));
 const RESOLVER_FIXTURE = fileURLToPath(
   new URL("./fixtures/codexBrokerResolver.ts", import.meta.url),
@@ -382,10 +389,7 @@ async function runPackagedReviewer(input: {
   expect(confirmed.state).toBe("consumed");
   const fetched = await capability.fetch(handle);
   if (fetched.state !== "consumed") throw new Error(`unexpected reviewer state ${fetched.state}`);
-  if (capability.observeEvidence === undefined) {
-    throw new Error("packaged reviewer evidence observation is unavailable");
-  }
-  const observed = await capability.observeEvidence(handle);
+  const observed = await evidenceObserverOf(capability)(handle);
   if (observed.state !== "consumed") {
     throw new Error(`unexpected reviewer observation ${observed.state}`);
   }
@@ -2186,10 +2190,7 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           },
           fetchWorker: async (dispatch) => {
             expect(dispatch).toEqual(round2.handle);
-            if (capability.observeEvidence === undefined) {
-              throw new Error("installed worker evidence observation is unavailable");
-            }
-            const observation = await capability.observeEvidence(dispatch);
+            const observation = await evidenceObserverOf(capability)(dispatch);
             if (observation.state !== "consumed") {
               throw new Error(`unexpected worker observation ${observation.state}`);
             }
