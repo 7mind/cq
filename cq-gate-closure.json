@@ -21,7 +21,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/worktreeTerminalReleaseXdg.test.ts",
-      "sha256": "07fc3140b12090ad945d90c8eb6ce028c3d128365afb9398a14e046b6cdcd4b0",
+      "sha256": "9daba29a92071d09c64e595f5a76ff83e29362455a14ccaf085dfa8db9354406",
       "targets": []
     },
     {
