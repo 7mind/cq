@@ -983,9 +983,9 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       reason: "wip-open",
       openCheckpoints: ["implementation"],
     });
-    expect(await fs.stat(subject.managed.handle.absolutePath).then((entry) => entry.isDirectory())).toBe(
-      true,
-    );
+    expect(
+      await fs.stat(subject.managed.handle.absolutePath).then((entry) => entry.isDirectory()),
+    ).toBe(true);
   });
 
   test("gate projection rejects integration history outside the exact result ancestry [Behavioral-Active Effectual-GoodCommunication]", async () => {
