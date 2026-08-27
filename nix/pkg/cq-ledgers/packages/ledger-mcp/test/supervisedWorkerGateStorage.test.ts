@@ -192,7 +192,14 @@ class ClockAdvancingGateDummy implements SupervisedWorkerGateRunner {
 }
 
 type DispatchBaseMode = "managed" | "descendant";
-type WipFixtureMode = false | "exact" | "inherited" | "foreign" | "modified-foreign" | "malformed";
+type WipFixtureMode =
+  | false
+  | "exact"
+  | "inherited"
+  | "after-prepare-inherited"
+  | "foreign"
+  | "modified-foreign"
+  | "malformed";
 
 function wipFixtureBody(taskId: string, baseCommit: string, body: string): string {
   return serializeWipArtifact({
@@ -250,6 +257,19 @@ async function fixtureWithDispatchBase(
   );
   if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
   let dispatchBaseCommit = baseCommit;
+  if (wipFixture === "after-prepare-inherited") {
+    const inheritedPath = "WIP-T2234.md";
+    const inheritedBody = wipFixtureBody(
+      "T2234",
+      baseCommit,
+      "Earlier task checkpoint entered integration after this task prepared.\n",
+    );
+    await fs.writeFile(path.join(repositoryRoot, inheritedPath), inheritedBody);
+    await git(repositoryRoot, ["add", inheritedPath]);
+    await git(repositoryRoot, ["commit", "-q", "-m", "advance integration with retained WIP"]);
+    dispatchBaseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+    await git(managed.handle.absolutePath, ["merge", "--ff-only", dispatchBaseCommit]);
+  }
   if (dispatchBaseMode === "descendant") {
     await fs.writeFile(path.join(managed.handle.absolutePath, "round-base.txt"), "round base\n");
     await git(managed.handle.absolutePath, ["add", "round-base.txt"]);
@@ -873,6 +893,27 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
         }),
       ).rejects.toThrow(/foreign WIP artifact WIP-T223[45]\.md/u);
     }
+  });
+
+  // Regression: D366 — integration can advance with retained WIP after task preparation.
+  test("terminal release ignores unchanged WIP from authenticated post-prepare integration [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const subject = await fixtureWithDispatchBase(
+      new GateDummy(),
+      "managed",
+      () => "2026-08-12T20:00:00.000Z",
+      "after-prepare-inherited",
+    );
+    expect(await stageAndFinalize(subject)).toMatchObject({ state: "result-stored" });
+
+    const released = await releaseManagedWorktree(
+      {
+        handle: subject.managed.handle,
+        terminalDisposition: "done",
+        resultCommit: subject.receipt.newHead,
+      },
+      { stateDir: subject.stateDir },
+    );
+    expect(released).toMatchObject({ status: "released" });
   });
 
   test("pre-merge WIP closure denies missing, malformed, stale, and coordinate-mismatched evidence", async () => {
