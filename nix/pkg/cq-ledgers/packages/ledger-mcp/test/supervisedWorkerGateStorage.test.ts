@@ -192,13 +192,7 @@ class ClockAdvancingGateDummy implements SupervisedWorkerGateRunner {
 }
 
 type DispatchBaseMode = "managed" | "descendant";
-type WipFixtureMode =
-  | false
-  | "exact"
-  | "inherited"
-  | "foreign"
-  | "modified-foreign"
-  | "malformed";
+type WipFixtureMode = false | "exact" | "inherited" | "foreign" | "modified-foreign" | "malformed";
 
 function wipFixtureBody(taskId: string, baseCommit: string, body: string): string {
   return serializeWipArtifact({
@@ -315,7 +309,7 @@ async function fixtureWithDispatchBase(
               ]
             : wipFixture === "modified-foreign"
               ? [{ taskId: "T2234", path: "WIP-T2234.md" }]
-            : []
+              : []
         ).map(({ taskId, path: wipPath }) => ({
           path: wipPath,
           body: wipFixtureBody(

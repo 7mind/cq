@@ -87,41 +87,43 @@ function authenticatedConsumedResult(
     attestationId: handle.attestationId,
     generation: handle.generation,
   }));
-  const output = (status === "fail"
-    ? {
-        taskId: RECOVERY_TASK,
-        status,
-        resultCommit: null,
-        branch: RECOVERY_BINDING.branch,
-        actualWorktreePath: RECOVERY_BINDING.worktreePath,
-        filesTouched: [],
-        checkSummary: "controlled consumed failure",
-        summary: "the trusted parent captured the failed output",
-        blockedReason: "controlled D361 reproduction",
-        baseVerification: {
-          status: "unresolvable",
-          reason: "base-missing",
-          baseCommit: null,
-          headCommit: null,
-        },
-      }
-    : {
-        taskId: RECOVERY_TASK,
-        status,
-        resultCommit: RECOVERY_TIP,
-        branch: RECOVERY_BINDING.branch,
-        actualWorktreePath: RECOVERY_BINDING.worktreePath,
-        filesTouched: ["file.txt"],
-        gitReceipts: receipts,
-        checkSummary: "controlled consumed pass",
-        summary: "the trusted parent captured the passing output",
-        baseVerification: {
-          status: "verified",
-          relation: "descendant",
-          baseCommit: RECOVERY_BASE,
-          headCommit: RECOVERY_TIP,
-        },
-      }) as DispatchJSONValue;
+  const output = (
+    status === "fail"
+      ? {
+          taskId: RECOVERY_TASK,
+          status,
+          resultCommit: null,
+          branch: RECOVERY_BINDING.branch,
+          actualWorktreePath: RECOVERY_BINDING.worktreePath,
+          filesTouched: [],
+          checkSummary: "controlled consumed failure",
+          summary: "the trusted parent captured the failed output",
+          blockedReason: "controlled D361 reproduction",
+          baseVerification: {
+            status: "unresolvable",
+            reason: "base-missing",
+            baseCommit: null,
+            headCommit: null,
+          },
+        }
+      : {
+          taskId: RECOVERY_TASK,
+          status,
+          resultCommit: RECOVERY_TIP,
+          branch: RECOVERY_BINDING.branch,
+          actualWorktreePath: RECOVERY_BINDING.worktreePath,
+          filesTouched: ["file.txt"],
+          gitReceipts: receipts,
+          checkSummary: "controlled consumed pass",
+          summary: "the trusted parent captured the passing output",
+          baseVerification: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit: RECOVERY_BASE,
+            headCommit: RECOVERY_TIP,
+          },
+        }
+  ) as DispatchJSONValue;
   const stored = storeDispatchResult(
     {
       resultCapability: handle.resultCapability,
@@ -152,7 +154,10 @@ function authenticatedConsumedResult(
       gateEpoch: claimed.gateEpoch,
       output:
         status === "pass"
-          ? ({ ...(output as Record<string, DispatchJSONValue>), gateDurationMs: 1 } as DispatchJSONValue)
+          ? ({
+              ...(output as Record<string, DispatchJSONValue>),
+              gateDurationMs: 1,
+            } as DispatchJSONValue)
           : output,
     },
     { store, now: clock.now },
@@ -277,14 +282,14 @@ describe("protected current dispatch-recovery capture", () => {
     expect(seal.seed.selectedSourceHandle.generation).toBe(2);
     expect(seal.seed.lineageMaximumGeneration).toBe(9);
     expect((await currentRecoveryStatus(journal, RECOVERY_TASK)).state).toBe("committed");
-    expect(dispatchLineageFenceFromRecoveryJournal(await journal.read(RECOVERY_TASK))).toMatchObject(
-      {
-        state: "journal-only",
-        recoverySeedRef: seal.sealReference,
-        selectedSourceGeneration: 2,
-        lineageMaximumGeneration: 9,
-      },
-    );
+    expect(
+      dispatchLineageFenceFromRecoveryJournal(await journal.read(RECOVERY_TASK)),
+    ).toMatchObject({
+      state: "journal-only",
+      recoverySeedRef: seal.sealReference,
+      selectedSourceGeneration: 2,
+      lineageMaximumGeneration: 9,
+    });
   });
 
   test("v1 committed status retains the legacy envelope-only lineage digest", async () => {
@@ -561,7 +566,8 @@ describe("protected current dispatch-recovery capture", () => {
 
   test("seals a pre-cutover consumed-fail envelope from its authenticated stored output", async () => {
     const fixture = authenticatedConsumedResult("fail", { collapse: false });
-    if (fixture.row.kind !== "envelope") throw new Error("failure fixture did not retain an envelope");
+    if (fixture.row.kind !== "envelope")
+      throw new Error("failure fixture did not retain an envelope");
     const { dispatchContinuationBinding: _classification, ...preCutoverBody } = fixture.row;
     const preCutover = rehydrateAttestationRow(
       fixture.row.namespace,
@@ -589,7 +595,8 @@ describe("protected current dispatch-recovery capture", () => {
 
   test("rejects pre-cutover pass, malformed failure output, and stale durable receipt closures", async () => {
     const passFixture = authenticatedConsumedResult("pass", { collapse: false });
-    if (passFixture.row.kind !== "envelope") throw new Error("pass fixture did not retain an envelope");
+    if (passFixture.row.kind !== "envelope")
+      throw new Error("pass fixture did not retain an envelope");
     const { dispatchContinuationBinding: _classification, ...preCutoverPassBody } = passFixture.row;
     const preCutoverPass = rehydrateAttestationRow(
       passFixture.row.namespace,

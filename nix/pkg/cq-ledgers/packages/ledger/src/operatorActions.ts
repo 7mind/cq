@@ -187,17 +187,14 @@ export async function materializeOperatorAction(
       status: "user-action-required",
       fields: {
         summary:
-          `Operator action ${action.id} awaits deployment identity ` +
-          input.expectedOutputIdentity,
+          `Operator action ${action.id} awaits deployment identity ` + input.expectedOutputIdentity,
         flow: "implement",
         ledgerRefs: [
           `${TASKS_LEDGER}:${task.id}`,
           goalRefs[0]!,
           `${OPERATOR_ACTIONS_LEDGER}:${action.id}`,
         ],
-        handoffReasons: [
-          `Deploy ${input.expectedOutputIdentity} and acknowledge ${action.id}`,
-        ],
+        handoffReasons: [`Deploy ${input.expectedOutputIdentity} and acknowledge ${action.id}`],
         tags: ["operator-action", directive.actionKey],
       },
       ...(input.author === undefined ? {} : { author: input.author }),
@@ -208,7 +205,10 @@ export async function materializeOperatorAction(
     handoff = store.fetchItem(HANDOFFS_LEDGER, handoffId);
     const refs = stringArray(handoff.fields["ledgerRefs"]);
     if (!refs.includes(`${OPERATOR_ACTIONS_LEDGER}:${action.id}`)) {
-      throw new OperatorActionConflictError(action.id, `handoff id ${handoff.id} belongs elsewhere`);
+      throw new OperatorActionConflictError(
+        action.id,
+        `handoff id ${handoff.id} belongs elsewhere`,
+      );
     }
   }
   return { state, action, handoff };
@@ -355,7 +355,10 @@ function assertEvidenceBounds(evidence: OperatorActionShellEvidence): void {
   if (byteLength(evidence.command) > MAX_COMMAND_BYTES) {
     throw new SchemaValidationError("command exceeds 4096 bytes");
   }
-  if (byteLength(evidence.stdout) > MAX_STREAM_BYTES || byteLength(evidence.stderr) > MAX_STREAM_BYTES) {
+  if (
+    byteLength(evidence.stdout) > MAX_STREAM_BYTES ||
+    byteLength(evidence.stderr) > MAX_STREAM_BYTES
+  ) {
     throw new SchemaValidationError("stdout/stderr exceeds 65536 bytes");
   }
 }
