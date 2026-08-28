@@ -293,8 +293,21 @@ describe("trusted historical implementation fixture rules [BA]", () => {
   });
 
   test("production D347 registry excludes completed tasks not retained at the boundary", async () => {
-    const head = "f".repeat(40);
-    const postBoundary = "e".repeat(40);
+    const git = async (args: readonly string[]) => {
+      const child = Bun.spawn(["git", ...args], {
+        cwd: process.cwd(),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([
+        new Response(child.stdout).text(),
+        child.exited,
+      ]);
+      return { stdout: stdout.trim(), exitCode };
+    };
+    const postBoundary = (await git(["rev-parse", "HEAD"])).stdout;
+    const head = (await git(["rev-parse", "HEAD^"])).stdout;
+    expect((await git(["merge-base", "--is-ancestor", postBoundary, head])).exitCode).toBe(1);
     const finalized = JSON.stringify({
       revision: 1,
       milestones: [{ key: "m-evidence", id: "M347" }],
@@ -316,14 +329,14 @@ describe("trusted historical implementation fixture rules [BA]", () => {
       }, "M347");
     const ledgers: Record<string, readonly ReturnType<typeof authorityItem>[]> = {
       tasks: [
-        task("T3000", "1".repeat(40)),
-        task("T3001", "2".repeat(40)),
+        task("T3000", head),
+        task("T3001", head),
         authorityItem("T3002", "planned", {
           headline: "T3002",
           worksetOwnerRef: "goals:G176",
           worksetOwnerEdgeKind: "finalized-manifest",
         }, "M347"),
-        task("T3003", "3".repeat(40)),
+        task("T3003", head),
         task("T3004", postBoundary),
       ],
       goals: [authorityItem("G176", "building", { title: "D347", planFinalizedManifest: finalized })],
@@ -351,11 +364,11 @@ describe("trusted historical implementation fixture rules [BA]", () => {
         readCommitFile: async (_commit, path) => {
           const taskId = /^WIP-(T[0-9]+)\.md$/u.exec(path)?.[1];
           if (taskId === undefined) throw new Error("unexpected WIP path");
-          return `\`\`\`json\n${JSON.stringify({ taskId, role: "implement-worker", baseCommit: "a".repeat(40) })}\n\`\`\`\n`;
+          return `\`\`\`json\n${JSON.stringify({ taskId, role: "implement-worker", baseCommit: head })}\n\`\`\`\n`;
         },
         diff: async (baseCommit, resultCommit) => `diff ${baseCommit} ${resultCommit}`,
         isAncestor: async (ancestor, descendant) =>
-          !(ancestor === postBoundary && descendant === head),
+          (await git(["merge-base", "--is-ancestor", ancestor, descendant])).exitCode === 0,
       },
     });
 
