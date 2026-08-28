@@ -17,6 +17,7 @@ import { serializePiRoleToolProfileManifest } from "../src/roleToolProfiles.js";
 import { implementConflictResolverSidecar } from "../src/schemas/implement-conflict-resolver.js";
 import { implementReviewerSidecar } from "../src/schemas/implement-reviewer.js";
 import { implementWorkerSidecar } from "../src/schemas/implement-worker.js";
+import { implementationAuditorSidecar } from "../src/schemas/implementation-auditor.js";
 import { investigateExplorerSidecar } from "../src/schemas/investigate-explorer.js";
 import { investigateProberSidecar } from "../src/schemas/investigate-prober.js";
 import { planAdvanceSidecar } from "../src/schemas/plan-advance.js";
@@ -29,6 +30,7 @@ const DISPATCHED_ROLE_SIDECARS = [
   planReviewerSidecar,
   implementWorkerSidecar,
   implementReviewerSidecar,
+  implementationAuditorSidecar,
   implementConflictResolverSidecar,
   investigateExplorerSidecar,
   investigateProberSidecar,

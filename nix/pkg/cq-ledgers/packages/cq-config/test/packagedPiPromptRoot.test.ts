@@ -501,6 +501,7 @@ describe("packaged Pi prompt root", () => {
       "src/schemas/implement-conflict-resolver.ts",
       "src/schemas/implement-reviewer.ts",
       "src/schemas/implement-worker.ts",
+      "src/schemas/implementation-auditor.ts",
       "src/schemas/investigate-evidence.ts",
       "src/schemas/investigate-explorer.ts",
       "src/schemas/investigate-prober.ts",
