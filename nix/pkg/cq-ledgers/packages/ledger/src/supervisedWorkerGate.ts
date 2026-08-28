@@ -24,7 +24,11 @@ import {
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const PASS_COUNT = /(?:^|\n)\s*([0-9]+)\s+pass\b/gu;
 const FAIL_COUNT = /(?:^|\n)\s*([0-9]+)\s+fail\b/gu;
+const FAIL_SUMMARY_LINE = /^\s*[0-9]+\s+fail\b/u;
 const OUTPUT_TAIL_LINE_COUNT = 20;
+const FAILURE_SUMMARY_CONTEXT_LINE_COUNT = 2;
+const FAILURE_SUMMARY_WINDOW_BYTE_LIMIT = 256;
+const FAILURE_OUTPUT_TAIL_BYTE_LIMIT = 896;
 
 /** Host-owned bounds begin only after the child has submitted its result. */
 export const SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS =
@@ -156,9 +160,39 @@ function tail(output: string): string {
   return output.trimEnd().split("\n").slice(-OUTPUT_TAIL_LINE_COUNT).join("\n");
 }
 
+function truncateUtf8(value: string, byteLimit: number): string {
+  let byteCount = 0;
+  let end = 0;
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, "utf8");
+    if (byteCount + characterBytes > byteLimit) break;
+    byteCount += characterBytes;
+    end += character.length;
+  }
+  return value.slice(0, end);
+}
+
+function failureSummaryWindow(output: string): string {
+  const lines = output.trimEnd().split("\n");
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (FAIL_SUMMARY_LINE.test(lines[index])) {
+      return lines
+        .slice(Math.max(0, index - FAILURE_SUMMARY_CONTEXT_LINE_COUNT + 1), index + 1)
+        .map((line) => truncateUtf8(line, FAILURE_SUMMARY_WINDOW_BYTE_LIMIT))
+        .join("\n");
+    }
+  }
+  return "";
+}
+
 function outputTail(stdout: string, stderr: string, gateExitCode: number): string {
   if (gateExitCode === 0) return tail(`${stdout}\n${stderr}`);
-  return [tail(stdout), tail(stderr)].filter((value) => value.length > 0).join("\n");
+  return truncateUtf8(
+    [failureSummaryWindow(stdout), failureSummaryWindow(stderr), tail(stdout), tail(stderr)]
+      .filter((value) => value.length > 0)
+      .join("\n"),
+    FAILURE_OUTPUT_TAIL_BYTE_LIMIT,
+  );
 }
 
 export function createNodeSupervisedWorkerGateRunner(
