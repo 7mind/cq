@@ -103,6 +103,9 @@ function fixture(
     readonly executeExternalAudit?: NonNullable<
       ImplementationEvidenceServiceDependencies["executeExternalAudit"]
     >;
+    readonly prepareNativeAudit?: NonNullable<
+      ImplementationEvidenceServiceDependencies["prepareNativeAudit"]
+    >;
   } = {
     auditRoster: [adapter],
     fetchNativeAudit: async () => ({ state: "missing" }),
@@ -137,7 +140,10 @@ function fixture(
       throw new Error("not configured");
     },
     readAuditManifest: async () => structuredClone(manifest),
-    prepareNativeAudit: async ({ attemptRef }) => dispatch(attemptRef),
+    prepareNativeAudit: async (input) =>
+      options.prepareNativeAudit === undefined
+        ? dispatch(input.attemptRef)
+        : await options.prepareNativeAudit(input),
     fetchNativeAudit: options.fetchNativeAudit,
     executeExternalAudit: async (input) => {
       launches += 1;
@@ -344,6 +350,91 @@ describe("protected implementation audit attempts [BG]", () => {
         author: "parent",
       }),
     ).rejects.toThrow("audit attempt is already terminal");
+    expect((await f.store.snapshot()).auditAttempts[prepared.attemptRef]).toEqual(terminalAttempt);
+  });
+
+  test("does not launch native preparation from a terminal snapshot", async () => {
+    let manifestDigest = "";
+    let prepareCount = 0;
+    const f = fixture(() => "", {
+      auditRoster: [native],
+      fetchNativeAudit: async (preparedDispatch) => ({
+        state: "consumed",
+        output: adapterVerdict(manifestDigest),
+        retainedAttestation: preparedDispatch.attestationId,
+      }),
+      prepareNativeAudit: async ({ attemptRef }) => {
+        prepareCount += 1;
+        return dispatch(attemptRef);
+      },
+    });
+    const prepared = await preparedAttempt(f);
+    manifestDigest = prepared.manifestDigest;
+    await f.service.finalizeAuditAttempt({
+      attemptRef: prepared.attemptRef,
+      operationId: "finalize-before-fresh-native-preparation",
+      author: "parent",
+    });
+
+    await expect(
+      f.service.prepareAuditAttempt({
+        panelRef: prepared.panel.panelRef,
+        attemptRef: prepared.attemptRef,
+        operationId: "prepare-terminal-native-attempt-again",
+        author: "parent",
+      }),
+    ).rejects.toThrow("audit attempt is already terminal");
+    expect(prepareCount).toBe(1);
+  });
+
+  test("rechecks terminal state when native preparation reaches the write boundary", async () => {
+    let manifestDigest = "";
+    let prepareCount = 0;
+    let markRacingPreparationStarted!: () => void;
+    let releaseRacingPreparation!: () => void;
+    const racingPreparationStarted = new Promise<void>((resolve) => {
+      markRacingPreparationStarted = resolve;
+    });
+    const racingPreparationReleased = new Promise<void>((resolve) => {
+      releaseRacingPreparation = resolve;
+    });
+    const f = fixture(() => "", {
+      auditRoster: [native],
+      fetchNativeAudit: async (preparedDispatch) => ({
+        state: "consumed",
+        output: adapterVerdict(manifestDigest),
+        retainedAttestation: preparedDispatch.attestationId,
+      }),
+      prepareNativeAudit: async ({ attemptRef }) => {
+        prepareCount += 1;
+        if (prepareCount === 2) {
+          markRacingPreparationStarted();
+          await racingPreparationReleased;
+        }
+        return dispatch(attemptRef);
+      },
+    });
+    const prepared = await preparedAttempt(f);
+    manifestDigest = prepared.manifestDigest;
+
+    const racingPreparation = f.service.prepareAuditAttempt({
+      panelRef: prepared.panel.panelRef,
+      attemptRef: prepared.attemptRef,
+      operationId: "prepare-from-stale-snapshot",
+      author: "parent",
+    });
+    await racingPreparationStarted;
+    await expect(
+      f.service.finalizeAuditAttempt({
+        attemptRef: prepared.attemptRef,
+        operationId: "finalize-before-preparation-write",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ terminalState: "approved" });
+    const terminalAttempt = (await f.store.snapshot()).auditAttempts[prepared.attemptRef];
+    releaseRacingPreparation();
+
+    await expect(racingPreparation).rejects.toThrow("audit attempt is already terminal");
     expect((await f.store.snapshot()).auditAttempts[prepared.attemptRef]).toEqual(terminalAttempt);
   });
 
