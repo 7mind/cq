@@ -2105,10 +2105,24 @@ export class ImplementationEvidenceService {
           taskRefs: existingApplication.taskRefs,
         };
       }
-      const requirement = Object.values(state.activationRequirements).find(
+      const requirementCandidates = Object.values(state.activationRequirements).filter(
         (candidate) =>
           candidate.manifestId === manifest.manifestId && candidate.boundaryCommit === repositoryHead,
       );
+      const armedRequirements = requirementCandidates.filter(
+        (candidate) => candidate.state === "armed",
+      );
+      if (armedRequirements.length > 1)
+        throw new Error("multiple implementation evidence activation requirements are armed");
+      const requirement =
+        armedRequirements[0] ??
+        requirementCandidates.find(
+          (candidate) =>
+            candidate.manifestDigest === manifestDigest &&
+            candidate.sourceDigest === manifest.sourceDigest &&
+            candidate.goalRef === manifest.activation?.goalRef &&
+            candidate.finalizedManifestDigest === manifest.activation?.finalizedManifestDigest,
+        );
       if (manifest.activation !== null && requirement === undefined)
         throw new Error("implementation evidence activation requirement is missing");
       if (
