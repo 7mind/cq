@@ -1495,7 +1495,7 @@ EOF
                 test "$(find "$agentsDir" -maxdepth 1 -name '*.toml' | wc -l)" \
                   -eq "${toString (builtins.length codexCommandSkillsTest.agentNames)}"
                 # The declared roster is the dispatched-role roster, not a subset.
-                test "${toString (builtins.length codexCommandSkillsTest.agentNames)}" -eq 9
+                test "${toString (builtins.length codexCommandSkillsTest.agentNames)}" -eq 10
                 # Half (a) again, on the RENDERED bytes rather than the nix source:
                 # no dispatched role body may reach a skill package.
                 if find "$out" -name 'role-*.md' | ${pkgs.gnugrep}/bin/grep -q .; then

@@ -133,7 +133,7 @@ pkgs.runCommand "claude-prompt-home-check"
 
     test ${toString (builtins.length promptCatalog)} -eq 26
     test ${toString commandCount} -eq 16
-    test ${toString agentCount} -eq 9
+    test ${toString agentCount} -eq 10
     test ${lib.escapeShellArg claudeConfig.package.promptSurface} = claude
     test ${lib.escapeShellArg (toString claudeConfig.package.promptRoot)} = ${lib.escapeShellArg (toString claudePromptRoot)}
     test ${toString (builtins.length (builtins.attrNames claudeConfig.plugins))} -eq 1
