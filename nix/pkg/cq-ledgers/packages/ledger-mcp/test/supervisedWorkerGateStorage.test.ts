@@ -1553,9 +1553,9 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     D326_TEST_TIMEOUT_MS,
   );
 
-  // Regression: the bounded runner diagnostic must retain an earlier Bun failure block.
+  // Regression: the bounded runner diagnostic must retain the stdout failure summary.
   test(
-    "D373 retains a Bun failure identity before long trailing diagnostics [Behavioral-Active Effectual-GoodCommunication]",
+    "D373 retains a stdout failure summary before long trailing stderr diagnostics [Behavioral-Active Effectual-GoodCommunication]",
     async () => {
       const root = await fs.mkdtemp(path.join(tmpdir(), "t2346-long-output-"));
       roots.push(root);
@@ -1570,8 +1570,8 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
         [
           "#!/bin/sh",
           "set -eu",
-          "printf 'long-output regression identity (fail)\\n1 fail\\n'",
-          "i=1; while test \"$i\" -le 21; do printf 'trailing diagnostic %s\\n' \"$i\"; i=$((i + 1)); done",
+          "printf 'long-output regression identity\\n1 fail\\n'",
+          "i=1; while test \"$i\" -le 21; do printf 'trailing diagnostic %s\\n' \"$i\" >&2; i=$((i + 1)); done",
           "exit 1",
           "",
         ].join("\n"),
@@ -1586,7 +1586,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
           executionTimeoutMs: FIRST_EXECUTION_TIMEOUT_MS,
         });
         expect(result.gateExitCode).toBe(1);
-        expect(result.outputTail).toContain("long-output regression identity (fail)");
+        expect(result.outputTail).toContain("long-output regression identity");
         expect(result.outputTail).toContain("trailing diagnostic 21");
       } finally {
         if (priorPath === undefined) delete process.env["PATH"];

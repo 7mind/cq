@@ -24,9 +24,7 @@ import {
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const PASS_COUNT = /(?:^|\n)\s*([0-9]+)\s+pass\b/gu;
 const FAIL_COUNT = /(?:^|\n)\s*([0-9]+)\s+fail\b/gu;
-const BUN_FAILURE_MARKER = "(fail)";
 const OUTPUT_TAIL_LINE_COUNT = 20;
-const FAILURE_CONTEXT_LINE_COUNT = 3;
 
 /** Host-owned bounds begin only after the child has submitted its result. */
 export const SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS =
@@ -154,18 +152,13 @@ function lastCount(pattern: RegExp, output: string): number | undefined {
   return observed;
 }
 
-function outputTail(output: string, gateExitCode: number): string {
-  const lines = output.trimEnd().split("\n");
-  const genericTail = lines.slice(-OUTPUT_TAIL_LINE_COUNT).join("\n");
-  if (gateExitCode === 0) return genericTail;
-  const failureIndex = lines.findLastIndex((line) => line.includes(BUN_FAILURE_MARKER));
-  if (failureIndex < 0 || failureIndex >= lines.length - OUTPUT_TAIL_LINE_COUNT) {
-    return genericTail;
-  }
-  const contextStart = Math.max(0, failureIndex - 1);
-  const contextEnd = Math.min(lines.length, failureIndex + FAILURE_CONTEXT_LINE_COUNT);
-  const failureContext = lines.slice(contextStart, contextEnd).join("\n");
-  return `${failureContext}\n${genericTail}`;
+function tail(output: string): string {
+  return output.trimEnd().split("\n").slice(-OUTPUT_TAIL_LINE_COUNT).join("\n");
+}
+
+function outputTail(stdout: string, stderr: string, gateExitCode: number): string {
+  if (gateExitCode === 0) return tail(`${stdout}\n${stderr}`);
+  return [tail(stdout), tail(stderr)].filter((value) => value.length > 0).join("\n");
 }
 
 export function createNodeSupervisedWorkerGateRunner(
@@ -401,7 +394,7 @@ async function runAdmittedNodeSupervisedWorkerGate(
     failCount,
     gateDurationMs: Date.now() - startedAt,
     capturedAt: new Date().toISOString(),
-    outputTail: outputTail(combined, raced.gateExitCode),
+    outputTail: outputTail(raced.stdout, raced.stderr, raced.gateExitCode),
   });
 }
 
