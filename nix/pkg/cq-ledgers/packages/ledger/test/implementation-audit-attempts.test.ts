@@ -253,6 +253,53 @@ describe("protected implementation audit attempts [BG]", () => {
     });
   });
 
+  test("rejects a fresh finalization operation after an audit attempt becomes terminal", async () => {
+    let manifestDigest = "";
+    let auditAvailable = true;
+    const f = fixture(() => "", {
+      auditRoster: [native],
+      fetchNativeAudit: async (preparedDispatch) =>
+        auditAvailable
+          ? {
+              state: "consumed",
+              output: adapterVerdict(manifestDigest),
+              retainedAttestation: preparedDispatch.attestationId,
+            }
+          : { state: "missing" },
+    });
+    const prepared = await preparedAttempt(f);
+    manifestDigest = prepared.manifestDigest;
+
+    expect(
+      await f.service.finalizeAuditAttempt({
+        attemptRef: prepared.attemptRef,
+        operationId: "finalize-approved-native-audit",
+        author: "parent",
+      }),
+    ).toMatchObject({ terminalState: "approved" });
+    await f.service.applyAuditManifest({
+      manifestId: manifest.manifestId,
+      manifestDigest,
+      expectedRepositoryHead: HEAD,
+      auditAttemptRefs: [prepared.attemptRef],
+      operationId: "apply-approved-native-audit",
+      author: "parent",
+    });
+    auditAvailable = false;
+
+    await expect(
+      f.service.finalizeAuditAttempt({
+        attemptRef: prepared.attemptRef,
+        operationId: "finalize-terminal-native-audit-again",
+        author: "parent",
+      }),
+    ).rejects.toThrow("audit attempt is already terminal");
+    expect((await f.store.snapshot()).auditAttempts[prepared.attemptRef]).toMatchObject({
+      terminalState: "approved",
+      verdict: adapterVerdict(manifestDigest),
+    });
+  });
+
   test("revalidates the native dispatch binding before applying an audit", async () => {
     let manifestDigest = "";
     let substituteAttestation = false;
