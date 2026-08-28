@@ -1370,9 +1370,15 @@ export async function implementationEvidenceActivationStatusFromStore(
   repositoryHead: string,
 ) {
   const state = await store.snapshot();
-  const requirement = Object.values(state.activationRequirements).find(
+  const requirementCandidates = Object.values(state.activationRequirements).filter(
     (candidate) => candidate.goalRef === input.goalRef && candidate.manifestId === input.manifestId,
   );
+  const armedRequirements = requirementCandidates.filter(
+    (candidate) => candidate.state === "armed",
+  );
+  if (armedRequirements.length > 1)
+    throw new Error("multiple implementation evidence activation requirements are armed");
+  const requirement = armedRequirements[0] ?? requirementCandidates[0];
   if (requirement === undefined) {
     return {
       status: "absent" as const,
