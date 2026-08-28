@@ -18,7 +18,7 @@ const workspacePackage = JSON.parse(
   readFileSync(WORKSPACE_PACKAGE_JSON, "utf8"),
 ) as WorkspacePackage;
 
-// Behavioral-Active Blackbox-Atomic; specified by the documented workspace gate.
+// Behavioral-Active Blackbox-Atomic; regression: D373 bounded gate diagnostics.
 describe("workspace script contract", () => {
   test("lints the whole workspace", () => {
     expect(workspacePackage.scripts.lint).toBe("eslint .");
@@ -26,7 +26,7 @@ describe("workspace script contract", () => {
 
   test("composes the aggregate check from named scripts", () => {
     expect(workspacePackage.scripts.check).toBe(
-      "tsc -b && bun run lint && bun test && bun run check:codex-installed-gate && bun run check:flake-enumeration",
+      "tsc -b && bun run lint && bun test --only-failures && bun run check:codex-installed-gate && bun run check:flake-enumeration",
     );
     expect(workspacePackage.scripts["check:codex-installed-gate"]).toBe(
       "cd ../../.. && nix build --no-link .#cq",
