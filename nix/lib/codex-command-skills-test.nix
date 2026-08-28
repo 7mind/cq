@@ -290,7 +290,7 @@ in
     assert !invalidSidecar.success;
     assert !collidingNames.success;
     assert builtins.length projectedSkillNames == 16;
-    assert builtins.length projectedRoleNames == 9;
+    assert builtins.length projectedRoleNames == 10;
     assert projectedAgentNames == projectedRoleNames;
     assert projected.catalog == "${promptRoot}/catalog.json";
     assert lib.all (name: builtins.hasAttr ".codex/skills/${name}" codexHomeFiles) projectedSkillNames;
