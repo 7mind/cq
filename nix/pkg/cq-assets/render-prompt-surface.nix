@@ -73,7 +73,7 @@ pkgs.runCommand "cq-${validatedSurface}-prompt-root"
     passthru.promptCatalog = assets.catalog;
   }
   ''
-    test "$(find ${rendererSource} -type f | wc -l)" -eq 15
+    test "$(find ${rendererSource} -type f | wc -l)" -eq 16
     test "$(find ${filteredAssets} -type f | wc -l)" -eq ${toString expectedAssetFileCount}
     bun run ${rendererSource}/scripts/render-prompt-surface.ts \
       ${lib.escapeShellArg validatedSurface} \
