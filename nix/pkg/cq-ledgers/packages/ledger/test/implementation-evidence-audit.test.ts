@@ -545,6 +545,59 @@ describe("protected historical implementation evidence [BA]", () => {
     });
   });
 
+  test("reports fulfilled requirements with obsolete packaged bindings as stale", async () => {
+    const base = manifest();
+    const reviewed = {
+      ...base,
+      records: base.records.map((entry) => ({
+        ...entry,
+        historicalReview: historicalReview(entry.taskRef, entry.baseCommit, entry.resultCommit),
+      })),
+    };
+    const replacements: readonly PackagedImplementationAuditManifest[] = [
+      {
+        ...reviewed,
+        records: reviewed.records.map((entry) => ({
+          ...entry,
+          acceptance: { clauses: ["replacement acceptance"] },
+        })),
+      },
+      { ...reviewed, sourceDigest: "1".repeat(64) },
+      {
+        ...reviewed,
+        activation: { ...reviewed.activation!, finalizedManifestDigest: "2".repeat(64) },
+      },
+    ];
+
+    for (const [index, replacement] of replacements.entries()) {
+      const f = fixture(reviewed);
+      await f.service.armEvidenceActivation({
+        goalRef: "goals:G176",
+        manifestId: reviewed.manifestId,
+        expectedRepositoryHead: HEAD,
+        operationId: `arm-status-obsolete-binding-${String(index)}`,
+        author: "parent",
+      });
+      await f.service.applyAuditManifest({
+        manifestId: reviewed.manifestId,
+        manifestDigest: implementationAuditManifestDigest(reviewed),
+        expectedRepositoryHead: HEAD,
+        auditAttemptRefs: [],
+        operationId: `apply-status-obsolete-binding-${String(index)}`,
+        author: "parent",
+      });
+      f.replacePackaged(replacement);
+
+      expect(
+        await f.service.evidenceActivationStatus({
+          goalRef: "goals:G176",
+          manifestId: replacement.manifestId,
+          expectedRepositoryHead: HEAD,
+        }),
+      ).toMatchObject({ status: "stale" });
+    }
+  });
+
   test("does not reuse a historical review bound to a different commit or ancestry", async () => {
     for (const review of [
       historicalReview("tasks:T10", BASE, RESULT_TWO),
