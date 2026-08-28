@@ -1553,6 +1553,49 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     D326_TEST_TIMEOUT_MS,
   );
 
+  // Regression: the bounded runner diagnostic must retain an earlier Bun failure block.
+  test(
+    "D373 retains a Bun failure identity before long trailing diagnostics [Behavioral-Active Effectual-GoodCommunication]",
+    async () => {
+      const root = await fs.mkdtemp(path.join(tmpdir(), "t2346-long-output-"));
+      roots.push(root);
+      const worktreePath = path.join(root, "worktree");
+      await fs.mkdir(path.join(worktreePath, "nix", "pkg", "cq-ledgers"), { recursive: true });
+      await git(worktreePath, ["init", "-q"]);
+      const bin = path.join(root, "bin");
+      await fs.mkdir(bin, { recursive: true });
+      const cq = path.join(bin, "cq");
+      await fs.writeFile(
+        cq,
+        [
+          "#!/bin/sh",
+          "set -eu",
+          "printf 'long-output regression identity (fail)\\n1 fail\\n'",
+          "i=1; while test \"$i\" -le 21; do printf 'trailing diagnostic %s\\n' \"$i\"; i=$((i + 1)); done",
+          "exit 1",
+          "",
+        ].join("\n"),
+      );
+      await fs.chmod(cq, 0o700);
+      const priorPath = process.env["PATH"];
+      process.env["PATH"] = `${bin}${path.delimiter}${priorPath ?? ""}`;
+      try {
+        const result = await nodeSupervisedWorkerGateRunner.run({
+          worktreePath,
+          admissionTimeoutMs: FIRST_EXECUTION_TIMEOUT_MS,
+          executionTimeoutMs: FIRST_EXECUTION_TIMEOUT_MS,
+        });
+        expect(result.gateExitCode).toBe(1);
+        expect(result.outputTail).toContain("long-output regression identity (fail)");
+        expect(result.outputTail).toContain("trailing diagnostic 21");
+      } finally {
+        if (priorPath === undefined) delete process.env["PATH"];
+        else process.env["PATH"] = priorPath;
+      }
+    },
+    FIRST_EXECUTION_TIMEOUT_MS,
+  );
+
   test(
     "D342 worktree settlement rejection still settles the registered root once and retains the deadline cause",
     async () => {
