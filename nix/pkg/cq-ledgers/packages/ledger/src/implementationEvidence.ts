@@ -1158,6 +1158,12 @@ export interface ImplementationEvidenceActivationStatusInput {
   readonly expectedRepositoryHead: string;
 }
 
+export interface ImplementationEvidenceActivationManifestBinding {
+  readonly manifestDigest: string;
+  readonly sourceDigest: string;
+  readonly finalizedManifestDigest: string;
+}
+
 export interface ImplementationAuditObservation {
   readonly state: "consumed" | "aborted" | "missing";
   readonly input?: DispatchJSONValue;
@@ -1368,6 +1374,7 @@ export async function implementationEvidenceActivationStatusFromStore(
   store: ImplementationEvidenceStore,
   input: ImplementationEvidenceActivationStatusInput,
   repositoryHead: string,
+  manifestBinding: ImplementationEvidenceActivationManifestBinding,
 ) {
   const state = await store.snapshot();
   const requirementCandidates = Object.values(state.activationRequirements).filter(
@@ -1378,7 +1385,13 @@ export async function implementationEvidenceActivationStatusFromStore(
   );
   if (armedRequirements.length > 1)
     throw new Error("multiple implementation evidence activation requirements are armed");
-  const requirement = armedRequirements[0] ?? requirementCandidates[0];
+  const matchingRequirement = requirementCandidates.find(
+    (candidate) =>
+      candidate.manifestDigest === manifestBinding.manifestDigest &&
+      candidate.sourceDigest === manifestBinding.sourceDigest &&
+      candidate.finalizedManifestDigest === manifestBinding.finalizedManifestDigest,
+  );
+  const requirement = armedRequirements[0] ?? matchingRequirement ?? requirementCandidates[0];
   if (requirement === undefined) {
     return {
       status: "absent" as const,
@@ -1390,7 +1403,12 @@ export async function implementationEvidenceActivationStatusFromStore(
       taskRefs: [],
     };
   }
-  if (requirement.boundaryCommit !== repositoryHead)
+  if (
+    requirement.boundaryCommit !== repositoryHead ||
+    requirement.manifestDigest !== manifestBinding.manifestDigest ||
+    requirement.sourceDigest !== manifestBinding.sourceDigest ||
+    requirement.finalizedManifestDigest !== manifestBinding.finalizedManifestDigest
+  )
     return {
       status: "stale" as const,
       manifestId: input.manifestId,
@@ -2274,10 +2292,18 @@ export class ImplementationEvidenceService {
     const repositoryHead = await this.deps.repositoryHead();
     if (repositoryHead !== input.expectedRepositoryHead)
       throw new Error("repository head does not match the bounded activation status probe");
+    const { manifest, manifestDigest } = await this.auditManifest(input.manifestId);
+    if (manifest.activation === null || manifest.activation.goalRef !== input.goalRef)
+      throw new Error("packaged manifest has no matching implementation evidence activation");
     return await implementationEvidenceActivationStatusFromStore(
       this.deps.store,
       input,
       repositoryHead,
+      {
+        manifestDigest,
+        sourceDigest: manifest.sourceDigest,
+        finalizedManifestDigest: manifest.activation.finalizedManifestDigest,
+      },
     );
   }
 
