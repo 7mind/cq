@@ -1,5 +1,5 @@
 import {
-  IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
+  IMPLEMENT_REVIEWER_SYNTHESIS_STORE_RESERVE_MS,
   defaultPanelFor,
   implementReviewerSidecar,
   implementationAuditorSidecar,
@@ -16,6 +16,7 @@ import {
   ImplementationEvidenceService,
   PLAN_FINALIZED_MANIFEST_FIELD,
   PlanPublishedManifestSchema,
+  SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
   TASKS_LEDGER,
   nodeGitRunner,
   readCanonicalOwnership,
@@ -32,6 +33,9 @@ import {
 import { computeReviewers } from "./configCapability.js";
 
 const FULL_SHA = /^[0-9a-f]{40}$/u;
+
+const PRODUCTION_IMPLEMENTATION_REVIEWER_TIMEOUT_MS =
+  SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS + IMPLEMENT_REVIEWER_SYNTHESIS_STORE_RESERVE_MS;
 
 type ExternalReviewRunner = (input: {
   readonly identity: ImplementationReviewerIdentity;
@@ -134,8 +138,12 @@ async function runExternalReviewer(input: {
   const timedOut = new Promise<never>((_, reject) => {
     timeout = setTimeout(() => {
       process.kill();
-      reject(new Error(`external implementation reviewer timed out after ${IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS}ms`));
-    }, IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS);
+      reject(
+        new Error(
+          `external implementation reviewer timed out after ${PRODUCTION_IMPLEMENTATION_REVIEWER_TIMEOUT_MS}ms`,
+        ),
+      );
+    }, PRODUCTION_IMPLEMENTATION_REVIEWER_TIMEOUT_MS);
   });
   let settled: [string, string, number];
   try {
@@ -493,7 +501,7 @@ export function createProductionImplementationEvidenceService(
         roleId: "implement-reviewer",
         input,
         idempotencyKey: `implementation-review-${operationId}-${attemptRef.slice(-16)}`,
-        timeoutMs: IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
+        timeoutMs: PRODUCTION_IMPLEMENTATION_REVIEWER_TIMEOUT_MS,
         expectedChild: {
           childId: `implementation-review-${attemptRef.slice(-12)}`,
           runId: `implementation-review-${attemptRef.slice(-12)}-${identity.alias}`,
@@ -530,7 +538,7 @@ export function createProductionImplementationEvidenceService(
         roleId: "implementation-auditor",
         input: panel.auditInput,
         idempotencyKey: `implementation-audit-${operationId}-${attemptRef.slice(-16)}`,
-        timeoutMs: IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS,
+        timeoutMs: PRODUCTION_IMPLEMENTATION_REVIEWER_TIMEOUT_MS,
         expectedChild: {
           childId: `implementation-audit-${attemptRef.slice(-12)}`,
           runId: `implementation-audit-${attemptRef.slice(-12)}-${identity.alias}`,
