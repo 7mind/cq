@@ -235,6 +235,7 @@ export interface ImplementationAuditAttemptRecord {
     readonly operationId: string;
     readonly requestDigest: string;
     readonly reservedAt: string;
+    readonly expiresAt: string;
   } | null;
   readonly execution: ExternalImplementationAuditExecution | null;
   readonly terminalState: ImplementationReviewTerminalState | null;
@@ -1743,6 +1744,38 @@ export class ImplementationEvidenceService {
     };
   }
 
+  private async recoverExpiredExternalAuditExecution(
+    attemptRef: string,
+  ): Promise<string | null> {
+    return await this.deps.store[mutateEvidence](async (state) => {
+      const current = state.auditAttempts[attemptRef];
+      if (
+        current === undefined ||
+        current.execution !== null ||
+        current.executionReservation === null ||
+        !this.reservationExpired(current.executionReservation)
+      ) {
+        return null;
+      }
+      const execution: ExternalImplementationAuditExecution = {
+        executionRef: current.executionReservation.executionRef,
+        adapterIdentity: current.identity.adapterId,
+        stdout: "",
+        stderr: "",
+        exitCode: null,
+        parseResult: {
+          kind: "operational-abstention",
+          reason: "unavailable",
+          detail:
+            "external audit execution reservation expired before an execution receipt was recorded",
+        },
+        executedAt: this.now(),
+      };
+      state.auditAttempts[attemptRef] = { ...current, execution };
+      return execution.executionRef;
+    });
+  }
+
   async executeExternalAuditAttempt(input: ExecuteExternalImplementationAuditAttemptInput) {
     assertOperationId(input.operationId);
     const snapshot = await this.deps.store.snapshot();
@@ -1754,6 +1787,14 @@ export class ImplementationEvidenceService {
     if (Object.keys(attempt.operations).length === 0)
       throw new Error("external audit attempt was not prepared");
     const requestDigest = digest(input);
+    const expiredExecutionRef = await this.recoverExpiredExternalAuditExecution(input.attemptRef);
+    if (expiredExecutionRef !== null) {
+      return {
+        status: "existing" as const,
+        attemptRef: attempt.attemptRef,
+        executionRef: expiredExecutionRef,
+      };
+    }
     if (operationReplay(attempt.operations, input.operationId, requestDigest)) {
       const executionRef =
         attempt.execution?.executionRef ?? attempt.executionReservation?.executionRef;
@@ -1768,29 +1809,42 @@ export class ImplementationEvidenceService {
     const reservation = await this.deps.store[mutateEvidence](async (state) => {
       const current = state.auditAttempts[input.attemptRef];
       if (current === undefined) throw new Error("audit attempt disappeared");
-      if (operationReplay(current.operations, input.operationId, requestDigest))
-        return { existing: true as const, attempt: current };
-      if (current.terminalState !== null || current.execution !== null)
-        throw new Error("external audit attempt is already settled");
+      if (operationReplay(current.operations, input.operationId, requestDigest)) {
+        const existingRef =
+          current.execution?.executionRef ?? current.executionReservation?.executionRef;
+        if (existingRef === undefined) throw new Error("external audit replay has no receipt");
+        return { existing: true as const, executionRef: existingRef };
+      }
+      if (current.terminalState !== null)
+        throw new Error("external audit attempt is already terminal");
+      if (current.execution !== null)
+        throw new Error("external audit attempt already has an execution receipt");
+      if (current.executionReservation !== null)
+        throw new Error("external audit attempt already has a durable execution reservation");
+      const reservedAt = this.now();
+      const reservedAtMs = Date.parse(reservedAt);
+      if (!Number.isFinite(reservedAtMs))
+        throw new Error("implementation auditor reservation clock returned an invalid timestamp");
       const updated: ImplementationAuditAttemptRecord = {
         ...current,
         executionReservation: {
           executionRef,
           operationId: input.operationId,
           requestDigest,
-          reservedAt: this.now(),
+          reservedAt,
+          expiresAt: new Date(reservedAtMs + this.executionReservationTimeoutMs).toISOString(),
         },
         operations: { ...current.operations, [input.operationId]: requestDigest },
       };
       state.auditAttempts[input.attemptRef] = updated;
-      return { existing: false as const, attempt: updated };
+      return { existing: false as const, executionRef };
     });
     if (reservation.existing) {
-      const existingRef =
-        reservation.attempt.execution?.executionRef ??
-        reservation.attempt.executionReservation?.executionRef;
-      if (existingRef === undefined) throw new Error("external audit replay has no receipt");
-      return { status: "existing" as const, attemptRef: attempt.attemptRef, executionRef: existingRef };
+      return {
+        status: "existing" as const,
+        attemptRef: attempt.attemptRef,
+        executionRef: reservation.executionRef,
+      };
     }
     let observation: ExternalReviewProcessObservation;
     try {
@@ -1820,13 +1874,23 @@ export class ImplementationEvidenceService {
             reason: "failed" as const,
             detail: `adapter exited ${String(observation.exitCode)}: ${parsed.detail}`,
           };
-    await this.deps.store[mutateEvidence](async (state) => {
+    return await this.deps.store[mutateEvidence](async (state) => {
       const current = state.auditAttempts[input.attemptRef];
       if (current === undefined) throw new Error("audit attempt disappeared");
+      if (current.execution !== null) {
+        if (!operationReplay(current.operations, input.operationId, requestDigest))
+          throw new Error("external audit attempt already has an execution receipt");
+        return {
+          status: "existing" as const,
+          attemptRef: current.attemptRef,
+          executionRef: current.execution.executionRef,
+        };
+      }
       if (current.terminalState !== null) throw new Error("audit attempt is already terminal");
       if (
         current.executionReservation?.executionRef !== executionRef ||
-        current.execution !== null
+        current.executionReservation.operationId !== input.operationId ||
+        current.executionReservation.requestDigest !== requestDigest
       )
         throw new Error("external audit reservation changed before settlement");
       state.auditAttempts[input.attemptRef] = {
@@ -1841,8 +1905,12 @@ export class ImplementationEvidenceService {
           executedAt: this.now(),
         },
       };
+      return {
+        status: "executed" as const,
+        attemptRef: current.attemptRef,
+        executionRef,
+      };
     });
-    return { status: "executed" as const, attemptRef: attempt.attemptRef, executionRef };
   }
 
   async finalizeAuditAttempt(input: FinalizeImplementationAuditAttemptInput) {
