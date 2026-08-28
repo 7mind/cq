@@ -489,6 +489,62 @@ describe("protected historical implementation evidence [BA]", () => {
     expect(Object.keys(snapshot.auditManifestApplications)).toHaveLength(1);
   });
 
+  test("reports a newer armed requirement instead of an obsolete fulfilled requirement", async () => {
+    const first = manifest();
+    const reviewed = {
+      ...first,
+      records: first.records.map((entry) => ({
+        ...entry,
+        historicalReview: historicalReview(entry.taskRef, entry.baseCommit, entry.resultCommit),
+      })),
+    };
+    const second = {
+      ...reviewed,
+      sourceDigest: "1".repeat(64),
+      records: reviewed.records.map((entry) => ({
+        ...entry,
+        finalizedManifest: `${entry.finalizedManifest} replacement`,
+      })),
+      activation: { ...reviewed.activation!, finalizedManifestDigest: "2".repeat(64) },
+    };
+    const f = fixture(reviewed);
+    await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: reviewed.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-status-first-manifest",
+      author: "parent",
+    });
+    await f.service.applyAuditManifest({
+      manifestId: reviewed.manifestId,
+      manifestDigest: implementationAuditManifestDigest(reviewed),
+      expectedRepositoryHead: HEAD,
+      auditAttemptRefs: [],
+      operationId: "apply-status-first-manifest",
+      author: "parent",
+    });
+    f.replacePackaged(second);
+    const secondRequirement = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: second.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-status-second-manifest",
+      author: "parent",
+    });
+
+    expect(
+      await f.service.evidenceActivationStatus({
+        goalRef: "goals:G176",
+        manifestId: second.manifestId,
+        expectedRepositoryHead: HEAD,
+      }),
+    ).toMatchObject({
+      status: "pending",
+      requirementRef: secondRequirement.requirementRef,
+      activationRef: null,
+    });
+  });
+
   test("does not reuse a historical review bound to a different commit or ancestry", async () => {
     for (const review of [
       historicalReview("tasks:T10", BASE, RESULT_TWO),
