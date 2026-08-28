@@ -100,6 +100,9 @@ function fixture(
     readonly fetchNativeAudit: (
       dispatch: DispatchPrepared,
     ) => Promise<ImplementationAuditObservation>;
+    readonly executeExternalAudit?: NonNullable<
+      ImplementationEvidenceServiceDependencies["executeExternalAudit"]
+    >;
   } = {
     auditRoster: [adapter],
     fetchNativeAudit: async () => ({ state: "missing" }),
@@ -136,8 +139,10 @@ function fixture(
     readAuditManifest: async () => structuredClone(manifest),
     prepareNativeAudit: async ({ attemptRef }) => dispatch(attemptRef),
     fetchNativeAudit: options.fetchNativeAudit,
-    executeExternalAudit: async () => {
+    executeExternalAudit: async (input) => {
       launches += 1;
+      if (options.executeExternalAudit !== undefined)
+        return await options.executeExternalAudit(input);
       return {
         adapterIdentity: adapter.adapterId,
         stdout: stdout(),
@@ -303,6 +308,141 @@ describe("protected implementation audit attempts [BG]", () => {
       terminalState: "approved",
       verdict: adapterVerdict(manifestDigest),
     });
+  });
+
+  test("rejects fresh preparation after terminal while preserving exact replay", async () => {
+    let manifestDigest = "";
+    const f = fixture(() => JSON.stringify(adapterVerdict(manifestDigest)));
+    const prepared = await preparedAttempt(f);
+    manifestDigest = prepared.manifestDigest;
+    await f.service.executeExternalAuditAttempt({
+      attemptRef: prepared.attemptRef,
+      operationId: "execute-before-terminal-prepare",
+      author: "parent",
+    });
+    await f.service.finalizeAuditAttempt({
+      attemptRef: prepared.attemptRef,
+      operationId: "finalize-before-terminal-prepare",
+      author: "parent",
+    });
+    const terminalAttempt = (await f.store.snapshot()).auditAttempts[prepared.attemptRef];
+
+    expect(
+      await f.service.prepareAuditAttempt({
+        panelRef: prepared.panel.panelRef,
+        attemptRef: prepared.attemptRef,
+        operationId: "prepare",
+        author: "parent",
+      }),
+    ).toMatchObject({ status: "existing", attemptRef: prepared.attemptRef });
+    expect((await f.store.snapshot()).auditAttempts[prepared.attemptRef]).toEqual(terminalAttempt);
+    await expect(
+      f.service.prepareAuditAttempt({
+        panelRef: prepared.panel.panelRef,
+        attemptRef: prepared.attemptRef,
+        operationId: "prepare-terminal-attempt-again",
+        author: "parent",
+      }),
+    ).rejects.toThrow("audit attempt is already terminal");
+    expect((await f.store.snapshot()).auditAttempts[prepared.attemptRef]).toEqual(terminalAttempt);
+  });
+
+  test("does not record external execution after concurrent finalization wins", async () => {
+    let manifestDigest = "";
+    let markExecutionStarted!: () => void;
+    let releaseExecution!: () => void;
+    const executionStarted = new Promise<void>((resolve) => {
+      markExecutionStarted = resolve;
+    });
+    const executionReleased = new Promise<void>((resolve) => {
+      releaseExecution = resolve;
+    });
+    const f = fixture(() => "", {
+      auditRoster: [adapter],
+      fetchNativeAudit: async () => ({ state: "missing" }),
+      executeExternalAudit: async () => {
+        markExecutionStarted();
+        await executionReleased;
+        return {
+          adapterIdentity: adapter.adapterId,
+          stdout: JSON.stringify(adapterVerdict(manifestDigest)),
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    });
+    const prepared = await preparedAttempt(f);
+    manifestDigest = prepared.manifestDigest;
+
+    const executing = f.service.executeExternalAuditAttempt({
+      attemptRef: prepared.attemptRef,
+      operationId: "execute-finalization-race",
+      author: "parent",
+    });
+    await executionStarted;
+    await expect(
+      f.service.finalizeAuditAttempt({
+        attemptRef: prepared.attemptRef,
+        operationId: "finalize-before-execution-settlement",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ terminalState: "operational-abstention" });
+    const terminalAttempt = (await f.store.snapshot()).auditAttempts[prepared.attemptRef];
+    releaseExecution();
+
+    await expect(executing).rejects.toThrow("audit attempt is already terminal");
+    expect((await f.store.snapshot()).auditAttempts[prepared.attemptRef]).toEqual(terminalAttempt);
+    expect(
+      await f.service.finalizeAuditAttempt({
+        attemptRef: prepared.attemptRef,
+        operationId: "finalize-before-execution-settlement",
+        author: "parent",
+      }),
+    ).toMatchObject({ status: "existing", terminalState: "operational-abstention" });
+  });
+
+  test("finalizes the external verdict when execution settlement wins", async () => {
+    let manifestDigest = "";
+    let markExecutionStarted!: () => void;
+    let releaseExecution!: () => void;
+    const executionStarted = new Promise<void>((resolve) => {
+      markExecutionStarted = resolve;
+    });
+    const executionReleased = new Promise<void>((resolve) => {
+      releaseExecution = resolve;
+    });
+    const f = fixture(() => "", {
+      auditRoster: [adapter],
+      fetchNativeAudit: async () => ({ state: "missing" }),
+      executeExternalAudit: async () => {
+        markExecutionStarted();
+        await executionReleased;
+        return {
+          adapterIdentity: adapter.adapterId,
+          stdout: JSON.stringify(adapterVerdict(manifestDigest)),
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    });
+    const prepared = await preparedAttempt(f);
+    manifestDigest = prepared.manifestDigest;
+
+    const executing = f.service.executeExternalAuditAttempt({
+      attemptRef: prepared.attemptRef,
+      operationId: "execute-before-finalization",
+      author: "parent",
+    });
+    await executionStarted;
+    releaseExecution();
+    await expect(executing).resolves.toMatchObject({ status: "executed" });
+    await expect(
+      f.service.finalizeAuditAttempt({
+        attemptRef: prepared.attemptRef,
+        operationId: "finalize-after-execution-settlement",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ terminalState: "approved" });
   });
 
   test("rechecks terminal state when concurrent finalizations reach the write boundary", async () => {
