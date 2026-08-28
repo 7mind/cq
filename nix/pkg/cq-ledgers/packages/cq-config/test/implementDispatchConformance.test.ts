@@ -34,11 +34,12 @@ function commandBody(rel: string): string {
 }
 
 describe("T715: implement dispatch edges are ref-first on every surface", () => {
-  test("the T721 implement subset is the three catalog dispatch edges", () => {
+  test("the T721 implement subset is the four catalog dispatch edges", () => {
     expect(implementDispatchEdges().map((edge) => edge.id).sort()).toEqual([
       "implement/advance::dispatch::implement-conflict-resolver",
       "implement/advance::dispatch::implement-reviewer",
       "implement/advance::dispatch::implement-worker",
+      "implement/advance::dispatch::implementation-auditor",
     ]);
   });
 

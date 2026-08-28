@@ -38,4 +38,4 @@ facts.
 
 Store the verdict exactly once through the dispatch-scoped `resultCapability`
 using `store_result`. Only a `result-stored` acknowledgement permits the final
-response. Then return only the prepared dispatch handle.
+response. Then return the prepared dispatch handle only.

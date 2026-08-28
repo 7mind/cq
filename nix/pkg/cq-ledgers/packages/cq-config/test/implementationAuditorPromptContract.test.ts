@@ -86,5 +86,6 @@ describe("implementation-auditor prompt and strict sidecar [BA]", () => {
     expect(prompt).toContain("Never edit a repository, mutate a\nledger, spawn a child");
     expect(prompt).toContain("not an ordinary implement-reviewer worktree\ncontract");
     expect(prompt).toContain("caller-authored\nevidence object");
+    expect(prompt).toContain("prepared dispatch handle only");
   });
 });
