@@ -3,7 +3,7 @@
   "target": {
     "packageJson": "nix/pkg/cq-ledgers/package.json",
     "script": "check",
-    "scriptDagSha256": "8f07ceadfa10d5076100baa6b57b481f629d88190505e53f1a0a9096ec5899eb"
+    "scriptDagSha256": "6160a925d203ab4936ef184bdfa5c0cf495999cc1ce230735e6f901084ada7b0"
   },
   "opaqueEdges": [
     {
@@ -27,7 +27,7 @@
     {
       "kind": "nix",
       "source": "nix/pkg/cq-ledgers/package.json",
-      "sha256": "ab5c4bc52d1ea75b5cf9e099d44e099d037f08b1d0b59dfff965acb66ad501a0",
+      "sha256": "b34988b61bc3ec457978739c1a5c63332bf09ed8e912bcc18cfc4aa8e0fcda8e",
       "targets": []
     },
     {
@@ -476,7 +476,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/supervisedWorkerGateStorage.test.ts",
-      "sha256": "274c0d8390e4eee9c7bb88c0ea38999916276e97deecaae42577de54adb0fc3a",
+      "sha256": "d165cd48449ad8574865e120dd3368718dc2badf7f9f3187d3714bfcb639cd3e",
       "targets": []
     },
     {
@@ -506,7 +506,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/supervisedWorkerGate.ts",
-      "sha256": "f543e550e5c8bcdef3bc96259d3b685f881a201bdc2266ec484db3fdeca08dc4",
+      "sha256": "4fa2fda1809e69e5952f2516bc177b514e326197d3b43a8a4933595ba6055805",
       "targets": []
     },
     {
@@ -1244,7 +1244,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/workspaceScriptContract.test.ts",
-      "sha256": "2f607cc4a2b6ec8adc6acf1e0e1f2b13e346257e995d98f03bc4d22d5668e218",
+      "sha256": "effa0fb429c884cd3243a6546fda1375fba2b35309d30ac2b0dd8ee95962fade",
       "targets": []
     },
     {

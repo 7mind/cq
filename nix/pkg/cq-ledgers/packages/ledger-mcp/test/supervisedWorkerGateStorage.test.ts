@@ -1553,9 +1553,9 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     D326_TEST_TIMEOUT_MS,
   );
 
-  // Regression: the bounded runner diagnostic must retain a same-stream failure summary.
+  // Regression: the bounded runner diagnostic must retain Bun failure identities.
   test(
-    "D373 retains a stdout failure summary before long same-stream diagnostics [Behavioral-Active Effectual-GoodCommunication]",
+    "D373 retains Bun failure identities before long same-stream diagnostics [Behavioral-Active Effectual-GoodCommunication]",
     async () => {
       const root = await fs.mkdtemp(path.join(tmpdir(), "t2346-long-output-"));
       roots.push(root);
@@ -1570,8 +1570,11 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
         [
           "#!/bin/sh",
           "set -eu",
-          "printf 'long-output regression identity\\n1 fail\\n'",
-          "i=1; while test \"$i\" -le 21; do printf 'trailing diagnostic %s\\n' \"$i\"; i=$((i + 1)); done",
+          "printf 'packages/example/test/failure.test.ts:\\n'",
+          "printf '(fail) first long-output regression identity [1.00ms]\\n'",
+          "printf '(fail) second long-output regression identity [2.00ms]\\n'",
+          'i=1; while test "$i" -le 21; do printf \'trailing diagnostic %s\\n\' "$i"; i=$((i + 1)); done',
+          "printf '6989 pass\\n288 skip\\n2 fail\\n'",
           "exit 1",
           "",
         ].join("\n"),
@@ -1586,8 +1589,9 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
           executionTimeoutMs: FIRST_EXECUTION_TIMEOUT_MS,
         });
         expect(result.gateExitCode).toBe(1);
-        expect(result.outputTail).toContain("long-output regression identity");
-        expect(result.outputTail).toContain("1 fail");
+        expect(result.outputTail).toContain("(fail) first long-output regression identity");
+        expect(result.outputTail).toContain("(fail) second long-output regression identity");
+        expect(result.outputTail).toContain("2 fail");
         expect(result.outputTail).toContain("trailing diagnostic 21");
         expect(Buffer.byteLength(result.outputTail, "utf8")).toBeLessThanOrEqual(896);
       } finally {

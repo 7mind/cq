@@ -24,8 +24,11 @@ import {
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const PASS_COUNT = /(?:^|\n)\s*([0-9]+)\s+pass\b/gu;
 const FAIL_COUNT = /(?:^|\n)\s*([0-9]+)\s+fail\b/gu;
+const BUN_FAILURE_IDENTITY_LINE = /^\(fail\)\s+\S/u;
 const FAIL_SUMMARY_LINE = /^\s*[0-9]+\s+fail\b/u;
 const OUTPUT_TAIL_LINE_COUNT = 20;
+const FAILURE_IDENTITY_LINE_LIMIT = 4;
+const FAILURE_IDENTITY_BYTE_LIMIT = 192;
 const FAILURE_SUMMARY_CONTEXT_LINE_COUNT = 2;
 const FAILURE_SUMMARY_WINDOW_BYTE_LIMIT = 256;
 const FAILURE_OUTPUT_TAIL_BYTE_LIMIT = 896;
@@ -186,10 +189,27 @@ function failureSummaryWindow(output: string): string {
   return "";
 }
 
+function failureIdentityLines(output: string): string {
+  return output
+    .trimEnd()
+    .split("\n")
+    .filter((line) => BUN_FAILURE_IDENTITY_LINE.test(line))
+    .slice(-FAILURE_IDENTITY_LINE_LIMIT)
+    .map((line) => truncateUtf8(line, FAILURE_IDENTITY_BYTE_LIMIT))
+    .join("\n");
+}
+
 function outputTail(stdout: string, stderr: string, gateExitCode: number): string {
   if (gateExitCode === 0) return tail(`${stdout}\n${stderr}`);
   return truncateUtf8(
-    [failureSummaryWindow(stdout), failureSummaryWindow(stderr), tail(stdout), tail(stderr)]
+    [
+      failureIdentityLines(stdout),
+      failureIdentityLines(stderr),
+      failureSummaryWindow(stdout),
+      failureSummaryWindow(stderr),
+      tail(stdout),
+      tail(stderr),
+    ]
       .filter((value) => value.length > 0)
       .join("\n"),
     FAILURE_OUTPUT_TAIL_BYTE_LIMIT,
