@@ -3,6 +3,7 @@ import {
   D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE,
   HISTORICAL_IMPLEMENTATION_FIXTURES,
   deriveHistoricalImplementationAuditTaskRefs,
+  nodeGitRunner,
   readPackagedImplementationAuditManifest,
   type HistoricalImplementationSourceObservation,
 } from "../src/index.js";
@@ -293,21 +294,10 @@ describe("trusted historical implementation fixture rules [BA]", () => {
   });
 
   test("production D347 registry excludes completed tasks not retained at the boundary", async () => {
-    const git = async (args: readonly string[]) => {
-      const child = Bun.spawn(["git", ...args], {
-        cwd: process.cwd(),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, exitCode] = await Promise.all([
-        new Response(child.stdout).text(),
-        child.exited,
-      ]);
-      return { stdout: stdout.trim(), exitCode };
-    };
-    const postBoundary = (await git(["rev-parse", "HEAD"])).stdout;
-    const head = (await git(["rev-parse", "HEAD^"])).stdout;
-    expect((await git(["merge-base", "--is-ancestor", postBoundary, head])).exitCode).toBe(1);
+    const git = nodeGitRunner(process.cwd());
+    const postBoundary = (await git(["rev-parse", "HEAD"])).stdout.trim();
+    const head = (await git(["rev-parse", "HEAD^"])).stdout.trim();
+    expect((await git(["merge-base", "--is-ancestor", postBoundary, head])).code).toBe(1);
     const finalized = JSON.stringify({
       revision: 1,
       milestones: [{ key: "m-evidence", id: "M347" }],
@@ -368,7 +358,7 @@ describe("trusted historical implementation fixture rules [BA]", () => {
         },
         diff: async (baseCommit, resultCommit) => `diff ${baseCommit} ${resultCommit}`,
         isAncestor: async (ancestor, descendant) =>
-          (await git(["merge-base", "--is-ancestor", ancestor, descendant])).exitCode === 0,
+          (await git(["merge-base", "--is-ancestor", ancestor, descendant])).code === 0,
       },
     });
 
