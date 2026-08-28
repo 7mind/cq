@@ -300,6 +300,58 @@ describe("protected implementation audit attempts [BG]", () => {
     });
   });
 
+  test("rechecks terminal state when concurrent finalizations reach the write boundary", async () => {
+    let manifestDigest = "";
+    let fetchCount = 0;
+    let markFirstFetchStarted!: () => void;
+    let releaseFirstFetch!: () => void;
+    const firstFetchStarted = new Promise<void>((resolve) => {
+      markFirstFetchStarted = resolve;
+    });
+    const firstFetchReleased = new Promise<void>((resolve) => {
+      releaseFirstFetch = resolve;
+    });
+    const f = fixture(() => "", {
+      auditRoster: [native],
+      fetchNativeAudit: async (preparedDispatch) => {
+        fetchCount += 1;
+        if (fetchCount === 1) {
+          markFirstFetchStarted();
+          await firstFetchReleased;
+          return { state: "missing" };
+        }
+        return {
+          state: "consumed",
+          output: adapterVerdict(manifestDigest),
+          retainedAttestation: preparedDispatch.attestationId,
+        };
+      },
+    });
+    const prepared = await preparedAttempt(f);
+    manifestDigest = prepared.manifestDigest;
+
+    const staleFinalization = f.service.finalizeAuditAttempt({
+      attemptRef: prepared.attemptRef,
+      operationId: "finalize-from-stale-snapshot",
+      author: "parent",
+    });
+    await firstFetchStarted;
+    expect(
+      await f.service.finalizeAuditAttempt({
+        attemptRef: prepared.attemptRef,
+        operationId: "finalize-at-write-boundary",
+        author: "parent",
+      }),
+    ).toMatchObject({ terminalState: "approved" });
+    releaseFirstFetch();
+
+    await expect(staleFinalization).rejects.toThrow("audit attempt is already terminal");
+    expect((await f.store.snapshot()).auditAttempts[prepared.attemptRef]).toMatchObject({
+      terminalState: "approved",
+      verdict: adapterVerdict(manifestDigest),
+    });
+  });
+
   test("revalidates the native dispatch binding before applying an audit", async () => {
     let manifestDigest = "";
     let substituteAttestation = false;
