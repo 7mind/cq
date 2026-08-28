@@ -1548,6 +1548,27 @@ export class ImplementationEvidenceService {
     await this.assertActivationTasksActionable(goalRef, current);
   }
 
+  private async assertNativeAuditApprovalBound(
+    panel: ImplementationAuditPanelRecord,
+    attempt: ImplementationAuditAttemptRecord,
+  ): Promise<void> {
+    if (
+      attempt.preparedDispatch === null ||
+      attempt.retainedAttestation !== attempt.preparedDispatch.attestationId ||
+      this.deps.fetchNativeAudit === undefined
+    )
+      throw new Error(`native audit approval for ${panel.taskRef} is not dispatch-bound`);
+    const observation = await this.deps.fetchNativeAudit(attempt.preparedDispatch);
+    if (
+      observation.state !== "consumed" ||
+      observation.retainedAttestation !== attempt.preparedDispatch.attestationId ||
+      observation.output === undefined ||
+      canonical(observation.output) !== canonical(attempt.verdict) ||
+      !validateAuditorVerdict(observation.output, panel)
+    )
+      throw new Error(`native audit approval for ${panel.taskRef} is not dispatch-bound`);
+  }
+
   async prepareAuditPanel(input: PrepareImplementationAuditPanelInput) {
     assertOperationId(input.operationId);
     assertFullSha(input.expectedRepositoryHead, "expected_repository_head");
@@ -2147,13 +2168,8 @@ export class ImplementationEvidenceService {
       if (!terminals.includes("approved"))
         throw new Error(`audit panel for ${record.taskRef} has no authenticated approval`);
       for (const attempt of attempts) {
-        if (
-          attempt!.identity.launch === "native" &&
-          attempt!.verdict !== null &&
-          (attempt!.preparedDispatch === null ||
-            attempt!.retainedAttestation !== attempt!.preparedDispatch.attestationId)
-        )
-          throw new Error(`native audit approval for ${record.taskRef} is not dispatch-bound`);
+        if (attempt!.identity.launch === "native" && attempt!.verdict !== null)
+          await this.assertNativeAuditApprovalBound(panel, attempt!);
       }
       expectedAttemptRefs.push(...refs);
       auditCandidates.push({ record, attemptRefs: refs, terminalState: "approved" });
