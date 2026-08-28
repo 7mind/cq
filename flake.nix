@@ -1436,7 +1436,7 @@ EOF
                 test "$(
                   find "$out" -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l
                 )" -eq "${toString (builtins.length (builtins.attrNames codexCqSkillSpecs))}"
-                test "$(find ${codexPromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 25
+                test "$(find ${codexPromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 26
                 ${verifySurfaceAttestation "codex" codexPromptRoot}
                 # D151: single-backslash Rust-regex escapes; rg exit 2 is a hard error
                 # (a missing path used to slip through the `if rg; then fail; fi` form).
@@ -1510,7 +1510,7 @@ EOF
               assert promptCatalogTest;
               pkgs.runCommand "prompt-catalog" { } "touch $out";
             claude-prompt-root = pkgs.runCommand "claude-prompt-root-check" { } ''
-              test "$(find ${claudePromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 25
+              test "$(find ${claudePromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 26
               test -f ${claudePromptRoot}/roles/begin.md
               cmp ${builtins.toFile "cq-expected-prompt-catalog.json" llmAssets.catalogJson} \
                 ${claudePromptRoot}/catalog.json
@@ -1538,7 +1538,7 @@ EOF
                 echo "D150: anchored CQ_PROMPT_SURFACE='pi' incorrectly matched pinocchio" >&2
                 exit 1
               fi
-              test "$(find ${piPromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 25
+              test "$(find ${piPromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 26
               test -f ${piPromptRoot}/roles/begin.md
               cmp ${builtins.toFile "cq-expected-prompt-catalog.json" llmAssets.catalogJson} \
                 ${piPromptRoot}/catalog.json
