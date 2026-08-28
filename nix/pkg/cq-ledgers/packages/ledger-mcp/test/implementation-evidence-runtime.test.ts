@@ -110,6 +110,17 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
     expect(source).toContain("{ implementationEvidence }");
   });
 
+  test("reserves production reviewer time for the canonical gate [WA]", async () => {
+    const source = await readFile(
+      new URL("../src/implementationEvidenceRuntime.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain("const PRODUCTION_IMPLEMENTATION_REVIEWER_TIMEOUT_MS =");
+    expect(source).toContain("SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS");
+    expect(source).toContain("IMPLEMENT_REVIEWER_SYNTHESIS_STORE_RESERVE_MS");
+    expect(source.match(/PRODUCTION_IMPLEMENTATION_REVIEWER_TIMEOUT_MS/gu)).toHaveLength(5);
+  });
+
   test("defers fail-closed reviewer-panel resolution until an evidence operation", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "implementation-evidence-runtime-config-"));
     roots.push(root);
