@@ -106,18 +106,25 @@ function fixture(
     readonly prepareNativeAudit?: NonNullable<
       ImplementationEvidenceServiceDependencies["prepareNativeAudit"]
     >;
+    readonly store?: ReturnType<typeof createInMemoryImplementationEvidenceStore>;
+    readonly now?: () => string;
+    readonly executionReservationTimeoutMs?: number;
   } = {
     auditRoster: [adapter],
     fetchNativeAudit: async () => ({ state: "missing" }),
   },
 ) {
-  const store = createInMemoryImplementationEvidenceStore();
+  const store = options.store ?? createInMemoryImplementationEvidenceStore();
   let launches = 0;
   const dependencies: ImplementationEvidenceServiceDependencies = {
     store,
     resolveReviewerRoster: () => [adapter],
     resolveAuditRoster: () => options.auditRoster,
     nativeFallback: native,
+    ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.executionReservationTimeoutMs === undefined
+      ? {}
+      : { executionReservationTimeoutMs: options.executionReservationTimeoutMs }),
     prepareNativeReview: async () => {
       throw new Error("not configured");
     },
@@ -206,6 +213,128 @@ describe("protected implementation audit attempts [BG]", () => {
         author: "parent",
       }),
     ).toMatchObject({ terminalState: "approved" });
+  });
+
+  test("rejects a concurrent distinct execution after durably reserving the adapter", async () => {
+    let manifestDigest = "";
+    let executions = 0;
+    let markExecutionStarted!: () => void;
+    let releaseExecution!: () => void;
+    const executionStarted = new Promise<void>((resolve) => {
+      markExecutionStarted = resolve;
+    });
+    const executionReleased = new Promise<void>((resolve) => {
+      releaseExecution = resolve;
+    });
+    const f = fixture(() => "", {
+      auditRoster: [adapter],
+      fetchNativeAudit: async () => ({ state: "missing" }),
+      executeExternalAudit: async () => {
+        executions += 1;
+        if (executions === 1) {
+          markExecutionStarted();
+          await executionReleased;
+        }
+        return {
+          adapterIdentity: adapter.adapterId,
+          stdout: JSON.stringify(adapterVerdict(manifestDigest)),
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    });
+    const prepared = await preparedAttempt(f);
+    manifestDigest = prepared.manifestDigest;
+
+    const first = f.service.executeExternalAuditAttempt({
+      attemptRef: prepared.attemptRef,
+      operationId: "execute-reserved-audit",
+      author: "parent",
+    });
+    await executionStarted;
+    try {
+      await expect(
+        f.service.executeExternalAuditAttempt({
+          attemptRef: prepared.attemptRef,
+          operationId: "execute-reserved-audit-again",
+          author: "parent",
+        }),
+      ).rejects.toThrow("durable execution reservation");
+      expect(f.launches()).toBe(1);
+    } finally {
+      releaseExecution();
+      await first.catch(() => undefined);
+    }
+  });
+
+  test("recovers an expired reservation after restart without relaunching the adapter", async () => {
+    let manifestDigest = "";
+    let now = "2026-08-28T00:00:00.000Z";
+    let markExecutionStarted!: () => void;
+    let releaseExecution!: () => void;
+    const executionStarted = new Promise<void>((resolve) => {
+      markExecutionStarted = resolve;
+    });
+    const executionReleased = new Promise<void>((resolve) => {
+      releaseExecution = resolve;
+    });
+    const store = createInMemoryImplementationEvidenceStore();
+    const firstService = fixture(() => "", {
+      auditRoster: [adapter],
+      fetchNativeAudit: async () => ({ state: "missing" }),
+      store,
+      now: () => now,
+      executionReservationTimeoutMs: 1,
+      executeExternalAudit: async () => {
+        markExecutionStarted();
+        await executionReleased;
+        return {
+          adapterIdentity: adapter.adapterId,
+          stdout: JSON.stringify(adapterVerdict(manifestDigest)),
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    });
+    const prepared = await preparedAttempt(firstService);
+    manifestDigest = prepared.manifestDigest;
+    const interruptedExecution = firstService.service.executeExternalAuditAttempt({
+      attemptRef: prepared.attemptRef,
+      operationId: "execute-before-restart",
+      author: "parent",
+    });
+    await executionStarted;
+
+    now = "2026-08-28T00:00:00.001Z";
+    const restartedService = fixture(() => "", {
+      auditRoster: [adapter],
+      fetchNativeAudit: async () => ({ state: "missing" }),
+      store,
+      now: () => now,
+      executionReservationTimeoutMs: 1,
+      executeExternalAudit: async () => {
+        throw new Error("expired execution must not relaunch");
+      },
+    });
+    await expect(
+      restartedService.service.executeExternalAuditAttempt({
+        attemptRef: prepared.attemptRef,
+        operationId: "execute-before-restart",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ status: "existing", attemptRef: prepared.attemptRef });
+    expect(restartedService.launches()).toBe(0);
+
+    releaseExecution();
+    await expect(interruptedExecution).resolves.toMatchObject({ status: "existing" });
+    await expect(
+      restartedService.service.finalizeAuditAttempt({
+        attemptRef: prepared.attemptRef,
+        operationId: "finalize-expired-execution",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ terminalState: "operational-abstention" });
+    expect(restartedService.launches()).toBe(0);
   });
 
   test("turns malformed transport output into terminal abstention and permits one native fallback", async () => {
