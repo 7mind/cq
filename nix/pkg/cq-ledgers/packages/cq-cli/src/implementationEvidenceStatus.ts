@@ -1,7 +1,9 @@
 import {
   createManagementLedgerStore,
+  implementationAuditManifestDigest,
   implementationEvidenceActivationStatusFromStore,
   nodeGitRunner,
+  readPackagedImplementationAuditManifest,
 } from "@cq/ledger";
 
 const FULL_SHA = /^[0-9a-f]{40}$/u;
@@ -61,11 +63,35 @@ export async function runImplementationEvidenceStatus(
   try {
     if (resolved.implementationEvidenceStore === undefined)
       throw new Error("protected implementation evidence store is unavailable");
-    const head = await nodeGitRunner(args.cwd)(["rev-parse", "HEAD"]);
+    const git = nodeGitRunner(args.cwd);
+    const head = await git(["rev-parse", "HEAD"]);
     if (head.code !== 0) throw new Error(`repository HEAD is unavailable: ${head.stderr.trim()}`);
     const repositoryHead = head.stdout.trim();
     if (repositoryHead !== args.expectedHead)
       throw new Error("repository HEAD does not match --expected-head");
+    const manifest = await readPackagedImplementationAuditManifest({
+      store: resolved.store,
+      manifestId: args.manifestId,
+      repository: {
+        repositoryHead: async () => repositoryHead,
+        readCommitFile: async (commit, path) => {
+          const result = await git(["show", `${commit}:${path}`]);
+          if (result.code !== 0)
+            throw new Error(`packaged audit source ${commit}:${path} is unavailable`);
+          return result.stdout;
+        },
+        diff: async (baseCommit, resultCommit) => {
+          const result = await git(["diff", "--no-ext-diff", `${baseCommit}..${resultCommit}`]);
+          if (result.code !== 0)
+            throw new Error(`packaged audit diff ${baseCommit}..${resultCommit} is unavailable`);
+          return result.stdout;
+        },
+        isAncestor: async (ancestor, descendant) =>
+          (await git(["merge-base", "--is-ancestor", ancestor, descendant])).code === 0,
+      },
+    });
+    if (manifest.activation === null || manifest.activation.goalRef !== args.goalRef)
+      throw new Error("packaged manifest has no matching implementation evidence activation");
     io.out(
       JSON.stringify(
         await implementationEvidenceActivationStatusFromStore(
@@ -76,6 +102,11 @@ export async function runImplementationEvidenceStatus(
             expectedRepositoryHead: args.expectedHead,
           },
           repositoryHead,
+          {
+            manifestDigest: implementationAuditManifestDigest(manifest),
+            sourceDigest: manifest.sourceDigest,
+            finalizedManifestDigest: manifest.activation.finalizedManifestDigest,
+          },
         ),
       ),
     );
