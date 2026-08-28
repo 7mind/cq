@@ -96,9 +96,34 @@ function auditVerdict(panel: ImplementationAuditPanelRecord): DispatchJSONValue 
   };
 }
 
-function fixture() {
+function historicalReview(
+  taskRef: string,
+  baseCommit: string,
+  resultCommit: string,
+): DispatchJSONValue {
+  return {
+    taskId: taskRef.slice("tasks:".length),
+    verdict: "approve",
+    criticism: [],
+    questions: [],
+    defects: [],
+    rationale: "historical implementation review",
+    gateReRan: true,
+    gateDurationMs: 100,
+    resultCommitVerified: true,
+    resultCommitEvidence: { status: "verified", resultCommit, branchTip: resultCommit },
+    baseAncestry: {
+      status: "verified",
+      relation: "descendant",
+      baseCommit,
+      resultCommit,
+      mergeBase: baseCommit,
+    },
+  };
+}
+
+function fixture(packaged: PackagedImplementationAuditManifest = manifest()) {
   const store = createInMemoryImplementationEvidenceStore();
-  const packaged = manifest();
   const panels = new Map<string, ImplementationAuditPanelRecord>();
   const dependencies: ImplementationEvidenceServiceDependencies = {
     store,
@@ -315,5 +340,53 @@ describe("protected historical implementation evidence [BA]", () => {
       ).rejects.toThrow("complete ordered");
     }
     expect(Object.keys((await f.store.snapshot()).implementationAudits)).toHaveLength(0);
+  });
+
+  test("does not reuse a historical review bound to a different commit or ancestry", async () => {
+    for (const review of [
+      historicalReview("tasks:T10", BASE, RESULT_TWO),
+      historicalReview("tasks:T10", RESULT_TWO, RESULT_ONE),
+    ]) {
+      const packaged = manifest();
+      const singleRecord = { ...packaged.records[0]!, historicalReview: review };
+      const f = fixture({ ...packaged, records: [singleRecord] });
+      await expect(
+        f.service.applyAuditManifest({
+          manifestId: packaged.manifestId,
+          manifestDigest: implementationAuditManifestDigest(f.packaged),
+          expectedRepositoryHead: HEAD,
+          auditAttemptRefs: [],
+          operationId: "reject-mismatched-historical-review",
+          author: "parent",
+        }),
+      ).rejects.toThrow("finalized audit panel");
+      expect(Object.keys((await f.store.snapshot()).implementationAudits)).toHaveLength(0);
+    }
+  });
+
+  test("fences audit-manifest application replays by operation id and full request", async () => {
+    const packaged = manifest();
+    const reviewed = {
+      ...packaged,
+      records: packaged.records.map((entry) => ({
+        ...entry,
+        historicalReview: historicalReview(entry.taskRef, entry.baseCommit, entry.resultCommit),
+      })),
+    };
+    const f = fixture(reviewed);
+    const request = {
+      manifestId: reviewed.manifestId,
+      manifestDigest: implementationAuditManifestDigest(reviewed),
+      expectedRepositoryHead: HEAD,
+      auditAttemptRefs: [],
+      operationId: "apply-replay-fence",
+      author: "parent",
+    } as const;
+
+    expect(await f.service.applyAuditManifest(request)).toMatchObject({ status: "applied" });
+    expect(await f.service.applyAuditManifest(request)).toMatchObject({ status: "existing" });
+    await expect(
+      f.service.applyAuditManifest({ ...request, author: "different-parent" }),
+    ).rejects.toThrow("reused with a different audit manifest application");
   });
 });

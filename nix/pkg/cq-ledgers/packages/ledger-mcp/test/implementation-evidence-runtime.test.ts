@@ -110,6 +110,15 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
     expect(source).toContain("{ implementationEvidence }");
   });
 
+  test("wires the trusted packaged audit registry without a caller-supplied seam", async () => {
+    const source = await readFile(
+      new URL("../src/implementationEvidenceRuntime.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain("readPackagedImplementationAuditManifest");
+    expect(source).toContain("options.readAuditManifest ??");
+  });
+
   test("reserves production reviewer time for the canonical gate [WA]", async () => {
     const source = await readFile(
       new URL("../src/implementationEvidenceRuntime.ts", import.meta.url),
