@@ -345,6 +345,34 @@ describe("protected historical implementation evidence [BA]", () => {
     expect(Object.keys((await f.store.snapshot()).implementationAudits)).toHaveLength(0);
   });
 
+  test("rejects an activation manifest when its requirement is absent without partial mutation", async () => {
+    const packaged = manifest();
+    const reviewed = {
+      ...packaged,
+      records: packaged.records.map((entry) => ({
+        ...entry,
+        historicalReview: historicalReview(entry.taskRef, entry.baseCommit, entry.resultCommit),
+      })),
+    };
+    const f = fixture(reviewed);
+
+    await expect(
+      f.service.applyAuditManifest({
+        manifestId: reviewed.manifestId,
+        manifestDigest: implementationAuditManifestDigest(reviewed),
+        expectedRepositoryHead: HEAD,
+        auditAttemptRefs: [],
+        operationId: "apply-without-requirement",
+        author: "parent",
+      }),
+    ).rejects.toThrow("activation requirement is missing");
+    const snapshot = await f.store.snapshot();
+    expect(Object.keys(snapshot.implementationAudits)).toHaveLength(0);
+    expect(Object.keys(snapshot.activationRequirements)).toHaveLength(0);
+    expect(Object.keys(snapshot.activations)).toHaveLength(0);
+    expect(Object.keys(snapshot.auditManifestApplications)).toHaveLength(0);
+  });
+
   test("does not reuse a historical review bound to a different commit or ancestry", async () => {
     for (const review of [
       historicalReview("tasks:T10", BASE, RESULT_TWO),
