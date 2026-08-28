@@ -117,7 +117,66 @@ describe("RemoteLedgerClient workset scope (Behavioral-Active Blackbox-Atomic)",
       operationId: "panel",
       author: "parent",
     });
-    expect(calls).toEqual(["prepare_implementation_review_panel"]);
+    await remote.prepareImplementationAuditPanel({
+      manifestId: "historical-v1",
+      manifestDigest: "c".repeat(64),
+      recordKey: "T2346",
+      expectedRepositoryHead: "d".repeat(40),
+      operationId: "audit-panel",
+      author: "parent",
+    });
+    await remote.prepareImplementationAuditAttempt({
+      panelRef: `cq-implementation-audit-panel:v1:${"e".repeat(64)}`,
+      attemptRef: `cq-implementation-audit-attempt:v1:${"f".repeat(64)}`,
+      operationId: "audit-prepare",
+      author: "parent",
+    });
+    await remote.executeExternalImplementationAuditAttempt({
+      attemptRef: `cq-implementation-audit-attempt:v1:${"f".repeat(64)}`,
+      operationId: "audit-execute",
+      author: "parent",
+    });
+    await remote.finalizeImplementationAuditAttempt({
+      attemptRef: `cq-implementation-audit-attempt:v1:${"f".repeat(64)}`,
+      operationId: "audit-finalize",
+      author: "parent",
+    });
+    await remote.prepareImplementationAuditFallback({
+      panelRef: `cq-implementation-audit-panel:v1:${"e".repeat(64)}`,
+      operationId: "audit-fallback",
+      author: "parent",
+    });
+    await remote.armImplementationEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: "historical-v1",
+      expectedRepositoryHead: "d".repeat(40),
+      operationId: "audit-arm",
+      author: "parent",
+    });
+    await remote.applyImplementationAuditManifest({
+      manifestId: "historical-v1",
+      manifestDigest: "c".repeat(64),
+      expectedRepositoryHead: "d".repeat(40),
+      auditAttemptRefs: [],
+      operationId: "audit-apply",
+      author: "parent",
+    });
+    await remote.getImplementationEvidenceActivationStatus({
+      goalRef: "goals:G176",
+      manifestId: "historical-v1",
+      expectedRepositoryHead: "d".repeat(40),
+    });
+    expect(calls).toEqual([
+      "prepare_implementation_review_panel",
+      "prepare_implementation_audit_panel",
+      "prepare_implementation_audit_attempt",
+      "execute_external_implementation_audit_attempt",
+      "finalize_implementation_audit_attempt",
+      "prepare_implementation_audit_fallback",
+      "arm_implementation_evidence_activation",
+      "apply_implementation_audit_manifest",
+      "get_implementation_evidence_activation_status",
+    ]);
     expect(
       [
         "prepareImplementationReviewAttempt",

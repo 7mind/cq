@@ -1214,6 +1214,24 @@ export interface ImplementationCompletionLedgerResult {
   readonly reviewRef: string;
 }
 
+export type ImplementationEvidenceFaultBoundary =
+  | "before-activation-requirement-write"
+  | "before-implementation-audit-write"
+  | "before-activation-write"
+  | "before-activation-requirement-fulfillment-write"
+  | "before-audit-manifest-application-write"
+  | "after-audit-manifest-application-commit";
+
+export interface ImplementationEvidenceFaultContext {
+  readonly operationId: string;
+  readonly recordRef: string | null;
+}
+
+export type ImplementationEvidenceFaultInjector = (
+  boundary: ImplementationEvidenceFaultBoundary,
+  context: ImplementationEvidenceFaultContext,
+) => void | Promise<void>;
+
 export interface ImplementationEvidenceServiceDependencies {
   readonly store: ImplementationEvidenceStore;
   readonly resolveReviewerRoster: () => readonly ImplementationReviewerIdentity[];
@@ -1282,6 +1300,7 @@ export interface ImplementationEvidenceServiceDependencies {
     readonly repositoryHead: string;
     readonly resultCommit: string;
   }) => Promise<boolean>;
+  readonly faultInjector?: ImplementationEvidenceFaultInjector;
 }
 
 function operationReplay(
@@ -1401,6 +1420,15 @@ export class ImplementationEvidenceService {
       throw new Error("implementation reviewer reservation timeout must be a positive integer");
     if (dependencies.nativeFallback.launch !== "native")
       throw new Error("implementation fallback reviewer must be native");
+  }
+
+  private async fault(
+    boundary: ImplementationEvidenceFaultBoundary,
+    context: ImplementationEvidenceFaultContext,
+  ): Promise<void> {
+    if (this.deps.faultInjector !== undefined) {
+      await this.deps.faultInjector(boundary, context);
+    }
   }
 
   private reviewerRoster(): readonly ImplementationReviewerIdentity[] {
@@ -1913,6 +1941,10 @@ export class ImplementationEvidenceService {
       );
       if (blocking !== undefined)
         throw new Error("a different implementation evidence activation requirement is pending");
+      await this.fault("before-activation-requirement-write", {
+        operationId: input.operationId,
+        recordRef: requirementRef,
+      });
       state.activationRequirements[requirementRef] = {
         version: 1,
         requirementRef,
@@ -2041,7 +2073,7 @@ export class ImplementationEvidenceService {
       auditRefs,
       taskRefs: manifest.records.map((record) => record.taskRef),
     });
-    return await this.deps.store[mutateEvidence](async (state) => {
+    const result = await this.deps.store[mutateEvidence](async (state) => {
       const existingApplication = state.auditManifestApplications[input.operationId];
       if (existingApplication !== undefined) {
         if (existingApplication.requestDigest !== applicationRequestDigest)
@@ -2064,15 +2096,19 @@ export class ImplementationEvidenceService {
         };
       }
       let existingCount = 0;
-      auditCandidates.forEach(({ record, attemptRefs, terminalState }, index) => {
+      for (const [index, { record, attemptRefs, terminalState }] of auditCandidates.entries()) {
         const auditRef = auditRefs[index]!;
         const existing = state.implementationAudits[auditRef];
         if (existing !== undefined) {
           if (existing.evidenceFingerprint !== digest({ record, attemptRefs, manifestDigest }))
             throw new Error("stored implementation audit does not match the packaged record");
           existingCount += 1;
-          return;
+          continue;
         }
+        await this.fault("before-implementation-audit-write", {
+          operationId: input.operationId,
+          recordRef: auditRef,
+        });
         state.implementationAudits[auditRef] = {
           version: 1,
           auditRef,
@@ -2094,7 +2130,7 @@ export class ImplementationEvidenceService {
           session: input.session ?? null,
           appliedAt: this.now(),
         };
-      });
+      }
       const requirement = Object.values(state.activationRequirements).find(
         (candidate) =>
           candidate.manifestId === manifest.manifestId && candidate.boundaryCommit === repositoryHead,
@@ -2117,6 +2153,10 @@ export class ImplementationEvidenceService {
         });
         const existingActivation = state.activations[activationRef];
         if (existingActivation === undefined) {
+          await this.fault("before-activation-write", {
+            operationId: input.operationId,
+            recordRef: activationRef,
+          });
           state.activations[activationRef] = {
             version: 1,
             activationRef,
@@ -2135,6 +2175,10 @@ export class ImplementationEvidenceService {
         } else {
           activation = "existing";
         }
+        await this.fault("before-activation-requirement-fulfillment-write", {
+          operationId: input.operationId,
+          recordRef: requirementRef,
+        });
         state.activationRequirements[requirementRef] = {
           ...requirement,
           state: "fulfilled",
@@ -2144,6 +2188,10 @@ export class ImplementationEvidenceService {
       }
       const status = existingCount === auditCandidates.length ? ("existing" as const) : ("applied" as const);
       const taskRefs = manifest.records.map((record) => record.taskRef);
+      await this.fault("before-audit-manifest-application-write", {
+        operationId: input.operationId,
+        recordRef: input.operationId,
+      });
       state.auditManifestApplications[input.operationId] = {
         version: 1,
         operationId: input.operationId,
@@ -2172,6 +2220,11 @@ export class ImplementationEvidenceService {
         taskRefs,
       };
     });
+    await this.fault("after-audit-manifest-application-commit", {
+      operationId: input.operationId,
+      recordRef: input.operationId,
+    });
+    return result;
   }
 
   async evidenceActivationStatus(input: ImplementationEvidenceActivationStatusInput) {

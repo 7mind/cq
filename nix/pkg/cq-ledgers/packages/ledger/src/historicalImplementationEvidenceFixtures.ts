@@ -35,6 +35,15 @@ export interface HistoricalImplementationSourceObservation {
   readonly finalizedManifestDigest: string;
 }
 
+export interface ImplementationEvidenceActivationTaskObservation {
+  readonly taskRef: string;
+  readonly ownerGoalRef: string | null;
+  readonly ownerEdgeKind: string | null;
+  readonly status: string;
+  readonly resultCommit: string | null;
+  readonly retainedAtBoundary: boolean;
+}
+
 export interface HistoricalImplementationFixtureExpectation {
   readonly manifestId: string;
   readonly rule: HistoricalImplementationAuditRule;
@@ -477,10 +486,11 @@ export async function readPackagedImplementationAuditManifest(
 
 export function resolveImplementationEvidenceActivationTaskMappings(
   manifest: PlanPublishedManifest,
-  rule: Pick<
-    typeof D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE,
-    "evidenceTaskKey" | "auditTaskKey" | "activationTaskKey"
-  >,
+  rule: {
+    readonly evidenceTaskKey: string;
+    readonly auditTaskKey: string;
+    readonly activationTaskKey: string;
+  },
 ): { readonly evidenceTaskRef: string; readonly auditTaskRef: string; readonly activationTaskRef: string } {
   const mapping = new Map(manifest.tasks.map(({ key, id }) => [key, id]));
   const evidenceTaskId = mapping.get(rule.evidenceTaskKey);
@@ -493,4 +503,46 @@ export function resolveImplementationEvidenceActivationTaskMappings(
     auditTaskRef: `tasks:${auditTaskId}`,
     activationTaskRef: `tasks:${activationTaskId}`,
   };
+}
+
+export function deriveImplementationEvidenceActivationCohort(
+  manifest: PlanPublishedManifest,
+  rule: {
+    readonly goalRef: string;
+    readonly evidenceTaskKey: string;
+    readonly auditTaskKey: string;
+    readonly activationTaskKey: string;
+  },
+  observations: readonly ImplementationEvidenceActivationTaskObservation[],
+): {
+  readonly evidenceTaskRef: string;
+  readonly auditTaskRef: string;
+  readonly activationTaskRef: string;
+  readonly taskRefs: readonly string[];
+} {
+  const mappings = resolveImplementationEvidenceActivationTaskMappings(manifest, rule);
+  const finalizedTaskRefs = new Set(manifest.tasks.map(({ id }) => `${TASKS_LEDGER}:${id}`));
+  const selected = new Set<string>();
+  for (const observation of observations) {
+    if (
+      observation.taskRef === mappings.activationTaskRef ||
+      !finalizedTaskRefs.has(observation.taskRef) ||
+      observation.ownerGoalRef !== rule.goalRef ||
+      observation.ownerEdgeKind !== "finalized-manifest" ||
+      observation.status !== "done" ||
+      observation.resultCommit === null ||
+      !FULL_SHA.test(observation.resultCommit) ||
+      !observation.retainedAtBoundary
+    )
+      continue;
+    if (selected.has(observation.taskRef))
+      throw new Error(`duplicate activation authority for ${observation.taskRef}`);
+    selected.add(observation.taskRef);
+  }
+  const taskRefs = [...selected].sort((left, right) =>
+    left.localeCompare(right, undefined, { numeric: true }),
+  );
+  if (!taskRefs.includes(mappings.evidenceTaskRef) || !taskRefs.includes(mappings.auditTaskRef))
+    throw new Error("implementation evidence activation cohort omits a finalized bootstrap task");
+  return { ...mappings, taskRefs };
 }
