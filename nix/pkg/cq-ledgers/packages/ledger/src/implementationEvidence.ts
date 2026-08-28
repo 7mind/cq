@@ -304,6 +304,23 @@ export interface ImplementationEvidenceActivationRecord {
   readonly activatedAt: string;
 }
 
+export interface ImplementationAuditManifestApplicationRecord {
+  readonly version: 1;
+  readonly operationId: string;
+  readonly requestDigest: string;
+  readonly manifestId: string;
+  readonly manifestDigest: string;
+  readonly repositoryHead: string;
+  readonly activation: "none" | "activated" | "existing";
+  readonly requirementRef: string | null;
+  readonly evidenceFingerprint: string;
+  readonly auditRefs: readonly string[];
+  readonly taskRefs: readonly string[];
+  readonly author: string;
+  readonly session: string | null;
+  readonly appliedAt: string;
+}
+
 export interface ImplementationEvidenceSnapshot {
   readonly version: 1;
   readonly panels: Readonly<Record<string, ImplementationReviewPanelRecord>>;
@@ -312,6 +329,9 @@ export interface ImplementationEvidenceSnapshot {
   readonly auditPanels: Readonly<Record<string, ImplementationAuditPanelRecord>>;
   readonly auditAttempts: Readonly<Record<string, ImplementationAuditAttemptRecord>>;
   readonly implementationAudits: Readonly<Record<string, ImplementationAuditRecord>>;
+  readonly auditManifestApplications: Readonly<
+    Record<string, ImplementationAuditManifestApplicationRecord>
+  >;
   readonly activationRequirements: Readonly<
     Record<string, ImplementationEvidenceActivationRequirementRecord>
   >;
@@ -326,6 +346,7 @@ interface MutableImplementationEvidenceSnapshot {
   auditPanels: Record<string, ImplementationAuditPanelRecord>;
   auditAttempts: Record<string, ImplementationAuditAttemptRecord>;
   implementationAudits: Record<string, ImplementationAuditRecord>;
+  auditManifestApplications: Record<string, ImplementationAuditManifestApplicationRecord>;
   activationRequirements: Record<string, ImplementationEvidenceActivationRequirementRecord>;
   activations: Record<string, ImplementationEvidenceActivationRecord>;
 }
@@ -460,6 +481,7 @@ function emptyState(): MutableImplementationEvidenceSnapshot {
     auditPanels: {},
     auditAttempts: {},
     implementationAudits: {},
+    auditManifestApplications: {},
     activationRequirements: {},
     activations: {},
   };
@@ -520,6 +542,8 @@ function parseStoredState(value: unknown): MutableImplementationEvidenceSnapshot
     (value["auditPanels"] !== undefined && !object(value["auditPanels"])) ||
     (value["auditAttempts"] !== undefined && !object(value["auditAttempts"])) ||
     (value["implementationAudits"] !== undefined && !object(value["implementationAudits"])) ||
+    (value["auditManifestApplications"] !== undefined &&
+      !object(value["auditManifestApplications"])) ||
     (value["activationRequirements"] !== undefined && !object(value["activationRequirements"])) ||
     (value["activations"] !== undefined && !object(value["activations"]))
   ) {
@@ -534,6 +558,7 @@ function parseStoredState(value: unknown): MutableImplementationEvidenceSnapshot
     auditPanels: stored.auditPanels ?? {},
     auditAttempts: stored.auditAttempts ?? {},
     implementationAudits: stored.implementationAudits ?? {},
+    auditManifestApplications: stored.auditManifestApplications ?? {},
     activationRequirements: stored.activationRequirements ?? {},
     activations: stored.activations ?? {},
   };
@@ -1293,13 +1318,28 @@ function sortedUniqueTaskRefs(taskRefs: readonly string[], label: string): reado
 
 function qualifyingHistoricalReview(
   review: DispatchJSONValue | null,
-  taskRef: string,
+  record: PackagedImplementationAuditRecord,
 ): boolean {
+  if (
+    !object(review) ||
+    review["taskId"] !== taskIdFromRef(record.taskRef) ||
+    review["verdict"] !== "approve" ||
+    !validateAgainstSchema(implementReviewerSidecar.outputSchema, review).ok
+  )
+    return false;
+  const result = review["resultCommitEvidence"];
+  const ancestry = review["baseAncestry"];
   return (
-    object(review) &&
-    review["taskId"] === taskIdFromRef(taskRef) &&
-    review["verdict"] === "approve" &&
-    validateAgainstSchema(implementReviewerSidecar.outputSchema, review).ok
+    object(result) &&
+    result["status"] === "verified" &&
+    result["resultCommit"] === record.resultCommit &&
+    result["branchTip"] === record.resultCommit &&
+    object(ancestry) &&
+    ancestry["status"] === "verified" &&
+    (ancestry["relation"] === "equal" || ancestry["relation"] === "descendant") &&
+    ancestry["baseCommit"] === record.baseCommit &&
+    ancestry["resultCommit"] === record.resultCommit &&
+    ancestry["mergeBase"] === record.baseCommit
   );
 }
 
@@ -1921,6 +1961,25 @@ export class ImplementationEvidenceService {
     if (repositoryHead !== input.expectedRepositoryHead)
       throw new Error("repository head changed before audit manifest application");
     const snapshot = await this.deps.store.snapshot();
+    const applicationRequestDigest = digest(input);
+    const replay = snapshot.auditManifestApplications[input.operationId];
+    if (replay !== undefined) {
+      if (replay.requestDigest !== applicationRequestDigest)
+        throw new Error(
+          `operation_id ${input.operationId} was reused with a different audit manifest application`,
+        );
+      return {
+        status: "existing" as const,
+        manifestId: replay.manifestId,
+        manifestDigest: replay.manifestDigest,
+        repositoryHead: replay.repositoryHead,
+        activation: replay.activation === "activated" ? ("existing" as const) : replay.activation,
+        requirementRef: replay.requirementRef,
+        evidenceFingerprint: replay.evidenceFingerprint,
+        auditRefs: replay.auditRefs,
+        taskRefs: replay.taskRefs,
+      };
+    }
     const expectedAttemptRefs: string[] = [];
     const auditCandidates: Array<{
       readonly record: PackagedImplementationAuditRecord;
@@ -1933,7 +1992,7 @@ export class ImplementationEvidenceService {
         !(await this.deps.isCommitRetained({ repositoryHead, resultCommit: record.resultCommit }))
       )
         throw new Error(`historical implementation result commit for ${record.taskRef} is not retained`);
-      if (qualifyingHistoricalReview(record.historicalReview, record.taskRef)) {
+      if (qualifyingHistoricalReview(record.historicalReview, record)) {
         auditCandidates.push({ record, attemptRefs: [], terminalState: "approved" });
         continue;
       }
@@ -1983,6 +2042,27 @@ export class ImplementationEvidenceService {
       taskRefs: manifest.records.map((record) => record.taskRef),
     });
     return await this.deps.store[mutateEvidence](async (state) => {
+      const existingApplication = state.auditManifestApplications[input.operationId];
+      if (existingApplication !== undefined) {
+        if (existingApplication.requestDigest !== applicationRequestDigest)
+          throw new Error(
+            `operation_id ${input.operationId} was reused with a different audit manifest application`,
+          );
+        return {
+          status: "existing" as const,
+          manifestId: existingApplication.manifestId,
+          manifestDigest: existingApplication.manifestDigest,
+          repositoryHead: existingApplication.repositoryHead,
+          activation:
+            existingApplication.activation === "activated"
+              ? ("existing" as const)
+              : existingApplication.activation,
+          requirementRef: existingApplication.requirementRef,
+          evidenceFingerprint: existingApplication.evidenceFingerprint,
+          auditRefs: existingApplication.auditRefs,
+          taskRefs: existingApplication.taskRefs,
+        };
+      }
       let existingCount = 0;
       auditCandidates.forEach(({ record, attemptRefs, terminalState }, index) => {
         const auditRef = auditRefs[index]!;
@@ -2062,8 +2142,12 @@ export class ImplementationEvidenceService {
           fulfilledAt: requirement.fulfilledAt ?? this.now(),
         };
       }
-      return {
-        status: existingCount === auditCandidates.length ? ("existing" as const) : ("applied" as const),
+      const status = existingCount === auditCandidates.length ? ("existing" as const) : ("applied" as const);
+      const taskRefs = manifest.records.map((record) => record.taskRef);
+      state.auditManifestApplications[input.operationId] = {
+        version: 1,
+        operationId: input.operationId,
+        requestDigest: applicationRequestDigest,
         manifestId: manifest.manifestId,
         manifestDigest,
         repositoryHead,
@@ -2071,7 +2155,21 @@ export class ImplementationEvidenceService {
         requirementRef,
         evidenceFingerprint,
         auditRefs,
-        taskRefs: manifest.records.map((record) => record.taskRef),
+        taskRefs,
+        author: input.author,
+        session: input.session ?? null,
+        appliedAt: this.now(),
+      };
+      return {
+        status,
+        manifestId: manifest.manifestId,
+        manifestDigest,
+        repositoryHead,
+        activation,
+        requirementRef,
+        evidenceFingerprint,
+        auditRefs,
+        taskRefs,
       };
     });
   }

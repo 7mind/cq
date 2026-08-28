@@ -21,6 +21,7 @@ import {
   nodeGitRunner,
   readCanonicalOwnership,
   operatorActionDirectiveForTask,
+  readPackagedImplementationAuditManifest,
   resolveImplementationEvidenceActivationTaskMappings,
   recordProtectedImplementationCompletion,
   type DispatchCapability,
@@ -457,6 +458,40 @@ export function createProductionImplementationEvidenceService(
   const environment = options.environment ?? process.env;
   const externalReviewRunner = options.externalReviewRunner ?? runExternalReviewer;
   const store = options.resolved.store;
+  const readAuditManifest =
+    options.readAuditManifest ??
+    (async (manifestId: string) =>
+      await readPackagedImplementationAuditManifest({
+        store,
+        manifestId,
+        repository: {
+          repositoryHead: async () =>
+            await gitOutput(options.repositoryRoot, ["rev-parse", "HEAD"], "integration HEAD"),
+          readCommitFile: async (commit, path) => {
+            const result = await nodeGitRunner(options.repositoryRoot)(["show", `${commit}:${path}`]);
+            if (result.code !== 0)
+              throw new Error(`packaged audit source ${commit}:${path} is unavailable`);
+            return result.stdout;
+          },
+          diff: async (baseCommit, resultCommit) => {
+            const result = await nodeGitRunner(options.repositoryRoot)([
+              "diff",
+              "--no-ext-diff",
+              `${baseCommit}..${resultCommit}`,
+            ]);
+            if (result.code !== 0)
+              throw new Error(`packaged audit diff ${baseCommit}..${resultCommit} is unavailable`);
+            return result.stdout;
+          },
+          isAncestor: async (ancestor, descendant) =>
+            (await nodeGitRunner(options.repositoryRoot)([
+              "merge-base",
+              "--is-ancestor",
+              ancestor,
+              descendant,
+            ])).code === 0,
+        },
+      }));
   return new ImplementationEvidenceService({
     store: options.resolved.implementationEvidenceStore,
     resolveReviewerRoster: () =>
@@ -530,9 +565,7 @@ export function createProductionImplementationEvidenceService(
       }
       return { state: observation.state === "aborted" ? "aborted" : "missing" };
     },
-    ...(options.readAuditManifest === undefined
-      ? {}
-      : { readAuditManifest: options.readAuditManifest }),
+    readAuditManifest,
     prepareNativeAudit: async ({ attemptRef, panel, identity, operationId }) => {
       const prepared = await options.dispatchCapability.prepare({
         roleId: "implementation-auditor",

@@ -1,4 +1,24 @@
-import type { PlanPublishedManifest } from "./planLifecycle.js";
+import { createHash } from "node:crypto";
+import type { DispatchJSONValue } from "@cq/config";
+import {
+  DEFECTS_LEDGER,
+  GOALS_LEDGER,
+  OPERATOR_ACTIONS_LEDGER,
+  REVIEWS_LEDGER,
+  TASKS_LEDGER,
+} from "./constants.js";
+import type {
+  PackagedImplementationAuditManifest,
+  PackagedImplementationAuditRecord,
+} from "./implementationEvidence.js";
+import {
+  PLAN_FINALIZED_MANIFEST_FIELD,
+  PlanPublishedManifestSchema,
+  type PlanPublishedManifest,
+} from "./planLifecycle.js";
+import type { LedgerStore } from "./store/LedgerStore.js";
+import type { Item } from "./types.js";
+import { readCanonicalOwnership } from "./worksetOwnerEdges.js";
 
 export interface HistoricalImplementationAuditRule {
   readonly defectRef: string;
@@ -25,8 +45,169 @@ export interface HistoricalImplementationFixtureExpectation {
   readonly requiredResultCommits: Readonly<Record<string, string>>;
 }
 
+export interface HistoricalImplementationRepositoryReader {
+  readonly repositoryHead: () => Promise<string>;
+  readonly readCommitFile: (commit: string, path: string) => Promise<string>;
+  readonly diff: (baseCommit: string, resultCommit: string) => Promise<string>;
+  readonly isAncestor: (ancestor: string, descendant: string) => Promise<boolean>;
+}
+
+export interface ReadPackagedImplementationAuditManifestInput {
+  readonly store: Pick<LedgerStore, "fetch" | "fetchArchive">;
+  readonly repository: HistoricalImplementationRepositoryReader;
+  readonly manifestId: string;
+}
+
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const TASK_REF = /^tasks:T[0-9]+$/u;
+
+interface SourcedItem {
+  readonly item: Item;
+  readonly source: "active" | "archive";
+  readonly archiveId: string | null;
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function itemForEvidence(source: SourcedItem): Record<string, unknown> {
+  return {
+    source: source.source,
+    archiveId: source.archiveId,
+    item: {
+      id: source.item.id,
+      milestoneId: source.item.milestoneId,
+      status: source.item.status,
+      fields: source.item.fields,
+      createdAt: source.item.createdAt,
+      updatedAt: source.item.updatedAt,
+      ...(source.item.author === undefined ? {} : { author: source.item.author }),
+      ...(source.item.session === undefined ? {} : { session: source.item.session }),
+    },
+  };
+}
+
+async function allItems(
+  reader: Pick<LedgerStore, "fetch" | "fetchArchive">,
+  ledgerId: string,
+): Promise<readonly SourcedItem[]> {
+  const ledger = reader.fetch(ledgerId);
+  const items: SourcedItem[] = ledger.milestones.flatMap((group) =>
+    group.items.map((item) => ({ item, source: "active" as const, archiveId: null })),
+  );
+  for (const pointer of ledger.archivePointers) {
+    const archive = await reader.fetchArchive(ledgerId, pointer.id);
+    const archived = archive.kind === "group" ? archive.milestone.items : [archive.item];
+    items.push(
+      ...archived.map((item) => ({
+        item,
+        source: "archive" as const,
+        archiveId: pointer.id,
+      })),
+    );
+  }
+  return items;
+}
+
+function uniqueItem(items: readonly SourcedItem[], ledgerId: string, itemId: string): SourcedItem {
+  const matches = items.filter(({ item }) => item.id === itemId);
+  if (matches.length !== 1)
+    throw new Error(`${ledgerId}:${itemId} resolves to ${String(matches.length)} authority records`);
+  return matches[0]!;
+}
+
+function parseFinalizedManifest(goal: SourcedItem): {
+  readonly raw: string;
+  readonly parsed: PlanPublishedManifest;
+  readonly digest: string;
+} {
+  const raw = goal.item.fields[PLAN_FINALIZED_MANIFEST_FIELD];
+  if (typeof raw !== "string") throw new Error(`goal ${goal.item.id} has no finalized manifest`);
+  const parsed = PlanPublishedManifestSchema.parse(JSON.parse(raw));
+  return { raw, parsed, digest: sha256(raw) };
+}
+
+function historicalReviewObservation(review: SourcedItem | undefined): DispatchJSONValue | null {
+  if (review === undefined) return null;
+  return {
+    reviewRef: `${REVIEWS_LEDGER}:${review.item.id}`,
+    ...itemForEvidence(review),
+  } as DispatchJSONValue;
+}
+
+function baseCommitFromWip(taskId: string, wip: string): string {
+  const fenced = /^```json\n([\s\S]*?)\n```/u.exec(wip);
+  if (fenced?.[1] === undefined) throw new Error(`WIP-${taskId}.md has no fenced JSON header`);
+  const header = JSON.parse(fenced[1]) as Record<string, unknown>;
+  if (header["taskId"] !== taskId || typeof header["baseCommit"] !== "string" ||
+    !FULL_SHA.test(header["baseCommit"]))
+    throw new Error(`WIP-${taskId}.md does not bind the task and a full base commit`);
+  return header["baseCommit"];
+}
+
+async function packagedRecord(input: {
+  readonly manifestId: string;
+  readonly task: SourcedItem;
+  readonly ownerGoalRef: string;
+  readonly finalizedManifest: string;
+  readonly historicalReview: SourcedItem | undefined;
+  readonly repositoryHead: string;
+  readonly repository: HistoricalImplementationRepositoryReader;
+}): Promise<{ readonly record: PackagedImplementationAuditRecord; readonly source: unknown }> {
+  const taskId = input.task.item.id;
+  const resultCommit = input.task.item.fields["resultCommit"];
+  if (input.task.item.status !== "done" || typeof resultCommit !== "string" ||
+    !FULL_SHA.test(resultCommit))
+    throw new Error(`historical audit task ${taskId} has no completed Git result`);
+  if (!(await input.repository.isAncestor(resultCommit, input.repositoryHead)))
+    throw new Error(`historical audit task ${taskId} result is not retained`);
+  const wipPath = `WIP-${taskId}.md`;
+  const wip = await input.repository.readCommitFile(resultCommit, wipPath);
+  const baseCommit = baseCommitFromWip(taskId, wip);
+  if (!(await input.repository.isAncestor(baseCommit, resultCommit)))
+    throw new Error(`historical audit task ${taskId} base is not an ancestor of its result`);
+  const diff = await input.repository.diff(baseCommit, resultCommit);
+  const wipDigest = sha256(wip);
+  const historicalReview = historicalReviewObservation(input.historicalReview);
+  return {
+    record: {
+      recordKey: `${input.manifestId}:${taskId}`,
+      taskRef: `${TASKS_LEDGER}:${taskId}`,
+      ownerGoalRef: input.ownerGoalRef,
+      finalizedManifest: input.finalizedManifest,
+      historicalReview,
+      baseCommit,
+      resultCommit,
+      repositoryHead: input.repositoryHead,
+      diff,
+      acceptance: { text: input.task.item.fields["acceptance"] ?? "" },
+      gateObservations: {
+        source: "git-wip",
+        path: wipPath,
+        digest: wipDigest,
+        completion: input.task.item.fields["completion"] ?? "",
+      },
+      requiredObservations: [
+        "task-authority",
+        "owner-goal-finalized-manifest",
+        "base-result-ancestry",
+        "result-retained-at-repository-head",
+        "diff-and-acceptance",
+        "gate-observations",
+      ],
+    },
+    source: {
+      task: itemForEvidence(input.task),
+      historicalReview,
+      wipPath,
+      wipDigest,
+      baseCommit,
+      resultCommit,
+      diffDigest: sha256(diff),
+    },
+  };
+}
 
 /**
  * Derive the qualifying Git cohort from active plus advertised archive
@@ -114,6 +295,185 @@ export const D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE = {
   auditTaskKey: "t-historical-evidence",
   activationTaskKey: "t-activate-evidence",
 } as const;
+
+function taskOrder(left: SourcedItem, right: SourcedItem): number {
+  return left.item.id.localeCompare(right.item.id, undefined, { numeric: true });
+}
+
+function assertExpectedHistoricalCohort(
+  fixture: HistoricalImplementationFixtureExpectation,
+  taskRefs: readonly string[],
+): void {
+  if (JSON.stringify(taskRefs) !== JSON.stringify(fixture.expectedTaskRefs))
+    throw new Error(
+      `${fixture.manifestId} authority-derived cohort changed: ${JSON.stringify(taskRefs)}`,
+    );
+  for (const [taskRef, resultCommit] of Object.entries(fixture.requiredResultCommits)) {
+    if (!taskRefs.includes(taskRef))
+      throw new Error(`${fixture.manifestId} is missing required historical task ${taskRef}`);
+    if (!FULL_SHA.test(resultCommit))
+      throw new Error(`${fixture.manifestId} has a malformed required result commit`);
+  }
+}
+
+/**
+ * Trusted production registry. Membership is discovered from the current
+ * active and advertised archive authority, then checked against the reviewed
+ * fixture expectation; the expectation is never used to select records.
+ */
+export async function readPackagedImplementationAuditManifest(
+  input: ReadPackagedImplementationAuditManifestInput,
+): Promise<PackagedImplementationAuditManifest> {
+  const historical = Object.values(HISTORICAL_IMPLEMENTATION_FIXTURES).find(
+    (fixture) => fixture.manifestId === input.manifestId,
+  );
+  const activation =
+    input.manifestId === D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE.manifestId
+      ? D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE
+      : null;
+  if (historical === undefined && activation === null)
+    throw new Error(`unknown packaged implementation audit manifest ${input.manifestId}`);
+
+  const [tasks, goals, defects, reviews, operatorActions] = await Promise.all([
+    allItems(input.store, TASKS_LEDGER),
+    allItems(input.store, GOALS_LEDGER),
+    allItems(input.store, DEFECTS_LEDGER),
+    allItems(input.store, REVIEWS_LEDGER),
+    allItems(input.store, OPERATOR_ACTIONS_LEDGER),
+  ]);
+  const repositoryHead = await input.repository.repositoryHead();
+  if (!FULL_SHA.test(repositoryHead)) throw new Error("packaged audit repository head is malformed");
+
+  let goal: SourcedItem;
+  let finalized: ReturnType<typeof parseFinalizedManifest>;
+  let selected: readonly SourcedItem[];
+  let reviewRefs: Readonly<Record<string, string>> = {};
+  const authoritySources: unknown[] = [];
+
+  if (historical !== undefined) {
+    const defectId = historical.rule.defectRef.slice(`${DEFECTS_LEDGER}:`.length);
+    const defect = uniqueItem(defects, DEFECTS_LEDGER, defectId);
+    const ownedGoals = goals.filter(({ item }) => {
+      const ownership = readCanonicalOwnership(item);
+      return ownership?.ownerRef === historical.rule.defectRef && ownership.edgeKind === "fix-goal";
+    });
+    if (ownedGoals.length !== 1)
+      throw new Error(`${historical.rule.defectRef} has ${String(ownedGoals.length)} sealed fix goals`);
+    goal = ownedGoals[0]!;
+    const goalRef = `${GOALS_LEDGER}:${goal.item.id}`;
+    finalized = parseFinalizedManifest(goal);
+    const finalizedTaskIds = new Set(finalized.parsed.tasks.map(({ id }) => id));
+    selected = tasks
+      .filter(({ item }) => {
+        const ownership = readCanonicalOwnership(item);
+        return (
+          ownership?.ownerRef === goalRef &&
+          ownership.edgeKind === "finalized-manifest" &&
+          item.status === "done" &&
+          typeof item.fields["resultCommit"] === "string" &&
+          FULL_SHA.test(item.fields["resultCommit"]) &&
+          finalizedTaskIds.has(item.id)
+        );
+      })
+      .sort(taskOrder);
+    const taskRefs = selected.map(({ item }) => `${TASKS_LEDGER}:${item.id}`);
+    assertExpectedHistoricalCohort(historical, taskRefs);
+    reviewRefs = historical.reviewRefs;
+    for (const [taskRef, requiredCommit] of Object.entries(historical.requiredResultCommits)) {
+      const task = selected.find(({ item }) => `${TASKS_LEDGER}:${item.id}` === taskRef);
+      if (task?.item.fields["resultCommit"] !== requiredCommit)
+        throw new Error(`${taskRef} result commit differs from the reviewed fixture`);
+    }
+    for (const [taskRef, actionRef] of Object.entries(historical.excludedExternalEffects)) {
+      if (taskRefs.includes(taskRef))
+        throw new Error(`${taskRef} must remain exclusively on the external-effect arm`);
+      const action = uniqueItem(
+        operatorActions,
+        OPERATOR_ACTIONS_LEDGER,
+        actionRef.slice(`${OPERATOR_ACTIONS_LEDGER}:`.length),
+      );
+      if (action.item.fields["taskRef"] !== taskRef)
+        throw new Error(`${actionRef} does not bind excluded external-effect task ${taskRef}`);
+      authoritySources.push(itemForEvidence(action));
+    }
+    authoritySources.push(itemForEvidence(defect));
+  } else {
+    goal = uniqueItem(
+      goals,
+      GOALS_LEDGER,
+      D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE.goalRef.slice(`${GOALS_LEDGER}:`.length),
+    );
+    finalized = parseFinalizedManifest(goal);
+    const mappings = resolveImplementationEvidenceActivationTaskMappings(
+      finalized.parsed,
+      D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE,
+    );
+    const activationTaskId = mappings.activationTaskRef.slice(`${TASKS_LEDGER}:`.length);
+    const finalizedTaskIds = new Set(finalized.parsed.tasks.map(({ id }) => id));
+    selected = tasks
+      .filter(({ item }) => {
+        const ownership = readCanonicalOwnership(item);
+        return (
+          item.id !== activationTaskId &&
+          finalizedTaskIds.has(item.id) &&
+          ownership?.ownerRef === D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE.goalRef &&
+          ownership.edgeKind === "finalized-manifest" &&
+          item.status === "done" &&
+          typeof item.fields["resultCommit"] === "string" &&
+          FULL_SHA.test(item.fields["resultCommit"])
+        );
+      })
+      .sort(taskOrder);
+    const selectedRefs = selected.map(({ item }) => `${TASKS_LEDGER}:${item.id}`);
+    if (!selectedRefs.includes(mappings.evidenceTaskRef) ||
+      !selectedRefs.includes(mappings.auditTaskRef))
+      throw new Error("D347 authority-derived cohort omits a finalized bootstrap task mapping");
+  }
+
+  const recordsAndSources = await Promise.all(
+    selected.map(async (task) => {
+      const taskRef = `${TASKS_LEDGER}:${task.item.id}`;
+      const reviewRef = reviewRefs[taskRef];
+      const review = reviewRef === undefined
+        ? undefined
+        : uniqueItem(reviews, REVIEWS_LEDGER, reviewRef.slice(`${REVIEWS_LEDGER}:`.length));
+      return await packagedRecord({
+        manifestId: input.manifestId,
+        task,
+        ownerGoalRef: `${GOALS_LEDGER}:${goal.item.id}`,
+        finalizedManifest: finalized.raw,
+        historicalReview: review,
+        repositoryHead,
+        repository: input.repository,
+      });
+    }),
+  );
+  authoritySources.push(itemForEvidence(goal));
+  const sourceDigest = sha256(
+    JSON.stringify({
+      manifestId: input.manifestId,
+      repositoryHead,
+      finalizedManifestDigest: finalized.digest,
+      authority: authoritySources,
+      records: recordsAndSources.map(({ source }) => source),
+    }),
+  );
+  return {
+    version: 1,
+    manifestId: input.manifestId,
+    sourceDigest,
+    records: recordsAndSources.map(({ record }) => record),
+    activation: activation === null
+      ? null
+      : {
+          goalRef: activation.goalRef,
+          finalizedManifestDigest: finalized.digest,
+          evidenceTaskKey: activation.evidenceTaskKey,
+          auditTaskKey: activation.auditTaskKey,
+          activationTaskKey: activation.activationTaskKey,
+        },
+  };
+}
 
 export function resolveImplementationEvidenceActivationTaskMappings(
   manifest: PlanPublishedManifest,
