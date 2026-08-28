@@ -1692,6 +1692,7 @@ export class ImplementationEvidenceService {
     const requestDigest = digest(input);
     if (operationReplay(attempt.operations, input.operationId, requestDigest))
       return this.preparedAuditAttemptResponse("existing", attempt);
+    if (attempt.terminalState !== null) throw new Error("audit attempt is already terminal");
     let preparedDispatch: DispatchPrepared | null = null;
     if (attempt.identity.launch === "native") {
       if (this.deps.prepareNativeAudit === undefined)
@@ -1709,6 +1710,7 @@ export class ImplementationEvidenceService {
         throw new Error("audit attempt changed during preparation");
       if (operationReplay(current.operations, input.operationId, requestDigest))
         return this.preparedAuditAttemptResponse("existing", current);
+      if (current.terminalState !== null) throw new Error("audit attempt is already terminal");
       if (
         current.preparedDispatch !== null &&
         preparedDispatch !== null &&
@@ -1820,8 +1822,9 @@ export class ImplementationEvidenceService {
           };
     await this.deps.store[mutateEvidence](async (state) => {
       const current = state.auditAttempts[input.attemptRef];
+      if (current === undefined) throw new Error("audit attempt disappeared");
+      if (current.terminalState !== null) throw new Error("audit attempt is already terminal");
       if (
-        current === undefined ||
         current.executionReservation?.executionRef !== executionRef ||
         current.execution !== null
       )
