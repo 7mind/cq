@@ -2095,6 +2095,12 @@ export class ImplementationEvidenceService {
           taskRefs: existingApplication.taskRefs,
         };
       }
+      const requirement = Object.values(state.activationRequirements).find(
+        (candidate) =>
+          candidate.manifestId === manifest.manifestId && candidate.boundaryCommit === repositoryHead,
+      );
+      if (manifest.activation !== null && requirement === undefined)
+        throw new Error("implementation evidence activation requirement is missing");
       let existingCount = 0;
       for (const [index, { record, attemptRefs, terminalState }] of auditCandidates.entries()) {
         const auditRef = auditRefs[index]!;
@@ -2131,10 +2137,6 @@ export class ImplementationEvidenceService {
           appliedAt: this.now(),
         };
       }
-      const requirement = Object.values(state.activationRequirements).find(
-        (candidate) =>
-          candidate.manifestId === manifest.manifestId && candidate.boundaryCommit === repositoryHead,
-      );
       let activation: "none" | "activated" | "existing" = "none";
       let requirementRef: string | null = null;
       if (requirement !== undefined) {
