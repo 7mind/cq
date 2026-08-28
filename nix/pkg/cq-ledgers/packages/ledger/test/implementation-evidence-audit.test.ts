@@ -122,7 +122,10 @@ function historicalReview(
   };
 }
 
-function fixture(packaged: PackagedImplementationAuditManifest = manifest()) {
+function fixture(
+  packaged: PackagedImplementationAuditManifest = manifest(),
+  activationTaskRefs: readonly string[] = ["tasks:T10", "tasks:T11"],
+) {
   const store = createInMemoryImplementationEvidenceStore();
   const panels = new Map<string, ImplementationAuditPanelRecord>();
   const dependencies: ImplementationEvidenceServiceDependencies = {
@@ -180,7 +183,7 @@ function fixture(packaged: PackagedImplementationAuditManifest = manifest()) {
       auditTaskRef: "tasks:T11",
       activationTaskRef: "tasks:T12",
       boundaryCommit: HEAD,
-      taskRefs: ["tasks:T10", "tasks:T11"],
+      taskRefs: activationTaskRefs,
     }),
     isCommitRetained: async () => true,
   };
@@ -388,5 +391,61 @@ describe("protected historical implementation evidence [BA]", () => {
     await expect(
       f.service.applyAuditManifest({ ...request, author: "different-parent" }),
     ).rejects.toThrow("reused with a different audit manifest application");
+  });
+
+  test("refuses incomplete and surplus activation cohorts without partial mutation", async () => {
+    const base = manifest();
+    const reviewed = {
+      ...base,
+      records: base.records.map((entry) => ({
+        ...entry,
+        historicalReview: historicalReview(entry.taskRef, entry.baseCommit, entry.resultCommit),
+      })),
+    };
+    const surplusRecord = record("tasks:T13", "f".repeat(40));
+    for (const [packaged, activationTaskRefs, operationId] of [
+      [reviewed, ["tasks:T10", "tasks:T11", "tasks:T13"], "apply-incomplete-cohort"],
+      [
+        {
+          ...reviewed,
+          records: [
+            ...reviewed.records,
+            {
+              ...surplusRecord,
+              historicalReview: historicalReview(
+                surplusRecord.taskRef,
+                surplusRecord.baseCommit,
+                surplusRecord.resultCommit,
+              ),
+            },
+          ],
+        },
+        ["tasks:T10", "tasks:T11"],
+        "apply-surplus-cohort",
+      ],
+    ] as const) {
+      const f = fixture(packaged, activationTaskRefs);
+      await f.service.armEvidenceActivation({
+        goalRef: "goals:G176",
+        manifestId: packaged.manifestId,
+        expectedRepositoryHead: HEAD,
+        operationId: `arm-${operationId}`,
+        author: "parent",
+      });
+      await expect(
+        f.service.applyAuditManifest({
+          manifestId: packaged.manifestId,
+          manifestDigest: implementationAuditManifestDigest(packaged),
+          expectedRepositoryHead: HEAD,
+          auditAttemptRefs: [],
+          operationId,
+          author: "parent",
+        }),
+      ).rejects.toThrow("does not exactly fulfill");
+      const snapshot = await f.store.snapshot();
+      expect(Object.keys(snapshot.implementationAudits)).toHaveLength(0);
+      expect(Object.keys(snapshot.activations)).toHaveLength(0);
+      expect(Object.values(snapshot.activationRequirements)).toMatchObject([{ state: "armed" }]);
+    }
   });
 });

@@ -22,6 +22,7 @@ import {
   readCanonicalOwnership,
   operatorActionDirectiveForTask,
   readPackagedImplementationAuditManifest,
+  deriveImplementationEvidenceActivationCohort,
   resolveImplementationEvidenceActivationTaskMappings,
   recordProtectedImplementationCompletion,
   type DispatchCapability,
@@ -681,43 +682,47 @@ export function createProductionImplementationEvidenceService(
         published,
         manifest.activation,
       );
-      const evidenceTaskId = mappings.evidenceTaskRef.slice(`${TASKS_LEDGER}:`.length);
-      const auditTaskId = mappings.auditTaskRef.slice(`${TASKS_LEDGER}:`.length);
       const activationTaskId = mappings.activationTaskRef.slice(`${TASKS_LEDGER}:`.length);
       const activationTask = store.fetchItem(TASKS_LEDGER, activationTaskId);
       if (operatorActionDirectiveForTask(activationTask)?.actionKey !== "implementation-evidence-activation")
         throw new Error("activation task lacks the strict implementation-evidence operator envelope");
-      const taskRefs: string[] = [];
+      const observations = [];
       for (const { id } of published.tasks) {
         const task = store.fetchItem(TASKS_LEDGER, id);
         const ownership = readCanonicalOwnership(task);
         const resultCommit = task.fields["resultCommit"];
-        if (
-          ownership?.ownerRef !== goalRef ||
-          task.status !== "done" ||
-          typeof resultCommit !== "string" ||
-          !FULL_SHA.test(resultCommit)
-        )
-          continue;
-        const retained = await nodeGitRunner(options.repositoryRoot)([
-          "merge-base",
-          "--is-ancestor",
-          resultCommit,
-          repositoryHead,
-        ]);
-        if (retained.code === 0) taskRefs.push(`${TASKS_LEDGER}:${id}`);
+        const retainedAtBoundary = typeof resultCommit === "string" && FULL_SHA.test(resultCommit)
+          ? (await nodeGitRunner(options.repositoryRoot)([
+              "merge-base",
+              "--is-ancestor",
+              resultCommit,
+              repositoryHead,
+            ])).code === 0
+          : false;
+        observations.push({
+          taskRef: `${TASKS_LEDGER}:${id}`,
+          ownerGoalRef: ownership?.ownerRef ?? null,
+          ownerEdgeKind: ownership?.edgeKind ?? null,
+          status: task.status,
+          resultCommit: typeof resultCommit === "string" ? resultCommit : null,
+          retainedAtBoundary,
+        });
       }
-      taskRefs.sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+      const cohort = deriveImplementationEvidenceActivationCohort(
+        published,
+        manifest.activation,
+        observations,
+      );
       const finalizedManifestDigest = new Bun.CryptoHasher("sha256").update(finalized).digest("hex");
       if (finalizedManifestDigest !== manifest.activation.finalizedManifestDigest)
         throw new Error("packaged activation rule does not match the finalized manifest digest");
       return {
         finalizedManifestDigest,
-        evidenceTaskRef: `${TASKS_LEDGER}:${evidenceTaskId}`,
-        auditTaskRef: `${TASKS_LEDGER}:${auditTaskId}`,
-        activationTaskRef: `${TASKS_LEDGER}:${activationTaskId}`,
+        evidenceTaskRef: cohort.evidenceTaskRef,
+        auditTaskRef: cohort.auditTaskRef,
+        activationTaskRef: cohort.activationTaskRef,
         boundaryCommit: repositoryHead,
-        taskRefs,
+        taskRefs: cohort.taskRefs,
       };
     },
     verifyImplementation: async ({ resultCommit, worker }) => {

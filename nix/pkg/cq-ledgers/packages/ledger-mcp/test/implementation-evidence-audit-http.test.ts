@@ -43,6 +43,23 @@ const manifest: PackagedImplementationAuditManifest = {
   activation: null,
 };
 
+function auditVerdict() {
+  return {
+    taskId: "T50",
+    verdict: "approve",
+    criticism: [],
+    questions: [],
+    observations: [
+      { name: "commit-retained", status: "verified", detail: "commit is retained" },
+    ],
+    rationale: "packaged observations verified",
+    manifestDigest: implementationAuditManifestDigest(manifest),
+    baseCommit: "c".repeat(40),
+    resultCommit: "d".repeat(40),
+    repositoryHead: HEAD,
+  };
+}
+
 function evidenceService(): ImplementationEvidenceService {
   const dependencies: ImplementationEvidenceServiceDependencies = {
     store: createInMemoryImplementationEvidenceStore(),
@@ -71,6 +88,12 @@ function evidenceService(): ImplementationEvidenceService {
       throw new Error("not configured");
     },
     readAuditManifest: async () => structuredClone(manifest),
+    executeExternalAudit: async () => ({
+      adapterIdentity: identity.adapterId,
+      stdout: JSON.stringify(auditVerdict()),
+      stderr: "",
+      exitCode: 0,
+    }),
     isCommitRetained: async () => true,
   };
   return new ImplementationEvidenceService(dependencies);
@@ -182,10 +205,54 @@ describe("implementation audit HTTP transport [Blackbox-GoodCommunication]", () 
       "management",
     );
     expect(called.response.status).toBe(200);
-    expect(textPayload(called.message["result"])).toMatchObject({
+    const panel = textPayload(called.message["result"]) as Record<string, unknown>;
+    expect(panel).toMatchObject({
       status: "prepared",
       manifestId: manifest.manifestId,
       taskRef: "tasks:T50",
     });
+    const attemptRefs = panel["attemptRefs"] as string[];
+    const call = async (id: number, name: string, args: Record<string, unknown>) => {
+      const result = await rpc(
+        handlers,
+        { jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } },
+        sessionId,
+        "management",
+      );
+      expect(result.response.status).toBe(200);
+      return textPayload(result.message["result"]);
+    };
+    await expect(
+      call(3, "prepare_implementation_audit_attempt", {
+        panel_ref: panel["panelRef"],
+        attempt_ref: attemptRefs[0],
+        operation_id: "prepare-http",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ status: "prepared", launch: "adapter" });
+    await expect(
+      call(4, "execute_external_implementation_audit_attempt", {
+        attempt_ref: attemptRefs[0],
+        operation_id: "execute-http",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ status: "executed" });
+    await expect(
+      call(5, "finalize_implementation_audit_attempt", {
+        attempt_ref: attemptRefs[0],
+        operation_id: "finalize-http",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ terminalState: "approved" });
+    await expect(
+      call(6, "apply_implementation_audit_manifest", {
+        manifest_id: manifest.manifestId,
+        manifest_digest: implementationAuditManifestDigest(manifest),
+        expected_repository_head: HEAD,
+        audit_attempt_refs: attemptRefs,
+        operation_id: "apply-http",
+        author: "parent",
+      }),
+    ).resolves.toMatchObject({ status: "applied", taskRefs: ["tasks:T50"] });
   });
 });

@@ -73,6 +73,85 @@ function authorityItem(
   };
 }
 
+async function productionHistoricalManifest(key: "D303" | "D343") {
+  const fixture = HISTORICAL_IMPLEMENTATION_FIXTURES[key];
+  const requiredResultCommits: Readonly<Record<string, string>> =
+    fixture.requiredResultCommits;
+  const abstentionReviewRefs: readonly string[] = fixture.abstentionReviewRefs;
+  const taskIds = fixture.expectedTaskRefs.map((taskRef) => taskRef.slice("tasks:".length));
+  const bases = Object.fromEntries(
+    taskIds.map((taskId, index) => [taskId, String(index + 1).repeat(40)]),
+  );
+  const finalized = JSON.stringify({
+    revision: 1,
+    milestones: [{ key: "m-fix", id: `M${key.slice(1)}` }],
+    tasks: taskIds.map((id) => ({ key: `t-${id.toLowerCase()}`, id })),
+  });
+  const tasks = taskIds.map((id) => {
+    const taskRef = `tasks:${id}`;
+    const resultCommit = requiredResultCommits[taskRef];
+    if (resultCommit === undefined) throw new Error(`fixture has no result commit for ${taskRef}`);
+    return authorityItem(id, "done", {
+      headline: id,
+      acceptance: `accept ${id}`,
+      resultCommit,
+      worksetOwnerRef: `goals:G${key.slice(1)}`,
+      worksetOwnerEdgeKind: "finalized-manifest",
+    });
+  });
+  const reviews = Object.values(fixture.reviewRefs).map((reviewRef) => {
+    const id = reviewRef.slice("reviews:".length);
+    const abstained = abstentionReviewRefs.includes(reviewRef);
+    return authorityItem(id, abstained ? "abstained" : "go-ahead", {
+      summary: abstained ? "operational-abstention" : "approved historical review",
+    });
+  });
+  const operatorActions = Object.entries(fixture.excludedExternalEffects).map(
+    ([taskRef, actionRef]) =>
+      authorityItem(actionRef.slice("operatorActions:".length), "completed", { taskRef }),
+  );
+  const ledgers: Record<string, readonly ReturnType<typeof authorityItem>[]> = {
+    tasks,
+    goals: [
+      authorityItem(`G${key.slice(1)}`, "building", {
+        title: `${key} fix`,
+        planFinalizedManifest: finalized,
+        worksetOwnerRef: `defects:${key}`,
+        worksetOwnerEdgeKind: "fix-goal",
+      }),
+    ],
+    defects: [authorityItem(key, "resolved", { headline: key, severity: "high" })],
+    reviews,
+    operatorActions,
+  };
+  return await readPackagedImplementationAuditManifest({
+    store: {
+      fetch: (ledgerId: string) => ({
+        id: ledgerId,
+        schema: {},
+        counters: { milestone: 1, item: 1 },
+        milestones: [{ id: "active", milestone: {}, items: ledgers[ledgerId] ?? [] }],
+        archivePointers: [],
+      }),
+      fetchArchive: async () => {
+        throw new Error("production fixture has no advertised archive");
+      },
+    } as never,
+    manifestId: fixture.manifestId,
+    repository: {
+      repositoryHead: async () => "f".repeat(40),
+      readCommitFile: async (_commit, path) => {
+        const taskId = /^WIP-(T[0-9]+)\.md$/u.exec(path)?.[1];
+        if (taskId === undefined || bases[taskId] === undefined)
+          throw new Error("unexpected WIP path");
+        return `\`\`\`json\n${JSON.stringify({ taskId, role: "implement-worker", baseCommit: bases[taskId] })}\n\`\`\`\n`;
+      },
+      diff: async (baseCommit, resultCommit) => `diff ${baseCommit} ${resultCommit}`,
+      isAncestor: async () => true,
+    },
+  });
+}
+
 describe("trusted historical implementation fixture rules [BA]", () => {
   test("derives the complete D303, D340, and D343 Git cohorts from source observations", () => {
     for (const key of ["D303", "D340", "D343"] as const) {
@@ -103,6 +182,25 @@ describe("trusted historical implementation fixture rules [BA]", () => {
     expect(HISTORICAL_IMPLEMENTATION_FIXTURES.D343.excludedExternalEffects).toEqual({
       "tasks:T2229": "operatorActions:OA2229",
     });
+  });
+
+  test("assembles D303 through the production registry with observed R1419 abstention", async () => {
+    const manifest = await productionHistoricalManifest("D303");
+    expect(manifest.records.map(({ taskRef }) => taskRef)).toEqual([
+      ...HISTORICAL_IMPLEMENTATION_FIXTURES.D303.expectedTaskRefs,
+    ]);
+    const review = manifest.records.find(({ taskRef }) => taskRef === "tasks:T2109")
+      ?.historicalReview as Record<string, unknown>;
+    expect(review).toMatchObject({
+      reviewRef: "reviews:R1419",
+      item: { status: "abstained", fields: { summary: "operational-abstention" } },
+    });
+  });
+
+  test("assembles D343 through the production registry while preserving OA2229", async () => {
+    const manifest = await productionHistoricalManifest("D343");
+    expect(manifest.records.map(({ taskRef }) => taskRef)).toEqual(["tasks:T2228"]);
+    expect(manifest.records[0]?.historicalReview).toMatchObject({ reviewRef: "reviews:R1413" });
   });
 
   test("builds D340 from active plus advertised archive authority and discovers T2151", async () => {
