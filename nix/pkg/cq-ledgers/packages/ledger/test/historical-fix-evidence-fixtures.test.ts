@@ -291,4 +291,78 @@ describe("trusted historical implementation fixture rules [BA]", () => {
     });
     expect(JSON.stringify(D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE)).not.toMatch(/T[0-9]+/u);
   });
+
+  test("production D347 registry excludes completed tasks not retained at the boundary", async () => {
+    const head = "f".repeat(40);
+    const postBoundary = "e".repeat(40);
+    const finalized = JSON.stringify({
+      revision: 1,
+      milestones: [{ key: "m-evidence", id: "M347" }],
+      tasks: [
+        { key: "t-evidence", id: "T3000" },
+        { key: "t-historical-evidence", id: "T3001" },
+        { key: "t-activate-evidence", id: "T3002" },
+        { key: "t-successor", id: "T3003" },
+        { key: "t-post-boundary", id: "T3004" },
+      ],
+    });
+    const task = (id: string, resultCommit: string) =>
+      authorityItem(id, "done", {
+        headline: id,
+        acceptance: `accept ${id}`,
+        resultCommit,
+        worksetOwnerRef: "goals:G176",
+        worksetOwnerEdgeKind: "finalized-manifest",
+      }, "M347");
+    const ledgers: Record<string, readonly ReturnType<typeof authorityItem>[]> = {
+      tasks: [
+        task("T3000", "1".repeat(40)),
+        task("T3001", "2".repeat(40)),
+        authorityItem("T3002", "planned", {
+          headline: "T3002",
+          worksetOwnerRef: "goals:G176",
+          worksetOwnerEdgeKind: "finalized-manifest",
+        }, "M347"),
+        task("T3003", "3".repeat(40)),
+        task("T3004", postBoundary),
+      ],
+      goals: [authorityItem("G176", "building", { title: "D347", planFinalizedManifest: finalized })],
+      defects: [],
+      reviews: [],
+      operatorActions: [],
+    };
+
+    const manifest = await readPackagedImplementationAuditManifest({
+      store: {
+        fetch: (ledgerId: string) => ({
+          id: ledgerId,
+          schema: {},
+          counters: { milestone: 1, item: 1 },
+          milestones: [{ id: "active", milestone: {}, items: ledgers[ledgerId] ?? [] }],
+          archivePointers: [],
+        }),
+        fetchArchive: async () => {
+          throw new Error("unexpected archive read");
+        },
+      } as never,
+      manifestId: D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE.manifestId,
+      repository: {
+        repositoryHead: async () => head,
+        readCommitFile: async (_commit, path) => {
+          const taskId = /^WIP-(T[0-9]+)\.md$/u.exec(path)?.[1];
+          if (taskId === undefined) throw new Error("unexpected WIP path");
+          return `\`\`\`json\n${JSON.stringify({ taskId, role: "implement-worker", baseCommit: "a".repeat(40) })}\n\`\`\`\n`;
+        },
+        diff: async (baseCommit, resultCommit) => `diff ${baseCommit} ${resultCommit}`,
+        isAncestor: async (ancestor, descendant) =>
+          !(ancestor === postBoundary && descendant === head),
+      },
+    });
+
+    expect(manifest.records.map(({ taskRef }) => taskRef)).toEqual([
+      "tasks:T3000",
+      "tasks:T3001",
+      "tasks:T3003",
+    ]);
+  });
 });

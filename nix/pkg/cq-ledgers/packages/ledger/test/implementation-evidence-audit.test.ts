@@ -126,6 +126,7 @@ function fixture(
   packaged: PackagedImplementationAuditManifest = manifest(),
   activationTaskRefs: readonly string[] = ["tasks:T10", "tasks:T11"],
 ) {
+  let currentPackaged = structuredClone(packaged);
   const store = createInMemoryImplementationEvidenceStore();
   const panels = new Map<string, ImplementationAuditPanelRecord>();
   const dependencies: ImplementationEvidenceServiceDependencies = {
@@ -156,8 +157,8 @@ function fixture(
       throw new Error("live completion not configured");
     },
     readAuditManifest: async (manifestId) => {
-      if (manifestId !== packaged.manifestId) throw new Error("missing packaged manifest");
-      return structuredClone(packaged);
+      if (manifestId !== currentPackaged.manifestId) throw new Error("missing packaged manifest");
+      return structuredClone(currentPackaged);
     },
     prepareNativeAudit: async ({ attemptRef, panel }) => {
       const dispatch = prepared(attemptRef);
@@ -187,7 +188,14 @@ function fixture(
     }),
     isCommitRetained: async () => true,
   };
-  return { service: new ImplementationEvidenceService(dependencies), store, packaged };
+  return {
+    service: new ImplementationEvidenceService(dependencies),
+    store,
+    packaged,
+    replacePackaged(next: PackagedImplementationAuditManifest) {
+      currentPackaged = structuredClone(next);
+    },
+  };
 }
 
 describe("protected historical implementation evidence [BA]", () => {
@@ -371,6 +379,54 @@ describe("protected historical implementation evidence [BA]", () => {
     expect(Object.keys(snapshot.activationRequirements)).toHaveLength(0);
     expect(Object.keys(snapshot.activations)).toHaveLength(0);
     expect(Object.keys(snapshot.auditManifestApplications)).toHaveLength(0);
+  });
+
+  test("rejects finalized or source manifest changes after activation is armed", async () => {
+    const base = manifest();
+    const reviewed = {
+      ...base,
+      records: base.records.map((entry) => ({
+        ...entry,
+        historicalReview: historicalReview(entry.taskRef, entry.baseCommit, entry.resultCommit),
+      })),
+    };
+    const changed = [
+      { ...reviewed, sourceDigest: "1".repeat(64) },
+      {
+        ...reviewed,
+        records: reviewed.records.map((entry) => ({
+          ...entry,
+          finalizedManifest: `${entry.finalizedManifest} changed`,
+        })),
+        activation: { ...reviewed.activation!, finalizedManifestDigest: "2".repeat(64) },
+      },
+    ];
+    for (const [index, replacement] of changed.entries()) {
+      const f = fixture(reviewed);
+      await f.service.armEvidenceActivation({
+        goalRef: "goals:G176",
+        manifestId: reviewed.manifestId,
+        expectedRepositoryHead: HEAD,
+        operationId: `arm-manifest-binding-${String(index)}`,
+        author: "parent",
+      });
+      f.replacePackaged(replacement);
+
+      await expect(
+        f.service.applyAuditManifest({
+          manifestId: replacement.manifestId,
+          manifestDigest: implementationAuditManifestDigest(replacement),
+          expectedRepositoryHead: HEAD,
+          auditAttemptRefs: [],
+          operationId: `apply-manifest-binding-${String(index)}`,
+          author: "parent",
+        }),
+      ).rejects.toThrow("armed activation requirement");
+      const snapshot = await f.store.snapshot();
+      expect(Object.keys(snapshot.implementationAudits)).toHaveLength(0);
+      expect(Object.keys(snapshot.activations)).toHaveLength(0);
+      expect(Object.values(snapshot.activationRequirements)).toMatchObject([{ state: "armed" }]);
+    }
   });
 
   test("does not reuse a historical review bound to a different commit or ancestry", async () => {
