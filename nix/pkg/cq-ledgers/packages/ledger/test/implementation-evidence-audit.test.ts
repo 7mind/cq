@@ -179,7 +179,8 @@ function fixture(
       throw new Error("adapter not configured");
     },
     resolveActivationCohort: async () => ({
-      finalizedManifestDigest: FINALIZED_MANIFEST_DIGEST,
+      finalizedManifestDigest:
+        currentPackaged.activation?.finalizedManifestDigest ?? FINALIZED_MANIFEST_DIGEST,
       evidenceTaskRef: "tasks:T10",
       auditTaskRef: "tasks:T11",
       activationTaskRef: "tasks:T12",
@@ -427,6 +428,65 @@ describe("protected historical implementation evidence [BA]", () => {
       expect(Object.keys(snapshot.activations)).toHaveLength(0);
       expect(Object.values(snapshot.activationRequirements)).toMatchObject([{ state: "armed" }]);
     }
+  });
+
+  test("does not bypass a newer armed manifest through an older fulfilled requirement", async () => {
+    const first = manifest();
+    const reviewed = {
+      ...first,
+      records: first.records.map((entry) => ({
+        ...entry,
+        historicalReview: historicalReview(entry.taskRef, entry.baseCommit, entry.resultCommit),
+      })),
+    };
+    const second = {
+      ...reviewed,
+      sourceDigest: "1".repeat(64),
+      records: reviewed.records.map((entry) => ({
+        ...entry,
+        finalizedManifest: `${entry.finalizedManifest} replacement`,
+      })),
+      activation: { ...reviewed.activation!, finalizedManifestDigest: "2".repeat(64) },
+    };
+    const f = fixture(reviewed);
+    await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: reviewed.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-first-manifest",
+      author: "parent",
+    });
+    await f.service.applyAuditManifest({
+      manifestId: reviewed.manifestId,
+      manifestDigest: implementationAuditManifestDigest(reviewed),
+      expectedRepositoryHead: HEAD,
+      auditAttemptRefs: [],
+      operationId: "apply-first-manifest",
+      author: "parent",
+    });
+    f.replacePackaged(second);
+    const secondRequirement = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: second.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-second-manifest",
+      author: "parent",
+    });
+    f.replacePackaged(reviewed);
+
+    await expect(
+      f.service.applyAuditManifest({
+        manifestId: reviewed.manifestId,
+        manifestDigest: implementationAuditManifestDigest(reviewed),
+        expectedRepositoryHead: HEAD,
+        auditAttemptRefs: [],
+        operationId: "bypass-second-manifest",
+        author: "parent",
+      }),
+    ).rejects.toThrow("armed activation requirement");
+    const snapshot = await f.store.snapshot();
+    expect(snapshot.activationRequirements[secondRequirement.requirementRef]!.state).toBe("armed");
+    expect(Object.keys(snapshot.auditManifestApplications)).toHaveLength(1);
   });
 
   test("does not reuse a historical review bound to a different commit or ancestry", async () => {
