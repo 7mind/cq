@@ -272,6 +272,8 @@ export interface ImplementationEvidenceActivationRequirementRecord {
   readonly version: 1;
   readonly requirementRef: string;
   readonly manifestId: string;
+  readonly manifestDigest: string;
+  readonly sourceDigest: string;
   readonly goalRef: string;
   readonly finalizedManifestDigest: string;
   readonly evidenceTaskRef: string;
@@ -1869,7 +1871,7 @@ export class ImplementationEvidenceService {
     if (!/^goals:G[0-9]+$/u.test(input.goalRef))
       throw new Error("goal_ref must be one canonical goal ref");
     assertFullSha(input.expectedRepositoryHead, "expected_repository_head");
-    const { manifest } = await this.auditManifest(input.manifestId);
+    const { manifest, manifestDigest } = await this.auditManifest(input.manifestId);
     if (manifest.activation === null || manifest.activation.goalRef !== input.goalRef)
       throw new Error("packaged manifest has no matching implementation evidence activation");
     const repositoryHead = await this.deps.repositoryHead();
@@ -1910,7 +1912,13 @@ export class ImplementationEvidenceService {
     const activationTask = await this.deps.readTaskAuthority(cohort.activationTaskRef);
     if (activationTask.taskRef !== cohort.activationTaskRef || activationTask.status === "done")
       throw new Error("implementation evidence activation task is not actionable");
-    const request = { ...input, finalizedManifestDigest: cohort.finalizedManifestDigest, taskRefs };
+    const request = {
+      ...input,
+      manifestDigest,
+      sourceDigest: manifest.sourceDigest,
+      finalizedManifestDigest: cohort.finalizedManifestDigest,
+      taskRefs,
+    };
     const requestDigest = digest(request);
     const requirementRef = opaqueRef("cq-implementation-evidence-activation-requirement", request);
     return await this.deps.store[mutateEvidence](async (state) => {
@@ -1949,6 +1957,8 @@ export class ImplementationEvidenceService {
         version: 1,
         requirementRef,
         manifestId: manifest.manifestId,
+        manifestDigest,
+        sourceDigest: manifest.sourceDigest,
         goalRef: input.goalRef,
         finalizedManifestDigest: cohort.finalizedManifestDigest,
         evidenceTaskRef: cohort.evidenceTaskRef,
@@ -2101,6 +2111,14 @@ export class ImplementationEvidenceService {
       );
       if (manifest.activation !== null && requirement === undefined)
         throw new Error("implementation evidence activation requirement is missing");
+      if (
+        requirement !== undefined &&
+        (requirement.manifestDigest !== manifestDigest ||
+          requirement.sourceDigest !== manifest.sourceDigest ||
+          requirement.goalRef !== manifest.activation?.goalRef ||
+          requirement.finalizedManifestDigest !== manifest.activation.finalizedManifestDigest)
+      )
+        throw new Error("audit manifest does not match the armed activation requirement");
       let existingCount = 0;
       for (const [index, { record, attemptRefs, terminalState }] of auditCandidates.entries()) {
         const auditRef = auditRefs[index]!;

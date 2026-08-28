@@ -419,7 +419,7 @@ export async function readPackagedImplementationAuditManifest(
     );
     const activationTaskId = mappings.activationTaskRef.slice(`${TASKS_LEDGER}:`.length);
     const finalizedTaskIds = new Set(finalized.parsed.tasks.map(({ id }) => id));
-    selected = tasks
+    const candidates = tasks
       .filter(({ item }) => {
         const ownership = readCanonicalOwnership(item);
         return (
@@ -433,6 +433,14 @@ export async function readPackagedImplementationAuditManifest(
         );
       })
       .sort(taskOrder);
+    const retained: SourcedItem[] = [];
+    for (const candidate of candidates) {
+      const resultCommit = candidate.item.fields["resultCommit"];
+      if (typeof resultCommit !== "string" || !FULL_SHA.test(resultCommit))
+        throw new Error("D347 activation candidate has no completed Git result");
+      if (await input.repository.isAncestor(resultCommit, repositoryHead)) retained.push(candidate);
+    }
+    selected = retained;
     const selectedRefs = selected.map(({ item }) => `${TASKS_LEDGER}:${item.id}`);
     if (!selectedRefs.includes(mappings.evidenceTaskRef) ||
       !selectedRefs.includes(mappings.auditTaskRef))
