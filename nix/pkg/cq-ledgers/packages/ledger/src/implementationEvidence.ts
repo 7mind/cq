@@ -1486,6 +1486,68 @@ export class ImplementationEvidenceService {
     return { manifest, manifestDigest };
   }
 
+  private async assertAuditAuthorityCurrent(
+    manifestId: string,
+    manifestDigest: string,
+    repositoryHead: string,
+    records: readonly PackagedImplementationAuditRecord[],
+  ): Promise<void> {
+    await this.auditManifest(manifestId, manifestDigest);
+    if ((await this.deps.repositoryHead()) !== repositoryHead)
+      throw new Error("repository head changed before protected implementation audit write");
+    if (this.deps.isCommitRetained === undefined) return;
+    for (const record of records) {
+      if (!(await this.deps.isCommitRetained({ repositoryHead, resultCommit: record.resultCommit })))
+        throw new Error(`historical implementation result commit for ${record.taskRef} is not retained`);
+    }
+  }
+
+  private async assertActivationTasksActionable(
+    goalRef: string,
+    cohort: ImplementationActivationCohort,
+  ): Promise<void> {
+    for (const taskRef of [
+      cohort.evidenceTaskRef,
+      cohort.auditTaskRef,
+      cohort.activationTaskRef,
+    ])
+      taskIdFromRef(taskRef);
+    for (const taskRef of [cohort.evidenceTaskRef, cohort.auditTaskRef]) {
+      const task = await this.deps.readTaskAuthority(taskRef);
+      if (task.taskRef !== taskRef || task.ownerGoalRef !== goalRef || task.status !== "done")
+        throw new Error("implementation evidence bootstrap tasks must be done before arming");
+    }
+    const activationTask = await this.deps.readTaskAuthority(cohort.activationTaskRef);
+    if (
+      activationTask.taskRef !== cohort.activationTaskRef ||
+      activationTask.ownerGoalRef !== goalRef ||
+      activationTask.status === "done"
+    )
+      throw new Error("implementation evidence activation task is not actionable");
+  }
+
+  private async assertActivationAuthorityCurrent(
+    goalRef: string,
+    manifestId: string,
+    manifestDigest: string,
+    repositoryHead: string,
+    cohort: ImplementationActivationCohort,
+  ): Promise<void> {
+    const { manifest } = await this.auditManifest(manifestId, manifestDigest);
+    if ((await this.deps.repositoryHead()) !== repositoryHead)
+      throw new Error("repository head changed before protected implementation activation write");
+    if (this.deps.resolveActivationCohort === undefined)
+      throw new Error("finalized-manifest activation resolver is unavailable");
+    const current = await this.deps.resolveActivationCohort({
+      goalRef,
+      manifest,
+      repositoryHead,
+    });
+    if (canonical(current) !== canonical(cohort))
+      throw new Error("finalized implementation activation authority changed before arming");
+    await this.assertActivationTasksActionable(goalRef, current);
+  }
+
   async prepareAuditPanel(input: PrepareImplementationAuditPanelInput) {
     assertOperationId(input.operationId);
     assertFullSha(input.expectedRepositoryHead, "expected_repository_head");
@@ -1520,6 +1582,9 @@ export class ImplementationEvidenceService {
     );
     const auditInput = implementationAuditInput(manifest, manifestDigest, record, roster);
     return await this.deps.store[mutateEvidence](async (state) => {
+      await this.assertAuditAuthorityCurrent(manifest.manifestId, manifestDigest, repositoryHead, [
+        record,
+      ]);
       for (const panel of Object.values(state.auditPanels)) {
         if (panel.operationId !== input.operationId) continue;
         if (panel.requestDigest !== requestDigest)
@@ -1781,11 +1846,13 @@ export class ImplementationEvidenceService {
       const observation = await this.deps.fetchNativeAudit(attempt.preparedDispatch);
       if (
         observation.state === "consumed" &&
+        typeof observation.retainedAttestation === "string" &&
+        observation.retainedAttestation === attempt.preparedDispatch.attestationId &&
         observation.output !== undefined &&
         validateAuditorVerdict(observation.output, panel)
       ) {
         verdict = observation.output;
-        retainedAttestation = observation.retainedAttestation ?? null;
+        retainedAttestation = observation.retainedAttestation;
         terminalState = object(verdict) && verdict["verdict"] === "approve" ? "approved" : "disapproved";
       }
     } else if (attempt.execution?.parseResult.kind === "valid-verdict") {
@@ -1922,20 +1989,7 @@ export class ImplementationEvidenceService {
       cohort.activationTaskRef === cohort.auditTaskRef
     )
       throw new Error("activation cohort does not bind the finalized bootstrap task mappings");
-    for (const taskRef of [
-      cohort.evidenceTaskRef,
-      cohort.auditTaskRef,
-      cohort.activationTaskRef,
-    ])
-      taskIdFromRef(taskRef);
-    for (const taskRef of [cohort.evidenceTaskRef, cohort.auditTaskRef]) {
-      const task = await this.deps.readTaskAuthority(taskRef);
-      if (task.taskRef !== taskRef || task.status !== "done")
-        throw new Error("implementation evidence bootstrap tasks must be done before arming");
-    }
-    const activationTask = await this.deps.readTaskAuthority(cohort.activationTaskRef);
-    if (activationTask.taskRef !== cohort.activationTaskRef || activationTask.status === "done")
-      throw new Error("implementation evidence activation task is not actionable");
+    await this.assertActivationTasksActionable(input.goalRef, cohort);
     const request = {
       ...input,
       manifestDigest,
@@ -1977,6 +2031,13 @@ export class ImplementationEvidenceService {
         operationId: input.operationId,
         recordRef: requirementRef,
       });
+      await this.assertActivationAuthorityCurrent(
+        input.goalRef,
+        manifest.manifestId,
+        manifestDigest,
+        repositoryHead,
+        cohort,
+      );
       state.activationRequirements[requirementRef] = {
         version: 1,
         requirementRef,
@@ -2085,6 +2146,15 @@ export class ImplementationEvidenceService {
         throw new Error(`audit panel for ${record.taskRef} was disapproved`);
       if (!terminals.includes("approved"))
         throw new Error(`audit panel for ${record.taskRef} has no authenticated approval`);
+      for (const attempt of attempts) {
+        if (
+          attempt!.identity.launch === "native" &&
+          attempt!.verdict !== null &&
+          (attempt!.preparedDispatch === null ||
+            attempt!.retainedAttestation !== attempt!.preparedDispatch.attestationId)
+        )
+          throw new Error(`native audit approval for ${record.taskRef} is not dispatch-bound`);
+      }
       expectedAttemptRefs.push(...refs);
       auditCandidates.push({ record, attemptRefs: refs, terminalState: "approved" });
     }
@@ -2266,6 +2336,12 @@ export class ImplementationEvidenceService {
         session: input.session ?? null,
         appliedAt: this.now(),
       };
+      await this.assertAuditAuthorityCurrent(
+        manifest.manifestId,
+        manifestDigest,
+        repositoryHead,
+        manifest.records,
+      );
       return {
         status,
         manifestId: manifest.manifestId,
