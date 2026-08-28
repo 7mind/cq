@@ -252,4 +252,44 @@ describe("protected implementation audit attempts [BG]", () => {
       verdict: null,
     });
   });
+
+  test("revalidates the native dispatch binding before applying an audit", async () => {
+    let manifestDigest = "";
+    let substituteAttestation = false;
+    const f = fixture(() => "", {
+      auditRoster: [native],
+      fetchNativeAudit: async (preparedDispatch) => ({
+        state: "consumed",
+        input: {
+          manifestId: manifest.manifestId,
+        },
+        output: adapterVerdict(manifestDigest),
+        retainedAttestation: substituteAttestation
+          ? "att_substituted_after_finalization"
+          : preparedDispatch.attestationId,
+      }),
+    });
+    const prepared = await preparedAttempt(f);
+    manifestDigest = prepared.manifestDigest;
+    expect(
+      await f.service.finalizeAuditAttempt({
+        attemptRef: prepared.attemptRef,
+        operationId: "finalize-before-substitution",
+        author: "parent",
+      }),
+    ).toMatchObject({ terminalState: "approved" });
+    substituteAttestation = true;
+
+    await expect(
+      f.service.applyAuditManifest({
+        manifestId: manifest.manifestId,
+        manifestDigest,
+        expectedRepositoryHead: HEAD,
+        auditAttemptRefs: [prepared.attemptRef],
+        operationId: "apply-after-substitution",
+        author: "parent",
+      }),
+    ).rejects.toThrow("dispatch-bound");
+    expect(Object.keys((await f.store.snapshot()).implementationAudits)).toHaveLength(0);
+  });
 });
