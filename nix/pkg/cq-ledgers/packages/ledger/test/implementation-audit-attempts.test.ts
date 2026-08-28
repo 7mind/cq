@@ -5,6 +5,7 @@ import {
   createInMemoryImplementationEvidenceStore,
   implementationAuditManifestDigest,
   type ImplementationEvidenceServiceDependencies,
+  type ImplementationAuditObservation,
   type ImplementationReviewerIdentity,
   type PackagedImplementationAuditManifest,
 } from "../src/index.js";
@@ -92,13 +93,24 @@ function adapterVerdict(manifestDigest: string) {
   };
 }
 
-function fixture(stdout: () => string) {
+function fixture(
+  stdout: () => string,
+  options: {
+    readonly auditRoster: readonly ImplementationReviewerIdentity[];
+    readonly fetchNativeAudit: (
+      dispatch: DispatchPrepared,
+    ) => Promise<ImplementationAuditObservation>;
+  } = {
+    auditRoster: [adapter],
+    fetchNativeAudit: async () => ({ state: "missing" }),
+  },
+) {
   const store = createInMemoryImplementationEvidenceStore();
   let launches = 0;
   const dependencies: ImplementationEvidenceServiceDependencies = {
     store,
     resolveReviewerRoster: () => [adapter],
-    resolveAuditRoster: () => [adapter],
+    resolveAuditRoster: () => options.auditRoster,
     nativeFallback: native,
     prepareNativeReview: async () => {
       throw new Error("not configured");
@@ -123,7 +135,7 @@ function fixture(stdout: () => string) {
     },
     readAuditManifest: async () => structuredClone(manifest),
     prepareNativeAudit: async ({ attemptRef }) => dispatch(attemptRef),
-    fetchNativeAudit: async () => ({ state: "missing" }),
+    fetchNativeAudit: options.fetchNativeAudit,
     executeExternalAudit: async () => {
       launches += 1;
       return {
@@ -213,5 +225,31 @@ describe("protected implementation audit attempts [BG]", () => {
         author: "parent",
       }),
     ).toMatchObject({ status: "existing", attemptRef: fallback.attemptRef });
+  });
+
+  test("rejects a native approval retained under a different attestation", async () => {
+    let manifestDigest = "";
+    const f = fixture(() => "", {
+      auditRoster: [native],
+      fetchNativeAudit: async () => ({
+        state: "consumed",
+        output: adapterVerdict(manifestDigest),
+        retainedAttestation: "att_substituted_dispatch",
+      }),
+    });
+    const prepared = await preparedAttempt(f);
+    manifestDigest = prepared.manifestDigest;
+
+    expect(
+      await f.service.finalizeAuditAttempt({
+        attemptRef: prepared.attemptRef,
+        operationId: "finalize-substituted-native-attestation",
+        author: "parent",
+      }),
+    ).toMatchObject({ terminalState: "operational-abstention" });
+    expect((await f.store.snapshot()).auditAttempts[prepared.attemptRef]).toMatchObject({
+      retainedAttestation: null,
+      verdict: null,
+    });
   });
 });
