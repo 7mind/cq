@@ -175,7 +175,8 @@ function truncateUtf8(value: string, byteLimit: number): string {
 function failureSummaryWindow(output: string): string {
   const lines = output.trimEnd().split("\n");
   for (let index = lines.length - 1; index >= 0; index -= 1) {
-    if (FAIL_SUMMARY_LINE.test(lines[index])) {
+    const line = lines[index];
+    if (line !== undefined && FAIL_SUMMARY_LINE.test(line)) {
       return lines
         .slice(Math.max(0, index - FAILURE_SUMMARY_CONTEXT_LINE_COUNT + 1), index + 1)
         .map((line) => truncateUtf8(line, FAILURE_SUMMARY_WINDOW_BYTE_LIMIT))
