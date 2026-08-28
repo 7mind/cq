@@ -5,6 +5,7 @@ import {
   createInMemoryImplementationEvidenceStore,
   implementationAuditManifestDigest,
   type ImplementationAuditPanelRecord,
+  type ImplementationEvidenceFaultInjector,
   type ImplementationEvidenceServiceDependencies,
   type ImplementationReviewerIdentity,
   type PackagedImplementationAuditManifest,
@@ -127,6 +128,9 @@ function fixture(
   activationTaskRefs: readonly string[] = ["tasks:T10", "tasks:T11"],
 ) {
   let currentPackaged = structuredClone(packaged);
+  let currentHead = HEAD;
+  const taskStatuses = new Map<string, string>([["tasks:T12", "planned"]]);
+  let faultInjector: ImplementationEvidenceFaultInjector | undefined;
   const store = createInMemoryImplementationEvidenceStore();
   const panels = new Map<string, ImplementationAuditPanelRecord>();
   const dependencies: ImplementationEvidenceServiceDependencies = {
@@ -146,10 +150,10 @@ function fixture(
     readTaskAuthority: async (taskRef) => ({
       taskRef,
       ownerGoalRef: "goals:G176",
-      status: taskRef === "tasks:T12" ? "planned" : "done",
+      status: taskStatuses.get(taskRef) ?? "done",
       finalizedManifest: "trusted finalized manifest",
     }),
-    repositoryHead: async () => HEAD,
+    repositoryHead: async () => currentHead,
     verifyImplementation: async () => {
       throw new Error("live completion not configured");
     },
@@ -188,6 +192,9 @@ function fixture(
       taskRefs: activationTaskRefs,
     }),
     isCommitRetained: async () => true,
+    faultInjector: async (boundary, context) => {
+      if (faultInjector !== undefined) await faultInjector(boundary, context);
+    },
   };
   return {
     service: new ImplementationEvidenceService(dependencies),
@@ -195,6 +202,15 @@ function fixture(
     packaged,
     replacePackaged(next: PackagedImplementationAuditManifest) {
       currentPackaged = structuredClone(next);
+    },
+    setFaultInjector(next: ImplementationEvidenceFaultInjector) {
+      faultInjector = next;
+    },
+    setHead(next: string) {
+      currentHead = next;
+    },
+    setTaskStatus(taskRef: string, status: string) {
+      taskStatuses.set(taskRef, status);
     },
   };
 }
@@ -304,6 +320,64 @@ describe("protected historical implementation evidence [BA]", () => {
     expect(Object.keys(snapshot.implementationAudits)).toHaveLength(2);
     expect(Object.keys(snapshot.activations)).toHaveLength(1);
     expect(snapshot.activationRequirements[requirement.requirementRef]!.state).toBe("fulfilled");
+  });
+
+  test("rejects authority changes at protected activation and audit write boundaries", async () => {
+    const activationRace = fixture();
+    activationRace.setFaultInjector(async (boundary) => {
+      if (boundary === "before-activation-requirement-write") {
+        activationRace.setTaskStatus("tasks:T10", "wip");
+      }
+    });
+    await expect(
+      activationRace.service.armEvidenceActivation({
+        goalRef: "goals:G176",
+        manifestId: activationRace.packaged.manifestId,
+        expectedRepositoryHead: HEAD,
+        operationId: "arm-authority-race",
+        author: "parent",
+      }),
+    ).rejects.toThrow("bootstrap tasks must be done");
+    expect(
+      Object.keys((await activationRace.store.snapshot()).activationRequirements),
+    ).toHaveLength(0);
+
+    const packaged = manifest();
+    const reviewed = {
+      ...packaged,
+      records: packaged.records.map((entry) => ({
+        ...entry,
+        historicalReview: historicalReview(entry.taskRef, entry.baseCommit, entry.resultCommit),
+      })),
+    };
+    const auditRace = fixture(reviewed);
+    const requirement = await auditRace.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: reviewed.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-before-audit-race",
+      author: "parent",
+    });
+    auditRace.setFaultInjector(async (boundary) => {
+      if (boundary === "before-implementation-audit-write") {
+        auditRace.setHead("9".repeat(40));
+      }
+    });
+    await expect(
+      auditRace.service.applyAuditManifest({
+        manifestId: reviewed.manifestId,
+        manifestDigest: implementationAuditManifestDigest(reviewed),
+        expectedRepositoryHead: HEAD,
+        auditAttemptRefs: [],
+        operationId: "apply-authority-race",
+        author: "parent",
+      }),
+    ).rejects.toThrow("repository head changed");
+    const snapshot = await auditRace.store.snapshot();
+    expect(Object.keys(snapshot.implementationAudits)).toHaveLength(0);
+    expect(Object.keys(snapshot.activations)).toHaveLength(0);
+    expect(Object.keys(snapshot.auditManifestApplications)).toHaveLength(0);
+    expect(snapshot.activationRequirements[requirement.requirementRef]!.state).toBe("armed");
   });
 
   test("rejects incomplete, surplus, reordered, and foreign attempt sets without partial audits", async () => {
