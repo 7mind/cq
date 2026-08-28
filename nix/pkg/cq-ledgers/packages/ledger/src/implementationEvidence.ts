@@ -577,18 +577,21 @@ function parseJournalEntry(value: unknown, filename: string): ImplementationEvid
   ) {
     throw new Error(`implementation evidence journal entry ${filename} is malformed`);
   }
-  const snapshot = parseStoredState(value["snapshot"]);
-  const payload: ImplementationEvidenceJournalPayload = {
-    kind: "cq-implementation-evidence-journal-entry",
-    version: 1,
+  const rawPayload = {
+    kind: "cq-implementation-evidence-journal-entry" as const,
+    version: 1 as const,
     sequence: value["sequence"] as number,
     priorDigest: value["priorDigest"] as string | null,
-    snapshot,
+    snapshot: value["snapshot"],
   };
-  const expectedDigest = digest(payload);
+  const expectedDigest = digest(rawPayload);
   if (value["digest"] !== expectedDigest) {
     throw new Error(`implementation evidence journal entry ${filename} failed authentication`);
   }
+  const payload: ImplementationEvidenceJournalPayload = {
+    ...rawPayload,
+    snapshot: parseStoredState(value["snapshot"]),
+  };
   return { ...payload, digest: expectedDigest };
 }
 

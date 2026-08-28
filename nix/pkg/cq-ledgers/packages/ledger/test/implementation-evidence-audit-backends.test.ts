@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -52,6 +53,25 @@ const temporary: string[] = [];
 afterEach(async () => {
   await Promise.all(temporary.splice(0).map(async (path) => await rm(path, { recursive: true })));
 });
+
+function canonical(value: unknown): string {
+  if (value === null || typeof value === "string" || typeof value === "boolean")
+    return JSON.stringify(value);
+  if (typeof value === "number") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`)
+      .join(",")}}`;
+  }
+  throw new Error("test journal payload must be JSON");
+}
+
+function journalDigest(payload: unknown): string {
+  return createHash("sha256").update(canonical(payload)).digest("hex");
+}
 
 function service(store: ImplementationEvidenceStore): ImplementationEvidenceService {
   const dependencies: ImplementationEvidenceServiceDependencies = {
@@ -113,6 +133,35 @@ describe("implementation audit store backend contract [Blackbox]", () => {
     const panelRef = await contract(createFsImplementationEvidenceStore({ path }));
     expect((await createFsImplementationEvidenceStore({ path }).snapshot()).auditPanels[panelRef])
       .toBeDefined();
+  });
+
+  test("loads an authenticated legacy filesystem snapshot without changing its digest", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cq-audit-legacy-journal-"));
+    temporary.push(root);
+    const path = join(root, "journal");
+    const snapshot = { version: 1, panels: {}, attempts: {}, completions: {} };
+    const payload = {
+      kind: "cq-implementation-evidence-journal-entry",
+      version: 1,
+      sequence: 1,
+      priorDigest: null,
+      snapshot,
+    };
+    const digest = journalDigest(payload);
+    await mkdir(path, { recursive: true });
+    await writeFile(
+      join(path, `0000000000000001-${digest}.json`),
+      `${JSON.stringify({ ...payload, digest })}\n`,
+      "utf8",
+    );
+
+    await expect(createFsImplementationEvidenceStore({ path }).snapshot()).resolves.toMatchObject({
+      auditPanels: {},
+      auditAttempts: {},
+      implementationAudits: {},
+      activationRequirements: {},
+      activations: {},
+    });
   });
 
   test("does not append state when trusted packaged resolution fails", async () => {
