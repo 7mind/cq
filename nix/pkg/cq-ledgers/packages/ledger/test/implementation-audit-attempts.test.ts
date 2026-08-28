@@ -256,16 +256,19 @@ describe("protected implementation audit attempts [BG]", () => {
   test("rejects a fresh finalization operation after an audit attempt becomes terminal", async () => {
     let manifestDigest = "";
     let auditAvailable = true;
+    let fetchCount = 0;
     const f = fixture(() => "", {
       auditRoster: [native],
-      fetchNativeAudit: async (preparedDispatch) =>
-        auditAvailable
+      fetchNativeAudit: async (preparedDispatch) => {
+        fetchCount += 1;
+        return auditAvailable
           ? {
               state: "consumed",
               output: adapterVerdict(manifestDigest),
               retainedAttestation: preparedDispatch.attestationId,
             }
-          : { state: "missing" },
+          : { state: "missing" };
+      },
     });
     const prepared = await preparedAttempt(f);
     manifestDigest = prepared.manifestDigest;
@@ -285,6 +288,7 @@ describe("protected implementation audit attempts [BG]", () => {
       operationId: "apply-approved-native-audit",
       author: "parent",
     });
+    const terminalFetchCount = fetchCount;
     auditAvailable = false;
 
     await expect(
@@ -294,6 +298,7 @@ describe("protected implementation audit attempts [BG]", () => {
         author: "parent",
       }),
     ).rejects.toThrow("audit attempt is already terminal");
+    expect(fetchCount).toBe(terminalFetchCount);
     expect((await f.store.snapshot()).auditAttempts[prepared.attemptRef]).toMatchObject({
       terminalState: "approved",
       verdict: adapterVerdict(manifestDigest),
