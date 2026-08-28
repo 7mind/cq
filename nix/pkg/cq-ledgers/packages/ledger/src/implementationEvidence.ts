@@ -1858,6 +1858,7 @@ export class ImplementationEvidenceService {
         terminalState: attempt.terminalState,
       };
     }
+    if (attempt.terminalState !== null) throw new Error("audit attempt is already terminal");
     let verdict: DispatchJSONValue | null = null;
     let retainedAttestation: string | null = null;
     let terminalState: ImplementationReviewTerminalState = "operational-abstention";
@@ -1891,6 +1892,7 @@ export class ImplementationEvidenceService {
           terminalState: current.terminalState,
         };
       }
+      if (current.terminalState !== null) throw new Error("audit attempt is already terminal");
       const updated: ImplementationAuditAttemptRecord = {
         ...current,
         retainedAttestation,
