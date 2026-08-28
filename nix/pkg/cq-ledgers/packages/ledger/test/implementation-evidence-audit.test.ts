@@ -405,6 +405,13 @@ describe("protected historical implementation evidence [BA]", () => {
       })),
     };
     const f = fixture(reviewed);
+    await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: reviewed.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-replay-fence",
+      author: "parent",
+    });
     const request = {
       manifestId: reviewed.manifestId,
       manifestDigest: implementationAuditManifestDigest(reviewed),
