@@ -653,6 +653,19 @@ async function buildImplementationEvidenceFixture() {
     operationId: "parity_audit_finalize_fallback",
     ...PARITY_PROVENANCE,
   });
+  implementationEvidence.continueEvidenceActivation = async (input) => ({
+    status: "continued" as const,
+    continuationRef:
+      `cq-implementation-evidence-activation-continuation:v1:${"3".repeat(64)}`,
+    previousRequirementRef: input.priorRequirementRef,
+    requirementRef:
+      `cq-implementation-evidence-activation-requirement:v1:${"4".repeat(64)}`,
+    activationRef: `cq-implementation-evidence-activation:v1:${"5".repeat(64)}`,
+    taskRef: input.completedTaskRef,
+    completionRef: input.completionRef,
+    fromHead: input.expectedFromHead,
+    repositoryHead: input.expectedRepositoryHead,
+  });
   return {
     implementationEvidence,
     implementationEvidenceRefs: {
@@ -2081,7 +2094,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 56 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 57 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);
