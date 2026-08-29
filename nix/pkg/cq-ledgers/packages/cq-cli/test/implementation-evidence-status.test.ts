@@ -1,9 +1,25 @@
 import { describe, expect, test } from "bun:test";
-import {
-  FINALIZED_IMPLEMENTATION_REVIEW_OUTCOME_CONTRACT,
-  IMPLEMENTATION_EVIDENCE_SERVICE_OPERATION_INVENTORY,
-} from "@cq/ledger";
 import { runImplementationEvidenceStatus } from "../src/implementationEvidenceStatus.js";
+
+const EXPECTED_OPERATIONS = [
+  "prepare_implementation_review_panel",
+  "prepare_implementation_review_attempt",
+  "execute_external_implementation_review_attempt",
+  "finalize_implementation_review_attempt",
+  "prepare_implementation_review_fallback",
+  "prepare_implementation_audit_panel",
+  "prepare_implementation_audit_attempt",
+  "execute_external_implementation_audit_attempt",
+  "finalize_implementation_audit_attempt",
+  "prepare_implementation_audit_fallback",
+  "advance_implementation_evidence_bootstrap",
+  "arm_implementation_evidence_activation",
+  "apply_implementation_audit_manifest",
+  "get_implementation_evidence_activation_status",
+  "get_implementation_evidence_service_status",
+  "prepare_implementation_completion",
+  "record_implementation_completion",
+] as const;
 
 function serviceStatus() {
   return {
@@ -21,15 +37,24 @@ function serviceStatus() {
     bootstrapPhase: "activation-handoff",
     activationState: { status: "absent", requirementRef: null, activationRef: null },
     packagedManifestInventory: ["d347-implementation-evidence-activation-v1"],
-    operationInventory: [...IMPLEMENTATION_EVIDENCE_SERVICE_OPERATION_INVENTORY],
-    finalizedReviewOutcomeContract: FINALIZED_IMPLEMENTATION_REVIEW_OUTCOME_CONTRACT,
+    operationInventory: [...EXPECTED_OPERATIONS],
+    finalizedReviewOutcomeContract: {
+      version: 1,
+      outcomeKinds: ["verdict", "operational-abstention"],
+      verdictSchema: "implement-reviewer-output",
+      maxOutcomesPerFinalization: 1,
+    },
   };
 }
 
 function io() {
   const out: string[] = [];
   const err: string[] = [];
-  return { out, err, adapter: { out: (line: string) => out.push(line), err: (line: string) => err.push(line) } };
+  return {
+    out,
+    err,
+    adapter: { out: (line: string) => out.push(line), err: (line: string) => err.push(line) },
+  };
 }
 
 describe("implementation evidence status CLI [BA]", () => {
@@ -59,13 +84,7 @@ describe("implementation evidence status CLI [BA]", () => {
     const captured = io();
     let queried = false;
     const result = await runImplementationEvidenceStatus(
-      [
-        "implementation-evidence",
-        "status",
-        "--json",
-        "--expected-head",
-        "1".repeat(40),
-      ],
+      ["implementation-evidence", "status", "--json", "--expected-head", "1".repeat(40)],
       captured.adapter,
       "/checkout",
       async () => {

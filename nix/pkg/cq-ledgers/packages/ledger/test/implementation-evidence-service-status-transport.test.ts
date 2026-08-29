@@ -17,6 +17,7 @@ function textPayload(result: unknown): Record<string, unknown> {
 describe("implementation evidence service status transport [BA]", () => {
   test("is management-only and derives build, head, protocol, mapping, and inventories", async () => {
     const fixture = await createImplementationEvidenceFixture();
+    fixture.setHead("b".repeat(40));
     const ledger = new InMemoryLedgerStore();
     await ledger.init();
     const ordinary = createLedgerMcpTools(
@@ -55,7 +56,7 @@ describe("implementation evidence service status transport [BA]", () => {
     expect(payload).toMatchObject({
       version: 1,
       startupBuildCommit: "a".repeat(40),
-      repositoryHead: "a".repeat(40),
+      repositoryHead: "b".repeat(40),
       protocolVersion: 2,
       goalRef: "goals:G176",
       finalizedManifestDigest: "f".repeat(64),
@@ -67,9 +68,25 @@ describe("implementation evidence service status transport [BA]", () => {
         activationTaskRef: "tasks:T3002",
       },
     });
-    expect(payload["operationInventory"]).toContain(
+    expect(payload["operationInventory"]).toEqual([
+      "prepare_implementation_review_panel",
+      "prepare_implementation_review_attempt",
+      "execute_external_implementation_review_attempt",
+      "finalize_implementation_review_attempt",
+      "prepare_implementation_review_fallback",
+      "prepare_implementation_audit_panel",
+      "prepare_implementation_audit_attempt",
+      "execute_external_implementation_audit_attempt",
+      "finalize_implementation_audit_attempt",
+      "prepare_implementation_audit_fallback",
       "advance_implementation_evidence_bootstrap",
-    );
+      "arm_implementation_evidence_activation",
+      "apply_implementation_audit_manifest",
+      "get_implementation_evidence_activation_status",
+      "get_implementation_evidence_service_status",
+      "prepare_implementation_completion",
+      "record_implementation_completion",
+    ]);
     expect(payload["finalizedReviewOutcomeContract"]).toEqual({
       version: 1,
       outcomeKinds: ["verdict", "operational-abstention"],

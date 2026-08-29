@@ -264,7 +264,7 @@ export const USAGE = [
   "                                                  when redispatching the worker onto the",
   "                                                  rebased managed tree; the server, never",
   "                                                  the caller, materializes the lineage.",
-  "  ledger implementation-evidence status --goal-ref goals:G176 --manifest-id <id>",
+  "  ledger implementation-evidence status --json [--cwd <repository-root>]",
   "              --expected-head <full-sha> --json   bounded protected activation status probe",
   "  dispatch-recovery <seal|status> --task-id <Tn> [--cwd <repository>]",
   "                                                  seal the maximal terminal worker receipt",
