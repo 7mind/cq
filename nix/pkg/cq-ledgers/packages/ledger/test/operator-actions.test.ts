@@ -56,6 +56,19 @@ function expectCoherentOldOrNew<T>(actual: T, oldState: T, newState: T): "old" |
   return "new";
 }
 
+function materializedPairState(store: LedgerStore) {
+  return {
+    actions: store
+      .fetch("operatorActions")
+      .milestones.flatMap(({ items }) => items)
+      .map(({ id, status }) => ({ id, status })),
+    handoffs: store
+      .fetch("handoffs")
+      .milestones.flatMap(({ items }) => items)
+      .map(({ id, status }) => ({ id, status })),
+  };
+}
+
 function revisedTriple(before: OperatorActionTriple): OperatorActionTriple {
   const next = structuredClone(before);
   const historicalAction = structuredClone(before.action);
@@ -258,6 +271,74 @@ test("operator-action materialization commits only the complete action/handoff p
     await store.dispose();
   }
 });
+
+for (const failAt of [1, 2, 3]) {
+  test(`filesystem materialization restart is old-or-new after durable boundary ${String(failAt)}`, async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "cq-operator-materialization-fault-"));
+    dirs.push(root);
+    let armed = false;
+    let writes = 0;
+    let store = new FsLedgerStore({
+      root,
+      now: () => NOW,
+      atomicWrite: async (filePath, text) => {
+        if (armed) {
+          writes += 1;
+          if (writes === failAt) {
+            throw new Error(`injected materialization boundary ${String(failAt)}`);
+          }
+        }
+        await productionAtomicWrite(filePath, text);
+      },
+    });
+    await store.init();
+    const milestone = await store.createMilestone({ title: "fault materialization" });
+    const goal = await store.createItem("goals", milestone.id, {
+      status: "planned",
+      fields: { title: "goal", description: "goal" },
+    });
+    const task = await store.createItem("tasks", milestone.id, {
+      status: "planned",
+      fields: {
+        headline: "deploy",
+        description:
+          "CQ-OPERATOR-ACTION v1 activate-implementation-evidence. User deploys; parent measures.",
+        ledgerRefs: [`goals:${goal.id}`],
+      },
+    });
+    const input = {
+      taskId: task.id,
+      expectedOutputIdentity: IDENTITY,
+      expectedEvidence: ["cq ledger implementation-evidence status --json"],
+      author: "parent",
+    } as const;
+    armed = true;
+    await expect(materializeOperatorAction(store, input)).rejects.toThrow(
+      `injected materialization boundary ${String(failAt)}`,
+    );
+    await store.dispose();
+
+    store = new FsLedgerStore({ root, now: () => NOW });
+    await store.init();
+    try {
+      const oldState = { actions: [], handoffs: [] };
+      const newState = {
+        actions: [{ id: "OA1", status: "pending" }],
+        handoffs: [{ id: "HO1", status: "user-action-required" }],
+      };
+      const recovery = expectCoherentOldOrNew(
+        materializedPairState(store),
+        oldState,
+        newState,
+      );
+      const replay = await materializeOperatorAction(store, input);
+      expect(replay.state).toBe(recovery === "old" ? "created" : "existing");
+      expect(materializedPairState(store)).toEqual(newState);
+    } finally {
+      await store.dispose();
+    }
+  });
+}
 
 for (const factory of factories) {
   describe(`operator-action lifecycle (${factory.name})`, () => {
