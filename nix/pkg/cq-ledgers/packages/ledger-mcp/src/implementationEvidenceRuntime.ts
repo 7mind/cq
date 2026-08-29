@@ -13,7 +13,10 @@ import {
 } from "@cq/config";
 import {
   GOALS_LEDGER,
+  D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE,
+  IMPLEMENTATION_EVIDENCE_SERVICE_PROTOCOL_VERSION,
   ImplementationEvidenceService,
+  PACKAGED_IMPLEMENTATION_AUDIT_MANIFEST_INVENTORY,
   PLAN_FINALIZED_MANIFEST_FIELD,
   PlanPublishedManifestSchema,
   SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
@@ -23,6 +26,8 @@ import {
   operatorActionDirectiveForTask,
   readPackagedImplementationAuditManifest,
   deriveImplementationEvidenceActivationCohort,
+  derivePredicates,
+  materializeOperatorAction,
   resolveImplementationEvidenceActivationTaskMappings,
   recordProtectedImplementationCompletion,
   type DispatchCapability,
@@ -38,6 +43,9 @@ const FULL_SHA = /^[0-9a-f]{40}$/u;
 
 const PRODUCTION_IMPLEMENTATION_REVIEWER_TIMEOUT_MS =
   SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS + IMPLEMENT_REVIEWER_SYNTHESIS_STORE_RESERVE_MS;
+
+const IMPLEMENTATION_EVIDENCE_STATUS_COMMAND =
+  "cq ledger implementation-evidence status --json";
 
 type ExternalReviewRunner = (input: {
   readonly identity: ImplementationReviewerIdentity;
@@ -254,6 +262,14 @@ async function gitOutput(
   return result.stdout.trim();
 }
 
+function startupBuildCommit(repositoryRoot: string): string | undefined {
+  const result = Bun.spawnSync(["git", "-C", repositoryRoot, "rev-parse", "HEAD"]);
+  if (result.exitCode !== 0) return undefined;
+  const commit = new TextDecoder().decode(result.stdout).trim();
+  if (!FULL_SHA.test(commit)) throw new Error("startup build commit is malformed");
+  return commit;
+}
+
 export async function verifyProductionImplementation(
   repositoryRoot: string,
   resultCommit: string,
@@ -459,6 +475,80 @@ export function createProductionImplementationEvidenceService(
   const environment = options.environment ?? process.env;
   const externalReviewRunner = options.externalReviewRunner ?? runExternalReviewer;
   const store = options.resolved.store;
+  const serviceBuildCommit = startupBuildCommit(options.repositoryRoot);
+  const readBootstrapAuthority = async () => {
+    const rule = D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE;
+    const goal = store.fetchItem(
+      GOALS_LEDGER,
+      rule.goalRef.slice(`${GOALS_LEDGER}:`.length),
+    );
+    const finalized = goal.fields[PLAN_FINALIZED_MANIFEST_FIELD];
+    if (typeof finalized !== "string")
+      throw new Error("implementation evidence goal has no exact finalized manifest");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(finalized);
+    } catch {
+      throw new Error("implementation evidence finalized manifest is not canonical JSON");
+    }
+    const published = PlanPublishedManifestSchema.parse(parsed);
+    const mappings = resolveImplementationEvidenceActivationTaskMappings(published, rule);
+    const predicates = derivePredicates(store);
+    const taskAuthority = (
+      taskRef: string,
+      ready: boolean,
+      includeActionKey: boolean,
+    ) => {
+      const task = store.fetchItem(TASKS_LEDGER, taskRef.slice(`${TASKS_LEDGER}:`.length));
+      const ownership = readCanonicalOwnership(task);
+      if (
+        ownership?.ownerRef !== rule.goalRef ||
+        ownership.edgeKind !== "finalized-manifest"
+      )
+        throw new Error(`${taskRef} does not have exact finalized-manifest ownership`);
+      const resultCommit = task.fields["resultCommit"];
+      if (resultCommit !== undefined && (typeof resultCommit !== "string" || !FULL_SHA.test(resultCommit)))
+        throw new Error(`${taskRef} has a malformed result commit`);
+      return {
+        taskRef,
+        status: task.status,
+        resultCommit: typeof resultCommit === "string" ? resultCommit : null,
+        ready,
+        ...(includeActionKey
+          ? { actionKey: operatorActionDirectiveForTask(task)?.actionKey ?? null }
+          : {}),
+      };
+    };
+    const evidenceTaskId = mappings.evidenceTaskRef.slice(`${TASKS_LEDGER}:`.length);
+    const historicalTaskId = mappings.auditTaskRef.slice(`${TASKS_LEDGER}:`.length);
+    const activationTaskId = mappings.activationTaskRef.slice(`${TASKS_LEDGER}:`.length);
+    return {
+      goalRef: rule.goalRef,
+      finalizedManifestDigest: new Bun.CryptoHasher("sha256")
+        .update(finalized)
+        .digest("hex"),
+      mappings: {
+        evidenceTaskRef: mappings.evidenceTaskRef,
+        historicalTaskRef: mappings.auditTaskRef,
+        activationTaskRef: mappings.activationTaskRef,
+      },
+      evidenceTask: taskAuthority(
+        mappings.evidenceTaskRef,
+        predicates.pImplement.items.includes(evidenceTaskId),
+        false,
+      ),
+      historicalTask: taskAuthority(
+        mappings.auditTaskRef,
+        predicates.pImplement.items.includes(historicalTaskId),
+        false,
+      ),
+      activationTask: taskAuthority(
+        mappings.activationTaskRef,
+        predicates.pOperatorAction.items.includes(activationTaskId),
+        true,
+      ),
+    };
+  };
   const readAuditManifest =
     options.readAuditManifest ??
     (async (manifestId: string) =>
@@ -495,6 +585,29 @@ export function createProductionImplementationEvidenceService(
       }));
   return new ImplementationEvidenceService({
     store: options.resolved.implementationEvidenceStore,
+    ...(serviceBuildCommit === undefined ? {} : { startupBuildCommit: serviceBuildCommit }),
+    implementationEvidenceProtocolVersion: IMPLEMENTATION_EVIDENCE_SERVICE_PROTOCOL_VERSION,
+    packagedManifestInventory: PACKAGED_IMPLEMENTATION_AUDIT_MANIFEST_INVENTORY,
+    readBootstrapAuthority,
+    materializeBootstrapActivationHandoff: async ({
+      activationTaskRef,
+      expectedServiceCommit,
+      author,
+      session,
+    }) => {
+      const materialized = await materializeOperatorAction(store, {
+        taskId: activationTaskRef.slice(`${TASKS_LEDGER}:`.length),
+        expectedOutputIdentity: expectedServiceCommit,
+        expectedEvidence: [IMPLEMENTATION_EVIDENCE_STATUS_COMMAND],
+        author,
+        ...(session === undefined ? {} : { session }),
+      });
+      return {
+        state: materialized.state,
+        actionRef: `operatorActions:${materialized.action.id}`,
+        handoffRef: `handoffs:${materialized.handoff.id}`,
+      };
+    },
     resolveReviewerRoster: () =>
       computeReviewers(options.repositoryRoot, activeHarness).reviewers.map((reviewer) =>
         reviewerIdentity(reviewer, activeHarness, forceShellout),

@@ -748,8 +748,16 @@ export type {
   RemoteMilestonePatch,
   RemoteFtsSearchOpts,
 } from "./store/remote/RemoteLedgerClient.js";
-export { resolveRemoteLaunch, resolveRemoteAdminLaunch } from "./store/remote/remoteLaunch.js";
-export type { RemoteLaunchTarget, RemoteAdminLaunchTarget } from "./store/remote/remoteLaunch.js";
+export {
+  resolveRemoteLaunch,
+  resolveRemoteAdminLaunch,
+  resolveRemoteManagementLaunch,
+} from "./store/remote/remoteLaunch.js";
+export type {
+  RemoteLaunchTarget,
+  RemoteAdminLaunchTarget,
+  RemoteManagementLaunchTarget,
+} from "./store/remote/remoteLaunch.js";
 export { InMemoryLedgerStore } from "./store/InMemoryLedgerStore.js";
 export type { InMemoryLedgerStoreOpts } from "./store/InMemoryLedgerStore.js";
 export { validateSchema } from "./store/core.js";

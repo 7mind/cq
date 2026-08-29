@@ -128,6 +128,37 @@ export async function createImplementationEvidenceFixture(
       ledgerWrites += 1;
       return { reviewRef: "reviews:R2345" };
     },
+    startupBuildCommit: IMPLEMENTATION_BASE,
+    implementationEvidenceProtocolVersion: 2,
+    packagedManifestInventory: ["d347-implementation-evidence-activation-v1"],
+    readBootstrapAuthority: async () => ({
+      goalRef: "goals:G176",
+      finalizedManifestDigest: "f".repeat(64),
+      mappings: {
+        evidenceTaskRef: "tasks:T3000",
+        historicalTaskRef: "tasks:T3001",
+        activationTaskRef: "tasks:T3002",
+      },
+      evidenceTask: {
+        taskRef: "tasks:T3000",
+        status: "done",
+        resultCommit: IMPLEMENTATION_BASE,
+        ready: false,
+      },
+      historicalTask: {
+        taskRef: "tasks:T3001",
+        status: "planned",
+        resultCommit: null,
+        ready: true,
+      },
+      activationTask: {
+        taskRef: "tasks:T3002",
+        status: "planned",
+        resultCommit: null,
+        ready: false,
+        actionKey: "activate-implementation-evidence",
+      },
+    }),
   };
   const service = new ImplementationEvidenceService(dependencies);
   const panel = await service.prepareReviewPanel({

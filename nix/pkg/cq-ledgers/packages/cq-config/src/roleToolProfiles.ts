@@ -59,9 +59,11 @@ export const LEDGER_CAPABILITY_TOOL_NAMES = [
   "execute_external_implementation_audit_attempt",
   "finalize_implementation_audit_attempt",
   "prepare_implementation_audit_fallback",
+  "advance_implementation_evidence_bootstrap",
   "arm_implementation_evidence_activation",
   "apply_implementation_audit_manifest",
   "get_implementation_evidence_activation_status",
+  "get_implementation_evidence_service_status",
   "prepare_implementation_completion",
   "record_implementation_completion",
 ] as const;

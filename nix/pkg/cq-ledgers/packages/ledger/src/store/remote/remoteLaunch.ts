@@ -18,6 +18,13 @@ export interface RemoteAdminLaunchTarget extends RemoteLaunchTarget {
   readonly adminToken: string;
 }
 
+export interface RemoteManagementLaunchTarget {
+  readonly mcpUrl: string;
+  readonly managementToken: string;
+  readonly projectKey: string;
+  readonly serverUrl: string;
+}
+
 export async function resolveRemoteLaunch(
   cwd: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
@@ -48,5 +55,29 @@ export async function resolveRemoteAdminLaunch(
     ...ordinary,
     adminToken,
     adminMcpUrl: remoteAdminMcpUrl(ordinary.serverUrl, ordinary.projectKey),
+  };
+}
+
+export async function resolveRemoteManagementLaunch(
+  cwd: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): Promise<RemoteManagementLaunchTarget | null> {
+  if (resolveLedgerBackend(cwd).backend !== "remote") return null;
+  const config = loadConfig(cwd);
+  if (config?.ledger?.backend !== "remote") return null;
+  const managementToken = env["CQ_SERVE_MANAGEMENT_TOKEN"];
+  if (managementToken === undefined || managementToken.trim() === "")
+    throw new Error(
+      "CQ_SERVE_MANAGEMENT_TOKEN must be set for remote management operations",
+    );
+  const projectKey = await resolveProjectKey({
+    repoRoot: cwd,
+    projectId: config.ledger.projectId,
+  });
+  return {
+    serverUrl: config.ledger.serverUrl,
+    projectKey,
+    mcpUrl: remoteMcpUrl(config.ledger.serverUrl, projectKey),
+    managementToken,
   };
 }

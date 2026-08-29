@@ -305,6 +305,11 @@ export const D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE = {
   activationTaskKey: "t-activate-evidence",
 } as const;
 
+export const PACKAGED_IMPLEMENTATION_AUDIT_MANIFEST_INVENTORY = [
+  ...Object.values(HISTORICAL_IMPLEMENTATION_FIXTURES).map(({ manifestId }) => manifestId),
+  D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE.manifestId,
+] as const;
+
 function taskOrder(left: SourcedItem, right: SourcedItem): number {
   return left.item.id.localeCompare(right.item.id, undefined, { numeric: true });
 }

@@ -2,6 +2,7 @@ import {
   RemoteLedgerClient,
   resolveRemoteAdminLaunch,
   resolveRemoteLaunch,
+  resolveRemoteManagementLaunch,
 } from "@cq/ledger";
 
 export async function withRemoteClient<T>(
@@ -16,6 +17,26 @@ export async function withRemoteClient<T>(
     serverUrl: launch.serverUrl,
     projectKey: launch.projectKey,
     token: launch.token,
+  });
+  try {
+    return await fn(client);
+  } finally {
+    await client.close();
+  }
+}
+
+export async function withRemoteManagementClient<T>(
+  cwd: string,
+  fn: (client: RemoteLedgerClient) => Promise<T>,
+): Promise<T> {
+  const launch = await resolveRemoteManagementLaunch(cwd);
+  if (launch === null) {
+    throw new Error(`cq: ${cwd} is not a backend=remote checkout`);
+  }
+  const client = await RemoteLedgerClient.connectManagement({
+    serverUrl: launch.serverUrl,
+    projectKey: launch.projectKey,
+    managementToken: launch.managementToken,
   });
   try {
     return await fn(client);

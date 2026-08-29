@@ -97,6 +97,7 @@ import type {
   FinalizeImplementationAuditAttemptInput,
   ImplementationEvidenceService,
   ImplementationEvidenceActivationStatusInput,
+  AdvanceImplementationEvidenceBootstrapInput,
   ApplyImplementationAuditManifestInput,
   ArmImplementationEvidenceActivationInput,
   PrepareImplementationAuditAttemptInput,
@@ -691,6 +692,21 @@ export class RemoteLedgerClient {
     });
   }
 
+  async advanceImplementationEvidenceBootstrap(
+    input: AdvanceImplementationEvidenceBootstrapInput,
+  ): Promise<Awaited<ReturnType<ImplementationEvidenceService["advanceEvidenceBootstrap"]>>> {
+    this.requireManagement("advance_implementation_evidence_bootstrap");
+    return await this.call("advance_implementation_evidence_bootstrap", {
+      goal_ref: input.goalRef,
+      finalized_manifest_digest: input.finalizedManifestDigest,
+      expected_repository_head: input.expectedRepositoryHead,
+      expected_phase: input.expectedPhase,
+      operation_id: input.operationId,
+      author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
+    });
+  }
+
   async applyImplementationAuditManifest(
     input: ApplyImplementationAuditManifestInput,
   ): Promise<Awaited<ReturnType<ImplementationEvidenceService["applyAuditManifest"]>>> {
@@ -715,6 +731,13 @@ export class RemoteLedgerClient {
       manifest_id: input.manifestId,
       expected_repository_head: input.expectedRepositoryHead,
     });
+  }
+
+  async getImplementationEvidenceServiceStatus(): Promise<
+    Awaited<ReturnType<ImplementationEvidenceService["evidenceServiceStatus"]>>
+  > {
+    this.requireManagement("get_implementation_evidence_service_status");
+    return await this.call("get_implementation_evidence_service_status", {});
   }
 
   async prepareImplementationCompletion(

@@ -189,9 +189,11 @@ export const IMPLEMENTATION_EVIDENCE_TOOL_NAMES = [
   "execute_external_implementation_audit_attempt",
   "finalize_implementation_audit_attempt",
   "prepare_implementation_audit_fallback",
+  "advance_implementation_evidence_bootstrap",
   "arm_implementation_evidence_activation",
   "apply_implementation_audit_manifest",
   "get_implementation_evidence_activation_status",
+  "get_implementation_evidence_service_status",
   "prepare_implementation_completion",
   "record_implementation_completion",
 ] as const satisfies readonly LedgerToolName[];
@@ -1502,6 +1504,33 @@ export function createLedgerMcpToolSpecifications(
     },
   );
 
+  const advanceImplementationEvidenceBootstrapTool = tool(
+    "advance_implementation_evidence_bootstrap",
+    "Advance the replay-fenced finalized-manifest bootstrap through historical dispatch or activation handoff.",
+    {
+      goal_ref: z.string().regex(/^goals:G[0-9]+$/),
+      finalized_manifest_digest: z.string().regex(/^[0-9a-f]{64}$/),
+      expected_repository_head: z.string().regex(/^[0-9a-f]{40}$/),
+      expected_phase: z.enum(["historical-dispatch", "activation-handoff"]),
+      ...implementationOperation,
+    } as const,
+    async (args) => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(
+        await implementationEvidence.advanceEvidenceBootstrap({
+          goalRef: args.goal_ref,
+          finalizedManifestDigest: args.finalized_manifest_digest,
+          expectedRepositoryHead: args.expected_repository_head,
+          expectedPhase: args.expected_phase,
+          operationId: args.operation_id,
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      );
+    },
+  );
+
   const applyImplementationAuditManifestTool = tool(
     "apply_implementation_audit_manifest",
     "Atomically append every packaged historical audit and fulfill an exact matching activation requirement.",
@@ -1549,6 +1578,17 @@ export function createLedgerMcpToolSpecifications(
           expectedRepositoryHead: args.expected_repository_head,
         }),
       );
+    },
+  );
+
+  const getImplementationEvidenceServiceStatusTool = tool(
+    "get_implementation_evidence_service_status",
+    "Return service-derived immutable build identity, live head, protocol, finalized mappings, bootstrap and activation state, and exact capability inventories.",
+    {} as Record<string, never>,
+    async () => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(await implementationEvidence.evidenceServiceStatus());
     },
   );
 
@@ -1879,9 +1919,11 @@ export function createLedgerMcpToolSpecifications(
           executeExternalImplementationAuditAttemptTool,
           finalizeImplementationAuditAttemptTool,
           prepareImplementationAuditFallbackTool,
+          advanceImplementationEvidenceBootstrapTool,
           armImplementationEvidenceActivationTool,
           applyImplementationAuditManifestTool,
           getImplementationEvidenceActivationStatusTool,
+          getImplementationEvidenceServiceStatusTool,
           prepareImplementationCompletionTool,
           recordImplementationCompletionTool,
         ]
