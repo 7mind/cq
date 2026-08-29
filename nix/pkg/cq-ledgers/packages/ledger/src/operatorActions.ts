@@ -194,36 +194,31 @@ export async function materializeOperatorAction(
     }
 
     const handoffId = handoffIdForTask(task.id);
+    const expectedHandoffFields = {
+      summary:
+        `Operator action ${action.id} awaits deployment identity ` +
+        input.expectedOutputIdentity,
+      flow: "implement",
+      ledgerRefs: [
+        `${TASKS_LEDGER}:${task.id}`,
+        goalRefs[0]!,
+        `${OPERATOR_ACTIONS_LEDGER}:${action.id}`,
+      ],
+      handoffReasons: [
+        `Deploy ${input.expectedOutputIdentity} and acknowledge ${action.id}`,
+      ],
+      tags: ["operator-action", directive.actionKey],
+    };
     let handoff: Item;
     try {
       handoff = tx.fetchItem(HANDOFFS_LEDGER, handoffId);
-      const refs = stringArray(handoff.fields["ledgerRefs"]);
-      if (!refs.includes(`${OPERATOR_ACTIONS_LEDGER}:${action.id}`)) {
-        throw new OperatorActionConflictError(
-          action.id,
-          `handoff id ${handoff.id} belongs elsewhere`,
-        );
-      }
+      assertExistingHandoffMatches(handoff, task, action.id, expectedHandoffFields);
     } catch (error) {
       if (!(error instanceof ItemNotFoundError)) throw error;
       handoff = tx.createItemOwnerless(HANDOFFS_LEDGER, task.milestoneId, {
         id: handoffId,
         status: "user-action-required",
-        fields: {
-          summary:
-            `Operator action ${action.id} awaits deployment identity ` +
-            input.expectedOutputIdentity,
-          flow: "implement",
-          ledgerRefs: [
-            `${TASKS_LEDGER}:${task.id}`,
-            goalRefs[0]!,
-            `${OPERATOR_ACTIONS_LEDGER}:${action.id}`,
-          ],
-          handoffReasons: [
-            `Deploy ${input.expectedOutputIdentity} and acknowledge ${action.id}`,
-          ],
-          tags: ["operator-action", directive.actionKey],
-        },
+        fields: expectedHandoffFields,
         ...(input.author === undefined ? {} : { author: input.author }),
         ...(input.session === undefined ? {} : { session: input.session }),
       });
@@ -345,6 +340,30 @@ function assertExistingActionMatches(
     if (field === "revision" && value === "1" && action.fields[field] === undefined) continue;
     if (JSON.stringify(action.fields[field]) !== JSON.stringify(value)) {
       throw new OperatorActionConflictError(action.id, `${field} differs`);
+    }
+  }
+}
+
+function assertExistingHandoffMatches(
+  handoff: Item,
+  task: Item,
+  actionId: string,
+  expected: Record<string, string | string[]>,
+): void {
+  if (handoff.milestoneId !== task.milestoneId) {
+    throw new OperatorActionConflictError(actionId, `handoff ${handoff.id} milestone differs`);
+  }
+  if (handoff.status !== "user-action-required") {
+    throw new OperatorActionConflictError(actionId, `handoff ${handoff.id} status differs`);
+  }
+  const actualFields = Object.keys(handoff.fields).sort();
+  const expectedFields = Object.keys(expected).sort();
+  if (JSON.stringify(actualFields) !== JSON.stringify(expectedFields)) {
+    throw new OperatorActionConflictError(actionId, `handoff ${handoff.id} fields differ`);
+  }
+  for (const [field, value] of Object.entries(expected)) {
+    if (JSON.stringify(handoff.fields[field]) !== JSON.stringify(value)) {
+      throw new OperatorActionConflictError(actionId, `handoff ${handoff.id} ${field} differs`);
     }
   }
 }
