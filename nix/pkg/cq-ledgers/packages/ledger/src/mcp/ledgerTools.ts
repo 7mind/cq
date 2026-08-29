@@ -1506,7 +1506,7 @@ export function createLedgerMcpToolSpecifications(
 
   const advanceImplementationEvidenceBootstrapTool = tool(
     "advance_implementation_evidence_bootstrap",
-    "Advance the replay-fenced finalized-manifest bootstrap through historical dispatch or activation handoff.",
+    "Advance the protected implementation-evidence bootstrap phase.",
     {
       goal_ref: z.string().regex(/^goals:G[0-9]+$/),
       finalized_manifest_digest: z.string().regex(/^[0-9a-f]{64}$/),
@@ -1583,7 +1583,7 @@ export function createLedgerMcpToolSpecifications(
 
   const getImplementationEvidenceServiceStatusTool = tool(
     "get_implementation_evidence_service_status",
-    "Return service-derived immutable build identity, live head, protocol, finalized mappings, bootstrap and activation state, and exact capability inventories.",
+    "Return protected implementation-evidence service status.",
     {} as Record<string, never>,
     async () => {
       if (implementationEvidence === undefined)

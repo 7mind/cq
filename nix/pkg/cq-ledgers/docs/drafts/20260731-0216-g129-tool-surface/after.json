@@ -24,6 +24,7 @@
       "inventory": [
         "abort_dispatch",
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "archive_milestone",
         "arm_implementation_evidence_activation",
@@ -48,6 +49,7 @@
         "fts_search",
         "get_config",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -77,7 +79,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 54,
+      "toolCount": 56,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -85,15 +87,16 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 60011,
-        "tokens": 14475,
-        "sha256": "d2f48a2a7b40d0790d8018a1ee914d2fcbccb50f536c99d4ff5a94ecf46fb748"
+        "utf8Bytes": 60950,
+        "tokens": 14680,
+        "sha256": "e301343f07b79cd8e8999915112338074ab3acb17966a36145de938688bd07e4"
       },
-      "surfaceTokens": 14640,
+      "surfaceTokens": 14845,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 2858,
+      "deltaTokens": 3063,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "arm_implementation_evidence_activation",
         "complete_operator_action",
@@ -102,6 +105,7 @@
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -119,18 +123,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8054,
-      "baselineComparableDeltaTokens": -3728,
+      "baselineComparableSurfaceTokens": 8063,
+      "baselineComparableDeltaTokens": -3719,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7212,
+      "domainInputSchemaTokens": 7391,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1320,
-        "allTokens": 1621,
+        "authoritativeResponseTokens": 1290,
+        "allTokens": 1591,
         "deltasAreAdditive": false
       }
     },
@@ -138,6 +142,7 @@
       "inventorySource": "MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES",
       "inventory": [
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "archive_milestone",
         "arm_implementation_evidence_activation",
@@ -159,6 +164,7 @@
         "fts_search",
         "get_config",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "list_milestone_items",
         "list_projects",
@@ -184,7 +190,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 46,
+      "toolCount": 48,
       "baselineProfile": "non-dispatch",
       "initialize": {
         "utf8Bytes": 812,
@@ -192,15 +198,16 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 47311,
-        "tokens": 11356,
-        "sha256": "1f549733e4021cdca67a01f3acd0eb3dc42d5c766952fdf7fccdf407f54d579c"
+        "utf8Bytes": 48198,
+        "tokens": 11552,
+        "sha256": "5d25f756c6c98015c3cb8041dc3c446b06dc608a416c17791d8978dcb783979f"
       },
-      "surfaceTokens": 11521,
+      "surfaceTokens": 11717,
       "baselineSurfaceTokens": 10386,
-      "deltaTokens": 1135,
+      "deltaTokens": 1331,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "arm_implementation_evidence_activation",
         "complete_operator_action",
@@ -209,6 +216,7 @@
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "materialize_operator_action",
         "prepare_implementation_audit_attempt",
@@ -230,12 +238,12 @@
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7212,
+      "domainInputSchemaTokens": 7391,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1131,
-        "allTokens": 1432,
+        "authoritativeResponseTokens": 1101,
+        "allTokens": 1402,
         "deltasAreAdditive": false
       }
     },
@@ -244,6 +252,7 @@
       "inventory": [
         "abort_dispatch",
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "archive_milestone",
         "arm_implementation_evidence_activation",
@@ -268,6 +277,7 @@
         "fts_search",
         "get_config",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -297,7 +307,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 54,
+      "toolCount": 56,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -305,15 +315,16 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 60011,
-        "tokens": 14475,
-        "sha256": "d2f48a2a7b40d0790d8018a1ee914d2fcbccb50f536c99d4ff5a94ecf46fb748"
+        "utf8Bytes": 60950,
+        "tokens": 14680,
+        "sha256": "e301343f07b79cd8e8999915112338074ab3acb17966a36145de938688bd07e4"
       },
-      "surfaceTokens": 14640,
+      "surfaceTokens": 14845,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 2858,
+      "deltaTokens": 3063,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "arm_implementation_evidence_activation",
         "complete_operator_action",
@@ -322,6 +333,7 @@
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -339,18 +351,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8054,
-      "baselineComparableDeltaTokens": -3728,
+      "baselineComparableSurfaceTokens": 8063,
+      "baselineComparableDeltaTokens": -3719,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7212,
+      "domainInputSchemaTokens": 7391,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1320,
-        "allTokens": 1621,
+        "authoritativeResponseTokens": 1290,
+        "allTokens": 1591,
         "deltasAreAdditive": false
       }
     },
@@ -359,6 +371,7 @@
       "inventory": [
         "abort_dispatch",
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "archive_milestone",
         "arm_implementation_evidence_activation",
@@ -383,6 +396,7 @@
         "fts_search",
         "get_config",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -412,7 +426,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 54,
+      "toolCount": 56,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -420,15 +434,16 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 60011,
-        "tokens": 14475,
-        "sha256": "d2f48a2a7b40d0790d8018a1ee914d2fcbccb50f536c99d4ff5a94ecf46fb748"
+        "utf8Bytes": 60950,
+        "tokens": 14680,
+        "sha256": "e301343f07b79cd8e8999915112338074ab3acb17966a36145de938688bd07e4"
       },
-      "surfaceTokens": 14640,
+      "surfaceTokens": 14845,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 2858,
+      "deltaTokens": 3063,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "arm_implementation_evidence_activation",
         "complete_operator_action",
@@ -437,6 +452,7 @@
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -454,18 +470,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8054,
-      "baselineComparableDeltaTokens": -3728,
+      "baselineComparableSurfaceTokens": 8063,
+      "baselineComparableDeltaTokens": -3719,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7212,
+      "domainInputSchemaTokens": 7391,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1320,
-        "allTokens": 1621,
+        "authoritativeResponseTokens": 1290,
+        "allTokens": 1591,
         "deltasAreAdditive": false
       }
     },
@@ -636,6 +652,7 @@
       "inventory": [
         "abort_dispatch",
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "archive_milestone",
         "arm_implementation_evidence_activation",
@@ -660,6 +677,7 @@
         "fts_search",
         "get_config",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -689,7 +707,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 54,
+      "toolCount": 56,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -697,15 +715,16 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 60011,
-        "tokens": 14475,
-        "sha256": "d2f48a2a7b40d0790d8018a1ee914d2fcbccb50f536c99d4ff5a94ecf46fb748"
+        "utf8Bytes": 60950,
+        "tokens": 14680,
+        "sha256": "e301343f07b79cd8e8999915112338074ab3acb17966a36145de938688bd07e4"
       },
-      "surfaceTokens": 14640,
+      "surfaceTokens": 14845,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 2858,
+      "deltaTokens": 3063,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "arm_implementation_evidence_activation",
         "complete_operator_action",
@@ -714,6 +733,7 @@
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -731,18 +751,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8054,
-      "baselineComparableDeltaTokens": -3728,
+      "baselineComparableSurfaceTokens": 8063,
+      "baselineComparableDeltaTokens": -3719,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7212,
+      "domainInputSchemaTokens": 7391,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1320,
-        "allTokens": 1621,
+        "authoritativeResponseTokens": 1290,
+        "allTokens": 1591,
         "deltasAreAdditive": false
       }
     },
@@ -751,6 +771,7 @@
       "inventory": [
         "abort_dispatch",
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "archive_milestone",
         "arm_implementation_evidence_activation",
@@ -775,6 +796,7 @@
         "fts_search",
         "get_config",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -804,7 +826,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 54,
+      "toolCount": 56,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -812,15 +834,16 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 60011,
-        "tokens": 14475,
-        "sha256": "d2f48a2a7b40d0790d8018a1ee914d2fcbccb50f536c99d4ff5a94ecf46fb748"
+        "utf8Bytes": 60950,
+        "tokens": 14680,
+        "sha256": "e301343f07b79cd8e8999915112338074ab3acb17966a36145de938688bd07e4"
       },
-      "surfaceTokens": 14640,
+      "surfaceTokens": 14845,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 2858,
+      "deltaTokens": 3063,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "arm_implementation_evidence_activation",
         "complete_operator_action",
@@ -829,6 +852,7 @@
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -846,18 +870,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8054,
-      "baselineComparableDeltaTokens": -3728,
+      "baselineComparableSurfaceTokens": 8063,
+      "baselineComparableDeltaTokens": -3719,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7212,
+      "domainInputSchemaTokens": 7391,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1320,
-        "allTokens": 1621,
+        "authoritativeResponseTokens": 1290,
+        "allTokens": 1591,
         "deltasAreAdditive": false
       }
     },
@@ -906,6 +930,7 @@
       "inventory": [
         "abort_dispatch",
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "archive_milestone",
         "arm_implementation_evidence_activation",
@@ -930,6 +955,7 @@
         "fts_search",
         "get_config",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -959,7 +985,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 54,
+      "toolCount": 56,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -967,15 +993,16 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 60011,
-        "tokens": 14475,
-        "sha256": "d2f48a2a7b40d0790d8018a1ee914d2fcbccb50f536c99d4ff5a94ecf46fb748"
+        "utf8Bytes": 60950,
+        "tokens": 14680,
+        "sha256": "e301343f07b79cd8e8999915112338074ab3acb17966a36145de938688bd07e4"
       },
-      "surfaceTokens": 14640,
+      "surfaceTokens": 14845,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 2858,
+      "deltaTokens": 3063,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "arm_implementation_evidence_activation",
         "complete_operator_action",
@@ -984,6 +1011,7 @@
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -1001,18 +1029,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8054,
-      "baselineComparableDeltaTokens": -3728,
+      "baselineComparableSurfaceTokens": 8063,
+      "baselineComparableDeltaTokens": -3719,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7212,
+      "domainInputSchemaTokens": 7391,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1320,
-        "allTokens": 1621,
+        "authoritativeResponseTokens": 1290,
+        "allTokens": 1591,
         "deltasAreAdditive": false
       }
     },
@@ -1101,6 +1129,7 @@
       "inventory": [
         "abort_dispatch",
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "archive_milestone",
         "arm_implementation_evidence_activation",
@@ -1125,6 +1154,7 @@
         "fts_search",
         "get_config",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -1154,7 +1184,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 54,
+      "toolCount": 56,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -1162,15 +1192,16 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 60011,
-        "tokens": 14475,
-        "sha256": "d2f48a2a7b40d0790d8018a1ee914d2fcbccb50f536c99d4ff5a94ecf46fb748"
+        "utf8Bytes": 60950,
+        "tokens": 14680,
+        "sha256": "e301343f07b79cd8e8999915112338074ab3acb17966a36145de938688bd07e4"
       },
-      "surfaceTokens": 14640,
+      "surfaceTokens": 14845,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 2858,
+      "deltaTokens": 3063,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "arm_implementation_evidence_activation",
         "complete_operator_action",
@@ -1179,6 +1210,7 @@
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -1196,18 +1228,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8054,
-      "baselineComparableDeltaTokens": -3728,
+      "baselineComparableSurfaceTokens": 8063,
+      "baselineComparableDeltaTokens": -3719,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7212,
+      "domainInputSchemaTokens": 7391,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1320,
-        "allTokens": 1621,
+        "authoritativeResponseTokens": 1290,
+        "allTokens": 1591,
         "deltasAreAdditive": false
       }
     },
@@ -1216,6 +1248,7 @@
       "inventory": [
         "abort_dispatch",
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "archive_milestone",
         "arm_implementation_evidence_activation",
@@ -1240,6 +1273,7 @@
         "fts_search",
         "get_config",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -1269,7 +1303,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 54,
+      "toolCount": 56,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -1277,15 +1311,16 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 60011,
-        "tokens": 14475,
-        "sha256": "d2f48a2a7b40d0790d8018a1ee914d2fcbccb50f536c99d4ff5a94ecf46fb748"
+        "utf8Bytes": 60950,
+        "tokens": 14680,
+        "sha256": "e301343f07b79cd8e8999915112338074ab3acb17966a36145de938688bd07e4"
       },
-      "surfaceTokens": 14640,
+      "surfaceTokens": 14845,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 2858,
+      "deltaTokens": 3063,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "arm_implementation_evidence_activation",
         "complete_operator_action",
@@ -1294,6 +1329,7 @@
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -1311,18 +1347,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8054,
-      "baselineComparableDeltaTokens": -3728,
+      "baselineComparableSurfaceTokens": 8063,
+      "baselineComparableDeltaTokens": -3719,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7212,
+      "domainInputSchemaTokens": 7391,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1320,
-        "allTokens": 1621,
+        "authoritativeResponseTokens": 1290,
+        "allTokens": 1591,
         "deltasAreAdditive": false
       }
     },
@@ -1454,6 +1490,7 @@
       "inventory": [
         "abort_dispatch",
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "archive_milestone",
         "arm_implementation_evidence_activation",
@@ -1478,6 +1515,7 @@
         "fts_search",
         "get_config",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -1507,7 +1545,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 54,
+      "toolCount": 56,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -1515,15 +1553,16 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 60011,
-        "tokens": 14475,
-        "sha256": "d2f48a2a7b40d0790d8018a1ee914d2fcbccb50f536c99d4ff5a94ecf46fb748"
+        "utf8Bytes": 60950,
+        "tokens": 14680,
+        "sha256": "e301343f07b79cd8e8999915112338074ab3acb17966a36145de938688bd07e4"
       },
-      "surfaceTokens": 14640,
+      "surfaceTokens": 14845,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 2858,
+      "deltaTokens": 3063,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "arm_implementation_evidence_activation",
         "complete_operator_action",
@@ -1532,6 +1571,7 @@
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -1549,18 +1589,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8054,
-      "baselineComparableDeltaTokens": -3728,
+      "baselineComparableSurfaceTokens": 8063,
+      "baselineComparableDeltaTokens": -3719,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7212,
+      "domainInputSchemaTokens": 7391,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1320,
-        "allTokens": 1621,
+        "authoritativeResponseTokens": 1290,
+        "allTokens": 1591,
         "deltasAreAdditive": false
       }
     },
@@ -1569,6 +1609,7 @@
       "inventory": [
         "abort_dispatch",
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "archive_milestone",
         "arm_implementation_evidence_activation",
@@ -1593,6 +1634,7 @@
         "fts_search",
         "get_config",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -1622,7 +1664,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 54,
+      "toolCount": 56,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -1630,15 +1672,16 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 60011,
-        "tokens": 14475,
-        "sha256": "d2f48a2a7b40d0790d8018a1ee914d2fcbccb50f536c99d4ff5a94ecf46fb748"
+        "utf8Bytes": 60950,
+        "tokens": 14680,
+        "sha256": "e301343f07b79cd8e8999915112338074ab3acb17966a36145de938688bd07e4"
       },
-      "surfaceTokens": 14640,
+      "surfaceTokens": 14845,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 2858,
+      "deltaTokens": 3063,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "arm_implementation_evidence_activation",
         "complete_operator_action",
@@ -1647,6 +1690,7 @@
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -1664,18 +1708,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8054,
-      "baselineComparableDeltaTokens": -3728,
+      "baselineComparableSurfaceTokens": 8063,
+      "baselineComparableDeltaTokens": -3719,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7212,
+      "domainInputSchemaTokens": 7391,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1320,
-        "allTokens": 1621,
+        "authoritativeResponseTokens": 1290,
+        "allTokens": 1591,
         "deltasAreAdditive": false
       }
     },
@@ -1722,6 +1766,7 @@
       "inventory": [
         "abort_dispatch",
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "archive_milestone",
         "arm_implementation_evidence_activation",
@@ -1746,6 +1791,7 @@
         "fts_search",
         "get_config",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -1775,7 +1821,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 54,
+      "toolCount": 56,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -1783,15 +1829,16 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 60011,
-        "tokens": 14475,
-        "sha256": "d2f48a2a7b40d0790d8018a1ee914d2fcbccb50f536c99d4ff5a94ecf46fb748"
+        "utf8Bytes": 60950,
+        "tokens": 14680,
+        "sha256": "e301343f07b79cd8e8999915112338074ab3acb17966a36145de938688bd07e4"
       },
-      "surfaceTokens": 14640,
+      "surfaceTokens": 14845,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 2858,
+      "deltaTokens": 3063,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "arm_implementation_evidence_activation",
         "complete_operator_action",
@@ -1800,6 +1847,7 @@
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -1817,18 +1865,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8054,
-      "baselineComparableDeltaTokens": -3728,
+      "baselineComparableSurfaceTokens": 8063,
+      "baselineComparableDeltaTokens": -3719,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7212,
+      "domainInputSchemaTokens": 7391,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1320,
-        "allTokens": 1621,
+        "authoritativeResponseTokens": 1290,
+        "allTokens": 1591,
         "deltasAreAdditive": false
       }
     },
@@ -1917,6 +1965,7 @@
       "inventory": [
         "abort_dispatch",
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "archive_milestone",
         "arm_implementation_evidence_activation",
@@ -1941,6 +1990,7 @@
         "fts_search",
         "get_config",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -1970,7 +2020,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 54,
+      "toolCount": 56,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -1978,15 +2028,16 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 60011,
-        "tokens": 14475,
-        "sha256": "d2f48a2a7b40d0790d8018a1ee914d2fcbccb50f536c99d4ff5a94ecf46fb748"
+        "utf8Bytes": 60950,
+        "tokens": 14680,
+        "sha256": "e301343f07b79cd8e8999915112338074ab3acb17966a36145de938688bd07e4"
       },
-      "surfaceTokens": 14640,
+      "surfaceTokens": 14845,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 2858,
+      "deltaTokens": 3063,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "arm_implementation_evidence_activation",
         "complete_operator_action",
@@ -1995,6 +2046,7 @@
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -2012,18 +2064,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8054,
-      "baselineComparableDeltaTokens": -3728,
+      "baselineComparableSurfaceTokens": 8063,
+      "baselineComparableDeltaTokens": -3719,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7212,
+      "domainInputSchemaTokens": 7391,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1320,
-        "allTokens": 1621,
+        "authoritativeResponseTokens": 1290,
+        "allTokens": 1591,
         "deltasAreAdditive": false
       }
     },
@@ -2070,6 +2122,7 @@
       "inventory": [
         "abort_dispatch",
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "archive_milestone",
         "arm_implementation_evidence_activation",
@@ -2094,6 +2147,7 @@
         "fts_search",
         "get_config",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -2123,7 +2177,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 54,
+      "toolCount": 56,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 812,
@@ -2131,15 +2185,16 @@
         "sha256": "3c44700332c61239b8a59b56fadcc60581ac32cc9f8ce01878b958cf127f8cc2"
       },
       "toolsList": {
-        "utf8Bytes": 60011,
-        "tokens": 14475,
-        "sha256": "d2f48a2a7b40d0790d8018a1ee914d2fcbccb50f536c99d4ff5a94ecf46fb748"
+        "utf8Bytes": 60950,
+        "tokens": 14680,
+        "sha256": "e301343f07b79cd8e8999915112338074ab3acb17966a36145de938688bd07e4"
       },
-      "surfaceTokens": 14640,
+      "surfaceTokens": 14845,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 2858,
+      "deltaTokens": 3063,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
+        "advance_implementation_evidence_bootstrap",
         "apply_implementation_audit_manifest",
         "arm_implementation_evidence_activation",
         "complete_operator_action",
@@ -2148,6 +2203,7 @@
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
+        "get_implementation_evidence_service_status",
         "get_usage_stats",
         "git_commit",
         "git_resolve_continue",
@@ -2165,18 +2221,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8054,
-      "baselineComparableDeltaTokens": -3728,
+      "baselineComparableSurfaceTokens": 8063,
+      "baselineComparableDeltaTokens": -3719,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7212,
+      "domainInputSchemaTokens": 7391,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1320,
-        "allTokens": 1621,
+        "authoritativeResponseTokens": 1290,
+        "allTokens": 1591,
         "deltasAreAdditive": false
       }
     }
@@ -2287,11 +2343,63 @@
       }
     },
     {
+      "name": "advance_implementation_evidence_bootstrap",
+      "whole": {
+        "baselineTokens": 0,
+        "afterTokens": 200,
+        "deltaTokens": 200
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 9,
+            "marginalTokens": 10
+          },
+          "delta": {
+            "serializedTokens": 9,
+            "marginalTokens": 10
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 21,
+            "marginalTokens": 22
+          },
+          "delta": {
+            "serializedTokens": 21,
+            "marginalTokens": 22
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 165,
+            "marginalTokens": 166
+          },
+          "delta": {
+            "serializedTokens": 165,
+            "marginalTokens": 166
+          }
+        }
+      }
+    },
+    {
       "name": "apply_implementation_audit_manifest",
       "whole": {
         "baselineTokens": 0,
-        "afterTokens": 235,
-        "deltaTokens": 235
+        "afterTokens": 213,
+        "deltaTokens": 213
       },
       "fields": {
         "name": {
@@ -2314,12 +2422,12 @@
             "marginalTokens": 0
           },
           "after": {
-            "serializedTokens": 51,
-            "marginalTokens": 52
+            "serializedTokens": 29,
+            "marginalTokens": 30
           },
           "delta": {
-            "serializedTokens": 51,
-            "marginalTokens": 52
+            "serializedTokens": 29,
+            "marginalTokens": 30
           }
         },
         "inputSchema": {
@@ -2394,8 +2502,8 @@
       "name": "arm_implementation_evidence_activation",
       "whole": {
         "baselineTokens": 0,
-        "afterTokens": 207,
-        "deltaTokens": 207
+        "afterTokens": 176,
+        "deltaTokens": 176
       },
       "fields": {
         "name": {
@@ -2418,12 +2526,12 @@
             "marginalTokens": 0
           },
           "after": {
-            "serializedTokens": 63,
-            "marginalTokens": 64
+            "serializedTokens": 32,
+            "marginalTokens": 33
           },
           "delta": {
-            "serializedTokens": 63,
-            "marginalTokens": 64
+            "serializedTokens": 32,
+            "marginalTokens": 33
           }
         },
         "inputSchema": {
@@ -3639,6 +3747,58 @@
       }
     },
     {
+      "name": "get_implementation_evidence_service_status",
+      "whole": {
+        "baselineTokens": 0,
+        "afterTokens": 49,
+        "deltaTokens": 49
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 9,
+            "marginalTokens": 10
+          },
+          "delta": {
+            "serializedTokens": 9,
+            "marginalTokens": 10
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 21,
+            "marginalTokens": 22
+          },
+          "delta": {
+            "serializedTokens": 21,
+            "marginalTokens": 22
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 14,
+            "marginalTokens": 15
+          },
+          "delta": {
+            "serializedTokens": 14,
+            "marginalTokens": 15
+          }
+        }
+      }
+    },
+    {
       "name": "get_usage_stats",
       "whole": {
         "baselineTokens": 0,
@@ -3954,8 +4114,8 @@
       "name": "prepare_dispatch",
       "whole": {
         "baselineTokens": 441,
-        "afterTokens": 537,
-        "deltaTokens": 96
+        "afterTokens": 546,
+        "deltaTokens": 105
       },
       "fields": {
         "name": {
@@ -3992,12 +4152,12 @@
             "marginalTokens": 377
           },
           "after": {
-            "serializedTokens": 489,
-            "marginalTokens": 490
+            "serializedTokens": 498,
+            "marginalTokens": 499
           },
           "delta": {
-            "serializedTokens": 114,
-            "marginalTokens": 113
+            "serializedTokens": 123,
+            "marginalTokens": 122
           }
         }
       }
@@ -5439,19 +5599,19 @@
     "ledgerCallingProfiles": [
       {
         "profileName": "full",
-        "remainingG93AttributableTokens": 1621
+        "remainingG93AttributableTokens": 1591
       },
       {
         "profileName": "non-dispatch",
-        "remainingG93AttributableTokens": 1432
+        "remainingG93AttributableTokens": 1402
       },
       {
         "profileName": "advance",
-        "remainingG93AttributableTokens": 1621
+        "remainingG93AttributableTokens": 1591
       },
       {
         "profileName": "begin",
-        "remainingG93AttributableTokens": 1621
+        "remainingG93AttributableTokens": 1591
       },
       {
         "profileName": "implement-conflict-resolver",
@@ -5467,11 +5627,11 @@
       },
       {
         "profileName": "implement/advance",
-        "remainingG93AttributableTokens": 1621
+        "remainingG93AttributableTokens": 1591
       },
       {
         "profileName": "implement/start",
-        "remainingG93AttributableTokens": 1621
+        "remainingG93AttributableTokens": 1591
       },
       {
         "profileName": "implementation-auditor",
@@ -5479,7 +5639,7 @@
       },
       {
         "profileName": "investigate",
-        "remainingG93AttributableTokens": 1621
+        "remainingG93AttributableTokens": 1591
       },
       {
         "profileName": "investigate-explorer",
@@ -5491,11 +5651,11 @@
       },
       {
         "profileName": "investigate/advance",
-        "remainingG93AttributableTokens": 1621
+        "remainingG93AttributableTokens": 1591
       },
       {
         "profileName": "plan",
-        "remainingG93AttributableTokens": 1621
+        "remainingG93AttributableTokens": 1591
       },
       {
         "profileName": "plan-advance",
@@ -5507,11 +5667,11 @@
       },
       {
         "profileName": "plan/advance",
-        "remainingG93AttributableTokens": 1621
+        "remainingG93AttributableTokens": 1591
       },
       {
         "profileName": "plan/follow-up",
-        "remainingG93AttributableTokens": 1621
+        "remainingG93AttributableTokens": 1591
       },
       {
         "profileName": "planners",
@@ -5519,7 +5679,7 @@
       },
       {
         "profileName": "research",
-        "remainingG93AttributableTokens": 1621
+        "remainingG93AttributableTokens": 1591
       },
       {
         "profileName": "research-experimenter",
@@ -5531,7 +5691,7 @@
       },
       {
         "profileName": "research/advance",
-        "remainingG93AttributableTokens": 1621
+        "remainingG93AttributableTokens": 1591
       },
       {
         "profileName": "reviewers",
@@ -5539,10 +5699,10 @@
       },
       {
         "profileName": "upstream",
-        "remainingG93AttributableTokens": 1621
+        "remainingG93AttributableTokens": 1591
       }
     ],
-    "maximumRemainingG93AttributableTokens": 1621
+    "maximumRemainingG93AttributableTokens": 1591
   },
   "budgets": {
     "tokenizerMatches": true,

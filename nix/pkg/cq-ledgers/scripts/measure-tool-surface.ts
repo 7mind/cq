@@ -31,6 +31,8 @@ const MANAGEMENT_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
   "execute_external_implementation_review_attempt",
   "finalize_implementation_review_attempt",
   "prepare_implementation_review_fallback",
+  "advance_implementation_evidence_bootstrap",
+  "get_implementation_evidence_service_status",
   "prepare_implementation_completion",
   "record_implementation_completion",
 ]);

@@ -362,19 +362,19 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     "Exactly `{ status, attemptRef, dispatch }` for the sole authenticated native fallback.",
   ),
   advance_implementation_evidence_bootstrap: purposeBuiltSmall(
-    "One replay-fenced `admitted`, `operator-action-required`, or `existing` bootstrap acknowledgement.",
+    "One typed bootstrap acknowledgement.",
   ),
   arm_implementation_evidence_activation: purposeBuiltSmall(
-    "Exactly `{ status, requirementRef, manifestId, goalRef, finalizedManifestDigest, evidenceTaskRef, auditTaskRef, activationTaskRef, boundaryCommit, taskRefs }`.",
+    "One typed activation-arm acknowledgement.",
   ),
   apply_implementation_audit_manifest: purposeBuiltSmall(
-    "Exactly `{ status, manifestId, manifestDigest, repositoryHead, activation, requirementRef, evidenceFingerprint, auditRefs, taskRefs }`.",
+    "One typed audit-application acknowledgement.",
   ),
   get_implementation_evidence_activation_status: purposeBuiltSmall(
     "Exactly one bounded absent, pending, stale, or active activation status acknowledgement.",
   ),
   get_implementation_evidence_service_status: purposeBuiltSmall(
-    "Exactly one service-derived implementation evidence identity and capability status object.",
+    "One typed service-status object.",
   ),
   prepare_implementation_completion: purposeBuiltSmall(
     "Exactly `{ status, completionRef, taskRef, resultCommit, repositoryHead, evidenceFingerprint }`.",

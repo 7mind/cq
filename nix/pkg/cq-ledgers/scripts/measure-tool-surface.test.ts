@@ -133,7 +133,10 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // their result contracts to full-parent profiles.
     // 1405 -> 1621 under T2346: historical-audit and activation operations add
     // protected management contracts. The refreshed threshold remains strict.
-    maximumRemainingG93AttributableTokens: 1621,
+    // 1621 -> 1591 under T2895: the two bootstrap operations use concise typed
+    // response contracts while the adjacent activation acknowledgements shed
+    // redundant field enumerations.
+    maximumRemainingG93AttributableTokens: 1591,
     corpusMedianResponseSavingTokens: 1622,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,
