@@ -1811,7 +1811,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/operator-actions.test.ts",
-      "sha256": "dbb79da99b6895c914358756013b40605bc88c28d870324e5f7ebae325014943",
+      "sha256": "0de571ce6cddce01102caa5ff6b89f9782e75c9f5ee7520bebfdd37f6135cc7e",
       "targets": []
     },
     {
