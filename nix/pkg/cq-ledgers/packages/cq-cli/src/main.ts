@@ -265,7 +265,7 @@ export const USAGE = [
   "                                                  rebased managed tree; the server, never",
   "                                                  the caller, materializes the lineage.",
   "  ledger implementation-evidence status --json [--cwd <repository-root>]",
-  "              --expected-head <full-sha> --json   bounded protected activation status probe",
+  "                                                  query authenticated deployment identity",
   "  dispatch-recovery <seal|status> --task-id <Tn> [--cwd <repository>]",
   "                                                  seal the maximal terminal worker receipt",
   "                                                  closure, or report its protected journal",

@@ -180,6 +180,15 @@ describe("RemoteLedgerClient workset scope (Behavioral-Active Blackbox-Atomic)",
       operationId: "audit-fallback",
       author: "parent",
     });
+    await remote.advanceImplementationEvidenceBootstrap({
+      goalRef: "goals:G176",
+      finalizedManifestDigest: "c".repeat(64),
+      expectedRepositoryHead: "d".repeat(40),
+      expectedPhase: "historical-dispatch",
+      operationId: "bootstrap",
+      author: "parent",
+    });
+    await remote.getImplementationEvidenceServiceStatus();
     await remote.armImplementationEvidenceActivation({
       goalRef: "goals:G176",
       manifestId: "historical-v1",
@@ -208,6 +217,8 @@ describe("RemoteLedgerClient workset scope (Behavioral-Active Blackbox-Atomic)",
       "execute_external_implementation_audit_attempt",
       "finalize_implementation_audit_attempt",
       "prepare_implementation_audit_fallback",
+      "advance_implementation_evidence_bootstrap",
+      "get_implementation_evidence_service_status",
       "arm_implementation_evidence_activation",
       "apply_implementation_audit_manifest",
       "get_implementation_evidence_activation_status",

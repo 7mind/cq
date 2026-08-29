@@ -17,25 +17,48 @@ interface ParsedStatusArgs {
   readonly cwd: string;
 }
 
-function valueAfter(argv: readonly string[], name: string): string | undefined {
-  const index = argv.indexOf(name);
-  if (index >= 0) return argv[index + 1];
-  const prefix = `${name}=`;
-  return argv.find((entry) => entry.startsWith(prefix))?.slice(prefix.length);
-}
-
 export function parseImplementationEvidenceStatusArgs(
   argv: readonly string[],
   processCwd: string,
 ): ParsedStatusArgs {
   if (argv[0] !== "implementation-evidence" || argv[1] !== "status")
     throw new Error("cq ledger: expected `implementation-evidence status`");
-  if (!argv.includes("--json")) throw new Error("cq ledger implementation-evidence status requires --json");
-  for (const name of ["--goal-ref", "--manifest-id", "--expected-head"]) {
-    if (argv.some((entry) => entry === name || entry.startsWith(`${name}=`)))
-      throw new Error(`${name} is service-derived and must not be supplied by the caller`);
+  const forbiddenIdentityArguments = new Set([
+    "--goal-ref",
+    "--manifest-id",
+    "--expected-head",
+    "--expected-repository-head",
+    "--repository-head",
+  ]);
+  let cwd = processCwd;
+  let json = false;
+  for (let index = 2; index < argv.length; index += 1) {
+    const argument = argv[index]!;
+    const identityArgument = argument.split("=", 1)[0]!;
+    if (forbiddenIdentityArguments.has(identityArgument))
+      throw new Error(
+        `${identityArgument} is service-derived and must not be supplied by the caller`,
+      );
+    if (argument === "--json") {
+      json = true;
+      continue;
+    }
+    if (argument === "--cwd") {
+      const value = argv[index + 1];
+      if (value === undefined || value.length === 0 || value.startsWith("--"))
+        throw new Error("--cwd requires one repository path");
+      cwd = value;
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--cwd=")) {
+      cwd = argument.slice("--cwd=".length);
+      if (cwd.length === 0) throw new Error("--cwd requires one repository path");
+      continue;
+    }
+    throw new Error(`unknown implementation-evidence status argument ${argument}`);
   }
-  const cwd = valueAfter(argv, "--cwd") ?? processCwd;
+  if (!json) throw new Error("cq ledger implementation-evidence status requires --json");
   return { cwd };
 }
 
@@ -93,8 +116,9 @@ export function assertImplementationEvidenceServiceStatus(value: unknown): asser
 export type ImplementationEvidenceStatusQuery = (cwd: string) => Promise<unknown>;
 
 const queryRemoteImplementationEvidenceStatus: ImplementationEvidenceStatusQuery = async (cwd) =>
-  await withRemoteManagementClient(cwd, async (client) =>
-    await client.getImplementationEvidenceServiceStatus(),
+  await withRemoteManagementClient(
+    cwd,
+    async (client) => await client.getImplementationEvidenceServiceStatus(),
   );
 
 export async function runImplementationEvidenceStatus(

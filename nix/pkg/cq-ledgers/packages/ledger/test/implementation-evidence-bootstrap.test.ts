@@ -46,8 +46,9 @@ function fixture(initialAuthority = authority("planned")) {
   let repositoryHead = EVIDENCE_COMMIT;
   let currentAuthority = initialAuthority;
   let materializations = 0;
+  const store = createInMemoryImplementationEvidenceStore();
   const dependencies = {
-    store: createInMemoryImplementationEvidenceStore(),
+    store,
     resolveReviewerRoster: () => [],
     nativeFallback: {
       alias: "native",
@@ -98,6 +99,7 @@ function fixture(initialAuthority = authority("planned")) {
       currentAuthority = value;
     },
     materializations: () => materializations,
+    restart: () => new ImplementationEvidenceService(dependencies),
   };
 }
 
@@ -145,7 +147,7 @@ describe("implementation evidence bootstrap [BG]", () => {
       expectedServiceCommit: HISTORICAL_COMMIT,
     });
     expect(state.materializations()).toBe(1);
-    expect(await state.service.advanceEvidenceBootstrap(input)).toEqual({
+    expect(await state.restart().advanceEvidenceBootstrap(input)).toEqual({
       ...first,
       status: "existing",
     });

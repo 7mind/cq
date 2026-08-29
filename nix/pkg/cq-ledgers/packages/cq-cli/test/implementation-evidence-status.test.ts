@@ -81,20 +81,28 @@ describe("implementation evidence status CLI [BA]", () => {
   });
 
   test("rejects caller-asserted service identity", async () => {
-    const captured = io();
-    let queried = false;
-    const result = await runImplementationEvidenceStatus(
-      ["implementation-evidence", "status", "--json", "--expected-head", "1".repeat(40)],
-      captured.adapter,
-      "/checkout",
-      async () => {
-        queried = true;
-        return serviceStatus();
-      },
-    );
-    expect(result.exitCode).toBe(2);
-    expect(queried).toBe(false);
-    expect(captured.err[0]).toContain("service-derived");
+    for (const argument of [
+      "--goal-ref",
+      "--manifest-id",
+      "--expected-head",
+      "--expected-repository-head",
+      "--repository-head",
+    ]) {
+      const captured = io();
+      let queried = false;
+      const result = await runImplementationEvidenceStatus(
+        ["implementation-evidence", "status", "--json", argument, "caller-identity"],
+        captured.adapter,
+        "/checkout",
+        async () => {
+          queried = true;
+          return serviceStatus();
+        },
+      );
+      expect(result.exitCode).toBe(2);
+      expect(queried).toBe(false);
+      expect(captured.err[0]).toContain("service-derived");
+    }
   });
 
   for (const [name, mutate, expected] of [

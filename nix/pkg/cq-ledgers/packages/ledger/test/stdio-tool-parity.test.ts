@@ -534,6 +534,37 @@ async function buildImplementationEvidenceFixture() {
       stderr: panel.taskRef === "tasks:T9103" ? "parity audit adapter unavailable" : "",
       exitCode: panel.taskRef === "tasks:T9103" ? 1 : 0,
     }),
+    startupBuildCommit: PARITY_IMPLEMENTATION_BASE,
+    implementationEvidenceProtocolVersion: 2,
+    packagedManifestInventory: [PARITY_AUDIT_MANIFEST_ID],
+    readBootstrapAuthority: async () => ({
+      goalRef: `goals:${PARITY_GOAL_ID}`,
+      finalizedManifestDigest: PARITY_AUDIT_FINALIZED_MANIFEST_DIGEST,
+      mappings: {
+        evidenceTaskRef: "tasks:T9101",
+        historicalTaskRef: "tasks:T9102",
+        activationTaskRef: "tasks:T9104",
+      },
+      evidenceTask: {
+        taskRef: "tasks:T9101",
+        status: "done",
+        resultCommit: PARITY_IMPLEMENTATION_BASE,
+        ready: false,
+      },
+      historicalTask: {
+        taskRef: "tasks:T9102",
+        status: "planned",
+        resultCommit: null,
+        ready: true,
+      },
+      activationTask: {
+        taskRef: "tasks:T9104",
+        status: "planned",
+        resultCommit: null,
+        ready: false,
+        actionKey: "activate-implementation-evidence",
+      },
+    }),
     resolveActivationCohort: async () => ({
       finalizedManifestDigest: PARITY_AUDIT_FINALIZED_MANIFEST_DIGEST,
       evidenceTaskRef: "tasks:T9101",
@@ -1524,6 +1555,17 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
       },
     },
     {
+      name: "advance_implementation_evidence_bootstrap",
+      args: {
+        goal_ref: `goals:${PARITY_GOAL_ID}`,
+        finalized_manifest_digest: PARITY_AUDIT_FINALIZED_MANIFEST_DIGEST,
+        expected_repository_head: PARITY_IMPLEMENTATION_BASE,
+        expected_phase: "historical-dispatch",
+        operation_id: "parity_bootstrap_historical",
+        ...PARITY_PROVENANCE,
+      },
+    },
+    {
       name: "arm_implementation_evidence_activation",
       args: {
         goal_ref: `goals:${PARITY_GOAL_ID}`,
@@ -1551,6 +1593,10 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
         manifest_id: PARITY_AUDIT_MANIFEST_ID,
         expected_repository_head: PARITY_AUDIT_HEAD,
       },
+    },
+    {
+      name: "get_implementation_evidence_service_status",
+      args: {},
     },
     {
       name: "prepare_implementation_completion",
@@ -2020,7 +2066,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 54 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 56 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);
