@@ -467,6 +467,13 @@ function implementationTaskIsActivated(
     Object.values(snapshot.implementationAudits).some((audit) => audit.taskRef === taskRef) ||
     Object.values(snapshot.activationRequirements).some((requirement) =>
       requirement.taskRefs.includes(taskRef),
+    ) ||
+    Object.values(snapshot.bootstraps).some(
+      (bootstrap) =>
+        bootstrap.phase === "historical-dispatch" &&
+        bootstrap.historicalTaskRef === taskRef &&
+        bootstrap.taskRefs.length === 1 &&
+        bootstrap.taskRefs[0] === taskRef,
     )
   );
 }
@@ -492,9 +499,9 @@ function assertGenericImplementationTaskMutationAllowed(
 
 /**
  * Bind protected activation authority to the generic store write boundary.
- * Legacy tasks remain writable until a review panel or completion journal
- * activates the task; protected completion uses the separate authorized
- * atomic-owned mutation path.
+ * Legacy tasks remain writable until a review panel, bootstrap admission, or
+ * completion journal activates the task; protected completion uses the
+ * separate authorized atomic-owned mutation path.
  */
 export function protectLedgerStoreWithImplementationEvidence(
   store: LedgerStore,
@@ -1623,6 +1630,36 @@ function implementationEvidenceBootstrapPhase(
   throw new Error("implementation evidence bootstrap task statuses are inconsistent");
 }
 
+function assertProtectedHistoricalBootstrapCompletion(
+  snapshot: ImplementationEvidenceSnapshot,
+  authority: ImplementationEvidenceBootstrapAuthority,
+  historicalResultCommit: string,
+): void {
+  if (historicalResultCommit === authority.evidenceTask.resultCommit)
+    throw new Error("historical task result commit must be distinct from the evidence service build");
+  const admissions = Object.values(snapshot.bootstraps).filter(
+    (record) =>
+      record.phase === "historical-dispatch" &&
+      record.goalRef === authority.goalRef &&
+      record.finalizedManifestDigest === authority.finalizedManifestDigest &&
+      record.evidenceTaskRef === authority.evidenceTask.taskRef &&
+      record.historicalTaskRef === authority.historicalTask.taskRef &&
+      record.activationTaskRef === authority.activationTask.taskRef &&
+      record.evidenceResultCommit === authority.evidenceTask.resultCommit &&
+      record.expectedServiceCommit === authority.evidenceTask.resultCommit &&
+      record.taskRefs.length === 1 &&
+      record.taskRefs[0] === authority.historicalTask.taskRef,
+  );
+  if (admissions.length !== 1)
+    throw new Error("historical task lacks one exact protected bootstrap admission");
+  const completions = Object.values(snapshot.completions).filter(
+    (completion) =>
+      completion.taskRef === authority.historicalTask.taskRef && completion.state === "recorded",
+  );
+  if (completions.length !== 1 || completions[0]!.resultCommit !== historicalResultCommit)
+    throw new Error("historical task result is not bound to one recorded protected completion");
+}
+
 export async function assertImplementationEvidenceBootstrapDispatchAdmission(
   store: ImplementationEvidenceStore,
   bootstrapRef: string,
@@ -2364,6 +2401,7 @@ export class ImplementationEvidenceService {
         throw new Error(
           "activation task must use the activate-implementation-evidence operator action",
         );
+      assertProtectedHistoricalBootstrapCompletion(snapshot, authority, historicalResultCommit);
       if (this.deps.materializeBootstrapActivationHandoff === undefined)
         throw new Error("implementation evidence activation handoff is unavailable");
       expectedServiceCommit = historicalResultCommit;
@@ -2921,15 +2959,7 @@ export class ImplementationEvidenceService {
   async assertGenericTaskTerminalizationAllowed(taskRef: string): Promise<void> {
     taskIdFromRef(taskRef);
     const state = await this.deps.store.snapshot();
-    const activated =
-      Object.values(state.panels).some((panel) => panel.taskRef === taskRef) ||
-      Object.values(state.completions).some((completion) => completion.taskRef === taskRef) ||
-      Object.values(state.auditPanels).some((panel) => panel.taskRef === taskRef) ||
-      Object.values(state.implementationAudits).some((audit) => audit.taskRef === taskRef) ||
-      Object.values(state.activationRequirements).some((requirement) =>
-        requirement.taskRefs.includes(taskRef),
-      );
-    if (activated) {
+    if (implementationTaskIsActivated(state, taskRef)) {
       throw new Error(
         `Git-producing task ${taskRef} may terminalize only through protected implementation evidence`,
       );
