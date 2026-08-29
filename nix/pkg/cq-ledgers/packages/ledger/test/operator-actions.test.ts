@@ -272,6 +272,48 @@ test("operator-action materialization commits only the complete action/handoff p
   }
 });
 
+test("operator-action materialization rejects a mismatched pre-existing handoff atomically", async () => {
+  const store = new InMemoryLedgerStore({ now: () => NOW });
+  await store.init();
+  try {
+    const milestone = await store.createMilestone({ title: "mismatched handoff" });
+    const goal = await store.createItem("goals", milestone.id, {
+      status: "planned",
+      fields: { title: "goal", description: "goal" },
+    });
+    const task = await store.createItem("tasks", milestone.id, {
+      status: "planned",
+      fields: {
+        headline: "deploy",
+        description:
+          "CQ-OPERATOR-ACTION v1 activate-implementation-evidence. User deploys; parent measures.",
+        ledgerRefs: [`goals:${goal.id}`],
+      },
+    });
+    const forged = await store.createItem("handoffs", milestone.id, {
+      id: "HO1",
+      status: "drained",
+      fields: {
+        summary: "forged",
+        ledgerRefs: ["operatorActions:OA1"],
+      },
+    });
+
+    await expect(
+      materializeOperatorAction(store, {
+        taskId: task.id,
+        expectedOutputIdentity: IDENTITY,
+        expectedEvidence: ["cq ledger implementation-evidence status --json"],
+        author: "parent",
+      }),
+    ).rejects.toThrow(OperatorActionConflictError);
+    expect(() => store.fetchItem("operatorActions", "OA1")).toThrow();
+    expect(store.fetchItem("handoffs", "HO1")).toEqual(forged);
+  } finally {
+    await store.dispose();
+  }
+});
+
 for (const failAt of [1, 2, 3]) {
   test(`filesystem materialization restart is old-or-new after durable boundary ${String(failAt)}`, async () => {
     const root = await mkdtemp(path.join(tmpdir(), "cq-operator-materialization-fault-"));
