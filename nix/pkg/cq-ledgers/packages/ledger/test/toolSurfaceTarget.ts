@@ -620,6 +620,34 @@ export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
     },
   },
   {
+    name: "advance_implementation_evidence_bootstrap",
+    description: "Advance the protected implementation-evidence bootstrap phase.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        goal_ref: { type: "string", pattern: "^goals:G[0-9]+$" },
+        finalized_manifest_digest: { type: "string", pattern: "^[0-9a-f]{64}$" },
+        expected_repository_head: { type: "string", pattern: "^[0-9a-f]{40}$" },
+        expected_phase: {
+          type: "string",
+          enum: ["historical-dispatch", "activation-handoff"],
+        },
+        operation_id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: [
+        "goal_ref",
+        "finalized_manifest_digest",
+        "expected_repository_head",
+        "expected_phase",
+        "operation_id",
+        "author",
+      ],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "arm_implementation_evidence_activation",
     description:
       "Freeze the exact finalized-manifest bootstrap mappings, pre-activation boundary, and qualifying evidence cohort.",
@@ -678,6 +706,15 @@ export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
         expected_repository_head: { type: "string", pattern: "^[0-9a-f]{40}$" },
       },
       required: ["goal_ref", "manifest_id", "expected_repository_head"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_implementation_evidence_service_status",
+    description: "Return protected implementation-evidence service status.",
+    inputSchema: {
+      type: "object",
+      properties: {},
       additionalProperties: false,
     },
   },
