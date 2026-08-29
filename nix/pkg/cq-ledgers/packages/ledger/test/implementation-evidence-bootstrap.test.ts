@@ -84,7 +84,7 @@ function fixture(initialAuthority = authority("planned")) {
       return {
         state: "created",
         actionRef: "operatorActions:OA3002",
-        handoffRef: "handoffs:H3002",
+        handoffRef: "handoffs:HO3002",
       };
     },
   } as never;
@@ -140,7 +140,7 @@ describe("implementation evidence bootstrap [BG]", () => {
     expect(first).toMatchObject({
       status: "operator-action-required",
       actionRef: "operatorActions:OA3002",
-      handoffRef: "handoffs:H3002",
+      handoffRef: "handoffs:HO3002",
       activationTaskRef: "tasks:T3002",
       expectedServiceCommit: HISTORICAL_COMMIT,
     });

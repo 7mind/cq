@@ -28,6 +28,34 @@ import type { WorksetOwnedWriteTx } from "./worksetOwnedLifecycle.js";
 import { ItemNotFoundError, LedgerError } from "./types.js";
 
 export const IMPLEMENTATION_EVIDENCE_VERSION = 1 as const;
+export const IMPLEMENTATION_EVIDENCE_SERVICE_PROTOCOL_VERSION = 2 as const;
+
+export const IMPLEMENTATION_EVIDENCE_SERVICE_OPERATION_INVENTORY = [
+  "prepare_implementation_review_panel",
+  "prepare_implementation_review_attempt",
+  "execute_external_implementation_review_attempt",
+  "finalize_implementation_review_attempt",
+  "prepare_implementation_review_fallback",
+  "prepare_implementation_audit_panel",
+  "prepare_implementation_audit_attempt",
+  "execute_external_implementation_audit_attempt",
+  "finalize_implementation_audit_attempt",
+  "prepare_implementation_audit_fallback",
+  "advance_implementation_evidence_bootstrap",
+  "arm_implementation_evidence_activation",
+  "apply_implementation_audit_manifest",
+  "get_implementation_evidence_activation_status",
+  "get_implementation_evidence_service_status",
+  "prepare_implementation_completion",
+  "record_implementation_completion",
+] as const;
+
+export const FINALIZED_IMPLEMENTATION_REVIEW_OUTCOME_CONTRACT = {
+  version: 1 as const,
+  outcomeKinds: ["verdict", "operational-abstention"] as const,
+  verdictSchema: "implement-reviewer-output" as const,
+  maxOutcomesPerFinalization: 1 as const,
+};
 
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const OPERATION_ID = /^[A-Za-z0-9_-]{1,128}$/u;
@@ -37,6 +65,7 @@ const PANEL_REF = /^cq-implementation-review-panel:v1:[0-9a-f]{64}$/u;
 const ATTEMPT_REF = /^cq-implementation-review-attempt:v1:[0-9a-f]{64}$/u;
 const AUDIT_PANEL_REF = /^cq-implementation-audit-panel:v1:[0-9a-f]{64}$/u;
 const AUDIT_ATTEMPT_REF = /^cq-implementation-audit-attempt:v1:[0-9a-f]{64}$/u;
+const BOOTSTRAP_REF = /^cq-implementation-evidence-bootstrap:v1:[0-9a-f]{64}$/u;
 
 export type ImplementationReviewTerminalState =
   "approved" | "disapproved" | "operational-abstention";
@@ -307,6 +336,54 @@ export interface ImplementationEvidenceActivationRecord {
   readonly activatedAt: string;
 }
 
+export type ImplementationEvidenceBootstrapPhase =
+  | "historical-dispatch"
+  | "activation-handoff";
+
+export interface ImplementationEvidenceBootstrapTaskAuthority {
+  readonly taskRef: string;
+  readonly status: string;
+  readonly resultCommit: string | null;
+  readonly ready: boolean;
+  readonly actionKey?: string | null;
+}
+
+export interface ImplementationEvidenceBootstrapAuthority {
+  readonly goalRef: string;
+  readonly finalizedManifestDigest: string;
+  readonly mappings: {
+    readonly evidenceTaskRef: string;
+    readonly historicalTaskRef: string;
+    readonly activationTaskRef: string;
+  };
+  readonly evidenceTask: ImplementationEvidenceBootstrapTaskAuthority;
+  readonly historicalTask: ImplementationEvidenceBootstrapTaskAuthority;
+  readonly activationTask: ImplementationEvidenceBootstrapTaskAuthority;
+}
+
+export interface ImplementationEvidenceBootstrapRecord {
+  readonly version: 1;
+  readonly bootstrapRef: string;
+  readonly phase: ImplementationEvidenceBootstrapPhase;
+  readonly goalRef: string;
+  readonly finalizedManifestDigest: string;
+  readonly repositoryHead: string;
+  readonly evidenceTaskRef: string;
+  readonly historicalTaskRef: string;
+  readonly activationTaskRef: string;
+  readonly evidenceResultCommit: string;
+  readonly historicalResultCommit: string | null;
+  readonly expectedServiceCommit: string;
+  readonly taskRefs: readonly string[];
+  readonly actionRef: string | null;
+  readonly handoffRef: string | null;
+  readonly operationId: string;
+  readonly requestDigest: string;
+  readonly author: string;
+  readonly session: string | null;
+  readonly createdAt: string;
+}
+
 export interface ImplementationAuditManifestApplicationRecord {
   readonly version: 1;
   readonly operationId: string;
@@ -339,6 +416,7 @@ export interface ImplementationEvidenceSnapshot {
     Record<string, ImplementationEvidenceActivationRequirementRecord>
   >;
   readonly activations: Readonly<Record<string, ImplementationEvidenceActivationRecord>>;
+  readonly bootstraps: Readonly<Record<string, ImplementationEvidenceBootstrapRecord>>;
 }
 
 interface MutableImplementationEvidenceSnapshot {
@@ -352,6 +430,7 @@ interface MutableImplementationEvidenceSnapshot {
   auditManifestApplications: Record<string, ImplementationAuditManifestApplicationRecord>;
   activationRequirements: Record<string, ImplementationEvidenceActivationRequirementRecord>;
   activations: Record<string, ImplementationEvidenceActivationRecord>;
+  bootstraps: Record<string, ImplementationEvidenceBootstrapRecord>;
 }
 
 const mutateEvidence = Symbol("cq.implementation-evidence.mutate");
@@ -487,6 +566,7 @@ function emptyState(): MutableImplementationEvidenceSnapshot {
     auditManifestApplications: {},
     activationRequirements: {},
     activations: {},
+    bootstraps: {},
   };
 }
 
@@ -548,7 +628,8 @@ function parseStoredState(value: unknown): MutableImplementationEvidenceSnapshot
     (value["auditManifestApplications"] !== undefined &&
       !object(value["auditManifestApplications"])) ||
     (value["activationRequirements"] !== undefined && !object(value["activationRequirements"])) ||
-    (value["activations"] !== undefined && !object(value["activations"]))
+    (value["activations"] !== undefined && !object(value["activations"])) ||
+    (value["bootstraps"] !== undefined && !object(value["bootstraps"]))
   ) {
     throw new Error("implementation evidence store has an unsupported or malformed version");
   }
@@ -564,6 +645,7 @@ function parseStoredState(value: unknown): MutableImplementationEvidenceSnapshot
     auditManifestApplications: stored.auditManifestApplications ?? {},
     activationRequirements: stored.activationRequirements ?? {},
     activations: stored.activations ?? {},
+    bootstraps: stored.bootstraps ?? {},
   };
 }
 
@@ -1159,6 +1241,26 @@ export interface ImplementationEvidenceActivationStatusInput {
   readonly expectedRepositoryHead: string;
 }
 
+export interface AdvanceImplementationEvidenceBootstrapInput extends OperationProvenance {
+  readonly goalRef: string;
+  readonly finalizedManifestDigest: string;
+  readonly expectedRepositoryHead: string;
+  readonly expectedPhase: ImplementationEvidenceBootstrapPhase;
+}
+
+export interface MaterializeImplementationEvidenceBootstrapHandoffInput {
+  readonly activationTaskRef: string;
+  readonly expectedServiceCommit: string;
+  readonly author: string;
+  readonly session?: string;
+}
+
+export interface MaterializedImplementationEvidenceBootstrapHandoff {
+  readonly state: "created" | "existing";
+  readonly actionRef: string;
+  readonly handoffRef: string;
+}
+
 export interface ImplementationEvidenceActivationManifestBinding {
   readonly manifestDigest: string;
   readonly sourceDigest: string;
@@ -1310,6 +1412,14 @@ export interface ImplementationEvidenceServiceDependencies {
     readonly resultCommit: string;
   }) => Promise<boolean>;
   readonly faultInjector?: ImplementationEvidenceFaultInjector;
+  /** Captured once when the deployed service starts; never supplied by a caller. */
+  readonly startupBuildCommit?: string;
+  readonly implementationEvidenceProtocolVersion?: number;
+  readonly packagedManifestInventory?: readonly string[];
+  readonly readBootstrapAuthority?: () => Promise<ImplementationEvidenceBootstrapAuthority>;
+  readonly materializeBootstrapActivationHandoff?: (
+    input: MaterializeImplementationEvidenceBootstrapHandoffInput,
+  ) => Promise<MaterializedImplementationEvidenceBootstrapHandoff>;
 }
 
 function operationReplay(
@@ -1438,6 +1548,100 @@ function finalizedReviewOutcome(attempt: ImplementationReviewAttemptRecord) {
   if (attempt.verdict === null)
     throw new Error("terminal implementation review attempt omitted its verdict");
   return { kind: "verdict" as const, verdict: attempt.verdict };
+}
+
+function assertBootstrapAuthority(
+  authority: ImplementationEvidenceBootstrapAuthority,
+): void {
+  if (!/^goals:G[0-9]+$/u.test(authority.goalRef))
+    throw new Error("bootstrap authority has a malformed goal ref");
+  if (!/^[0-9a-f]{64}$/u.test(authority.finalizedManifestDigest))
+    throw new Error("bootstrap authority has a malformed finalized manifest digest");
+  const mappings = authority.mappings;
+  const refs = [
+    mappings.evidenceTaskRef,
+    mappings.historicalTaskRef,
+    mappings.activationTaskRef,
+  ];
+  refs.forEach(taskIdFromRef);
+  if (new Set(refs).size !== refs.length)
+    throw new Error("bootstrap authority task mappings are not distinct");
+  if (
+    authority.evidenceTask.taskRef !== mappings.evidenceTaskRef ||
+    authority.historicalTask.taskRef !== mappings.historicalTaskRef ||
+    authority.activationTask.taskRef !== mappings.activationTaskRef
+  )
+    throw new Error("bootstrap task authority does not match the finalized mapping");
+}
+
+function bootstrapResponse(
+  record: ImplementationEvidenceBootstrapRecord,
+  status: "admitted" | "operator-action-required" | "existing",
+) {
+  if (record.phase === "historical-dispatch") {
+    return {
+      status,
+      bootstrapRef: record.bootstrapRef,
+      taskRefs: record.taskRefs,
+      expectedServiceCommit: record.expectedServiceCommit,
+    };
+  }
+  if (record.actionRef === null || record.handoffRef === null)
+    throw new Error("activation bootstrap record omitted its action or handoff");
+  return {
+    status,
+    bootstrapRef: record.bootstrapRef,
+    actionRef: record.actionRef,
+    handoffRef: record.handoffRef,
+    activationTaskRef: record.activationTaskRef,
+    expectedServiceCommit: record.expectedServiceCommit,
+  };
+}
+
+function implementationEvidenceBootstrapPhase(
+  authority: ImplementationEvidenceBootstrapAuthority,
+): "evidence-dispatch" | "historical-dispatch" | "activation-handoff" | "complete" {
+  if (authority.evidenceTask.status === "planned") return "evidence-dispatch";
+  if (
+    authority.evidenceTask.status === "done" &&
+    authority.historicalTask.status === "planned" &&
+    authority.activationTask.status === "planned"
+  )
+    return "historical-dispatch";
+  if (
+    authority.evidenceTask.status === "done" &&
+    authority.historicalTask.status === "done" &&
+    authority.activationTask.status === "planned"
+  )
+    return "activation-handoff";
+  if (
+    authority.evidenceTask.status === "done" &&
+    authority.historicalTask.status === "done" &&
+    authority.activationTask.status === "done"
+  )
+    return "complete";
+  throw new Error("implementation evidence bootstrap task statuses are inconsistent");
+}
+
+export async function assertImplementationEvidenceBootstrapDispatchAdmission(
+  store: ImplementationEvidenceStore,
+  bootstrapRef: string,
+  taskRef: string,
+): Promise<ImplementationEvidenceBootstrapRecord> {
+  if (!BOOTSTRAP_REF.test(bootstrapRef))
+    throw new Error("implementation evidence bootstrap ref is malformed");
+  taskIdFromRef(taskRef);
+  const record = (await store.snapshot()).bootstraps[bootstrapRef];
+  if (record === undefined)
+    throw new Error("implementation evidence bootstrap ref is missing");
+  if (
+    record.phase !== "historical-dispatch" ||
+    record.taskRefs.length !== 1 ||
+    record.taskRefs[0] !== taskRef ||
+    record.historicalTaskRef !== taskRef
+  )
+    throw new Error("implementation evidence bootstrap ref does not admit this task");
+  return record;
 }
 
 export class ImplementationEvidenceService {
@@ -2059,6 +2263,222 @@ export class ImplementationEvidenceService {
       state.auditPanels[input.panelRef] = { ...currentPanel, fallbackAttemptRef: fallbackRef };
       return { status: "prepared" as const, attemptRef: fallbackRef, dispatch: preparedDispatch };
     });
+  }
+
+  async advanceEvidenceBootstrap(input: AdvanceImplementationEvidenceBootstrapInput) {
+    assertOperationId(input.operationId);
+    if (!/^goals:G[0-9]+$/u.test(input.goalRef))
+      throw new Error("goal_ref must be one canonical goal ref");
+    if (!/^[0-9a-f]{64}$/u.test(input.finalizedManifestDigest))
+      throw new Error("finalized_manifest_digest must be one lowercase SHA-256 digest");
+    assertFullSha(input.expectedRepositoryHead, "expected_repository_head");
+    if (
+      input.expectedPhase !== "historical-dispatch" &&
+      input.expectedPhase !== "activation-handoff"
+    )
+      throw new Error("expected_phase is not a supported implementation evidence bootstrap phase");
+    const requestDigest = digest(input);
+    const snapshot = await this.deps.store.snapshot();
+    const replay = Object.values(snapshot.bootstraps).find(
+      (record) => record.operationId === input.operationId,
+    );
+    if (replay !== undefined) {
+      if (replay.requestDigest !== requestDigest)
+        throw new Error(`operation_id ${input.operationId} was reused with a different bootstrap`);
+      return bootstrapResponse(replay, "existing");
+    }
+    if (
+      this.deps.startupBuildCommit === undefined ||
+      this.deps.readBootstrapAuthority === undefined
+    )
+      throw new Error("implementation evidence bootstrap authority is unavailable");
+    assertFullSha(this.deps.startupBuildCommit, "startup build commit");
+    const repositoryHead = await this.deps.repositoryHead();
+    if (repositoryHead !== input.expectedRepositoryHead)
+      throw new Error("repository head changed before implementation evidence bootstrap advance");
+    const authority = await this.deps.readBootstrapAuthority();
+    assertBootstrapAuthority(authority);
+    if (authority.goalRef !== input.goalRef)
+      throw new Error("bootstrap goal does not match protected finalized-manifest authority");
+    if (authority.finalizedManifestDigest !== input.finalizedManifestDigest)
+      throw new Error("bootstrap finalized manifest digest changed");
+    if (
+      authority.evidenceTask.status !== "done" ||
+      authority.evidenceTask.resultCommit === null
+    )
+      throw new Error("fresh implementation evidence task is not done");
+    assertFullSha(authority.evidenceTask.resultCommit, "evidence task result commit");
+    if (authority.evidenceTask.resultCommit !== this.deps.startupBuildCommit)
+      throw new Error("deployed service build does not equal the fresh evidence task result commit");
+
+    let expectedServiceCommit: string;
+    let historicalResultCommit: string | null = null;
+    let taskRefs: readonly string[] = [];
+    let materialized: MaterializedImplementationEvidenceBootstrapHandoff | null = null;
+    if (input.expectedPhase === "historical-dispatch") {
+      if (repositoryHead !== authority.evidenceTask.resultCommit)
+        throw new Error("historical dispatch requires the fresh evidence result at repository head");
+      if (
+        authority.historicalTask.status !== "planned" ||
+        authority.historicalTask.resultCommit !== null ||
+        !authority.historicalTask.ready
+      )
+        throw new Error("fresh historical evidence task is not ordinarily ready");
+      if (authority.activationTask.status !== "planned")
+        throw new Error("activation task changed before historical dispatch");
+      expectedServiceCommit = authority.evidenceTask.resultCommit;
+      taskRefs = [authority.historicalTask.taskRef];
+    } else {
+      if (
+        authority.historicalTask.status !== "done" ||
+        authority.historicalTask.resultCommit === null
+      )
+        throw new Error("fresh historical evidence task is not done");
+      assertFullSha(authority.historicalTask.resultCommit, "historical task result commit");
+      historicalResultCommit = authority.historicalTask.resultCommit;
+      if (repositoryHead !== historicalResultCommit)
+        throw new Error("activation handoff requires the historical result at repository head");
+      if (
+        authority.activationTask.status !== "planned" ||
+        authority.activationTask.resultCommit !== null ||
+        !authority.activationTask.ready
+      )
+        throw new Error("fresh activation task is not ordinarily ready");
+      if (authority.activationTask.actionKey !== "activate-implementation-evidence")
+        throw new Error(
+          "activation task must use the activate-implementation-evidence operator action",
+        );
+      if (this.deps.materializeBootstrapActivationHandoff === undefined)
+        throw new Error("implementation evidence activation handoff is unavailable");
+      expectedServiceCommit = historicalResultCommit;
+      materialized = await this.deps.materializeBootstrapActivationHandoff({
+        activationTaskRef: authority.activationTask.taskRef,
+        expectedServiceCommit,
+        author: input.author,
+        ...(input.session === undefined ? {} : { session: input.session }),
+      });
+      if (
+        !/^operatorActions:OA[0-9]+$/u.test(materialized.actionRef) ||
+        !/^handoffs:HO[0-9]+$/u.test(materialized.handoffRef)
+      )
+        throw new Error("activation handoff returned malformed action authority");
+    }
+    const bootstrapRef = opaqueRef("cq-implementation-evidence-bootstrap", {
+      request: input,
+      mappings: authority.mappings,
+      evidenceResultCommit: authority.evidenceTask.resultCommit,
+      historicalResultCommit,
+      expectedServiceCommit,
+      taskRefs,
+      actionRef: materialized?.actionRef ?? null,
+      handoffRef: materialized?.handoffRef ?? null,
+    });
+    const record: ImplementationEvidenceBootstrapRecord = {
+      version: 1,
+      bootstrapRef,
+      phase: input.expectedPhase,
+      goalRef: input.goalRef,
+      finalizedManifestDigest: input.finalizedManifestDigest,
+      repositoryHead,
+      evidenceTaskRef: authority.evidenceTask.taskRef,
+      historicalTaskRef: authority.historicalTask.taskRef,
+      activationTaskRef: authority.activationTask.taskRef,
+      evidenceResultCommit: authority.evidenceTask.resultCommit,
+      historicalResultCommit,
+      expectedServiceCommit,
+      taskRefs,
+      actionRef: materialized?.actionRef ?? null,
+      handoffRef: materialized?.handoffRef ?? null,
+      operationId: input.operationId,
+      requestDigest,
+      author: input.author,
+      session: input.session ?? null,
+      createdAt: this.now(),
+    };
+    return await this.deps.store[mutateEvidence](async (state) => {
+      const racedReplay = Object.values(state.bootstraps).find(
+        (candidate) => candidate.operationId === input.operationId,
+      );
+      if (racedReplay !== undefined) {
+        if (racedReplay.requestDigest !== requestDigest)
+          throw new Error(`operation_id ${input.operationId} was reused with a different bootstrap`);
+        return bootstrapResponse(racedReplay, "existing");
+      }
+      const phaseConflict = Object.values(state.bootstraps).find(
+        (candidate) =>
+          candidate.goalRef === input.goalRef &&
+          candidate.finalizedManifestDigest === input.finalizedManifestDigest &&
+          candidate.phase === input.expectedPhase,
+      );
+      if (phaseConflict !== undefined)
+        throw new Error("bootstrap phase is already bound to a different operation_id");
+      state.bootstraps[bootstrapRef] = record;
+      return bootstrapResponse(
+        record,
+        input.expectedPhase === "historical-dispatch"
+          ? "admitted"
+          : "operator-action-required",
+      );
+    });
+  }
+
+  async evidenceServiceStatus() {
+    if (
+      this.deps.startupBuildCommit === undefined ||
+      this.deps.implementationEvidenceProtocolVersion === undefined ||
+      this.deps.packagedManifestInventory === undefined ||
+      this.deps.readBootstrapAuthority === undefined
+    )
+      throw new Error("implementation evidence service identity is unavailable");
+    assertFullSha(this.deps.startupBuildCommit, "startup build commit");
+    const repositoryHead = await this.deps.repositoryHead();
+    assertFullSha(repositoryHead, "repository head");
+    const authority = await this.deps.readBootstrapAuthority();
+    assertBootstrapAuthority(authority);
+    const inventory = [...this.deps.packagedManifestInventory];
+    if (
+      inventory.length === 0 ||
+      new Set(inventory).size !== inventory.length ||
+      inventory.some((entry) => entry.trim() === "")
+    )
+      throw new Error("packaged implementation evidence manifest inventory is malformed");
+    const state = await this.deps.store.snapshot();
+    const candidates = Object.values(state.activationRequirements).filter(
+      (entry) => entry.goalRef === authority.goalRef,
+    );
+    const armed = candidates.filter((entry) => entry.state === "armed");
+    if (armed.length > 1)
+      throw new Error("multiple implementation evidence activation requirements are armed");
+    const requirement = armed[0] ?? candidates.at(-1);
+    const activationState =
+      requirement === undefined
+        ? { status: "absent" as const, requirementRef: null, activationRef: null }
+        : requirement.finalizedManifestDigest !== authority.finalizedManifestDigest ||
+            requirement.boundaryCommit !== repositoryHead
+          ? {
+              status: "stale" as const,
+              requirementRef: requirement.requirementRef,
+              activationRef: requirement.activationRef,
+            }
+          : {
+              status: requirement.state === "fulfilled" ? ("active" as const) : ("pending" as const),
+              requirementRef: requirement.requirementRef,
+              activationRef: requirement.activationRef,
+            };
+    return {
+      version: 1 as const,
+      startupBuildCommit: this.deps.startupBuildCommit,
+      repositoryHead,
+      protocolVersion: this.deps.implementationEvidenceProtocolVersion,
+      goalRef: authority.goalRef,
+      finalizedManifestDigest: authority.finalizedManifestDigest,
+      mappings: authority.mappings,
+      bootstrapPhase: implementationEvidenceBootstrapPhase(authority),
+      activationState,
+      packagedManifestInventory: inventory,
+      operationInventory: [...IMPLEMENTATION_EVIDENCE_SERVICE_OPERATION_INVENTORY],
+      finalizedReviewOutcomeContract: FINALIZED_IMPLEMENTATION_REVIEW_OUTCOME_CONTRACT,
+    };
   }
 
   async armEvidenceActivation(input: ArmImplementationEvidenceActivationInput) {
