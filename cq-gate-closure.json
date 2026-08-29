@@ -413,6 +413,21 @@
     },
     {
       "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t2895/productionBootstrapFixture.ts",
+      "sha256": "ec29959425da59cc64b3f6728f9f4129e117405b2eb0771b7a717e2cb2f485fd",
+      "targets": []
+    },
+    {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t2895/productionBootstrapFixture.ts",
+      "sha256": "ec29959425da59cc64b3f6728f9f4129e117405b2eb0771b7a717e2cb2f485fd",
+      "targets": [
+        "nix/pkg/cq-ledgers/packages/cq-cli/src/main.ts",
+        "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t2895/production-bootstrap-v1.json"
+      ]
+    },
+    {
+      "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/createLedgerMcpServer.test.ts",
       "sha256": "8a3a9ceb5d5769fe35a276245200a935b2183bb4fb682e3d4118d7766f368858",
       "targets": []
@@ -464,7 +479,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-evidence-runtime.test.ts",
-      "sha256": "f1eed3003ee8e6962b44a7fb0504908520d536d727bd256572699ea846ca8c80",
+      "sha256": "66f0bef8f794ef2edad514cbb3b6fc83a1dfa0a7dfbe481b389c7f23e4cd1c0a",
       "targets": []
     },
     {
@@ -1304,7 +1319,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-evidence-runtime.test.ts",
-      "sha256": "f1eed3003ee8e6962b44a7fb0504908520d536d727bd256572699ea846ca8c80",
+      "sha256": "66f0bef8f794ef2edad514cbb3b6fc83a1dfa0a7dfbe481b389c7f23e4cd1c0a",
       "targets": ["nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts"]
     },
     {
