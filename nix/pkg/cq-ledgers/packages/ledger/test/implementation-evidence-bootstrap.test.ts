@@ -11,6 +11,7 @@ import {
 const EVIDENCE_COMMIT = "1".repeat(40);
 const HISTORICAL_COMMIT = "2".repeat(40);
 const MANIFEST_DIGEST = "3".repeat(64);
+const ALTERNATE_COMMIT = "4".repeat(40);
 const WORKER_DISPATCH = { attestationId: "att_historical", generation: 1 } as const;
 const REVIEWER = {
   alias: "native",
@@ -319,7 +320,7 @@ describe("implementation evidence bootstrap [BG]", () => {
     expect(rawLedger.fetchItem(TASKS_LEDGER, "T3001").status).toBe("wip");
   });
 
-  test("activation handoff requires a distinct protected historical completion", async () => {
+  test("activation handoff requires a recorded protected historical completion", async () => {
     const absent = fixture();
     await admitHistoricalTask(absent);
     absent.setAuthority(authority("done"));
@@ -335,7 +336,46 @@ describe("implementation evidence bootstrap [BG]", () => {
       }),
     ).rejects.toThrow("protected completion");
     expect(absent.materializations()).toBe(0);
+  });
 
+  test("activation handoff requires an exact historical bootstrap admission", async () => {
+    const unadmitted = fixture();
+    await recordProtectedHistoricalCompletion(unadmitted);
+    await expect(
+      unadmitted.service.advanceEvidenceBootstrap({
+        goalRef: "goals:G176",
+        finalizedManifestDigest: MANIFEST_DIGEST,
+        expectedRepositoryHead: HISTORICAL_COMMIT,
+        expectedPhase: "activation-handoff",
+        operationId: "activation-without-admission",
+        author: "parent",
+      }),
+    ).rejects.toThrow("protected bootstrap admission");
+    expect(unadmitted.materializations()).toBe(0);
+  });
+
+  test("activation handoff binds the projected result to the protected completion", async () => {
+    const mismatched = fixture();
+    await admitHistoricalTask(mismatched);
+    await recordProtectedHistoricalCompletion(mismatched);
+    mismatched.setAuthority(
+      authority("done", "activate-implementation-evidence", ALTERNATE_COMMIT),
+    );
+    mismatched.setRepositoryHead(ALTERNATE_COMMIT);
+    await expect(
+      mismatched.service.advanceEvidenceBootstrap({
+        goalRef: "goals:G176",
+        finalizedManifestDigest: MANIFEST_DIGEST,
+        expectedRepositoryHead: ALTERNATE_COMMIT,
+        expectedPhase: "activation-handoff",
+        operationId: "activation-with-mismatched-result",
+        author: "parent",
+      }),
+    ).rejects.toThrow("protected completion");
+    expect(mismatched.materializations()).toBe(0);
+  });
+
+  test("activation handoff requires a result distinct from the evidence service build", async () => {
     const unchanged = fixture();
     await admitHistoricalTask(unchanged);
     unchanged.setAuthority(authority("done", "activate-implementation-evidence", EVIDENCE_COMMIT));
