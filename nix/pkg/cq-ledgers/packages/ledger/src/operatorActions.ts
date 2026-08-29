@@ -7,7 +7,8 @@ import {
 } from "./constants.js";
 import type { LedgerStore } from "./store/LedgerStore.js";
 import type { Item } from "./types.js";
-import { DuplicateIdError, LedgerError, SchemaValidationError } from "./types.js";
+import { ItemNotFoundError, LedgerError, SchemaValidationError } from "./types.js";
+import type { WorksetOwnedWriteTx } from "./worksetOwnedLifecycle.js";
 
 export { operatorActionRevision } from "./store/operatorActionLifecycle.js";
 
@@ -132,86 +133,103 @@ export async function materializeOperatorAction(
 ): Promise<MaterializedOperatorAction> {
   assertNonEmpty(input.expectedOutputIdentity, "expectedOutputIdentity");
   assertExpectedEvidence(input.expectedEvidence);
-  const task = store.fetchItem(TASKS_LEDGER, input.taskId);
-  if (task.status !== "planned") {
-    throw new LedgerError(`Operator-action task ${task.id} must remain planned until verification`);
-  }
-  const directive = operatorActionDirectiveForTask(task);
-  if (directive === null) {
-    throw new OperatorActionEnvelopeError(`task ${task.id} has no envelope`);
-  }
-  const goalRefs = stringArray(task.fields["ledgerRefs"]).filter((ref) =>
-    ref.startsWith(`${GOALS_LEDGER}:`),
-  );
-  if (goalRefs.length !== 1) {
-    throw new OperatorActionEnvelopeError(
-      `task ${task.id} must link exactly one goal (found ${String(goalRefs.length)})`,
-    );
-  }
-  const actionId = actionIdForTask(task.id);
-  const expectedFields = {
-    actionKey: directive.actionKey,
-    summary: `Operator action ${directive.actionKey}`,
-    taskRef: `${TASKS_LEDGER}:${task.id}`,
-    goalRef: goalRefs[0]!,
-    expectedOutputIdentity: input.expectedOutputIdentity,
-    expectedEvidence: [...input.expectedEvidence],
-    revision: "1",
-    ledgerRefs: [`${TASKS_LEDGER}:${task.id}`, goalRefs[0]!],
+  const atomic = store as LedgerStore & {
+    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T>;
   };
-
-  let action: Item;
-  let state: MaterializedOperatorAction["state"] = "created";
-  try {
-    const init = {
-      id: actionId,
-      status: "pending",
-      fields: expectedFields,
-      ...(input.author === undefined ? {} : { author: input.author }),
-      ...(input.session === undefined ? {} : { session: input.session }),
-    } as const;
-    authorizedActionMutations.add(init);
-    action = await store.createItem(OPERATOR_ACTIONS_LEDGER, task.milestoneId, init);
-  } catch (error) {
-    if (!(error instanceof DuplicateIdError)) throw error;
-    state = "existing";
-    action = store.fetchItem(OPERATOR_ACTIONS_LEDGER, actionId);
-    assertExistingActionMatches(action, task, expectedFields);
+  if (atomic.runAtomicOwnedMutation === undefined) {
+    throw new LedgerError("operator-action materialization requires an atomic ledger adapter");
   }
-
-  const handoffId = handoffIdForTask(task.id);
-  let handoff: Item;
-  try {
-    handoff = await store.createItem(HANDOFFS_LEDGER, task.milestoneId, {
-      id: handoffId,
-      status: "user-action-required",
-      fields: {
-        summary:
-          `Operator action ${action.id} awaits deployment identity ` + input.expectedOutputIdentity,
-        flow: "implement",
-        ledgerRefs: [
-          `${TASKS_LEDGER}:${task.id}`,
-          goalRefs[0]!,
-          `${OPERATOR_ACTIONS_LEDGER}:${action.id}`,
-        ],
-        handoffReasons: [`Deploy ${input.expectedOutputIdentity} and acknowledge ${action.id}`],
-        tags: ["operator-action", directive.actionKey],
-      },
-      ...(input.author === undefined ? {} : { author: input.author }),
-      ...(input.session === undefined ? {} : { session: input.session }),
-    });
-  } catch (error) {
-    if (!(error instanceof DuplicateIdError)) throw error;
-    handoff = store.fetchItem(HANDOFFS_LEDGER, handoffId);
-    const refs = stringArray(handoff.fields["ledgerRefs"]);
-    if (!refs.includes(`${OPERATOR_ACTIONS_LEDGER}:${action.id}`)) {
-      throw new OperatorActionConflictError(
-        action.id,
-        `handoff id ${handoff.id} belongs elsewhere`,
+  return await atomic.runAtomicOwnedMutation((tx) => {
+    const task = tx.fetchItem(TASKS_LEDGER, input.taskId);
+    if (task.status !== "planned") {
+      throw new LedgerError(
+        `Operator-action task ${task.id} must remain planned until verification`,
       );
     }
-  }
-  return { state, action, handoff };
+    const directive = operatorActionDirectiveForTask(task);
+    if (directive === null) {
+      throw new OperatorActionEnvelopeError(`task ${task.id} has no envelope`);
+    }
+    const goalRefs = stringArray(task.fields["ledgerRefs"]).filter((ref) =>
+      ref.startsWith(`${GOALS_LEDGER}:`),
+    );
+    if (goalRefs.length !== 1) {
+      throw new OperatorActionEnvelopeError(
+        `task ${task.id} must link exactly one goal (found ${String(goalRefs.length)})`,
+      );
+    }
+    const actionId = actionIdForTask(task.id);
+    const expectedFields = {
+      actionKey: directive.actionKey,
+      summary: `Operator action ${directive.actionKey}`,
+      taskRef: `${TASKS_LEDGER}:${task.id}`,
+      goalRef: goalRefs[0]!,
+      expectedOutputIdentity: input.expectedOutputIdentity,
+      expectedEvidence: [...input.expectedEvidence],
+      revision: "1",
+      ledgerRefs: [`${TASKS_LEDGER}:${task.id}`, goalRefs[0]!],
+    };
+
+    let action: Item;
+    let state: MaterializedOperatorAction["state"] = "created";
+    try {
+      action = tx.fetchItem(OPERATOR_ACTIONS_LEDGER, actionId);
+      state = "existing";
+      assertExistingActionMatches(action, task, expectedFields);
+    } catch (error) {
+      if (!(error instanceof ItemNotFoundError)) throw error;
+      const init = {
+        id: actionId,
+        status: "pending",
+        fields: expectedFields,
+        ...(input.author === undefined ? {} : { author: input.author }),
+        ...(input.session === undefined ? {} : { session: input.session }),
+      } as const;
+      authorizedActionMutations.add(init);
+      action = tx.createItemOwnerless(
+        OPERATOR_ACTIONS_LEDGER,
+        task.milestoneId,
+        init,
+      );
+    }
+
+    const handoffId = handoffIdForTask(task.id);
+    let handoff: Item;
+    try {
+      handoff = tx.fetchItem(HANDOFFS_LEDGER, handoffId);
+      const refs = stringArray(handoff.fields["ledgerRefs"]);
+      if (!refs.includes(`${OPERATOR_ACTIONS_LEDGER}:${action.id}`)) {
+        throw new OperatorActionConflictError(
+          action.id,
+          `handoff id ${handoff.id} belongs elsewhere`,
+        );
+      }
+    } catch (error) {
+      if (!(error instanceof ItemNotFoundError)) throw error;
+      handoff = tx.createItemOwnerless(HANDOFFS_LEDGER, task.milestoneId, {
+        id: handoffId,
+        status: "user-action-required",
+        fields: {
+          summary:
+            `Operator action ${action.id} awaits deployment identity ` +
+            input.expectedOutputIdentity,
+          flow: "implement",
+          ledgerRefs: [
+            `${TASKS_LEDGER}:${task.id}`,
+            goalRefs[0]!,
+            `${OPERATOR_ACTIONS_LEDGER}:${action.id}`,
+          ],
+          handoffReasons: [
+            `Deploy ${input.expectedOutputIdentity} and acknowledge ${action.id}`,
+          ],
+          tags: ["operator-action", directive.actionKey],
+        },
+        ...(input.author === undefined ? {} : { author: input.author }),
+        ...(input.session === undefined ? {} : { session: input.session }),
+      });
+    }
+    return { state, action, handoff };
+  });
 }
 
 export async function acknowledgeOperatorAction(
