@@ -252,6 +252,16 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
       ).receiptsVerified,
     ).toBe(false);
   });
+
+  test("runs the versioned G176 replacement bootstrap from the exact production baseline", async () => {
+    const fixture = JSON.parse(
+      await readFile(
+        new URL("./fixtures/t2895/production-bootstrap-v1.json", import.meta.url),
+        "utf8",
+      ),
+    ) as { readonly baselineCommit: string };
+    expect(fixture.baselineCommit).toBe("5342f4050891231a4b41e6d0278c62c87568d16b");
+  });
 });
 
 afterEach(async () => {
