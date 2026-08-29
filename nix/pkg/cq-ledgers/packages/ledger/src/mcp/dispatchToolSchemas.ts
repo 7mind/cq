@@ -130,6 +130,7 @@ export const PREPARE_DISPATCH_INPUT = {
   guardedRebase: z.string().optional(),
   recovery: z.string().optional(),
   continuation: z.string().optional(),
+  implementationEvidenceBootstrap: z.string().optional(),
   recoveryPreparation: z
     .object({
       recoverySeedRef: z.string(),

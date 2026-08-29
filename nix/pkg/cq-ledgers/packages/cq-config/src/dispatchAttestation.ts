@@ -1415,6 +1415,8 @@ export interface PrepareDispatchRequest {
   readonly continuationClaim?: DispatchContinuationClaim;
   /** Trusted fence-authorized generation reservation; never contains the capability token. */
   readonly journalRecoveryReservation?: DispatchJournalRecoveryReservation;
+  /** Protected historical-evidence bootstrap authority consumed by this prepare. */
+  readonly implementationEvidenceBootstrapRef?: string;
 }
 
 export interface DispatchJournalRecoveryReservation {
@@ -1475,6 +1477,8 @@ export function prepareDispatchRequestDigest(request: PrepareDispatchRequest): s
             selectedSourceGeneration: request.journalRecoveryReservation.selectedSourceGeneration,
             lineageMaximumGeneration: request.journalRecoveryReservation.lineageMaximumGeneration,
           },
+    implementationEvidenceBootstrapRef:
+      request.implementationEvidenceBootstrapRef ?? null,
   });
 }
 

@@ -1644,6 +1644,22 @@ export async function assertImplementationEvidenceBootstrapDispatchAdmission(
   return record;
 }
 
+export async function implementationEvidenceBootstrapAdmissionForTask(
+  store: ImplementationEvidenceStore,
+  taskRef: string,
+): Promise<ImplementationEvidenceBootstrapRecord | null> {
+  taskIdFromRef(taskRef);
+  const matches = Object.values((await store.snapshot()).bootstraps).filter(
+    (record) =>
+      record.phase === "historical-dispatch" &&
+      record.taskRefs.length === 1 &&
+      record.taskRefs[0] === taskRef,
+  );
+  if (matches.length > 1)
+    throw new Error("multiple implementation evidence bootstrap admissions target this task");
+  return matches[0] ?? null;
+}
+
 export class ImplementationEvidenceService {
   private readonly deps: ImplementationEvidenceServiceDependencies;
   private readonly now: () => string;

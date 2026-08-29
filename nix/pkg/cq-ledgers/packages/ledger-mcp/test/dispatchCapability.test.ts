@@ -44,6 +44,7 @@ import type {
   PromptArtifactStore,
   PromptArtifactRoleMetadata,
 } from "../src/promptArtifactStore.js";
+import { createImplementationEvidenceFixture } from "../../ledger/test/implementationEvidenceTestSupport.js";
 
 const NAMESPACE: AttestationNamespace = { backend: "xdg", projectKey: "runtime-T977" };
 const PROMPT_DIGEST = "a".repeat(64);
@@ -907,6 +908,88 @@ describe("live compact-dispatch capability", () => {
       await capability.abort({ ...recovered.handle, reason: "parent-lost" });
     } finally {
       await ledger.dispose();
+      await fs.rm(repositoryRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("fresh historical evidence prepare consumes only its protected bootstrap ref [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), "t2895-bootstrap-dispatch-"));
+    try {
+      await git(repositoryRoot, ["init", "-q"]);
+      await fs.writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
+      await git(repositoryRoot, ["add", "file.txt"]);
+      await git(repositoryRoot, [
+        "-c",
+        "user.name=T2895",
+        "-c",
+        "user.email=t2895@example.invalid",
+        "commit",
+        "-q",
+        "-m",
+        "seed",
+      ]);
+      const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+      const stateDir = path.join(repositoryRoot, ".manager-state");
+      const managed = await prepareManagedWorktree(
+        { repositoryRoot, taskId: "T2896", baseCommit },
+        { stateDir, skipInstall: true, bunWorkspaceRoot: repositoryRoot },
+      );
+      if (managed.status !== "prepared") throw new Error(`unexpected ${managed.status}`);
+      const fixture = await createImplementationEvidenceFixture(undefined, {
+        repositoryHead: baseCommit,
+        bootstrapHistoricalTaskId: "T2896",
+      });
+      const bootstrap = await fixture.service.advanceEvidenceBootstrap({
+        goalRef: "goals:G176",
+        finalizedManifestDigest: "f".repeat(64),
+        expectedRepositoryHead: baseCommit,
+        expectedPhase: "historical-dispatch",
+        operationId: "admit-t2896",
+        author: "parent",
+      });
+      const attestationStore = new InMemoryAttestationStore(NAMESPACE);
+      const capability = createDispatchCapability({
+        backend: new InMemoryAttestationBackend(attestationStore),
+        promptArtifactStore: artifactStore("claude"),
+        repositoryRoot,
+        worktreeStateDir: stateDir,
+        implementationEvidenceStore: fixture.store,
+        now: () => NOW,
+        randomBytes: sequentialDispatchRandomBytes(2895),
+      });
+      const input = {
+        taskId: "T2896",
+        headline: "Fresh historical evidence",
+        description: "Consume the protected bootstrap admission.",
+        acceptance: "Only this finalized-manifest task dispatches.",
+        worktreePath: managed.handle.absolutePath,
+        branch: managed.handle.branch,
+        baseCommit,
+        round: 0,
+        startingCommit: baseCommit,
+      } as const;
+      const omitted = await capability.prepare({
+        roleId: "implement-worker",
+        input,
+        idempotencyKey: "t2896-omitted-bootstrap",
+        timeoutMs: 600_000,
+        expectedChild: EXPECTED_CHILD,
+      });
+      expect(omitted).toMatchObject({
+        accepted: false,
+        path: "implementationEvidenceBootstrap",
+      });
+      const prepared = await capability.prepare({
+        roleId: "implement-worker",
+        input,
+        implementationEvidenceBootstrap: bootstrap.bootstrapRef,
+        idempotencyKey: "t2896-admitted-bootstrap",
+        timeoutMs: 600_000,
+        expectedChild: EXPECTED_CHILD,
+      });
+      if (!prepared.accepted) throw new Error(prepared.detail);
+      expect(attestationStore.snapshot()).toHaveLength(1);
+    } finally {
       await fs.rm(repositoryRoot, { recursive: true, force: true });
     }
   });

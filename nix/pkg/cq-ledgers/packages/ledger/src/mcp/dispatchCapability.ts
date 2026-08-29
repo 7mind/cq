@@ -41,6 +41,8 @@ export interface PrepareDispatchToolInput {
   readonly recovery?: string;
   /** Opaque single-use authority to continue one consumed managed worker generation. */
   readonly continuation?: string;
+  /** Opaque protected admission for the fresh historical evidence worker. */
+  readonly implementationEvidenceBootstrap?: string;
   /** Trusted journal-recovery saga authority; legacy recovery paths must omit it. */
   readonly recoveryPreparation?: DispatchLineageFenceAuthority;
 }

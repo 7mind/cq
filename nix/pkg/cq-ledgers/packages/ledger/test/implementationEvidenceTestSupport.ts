@@ -71,8 +71,13 @@ function approvedVerdict() {
 
 export async function createImplementationEvidenceFixture(
   store: ImplementationEvidenceStore = createInMemoryImplementationEvidenceStore(),
+  options: {
+    readonly repositoryHead?: string;
+    readonly bootstrapHistoricalTaskId?: string;
+  } = {},
 ) {
-  let head = IMPLEMENTATION_BASE;
+  let head = options.repositoryHead ?? IMPLEMENTATION_BASE;
+  const bootstrapHistoricalTaskId = options.bootstrapHistoricalTaskId ?? "T3001";
   let ledgerWrites = 0;
   const dependencies: ImplementationEvidenceServiceDependencies = {
     store,
@@ -128,7 +133,7 @@ export async function createImplementationEvidenceFixture(
       ledgerWrites += 1;
       return { reviewRef: "reviews:R2345" };
     },
-    startupBuildCommit: IMPLEMENTATION_BASE,
+    startupBuildCommit: head,
     implementationEvidenceProtocolVersion: 2,
     packagedManifestInventory: ["d347-implementation-evidence-activation-v1"],
     readBootstrapAuthority: async () => ({
@@ -136,17 +141,17 @@ export async function createImplementationEvidenceFixture(
       finalizedManifestDigest: "f".repeat(64),
       mappings: {
         evidenceTaskRef: "tasks:T3000",
-        historicalTaskRef: "tasks:T3001",
+        historicalTaskRef: `tasks:${bootstrapHistoricalTaskId}`,
         activationTaskRef: "tasks:T3002",
       },
       evidenceTask: {
         taskRef: "tasks:T3000",
         status: "done",
-        resultCommit: IMPLEMENTATION_BASE,
+        resultCommit: head,
         ready: false,
       },
       historicalTask: {
-        taskRef: "tasks:T3001",
+        taskRef: `tasks:${bootstrapHistoricalTaskId}`,
         status: "planned",
         resultCommit: null,
         ready: true,

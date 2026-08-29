@@ -51,6 +51,8 @@ import type { SQL } from "bun";
 import { resolve } from "node:path";
 import {
   assertAttestationConstructionSupported,
+  assertImplementationEvidenceBootstrapDispatchAdmission,
+  implementationEvidenceBootstrapAdmissionForTask,
   attestationNamespaceForTrustedHubProject,
   currentRecoveryJournalRoot,
   createAttestationStoreForConstruction,
@@ -76,6 +78,7 @@ import {
   dispatchLineageFenceMatches,
   FsCurrentRecoverySealJournalStore,
   journalRecoveryRequiredForFence,
+  TASKS_LEDGER,
   type CurrentRecoverySealJournalStore,
   type DispatchLineageCutoverFence,
   type DispatchCapability,
@@ -83,6 +86,7 @@ import {
   type GitRebaseConflictState,
   type GitConflictContinuationResultEvidence,
   type LedgerStore,
+  type ImplementationEvidenceStore,
   type LedgerServerConstruction,
   type ManagedWorktreeDispatchBinding,
   type ResolvedLedgerStore,
@@ -139,6 +143,7 @@ export interface DispatchCapabilityOptions {
   readonly supervisedWorkerGateRunner?: SupervisedWorkerGateRunner;
   /** Recovery authority journal; defaults to the managed registry when repository-bound. */
   readonly recoveryJournal?: CurrentRecoverySealJournalStore;
+  readonly implementationEvidenceStore?: ImplementationEvidenceStore;
 }
 
 function brokerResultEvidence(
@@ -655,6 +660,19 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           "journal recovery preparation requires an implement-worker on a local repository and must replace every legacy continuation path",
         );
       }
+      if (
+        input.implementationEvidenceBootstrap !== undefined &&
+        (input.reprepareOf !== undefined ||
+          input.guardedRebase !== undefined ||
+          input.recovery !== undefined ||
+          input.continuation !== undefined ||
+          input.recoveryPreparation !== undefined)
+      ) {
+        return rejectLaunch(
+          "implementationEvidenceBootstrap",
+          "implementation evidence bootstrap admission is a fresh implement-worker dispatch and cannot accompany continuation authority",
+        );
+      }
       if (earlyCoordinates !== undefined) {
         const candidate = await resolveManagedWorktreeDispatchBinding(
           earlyCoordinates,
@@ -809,6 +827,18 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         );
       }
 
+      if (
+        input.implementationEvidenceBootstrap !== undefined &&
+        (roleId !== "implement-worker" ||
+          options.repositoryRoot === undefined ||
+          options.implementationEvidenceStore === undefined)
+      ) {
+        return rejectLaunch(
+          "implementationEvidenceBootstrap",
+          "implementation evidence bootstrap admission requires a protected local implement-worker runtime",
+        );
+      }
+
       if (roleId === "implement-reviewer") {
         if (input.timeoutMs < IMPLEMENT_REVIEWER_TIMEOUT_MIN_MS) {
           return rejectLaunch(
@@ -955,6 +985,57 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         const fence = await matchingFence(taskId, resolvedGitEffectBinding.handleFingerprint);
         if (fence !== null && !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)) {
           return journalRecoveryRequiredForFence(fence);
+        }
+        if (roleId === "implement-worker" && options.implementationEvidenceStore !== undefined) {
+          let requiredBootstrap;
+          try {
+            requiredBootstrap = await implementationEvidenceBootstrapAdmissionForTask(
+              options.implementationEvidenceStore,
+              `${TASKS_LEDGER}:${taskId}`,
+            );
+          } catch (error) {
+            return rejectLaunch(
+              "implementationEvidenceBootstrap",
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+          if (
+            requiredBootstrap !== null &&
+            input.implementationEvidenceBootstrap !== requiredBootstrap.bootstrapRef
+          )
+            return rejectLaunch(
+              "implementationEvidenceBootstrap",
+              "fresh historical evidence dispatch must consume its exact bootstrap ref",
+            );
+        }
+        if (input.implementationEvidenceBootstrap !== undefined) {
+          if (
+            dispatchRecord["round"] !== 0 ||
+            Object.hasOwn(dispatchRecord, "priorResultCommit") ||
+            dispatchRecord["baseCommit"] !== resolvedGitEffectBinding.baseCommit ||
+            dispatchRecord["startingCommit"] !== resolvedGitEffectBinding.baseCommit
+          )
+            return rejectLaunch(
+              "implementationEvidenceBootstrap",
+              "historical bootstrap admission requires the fresh round-zero managed base",
+            );
+          try {
+            const admission = await assertImplementationEvidenceBootstrapDispatchAdmission(
+              options.implementationEvidenceStore!,
+              input.implementationEvidenceBootstrap,
+              `${TASKS_LEDGER}:${taskId}`,
+            );
+            if (admission.repositoryHead !== resolvedGitEffectBinding.baseCommit)
+              return rejectLaunch(
+                "implementationEvidenceBootstrap",
+                "historical bootstrap admission repository head differs from the managed base",
+              );
+          } catch (error) {
+            return rejectLaunch(
+              "implementationEvidenceBootstrap",
+              error instanceof Error ? error.message : String(error),
+            );
+          }
         }
         if (roleId === "implement-conflict-resolver") {
           const resolverState = conflictState as unknown as GitRebaseConflictState;
@@ -1336,6 +1417,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         ...(gitEffectBinding === undefined ? {} : { gitEffectBinding }),
         ...(continuationClaim === undefined ? {} : { continuationClaim }),
         ...(journalRecoveryReservation === undefined ? {} : { journalRecoveryReservation }),
+        ...(input.implementationEvidenceBootstrap === undefined
+          ? {}
+          : { implementationEvidenceBootstrapRef: input.implementationEvidenceBootstrap }),
       } as const;
       const fingerprint = prepareDispatchRequestDigest(request);
       const allocateOrReplay = async (): Promise<PrepareDispatchOutcome> => {
@@ -1895,6 +1979,7 @@ function available(
   narrativeSource?: DispatchNarrativeSource,
   repositoryRoot?: string,
   ledgerStore?: LedgerStore,
+  implementationEvidenceStore?: ImplementationEvidenceStore,
 ): DispatchRuntime {
   return Object.freeze({
     kind: "available" as const,
@@ -1904,6 +1989,7 @@ function available(
       ...(narrativeSource === undefined ? {} : { narrativeSource }),
       ...(repositoryRoot === undefined ? {} : { repositoryRoot }),
       ...(ledgerStore === undefined ? {} : { ledgerStore }),
+      ...(implementationEvidenceStore === undefined ? {} : { implementationEvidenceStore }),
     }),
     close: async (): Promise<void> => backend.close(),
   });
@@ -1981,6 +2067,7 @@ export async function createSingleProjectDispatchRuntime(
     createDispatchNarrativeSource(options.resolved.store, namespace.projectKey),
     options.resolved.configRoot,
     options.resolved.store,
+    options.resolved.implementationEvidenceStore,
   );
 }
 
