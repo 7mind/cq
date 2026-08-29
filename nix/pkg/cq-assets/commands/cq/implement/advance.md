@@ -206,6 +206,22 @@ any preparation/application refusal stops this pass closed; do not dispatch
 reconciliation, use generic writes, or infer activation from task prose,
 reviews, logs, tags, or resultCommit text.
 
+The canonical activation manifest is
+`d347-implementation-evidence-activation-v2`. `active` is the only state that
+admits ordinary work. A `stale` probe may recover only one already-recorded,
+one-step protected transition: identify the unique finalized-manifest Git task
+whose terminal go-ahead review names one recorded completion from the stale
+requirement's exact boundary to the current head, then replay one stable
+`continue_implementation_evidence_activation({ goal_ref, manifest_id,
+prior_requirement_ref, completed_task_ref, completion_ref,
+expected_from_head, expected_repository_head, operation_id, author, session })`
+request. Accept only `continued|existing` with every returned ref, task, head,
+and completion equal to that request, then re-probe and require `active`.
+Absent, pending, multi-step, surplus, rewritten, ambiguous, unaudited, or
+changed-input recovery stops closed and dispatches nothing. Never arm, audit,
+or apply again to repair a stale head, and never read protected storage,
+diagnostics, summaries, or logs to reconstruct continuation authority.
+
 ## 1. Derive the ready set
 
 Before selecting or dispatching work, recover every active implementation
@@ -645,6 +661,20 @@ same completion/task/result/head/fingerprint. This protected transaction, not
 and log paths and creates exactly one terminal go-ahead review carrying strict
 versioned `implementationEvidence`. `merge-required` or `reprepare-required`
 returns to recovery and forbids release or defect reconciliation.
+
+Before release, defect reconciliation, or readiness rederivation, continue the
+active v2 evidence requirement across this exact recorded merge. Call
+`continue_implementation_evidence_activation` with the previously active
+`requirementRef`, this task and the returned `completionRef`, the completion's
+prepared repository head as `expected_from_head`, the recorded merged head as
+`expected_repository_head`, and one stable operation id. Accept only
+`continued|existing` whose continuation, previous/new requirement, activation,
+task, completion, and head bindings match exactly. Re-probe and require
+`active` at the merged head. Any absent/pending/stale prior activation,
+nonterminal or ambiguous completion, missing runner-owned green gate,
+disapproved terminal review, foreign/surplus task, non-fast-forward ancestry,
+intervening unreceipted commit, semantic manifest drift, completion reuse, or
+changed-input replay forbids release and all later dispatch.
 
 Cleanup uses guarded release only:
 

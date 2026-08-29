@@ -236,14 +236,14 @@ function expectedItemAcknowledgement(item: Item): Record<string, unknown> {
 }
 
 describe("ledger MCP tools", () => {
-  it("keeps the 39 ordinary names separate from the 56-name management inventory", async () => {
+  it("keeps the 39 ordinary names separate from the 57-name management inventory", async () => {
     const store = await buildStore();
     const tools = createManagementLedgerMcpTools(store);
     expect(tools.map((t) => t.name).sort()).toEqual([
       ...MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES,
     ].sort());
     expect(LEDGER_TOOL_NAMES.length).toBe(39);
-    expect(MANAGEMENT_LEDGER_TOOL_NAMES.length).toBe(56);
+    expect(MANAGEMENT_LEDGER_TOOL_NAMES.length).toBe(57);
     expect(MANAGEMENT_LEDGER_TOOL_NAMES).toContain(
       "advance_implementation_evidence_bootstrap",
     );

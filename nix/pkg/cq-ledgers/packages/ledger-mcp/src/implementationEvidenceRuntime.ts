@@ -20,6 +20,7 @@ import {
   PLAN_FINALIZED_MANIFEST_FIELD,
   PlanPublishedManifestSchema,
   SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
+  REVIEWS_LEDGER,
   TASKS_LEDGER,
   nodeGitRunner,
   readCanonicalOwnership,
@@ -854,5 +855,17 @@ export function createProductionImplementationEvidenceService(
         author,
         ...(session === undefined ? {} : { session }),
       }),
+    readCompletionReview: async (reviewRef) => {
+      if (!/^reviews:R[0-9]+$/u.test(reviewRef))
+        throw new Error("terminal implementation review ref is malformed");
+      const review = store.fetchItem(
+        REVIEWS_LEDGER,
+        reviewRef.slice(`${REVIEWS_LEDGER}:`.length),
+      );
+      const implementationEvidence = review.fields["implementationEvidence"];
+      if (typeof implementationEvidence !== "string")
+        throw new Error("terminal implementation review omitted protected evidence");
+      return { reviewRef, status: review.status, implementationEvidence };
+    },
   });
 }

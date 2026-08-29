@@ -4,6 +4,9 @@ import {
   ImplementationEvidenceService,
   createInMemoryImplementationEvidenceStore,
   implementationAuditManifestDigest,
+  implementationAuditManifestSemanticDigest,
+  type ImplementationCompletionRecord,
+  type ImplementationEvidenceActivationContinuationRecord,
   type ImplementationEvidenceSnapshot,
   type PackagedImplementationAuditManifest,
 } from "../src/index.js";
@@ -32,8 +35,8 @@ const manifest: PackagedImplementationAuditManifest = {
     ownerGoalRef: "goals:G176",
     finalizedManifest: "finalized-v2\n",
     historicalReview: null,
-    baseCommit: String(index + 7).repeat(40),
-    resultCommit: String(index + 9).repeat(40),
+    baseCommit: (index === 0 ? "7" : "8").repeat(40),
+    resultCommit: (index === 0 ? "9" : "d").repeat(40),
     repositoryHead: FROM_HEAD,
     diff: `diff-${taskRef}`,
     acceptance: { text: "accepted" },
@@ -84,7 +87,7 @@ function workerResult() {
       headCommit: REPOSITORY_HEAD,
     },
     supervisedGateEvidence: {
-      kind: "cq-supervised-worker-gate-evidence",
+      kind: "cq-supervised-gate-evidence",
       version: 1,
       attestationId: `att_${"r".repeat(32)}`,
       generation: 1,
@@ -189,7 +192,7 @@ function snapshot(): ImplementationEvidenceSnapshot {
         manifestId: MANIFEST_ID,
         manifestDigest,
         sourceDigest: manifest.sourceDigest,
-        semanticManifestDigest: "f".repeat(64),
+        semanticManifestDigest: implementationAuditManifestSemanticDigest(manifest),
         goalRef: "goals:G176",
         finalizedManifestDigest: manifest.activation!.finalizedManifestDigest,
         evidenceTaskRef: COHORT[0],
@@ -232,7 +235,7 @@ function snapshot(): ImplementationEvidenceSnapshot {
 
 function fixture(initial = snapshot()) {
   const store = createInMemoryImplementationEvidenceStore(initial);
-  const service = new ImplementationEvidenceService({
+  const dependencies = {
     store,
     resolveReviewerRoster: () => [{
       alias: "native",
@@ -285,8 +288,22 @@ function fixture(initial = snapshot()) {
         reviewAttemptRefs: [`cq-implementation-review-attempt:v1:${"7".repeat(64)}`],
       }),
     }),
-  } as never);
-  return { service, store };
+  } as never;
+  const service = new ImplementationEvidenceService(dependencies);
+  return {
+    service,
+    store,
+    restart: () => new ImplementationEvidenceService(dependencies),
+  };
+}
+
+type MutableSnapshot = ImplementationEvidenceSnapshot & {
+  completions: Record<string, ImplementationCompletionRecord>;
+  activationContinuations: Record<string, ImplementationEvidenceActivationContinuationRecord>;
+};
+
+function mutableSnapshot(): MutableSnapshot {
+  return structuredClone(snapshot()) as MutableSnapshot;
 }
 
 const request = {
@@ -314,8 +331,7 @@ describe("implementation evidence activation continuation [BG]", () => {
       repositoryHead: REPOSITORY_HEAD,
     });
     expect(first.requirementRef).not.toBe(PRIOR_REQUIREMENT_REF);
-    const restarted = new ImplementationEvidenceService((state.service as never)["deps"]);
-    expect(await restarted.continueEvidenceActivation(request)).toEqual({
+    expect(await state.restart().continueEvidenceActivation(request)).toEqual({
       ...first,
       status: "existing",
     });
@@ -331,7 +347,7 @@ describe("implementation evidence activation continuation [BG]", () => {
   });
 
   test("rejects a head skip, an unobserved gate, and completion reuse", async () => {
-    const skipped = snapshot();
+    const skipped = mutableSnapshot();
     skipped.completions[COMPLETION_REF] = {
       ...skipped.completions[COMPLETION_REF]!,
       repositoryHead: "0".repeat(40),
@@ -340,16 +356,17 @@ describe("implementation evidence activation continuation [BG]", () => {
       "prior activation head",
     );
 
-    const ungated = snapshot();
+    const ungated = mutableSnapshot();
+    const { supervisedGateEvidence: _gate, ...workerWithoutGate } = workerResult();
     ungated.completions[COMPLETION_REF] = {
       ...ungated.completions[COMPLETION_REF]!,
-      workerResult: { ...workerResult(), supervisedGateEvidence: undefined },
+      workerResult: workerWithoutGate,
     };
     await expect(fixture(ungated).service.continueEvidenceActivation(request)).rejects.toThrow(
       "runner-owned green gate",
     );
 
-    const reused = snapshot();
+    const reused = mutableSnapshot();
     reused.activationContinuations = {
       [`cq-implementation-evidence-activation-continuation:v1:${"f".repeat(64)}`]: {
         version: 1,

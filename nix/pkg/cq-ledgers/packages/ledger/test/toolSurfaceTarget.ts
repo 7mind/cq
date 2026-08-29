@@ -710,6 +710,47 @@ export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
     },
   },
   {
+    name: "continue_implementation_evidence_activation",
+    description:
+      "Advance one active v2 implementation-evidence requirement across one exact protected Git completion.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        goal_ref: { type: "string", pattern: "^goals:G[0-9]+$" },
+        manifest_id: {
+          type: "string",
+          const: "d347-implementation-evidence-activation-v2",
+        },
+        prior_requirement_ref: {
+          type: "string",
+          pattern: "^cq-implementation-evidence-activation-requirement:v1:[0-9a-f]{64}$",
+        },
+        completed_task_ref: { type: "string", pattern: "^tasks:T[0-9]+$" },
+        completion_ref: {
+          type: "string",
+          pattern: "^cq-implementation-completion:v1:[0-9a-f]{64}$",
+        },
+        expected_from_head: { type: "string", pattern: "^[0-9a-f]{40}$" },
+        expected_repository_head: { type: "string", pattern: "^[0-9a-f]{40}$" },
+        operation_id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+        author: { type: "string", minLength: 1 },
+        session: { type: "string", minLength: 1 },
+      },
+      required: [
+        "goal_ref",
+        "manifest_id",
+        "prior_requirement_ref",
+        "completed_task_ref",
+        "completion_ref",
+        "expected_from_head",
+        "expected_repository_head",
+        "operation_id",
+        "author",
+      ],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "get_implementation_evidence_service_status",
     description: "Return protected implementation-evidence service status.",
     inputSchema: {

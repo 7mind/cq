@@ -83,6 +83,7 @@ describe("implementation evidence service status transport [BA]", () => {
       "arm_implementation_evidence_activation",
       "apply_implementation_audit_manifest",
       "get_implementation_evidence_activation_status",
+      "continue_implementation_evidence_activation",
       "get_implementation_evidence_service_status",
       "prepare_implementation_completion",
       "record_implementation_completion",

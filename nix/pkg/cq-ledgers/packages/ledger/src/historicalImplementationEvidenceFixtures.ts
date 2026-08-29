@@ -11,6 +11,7 @@ import type {
   PackagedImplementationAuditManifest,
   PackagedImplementationAuditRecord,
 } from "./implementationEvidence.js";
+import { IMPLEMENTATION_EVIDENCE_ACTIVATION_MANIFEST_V2 } from "./implementationEvidence.js";
 import {
   PLAN_FINALIZED_MANIFEST_FIELD,
   PlanPublishedManifestSchema,
@@ -305,9 +306,21 @@ export const D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE = {
   activationTaskKey: "t-activate-evidence",
 } as const;
 
+export const D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE_V2 = {
+  ...D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE,
+  manifestId: IMPLEMENTATION_EVIDENCE_ACTIVATION_MANIFEST_V2,
+} as const;
+
+export const D347_REJECTED_PREDECESSOR_PROVENANCE = {
+  taskRef: "tasks:T2346",
+  requiredAncestorCommit: "00ebe7e4982cbf9d847b5713c65f5fa46b6bda72",
+  authorizes: false,
+} as const;
+
 export const PACKAGED_IMPLEMENTATION_AUDIT_MANIFEST_INVENTORY = [
   ...Object.values(HISTORICAL_IMPLEMENTATION_FIXTURES).map(({ manifestId }) => manifestId),
   D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE.manifestId,
+  D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE_V2.manifestId,
 ] as const;
 
 function taskOrder(left: SourcedItem, right: SourcedItem): number {
@@ -344,7 +357,9 @@ export async function readPackagedImplementationAuditManifest(
   const activation =
     input.manifestId === D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE.manifestId
       ? D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE
-      : null;
+      : input.manifestId === D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE_V2.manifestId
+        ? D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE_V2
+        : null;
   if (historical === undefined && activation === null)
     throw new Error(`unknown packaged implementation audit manifest ${input.manifestId}`);
 
@@ -412,6 +427,7 @@ export async function readPackagedImplementationAuditManifest(
     }
     authoritySources.push(itemForEvidence(defect));
   } else {
+    if (activation === null) throw new Error("D347 activation rule is unavailable");
     goal = uniqueItem(
       goals,
       GOALS_LEDGER,
@@ -438,14 +454,35 @@ export async function readPackagedImplementationAuditManifest(
         );
       })
       .sort(taskOrder);
-    const retained: SourcedItem[] = [];
-    for (const candidate of candidates) {
-      const resultCommit = candidate.item.fields["resultCommit"];
-      if (typeof resultCommit !== "string" || !FULL_SHA.test(resultCommit))
-        throw new Error("D347 activation candidate has no completed Git result");
-      if (await input.repository.isAncestor(resultCommit, repositoryHead)) retained.push(candidate);
+    if (activation.manifestId === D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE_V2.manifestId) {
+      const freshRefs = [mappings.evidenceTaskRef, mappings.auditTaskRef];
+      selected = freshRefs.map((taskRef) => {
+        const matches = candidates.filter(
+          ({ item }) => `${TASKS_LEDGER}:${item.id}` === taskRef,
+        );
+        if (matches.length !== 1)
+          throw new Error(`fresh D347 v2 cohort has ${String(matches.length)} ${taskRef} records`);
+        return matches[0]!;
+      }).sort(taskOrder);
+    } else {
+      const retained: SourcedItem[] = [];
+      for (const candidate of candidates) {
+        const resultCommit = candidate.item.fields["resultCommit"];
+        if (typeof resultCommit !== "string" || !FULL_SHA.test(resultCommit))
+          throw new Error("D347 activation candidate has no completed Git result");
+        if (await input.repository.isAncestor(resultCommit, repositoryHead)) retained.push(candidate);
+      }
+      selected = retained;
     }
-    selected = retained;
+    for (const candidate of selected) {
+      const resultCommit = candidate.item.fields["resultCommit"];
+      if (
+        typeof resultCommit !== "string" ||
+        !FULL_SHA.test(resultCommit) ||
+        !(await input.repository.isAncestor(resultCommit, repositoryHead))
+      )
+        throw new Error("fresh D347 activation result is not retained at the boundary");
+    }
     const selectedRefs = selected.map(({ item }) => `${TASKS_LEDGER}:${item.id}`);
     if (!selectedRefs.includes(mappings.evidenceTaskRef) ||
       !selectedRefs.includes(mappings.auditTaskRef))
@@ -471,6 +508,45 @@ export async function readPackagedImplementationAuditManifest(
     }),
   );
   authoritySources.push(itemForEvidence(goal));
+  let nonAuthorizingProvenance:
+    | PackagedImplementationAuditManifest["nonAuthorizingProvenance"]
+    | undefined;
+  if (activation?.manifestId === D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE_V2.manifestId) {
+    const predecessor = uniqueItem(
+      tasks,
+      TASKS_LEDGER,
+      D347_REJECTED_PREDECESSOR_PROVENANCE.taskRef.slice(`${TASKS_LEDGER}:`.length),
+    );
+    const predecessorReviews = reviews.filter(({ item }) => {
+      const refs = item.fields["ledgerRefs"];
+      return (
+        (item.status === "changes-requested" ||
+          item.status === "disapproved" ||
+          item.fields["verdict"] === "disapprove") &&
+        ((Array.isArray(refs) && refs.includes(D347_REJECTED_PREDECESSOR_PROVENANCE.taskRef)) ||
+          item.fields["taskRef"] === D347_REJECTED_PREDECESSOR_PROVENANCE.taskRef)
+      );
+    });
+    if (predecessorReviews.length !== 1)
+      throw new Error("T2346 must retain one authenticated disapproval as non-authorizing provenance");
+    if (
+      !(await input.repository.isAncestor(
+        D347_REJECTED_PREDECESSOR_PROVENANCE.requiredAncestorCommit,
+        repositoryHead,
+      ))
+    )
+      throw new Error("T2346 original implementation ancestry is not retained");
+    nonAuthorizingProvenance = [{
+      ...D347_REJECTED_PREDECESSOR_PROVENANCE,
+      historicalReview: historicalReviewObservation(predecessorReviews[0])!,
+    }];
+    authoritySources.push({
+      predecessor: itemForEvidence(predecessor),
+      disapproval: itemForEvidence(predecessorReviews[0]!),
+      requiredAncestorCommit: D347_REJECTED_PREDECESSOR_PROVENANCE.requiredAncestorCommit,
+      authorizes: false,
+    });
+  }
   const sourceDigest = sha256(
     JSON.stringify({
       manifestId: input.manifestId,
@@ -494,6 +570,7 @@ export async function readPackagedImplementationAuditManifest(
           auditTaskKey: activation.auditTaskKey,
           activationTaskKey: activation.activationTaskKey,
         },
+    ...(nonAuthorizingProvenance === undefined ? {} : { nonAuthorizingProvenance }),
   };
 }
 

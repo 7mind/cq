@@ -39,6 +39,12 @@ function assertContract(source: string): void {
     "finalizedReviewOutcomeContract",
     "dispatch no third Git task",
     "arm, audit, apply, active proof, operator evidence, and typed completion",
+    "d347-implementation-evidence-activation-v2",
+    "continue_implementation_evidence_activation",
+    "expected_from_head",
+    "expected_repository_head",
+    "`active` is the only state that admits ordinary work",
+    "Before release, defect reconciliation, or readiness rederivation",
   ])
     expect(compact).toContain(token);
   expect(compact).toContain("not `update_item` or `create_item`");
@@ -75,6 +81,11 @@ describe("implementation evidence orchestration prompt contract [BA]", () => {
       "bootstrap dispatch authority",
       "implementationEvidenceBootstrap: <bootstrapRef>",
       "bootstrapRef only in task prose",
+    ],
+    [
+      "activation continuation order",
+      "Before release, defect reconciliation, or readiness rederivation",
+      "After release and readiness rederivation",
     ],
   ])("rejects the %s mutation", async (_name, from, to) => {
     const source = await readFile(commandPath, "utf8");

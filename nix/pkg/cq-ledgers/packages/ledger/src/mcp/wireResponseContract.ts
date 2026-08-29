@@ -373,6 +373,9 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   get_implementation_evidence_activation_status: purposeBuiltSmall(
     "Exactly one bounded absent, pending, stale, or active activation status acknowledgement.",
   ),
+  continue_implementation_evidence_activation: purposeBuiltSmall(
+    "Exactly one continued or existing activation-continuation acknowledgement.",
+  ),
   get_implementation_evidence_service_status: purposeBuiltSmall(
     "One typed service-status object.",
   ),

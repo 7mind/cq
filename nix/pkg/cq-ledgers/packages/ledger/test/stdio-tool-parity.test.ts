@@ -1595,6 +1595,21 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
       },
     },
     {
+      name: "continue_implementation_evidence_activation",
+      args: {
+        goal_ref: `goals:${PARITY_GOAL_ID}`,
+        manifest_id: "d347-implementation-evidence-activation-v2",
+        prior_requirement_ref:
+          `cq-implementation-evidence-activation-requirement:v1:${"1".repeat(64)}`,
+        completed_task_ref: PARITY_IMPLEMENTATION_TASK_REF,
+        completion_ref: `cq-implementation-completion:v1:${"2".repeat(64)}`,
+        expected_from_head: PARITY_IMPLEMENTATION_BASE,
+        expected_repository_head: PARITY_IMPLEMENTATION_RESULT,
+        operation_id: "parity_activation_continue",
+        ...PARITY_PROVENANCE,
+      },
+    },
+    {
       name: "get_implementation_evidence_service_status",
       args: {},
     },

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE,
+  D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE_V2,
+  D347_REJECTED_PREDECESSOR_PROVENANCE,
   HISTORICAL_IMPLEMENTATION_FIXTURES,
   deriveHistoricalImplementationAuditTaskRefs,
   nodeGitRunner,
@@ -367,5 +369,84 @@ describe("trusted historical implementation fixture rules [BA]", () => {
       "tasks:T3001",
       "tasks:T3003",
     ]);
+  });
+
+  test("packages only the fresh v2 cohort while retaining T2346 as non-authorizing provenance", async () => {
+    const git = nodeGitRunner(process.cwd());
+    const head = (await git(["rev-parse", "HEAD"])).stdout.trim();
+    const finalized = JSON.stringify({
+      revision: 2,
+      milestones: [{ key: "m-evidence", id: "M347" }],
+      tasks: [
+        { key: "t-evidence", id: "T3000" },
+        { key: "t-historical-evidence", id: "T3001" },
+        { key: "t-activate-evidence", id: "T3002" },
+        { key: "t-successor", id: "T3003" },
+      ],
+    });
+    const finalizedTask = (id: string) => authorityItem(id, "done", {
+      headline: id,
+      acceptance: `accept ${id}`,
+      resultCommit: head,
+      worksetOwnerRef: "goals:G176",
+      worksetOwnerEdgeKind: "finalized-manifest",
+    }, "M347");
+    const ledgers: Record<string, readonly ReturnType<typeof authorityItem>[]> = {
+      tasks: [
+        finalizedTask("T3000"),
+        finalizedTask("T3001"),
+        authorityItem("T3002", "planned", {
+          headline: "activation",
+          worksetOwnerRef: "goals:G176",
+          worksetOwnerEdgeKind: "finalized-manifest",
+        }, "M347"),
+        finalizedTask("T3003"),
+        authorityItem("T2346", "abandoned", { headline: "rejected predecessor" }, "M347"),
+      ],
+      goals: [authorityItem("G176", "building", { title: "D347", planFinalizedManifest: finalized })],
+      defects: [],
+      reviews: [authorityItem("R2346", "changes-requested", {
+        taskRef: "tasks:T2346",
+        ledgerRefs: ["tasks:T2346"],
+        verdict: "disapprove",
+        criticism: ["replacement required"],
+      }, "M347")],
+      operatorActions: [],
+    };
+    const packaged = await readPackagedImplementationAuditManifest({
+      store: {
+        fetch: (ledgerId: string) => ({
+          id: ledgerId,
+          schema: {},
+          counters: { milestone: 1, item: 1 },
+          milestones: [{ id: "active", milestone: {}, items: ledgers[ledgerId] ?? [] }],
+          archivePointers: [],
+        }),
+        fetchArchive: async () => { throw new Error("unexpected archive read"); },
+      } as never,
+      manifestId: D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE_V2.manifestId,
+      repository: {
+        repositoryHead: async () => head,
+        readCommitFile: async (_commit, path) => {
+          const taskId = /^WIP-(T[0-9]+)\.md$/u.exec(path)?.[1];
+          if (taskId === undefined) throw new Error("unexpected WIP path");
+          return `\`\`\`json\n${JSON.stringify({ taskId, role: "implement-worker", baseCommit: head })}\n\`\`\`\n`;
+        },
+        diff: async () => "",
+        isAncestor: async (ancestor, descendant) =>
+          (await git(["merge-base", "--is-ancestor", ancestor, descendant])).code === 0,
+      },
+    });
+
+    expect(packaged.records.map(({ taskRef }) => taskRef)).toEqual([
+      "tasks:T3000",
+      "tasks:T3001",
+    ]);
+    expect(packaged.nonAuthorizingProvenance).toEqual([{
+      ...D347_REJECTED_PREDECESSOR_PROVENANCE,
+      historicalReview: expect.objectContaining({ reviewRef: "reviews:R2346" }),
+    }]);
+    expect(packaged.records.map(({ taskRef }) => taskRef)).not.toContain("tasks:T2346");
+    expect(packaged.records.map(({ taskRef }) => taskRef)).not.toContain("tasks:T3003");
   });
 });

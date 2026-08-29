@@ -193,6 +193,7 @@ export const IMPLEMENTATION_EVIDENCE_TOOL_NAMES = [
   "arm_implementation_evidence_activation",
   "apply_implementation_audit_manifest",
   "get_implementation_evidence_activation_status",
+  "continue_implementation_evidence_activation",
   "get_implementation_evidence_service_status",
   "prepare_implementation_completion",
   "record_implementation_completion",
@@ -1581,6 +1582,41 @@ export function createLedgerMcpToolSpecifications(
     },
   );
 
+  const continueImplementationEvidenceActivationTool = tool(
+    "continue_implementation_evidence_activation",
+    "Advance one active v2 implementation-evidence requirement across one exact protected Git completion.",
+    {
+      goal_ref: z.string().regex(/^goals:G[0-9]+$/),
+      manifest_id: z.literal("d347-implementation-evidence-activation-v2"),
+      prior_requirement_ref: z
+        .string()
+        .regex(/^cq-implementation-evidence-activation-requirement:v1:[0-9a-f]{64}$/),
+      completed_task_ref: z.string().regex(/^tasks:T[0-9]+$/),
+      completion_ref: z.string().regex(/^cq-implementation-completion:v1:[0-9a-f]{64}$/),
+      expected_from_head: z.string().regex(/^[0-9a-f]{40}$/),
+      expected_repository_head: z.string().regex(/^[0-9a-f]{40}$/),
+      ...implementationOperation,
+    } as const,
+    async (args) => {
+      if (implementationEvidence === undefined)
+        throw new Error("protected implementation evidence is unavailable");
+      return jsonResult(
+        await implementationEvidence.continueEvidenceActivation({
+          goalRef: args.goal_ref,
+          manifestId: args.manifest_id,
+          priorRequirementRef: args.prior_requirement_ref,
+          completedTaskRef: args.completed_task_ref,
+          completionRef: args.completion_ref,
+          expectedFromHead: args.expected_from_head,
+          expectedRepositoryHead: args.expected_repository_head,
+          operationId: args.operation_id,
+          author: args.author,
+          ...(args.session === undefined ? {} : { session: args.session }),
+        }),
+      );
+    },
+  );
+
   const getImplementationEvidenceServiceStatusTool = tool(
     "get_implementation_evidence_service_status",
     "Return protected implementation-evidence service status.",
@@ -1926,6 +1962,7 @@ export function createLedgerMcpToolSpecifications(
           armImplementationEvidenceActivationTool,
           applyImplementationAuditManifestTool,
           getImplementationEvidenceActivationStatusTool,
+          continueImplementationEvidenceActivationTool,
           getImplementationEvidenceServiceStatusTool,
           prepareImplementationCompletionTool,
           recordImplementationCompletionTool,

@@ -209,6 +209,18 @@ describe("RemoteLedgerClient workset scope (Behavioral-Active Blackbox-Atomic)",
       manifestId: "historical-v1",
       expectedRepositoryHead: "d".repeat(40),
     });
+    await remote.continueImplementationEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: "d347-implementation-evidence-activation-v2",
+      priorRequirementRef:
+        `cq-implementation-evidence-activation-requirement:v1:${"a".repeat(64)}`,
+      completedTaskRef: "tasks:T3003",
+      completionRef: `cq-implementation-completion:v1:${"b".repeat(64)}`,
+      expectedFromHead: "c".repeat(40),
+      expectedRepositoryHead: "d".repeat(40),
+      operationId: "activation-continue",
+      author: "parent",
+    });
     expect(calls).toEqual([
       "prepare_implementation_review_panel",
       "finalize_implementation_review_attempt",
@@ -222,6 +234,7 @@ describe("RemoteLedgerClient workset scope (Behavioral-Active Blackbox-Atomic)",
       "arm_implementation_evidence_activation",
       "apply_implementation_audit_manifest",
       "get_implementation_evidence_activation_status",
+      "continue_implementation_evidence_activation",
     ]);
     expect(
       [

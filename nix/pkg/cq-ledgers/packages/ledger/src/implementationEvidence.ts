@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import {
   implementReviewerSidecar,
   implementationAuditorSidecar,
+  implementWorkerSupervisedGateEvidenceSchema,
   validateAgainstSchema,
   validateParentGateAttestation,
   validateSupervisedWorkerGateEvidenceForReview,
@@ -45,6 +46,7 @@ export const IMPLEMENTATION_EVIDENCE_SERVICE_OPERATION_INVENTORY = [
   "arm_implementation_evidence_activation",
   "apply_implementation_audit_manifest",
   "get_implementation_evidence_activation_status",
+  "continue_implementation_evidence_activation",
   "get_implementation_evidence_service_status",
   "prepare_implementation_completion",
   "record_implementation_completion",
@@ -66,6 +68,14 @@ const ATTEMPT_REF = /^cq-implementation-review-attempt:v1:[0-9a-f]{64}$/u;
 const AUDIT_PANEL_REF = /^cq-implementation-audit-panel:v1:[0-9a-f]{64}$/u;
 const AUDIT_ATTEMPT_REF = /^cq-implementation-audit-attempt:v1:[0-9a-f]{64}$/u;
 const BOOTSTRAP_REF = /^cq-implementation-evidence-bootstrap:v1:[0-9a-f]{64}$/u;
+const ACTIVATION_REQUIREMENT_REF =
+  /^cq-implementation-evidence-activation-requirement:v1:[0-9a-f]{64}$/u;
+const ACTIVATION_REF = /^cq-implementation-evidence-activation:v1:[0-9a-f]{64}$/u;
+const ACTIVATION_CONTINUATION_REF =
+  /^cq-implementation-evidence-activation-continuation:v1:[0-9a-f]{64}$/u;
+
+export const IMPLEMENTATION_EVIDENCE_ACTIVATION_MANIFEST_V2 =
+  "d347-implementation-evidence-activation-v2" as const;
 
 export type ImplementationReviewTerminalState =
   "approved" | "disapproved" | "operational-abstention";
@@ -209,6 +219,12 @@ export interface PackagedImplementationAuditManifest {
   readonly sourceDigest: string;
   readonly records: readonly PackagedImplementationAuditRecord[];
   readonly activation: PackagedImplementationEvidenceActivation | null;
+  readonly nonAuthorizingProvenance?: readonly {
+    readonly taskRef: string;
+    readonly requiredAncestorCommit: string;
+    readonly historicalReview: DispatchJSONValue;
+    readonly authorizes: false;
+  }[];
 }
 
 export interface ImplementationAuditPanelRecord {
@@ -304,6 +320,7 @@ export interface ImplementationEvidenceActivationRequirementRecord {
   readonly manifestId: string;
   readonly manifestDigest: string;
   readonly sourceDigest: string;
+  readonly semanticManifestDigest: string;
   readonly goalRef: string;
   readonly finalizedManifestDigest: string;
   readonly evidenceTaskRef: string;
@@ -313,6 +330,8 @@ export interface ImplementationEvidenceActivationRequirementRecord {
   readonly taskRefs: readonly string[];
   readonly state: "armed" | "fulfilled";
   readonly activationRef: string | null;
+  readonly previousRequirementRef: string | null;
+  readonly continuationRef: string | null;
   readonly operationId: string;
   readonly requestDigest: string;
   readonly author: string;
@@ -334,6 +353,24 @@ export interface ImplementationEvidenceActivationRecord {
   readonly author: string;
   readonly session: string | null;
   readonly activatedAt: string;
+}
+
+export interface ImplementationEvidenceActivationContinuationRecord {
+  readonly version: 1;
+  readonly continuationRef: string;
+  readonly previousContinuationRef: string | null;
+  readonly previousRequirementRef: string;
+  readonly requirementRef: string;
+  readonly activationRef: string;
+  readonly taskRef: string;
+  readonly completionRef: string;
+  readonly fromHead: string;
+  readonly repositoryHead: string;
+  readonly operationId: string;
+  readonly requestDigest: string;
+  readonly author: string;
+  readonly session: string | null;
+  readonly continuedAt: string;
 }
 
 export type ImplementationEvidenceBootstrapPhase =
@@ -416,6 +453,9 @@ export interface ImplementationEvidenceSnapshot {
     Record<string, ImplementationEvidenceActivationRequirementRecord>
   >;
   readonly activations: Readonly<Record<string, ImplementationEvidenceActivationRecord>>;
+  readonly activationContinuations: Readonly<
+    Record<string, ImplementationEvidenceActivationContinuationRecord>
+  >;
   readonly bootstraps: Readonly<Record<string, ImplementationEvidenceBootstrapRecord>>;
 }
 
@@ -430,6 +470,7 @@ interface MutableImplementationEvidenceSnapshot {
   auditManifestApplications: Record<string, ImplementationAuditManifestApplicationRecord>;
   activationRequirements: Record<string, ImplementationEvidenceActivationRequirementRecord>;
   activations: Record<string, ImplementationEvidenceActivationRecord>;
+  activationContinuations: Record<string, ImplementationEvidenceActivationContinuationRecord>;
   bootstraps: Record<string, ImplementationEvidenceBootstrapRecord>;
 }
 
@@ -573,6 +614,7 @@ function emptyState(): MutableImplementationEvidenceSnapshot {
     auditManifestApplications: {},
     activationRequirements: {},
     activations: {},
+    activationContinuations: {},
     bootstraps: {},
   };
 }
@@ -636,6 +678,8 @@ function parseStoredState(value: unknown): MutableImplementationEvidenceSnapshot
       !object(value["auditManifestApplications"])) ||
     (value["activationRequirements"] !== undefined && !object(value["activationRequirements"])) ||
     (value["activations"] !== undefined && !object(value["activations"])) ||
+    (value["activationContinuations"] !== undefined &&
+      !object(value["activationContinuations"])) ||
     (value["bootstraps"] !== undefined && !object(value["bootstraps"]))
   ) {
     throw new Error("implementation evidence store has an unsupported or malformed version");
@@ -652,6 +696,7 @@ function parseStoredState(value: unknown): MutableImplementationEvidenceSnapshot
     auditManifestApplications: stored.auditManifestApplications ?? {},
     activationRequirements: stored.activationRequirements ?? {},
     activations: stored.activations ?? {},
+    activationContinuations: stored.activationContinuations ?? {},
     bootstraps: stored.bootstraps ?? {},
   };
 }
@@ -1026,6 +1071,22 @@ export function implementationAuditManifestDigest(
   return digest(manifest);
 }
 
+/**
+ * Bind the immutable audit meaning while excluding the two documented fields
+ * that are regenerated at an integration-head transition.
+ */
+export function implementationAuditManifestSemanticDigest(
+  manifest: PackagedImplementationAuditManifest,
+): string {
+  return digest({
+    version: manifest.version,
+    manifestId: manifest.manifestId,
+    records: manifest.records.map(({ repositoryHead: _repositoryHead, ...record }) => record),
+    activation: manifest.activation,
+    nonAuthorizingProvenance: manifest.nonAuthorizingProvenance ?? [],
+  });
+}
+
 function assertPackagedAuditManifest(
   manifest: PackagedImplementationAuditManifest,
   manifestId: string,
@@ -1076,6 +1137,16 @@ function assertPackagedAuditManifest(
     ) {
       throw new Error("packaged implementation evidence activation is malformed");
     }
+  }
+  for (const provenance of manifest.nonAuthorizingProvenance ?? []) {
+    taskIdFromRef(provenance.taskRef);
+    assertFullSha(provenance.requiredAncestorCommit, "non-authorizing ancestor commit");
+    if (
+      provenance.authorizes !== false ||
+      !object(provenance.historicalReview) ||
+      taskRefs.has(provenance.taskRef)
+    )
+      throw new Error("packaged non-authorizing implementation provenance is malformed");
   }
 }
 
@@ -1248,6 +1319,16 @@ export interface ImplementationEvidenceActivationStatusInput {
   readonly expectedRepositoryHead: string;
 }
 
+export interface ContinueImplementationEvidenceActivationInput extends OperationProvenance {
+  readonly goalRef: string;
+  readonly manifestId: string;
+  readonly priorRequirementRef: string;
+  readonly completedTaskRef: string;
+  readonly completionRef: string;
+  readonly expectedFromHead: string;
+  readonly expectedRepositoryHead: string;
+}
+
 export interface AdvanceImplementationEvidenceBootstrapInput extends OperationProvenance {
   readonly goalRef: string;
   readonly finalizedManifestDigest: string;
@@ -1332,6 +1413,12 @@ export interface ImplementationCompletionLedgerResult {
   readonly reviewRef: string;
 }
 
+export interface ImplementationCompletionReviewAuthority {
+  readonly reviewRef: string;
+  readonly status: string;
+  readonly implementationEvidence: string;
+}
+
 export type ImplementationEvidenceFaultBoundary =
   | "before-activation-requirement-write"
   | "before-implementation-audit-write"
@@ -1391,6 +1478,9 @@ export interface ImplementationEvidenceServiceDependencies {
     readonly author: string;
     readonly session?: string;
   }) => Promise<ImplementationCompletionLedgerResult>;
+  readonly readCompletionReview?: (
+    reviewRef: string,
+  ) => Promise<ImplementationCompletionReviewAuthority>;
   readonly resolveAuditRoster?: () => readonly ImplementationReviewerIdentity[];
   readonly readAuditManifest?: (
     manifestId: string,
@@ -2622,6 +2712,7 @@ export class ImplementationEvidenceService {
         manifestId: manifest.manifestId,
         manifestDigest,
         sourceDigest: manifest.sourceDigest,
+        semanticManifestDigest: implementationAuditManifestSemanticDigest(manifest),
         goalRef: input.goalRef,
         finalizedManifestDigest: cohort.finalizedManifestDigest,
         evidenceTaskRef: cohort.evidenceTaskRef,
@@ -2631,6 +2722,8 @@ export class ImplementationEvidenceService {
         taskRefs,
         state: "armed",
         activationRef: null,
+        previousRequirementRef: null,
+        continuationRef: null,
         operationId: input.operationId,
         requestDigest,
         author: input.author,
@@ -2954,6 +3047,336 @@ export class ImplementationEvidenceService {
         finalizedManifestDigest: manifest.activation.finalizedManifestDigest,
       },
     );
+  }
+
+  async continueEvidenceActivation(input: ContinueImplementationEvidenceActivationInput) {
+    assertOperationId(input.operationId);
+    if (!/^goals:G[0-9]+$/u.test(input.goalRef))
+      throw new Error("goal_ref must be one canonical goal ref");
+    if (input.manifestId !== IMPLEMENTATION_EVIDENCE_ACTIVATION_MANIFEST_V2)
+      throw new Error("activation continuation requires the immutable v2 manifest");
+    if (!ACTIVATION_REQUIREMENT_REF.test(input.priorRequirementRef))
+      throw new Error("prior_requirement_ref is malformed");
+    taskIdFromRef(input.completedTaskRef);
+    if (!COMPLETION_REF.test(input.completionRef))
+      throw new Error("completion_ref is malformed");
+    assertFullSha(input.expectedFromHead, "expected_from_head");
+    assertFullSha(input.expectedRepositoryHead, "expected_repository_head");
+    if (input.expectedFromHead === input.expectedRepositoryHead)
+      throw new Error("activation continuation requires one distinct repository transition");
+    const requestDigest = digest(input);
+    const response = (
+      record: ImplementationEvidenceActivationContinuationRecord,
+      status: "continued" | "existing",
+    ) => ({
+      status,
+      continuationRef: record.continuationRef,
+      previousRequirementRef: record.previousRequirementRef,
+      requirementRef: record.requirementRef,
+      activationRef: record.activationRef,
+      taskRef: record.taskRef,
+      completionRef: record.completionRef,
+      fromHead: record.fromHead,
+      repositoryHead: record.repositoryHead,
+    });
+    const initial = await this.deps.store.snapshot();
+    const replay = Object.values(initial.activationContinuations).find(
+      (record) => record.operationId === input.operationId,
+    );
+    if (replay !== undefined) {
+      if (replay.requestDigest !== requestDigest)
+        throw new Error(`operation_id ${input.operationId} was reused with a different continuation`);
+      return response(replay, "existing");
+    }
+    const repositoryHead = await this.deps.repositoryHead();
+    if (repositoryHead !== input.expectedRepositoryHead)
+      throw new Error("repository head changed before activation continuation");
+    const prior = initial.activationRequirements[input.priorRequirementRef];
+    if (
+      prior === undefined ||
+      prior.manifestId !== input.manifestId ||
+      prior.goalRef !== input.goalRef ||
+      prior.state !== "fulfilled" ||
+      prior.activationRef === null ||
+      prior.boundaryCommit !== input.expectedFromHead
+    ) {
+      throw new Error("prior v2 activation is absent, pending, or stale at the expected head");
+    }
+    if (
+      typeof prior.semanticManifestDigest !== "string" ||
+      !/^[0-9a-f]{64}$/u.test(prior.semanticManifestDigest)
+    )
+      throw new Error("prior v2 activation omitted its semantic manifest binding");
+    const priorActivation = initial.activations[prior.activationRef];
+    if (
+      priorActivation === undefined ||
+      priorActivation.requirementRef !== prior.requirementRef ||
+      priorActivation.manifestId !== prior.manifestId ||
+      priorActivation.manifestDigest !== prior.manifestDigest ||
+      priorActivation.repositoryHead !== input.expectedFromHead ||
+      canonical(priorActivation.taskRefs) !== canonical(prior.taskRefs)
+    )
+      throw new Error("prior v2 activation payload is absent or inconsistent");
+    if (priorActivation.auditRefs.length !== prior.taskRefs.length)
+      throw new Error("prior v2 activation audit cohort is incomplete");
+    for (const [index, auditRef] of priorActivation.auditRefs.entries()) {
+      const audit = initial.implementationAudits[auditRef];
+      if (
+        audit === undefined ||
+        audit.terminalState !== "approved" ||
+        audit.taskRef !== prior.taskRefs[index] ||
+        audit.manifestId !== prior.manifestId ||
+        audit.manifestDigest !== prior.manifestDigest
+      )
+        throw new Error("prior v2 activation ordered audit set is incomplete or unauthenticated");
+    }
+    if (prior.continuationRef !== null) {
+      const predecessor = initial.activationContinuations[prior.continuationRef];
+      if (
+        predecessor === undefined ||
+        predecessor.requirementRef !== prior.requirementRef ||
+        predecessor.repositoryHead !== prior.boundaryCommit
+      )
+        throw new Error("prior v2 activation continuation chain is malformed");
+    }
+    const { manifest, manifestDigest } = await this.auditManifest(input.manifestId);
+    const semanticManifestDigest = implementationAuditManifestSemanticDigest(manifest);
+    if (
+      semanticManifestDigest !== prior.semanticManifestDigest ||
+      manifest.activation === null ||
+      manifest.activation.goalRef !== prior.goalRef ||
+      manifest.activation.finalizedManifestDigest !== prior.finalizedManifestDigest
+    )
+      throw new Error("packaged v2 activation semantics changed across the head transition");
+    if (this.deps.resolveActivationCohort === undefined)
+      throw new Error("finalized-manifest activation resolver is unavailable");
+    const currentCohort = await this.deps.resolveActivationCohort({
+      goalRef: input.goalRef,
+      manifest,
+      repositoryHead,
+    });
+    const expectedCurrentTaskRefs = [...prior.taskRefs, input.completedTaskRef].sort((left, right) =>
+      left.localeCompare(right, undefined, { numeric: true }),
+    );
+    if (
+      prior.taskRefs.includes(input.completedTaskRef) ||
+      canonical(currentCohort.taskRefs) !== canonical(expectedCurrentTaskRefs) ||
+      currentCohort.boundaryCommit !== repositoryHead ||
+      currentCohort.finalizedManifestDigest !== prior.finalizedManifestDigest ||
+      currentCohort.evidenceTaskRef !== prior.evidenceTaskRef ||
+      currentCohort.auditTaskRef !== prior.auditTaskRef ||
+      currentCohort.activationTaskRef !== prior.activationTaskRef
+    )
+      throw new Error("completed task is not the unique next finalized-manifest Git member");
+    const task = await this.deps.readTaskAuthority(input.completedTaskRef);
+    const finalizedManifestBytes = new Set(manifest.records.map((record) => record.finalizedManifest));
+    if (
+      task.taskRef !== input.completedTaskRef ||
+      task.ownerGoalRef !== input.goalRef ||
+      task.status !== "done" ||
+      finalizedManifestBytes.size !== 1 ||
+      !finalizedManifestBytes.has(task.finalizedManifest)
+    )
+      throw new Error("completed task does not retain exact finalized-manifest authority");
+    const completions = Object.values(initial.completions).filter(
+      (completion) => completion.taskRef === input.completedTaskRef,
+    );
+    if (completions.length !== 1 || completions[0]!.completionRef !== input.completionRef)
+      throw new Error("completed task lacks one immutable protected completion journal");
+    const completion = completions[0]!;
+    if (
+      completion.state !== "recorded" ||
+      completion.reviewRef === null ||
+      completion.ownerGoalRef !== input.goalRef ||
+      completion.repositoryHead !== input.expectedFromHead ||
+      completion.baseCommit !== input.expectedFromHead ||
+      completion.startingCommit !== input.expectedFromHead ||
+      completion.resultCommit !== repositoryHead
+    )
+      throw new Error("protected completion does not bind the prior activation head transition");
+    if (
+      Object.values(initial.activationContinuations).some(
+        (continuation) => continuation.completionRef === completion.completionRef,
+      )
+    )
+      throw new Error("completion is already bound to another activation transition");
+    if (!object(completion.workerResult))
+      throw new Error("protected completion omitted its consumed worker result");
+    const workerResult = completion.workerResult;
+    const gate = workerResult["supervisedGateEvidence"];
+    if (
+      !object(gate) ||
+      !validateAgainstSchema(implementWorkerSupervisedGateEvidenceSchema, gate).ok ||
+      workerResult["gateDurationMs"] !== undefined ||
+      gate["taskId"] !== taskIdFromRef(input.completedTaskRef) ||
+      gate["baseCommit"] !== input.expectedFromHead ||
+      gate["startingCommit"] !== input.expectedFromHead ||
+      gate["resultCommit"] !== repositoryHead ||
+      gate["gateExitCode"] !== 0 ||
+      gate["failCount"] !== 0 ||
+      typeof gate["passCount"] !== "number" ||
+      gate["passCount"] <= 0
+    )
+      throw new Error("protected completion lacks runner-owned green gate evidence");
+    const receipts = workerResult["gitReceipts"];
+    if (!Array.isArray(receipts) || receipts.length === 0)
+      throw new Error("protected completion lacks a result receipt chain");
+    let receiptHead = input.expectedFromHead;
+    for (const value of receipts) {
+      if (
+        !object(value) ||
+        value["kind"] !== "cq-git-change-receipt" ||
+        value["taskId"] !== taskIdFromRef(input.completedTaskRef) ||
+        value["oldHead"] !== receiptHead ||
+        typeof value["newHead"] !== "string" ||
+        !FULL_SHA.test(value["newHead"])
+      )
+        throw new Error("protected completion result receipt chain is not contiguous");
+      receiptHead = value["newHead"];
+    }
+    if (receiptHead !== repositoryHead)
+      throw new Error("protected completion result receipt chain skips the repository head");
+    if (
+      this.deps.isCommitRetained === undefined ||
+      !(await this.deps.isCommitRetained({
+        repositoryHead,
+        resultCommit: input.expectedFromHead,
+      }))
+    )
+      throw new Error("activation continuation is not a retained fast-forward transition");
+    if (this.deps.readCompletionReview === undefined)
+      throw new Error("terminal implementation review authority is unavailable");
+    const review = await this.deps.readCompletionReview(completion.reviewRef);
+    const expectedReviewEvidence = {
+      version: 1,
+      completionRef: completion.completionRef,
+      taskRef: completion.taskRef,
+      resultCommit: completion.resultCommit,
+      evidenceFingerprint: completion.evidenceFingerprint,
+      reviewAttemptRefs: completion.reviewAttemptRefs,
+    };
+    let observedReviewEvidence: unknown;
+    try {
+      observedReviewEvidence = JSON.parse(review.implementationEvidence);
+    } catch {
+      throw new Error("terminal go-ahead review has malformed implementation evidence");
+    }
+    if (
+      review.reviewRef !== completion.reviewRef ||
+      review.status !== "go-ahead" ||
+      canonical(observedReviewEvidence) !== canonical(expectedReviewEvidence)
+    )
+      throw new Error("terminal go-ahead review is absent or does not bind the completion");
+    const requirementRef = opaqueRef("cq-implementation-evidence-activation-requirement", {
+      request: input,
+      manifestDigest,
+      sourceDigest: manifest.sourceDigest,
+      semanticManifestDigest,
+      priorActivationRef: priorActivation.activationRef,
+    });
+    const activationRef = opaqueRef("cq-implementation-evidence-activation", {
+      requirementRef,
+      manifestId: manifest.manifestId,
+      manifestDigest,
+      repositoryHead,
+      priorActivationRef: priorActivation.activationRef,
+      evidenceFingerprint: priorActivation.evidenceFingerprint,
+      auditRefs: priorActivation.auditRefs,
+      taskRefs: priorActivation.taskRefs,
+    });
+    const continuationRef = opaqueRef("cq-implementation-evidence-activation-continuation", {
+      request: input,
+      previousContinuationRef: prior.continuationRef,
+      previousRequirementRef: prior.requirementRef,
+      requirementRef,
+      activationRef,
+    });
+    if (
+      !ACTIVATION_REQUIREMENT_REF.test(requirementRef) ||
+      !ACTIVATION_REF.test(activationRef) ||
+      !ACTIVATION_CONTINUATION_REF.test(continuationRef)
+    )
+      throw new Error("activation continuation produced malformed protected references");
+    const continuedAt = this.now();
+    const continuation: ImplementationEvidenceActivationContinuationRecord = {
+      version: 1,
+      continuationRef,
+      previousContinuationRef: prior.continuationRef,
+      previousRequirementRef: prior.requirementRef,
+      requirementRef,
+      activationRef,
+      taskRef: input.completedTaskRef,
+      completionRef: completion.completionRef,
+      fromHead: input.expectedFromHead,
+      repositoryHead,
+      operationId: input.operationId,
+      requestDigest,
+      author: input.author,
+      session: input.session ?? null,
+      continuedAt,
+    };
+    return await this.deps.store[mutateEvidence](async (state) => {
+      const racedReplay = Object.values(state.activationContinuations).find(
+        (record) => record.operationId === input.operationId,
+      );
+      if (racedReplay !== undefined) {
+        if (racedReplay.requestDigest !== requestDigest)
+          throw new Error(
+            `operation_id ${input.operationId} was reused with a different continuation`,
+          );
+        return response(racedReplay, "existing");
+      }
+      if (
+        canonical(state.activationRequirements[prior.requirementRef]) !== canonical(prior) ||
+        canonical(state.activations[priorActivation.activationRef]) !== canonical(priorActivation) ||
+        canonical(state.completions[completion.completionRef]) !== canonical(completion)
+      )
+        throw new Error("activation continuation authority changed before append");
+      if (
+        Object.values(state.activationContinuations).some(
+          (record) => record.completionRef === completion.completionRef,
+        )
+      )
+        throw new Error("completion is already bound to another activation transition");
+      if ((await this.deps.repositoryHead()) !== repositoryHead)
+        throw new Error("repository head changed before activation continuation append");
+      const currentManifest = await this.auditManifest(input.manifestId, manifestDigest);
+      if (
+        implementationAuditManifestSemanticDigest(currentManifest.manifest) !==
+        semanticManifestDigest
+      )
+        throw new Error("packaged v2 activation semantics changed before continuation append");
+      state.activationRequirements[requirementRef] = {
+        ...prior,
+        requirementRef,
+        manifestDigest,
+        sourceDigest: manifest.sourceDigest,
+        semanticManifestDigest,
+        boundaryCommit: repositoryHead,
+        state: "fulfilled",
+        activationRef,
+        previousRequirementRef: prior.requirementRef,
+        continuationRef,
+        operationId: input.operationId,
+        requestDigest,
+        author: input.author,
+        session: input.session ?? null,
+        armedAt: continuedAt,
+        fulfilledAt: continuedAt,
+      };
+      state.activations[activationRef] = {
+        ...priorActivation,
+        activationRef,
+        requirementRef,
+        manifestDigest,
+        repositoryHead,
+        author: input.author,
+        session: input.session ?? null,
+        activatedAt: continuedAt,
+      };
+      state.activationContinuations[continuationRef] = continuation;
+      return response(continuation, "continued");
+    });
   }
 
   async assertGenericTaskTerminalizationAllowed(taskRef: string): Promise<void> {
