@@ -256,7 +256,7 @@ measured savings without another batching schema.
 | `prepare_implementation_review_panel` | `purpose-built-small` | Exactly `{ status, panelRef, taskRef, resultCommit, rosterDigest, attemptRefs }`. |
 | `prepare_implementation_review_attempt` | `purpose-built-small` | Exactly `{ status, attemptRef, launch, dispatch? }`; `dispatch` exists only for native launch. |
 | `execute_external_implementation_review_attempt` | `purpose-built-small` | Exactly `{ status, attemptRef, executionRef }`. |
-| `finalize_implementation_review_attempt` | `purpose-built-small` | Exactly `{ status, attemptRef, terminalState, outcome }`; `outcome` is either the validated reviewer verdict or an authenticated operational abstention. |
+| `finalize_implementation_review_attempt` | `purpose-built-small` | `{status,attemptRef,terminalState,outcome}`. |
 | `prepare_implementation_review_fallback` | `purpose-built-small` | Exactly `{ status, attemptRef, dispatch }` for the sole authenticated native fallback. |
 | `prepare_implementation_audit_panel` | `purpose-built-small` | Exactly `{ status, panelRef, manifestId, recordKey, taskRef, rosterDigest, attemptRefs }`. |
 | `prepare_implementation_audit_attempt` | `purpose-built-small` | Exactly `{ status, attemptRef, launch, dispatch? }`; `dispatch` exists only for native launch. |
