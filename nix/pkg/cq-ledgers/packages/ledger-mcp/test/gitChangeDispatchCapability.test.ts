@@ -1128,7 +1128,7 @@ describe("dispatch-bound Git change capability", () => {
     });
     expect(lineageFree).toMatchObject({
       accepted: false,
-      path: "implementationEvidenceBootstrap",
+      path: "reprepareOf",
     });
 
     const foreign = await capability.prepare({
@@ -1139,7 +1139,7 @@ describe("dispatch-bound Git change capability", () => {
       timeoutMs: 600_000,
       expectedChild: { childId: "t2896-foreign", runId: "t2896-foreign" },
     });
-    expect(foreign).toMatchObject({ accepted: false });
+    expect(foreign).toMatchObject({ accepted: false, path: "recovery" });
 
     const recovered = await capability.prepare({
       roleId: "implement-worker",

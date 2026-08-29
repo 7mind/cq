@@ -925,6 +925,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       }
       let gitEffectBinding;
       let resolvedReprepareOf = input.reprepareOf;
+      let resolvedImplementationEvidenceBootstrapRef = input.implementationEvidenceBootstrap;
       let continuationClaim;
       let journalRecoveryReservation;
       let prepareLockBinding: ManagedWorktreeDispatchBinding | undefined;
@@ -985,57 +986,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         const fence = await matchingFence(taskId, resolvedGitEffectBinding.handleFingerprint);
         if (fence !== null && !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)) {
           return journalRecoveryRequiredForFence(fence);
-        }
-        if (roleId === "implement-worker" && options.implementationEvidenceStore !== undefined) {
-          let requiredBootstrap;
-          try {
-            requiredBootstrap = await implementationEvidenceBootstrapAdmissionForTask(
-              options.implementationEvidenceStore,
-              `${TASKS_LEDGER}:${taskId}`,
-            );
-          } catch (error) {
-            return rejectLaunch(
-              "implementationEvidenceBootstrap",
-              error instanceof Error ? error.message : String(error),
-            );
-          }
-          if (
-            requiredBootstrap !== null &&
-            input.implementationEvidenceBootstrap !== requiredBootstrap.bootstrapRef
-          )
-            return rejectLaunch(
-              "implementationEvidenceBootstrap",
-              "fresh historical evidence dispatch must consume its exact bootstrap ref",
-            );
-        }
-        if (input.implementationEvidenceBootstrap !== undefined) {
-          if (
-            dispatchRecord["round"] !== 0 ||
-            Object.hasOwn(dispatchRecord, "priorResultCommit") ||
-            dispatchRecord["baseCommit"] !== resolvedGitEffectBinding.baseCommit ||
-            dispatchRecord["startingCommit"] !== resolvedGitEffectBinding.baseCommit
-          )
-            return rejectLaunch(
-              "implementationEvidenceBootstrap",
-              "historical bootstrap admission requires the fresh round-zero managed base",
-            );
-          try {
-            const admission = await assertImplementationEvidenceBootstrapDispatchAdmission(
-              options.implementationEvidenceStore!,
-              input.implementationEvidenceBootstrap,
-              `${TASKS_LEDGER}:${taskId}`,
-            );
-            if (admission.repositoryHead !== resolvedGitEffectBinding.baseCommit)
-              return rejectLaunch(
-                "implementationEvidenceBootstrap",
-                "historical bootstrap admission repository head differs from the managed base",
-              );
-          } catch (error) {
-            return rejectLaunch(
-              "implementationEvidenceBootstrap",
-              error instanceof Error ? error.message : String(error),
-            );
-          }
         }
         if (roleId === "implement-conflict-resolver") {
           const resolverState = conflictState as unknown as GitRebaseConflictState;
@@ -1227,6 +1177,8 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             );
           }
           resolvedReprepareOf = recovery.reprepareOf;
+          resolvedImplementationEvidenceBootstrapRef =
+            recovery.implementationEvidenceBootstrapRef;
           gitEffectBinding =
             recovery.gitReceipts.length === 0
               ? resolvedGitEffectBinding
@@ -1400,6 +1352,58 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             }
           }
         }
+        if (roleId === "implement-worker" && options.implementationEvidenceStore !== undefined) {
+          let requiredBootstrap;
+          try {
+            requiredBootstrap = await implementationEvidenceBootstrapAdmissionForTask(
+              options.implementationEvidenceStore,
+              `${TASKS_LEDGER}:${taskId}`,
+            );
+          } catch (error) {
+            return rejectLaunch(
+              "implementationEvidenceBootstrap",
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+          if (
+            requiredBootstrap !== null &&
+            resolvedImplementationEvidenceBootstrapRef !== requiredBootstrap.bootstrapRef
+          )
+            return rejectLaunch(
+              "implementationEvidenceBootstrap",
+              "fresh historical evidence dispatch must consume its exact bootstrap ref",
+            );
+          if (resolvedImplementationEvidenceBootstrapRef !== undefined) {
+            if (
+              input.recovery === undefined &&
+              (dispatchRecord["round"] !== 0 ||
+                Object.hasOwn(dispatchRecord, "priorResultCommit") ||
+                dispatchRecord["baseCommit"] !== resolvedGitEffectBinding.baseCommit ||
+                dispatchRecord["startingCommit"] !== resolvedGitEffectBinding.baseCommit)
+            )
+              return rejectLaunch(
+                "implementationEvidenceBootstrap",
+                "historical bootstrap admission requires the fresh round-zero managed base",
+              );
+            try {
+              const admission = await assertImplementationEvidenceBootstrapDispatchAdmission(
+                options.implementationEvidenceStore,
+                resolvedImplementationEvidenceBootstrapRef,
+                `${TASKS_LEDGER}:${taskId}`,
+              );
+              if (admission.repositoryHead !== resolvedGitEffectBinding.baseCommit)
+                return rejectLaunch(
+                  "implementationEvidenceBootstrap",
+                  "historical bootstrap admission repository head differs from the managed base",
+                );
+            } catch (error) {
+              return rejectLaunch(
+                "implementationEvidenceBootstrap",
+                error instanceof Error ? error.message : String(error),
+              );
+            }
+          }
+        }
       }
       const request = {
         namespace,
@@ -1417,9 +1421,12 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         ...(gitEffectBinding === undefined ? {} : { gitEffectBinding }),
         ...(continuationClaim === undefined ? {} : { continuationClaim }),
         ...(journalRecoveryReservation === undefined ? {} : { journalRecoveryReservation }),
-        ...(input.implementationEvidenceBootstrap === undefined
+        ...(resolvedImplementationEvidenceBootstrapRef === undefined
           ? {}
-          : { implementationEvidenceBootstrapRef: input.implementationEvidenceBootstrap }),
+          : {
+              implementationEvidenceBootstrapRef:
+                resolvedImplementationEvidenceBootstrapRef,
+            }),
       } as const;
       const fingerprint = prepareDispatchRequestDigest(request);
       const allocateOrReplay = async (): Promise<PrepareDispatchOutcome> => {

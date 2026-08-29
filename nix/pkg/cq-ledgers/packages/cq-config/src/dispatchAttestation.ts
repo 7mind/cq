@@ -116,6 +116,8 @@ const GIT_CHANGE_CAPABILITY_RE = /^cq_git_[A-Za-z0-9_-]{43,}$/;
 const GIT_CONFLICT_CAPABILITY_RE = /^cq_conflict_[A-Za-z0-9_-]{43,}$/;
 const DISPATCH_RECOVERY_REFERENCE_RE = /^cq-dispatch-recovery:v1:[0-9a-f]{64}$/;
 const DISPATCH_CONTINUATION_REFERENCE_RE = /^cq-dispatch-continuation:v1:[0-9a-f]{64}$/;
+const IMPLEMENTATION_EVIDENCE_BOOTSTRAP_REFERENCE_RE =
+  /^cq-implementation-evidence-bootstrap:v1:[0-9a-f]{64}$/;
 const PROJECT_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const IDEMPOTENCY_KEY_MAX_LENGTH = 256;
 
@@ -1024,6 +1026,7 @@ export interface DispatchRecoveryBinding {
   readonly gitEffectBinding: DispatchGitEffectBinding;
   readonly liveTip: string;
   readonly gitReceipts: readonly DispatchGitChangeReceipt[];
+  readonly implementationEvidenceBootstrapRef?: string;
 }
 
 /** Trusted resolution used internally by reprepare; public callers receive only its projection. */
@@ -1034,6 +1037,7 @@ export interface ResolvedDispatchRecovery {
   readonly gitEffectBinding: DispatchGitEffectBinding;
   readonly liveTip: string;
   readonly gitReceipts: readonly DispatchGitChangeReceipt[];
+  readonly implementationEvidenceBootstrapRef?: string;
 }
 
 /** The trusted parent lineage authorized to continue one consumed worker generation. */
@@ -1163,6 +1167,8 @@ export interface AttestationEnvelope {
   readonly gitChangeCapabilityHash?: string;
   readonly gitConflictCapabilityHash?: string;
   readonly gitEffectBinding?: DispatchGitEffectBinding;
+  /** Server-bound historical-evidence bootstrap authority, never materialized to the child. */
+  readonly implementationEvidenceBootstrapRef?: string;
   readonly createdAt: string;
   readonly storedAt?: string;
   readonly gateSubmittedAt?: string;
@@ -1745,6 +1751,17 @@ export function assertDispatchRecoveryBinding(
       "recovery receipt closure does not end at its authenticated live tip",
     );
   }
+  if (
+    value.implementationEvidenceBootstrapRef !== undefined &&
+    !IMPLEMENTATION_EVIDENCE_BOOTSTRAP_REFERENCE_RE.test(
+      value.implementationEvidenceBootstrapRef,
+    )
+  ) {
+    throw new AttestationContractError(
+      `${path}.implementationEvidenceBootstrapRef`,
+      "expected an opaque implementation evidence bootstrap reference",
+    );
+  }
   const normalizedWithoutReference = Object.freeze({
     kind: "cq-dispatch-recovery-binding" as const,
     version: 1 as const,
@@ -1755,6 +1772,9 @@ export function assertDispatchRecoveryBinding(
     gitEffectBinding,
     liveTip: value.liveTip,
     gitReceipts: Object.freeze([...receipts]),
+    ...(value.implementationEvidenceBootstrapRef === undefined
+      ? {}
+      : { implementationEvidenceBootstrapRef: value.implementationEvidenceBootstrapRef }),
   });
   const expectedReference = dispatchRecoveryReferenceOf(normalizedWithoutReference);
   if (value.recoveryReference !== expectedReference) {
@@ -1983,6 +2003,9 @@ function createDispatchRecoveryBinding(
     gitEffectBinding: row.gitEffectBinding,
     liveTip,
     gitReceipts: Object.freeze([...receipts]),
+    ...(row.implementationEvidenceBootstrapRef === undefined
+      ? {}
+      : { implementationEvidenceBootstrapRef: row.implementationEvidenceBootstrapRef }),
   });
   return Object.freeze({
     ...withoutReference,
@@ -2149,6 +2172,20 @@ export function prepareDispatch(
   const catalogHash = assertDigest(request.catalogHash, "catalogHash");
   const expectedChild = assertChildIdentity(request.expectedChild, "expectedChild");
   const gitEffectBinding = assertGitEffectBinding(request.gitEffectBinding, validation.roleId);
+  const implementationEvidenceBootstrapRef = request.implementationEvidenceBootstrapRef;
+  if (
+    implementationEvidenceBootstrapRef !== undefined &&
+    (!IMPLEMENTATION_EVIDENCE_BOOTSTRAP_REFERENCE_RE.test(
+      implementationEvidenceBootstrapRef,
+    ) ||
+      validation.roleId !== "implement-worker" ||
+      gitEffectBinding === undefined)
+  ) {
+    throw new AttestationContractError(
+      "implementationEvidenceBootstrapRef",
+      "expected protected implement-worker bootstrap authority",
+    );
+  }
   const inputDigest = dispatchPayloadDigest(preparedInput);
   const requestedOverlays = new Map(
     (request.overlays ?? []).map((application) => [application.overlayId, application]),
@@ -2258,6 +2295,9 @@ export function prepareDispatch(
       ? {}
       : { gitConflictCapabilityHash: gitConflictCapabilityHash(gitConflictCapability.token) }),
     ...(gitEffectBinding === undefined ? {} : { gitEffectBinding }),
+    ...(implementationEvidenceBootstrapRef === undefined
+      ? {}
+      : { implementationEvidenceBootstrapRef }),
     ...(request.continuationClaim === undefined
       ? {}
       : {
@@ -3981,6 +4021,9 @@ function resolvedRecoveryOf(binding: DispatchRecoveryBinding): ResolvedDispatchR
     gitEffectBinding: binding.gitEffectBinding,
     liveTip: binding.liveTip,
     gitReceipts: Object.freeze([...binding.gitReceipts]),
+    ...(binding.implementationEvidenceBootstrapRef === undefined
+      ? {}
+      : { implementationEvidenceBootstrapRef: binding.implementationEvidenceBootstrapRef }),
   });
 }
 
