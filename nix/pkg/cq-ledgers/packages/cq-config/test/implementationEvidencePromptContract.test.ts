@@ -25,6 +25,10 @@ function assertContract(source: string): void {
     "manifest-derived bootstrap mode",
     "process only the exact mapped `t-evidence` task",
     "Stop `user-action-required` after recording its terminal completion",
+    '`{ kind: "verdict", verdict }`',
+    '`{ kind: "operational-abstention" }`',
+    "Use the returned validated `outcome.verdict`",
+    "correction redispatch",
   ])
     expect(compact).toContain(token);
   expect(compact).toContain("not `update_item` or `create_item`");
@@ -50,6 +54,11 @@ describe("implementation evidence orchestration prompt contract [BA]", () => {
       "restart recovery",
       "blocks every other repository\nmerge",
       "permits another repository merge",
+    ],
+    [
+      "bounded review outcome",
+      "Use the returned validated\n`outcome.verdict`",
+      "Infer reviewer fields from terminalState",
     ],
   ])("rejects the %s mutation", async (_name, from, to) => {
     const source = await readFile(commandPath, "utf8");

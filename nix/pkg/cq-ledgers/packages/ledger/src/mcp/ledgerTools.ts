@@ -1324,7 +1324,7 @@ export function createLedgerMcpToolSpecifications(
 
   const finalizeImplementationReviewAttemptTool = tool(
     "finalize_implementation_review_attempt",
-    "Derive one terminal review-attempt receipt from its consumed native dispatch or trusted external execution.",
+    "Derive one terminal review-attempt receipt and bounded validated outcome from its consumed native dispatch or trusted external execution.",
     {
       attempt_ref: z.string().regex(/^cq-implementation-review-attempt:v1:[0-9a-f]{64}$/),
       ...implementationOperation,

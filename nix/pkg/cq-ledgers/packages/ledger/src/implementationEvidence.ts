@@ -1430,6 +1430,16 @@ export async function implementationEvidenceActivationStatusFromStore(
   };
 }
 
+function finalizedReviewOutcome(attempt: ImplementationReviewAttemptRecord) {
+  if (attempt.terminalState === null)
+    throw new Error("implementation review attempt is not terminal");
+  if (attempt.terminalState === "operational-abstention")
+    return { kind: "operational-abstention" as const };
+  if (attempt.verdict === null)
+    throw new Error("terminal implementation review attempt omitted its verdict");
+  return { kind: "verdict" as const, verdict: attempt.verdict };
+}
+
 export class ImplementationEvidenceService {
   private readonly deps: ImplementationEvidenceServiceDependencies;
   private readonly now: () => string;
@@ -2851,6 +2861,7 @@ export class ImplementationEvidenceService {
         status: "existing" as const,
         attemptRef: attempt.attemptRef,
         terminalState: attempt.terminalState,
+        outcome: finalizedReviewOutcome(attempt),
       };
     }
     let verdict: DispatchJSONValue | null = null;
@@ -2895,6 +2906,7 @@ export class ImplementationEvidenceService {
           status: "existing" as const,
           attemptRef: current.attemptRef,
           terminalState: current.terminalState,
+          outcome: finalizedReviewOutcome(current),
         };
       }
       if (current.terminalState !== null)
@@ -2906,7 +2918,15 @@ export class ImplementationEvidenceService {
         input.operationId,
         requestDigest,
       );
-      return { status: "recorded" as const, attemptRef: current.attemptRef, terminalState };
+      return {
+        status: "recorded" as const,
+        attemptRef: current.attemptRef,
+        terminalState,
+        outcome:
+          verdict === null
+            ? { kind: "operational-abstention" as const }
+            : { kind: "verdict" as const, verdict },
+      };
     });
   }
 

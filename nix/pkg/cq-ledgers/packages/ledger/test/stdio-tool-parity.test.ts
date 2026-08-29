@@ -1660,6 +1660,12 @@ function assertRepresentativeContracts(
       projection: "id",
     },
   });
+  expect(responses.get("finalize_implementation_review_attempt")).toEqual({
+    status: "existing",
+    attemptRef: fixture.implementationEvidenceRefs.attemptRef,
+    terminalState: "operational-abstention",
+    outcome: { kind: "operational-abstention" },
+  });
   const predicates = responses.get("derive_predicates") as Record<string, unknown>;
   expect(Object.keys(predicates).sort()).toEqual(
     [

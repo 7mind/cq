@@ -94,6 +94,28 @@ describe("RemoteLedgerClient workset scope (Behavioral-Active Blackbox-Atomic)",
       client: {
         callTool: async ({ name }: { name: string }) => {
           calls.push(name);
+          if (name === "finalize_implementation_review_attempt")
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    status: "existing",
+                    attemptRef: `cq-implementation-review-attempt:v1:${"f".repeat(64)}`,
+                    terminalState: "disapproved",
+                    outcome: {
+                      kind: "verdict",
+                      verdict: {
+                        verdict: "disapprove",
+                        criticism: ["exact correction"],
+                        questions: [],
+                        defects: [],
+                      },
+                    },
+                  }),
+                },
+              ],
+            };
           return { content: [{ type: "text", text: "{}" }] };
         },
       },
@@ -116,6 +138,18 @@ describe("RemoteLedgerClient workset scope (Behavioral-Active Blackbox-Atomic)",
       workerDispatch: { attestationId: "att_worker", generation: 1 },
       operationId: "panel",
       author: "parent",
+    });
+    const reviewOutcome = await remote.finalizeImplementationReviewAttempt({
+      attemptRef: `cq-implementation-review-attempt:v1:${"f".repeat(64)}`,
+      operationId: "review-finalize",
+      author: "parent",
+    });
+    expect(reviewOutcome).toMatchObject({
+      terminalState: "disapproved",
+      outcome: {
+        kind: "verdict",
+        verdict: { criticism: ["exact correction"] },
+      },
     });
     await remote.prepareImplementationAuditPanel({
       manifestId: "historical-v1",
@@ -168,6 +202,7 @@ describe("RemoteLedgerClient workset scope (Behavioral-Active Blackbox-Atomic)",
     });
     expect(calls).toEqual([
       "prepare_implementation_review_panel",
+      "finalize_implementation_review_attempt",
       "prepare_implementation_audit_panel",
       "prepare_implementation_audit_attempt",
       "execute_external_implementation_audit_attempt",

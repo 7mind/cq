@@ -382,7 +382,13 @@ adapter and prepare-bound input inside the trusted parent. Call
 session })` for every attempt. The finalizer derives its receipt only from the
 bound consumed native dispatch or trusted adapter execution. Callers never
 submit a verdict, abstention, stdout, stderr, exit code, or adapter identity to
-an evidence operation.
+an evidence operation. Require every finalizer response to carry exactly one
+bounded `outcome`: either `{ kind: "verdict", verdict }` or
+`{ kind: "operational-abstention" }`. Use the returned validated
+`outcome.verdict` as the sole source of the attempt's exact criticism,
+questions, and defects for reconciliation and correction redispatch. Never
+infer those fields from `terminalState`, raw process output, task prose, logs,
+or protected store state.
 
 **Sandboxed reviewer gate evidence.** Pass a consumed worker's verified
 `supervisedGateEvidence` through to a sandboxed `implement-reviewer` and require

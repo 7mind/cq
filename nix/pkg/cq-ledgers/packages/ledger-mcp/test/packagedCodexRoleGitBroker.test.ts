@@ -2240,13 +2240,22 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           launch: "native",
           dispatch: round2Review.dispatch,
         });
-        expect(
-          await implementationEvidence.finalizeReviewAttempt({
-            attemptRef,
-            operationId: "t2151_review_finalize_round2_v1",
-            author: "t2151-parent",
-          }),
-        ).toEqual({ status: "recorded", attemptRef, terminalState: "approved" });
+        const finalizedReview = await implementationEvidence.finalizeReviewAttempt({
+          attemptRef,
+          operationId: "t2151_review_finalize_round2_v1",
+          author: "t2151-parent",
+        });
+        expect(finalizedReview).toMatchObject({
+          status: "recorded",
+          attemptRef,
+          terminalState: "approved",
+          outcome: { kind: "verdict" },
+        });
+        if (finalizedReview.outcome.kind !== "verdict")
+          throw new Error("approved review omitted its validated verdict outcome");
+        expect(JSON.stringify(finalizedReview.outcome.verdict)).toBe(
+          JSON.stringify(round2Review.consumed.output),
+        );
         const mergeOperationId = "implement-t2151-merge-r2";
         const completion = await implementationEvidence.prepareCompletion({
           taskRef: `tasks:${taskId}`,

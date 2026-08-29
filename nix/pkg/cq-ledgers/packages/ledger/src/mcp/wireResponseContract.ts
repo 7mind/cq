@@ -341,7 +341,8 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     "Exactly `{ status, attemptRef, executionRef }`.",
   ),
   finalize_implementation_review_attempt: purposeBuiltSmall(
-    "Exactly `{ status, attemptRef, terminalState }`.",
+    "Exactly `{ status, attemptRef, terminalState, outcome }`; `outcome` is either the validated " +
+      "reviewer verdict or an authenticated operational abstention.",
   ),
   prepare_implementation_review_fallback: purposeBuiltSmall(
     "Exactly `{ status, attemptRef, dispatch }` for the sole authenticated native fallback.",

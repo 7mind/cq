@@ -120,5 +120,30 @@ describe("implementation evidence HTTP transport [Behavioral-Active Blackbox-Goo
       status: "existing",
       panelRef: fixture.panel.panelRef,
     });
+    const finalized = await rpc(
+      handlers,
+      {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: "finalize_implementation_review_attempt",
+          arguments: {
+            attempt_ref: fixture.attemptRef,
+            operation_id: "finalize",
+            author: "parent",
+          },
+        },
+      },
+      sessionId,
+      "management",
+    );
+    expect(finalized.response.status).toBe(200);
+    expect(textPayload(finalized.message["result"])).toMatchObject({
+      status: "existing",
+      attemptRef: fixture.attemptRef,
+      terminalState: "approved",
+      outcome: { kind: "verdict", verdict: { verdict: "approve" } },
+    });
   });
 });

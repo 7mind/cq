@@ -405,7 +405,7 @@ export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
   {
     name: "finalize_implementation_review_attempt",
     description:
-      "Derive one terminal review-attempt receipt from its consumed native dispatch or trusted external execution.\n\nAuthoritative response: Exactly `{ status, attemptRef, terminalState }`.",
+      "Derive one terminal review-attempt receipt and bounded validated outcome from its consumed native dispatch or trusted external execution.\n\nAuthoritative response: Exactly `{ status, attemptRef, terminalState, outcome }`; `outcome` is either the validated reviewer verdict or an authenticated operational abstention.",
     inputSchema: {
       type: "object",
       properties: {

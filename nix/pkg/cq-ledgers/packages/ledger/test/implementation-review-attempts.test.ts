@@ -270,6 +270,52 @@ describe("protected implementation review attempts [BG]", () => {
     expect(executions).toBe(1);
   });
 
+  test("returns the validated disapproval verdict needed for correction redispatch", async () => {
+    const expected = verdict("disapprove");
+    const { service } = serviceWith([adapter], async () => ({
+      adapterIdentity: adapter.adapterId,
+      stdout: JSON.stringify(expected),
+      stderr: "private diagnostic",
+      exitCode: 0,
+    }));
+    const panel = await service.prepareReviewPanel({
+      taskRef: "tasks:T2345",
+      resultCommit: RESULT,
+      workerDispatch: WORKER,
+      operationId: "panel-disapproval-outcome",
+      author: "parent",
+    });
+    const attemptRef = panel.attemptRefs[0]!;
+    await service.prepareReviewAttempt({
+      panelRef: panel.panelRef,
+      attemptRef,
+      operationId: "prepare-disapproval-outcome",
+      author: "parent",
+    });
+    await service.executeExternalReviewAttempt({
+      attemptRef,
+      operationId: "execute-disapproval-outcome",
+      author: "parent",
+    });
+    const finalizeInput = {
+      attemptRef,
+      operationId: "finalize-disapproval-outcome",
+      author: "parent",
+    } as const;
+    expect(await service.finalizeReviewAttempt(finalizeInput)).toEqual({
+      status: "recorded",
+      attemptRef,
+      terminalState: "disapproved",
+      outcome: { kind: "verdict", verdict: expected },
+    });
+    expect(await service.finalizeReviewAttempt(finalizeInput)).toEqual({
+      status: "existing",
+      attemptRef,
+      terminalState: "disapproved",
+      outcome: { kind: "verdict", verdict: expected },
+    });
+  });
+
   test("reserves an adapter execution before launching the trusted shellout", async () => {
     let executions = 0;
     let release!: () => void;
