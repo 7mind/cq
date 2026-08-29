@@ -22,6 +22,9 @@ function assertContract(source: string): void {
     "CQ_IMPLEMENTATION_COMPLETION_MERGE=<canonical JSON>",
     "supersedes_completion_ref",
     "blocks every other repository merge",
+    "manifest-derived bootstrap mode",
+    "process only the exact mapped `t-evidence` task",
+    "Stop `user-action-required` after recording its terminal completion",
   ])
     expect(compact).toContain(token);
   expect(compact).toContain("not `update_item` or `create_item`");

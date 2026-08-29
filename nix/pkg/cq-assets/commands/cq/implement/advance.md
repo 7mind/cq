@@ -120,10 +120,42 @@ the effect boundaries required by the shared contract.
 
 ## 0. Activate protected historical implementation evidence
 
-After the ledger service is available and before deriving ready work, probe
-`d347-implementation-evidence-activation-v1` with the current goal reference,
-manifest id, and expected repository head, binding the full observed integration
-HEAD. Continue to ordinary reconciliation only from `active`.
+Before the ordinary activation probe, resolve the selected goal's exact current
+finalized-manifest mappings for `t-evidence`, `t-historical-evidence`, and
+`t-activate-evidence` and read those three tasks. When replacement evidence is
+not active, use this **manifest-derived bootstrap mode** and no other readiness
+path:
+
+- while the exact mapped `t-evidence` task is `planned`, derive the ready set
+  through the ordinary §1 rules, require that task to be ready, and process only
+  the exact mapped `t-evidence` task through §§3–7. No other task may prepare,
+  dispatch, review, or merge in that pass. Stop `user-action-required` after
+  recording its terminal completion so the user can deploy/restart its exact
+  result before the next bootstrap step;
+- after `t-evidence` is `done`, admit the exact mapped
+  `t-historical-evidence` task only through the deployed management service's
+  authenticated bootstrap authority returned for the same goal, finalized
+  manifest, and repository head. Missing, stale, local-only, predecessor, or
+  mismatched authority stops before worktree preparation. After recording its
+  terminal completion, stop `user-action-required` for deployment/restart at
+  that exact result;
+- after both Git tasks are `done`, process only the exact mapped
+  `t-activate-evidence` strict operator-action task through §2. Materialize its
+  pending action and user handoff before requiring activation to be active.
+
+This bootstrap mode never treats task prose, a local checkout, a generic write,
+or patch/tree equivalence as authority. A missing or ambiguous mapping, a
+non-strict activation envelope, a surplus selected task, or any task-state
+combination outside the three cases above stops closed. Once the exact
+activation action is verified and complete, leave bootstrap mode and require
+the ordinary active probe below.
+
+After the ledger service is available and before deriving ordinary ready work,
+probe the exact implementation-evidence activation manifest selected by the
+current finalized mapping with the current goal reference, manifest id, and
+expected repository head, binding the full observed integration HEAD. Never
+fall back to an older packaged manifest. Continue to ordinary reconciliation
+only from `active`.
 
 For `absent`, call `arm_implementation_evidence_activation` with the same goal,
 manifest, head, one stable operation id, author, and session. Accept only the
@@ -131,7 +163,7 @@ exact finalized-manifest mappings returned for `t-evidence`,
 `t-historical-evidence`, and `t-activate-evidence`; never substitute predecessor
 task literals. The first two tasks must already be done, the activation task
 must carry the strict `CQ-OPERATOR-ACTION v1
-implementation-evidence-activation.` envelope, and the frozen boundary must
+activate-implementation-evidence.` envelope, and the frozen boundary must
 equal the observed head.
 
 For every packaged record not already backed by a mechanically sufficient
