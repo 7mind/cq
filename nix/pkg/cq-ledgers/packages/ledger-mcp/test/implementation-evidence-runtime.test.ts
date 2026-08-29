@@ -119,6 +119,15 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
     expect(source).toContain("options.readAuditManifest ??");
   });
 
+  test("recognizes the finalized activation task action key", async () => {
+    const source = await readFile(
+      new URL("../src/implementationEvidenceRuntime.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain('actionKey !== "activate-implementation-evidence"');
+    expect(source).not.toContain('actionKey !== "implementation-evidence-activation"');
+  });
+
   test("reserves production reviewer time for the canonical gate [WA]", async () => {
     const source = await readFile(
       new URL("../src/implementationEvidenceRuntime.ts", import.meta.url),

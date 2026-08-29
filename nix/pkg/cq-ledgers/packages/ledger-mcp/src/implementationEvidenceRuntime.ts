@@ -684,7 +684,7 @@ export function createProductionImplementationEvidenceService(
       );
       const activationTaskId = mappings.activationTaskRef.slice(`${TASKS_LEDGER}:`.length);
       const activationTask = store.fetchItem(TASKS_LEDGER, activationTaskId);
-      if (operatorActionDirectiveForTask(activationTask)?.actionKey !== "implementation-evidence-activation")
+      if (operatorActionDirectiveForTask(activationTask)?.actionKey !== "activate-implementation-evidence")
         throw new Error("activation task lacks the strict implementation-evidence operator envelope");
       const observations = [];
       for (const { id } of published.tasks) {
