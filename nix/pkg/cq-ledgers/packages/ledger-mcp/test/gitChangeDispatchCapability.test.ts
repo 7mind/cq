@@ -28,6 +28,7 @@ import {
 } from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
+import { createImplementationEvidenceFixture } from "../../ledger/test/implementationEvidenceTestSupport.js";
 
 const exec = promisify(execFile);
 const roots: string[] = [];
@@ -1022,6 +1023,137 @@ describe("dispatch-bound Git change capability", () => {
     });
     expect(await git(managed.handle.absolutePath, ["rev-parse", "HEAD"])).toBe(receipt.newHead);
     expect(receipt.generation).toBe(first.handle.generation);
+  });
+
+  test("bootstrap-bound parent-loss recovery reuses only the sealed original admission [Behavioral-Active, Effectual-GoodCommunication]", async () => {
+    const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), "t2896-bootstrap-recovery-"));
+    roots.push(repositoryRoot);
+    await git(repositoryRoot, ["init", "-q"]);
+    await fs.writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
+    await git(repositoryRoot, ["add", "file.txt"]);
+    await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
+    const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+    const stateDir = path.join(repositoryRoot, ".manager-state");
+    const managed = await prepareManagedWorktree(
+      { repositoryRoot, taskId: "T2896", baseCommit },
+      { stateDir, skipInstall: true, bunWorkspaceRoot: repositoryRoot },
+    );
+    if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
+    const fixture = await createImplementationEvidenceFixture(undefined, {
+      repositoryHead: baseCommit,
+      bootstrapHistoricalTaskId: "T2896",
+    });
+    const bootstrap = await fixture.service.advanceEvidenceBootstrap({
+      goalRef: "goals:G176",
+      finalizedManifestDigest: "f".repeat(64),
+      expectedRepositoryHead: baseCommit,
+      expectedPhase: "historical-dispatch",
+      operationId: "admit-t2896-recovery",
+      author: "parent",
+    });
+    const capability = createDispatchCapability({
+      backend: new InMemoryAttestationBackend(new InMemoryAttestationStore(NAMESPACE)),
+      promptArtifactStore: artifactStore("codex"),
+      repositoryRoot,
+      worktreeStateDir: stateDir,
+      implementationEvidenceStore: fixture.store,
+      now: () => "2026-08-29T20:00:00.000Z",
+      randomBytes: sequentialDispatchRandomBytes(2896),
+    });
+    const workerInput = (round: number, startingCommit: string) => ({
+      taskId: "T2896",
+      headline: "Recover protected historical evidence",
+      description: "Retain the original bootstrap admission across a parent-lost report.",
+      acceptance: "Only the sealed recovery lineage may advance from the brokered tip.",
+      worktreePath: managed.handle.absolutePath,
+      branch: managed.handle.branch,
+      baseCommit,
+      round,
+      startingCommit,
+      ...(round === 0 ? {} : { priorResultCommit: startingCommit }),
+    });
+    const first = await capability.prepare({
+      roleId: "implement-worker",
+      input: workerInput(0, baseCommit),
+      implementationEvidenceBootstrap: bootstrap.bootstrapRef,
+      idempotencyKey: "T2896-bootstrap-parent-lost-r0",
+      timeoutMs: 600_000,
+      expectedChild: { childId: "t2896-lost-r0", runId: "t2896-lost-r0" },
+    });
+    if (!first.accepted || first.prepared.gitChangeCapability === undefined) {
+      throw new Error("bootstrap worker did not receive Git authority");
+    }
+    await capability.fetchInput({
+      ...first.handle,
+      inputCapability: first.prepared.inputCapability,
+    });
+    await fs.writeFile(path.join(managed.handle.absolutePath, "file.txt"), "after\n");
+    if (capability.gitCommit === undefined) throw new Error("git_commit was not wired");
+    const receipt = await capability.gitCommit({
+      ...first.handle,
+      gitChangeCapability: first.prepared.gitChangeCapability,
+      operationId: "T2896-bootstrap-parent-lost-change",
+      expectedHead: baseCommit,
+      message: "advance protected historical worker",
+      changes: [
+        {
+          kind: "modify",
+          path: "file.txt",
+          oldState: { mode: "100644", digest: sha256("before\n") },
+          newState: { mode: "100644", digest: sha256("after\n") },
+        },
+      ],
+    });
+    await capability.abort({ ...first.handle, reason: "parent-lost" });
+    const liveBinding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot,
+        taskId: managed.handle.taskId,
+        worktreePath: managed.handle.absolutePath,
+        branch: managed.handle.branch,
+      },
+      { stateDir },
+    );
+    if (liveBinding === null || capability.resolveRecovery === undefined) {
+      throw new Error("managed recovery resolution was not wired");
+    }
+    const recovery = await capability.resolveRecovery(liveBinding, receipt.newHead);
+
+    const lineageFree = await capability.prepare({
+      roleId: "implement-worker",
+      input: workerInput(1, receipt.newHead),
+      idempotencyKey: "T2896-bootstrap-parent-lost-lineage-free",
+      timeoutMs: 600_000,
+      expectedChild: { childId: "t2896-lineage-free", runId: "t2896-lineage-free" },
+    });
+    expect(lineageFree).toMatchObject({
+      accepted: false,
+      path: "implementationEvidenceBootstrap",
+    });
+
+    const foreign = await capability.prepare({
+      roleId: "implement-worker",
+      input: workerInput(1, receipt.newHead),
+      recovery: `cq-dispatch-recovery:v1:${"f".repeat(64)}`,
+      idempotencyKey: "T2896-bootstrap-parent-lost-foreign",
+      timeoutMs: 600_000,
+      expectedChild: { childId: "t2896-foreign", runId: "t2896-foreign" },
+    });
+    expect(foreign).toMatchObject({ accepted: false });
+
+    const recovered = await capability.prepare({
+      roleId: "implement-worker",
+      input: workerInput(1, receipt.newHead),
+      recovery: recovery.recoveryReference,
+      idempotencyKey: "T2896-bootstrap-parent-lost-r1",
+      timeoutMs: 600_000,
+      expectedChild: { childId: "t2896-lost-r1", runId: "t2896-lost-r1" },
+    });
+    if (!recovered.accepted) throw new Error(recovered.detail);
+    expect(recovered.handle).toEqual({
+      attestationId: first.handle.attestationId,
+      generation: first.handle.generation + 1,
+    });
   });
 
   test("keeps a reloaded inherited prefix server-side and normalizes a suffix-only result", async () => {
