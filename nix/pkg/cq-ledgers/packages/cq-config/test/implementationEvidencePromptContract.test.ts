@@ -29,12 +29,23 @@ function assertContract(source: string): void {
     '`{ kind: "operational-abstention" }`',
     "Use the returned validated `outcome.verdict`",
     "correction redispatch",
+    "get_implementation_evidence_service_status",
+    "advance_implementation_evidence_bootstrap",
+    'expected_phase: "historical-dispatch"',
+    'expected_phase: "activation-handoff"',
+    "implementationEvidenceBootstrap: <bootstrapRef>",
+    "unchanged evidence-task service",
+    "startupBuildCommit",
+    "finalizedReviewOutcomeContract",
+    "dispatch no third Git task",
+    "arm, audit, apply, active proof, operator evidence, and typed completion",
   ])
     expect(compact).toContain(token);
   expect(compact).toContain("not `update_item` or `create_item`");
   expect(compact).not.toContain(
     "cq gate git-effect --operation merge --cwd <repositoryRoot> --task-id <taskId> --commit <resultCommit> ```",
   );
+  expect(compact).not.toContain("activate-evidence-implementation");
 }
 
 describe("implementation evidence orchestration prompt contract [BA]", () => {
@@ -59,6 +70,11 @@ describe("implementation evidence orchestration prompt contract [BA]", () => {
       "bounded review outcome",
       "Use the returned validated\n`outcome.verdict`",
       "Infer reviewer fields from terminalState",
+    ],
+    [
+      "bootstrap dispatch authority",
+      "implementationEvidenceBootstrap: <bootstrapRef>",
+      "bootstrapRef only in task prose",
     ],
   ])("rejects the %s mutation", async (_name, from, to) => {
     const source = await readFile(commandPath, "utf8");

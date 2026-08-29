@@ -132,16 +132,33 @@ path:
   dispatch, review, or merge in that pass. Stop `user-action-required` after
   recording its terminal completion so the user can deploy/restart its exact
   result before the next bootstrap step;
-- after `t-evidence` is `done`, admit the exact mapped
-  `t-historical-evidence` task only through the deployed management service's
-  authenticated bootstrap authority returned for the same goal, finalized
-  manifest, and repository head. Missing, stale, local-only, predecessor, or
-  mismatched authority stops before worktree preparation. After recording its
-  terminal completion, stop `user-action-required` for deployment/restart at
-  that exact result;
-- after both Git tasks are `done`, process only the exact mapped
-  `t-activate-evidence` strict operator-action task through §2. Materialize its
-  pending action and user handoff before requiring activation to be active.
+- after `t-evidence` is `done` and `t-historical-evidence` is `planned`, call
+  `get_implementation_evidence_service_status` through the deployed evidence
+  task's authenticated management service with no caller-supplied goal,
+  manifest, mapping, commit, or action identity. Require protocol version 2;
+  exact operation inventory; `startupBuildCommit` equal to the evidence task's
+  result commit; the observed live repository head; exact frozen digest and
+  mappings; a recognized bootstrap phase; and the exact
+  `finalizedReviewOutcomeContract`. Then call
+  `advance_implementation_evidence_bootstrap` with that returned identity and
+  `expected_phase: "historical-dispatch"`. Accept only `admitted|existing`, one
+  opaque `<bootstrapRef>`, and only the exact historical task. Prepare only that
+  task and pass
+  `implementationEvidenceBootstrap: <bootstrapRef>` to `prepare_dispatch`;
+  missing, stale, local-only, predecessor, replayed, or mismatched authority
+  stops before worktree preparation. After recording its terminal completion,
+  stop `user-action-required` for deployment/restart at that exact result;
+- after both Git tasks are `done`, while the unchanged evidence-task service is
+  still deployed, call `get_implementation_evidence_service_status` again and
+  require the same startup build and frozen identity. Call
+  `advance_implementation_evidence_bootstrap` with the returned identity and
+  `expected_phase: "activation-handoff"`, including when the v2 packaged
+  registry is unavailable. Accept only `operator-action-required|existing`,
+  the exact activation task, canonical action key
+  `activate-implementation-evidence`, expected historical-service commit, and
+  opaque action and handoff references. Materialize no worktree and dispatch no
+  third Git task. Stop `user-action-required` so the user can deploy/restart the
+  historical task's exact result.
 
 This bootstrap mode never treats task prose, a local checkout, a generic write,
 or patch/tree equivalence as authority. A missing or ambiguous mapping, a
@@ -150,12 +167,16 @@ combination outside the three cases above stops closed. Once the exact
 activation action is verified and complete, leave bootstrap mode and require
 the ordinary active probe below.
 
-After the ledger service is available and before deriving ordinary ready work,
-probe the exact implementation-evidence activation manifest selected by the
-current finalized mapping with the current goal reference, manifest id, and
-expected repository head, binding the full observed integration HEAD. Never
-fall back to an older packaged manifest. Continue to ordinary reconciliation
-only from `active`.
+After the user deploys/restarts the historical task result, call
+`get_implementation_evidence_service_status` and require
+`startupBuildCommit` to equal that exact result. Complete, in order, **arm,
+audit, apply, active proof, operator evidence, and typed completion**. Probe the
+exact implementation-evidence activation manifest selected by the current
+finalized mapping with the current goal reference, manifest id, and expected
+repository head, binding the full observed integration HEAD. Never fall back
+to an older packaged manifest. Reject every noncanonical action key and require
+the `activate-implementation-evidence` envelope. Continue to ordinary
+reconciliation only from `active`.
 
 For `absent`, call `arm_implementation_evidence_activation` with the same goal,
 manifest, head, one stable operation id, author, and session. Accept only the
