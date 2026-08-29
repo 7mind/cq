@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "baselineCommit": "5342f4050891231a4b41e6d0278c62c87568d16b",
+  "goalRef": "goals:G176",
+  "taskKeys": ["t-evidence", "t-historical-evidence", "t-activate-evidence"],
+  "knownCriticism": "The replacement must retain the production bootstrap authority across correction redispatch.",
+  "baselineArtifacts": [
+    {
+      "kind": "source-command",
+      "path": "nix/pkg/cq-assets/commands/cq/implement/advance.md",
+      "sha256": "7716a6f0a8ec49f663da22c5429f2d186822d73354fe8680489deefeff80fe71"
+    },
+    {
+      "kind": "generated-command-catalog",
+      "path": "nix/pkg/cq-ledgers/packages/cq-config/src/promptCatalog.gen.ts",
+      "sha256": "3f4412ea8a5f319bca9df07ad8f48c6ac59753fbd652509aec154f8374249c29"
+    },
+    {
+      "kind": "generated-command-surface",
+      "path": "nix/pkg/cq-ledgers/packages/ledger-web/src/agentsCatalogue.gen.ts",
+      "sha256": "812564e2ab9b435989bc9054921ab5c8f19c513b824f5b5b3db98bf4ccc4435d"
+    },
+    {
+      "kind": "management-profile",
+      "path": "nix/pkg/cq-ledgers/packages/cq-config/src/roleToolProfiles.ts",
+      "sha256": "2e10875471d03c45ce7af5b974dc0705539aa371fefd8356140703a2cf3182f7"
+    }
+  ]
+}

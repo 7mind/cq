@@ -12,6 +12,7 @@ import {
   createProductionImplementationEvidenceService,
   verifyProductionImplementation,
 } from "../src/implementationEvidenceRuntime.js";
+import { runProductionBootstrapFixture } from "./fixtures/t2895/productionBootstrapFixture.js";
 
 const RESULT = "b".repeat(40);
 const WORKER = { attestationId: "att_runtime_worker", generation: 1 } as const;
@@ -234,14 +235,8 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
       summary: "verified",
     } as const;
     expect(
-      (
-        await verifyProductionImplementation(
-          root,
-          resultCommit,
-          workerInput,
-          workerOutput,
-        )
-      ).receiptsVerified,
+      (await verifyProductionImplementation(root, resultCommit, workerInput, workerOutput))
+        .receiptsVerified,
     ).toBe(true);
     expect(
       (
@@ -252,16 +247,46 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
       ).receiptsVerified,
     ).toBe(false);
   });
+});
 
+describe("versioned production evidence bootstrap [Behavioral-Active Effectual-GoodCommunication]", () => {
   test("runs the versioned G176 replacement bootstrap from the exact production baseline", async () => {
-    const fixture = JSON.parse(
-      await readFile(
-        new URL("./fixtures/t2895/production-bootstrap-v1.json", import.meta.url),
-        "utf8",
-      ),
-    ) as { readonly baselineCommit: string };
-    expect(fixture.baselineCommit).toBe("5342f4050891231a4b41e6d0278c62c87568d16b");
-  });
+    expect(await runProductionBootstrapFixture()).toEqual({
+      baselineCommit: "5342f4050891231a4b41e6d0278c62c87568d16b",
+      exactBaselineArtifacts: true,
+      baselineSourceSelectedOnlyEvidence: true,
+      baselineManagementProfileUsed: true,
+      ledgerBackend: "xdg",
+      attestationBackend: "fs",
+      workerDispatches: 2,
+      workerTaskIdsMatchFreshMapping: true,
+      workerGenerations: [1, 2],
+      firstReviewState: "disapproved",
+      firstReviewCriticism: [
+        "The replacement must retain the production bootstrap authority across correction redispatch.",
+      ],
+      firstReviewExcludedRawDiagnostics: true,
+      correctionConsumedFinalizedOutcome: true,
+      supervisedGateRuns: 2,
+      secondReviewState: "approved",
+      mergeAcknowledged: true,
+      recordedStatus: "recorded",
+      releaseStatus: "released",
+      worktreesAfterRelease: 0,
+      deploymentHandoffStatus: "user-action-required",
+      bootstrapStatus: "admitted",
+      bootstrapReplayStatus: "existing",
+      bootstrapTaskRefsMatchFreshMapping: true,
+      bootstrapRefValid: true,
+      bootstrapExpectedServiceCommitMatches: true,
+      wrongHeadRejected: true,
+      wrongManifestRejected: true,
+      resultCommitIsFullSha: true,
+      resultDescendsBaseline: true,
+      historicalTaskDispatches: 0,
+      operatorActions: 0,
+    });
+  }, 240_000);
 });
 
 afterEach(async () => {
