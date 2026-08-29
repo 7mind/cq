@@ -33,6 +33,7 @@ const MANAGEMENT_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
   "prepare_implementation_review_fallback",
   "advance_implementation_evidence_bootstrap",
   "get_implementation_evidence_service_status",
+  "continue_implementation_evidence_activation",
   "prepare_implementation_completion",
   "record_implementation_completion",
 ]);

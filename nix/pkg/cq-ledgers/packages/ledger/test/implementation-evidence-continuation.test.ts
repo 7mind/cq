@@ -233,7 +233,10 @@ function snapshot(): ImplementationEvidenceSnapshot {
   };
 }
 
-function fixture(initial = snapshot()) {
+function fixture(
+  initial = snapshot(),
+  faultInjector?: (boundary: string) => Promise<void>,
+) {
   const store = createInMemoryImplementationEvidenceStore(initial);
   const dependencies = {
     store,
@@ -288,6 +291,7 @@ function fixture(initial = snapshot()) {
         reviewAttemptRefs: [`cq-implementation-review-attempt:v1:${"7".repeat(64)}`],
       }),
     }),
+    faultInjector,
   } as never;
   const service = new ImplementationEvidenceService(dependencies);
   return {
@@ -344,6 +348,27 @@ describe("implementation evidence activation continuation [BG]", () => {
     await expect(
       service.continueEvidenceActivation({ ...request, completedTaskRef: "tasks:T3004" }),
     ).rejects.toThrow("operation_id");
+  });
+
+  test("rolls back a failed append and retry survives restart", async () => {
+    let fail = true;
+    const state = fixture(snapshot(), async (boundary) => {
+      if (fail && boundary === "before-activation-continuation-write") {
+        throw new Error("injected continuation failure");
+      }
+    });
+    await expect(state.service.continueEvidenceActivation(request)).rejects.toThrow(
+      "injected continuation failure",
+    );
+    expect(Object.keys((await state.store.snapshot()).activationContinuations)).toHaveLength(0);
+
+    fail = false;
+    const continued = await state.service.continueEvidenceActivation(request);
+    expect(continued.status).toBe("continued");
+    expect(await state.restart().continueEvidenceActivation(request)).toEqual({
+      ...continued,
+      status: "existing",
+    });
   });
 
   test("rejects a head skip, an unobserved gate, and completion reuse", async () => {

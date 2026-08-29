@@ -1424,6 +1424,7 @@ export type ImplementationEvidenceFaultBoundary =
   | "before-implementation-audit-write"
   | "before-activation-write"
   | "before-activation-requirement-fulfillment-write"
+  | "before-activation-continuation-write"
   | "before-audit-manifest-application-write"
   | "after-audit-manifest-application-commit";
 
@@ -3346,6 +3347,10 @@ export class ImplementationEvidenceService {
         semanticManifestDigest
       )
         throw new Error("packaged v2 activation semantics changed before continuation append");
+      await this.fault("before-activation-continuation-write", {
+        operationId: input.operationId,
+        recordRef: continuationRef,
+      });
       state.activationRequirements[requirementRef] = {
         ...prior,
         requirementRef,
