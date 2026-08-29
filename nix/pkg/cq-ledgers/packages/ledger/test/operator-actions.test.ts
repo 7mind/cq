@@ -23,6 +23,7 @@ import {
   type Item,
   type PlanLifecycleStore,
   type PlanDraftManifest,
+  type WorksetOwnedWriteTx,
 } from "../src/index.js";
 import { atomicWrite as productionAtomicWrite } from "../src/store/fsAtomic.js";
 
@@ -171,6 +172,91 @@ const factories: StoreFactory[] = [
 
 afterAll(async () => {
   await Promise.all(dirs.map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+test("operator-action materialization commits only the complete action/handoff pair", async () => {
+  const store = new InMemoryLedgerStore({ now: () => NOW });
+  await store.init();
+  try {
+    const milestone = await store.createMilestone({ title: "atomic materialization" });
+    const goal = await store.createItem("goals", milestone.id, {
+      status: "planned",
+      fields: { title: "goal", description: "goal" },
+    });
+    const task = await store.createItem("tasks", milestone.id, {
+      status: "planned",
+      fields: {
+        headline: "deploy",
+        description:
+          "CQ-OPERATOR-ACTION v1 activate-implementation-evidence. User deploys; parent measures.",
+        ledgerRefs: [`goals:${goal.id}`],
+      },
+    });
+    const atomicStore = store as InMemoryLedgerStore & {
+      runAtomicOwnedMutation<T>(
+        mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>,
+      ): Promise<T>;
+    };
+    const injectedFailure = new Error("injected handoff create failure");
+    const faultedStore = new Proxy(atomicStore, {
+      get(target, property) {
+        if (property === "createItem") {
+          return async (...args: Parameters<LedgerStore["createItem"]>) => {
+            if (args[0] === "handoffs") throw injectedFailure;
+            return await target.createItem(...args);
+          };
+        }
+        if (property === "runAtomicOwnedMutation") {
+          return async <T>(mutate: (tx: WorksetOwnedWriteTx) => T | Promise<T>): Promise<T> =>
+            await target.runAtomicOwnedMutation((tx) =>
+              mutate(
+                new Proxy(tx, {
+                  get(txTarget, txProperty) {
+                    if (txProperty === "createItemOwnerless") {
+                      return (
+                        ...args: Parameters<WorksetOwnedWriteTx["createItemOwnerless"]>
+                      ) => {
+                        if (args[0] === "handoffs") throw injectedFailure;
+                        return txTarget.createItemOwnerless(...args);
+                      };
+                    }
+                    const value = Reflect.get(txTarget, txProperty, txTarget) as unknown;
+                    return typeof value === "function" ? value.bind(txTarget) : value;
+                  },
+                }),
+              ),
+            );
+        }
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as LedgerStore;
+
+    await expect(
+      materializeOperatorAction(faultedStore, {
+        taskId: task.id,
+        expectedOutputIdentity: IDENTITY,
+        expectedEvidence: ["cq ledger implementation-evidence status --json"],
+        author: "parent",
+      }),
+    ).rejects.toBe(injectedFailure);
+    expect(() => store.fetchItem("operatorActions", "OA1")).toThrow();
+    expect(() => store.fetchItem("handoffs", "HO1")).toThrow();
+
+    const created = await materializeOperatorAction(store, {
+      taskId: task.id,
+      expectedOutputIdentity: IDENTITY,
+      expectedEvidence: ["cq ledger implementation-evidence status --json"],
+      author: "parent",
+    });
+    expect(created).toMatchObject({
+      state: "created",
+      action: { id: "OA1", status: "pending" },
+      handoff: { id: "HO1", status: "user-action-required" },
+    });
+  } finally {
+    await store.dispose();
+  }
 });
 
 for (const factory of factories) {
