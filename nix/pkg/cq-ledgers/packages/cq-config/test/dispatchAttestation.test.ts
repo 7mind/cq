@@ -57,6 +57,7 @@ import {
   authorizeDispatchGitConflict,
   authorizeDispatchGitEffect,
   assertAttestationNamespace,
+  assertDispatchContinuationBinding,
   assertDispatchHandle,
   assertDispatchOperationAuthorization,
   assembleDispatchInput,
@@ -2615,7 +2616,11 @@ describe("consumed managed-worker continuation authority", () => {
 
   test("consumption persists one restart-stable association that survives envelope collapse", () => {
     const h = harness();
-    const p = prepared(h, { gitEffectBinding: GIT_EFFECT_BINDING });
+    const implementationEvidenceBootstrapRef = `cq-implementation-evidence-bootstrap:v1:${"f".repeat(64)}`;
+    const p = prepared(h, {
+      gitEffectBinding: GIT_EFFECT_BINDING,
+      implementationEvidenceBootstrapRef,
+    });
     storeOne(h, p);
     expect(() => confirmDispatchCompletion(confirmation(p), h.deps)).toThrow(
       "requires locked continuation evidence",
@@ -2634,6 +2639,15 @@ describe("consumed managed-worker continuation authority", () => {
     expect(continuation.continuationReference).toMatch(
       /^cq-dispatch-continuation:v1:[0-9a-f]{64}$/,
     );
+    expect(continuation.implementationEvidenceBootstrapRef).toBe(
+      implementationEvidenceBootstrapRef,
+    );
+    expect(() =>
+      assertDispatchContinuationBinding({
+        ...envelopeOf(h, p).dispatchContinuationBinding!,
+        implementationEvidenceBootstrapRef: "forged",
+      }),
+    ).toThrow("expected an opaque implementation evidence bootstrap reference");
     expect(
       resolveDispatchContinuation(
         {

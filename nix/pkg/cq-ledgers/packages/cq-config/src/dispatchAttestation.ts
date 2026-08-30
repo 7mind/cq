@@ -1057,6 +1057,7 @@ export interface DispatchContinuationBinding {
   readonly gitEffectBinding: DispatchGitEffectBinding;
   readonly liveTip: string;
   readonly gitReceipts: readonly DispatchGitChangeReceipt[];
+  readonly implementationEvidenceBootstrapRef?: string;
   /** Present only when the server-validated consumed worker output was a failure. */
   readonly currentRecoverySource?: DispatchCurrentRecoverySource;
   readonly callerLineage: DispatchContinuationCallerLineage;
@@ -1076,6 +1077,7 @@ export interface ResolvedDispatchContinuation {
   readonly gitEffectBinding: DispatchGitEffectBinding;
   readonly liveTip: string;
   readonly gitReceipts: readonly DispatchGitChangeReceipt[];
+  readonly implementationEvidenceBootstrapRef?: string;
 }
 
 /** Server-only continuation claim carried into the allocation transaction. */
@@ -1799,16 +1801,30 @@ export function assertDispatchCurrentRecoverySource(
   path = "currentRecoverySource",
 ): DispatchCurrentRecoverySource {
   if (value?.version !== 1) {
-    throw new AttestationContractError(`${path}.version`, "expected current-recovery source version 1");
+    throw new AttestationContractError(
+      `${path}.version`,
+      "expected current-recovery source version 1",
+    );
   }
   if (value.kind === "aborted") {
     if (!DISPATCH_ABORT_REASONS.includes(value.abortReason)) {
-      throw new AttestationContractError(`${path}.abortReason`, "expected one dispatch abort reason");
+      throw new AttestationContractError(
+        `${path}.abortReason`,
+        "expected one dispatch abort reason",
+      );
     }
-    return Object.freeze({ kind: "aborted" as const, version: 1 as const, abortReason: value.abortReason });
+    return Object.freeze({
+      kind: "aborted" as const,
+      version: 1 as const,
+      abortReason: value.abortReason,
+    });
   }
   if (value.kind === "consumed-fail" && value.status === "fail") {
-    return Object.freeze({ kind: "consumed-fail" as const, version: 1 as const, status: "fail" as const });
+    return Object.freeze({
+      kind: "consumed-fail" as const,
+      version: 1 as const,
+      status: "fail" as const,
+    });
   }
   throw new AttestationContractError(path, "expected a recognized current-recovery source");
 }
@@ -1856,6 +1872,15 @@ export function assertDispatchContinuationBinding(
       "continuation receipt closure does not end at its authenticated live tip",
     );
   }
+  if (
+    value.implementationEvidenceBootstrapRef !== undefined &&
+    !IMPLEMENTATION_EVIDENCE_BOOTSTRAP_REFERENCE_RE.test(value.implementationEvidenceBootstrapRef)
+  ) {
+    throw new AttestationContractError(
+      `${path}.implementationEvidenceBootstrapRef`,
+      "expected an opaque implementation evidence bootstrap reference",
+    );
+  }
   if (!TRUSTED_ACTOR_SET.has(value.callerLineage?.actor)) {
     throw new AttestationContractError(`${path}.callerLineage.actor`, "expected a trusted actor");
   }
@@ -1877,6 +1902,9 @@ export function assertDispatchContinuationBinding(
     gitEffectBinding,
     liveTip: value.liveTip,
     gitReceipts: Object.freeze([...receipts]),
+    ...(value.implementationEvidenceBootstrapRef === undefined
+      ? {}
+      : { implementationEvidenceBootstrapRef: value.implementationEvidenceBootstrapRef }),
     ...(currentRecoverySource === undefined ? {} : { currentRecoverySource }),
     callerLineage: Object.freeze({ actor: value.callerLineage.actor, ...child }),
   });
@@ -2038,6 +2066,9 @@ function createDispatchContinuationBinding(
     gitEffectBinding: validated.gitEffectBinding,
     liveTip: validated.liveTip,
     gitReceipts: validated.gitReceipts,
+    ...(validated.implementationEvidenceBootstrapRef === undefined
+      ? {}
+      : { implementationEvidenceBootstrapRef: validated.implementationEvidenceBootstrapRef }),
     ...(currentRecoverySource === undefined ? {} : { currentRecoverySource }),
     callerLineage: Object.freeze({
       actor: proof.actor,
@@ -4206,6 +4237,9 @@ function resolvedContinuationOf(
     gitEffectBinding: binding.gitEffectBinding,
     liveTip: binding.liveTip,
     gitReceipts: Object.freeze([...binding.gitReceipts]),
+    ...(binding.implementationEvidenceBootstrapRef === undefined
+      ? {}
+      : { implementationEvidenceBootstrapRef: binding.implementationEvidenceBootstrapRef }),
   });
 }
 

@@ -1127,6 +1127,8 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             );
           }
           resolvedReprepareOf = continuation.reprepareOf;
+          resolvedImplementationEvidenceBootstrapRef =
+            continuation.implementationEvidenceBootstrapRef;
           continuationClaim = {
             continuationReference: continuation.continuationReference,
             actor: "trusted-parent" as const,
@@ -1375,6 +1377,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           if (resolvedImplementationEvidenceBootstrapRef !== undefined) {
             if (
               input.recovery === undefined &&
+              input.continuation === undefined &&
               (dispatchRecord["round"] !== 0 ||
                 Object.hasOwn(dispatchRecord, "priorResultCommit") ||
                 dispatchRecord["baseCommit"] !== resolvedGitEffectBinding.baseCommit ||

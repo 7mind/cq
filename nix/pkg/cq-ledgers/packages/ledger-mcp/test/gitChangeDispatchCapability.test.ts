@@ -19,6 +19,8 @@ import {
   type DispatchJSONValue,
 } from "@cq/config";
 import {
+  ImplementationEvidenceService,
+  createInMemoryImplementationEvidenceStore,
   createLedgerStore,
   fsAttestationProductionRoot,
   MILESTONES_AMBIENT_ID,
@@ -1154,6 +1156,282 @@ describe("dispatch-bound Git change capability", () => {
       attestationId: first.handle.attestationId,
       generation: first.handle.generation + 1,
     });
+  });
+
+  test("bootstrap-bound disapproval continues with the finalized criticism and sealed admission [Behavioral-Active Blackbox-Group]", async () => {
+    const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), "t2896-bootstrap-continuation-"));
+    roots.push(repositoryRoot);
+    await git(repositoryRoot, ["init", "-q"]);
+    await fs.writeFile(path.join(repositoryRoot, "file.txt"), "before\n");
+    await git(repositoryRoot, ["add", "file.txt"]);
+    await git(repositoryRoot, ["commit", "-q", "-m", "seed"]);
+    const baseCommit = await git(repositoryRoot, ["rev-parse", "HEAD"]);
+    const stateDir = path.join(repositoryRoot, ".manager-state");
+    const managed = await prepareManagedWorktree(
+      { repositoryRoot, taskId: "T2896", baseCommit },
+      { stateDir, skipInstall: true, bunWorkspaceRoot: repositoryRoot },
+    );
+    if (managed.status !== "prepared") throw new Error(`unexpected prepare ${managed.status}`);
+    const fixture = await createImplementationEvidenceFixture(undefined, {
+      repositoryHead: baseCommit,
+      bootstrapHistoricalTaskId: "T2896",
+    });
+    const bootstrap = await fixture.service.advanceEvidenceBootstrap({
+      goalRef: "goals:G176",
+      finalizedManifestDigest: "f".repeat(64),
+      expectedRepositoryHead: baseCommit,
+      expectedPhase: "historical-dispatch",
+      operationId: "admit-t2896-continuation",
+      author: "parent",
+    });
+    const gateRunner = {
+      run: async () => ({
+        gateExitCode: 0,
+        passCount: 1,
+        failCount: 0,
+        gateDurationMs: 10,
+        capturedAt: "2026-08-30T00:00:02.000Z",
+        outputTail: "1 pass\n0 fail",
+      }),
+    };
+    const capability = createDispatchCapability({
+      backend: new InMemoryAttestationBackend(new InMemoryAttestationStore(NAMESPACE)),
+      promptArtifactStore: artifactStore("codex"),
+      repositoryRoot,
+      worktreeStateDir: stateDir,
+      implementationEvidenceStore: fixture.store,
+      now: () => "2026-08-30T00:00:00.000Z",
+      randomBytes: sequentialDispatchRandomBytes(2897),
+      supervisedWorkerGateRunner: gateRunner,
+    });
+    const criticism = ["preserve the sealed bootstrap admission during correction"] as const;
+    const workerInput = (
+      round: number,
+      startingCommit: string,
+      priorCriticism: readonly string[] = [],
+    ) => ({
+      taskId: "T2896",
+      headline: "Correct protected historical evidence",
+      description: "Retain the bootstrap admission after a protected disapproval.",
+      acceptance: "The corrected generation consumes the finalized criticism.",
+      worktreePath: managed.handle.absolutePath,
+      branch: managed.handle.branch,
+      baseCommit,
+      round,
+      startingCommit,
+      ...(round === 0 ? {} : { priorResultCommit: startingCommit, priorCriticism }),
+    });
+    const firstChild = { childId: "t2896-continuation-r0", runId: "t2896-continuation-r0" };
+    const first = await capability.prepare({
+      roleId: "implement-worker",
+      input: workerInput(0, baseCommit),
+      implementationEvidenceBootstrap: bootstrap.bootstrapRef,
+      idempotencyKey: "T2896-bootstrap-continuation-r0",
+      timeoutMs: 600_000,
+      expectedChild: firstChild,
+    });
+    if (
+      !first.accepted ||
+      first.prepared.gitChangeCapability === undefined ||
+      first.prepared.parentGateCapability === undefined ||
+      capability.gitCommit === undefined ||
+      capability.finalizeParentGate === undefined ||
+      capability.resolveContinuation === undefined
+    ) {
+      throw new Error("bootstrap worker lacks brokered continuation authority");
+    }
+    await capability.fetchInput({
+      ...first.handle,
+      inputCapability: first.prepared.inputCapability,
+    });
+    await fs.writeFile(path.join(managed.handle.absolutePath, "file.txt"), "candidate\n");
+    const receipt = await capability.gitCommit({
+      ...first.handle,
+      gitChangeCapability: first.prepared.gitChangeCapability,
+      operationId: "T2896-bootstrap-continuation-change",
+      expectedHead: baseCommit,
+      message: "persist historical candidate",
+      changes: [
+        {
+          kind: "modify",
+          path: "file.txt",
+          oldState: { mode: "100644", digest: sha256("before\n") },
+          newState: { mode: "100644", digest: sha256("candidate\n") },
+        },
+      ],
+    });
+    const workerOutput = {
+      taskId: "T2896",
+      status: "pass" as const,
+      resultCommit: receipt.newHead,
+      branch: managed.handle.branch,
+      actualWorktreePath: managed.handle.absolutePath,
+      filesTouched: ["file.txt"],
+      gitReceipts: [receipt],
+      checkSummary: "trusted gate delegated to result storage",
+      baseVerification: {
+        status: "verified" as const,
+        relation: "descendant" as const,
+        baseCommit,
+        headCommit: receipt.newHead,
+      },
+      summary: "historical candidate awaiting protected review",
+    };
+    await capability.storeResult({
+      resultCapability: first.prepared.resultCapability,
+      output: workerOutput as unknown as DispatchJSONValue,
+    });
+    await capability.finalizeParentGate({
+      ...first.handle,
+      parentGateCapability: first.prepared.parentGateCapability,
+    });
+    await capability.confirmCompletion({
+      ...first.handle,
+      nativeCompletion: {
+        kind: "native-completion",
+        actor: "trusted-parent",
+        ...firstChild,
+        completedAt: "2026-08-30T00:00:03.000Z",
+      },
+      expectedProvenance: first.prepared.promptProvenance,
+    });
+    const consumed = await capability.fetch(first.handle);
+    if (consumed.state !== "consumed") throw new Error(`unexpected state ${consumed.state}`);
+
+    const reviewer = {
+      alias: "protected",
+      harness: "pi",
+      model: "reviewer",
+      provider: "test",
+      launch: "adapter" as const,
+      adapterId: "pi:process:test/protected-reviewer",
+    };
+    const fallback = {
+      alias: "native-fallback",
+      harness: "codex",
+      model: "frontier",
+      provider: null,
+      launch: "native" as const,
+      adapterId: "codex:native",
+    };
+    const review = new ImplementationEvidenceService({
+      store: createInMemoryImplementationEvidenceStore(),
+      resolveReviewerRoster: () => [reviewer],
+      nativeFallback: fallback,
+      now: () => "2026-08-30T00:00:04.000Z",
+      prepareNativeReview: async () => {
+        throw new Error("native review was not requested");
+      },
+      fetchNativeReview: async () => {
+        throw new Error("native review was not requested");
+      },
+      executeExternalReview: async () => ({
+        adapterIdentity: reviewer.adapterId,
+        stdout: JSON.stringify({
+          taskId: "T2896",
+          verdict: "disapprove",
+          criticism,
+          questions: [],
+          defects: [],
+          rationale: "candidate requires one bounded correction",
+          gateReRan: true,
+          gateDurationMs: 10,
+          resultCommitVerified: true,
+          resultCommitEvidence: {
+            status: "verified",
+            resultCommit: receipt.newHead,
+            branchTip: receipt.newHead,
+          },
+          baseAncestry: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit,
+            resultCommit: receipt.newHead,
+            mergeBase: baseCommit,
+          },
+        }),
+        stderr: "private diagnostic must not authorize correction",
+        exitCode: 0,
+      }),
+      fetchWorker: async () => ({
+        state: "consumed",
+        input: workerInput(0, baseCommit),
+        output: consumed.output,
+      }),
+      readTaskAuthority: async () => ({
+        taskRef: "tasks:T2896",
+        ownerGoalRef: "goals:G176",
+        status: "wip",
+        finalizedManifest: "manifest-v1",
+      }),
+      repositoryHead: async () => baseCommit,
+      verifyImplementation: async () => ({
+        baseCommit,
+        startingCommit: baseCommit,
+        clean: true,
+        ancestryVerified: true,
+        receiptsVerified: true,
+        acceptanceVerified: true,
+        gateVerified: true,
+        details: {},
+      }),
+      recordLedgerCompletion: async () => ({ reviewRef: "reviews:unexpected" }),
+    });
+    const panel = await review.prepareReviewPanel({
+      taskRef: "tasks:T2896",
+      resultCommit: receipt.newHead,
+      workerDispatch: first.handle,
+      operationId: "T2896-disapproval-panel",
+      author: "parent",
+    });
+    const attemptRef = panel.attemptRefs[0]!;
+    await review.prepareReviewAttempt({
+      panelRef: panel.panelRef,
+      attemptRef,
+      operationId: "T2896-disapproval-attempt",
+      author: "parent",
+    });
+    await review.executeExternalReviewAttempt({
+      attemptRef,
+      operationId: "T2896-disapproval-execution",
+      author: "parent",
+    });
+    const finalized = await review.finalizeReviewAttempt({
+      attemptRef,
+      operationId: "T2896-disapproval-finalize",
+      author: "parent",
+    });
+    expect(finalized).toMatchObject({
+      status: "recorded",
+      terminalState: "disapproved",
+      outcome: { kind: "verdict", verdict: { criticism } },
+    });
+
+    const liveBinding = await resolveManagedWorktreeDispatchBinding(
+      {
+        repositoryRoot,
+        taskId: managed.handle.taskId,
+        worktreePath: managed.handle.absolutePath,
+        branch: managed.handle.branch,
+      },
+      { stateDir },
+    );
+    if (liveBinding === null) throw new Error("managed continuation binding disappeared");
+    const continuation = await capability.resolveContinuation(liveBinding, receipt.newHead);
+    const corrected = await capability.prepare({
+      roleId: "implement-worker",
+      input: workerInput(1, receipt.newHead, criticism),
+      continuation: continuation.continuationReference,
+      idempotencyKey: "T2896-bootstrap-continuation-r1",
+      timeoutMs: 600_000,
+      expectedChild: { childId: "t2896-continuation-r1", runId: "t2896-continuation-r1" },
+    });
+    if (!corrected.accepted) throw new Error(corrected.detail);
+    const correctedInput = await capability.fetchInput({
+      ...corrected.handle,
+      inputCapability: corrected.prepared.inputCapability,
+    });
+    expect(correctedInput.input).toMatchObject({ round: 1, priorCriticism: criticism });
   });
 
   test("keeps a reloaded inherited prefix server-side and normalizes a suffix-only result", async () => {
