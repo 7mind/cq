@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND } from "@cq/config";
 import {
   ImplementationEvidenceService,
@@ -6,24 +7,40 @@ import {
   implementationAuditManifestDigest,
   implementationAuditManifestSemanticDigest,
   type ImplementationCompletionRecord,
+  type ImplementationAuditRecord,
   type ImplementationEvidenceActivationContinuationRecord,
+  type ImplementationEvidenceActivationRecord,
   type ImplementationEvidenceSnapshot,
+  type PackagedImplementationAuditRecord,
   type PackagedImplementationAuditManifest,
 } from "../src/index.js";
 
 const FROM_HEAD = "a".repeat(40);
+const CORRECTION_START = "e".repeat(40);
 const REPOSITORY_HEAD = "b".repeat(40);
 const MANIFEST_ID = "d347-implementation-evidence-activation-v2";
 const PRIOR_REQUIREMENT_REF =
   `cq-implementation-evidence-activation-requirement:v1:${"1".repeat(64)}`;
 const PRIOR_ACTIVATION_REF = `cq-implementation-evidence-activation:v1:${"2".repeat(64)}`;
 const COMPLETION_REF = `cq-implementation-completion:v1:${"3".repeat(64)}`;
-const AUDIT_REFS = [
-  `cq-implementation-audit:v1:${"4".repeat(64)}`,
-  `cq-implementation-audit:v1:${"5".repeat(64)}`,
-] as const;
 const COHORT = ["tasks:T3000", "tasks:T3001"] as const;
 const COMPLETED_TASK_REF = "tasks:T3003";
+
+function canonical(value: unknown): string {
+  if (value === null || typeof value === "string" || typeof value === "boolean")
+    return JSON.stringify(value);
+  if (typeof value === "number") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`)
+    .join(",")}}`;
+}
+
+function evidenceDigest(value: unknown): string {
+  return createHash("sha256").update(canonical(value)).digest("hex");
+}
 
 const manifest: PackagedImplementationAuditManifest = {
   version: 1,
@@ -52,25 +69,64 @@ const manifest: PackagedImplementationAuditManifest = {
   },
 };
 
-function receipt() {
+function implementationAuditRef(record: PackagedImplementationAuditRecord): string {
+  return `cq-implementation-audit:v1:${evidenceDigest({
+    manifestId: MANIFEST_ID,
+    manifestDigest: implementationAuditManifestDigest(manifest),
+    sourceDigest: manifest.sourceDigest,
+    record,
+    attemptRefs: [],
+  })}`;
+}
+
+function implementationAuditEvidenceFingerprint(
+  record: PackagedImplementationAuditRecord,
+): string {
+  return evidenceDigest({
+    record,
+    attemptRefs: [],
+    manifestDigest: implementationAuditManifestDigest(manifest),
+  });
+}
+
+const AUDIT_REFS = [
+  implementationAuditRef(manifest.records[0]!),
+  implementationAuditRef(manifest.records[1]!),
+] as const;
+
+function activationEvidenceFingerprint(): string {
+  return evidenceDigest({
+    manifestId: MANIFEST_ID,
+    manifestDigest: implementationAuditManifestDigest(manifest),
+    sourceDigest: manifest.sourceDigest,
+    repositoryHead: FROM_HEAD,
+    auditRefs: AUDIT_REFS,
+    taskRefs: COHORT,
+  });
+}
+
+function receipt(oldHead: string, newHead: string, operationId: string) {
   return {
     kind: "cq-git-change-receipt",
     version: 1,
     attestationId: `att_${"r".repeat(32)}`,
     generation: 1,
     taskId: "T3003",
-    operationId: "commit-t3003",
+    operationId,
     requestDigest: "d".repeat(64),
-    oldHead: FROM_HEAD,
-    newHead: REPOSITORY_HEAD,
+    oldHead,
+    newHead,
     tree: "e".repeat(40),
-    objectOids: ["e".repeat(40), REPOSITORY_HEAD],
+    objectOids: ["e".repeat(40), newHead],
     paths: ["feature.ts"],
     committedAt: "2026-08-29T20:00:00.000Z",
   } as const;
 }
 
-function workerResult() {
+function workerResultAt(
+  startingCommit: string,
+  gitReceipts: readonly ReturnType<typeof receipt>[],
+) {
   return {
     taskId: "T3003",
     status: "pass",
@@ -78,7 +134,7 @@ function workerResult() {
     branch: "implement/T3003",
     actualWorktreePath: "/repo/.claude/worktrees/T3003",
     filesTouched: ["feature.ts"],
-    gitReceipts: [receipt()],
+    gitReceipts,
     checkSummary: "trusted gate delegated to result storage",
     baseVerification: {
       status: "verified",
@@ -101,7 +157,7 @@ function workerResult() {
       worktreePath: "/repo/.claude/worktrees/T3003",
       branch: "implement/T3003",
       baseCommit: FROM_HEAD,
-      startingCommit: FROM_HEAD,
+      startingCommit,
       resultCommit: REPOSITORY_HEAD,
       clean: true,
       command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
@@ -116,6 +172,10 @@ function workerResult() {
     },
     summary: "implemented",
   };
+}
+
+function workerResult() {
+  return workerResultAt(FROM_HEAD, [receipt(FROM_HEAD, REPOSITORY_HEAD, "commit-t3003")]);
 }
 
 function snapshot(): ImplementationEvidenceSnapshot {
@@ -175,7 +235,7 @@ function snapshot(): ImplementationEvidenceSnapshot {
           resultCommit: manifest.records[index]!.resultCommit,
           repositoryHead: FROM_HEAD,
           sourceDigest: manifest.sourceDigest,
-          evidenceFingerprint: String(index + 1).repeat(64),
+          evidenceFingerprint: implementationAuditEvidenceFingerprint(manifest.records[index]!),
           attemptRefs: [],
           terminalState: "approved",
           author: "parent",
@@ -220,7 +280,7 @@ function snapshot(): ImplementationEvidenceSnapshot {
         manifestId: MANIFEST_ID,
         manifestDigest,
         repositoryHead: FROM_HEAD,
-        evidenceFingerprint: "b".repeat(64),
+        evidenceFingerprint: activationEvidenceFingerprint(),
         auditRefs: AUDIT_REFS,
         taskRefs: COHORT,
         author: "parent",
@@ -236,6 +296,10 @@ function snapshot(): ImplementationEvidenceSnapshot {
 function fixture(
   initial = snapshot(),
   faultInjector?: (boundary: string) => Promise<void>,
+  isCommitRetained: (input: {
+    repositoryHead: string;
+    resultCommit: string;
+  }) => Promise<boolean> = async () => true,
 ) {
   const store = createInMemoryImplementationEvidenceStore(initial);
   const dependencies = {
@@ -278,7 +342,7 @@ function fixture(
       boundaryCommit: REPOSITORY_HEAD,
       taskRefs: [...COHORT, COMPLETED_TASK_REF],
     }),
-    isCommitRetained: async () => true,
+    isCommitRetained,
     readCompletionReview: async () => ({
       reviewRef: "reviews:R3003",
       status: "go-ahead",
@@ -303,6 +367,8 @@ function fixture(
 
 type MutableSnapshot = ImplementationEvidenceSnapshot & {
   completions: Record<string, ImplementationCompletionRecord>;
+  implementationAudits: Record<string, ImplementationAuditRecord>;
+  activations: Record<string, ImplementationEvidenceActivationRecord>;
   activationContinuations: Record<string, ImplementationEvidenceActivationContinuationRecord>;
 };
 
@@ -369,6 +435,69 @@ describe("implementation evidence activation continuation [BG]", () => {
       ...continued,
       status: "existing",
     });
+  });
+
+  test("authenticates a correction-round starting commit through receipts and ancestry", async () => {
+    const corrected = mutableSnapshot();
+    corrected.completions[COMPLETION_REF] = {
+      ...corrected.completions[COMPLETION_REF]!,
+      startingCommit: CORRECTION_START,
+      workerResult: workerResultAt(CORRECTION_START, [
+        receipt(FROM_HEAD, CORRECTION_START, "commit-t3003-initial"),
+        receipt(CORRECTION_START, REPOSITORY_HEAD, "commit-t3003-correction"),
+      ]),
+    };
+    const ancestryChecks: Array<{ repositoryHead: string; resultCommit: string }> = [];
+    const continued = await fixture(corrected, undefined, async (input) => {
+      ancestryChecks.push(input);
+      return true;
+    }).service.continueEvidenceActivation(request);
+    expect(continued.status).toBe("continued");
+    expect(ancestryChecks).toContainEqual({
+      repositoryHead: CORRECTION_START,
+      resultCommit: FROM_HEAD,
+    });
+    expect(ancestryChecks).toContainEqual({
+      repositoryHead: REPOSITORY_HEAD,
+      resultCommit: CORRECTION_START,
+    });
+
+    const missingLineage = structuredClone(corrected) as MutableSnapshot;
+    missingLineage.completions[COMPLETION_REF] = {
+      ...missingLineage.completions[COMPLETION_REF]!,
+      workerResult: workerResultAt(CORRECTION_START, [
+        receipt(FROM_HEAD, REPOSITORY_HEAD, "commit-t3003-squashed"),
+      ]),
+    };
+    await expect(
+      fixture(missingLineage).service.continueEvidenceActivation(request),
+    ).rejects.toThrow("starting commit is absent from the result receipt lineage");
+
+    await expect(
+      fixture(corrected, undefined, async ({ repositoryHead, resultCommit }) =>
+        !(repositoryHead === CORRECTION_START && resultCommit === FROM_HEAD),
+      ).service.continueEvidenceActivation(request),
+    ).rejects.toThrow("starting commit is not retained on the protected transition");
+  });
+
+  test("rejects altered prior activation and corresponding audit fingerprints", async () => {
+    const alteredActivation = mutableSnapshot();
+    alteredActivation.activations[PRIOR_ACTIVATION_REF] = {
+      ...alteredActivation.activations[PRIOR_ACTIVATION_REF]!,
+      evidenceFingerprint: "f".repeat(64),
+    };
+    await expect(
+      fixture(alteredActivation).service.continueEvidenceActivation(request),
+    ).rejects.toThrow("prior v2 activation evidence fingerprint is inconsistent");
+
+    const alteredAudit = mutableSnapshot();
+    alteredAudit.implementationAudits[AUDIT_REFS[0]] = {
+      ...alteredAudit.implementationAudits[AUDIT_REFS[0]]!,
+      evidenceFingerprint: "f".repeat(64),
+    };
+    await expect(
+      fixture(alteredAudit).service.continueEvidenceActivation(request),
+    ).rejects.toThrow("prior v2 activation ordered audit set is incomplete or unauthenticated");
   });
 
   test("rejects a head skip, an unobserved gate, and completion reuse", async () => {
