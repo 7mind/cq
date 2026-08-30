@@ -2,7 +2,14 @@ import {
   FINALIZED_IMPLEMENTATION_REVIEW_OUTCOME_CONTRACT,
   IMPLEMENTATION_EVIDENCE_SERVICE_OPERATION_INVENTORY,
   IMPLEMENTATION_EVIDENCE_SERVICE_PROTOCOL_VERSION,
+  resolveLedgerBackend,
 } from "@cq/ledger";
+import {
+  createEmbeddedStore,
+  createProductionImplementationEvidenceService,
+  createSingleProjectDispatchRuntime,
+  resolvePromptSurface,
+} from "@cq/ledger-mcp";
 import { withRemoteManagementClient } from "./remoteClient.js";
 
 const FULL_SHA = /^[0-9a-f]{40}$/u;
@@ -121,11 +128,65 @@ const queryRemoteImplementationEvidenceStatus: ImplementationEvidenceStatusQuery
     async (client) => await client.getImplementationEvidenceServiceStatus(),
   );
 
+const queryEmbeddedImplementationEvidenceStatus: ImplementationEvidenceStatusQuery = async (
+  cwd,
+) => {
+  const promptSurface = resolvePromptSurface({
+    promptSurface: undefined,
+    promptRoot: undefined,
+    environment: process.env,
+  });
+  const resolved = await createEmbeddedStore(cwd);
+  try {
+    const dispatchRuntime = await createSingleProjectDispatchRuntime({
+      construction: "embedded",
+      resolved,
+      ...(promptSurface === undefined
+        ? {}
+        : { promptArtifactStore: promptSurface.store }),
+      environment: process.env,
+    });
+    try {
+      if (dispatchRuntime.kind !== "available")
+        throw new Error("implementation evidence dispatch runtime is unavailable");
+      if (resolved.implementationEvidenceStore === undefined)
+        throw new Error("protected implementation evidence store is unavailable");
+      return await createProductionImplementationEvidenceService({
+        resolved,
+        dispatchCapability: dispatchRuntime.capability,
+        repositoryRoot: cwd,
+      }).evidenceServiceStatus();
+    } finally {
+      await dispatchRuntime.close();
+    }
+  } finally {
+    await resolved.store.dispose();
+  }
+};
+
+export interface ImplementationEvidenceStatusQueries {
+  readonly embedded: ImplementationEvidenceStatusQuery;
+  readonly remote: ImplementationEvidenceStatusQuery;
+}
+
+const productionStatusQueries: ImplementationEvidenceStatusQueries = {
+  embedded: queryEmbeddedImplementationEvidenceStatus,
+  remote: queryRemoteImplementationEvidenceStatus,
+};
+
+export async function queryImplementationEvidenceStatus(
+  cwd: string,
+  backend: string = resolveLedgerBackend(cwd).backend,
+  queries: ImplementationEvidenceStatusQueries = productionStatusQueries,
+): Promise<unknown> {
+  return await (backend === "remote" ? queries.remote(cwd) : queries.embedded(cwd));
+}
+
 export async function runImplementationEvidenceStatus(
   argv: readonly string[],
   io: ImplementationEvidenceStatusIo,
   processCwd: string = process.cwd(),
-  query: ImplementationEvidenceStatusQuery = queryRemoteImplementationEvidenceStatus,
+  query: ImplementationEvidenceStatusQuery = queryImplementationEvidenceStatus,
 ): Promise<{ exitCode: number }> {
   let args: ParsedStatusArgs;
   try {

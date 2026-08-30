@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { runImplementationEvidenceStatus } from "../src/implementationEvidenceStatus.js";
+import {
+  queryImplementationEvidenceStatus,
+  runImplementationEvidenceStatus,
+} from "../src/implementationEvidenceStatus.js";
 
 const EXPECTED_OPERATIONS = [
   "prepare_implementation_review_panel",
@@ -59,6 +62,28 @@ function io() {
 }
 
 describe("implementation evidence status CLI [BA]", () => {
+  test("routes local backends to embedded management and remote to its authenticated client", async () => {
+    const calls: string[] = [];
+    const queries = {
+      embedded: async (cwd: string) => {
+        calls.push(`embedded:${cwd}`);
+        return { transport: "embedded" };
+      },
+      remote: async (cwd: string) => {
+        calls.push(`remote:${cwd}`);
+        return { transport: "remote" };
+      },
+    };
+
+    expect(await queryImplementationEvidenceStatus("/xdg", "xdg", queries)).toEqual({
+      transport: "embedded",
+    });
+    expect(await queryImplementationEvidenceStatus("/remote", "remote", queries)).toEqual({
+      transport: "remote",
+    });
+    expect(calls).toEqual(["embedded:/xdg", "remote:/remote"]);
+  });
+
   test("prints authenticated service identity without consulting the local checkout", async () => {
     const captured = io();
     let queriedCwd = "";
