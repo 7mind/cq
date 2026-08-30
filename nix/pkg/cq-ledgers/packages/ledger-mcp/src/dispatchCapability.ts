@@ -1177,8 +1177,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             );
           }
           resolvedReprepareOf = recovery.reprepareOf;
-          resolvedImplementationEvidenceBootstrapRef =
-            recovery.implementationEvidenceBootstrapRef;
+          resolvedImplementationEvidenceBootstrapRef = recovery.implementationEvidenceBootstrapRef;
           gitEffectBinding =
             recovery.gitReceipts.length === 0
               ? resolvedGitEffectBinding
@@ -1424,8 +1423,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         ...(resolvedImplementationEvidenceBootstrapRef === undefined
           ? {}
           : {
-              implementationEvidenceBootstrapRef:
-                resolvedImplementationEvidenceBootstrapRef,
+              implementationEvidenceBootstrapRef: resolvedImplementationEvidenceBootstrapRef,
             }),
       } as const;
       const fingerprint = prepareDispatchRequestDigest(request);

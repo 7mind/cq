@@ -1483,8 +1483,7 @@ export function prepareDispatchRequestDigest(request: PrepareDispatchRequest): s
             selectedSourceGeneration: request.journalRecoveryReservation.selectedSourceGeneration,
             lineageMaximumGeneration: request.journalRecoveryReservation.lineageMaximumGeneration,
           },
-    implementationEvidenceBootstrapRef:
-      request.implementationEvidenceBootstrapRef ?? null,
+    implementationEvidenceBootstrapRef: request.implementationEvidenceBootstrapRef ?? null,
   });
 }
 
@@ -1753,9 +1752,7 @@ export function assertDispatchRecoveryBinding(
   }
   if (
     value.implementationEvidenceBootstrapRef !== undefined &&
-    !IMPLEMENTATION_EVIDENCE_BOOTSTRAP_REFERENCE_RE.test(
-      value.implementationEvidenceBootstrapRef,
-    )
+    !IMPLEMENTATION_EVIDENCE_BOOTSTRAP_REFERENCE_RE.test(value.implementationEvidenceBootstrapRef)
   ) {
     throw new AttestationContractError(
       `${path}.implementationEvidenceBootstrapRef`,
@@ -2175,9 +2172,7 @@ export function prepareDispatch(
   const implementationEvidenceBootstrapRef = request.implementationEvidenceBootstrapRef;
   if (
     implementationEvidenceBootstrapRef !== undefined &&
-    (!IMPLEMENTATION_EVIDENCE_BOOTSTRAP_REFERENCE_RE.test(
-      implementationEvidenceBootstrapRef,
-    ) ||
+    (!IMPLEMENTATION_EVIDENCE_BOOTSTRAP_REFERENCE_RE.test(implementationEvidenceBootstrapRef) ||
       validation.roleId !== "implement-worker" ||
       gitEffectBinding === undefined)
   ) {
