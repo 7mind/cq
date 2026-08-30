@@ -20,8 +20,7 @@ const FROM_HEAD = "a".repeat(40);
 const CORRECTION_START = "e".repeat(40);
 const REPOSITORY_HEAD = "b".repeat(40);
 const MANIFEST_ID = "d347-implementation-evidence-activation-v2";
-const PRIOR_REQUIREMENT_REF =
-  `cq-implementation-evidence-activation-requirement:v1:${"1".repeat(64)}`;
+const PRIOR_REQUIREMENT_REF = `cq-implementation-evidence-activation-requirement:v1:${"1".repeat(64)}`;
 const PRIOR_ACTIVATION_REF = `cq-implementation-evidence-activation:v1:${"2".repeat(64)}`;
 const COMPLETION_REF = `cq-implementation-completion:v1:${"3".repeat(64)}`;
 const COHORT = ["tasks:T3000", "tasks:T3001"] as const;
@@ -80,9 +79,7 @@ function implementationAuditRef(record: PackagedImplementationAuditRecord): stri
   })}`;
 }
 
-function implementationAuditEvidenceFingerprint(
-  record: PackagedImplementationAuditRecord,
-): string {
+function implementationAuditEvidenceFingerprint(record: PackagedImplementationAuditRecord): string {
   return evidenceDigest({
     record,
     attemptRefs: [],
@@ -305,14 +302,16 @@ function fixture(
   const store = createInMemoryImplementationEvidenceStore(initial);
   const dependencies = {
     store,
-    resolveReviewerRoster: () => [{
-      alias: "native",
-      harness: "codex",
-      model: "frontier",
-      provider: null,
-      launch: "native",
-      adapterId: "codex:native",
-    }],
+    resolveReviewerRoster: () => [
+      {
+        alias: "native",
+        harness: "codex",
+        model: "frontier",
+        provider: null,
+        launch: "native",
+        adapterId: "codex:native",
+      },
+    ],
     nativeFallback: {
       alias: "native",
       harness: "codex",
@@ -321,10 +320,18 @@ function fixture(
       launch: "native",
       adapterId: "codex:native",
     },
-    prepareNativeReview: async () => { throw new Error("unused"); },
-    fetchNativeReview: async () => { throw new Error("unused"); },
-    executeExternalReview: async () => { throw new Error("unused"); },
-    fetchWorker: async () => { throw new Error("unused"); },
+    prepareNativeReview: async () => {
+      throw new Error("unused");
+    },
+    fetchNativeReview: async () => {
+      throw new Error("unused");
+    },
+    executeExternalReview: async () => {
+      throw new Error("unused");
+    },
+    fetchWorker: async () => {
+      throw new Error("unused");
+    },
     readTaskAuthority: async () => ({
       taskRef: COMPLETED_TASK_REF,
       ownerGoalRef: "goals:G176",
@@ -332,8 +339,12 @@ function fixture(
       finalizedManifest: "finalized-v2\n",
     }),
     repositoryHead: async () => REPOSITORY_HEAD,
-    verifyImplementation: async () => { throw new Error("unused"); },
-    recordLedgerCompletion: async () => { throw new Error("unused"); },
+    verifyImplementation: async () => {
+      throw new Error("unused");
+    },
+    recordLedgerCompletion: async () => {
+      throw new Error("unused");
+    },
     readAuditManifest: async () => manifest,
     resolveActivationCohort: async () => ({
       finalizedManifestDigest: manifest.activation!.finalizedManifestDigest,
@@ -407,7 +418,9 @@ describe("implementation evidence activation continuation [BG]", () => {
       ...first,
       status: "existing",
     });
-    expect((await state.store.snapshot()).activationRequirements[PRIOR_REQUIREMENT_REF]).toBeDefined();
+    expect(
+      (await state.store.snapshot()).activationRequirements[PRIOR_REQUIREMENT_REF],
+    ).toBeDefined();
   });
 
   test("fences replay to the full request", async () => {
@@ -476,8 +489,11 @@ describe("implementation evidence activation continuation [BG]", () => {
     ).rejects.toThrow("starting commit is absent from the result receipt lineage");
 
     await expect(
-      fixture(corrected, undefined, async ({ repositoryHead, resultCommit }) =>
-        !(repositoryHead === CORRECTION_START && resultCommit === FROM_HEAD),
+      fixture(
+        corrected,
+        undefined,
+        async ({ repositoryHead, resultCommit }) =>
+          !(repositoryHead === CORRECTION_START && resultCommit === FROM_HEAD),
       ).service.continueEvidenceActivation(request),
     ).rejects.toThrow("starting commit is not retained on the protected transition");
   });
@@ -497,9 +513,9 @@ describe("implementation evidence activation continuation [BG]", () => {
       ...alteredAudit.implementationAudits[AUDIT_REFS[0]]!,
       evidenceFingerprint: "f".repeat(64),
     };
-    await expect(
-      fixture(alteredAudit).service.continueEvidenceActivation(request),
-    ).rejects.toThrow("prior v2 activation ordered audit set is incomplete or unauthenticated");
+    await expect(fixture(alteredAudit).service.continueEvidenceActivation(request)).rejects.toThrow(
+      "prior v2 activation ordered audit set is incomplete or unauthenticated",
+    );
 
     const alteredManifestBinding = mutableSnapshot();
     const alteredManifestDigest = "f".repeat(64);

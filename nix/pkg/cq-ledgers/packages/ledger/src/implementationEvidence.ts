@@ -373,9 +373,7 @@ export interface ImplementationEvidenceActivationContinuationRecord {
   readonly continuedAt: string;
 }
 
-export type ImplementationEvidenceBootstrapPhase =
-  | "historical-dispatch"
-  | "activation-handoff";
+export type ImplementationEvidenceBootstrapPhase = "historical-dispatch" | "activation-handoff";
 
 export interface ImplementationEvidenceBootstrapTaskAuthority {
   readonly taskRef: string;
@@ -678,13 +676,14 @@ function parseStoredState(value: unknown): MutableImplementationEvidenceSnapshot
       !object(value["auditManifestApplications"])) ||
     (value["activationRequirements"] !== undefined && !object(value["activationRequirements"])) ||
     (value["activations"] !== undefined && !object(value["activations"])) ||
-    (value["activationContinuations"] !== undefined &&
-      !object(value["activationContinuations"])) ||
+    (value["activationContinuations"] !== undefined && !object(value["activationContinuations"])) ||
     (value["bootstraps"] !== undefined && !object(value["bootstraps"]))
   ) {
     throw new Error("implementation evidence store has an unsupported or malformed version");
   }
-  const stored = structuredClone(value) as unknown as Partial<MutableImplementationEvidenceSnapshot>;
+  const stored = structuredClone(
+    value,
+  ) as unknown as Partial<MutableImplementationEvidenceSnapshot>;
   return {
     version: 1,
     panels: stored.panels ?? {},
@@ -1483,9 +1482,7 @@ export interface ImplementationEvidenceServiceDependencies {
     reviewRef: string,
   ) => Promise<ImplementationCompletionReviewAuthority>;
   readonly resolveAuditRoster?: () => readonly ImplementationReviewerIdentity[];
-  readonly readAuditManifest?: (
-    manifestId: string,
-  ) => Promise<PackagedImplementationAuditManifest>;
+  readonly readAuditManifest?: (manifestId: string) => Promise<PackagedImplementationAuditManifest>;
   readonly prepareNativeAudit?: (input: {
     readonly attemptRef: string;
     readonly panel: ImplementationAuditPanelRecord;
@@ -1648,19 +1645,13 @@ function finalizedReviewOutcome(attempt: ImplementationReviewAttemptRecord) {
   return { kind: "verdict" as const, verdict: attempt.verdict };
 }
 
-function assertBootstrapAuthority(
-  authority: ImplementationEvidenceBootstrapAuthority,
-): void {
+function assertBootstrapAuthority(authority: ImplementationEvidenceBootstrapAuthority): void {
   if (!/^goals:G[0-9]+$/u.test(authority.goalRef))
     throw new Error("bootstrap authority has a malformed goal ref");
   if (!/^[0-9a-f]{64}$/u.test(authority.finalizedManifestDigest))
     throw new Error("bootstrap authority has a malformed finalized manifest digest");
   const mappings = authority.mappings;
-  const refs = [
-    mappings.evidenceTaskRef,
-    mappings.historicalTaskRef,
-    mappings.activationTaskRef,
-  ];
+  const refs = [mappings.evidenceTaskRef, mappings.historicalTaskRef, mappings.activationTaskRef];
   refs.forEach(taskIdFromRef);
   if (new Set(refs).size !== refs.length)
     throw new Error("bootstrap authority task mappings are not distinct");
@@ -1727,7 +1718,9 @@ function assertProtectedHistoricalBootstrapCompletion(
   historicalResultCommit: string,
 ): void {
   if (historicalResultCommit === authority.evidenceTask.resultCommit)
-    throw new Error("historical task result commit must be distinct from the evidence service build");
+    throw new Error(
+      "historical task result commit must be distinct from the evidence service build",
+    );
   const admissions = Object.values(snapshot.bootstraps).filter(
     (record) =>
       record.phase === "historical-dispatch" &&
@@ -1760,8 +1753,7 @@ export async function assertImplementationEvidenceBootstrapDispatchAdmission(
     throw new Error("implementation evidence bootstrap ref is malformed");
   taskIdFromRef(taskRef);
   const record = (await store.snapshot()).bootstraps[bootstrapRef];
-  if (record === undefined)
-    throw new Error("implementation evidence bootstrap ref is missing");
+  if (record === undefined) throw new Error("implementation evidence bootstrap ref is missing");
   if (
     record.phase !== "historical-dispatch" ||
     record.taskRefs.length !== 1 ||
@@ -1856,8 +1848,12 @@ export class ImplementationEvidenceService {
       throw new Error("repository head changed before protected implementation audit write");
     if (this.deps.isCommitRetained === undefined) return;
     for (const record of records) {
-      if (!(await this.deps.isCommitRetained({ repositoryHead, resultCommit: record.resultCommit })))
-        throw new Error(`historical implementation result commit for ${record.taskRef} is not retained`);
+      if (
+        !(await this.deps.isCommitRetained({ repositoryHead, resultCommit: record.resultCommit }))
+      )
+        throw new Error(
+          `historical implementation result commit for ${record.taskRef} is not retained`,
+        );
     }
   }
 
@@ -1865,11 +1861,7 @@ export class ImplementationEvidenceService {
     goalRef: string,
     cohort: ImplementationActivationCohort,
   ): Promise<void> {
-    for (const taskRef of [
-      cohort.evidenceTaskRef,
-      cohort.auditTaskRef,
-      cohort.activationTaskRef,
-    ])
+    for (const taskRef of [cohort.evidenceTaskRef, cohort.auditTaskRef, cohort.activationTaskRef])
       taskIdFromRef(taskRef);
     for (const taskRef of [cohort.evidenceTaskRef, cohort.auditTaskRef]) {
       const task = await this.deps.readTaskAuthority(taskRef);
@@ -2102,9 +2094,7 @@ export class ImplementationEvidenceService {
     };
   }
 
-  private async recoverExpiredExternalAuditExecution(
-    attemptRef: string,
-  ): Promise<string | null> {
+  private async recoverExpiredExternalAuditExecution(attemptRef: string): Promise<string | null> {
     return await this.deps.store[mutateEvidence](async (state) => {
       const current = state.auditAttempts[attemptRef];
       if (
@@ -2280,7 +2270,8 @@ export class ImplementationEvidenceService {
     if (panel === undefined) throw new Error("implementation audit panel is missing");
     const requestDigest = digest(input);
     if (operationReplay(attempt.operations, input.operationId, requestDigest)) {
-      if (attempt.terminalState === null) throw new Error("audit finalization replay is incomplete");
+      if (attempt.terminalState === null)
+        throw new Error("audit finalization replay is incomplete");
       return {
         status: "existing" as const,
         attemptRef: attempt.attemptRef,
@@ -2304,17 +2295,20 @@ export class ImplementationEvidenceService {
       ) {
         verdict = observation.output;
         retainedAttestation = observation.retainedAttestation;
-        terminalState = object(verdict) && verdict["verdict"] === "approve" ? "approved" : "disapproved";
+        terminalState =
+          object(verdict) && verdict["verdict"] === "approve" ? "approved" : "disapproved";
       }
     } else if (attempt.execution?.parseResult.kind === "valid-verdict") {
       verdict = attempt.execution.parseResult.verdict;
-      terminalState = object(verdict) && verdict["verdict"] === "approve" ? "approved" : "disapproved";
+      terminalState =
+        object(verdict) && verdict["verdict"] === "approve" ? "approved" : "disapproved";
     }
     return await this.deps.store[mutateEvidence](async (state) => {
       const current = state.auditAttempts[input.attemptRef];
       if (current === undefined) throw new Error("audit attempt disappeared");
       if (operationReplay(current.operations, input.operationId, requestDigest)) {
-        if (current.terminalState === null) throw new Error("audit finalization replay is incomplete");
+        if (current.terminalState === null)
+          throw new Error("audit finalization replay is incomplete");
         return {
           status: "existing" as const,
           attemptRef: current.attemptRef,
@@ -2341,7 +2335,8 @@ export class ImplementationEvidenceService {
 
   async prepareAuditFallback(input: PrepareImplementationAuditFallbackInput) {
     assertOperationId(input.operationId);
-    if (!AUDIT_PANEL_REF.test(input.panelRef)) throw new Error("invalid implementation audit panel ref");
+    if (!AUDIT_PANEL_REF.test(input.panelRef))
+      throw new Error("invalid implementation audit panel ref");
     const snapshot = await this.deps.store.snapshot();
     const panel = snapshot.auditPanels[input.panelRef];
     if (panel === undefined) throw new Error("implementation audit panel is missing");
@@ -2359,9 +2354,16 @@ export class ImplementationEvidenceService {
       identity: this.deps.nativeFallback,
     });
     const existing = snapshot.auditAttempts[fallbackRef];
-    if (existing !== undefined && operationReplay(existing.operations, input.operationId, requestDigest)) {
+    if (
+      existing !== undefined &&
+      operationReplay(existing.operations, input.operationId, requestDigest)
+    ) {
       if (existing.preparedDispatch === null) throw new Error("audit fallback dispatch is missing");
-      return { status: "existing" as const, attemptRef: fallbackRef, dispatch: existing.preparedDispatch };
+      return {
+        status: "existing" as const,
+        attemptRef: fallbackRef,
+        dispatch: existing.preparedDispatch,
+      };
     }
     if (this.deps.prepareNativeAudit === undefined)
       throw new Error("native implementation audit dispatch is unavailable");
@@ -2378,8 +2380,13 @@ export class ImplementationEvidenceService {
       if (current !== undefined) {
         if (!operationReplay(current.operations, input.operationId, requestDigest))
           throw new Error("implementation audit fallback identity already exists");
-        if (current.preparedDispatch === null) throw new Error("audit fallback dispatch is missing");
-        return { status: "existing" as const, attemptRef: fallbackRef, dispatch: current.preparedDispatch };
+        if (current.preparedDispatch === null)
+          throw new Error("audit fallback dispatch is missing");
+        return {
+          status: "existing" as const,
+          attemptRef: fallbackRef,
+          dispatch: current.preparedDispatch,
+        };
       }
       const createdAt = this.now();
       state.auditAttempts[fallbackRef] = {
@@ -2446,14 +2453,13 @@ export class ImplementationEvidenceService {
       throw new Error("bootstrap goal does not match protected finalized-manifest authority");
     if (authority.finalizedManifestDigest !== input.finalizedManifestDigest)
       throw new Error("bootstrap finalized manifest digest changed");
-    if (
-      authority.evidenceTask.status !== "done" ||
-      authority.evidenceTask.resultCommit === null
-    )
+    if (authority.evidenceTask.status !== "done" || authority.evidenceTask.resultCommit === null)
       throw new Error("fresh implementation evidence task is not done");
     assertFullSha(authority.evidenceTask.resultCommit, "evidence task result commit");
     if (authority.evidenceTask.resultCommit !== this.deps.startupBuildCommit)
-      throw new Error("deployed service build does not equal the fresh evidence task result commit");
+      throw new Error(
+        "deployed service build does not equal the fresh evidence task result commit",
+      );
 
     let expectedServiceCommit: string;
     let historicalResultCommit: string | null = null;
@@ -2461,7 +2467,9 @@ export class ImplementationEvidenceService {
     let materialized: MaterializedImplementationEvidenceBootstrapHandoff | null = null;
     if (input.expectedPhase === "historical-dispatch") {
       if (repositoryHead !== authority.evidenceTask.resultCommit)
-        throw new Error("historical dispatch requires the fresh evidence result at repository head");
+        throw new Error(
+          "historical dispatch requires the fresh evidence result at repository head",
+        );
       if (
         authority.historicalTask.status !== "planned" ||
         authority.historicalTask.resultCommit !== null ||
@@ -2546,7 +2554,9 @@ export class ImplementationEvidenceService {
       );
       if (racedReplay !== undefined) {
         if (racedReplay.requestDigest !== requestDigest)
-          throw new Error(`operation_id ${input.operationId} was reused with a different bootstrap`);
+          throw new Error(
+            `operation_id ${input.operationId} was reused with a different bootstrap`,
+          );
         return bootstrapResponse(racedReplay, "existing");
       }
       const phaseConflict = Object.values(state.bootstraps).find(
@@ -2560,9 +2570,7 @@ export class ImplementationEvidenceService {
       state.bootstraps[bootstrapRef] = record;
       return bootstrapResponse(
         record,
-        input.expectedPhase === "historical-dispatch"
-          ? "admitted"
-          : "operator-action-required",
+        input.expectedPhase === "historical-dispatch" ? "admitted" : "operator-action-required",
       );
     });
   }
@@ -2606,7 +2614,8 @@ export class ImplementationEvidenceService {
               activationRef: requirement.activationRef,
             }
           : {
-              status: requirement.state === "fulfilled" ? ("active" as const) : ("pending" as const),
+              status:
+                requirement.state === "fulfilled" ? ("active" as const) : ("pending" as const),
               requirementRef: requirement.requirementRef,
               activationRef: requirement.activationRef,
             };
@@ -2790,7 +2799,9 @@ export class ImplementationEvidenceService {
         this.deps.isCommitRetained !== undefined &&
         !(await this.deps.isCommitRetained({ repositoryHead, resultCommit: record.resultCommit }))
       )
-        throw new Error(`historical implementation result commit for ${record.taskRef} is not retained`);
+        throw new Error(
+          `historical implementation result commit for ${record.taskRef} is not retained`,
+        );
       if (qualifyingHistoricalReview(record.historicalReview, record)) {
         auditCandidates.push({ record, attemptRefs: [], terminalState: "approved" });
         continue;
@@ -2868,7 +2879,8 @@ export class ImplementationEvidenceService {
       }
       const requirementCandidates = Object.values(state.activationRequirements).filter(
         (candidate) =>
-          candidate.manifestId === manifest.manifestId && candidate.boundaryCommit === repositoryHead,
+          candidate.manifestId === manifest.manifestId &&
+          candidate.boundaryCommit === repositoryHead,
       );
       const armedRequirements = requirementCandidates.filter(
         (candidate) => candidate.state === "armed",
@@ -2936,7 +2948,9 @@ export class ImplementationEvidenceService {
         requirementRef = requirement.requirementRef;
         const taskRefs = manifest.records.map((record) => record.taskRef);
         if (JSON.stringify(taskRefs) !== JSON.stringify(requirement.taskRefs))
-          throw new Error("audit manifest cohort does not exactly fulfill the activation requirement");
+          throw new Error(
+            "audit manifest cohort does not exactly fulfill the activation requirement",
+          );
         const activationRef = opaqueRef("cq-implementation-evidence-activation", {
           requirementRef,
           manifestId: manifest.manifestId,
@@ -2981,7 +2995,8 @@ export class ImplementationEvidenceService {
           fulfilledAt: requirement.fulfilledAt ?? this.now(),
         };
       }
-      const status = existingCount === auditCandidates.length ? ("existing" as const) : ("applied" as const);
+      const status =
+        existingCount === auditCandidates.length ? ("existing" as const) : ("applied" as const);
       const taskRefs = manifest.records.map((record) => record.taskRef);
       await this.fault("before-audit-manifest-application-write", {
         operationId: input.operationId,
@@ -3059,8 +3074,7 @@ export class ImplementationEvidenceService {
     if (!ACTIVATION_REQUIREMENT_REF.test(input.priorRequirementRef))
       throw new Error("prior_requirement_ref is malformed");
     taskIdFromRef(input.completedTaskRef);
-    if (!COMPLETION_REF.test(input.completionRef))
-      throw new Error("completion_ref is malformed");
+    if (!COMPLETION_REF.test(input.completionRef)) throw new Error("completion_ref is malformed");
     assertFullSha(input.expectedFromHead, "expected_from_head");
     assertFullSha(input.expectedRepositoryHead, "expected_repository_head");
     if (input.expectedFromHead === input.expectedRepositoryHead)
@@ -3086,7 +3100,9 @@ export class ImplementationEvidenceService {
     );
     if (replay !== undefined) {
       if (replay.requestDigest !== requestDigest)
-        throw new Error(`operation_id ${input.operationId} was reused with a different continuation`);
+        throw new Error(
+          `operation_id ${input.operationId} was reused with a different continuation`,
+        );
       return response(replay, "existing");
     }
     const repositoryHead = await this.deps.repositoryHead();
@@ -3224,8 +3240,8 @@ export class ImplementationEvidenceService {
       manifest,
       repositoryHead,
     });
-    const expectedCurrentTaskRefs = [...prior.taskRefs, input.completedTaskRef].sort((left, right) =>
-      left.localeCompare(right, undefined, { numeric: true }),
+    const expectedCurrentTaskRefs = [...prior.taskRefs, input.completedTaskRef].sort(
+      (left, right) => left.localeCompare(right, undefined, { numeric: true }),
     );
     if (
       prior.taskRefs.includes(input.completedTaskRef) ||
@@ -3238,7 +3254,9 @@ export class ImplementationEvidenceService {
     )
       throw new Error("completed task is not the unique next finalized-manifest Git member");
     const task = await this.deps.readTaskAuthority(input.completedTaskRef);
-    const finalizedManifestBytes = new Set(manifest.records.map((record) => record.finalizedManifest));
+    const finalizedManifestBytes = new Set(
+      manifest.records.map((record) => record.finalizedManifest),
+    );
     if (
       task.taskRef !== input.completedTaskRef ||
       task.ownerGoalRef !== input.goalRef ||
@@ -3308,7 +3326,9 @@ export class ImplementationEvidenceService {
     if (receiptHead !== repositoryHead)
       throw new Error("protected completion result receipt chain skips the repository head");
     if (!receiptLineage.has(completion.startingCommit))
-      throw new Error("protected completion starting commit is absent from the result receipt lineage");
+      throw new Error(
+        "protected completion starting commit is absent from the result receipt lineage",
+      );
     if (
       this.deps.isCommitRetained === undefined ||
       !(await this.deps.isCommitRetained({
@@ -3327,7 +3347,9 @@ export class ImplementationEvidenceService {
         resultCommit: completion.startingCommit,
       }))
     )
-      throw new Error("protected completion starting commit is not retained on the protected transition");
+      throw new Error(
+        "protected completion starting commit is not retained on the protected transition",
+      );
     if (this.deps.readCompletionReview === undefined)
       throw new Error("terminal implementation review authority is unavailable");
     const review = await this.deps.readCompletionReview(completion.reviewRef);
@@ -3412,7 +3434,8 @@ export class ImplementationEvidenceService {
       }
       if (
         canonical(state.activationRequirements[prior.requirementRef]) !== canonical(prior) ||
-        canonical(state.activations[priorActivation.activationRef]) !== canonical(priorActivation) ||
+        canonical(state.activations[priorActivation.activationRef]) !==
+          canonical(priorActivation) ||
         canonical(state.completions[completion.completionRef]) !== canonical(completion)
       )
         throw new Error("activation continuation authority changed before append");
