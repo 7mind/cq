@@ -3163,7 +3163,8 @@ export class ImplementationEvidenceService {
       if (chainRequirement.continuationRef === null)
         throw new Error("prior v2 activation continuation chain is malformed");
       const continuation = initial.activationContinuations[chainRequirement.continuationRef];
-      const previous = initial.activationRequirements[chainRequirement.previousRequirementRef];
+      const previous: ImplementationEvidenceActivationRequirementRecord | undefined =
+        initial.activationRequirements[chainRequirement.previousRequirementRef];
       if (
         continuation === undefined ||
         previous === undefined ||

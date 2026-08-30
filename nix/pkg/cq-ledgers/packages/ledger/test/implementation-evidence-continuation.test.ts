@@ -72,7 +72,10 @@ const manifest: PackagedImplementationAuditManifest = {
   },
 };
 
-function manifestAt(repositoryHead: string, sourceDigest: string): PackagedImplementationAuditManifest {
+function manifestAt(
+  repositoryHead: string,
+  sourceDigest: string,
+): PackagedImplementationAuditManifest {
   return {
     ...manifest,
     sourceDigest,
@@ -114,13 +117,13 @@ function activationEvidenceFingerprint(): string {
   });
 }
 
-function receipt(oldHead: string, newHead: string, operationId: string) {
+function receipt(oldHead: string, newHead: string, operationId: string, taskId: string) {
   return {
     kind: "cq-git-change-receipt",
     version: 1,
     attestationId: `att_${"r".repeat(32)}`,
     generation: 1,
-    taskId: "T3003",
+    taskId,
     operationId,
     requestDigest: "d".repeat(64),
     oldHead,
@@ -184,7 +187,7 @@ function workerResultAt(
 }
 
 function workerResult() {
-  return workerResultAt(FROM_HEAD, [receipt(FROM_HEAD, REPOSITORY_HEAD, "commit-t3003")]);
+  return workerResultAt(FROM_HEAD, [receipt(FROM_HEAD, REPOSITORY_HEAD, "commit-t3003", "T3003")]);
 }
 
 function snapshot(): ImplementationEvidenceSnapshot {
@@ -528,13 +531,10 @@ describe("implementation evidence activation continuation [BG]", () => {
   // regression: round 6 rejected a second distinct protected completion after the first append.
   test("extends cumulative authority through two sequential protected completions", async () => {
     const firstManifest = manifestAt(REPOSITORY_HEAD, "5".repeat(64));
-    const firstState = fixtureAt(
-      snapshot(),
-      firstManifest,
-      REPOSITORY_HEAD,
+    const firstState = fixtureAt(snapshot(), firstManifest, REPOSITORY_HEAD, COMPLETED_TASK_REF, [
+      ...COHORT,
       COMPLETED_TASK_REF,
-      [...COHORT, COMPLETED_TASK_REF],
-    );
+    ]);
     const first = await firstState.service.continueEvidenceActivation(request);
     expect(
       await firstState.service.evidenceActivationStatus({
@@ -553,10 +553,7 @@ describe("implementation evidence activation continuation [BG]", () => {
     const priorCompletion = secondInitial.completions[COMPLETION_REF]!;
     const secondWorkerResult = {
       ...workerResultAt(REPOSITORY_HEAD, [
-        {
-          ...receipt(REPOSITORY_HEAD, SECOND_REPOSITORY_HEAD, "commit-t3004"),
-          taskId: "T3004",
-        },
+        receipt(REPOSITORY_HEAD, SECOND_REPOSITORY_HEAD, "commit-t3004", "T3004"),
       ]),
       taskId: "T3004",
       resultCommit: SECOND_REPOSITORY_HEAD,
@@ -611,13 +608,11 @@ describe("implementation evidence activation continuation [BG]", () => {
       evidenceFingerprint: "f".repeat(64),
     };
     await expect(
-      fixtureAt(
-        tampered,
-        secondManifest,
-        SECOND_REPOSITORY_HEAD,
+      fixtureAt(tampered, secondManifest, SECOND_REPOSITORY_HEAD, SECOND_COMPLETED_TASK_REF, [
+        ...COHORT,
+        COMPLETED_TASK_REF,
         SECOND_COMPLETED_TASK_REF,
-        [...COHORT, COMPLETED_TASK_REF, SECOND_COMPLETED_TASK_REF],
-      ).service.continueEvidenceActivation(secondRequest),
+      ]).service.continueEvidenceActivation(secondRequest),
     ).rejects.toThrow("prior v2 activation evidence fingerprint is inconsistent");
 
     const secondState = fixtureAt(
@@ -689,8 +684,8 @@ describe("implementation evidence activation continuation [BG]", () => {
       ...corrected.completions[COMPLETION_REF]!,
       startingCommit: CORRECTION_START,
       workerResult: workerResultAt(CORRECTION_START, [
-        receipt(FROM_HEAD, CORRECTION_START, "commit-t3003-initial"),
-        receipt(CORRECTION_START, REPOSITORY_HEAD, "commit-t3003-correction"),
+        receipt(FROM_HEAD, CORRECTION_START, "commit-t3003-initial", "T3003"),
+        receipt(CORRECTION_START, REPOSITORY_HEAD, "commit-t3003-correction", "T3003"),
       ]),
     };
     const ancestryChecks: Array<{ repositoryHead: string; resultCommit: string }> = [];
@@ -712,7 +707,7 @@ describe("implementation evidence activation continuation [BG]", () => {
     missingLineage.completions[COMPLETION_REF] = {
       ...missingLineage.completions[COMPLETION_REF]!,
       workerResult: workerResultAt(CORRECTION_START, [
-        receipt(FROM_HEAD, REPOSITORY_HEAD, "commit-t3003-squashed"),
+        receipt(FROM_HEAD, REPOSITORY_HEAD, "commit-t3003-squashed", "T3003"),
       ]),
     };
     await expect(
@@ -802,8 +797,8 @@ describe("implementation evidence activation continuation [BG]", () => {
 
     const mismatchedCorrectionGate = mutableSnapshot();
     const correctionResult = workerResultAt(CORRECTION_START, [
-      receipt(FROM_HEAD, CORRECTION_START, "commit-t3003-initial"),
-      receipt(CORRECTION_START, REPOSITORY_HEAD, "commit-t3003-correction"),
+      receipt(FROM_HEAD, CORRECTION_START, "commit-t3003-initial", "T3003"),
+      receipt(CORRECTION_START, REPOSITORY_HEAD, "commit-t3003-correction", "T3003"),
     ]);
     mismatchedCorrectionGate.completions[COMPLETION_REF] = {
       ...mismatchedCorrectionGate.completions[COMPLETION_REF]!,
