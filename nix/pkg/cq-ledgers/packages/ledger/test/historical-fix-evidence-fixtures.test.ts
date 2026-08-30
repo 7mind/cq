@@ -405,11 +405,14 @@ describe("trusted historical implementation fixture rules [BA]", () => {
       ],
       goals: [authorityItem("G176", "building", { title: "D347", planFinalizedManifest: finalized })],
       defects: [],
-      reviews: [authorityItem("R2346", "changes-requested", {
+      reviews: [authorityItem("R1548", "revise", {
         taskRef: "tasks:T2346",
         ledgerRefs: ["tasks:T2346"],
-        verdict: "disapprove",
         criticism: ["replacement required"],
+      }, "M347"), authorityItem("R1556", "revise", {
+        taskRef: "tasks:T2346",
+        ledgerRefs: ["tasks:T2346"],
+        criticism: ["later rejected correction"],
       }, "M347")],
       operatorActions: [],
     };
@@ -444,7 +447,7 @@ describe("trusted historical implementation fixture rules [BA]", () => {
     ]);
     expect(packaged.nonAuthorizingProvenance).toEqual([{
       ...D347_REJECTED_PREDECESSOR_PROVENANCE,
-      historicalReview: expect.objectContaining({ reviewRef: "reviews:R2346" }),
+      historicalReview: expect.objectContaining({ reviewRef: "reviews:R1548" }),
     }]);
     expect(packaged.records.map(({ taskRef }) => taskRef)).not.toContain("tasks:T2346");
     expect(packaged.records.map(({ taskRef }) => taskRef)).not.toContain("tasks:T3003");

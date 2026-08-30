@@ -317,6 +317,8 @@ export const D347_REJECTED_PREDECESSOR_PROVENANCE = {
   authorizes: false,
 } as const;
 
+const D347_REJECTED_PREDECESSOR_REVIEW_REF = "reviews:R1548";
+
 export const PACKAGED_IMPLEMENTATION_AUDIT_MANIFEST_INVENTORY = [
   ...Object.values(HISTORICAL_IMPLEMENTATION_FIXTURES).map(({ manifestId }) => manifestId),
   D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE.manifestId,
@@ -517,17 +519,20 @@ export async function readPackagedImplementationAuditManifest(
       TASKS_LEDGER,
       D347_REJECTED_PREDECESSOR_PROVENANCE.taskRef.slice(`${TASKS_LEDGER}:`.length),
     );
-    const predecessorReviews = reviews.filter(({ item }) => {
-      const refs = item.fields["ledgerRefs"];
-      return (
-        (item.status === "changes-requested" ||
-          item.status === "disapproved" ||
-          item.fields["verdict"] === "disapprove") &&
-        ((Array.isArray(refs) && refs.includes(D347_REJECTED_PREDECESSOR_PROVENANCE.taskRef)) ||
-          item.fields["taskRef"] === D347_REJECTED_PREDECESSOR_PROVENANCE.taskRef)
-      );
-    });
-    if (predecessorReviews.length !== 1)
+    const predecessorReview = uniqueItem(
+      reviews,
+      REVIEWS_LEDGER,
+      D347_REJECTED_PREDECESSOR_REVIEW_REF.slice(`${REVIEWS_LEDGER}:`.length),
+    );
+    const predecessorReviewRefs = predecessorReview.item.fields["ledgerRefs"];
+    if (
+      predecessorReview.item.status !== "revise" ||
+      !(
+        (Array.isArray(predecessorReviewRefs) &&
+          predecessorReviewRefs.includes(D347_REJECTED_PREDECESSOR_PROVENANCE.taskRef)) ||
+        predecessorReview.item.fields["taskRef"] === D347_REJECTED_PREDECESSOR_PROVENANCE.taskRef
+      )
+    )
       throw new Error("T2346 must retain one authenticated disapproval as non-authorizing provenance");
     if (
       !(await input.repository.isAncestor(
@@ -538,11 +543,11 @@ export async function readPackagedImplementationAuditManifest(
       throw new Error("T2346 original implementation ancestry is not retained");
     nonAuthorizingProvenance = [{
       ...D347_REJECTED_PREDECESSOR_PROVENANCE,
-      historicalReview: historicalReviewObservation(predecessorReviews[0])!,
+      historicalReview: historicalReviewObservation(predecessorReview)!,
     }];
     authoritySources.push({
       predecessor: itemForEvidence(predecessor),
-      disapproval: itemForEvidence(predecessorReviews[0]!),
+      disapproval: itemForEvidence(predecessorReview),
       requiredAncestorCommit: D347_REJECTED_PREDECESSOR_PROVENANCE.requiredAncestorCommit,
       authorizes: false,
     });
