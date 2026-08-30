@@ -3124,36 +3124,87 @@ export class ImplementationEvidenceService {
       !/^[0-9a-f]{64}$/u.test(prior.semanticManifestDigest)
     )
       throw new Error("prior v2 activation omitted its semantic manifest binding");
-    const priorActivation = initial.activations[prior.activationRef];
-    if (
-      priorActivation === undefined ||
-      priorActivation.requirementRef !== prior.requirementRef ||
-      priorActivation.manifestId !== prior.manifestId ||
-      priorActivation.manifestDigest !== prior.manifestDigest ||
-      priorActivation.repositoryHead !== input.expectedFromHead ||
-      canonical(priorActivation.taskRefs) !== canonical(prior.taskRefs)
-    )
-      throw new Error("prior v2 activation payload is absent or inconsistent");
-    const expectedPriorActivationFingerprint = digest({
-      manifestId: priorActivation.manifestId,
-      manifestDigest: priorActivation.manifestDigest,
-      sourceDigest: prior.sourceDigest,
-      repositoryHead: priorActivation.repositoryHead,
-      auditRefs: priorActivation.auditRefs,
-      taskRefs: priorActivation.taskRefs,
-    });
-    if (priorActivation.evidenceFingerprint !== expectedPriorActivationFingerprint)
-      throw new Error("prior v2 activation evidence fingerprint is inconsistent");
-    if (priorActivation.auditRefs.length !== prior.taskRefs.length)
-      throw new Error("prior v2 activation audit cohort is incomplete");
-    if (prior.continuationRef !== null) {
-      const predecessor = initial.activationContinuations[prior.continuationRef];
+    const requirementChain: ImplementationEvidenceActivationRequirementRecord[] = [];
+    const seenRequirements = new Set<string>();
+    let chainRequirement: ImplementationEvidenceActivationRequirementRecord | undefined = prior;
+    while (chainRequirement !== undefined) {
+      if (seenRequirements.has(chainRequirement.requirementRef))
+        throw new Error("prior v2 activation continuation chain is malformed");
+      seenRequirements.add(chainRequirement.requirementRef);
+      requirementChain.push(chainRequirement);
+      const chainActivation =
+        chainRequirement.activationRef === null
+          ? undefined
+          : initial.activations[chainRequirement.activationRef];
       if (
-        predecessor === undefined ||
-        predecessor.requirementRef !== prior.requirementRef ||
-        predecessor.repositoryHead !== prior.boundaryCommit
+        chainActivation === undefined ||
+        chainActivation.requirementRef !== chainRequirement.requirementRef ||
+        chainActivation.manifestId !== chainRequirement.manifestId ||
+        chainActivation.manifestDigest !== chainRequirement.manifestDigest ||
+        chainActivation.repositoryHead !== chainRequirement.boundaryCommit ||
+        canonical(chainActivation.taskRefs) !== canonical(chainRequirement.taskRefs)
+      )
+        throw new Error("prior v2 activation payload is absent or inconsistent");
+      const expectedChainActivationFingerprint = digest({
+        manifestId: chainActivation.manifestId,
+        manifestDigest: chainActivation.manifestDigest,
+        sourceDigest: chainRequirement.sourceDigest,
+        repositoryHead: chainActivation.repositoryHead,
+        auditRefs: chainActivation.auditRefs,
+        taskRefs: chainActivation.taskRefs,
+      });
+      if (chainActivation.evidenceFingerprint !== expectedChainActivationFingerprint)
+        throw new Error("prior v2 activation evidence fingerprint is inconsistent");
+      if (chainRequirement.previousRequirementRef === null) {
+        if (chainRequirement.continuationRef !== null)
+          throw new Error("prior v2 activation continuation chain is malformed");
+        break;
+      }
+      if (chainRequirement.continuationRef === null)
+        throw new Error("prior v2 activation continuation chain is malformed");
+      const continuation = initial.activationContinuations[chainRequirement.continuationRef];
+      const previous = initial.activationRequirements[chainRequirement.previousRequirementRef];
+      if (
+        continuation === undefined ||
+        previous === undefined ||
+        continuation.continuationRef !== chainRequirement.continuationRef ||
+        continuation.previousContinuationRef !== previous.continuationRef ||
+        continuation.previousRequirementRef !== previous.requirementRef ||
+        continuation.requirementRef !== chainRequirement.requirementRef ||
+        continuation.activationRef !== chainActivation.activationRef ||
+        continuation.fromHead !== previous.boundaryCommit ||
+        continuation.repositoryHead !== chainRequirement.boundaryCommit
       )
         throw new Error("prior v2 activation continuation chain is malformed");
+      const expectedChainTaskRefs = [...previous.taskRefs, continuation.taskRef].sort(
+        (left, right) => left.localeCompare(right, undefined, { numeric: true }),
+      );
+      if (
+        previous.taskRefs.includes(continuation.taskRef) ||
+        canonical(chainRequirement.taskRefs) !== canonical(expectedChainTaskRefs)
+      )
+        throw new Error("prior v2 activation continuation task chain is malformed");
+      chainRequirement = previous;
+    }
+    const rootRequirement = requirementChain.at(-1)!;
+    const priorActivation = initial.activations[prior.activationRef];
+    const rootActivation = initial.activations[rootRequirement.activationRef!];
+    if (priorActivation === undefined || rootActivation === undefined)
+      throw new Error("prior v2 activation payload is absent or inconsistent");
+    for (const requirement of requirementChain) {
+      const activation = initial.activations[requirement.activationRef!];
+      if (
+        requirement.manifestId !== rootRequirement.manifestId ||
+        requirement.semanticManifestDigest !== rootRequirement.semanticManifestDigest ||
+        requirement.goalRef !== rootRequirement.goalRef ||
+        requirement.finalizedManifestDigest !== rootRequirement.finalizedManifestDigest ||
+        requirement.evidenceTaskRef !== rootRequirement.evidenceTaskRef ||
+        requirement.auditTaskRef !== rootRequirement.auditTaskRef ||
+        requirement.activationTaskRef !== rootRequirement.activationTaskRef ||
+        activation === undefined ||
+        canonical(activation.auditRefs) !== canonical(rootActivation.auditRefs)
+      )
+        throw new Error("prior v2 activation continuation semantics changed");
     }
     const { manifest, manifestDigest } = await this.auditManifest(input.manifestId);
     const semanticManifestDigest = implementationAuditManifestSemanticDigest(manifest);
@@ -3164,38 +3215,54 @@ export class ImplementationEvidenceService {
       manifest.activation.finalizedManifestDigest !== prior.finalizedManifestDigest
     )
       throw new Error("packaged v2 activation semantics changed across the head transition");
-    const priorManifest: PackagedImplementationAuditManifest = {
+    for (const requirement of requirementChain) {
+      const boundManifest: PackagedImplementationAuditManifest = {
+        ...manifest,
+        sourceDigest: requirement.sourceDigest,
+        records: manifest.records.map((record) => ({
+          ...record,
+          repositoryHead: requirement.boundaryCommit,
+        })),
+      };
+      if (implementationAuditManifestDigest(boundManifest) !== requirement.manifestDigest)
+        throw new Error("prior v2 activation manifest bindings are inconsistent");
+    }
+    const rootManifest: PackagedImplementationAuditManifest = {
       ...manifest,
-      sourceDigest: prior.sourceDigest,
+      sourceDigest: rootRequirement.sourceDigest,
       records: manifest.records.map((record) => ({
         ...record,
-        repositoryHead: input.expectedFromHead,
+        repositoryHead: rootRequirement.boundaryCommit,
       })),
     };
-    if (implementationAuditManifestDigest(priorManifest) !== prior.manifestDigest)
-      throw new Error("prior v2 activation manifest bindings are inconsistent");
-    for (const [index, auditRef] of priorActivation.auditRefs.entries()) {
+    if (
+      rootActivation.auditRefs.length !== rootManifest.records.length ||
+      canonical(rootActivation.taskRefs) !==
+        canonical(rootManifest.records.map((record) => record.taskRef))
+    )
+      throw new Error("prior v2 activation audit cohort is incomplete");
+    for (const [index, auditRef] of rootActivation.auditRefs.entries()) {
       const audit = initial.implementationAudits[auditRef];
-      const record = priorManifest.records[index];
+      const record = rootManifest.records[index];
       if (audit === undefined || record === undefined)
         throw new Error("prior v2 activation ordered audit set is incomplete or unauthenticated");
       const expectedAuditRef = opaqueRef("cq-implementation-audit", {
-        manifestId: prior.manifestId,
-        manifestDigest: prior.manifestDigest,
-        sourceDigest: prior.sourceDigest,
+        manifestId: rootRequirement.manifestId,
+        manifestDigest: rootRequirement.manifestDigest,
+        sourceDigest: rootRequirement.sourceDigest,
         record,
         attemptRefs: audit.attemptRefs,
       });
       const expectedAuditFingerprint = digest({
         record,
         attemptRefs: audit.attemptRefs,
-        manifestDigest: prior.manifestDigest,
+        manifestDigest: rootRequirement.manifestDigest,
       });
       const expectedAuditBinding = {
         version: 1,
         auditRef: expectedAuditRef,
-        manifestId: prior.manifestId,
-        manifestDigest: prior.manifestDigest,
+        manifestId: rootRequirement.manifestId,
+        manifestDigest: rootRequirement.manifestDigest,
         recordKey: record.recordKey,
         taskRef: record.taskRef,
         ownerGoalRef: record.ownerGoalRef,
@@ -3204,7 +3271,7 @@ export class ImplementationEvidenceService {
         baseCommit: record.baseCommit,
         resultCommit: record.resultCommit,
         repositoryHead: record.repositoryHead,
-        sourceDigest: prior.sourceDigest,
+        sourceDigest: rootRequirement.sourceDigest,
         evidenceFingerprint: expectedAuditFingerprint,
         attemptRefs: audit.attemptRefs,
         terminalState: "approved",
@@ -3228,7 +3295,7 @@ export class ImplementationEvidenceService {
         terminalState: audit.terminalState,
       };
       if (
-        record.taskRef !== prior.taskRefs[index] ||
+        record.taskRef !== rootRequirement.taskRefs[index] ||
         canonical(observedAuditBinding) !== canonical(expectedAuditBinding)
       )
         throw new Error("prior v2 activation ordered audit set is incomplete or unauthenticated");
@@ -3373,6 +3440,15 @@ export class ImplementationEvidenceService {
       canonical(observedReviewEvidence) !== canonical(expectedReviewEvidence)
     )
       throw new Error("terminal go-ahead review is absent or does not bind the completion");
+    const currentTaskRefs = expectedCurrentTaskRefs;
+    const evidenceFingerprint = digest({
+      manifestId: manifest.manifestId,
+      manifestDigest,
+      sourceDigest: manifest.sourceDigest,
+      repositoryHead,
+      auditRefs: rootActivation.auditRefs,
+      taskRefs: currentTaskRefs,
+    });
     const requirementRef = opaqueRef("cq-implementation-evidence-activation-requirement", {
       request: input,
       manifestDigest,
@@ -3386,9 +3462,9 @@ export class ImplementationEvidenceService {
       manifestDigest,
       repositoryHead,
       priorActivationRef: priorActivation.activationRef,
-      evidenceFingerprint: priorActivation.evidenceFingerprint,
-      auditRefs: priorActivation.auditRefs,
-      taskRefs: priorActivation.taskRefs,
+      evidenceFingerprint,
+      auditRefs: rootActivation.auditRefs,
+      taskRefs: currentTaskRefs,
     });
     const continuationRef = opaqueRef("cq-implementation-evidence-activation-continuation", {
       request: input,
@@ -3464,6 +3540,7 @@ export class ImplementationEvidenceService {
         sourceDigest: manifest.sourceDigest,
         semanticManifestDigest,
         boundaryCommit: repositoryHead,
+        taskRefs: currentTaskRefs,
         state: "fulfilled",
         activationRef,
         previousRequirementRef: prior.requirementRef,
@@ -3481,6 +3558,9 @@ export class ImplementationEvidenceService {
         requirementRef,
         manifestDigest,
         repositoryHead,
+        evidenceFingerprint,
+        auditRefs: rootActivation.auditRefs,
+        taskRefs: currentTaskRefs,
         author: input.author,
         session: input.session ?? null,
         activatedAt: continuedAt,
