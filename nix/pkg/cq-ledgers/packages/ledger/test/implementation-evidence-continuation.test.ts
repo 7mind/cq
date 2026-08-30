@@ -602,25 +602,93 @@ describe("implementation evidence activation continuation [BG]", () => {
       expectedRepositoryHead: SECOND_REPOSITORY_HEAD,
       operationId: "continue-after-t3004",
     };
+    const secondTaskRefs = [...COHORT, COMPLETED_TASK_REF, SECOND_COMPLETED_TASK_REF];
+    const continueSecond = (initial: ImplementationEvidenceSnapshot) =>
+      fixtureAt(
+        initial,
+        secondManifest,
+        SECOND_REPOSITORY_HEAD,
+        SECOND_COMPLETED_TASK_REF,
+        secondTaskRefs,
+      ).service.continueEvidenceActivation(secondRequest);
     const tampered = structuredClone(secondInitial) as MutableSnapshot;
     tampered.activations[first.activationRef] = {
       ...tampered.activations[first.activationRef]!,
       evidenceFingerprint: "f".repeat(64),
     };
-    await expect(
-      fixtureAt(tampered, secondManifest, SECOND_REPOSITORY_HEAD, SECOND_COMPLETED_TASK_REF, [
-        ...COHORT,
-        COMPLETED_TASK_REF,
-        SECOND_COMPLETED_TASK_REF,
-      ]).service.continueEvidenceActivation(secondRequest),
-    ).rejects.toThrow("prior v2 activation evidence fingerprint is inconsistent");
+    await expect(continueSecond(tampered)).rejects.toThrow(
+      "prior v2 activation evidence fingerprint is inconsistent",
+    );
+
+    const brokenLink = structuredClone(secondInitial) as MutableSnapshot;
+    brokenLink.activationContinuations[first.continuationRef] = {
+      ...brokenLink.activationContinuations[first.continuationRef]!,
+      previousContinuationRef: `cq-implementation-evidence-activation-continuation:v1:${"0".repeat(64)}`,
+    };
+    await expect(continueSecond(brokenLink)).rejects.toThrow(
+      "prior v2 activation continuation chain is malformed",
+    );
+
+    const brokenTaskChain = structuredClone(secondInitial) as MutableSnapshot;
+    const forgedTaskRefs = [...COHORT, "tasks:T3999"];
+    brokenTaskChain.activationRequirements[first.requirementRef] = {
+      ...brokenTaskChain.activationRequirements[first.requirementRef]!,
+      taskRefs: forgedTaskRefs,
+    };
+    const firstActivation = brokenTaskChain.activations[first.activationRef]!;
+    brokenTaskChain.activations[first.activationRef] = {
+      ...firstActivation,
+      taskRefs: forgedTaskRefs,
+      evidenceFingerprint: evidenceDigest({
+        manifestId: MANIFEST_ID,
+        manifestDigest: implementationAuditManifestDigest(firstManifest),
+        sourceDigest: firstManifest.sourceDigest,
+        repositoryHead: REPOSITORY_HEAD,
+        auditRefs: firstActivation.auditRefs,
+        taskRefs: forgedTaskRefs,
+      }),
+    };
+    await expect(continueSecond(brokenTaskChain)).rejects.toThrow(
+      "prior v2 activation continuation task chain is malformed",
+    );
+
+    const changedSemantics = structuredClone(secondInitial) as MutableSnapshot;
+    changedSemantics.activationRequirements[first.requirementRef] = {
+      ...changedSemantics.activationRequirements[first.requirementRef]!,
+      activationTaskRef: "tasks:T3999",
+    };
+    await expect(continueSecond(changedSemantics)).rejects.toThrow(
+      "prior v2 activation continuation semantics changed",
+    );
+
+    const changedManifestBinding = structuredClone(secondInitial) as MutableSnapshot;
+    const changedSourceDigest = "0".repeat(64);
+    changedManifestBinding.activationRequirements[first.requirementRef] = {
+      ...changedManifestBinding.activationRequirements[first.requirementRef]!,
+      sourceDigest: changedSourceDigest,
+    };
+    const changedManifestActivation = changedManifestBinding.activations[first.activationRef]!;
+    changedManifestBinding.activations[first.activationRef] = {
+      ...changedManifestActivation,
+      evidenceFingerprint: evidenceDigest({
+        manifestId: MANIFEST_ID,
+        manifestDigest: changedManifestActivation.manifestDigest,
+        sourceDigest: changedSourceDigest,
+        repositoryHead: REPOSITORY_HEAD,
+        auditRefs: changedManifestActivation.auditRefs,
+        taskRefs: changedManifestActivation.taskRefs,
+      }),
+    };
+    await expect(continueSecond(changedManifestBinding)).rejects.toThrow(
+      "prior v2 activation manifest bindings are inconsistent",
+    );
 
     const secondState = fixtureAt(
       secondInitial,
       secondManifest,
       SECOND_REPOSITORY_HEAD,
       SECOND_COMPLETED_TASK_REF,
-      [...COHORT, COMPLETED_TASK_REF, SECOND_COMPLETED_TASK_REF],
+      secondTaskRefs,
     );
     const second = await secondState.service.continueEvidenceActivation(secondRequest);
     expect(second).toMatchObject({
@@ -642,6 +710,13 @@ describe("implementation evidence activation continuation [BG]", () => {
       requirementRef: second.requirementRef,
       repositoryHead: SECOND_REPOSITORY_HEAD,
       taskRefs: [...COHORT, COMPLETED_TASK_REF, SECOND_COMPLETED_TASK_REF],
+    });
+    expect(
+      (await secondState.store.snapshot()).activationContinuations[second.continuationRef],
+    ).toMatchObject({
+      previousContinuationRef: first.continuationRef,
+      previousRequirementRef: first.requirementRef,
+      requirementRef: second.requirementRef,
     });
     expect(await secondState.restart().continueEvidenceActivation(secondRequest)).toEqual({
       ...second,
