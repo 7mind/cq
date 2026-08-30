@@ -15,6 +15,7 @@ const BASE = "a".repeat(40);
 const RESULT_ONE = "b".repeat(40);
 const RESULT_TWO = "c".repeat(40);
 const HEAD = "d".repeat(40);
+const NEXT_HEAD = "1".repeat(40);
 const FINALIZED_MANIFEST_DIGEST = "e".repeat(64);
 
 const auditor: ImplementationReviewerIdentity = {
@@ -188,7 +189,7 @@ function fixture(
       evidenceTaskRef: "tasks:T10",
       auditTaskRef: "tasks:T11",
       activationTaskRef: "tasks:T12",
-      boundaryCommit: HEAD,
+      boundaryCommit: currentHead,
       taskRefs: activationTaskRefs,
     }),
     isCommitRetained: async () => true,
@@ -294,6 +295,7 @@ describe("protected historical implementation evidence [BA]", () => {
       "records",
       "requirementRef",
       "status",
+      "supersededRequirementRef",
       "taskRefs",
     ]);
     expect(requirement.manifestDigest).toBe(manifestDigest);
@@ -327,6 +329,80 @@ describe("protected historical implementation evidence [BA]", () => {
     expect(Object.keys(snapshot.implementationAudits)).toHaveLength(2);
     expect(Object.keys(snapshot.activations)).toHaveLength(1);
     expect(snapshot.activationRequirements[requirement.requirementRef]!.state).toBe("fulfilled");
+  });
+
+  test("supersedes one empty stale arm at a retained descendant head", async () => {
+    const f = fixture();
+    const first = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-before-parent-correction",
+      author: "parent",
+    });
+    f.setHead(NEXT_HEAD);
+    f.replacePackaged({
+      ...f.packaged,
+      records: f.packaged.records.map((candidate) => ({
+        ...candidate,
+        repositoryHead: NEXT_HEAD,
+      })),
+    });
+
+    const replacement = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: NEXT_HEAD,
+      operationId: "arm-after-parent-correction",
+      author: "parent",
+    });
+
+    expect(replacement).toMatchObject({
+      status: "armed",
+      boundaryCommit: NEXT_HEAD,
+      supersededRequirementRef: first.requirementRef,
+    });
+    const snapshot = await f.store.snapshot();
+    expect(snapshot.activationRequirements[first.requirementRef]).toMatchObject({
+      state: "superseded",
+      supersededByRequirementRef: replacement.requirementRef,
+    });
+  });
+
+  test("refuses to supersede a stale arm after audit preparation", async () => {
+    const f = fixture();
+    const manifestDigest = implementationAuditManifestDigest(f.packaged);
+    await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-before-audit-preparation",
+      author: "parent",
+    });
+    await f.service.prepareAuditPanel({
+      manifestId: f.packaged.manifestId,
+      manifestDigest,
+      recordKey: f.packaged.records[0]!.recordKey,
+      expectedRepositoryHead: HEAD,
+      operationId: "prepare-before-parent-correction",
+      author: "parent",
+    });
+    f.setHead(NEXT_HEAD);
+    f.replacePackaged({
+      ...f.packaged,
+      records: f.packaged.records.map((candidate) => ({
+        ...candidate,
+        repositoryHead: NEXT_HEAD,
+      })),
+    });
+
+    await expect(f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: NEXT_HEAD,
+      operationId: "refuse-arm-after-audit-preparation",
+      author: "parent",
+    })).rejects.toThrow("a different implementation evidence activation requirement is pending");
   });
 
   test("rejects authority changes at protected activation and audit write boundaries", async () => {

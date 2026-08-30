@@ -328,8 +328,11 @@ export interface ImplementationEvidenceActivationRequirementRecord {
   readonly activationTaskRef: string;
   readonly boundaryCommit: string;
   readonly taskRefs: readonly string[];
-  readonly state: "armed" | "fulfilled";
+  readonly state: "armed" | "fulfilled" | "superseded";
   readonly activationRef: string | null;
+  readonly supersededRequirementRef?: string | null;
+  readonly supersededByRequirementRef?: string | null;
+  readonly supersededAt?: string | null;
   readonly previousRequirementRef: string | null;
   readonly continuationRef: string | null;
   readonly operationId: string;
@@ -2642,6 +2645,7 @@ export class ImplementationEvidenceService {
     assertFullSha(input.expectedRepositoryHead, "expected_repository_head");
     const { manifest, manifestDigest } = await this.auditManifest(input.manifestId);
     const records = manifest.records.map(({ recordKey, taskRef }) => ({ recordKey, taskRef }));
+    const semanticManifestDigest = implementationAuditManifestSemanticDigest(manifest);
     if (manifest.activation === null || manifest.activation.goalRef !== input.goalRef)
       throw new Error("packaged manifest has no matching implementation evidence activation");
     const repositoryHead = await this.deps.repositoryHead();
@@ -2691,6 +2695,7 @@ export class ImplementationEvidenceService {
           manifestId: requirement.manifestId,
           manifestDigest: requirement.manifestDigest,
           records,
+          supersededRequirementRef: requirement.supersededRequirementRef ?? null,
           goalRef: requirement.goalRef,
           finalizedManifestDigest: requirement.finalizedManifestDigest,
           evidenceTaskRef: requirement.evidenceTaskRef,
@@ -2706,8 +2711,55 @@ export class ImplementationEvidenceService {
           requirement.manifestId === input.manifestId &&
           requirement.state === "armed",
       );
-      if (blocking !== undefined)
-        throw new Error("a different implementation evidence activation requirement is pending");
+      let supersededRequirementRef: string | null = null;
+      if (blocking !== undefined) {
+        const hasPreparedEvidence =
+          Object.values(state.auditPanels).some(
+            (panel) =>
+              panel.manifestId === blocking.manifestId &&
+              panel.manifestDigest === blocking.manifestDigest &&
+              panel.repositoryHead === blocking.boundaryCommit,
+          ) ||
+          Object.values(state.implementationAudits).some(
+            (audit) =>
+              audit.manifestId === blocking.manifestId &&
+              audit.manifestDigest === blocking.manifestDigest &&
+              audit.repositoryHead === blocking.boundaryCommit,
+          ) ||
+          Object.values(state.auditManifestApplications).some(
+            (application) =>
+              application.manifestId === blocking.manifestId &&
+              application.manifestDigest === blocking.manifestDigest &&
+              application.repositoryHead === blocking.boundaryCommit,
+          );
+        const retainedBoundary =
+          this.deps.isCommitRetained !== undefined &&
+          await this.deps.isCommitRetained({
+            repositoryHead,
+            resultCommit: blocking.boundaryCommit,
+          });
+        if (
+          blocking.boundaryCommit === repositoryHead ||
+          blocking.activationRef !== null ||
+          blocking.fulfilledAt !== null ||
+          blocking.semanticManifestDigest !== semanticManifestDigest ||
+          blocking.finalizedManifestDigest !== cohort.finalizedManifestDigest ||
+          blocking.evidenceTaskRef !== cohort.evidenceTaskRef ||
+          blocking.auditTaskRef !== cohort.auditTaskRef ||
+          blocking.activationTaskRef !== cohort.activationTaskRef ||
+          canonical(blocking.taskRefs) !== canonical(taskRefs) ||
+          hasPreparedEvidence ||
+          !retainedBoundary
+        )
+          throw new Error("a different implementation evidence activation requirement is pending");
+        supersededRequirementRef = blocking.requirementRef;
+        state.activationRequirements[blocking.requirementRef] = {
+          ...blocking,
+          state: "superseded",
+          supersededByRequirementRef: requirementRef,
+          supersededAt: this.now(),
+        };
+      }
       await this.fault("before-activation-requirement-write", {
         operationId: input.operationId,
         recordRef: requirementRef,
@@ -2725,7 +2777,7 @@ export class ImplementationEvidenceService {
         manifestId: manifest.manifestId,
         manifestDigest,
         sourceDigest: manifest.sourceDigest,
-        semanticManifestDigest: implementationAuditManifestSemanticDigest(manifest),
+        semanticManifestDigest,
         goalRef: input.goalRef,
         finalizedManifestDigest: cohort.finalizedManifestDigest,
         evidenceTaskRef: cohort.evidenceTaskRef,
@@ -2735,6 +2787,7 @@ export class ImplementationEvidenceService {
         taskRefs,
         state: "armed",
         activationRef: null,
+        supersededRequirementRef,
         previousRequirementRef: null,
         continuationRef: null,
         operationId: input.operationId,
@@ -2750,6 +2803,7 @@ export class ImplementationEvidenceService {
         manifestId: manifest.manifestId,
         manifestDigest,
         records,
+        supersededRequirementRef,
         goalRef: input.goalRef,
         finalizedManifestDigest: cohort.finalizedManifestDigest,
         evidenceTaskRef: cohort.evidenceTaskRef,

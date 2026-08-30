@@ -211,7 +211,16 @@ reviews, logs, tags, or resultCommit text.
 
 The canonical activation manifest is
 `d347-implementation-evidence-activation-v2`. `active` is the only state that
-admits ordinary work. A `stale` probe may recover only one already-recorded,
+admits ordinary work. A `stale` probe with a null activation ref may re-arm only
+after a retained descendant-head parent correction and only through
+`arm_implementation_evidence_activation`. Accept that recovery only when the
+response names the exact stale requirement as `supersededRequirementRef`,
+returns the unchanged semantic manifest/mappings/cohort at the new head, and
+the server proves the stale requirement had no prepared panel, audit, or
+application. Continue with only the replacement arm's returned digest and
+record coordinates.
+
+A `stale` probe with a non-null activation ref may recover only one already-recorded,
 one-step protected transition: identify the unique finalized-manifest Git task
 whose terminal go-ahead review names one recorded completion from the stale
 requirement's exact boundary to the current head, then replay one stable
@@ -222,7 +231,7 @@ request. Accept only `continued|existing` with every returned ref, task, head,
 and completion equal to that request, then re-probe and require `active`.
 Absent, pending, multi-step, surplus, rewritten, ambiguous, unaudited, or
 changed-input recovery stops closed and dispatches nothing. Never arm, audit,
-or apply again to repair a stale head, and never read protected storage,
+or apply again to repair a stale fulfilled head, and never read protected storage,
 diagnostics, summaries, or logs to reconstruct continuation authority.
 
 ## 1. Derive the ready set
