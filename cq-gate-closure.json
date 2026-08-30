@@ -84,7 +84,7 @@
     {
       "kind": "dynamic",
       "source": "nix/pkg/cq-ledgers/scripts/measure-tool-surface.ts",
-      "sha256": "f749ab2d629969e666edf31aae9565a2f3ecc66568c2a8abb54baba51b054c24",
+      "sha256": "e766618ae305c21709b0a9d8feba823aae929880a36cc73163faa0f229b375c5",
       "targets": ["nix/pkg/cq-ledgers/packages/ledger-mcp/package.json"]
     },
     {
@@ -366,7 +366,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/roleToolProfiles.test.ts",
-      "sha256": "e595af3a92e4b670939f3e3a5ece4d5f3be0ace38983c8b586d967881f482d95",
+      "sha256": "5e221c6c8a80df00e04c2004e6456dd069e6d5d9f0f75980ec86348d8a46d267",
       "targets": []
     },
     {
@@ -384,7 +384,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/implementationEvidenceRuntime.ts",
-      "sha256": "6ee4872d01842304e08e5a07f6979c9cb1a4ead6a0c2d7a3e797fb005e707213",
+      "sha256": "dd3f7626259d0fdfe16813f3ebf3f3f7bed4fcdbc05c41739cb31755ba3af07e",
       "targets": []
     },
     {
@@ -461,13 +461,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts",
-      "sha256": "a971dce79f676a8fd1bd35b36438e1724e2abc625a429482ec0a6f36e6d43194",
+      "sha256": "ef2e2886697b30ef93eebdef0848713250883308496956f5ff03321a1a52d30c",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts",
-      "sha256": "a971dce79f676a8fd1bd35b36438e1724e2abc625a429482ec0a6f36e6d43194",
+      "sha256": "ef2e2886697b30ef93eebdef0848713250883308496956f5ff03321a1a52d30c",
       "targets": []
     },
     {
@@ -1055,7 +1055,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/implementationEvidencePromptContract.test.ts",
-      "sha256": "49c681d8b001e89b750261ade719e04c81687d03b32abbdea85dfc847d226518",
+      "sha256": "10af9a2454a2576153ce2515358368f3fa5bb0944bd7ebca1792d942121ff19f",
       "targets": []
     },
     {
@@ -1181,7 +1181,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/roleToolProfiles.test.ts",
-      "sha256": "e595af3a92e4b670939f3e3a5ece4d5f3be0ace38983c8b586d967881f482d95",
+      "sha256": "5e221c6c8a80df00e04c2004e6456dd069e6d5d9f0f75980ec86348d8a46d267",
       "targets": []
     },
     {
@@ -1337,7 +1337,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/responseContractDocs.test.ts",
-      "sha256": "91773f99bc7b4fe1c5cbff7773e837fcaae3e98153645c3e50b4d079c1f5964f",
+      "sha256": "8779329793bcbd1f70a29f76d92260cafe6d8776e0a7da97e293179fa16f7da7",
       "targets": []
     },
     {
@@ -1493,7 +1493,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/implementationEvidence.ts",
-      "sha256": "d4152c9f18ee2dc209b23391403ee21b991525532ff8f18a78c70668f5efdc52",
+      "sha256": "5c682fe5b96023ef1cbec6dd33417851038c165ba7d9394f518e7fcc8e73d5f0",
       "targets": []
     },
     {
@@ -1937,13 +1937,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
-      "sha256": "b76dfeb043ff753a8213d8711102fd4621ca54443d5187835588261210bef58e",
+      "sha256": "6e7fbb11ac741dfea69ab208bbe6d235bb87548d532e7e572dc6de9a0f04e282",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
-      "sha256": "b76dfeb043ff753a8213d8711102fd4621ca54443d5187835588261210bef58e",
+      "sha256": "6e7fbb11ac741dfea69ab208bbe6d235bb87548d532e7e572dc6de9a0f04e282",
       "targets": []
     },
     {
@@ -2195,13 +2195,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/scripts/measure-tool-surface.test.ts",
-      "sha256": "00d1ec63c53b2d33e5f1bd32c4562ada1e58482a12e20bc2913f3539749ce65b",
+      "sha256": "19bb2648547948791fec2235c88f6243f44ec99e047f40c3487f278ec53ba806",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/scripts/measure-tool-surface.ts",
-      "sha256": "f749ab2d629969e666edf31aae9565a2f3ecc66568c2a8abb54baba51b054c24",
+      "sha256": "e766618ae305c21709b0a9d8feba823aae929880a36cc73163faa0f229b375c5",
       "targets": []
     },
     {

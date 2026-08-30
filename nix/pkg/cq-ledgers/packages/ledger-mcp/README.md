@@ -267,6 +267,7 @@ measured savings without another batching schema.
 | `arm_implementation_evidence_activation` | `purpose-built-small` | One typed activation-arm acknowledgement. |
 | `apply_implementation_audit_manifest` | `purpose-built-small` | One typed audit-application acknowledgement. |
 | `get_implementation_evidence_activation_status` | `purpose-built-small` | Exactly one bounded absent, pending, stale, or active activation status acknowledgement. |
+| `continue_implementation_evidence_activation` | `purpose-built-small` | Exactly one continued or existing activation-continuation acknowledgement. |
 | `get_implementation_evidence_service_status` | `purpose-built-small` | One typed service-status object. |
 | `prepare_implementation_completion` | `purpose-built-small` | Exactly `{ status, completionRef, taskRef, resultCommit, repositoryHead, evidenceFingerprint }`. |
 | `record_implementation_completion` | `purpose-built-small` | One typed `merge-required`, `reprepare-required`, `recorded`, or `existing` acknowledgement. |
@@ -397,7 +398,7 @@ not sent as a tool argument.
 
 ## Client development and migration
 
-Treat response decoding as a closed 56-tool matrix, not as a generic
+Treat response decoding as a closed 57-tool matrix, not as a generic
 full-entity decoder. Require callers to choose a projection for the five
 item-bearing read tools, model the acknowledgement DTOs independently
 from full items, and retain pagination metadata until `nextOffset` becomes
