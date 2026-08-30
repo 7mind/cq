@@ -2643,18 +2643,23 @@ export class ImplementationEvidenceService {
       (entry) => entry.goalRef === authority.goalRef,
     );
     const lineageTips = activationRequirementLineageTips(candidates);
-    const armed = lineageTips.filter((entry) => entry.state === "armed");
-    if (armed.length > 1)
-      throw new Error("multiple implementation evidence activation requirements are armed");
-    const current = lineageTips.filter(
+    const authorityTips = lineageTips.filter(
+      (entry) => entry.finalizedManifestDigest === authority.finalizedManifestDigest,
+    );
+    const armedAuthority = authorityTips.filter((entry) => entry.state === "armed");
+    if (armedAuthority.length > 1)
+      throw new Error("multiple current implementation evidence activation requirements are armed");
+    const current = authorityTips.filter(
       (entry) =>
-        entry.finalizedManifestDigest === authority.finalizedManifestDigest &&
         entry.boundaryCommit === repositoryHead,
     );
     if (current.length > 1)
       throw new Error("multiple current implementation evidence activation requirements exist");
-    const latest = latestActivationRequirement(lineageTips);
-    const requirement = armed[0] ?? current[0] ?? latest;
+    const requirement =
+      current[0] ??
+      armedAuthority[0] ??
+      latestActivationRequirement(authorityTips) ??
+      latestActivationRequirement(lineageTips);
     const activationState =
       requirement === undefined
         ? { status: "absent" as const, requirementRef: null, activationRef: null }

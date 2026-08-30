@@ -670,6 +670,42 @@ describe("protected historical implementation evidence [BA]", () => {
     });
   });
 
+  test("aggregate status ignores an armed obsolete manifest lineage", async () => {
+    const currentManifest = manifest();
+    const obsoleteManifest: PackagedImplementationAuditManifest = {
+      ...currentManifest,
+      manifestId: "d347-implementation-evidence-activation-obsolete",
+      activation: {
+        ...currentManifest.activation!,
+        finalizedManifestDigest: "0".repeat(64),
+      },
+    };
+    const f = fixture(obsoleteManifest);
+    await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: obsoleteManifest.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-obsolete-manifest-lineage",
+      author: "parent",
+    });
+    f.replacePackaged(currentManifest);
+    const current = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: currentManifest.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-current-manifest-lineage",
+      author: "parent",
+    });
+
+    expect(await f.service.evidenceServiceStatus()).toMatchObject({
+      activationState: {
+        status: "pending",
+        requirementRef: current.requirementRef,
+        activationRef: null,
+      },
+    });
+  });
+
   test("refuses to supersede a stale arm after audit preparation", async () => {
     const f = fixture();
     const manifestDigest = implementationAuditManifestDigest(f.packaged);
