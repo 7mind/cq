@@ -19,12 +19,15 @@ import {
 const FROM_HEAD = "a".repeat(40);
 const CORRECTION_START = "e".repeat(40);
 const REPOSITORY_HEAD = "b".repeat(40);
+const SECOND_REPOSITORY_HEAD = "f".repeat(40);
 const MANIFEST_ID = "d347-implementation-evidence-activation-v2";
 const PRIOR_REQUIREMENT_REF = `cq-implementation-evidence-activation-requirement:v1:${"1".repeat(64)}`;
 const PRIOR_ACTIVATION_REF = `cq-implementation-evidence-activation:v1:${"2".repeat(64)}`;
 const COMPLETION_REF = `cq-implementation-completion:v1:${"3".repeat(64)}`;
+const SECOND_COMPLETION_REF = `cq-implementation-completion:v1:${"4".repeat(64)}`;
 const COHORT = ["tasks:T3000", "tasks:T3001"] as const;
 const COMPLETED_TASK_REF = "tasks:T3003";
+const SECOND_COMPLETED_TASK_REF = "tasks:T3004";
 
 function canonical(value: unknown): string {
   if (value === null || typeof value === "string" || typeof value === "boolean")
@@ -68,6 +71,14 @@ const manifest: PackagedImplementationAuditManifest = {
     activationTaskKey: "t-activate-evidence",
   },
 };
+
+function manifestAt(repositoryHead: string, sourceDigest: string): PackagedImplementationAuditManifest {
+  return {
+    ...manifest,
+    sourceDigest,
+    records: manifest.records.map((record) => ({ ...record, repositoryHead })),
+  };
+}
 
 function implementationAuditRef(record: PackagedImplementationAuditRecord): string {
   return `cq-implementation-audit:v1:${evidenceDigest({
@@ -377,6 +388,97 @@ function fixture(
   };
 }
 
+function fixtureAt(
+  initial: ImplementationEvidenceSnapshot,
+  currentManifest: PackagedImplementationAuditManifest,
+  currentRepositoryHead: string,
+  currentCompletedTaskRef: string,
+  currentTaskRefs: readonly string[],
+) {
+  const store = createInMemoryImplementationEvidenceStore(initial);
+  const dependencies = {
+    store,
+    resolveReviewerRoster: () => [
+      {
+        alias: "native",
+        harness: "codex",
+        model: "frontier",
+        provider: null,
+        launch: "native",
+        adapterId: "codex:native",
+      },
+    ],
+    nativeFallback: {
+      alias: "native",
+      harness: "codex",
+      model: "frontier",
+      provider: null,
+      launch: "native",
+      adapterId: "codex:native",
+    },
+    prepareNativeReview: async () => {
+      throw new Error("unused");
+    },
+    fetchNativeReview: async () => {
+      throw new Error("unused");
+    },
+    executeExternalReview: async () => {
+      throw new Error("unused");
+    },
+    fetchWorker: async () => {
+      throw new Error("unused");
+    },
+    readTaskAuthority: async () => ({
+      taskRef: currentCompletedTaskRef,
+      ownerGoalRef: "goals:G176",
+      status: "done",
+      finalizedManifest: "finalized-v2\n",
+    }),
+    repositoryHead: async () => currentRepositoryHead,
+    verifyImplementation: async () => {
+      throw new Error("unused");
+    },
+    recordLedgerCompletion: async () => {
+      throw new Error("unused");
+    },
+    readAuditManifest: async () => currentManifest,
+    resolveActivationCohort: async () => ({
+      finalizedManifestDigest: currentManifest.activation!.finalizedManifestDigest,
+      evidenceTaskRef: COHORT[0],
+      auditTaskRef: COHORT[1],
+      activationTaskRef: "tasks:T3002",
+      boundaryCommit: currentRepositoryHead,
+      taskRefs: currentTaskRefs,
+    }),
+    isCommitRetained: async () => true,
+    readCompletionReview: async (reviewRef: string) => {
+      const matches = Object.values(initial.completions).filter(
+        (completion) => completion.reviewRef === reviewRef,
+      );
+      if (matches.length !== 1) throw new Error("test completion review is ambiguous");
+      const completion = matches[0]!;
+      return {
+        reviewRef,
+        status: "go-ahead" as const,
+        implementationEvidence: JSON.stringify({
+          version: 1,
+          completionRef: completion.completionRef,
+          taskRef: completion.taskRef,
+          resultCommit: completion.resultCommit,
+          evidenceFingerprint: completion.evidenceFingerprint,
+          reviewAttemptRefs: completion.reviewAttemptRefs,
+        }),
+      };
+    },
+  } as never;
+  const service = new ImplementationEvidenceService(dependencies);
+  return {
+    service,
+    store,
+    restart: () => new ImplementationEvidenceService(dependencies),
+  };
+}
+
 type MutableSnapshot = ImplementationEvidenceSnapshot & {
   completions: Record<string, ImplementationCompletionRecord>;
   implementationAudits: Record<string, ImplementationAuditRecord>;
@@ -421,6 +523,135 @@ describe("implementation evidence activation continuation [BG]", () => {
     expect(
       (await state.store.snapshot()).activationRequirements[PRIOR_REQUIREMENT_REF],
     ).toBeDefined();
+  });
+
+  // regression: round 6 rejected a second distinct protected completion after the first append.
+  test("extends cumulative authority through two sequential protected completions", async () => {
+    const firstManifest = manifestAt(REPOSITORY_HEAD, "5".repeat(64));
+    const firstState = fixtureAt(
+      snapshot(),
+      firstManifest,
+      REPOSITORY_HEAD,
+      COMPLETED_TASK_REF,
+      [...COHORT, COMPLETED_TASK_REF],
+    );
+    const first = await firstState.service.continueEvidenceActivation(request);
+    expect(
+      await firstState.service.evidenceActivationStatus({
+        goalRef: "goals:G176",
+        manifestId: MANIFEST_ID,
+        expectedRepositoryHead: REPOSITORY_HEAD,
+      }),
+    ).toMatchObject({
+      status: "active",
+      requirementRef: first.requirementRef,
+      repositoryHead: REPOSITORY_HEAD,
+      taskRefs: [...COHORT, COMPLETED_TASK_REF],
+    });
+
+    const secondInitial = structuredClone(await firstState.store.snapshot()) as MutableSnapshot;
+    const priorCompletion = secondInitial.completions[COMPLETION_REF]!;
+    const secondWorkerResult = {
+      ...workerResultAt(REPOSITORY_HEAD, [
+        {
+          ...receipt(REPOSITORY_HEAD, SECOND_REPOSITORY_HEAD, "commit-t3004"),
+          taskId: "T3004",
+        },
+      ]),
+      taskId: "T3004",
+      resultCommit: SECOND_REPOSITORY_HEAD,
+      branch: "implement/T3004",
+      baseVerification: {
+        status: "verified" as const,
+        relation: "descendant" as const,
+        baseCommit: REPOSITORY_HEAD,
+        headCommit: SECOND_REPOSITORY_HEAD,
+      },
+      supervisedGateEvidence: {
+        ...workerResultAt(REPOSITORY_HEAD, []).supervisedGateEvidence,
+        taskId: "T3004",
+        branch: "implement/T3004",
+        baseCommit: REPOSITORY_HEAD,
+        startingCommit: REPOSITORY_HEAD,
+        resultCommit: SECOND_REPOSITORY_HEAD,
+      },
+    };
+    secondInitial.completions[SECOND_COMPLETION_REF] = {
+      ...priorCompletion,
+      completionRef: SECOND_COMPLETION_REF,
+      taskRef: SECOND_COMPLETED_TASK_REF,
+      resultCommit: SECOND_REPOSITORY_HEAD,
+      repositoryHead: REPOSITORY_HEAD,
+      baseCommit: REPOSITORY_HEAD,
+      startingCommit: REPOSITORY_HEAD,
+      workerResult: secondWorkerResult,
+      reviewAttemptRefs: [`cq-implementation-review-attempt:v1:${"6".repeat(64)}`],
+      completion: "implemented T3004",
+      logPaths: [".cq/logs/T3004.md"],
+      evidenceFingerprint: "9".repeat(64),
+      reviewRef: "reviews:R3004",
+      operationId: "prepare-t3004",
+      requestDigest: "0".repeat(64),
+      mergeOperationId: "merge-t3004",
+      recordOperationId: "record-t3004",
+    };
+    const secondManifest = manifestAt(SECOND_REPOSITORY_HEAD, "4".repeat(64));
+    const secondRequest = {
+      ...request,
+      priorRequirementRef: first.requirementRef,
+      completedTaskRef: SECOND_COMPLETED_TASK_REF,
+      completionRef: SECOND_COMPLETION_REF,
+      expectedFromHead: REPOSITORY_HEAD,
+      expectedRepositoryHead: SECOND_REPOSITORY_HEAD,
+      operationId: "continue-after-t3004",
+    };
+    const tampered = structuredClone(secondInitial) as MutableSnapshot;
+    tampered.activations[first.activationRef] = {
+      ...tampered.activations[first.activationRef]!,
+      evidenceFingerprint: "f".repeat(64),
+    };
+    await expect(
+      fixtureAt(
+        tampered,
+        secondManifest,
+        SECOND_REPOSITORY_HEAD,
+        SECOND_COMPLETED_TASK_REF,
+        [...COHORT, COMPLETED_TASK_REF, SECOND_COMPLETED_TASK_REF],
+      ).service.continueEvidenceActivation(secondRequest),
+    ).rejects.toThrow("prior v2 activation evidence fingerprint is inconsistent");
+
+    const secondState = fixtureAt(
+      secondInitial,
+      secondManifest,
+      SECOND_REPOSITORY_HEAD,
+      SECOND_COMPLETED_TASK_REF,
+      [...COHORT, COMPLETED_TASK_REF, SECOND_COMPLETED_TASK_REF],
+    );
+    const second = await secondState.service.continueEvidenceActivation(secondRequest);
+    expect(second).toMatchObject({
+      status: "continued",
+      previousRequirementRef: first.requirementRef,
+      taskRef: SECOND_COMPLETED_TASK_REF,
+      completionRef: SECOND_COMPLETION_REF,
+      fromHead: REPOSITORY_HEAD,
+      repositoryHead: SECOND_REPOSITORY_HEAD,
+    });
+    expect(
+      await secondState.service.evidenceActivationStatus({
+        goalRef: "goals:G176",
+        manifestId: MANIFEST_ID,
+        expectedRepositoryHead: SECOND_REPOSITORY_HEAD,
+      }),
+    ).toMatchObject({
+      status: "active",
+      requirementRef: second.requirementRef,
+      repositoryHead: SECOND_REPOSITORY_HEAD,
+      taskRefs: [...COHORT, COMPLETED_TASK_REF, SECOND_COMPLETED_TASK_REF],
+    });
+    expect(await secondState.restart().continueEvidenceActivation(secondRequest)).toEqual({
+      ...second,
+      status: "existing",
+    });
   });
 
   test("fences replay to the full request", async () => {
