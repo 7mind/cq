@@ -182,12 +182,15 @@ For `absent`, call `arm_implementation_evidence_activation` with the same goal,
 manifest, head, one stable operation id, author, and session. Accept only the
 exact finalized-manifest mappings returned for `t-evidence`,
 `t-historical-evidence`, and `t-activate-evidence`; never substitute predecessor
-task literals. The first two tasks must already be done, the activation task
-must carry the strict `CQ-OPERATOR-ACTION v1
+task literals. Retain the returned packaged manifest digest and complete ordered
+`recordKey`/`taskRef` coordinates as the sole inputs to audit-panel preparation
+and final application; never derive either from caller-side storage or naming
+conventions. The first two tasks must already be done, the activation task must
+carry the strict `CQ-OPERATOR-ACTION v1
 activate-implementation-evidence.` envelope, and the frozen boundary must
 equal the observed head.
 
-For every packaged record not already backed by a mechanically sufficient
+For every returned packaged record not already backed by a mechanically sufficient
 authenticated implementation review, call
 `prepare_implementation_audit_panel`, then prepare each ordered opaque attempt.
 Native attempts dispatch only the returned `implementation-auditor` payload;

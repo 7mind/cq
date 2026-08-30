@@ -289,11 +289,18 @@ describe("protected historical implementation evidence [BA]", () => {
       "evidenceTaskRef",
       "finalizedManifestDigest",
       "goalRef",
+      "manifestDigest",
       "manifestId",
+      "records",
       "requirementRef",
       "status",
       "taskRefs",
     ]);
+    expect(requirement.manifestDigest).toBe(manifestDigest);
+    expect(requirement.records).toEqual(f.packaged.records.map(({ recordKey, taskRef }) => ({
+      recordKey,
+      taskRef,
+    })));
 
     const applied = await f.service.applyAuditManifest({
       manifestId: f.packaged.manifestId,

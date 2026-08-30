@@ -2641,6 +2641,7 @@ export class ImplementationEvidenceService {
       throw new Error("goal_ref must be one canonical goal ref");
     assertFullSha(input.expectedRepositoryHead, "expected_repository_head");
     const { manifest, manifestDigest } = await this.auditManifest(input.manifestId);
+    const records = manifest.records.map(({ recordKey, taskRef }) => ({ recordKey, taskRef }));
     if (manifest.activation === null || manifest.activation.goalRef !== input.goalRef)
       throw new Error("packaged manifest has no matching implementation evidence activation");
     const repositoryHead = await this.deps.repositoryHead();
@@ -2688,6 +2689,8 @@ export class ImplementationEvidenceService {
           status: "existing" as const,
           requirementRef: requirement.requirementRef,
           manifestId: requirement.manifestId,
+          manifestDigest: requirement.manifestDigest,
+          records,
           goalRef: requirement.goalRef,
           finalizedManifestDigest: requirement.finalizedManifestDigest,
           evidenceTaskRef: requirement.evidenceTaskRef,
@@ -2745,6 +2748,8 @@ export class ImplementationEvidenceService {
         status: "armed" as const,
         requirementRef,
         manifestId: manifest.manifestId,
+        manifestDigest,
+        records,
         goalRef: input.goalRef,
         finalizedManifestDigest: cohort.finalizedManifestDigest,
         evidenceTaskRef: cohort.evidenceTaskRef,
