@@ -67,8 +67,8 @@
 > `implement-reviewer`, compose `{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism?, supervisedGateEvidence?, parentGateAttestation? }`.
 > Omit `responseStoreNow`, `gateCompleteBy`, and `synthesisStoreReserveMs` from
 > caller input because `prepare_dispatch` binds those absolute values. When the
-> reviewer runs under the `read-only` sandbox (gate primitives denied), pass
-> through the trusted `supervisedGateEvidence` from the consumed worker result
+> reviewer runs under either configured sandbox mode, pass through the trusted
+> `supervisedGateEvidence` from the consumed worker result
 > and require the reviewer to validate its exact bindings and green counts.
 > For a legacy worker result without trusted evidence, attach
 > `parentGateAttestation` from a just-run or freshly run full gate on the worker
@@ -76,7 +76,7 @@
 > gateDurationMs?, command, capturedAt }` with `resultCommit` equal to the
 > worker tip, `gateExitCode === 0`, `failCount === 0`, and `passCount > 0`.
 > Never use `danger-full-access` to let the child re-run the gate. Non-sandboxed
-> reviewers omit both evidence fields and re-run the gate themselves. Then
+> reviewers validate the same trusted evidence and rerun only when it is absent or invalid. Then
 > dispatch through `CQ_SUBAGENT`, require its capability-scoped `store_result`
 > plus handle-only final response, confirm native completion, and fetch once
 > with the retained prepared handle. Only a consumed fetched body is a usable

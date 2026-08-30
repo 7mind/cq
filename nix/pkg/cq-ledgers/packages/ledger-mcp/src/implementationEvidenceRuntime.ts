@@ -185,7 +185,8 @@ function externalReviewPrompt(
 ): string {
   return [
     "Act as the CQ implement-reviewer for the bound implementation below.",
-    "Inspect the repository and exact result commit, rerun the canonical full gate, and return only one JSON object matching the supplied output schema.",
+    "Inspect the repository and exact result commit, validate exact runner-owned supervised gate evidence when present, and return only one JSON object matching the supplied output schema.",
+    "Rerun the canonical full gate only when exact trusted gate evidence is absent or invalid.",
     "Do not modify the repository. Approval requires an empty criticism and questions array.",
     `Task ref: ${panel.taskRef}`,
     `Result commit: ${panel.resultCommit}`,

@@ -35,7 +35,9 @@ import {
   InMemoryLedgerStore,
   serializeRegistry,
   derivePredicates,
+  recordProtectedImplementationCompletion,
   CANONICAL_LEDGERS,
+  type ImplementationCompletionRecord,
   type LedgerStore,
   type PredicateVerdict,
   LEDGER_STORAGE_DIRNAME,
@@ -688,6 +690,79 @@ function runPredicatesSuite(factory: PredicatesStoreFactory): void {
         expectVerdict(ext.belowFloor, true, [med.id, low.id]);
         expect(ext.pSeed!.items).not.toContain(med.id);
         expect(ext.pSeed!.items).not.toContain(low.id);
+      } finally {
+        await factory.teardown(store);
+      }
+    });
+
+    it("(seed-9) evidence-complete fix under a terminal goal does not reseed", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "completed fix" });
+        const goal = await store.createItem(GOALS, m.id, {
+          status: "done",
+          fields: { title: "completed fix goal", description: "d" },
+        });
+        const defect = await store.createItem(DEFECTS, m.id, {
+          status: "root-caused",
+          fields: { headline: "already fixed", severity: "high" },
+        });
+        const task = await store.createItem(TASKS, m.id, {
+          status: "wip",
+          fields: {
+            headline: "fix",
+            ledgerRefs: [`${GOALS}:${goal.id}`, `${DEFECTS}:${defect.id}`],
+          },
+        });
+        const resultCommit = "b".repeat(40);
+        const recordedAt = "2026-08-30T00:00:00.000Z";
+        const completion: ImplementationCompletionRecord = {
+          version: 1,
+          completionRef: `cq-implementation-completion:v1:${"c".repeat(64)}`,
+          taskRef: `${TASKS}:${task.id}`,
+          ownerGoalRef: `${GOALS}:${goal.id}`,
+          resultCommit,
+          repositoryHead: resultCommit,
+          baseCommit: "a".repeat(40),
+          startingCommit: "a".repeat(40),
+          workerDispatch: { attestationId: "att_seed_9", generation: 1 },
+          workerResult: {},
+          reviewAttemptRefs: [`cq-implementation-review-attempt:v1:${"d".repeat(64)}`],
+          completion: "fixed",
+          logPaths: [],
+          finalizedManifest: "manifest",
+          verification: {},
+          mergeOperationId: "merge-seed-9",
+          evidenceFingerprint: "e".repeat(64),
+          supersedesCompletionRef: null,
+          state: "merged",
+          reviewRef: null,
+          operationId: "complete-seed-9",
+          requestDigest: "f".repeat(64),
+          author: "test",
+          session: null,
+          preparedAt: recordedAt,
+          mergeStartedAt: recordedAt,
+          mergedAt: recordedAt,
+          recordedAt: null,
+          recordOperationId: null,
+        };
+        expectVerdict(derivePredicates(store).pSeed, true, [defect.id]);
+        await recordProtectedImplementationCompletion(
+          store,
+          {
+            taskRef: `${TASKS}:${task.id}`,
+            ownerGoalRef: `${GOALS}:${goal.id}`,
+            status: "wip",
+            finalizedManifest: "manifest",
+          },
+          completion,
+          { author: "test" },
+        );
+
+        expect((await store.fetchItem(DEFECTS, defect.id)).status).toBe("resolved");
+        await store.reopenItem(DEFECTS, defect.id, "root-caused");
+        expectVerdict(derivePredicates(store).pSeed, false, []);
       } finally {
         await factory.teardown(store);
       }

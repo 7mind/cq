@@ -243,7 +243,7 @@ async function runPackagedReviewer(input: {
       baseCommit,
       workerResult: workerOutput,
       round: 1,
-      ...(reviewerMode === "sandboxed" ? { supervisedGateEvidence } : {}),
+      supervisedGateEvidence,
     }),
   ) as DispatchJSONValue;
   const prepared = await capability.prepare({
@@ -405,21 +405,21 @@ async function runPackagedReviewer(input: {
     directGitDenied: reviewerMode === "sandboxed",
   });
   expect(capture.inputEvidence).toEqual({
-    supervised: reviewerMode === "sandboxed",
+    supervised: true,
     parent: false,
   });
   expect(capture.gate).toMatchObject({
     gateExitCode: 0,
     passCount: 1,
     failCount: 0,
-    gateReRan: reviewerMode === "non-sandboxed",
+    gateReRan: false,
   });
   expect(capture.output).toMatchObject({
     taskId: managedHandle.taskId,
     verdict: "approve",
     criticism: [],
     questions: [],
-    gateReRan: reviewerMode === "non-sandboxed",
+    gateReRan: false,
     resultCommitVerified: true,
     resultCommitEvidence: {
       status: "verified",
@@ -442,8 +442,8 @@ async function runPackagedReviewer(input: {
     workerRoute,
     reviewerMode,
     verdict: "approve",
-    gateReRan: reviewerMode === "non-sandboxed",
-    evidenceForwarded: reviewerMode === "sandboxed",
+    gateReRan: false,
+    evidenceForwarded: true,
     fastForwardEligible: true,
     dispatch: prepared.prepared,
     input: observed.input,
@@ -1333,8 +1333,8 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           workerRoute: "native",
           reviewerMode: "non-sandboxed",
           verdict: "approve",
-          gateReRan: true,
-          evidenceForwarded: false,
+          gateReRan: false,
+          evidenceForwarded: true,
           fastForwardEligible: true,
         },
         {
@@ -1349,8 +1349,8 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           workerRoute: "process",
           reviewerMode: "non-sandboxed",
           verdict: "approve",
-          gateReRan: true,
-          evidenceForwarded: false,
+          gateReRan: false,
+          evidenceForwarded: true,
           fastForwardEligible: true,
         },
       ]);
@@ -2138,8 +2138,8 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
           },
         });
 
-        // 7. A fresh review of the correction (non-sandboxed: the reviewer
-        // re-runs the canonical gate on the rebased tree itself).
+        // 7. A fresh review of the correction validates the exact supervised
+        // gate evidence produced for the rebased tree.
         const round2Review = await runPackagedReviewer({
           repositoryRoot,
           managedHandle: managed.handle,
@@ -2152,14 +2152,14 @@ exec ${JSON.stringify(ledgerCommand)} "$@"
         });
         expect(round2Review).toMatchObject({
           verdict: "approve",
-          gateReRan: true,
-          evidenceForwarded: false,
+          gateReRan: false,
+          evidenceForwarded: true,
           fastForwardEligible: true,
         });
-        expect(await gateRuns()).toBe(4);
-        expect(
-          (round2Review.consumed.output as Record<string, unknown>)["gateDurationMs"],
-        ).toBeGreaterThan(0);
+        expect(await gateRuns()).toBe(3);
+        expect(round2Review.consumed.output).toMatchObject({
+          gateReRanReason: "trusted supervised worker gate",
+        });
 
         // 8. Bind the consumed worker and fresh reviewer dispatches into the
         // protected completion journal before the ff-only merge.

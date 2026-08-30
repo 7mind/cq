@@ -17,6 +17,11 @@ const cli = fileURLToPath(new URL("../src/main.ts", import.meta.url));
 const parentFixture = fileURLToPath(
   new URL("./worksetEffectProviderParentFixture.ts", import.meta.url),
 );
+const PROCESS_SETTLEMENT_BOUND_MS = 5_000;
+const PROCESS_SETTLEMENT_SCHEDULER_MARGIN_MS = 2_000;
+const PROCESS_EXIT_OBSERVATION_DEADLINE_MS =
+  PROCESS_SETTLEMENT_BOUND_MS + PROCESS_SETTLEMENT_SCHEDULER_MARGIN_MS;
+const PROCESS_EXIT_POLL_MS = 2;
 
 function childExited(child: ChildProcess): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -63,11 +68,14 @@ async function waitForFile(path: string): Promise<void> {
 }
 
 async function waitForExit(pid: number): Promise<void> {
-  for (let attempt = 0; attempt < 2_500; attempt += 1) {
+  const deadline = performance.now() + PROCESS_EXIT_OBSERVATION_DEADLINE_MS;
+  while (performance.now() < deadline) {
     if ((await readProcessIdentity(pid)) === null) return;
-    await Bun.sleep(2);
+    await Bun.sleep(PROCESS_EXIT_POLL_MS);
   }
-  throw new Error(`process ${String(pid)} survived controller death`);
+  throw new Error(
+    `process ${String(pid)} survived the ${String(PROCESS_EXIT_OBSERVATION_DEADLINE_MS)}ms controller-death settlement deadline`,
+  );
 }
 
 describe("cq workset effect provider control [Behavioral-Active Blackbox Good-Communication]", () => {

@@ -79,8 +79,8 @@ require its strict versioned schema and verify that its `taskId`,
 Also require the canonical command, `gateExitCode === 0`, `failCount === 0`,
 `passCount > 0`, `clean === true`, `roleId === "implement-worker"`, and
 `surface === "codex"`. Reject caller substitutions or incomplete evidence.
-Do **not** invoke `cq gate run` inside the sandbox. On valid evidence set
-`gateReRan=false`, `gateReRanReason=sandbox-denied-primitives`, omit reviewer
+Do **not** invoke `cq gate run` when this exact evidence is valid. On valid evidence set
+`gateReRan=false`, `gateReRanReason=trusted supervised worker gate`, omit reviewer
 `gateDurationMs`, and cite the runner-owned counts, command, duration, and
 capture time in the rationale.
 
@@ -102,7 +102,8 @@ gate as
 `cq gate run --worktree <worktree> --command-cwd <worktree>/nix/pkg/cq-ledgers --deadline <gateCompleteBy> -- bun run check`.
 The deadline path terminates and settles the registered command before it
 returns; measure `gateDurationMs` through that termination and settlement.
-Non-sandboxed reviewers always take this child re-run path.
+Non-sandboxed reviewers take the same trusted-evidence path and rerun only when
+the evidence is absent or invalid.
 
 Check acceptance, correctness, boundary handling, type safety, surgical scope,
 and defect reproduction.
@@ -182,8 +183,8 @@ are not questions.
 
 Always state `gateReRan`, `resultCommitVerified`, `resultCommitEvidence`, and
 `baseAncestry`. Include `gateDurationMs` only when the gate ran; otherwise
-include an optional `gateReRanReason` (use exactly `sandbox-denied-primitives`
-on the parent-attested path). Approval requires empty criticism/questions, a
+include an optional `gateReRanReason` (use exactly `trusted supervised worker gate`
+for supervised evidence and `sandbox-denied-primitives` on the legacy parent-attested path). Approval requires empty criticism/questions, a
 green gate (child re-run exit 0, or a verified parent attestation with exit 0 /
 failCount 0 / passCount > 0), `resultCommitVerified=true`, and both evidence
 arms verified with full SHAs. Disapproval requires criticism or questions and

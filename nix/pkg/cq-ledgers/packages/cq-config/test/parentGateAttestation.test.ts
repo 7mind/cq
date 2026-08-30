@@ -265,7 +265,7 @@ describe("T2007 sandbox-denied prompt and parent dispatch guards", () => {
     expect(body).toContain("supervisedGateEvidence");
   });
 
-  test("implement-reviewer pins sandbox-denied-primitives and keeps child gate prose [BG]", () => {
+  test("implement-reviewer reuses trusted evidence and preserves the legacy attested gate path [BG]", () => {
     const body = readFileSync(IMPLEMENT_REVIEWER_AGENT, "utf8");
     expect(body).toContain(SANDBOX_DENIED_PRIMITIVES_GATE_REASON);
     expect(body).toContain("parentGateAttestation");
@@ -274,30 +274,34 @@ describe("T2007 sandbox-denied prompt and parent dispatch guards", () => {
     expect(body).toContain(
       "`cq gate run --worktree <worktree> --command-cwd <worktree>/nix/pkg/cq-ledgers --deadline <gateCompleteBy> -- bun run check`",
     );
-    expect(body).toContain("Non-sandboxed reviewers always take this child re-run path");
+    expect(body).toContain(
+      "Non-sandboxed reviewers take the same trusted-evidence path and rerun only when",
+    );
     expect(body).toContain("gateExitCode === 0");
     expect(body).toContain("failCount === 0");
     expect(body).toContain("passCount > 0");
   });
 
-  test("Codex parent dispatch attaches parentGateAttestation on the sandboxed path [BG]", () => {
+  test("Codex parent dispatch forwards supervised evidence and retains the legacy attested path [BG]", () => {
     const body = readFileSync(CODEX_IMPLEMENT_DISPATCH, "utf8");
     expect(body).toContain("parentGateAttestation");
     expect(body).toContain("supervisedGateEvidence");
     expect(body).toMatch(/trusted\s+result-storage boundary/m);
-    expect(body).toContain("read-only");
+    expect(body).toContain("reviewer runs under either configured sandbox mode");
     expect(body).toContain("danger-full-access");
     expect(body).toContain("gateExitCode === 0");
     expect(body).toContain("passCount > 0");
   });
 
-  test("implement/advance pins the parent-attested gate rule [BG]", () => {
+  test("implement/advance pins trusted evidence reuse and the parent-attested fallback [BG]", () => {
     const body = readFileSync(IMPLEMENT_ADVANCE, "utf8");
     expect(body).toContain("parentGateAttestation");
     expect(body).toContain("supervisedGateEvidence");
     expect(body).toContain("gate primitives denied");
     expect(body).toContain("Do not escalate the child sandbox");
-    expect(body).toContain("gateReRan=true");
+    expect(body).toMatch(
+      /Every reviewer\s+reruns the gate only when exact trusted evidence is absent or invalid/m,
+    );
   });
 
   test("non-Codex parent dispatch fragments omit parentGateAttestation [BG]", () => {

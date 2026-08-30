@@ -21,7 +21,7 @@ import type {
   WorksetBrokerAdmissionHandle,
 } from "@cq/process-control";
 import { Lockfile, type LockfileOpts } from "./store/lockfile.js";
-import { REVIEWS_LEDGER, TASKS_LEDGER } from "./constants.js";
+import { DEFECTS_LEDGER, REVIEWS_LEDGER, TASKS_LEDGER } from "./constants.js";
 import type { CreateItemInit, LedgerStore, UpdateItemPatch } from "./store/LedgerStore.js";
 import type { WorksetGenericMutationTx } from "./store/genericMutationTransaction.js";
 import type { WorksetRootsEpoch } from "./worksetEffectAdmission.js";
@@ -4967,6 +4967,14 @@ export async function recordProtectedImplementationCompletion(
     author: provenance.author,
     ...(provenance.session === undefined ? {} : { session: provenance.session }),
   };
+  const defectPatch: UpdateItemPatch = {
+    status: "resolved",
+    fields: {
+      fix: `Protected completion ${completion.completionRef} recorded at ${completion.resultCommit}.`,
+    },
+    author: provenance.author,
+    ...(provenance.session === undefined ? {} : { session: provenance.session }),
+  };
   authorizedImplementationEvidenceMutations.add(reviewInit);
   authorizedImplementationEvidenceMutations.add(patch);
   const atomic = store as LedgerStore & {
@@ -4994,6 +5002,23 @@ export async function recordProtectedImplementationCompletion(
     if (currentTask.status !== "done") tx.updateItem(TASKS_LEDGER, taskId, patch);
     else if (currentTask.fields["resultCommit"] !== completion.resultCommit)
       throw new Error("done task carries a different resultCommit");
+    const defectRefs = currentTask.fields["ledgerRefs"];
+    if (Array.isArray(defectRefs)) {
+      for (const defectRef of new Set(defectRefs)) {
+        if (!defectRef.startsWith(`${DEFECTS_LEDGER}:`)) continue;
+        const defectId = defectRef.slice(DEFECTS_LEDGER.length + 1);
+        let defect;
+        try {
+          defect = tx.fetchItem(DEFECTS_LEDGER, defectId);
+        } catch (error) {
+          if (error instanceof ItemNotFoundError) continue;
+          throw error;
+        }
+        if (defect.status === "root-caused") {
+          tx.updateItem(DEFECTS_LEDGER, defectId, defectPatch);
+        }
+      }
+    }
     return { reviewRef: `${REVIEWS_LEDGER}:${reviewId}` };
   });
 }

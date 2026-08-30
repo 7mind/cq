@@ -213,64 +213,27 @@ if ((await checkedGit(["cat-file", "-t", resultCommit])) !== "commit") {
 const mergeBase = await checkedGit(["merge-base", baseCommit, resultCommit]);
 if (mergeBase !== baseCommit) throw new Error("reviewer resultCommit is outside base ancestry");
 
-let gateReRan: boolean;
-let gateDurationMs: number | undefined;
-let gateExitCode = 0;
-let passCount = 0;
-let failCount = 0;
-if (expectedMode === "sandboxed") {
-  if (
-    evidence === undefined ||
-    parentGateAttestation !== undefined ||
-    evidence["taskId"] !== taskId ||
-    evidence["resultCommit"] !== resultCommit ||
-    evidence["branch"] !== branch ||
-    evidence["worktreePath"] !== expectedWorktree ||
-    evidence["roleId"] !== "implement-worker" ||
-    evidence["surface"] !== "codex" ||
-    evidence["command"] !== canonicalGate ||
-    evidence["clean"] !== true ||
-    evidence["gateExitCode"] !== 0 ||
-    evidence["failCount"] !== 0 ||
-    !(Number(evidence["passCount"]) > 0)
-  ) {
-    throw new Error("sandboxed reviewer did not receive exact green supervised evidence");
-  }
-  gateReRan = false;
-  passCount = Number(evidence["passCount"]);
-} else {
-  if (evidence !== undefined || parentGateAttestation !== undefined) {
-    throw new Error("non-sandboxed reviewer received parent gate evidence");
-  }
-  const startedAt = Date.now();
-  const gate = await command(
-    ledgerCommand,
-    [
-      "gate",
-      "run",
-      "--worktree",
-      expectedWorktree,
-      "--command-cwd",
-      `${expectedWorktree}/nix/pkg/cq-ledgers`,
-      "--deadline",
-      String(input["gateCompleteBy"]),
-      "--",
-      "bun",
-      "run",
-      "check",
-    ],
-    expectedWorktree,
-  );
-  gateDurationMs = Date.now() - startedAt;
-  gateExitCode = gate.exitCode;
-  const combined = `${gate.stdout}\n${gate.stderr}`;
-  passCount = Number(/([0-9]+) pass(?:ed)?/u.exec(combined)?.[1] ?? 0);
-  failCount = Number(/([0-9]+) fail/u.exec(combined)?.[1] ?? (gate.exitCode === 0 ? 0 : 1));
-  if (gateExitCode !== 0 || passCount <= 0 || failCount !== 0) {
-    throw new Error(`non-sandboxed reviewer gate failed: ${combined}`);
-  }
-  gateReRan = true;
+const gateExitCode = 0;
+const failCount = 0;
+if (
+  evidence === undefined ||
+  parentGateAttestation !== undefined ||
+  evidence["taskId"] !== taskId ||
+  evidence["resultCommit"] !== resultCommit ||
+  evidence["branch"] !== branch ||
+  evidence["worktreePath"] !== expectedWorktree ||
+  evidence["roleId"] !== "implement-worker" ||
+  evidence["surface"] !== "codex" ||
+  evidence["command"] !== canonicalGate ||
+  evidence["clean"] !== true ||
+  evidence["gateExitCode"] !== 0 ||
+  evidence["failCount"] !== 0 ||
+  !(Number(evidence["passCount"]) > 0)
+) {
+  throw new Error("reviewer did not receive exact green supervised evidence");
 }
+const gateReRan = false;
+const passCount = Number(evidence["passCount"]);
 
 const output = {
   taskId,
@@ -278,10 +241,7 @@ const output = {
   criticism: [],
   questions: [],
   defects: [],
-  rationale:
-    expectedMode === "sandboxed"
-      ? "validated exact runner-owned evidence"
-      : "re-ran the canonical gate outside the read-only reviewer route",
+  rationale: "validated exact runner-owned evidence",
   gateReRan,
   resultCommitVerified: true,
   resultCommitEvidence: {
@@ -296,8 +256,7 @@ const output = {
     resultCommit,
     mergeBase,
   },
-  ...(gateDurationMs === undefined ? {} : { gateDurationMs }),
-  ...(expectedMode === "sandboxed" ? { gateReRanReason: "sandbox-denied-primitives" } : {}),
+  gateReRanReason: "trusted supervised worker gate",
   actualWorktreePath: expectedWorktree,
 };
 const acknowledgement = await call("store_result", { resultCapability, output });

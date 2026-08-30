@@ -112,6 +112,7 @@ import {
   MILESTONES_LEDGER,
   QUESTIONS_LEDGER,
   RESEARCHES_LEDGER,
+  REVIEWS_LEDGER,
   TASKS_LEDGER,
   UPSTREAM_LEDGER,
 } from "../constants.js";
@@ -269,6 +270,53 @@ function refList(item: Item, name: string): string[] {
 function stringField(item: Item, name: string): string {
   const value = item.fields[name];
   return typeof value === "string" ? value : "";
+}
+
+const FULL_RESULT_COMMIT = /^[0-9a-f]{40}$/u;
+const COMPLETION_REF = /^cq-implementation-completion:v1:[0-9a-f]{64}$/u;
+const EVIDENCE_FINGERPRINT = /^[0-9a-f]{64}$/u;
+
+function hasEvidenceCompleteFix(
+  defect: Item,
+  tasks: readonly Item[],
+  reviews: readonly Item[],
+): boolean {
+  const defectRef = `${DEFECTS_LEDGER}:${defect.id}`;
+  return tasks.some((task) => {
+    if (task.status !== "done" || !refList(task, "ledgerRefs").includes(defectRef)) return false;
+    const resultCommit = stringField(task, "resultCommit");
+    if (!FULL_RESULT_COMMIT.test(resultCommit) || stringField(task, "completion").length === 0) {
+      return false;
+    }
+    const taskRef = `${TASKS_LEDGER}:${task.id}`;
+    return reviews.some((review) => {
+      if (review.status !== "go-ahead" || !refList(review, "ledgerRefs").includes(taskRef)) {
+        return false;
+      }
+      try {
+        const evidence = JSON.parse(stringField(review, "implementationEvidence")) as Record<
+          string,
+          unknown
+        >;
+        return (
+          evidence["version"] === 1 &&
+          evidence["taskRef"] === taskRef &&
+          evidence["resultCommit"] === resultCommit &&
+          typeof evidence["completionRef"] === "string" &&
+          COMPLETION_REF.test(evidence["completionRef"]) &&
+          typeof evidence["evidenceFingerprint"] === "string" &&
+          EVIDENCE_FINGERPRINT.test(evidence["evidenceFingerprint"]) &&
+          Array.isArray(evidence["reviewAttemptRefs"]) &&
+          evidence["reviewAttemptRefs"].length > 0 &&
+          evidence["reviewAttemptRefs"].every(
+            (attemptRef) => typeof attemptRef === "string" && attemptRef.length > 0,
+          )
+        );
+      } catch {
+        return false;
+      }
+    });
+  });
 }
 
 /**
@@ -546,6 +594,7 @@ function deriveEligiblePredicates(
   const questions = activeItems(store, QUESTIONS_LEDGER, eligibleRefs);
   const milestones = activeItems(store, MILESTONES_LEDGER, eligibleRefs);
   const researches = activeItems(store, RESEARCHES_LEDGER, eligibleRefs);
+  const reviews = activeItems(store, REVIEWS_LEDGER, eligibleRefs);
 
   // The open questions, indexed by the cross-ledger refs they carry, so a
   // single pass answers "is item X gated by an open question?".
@@ -617,6 +666,7 @@ function deriveEligiblePredicates(
   const belowFloorItems: string[] = [];
   for (const d of defects) {
     if (d.status !== DEFECT_SEED_STATUS) continue;
+    if (hasEvidenceCompleteFix(d, tasks, reviews)) continue;
     // Owned by a live goal, either direction → that goal's fix, not a seed.
     const ownedByLiveGoal =
       refList(d, "ledgerRefs").some((ref) => {

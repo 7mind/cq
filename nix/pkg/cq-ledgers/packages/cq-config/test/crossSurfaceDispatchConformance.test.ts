@@ -581,7 +581,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     }
   });
 
-  it("T2007 pins parent-attested sandbox-denied gate path while preserving child re-run prose", () => {
+  it("T2007 pins trusted evidence reuse and the parent-attested sandbox-denied fallback", () => {
     for (const surface of PROMPT_SURFACES) {
       const reviewer = normalize(renderedOf(surface, "implement-reviewer"));
       expect(reviewer).toContain("parentGateAttestation");
@@ -589,12 +589,16 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       expect(reviewer).toContain(
         "`cq gate run --worktree <worktree> --command-cwd <worktree>/nix/pkg/cq-ledgers --deadline <gateCompleteBy> -- bun run check`",
       );
-      expect(reviewer).toContain("Non-sandboxed reviewers always take this child re-run path");
+      expect(reviewer).toContain(
+        "Non-sandboxed reviewers take the same trusted-evidence path and rerun only when",
+      );
     }
     const codexAdvance = normalize(renderedOf("codex", "implement/advance"));
     expect(codexAdvance).toContain("parentGateAttestation");
     expect(codexAdvance).toContain("danger-full-access");
-    expect(codexAdvance).toContain("gateReRan=true");
+    expect(codexAdvance).toContain(
+      "Every reviewer reruns the gate only when exact trusted evidence is absent or invalid",
+    );
   });
 
   it("T903 pins the implausible-duration classification and foreground-rerun response", () => {

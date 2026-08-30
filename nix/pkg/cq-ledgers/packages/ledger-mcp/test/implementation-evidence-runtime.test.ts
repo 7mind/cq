@@ -102,6 +102,10 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
     expect(observed[0]!.adapterIdentity).toBe("pi:process");
     expect(observed[0]!.prompt).toContain("Output JSON Schema");
     expect(observed[0]!.prompt).toContain("protected runtime executes the configured reviewer");
+    expect(observed[0]!.prompt).toContain(
+      "validate exact runner-owned supervised gate evidence when present",
+    );
+    expect(observed[0]!.prompt).not.toContain("rerun the canonical full gate");
   });
 
   test("constructs one production service and passes it to both standalone transports", async () => {

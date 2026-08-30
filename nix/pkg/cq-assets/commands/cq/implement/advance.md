@@ -451,8 +451,8 @@ questions, and defects for reconciliation and correction redispatch. Never
 infer those fields from `terminalState`, raw process output, task prose, logs,
 or protected store state.
 
-**Sandboxed reviewer gate evidence.** Pass a consumed worker's verified
-`supervisedGateEvidence` through to a sandboxed `implement-reviewer` and require
+**Reviewer gate evidence.** Pass a consumed worker's verified
+`supervisedGateEvidence` through to every protected `implement-reviewer` and require
 the reviewer to validate its exact bindings and green counts without rerunning
 the gate. For a legacy result without this evidence, when a surface's dispatch
 workflow requires parent-attested gate evidence (gate primitives denied), the
@@ -461,8 +461,8 @@ full gate on the worker tip:
 `{ resultCommit, gateExitCode, passCount, failCount, gateDurationMs?, command,
 capturedAt }` with exact tip match, `gateExitCode === 0`, `failCount === 0`, and
 `passCount > 0`. Do not escalate the child sandbox to gain gate primitives.
-Non-sandboxed reviewers omit the attestation and still re-run the gate
-themselves; their approve path still requires child `gateReRan=true`.
+Non-sandboxed reviewers use the same runner-owned evidence path. Every reviewer
+reruns the gate only when exact trusted evidence is absent or invalid.
 
 **External reviewer usable-verdict rule.** Fence-strip and validate stdout first.
 A complete, parseable verdict counts as a vote despite a non-zero shell exit;

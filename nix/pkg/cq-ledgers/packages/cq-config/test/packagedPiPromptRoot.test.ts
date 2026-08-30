@@ -52,6 +52,7 @@ const originalMcpDirectTools = process.env.MCP_DIRECT_TOOLS;
 const originalPiOffline = process.env.PI_OFFLINE;
 const originalXdgStateHome = process.env.XDG_STATE_HOME;
 const originalWorksetProviderCommand = process.env.CQ_WORKSET_EFFECT_PROVIDER_COMMAND;
+const PI_ROLE_DISPATCH_TIMEOUT_MS = 30_000;
 
 interface CatalogRole {
   readonly roleId: string;
@@ -614,17 +615,15 @@ describe("packaged Pi prompt root", () => {
     ).rejects.toThrow('tool "enumerate_ledgers" lacks a profile decision');
   }, 30_000);
 
-  test("dispatches mutation-capable roles with exact Pi deny lists", async () => {
+  test.each([
+    "implement-worker",
+    "implement-reviewer",
+    "implement-conflict-resolver",
+    "investigate-prober",
+    "research-experimenter",
+  ])("dispatches mutation-capable role %s with its exact Pi deny list", async (agent) => {
     const runtime = await prepareDispatchRuntime();
     expect(runtime.registered.name).toBe("dispatch_agent");
-    for (const agent of [
-      "implement-worker",
-      "implement-reviewer",
-      "implement-conflict-resolver",
-      "investigate-prober",
-      "research-experimenter",
-    ]) {
-      await assertRoleDispatch(runtime, agent);
-    }
-  }, 30_000);
+    await assertRoleDispatch(runtime, agent);
+  }, PI_ROLE_DISPATCH_TIMEOUT_MS);
 });
