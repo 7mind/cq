@@ -220,19 +220,31 @@ the server proves the stale requirement had no prepared panel, audit, or
 application. Continue with only the replacement arm's returned digest and
 record coordinates.
 
-A `stale` probe with a non-null activation ref may recover only one already-recorded,
-one-step protected transition: identify the unique finalized-manifest Git task
-whose terminal go-ahead review names one recorded completion from the stale
-requirement's exact boundary to the current head, then replay one stable
+A `stale` probe with a non-null activation ref first checks for one already-recorded,
+one-step protected transition. When one exists, identify the unique
+finalized-manifest Git task whose terminal go-ahead review names one recorded
+completion from the stale requirement's exact boundary to the current head,
+then replay one stable
 `continue_implementation_evidence_activation({ goal_ref, manifest_id,
 prior_requirement_ref, completed_task_ref, completion_ref,
 expected_from_head, expected_repository_head, operation_id, author, session })`
 request. Accept only `continued|existing` with every returned ref, task, head,
 and completion equal to that request, then re-probe and require `active`.
-Absent, pending, multi-step, surplus, rewritten, ambiguous, unaudited, or
-changed-input recovery stops closed and dispatches nothing. Never arm, audit,
-or apply again to repair a stale fulfilled head, and never read protected storage,
-diagnostics, summaries, or logs to reconstruct continuation authority.
+
+When no such protected completion exists because the current head is instead a
+retained descendant parent correction, re-arm through
+`arm_implementation_evidence_activation` and repeat the complete ordered audit
+and application sequence at the new head. Accept this recovery only when the
+response names the exact fulfilled stale requirement as
+`supersededRequirementRef`; the old requirement has a matching authenticated
+activation and manifest application; and the semantic manifest, finalized
+digest, mappings, and cohort are unchanged. Continue with only the replacement
+arm's returned digest and record coordinates. Missing prior activation or
+application, changed authority, an unretained or same boundary, multiple live
+lineage tips, incomplete audit, disapproval, surplus evidence, or changed-input
+replay stops closed. Never use this parent-correction arm when a protected task
+completion exists, and never read protected storage, diagnostics, summaries,
+or logs to reconstruct either recovery authority.
 
 ## 1. Derive the ready set
 

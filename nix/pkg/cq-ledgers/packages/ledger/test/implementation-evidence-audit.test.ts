@@ -403,6 +403,144 @@ describe("protected historical implementation evidence [BA]", () => {
     });
   });
 
+  test("supersedes one fulfilled stale activation for a retained parent correction", async () => {
+    const reviewed = manifest();
+    const f = fixture({
+      ...reviewed,
+      records: reviewed.records.map((candidate) => ({
+        ...candidate,
+        historicalReview: historicalReview(
+          candidate.taskRef,
+          candidate.baseCommit,
+          candidate.resultCommit,
+        ),
+      })),
+    });
+    const first = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-before-fulfilled-parent-correction",
+      author: "parent",
+    });
+    await f.service.applyAuditManifest({
+      manifestId: f.packaged.manifestId,
+      manifestDigest: first.manifestDigest,
+      expectedRepositoryHead: HEAD,
+      auditAttemptRefs: [],
+      operationId: "apply-before-fulfilled-parent-correction",
+      author: "parent",
+    });
+    f.setHead(NEXT_HEAD);
+    f.replacePackaged({
+      ...f.packaged,
+      records: f.packaged.records.map((candidate) => ({
+        ...candidate,
+        repositoryHead: NEXT_HEAD,
+      })),
+    });
+
+    const replacement = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: NEXT_HEAD,
+      operationId: "arm-after-fulfilled-parent-correction",
+      author: "parent",
+    });
+
+    expect(replacement).toMatchObject({
+      status: "armed",
+      boundaryCommit: NEXT_HEAD,
+      supersededRequirementRef: first.requirementRef,
+    });
+    expect((await f.store.snapshot()).activationRequirements[first.requirementRef]).toMatchObject({
+      state: "superseded",
+      supersededByRequirementRef: replacement.requirementRef,
+      activationRef: expect.any(String),
+      fulfilledAt: expect.any(String),
+    });
+    expect(
+      await f.service.applyAuditManifest({
+        manifestId: f.packaged.manifestId,
+        manifestDigest: replacement.manifestDigest,
+        expectedRepositoryHead: NEXT_HEAD,
+        auditAttemptRefs: [],
+        operationId: "apply-after-fulfilled-parent-correction",
+        author: "parent",
+      }),
+    ).toMatchObject({
+      status: "applied",
+      activation: "activated",
+      requirementRef: replacement.requirementRef,
+    });
+    expect(
+      await f.service.evidenceActivationStatus({
+        goalRef: "goals:G176",
+        manifestId: f.packaged.manifestId,
+        expectedRepositoryHead: NEXT_HEAD,
+      }),
+    ).toMatchObject({ status: "active", requirementRef: replacement.requirementRef });
+    expect(await f.service.evidenceServiceStatus()).toMatchObject({
+      activationState: { status: "active", requirementRef: replacement.requirementRef },
+    });
+  });
+
+  test("refuses fulfilled supersession without its authenticated activation and application", async () => {
+    const reviewed = manifest();
+    const f = fixture({
+      ...reviewed,
+      records: reviewed.records.map((candidate) => ({
+        ...candidate,
+        historicalReview: historicalReview(
+          candidate.taskRef,
+          candidate.baseCommit,
+          candidate.resultCommit,
+        ),
+      })),
+    });
+    const first = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-before-corrupt-fulfilled-authority",
+      author: "parent",
+    });
+    await f.service.applyAuditManifest({
+      manifestId: f.packaged.manifestId,
+      manifestDigest: first.manifestDigest,
+      expectedRepositoryHead: HEAD,
+      auditAttemptRefs: [],
+      operationId: "apply-before-corrupt-fulfilled-authority",
+      author: "parent",
+    });
+    const snapshot = await f.store.snapshot();
+    f.setHead(NEXT_HEAD);
+    f.replacePackaged({
+      ...f.packaged,
+      records: f.packaged.records.map((candidate) => ({
+        ...candidate,
+        repositoryHead: NEXT_HEAD,
+      })),
+    });
+
+    const corruptions = [
+      { ...snapshot, activations: {} },
+      { ...snapshot, auditManifestApplications: {} },
+    ];
+    for (const [index, corrupted] of corruptions.entries()) {
+      await expect(
+        f.serviceWithStore(createInMemoryImplementationEvidenceStore(corrupted))
+          .armEvidenceActivation({
+            goalRef: "goals:G176",
+            manifestId: f.packaged.manifestId,
+            expectedRepositoryHead: NEXT_HEAD,
+            operationId: `refuse-corrupt-fulfilled-authority-${String(index)}`,
+            author: "parent",
+          }),
+      ).rejects.toThrow("a different implementation evidence activation requirement is pending");
+    }
+  });
+
   test("reports the fulfilled current requirement after persisted keys are reordered", async () => {
     const reviewed = manifest();
     const f = fixture({

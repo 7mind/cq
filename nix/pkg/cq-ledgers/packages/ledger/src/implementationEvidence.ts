@@ -2718,12 +2718,36 @@ export class ImplementationEvidenceService {
           taskRefs: requirement.taskRefs,
         };
       }
-      const blocking = Object.values(state.activationRequirements).find(
+      const scopedRequirements = Object.values(state.activationRequirements).filter(
         (requirement) =>
-          requirement.goalRef === input.goalRef &&
-          requirement.manifestId === input.manifestId &&
-          requirement.state === "armed",
+          requirement.goalRef === input.goalRef && requirement.manifestId === input.manifestId,
       );
+      const armedRequirements = scopedRequirements.filter(
+        (requirement) => requirement.state === "armed",
+      );
+      if (armedRequirements.length > 1)
+        throw new Error("multiple implementation evidence activation requirements are armed");
+      const supersededPredecessors = new Set(
+        scopedRequirements.flatMap((requirement) =>
+          [requirement.previousRequirementRef, requirement.supersededRequirementRef].filter(
+            (reference): reference is string => reference !== null && reference !== undefined,
+          ),
+        ),
+      );
+      const fulfilledTips = scopedRequirements.filter(
+        (requirement) =>
+          requirement.state === "fulfilled" &&
+          !supersededPredecessors.has(requirement.requirementRef) &&
+          requirement.semanticManifestDigest === semanticManifestDigest &&
+          requirement.finalizedManifestDigest === cohort.finalizedManifestDigest &&
+          requirement.evidenceTaskRef === cohort.evidenceTaskRef &&
+          requirement.auditTaskRef === cohort.auditTaskRef &&
+          requirement.activationTaskRef === cohort.activationTaskRef &&
+          canonical(requirement.taskRefs) === canonical(taskRefs),
+      );
+      if (fulfilledTips.length > 1)
+        throw new Error("multiple matching implementation evidence requirement lineages exist");
+      const blocking = armedRequirements[0] ?? fulfilledTips[0];
       let supersededRequirementRef: string | null = null;
       if (blocking !== undefined) {
         const hasPreparedEvidence =
@@ -2745,6 +2769,16 @@ export class ImplementationEvidenceService {
               application.manifestDigest === blocking.manifestDigest &&
               application.repositoryHead === blocking.boundaryCommit,
           );
+        const priorActivation =
+          blocking.activationRef === null
+            ? undefined
+            : state.activations[blocking.activationRef];
+        const fulfilledApplication = Object.values(state.auditManifestApplications).find(
+          (application) =>
+            application.requirementRef === blocking.requirementRef &&
+            application.repositoryHead === blocking.boundaryCommit &&
+            application.activation !== "none",
+        );
         const retainedBoundary =
           this.deps.isCommitRetained !== undefined &&
           await this.deps.isCommitRetained({
@@ -2753,15 +2787,22 @@ export class ImplementationEvidenceService {
           });
         if (
           blocking.boundaryCommit === repositoryHead ||
-          blocking.activationRef !== null ||
-          blocking.fulfilledAt !== null ||
           blocking.semanticManifestDigest !== semanticManifestDigest ||
           blocking.finalizedManifestDigest !== cohort.finalizedManifestDigest ||
           blocking.evidenceTaskRef !== cohort.evidenceTaskRef ||
           blocking.auditTaskRef !== cohort.auditTaskRef ||
           blocking.activationTaskRef !== cohort.activationTaskRef ||
           canonical(blocking.taskRefs) !== canonical(taskRefs) ||
-          hasPreparedEvidence ||
+          (blocking.state === "armed" &&
+            (blocking.activationRef !== null ||
+              blocking.fulfilledAt !== null ||
+              hasPreparedEvidence)) ||
+          (blocking.state === "fulfilled" &&
+            (blocking.activationRef === null ||
+              blocking.fulfilledAt === null ||
+              priorActivation?.requirementRef !== blocking.requirementRef ||
+              priorActivation.repositoryHead !== blocking.boundaryCommit ||
+              fulfilledApplication === undefined)) ||
           !retainedBoundary
         )
           throw new Error("a different implementation evidence activation requirement is pending");
