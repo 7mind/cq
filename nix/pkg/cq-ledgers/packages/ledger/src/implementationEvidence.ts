@@ -1589,18 +1589,32 @@ export async function implementationEvidenceActivationStatusFromStore(
   const requirementCandidates = Object.values(state.activationRequirements).filter(
     (candidate) => candidate.goalRef === input.goalRef && candidate.manifestId === input.manifestId,
   );
-  const armedRequirements = requirementCandidates.filter(
+  const lineageTips = activationRequirementLineageTips(requirementCandidates);
+  const armedRequirements = lineageTips.filter(
     (candidate) => candidate.state === "armed",
   );
   if (armedRequirements.length > 1)
     throw new Error("multiple implementation evidence activation requirements are armed");
-  const matchingRequirement = requirementCandidates.find(
+  const currentRequirements = lineageTips.filter(
+    (candidate) =>
+      candidate.manifestDigest === manifestBinding.manifestDigest &&
+      candidate.sourceDigest === manifestBinding.sourceDigest &&
+      candidate.finalizedManifestDigest === manifestBinding.finalizedManifestDigest &&
+      candidate.boundaryCommit === repositoryHead,
+  );
+  if (currentRequirements.length > 1)
+    throw new Error("multiple current implementation evidence activation requirements exist");
+  const matchingRequirements = lineageTips.filter(
     (candidate) =>
       candidate.manifestDigest === manifestBinding.manifestDigest &&
       candidate.sourceDigest === manifestBinding.sourceDigest &&
       candidate.finalizedManifestDigest === manifestBinding.finalizedManifestDigest,
   );
-  const requirement = armedRequirements[0] ?? matchingRequirement ?? requirementCandidates[0];
+  const requirement =
+    armedRequirements[0] ??
+    currentRequirements[0] ??
+    latestActivationRequirement(matchingRequirements) ??
+    latestActivationRequirement(lineageTips);
   if (requirement === undefined) {
     return {
       status: "absent" as const,
@@ -1636,6 +1650,32 @@ export async function implementationEvidenceActivationStatusFromStore(
     activationRef: requirement.activationRef,
     taskRefs: requirement.taskRefs,
   };
+}
+
+function activationRequirementLineageTips(
+  requirements: readonly ImplementationEvidenceActivationRequirementRecord[],
+): readonly ImplementationEvidenceActivationRequirementRecord[] {
+  const predecessors = new Set(
+    requirements.flatMap((requirement) =>
+      [requirement.previousRequirementRef, requirement.supersededRequirementRef].filter(
+        (reference): reference is string => reference !== null && reference !== undefined,
+      ),
+    ),
+  );
+  return requirements.filter(
+    (requirement) =>
+      requirement.state !== "superseded" && !predecessors.has(requirement.requirementRef),
+  );
+}
+
+function latestActivationRequirement(
+  requirements: readonly ImplementationEvidenceActivationRequirementRecord[],
+): ImplementationEvidenceActivationRequirementRecord | undefined {
+  return [...requirements].sort(
+    (left, right) =>
+      left.armedAt.localeCompare(right.armedAt) ||
+      left.requirementRef.localeCompare(right.requirementRef),
+  ).at(-1);
 }
 
 function finalizedReviewOutcome(attempt: ImplementationReviewAttemptRecord) {
@@ -2602,22 +2642,18 @@ export class ImplementationEvidenceService {
     const candidates = Object.values(state.activationRequirements).filter(
       (entry) => entry.goalRef === authority.goalRef,
     );
-    const armed = candidates.filter((entry) => entry.state === "armed");
+    const lineageTips = activationRequirementLineageTips(candidates);
+    const armed = lineageTips.filter((entry) => entry.state === "armed");
     if (armed.length > 1)
       throw new Error("multiple implementation evidence activation requirements are armed");
-    const current = candidates.filter(
+    const current = lineageTips.filter(
       (entry) =>
-        entry.state !== "superseded" &&
         entry.finalizedManifestDigest === authority.finalizedManifestDigest &&
         entry.boundaryCommit === repositoryHead,
     );
     if (current.length > 1)
       throw new Error("multiple current implementation evidence activation requirements exist");
-    const latest = [...candidates].sort(
-      (left, right) =>
-        left.armedAt.localeCompare(right.armedAt) ||
-        left.requirementRef.localeCompare(right.requirementRef),
-    ).at(-1);
+    const latest = latestActivationRequirement(lineageTips);
     const requirement = armed[0] ?? current[0] ?? latest;
     const activationState =
       requirement === undefined
@@ -2722,22 +2758,15 @@ export class ImplementationEvidenceService {
         (requirement) =>
           requirement.goalRef === input.goalRef && requirement.manifestId === input.manifestId,
       );
-      const armedRequirements = scopedRequirements.filter(
+      const lineageTips = activationRequirementLineageTips(scopedRequirements);
+      const armedRequirements = lineageTips.filter(
         (requirement) => requirement.state === "armed",
       );
       if (armedRequirements.length > 1)
         throw new Error("multiple implementation evidence activation requirements are armed");
-      const supersededPredecessors = new Set(
-        scopedRequirements.flatMap((requirement) =>
-          [requirement.previousRequirementRef, requirement.supersededRequirementRef].filter(
-            (reference): reference is string => reference !== null && reference !== undefined,
-          ),
-        ),
-      );
-      const fulfilledTips = scopedRequirements.filter(
+      const fulfilledTips = lineageTips.filter(
         (requirement) =>
           requirement.state === "fulfilled" &&
-          !supersededPredecessors.has(requirement.requirementRef) &&
           requirement.semanticManifestDigest === semanticManifestDigest &&
           requirement.finalizedManifestDigest === cohort.finalizedManifestDigest &&
           requirement.evidenceTaskRef === cohort.evidenceTaskRef &&

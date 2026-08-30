@@ -16,6 +16,7 @@ const RESULT_ONE = "b".repeat(40);
 const RESULT_TWO = "c".repeat(40);
 const HEAD = "d".repeat(40);
 const NEXT_HEAD = "1".repeat(40);
+const THIRD_HEAD = "2".repeat(40);
 const FINALIZED_MANIFEST_DIGEST = "e".repeat(64);
 
 const auditor: ImplementationReviewerIdentity = {
@@ -482,6 +483,71 @@ describe("protected historical implementation evidence [BA]", () => {
     ).toMatchObject({ status: "active", requirementRef: replacement.requirementRef });
     expect(await f.service.evidenceServiceStatus()).toMatchObject({
       activationState: { status: "active", requirementRef: replacement.requirementRef },
+    });
+  });
+
+  test("reports the fulfilled lineage tip after an earlier empty arm was superseded", async () => {
+    const reviewed = manifest();
+    const f = fixture({
+      ...reviewed,
+      records: reviewed.records.map((candidate) => ({
+        ...candidate,
+        historicalReview: historicalReview(
+          candidate.taskRef,
+          candidate.baseCommit,
+          candidate.resultCommit,
+        ),
+      })),
+    });
+    await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-empty-lineage-root",
+      author: "parent",
+    });
+    f.setHead(NEXT_HEAD);
+    f.replacePackaged({
+      ...f.packaged,
+      records: f.packaged.records.map((candidate) => ({
+        ...candidate,
+        repositoryHead: NEXT_HEAD,
+      })),
+    });
+    const fulfilledTip = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: NEXT_HEAD,
+      operationId: "arm-fulfilled-lineage-tip",
+      author: "parent",
+    });
+    await f.service.applyAuditManifest({
+      manifestId: f.packaged.manifestId,
+      manifestDigest: fulfilledTip.manifestDigest,
+      expectedRepositoryHead: NEXT_HEAD,
+      auditAttemptRefs: [],
+      operationId: "apply-fulfilled-lineage-tip",
+      author: "parent",
+    });
+    f.setHead(THIRD_HEAD);
+    f.replacePackaged({
+      ...f.packaged,
+      records: f.packaged.records.map((candidate) => ({
+        ...candidate,
+        repositoryHead: THIRD_HEAD,
+      })),
+    });
+
+    expect(
+      await f.service.evidenceActivationStatus({
+        goalRef: "goals:G176",
+        manifestId: f.packaged.manifestId,
+        expectedRepositoryHead: THIRD_HEAD,
+      }),
+    ).toMatchObject({
+      status: "stale",
+      requirementRef: fulfilledTip.requirementRef,
+      activationRef: expect.any(String),
     });
   });
 
