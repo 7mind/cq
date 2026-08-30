@@ -3118,19 +3118,18 @@ export class ImplementationEvidenceService {
       canonical(priorActivation.taskRefs) !== canonical(prior.taskRefs)
     )
       throw new Error("prior v2 activation payload is absent or inconsistent");
+    const expectedPriorActivationFingerprint = digest({
+      manifestId: priorActivation.manifestId,
+      manifestDigest: priorActivation.manifestDigest,
+      sourceDigest: prior.sourceDigest,
+      repositoryHead: priorActivation.repositoryHead,
+      auditRefs: priorActivation.auditRefs,
+      taskRefs: priorActivation.taskRefs,
+    });
+    if (priorActivation.evidenceFingerprint !== expectedPriorActivationFingerprint)
+      throw new Error("prior v2 activation evidence fingerprint is inconsistent");
     if (priorActivation.auditRefs.length !== prior.taskRefs.length)
       throw new Error("prior v2 activation audit cohort is incomplete");
-    for (const [index, auditRef] of priorActivation.auditRefs.entries()) {
-      const audit = initial.implementationAudits[auditRef];
-      if (
-        audit === undefined ||
-        audit.terminalState !== "approved" ||
-        audit.taskRef !== prior.taskRefs[index] ||
-        audit.manifestId !== prior.manifestId ||
-        audit.manifestDigest !== prior.manifestDigest
-      )
-        throw new Error("prior v2 activation ordered audit set is incomplete or unauthenticated");
-    }
     if (prior.continuationRef !== null) {
       const predecessor = initial.activationContinuations[prior.continuationRef];
       if (
@@ -3149,6 +3148,53 @@ export class ImplementationEvidenceService {
       manifest.activation.finalizedManifestDigest !== prior.finalizedManifestDigest
     )
       throw new Error("packaged v2 activation semantics changed across the head transition");
+    const priorManifest: PackagedImplementationAuditManifest = {
+      ...manifest,
+      sourceDigest: prior.sourceDigest,
+      records: manifest.records.map((record) => ({
+        ...record,
+        repositoryHead: input.expectedFromHead,
+      })),
+    };
+    if (implementationAuditManifestDigest(priorManifest) !== prior.manifestDigest)
+      throw new Error("prior v2 activation manifest bindings are inconsistent");
+    for (const [index, auditRef] of priorActivation.auditRefs.entries()) {
+      const audit = initial.implementationAudits[auditRef];
+      const record = priorManifest.records[index];
+      if (audit === undefined || record === undefined)
+        throw new Error("prior v2 activation ordered audit set is incomplete or unauthenticated");
+      const expectedAuditRef = opaqueRef("cq-implementation-audit", {
+        manifestId: prior.manifestId,
+        manifestDigest: prior.manifestDigest,
+        sourceDigest: prior.sourceDigest,
+        record,
+        attemptRefs: audit.attemptRefs,
+      });
+      const expectedAuditFingerprint = digest({
+        record,
+        attemptRefs: audit.attemptRefs,
+        manifestDigest: prior.manifestDigest,
+      });
+      if (
+        auditRef !== expectedAuditRef ||
+        audit.auditRef !== auditRef ||
+        audit.terminalState !== "approved" ||
+        audit.manifestId !== prior.manifestId ||
+        audit.manifestDigest !== prior.manifestDigest ||
+        audit.recordKey !== record.recordKey ||
+        audit.taskRef !== prior.taskRefs[index] ||
+        audit.taskRef !== record.taskRef ||
+        audit.ownerGoalRef !== record.ownerGoalRef ||
+        audit.finalizedManifest !== record.finalizedManifest ||
+        canonical(audit.historicalReview) !== canonical(record.historicalReview) ||
+        audit.baseCommit !== record.baseCommit ||
+        audit.resultCommit !== record.resultCommit ||
+        audit.repositoryHead !== record.repositoryHead ||
+        audit.sourceDigest !== prior.sourceDigest ||
+        audit.evidenceFingerprint !== expectedAuditFingerprint
+      )
+        throw new Error("prior v2 activation ordered audit set is incomplete or unauthenticated");
+    }
     if (this.deps.resolveActivationCohort === undefined)
       throw new Error("finalized-manifest activation resolver is unavailable");
     const currentCohort = await this.deps.resolveActivationCohort({
@@ -3191,7 +3237,7 @@ export class ImplementationEvidenceService {
       completion.ownerGoalRef !== input.goalRef ||
       completion.repositoryHead !== input.expectedFromHead ||
       completion.baseCommit !== input.expectedFromHead ||
-      completion.startingCommit !== input.expectedFromHead ||
+      !FULL_SHA.test(completion.startingCommit) ||
       completion.resultCommit !== repositoryHead
     )
       throw new Error("protected completion does not bind the prior activation head transition");
@@ -3211,7 +3257,7 @@ export class ImplementationEvidenceService {
       workerResult["gateDurationMs"] !== undefined ||
       gate["taskId"] !== taskIdFromRef(input.completedTaskRef) ||
       gate["baseCommit"] !== input.expectedFromHead ||
-      gate["startingCommit"] !== input.expectedFromHead ||
+      gate["startingCommit"] !== completion.startingCommit ||
       gate["resultCommit"] !== repositoryHead ||
       gate["gateExitCode"] !== 0 ||
       gate["failCount"] !== 0 ||
@@ -3223,6 +3269,7 @@ export class ImplementationEvidenceService {
     if (!Array.isArray(receipts) || receipts.length === 0)
       throw new Error("protected completion lacks a result receipt chain");
     let receiptHead = input.expectedFromHead;
+    const receiptLineage = new Set([receiptHead]);
     for (const value of receipts) {
       if (
         !object(value) ||
@@ -3234,9 +3281,12 @@ export class ImplementationEvidenceService {
       )
         throw new Error("protected completion result receipt chain is not contiguous");
       receiptHead = value["newHead"];
+      receiptLineage.add(receiptHead);
     }
     if (receiptHead !== repositoryHead)
       throw new Error("protected completion result receipt chain skips the repository head");
+    if (!receiptLineage.has(completion.startingCommit))
+      throw new Error("protected completion starting commit is absent from the result receipt lineage");
     if (
       this.deps.isCommitRetained === undefined ||
       !(await this.deps.isCommitRetained({
@@ -3245,6 +3295,17 @@ export class ImplementationEvidenceService {
       }))
     )
       throw new Error("activation continuation is not a retained fast-forward transition");
+    if (
+      !(await this.deps.isCommitRetained({
+        repositoryHead: completion.startingCommit,
+        resultCommit: input.expectedFromHead,
+      })) ||
+      !(await this.deps.isCommitRetained({
+        repositoryHead,
+        resultCommit: completion.startingCommit,
+      }))
+    )
+      throw new Error("protected completion starting commit is not retained on the protected transition");
     if (this.deps.readCompletionReview === undefined)
       throw new Error("terminal implementation review authority is unavailable");
     const review = await this.deps.readCompletionReview(completion.reviewRef);
