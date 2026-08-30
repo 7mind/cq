@@ -10,6 +10,7 @@ import {
   type ImplementationAuditRecord,
   type ImplementationEvidenceActivationContinuationRecord,
   type ImplementationEvidenceActivationRecord,
+  type ImplementationEvidenceActivationRequirementRecord,
   type ImplementationEvidenceSnapshot,
   type PackagedImplementationAuditRecord,
   type PackagedImplementationAuditManifest,
@@ -369,6 +370,7 @@ type MutableSnapshot = ImplementationEvidenceSnapshot & {
   completions: Record<string, ImplementationCompletionRecord>;
   implementationAudits: Record<string, ImplementationAuditRecord>;
   activations: Record<string, ImplementationEvidenceActivationRecord>;
+  activationRequirements: Record<string, ImplementationEvidenceActivationRequirementRecord>;
   activationContinuations: Record<string, ImplementationEvidenceActivationContinuationRecord>;
 };
 
@@ -498,6 +500,28 @@ describe("implementation evidence activation continuation [BG]", () => {
     await expect(
       fixture(alteredAudit).service.continueEvidenceActivation(request),
     ).rejects.toThrow("prior v2 activation ordered audit set is incomplete or unauthenticated");
+
+    const alteredManifestBinding = mutableSnapshot();
+    const alteredManifestDigest = "f".repeat(64);
+    alteredManifestBinding.activationRequirements[PRIOR_REQUIREMENT_REF] = {
+      ...alteredManifestBinding.activationRequirements[PRIOR_REQUIREMENT_REF]!,
+      manifestDigest: alteredManifestDigest,
+    };
+    alteredManifestBinding.activations[PRIOR_ACTIVATION_REF] = {
+      ...alteredManifestBinding.activations[PRIOR_ACTIVATION_REF]!,
+      manifestDigest: alteredManifestDigest,
+      evidenceFingerprint: evidenceDigest({
+        manifestId: MANIFEST_ID,
+        manifestDigest: alteredManifestDigest,
+        sourceDigest: manifest.sourceDigest,
+        repositoryHead: FROM_HEAD,
+        auditRefs: AUDIT_REFS,
+        taskRefs: COHORT,
+      }),
+    };
+    await expect(
+      fixture(alteredManifestBinding).service.continueEvidenceActivation(request),
+    ).rejects.toThrow("prior v2 activation manifest bindings are inconsistent");
   });
 
   test("rejects a head skip, an unobserved gate, and completion reuse", async () => {
@@ -519,6 +543,35 @@ describe("implementation evidence activation continuation [BG]", () => {
     await expect(fixture(ungated).service.continueEvidenceActivation(request)).rejects.toThrow(
       "runner-owned green gate",
     );
+
+    const malformedStart = mutableSnapshot();
+    malformedStart.completions[COMPLETION_REF] = {
+      ...malformedStart.completions[COMPLETION_REF]!,
+      startingCommit: "not-a-full-sha",
+    };
+    await expect(
+      fixture(malformedStart).service.continueEvidenceActivation(request),
+    ).rejects.toThrow("prior activation head transition");
+
+    const mismatchedCorrectionGate = mutableSnapshot();
+    const correctionResult = workerResultAt(CORRECTION_START, [
+      receipt(FROM_HEAD, CORRECTION_START, "commit-t3003-initial"),
+      receipt(CORRECTION_START, REPOSITORY_HEAD, "commit-t3003-correction"),
+    ]);
+    mismatchedCorrectionGate.completions[COMPLETION_REF] = {
+      ...mismatchedCorrectionGate.completions[COMPLETION_REF]!,
+      startingCommit: CORRECTION_START,
+      workerResult: {
+        ...correctionResult,
+        supervisedGateEvidence: {
+          ...correctionResult.supervisedGateEvidence,
+          startingCommit: FROM_HEAD,
+        },
+      },
+    };
+    await expect(
+      fixture(mismatchedCorrectionGate).service.continueEvidenceActivation(request),
+    ).rejects.toThrow("runner-owned green gate");
 
     const reused = mutableSnapshot();
     reused.activationContinuations = {

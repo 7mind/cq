@@ -3175,23 +3175,45 @@ export class ImplementationEvidenceService {
         attemptRefs: audit.attemptRefs,
         manifestDigest: prior.manifestDigest,
       });
+      const expectedAuditBinding = {
+        version: 1,
+        auditRef: expectedAuditRef,
+        manifestId: prior.manifestId,
+        manifestDigest: prior.manifestDigest,
+        recordKey: record.recordKey,
+        taskRef: record.taskRef,
+        ownerGoalRef: record.ownerGoalRef,
+        finalizedManifest: record.finalizedManifest,
+        historicalReview: record.historicalReview,
+        baseCommit: record.baseCommit,
+        resultCommit: record.resultCommit,
+        repositoryHead: record.repositoryHead,
+        sourceDigest: prior.sourceDigest,
+        evidenceFingerprint: expectedAuditFingerprint,
+        attemptRefs: audit.attemptRefs,
+        terminalState: "approved",
+      };
+      const observedAuditBinding = {
+        version: audit.version,
+        auditRef: audit.auditRef,
+        manifestId: audit.manifestId,
+        manifestDigest: audit.manifestDigest,
+        recordKey: audit.recordKey,
+        taskRef: audit.taskRef,
+        ownerGoalRef: audit.ownerGoalRef,
+        finalizedManifest: audit.finalizedManifest,
+        historicalReview: audit.historicalReview,
+        baseCommit: audit.baseCommit,
+        resultCommit: audit.resultCommit,
+        repositoryHead: audit.repositoryHead,
+        sourceDigest: audit.sourceDigest,
+        evidenceFingerprint: audit.evidenceFingerprint,
+        attemptRefs: audit.attemptRefs,
+        terminalState: audit.terminalState,
+      };
       if (
-        auditRef !== expectedAuditRef ||
-        audit.auditRef !== auditRef ||
-        audit.terminalState !== "approved" ||
-        audit.manifestId !== prior.manifestId ||
-        audit.manifestDigest !== prior.manifestDigest ||
-        audit.recordKey !== record.recordKey ||
-        audit.taskRef !== prior.taskRefs[index] ||
-        audit.taskRef !== record.taskRef ||
-        audit.ownerGoalRef !== record.ownerGoalRef ||
-        audit.finalizedManifest !== record.finalizedManifest ||
-        canonical(audit.historicalReview) !== canonical(record.historicalReview) ||
-        audit.baseCommit !== record.baseCommit ||
-        audit.resultCommit !== record.resultCommit ||
-        audit.repositoryHead !== record.repositoryHead ||
-        audit.sourceDigest !== prior.sourceDigest ||
-        audit.evidenceFingerprint !== expectedAuditFingerprint
+        record.taskRef !== prior.taskRefs[index] ||
+        canonical(observedAuditBinding) !== canonical(expectedAuditBinding)
       )
         throw new Error("prior v2 activation ordered audit set is incomplete or unauthenticated");
     }
