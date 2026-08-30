@@ -29,6 +29,7 @@ import {
   deriveImplementationEvidenceActivationCohort,
   derivePredicates,
   materializeOperatorAction,
+  resolveUniqueTaskState,
   resolveImplementationEvidenceActivationTaskMappings,
   recordProtectedImplementationCompletion,
   type DispatchCapability,
@@ -803,7 +804,7 @@ export function createProductionImplementationEvidenceService(
         throw new Error("activation task lacks the strict implementation-evidence operator envelope");
       const observations = [];
       for (const { id } of published.tasks) {
-        const task = store.fetchItem(TASKS_LEDGER, id);
+        const task = await resolveUniqueTaskState(store, id);
         const ownership = readCanonicalOwnership(task);
         const resultCommit = task.fields["resultCommit"];
         const retainedAtBoundary = typeof resultCommit === "string" && FULL_SHA.test(resultCommit)

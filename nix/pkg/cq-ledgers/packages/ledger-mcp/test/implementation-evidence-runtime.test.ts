@@ -133,6 +133,15 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
     expect(source).not.toContain('actionKey !== "implementation-evidence-activation"');
   });
 
+  test("resolves finalized activation cohort tasks across active and archived state", async () => {
+    const source = await readFile(
+      new URL("../src/implementationEvidenceRuntime.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain("const task = await resolveUniqueTaskState(store, id);");
+    expect(source).not.toContain("const task = store.fetchItem(TASKS_LEDGER, id);");
+  });
+
   test("reserves production reviewer time for the canonical gate [WA]", async () => {
     const source = await readFile(
       new URL("../src/implementationEvidenceRuntime.ts", import.meta.url),

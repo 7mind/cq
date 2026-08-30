@@ -82,16 +82,26 @@ function prepared(attemptRef: string): DispatchPrepared {
   };
 }
 
-function auditVerdict(panel: ImplementationAuditPanelRecord): DispatchJSONValue {
+function auditVerdict(
+  panel: ImplementationAuditPanelRecord,
+  verdict: "approve" | "disapprove" = "approve",
+): DispatchJSONValue {
   const input = panel.auditInput as Record<string, DispatchJSONValue>;
   const required = input["requiredObservations"] as readonly string[];
   return {
     taskId: panel.taskRef.slice("tasks:".length),
-    verdict: "approve",
-    criticism: [],
+    verdict,
+    criticism: verdict === "approve" ? [] : ["A required observation was not verified."],
     questions: [],
-    observations: required.map((name) => ({ name, status: "verified", detail: `${name} checked` })),
-    rationale: "Every packaged observation was independently verified.",
+    observations: required.map((name) => ({
+      name,
+      status: verdict === "approve" ? "verified" : "not-verified",
+      detail: `${name} checked`,
+    })),
+    rationale:
+      verdict === "approve"
+        ? "Every packaged observation was independently verified."
+        : "At least one packaged observation was not independently verified.",
     manifestDigest: panel.manifestDigest,
     baseCommit: input["baseCommit"]!,
     resultCommit: input["resultCommit"]!,
@@ -133,6 +143,7 @@ function fixture(
   let currentHead = HEAD;
   const taskStatuses = new Map<string, string>([["tasks:T12", "planned"]]);
   let faultInjector: ImplementationEvidenceFaultInjector | undefined;
+  let nativeAuditOutputMode: "approve" | "disapprove" | "invalid" = "approve";
   let commitRetained: (repositoryHead: string, resultCommit: string) => Promise<boolean> =
     async () => true;
   const store = createInMemoryImplementationEvidenceStore();
@@ -179,7 +190,8 @@ function fixture(
       return {
         state: "consumed" as const,
         input: panel.auditInput,
-        output: auditVerdict(panel),
+        output:
+          nativeAuditOutputMode === "invalid" ? {} : auditVerdict(panel, nativeAuditOutputMode),
         retainedAttestation: dispatch.attestationId,
       };
     },
@@ -241,6 +253,9 @@ function fixture(
     },
     setFaultInjector(next: ImplementationEvidenceFaultInjector) {
       faultInjector = next;
+    },
+    setNativeAuditOutputMode(next: "approve" | "disapprove" | "invalid") {
+      nativeAuditOutputMode = next;
     },
     setHead(next: string) {
       currentHead = next;
@@ -857,6 +872,110 @@ describe("protected historical implementation evidence [BA]", () => {
       operationId: "refuse-arm-after-audit-preparation",
       author: "parent",
     })).rejects.toThrow("a different implementation evidence activation requirement is pending");
+  });
+
+  test("supersedes an arm after a terminal inconclusive audit cohort", async () => {
+    const f = fixture();
+    const manifestDigest = implementationAuditManifestDigest(f.packaged);
+    const original = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-before-terminal-inconclusive-audit",
+      author: "parent",
+    });
+    for (const [index, record] of f.packaged.records.entries()) {
+      f.setNativeAuditOutputMode(index === 0 ? "approve" : "invalid");
+      const panel = await f.service.prepareAuditPanel({
+        manifestId: f.packaged.manifestId,
+        manifestDigest,
+        recordKey: record.recordKey,
+        expectedRepositoryHead: HEAD,
+        operationId: `inconclusive-panel-${record.recordKey}`,
+        author: "parent",
+      });
+      const configuredAttemptRef = panel.attemptRefs[0]!;
+      await f.service.prepareAuditAttempt({
+        panelRef: panel.panelRef,
+        attemptRef: configuredAttemptRef,
+        operationId: `inconclusive-prepare-${record.recordKey}`,
+        author: "parent",
+      });
+      const configured = await f.service.finalizeAuditAttempt({
+        attemptRef: configuredAttemptRef,
+        operationId: `inconclusive-finalize-${record.recordKey}`,
+        author: "parent",
+      });
+      expect(configured).toMatchObject({
+        terminalState: index === 0 ? "approved" : "operational-abstention",
+      });
+      if (configured.terminalState === "approved") continue;
+      const fallback = await f.service.prepareAuditFallback({
+        panelRef: panel.panelRef,
+        operationId: `inconclusive-fallback-${record.recordKey}`,
+        author: "parent",
+      });
+      expect(await f.service.finalizeAuditAttempt({
+        attemptRef: fallback.attemptRef,
+        operationId: `inconclusive-fallback-finalize-${record.recordKey}`,
+        author: "parent",
+      })).toMatchObject({ terminalState: "operational-abstention" });
+    }
+
+    await expect(f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "rearm-after-terminal-inconclusive-audit",
+      author: "parent",
+    })).resolves.toMatchObject({ supersededRequirementRef: original.requirementRef });
+  });
+
+  test("refuses to supersede terminal decisive audit cohorts", async () => {
+    for (const verdict of ["approve", "disapprove"] as const) {
+      const f = fixture();
+      const manifestDigest = implementationAuditManifestDigest(f.packaged);
+      await f.service.armEvidenceActivation({
+        goalRef: "goals:G176",
+        manifestId: f.packaged.manifestId,
+        expectedRepositoryHead: HEAD,
+        operationId: `arm-before-${verdict}-audit`,
+        author: "parent",
+      });
+      f.setNativeAuditOutputMode(verdict);
+      for (const record of f.packaged.records) {
+        const panel = await f.service.prepareAuditPanel({
+          manifestId: f.packaged.manifestId,
+          manifestDigest,
+          recordKey: record.recordKey,
+          expectedRepositoryHead: HEAD,
+          operationId: `${verdict}-panel-${record.recordKey}`,
+          author: "parent",
+        });
+        const attemptRef = panel.attemptRefs[0]!;
+        await f.service.prepareAuditAttempt({
+          panelRef: panel.panelRef,
+          attemptRef,
+          operationId: `${verdict}-prepare-${record.recordKey}`,
+          author: "parent",
+        });
+        expect(await f.service.finalizeAuditAttempt({
+          attemptRef,
+          operationId: `${verdict}-finalize-${record.recordKey}`,
+          author: "parent",
+        })).toMatchObject({
+          terminalState: verdict === "approve" ? "approved" : "disapproved",
+        });
+      }
+
+      await expect(f.service.armEvidenceActivation({
+        goalRef: "goals:G176",
+        manifestId: f.packaged.manifestId,
+        expectedRepositoryHead: HEAD,
+        operationId: `refuse-rearm-after-${verdict}-audit`,
+        author: "parent",
+      })).rejects.toThrow("a different implementation evidence activation requirement is pending");
+    }
   });
 
   test("rejects authority changes at protected activation and audit write boundaries", async () => {

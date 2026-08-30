@@ -2807,25 +2807,66 @@ export class ImplementationEvidenceService {
       const blocking = armedRequirements[0] ?? fulfilledTip;
       let supersededRequirementRef: string | null = null;
       if (blocking !== undefined) {
-        const hasPreparedEvidence =
-          Object.values(state.auditPanels).some(
-            (panel) =>
-              panel.manifestId === blocking.manifestId &&
-              panel.manifestDigest === blocking.manifestDigest &&
-              panel.repositoryHead === blocking.boundaryCommit,
-          ) ||
-          Object.values(state.implementationAudits).some(
-            (audit) =>
-              audit.manifestId === blocking.manifestId &&
-              audit.manifestDigest === blocking.manifestDigest &&
-              audit.repositoryHead === blocking.boundaryCommit,
-          ) ||
-          Object.values(state.auditManifestApplications).some(
-            (application) =>
-              application.manifestId === blocking.manifestId &&
-              application.manifestDigest === blocking.manifestDigest &&
-              application.repositoryHead === blocking.boundaryCommit,
+        const matchingPanels = Object.values(state.auditPanels).filter(
+          (panel) =>
+            panel.manifestId === blocking.manifestId &&
+            panel.manifestDigest === blocking.manifestDigest &&
+            panel.repositoryHead === blocking.boundaryCommit,
+        );
+        const matchingAudits = Object.values(state.implementationAudits).filter(
+          (audit) =>
+            audit.manifestId === blocking.manifestId &&
+            audit.manifestDigest === blocking.manifestDigest &&
+            audit.repositoryHead === blocking.boundaryCommit,
+        );
+        const matchingApplications = Object.values(state.auditManifestApplications).filter(
+          (application) =>
+            application.manifestId === blocking.manifestId &&
+            application.manifestDigest === blocking.manifestDigest &&
+            application.repositoryHead === blocking.boundaryCommit,
+        );
+        const attemptsFor = (panel: ImplementationAuditPanelRecord) =>
+          [...panel.attemptRefs, ...(panel.fallbackAttemptRef === null
+            ? []
+            : [panel.fallbackAttemptRef])].map((attemptRef) => state.auditAttempts[attemptRef]);
+        const panelsFor = (record: (typeof records)[number]) =>
+          matchingPanels.filter(
+            (panel) => panel.recordKey === record.recordKey && panel.taskRef === record.taskRef,
           );
+        const allAttemptsAreTerminalAndNonDisapproved = matchingPanels.every((panel) =>
+          attemptsFor(panel).every(
+            (attempt) =>
+              attempt !== undefined &&
+              attempt.panelRef === panel.panelRef &&
+              attempt.terminalState !== null &&
+              attempt.terminalState !== "disapproved",
+          ),
+        );
+        const everyInconclusivePanelExhaustedFallback = matchingPanels.every((panel) => {
+          const attempts = attemptsFor(panel);
+          if (attempts.some((attempt) => attempt?.terminalState === "approved")) return true;
+          return (
+            panel.fallbackAttemptRef !== null &&
+            state.auditAttempts[panel.fallbackAttemptRef]?.terminalState ===
+              "operational-abstention"
+          );
+        });
+        const hasInconclusiveRecord = records.some((record) =>
+          panelsFor(record).every((panel) =>
+            attemptsFor(panel).every((attempt) => attempt?.terminalState !== "approved"),
+          ),
+        );
+        const terminalInconclusiveAuditCohort =
+          records.every((record) => panelsFor(record).length > 0) &&
+          matchingAudits.length === 0 &&
+          matchingApplications.length === 0 &&
+          allAttemptsAreTerminalAndNonDisapproved &&
+          everyInconclusivePanelExhaustedFallback &&
+          hasInconclusiveRecord;
+        const hasPreparedEvidence =
+          matchingPanels.length > 0 ||
+          matchingAudits.length > 0 ||
+          matchingApplications.length > 0;
         const priorActivation =
           blocking.activationRef === null
             ? undefined
@@ -2843,7 +2884,7 @@ export class ImplementationEvidenceService {
             resultCommit: blocking.boundaryCommit,
           });
         if (
-          blocking.boundaryCommit === repositoryHead ||
+          (blocking.boundaryCommit === repositoryHead && !terminalInconclusiveAuditCohort) ||
           blocking.semanticManifestDigest !== semanticManifestDigest ||
           blocking.finalizedManifestDigest !== cohort.finalizedManifestDigest ||
           blocking.evidenceTaskRef !== cohort.evidenceTaskRef ||
@@ -2853,7 +2894,7 @@ export class ImplementationEvidenceService {
           (blocking.state === "armed" &&
             (blocking.activationRef !== null ||
               blocking.fulfilledAt !== null ||
-              hasPreparedEvidence)) ||
+              (hasPreparedEvidence && !terminalInconclusiveAuditCohort))) ||
           (blocking.state === "fulfilled" &&
             (blocking.activationRef === null ||
               blocking.fulfilledAt === null ||
