@@ -9,7 +9,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/bunfig.toml",
-      "sha256": "22902260ed8ecbe623eedb941034bcb51101bf2cfface698a93846880ba31726",
+      "sha256": "ee14a8cf9028bc387e18e694e8933c6d97a454555adac5c293d3d4a262c59324",
       "targets": ["nix/pkg/cq-ledgers/test-setup/isolate-state-dir.ts"]
     },
     {
@@ -1493,7 +1493,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/implementationEvidence.ts",
-      "sha256": "69a5ed6c4eda054d988da1199224daacad2146e61e8828627668aaa3a8e24f3f",
+      "sha256": "4d983d1c406d29cb2197a7b56b9f6f9e3fb3e9f2bb5dd9a11d4792989bdd6cdd",
       "targets": []
     },
     {

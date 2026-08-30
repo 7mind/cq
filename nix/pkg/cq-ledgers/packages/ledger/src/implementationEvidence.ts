@@ -2779,9 +2779,32 @@ export class ImplementationEvidenceService {
           requirement.activationTaskRef === cohort.activationTaskRef &&
           canonical(requirement.taskRefs) === canonical(taskRefs),
       );
-      if (fulfilledTips.length > 1)
-        throw new Error("multiple matching implementation evidence requirement lineages exist");
-      const blocking = armedRequirements[0] ?? fulfilledTips[0];
+      let fulfilledTip = fulfilledTips[0];
+      if (fulfilledTips.length > 1) {
+        if (this.deps.isCommitRetained === undefined)
+          throw new Error("multiple matching implementation evidence requirement lineages exist");
+        const maximalTips: ImplementationEvidenceActivationRequirementRecord[] = [];
+        for (const candidate of fulfilledTips) {
+          let retainsEveryOtherBoundary = true;
+          for (const other of fulfilledTips) {
+            if (other.requirementRef === candidate.requirementRef) continue;
+            if (
+              !(await this.deps.isCommitRetained({
+                repositoryHead: candidate.boundaryCommit,
+                resultCommit: other.boundaryCommit,
+              }))
+            ) {
+              retainsEveryOtherBoundary = false;
+              break;
+            }
+          }
+          if (retainsEveryOtherBoundary) maximalTips.push(candidate);
+        }
+        if (maximalTips.length !== 1)
+          throw new Error("multiple matching implementation evidence requirement lineages exist");
+        fulfilledTip = maximalTips[0];
+      }
+      const blocking = armedRequirements[0] ?? fulfilledTip;
       let supersededRequirementRef: string | null = null;
       if (blocking !== undefined) {
         const hasPreparedEvidence =

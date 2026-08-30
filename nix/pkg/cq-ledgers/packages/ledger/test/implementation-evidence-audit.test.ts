@@ -133,6 +133,8 @@ function fixture(
   let currentHead = HEAD;
   const taskStatuses = new Map<string, string>([["tasks:T12", "planned"]]);
   let faultInjector: ImplementationEvidenceFaultInjector | undefined;
+  let commitRetained: (repositoryHead: string, resultCommit: string) => Promise<boolean> =
+    async () => true;
   const store = createInMemoryImplementationEvidenceStore();
   const panels = new Map<string, ImplementationAuditPanelRecord>();
   const dependencies: ImplementationEvidenceServiceDependencies = {
@@ -193,7 +195,8 @@ function fixture(
       boundaryCommit: currentHead,
       taskRefs: activationTaskRefs,
     }),
-    isCommitRetained: async () => true,
+    isCommitRetained: async (input) =>
+      await commitRetained(input.repositoryHead, input.resultCommit),
     startupBuildCommit: NEXT_HEAD,
     implementationEvidenceProtocolVersion: 2,
     packagedManifestInventory: [currentPackaged.manifestId],
@@ -241,6 +244,9 @@ function fixture(
     },
     setHead(next: string) {
       currentHead = next;
+    },
+    setCommitRetained(next: (repositoryHead: string, resultCommit: string) => Promise<boolean>) {
+      commitRetained = next;
     },
     setTaskStatus(taskRef: string, status: string) {
       taskStatuses.set(taskRef, status);
@@ -483,6 +489,117 @@ describe("protected historical implementation evidence [BA]", () => {
     ).toMatchObject({ status: "active", requirementRef: replacement.requirementRef });
     expect(await f.service.evidenceServiceStatus()).toMatchObject({
       activationState: { status: "active", requirementRef: replacement.requirementRef },
+    });
+  });
+
+  test("D389 regression: supersedes the unique ancestry-maximal fulfilled lineage tip", async () => {
+    const reviewed = manifest();
+    const f = fixture({
+      ...reviewed,
+      records: reviewed.records.map((candidate) => ({
+        ...candidate,
+        historicalReview: historicalReview(
+          candidate.taskRef,
+          candidate.baseCommit,
+          candidate.resultCommit,
+        ),
+      })),
+    });
+    const first = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-first-retained-tip",
+      author: "parent",
+    });
+    await f.service.applyAuditManifest({
+      manifestId: f.packaged.manifestId,
+      manifestDigest: first.manifestDigest,
+      expectedRepositoryHead: HEAD,
+      auditAttemptRefs: [],
+      operationId: "apply-first-retained-tip",
+      author: "parent",
+    });
+    f.setHead(NEXT_HEAD);
+    f.replacePackaged({
+      ...f.packaged,
+      records: f.packaged.records.map((candidate) => ({
+        ...candidate,
+        repositoryHead: NEXT_HEAD,
+      })),
+    });
+    const second = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: NEXT_HEAD,
+      operationId: "arm-second-retained-tip",
+      author: "parent",
+    });
+    await f.service.applyAuditManifest({
+      manifestId: f.packaged.manifestId,
+      manifestDigest: second.manifestDigest,
+      expectedRepositoryHead: NEXT_HEAD,
+      auditAttemptRefs: [],
+      operationId: "apply-second-retained-tip",
+      author: "parent",
+    });
+
+    const snapshot = await f.store.snapshot();
+    const firstRequirement = snapshot.activationRequirements[first.requirementRef]!;
+    const secondRequirement = snapshot.activationRequirements[second.requirementRef]!;
+    const {
+      supersededByRequirementRef: _supersededBy,
+      supersededAt: _supersededAt,
+      ...detachedFirst
+    } = firstRequirement;
+    const { supersededRequirementRef: _superseded, ...detachedSecond } = secondRequirement;
+    const branchedStore = createInMemoryImplementationEvidenceStore({
+      ...snapshot,
+      activationRequirements: {
+        ...snapshot.activationRequirements,
+        [first.requirementRef]: { ...detachedFirst, state: "fulfilled" },
+        [second.requirementRef]: detachedSecond,
+      },
+    });
+    f.setHead(THIRD_HEAD);
+    f.replacePackaged({
+      ...f.packaged,
+      records: f.packaged.records.map((candidate) => ({
+        ...candidate,
+        repositoryHead: THIRD_HEAD,
+      })),
+    });
+    const replacementService = f.serviceWithStore(branchedStore);
+    f.setCommitRetained(async (repositoryHead, resultCommit) => repositoryHead === resultCommit);
+    await expect(
+      replacementService.armEvidenceActivation({
+        goalRef: "goals:G176",
+        manifestId: f.packaged.manifestId,
+        expectedRepositoryHead: THIRD_HEAD,
+        operationId: "refuse-incomparable-retained-tips",
+        author: "parent",
+      }),
+    ).rejects.toThrow("multiple matching implementation evidence requirement lineages exist");
+
+    const retainedOrder = [HEAD, NEXT_HEAD, THIRD_HEAD];
+    f.setCommitRetained(async (repositoryHead, resultCommit) => {
+      const repositoryIndex = retainedOrder.indexOf(repositoryHead);
+      const resultIndex = retainedOrder.indexOf(resultCommit);
+      return repositoryIndex >= 0 && resultIndex >= 0 && resultIndex <= repositoryIndex;
+    });
+
+    const replacement = await replacementService.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: THIRD_HEAD,
+      operationId: "arm-after-branched-retained-tips",
+      author: "parent",
+    });
+
+    expect(replacement).toMatchObject({
+      status: "armed",
+      boundaryCommit: THIRD_HEAD,
+      supersededRequirementRef: second.requirementRef,
     });
   });
 
