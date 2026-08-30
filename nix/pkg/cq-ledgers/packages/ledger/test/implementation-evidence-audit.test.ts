@@ -193,6 +193,37 @@ function fixture(
       taskRefs: activationTaskRefs,
     }),
     isCommitRetained: async () => true,
+    startupBuildCommit: NEXT_HEAD,
+    implementationEvidenceProtocolVersion: 2,
+    packagedManifestInventory: [currentPackaged.manifestId],
+    readBootstrapAuthority: async () => ({
+      goalRef: "goals:G176",
+      finalizedManifestDigest: FINALIZED_MANIFEST_DIGEST,
+      mappings: {
+        evidenceTaskRef: "tasks:T10",
+        historicalTaskRef: "tasks:T11",
+        activationTaskRef: "tasks:T12",
+      },
+      evidenceTask: {
+        taskRef: "tasks:T10",
+        status: "done",
+        resultCommit: NEXT_HEAD,
+        ready: false,
+      },
+      historicalTask: {
+        taskRef: "tasks:T11",
+        status: "done",
+        resultCommit: RESULT_TWO,
+        ready: false,
+      },
+      activationTask: {
+        taskRef: "tasks:T12",
+        status: "planned",
+        resultCommit: null,
+        ready: true,
+        actionKey: "activate-implementation-evidence",
+      },
+    }),
     faultInjector: async (boundary, context) => {
       if (faultInjector !== undefined) await faultInjector(boundary, context);
     },
@@ -212,6 +243,9 @@ function fixture(
     },
     setTaskStatus(taskRef: string, status: string) {
       taskStatuses.set(taskRef, status);
+    },
+    serviceWithStore(nextStore: ReturnType<typeof createInMemoryImplementationEvidenceStore>) {
+      return new ImplementationEvidenceService({ ...dependencies, store: nextStore });
     },
   };
 }
@@ -366,6 +400,69 @@ describe("protected historical implementation evidence [BA]", () => {
     expect(snapshot.activationRequirements[first.requirementRef]).toMatchObject({
       state: "superseded",
       supersededByRequirementRef: replacement.requirementRef,
+    });
+  });
+
+  test("reports the fulfilled current requirement after persisted keys are reordered", async () => {
+    const reviewed = manifest();
+    const f = fixture({
+      ...reviewed,
+      records: reviewed.records.map((candidate) => ({
+        ...candidate,
+        historicalReview: historicalReview(
+          candidate.taskRef,
+          candidate.baseCommit,
+          candidate.resultCommit,
+        ),
+      })),
+    });
+    const first = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-before-status-reorder",
+      author: "parent",
+    });
+    f.setHead(NEXT_HEAD);
+    f.replacePackaged({
+      ...f.packaged,
+      records: f.packaged.records.map((candidate) => ({
+        ...candidate,
+        repositoryHead: NEXT_HEAD,
+      })),
+    });
+    const replacement = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: NEXT_HEAD,
+      operationId: "arm-after-status-reorder",
+      author: "parent",
+    });
+    await f.service.applyAuditManifest({
+      manifestId: f.packaged.manifestId,
+      manifestDigest: replacement.manifestDigest,
+      expectedRepositoryHead: NEXT_HEAD,
+      auditAttemptRefs: [],
+      operationId: "apply-after-status-reorder",
+      author: "parent",
+    });
+
+    const snapshot = await f.store.snapshot();
+    const reordered = createInMemoryImplementationEvidenceStore({
+      ...snapshot,
+      activationRequirements: {
+        [replacement.requirementRef]: snapshot.activationRequirements[replacement.requirementRef]!,
+        [first.requirementRef]: snapshot.activationRequirements[first.requirementRef]!,
+      },
+    });
+
+    expect(await f.serviceWithStore(reordered).evidenceServiceStatus()).toMatchObject({
+      repositoryHead: NEXT_HEAD,
+      activationState: {
+        status: "active",
+        requirementRef: replacement.requirementRef,
+        activationRef: expect.any(String),
+      },
     });
   });
 

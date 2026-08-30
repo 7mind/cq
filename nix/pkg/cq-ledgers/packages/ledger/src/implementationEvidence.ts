@@ -2605,7 +2605,20 @@ export class ImplementationEvidenceService {
     const armed = candidates.filter((entry) => entry.state === "armed");
     if (armed.length > 1)
       throw new Error("multiple implementation evidence activation requirements are armed");
-    const requirement = armed[0] ?? candidates.at(-1);
+    const current = candidates.filter(
+      (entry) =>
+        entry.state !== "superseded" &&
+        entry.finalizedManifestDigest === authority.finalizedManifestDigest &&
+        entry.boundaryCommit === repositoryHead,
+    );
+    if (current.length > 1)
+      throw new Error("multiple current implementation evidence activation requirements exist");
+    const latest = [...candidates].sort(
+      (left, right) =>
+        left.armedAt.localeCompare(right.armedAt) ||
+        left.requirementRef.localeCompare(right.requirementRef),
+    ).at(-1);
+    const requirement = armed[0] ?? current[0] ?? latest;
     const activationState =
       requirement === undefined
         ? { status: "absent" as const, requirementRef: null, activationRef: null }
