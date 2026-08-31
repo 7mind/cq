@@ -12,12 +12,14 @@ import {
 } from "@cq/process-control";
 import {
   InMemoryLedgerStore,
+  GOALS_LEDGER,
   TASKS_LEDGER,
   TASKS_SCHEMA,
   WorksetAdmissionError,
   createManagedWorktreeGitEffectRunner,
   createFsWorksetStore,
   requireWorksetStore,
+  resolveUniqueGoalState,
   resolveUniqueTaskState,
   type Item,
   type TaskStateReader,
@@ -225,6 +227,30 @@ describe("T2322 unique active-or-archived task state", () => {
     } finally {
       await store.dispose();
     }
+  });
+});
+
+describe("D398 unique active-or-archived goal state", () => {
+  test("returns the exact archived owning goal [Behavioral-Active Blackbox-Atomic]", async () => {
+    const store = new InMemoryLedgerStore();
+    await store.init();
+    const milestone = await store.createMilestone({ id: "M398", title: "Archived goal" });
+    const goal = await store.createItem(GOALS_LEDGER, milestone.id, {
+      id: "G398",
+      status: "done",
+      fields: {
+        title: "Archived implementation-evidence owner",
+        description: "Production authority remains resolvable after archival.",
+      },
+    });
+    await store.updateMilestone(milestone.id, { status: "done" });
+    await store.archiveMilestone(milestone.id, "archived goal fixture");
+
+    await expect(resolveUniqueGoalState(store, goal.id)).resolves.toMatchObject({
+      id: goal.id,
+      status: "done",
+      milestoneId: milestone.id,
+    });
   });
 });
 

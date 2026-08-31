@@ -151,6 +151,15 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
     expect(source).not.toContain("store.fetchItem(TASKS_LEDGER");
   });
 
+  test("resolves owning goals across active and archived state", async () => {
+    const source = await readFile(
+      new URL("../src/implementationEvidenceRuntime.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source.match(/await resolveUniqueGoalState\(/gu)).toHaveLength(3);
+    expect(source).not.toContain("store.fetchItem(GOALS_LEDGER");
+  });
+
   test("reserves production reviewer time for the canonical gate [WA]", async () => {
     const source = await readFile(
       new URL("../src/implementationEvidenceRuntime.ts", import.meta.url),

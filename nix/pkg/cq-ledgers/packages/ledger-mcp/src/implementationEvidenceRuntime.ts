@@ -29,6 +29,7 @@ import {
   deriveImplementationEvidenceActivationCohort,
   derivePredicates,
   materializeOperatorAction,
+  resolveUniqueGoalState,
   resolveUniqueTaskState,
   resolveImplementationEvidenceActivationTaskMappings,
   recordProtectedImplementationCompletion,
@@ -481,8 +482,8 @@ export function createProductionImplementationEvidenceService(
   const serviceBuildCommit = startupBuildCommit(options.repositoryRoot);
   const readBootstrapAuthority = async () => {
     const rule = D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE;
-    const goal = store.fetchItem(
-      GOALS_LEDGER,
+    const goal = await resolveUniqueGoalState(
+      store,
       rule.goalRef.slice(`${GOALS_LEDGER}:`.length),
     );
     const finalized = goal.fields[PLAN_FINALIZED_MANIFEST_FIELD];
@@ -752,7 +753,10 @@ export function createProductionImplementationEvidenceService(
       if (ownership === null || !ownership.ownerRef.startsWith(`${GOALS_LEDGER}:`)) {
         throw new Error(`implementation task ${taskRef} has no sealed owning goal`);
       }
-      const goal = store.fetchItem(GOALS_LEDGER, ownership.ownerRef.slice(`${GOALS_LEDGER}:`.length));
+      const goal = await resolveUniqueGoalState(
+        store,
+        ownership.ownerRef.slice(`${GOALS_LEDGER}:`.length),
+      );
       const manifest = goal.fields[PLAN_FINALIZED_MANIFEST_FIELD];
       if (typeof manifest !== "string") {
         throw new Error(`owning goal ${ownership.ownerRef} has no finalized manifest`);
@@ -787,7 +791,10 @@ export function createProductionImplementationEvidenceService(
     resolveActivationCohort: async ({ goalRef, manifest, repositoryHead }) => {
       if (manifest.activation === null || manifest.activation.goalRef !== goalRef)
         throw new Error("activation manifest does not bind the requested goal");
-      const goal = store.fetchItem(GOALS_LEDGER, goalRef.slice(`${GOALS_LEDGER}:`.length));
+      const goal = await resolveUniqueGoalState(
+        store,
+        goalRef.slice(`${GOALS_LEDGER}:`.length),
+      );
       const finalized = goal.fields[PLAN_FINALIZED_MANIFEST_FIELD];
       if (typeof finalized !== "string") throw new Error("goal has no exact finalized manifest");
       let parsed: unknown;
