@@ -74,11 +74,12 @@ describe("A — canonical schemas via computeDagLayout (STATE_LAYOUT_OPTS, pad=1
 //
 // HYPOTHESIS_SCHEMA transitions: open→uncertain/confirmed/wrong; uncertain→confirmed/wrong.
 // "open" has no predecessors, so minLayer=0 before the fix — the re-base changes nothing.
-// Baseline x-coordinates captured from a known-good layout (layer 0,1,2,2):
+// Baseline x-coordinates captured from a known-good layout (layer 0,1,2,2,2):
 //   open:      pad + 0*(nodeWidth+hGap) = 16
 //   uncertain: pad + 1*(nodeWidth+hGap) = 16 + 176 = 192
 //   confirmed: pad + 2*(nodeWidth+hGap) = 16 + 352 = 368
 //   wrong:     pad + 2*(nodeWidth+hGap) = 368
+//   inconclusive: pad + 2*(nodeWidth+hGap) = 368
 // ---------------------------------------------------------------------------
 describe("B — flush schema (HYPOTHESIS_SCHEMA) is a rebase no-op", () => {
   const BASELINE: Record<string, number> = {
@@ -86,11 +87,12 @@ describe("B — flush schema (HYPOTHESIS_SCHEMA) is a rebase no-op", () => {
     uncertain: 192,
     confirmed: 368,
     wrong: 368,
+    inconclusive: 368,
   };
 
   it("node count is unchanged", () => {
     const layout = computeDagLayout(HYPOTHESIS_SCHEMA.statusValues, schemaEdges(HYPOTHESIS_SCHEMA), STATE_LAYOUT_OPTS);
-    expect(layout.nodes.length).toBe(4);
+    expect(layout.nodes.length).toBe(5);
   });
 
   it("minX is still 16 (pad)", () => {

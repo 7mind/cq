@@ -43,6 +43,7 @@ import {
   assertWorksetOwnershipFieldsAbsent,
   WorksetOwnershipFieldError,
 } from "./worksetOwnerEdges.js";
+import type { FinalizeBatchOperation } from "./finalize.js";
 import {
   createInMemoryWorksetStore,
   readWorksetRootsEpoch,
@@ -357,6 +358,7 @@ export interface WorksetGenericMutationGateway {
     summary: string,
     gatePolicy: ArchiveTerminalItemsGatePolicy,
   ): Promise<ArchiveTerminalItemsResult>;
+  executeFinalize(operations: readonly FinalizeBatchOperation[]): Promise<{ applied: number }>;
   archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer>;
 }
 
@@ -825,6 +827,74 @@ export function createWorksetGenericMutationGateway(
           );
         }
         return tx.archiveTerminalItems(ledgerIds, summary, gatePolicy);
+      });
+    },
+
+    async executeFinalize(operations) {
+      const admissionTargets = operations.flatMap((operation) => {
+        switch (operation.action) {
+          case "close-milestone":
+            return [itemRef(MILESTONES_LEDGER, operation.targetId)];
+          case "close-goal":
+            return [itemRef("goals", operation.targetId)];
+          case "archive-milestone": {
+            const sweep = collectArchiveSweepRefs(rawStore, operation.targetId);
+            return sweep.length > 0
+              ? sweep
+              : [itemRef(MILESTONES_LEDGER, operation.targetId)];
+          }
+        }
+      });
+      return withGenericAdmission(admissionTargets, (tx, _adm, ctx) => {
+        const ids = new Set<string>();
+        for (const operation of operations) {
+          if (operation.id.length === 0 || operation.targetId.length === 0) {
+            throw new LedgerError("finalize operation ids must be non-empty");
+          }
+          if (ids.has(operation.id)) {
+            throw new LedgerError(`duplicate finalize operation id "${operation.id}"`);
+          }
+          ids.add(operation.id);
+          switch (operation.action) {
+            case "close-milestone":
+              assertTargetInGraph(ctx, itemRef(MILESTONES_LEDGER, operation.targetId));
+              if (operation.targetStatus === undefined) {
+                throw new LedgerError(
+                  `finalize operation ${operation.id} requires targetStatus`,
+                );
+              }
+              tx.updateMilestone(operation.targetId, { status: operation.targetStatus });
+              break;
+            case "close-goal":
+              assertTargetInGraph(ctx, itemRef("goals", operation.targetId));
+              if (operation.targetStatus === undefined) {
+                throw new LedgerError(
+                  `finalize operation ${operation.id} requires targetStatus`,
+                );
+              }
+              tx.updateItem("goals", operation.targetId, { status: operation.targetStatus });
+              break;
+            case "archive-milestone": {
+              if (operation.summary === undefined) {
+                throw new LedgerError(`finalize operation ${operation.id} requires summary`);
+              }
+              if (ctx.restrictive) {
+                const missing = tx
+                  .collectArchiveSweepRefs(operation.targetId)
+                  .filter((ref) => !ctx.members.has(ref));
+                if (missing.length > 0) {
+                  throw new WorksetGenericMutationError(
+                    "archive-sweep-incomplete",
+                    `archiveMilestone requires every swept active member in the admitted graph; missing: ${missing.join(", ")}`,
+                  );
+                }
+              }
+              tx.archiveMilestone(operation.targetId, operation.summary);
+              break;
+            }
+          }
+        }
+        return { applied: operations.length };
       });
     },
 

@@ -223,16 +223,17 @@ measured savings without another batching schema.
 | `create_ledger` | `fixed-acknowledgement` | `{ ledger: { id } }`. |
 | `search_items` | `mandatory-item-projection` | `{ items }` using the requested projection. |
 | `fts_search` | `mandatory-item-projection` | `{ results: [{ ledgerId, item, score, matchedFields }] }`; each item uses the requested projection. |
-| `archive_milestone` | `purpose-built-small` | `{ pointer }` for the archived milestone. |
+| `archive_milestone` | `purpose-built-small` | `{ pointer }`. |
 | `archive_terminal_items` | `purpose-built-small` | `{ sweep }`. |
+| `execute_finalize` | `purpose-built-small` | `{ applied }`. |
 | `list_milestone_items` | `mandatory-item-projection` | `{ items: Record<ledgerId, Item[]> }`; every item uses the requested projection. |
 | `snapshot` | `purpose-built-small` | `{ ledger: Record<ledgerId, Record<status, { count, items: [{ id, status, summary }] }>> }`. |
 | `workset` | `purpose-built-small` | Get/fetch: `{op,graph}`. Set: `{op:"set",acknowledgement:{roots,epoch}}`. |
-| `derive_predicates` | `purpose-built-small` | Predicate verdicts `{ value, items }` for `pInvestigate`, `pSeed`, `pPlan`, `pResearch`, `pImplement`, `pOperatorAction`, `openQuestionGate`, `belowFloor`, `planBusy`, and `goalDrift`. |
+| `derive_predicates` | `purpose-built-small` | `{ <predicate>: { value, items } }`. |
 | `materialize_operator_action` | `purpose-built-small` | `{ state: "created"\|"existing", action, handoff }` with revision 1. |
-| `acknowledge_operator_action` | `purpose-built-small` | `{ state: "acknowledged"\|"verified", action }` or identity-mismatch pending, revision-fenced. |
-| `record_operator_action_evidence` | `purpose-built-small` | Revision-bound append-only `{ state: "acknowledged"\|"verified"\|"pending", action, reason? }`. |
-| `revise_operator_action` | `purpose-built-small` | `{ action, task, handoff }`; exact revision, prior snapshots. |
+| `acknowledge_operator_action` | `purpose-built-small` | `{ state, action, reason? }`. |
+| `record_operator_action_evidence` | `purpose-built-small` | `{ state, action, reason? }`. |
+| `revise_operator_action` | `purpose-built-small` | `{ action, task?, handoff? }`. |
 | `complete_operator_action` | `purpose-built-small` | `{ task }` after the exact verified revision. |
 | `reopen_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
 | `unarchive_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
@@ -275,7 +276,7 @@ measured savings without another batching schema.
 <!-- ledger-response-contract:end -->
 
 For `archive_terminal_items`, `sweep` contains `archivedItems`, `archiveGroups`,
-`byLedger`, and `retainedActiveGates`.
+`byLedger`, `retainedActiveGates`, and `retainedActiveOwners`.
 
 Operator-action probe history remains append-only, but verification counts only
 the complete successful probe set from the latest exact acknowledgement epoch.
@@ -402,7 +403,7 @@ not sent as a tool argument.
 
 ## Client development and migration
 
-Treat response decoding as a closed 58-tool matrix, not as a generic
+Treat response decoding as a closed 59-tool matrix, not as a generic
 full-entity decoder. Require callers to choose a projection for the five
 item-bearing read tools, model the acknowledgement DTOs independently
 from full items, and retain pagination metadata until `nextOffset` becomes

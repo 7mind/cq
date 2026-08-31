@@ -401,6 +401,40 @@ describe("(f) runApplyDone executor", () => {
     ]);
   });
 
+  it("executes the complete plan through one batch mutation when the client supports it [D394]", async () => {
+    const calls: string[] = [];
+    const ops = {
+      ...makeStubOps().ops,
+      async executeFinalize(operations: readonly unknown[]) {
+        calls.push(`executeFinalize:${String(operations.length)}`);
+        return plan.affected.map(({ id, action }) => ({ id, action, ok: true }));
+      },
+    };
+
+    expect(await runApplyDone(ops, plan)).toEqual(
+      plan.affected.map(({ id, action }) => ({ id, action, ok: true })),
+    );
+    expect(calls).toEqual(["executeFinalize:3"]);
+  });
+
+  it("reports every entry failed when the atomic batch rejects [D394]", async () => {
+    const ops = {
+      ...makeStubOps().ops,
+      async executeFinalize() {
+        throw new Error("transaction rolled back");
+      },
+    };
+
+    expect(await runApplyDone(ops, plan)).toEqual(
+      plan.affected.map(({ id, action }) => ({
+        id,
+        action,
+        ok: false,
+        error: "transaction rolled back",
+      })),
+    );
+  });
+
   it("marks exactly the id whose call rejects ok:false with the error message, and still runs the rest (Q292)", async () => {
     const { ops, calls } = makeStubOps(2); // 2nd call = M2's updateMilestone
     const results: FinalizeExecResult[] = await runApplyDone(ops, plan);

@@ -42,6 +42,7 @@ import {
   assertPrefixUnique,
   assertQuestionAnswerPrecondition,
   collectNonTerminalChildren,
+  collectNonTerminalOwnedChildren,
   findItem,
   validateSchema,
   type RefValidationContext,
@@ -59,6 +60,7 @@ import {
   QUESTIONS_LEDGER,
   TASKS_LEDGER,
   DECISIONS_LEDGER,
+  WORKSET_OWNER_REF_FIELD,
 } from "../constants.js";
 
 export interface GenericArchiveEntry {
@@ -80,6 +82,7 @@ export interface ArchiveTerminalItemsResult {
   readonly archiveGroups: number;
   readonly byLedger: Readonly<Record<string, number>>;
   readonly retainedActiveGates: readonly string[];
+  readonly retainedActiveOwners: readonly string[];
 }
 
 export type ArchiveTerminalItemsGatePolicy =
@@ -179,6 +182,7 @@ function statusPrecondition(
         to,
         ledgers.get(QUESTIONS_LEDGER),
         ledgers.get(DECISIONS_LEDGER),
+        collectNonTerminalOwnedChildren(ledgers, `${GOALS_LEDGER}:${itemId}`),
       );
   }
   if (ledgerId === QUESTIONS_LEDGER) {
@@ -379,7 +383,32 @@ export function createGenericMutationTransaction(
       const retainedActiveGates = [
         ...new Set(blockers.map((blocker) => blocker.targetRef)),
       ].sort();
-      const retained = new Set(retainedActiveGates);
+      const ownersWithActiveChildren = new Set<string>();
+      for (const ledger of state.ledgers.values()) {
+        const terminal = new Set(ledger.schema.terminalStatuses);
+        for (const group of ledger.milestones) {
+          for (const item of group.items) {
+            if (terminal.has(item.status)) continue;
+            const ownerRef = item.fields[WORKSET_OWNER_REF_FIELD];
+            if (typeof ownerRef === "string") ownersWithActiveChildren.add(ownerRef);
+          }
+        }
+      }
+      const retainedActiveOwners: string[] = [];
+      for (const ledgerId of selectedLedgerIds) {
+        const ledger = getLedger(ledgerId);
+        const terminal = new Set(ledger.schema.terminalStatuses);
+        for (const group of ledger.milestones) {
+          for (const item of group.items) {
+            const ref = `${ledgerId}:${item.id}`;
+            if (terminal.has(item.status) && ownersWithActiveChildren.has(ref)) {
+              retainedActiveOwners.push(ref);
+            }
+          }
+        }
+      }
+      retainedActiveOwners.sort();
+      const retained = new Set([...retainedActiveGates, ...retainedActiveOwners]);
 
       const milestones = getLedger(MILESTONES_LEDGER);
       const byLedger: Record<string, number> = {};
@@ -445,7 +474,13 @@ export function createGenericMutationTransaction(
           byLedger[ledgerId] = (byLedger[ledgerId] ?? 0) + leaving.length;
         }
       }
-      return { archivedItems, archiveGroups, byLedger, retainedActiveGates };
+      return {
+        archivedItems,
+        archiveGroups,
+        byLedger,
+        retainedActiveGates,
+        retainedActiveOwners,
+      };
     },
     collectArchiveSweepRefs: (milestoneId) => {
       const refs: string[] = [];

@@ -61,6 +61,14 @@ export type OperatorActionLifecycleMutation =
       readonly expectedRevision: number;
       readonly completion: string;
       readonly provenance: OperatorActionLifecycleProvenance;
+    }
+  | {
+      readonly kind: "supersede";
+      readonly actionId: string;
+      readonly expectedRevision: number;
+      readonly reason: string;
+      readonly supersededAt: string;
+      readonly provenance: OperatorActionLifecycleProvenance;
     };
 
 export type OperatorActionLifecycleMutationResult =
@@ -82,7 +90,8 @@ export type OperatorActionLifecycleMutationResult =
       readonly task: Item;
       readonly handoff: Item;
     }
-  | { readonly kind: "complete"; readonly action: Item; readonly task: Item };
+  | { readonly kind: "complete"; readonly action: Item; readonly task: Item }
+  | { readonly kind: "supersede"; readonly action: Item; readonly task?: Item };
 
 export interface OperatorActionLifecycleMutationOutcome {
   readonly result: OperatorActionLifecycleMutationResult;
@@ -111,6 +120,8 @@ export function applyOperatorActionLifecycleMutation(
       return revise(ledgers, action, revision, mutation, now);
     case "complete":
       return complete(ledgers, action, revision, mutation, now);
+    case "supersede":
+      return supersede(ledgers, action, mutation);
   }
 }
 
@@ -374,6 +385,70 @@ function complete(
   };
 }
 
+function supersede(
+  ledgers: Map<string, Ledger>,
+  action: Item,
+  mutation: Extract<OperatorActionLifecycleMutation, { kind: "supersede" }>,
+): OperatorActionLifecycleMutationOutcome {
+  if (action.status === "superseded") {
+    if (
+      action.fields["supersededReason"] !== mutation.reason ||
+      action.fields["supersededAt"] !== mutation.supersededAt
+    ) {
+      throw new LedgerError(`Operator action ${action.id} was superseded with different evidence`);
+    }
+    const taskId = referencedId(action, "taskRef", TASKS_LEDGER);
+    const task = findOptionalMutableItem(ledgers, TASKS_LEDGER, taskId);
+    return {
+      result: {
+        kind: "supersede",
+        action: cloneItem(action),
+        ...(task === undefined ? {} : { task: cloneItem(task) }),
+      },
+      dirtyLedgers: [],
+    };
+  }
+  if (action.status !== "pending" && action.status !== "acknowledged") {
+    throw new LedgerError(
+      `Operator action ${action.id} may be superseded only while pending or acknowledged`,
+    );
+  }
+
+  const taskId = referencedId(action, "taskRef", TASKS_LEDGER);
+  const task = findOptionalMutableItem(ledgers, TASKS_LEDGER, taskId);
+  if (
+    task !== undefined &&
+    task.status !== "planned" &&
+    task.status !== "abandoned" &&
+    task.status !== "done"
+  ) {
+    throw new LedgerError(
+      `Operator-action task ${task.id} may be superseded only from planned, abandoned, or done`,
+    );
+  }
+
+  action.status = "superseded";
+  action.fields["supersededReason"] = mutation.reason;
+  action.fields["supersededAt"] = mutation.supersededAt;
+  applyProvenance(action, mutation.provenance, mutation.supersededAt);
+
+  const dirtyLedgers: string[] = [OPERATOR_ACTIONS_LEDGER];
+  if (task?.status === "planned") {
+    task.status = "abandoned";
+    task.fields["completion"] = `Superseded operator action ${action.id}: ${mutation.reason}`;
+    applyProvenance(task, mutation.provenance, mutation.supersededAt);
+    dirtyLedgers.push(TASKS_LEDGER);
+  }
+  return {
+    result: {
+      kind: "supersede",
+      action: cloneItem(action),
+      ...(task === undefined ? {} : { task: cloneItem(task) }),
+    },
+    dirtyLedgers,
+  };
+}
+
 function findMutableItem(ledgers: Map<string, Ledger>, ledgerId: string, itemId: string): Item {
   const ledger = ledgers.get(ledgerId);
   if (ledger === undefined) throw new LedgerError(`ledger not found: ${ledgerId}`);
@@ -382,6 +457,20 @@ function findMutableItem(ledgers: Map<string, Ledger>, ledgerId: string, itemId:
     if (item !== undefined) return item;
   }
   throw new ItemNotFoundError(ledgerId, itemId);
+}
+
+function findOptionalMutableItem(
+  ledgers: Map<string, Ledger>,
+  ledgerId: string,
+  itemId: string,
+): Item | undefined {
+  const ledger = ledgers.get(ledgerId);
+  if (ledger === undefined) throw new LedgerError(`ledger not found: ${ledgerId}`);
+  for (const milestone of ledger.milestones) {
+    const item = milestone.items.find((candidate) => candidate.id === itemId);
+    if (item !== undefined) return item;
+  }
+  return undefined;
 }
 
 function referencedId(action: Item, field: string, ledgerId: string): string {

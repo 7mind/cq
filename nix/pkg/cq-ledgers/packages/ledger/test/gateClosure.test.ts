@@ -264,6 +264,16 @@ describe("managed gate closure v1", () => {
     if (resolution.status === "invalid") expect(resolution.reason).toBe("path-escape");
   });
 
+  test("ignores a generated result symlink outside the repository", async () => {
+    const fixture = await createFixture();
+    const externalResult = await createStandaloneBunRoot();
+    await fs.symlink(externalResult, path.join(fixture.targetRoot, "result"), "dir");
+    await writeManifest(fixture);
+
+    const resolution = await resolveManagedGateClosure(fixture.root);
+    expect(resolution.status).toBe("resolved");
+  });
+
   test("rejects an executable variable-valued CommonJS require without a declaration", async () => {
     const fixture = await createFixture();
     const siblingSource = await addBunRoot(fixture, "nix/pkg/commonjs-sibling-root", "index.cjs");

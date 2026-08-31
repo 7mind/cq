@@ -132,6 +132,7 @@ import {
   validateMilestoneItemPatch,
   applyUpdateMilestoneItem,
   assertGoalPhasePreconditions,
+  collectNonTerminalOwnedChildren,
   assertMilestoneActive,
   assertPrefixUnique,
   assertQuestionAnswerPrecondition,
@@ -2674,6 +2675,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
           to,
           source.get(QUESTIONS_LEDGER),
           source.get(DECISIONS_LEDGER),
+          collectNonTerminalOwnedChildren(source, `${GOALS_LEDGER}:${itemId}`),
         );
     }
     if (ledgerId === QUESTIONS_LEDGER) {

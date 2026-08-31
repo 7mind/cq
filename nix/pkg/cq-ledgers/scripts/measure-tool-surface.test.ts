@@ -140,7 +140,9 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // its concise response contract while remaining below the corpus median.
     // 1608 -> 1619 under D396: terminal-item archival adds one compact
     // purpose-built acknowledgement while remaining below the corpus median.
-    maximumRemainingG93AttributableTokens: 1619,
+    // 1619 -> 1590 under D394/D395: atomic finalization adds one acknowledgement;
+    // existing operator-action acknowledgements shed redundant state enumerations.
+    maximumRemainingG93AttributableTokens: 1590,
     corpusMedianResponseSavingTokens: 1622,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,

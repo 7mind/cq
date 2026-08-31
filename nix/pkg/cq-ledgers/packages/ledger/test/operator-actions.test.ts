@@ -19,6 +19,7 @@ import {
   parseOperatorActionEnvelope,
   recordOperatorActionEvidence,
   reviseOperatorAction,
+  supersedeOperatorAction,
   type LedgerStore,
   type Item,
   type PlanLifecycleStore,
@@ -384,6 +385,128 @@ for (const failAt of [1, 2, 3]) {
 
 for (const factory of factories) {
   describe(`operator-action lifecycle (${factory.name})`, () => {
+    test("supersedes a pending action and atomically abandons its planned task [D395]", async () => {
+      const store = await factory.build();
+      try {
+        const milestone = await store.createMilestone({ title: "superseded deployment" });
+        const goal = await store.createItem("goals", milestone.id, {
+          status: "planned",
+          fields: { title: "goal", description: "goal" },
+        });
+        const task = await store.createItem("tasks", milestone.id, {
+          status: "planned",
+          fields: {
+            headline: "obsolete deployment",
+            description: "CQ-OPERATOR-ACTION v1 obsolete-deployment. User deploys.",
+            ledgerRefs: [`goals:${goal.id}`],
+          },
+        });
+        const created = await materializeOperatorAction(store, {
+          taskId: task.id,
+          expectedOutputIdentity: IDENTITY,
+          expectedEvidence: ["cq --version"],
+        });
+
+        const result = await supersedeOperatorAction(store, {
+          actionId: created.action.id,
+          expectedRevision: 1,
+          reason: "deployment requirement replaced",
+          supersededAt: NOW,
+          author: "parent",
+        });
+
+        expect(result).toMatchObject({
+          action: { status: "superseded" },
+          task: { id: task.id, status: "abandoned" },
+        });
+        expect(store.fetchItem("operatorActions", created.action.id)).toMatchObject({
+          status: "superseded",
+          fields: { supersededReason: "deployment requirement replaced" },
+        });
+        expect(store.fetchItem("tasks", task.id).status).toBe("abandoned");
+      } finally {
+        await store.dispose();
+      }
+    });
+
+    test("a goal cannot become terminal while it has a nonterminal sealed child [D397]", async () => {
+      const store = await factory.build();
+      try {
+        const milestone = await store.createMilestone({ title: "owned plan" });
+        const goal = await store.createItem("goals", milestone.id, {
+          status: "building",
+          fields: { title: "goal", description: "goal" },
+        });
+        const atomic = store as LedgerStore & {
+          runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T>;
+        };
+        await atomic.runAtomicOwnedMutation((tx) =>
+          tx.createItemWithSealedOwnership(
+            "tasks",
+            milestone.id,
+            { status: "planned", fields: { headline: "unfinished" } },
+            { ownerRef: `goals:${goal.id}`, edgeKind: "finalized-manifest" },
+          ),
+        );
+
+        await expect(store.updateItem("goals", goal.id, { status: "done" })).rejects.toThrow(
+          /nonterminal sealed children/,
+        );
+        expect(store.fetchItem("goals", goal.id).status).toBe("building");
+      } finally {
+        await store.dispose();
+      }
+    });
+
+    test("terminal-item archival retains a historical terminal goal with active sealed children [D397]", async () => {
+      const store = await factory.build();
+      try {
+        const milestone = await store.createMilestone({ title: "historical drift" });
+        const goal = await store.createItem("goals", milestone.id, {
+          status: "done",
+          fields: { title: "historical goal", description: "goal" },
+        });
+        const atomic = store as LedgerStore & {
+          runAtomicOwnedMutation<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T>;
+          runAtomicGenericMutation<T>(
+            mutate: (tx: {
+              archiveTerminalItems(
+                ledgerIds: readonly string[],
+                summary: string,
+                gatePolicy: "retain-active-gates",
+              ): T;
+            }) => T,
+            readRoots: () => Promise<{ roots: string[]; epoch: number }>,
+          ): Promise<T>;
+        };
+        await atomic.runAtomicOwnedMutation((tx) =>
+          tx.createItemWithSealedOwnership(
+            "tasks",
+            milestone.id,
+            { status: "planned", fields: { headline: "unfinished historical child" } },
+            { ownerRef: `goals:${goal.id}`, edgeKind: "finalized-manifest" },
+          ),
+        );
+
+        const result = await atomic.runAtomicGenericMutation(
+          (tx) =>
+            tx.archiveTerminalItems(
+              ["goals"],
+              "terminal cleanup",
+              "retain-active-gates",
+            ),
+          async () => ({ roots: [], epoch: 0 }),
+        );
+        expect(result).toMatchObject({
+          archivedItems: 0,
+          retainedActiveOwners: [`goals:${goal.id}`],
+        });
+        expect(store.fetchItem("goals", goal.id).status).toBe("done");
+      } finally {
+        await store.dispose();
+      }
+    });
+
     test("reuses one action/handoff, fences identity, preserves evidence, and completes only verified", async () => {
       const store = await factory.build();
       try {

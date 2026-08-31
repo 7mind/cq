@@ -112,6 +112,7 @@ import {
   materializeOperatorAction,
   recordOperatorActionEvidence,
   reviseOperatorAction,
+  supersedeOperatorAction,
 } from "../operatorActions.js";
 import {
   bindWorksetInvocationAuthority,
@@ -1056,6 +1057,37 @@ export function createLedgerMcpToolSpecifications(
     },
   );
 
+  const executeFinalizeTool = tool(
+    "execute_finalize",
+    "Atomically execute an ordered batch of milestone/goal closes and milestone archives under one workset admission.",
+    {
+      operations: z.array(
+        z.object({
+          id: z.string().min(1),
+          target_id: safeIdSchema,
+          action: z.enum(["close-milestone", "close-goal", "archive-milestone"]),
+          target_status: z.string().min(1).optional(),
+          summary: z.string().optional(),
+        }).strict(),
+      ).min(1),
+    } as const,
+    async (args) => {
+      assertOnlyToolArguments("execute_finalize", args, ["operations"]);
+      const result = await mutationsFor("execute_finalize").executeFinalize(
+        args.operations.map((operation) => ({
+          id: operation.id,
+          targetId: operation.target_id,
+          action: operation.action,
+          ...(operation.target_status === undefined
+            ? {}
+            : { targetStatus: operation.target_status }),
+          ...(operation.summary === undefined ? {} : { summary: operation.summary }),
+        })),
+      );
+      return jsonResult(result);
+    },
+  );
+
   const listMilestoneItems = tool(
     "list_milestone_items",
     `Return active items grouped by ledger that reference one milestone. ${ITEM_PROJECTION_DESCRIPTION}.`,
@@ -1218,18 +1250,55 @@ export function createLedgerMcpToolSpecifications(
 
   const reviseOperatorActionTool = tool(
     "revise_operator_action",
-    "Exact-CAS revise before evidence or after a validated terminal failure from the pending action's current revision and acknowledgement epoch. Reject stale or other evidence; snapshot action/task/handoff, reset action state, refresh handoff, and replan an abandoned task.",
+    "Exact-CAS revise before evidence or after a validated terminal failure from the pending action's current revision and acknowledgement epoch. Reject stale or other evidence; snapshot action/task/handoff, reset action state, refresh handoff, and replan an abandoned task. Supersession terminalizes the action and abandons a live planned task.",
     {
       action_id: z.string().regex(/^OA\d+$/),
       expected_revision: z.number().int().positive(),
-      expected_output_identity: z.string().min(1),
-      expected_evidence: z.array(z.string().min(1)).min(1),
-      revised_at: z.string().min(1),
+      disposition: z.enum(["revise", "supersede"]).optional(),
+      expected_output_identity: z.string().min(1).optional(),
+      expected_evidence: z.array(z.string().min(1)).min(1).optional(),
+      revised_at: z.string().min(1).optional(),
+      superseded_reason: z.string().min(1).optional(),
+      superseded_at: z.string().min(1).optional(),
       author: z.string().min(1),
       session: z.string().min(1).optional(),
     } as const,
-    async (args) =>
-      jsonResult(
+    async (args) => {
+      if (args.disposition === "supersede") {
+        if (args.superseded_reason === undefined || args.superseded_at === undefined) {
+          throw new LedgerError("supersede requires superseded_reason and superseded_at");
+        }
+        if (
+          args.expected_output_identity !== undefined ||
+          args.expected_evidence !== undefined ||
+          args.revised_at !== undefined
+        ) {
+          throw new LedgerError("supersede does not accept revision replacement fields");
+        }
+        return jsonResult(
+          await supersedeOperatorAction(store, {
+            actionId: args.action_id,
+            expectedRevision: args.expected_revision,
+            reason: args.superseded_reason,
+            supersededAt: args.superseded_at,
+            author: args.author,
+            ...(args.session === undefined ? {} : { session: args.session }),
+          }),
+        );
+      }
+      if (
+        args.expected_output_identity === undefined ||
+        args.expected_evidence === undefined ||
+        args.revised_at === undefined
+      ) {
+        throw new LedgerError(
+          "revise requires expected_output_identity, expected_evidence, and revised_at",
+        );
+      }
+      if (args.superseded_reason !== undefined || args.superseded_at !== undefined) {
+        throw new LedgerError("revise does not accept supersession fields");
+      }
+      return jsonResult(
         await reviseOperatorAction(store, {
           actionId: args.action_id,
           expectedRevision: args.expected_revision,
@@ -1239,7 +1308,8 @@ export function createLedgerMcpToolSpecifications(
           author: args.author,
           ...(args.session === undefined ? {} : { session: args.session }),
         }),
-      ),
+      );
+    },
   );
 
   const completeOperatorActionTool = tool(
@@ -1950,6 +2020,7 @@ export function createLedgerMcpToolSpecifications(
     ftsSearch,
     archiveMilestone,
     archiveTerminalItems,
+    executeFinalizeTool,
     listMilestoneItems,
     snapshotTool,
     worksetTool,

@@ -205,6 +205,8 @@ describe("eligibleColumnFields", () => {
         "lastFailure",
         "verifiedAt",
         "verifiedRevision",
+        "supersededAt",
+        "supersededReason",
         "ledgerRefs",
       ],
       ideas: ["ledgerRefs"],

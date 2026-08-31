@@ -27,6 +27,7 @@ import type {
   WorksetResultFor,
 } from "@cq/ledger";
 import type { ArchiveContent, ArchivePointer } from "@cq/ledger";
+import type { FinalizeBatchOperation } from "@cq/ledger/finalize";
 
 export type {
   Item,
@@ -38,6 +39,7 @@ export type {
   LedgerSchema,
   ArchiveContent,
   ArchivePointer,
+  FinalizeBatchOperation,
   ProjectEntry,
   FetchPromptResult,
   ItemMutationAckDto,
@@ -140,6 +142,8 @@ export interface LedgerClient {
    * ledger is non-terminal (`archive_milestone` MCP tool).
    */
   archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer>;
+  /** Optional one-round-trip atomic finalization path for real MCP clients. */
+  executeFinalize?(operations: readonly FinalizeBatchOperation[]): Promise<{ applied: number }>;
   /**
    * List every project the connected server's store knows about (the
    * `list_projects` tool, T585/Q284) — feeds the always-visible project

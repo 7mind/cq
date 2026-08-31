@@ -8,6 +8,7 @@ import {
   createLedgerMcpTools,
   FsLedgerStore,
   GOALS_LEDGER,
+  HYPOTHESIS_LEDGER,
   IDEAS_LEDGER,
   InMemoryLedgerStore,
   PLAN_MANAGED_GOAL_FIELD_NAMES,
@@ -181,6 +182,22 @@ function prePlanLifecycleSchema(ledgerName: string, schema: LedgerSchema): Ledge
     delete compatible.fields.implementationEvidence;
   }
   if (ledgerName === IDEAS_LEDGER) delete compatible.fields.ledgerRefs;
+  if (ledgerName === HYPOTHESIS_LEDGER) {
+    compatible.statusValues = compatible.statusValues.filter(
+      (status) => status !== "inconclusive",
+    );
+    compatible.terminalStatuses = compatible.terminalStatuses.filter(
+      (status) => status !== "inconclusive",
+    );
+    if (compatible.transitions !== undefined) {
+      delete compatible.transitions.inconclusive;
+      for (const [status, targets] of Object.entries(compatible.transitions)) {
+        compatible.transitions[status] = targets.filter(
+          (target) => target !== "inconclusive",
+        );
+      }
+    }
+  }
   return compatible;
 }
 

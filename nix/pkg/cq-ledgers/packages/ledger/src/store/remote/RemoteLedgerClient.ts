@@ -47,6 +47,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { ArchivePointer, FieldValue, Item, LedgerSchema } from "../../types.js";
 import type { ArchiveContent } from "../LedgerStore.js";
+import type { FinalizeBatchOperation } from "../../finalize.js";
 import type { BackupDumpFile } from "../backupExporter.js";
 import type {
   CompactItemDto,
@@ -75,6 +76,7 @@ import type {
   OperatorActionShellEvidence,
   RecordOperatorActionEvidenceResult,
   RevisedOperatorAction,
+  SupersededOperatorAction,
 } from "../../operatorActions.js";
 import type {
   WorksetRequest,
@@ -1069,6 +1071,22 @@ export class RemoteLedgerClient {
     ).pointer;
   }
 
+  async executeFinalize(
+    operations: readonly FinalizeBatchOperation[],
+  ): Promise<{ applied: number }> {
+    return await this.call<{ applied: number }>("execute_finalize", {
+      operations: operations.map((operation) => ({
+        id: operation.id,
+        target_id: operation.targetId,
+        action: operation.action,
+        ...(operation.targetStatus === undefined
+          ? {}
+          : { target_status: operation.targetStatus }),
+        ...(operation.summary === undefined ? {} : { summary: operation.summary }),
+      })),
+    });
+  }
+
   async reopenItem(
     ledgerId: string,
     itemId: string,
@@ -1175,6 +1193,26 @@ export class RemoteLedgerClient {
     };
     if (input.session !== undefined) args["session"] = input.session;
     return await this.call<RevisedOperatorAction>("revise_operator_action", args);
+  }
+
+  async supersedeOperatorAction(input: {
+    actionId: string;
+    expectedRevision: number;
+    reason: string;
+    supersededAt: string;
+    author: string;
+    session?: string;
+  }): Promise<SupersededOperatorAction> {
+    const args: Record<string, unknown> = {
+      action_id: input.actionId,
+      expected_revision: input.expectedRevision,
+      disposition: "supersede",
+      superseded_reason: input.reason,
+      superseded_at: input.supersededAt,
+      author: input.author,
+    };
+    if (input.session !== undefined) args["session"] = input.session;
+    return await this.call<SupersededOperatorAction>("revise_operator_action", args);
   }
 
   async completeOperatorAction(input: {

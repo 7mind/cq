@@ -24,6 +24,7 @@ import {
   GitObjectLedgerBackend,
   GitPlumbing,
   GOALS_LEDGER,
+  HYPOTHESIS_LEDGER,
   IDEAS_LEDGER,
   InMemoryLedgerStore,
   LEDGER_STORAGE_DIRNAME,
@@ -124,20 +125,9 @@ function publicSnapshot(store: LedgerStore, names: readonly string[]): PublicSna
 
 function withoutPlanLifecycleSchemaFields(snapshot: PublicSnapshot): PublicSnapshot {
   const compatible = structuredClone(snapshot);
-  for (const ledger of Object.values(compatible)) {
-    for (const field of WORKSET_OWNED_FIELD_NAMES) delete ledger.schema.fields[field];
+  for (const [name, ledger] of Object.entries(compatible)) {
+    ledger.schema = withoutPlanLifecycleFields(name, ledger.schema);
   }
-  const goals = compatible[GOALS_LEDGER];
-  if (goals !== undefined) {
-    for (const field of PLAN_MANAGED_GOAL_FIELD_NAMES) delete goals.schema.fields[field];
-  }
-  const reviews = compatible[REVIEWS_LEDGER];
-  if (reviews !== undefined) {
-    delete reviews.schema.fields[PLAN_REVIEW_DRAFT_FIELD];
-    delete reviews.schema.fields.implementationEvidence;
-  }
-  const ideas = compatible[IDEAS_LEDGER];
-  if (ideas !== undefined) delete ideas.schema.fields.ledgerRefs;
   return compatible;
 }
 
@@ -152,6 +142,22 @@ function withoutPlanLifecycleFields(ledgerName: string, schema: LedgerSchema): L
     delete compatible.fields.implementationEvidence;
   }
   if (ledgerName === IDEAS_LEDGER) delete compatible.fields.ledgerRefs;
+  if (ledgerName === HYPOTHESIS_LEDGER) {
+    compatible.statusValues = compatible.statusValues.filter(
+      (status) => status !== "inconclusive",
+    );
+    compatible.terminalStatuses = compatible.terminalStatuses.filter(
+      (status) => status !== "inconclusive",
+    );
+    if (compatible.transitions !== undefined) {
+      delete compatible.transitions.inconclusive;
+      for (const [status, targets] of Object.entries(compatible.transitions)) {
+        compatible.transitions[status] = targets.filter(
+          (target) => target !== "inconclusive",
+        );
+      }
+    }
+  }
   return compatible;
 }
 

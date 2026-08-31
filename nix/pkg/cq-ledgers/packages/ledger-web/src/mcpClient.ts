@@ -27,6 +27,7 @@ import type {
   FetchedLedger,
   FetchPromptResult,
   FieldValue,
+  FinalizeBatchOperation,
   FtsHit,
   Item,
   ItemInit,
@@ -266,6 +267,22 @@ export class McpLedgerClient implements WorksetCapableLedgerClient {
         summary,
       })
     ).pointer;
+  }
+
+  async executeFinalize(
+    operations: readonly FinalizeBatchOperation[],
+  ): Promise<{ applied: number }> {
+    return await this.call<{ applied: number }>("execute_finalize", {
+      operations: operations.map((operation) => ({
+        id: operation.id,
+        target_id: operation.targetId,
+        action: operation.action,
+        ...(operation.targetStatus === undefined
+          ? {}
+          : { target_status: operation.targetStatus }),
+        ...(operation.summary === undefined ? {} : { summary: operation.summary }),
+      })),
+    });
   }
 
   async readLog(path: string): Promise<ReadLogResult> {

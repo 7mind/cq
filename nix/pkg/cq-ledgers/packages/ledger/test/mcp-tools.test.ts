@@ -236,14 +236,14 @@ function expectedItemAcknowledgement(item: Item): Record<string, unknown> {
 }
 
 describe("ledger MCP tools", () => {
-  it("keeps the 40 ordinary names separate from the 58-name management inventory", async () => {
+  it("keeps the 41 ordinary names separate from the 59-name management inventory", async () => {
     const store = await buildStore();
     const tools = createManagementLedgerMcpTools(store);
     expect(tools.map((t) => t.name).sort()).toEqual([
       ...MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES,
     ].sort());
-    expect(LEDGER_TOOL_NAMES.length).toBe(40);
-    expect(MANAGEMENT_LEDGER_TOOL_NAMES.length).toBe(58);
+    expect(LEDGER_TOOL_NAMES.length).toBe(41);
+    expect(MANAGEMENT_LEDGER_TOOL_NAMES.length).toBe(59);
     expect(MANAGEMENT_LEDGER_TOOL_NAMES).toContain(
       "advance_implementation_evidence_bootstrap",
     );
@@ -257,6 +257,7 @@ describe("ledger MCP tools", () => {
     expect(LEDGER_TOOL_NAMES).toContain("derive_predicates");
     expect(LEDGER_TOOL_NAMES).toContain("acknowledge_operator_action");
     expect(LEDGER_TOOL_NAMES).toContain("revise_operator_action");
+    expect(LEDGER_TOOL_NAMES).toContain("execute_finalize");
     expect(LEDGER_TOOL_NAMES).toContain("reopen_item");
     expect(LEDGER_TOOL_NAMES).toContain("unarchive_item");
     expect(LEDGER_TOOL_NAMES).toContain("read_log");
@@ -990,6 +991,7 @@ describe("ledger MCP tools", () => {
         archiveGroups: number;
         byLedger: Record<string, number>;
         retainedActiveGates: string[];
+        retainedActiveOwners: string[];
       };
     }>(
       await callTool(tools, "archive_terminal_items", {
@@ -1004,6 +1006,7 @@ describe("ledger MCP tools", () => {
         archiveGroups: 1,
         byLedger: { tasks: 1 },
         retainedActiveGates: [],
+        retainedActiveOwners: [],
       },
     });
     expect(() => store.fetchItem("tasks", "T1")).toThrow();

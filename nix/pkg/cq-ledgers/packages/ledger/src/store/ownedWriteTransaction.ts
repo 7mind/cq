@@ -16,6 +16,7 @@ import {
   applyUpdateItem,
   applyUpdateMilestoneItem,
   assertGoalPhasePreconditions,
+  collectNonTerminalOwnedChildren,
   assertMilestoneActive,
   assertQuestionAnswerPrecondition,
   findItem,
@@ -84,6 +85,7 @@ function statusChangePrecondition(
         to,
         ledgers.get(QUESTIONS_LEDGER),
         ledgers.get(DECISIONS_LEDGER),
+        collectNonTerminalOwnedChildren(ledgers, `${GOALS_LEDGER}:${itemId}`),
       );
   }
   if (ledgerId === QUESTIONS_LEDGER) {

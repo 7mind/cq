@@ -28,6 +28,7 @@ import type {
   FetchedLedger,
   FetchPromptResult,
   FieldValue,
+  FinalizeBatchOperation,
   FtsHit,
   Item,
   ItemInit,
@@ -353,6 +354,22 @@ export class McpLedgerClient implements WorksetCapableLedgerClient {
   async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
     const args: Record<string, unknown> = { milestone_id: milestoneId, summary };
     return (await this.call<{ pointer: ArchivePointer }>("archive_milestone", args)).pointer;
+  }
+
+  async executeFinalize(
+    operations: readonly FinalizeBatchOperation[],
+  ): Promise<{ applied: number }> {
+    return await this.call<{ applied: number }>("execute_finalize", {
+      operations: operations.map((operation) => ({
+        id: operation.id,
+        target_id: operation.targetId,
+        action: operation.action,
+        ...(operation.targetStatus === undefined
+          ? {}
+          : { target_status: operation.targetStatus }),
+        ...(operation.summary === undefined ? {} : { summary: operation.summary }),
+      })),
+    });
   }
 
   async listProjects(): Promise<ProjectEntry[]> {

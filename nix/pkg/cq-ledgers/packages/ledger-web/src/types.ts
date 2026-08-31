@@ -31,6 +31,7 @@ import type {
   WorksetResultFor,
 } from "@cq/ledger";
 import type { ArchiveContent } from "@cq/ledger";
+import type { FinalizeBatchOperation } from "@cq/ledger/finalize";
 
 export type {
   Item,
@@ -47,6 +48,7 @@ export type {
   ListProjectsResult,
   ProjectEntry,
   ArchivePointer,
+  FinalizeBatchOperation,
   ItemMutationAckDto,
   ItemProjection,
   MilestoneMutationAckDto,
@@ -141,6 +143,8 @@ export interface LedgerClient {
    * non-terminal.
    */
   archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer>;
+  /** Optional one-round-trip atomic finalization path for real MCP clients. */
+  executeFinalize?(operations: readonly FinalizeBatchOperation[]): Promise<{ applied: number }>;
   /** Read a log file under docs/logs/ via the read_log MCP tool. */
   readLog(path: string): Promise<ReadLogResult>;
   /** Retrieve per-agent resolved model overlays via get_config(agent_models). */

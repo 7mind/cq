@@ -2,8 +2,8 @@
  * Regression guard for the 2026-07-25 ledger-wipe incident.
  *
  * An OLDER build opening a store written by a NEWER one sees persisted fields
- * its own CANONICAL_LEDGERS lacks. `schemaCompatible` only tolerates the
- * FORWARD direction (canon ADDED an optional field); this BACKWARD direction is
+ * its own CANONICAL_LEDGERS lacks. `schemaCompatible` only tolerates safe
+ * FORWARD direction (canon added an optional field or status); this BACKWARD direction is
  * classed divergent, and under the historical `'backup-reinit'` DEFAULT the
  * store silently wiped every row after taking a sibling backup — 750 active +
  * 2278 archived items lost in the real incident, announced only by a stderr

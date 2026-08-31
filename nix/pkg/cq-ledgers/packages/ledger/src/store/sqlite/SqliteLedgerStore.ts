@@ -106,6 +106,7 @@ import {
   validateMilestoneItemPatch,
   applyUpdateMilestoneItem,
   assertGoalPhasePreconditions,
+  collectNonTerminalOwnedChildren,
   assertMilestoneActive,
   assertPrefixUnique,
   assertQuestionAnswerPrecondition,
@@ -381,10 +382,10 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
 
     // Pass 1 — READ-ONLY divergence detection over the persisted canonical
     // ledgers (parity with AbstractLedgerStore.init): a missing canonical
-    // ledger will be provisioned from canon; a persisted schema that only
-    // LACKS canon's added-optional fields is a forward-compatible widening
-    // upgraded to canon in place (T407); anything else is divergent and
-    // routes through onSchemaDivergence BEFORE any bootstrap write commits.
+    // ledger will be provisioned from canon; safe forward widenings (optional
+    // fields and append-only statuses/transitions) upgrade to canon in place;
+    // anything else routes through onSchemaDivergence before any bootstrap
+    // write commits.
     const missing: string[] = [];
     const widened: string[] = [];
     const divergent: string[] = [];
@@ -2103,6 +2104,10 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
           to,
           this.loadLedgerIfExists(QUESTIONS_LEDGER),
           this.loadLedgerIfExists(DECISIONS_LEDGER),
+          collectNonTerminalOwnedChildren(
+            new Map(this.enumerate().map((name) => [name, this.loadLedger(name)])),
+            `${GOALS_LEDGER}:${itemId}`,
+          ),
         );
     }
     if (ledgerId === QUESTIONS_LEDGER) {

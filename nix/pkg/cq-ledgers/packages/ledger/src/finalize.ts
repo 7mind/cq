@@ -732,6 +732,17 @@ export interface FinalizeOps {
   updateMilestone(milestoneId: string, patch: { status: string }): Promise<unknown>;
   /** Mirrors `LedgerClient.archiveMilestone` (used for `archive-milestone` entries). */
   archiveMilestone(milestoneId: string, summary: string): Promise<unknown>;
+  /** Optional atomic bulk path used by MCP clients; legacy/test clients fall back per entry. */
+  executeFinalize?(operations: readonly FinalizeBatchOperation[]): Promise<unknown>;
+}
+
+/** One server-executable Finalize mutation in already-validated execution order. */
+export interface FinalizeBatchOperation {
+  readonly id: string;
+  readonly targetId: string;
+  readonly action: FinalizeAction;
+  readonly targetStatus?: string;
+  readonly summary?: string;
 }
 
 /**
@@ -797,11 +808,9 @@ async function applyEntry(ops: FinalizeOps, entry: FinalizePlanEntry): Promise<v
 }
 
 /**
- * Execute `entries` sequentially against `ops` (client-side composition is
- * non-atomic per Q293 — each write is its own MCP round-trip), capturing a
- * per-id `{ id, action, ok, error? }` result instead of throwing mid-sweep
- * (Q292): a failure on one entry does not prevent later entries from running.
- * The returned list is in the same order as `entries`.
+ * Legacy/test clients execute `entries` sequentially. Real MCP clients use
+ * the atomic batch path below. The returned list is in the same order as
+ * `entries`.
  */
 async function executeSequential(
   ops: FinalizeOps,
@@ -819,13 +828,39 @@ async function executeSequential(
   return results;
 }
 
+function entryBatchOperation(entry: FinalizePlanEntry): FinalizeBatchOperation {
+  return {
+    id: entry.id,
+    targetId: entry.id,
+    action: entry.action,
+    ...(entry.targetStatus === undefined ? {} : { targetStatus: entry.targetStatus }),
+    ...(entry.action === "archive-milestone"
+      ? { summary: `finalized: ${entry.title ?? entry.id}` }
+      : {}),
+  };
+}
+
+async function executePlan(
+  ops: FinalizeOps,
+  entries: FinalizePlanEntry[],
+): Promise<FinalizeExecResult[]> {
+  if (ops.executeFinalize === undefined) return executeSequential(ops, entries);
+  try {
+    await ops.executeFinalize(entries.map(entryBatchOperation));
+    return entries.map(({ id, action }) => ({ id, action, ok: true }));
+  } catch (err) {
+    const error = errorMessage(err);
+    return entries.map(({ id, action }) => ({ id, action, ok: false, error }));
+  }
+}
+
 /**
  * Execute an apply-done plan's `affected` entries (from
- * {@link computeApplyDonePlan}) against `ops`. Sequential, in the plan's own
- * order — milestone closes before goal closes, per that function's doc.
+ * {@link computeApplyDonePlan}) against `ops`, atomically when the client
+ * exposes the batch operation. Milestone closes precede goal closes.
  */
 export function runApplyDone(ops: FinalizeOps, plan: FinalizePlan): Promise<FinalizeExecResult[]> {
-  return executeSequential(ops, plan.affected);
+  return executePlan(ops, plan.affected);
 }
 
 /**
@@ -835,7 +870,7 @@ export function runApplyDone(ops: FinalizeOps, plan: FinalizePlan): Promise<Fina
  * to the id when no title was recorded).
  */
 export function runArchive(ops: FinalizeOps, plan: FinalizePlan): Promise<FinalizeExecResult[]> {
-  return executeSequential(ops, plan.affected);
+  return executePlan(ops, plan.affected);
 }
 
 function goalsOperationOrder(
@@ -984,6 +1019,42 @@ export async function runGoalsFinalize(
   plan: GoalsFinalizePlan,
 ): Promise<GoalsFinalizeExecResult[]> {
   const ordered = goalsOperationOrder(plan.operations);
+  if (ops.executeFinalize !== undefined) {
+    try {
+      await ops.executeFinalize(
+        ordered.map((operation) => {
+          return {
+            id: operation.id,
+            targetId: operation.targetId,
+            action: operation.action,
+            ...(operation.targetStatus === undefined
+              ? {}
+              : { targetStatus: operation.targetStatus }),
+            ...(operation.action === "archive-milestone"
+              ? { summary: `finalized: ${operation.title ?? operation.targetId}` }
+              : {}),
+          };
+        }),
+      );
+      return ordered.map((operation) => ({
+        id: operation.id,
+        targetId: operation.targetId,
+        action: operation.action,
+        attempted: true,
+        ok: true,
+      }));
+    } catch (err) {
+      const error = errorMessage(err);
+      return ordered.map((operation) => ({
+        id: operation.id,
+        targetId: operation.targetId,
+        action: operation.action,
+        attempted: true,
+        ok: false,
+        error,
+      }));
+    }
+  }
   const results: GoalsFinalizeExecResult[] = [];
   const byId = new Map<GoalsFinalizeOperationId, GoalsFinalizeExecResult>();
 

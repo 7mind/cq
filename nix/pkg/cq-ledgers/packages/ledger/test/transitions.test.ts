@@ -397,6 +397,12 @@ describe("canonical schema transition maps — pinned edges", () => {
     expect(HYPOTHESIS_SCHEMA.transitions?.["confirmed"]).toEqual([]);
   });
 
+  it("hypothesis: an inconclusive investigation can terminate without falsifying the hypothesis", () => {
+    expect(HYPOTHESIS_SCHEMA.transitions?.["uncertain"]).toContain("inconclusive");
+    expect(HYPOTHESIS_SCHEMA.terminalStatuses).toContain("inconclusive");
+    expect(HYPOTHESIS_SCHEMA.transitions?.["inconclusive"]).toEqual([]);
+  });
+
   it("questions: open reaches both answered and withdrawn", () => {
     expect(QUESTIONS_SCHEMA.transitions?.["open"]).toContain("answered");
     expect(QUESTIONS_SCHEMA.transitions?.["open"]).toContain("withdrawn");

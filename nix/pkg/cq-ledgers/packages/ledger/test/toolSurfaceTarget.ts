@@ -90,6 +90,36 @@ export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
     },
   },
   {
+    name: "execute_finalize",
+    description:
+      "Atomically execute an ordered batch of milestone/goal closes and milestone archives under one workset admission.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        operations: {
+          type: "array",
+          minItems: 1,
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string", minLength: 1 },
+              target_id: { type: "string", pattern: "^[A-Za-z0-9_-]+$" },
+              action: {
+                enum: ["close-milestone", "close-goal", "archive-milestone"],
+              },
+              target_status: { type: "string", minLength: 1 },
+              summary: { type: "string" },
+            },
+            required: ["id", "target_id", "action"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["operations"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "workset",
     description:
       "Get the configured workset graph or fetch a graph for supplied live roots. Management sessions additionally expose atomic root replacement.",
@@ -183,12 +213,13 @@ export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
   {
     name: "revise_operator_action",
     description:
-      "Exact-CAS revise before evidence or after a validated terminal failure from the pending action's current revision and acknowledgement epoch. Reject stale or other evidence; snapshot action/task/handoff, reset action state, refresh handoff, and replan an abandoned task.",
+      "Exact-CAS revise before evidence or after a validated terminal failure from the pending action's current revision and acknowledgement epoch. Reject stale or other evidence; snapshot action/task/handoff, reset action state, refresh handoff, and replan an abandoned task. Supersession terminalizes the action and abandons a live planned task.",
     inputSchema: {
       type: "object",
       properties: {
         action_id: { type: "string", pattern: "^OA\\d+$" },
         expected_revision: { type: "integer", minimum: 1 },
+        disposition: { enum: ["revise", "supersede"] },
         expected_output_identity: { type: "string", minLength: 1 },
         expected_evidence: {
           type: "array",
@@ -196,17 +227,12 @@ export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
           items: { type: "string", minLength: 1 },
         },
         revised_at: { type: "string", minLength: 1 },
+        superseded_reason: { type: "string", minLength: 1 },
+        superseded_at: { type: "string", minLength: 1 },
         author: { type: "string", minLength: 1 },
         session: { type: "string", minLength: 1 },
       },
-      required: [
-        "action_id",
-        "expected_revision",
-        "expected_output_identity",
-        "expected_evidence",
-        "revised_at",
-        "author",
-      ],
+      required: ["action_id", "expected_revision", "author"],
       additionalProperties: false,
     },
   },

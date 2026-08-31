@@ -221,19 +221,20 @@ export const TASKS_SCHEMA: LedgerSchema = {
 
 /** §4 — hypothesis ledger. */
 export const HYPOTHESIS_SCHEMA: LedgerSchema = {
-  statusValues: ["open", "uncertain", "confirmed", "wrong"],
-  terminalStatuses: ["confirmed", "wrong"],
+  statusValues: ["open", "uncertain", "confirmed", "wrong", "inconclusive"],
+  terminalStatuses: ["confirmed", "wrong", "inconclusive"],
   // G80: only `confirmed` satisfies a dependency on a hypothesis — `wrong`
   // is terminal (archivable) but must NOT silently satisfy (design lock).
   satisfiesDependencyStatuses: ["confirmed"],
   idPrefix: "H",
-  // F1 transition guard. open → uncertain/confirmed/wrong; uncertain →
-  // confirmed/wrong; confirmed/wrong are terminal.
+  // F1 transition guard. `inconclusive` terminates a completed investigation
+  // without claiming that the hypothesis was confirmed or falsified.
   transitions: {
-    open: ["uncertain", "confirmed", "wrong"],
-    uncertain: ["confirmed", "wrong"],
+    open: ["uncertain", "confirmed", "wrong", "inconclusive"],
+    uncertain: ["confirmed", "wrong", "inconclusive"],
     confirmed: [],
     wrong: [],
+    inconclusive: [],
   },
   fields: {
     headline: { type: "string", required: true },
@@ -464,14 +465,15 @@ export const HANDOFFS_SCHEMA: LedgerSchema = {
 
 /** Durable user-deployment gates consumed by implement-flow, never workers. */
 export const OPERATOR_ACTIONS_SCHEMA: LedgerSchema = {
-  statusValues: ["pending", "acknowledged", "verified"],
-  terminalStatuses: ["verified"],
+  statusValues: ["pending", "acknowledged", "verified", "superseded"],
+  terminalStatuses: ["verified", "superseded"],
   satisfiesDependencyStatuses: ["verified"],
   idPrefix: "OA",
   transitions: {
-    pending: ["acknowledged"],
-    acknowledged: ["pending", "verified"],
+    pending: ["acknowledged", "superseded"],
+    acknowledged: ["pending", "verified", "superseded"],
     verified: [],
+    superseded: [],
   },
   fields: {
     actionKey: { type: "string", required: true },
@@ -490,6 +492,8 @@ export const OPERATOR_ACTIONS_SCHEMA: LedgerSchema = {
     verifiedAt: { type: "timestamp", required: false },
     verifiedRevision: { type: "string", required: false },
     completion: { type: "string", required: false },
+    supersededAt: { type: "timestamp", required: false },
+    supersededReason: { type: "string", required: false },
     ledgerRefs: { type: "id[]", required: true },
     ...WORKSET_OWNERSHIP_SCHEMA_FIELDS,
   },

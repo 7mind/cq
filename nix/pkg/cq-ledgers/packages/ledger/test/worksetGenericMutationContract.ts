@@ -367,6 +367,7 @@ export function runWorksetGenericMutationContract(
         archiveGroups: 1,
         byLedger: { [TASKS_LEDGER]: 1 },
         retainedActiveGates: [],
+        retainedActiveOwners: [],
       });
       expect(() => ledger.fetchItem(TASKS_LEDGER, finished.id)).toThrow();
       expect(ledger.fetchItem(TASKS_LEDGER, unfinished.id).status).toBe("planned");
@@ -466,9 +467,72 @@ export function runWorksetGenericMutationContract(
         archiveGroups: 1,
         byLedger: { [TASKS_LEDGER]: 1 },
         retainedActiveGates: [`${TASKS_LEDGER}:${abandoned.id}`],
+        retainedActiveOwners: [],
       });
       expect(ledger.fetchItem(TASKS_LEDGER, abandoned.id).status).toBe("abandoned");
       expect(() => ledger.fetchItem(TASKS_LEDGER, finished.id)).toThrow();
+    });
+
+    caseIt(factory, "executes one finalization batch under one restrictive admission [D394]", async () => {
+      let admissions = 0;
+      const ledger = await factory.build({
+        afterGenericAdmit: () => {
+          admissions += 1;
+        },
+      });
+      await ledger.init();
+      const milestone = await ledger.mutations.createMilestone({ title: "batch finalize" });
+      const task = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "done",
+        fields: { headline: "finished" },
+      });
+      await ledger.setRoots([
+        `${MILESTONES_LEDGER}:${milestone.id}`,
+        `${TASKS_LEDGER}:${task.id}`,
+      ]);
+      admissions = 0;
+
+      const result = await ledger.mutations.executeFinalize([
+        {
+          id: `close-milestone:${milestone.id}`,
+          targetId: milestone.id,
+          action: "close-milestone",
+          targetStatus: "done",
+        },
+        {
+          id: `archive-milestone:${milestone.id}`,
+          targetId: milestone.id,
+          action: "archive-milestone",
+          summary: "batch finalized",
+        },
+      ]);
+
+      expect(result).toEqual({ applied: 2 });
+      expect(admissions).toBe(1);
+      expect((await ledger.fetchArchive(MILESTONES_LEDGER, milestone.id)).kind).toBe("item");
+    });
+
+    caseIt(factory, "rolls back the entire finalization batch on validation failure [D394]", async () => {
+      const ledger = await factory.build();
+      await ledger.init();
+      const milestone = await ledger.mutations.createMilestone({ title: "batch rollback" });
+
+      await expect(
+        ledger.mutations.executeFinalize([
+          {
+            id: `close-milestone:${milestone.id}`,
+            targetId: milestone.id,
+            action: "close-milestone",
+            targetStatus: "done",
+          },
+          {
+            id: `archive-milestone:${milestone.id}`,
+            targetId: milestone.id,
+            action: "archive-milestone",
+          },
+        ]),
+      ).rejects.toThrow("requires summary");
+      expect(ledger.fetchItem(MILESTONES_LEDGER, milestone.id).status).toBe("open");
     });
 
     caseIt(factory, "set waits behind an in-flight generic mutation admission", async () => {

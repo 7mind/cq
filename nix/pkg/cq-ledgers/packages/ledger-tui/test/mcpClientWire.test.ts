@@ -247,6 +247,48 @@ describe("McpLedgerClient archive acknowledgement contract", () => {
       },
     ]);
   });
+
+  it("serializes one atomic finalization batch [D394]", async () => {
+    const { client, calls } = stubClient({ execute_finalize: { applied: 2 } });
+
+    expect(
+      await client.executeFinalize([
+        {
+          id: "close-milestone:M9",
+          targetId: "M9",
+          action: "close-milestone",
+          targetStatus: "done",
+        },
+        {
+          id: "archive-milestone:M9",
+          targetId: "M9",
+          action: "archive-milestone",
+          summary: "shipped",
+        },
+      ]),
+    ).toEqual({ applied: 2 });
+    expect(calls).toEqual([
+      {
+        name: "execute_finalize",
+        arguments: {
+          operations: [
+            {
+              id: "close-milestone:M9",
+              target_id: "M9",
+              action: "close-milestone",
+              target_status: "done",
+            },
+            {
+              id: "archive-milestone:M9",
+              target_id: "M9",
+              action: "archive-milestone",
+              summary: "shipped",
+            },
+          ],
+        },
+      },
+    ]);
+  });
 });
 
 describe("McpLedgerClient usage stats wire contract (T1513)", () => {

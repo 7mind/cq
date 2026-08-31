@@ -46,33 +46,20 @@ export function schemasEqual(a: LedgerSchema, b: LedgerSchema): boolean {
  * on-disk schema `onDisk` compatible with the current `canonical` bootstrap
  * schema, such that loading it requires NO destructive backup-reinit?
  *
- * Compatible means the two schemas are equal EXCEPT that `canonical` may have
- * ADDED one or more OPTIONAL (`required: false`) fields absent from `onDisk`.
- * This is the case when a newer build widens a canonical schema with an
- * optional field (e.g. T405's `rawLogs`): a pre-widening ledger's persisted
- * registry entry simply lacks the new field, and that omission is benign — no
- * existing item is invalidated, and the field is optional so nothing must be
- * backfilled. The store upgrades the in-memory schema to `canonical` on load.
+ * Compatible means the two schemas are equal EXCEPT that `canonical` may add
+ * optional fields or append statuses. An appended status may be terminal only
+ * when it is itself new; existing transition lists may only append targets
+ * that are also new. Existing items and transitions therefore retain their
+ * meaning, and the store can upgrade the persisted schema in place.
  *
- * Everything ELSE that `schemasEqual` distinguishes remains divergent and is
- * NOT tolerated here: a differing idPrefix / statusValues / terminalStatuses /
- * transitions, a field PRESENT on disk but ABSENT from canon, an added
- * REQUIRED field, or a field whose `type`/`required` changed. Such differences
- * still route through the backup-reinit (or abort) divergence policy.
+ * Everything else remains divergent: removals/reordering, changed transitions
+ * among existing statuses, a field present on disk but absent from canon, an
+ * added required field, or a field whose type/required flag changed.
  */
 export function schemaCompatible(a: LedgerSchema, b: LedgerSchema): boolean {
   if (schemasEqual(a, b)) return true;
-  // Non-field facets must match exactly.
   if ((a.idPrefix ?? undefined) !== (b.idPrefix ?? undefined)) return false;
-  if (a.statusValues.length !== b.statusValues.length) return false;
-  for (let i = 0; i < a.statusValues.length; i++) {
-    if (a.statusValues[i] !== b.statusValues[i]) return false;
-  }
-  if (a.terminalStatuses.length !== b.terminalStatuses.length) return false;
-  for (let i = 0; i < a.terminalStatuses.length; i++) {
-    if (a.terminalStatuses[i] !== b.terminalStatuses[i]) return false;
-  }
-  if (!transitionsEqual(a.transitions, b.transitions)) return false;
+  if (!statusWideningCompatible(a, b)) return false;
   // Every on-disk field must exist in canon UNCHANGED (no removed/retyped
   // field, no required-flag flip).
   for (const [name, af] of Object.entries(a.fields)) {
@@ -83,6 +70,49 @@ export function schemaCompatible(a: LedgerSchema, b: LedgerSchema): boolean {
   // Every canon field MISSING from on-disk must be OPTIONAL (added-optional).
   for (const [name, bf] of Object.entries(b.fields)) {
     if (a.fields[name] === undefined && bf.required) return false;
+  }
+  return true;
+}
+
+function orderedPrefix<T>(prefix: readonly T[], whole: readonly T[]): boolean {
+  return (
+    prefix.length <= whole.length &&
+    prefix.every((value, index) => value === whole[index])
+  );
+}
+
+function statusWideningCompatible(a: LedgerSchema, b: LedgerSchema): boolean {
+  if (!orderedPrefix(a.statusValues, b.statusValues)) return false;
+  if (!orderedPrefix(a.terminalStatuses, b.terminalStatuses)) return false;
+  const addedStatuses = new Set(b.statusValues.slice(a.statusValues.length));
+  if (
+    b.terminalStatuses
+      .slice(a.terminalStatuses.length)
+      .some((status) => !addedStatuses.has(status))
+  ) {
+    return false;
+  }
+  return transitionsWideningCompatible(a.transitions, b.transitions, addedStatuses);
+}
+
+function transitionsWideningCompatible(
+  a: Record<string, string[]> | undefined,
+  b: Record<string, string[]> | undefined,
+  addedStatuses: ReadonlySet<string>,
+): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  for (const [status, oldTargets] of Object.entries(a)) {
+    const newTargets = b[status];
+    if (newTargets === undefined || !orderedPrefix(oldTargets, newTargets)) return false;
+    if (newTargets.slice(oldTargets.length).some((target) => !addedStatuses.has(target))) {
+      return false;
+    }
+  }
+  for (const status of Object.keys(b)) {
+    if (a[status] === undefined && !addedStatuses.has(status)) return false;
+  }
+  for (const status of addedStatuses) {
+    if (b[status] === undefined) return false;
   }
   return true;
 }

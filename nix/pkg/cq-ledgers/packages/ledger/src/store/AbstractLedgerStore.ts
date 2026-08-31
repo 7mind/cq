@@ -67,6 +67,7 @@ import {
   applyUpdateItem,
   applyUpdateMilestoneItem,
   collectNonTerminalChildren,
+  collectNonTerminalOwnedChildren,
   validateMilestoneItemPatch,
   assertGoalPhasePreconditions,
   assertMilestoneActive,
@@ -652,6 +653,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
           to,
           this.ledgers.get(QUESTIONS_LEDGER),
           this.ledgers.get(DECISIONS_LEDGER),
+          collectNonTerminalOwnedChildren(this.ledgers, `${GOALS_LEDGER}:${itemId}`),
         );
     }
     if (ledgerId === QUESTIONS_LEDGER) {

@@ -15,6 +15,7 @@ const SKIPPED_DIRECTORIES = new Set([
   ".git",
   "dist",
   "node_modules",
+  "result",
 ]);
 const SHA256_RE = /^[0-9a-f]{64}$/;
 const BUN_SCRIPT_EDGE_RE = /\bbun\s+run\s+([A-Za-z0-9:_-]+)/gu;
@@ -542,6 +543,7 @@ async function sourceFiles(repositoryRoot: string, root: string): Promise<Source
     visitedDirectories.add(directory);
     const entries = await fs.readdir(directory, { withFileTypes: true });
     for (const entry of entries) {
+      if (SKIPPED_DIRECTORIES.has(entry.name)) continue;
       const absolute = join(directory, entry.name);
       let canonical: string;
       try {
@@ -557,10 +559,8 @@ async function sourceFiles(repositoryRoot: string, root: string): Promise<Source
         continue;
       }
       if (kind.isDirectory()) {
-        if (!SKIPPED_DIRECTORIES.has(entry.name)) {
-          const escape = await visit(canonical);
-          if (escape !== null) return escape;
-        }
+        const escape = await visit(canonical);
+        if (escape !== null) return escape;
       } else if (kind.isFile() && SOURCE_EXTENSIONS.has(extname(entry.name))) {
         files.add(canonical);
       }

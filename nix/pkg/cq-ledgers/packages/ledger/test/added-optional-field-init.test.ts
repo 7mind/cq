@@ -36,9 +36,13 @@ import {
   schemaCompatible,
   schemasEqual,
   GOALS_SCHEMA,
+  HYPOTHESIS_SCHEMA,
+  HYPOTHESIS_LEDGER,
+  SqliteLedgerStore,
   type LedgerSchema,
   LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
+import { openLedgerDb } from "../src/store/sqlite/connection.js";
 
 // ---------------------------------------------------------------------------
 // Cleanup
@@ -60,6 +64,23 @@ function stripRawLogs(schema: LedgerSchema): LedgerSchema {
     Object.entries(schema.fields).filter(([k]) => k !== ADDED_OPTIONAL_FIELD),
   );
   return { ...schema, fields };
+}
+
+function preInconclusiveHypothesisSchema(): LedgerSchema {
+  const schema = structuredClone(HYPOTHESIS_SCHEMA);
+  schema.statusValues = schema.statusValues.filter((status) => status !== "inconclusive");
+  schema.terminalStatuses = schema.terminalStatuses.filter(
+    (status) => status !== "inconclusive",
+  );
+  schema.transitions = Object.fromEntries(
+    Object.entries(schema.transitions ?? {})
+      .filter(([status]) => status !== "inconclusive")
+      .map(([status, targets]) => [
+        status,
+        targets.filter((target) => target !== "inconclusive"),
+      ]),
+  );
+  return schema;
 }
 
 /**
@@ -188,6 +209,46 @@ describe("schemaCompatible — added-optional-field tolerance", () => {
       statusValues: [...GOALS_SCHEMA.statusValues, "extra-status"],
     };
     expect(schemaCompatible(GOALS_SCHEMA, canon)).toBe(false);
+  });
+
+  it("an append-only terminal status and its transitions are compatible [M328/M335]", () => {
+    const onDisk = preInconclusiveHypothesisSchema();
+
+    expect(schemasEqual(onDisk, HYPOTHESIS_SCHEMA)).toBe(false);
+    expect(schemaCompatible(onDisk, HYPOTHESIS_SCHEMA)).toBe(true);
+    expect(schemaCompatible(HYPOTHESIS_SCHEMA, onDisk)).toBe(false);
+  });
+});
+
+describe("append-only status widening — SQLite preservation", () => {
+  it("upgrades the pre-inconclusive schema in place without losing an item", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "ledger-status-widening-"));
+    dirs.push(root);
+    const dbPath = path.join(root, "ledger.db");
+    const seed = new SqliteLedgerStore({ dbPath });
+    await seed.init();
+    const milestone = await seed.createMilestone({ title: "status widening" });
+    const hypothesis = await seed.createItem(HYPOTHESIS_LEDGER, milestone.id, {
+      status: "uncertain",
+      fields: { headline: "survives widening" },
+    });
+    await seed.dispose();
+
+    const db = openLedgerDb(dbPath);
+    db.query("UPDATE ledgers SET schema_json = ? WHERE name = ?").run(
+      JSON.stringify(preInconclusiveHypothesisSchema()),
+      HYPOTHESIS_LEDGER,
+    );
+    db.close();
+
+    const reopened = new SqliteLedgerStore({ dbPath, onSchemaDivergence: "abort" });
+    await reopened.init();
+    try {
+      expect(reopened.fetchItem(HYPOTHESIS_LEDGER, hypothesis.id).status).toBe("uncertain");
+      expect(reopened.fetch(HYPOTHESIS_LEDGER).schema).toEqual(HYPOTHESIS_SCHEMA);
+    } finally {
+      await reopened.dispose();
+    }
   });
 });
 

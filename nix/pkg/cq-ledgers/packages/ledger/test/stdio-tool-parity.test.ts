@@ -299,6 +299,7 @@ interface Fixture {
     activeMilestone: string;
     archivedMilestone: string;
     archivableMilestone: string;
+    finalizableMilestone: string;
     dependencyItem: string;
     targetItem: string;
     terminalItem: string;
@@ -756,6 +757,14 @@ async function buildFixture(): Promise<Fixture> {
   });
   await store.updateMilestone(archivableMilestone.id, { status: "done" });
 
+  const finalizableMilestone = await store.createMilestone({
+    title: "Finalize through tool",
+  });
+  await store.createItem("tasks", finalizableMilestone.id, {
+    status: "done",
+    fields: { headline: "Finalize-ready target" },
+  });
+
   return {
     store,
     ...evidence,
@@ -763,6 +772,7 @@ async function buildFixture(): Promise<Fixture> {
       activeMilestone: activeMilestone.id,
       archivedMilestone: archivedMilestone.id,
       archivableMilestone: archivableMilestone.id,
+      finalizableMilestone: finalizableMilestone.id,
       dependencyItem: dependencyItem.id,
       targetItem: targetItem.id,
       terminalItem: terminalItem.id,
@@ -1220,6 +1230,25 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
         ledger_ids: ["memories"],
         summary: "terminal transport parity",
         gate_policy: "retain-active-gates",
+      },
+    },
+    {
+      name: "execute_finalize",
+      args: {
+        operations: [
+          {
+            id: `close-milestone:${ids.finalizableMilestone}`,
+            target_id: ids.finalizableMilestone,
+            action: "close-milestone",
+            target_status: "done",
+          },
+          {
+            id: `archive-milestone:${ids.finalizableMilestone}`,
+            target_id: ids.finalizableMilestone,
+            action: "archive-milestone",
+            summary: "finalize through differential suite",
+          },
+        ],
       },
     },
     {
@@ -1696,6 +1725,7 @@ function assertRepresentativeContracts(
   expect(responses.get("archive_milestone")).toMatchObject({
     pointer: { id: fixture.ids.archivableMilestone },
   });
+  expect(responses.get("execute_finalize")).toEqual({ applied: 2 });
 
   const updated = responses.get("update_item") as {
     item: { fields: Record<string, unknown> };
@@ -2102,7 +2132,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 58 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 59 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);

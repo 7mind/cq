@@ -51,6 +51,7 @@ import {
   REVIEWS_LEDGER,
   TASKS_LEDGER,
   UPSTREAM_LEDGER,
+  WORKSET_OWNER_REF_FIELD,
 } from "../constants.js";
 import {
   isAuthorizedOperatorActionCompletionPatch,
@@ -782,6 +783,28 @@ export function collectNonTerminalChildren(
   return blockers.sort();
 }
 
+/** Active nonterminal children carrying an exact sealed owner reference. */
+export function collectNonTerminalOwnedChildren(
+  ledgers: ReadonlyMap<string, Ledger>,
+  ownerRef: string,
+): string[] {
+  const blockers: string[] = [];
+  for (const [ledgerId, ledger] of ledgers) {
+    const terminal = new Set(ledger.schema.terminalStatuses);
+    for (const group of ledger.milestones) {
+      for (const item of group.items) {
+        if (
+          item.fields[WORKSET_OWNER_REF_FIELD] === ownerRef &&
+          !terminal.has(item.status)
+        ) {
+          blockers.push(`${ledgerId}:${item.id}`);
+        }
+      }
+    }
+  }
+  return blockers.sort();
+}
+
 /** Canonical field names of a milestone-item patch; anything else is not a
  * milestone field and must not take the delegated path (D267/T1856). */
 const MILESTONE_FIELD_NAMES = new Set(["title", "description", "blockedBy", "dependsOn"]);
@@ -1322,6 +1345,7 @@ export function assertGoalPhasePreconditions(
   toStatus: string,
   questionsLedger: Ledger | undefined,
   decisionsLedger: Ledger | undefined,
+  nonTerminalOwnedChildren: readonly string[],
 ): void {
   // (a) Leaving `clarifying`.
   if (fromStatus === GOALS_CLARIFYING_STATUS && toStatus !== GOALS_CLARIFYING_STATUS) {
@@ -1344,6 +1368,15 @@ export function assertGoalPhasePreconditions(
         `goal ${goalId} cannot enter "${GOALS_PLANNED_STATUS}" without a locked decision linking it`,
       );
     }
+  }
+  if (
+    (toStatus === "done" || toStatus === "abandoned") &&
+    toStatus !== fromStatus &&
+    nonTerminalOwnedChildren.length > 0
+  ) {
+    throw new GoalPreconditionError(
+      `goal ${goalId} cannot become terminal while it has nonterminal sealed children: ${nonTerminalOwnedChildren.join(", ")}`,
+    );
   }
 }
 

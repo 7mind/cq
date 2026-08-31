@@ -39,4 +39,53 @@ describe("McpLedgerClient.archiveMilestone (T616)", () => {
     expect(calls).toEqual([{ name: "archive_milestone", args: { milestone_id: "M1", summary: "wrapped up" } }]);
     expect(result).toEqual(pointer);
   });
+
+  it("serializes one atomic finalization batch [D394]", async () => {
+    const calls: Array<{ name: string; args: unknown }> = [];
+    const stub = {
+      callTool: async ({ name, arguments: args }: { name: string; arguments: unknown }) => {
+        calls.push({ name, args });
+        return { content: [{ type: "text", text: JSON.stringify({ applied: 2 }) }] };
+      },
+    };
+    const client = new McpLedgerClient(stub as unknown as Client);
+
+    expect(
+      await client.executeFinalize([
+        {
+          id: "close-milestone:M1",
+          targetId: "M1",
+          action: "close-milestone",
+          targetStatus: "done",
+        },
+        {
+          id: "archive-milestone:M1",
+          targetId: "M1",
+          action: "archive-milestone",
+          summary: "wrapped up",
+        },
+      ]),
+    ).toEqual({ applied: 2 });
+    expect(calls).toEqual([
+      {
+        name: "execute_finalize",
+        args: {
+          operations: [
+            {
+              id: "close-milestone:M1",
+              target_id: "M1",
+              action: "close-milestone",
+              target_status: "done",
+            },
+            {
+              id: "archive-milestone:M1",
+              target_id: "M1",
+              action: "archive-milestone",
+              summary: "wrapped up",
+            },
+          ],
+        },
+      },
+    ]);
+  });
 });

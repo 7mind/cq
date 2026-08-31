@@ -238,8 +238,9 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   fts_search: mandatoryItemProjection(
     "`{ results: [{ ledgerId, item, score, matchedFields }] }`; each item uses the requested projection.",
   ),
-  archive_milestone: purposeBuiltSmall("`{ pointer }` for the archived milestone."),
+  archive_milestone: purposeBuiltSmall("`{ pointer }`."),
   archive_terminal_items: purposeBuiltSmall("`{ sweep }`."),
+  execute_finalize: purposeBuiltSmall("`{ applied }`."),
   list_milestone_items: mandatoryItemProjection(
     "`{ items: Record<ledgerId, Item[]> }`; every item uses the requested projection.",
   ),
@@ -250,19 +251,19 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     'Get/fetch: `{op,graph}`. Set: `{op:"set",acknowledgement:{roots,epoch}}`.',
   ),
   derive_predicates: purposeBuiltSmall(
-    "Predicate verdicts `{ value, items }` for `pInvestigate`, `pSeed`, `pPlan`, `pResearch`, `pImplement`, `pOperatorAction`, `openQuestionGate`, `belowFloor`, `planBusy`, and `goalDrift`.",
+    "`{ <predicate>: { value, items } }`.",
   ),
   materialize_operator_action: purposeBuiltSmall(
     '`{ state: "created"|"existing", action, handoff }` with revision 1.',
   ),
   acknowledge_operator_action: purposeBuiltSmall(
-    '`{ state: "acknowledged"|"verified", action }` or identity-mismatch pending, revision-fenced.',
+    "`{ state, action, reason? }`.",
   ),
   record_operator_action_evidence: purposeBuiltSmall(
-    'Revision-bound append-only `{ state: "acknowledged"|"verified"|"pending", action, reason? }`.',
+    "`{ state, action, reason? }`.",
   ),
   revise_operator_action: purposeBuiltSmall(
-    "`{ action, task, handoff }`; exact revision, prior snapshots.",
+    "`{ action, task?, handoff? }`.",
   ),
   complete_operator_action: purposeBuiltSmall("`{ task }` after the exact verified revision."),
   reopen_item: fixedAcknowledgement(

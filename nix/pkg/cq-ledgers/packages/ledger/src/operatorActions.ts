@@ -83,6 +83,20 @@ export interface RevisedOperatorAction {
   readonly handoff: Item;
 }
 
+export interface SupersedeOperatorActionInput {
+  readonly actionId: string;
+  readonly expectedRevision: number;
+  readonly reason: string;
+  readonly supersededAt: string;
+  readonly author: string;
+  readonly session?: string;
+}
+
+export interface SupersededOperatorAction {
+  readonly action: Item;
+  readonly task?: Item;
+}
+
 export class OperatorActionEnvelopeError extends SchemaValidationError {
   constructor(reason: string) {
     super(`operator-action envelope: ${reason}`);
@@ -310,6 +324,33 @@ export async function completeOperatorActionTask(
   });
   if (result.kind !== "complete") throw new LedgerError("unexpected lifecycle result");
   return result.task;
+}
+
+export async function supersedeOperatorAction(
+  store: LedgerStore,
+  input: SupersedeOperatorActionInput,
+): Promise<SupersededOperatorAction> {
+  assertRevision(input.expectedRevision);
+  assertNonEmpty(input.reason, "reason");
+  if (!isIsoTimestamp(input.supersededAt)) {
+    throw new SchemaValidationError("supersededAt must be an ISO timestamp");
+  }
+  const result = await store.mutateOperatorAction({
+    kind: "supersede",
+    actionId: input.actionId,
+    expectedRevision: input.expectedRevision,
+    reason: input.reason,
+    supersededAt: input.supersededAt,
+    provenance: {
+      author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
+    },
+  });
+  if (result.kind !== "supersede") throw new LedgerError("unexpected lifecycle result");
+  return {
+    action: result.action,
+    ...(result.task === undefined ? {} : { task: result.task }),
+  };
 }
 
 function actionIdForTask(taskId: string): string {

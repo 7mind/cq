@@ -39,6 +39,7 @@
         "enumerate_ledgers",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
@@ -81,7 +82,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 58,
+      "toolCount": 59,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 830,
@@ -89,13 +90,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 62721,
-        "tokens": 15101,
-        "sha256": "e98989c431fa6d6faf89975f5b60733d1460a23b7dead9d4496dbc91841bdf97"
+        "utf8Bytes": 63410,
+        "tokens": 15276,
+        "sha256": "8a0d3144370df091cd8ecea352fb93321783002717ddc7e9c25aa8e38a95f220"
       },
-      "surfaceTokens": 15269,
+      "surfaceTokens": 15444,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3487,
+      "deltaTokens": 3662,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -106,6 +107,7 @@
         "continue_implementation_evidence_activation",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
@@ -127,18 +129,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8070,
-      "baselineComparableDeltaTokens": -3712,
+      "baselineComparableSurfaceTokens": 8066,
+      "baselineComparableDeltaTokens": -3716,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7721,
+      "domainInputSchemaTokens": 7880,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1318,
-        "allTokens": 1619,
+        "authoritativeResponseTokens": 1289,
+        "allTokens": 1590,
         "deltasAreAdditive": false
       }
     },
@@ -160,6 +162,7 @@
         "enumerate_ledgers",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "fetch_item",
         "fetch_ledger",
         "fetch_ledger_archive",
@@ -196,7 +199,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 50,
+      "toolCount": 51,
       "baselineProfile": "non-dispatch",
       "initialize": {
         "utf8Bytes": 830,
@@ -204,13 +207,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 49969,
-        "tokens": 11973,
-        "sha256": "7e76a407d61a1c8891524471ed7b1194c741455cabf66c72e937a39fc6f7b998"
+        "utf8Bytes": 50658,
+        "tokens": 12148,
+        "sha256": "3a56cd8e4ed0ce9eaf8a5ad77bcb36df10f57109225e965cb96386cd21a525b8"
       },
-      "surfaceTokens": 12141,
+      "surfaceTokens": 12316,
       "baselineSurfaceTokens": 10386,
-      "deltaTokens": 1755,
+      "deltaTokens": 1930,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -221,6 +224,7 @@
         "continue_implementation_evidence_activation",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
@@ -240,18 +244,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 6645,
-      "baselineComparableDeltaTokens": -3741,
+      "baselineComparableSurfaceTokens": 6641,
+      "baselineComparableDeltaTokens": -3745,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7721,
+      "domainInputSchemaTokens": 7880,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1129,
-        "allTokens": 1430,
+        "authoritativeResponseTokens": 1100,
+        "allTokens": 1401,
         "deltasAreAdditive": false
       }
     },
@@ -275,6 +279,7 @@
         "enumerate_ledgers",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
@@ -317,7 +322,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 58,
+      "toolCount": 59,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 830,
@@ -325,13 +330,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 62721,
-        "tokens": 15101,
-        "sha256": "e98989c431fa6d6faf89975f5b60733d1460a23b7dead9d4496dbc91841bdf97"
+        "utf8Bytes": 63410,
+        "tokens": 15276,
+        "sha256": "8a0d3144370df091cd8ecea352fb93321783002717ddc7e9c25aa8e38a95f220"
       },
-      "surfaceTokens": 15269,
+      "surfaceTokens": 15444,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3487,
+      "deltaTokens": 3662,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -342,6 +347,7 @@
         "continue_implementation_evidence_activation",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
@@ -363,18 +369,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8070,
-      "baselineComparableDeltaTokens": -3712,
+      "baselineComparableSurfaceTokens": 8066,
+      "baselineComparableDeltaTokens": -3716,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7721,
+      "domainInputSchemaTokens": 7880,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1318,
-        "allTokens": 1619,
+        "authoritativeResponseTokens": 1289,
+        "allTokens": 1590,
         "deltasAreAdditive": false
       }
     },
@@ -398,6 +404,7 @@
         "enumerate_ledgers",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
@@ -440,7 +447,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 58,
+      "toolCount": 59,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 830,
@@ -448,13 +455,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 62721,
-        "tokens": 15101,
-        "sha256": "e98989c431fa6d6faf89975f5b60733d1460a23b7dead9d4496dbc91841bdf97"
+        "utf8Bytes": 63410,
+        "tokens": 15276,
+        "sha256": "8a0d3144370df091cd8ecea352fb93321783002717ddc7e9c25aa8e38a95f220"
       },
-      "surfaceTokens": 15269,
+      "surfaceTokens": 15444,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3487,
+      "deltaTokens": 3662,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -465,6 +472,7 @@
         "continue_implementation_evidence_activation",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
@@ -486,18 +494,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8070,
-      "baselineComparableDeltaTokens": -3712,
+      "baselineComparableSurfaceTokens": 8066,
+      "baselineComparableDeltaTokens": -3716,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7721,
+      "domainInputSchemaTokens": 7880,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1318,
-        "allTokens": 1619,
+        "authoritativeResponseTokens": 1289,
+        "allTokens": 1590,
         "deltasAreAdditive": false
       }
     },
@@ -683,6 +691,7 @@
         "enumerate_ledgers",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
@@ -725,7 +734,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 58,
+      "toolCount": 59,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 830,
@@ -733,13 +742,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 62721,
-        "tokens": 15101,
-        "sha256": "e98989c431fa6d6faf89975f5b60733d1460a23b7dead9d4496dbc91841bdf97"
+        "utf8Bytes": 63410,
+        "tokens": 15276,
+        "sha256": "8a0d3144370df091cd8ecea352fb93321783002717ddc7e9c25aa8e38a95f220"
       },
-      "surfaceTokens": 15269,
+      "surfaceTokens": 15444,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3487,
+      "deltaTokens": 3662,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -750,6 +759,7 @@
         "continue_implementation_evidence_activation",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
@@ -771,18 +781,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8070,
-      "baselineComparableDeltaTokens": -3712,
+      "baselineComparableSurfaceTokens": 8066,
+      "baselineComparableDeltaTokens": -3716,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7721,
+      "domainInputSchemaTokens": 7880,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1318,
-        "allTokens": 1619,
+        "authoritativeResponseTokens": 1289,
+        "allTokens": 1590,
         "deltasAreAdditive": false
       }
     },
@@ -806,6 +816,7 @@
         "enumerate_ledgers",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
@@ -848,7 +859,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 58,
+      "toolCount": 59,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 830,
@@ -856,13 +867,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 62721,
-        "tokens": 15101,
-        "sha256": "e98989c431fa6d6faf89975f5b60733d1460a23b7dead9d4496dbc91841bdf97"
+        "utf8Bytes": 63410,
+        "tokens": 15276,
+        "sha256": "8a0d3144370df091cd8ecea352fb93321783002717ddc7e9c25aa8e38a95f220"
       },
-      "surfaceTokens": 15269,
+      "surfaceTokens": 15444,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3487,
+      "deltaTokens": 3662,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -873,6 +884,7 @@
         "continue_implementation_evidence_activation",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
@@ -894,18 +906,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8070,
-      "baselineComparableDeltaTokens": -3712,
+      "baselineComparableSurfaceTokens": 8066,
+      "baselineComparableDeltaTokens": -3716,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7721,
+      "domainInputSchemaTokens": 7880,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1318,
-        "allTokens": 1619,
+        "authoritativeResponseTokens": 1289,
+        "allTokens": 1590,
         "deltasAreAdditive": false
       }
     },
@@ -969,6 +981,7 @@
         "enumerate_ledgers",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
@@ -1011,7 +1024,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 58,
+      "toolCount": 59,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 830,
@@ -1019,13 +1032,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 62721,
-        "tokens": 15101,
-        "sha256": "e98989c431fa6d6faf89975f5b60733d1460a23b7dead9d4496dbc91841bdf97"
+        "utf8Bytes": 63410,
+        "tokens": 15276,
+        "sha256": "8a0d3144370df091cd8ecea352fb93321783002717ddc7e9c25aa8e38a95f220"
       },
-      "surfaceTokens": 15269,
+      "surfaceTokens": 15444,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3487,
+      "deltaTokens": 3662,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1036,6 +1049,7 @@
         "continue_implementation_evidence_activation",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
@@ -1057,18 +1071,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8070,
-      "baselineComparableDeltaTokens": -3712,
+      "baselineComparableSurfaceTokens": 8066,
+      "baselineComparableDeltaTokens": -3716,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7721,
+      "domainInputSchemaTokens": 7880,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1318,
-        "allTokens": 1619,
+        "authoritativeResponseTokens": 1289,
+        "allTokens": 1590,
         "deltasAreAdditive": false
       }
     },
@@ -1172,6 +1186,7 @@
         "enumerate_ledgers",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
@@ -1214,7 +1229,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 58,
+      "toolCount": 59,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 830,
@@ -1222,13 +1237,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 62721,
-        "tokens": 15101,
-        "sha256": "e98989c431fa6d6faf89975f5b60733d1460a23b7dead9d4496dbc91841bdf97"
+        "utf8Bytes": 63410,
+        "tokens": 15276,
+        "sha256": "8a0d3144370df091cd8ecea352fb93321783002717ddc7e9c25aa8e38a95f220"
       },
-      "surfaceTokens": 15269,
+      "surfaceTokens": 15444,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3487,
+      "deltaTokens": 3662,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1239,6 +1254,7 @@
         "continue_implementation_evidence_activation",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
@@ -1260,18 +1276,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8070,
-      "baselineComparableDeltaTokens": -3712,
+      "baselineComparableSurfaceTokens": 8066,
+      "baselineComparableDeltaTokens": -3716,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7721,
+      "domainInputSchemaTokens": 7880,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1318,
-        "allTokens": 1619,
+        "authoritativeResponseTokens": 1289,
+        "allTokens": 1590,
         "deltasAreAdditive": false
       }
     },
@@ -1295,6 +1311,7 @@
         "enumerate_ledgers",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
@@ -1337,7 +1354,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 58,
+      "toolCount": 59,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 830,
@@ -1345,13 +1362,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 62721,
-        "tokens": 15101,
-        "sha256": "e98989c431fa6d6faf89975f5b60733d1460a23b7dead9d4496dbc91841bdf97"
+        "utf8Bytes": 63410,
+        "tokens": 15276,
+        "sha256": "8a0d3144370df091cd8ecea352fb93321783002717ddc7e9c25aa8e38a95f220"
       },
-      "surfaceTokens": 15269,
+      "surfaceTokens": 15444,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3487,
+      "deltaTokens": 3662,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1362,6 +1379,7 @@
         "continue_implementation_evidence_activation",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
@@ -1383,18 +1401,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8070,
-      "baselineComparableDeltaTokens": -3712,
+      "baselineComparableSurfaceTokens": 8066,
+      "baselineComparableDeltaTokens": -3716,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7721,
+      "domainInputSchemaTokens": 7880,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1318,
-        "allTokens": 1619,
+        "authoritativeResponseTokens": 1289,
+        "allTokens": 1590,
         "deltasAreAdditive": false
       }
     },
@@ -1541,6 +1559,7 @@
         "enumerate_ledgers",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
@@ -1583,7 +1602,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 58,
+      "toolCount": 59,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 830,
@@ -1591,13 +1610,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 62721,
-        "tokens": 15101,
-        "sha256": "e98989c431fa6d6faf89975f5b60733d1460a23b7dead9d4496dbc91841bdf97"
+        "utf8Bytes": 63410,
+        "tokens": 15276,
+        "sha256": "8a0d3144370df091cd8ecea352fb93321783002717ddc7e9c25aa8e38a95f220"
       },
-      "surfaceTokens": 15269,
+      "surfaceTokens": 15444,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3487,
+      "deltaTokens": 3662,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1608,6 +1627,7 @@
         "continue_implementation_evidence_activation",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
@@ -1629,18 +1649,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8070,
-      "baselineComparableDeltaTokens": -3712,
+      "baselineComparableSurfaceTokens": 8066,
+      "baselineComparableDeltaTokens": -3716,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7721,
+      "domainInputSchemaTokens": 7880,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1318,
-        "allTokens": 1619,
+        "authoritativeResponseTokens": 1289,
+        "allTokens": 1590,
         "deltasAreAdditive": false
       }
     },
@@ -1664,6 +1684,7 @@
         "enumerate_ledgers",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
@@ -1706,7 +1727,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 58,
+      "toolCount": 59,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 830,
@@ -1714,13 +1735,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 62721,
-        "tokens": 15101,
-        "sha256": "e98989c431fa6d6faf89975f5b60733d1460a23b7dead9d4496dbc91841bdf97"
+        "utf8Bytes": 63410,
+        "tokens": 15276,
+        "sha256": "8a0d3144370df091cd8ecea352fb93321783002717ddc7e9c25aa8e38a95f220"
       },
-      "surfaceTokens": 15269,
+      "surfaceTokens": 15444,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3487,
+      "deltaTokens": 3662,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1731,6 +1752,7 @@
         "continue_implementation_evidence_activation",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
@@ -1752,18 +1774,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8070,
-      "baselineComparableDeltaTokens": -3712,
+      "baselineComparableSurfaceTokens": 8066,
+      "baselineComparableDeltaTokens": -3716,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7721,
+      "domainInputSchemaTokens": 7880,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1318,
-        "allTokens": 1619,
+        "authoritativeResponseTokens": 1289,
+        "allTokens": 1590,
         "deltasAreAdditive": false
       }
     },
@@ -1825,6 +1847,7 @@
         "enumerate_ledgers",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
@@ -1867,7 +1890,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 58,
+      "toolCount": 59,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 830,
@@ -1875,13 +1898,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 62721,
-        "tokens": 15101,
-        "sha256": "e98989c431fa6d6faf89975f5b60733d1460a23b7dead9d4496dbc91841bdf97"
+        "utf8Bytes": 63410,
+        "tokens": 15276,
+        "sha256": "8a0d3144370df091cd8ecea352fb93321783002717ddc7e9c25aa8e38a95f220"
       },
-      "surfaceTokens": 15269,
+      "surfaceTokens": 15444,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3487,
+      "deltaTokens": 3662,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1892,6 +1915,7 @@
         "continue_implementation_evidence_activation",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
@@ -1913,18 +1937,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8070,
-      "baselineComparableDeltaTokens": -3712,
+      "baselineComparableSurfaceTokens": 8066,
+      "baselineComparableDeltaTokens": -3716,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7721,
+      "domainInputSchemaTokens": 7880,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1318,
-        "allTokens": 1619,
+        "authoritativeResponseTokens": 1289,
+        "allTokens": 1590,
         "deltasAreAdditive": false
       }
     },
@@ -2028,6 +2052,7 @@
         "enumerate_ledgers",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
@@ -2070,7 +2095,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 58,
+      "toolCount": 59,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 830,
@@ -2078,13 +2103,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 62721,
-        "tokens": 15101,
-        "sha256": "e98989c431fa6d6faf89975f5b60733d1460a23b7dead9d4496dbc91841bdf97"
+        "utf8Bytes": 63410,
+        "tokens": 15276,
+        "sha256": "8a0d3144370df091cd8ecea352fb93321783002717ddc7e9c25aa8e38a95f220"
       },
-      "surfaceTokens": 15269,
+      "surfaceTokens": 15444,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3487,
+      "deltaTokens": 3662,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -2095,6 +2120,7 @@
         "continue_implementation_evidence_activation",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
@@ -2116,18 +2142,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8070,
-      "baselineComparableDeltaTokens": -3712,
+      "baselineComparableSurfaceTokens": 8066,
+      "baselineComparableDeltaTokens": -3716,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7721,
+      "domainInputSchemaTokens": 7880,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1318,
-        "allTokens": 1619,
+        "authoritativeResponseTokens": 1289,
+        "allTokens": 1590,
         "deltasAreAdditive": false
       }
     },
@@ -2189,6 +2215,7 @@
         "enumerate_ledgers",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "fetch_dispatch_input",
         "fetch_dispatch_result",
         "fetch_item",
@@ -2231,7 +2258,7 @@
         "workset",
         "worktree_manage"
       ],
-      "toolCount": 58,
+      "toolCount": 59,
       "baselineProfile": "full",
       "initialize": {
         "utf8Bytes": 830,
@@ -2239,13 +2266,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 62721,
-        "tokens": 15101,
-        "sha256": "e98989c431fa6d6faf89975f5b60733d1460a23b7dead9d4496dbc91841bdf97"
+        "utf8Bytes": 63410,
+        "tokens": 15276,
+        "sha256": "8a0d3144370df091cd8ecea352fb93321783002717ddc7e9c25aa8e38a95f220"
       },
-      "surfaceTokens": 15269,
+      "surfaceTokens": 15444,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3487,
+      "deltaTokens": 3662,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -2256,6 +2283,7 @@
         "continue_implementation_evidence_activation",
         "execute_external_implementation_audit_attempt",
         "execute_external_implementation_review_attempt",
+        "execute_finalize",
         "finalize_implementation_audit_attempt",
         "finalize_implementation_review_attempt",
         "get_implementation_evidence_activation_status",
@@ -2277,18 +2305,18 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8070,
-      "baselineComparableDeltaTokens": -3712,
+      "baselineComparableSurfaceTokens": 8066,
+      "baselineComparableDeltaTokens": -3716,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
       "zeroDomainCalls": false,
-      "domainInputSchemaTokens": 7721,
+      "domainInputSchemaTokens": 7880,
       "responseContractCounterfactual": {
         "projectionTokens": 213,
         "acknowledgementSentenceTokens": 193,
-        "authoritativeResponseTokens": 1318,
-        "allTokens": 1619,
+        "authoritativeResponseTokens": 1289,
+        "allTokens": 1590,
         "deltasAreAdditive": false
       }
     }
@@ -2350,8 +2378,8 @@
       "name": "acknowledge_operator_action",
       "whole": {
         "baselineTokens": 0,
-        "afterTokens": 195,
-        "deltaTokens": 195
+        "afterTokens": 180,
+        "deltaTokens": 180
       },
       "fields": {
         "name": {
@@ -2374,12 +2402,12 @@
             "marginalTokens": 0
           },
           "after": {
-            "serializedTokens": 78,
-            "marginalTokens": 80
+            "serializedTokens": 63,
+            "marginalTokens": 65
           },
           "delta": {
-            "serializedTokens": 78,
-            "marginalTokens": 80
+            "serializedTokens": 63,
+            "marginalTokens": 65
           }
         },
         "inputSchema": {
@@ -2506,8 +2534,8 @@
       "name": "archive_milestone",
       "whole": {
         "baselineTokens": 151,
-        "afterTokens": 105,
-        "deltaTokens": -46
+        "afterTokens": 101,
+        "deltaTokens": -50
       },
       "fields": {
         "name": {
@@ -2530,12 +2558,12 @@
             "marginalTokens": 73
           },
           "after": {
-            "serializedTokens": 44,
-            "marginalTokens": 45
+            "serializedTokens": 40,
+            "marginalTokens": 41
           },
           "delta": {
-            "serializedTokens": -28,
-            "marginalTokens": -28
+            "serializedTokens": -32,
+            "marginalTokens": -32
           }
         },
         "inputSchema": {
@@ -3226,6 +3254,58 @@
           "delta": {
             "serializedTokens": 99,
             "marginalTokens": 100
+          }
+        }
+      }
+    },
+    {
+      "name": "execute_finalize",
+      "whole": {
+        "baselineTokens": 0,
+        "afterTokens": 167,
+        "deltaTokens": 167
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "delta": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 32,
+            "marginalTokens": 33
+          },
+          "delta": {
+            "serializedTokens": 32,
+            "marginalTokens": 33
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "after": {
+            "serializedTokens": 126,
+            "marginalTokens": 127
+          },
+          "delta": {
+            "serializedTokens": 126,
+            "marginalTokens": 127
           }
         }
       }
@@ -4846,8 +4926,8 @@
       "name": "record_operator_action_evidence",
       "whole": {
         "baselineTokens": 0,
-        "afterTokens": 279,
-        "deltaTokens": 279
+        "afterTokens": 262,
+        "deltaTokens": 262
       },
       "fields": {
         "name": {
@@ -4870,12 +4950,12 @@
             "marginalTokens": 0
           },
           "after": {
-            "serializedTokens": 92,
-            "marginalTokens": 93
+            "serializedTokens": 75,
+            "marginalTokens": 76
           },
           "delta": {
-            "serializedTokens": 92,
-            "marginalTokens": 93
+            "serializedTokens": 75,
+            "marginalTokens": 76
           }
         },
         "inputSchema": {
@@ -5002,8 +5082,8 @@
       "name": "revise_operator_action",
       "whole": {
         "baselineTokens": 0,
-        "afterTokens": 229,
-        "deltaTokens": 229
+        "afterTokens": 273,
+        "deltaTokens": 273
       },
       "fields": {
         "name": {
@@ -5026,12 +5106,12 @@
             "marginalTokens": 0
           },
           "after": {
-            "serializedTokens": 72,
-            "marginalTokens": 73
+            "serializedTokens": 83,
+            "marginalTokens": 84
           },
           "delta": {
-            "serializedTokens": 72,
-            "marginalTokens": 73
+            "serializedTokens": 83,
+            "marginalTokens": 84
           }
         },
         "inputSchema": {
@@ -5040,12 +5120,12 @@
             "marginalTokens": 0
           },
           "after": {
-            "serializedTokens": 146,
-            "marginalTokens": 147
+            "serializedTokens": 179,
+            "marginalTokens": 180
           },
           "delta": {
-            "serializedTokens": 146,
-            "marginalTokens": 147
+            "serializedTokens": 179,
+            "marginalTokens": 180
           }
         }
       }
@@ -5759,19 +5839,19 @@
     "ledgerCallingProfiles": [
       {
         "profileName": "full",
-        "remainingG93AttributableTokens": 1619
+        "remainingG93AttributableTokens": 1590
       },
       {
         "profileName": "non-dispatch",
-        "remainingG93AttributableTokens": 1430
+        "remainingG93AttributableTokens": 1401
       },
       {
         "profileName": "advance",
-        "remainingG93AttributableTokens": 1619
+        "remainingG93AttributableTokens": 1590
       },
       {
         "profileName": "begin",
-        "remainingG93AttributableTokens": 1619
+        "remainingG93AttributableTokens": 1590
       },
       {
         "profileName": "implement-conflict-resolver",
@@ -5787,11 +5867,11 @@
       },
       {
         "profileName": "implement/advance",
-        "remainingG93AttributableTokens": 1619
+        "remainingG93AttributableTokens": 1590
       },
       {
         "profileName": "implement/start",
-        "remainingG93AttributableTokens": 1619
+        "remainingG93AttributableTokens": 1590
       },
       {
         "profileName": "implementation-auditor",
@@ -5799,7 +5879,7 @@
       },
       {
         "profileName": "investigate",
-        "remainingG93AttributableTokens": 1619
+        "remainingG93AttributableTokens": 1590
       },
       {
         "profileName": "investigate-explorer",
@@ -5811,11 +5891,11 @@
       },
       {
         "profileName": "investigate/advance",
-        "remainingG93AttributableTokens": 1619
+        "remainingG93AttributableTokens": 1590
       },
       {
         "profileName": "plan",
-        "remainingG93AttributableTokens": 1619
+        "remainingG93AttributableTokens": 1590
       },
       {
         "profileName": "plan-advance",
@@ -5827,11 +5907,11 @@
       },
       {
         "profileName": "plan/advance",
-        "remainingG93AttributableTokens": 1619
+        "remainingG93AttributableTokens": 1590
       },
       {
         "profileName": "plan/follow-up",
-        "remainingG93AttributableTokens": 1619
+        "remainingG93AttributableTokens": 1590
       },
       {
         "profileName": "planners",
@@ -5839,7 +5919,7 @@
       },
       {
         "profileName": "research",
-        "remainingG93AttributableTokens": 1619
+        "remainingG93AttributableTokens": 1590
       },
       {
         "profileName": "research-experimenter",
@@ -5851,7 +5931,7 @@
       },
       {
         "profileName": "research/advance",
-        "remainingG93AttributableTokens": 1619
+        "remainingG93AttributableTokens": 1590
       },
       {
         "profileName": "reviewers",
@@ -5859,10 +5939,10 @@
       },
       {
         "profileName": "upstream",
-        "remainingG93AttributableTokens": 1619
+        "remainingG93AttributableTokens": 1590
       }
     ],
-    "maximumRemainingG93AttributableTokens": 1619
+    "maximumRemainingG93AttributableTokens": 1590
   },
   "budgets": {
     "tokenizerMatches": true,

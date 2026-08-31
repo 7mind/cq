@@ -26,6 +26,7 @@ import {
   assertArchiveDoesNotDropUnsatisfyingGates,
   applyUpdateItem,
   collectNonTerminalChildren,
+  collectNonTerminalOwnedChildren,
   validateMilestoneItemPatch,
   applyUpdateMilestoneItem,
   assertGoalPhasePreconditions,
@@ -570,6 +571,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
           to,
           this.ledgers.get(QUESTIONS_LEDGER),
           this.ledgers.get(DECISIONS_LEDGER),
+          collectNonTerminalOwnedChildren(this.ledgers, `${GOALS_LEDGER}:${itemId}`),
         );
     }
     if (ledgerId === QUESTIONS_LEDGER) {
