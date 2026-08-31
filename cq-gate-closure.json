@@ -1811,7 +1811,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/operator-actions.test.ts",
-      "sha256": "1f539e528359acf3c9744d39c7525274883bd92743e982d2e2bc387f872604b9",
+      "sha256": "3587c2b2681081ac739a10e7d9eb16d64b46e17cea45392d59d321939e73136e",
       "targets": []
     },
     {
@@ -1937,13 +1937,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
-      "sha256": "73ca9916d8482a384c4b6a3704aea42a462b4a91051f027c00fd780a8d74ee06",
+      "sha256": "ed4b3989d06eede24d80aab30a69f2f94679f6d34d9719659e65718fa090f8ef",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
-      "sha256": "73ca9916d8482a384c4b6a3704aea42a462b4a91051f027c00fd780a8d74ee06",
+      "sha256": "ed4b3989d06eede24d80aab30a69f2f94679f6d34d9719659e65718fa090f8ef",
       "targets": []
     },
     {

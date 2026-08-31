@@ -56,6 +56,7 @@ import {
 import {
   isAuthorizedOperatorActionCompletionPatch,
   isAuthorizedOperatorActionMutation,
+  isAuthorizedOperatorActionSupersessionPatch,
   parseOperatorActionEnvelope,
 } from "../operatorActions.js";
 import { isAuthorizedImplementationEvidenceMutation } from "../implementationEvidence.js";
@@ -467,7 +468,8 @@ export function applyUpdateItem(
     currentOperatorDirective !== null &&
     patch.status !== undefined &&
     patch.status !== item.status &&
-    patch.status !== "done"
+    patch.status !== "done" &&
+    !(patch.status === "abandoned" && isAuthorizedOperatorActionSupersessionPatch(patch))
   ) {
     throw new LedgerError(
       `Operator-action task ${item.id} must remain planned until verified completion`,

@@ -385,6 +385,56 @@ for (const failAt of [1, 2, 3]) {
 
 for (const factory of factories) {
   describe(`operator-action lifecycle (${factory.name})`, () => {
+    test("supersedes a strict operator-action task before materialization [D395]", async () => {
+      const store = await factory.build();
+      try {
+        const milestone = await store.createMilestone({ title: "obsolete deployment" });
+        const goal = await store.createItem("goals", milestone.id, {
+          status: "planned",
+          fields: { title: "goal", description: "goal" },
+        });
+        const task = await store.createItem("tasks", milestone.id, {
+          status: "planned",
+          fields: {
+            headline: "obsolete deployment",
+            description: "CQ-OPERATOR-ACTION v1 obsolete-deployment. User deploys.",
+            ledgerRefs: [`goals:${goal.id}`],
+          },
+        });
+
+        const input = {
+          actionId: `OA${task.id.slice(1)}`,
+          expectedRevision: 1,
+          reason: "deployment requirement withdrawn before materialization",
+          supersededAt: NOW,
+          author: "parent",
+        } as const;
+        const result = await supersedeOperatorAction(store, input);
+
+        expect(result).toEqual({
+          task: expect.objectContaining({
+            id: task.id,
+            status: "abandoned",
+            fields: expect.objectContaining({
+              completion:
+                `Superseded operator action OA${task.id.slice(1)}: ` +
+                "deployment requirement withdrawn before materialization",
+            }),
+          }),
+        });
+        expect(() => store.fetchItem("operatorActions", `OA${task.id.slice(1)}`)).toThrow();
+        expect(await supersedeOperatorAction(store, input)).toEqual(result);
+        await expect(
+          supersedeOperatorAction(store, {
+            ...input,
+            reason: "different withdrawal evidence",
+          }),
+        ).rejects.toThrow(/abandoned with different evidence/);
+      } finally {
+        await store.dispose();
+      }
+    });
+
     test("supersedes a pending action and atomically abandons its planned task [D395]", async () => {
       const store = await factory.build();
       try {

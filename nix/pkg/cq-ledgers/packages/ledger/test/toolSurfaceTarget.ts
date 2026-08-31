@@ -213,7 +213,7 @@ export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
   {
     name: "revise_operator_action",
     description:
-      "Exact-CAS revise before evidence or after a validated terminal failure from the pending action's current revision and acknowledgement epoch. Reject stale or other evidence; snapshot action/task/handoff, reset action state, refresh handoff, and replan an abandoned task. Supersession terminalizes the action and abandons a live planned task.",
+      "Exact-CAS revise before evidence or after a validated terminal failure from the pending action's current revision and acknowledgement epoch. Reject stale or other evidence; snapshot action/task/handoff, reset action state, refresh handoff, and replan an abandoned task. Supersession terminalizes a materialized action and abandons its live planned task, or abandons the strict task at its deterministic revision-1 action coordinate before materialization.",
     inputSchema: {
       type: "object",
       properties: {

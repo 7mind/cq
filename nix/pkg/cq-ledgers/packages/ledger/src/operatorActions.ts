@@ -20,6 +20,7 @@ const OPERATOR_ACTION_ENVELOPE_RE =
 const MAX_COMMAND_BYTES = 4096;
 const MAX_STREAM_BYTES = 65_536;
 const authorizedCompletionPatches = new WeakSet<object>();
+const authorizedSupersessionPatches = new WeakSet<object>();
 const authorizedActionMutations = new WeakSet<object>();
 
 export interface OperatorActionDirective {
@@ -92,10 +93,9 @@ export interface SupersedeOperatorActionInput {
   readonly session?: string;
 }
 
-export interface SupersededOperatorAction {
-  readonly action: Item;
-  readonly task?: Item;
-}
+export type SupersededOperatorAction =
+  | { readonly action: Item; readonly task?: Item }
+  | { readonly action?: never; readonly task: Item };
 
 export class OperatorActionEnvelopeError extends SchemaValidationError {
   constructor(reason: string) {
@@ -114,6 +114,11 @@ export class OperatorActionConflictError extends LedgerError {
 /** Internal cross-adapter completion authority consumed by store/core.ts. */
 export function isAuthorizedOperatorActionCompletionPatch(patch: object): boolean {
   return authorizedCompletionPatches.has(patch);
+}
+
+/** Internal cross-adapter supersession authority consumed by store/core.ts. */
+export function isAuthorizedOperatorActionSupersessionPatch(patch: object): boolean {
+  return authorizedSupersessionPatches.has(patch);
 }
 
 /** Internal authority for canonical operatorActions creates/updates. */
@@ -335,6 +340,12 @@ export async function supersedeOperatorAction(
   if (!isIsoTimestamp(input.supersededAt)) {
     throw new SchemaValidationError("supersededAt must be an ISO timestamp");
   }
+  try {
+    store.fetchItem(OPERATOR_ACTIONS_LEDGER, input.actionId);
+  } catch (error) {
+    if (!(error instanceof ItemNotFoundError)) throw error;
+    return await supersedeUnmaterializedOperatorAction(store, input);
+  }
   const result = await store.mutateOperatorAction({
     kind: "supersede",
     actionId: input.actionId,
@@ -353,12 +364,77 @@ export async function supersedeOperatorAction(
   };
 }
 
+async function supersedeUnmaterializedOperatorAction(
+  store: LedgerStore,
+  input: SupersedeOperatorActionInput,
+): Promise<SupersededOperatorAction> {
+  if (input.expectedRevision !== 1) {
+    throw new LedgerError(
+      `Unmaterialized operator action ${input.actionId} has revision 1, not ${String(input.expectedRevision)}`,
+    );
+  }
+  const atomic = store as LedgerStore & {
+    runAtomicOwnedMutation?<T>(mutate: (tx: WorksetOwnedWriteTx) => T): Promise<T>;
+  };
+  if (atomic.runAtomicOwnedMutation === undefined) {
+    throw new LedgerError("operator-action supersession requires an atomic ledger adapter");
+  }
+  return await atomic.runAtomicOwnedMutation((tx) => {
+    try {
+      tx.fetchItem(OPERATOR_ACTIONS_LEDGER, input.actionId);
+      throw new LedgerError(
+        `Operator action ${input.actionId} materialized concurrently; retry supersession`,
+      );
+    } catch (error) {
+      if (!(error instanceof ItemNotFoundError)) throw error;
+    }
+
+    const task = tx.fetchItem(TASKS_LEDGER, taskIdForAction(input.actionId));
+    if (operatorActionDirectiveForTask(task) === null) {
+      throw new OperatorActionEnvelopeError(`task ${task.id} has no envelope`);
+    }
+    const completion = `Superseded operator action ${input.actionId}: ${input.reason}`;
+    if (task.status === "abandoned") {
+      if (
+        task.fields["completion"] !== completion ||
+        task.updatedAt !== input.supersededAt
+      ) {
+        throw new LedgerError(
+          `Operator-action task ${task.id} was abandoned with different evidence`,
+        );
+      }
+      return { task };
+    }
+    if (task.status !== "planned") {
+      throw new LedgerError(
+        `Unmaterialized operator-action task ${task.id} may be superseded only from planned`,
+      );
+    }
+    const patch = {
+      status: "abandoned",
+      fields: { completion },
+      author: input.author,
+      ...(input.session === undefined ? {} : { session: input.session }),
+    } as const;
+    authorizedSupersessionPatches.add(patch);
+    return { task: tx.updateItem(TASKS_LEDGER, task.id, patch) };
+  });
+}
+
 function actionIdForTask(taskId: string): string {
   const match = /^T(\d+)$/.exec(taskId);
   if (match === null || match[1] === undefined) {
     throw new OperatorActionEnvelopeError(`task id ${taskId} cannot derive an action id`);
   }
   return `OA${match[1]}`;
+}
+
+function taskIdForAction(actionId: string): string {
+  const match = /^OA(\d+)$/.exec(actionId);
+  if (match === null || match[1] === undefined) {
+    throw new OperatorActionEnvelopeError(`action id ${actionId} cannot derive a task id`);
+  }
+  return `T${match[1]}`;
 }
 
 function handoffIdForTask(taskId: string): string {
