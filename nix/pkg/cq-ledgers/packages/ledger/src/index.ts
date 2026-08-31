@@ -252,6 +252,10 @@ export type {
   WorksetGenericMutationGatewayHost,
   CreateInMemoryWorksetGuardedLedgerOptions,
 } from "./worksetGenericMutation.js";
+export type {
+  ArchiveTerminalItemsGatePolicy,
+  ArchiveTerminalItemsResult,
+} from "./store/genericMutationTransaction.js";
 export {
   createFsWorksetGuardedLedger,
   createFsWorksetManagementLedger,

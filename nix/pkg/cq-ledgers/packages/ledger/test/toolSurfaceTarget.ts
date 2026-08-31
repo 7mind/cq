@@ -59,7 +59,7 @@ const TARGET_INSTRUCTIONS = `Project: tool-surface-profiler
 
 Markdown-backed typed ledgers. Milestones form dependency DAGs; other items attach to milestones. Discover schemas with enumerate_ledgers. Write schema-valid items with author/session provenance; recognized ledger references are canonicalized on write.
 
-Reads require compact or full projection. Paginate fetch_ledger until nextOffset is null. fts_search spans active ledgers by default and accepts field qualifiers; terminal items remain active until archive_milestone sweeps a fully terminal milestone.
+Reads require compact or full projection. Paginate fetch_ledger until nextOffset is null. fts_search spans active ledgers by default and accepts field qualifiers; terminal items remain active until archive_terminal_items or archive_milestone.
 
 Use snapshot and derive_predicates for CQ flow state. Dispatch and plan-lifecycle tools retain their capability, generation, fence, recovery, and idempotency contracts; preserve exact identifiers returned by those tools.`;
 
@@ -70,6 +70,25 @@ Use snapshot and derive_predicates for CQ flow state. Dispatch and plan-lifecycl
  * (I20/G155, T1511: get_usage_stats).
  */
 export const POST_TARGET_ADDITIONS: readonly ToolDefinition[] = Object.freeze([
+  {
+    name: "archive_terminal_items",
+    description:
+      "Atomically archive terminal items from selected ledgers; optionally retain and report active dependency gates.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ledger_ids: {
+          type: "array",
+          minItems: 1,
+          items: { type: "string" },
+        },
+        summary: { type: "string" },
+        gate_policy: { enum: ["fail-on-active-gate", "retain-active-gates"] },
+      },
+      required: ["ledger_ids", "summary", "gate_policy"],
+      additionalProperties: false,
+    },
+  },
   {
     name: "workset",
     description:
@@ -774,7 +793,7 @@ const DESCRIPTION_REPLACEMENTS: Readonly<Record<string, string>> = Object.freeze
   fetch_item: `Fetch one active item from a ledger. projection is required: ${COMPACT_PROJECTION}. Returns {item}.`,
   fetch_ledger: `Fetch a ledger's schema, active milestone groups with resolved milestone metadata, and archive pointers. projection is required: ${COMPACT_PROJECTION}. Without pagination returns grouped {ledger}; offset/limit returns flattened {ledger,items,total,offset,limit,nextOffset}. Follow nextOffset until null.`,
   fetch_milestone: `Fetch a milestones-ledger item plus resolved dependency metadata and per-ledger active reference counts. projection is required: ${COMPACT_PROJECTION}. Returns {milestone,resolved,references}.`,
-  fts_search: `Ranked cross-ledger search with optional ledger/status prefilters, archived coverage, fuzzy matching, and prefixes. query accepts free text; field:value qualifiers for status, ledger, milestone, author, session, and item fields; quoted values; implicit AND; uppercase OR; NOT or leading -; and parentheses. The status prefilter composes with query. Terminal items remain active until archive_milestone. Returns ranked {ledgerId,item,score,matchedFields} results; ${COMPACT_PROJECTION}.`,
+  fts_search: `Ranked cross-ledger search with optional ledger/status prefilters, archived coverage, fuzzy matching, and prefixes. query accepts free text; field:value qualifiers for status, ledger, milestone, author, session, and item fields; quoted values; implicit AND; uppercase OR; NOT or leading -; and parentheses. The status prefilter composes with query. Terminal items remain active until archive_terminal_items or archive_milestone. Returns ranked {ledgerId,item,score,matchedFields} results; ${COMPACT_PROJECTION}.`,
   list_milestone_items: `Return active items grouped by ledger that reference one milestone. projection is required: ${COMPACT_PROJECTION}.`,
   search_items: `Substring-search status and fields within one ledger. projection is required: ${COMPACT_PROJECTION}. Returns {items}.`,
   snapshot:

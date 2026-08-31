@@ -46,8 +46,8 @@ export const QUERY_LANGUAGE_HELP =
   "Active vs archived: by default fts_search covers only active (non-archived) items; " +
   "pass include_archived:true to also search items swept into milestone-group archives. " +
   "Terminal vs active statuses: each ledger's schema lists terminalStatuses (e.g. done, " +
-  "resolved, abandoned) — items in those statuses are still active (not archived) until " +
-  "archive_milestone is called; use -status:done style negation to exclude them from results. " +
+  "resolved, abandoned) — items in those statuses remain active until archive_terminal_items " +
+  "or archive_milestone is called; use -status:done style negation to exclude them from results. " +
   "Examples: status:done | (status:done OR status:wip) | ledger:goals platform | " +
   "author:user -status:abandoned.";
 

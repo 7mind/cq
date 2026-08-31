@@ -236,14 +236,14 @@ function expectedItemAcknowledgement(item: Item): Record<string, unknown> {
 }
 
 describe("ledger MCP tools", () => {
-  it("keeps the 39 ordinary names separate from the 57-name management inventory", async () => {
+  it("keeps the 40 ordinary names separate from the 58-name management inventory", async () => {
     const store = await buildStore();
     const tools = createManagementLedgerMcpTools(store);
     expect(tools.map((t) => t.name).sort()).toEqual([
       ...MANAGEMENT_NON_DISPATCH_LEDGER_TOOL_NAMES,
     ].sort());
-    expect(LEDGER_TOOL_NAMES.length).toBe(39);
-    expect(MANAGEMENT_LEDGER_TOOL_NAMES.length).toBe(57);
+    expect(LEDGER_TOOL_NAMES.length).toBe(40);
+    expect(MANAGEMENT_LEDGER_TOOL_NAMES.length).toBe(58);
     expect(MANAGEMENT_LEDGER_TOOL_NAMES).toContain(
       "advance_implementation_evidence_bootstrap",
     );
@@ -965,6 +965,49 @@ describe("ledger MCP tools", () => {
       },
     });
     expect(archiveResult.content[0]?.text).toBe(JSON.stringify(ptr));
+  });
+
+  it("archive_terminal_items detaches terminal items and reports retained active gates [D396]", async () => {
+    const store = await buildStore();
+    const tools = createLedgerMcpTools(store);
+    await createRoot(tools, { title: "partial" });
+    await callTool(tools, "create_item", {
+      ledger_id: "tasks",
+      milestone_id: "M1",
+      status: "done",
+      fields: { headline: "finished" },
+    });
+    await callTool(tools, "create_item", {
+      ledger_id: "tasks",
+      milestone_id: "M1",
+      status: "planned",
+      fields: { headline: "unfinished" },
+    });
+
+    const result = decode<{
+      sweep: {
+        archivedItems: number;
+        archiveGroups: number;
+        byLedger: Record<string, number>;
+        retainedActiveGates: string[];
+      };
+    }>(
+      await callTool(tools, "archive_terminal_items", {
+        ledger_ids: ["tasks"],
+        summary: "terminal history",
+        gate_policy: "retain-active-gates",
+      }),
+    );
+    expect(result).toEqual({
+      sweep: {
+        archivedItems: 1,
+        archiveGroups: 1,
+        byLedger: { tasks: 1 },
+        retainedActiveGates: [],
+      },
+    });
+    expect(() => store.fetchItem("tasks", "T1")).toThrow();
+    expect(store.fetchItem("tasks", "T2").status).toBe("planned");
   });
 
   // D-LED-02 — Zod-layer rejection of invalid schemas at create_ledger.

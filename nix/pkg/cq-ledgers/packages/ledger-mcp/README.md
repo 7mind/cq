@@ -224,6 +224,7 @@ measured savings without another batching schema.
 | `search_items` | `mandatory-item-projection` | `{ items }` using the requested projection. |
 | `fts_search` | `mandatory-item-projection` | `{ results: [{ ledgerId, item, score, matchedFields }] }`; each item uses the requested projection. |
 | `archive_milestone` | `purpose-built-small` | `{ pointer }` for the archived milestone. |
+| `archive_terminal_items` | `purpose-built-small` | `{ sweep }`. |
 | `list_milestone_items` | `mandatory-item-projection` | `{ items: Record<ledgerId, Item[]> }`; every item uses the requested projection. |
 | `snapshot` | `purpose-built-small` | `{ ledger: Record<ledgerId, Record<status, { count, items: [{ id, status, summary }] }>> }`. |
 | `workset` | `purpose-built-small` | Get/fetch: `{op,graph}`. Set: `{op:"set",acknowledgement:{roots,epoch}}`. |
@@ -272,6 +273,9 @@ measured savings without another batching schema.
 | `prepare_implementation_completion` | `purpose-built-small` | Exactly `{ status, completionRef, taskRef, resultCommit, repositoryHead, evidenceFingerprint }`. |
 | `record_implementation_completion` | `purpose-built-small` | One typed `merge-required`, `reprepare-required`, `recorded`, or `existing` acknowledgement. |
 <!-- ledger-response-contract:end -->
+
+For `archive_terminal_items`, `sweep` contains `archivedItems`, `archiveGroups`,
+`byLedger`, and `retainedActiveGates`.
 
 Operator-action probe history remains append-only, but verification counts only
 the complete successful probe set from the latest exact acknowledgement epoch.
@@ -398,7 +402,7 @@ not sent as a tool argument.
 
 ## Client development and migration
 
-Treat response decoding as a closed 57-tool matrix, not as a generic
+Treat response decoding as a closed 58-tool matrix, not as a generic
 full-entity decoder. Require callers to choose a projection for the five
 item-bearing read tools, model the acknowledgement DTOs independently
 from full items, and retain pagination metadata until `nextOffset` becomes

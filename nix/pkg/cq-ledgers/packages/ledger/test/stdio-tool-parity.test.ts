@@ -1215,6 +1215,14 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
       },
     },
     {
+      name: "archive_terminal_items",
+      args: {
+        ledger_ids: ["memories"],
+        summary: "terminal transport parity",
+        gate_policy: "retain-active-gates",
+      },
+    },
+    {
       name: "list_milestone_items",
       args: {
         milestone_id: ids.activeMilestone,
@@ -2094,7 +2102,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 57 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 58 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);

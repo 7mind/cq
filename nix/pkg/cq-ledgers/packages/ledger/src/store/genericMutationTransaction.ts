@@ -32,6 +32,8 @@ import {
   applyReattachItem,
   applyReopenItem,
   assertArchiveDoesNotDropUnsatisfyingGates,
+  assertArchiveItemsDoNotDropUnsatisfyingGates,
+  collectUnsatisfiedDependencyArchiveBlockers,
   applyUpdateItem,
   statusSatisfiesDependency,
   applyUpdateMilestoneItem,
@@ -73,6 +75,17 @@ export interface GenericMutationTransactionState {
   readonly now: () => string;
 }
 
+export interface ArchiveTerminalItemsResult {
+  readonly archivedItems: number;
+  readonly archiveGroups: number;
+  readonly byLedger: Readonly<Record<string, number>>;
+  readonly retainedActiveGates: readonly string[];
+}
+
+export type ArchiveTerminalItemsGatePolicy =
+  | "fail-on-active-gate"
+  | "retain-active-gates";
+
 export interface WorksetGenericMutationTx {
   activeState(): WorksetActiveState;
   fetchItem(ledgerId: string, itemId: string): Item;
@@ -83,6 +96,11 @@ export interface WorksetGenericMutationTx {
   createLedger(name: string, schema: LedgerSchema): FetchedLedger;
   reopenItem(ledgerId: string, itemId: string, toStatus: string): Item;
   unarchiveItem(ledgerId: string, milestoneId: string, itemId: string): Item;
+  archiveTerminalItems(
+    ledgerIds: readonly string[],
+    summary: string,
+    gatePolicy: ArchiveTerminalItemsGatePolicy,
+  ): ArchiveTerminalItemsResult;
   collectArchiveSweepRefs(milestoneId: string): readonly string[];
   archiveMilestone(milestoneId: string, summary: string): ArchivePointer;
 }
@@ -324,6 +342,111 @@ export function createGenericMutationTransaction(
       dirtyLedgers.add(ledgerId);
       return cloneItem(item);
     },
+    archiveTerminalItems: (ledgerIds, summary, gatePolicy) => {
+      if (gatePolicy !== "fail-on-active-gate" && gatePolicy !== "retain-active-gates") {
+        throw new LedgerError(`unknown terminal-item archive gate policy "${gatePolicy}"`);
+      }
+      const selectedLedgerIds = [...new Set(ledgerIds)].sort();
+      if (selectedLedgerIds.includes(MILESTONES_LEDGER)) {
+        throw new BootstrapViolationError(
+          `${MILESTONES_LEDGER} items are archived only through archiveMilestone`,
+        );
+      }
+      for (const ledgerId of selectedLedgerIds) getLedger(ledgerId);
+
+      const leavingUnsatisfied = new Map<string, string>();
+      for (const ledgerId of selectedLedgerIds) {
+        const ledger = getLedger(ledgerId);
+        const terminal = new Set(ledger.schema.terminalStatuses);
+        for (const group of ledger.milestones) {
+          for (const item of group.items) {
+            if (
+              terminal.has(item.status) &&
+              !statusSatisfiesDependency(ledger.schema, item.status)
+            ) {
+              leavingUnsatisfied.set(`${ledgerId}:${item.id}`, group.id);
+            }
+          }
+        }
+      }
+      const blockers = collectUnsatisfiedDependencyArchiveBlockers(
+        state.ledgers,
+        leavingUnsatisfied,
+      );
+      if (gatePolicy === "fail-on-active-gate") {
+        assertArchiveItemsDoNotDropUnsatisfyingGates(state.ledgers, leavingUnsatisfied);
+      }
+      const retainedActiveGates = [
+        ...new Set(blockers.map((blocker) => blocker.targetRef)),
+      ].sort();
+      const retained = new Set(retainedActiveGates);
+
+      const milestones = getLedger(MILESTONES_LEDGER);
+      const byLedger: Record<string, number> = {};
+      let archivedItems = 0;
+      let archiveGroups = 0;
+      for (const ledgerId of selectedLedgerIds) {
+        const ledger = getLedger(ledgerId);
+        const terminal = new Set(ledger.schema.terminalStatuses);
+        for (const group of [...ledger.milestones]) {
+          const leaving = group.items.filter(
+            (item) =>
+              terminal.has(item.status) && !retained.has(`${ledgerId}:${item.id}`),
+          );
+          if (leaving.length === 0) continue;
+          const leavingIds = new Set(leaving.map((item) => item.id));
+          const staying = group.items.filter((item) => !leavingIds.has(item.id));
+          const milestone = findItem(milestones, group.id).item;
+          const title = typeof milestone.fields.title === "string" ? milestone.fields.title : "";
+          const description =
+            typeof milestone.fields.description === "string"
+              ? milestone.fields.description
+              : "";
+          const path = `./archive/${ledgerId}/${group.id}.md`;
+          const key = genericArchiveKey(ledgerId, group.id);
+          const existing = state.archives.get(key);
+          const pointer = ledger.archivePointers.find((candidate) => candidate.id === group.id);
+          if ((existing === undefined) !== (pointer === undefined)) {
+            throw new LedgerError(`archive pointer/content mismatch for ${key}`);
+          }
+          if (pointer === undefined) {
+            ledger.archivePointers.push({
+              id: group.id,
+              path,
+              summary,
+              title,
+              status: milestone.status,
+            });
+          } else {
+            pointer.summary = summary;
+            pointer.title = title;
+            pointer.status = milestone.status;
+          }
+          const archived: GenericArchiveEntry = {
+            ledgerId,
+            pointerId: group.id,
+            title,
+            description,
+            items: existing?.items ?? [],
+          };
+          archived.items.push(...leaving.map(cloneItem));
+          state.archives.set(key, archived);
+
+          const groupIndex = ledger.milestones.indexOf(group);
+          if (staying.length === 0) {
+            ledger.milestones.splice(groupIndex, 1);
+          } else {
+            group.items = staying;
+          }
+          dirtyArchives.add(key);
+          dirtyLedgers.add(ledgerId);
+          archivedItems += leaving.length;
+          archiveGroups += 1;
+          byLedger[ledgerId] = (byLedger[ledgerId] ?? 0) + leaving.length;
+        }
+      }
+      return { archivedItems, archiveGroups, byLedger, retainedActiveGates };
+    },
     collectArchiveSweepRefs: (milestoneId) => {
       const refs: string[] = [];
       for (const [ledgerId, ledger] of state.ledgers) {
@@ -358,8 +481,33 @@ export function createGenericMutationTransaction(
       const status = milestone.status;
       for (const [ledgerId, ledger] of state.ledgers) {
         if (ledgerId === MILESTONES_LEDGER) continue;
-        if (!ledger.milestones.some((group) => group.id === milestoneId)) continue;
+        const key = genericArchiveKey(ledgerId, milestoneId);
+        const existing = state.archives.get(key);
+        const hasActiveGroup = ledger.milestones.some((group) => group.id === milestoneId);
+        if (!hasActiveGroup && existing === undefined) continue;
         const path = `./archive/${ledgerId}/${milestoneId}.md`;
+        if (!hasActiveGroup) {
+          const pointer = ledger.archivePointers.find((candidate) => candidate.id === milestoneId);
+          if (pointer === undefined || existing === undefined) {
+            throw new LedgerError(`archive pointer/content mismatch for ${key}`);
+          }
+          pointer.summary = summary;
+          pointer.title = title;
+          pointer.status = status;
+          state.archives.set(key, { ...existing, title });
+          dirtyArchives.add(key);
+          dirtyLedgers.add(ledgerId);
+          continue;
+        }
+        if (existing !== undefined) {
+          const pointerIndex = ledger.archivePointers.findIndex(
+            (candidate) => candidate.id === milestoneId,
+          );
+          if (pointerIndex < 0) {
+            throw new LedgerError(`archive pointer/content mismatch for ${key}`);
+          }
+          ledger.archivePointers.splice(pointerIndex, 1);
+        }
         const detached = applyDetachMilestoneGroup(
           ledger,
           milestoneId,
@@ -368,13 +516,15 @@ export function createGenericMutationTransaction(
           title,
           status,
         );
-        const key = genericArchiveKey(ledgerId, milestoneId);
         state.archives.set(key, {
           ledgerId,
           pointerId: milestoneId,
           title: detached.milestone.title,
           description: detached.milestone.description,
-          items: detached.milestone.items.map(cloneItem),
+          items: [
+            ...(existing?.items.map(cloneItem) ?? []),
+            ...detached.milestone.items.map(cloneItem),
+          ],
         });
         dirtyArchives.add(key);
         dirtyLedgers.add(ledgerId);

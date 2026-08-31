@@ -971,7 +971,7 @@ export function createLedgerMcpToolSpecifications(
 
   const ftsSearch = tool(
     "fts_search",
-    `Ranked cross-ledger search with optional ledger/status prefilters, archived coverage, fuzzy matching, and prefixes. query accepts free text; field:value qualifiers for status, ledger, milestone, author, session, and item fields; quoted values; implicit AND; uppercase OR; NOT or leading -; and parentheses. The status prefilter composes with query. Terminal items remain active until archive_milestone. Returns ranked {ledgerId,item,score,matchedFields} results. ${ITEM_PROJECTION_DESCRIPTION}.`,
+    `Ranked cross-ledger search with optional ledger/status prefilters, archived coverage, fuzzy matching, and prefixes. query accepts free text; field:value qualifiers for status, ledger, milestone, author, session, and item fields; quoted values; implicit AND; uppercase OR; NOT or leading -; and parentheses. The status prefilter composes with query. Terminal items remain active until archive_terminal_items or archive_milestone. Returns ranked {ledgerId,item,score,matchedFields} results. ${ITEM_PROJECTION_DESCRIPTION}.`,
     {
       query: z.string(),
       projection: projectionSchema,
@@ -1030,6 +1030,29 @@ export function createLedgerMcpToolSpecifications(
         args.summary,
       );
       return jsonResult({ pointer });
+    },
+  );
+
+  const archiveTerminalItems = tool(
+    "archive_terminal_items",
+    "Atomically archive terminal items from selected ledgers; optionally retain and report active dependency gates.",
+    {
+      ledger_ids: z.array(z.string()).min(1),
+      summary: z.string(),
+      gate_policy: z.enum(["fail-on-active-gate", "retain-active-gates"]),
+    } as const,
+    async (args) => {
+      assertOnlyToolArguments("archive_terminal_items", args, [
+        "ledger_ids",
+        "summary",
+        "gate_policy",
+      ]);
+      const sweep = await mutationsFor("archive_terminal_items").archiveTerminalItems(
+        args.ledger_ids,
+        args.summary,
+        args.gate_policy,
+      );
+      return jsonResult({ sweep });
     },
   );
 
@@ -1926,6 +1949,7 @@ export function createLedgerMcpToolSpecifications(
     searchItems,
     ftsSearch,
     archiveMilestone,
+    archiveTerminalItems,
     listMilestoneItems,
     snapshotTool,
     worksetTool,

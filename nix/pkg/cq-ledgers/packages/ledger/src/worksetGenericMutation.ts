@@ -85,7 +85,11 @@ import type {
 import { LedgerError } from "./types.js";
 import type { LedgerSnapshot } from "./snapshot.js";
 import type { UsageStatsSnapshot } from "./usageStats.js";
-import type { WorksetGenericMutationTx } from "./store/genericMutationTransaction.js";
+import type {
+  ArchiveTerminalItemsGatePolicy,
+  ArchiveTerminalItemsResult,
+  WorksetGenericMutationTx,
+} from "./store/genericMutationTransaction.js";
 import { CANONICAL_LEDGERS } from "./constants.js";
 
 // ---------------------------------------------------------------------------
@@ -283,6 +287,7 @@ export type WorksetGenericMutationErrorCode =
   | "target-excluded"
   | "introduced-ref-excluded"
   | "unarchive-not-exact-inactive-root"
+  | "archive-terminal-items-denied"
   | "archive-sweep-incomplete"
   | "sealed-ownership"
   | "mixed-or-excluded-targets"
@@ -347,6 +352,11 @@ export interface WorksetGenericMutationGateway {
     milestoneId: string,
     itemId: string,
   ): Promise<Item>;
+  archiveTerminalItems(
+    ledgerIds: readonly string[],
+    summary: string,
+    gatePolicy: ArchiveTerminalItemsGatePolicy,
+  ): Promise<ArchiveTerminalItemsResult>;
   archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer>;
 }
 
@@ -804,6 +814,18 @@ export function createWorksetGenericMutationGateway(
             ),
         },
       );
+    },
+
+    async archiveTerminalItems(ledgerIds, summary, gatePolicy) {
+      return withGenericAdmission([], (tx, adm) => {
+        if (adm.roots.length > 0) {
+          throw new WorksetGenericMutationError(
+            "archive-terminal-items-denied",
+            "archiveTerminalItems is denied under non-empty workset roots",
+          );
+        }
+        return tx.archiveTerminalItems(ledgerIds, summary, gatePolicy);
+      });
     },
 
     async archiveMilestone(milestoneId, summary) {

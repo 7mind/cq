@@ -991,21 +991,51 @@ export function assertArchiveDoesNotDropUnsatisfyingGates(
   ledgers: ReadonlyMap<string, Ledger>,
   milestoneId: string,
 ): void {
-  const registry = buildPrefixRegistry(
-    [...ledgers].map(([name, ledger]) => ({ name, schema: ledger.schema })),
-  );
-  const leaving = new Set<string>();
+  const leaving = new Map<string, string>();
   for (const [name, ledger] of ledgers) {
     if (name === MILESTONES_LEDGER) continue;
     const group = ledger.milestones.find((milestone) => milestone.id === milestoneId);
     if (group === undefined) continue;
     for (const item of group.items) {
       if (!statusSatisfiesDependency(ledger.schema, item.status)) {
-        leaving.add(`${name}:${item.id}`);
+        leaving.set(`${name}:${item.id}`, milestoneId);
       }
     }
   }
-  if (leaving.size === 0) return;
+  assertArchiveItemsDoNotDropUnsatisfyingGates(ledgers, leaving);
+}
+
+/** Refuse an item-level archive that would hide an unsatisfied active gate. */
+export function assertArchiveItemsDoNotDropUnsatisfyingGates(
+  ledgers: ReadonlyMap<string, Ledger>,
+  leaving: ReadonlyMap<string, string>,
+): void {
+  const blocker = collectUnsatisfiedDependencyArchiveBlockers(ledgers, leaving)[0];
+  if (blocker !== undefined) {
+    throw new UnsatisfiedDependencyArchiveError(
+      blocker.archiveScope,
+      blocker.dependentRef,
+      blocker.targetRef,
+    );
+  }
+}
+
+export interface UnsatisfiedDependencyArchiveBlocker {
+  readonly archiveScope: string;
+  readonly dependentRef: string;
+  readonly targetRef: string;
+}
+
+/** Find terminal items that must remain active because they still gate work. */
+export function collectUnsatisfiedDependencyArchiveBlockers(
+  ledgers: ReadonlyMap<string, Ledger>,
+  leaving: ReadonlyMap<string, string>,
+): readonly UnsatisfiedDependencyArchiveBlocker[] {
+  if (leaving.size === 0) return [];
+  const registry = buildPrefixRegistry(
+    [...ledgers].map(([name, ledger]) => ({ name, schema: ledger.schema })),
+  );
+  const blockers: UnsatisfiedDependencyArchiveBlocker[] = [];
   for (const [name, ledger] of ledgers) {
     const terminal = new Set(ledger.schema.terminalStatuses);
     for (const group of ledger.milestones) {
@@ -1023,13 +1053,15 @@ export function assertArchiveDoesNotDropUnsatisfyingGates(
           const parsed = parseRef(canonical);
           if (parsed.kind !== "prefixed") continue;
           const target = `${parsed.ledger}:${parsed.id}`;
-          if (leaving.has(target)) {
-            throw new UnsatisfiedDependencyArchiveError(milestoneId, `${name}:${item.id}`, target);
+          const archiveScope = leaving.get(target);
+          if (archiveScope !== undefined) {
+            blockers.push({ archiveScope, dependentRef: `${name}:${item.id}`, targetRef: target });
           }
         }
       }
     }
   }
+  return blockers;
 }
 
 /**

@@ -138,7 +138,9 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     // redundant field enumerations.
     // 1591 -> 1608 under T2896: the management-only continuation operation adds
     // its concise response contract while remaining below the corpus median.
-    maximumRemainingG93AttributableTokens: 1608,
+    // 1608 -> 1619 under D396: terminal-item archival adds one compact
+    // purpose-built acknowledgement while remaining below the corpus median.
+    maximumRemainingG93AttributableTokens: 1619,
     corpusMedianResponseSavingTokens: 1622,
     transportTools: ["fetch_dispatch_input", "store_result"],
     everyToolHasFieldDeltas: true,

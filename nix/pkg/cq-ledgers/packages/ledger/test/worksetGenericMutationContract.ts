@@ -345,6 +345,132 @@ export function runWorksetGenericMutationContract(
       expect(ptr.id).toBe(milestoneId);
     });
 
+    caseIt(factory, "archives terminal items without removing unfinished siblings and later merges the whole milestone [D396]", async () => {
+      const ledger = await factory.build();
+      await ledger.init();
+      const milestone = await ledger.mutations.createMilestone({ title: "partial archive" });
+      const finished = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "done",
+        fields: { headline: "finished" },
+      });
+      const unfinished = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "planned",
+        fields: { headline: "unfinished" },
+      });
+      const swept = await ledger.mutations.archiveTerminalItems(
+        [TASKS_LEDGER],
+        "completed item sweep",
+        "fail-on-active-gate",
+      );
+      expect(swept).toEqual({
+        archivedItems: 1,
+        archiveGroups: 1,
+        byLedger: { [TASKS_LEDGER]: 1 },
+        retainedActiveGates: [],
+      });
+      expect(() => ledger.fetchItem(TASKS_LEDGER, finished.id)).toThrow();
+      expect(ledger.fetchItem(TASKS_LEDGER, unfinished.id).status).toBe("planned");
+      const partial = await ledger.fetchArchive(TASKS_LEDGER, milestone.id);
+      expect(partial.kind).toBe("group");
+      if (partial.kind === "group") {
+        expect(partial.milestone.items.map((item) => item.id)).toEqual([finished.id]);
+      }
+
+      await ledger.mutations.updateItem(TASKS_LEDGER, unfinished.id, { status: "done" });
+      await ledger.mutations.updateMilestone(milestone.id, { status: "done" });
+      await ledger.mutations.archiveMilestone(milestone.id, "whole milestone");
+      const complete = await ledger.fetchArchive(TASKS_LEDGER, milestone.id);
+      expect(complete.kind).toBe("group");
+      if (complete.kind === "group") {
+        expect(complete.milestone.items.map((item) => item.id).sort()).toEqual(
+          [finished.id, unfinished.id].sort(),
+        );
+      }
+    });
+
+    caseIt(factory, "refuses a terminal-item sweep under restrictive roots", async () => {
+      const ledger = await factory.build();
+      await ledger.init();
+      const milestone = await ledger.mutations.createMilestone({ title: "restricted archive" });
+      const finished = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "done",
+        fields: { headline: "finished" },
+      });
+      await ledger.setRoots([`${TASKS_LEDGER}:${finished.id}`]);
+
+      await expectGatewayRejection(
+        ledger.mutations.archiveTerminalItems(
+          [TASKS_LEDGER],
+          "denied sweep",
+          "fail-on-active-gate",
+        ),
+        "archive-terminal-items-denied",
+      );
+      expect(ledger.fetchItem(TASKS_LEDGER, finished.id).status).toBe("done");
+    });
+
+    caseIt(factory, "refuses to archive an unsatisfying terminal item that still gates active work", async () => {
+      const ledger = await factory.build();
+      await ledger.init();
+      const milestone = await ledger.mutations.createMilestone({ title: "gated archive" });
+      const abandoned = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "abandoned",
+        fields: { headline: "abandoned prerequisite" },
+      });
+      const dependent = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "planned",
+        fields: {
+          headline: "active dependent",
+          dependsOn: [`${TASKS_LEDGER}:${abandoned.id}`],
+        },
+      });
+
+      await expect(
+        ledger.mutations.archiveTerminalItems(
+          [TASKS_LEDGER],
+          "unsafe sweep",
+          "fail-on-active-gate",
+        ),
+      ).rejects.toThrow(
+        `active ${TASKS_LEDGER}:${dependent.id} still depends on non-satisfying ${TASKS_LEDGER}:${abandoned.id}`,
+      );
+      expect(ledger.fetchItem(TASKS_LEDGER, abandoned.id).status).toBe("abandoned");
+    });
+
+    caseIt(factory, "retains unsatisfying active gates while archiving unrelated terminal items", async () => {
+      const ledger = await factory.build();
+      await ledger.init();
+      const milestone = await ledger.mutations.createMilestone({ title: "retained gate" });
+      const abandoned = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "abandoned",
+        fields: { headline: "retained prerequisite" },
+      });
+      const finished = await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "done",
+        fields: { headline: "independent completion" },
+      });
+      await ledger.mutations.createItem(TASKS_LEDGER, milestone.id, {
+        status: "planned",
+        fields: {
+          headline: "active dependent",
+          dependsOn: [`${TASKS_LEDGER}:${abandoned.id}`],
+        },
+      });
+      const result = await ledger.mutations.archiveTerminalItems(
+        [TASKS_LEDGER],
+        "retain active gates",
+        "retain-active-gates",
+      );
+      expect(result).toEqual({
+        archivedItems: 1,
+        archiveGroups: 1,
+        byLedger: { [TASKS_LEDGER]: 1 },
+        retainedActiveGates: [`${TASKS_LEDGER}:${abandoned.id}`],
+      });
+      expect(ledger.fetchItem(TASKS_LEDGER, abandoned.id).status).toBe("abandoned");
+      expect(() => ledger.fetchItem(TASKS_LEDGER, finished.id)).toThrow();
+    });
+
     caseIt(factory, "set waits behind an in-flight generic mutation admission", async () => {
       // Hold only the post-seed mutation critical section so setRoots observes
       // activeAdmissionCount > 0 and cannot finish until release.

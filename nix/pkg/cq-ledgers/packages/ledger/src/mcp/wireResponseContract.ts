@@ -239,6 +239,7 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     "`{ results: [{ ledgerId, item, score, matchedFields }] }`; each item uses the requested projection.",
   ),
   archive_milestone: purposeBuiltSmall("`{ pointer }` for the archived milestone."),
+  archive_terminal_items: purposeBuiltSmall("`{ sweep }`."),
   list_milestone_items: mandatoryItemProjection(
     "`{ items: Record<ledgerId, Item[]> }`; every item uses the requested projection.",
   ),
