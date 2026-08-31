@@ -135,6 +135,36 @@ function historicalReview(
   };
 }
 
+function protectedCompletionReview(
+  taskRef: string,
+  resultCommit: string,
+): DispatchJSONValue {
+  const taskId = taskRef.slice("tasks:".length);
+  return {
+    reviewRef: `reviews:R${taskId.slice(1)}`,
+    source: "active",
+    archiveId: null,
+    item: {
+      id: `R${taskId.slice(1)}`,
+      milestoneId: "M176",
+      status: "go-ahead",
+      fields: {
+        ledgerRefs: [taskRef, "goals:G176"],
+        implementationEvidence: JSON.stringify({
+          version: 1,
+          completionRef: `cq-implementation-completion:v1:${"4".repeat(64)}`,
+          taskRef,
+          resultCommit,
+          evidenceFingerprint: "5".repeat(64),
+          reviewAttemptRefs: [`cq-implementation-review-attempt:v1:${"6".repeat(64)}`],
+        }),
+      },
+      createdAt: "2026-08-27T00:00:00.000Z",
+      updatedAt: "2026-08-27T00:00:00.000Z",
+    },
+  };
+}
+
 function fixture(
   packaged: PackagedImplementationAuditManifest = manifest(),
   activationTaskRefs: readonly string[] = ["tasks:T10", "tasks:T11"],
@@ -976,6 +1006,70 @@ describe("protected historical implementation evidence [BA]", () => {
         author: "parent",
       })).rejects.toThrow("a different implementation evidence activation requirement is pending");
     }
+  });
+
+  test("supersedes an unapplied disapproval only when protected completion reviews repair the packaged evidence", async () => {
+    const f = fixture({
+      ...manifest(),
+      manifestId: "d347-implementation-evidence-activation-v2",
+    });
+    const originalDigest = implementationAuditManifestDigest(f.packaged);
+    const original = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: f.packaged.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-before-protected-review-repair",
+      author: "parent",
+    });
+    f.setNativeAuditOutputMode("disapprove");
+    for (const record of f.packaged.records) {
+      const panel = await f.service.prepareAuditPanel({
+        manifestId: f.packaged.manifestId,
+        manifestDigest: originalDigest,
+        recordKey: record.recordKey,
+        expectedRepositoryHead: HEAD,
+        operationId: `repair-panel-${record.recordKey}`,
+        author: "parent",
+      });
+      const attemptRef = panel.attemptRefs[0]!;
+      await f.service.prepareAuditAttempt({
+        panelRef: panel.panelRef,
+        attemptRef,
+        operationId: `repair-prepare-${record.recordKey}`,
+        author: "parent",
+      });
+      expect(await f.service.finalizeAuditAttempt({
+        attemptRef,
+        operationId: `repair-finalize-${record.recordKey}`,
+        author: "parent",
+      })).toMatchObject({ terminalState: "disapproved" });
+    }
+
+    const repaired = {
+      ...f.packaged,
+      sourceDigest: "7".repeat(64),
+      records: f.packaged.records.map((record) => ({
+        ...record,
+        historicalReview: protectedCompletionReview(record.taskRef, record.resultCommit),
+      })),
+    };
+    f.replacePackaged(repaired);
+    const replacement = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: repaired.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "rearm-after-protected-review-repair",
+      author: "parent",
+    });
+    expect(replacement).toMatchObject({ supersededRequirementRef: original.requirementRef });
+    expect(await f.service.applyAuditManifest({
+      manifestId: repaired.manifestId,
+      manifestDigest: implementationAuditManifestDigest(repaired),
+      expectedRepositoryHead: HEAD,
+      auditAttemptRefs: [],
+      operationId: "apply-protected-review-repair",
+      author: "parent",
+    })).toMatchObject({ status: "applied", activation: "activated" });
   });
 
   test("rejects authority changes at protected activation and audit write boundaries", async () => {

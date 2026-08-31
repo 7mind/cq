@@ -1556,6 +1556,7 @@ function qualifyingHistoricalReview(
   review: DispatchJSONValue | null,
   record: PackagedImplementationAuditRecord,
 ): boolean {
+  if (protectedCompletionReviewObservation(review, record)) return true;
   if (
     !object(review) ||
     review["taskId"] !== taskIdFromRef(record.taskRef) ||
@@ -1577,6 +1578,78 @@ function qualifyingHistoricalReview(
     ancestry["resultCommit"] === record.resultCommit &&
     ancestry["mergeBase"] === record.baseCommit
   );
+}
+
+function protectedCompletionReviewObservation(
+  review: DispatchJSONValue | null,
+  record: PackagedImplementationAuditRecord,
+): boolean {
+  if (!object(review) || !object(review["item"])) return false;
+  const item = review["item"];
+  const fields = item["fields"];
+  if (
+    !object(fields) ||
+    typeof item["id"] !== "string" ||
+    review["reviewRef"] !== `reviews:${item["id"]}` ||
+    item["status"] !== "go-ahead" ||
+    (review["source"] !== "active" && review["source"] !== "archive") ||
+    (review["source"] === "active"
+      ? review["archiveId"] !== null
+      : typeof review["archiveId"] !== "string") ||
+    !stringArray(fields["ledgerRefs"]) ||
+    !fields["ledgerRefs"].includes(record.taskRef) ||
+    typeof fields["implementationEvidence"] !== "string"
+  )
+    return false;
+  let evidence: unknown;
+  try {
+    evidence = JSON.parse(fields["implementationEvidence"]);
+  } catch {
+    return false;
+  }
+  if (!object(evidence)) return false;
+  const attemptRefs = evidence["reviewAttemptRefs"];
+  return (
+    evidence["version"] === 1 &&
+    typeof evidence["completionRef"] === "string" &&
+    COMPLETION_REF.test(evidence["completionRef"]) &&
+    evidence["taskRef"] === record.taskRef &&
+    evidence["resultCommit"] === record.resultCommit &&
+    typeof evidence["evidenceFingerprint"] === "string" &&
+    /^[0-9a-f]{64}$/u.test(evidence["evidenceFingerprint"]) &&
+    Array.isArray(attemptRefs) &&
+    attemptRefs.length > 0 &&
+    attemptRefs.every((ref) => typeof ref === "string" && ATTEMPT_REF.test(ref))
+  );
+}
+
+function panelMatchesProtectedReviewRepair(
+  panel: ImplementationAuditPanelRecord,
+  record: PackagedImplementationAuditRecord,
+  priorRepositoryHead: string,
+): boolean {
+  if (!object(panel.auditInput) || !protectedCompletionReviewObservation(record.historicalReview, record))
+    return false;
+  const prior = panel.auditInput;
+  const observed = {
+    recordKey: prior["recordKey"],
+    taskRef: prior["taskRef"],
+    ownerGoalRef: prior["ownerGoalRef"],
+    finalizedManifest: prior["finalizedManifest"],
+    historicalReview: prior["historicalReview"],
+    baseCommit: prior["baseCommit"],
+    resultCommit: prior["resultCommit"],
+    repositoryHead: prior["repositoryHead"],
+    diff: prior["diff"],
+    acceptance: prior["acceptance"],
+    gateObservations: prior["gateObservations"],
+    requiredObservations: prior["requiredObservations"],
+  };
+  return canonical(observed) === canonical({
+    ...record,
+    historicalReview: null,
+    repositoryHead: priorRepositoryHead,
+  });
 }
 
 export async function implementationEvidenceActivationStatusFromStore(
@@ -2863,6 +2936,37 @@ export class ImplementationEvidenceService {
           allAttemptsAreTerminalAndNonDisapproved &&
           everyInconclusivePanelExhaustedFallback &&
           hasInconclusiveRecord;
+        const protectedReviewRepairCohort =
+          blocking.manifestId === IMPLEMENTATION_EVIDENCE_ACTIVATION_MANIFEST_V2 &&
+          blocking.state === "armed" &&
+          blocking.semanticManifestDigest !== semanticManifestDigest &&
+          matchingPanels.length === records.length &&
+          matchingAudits.length === 0 &&
+          matchingApplications.length === 0 &&
+          records.every((record) => {
+            const panels = panelsFor(record);
+            const currentRecord = manifest.records.find(
+              (candidate) =>
+                candidate.recordKey === record.recordKey && candidate.taskRef === record.taskRef,
+            );
+            if (panels.length !== 1 || currentRecord === undefined) return false;
+            const attempts = attemptsFor(panels[0]!);
+            return (
+              attempts.length > 0 &&
+              attempts.every(
+                (attempt) =>
+                  attempt !== undefined &&
+                  attempt.panelRef === panels[0]!.panelRef &&
+                  attempt.terminalState !== null,
+              ) &&
+              attempts.some((attempt) => attempt?.terminalState === "disapproved") &&
+              panelMatchesProtectedReviewRepair(
+                panels[0]!,
+                currentRecord,
+                blocking.boundaryCommit,
+              )
+            );
+          });
         const hasPreparedEvidence =
           matchingPanels.length > 0 ||
           matchingAudits.length > 0 ||
@@ -2884,8 +2988,11 @@ export class ImplementationEvidenceService {
             resultCommit: blocking.boundaryCommit,
           });
         if (
-          (blocking.boundaryCommit === repositoryHead && !terminalInconclusiveAuditCohort) ||
-          blocking.semanticManifestDigest !== semanticManifestDigest ||
+          (blocking.boundaryCommit === repositoryHead &&
+            !terminalInconclusiveAuditCohort &&
+            !protectedReviewRepairCohort) ||
+          (blocking.semanticManifestDigest !== semanticManifestDigest &&
+            !protectedReviewRepairCohort) ||
           blocking.finalizedManifestDigest !== cohort.finalizedManifestDigest ||
           blocking.evidenceTaskRef !== cohort.evidenceTaskRef ||
           blocking.auditTaskRef !== cohort.auditTaskRef ||
@@ -2894,7 +3001,9 @@ export class ImplementationEvidenceService {
           (blocking.state === "armed" &&
             (blocking.activationRef !== null ||
               blocking.fulfilledAt !== null ||
-              (hasPreparedEvidence && !terminalInconclusiveAuditCohort))) ||
+              (hasPreparedEvidence &&
+                !terminalInconclusiveAuditCohort &&
+                !protectedReviewRepairCohort))) ||
           (blocking.state === "fulfilled" &&
             (blocking.activationRef === null ||
               blocking.fulfilledAt === null ||

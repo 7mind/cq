@@ -146,6 +146,50 @@ function historicalReviewObservation(review: SourcedItem | undefined): DispatchJ
   } as DispatchJSONValue;
 }
 
+function protectedCompletionReview(
+  reviews: readonly SourcedItem[],
+  task: SourcedItem,
+): SourcedItem {
+  const taskRef = `${TASKS_LEDGER}:${task.item.id}`;
+  const resultCommit = task.item.fields["resultCommit"];
+  const matches = reviews.filter(({ item }) => {
+    if (item.status !== "go-ahead") return false;
+    const ledgerRefs = item.fields["ledgerRefs"];
+    const encoded = item.fields["implementationEvidence"];
+    if (!Array.isArray(ledgerRefs) || !ledgerRefs.includes(taskRef) || typeof encoded !== "string")
+      return false;
+    let evidence: unknown;
+    try {
+      evidence = JSON.parse(encoded);
+    } catch {
+      return false;
+    }
+    if (typeof evidence !== "object" || evidence === null || Array.isArray(evidence)) return false;
+    const record = evidence as Record<string, unknown>;
+    return (
+      record["version"] === 1 &&
+      record["taskRef"] === taskRef &&
+      record["resultCommit"] === resultCommit &&
+      typeof record["completionRef"] === "string" &&
+      /^cq-implementation-completion:v1:[0-9a-f]{64}$/u.test(record["completionRef"]) &&
+      typeof record["evidenceFingerprint"] === "string" &&
+      /^[0-9a-f]{64}$/u.test(record["evidenceFingerprint"]) &&
+      Array.isArray(record["reviewAttemptRefs"]) &&
+      record["reviewAttemptRefs"].length > 0 &&
+      record["reviewAttemptRefs"].every(
+        (ref) =>
+          typeof ref === "string" &&
+          /^cq-implementation-review-attempt:v1:[0-9a-f]{64}$/u.test(ref),
+      )
+    );
+  });
+  if (matches.length !== 1)
+    throw new Error(
+      `${taskRef} has ${String(matches.length)} exact protected completion reviews`,
+    );
+  return matches[0]!;
+}
+
 function baseCommitFromWip(taskId: string, wip: string): string {
   const fenced = /^```json\n([\s\S]*?)\n```/u.exec(wip);
   if (fenced?.[1] === undefined) throw new Error(`WIP-${taskId}.md has no fenced JSON header`);
@@ -489,6 +533,13 @@ export async function readPackagedImplementationAuditManifest(
     if (!selectedRefs.includes(mappings.evidenceTaskRef) ||
       !selectedRefs.includes(mappings.auditTaskRef))
       throw new Error("D347 authority-derived cohort omits a finalized bootstrap task mapping");
+    if (activation.manifestId === D347_IMPLEMENTATION_EVIDENCE_ACTIVATION_RULE_V2.manifestId) {
+      reviewRefs = Object.fromEntries(selected.map((task) => {
+        const taskRef = `${TASKS_LEDGER}:${task.item.id}`;
+        const review = protectedCompletionReview(reviews, task);
+        return [taskRef, `${REVIEWS_LEDGER}:${review.item.id}`];
+      }));
+    }
   }
 
   const recordsAndSources = await Promise.all(

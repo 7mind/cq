@@ -391,6 +391,18 @@ describe("trusted historical implementation fixture rules [BA]", () => {
       worksetOwnerRef: "goals:G176",
       worksetOwnerEdgeKind: "finalized-manifest",
     }, "M347");
+    const protectedReview = (id: string, taskId: string) => authorityItem(id, "go-ahead", {
+      summary: `approved ${taskId}`,
+      ledgerRefs: [`tasks:${taskId}`, "goals:G176"],
+      implementationEvidence: JSON.stringify({
+        version: 1,
+        completionRef: `cq-implementation-completion:v1:${"1".repeat(64)}`,
+        taskRef: `tasks:${taskId}`,
+        resultCommit: head,
+        evidenceFingerprint: "2".repeat(64),
+        reviewAttemptRefs: [`cq-implementation-review-attempt:v1:${"3".repeat(64)}`],
+      }),
+    }, "M347");
     const ledgers: Record<string, readonly ReturnType<typeof authorityItem>[]> = {
       tasks: [
         finalizedTask("T3000"),
@@ -405,15 +417,20 @@ describe("trusted historical implementation fixture rules [BA]", () => {
       ],
       goals: [authorityItem("G176", "building", { title: "D347", planFinalizedManifest: finalized })],
       defects: [],
-      reviews: [authorityItem("R1548", "revise", {
-        taskRef: "tasks:T2346",
-        ledgerRefs: ["tasks:T2346"],
-        criticism: ["replacement required"],
-      }, "M347"), authorityItem("R1556", "revise", {
-        taskRef: "tasks:T2346",
-        ledgerRefs: ["tasks:T2346"],
-        criticism: ["later rejected correction"],
-      }, "M347")],
+      reviews: [
+        authorityItem("R1548", "revise", {
+          taskRef: "tasks:T2346",
+          ledgerRefs: ["tasks:T2346"],
+          criticism: ["replacement required"],
+        }, "M347"),
+        authorityItem("R1556", "revise", {
+          taskRef: "tasks:T2346",
+          ledgerRefs: ["tasks:T2346"],
+          criticism: ["later rejected correction"],
+        }, "M347"),
+        protectedReview("R3000", "T3000"),
+        protectedReview("R3001", "T3001"),
+      ],
       operatorActions: [],
     };
     const packaged = await readPackagedImplementationAuditManifest({
@@ -444,6 +461,10 @@ describe("trusted historical implementation fixture rules [BA]", () => {
     expect(packaged.records.map(({ taskRef }) => taskRef)).toEqual([
       "tasks:T3000",
       "tasks:T3001",
+    ]);
+    expect(packaged.records.map(({ historicalReview }) => historicalReview)).toEqual([
+      expect.objectContaining({ reviewRef: "reviews:R3000" }),
+      expect.objectContaining({ reviewRef: "reviews:R3001" }),
     ]);
     expect(packaged.nonAuthorizingProvenance).toEqual([{
       ...D347_REJECTED_PREDECESSOR_PROVENANCE,
