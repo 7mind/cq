@@ -497,12 +497,15 @@ export function createProductionImplementationEvidenceService(
     const published = PlanPublishedManifestSchema.parse(parsed);
     const mappings = resolveImplementationEvidenceActivationTaskMappings(published, rule);
     const predicates = derivePredicates(store);
-    const taskAuthority = (
+    const taskAuthority = async (
       taskRef: string,
       ready: boolean,
       includeActionKey: boolean,
     ) => {
-      const task = store.fetchItem(TASKS_LEDGER, taskRef.slice(`${TASKS_LEDGER}:`.length));
+      const task = await resolveUniqueTaskState(
+        store,
+        taskRef.slice(`${TASKS_LEDGER}:`.length),
+      );
       const ownership = readCanonicalOwnership(task);
       if (
         ownership?.ownerRef !== rule.goalRef ||
@@ -535,17 +538,17 @@ export function createProductionImplementationEvidenceService(
         historicalTaskRef: mappings.auditTaskRef,
         activationTaskRef: mappings.activationTaskRef,
       },
-      evidenceTask: taskAuthority(
+      evidenceTask: await taskAuthority(
         mappings.evidenceTaskRef,
         predicates.pImplement.items.includes(evidenceTaskId),
         false,
       ),
-      historicalTask: taskAuthority(
+      historicalTask: await taskAuthority(
         mappings.auditTaskRef,
         predicates.pImplement.items.includes(historicalTaskId),
         false,
       ),
-      activationTask: taskAuthority(
+      activationTask: await taskAuthority(
         mappings.activationTaskRef,
         predicates.pOperatorAction.items.includes(activationTaskId),
         true,
@@ -744,7 +747,7 @@ export function createProductionImplementationEvidenceService(
     },
     readTaskAuthority: async (taskRef) => {
       const taskId = taskRef.slice("tasks:".length);
-      const task = store.fetchItem(TASKS_LEDGER, taskId);
+      const task = await resolveUniqueTaskState(store, taskId);
       const ownership = readCanonicalOwnership(task);
       if (ownership === null || !ownership.ownerRef.startsWith(`${GOALS_LEDGER}:`)) {
         throw new Error(`implementation task ${taskRef} has no sealed owning goal`);
@@ -799,7 +802,7 @@ export function createProductionImplementationEvidenceService(
         manifest.activation,
       );
       const activationTaskId = mappings.activationTaskRef.slice(`${TASKS_LEDGER}:`.length);
-      const activationTask = store.fetchItem(TASKS_LEDGER, activationTaskId);
+      const activationTask = await resolveUniqueTaskState(store, activationTaskId);
       if (operatorActionDirectiveForTask(activationTask)?.actionKey !== "activate-implementation-evidence")
         throw new Error("activation task lacks the strict implementation-evidence operator envelope");
       const observations = [];
