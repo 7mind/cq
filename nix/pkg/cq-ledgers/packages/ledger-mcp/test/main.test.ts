@@ -23,7 +23,7 @@ import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { serializePromptSurfaceManifest } from "@cq/config";
+import { planAdvanceSidecar, serializePromptSurfaceManifest } from "@cq/config";
 import {
   createLedgerStore,
   CANONICAL_LEDGERS,
@@ -102,14 +102,14 @@ beforeAll(async () => {
   ]);
   const schemaJson = JSON.stringify({
     id: roleId,
-    version: 2,
+    version: planAdvanceSidecar.version,
     inputSchema: { type: "object" },
     outputSchema: { type: "object" },
   });
   const roles = [
     {
       roleId,
-      version: 2,
+      version: planAdvanceSidecar.version,
       sha256: createHash("sha256").update(roleBytes, "utf8").digest("hex"),
       schemaSha256: createHash("sha256").update(schemaJson, "utf8").digest("hex"),
     },
@@ -239,6 +239,14 @@ describe("ledger-mcp stdio binary", () => {
             roleId: "plan-advance",
             input: {
               goalId: "G695",
+              activeClaim: {
+                goalId: "G695",
+                claimId: "claim_G695_1",
+                generation: 1,
+                purpose: "initial",
+              },
+              currentDraftIdentity: null,
+              latestReviewId: null,
             },
             idempotencyKey: "T695-production-stdio",
             timeoutMs: 120_000,

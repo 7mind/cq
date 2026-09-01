@@ -9,7 +9,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { serializePromptSurfaceManifest } from "@cq/config";
+import { planAdvanceSidecar, serializePromptSurfaceManifest } from "@cq/config";
 import {
   createAttestationStoreForConstruction,
   LEDGER_TOOL_NAMES,
@@ -254,7 +254,7 @@ beforeAll(async () => {
     const orchestratorBytes = `orchestrator ${surface}\n`;
     const dispatchedSchema = JSON.stringify({
       id: DISPATCHED_ROLE_ID,
-      version: 2,
+      version: planAdvanceSidecar.version,
       inputSchema: { type: "object" },
       outputSchema: { type: "object" },
     });
@@ -267,7 +267,7 @@ beforeAll(async () => {
     const roles = [
       {
         roleId: DISPATCHED_ROLE_ID,
-        version: 2,
+        version: planAdvanceSidecar.version,
         sha256: createHash("sha256").update(dispatchedBytes, "utf8").digest("hex"),
         schemaSha256: createHash("sha256").update(dispatchedSchema, "utf8").digest("hex"),
       },

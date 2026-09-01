@@ -299,7 +299,17 @@ describe("registry-derived launch schema", () => {
   const FIXTURE_LAUNCH_SCHEMA = compactDispatchLaunchSchemaFor(FIXTURE_REGISTRY);
   const VALID_LAUNCH = {
     roleId: "plan-advance",
-    input: { goalId: "G94" },
+    input: {
+      goalId: "G94",
+      activeClaim: {
+        goalId: "G94",
+        claimId: "claim_G94_1",
+        generation: 1,
+        purpose: "initial",
+      },
+      currentDraftIdentity: null,
+      latestReviewId: null,
+    },
     idempotencyKey: "dispatch-plan",
     timeoutMs: 120_000,
   };

@@ -56,8 +56,8 @@ const REPOSITORY_ROOT = resolve(import.meta.dir, "../../../../../..");
 
 const SCHEMA_PINS_JSON = String.raw`{
   "plan-advance": {
-    "version": 2,
-    "digest": "095f30b6126d07f8e7ee85631376715c5beff89a6746c6c973def3a9ae5c4f3c"
+    "version": 3,
+    "digest": "5afb0fedab21326fb4d4dbd6243610ab07510462c42007d383e185333cef595f"
   },
   "plan-reviewer": {
     "version": 1,

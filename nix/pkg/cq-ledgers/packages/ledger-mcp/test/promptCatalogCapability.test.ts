@@ -40,6 +40,17 @@ import {
 const DISPATCHED_ROLE = "plan-advance";
 const COMMAND_ROLE = "advance";
 const PROMPT_SURFACE = "codex";
+const VALID_PLAN_INPUT = {
+  goalId: "G1",
+  activeClaim: {
+    goalId: "G1",
+    claimId: "claim_G1_1",
+    generation: 1,
+    purpose: "initial",
+  },
+  currentDraftIdentity: null,
+  latestReviewId: null,
+} as const;
 
 const INTENTIONAL_DIFFERENCE = {
   kind: "tool-vocabulary",
@@ -215,7 +226,7 @@ function runPromptCatalogSuite(label: string, make: () => PromptCatalogCapabilit
     it("an allowlisted debug caller reaches validateInput directly, outside tools/list", () => {
       expect(isAllowlistedValidateInputCaller("agents-tab")).toBe(true);
       const cap = make();
-      const result = cap.validateInput(DISPATCHED_ROLE, { goalId: "G41" });
+      const result = cap.validateInput(DISPATCHED_ROLE, VALID_PLAN_INPUT);
       expect(result.ok).toBe(true);
     });
 
@@ -376,18 +387,18 @@ describe("attested version pairing (T683)", () => {
  */
 describe("D60 regression — validateInput string-tolerance at the capability boundary", () => {
   // (i) Genuine object input — already passes today; stays a normal test.
-  it("(i) genuine object {goalId:'G1'} → {ok:true}", () => {
+  it("(i) genuine state-bound object → {ok:true}", () => {
     const cap = makeCapability();
-    const result = cap.validateInput(DISPATCHED_ROLE, { goalId: "G1" });
+    const result = cap.validateInput(DISPATCHED_ROLE, VALID_PLAN_INPUT);
     expect(result.ok).toBe(true);
   });
 
   // (ii) JSON-string encoding of a valid payload — validateInput parses the
   // JSON string before validating. The MCP wire serialises the nested `input`
   // arg as a JSON string; validateInput must parse it before validating.
-  test("(ii) JSON-string JSON.stringify({goalId:'G1'}) → {ok:true} [D60]", () => {
+  test("(ii) JSON-string state-bound payload → {ok:true} [D60]", () => {
     const cap = makeCapability();
-    const result = cap.validateInput(DISPATCHED_ROLE, JSON.stringify({ goalId: "G1" }));
+    const result = cap.validateInput(DISPATCHED_ROLE, JSON.stringify(VALID_PLAN_INPUT));
     expect(result.ok).toBe(true);
   });
 

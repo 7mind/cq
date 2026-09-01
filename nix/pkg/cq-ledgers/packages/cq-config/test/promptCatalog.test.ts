@@ -42,14 +42,65 @@ describe("plan-advance schema sidecar (T336 proof-of-one-role)", () => {
 
   test("inputSchema ACCEPTS a valid example", () => {
     const validate = newAjv().compile(planAdvanceSidecar.inputSchema);
-    expect(validate({ goalId: "G41" })).toBe(true);
-    expect(validate({ goalId: "G41", candidateMode: true })).toBe(true);
+    const planningState = {
+      activeClaim: {
+        goalId: "G41",
+        claimId: "claim_G41_2",
+        generation: 2,
+        purpose: "initial",
+      },
+      currentDraftIdentity: {
+        goalId: "G41",
+        claimId: "claim_G41_2",
+        generation: 2,
+        revision: 38,
+      },
+      latestReviewId: "R2994",
+    };
+    expect(validate({ goalId: "G41", ...planningState })).toBe(true);
+    expect(validate({ goalId: "G41", candidateMode: true, ...planningState })).toBe(true);
+    expect(
+      validate({
+        goalId: "G41",
+        activeClaim: planningState.activeClaim,
+        currentDraftIdentity: null,
+        latestReviewId: null,
+      }),
+    ).toBe(true);
   });
 
   test("inputSchema REJECTS invalid examples", () => {
     const validate = newAjv().compile(planAdvanceSidecar.inputSchema);
     // missing required goalId
-    expect(validate({ candidateMode: true })).toBe(false);
+    expect(
+      validate({
+        candidateMode: true,
+        activeClaim: {
+          goalId: "G41",
+          claimId: "claim_G41_2",
+          generation: 2,
+          purpose: "initial",
+        },
+        currentDraftIdentity: null,
+        latestReviewId: null,
+      }),
+    ).toBe(false);
+    // dispatches must bind the exact planning state; goalId alone is stale-state prone
+    expect(validate({ goalId: "G41" })).toBe(false);
+    // a review cannot be current when no current draft exists
+    expect(
+      validate({
+        goalId: "G41",
+        activeClaim: {
+          goalId: "G41",
+          claimId: "claim_G41_2",
+          generation: 2,
+          purpose: "initial",
+        },
+        currentDraftIdentity: null,
+        latestReviewId: "R2994",
+      }),
+    ).toBe(false);
     // malformed goal id (not G<digits>)
     expect(validate({ goalId: "41" })).toBe(false);
     // wrong type for candidateMode

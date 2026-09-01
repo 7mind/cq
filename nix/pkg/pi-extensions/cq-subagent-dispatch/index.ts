@@ -1640,11 +1640,17 @@ export type RoleContractSide = "input" | "output";
  */
 export const DISPATCHED_ROLE_CONTRACTS: Readonly<Record<string, RoleContractProjection>> = {
   "plan-advance": {
-    version: 2,
+    version: 3,
     input: [
       {
-        required: ["goalId"],
-        kinds: { candidateMode: ["boolean"], goalId: ["string"] },
+        required: ["activeClaim", "currentDraftIdentity", "goalId", "latestReviewId"],
+        kinds: {
+          activeClaim: ["object"],
+          candidateMode: ["boolean"],
+          currentDraftIdentity: [],
+          goalId: ["string"],
+          latestReviewId: [],
+        },
         closed: true,
       },
     ],

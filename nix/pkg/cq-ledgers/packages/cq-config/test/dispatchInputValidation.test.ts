@@ -71,13 +71,24 @@ const FIXTURE_APPLICATION: DispatchOverlayApplication = {
   overlayId: "fixture-focus",
   data: { note: "prefer the failing suite" },
 };
+const BOUND_PLAN_INPUT = {
+  goalId: "G94",
+  activeClaim: {
+    goalId: "G94",
+    claimId: "claim_G94_1",
+    generation: 1,
+    purpose: "initial",
+  },
+  currentDraftIdentity: null,
+  latestReviewId: null,
+} as const;
 
 function validate(
   overrides: Partial<DispatchInputValidationRequest> = {},
 ): DispatchInputValidation {
   return validateDispatchInput({
     roleId: "plan-advance",
-    input: { goalId: "G94" },
+    input: BOUND_PLAN_INPUT,
     surface: "codex",
     registry: FIXTURE_REGISTRY,
     ...overrides,
@@ -163,12 +174,20 @@ describe("the inside-prepare validation entry point", () => {
   });
 
   test("rejects role input failing the role's bound inputSchema", () => {
-    const rejection = rejectionOf(validate({ input: { goalId: "not-a-goal" } }));
+    const rejection = rejectionOf(
+      validate({ input: { ...BOUND_PLAN_INPUT, goalId: "not-a-goal" } }),
+    );
     expect(rejection.reason).toBe("invalid-role-input");
     expect(rejection.path).toBe("input");
     expect(rejection.detail).toContain("invalid role input");
 
-    for (const input of [{}, { goalId: 7 }, { goalId: "G94", extra: true }, null, "G94"]) {
+    for (const input of [
+      {},
+      { ...BOUND_PLAN_INPUT, goalId: 7 },
+      { ...BOUND_PLAN_INPUT, extra: true },
+      null,
+      "G94",
+    ]) {
       expect(rejectionOf(validate({ input })).reason).toBe("invalid-role-input");
     }
   });

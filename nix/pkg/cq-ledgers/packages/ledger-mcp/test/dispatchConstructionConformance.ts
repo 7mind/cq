@@ -8,6 +8,14 @@ import {
 
 const VALID_INPUT = Object.freeze({
   goalId: "G977",
+  activeClaim: {
+    goalId: "G977",
+    claimId: "claim_G977_1",
+    generation: 1,
+    purpose: "initial",
+  },
+  currentDraftIdentity: null,
+  latestReviewId: null,
 });
 
 interface ToolResultLike {

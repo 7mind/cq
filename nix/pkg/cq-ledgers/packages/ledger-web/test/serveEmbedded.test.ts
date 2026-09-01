@@ -22,7 +22,7 @@ import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { serializePromptSurfaceManifest } from "@cq/config";
+import { planAdvanceSidecar, serializePromptSurfaceManifest } from "@cq/config";
 import {
   createAttestationStoreForConstruction,
   createLedgerStore,
@@ -114,7 +114,7 @@ beforeAll(async () => {
   ]);
   const planAdvanceSchema = JSON.stringify({
     id: "plan-advance",
-    version: 2,
+    version: planAdvanceSidecar.version,
     inputSchema: { type: "object" },
     outputSchema: { type: "object" },
   });
@@ -127,7 +127,7 @@ beforeAll(async () => {
   const roles = [
     {
       roleId: "plan-advance",
-      version: 2,
+      version: planAdvanceSidecar.version,
       sha256: createHash("sha256").update(PROMPT_BYTES, "utf8").digest("hex"),
       schemaSha256: createHash("sha256").update(planAdvanceSchema, "utf8").digest("hex"),
     },

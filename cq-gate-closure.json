@@ -126,13 +126,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/scripts/probe-codex-role-dispatch.ts",
-      "sha256": "9386dff52ab3c83e10ea81c1f1a181f8e540aeb0b92ae7ae49fa34b48a0559a7",
+      "sha256": "2988e812cea49688c6d23a43b2e78e17dbebea21945a5af3b2ff500254b18b83",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/scripts/probe-codex-role-dispatch.ts",
-      "sha256": "9386dff52ab3c83e10ea81c1f1a181f8e540aeb0b92ae7ae49fa34b48a0559a7",
+      "sha256": "2988e812cea49688c6d23a43b2e78e17dbebea21945a5af3b2ff500254b18b83",
       "targets": []
     },
     {
@@ -312,7 +312,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/planAdvanceCandidatePromptContract.test.ts",
-      "sha256": "ee818d13bf93ba3040e6d79935fd320bbafbee309e74c0d6a0bdfe82f63e1f2a",
+      "sha256": "6df3ac7dbb84b94cc88b6e7406e7b5ca313d84c40c517c5ade8032631a5393b6",
       "targets": []
     },
     {
@@ -336,7 +336,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/promptCatalogStore.test.ts",
-      "sha256": "000aa8709eb0800ce86059cf0c1b4df08a057ed0a4982de7f1ca679d09b5e5ab",
+      "sha256": "ba222092c493311b8917823f3da35988fb02df2cfcb912d8e6c4c39647e45db8",
       "targets": []
     },
     {
@@ -1397,7 +1397,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-web/test/serveEmbedded.test.ts",
-      "sha256": "3f12000f5e310e74e6c7280b947d1688efc40afbf3cb60d7ff7ba149338d5490",
+      "sha256": "6b6490099eec1d8f83ad3da031d5e08e848da10133ee60c378a2138bffe04621",
       "targets": []
     },
     {
@@ -2207,13 +2207,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/pi-extensions/cq-subagent-dispatch/index.ts",
-      "sha256": "e3e6a326c2fd89dd1bfbcd2f85c767d1965f7cc6c07a2932c35630bd2337e5c6",
+      "sha256": "f5516f9da898179686f1ad4a7e902161f38ef52544ae4b2484a1a8f8e7db67a4",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/pi-extensions/cq-subagent-dispatch/index.ts",
-      "sha256": "e3e6a326c2fd89dd1bfbcd2f85c767d1965f7cc6c07a2932c35630bd2337e5c6",
+      "sha256": "f5516f9da898179686f1ad4a7e902161f38ef52544ae4b2484a1a8f8e7db67a4",
       "targets": []
     },
     {

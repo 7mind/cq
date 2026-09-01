@@ -9,8 +9,9 @@ description: Read-only plan-flow planner. In default mode returns one PlanStepRe
 ## Catalogue
 ```yaml
 inputs:
-  - "goal id"
-  - "full goal, answered questions, latest review, current draft, and repository context"
+  - "goal id and exact active public claim"
+  - "nullable currentDraftIdentity and nullable latestReviewId planning-state binding"
+  - "full goal, answered questions, bound review, current draft, and repository context"
   - "explicit candidate-mode request when participating in a planner panel"
 outputs:
   - "default: one schema-valid PlanStepResult object"
@@ -26,10 +27,33 @@ the selected mode.
 
 ## Read state
 
-Fetch the goal with full projection. From its coordination milestone, read
-goal-linked questions and reviews with full projection. Choose the latest
-review by id ordering. Read `planCurrentDraft` when revising. Incorporate all
-answered questions and existing grounding.
+The prepared typed input binds this dispatch to `activeClaim`,
+`currentDraftIdentity`, and `latestReviewId`. Fetch the goal with full
+projection. Parse its active public claim and current draft identity, treating
+an absent current draft as null. From its coordination milestone, read
+goal-linked questions and reviews' ids plus `planDraft` bindings.
+
+Before planning, require all of the following exact matches:
+
+- the input `goalId`, `activeClaim.goalId`, and fetched goal id are equal;
+- the fetched active public claim equals the bound `activeClaim` in goal id,
+  claim id, generation, and purpose;
+- the fetched current draft identity equals bound `currentDraftIdentity`,
+  including null;
+- the highest goal-linked review id whose `planDraft` equals
+  `currentDraftIdentity` equals bound `latestReviewId`, including null; when
+  `currentDraftIdentity` is null, `latestReviewId` must also be null.
+
+When `latestReviewId` is non-null, fetch the exact bound review with full
+projection. Require its `goals:<goalId>` link and require its `planDraft` to
+equal `currentDraftIdentity`. Use only that review when choosing an action; do
+not substitute another review discovered from ambient state. Read the matched
+`planCurrentDraft` manifest when revising. Incorporate all answered questions
+and existing grounding.
+
+If any binding is malformed or differs from live state, fail closed: produce no
+role result and perform no mutation. The parent will reject or retry the stale
+dispatch with a fresh prepared input.
 
 Triage unknowns by who can answer them:
 

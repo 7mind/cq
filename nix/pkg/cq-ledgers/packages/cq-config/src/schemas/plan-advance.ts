@@ -5,11 +5,13 @@
  * The schemas below are authored DIRECTLY from `cq-assets/agents/plan-advance.md`
  * — its `## Catalogue` block and its DEFAULT/CANDIDATE mode contracts:
  *
- * - **Input** — a goal id `G`, plus the explicit CANDIDATE-mode flag the
- *   orchestrator sets when it dispatches one of N parallel candidate planners
- *   (generate-N-then-judge, Q100/Q101). The ledger state for `G` is read by the
- *   subagent itself via the ledger MCP tools, so it is not part of the
- *   parent-supplied input contract; the parent supplies the goal id and the mode.
+ * - **Input** — a goal id `G`, the exact active public claim, nullable current
+ *   draft identity, nullable latest review id, plus the explicit CANDIDATE-mode
+ *   flag the orchestrator sets when it dispatches one of N parallel candidate
+ *   planners (generate-N-then-judge, Q100/Q101). The state binding makes the
+ *   prepared input digest change across claims, drafts, and review rounds. The
+ *   subagent reads the corresponding ledger entities and verifies that live
+ *   state still matches before producing a result.
  *
  * - **Output** — mode-gated, so a `oneOf`:
  *   - DEFAULT mode returns a typed **PlanStepResult** (T854): exactly one
@@ -53,9 +55,9 @@ const DEFECT_SEVERITIES = ["low", "medium", "high", "critical"] as const;
 const CLIENT_KEY_PATTERN = "^[A-Za-z][A-Za-z0-9_-]*$";
 
 /**
- * The parent-supplied input contract for a plan-advance dispatch: the goal id and
- * the optional candidate-mode flag. `goalId` matches the ledger goal-id token
- * shape (`G` followed by digits, e.g. `G41`).
+ * The parent-supplied input contract for a plan-advance dispatch. Required
+ * nullable fields make the absence of a draft or review an explicit snapshot,
+ * rather than an omitted value that could be mistaken for legacy input.
  */
 const inputSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -68,14 +70,57 @@ const inputSchema = {
       description: "The goal id G passed in the dispatch prompt (e.g. G41).",
       pattern: "^G[0-9]+$",
     },
+    activeClaim: {
+      type: "object",
+      description: "The exact active public planning claim held by the orchestrator.",
+      properties: {
+        goalId: { type: "string", pattern: "^G[0-9]+$" },
+        claimId: { type: "string", pattern: "^[A-Za-z0-9_-]+$" },
+        generation: { type: "integer", minimum: 1 },
+        purpose: { type: "string", enum: ["initial", "follow-up"] },
+      },
+      required: ["goalId", "claimId", "generation", "purpose"],
+      additionalProperties: false,
+    },
+    currentDraftIdentity: {
+      description: "The exact current draft identity observed by the orchestrator, or null.",
+      anyOf: [
+        {
+          type: "object",
+          properties: {
+            goalId: { type: "string", pattern: "^G[0-9]+$" },
+            claimId: { type: "string", pattern: "^[A-Za-z0-9_-]+$" },
+            generation: { type: "integer", minimum: 1 },
+            revision: { type: "integer", minimum: 1 },
+          },
+          required: ["goalId", "claimId", "generation", "revision"],
+          additionalProperties: false,
+        },
+        { type: "null" },
+      ],
+    },
+    latestReviewId: {
+      description:
+        "The highest goal-linked review id bound to currentDraftIdentity, or null when no such review exists.",
+      anyOf: [{ type: "string", pattern: "^R[0-9]+$" }, { type: "null" }],
+    },
     candidateMode: {
       type: "boolean",
       description:
         "True iff the orchestrator dispatched this planner in CANDIDATE mode (one of N parallel candidate planners under generate-N-then-judge). Absent/false ⇒ DEFAULT single-planner mode.",
     },
   },
-  required: ["goalId"],
+  required: ["goalId", "activeClaim", "currentDraftIdentity", "latestReviewId"],
   additionalProperties: false,
+  allOf: [
+    {
+      if: {
+        properties: { currentDraftIdentity: { type: "null" } },
+        required: ["currentDraftIdentity"],
+      },
+      then: { properties: { latestReviewId: { type: "null" } } },
+    },
+  ],
 } as const;
 
 // --- DEFAULT-mode payload shapes (mirror the guarded plan mutations) --------
@@ -365,7 +410,7 @@ const outputSchema = {
 /** The plan-advance per-role schema sidecar (storage-format decision 3). */
 export const planAdvanceSidecar: RoleSchemaSidecar = {
   id: "plan-advance",
-  version: 2,
+  version: 3,
   inputSchema,
   outputSchema,
 };

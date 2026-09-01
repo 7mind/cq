@@ -836,7 +836,17 @@ async function main(): Promise<void> {
     const prepare = decodeToolJson<PreparedOutcome>(
       await parentClient.callTool("prepare_dispatch", {
         roleId: ROLE_ID,
-        input: { goalId: "G1493" },
+        input: {
+          goalId: "G1493",
+          activeClaim: {
+            goalId: "G1493",
+            claimId: "claim_G1493_1",
+            generation: 1,
+            purpose: "initial",
+          },
+          currentDraftIdentity: null,
+          latestReviewId: null,
+        },
         idempotencyKey: "T1493-codex-role-dispatch-probe",
         timeoutMs: PROBE_TIMEOUT_MS,
         expectedChild,

@@ -62,7 +62,17 @@ const DEADLINES = {
 } as const;
 
 const ROLE_INPUTS = {
-  "plan-advance": { goalId: "G94" },
+  "plan-advance": {
+    goalId: "G94",
+    activeClaim: {
+      goalId: "G94",
+      claimId: "claim_G94_1",
+      generation: 1,
+      purpose: "initial",
+    },
+    currentDraftIdentity: null,
+    latestReviewId: null,
+  },
   "plan-reviewer": { goalId: "G94" },
   "implement-worker": {
     taskId: "T682",

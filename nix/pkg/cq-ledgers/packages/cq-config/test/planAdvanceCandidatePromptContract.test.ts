@@ -86,6 +86,16 @@ function candidateExample(surface: PromptSurface): unknown {
 }
 
 describe("plan-advance candidate prompt contract", () => {
+  test("every generated surface requires the prepared planning-state binding", () => {
+    for (const surface of PROMPT_SURFACES) {
+      const prompt = renderedPrompt(surface);
+      expect(prompt).toContain("currentDraftIdentity");
+      expect(prompt).toContain("latestReviewId");
+      expect(prompt).toMatch(/fetch the exact bound review/i);
+      expect(prompt).toMatch(/fail closed/i);
+    }
+  });
+
   test("accepts default defect-fix ownership only through task ledgerRefs", () => {
     const validate = new Ajv2020({ strict: false, allErrors: true }).compile(
       planAdvanceSidecar.outputSchema,

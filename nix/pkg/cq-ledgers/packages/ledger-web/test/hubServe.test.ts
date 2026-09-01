@@ -24,7 +24,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { serializePromptSurfaceManifest } from "@cq/config";
+import { planAdvanceSidecar, serializePromptSurfaceManifest } from "@cq/config";
 import { openPgPool, ensureSchema, PostgresLedgerStore } from "@cq/ledger";
 import { FileSystemPromptArtifactStore } from "@cq/ledger-mcp";
 import {
@@ -401,11 +401,11 @@ async function writeHubPromptFixture(promptRoot: string): Promise<void> {
       sidecar: { schemaRoleId: HUB_PROMPT_ROLE_ID },
     },
   ]);
-  // Must match @cq/config planAdvanceSidecar.version (currently 2) — fetch_prompt
+  // Must match @cq/config planAdvanceSidecar.version — fetch_prompt
   // fail-closes when the attested schemaVersion drifts from the live sidecar.
   const schemaJson = JSON.stringify({
     id: HUB_PROMPT_ROLE_ID,
-    version: 2,
+    version: planAdvanceSidecar.version,
     inputSchema: { type: "object" },
     outputSchema: { type: "object" },
   });
@@ -422,7 +422,7 @@ async function writeHubPromptFixture(promptRoot: string): Promise<void> {
       [
         {
           roleId: HUB_PROMPT_ROLE_ID,
-          version: 2,
+          version: planAdvanceSidecar.version,
           sha256: createHash("sha256").update(HUB_PROMPT_BYTES, "utf8").digest("hex"),
           schemaSha256: createHash("sha256").update(schemaJson, "utf8").digest("hex"),
         },

@@ -87,11 +87,45 @@ Treat claim conflicts as follows:
 
 Read `ledger::get_config("planners")` once. Honor any session override.
 
+Immediately before each planner dispatch, snapshot the exact planning state
+under the held claim. Read the goal with full projection and its goal-linked
+reviews' ids plus `planDraft` bindings. Require its active public claim to equal
+the acknowledged claim held in memory. Parse the current draft identity, or use
+null when no current draft exists, and select the highest goal-linked review id
+whose `planDraft` equals that identity. Use null when there is no current draft
+or no review bound to it.
+Prepare every `plan-advance` typed input as:
+
+```json
+{
+  "goalId": "<G>",
+  "activeClaim": {
+    "goalId": "<G>",
+    "claimId": "<held claim id>",
+    "generation": 1,
+    "purpose": "initial | follow-up"
+  },
+  "currentDraftIdentity": null,
+  "latestReviewId": null
+}
+```
+
+Replace the nullable fields with their exact observed values when present. Add
+`"candidateMode": true` only for candidate dispatches. All planners in one
+configured panel receive the same snapshot.
+
+Before accepting a planner result or synthesized panel manifest, reread those
+three bound values and require exact equality with the prepared input. On a
+mismatch, reject the entire result without applying effects. If the held claim
+is still exact, retry from one fresh snapshot; otherwise stop with an invariant
+failure. The prepared input digest must therefore change when the active claim,
+draft identity, or latest review changes.
+
 #### Single-planner fallback
 
-Dispatch `plan-advance` in default mode with the goal id. It returns one
-schema-valid PlanStepResult and writes nothing. Reject the whole result on any
-contract failure; never apply a valid prefix.
+Dispatch `plan-advance` in default mode with the bound planning-state input. It
+returns one schema-valid PlanStepResult and writes nothing. Reject the whole
+result on any contract failure; never apply a valid prefix.
 
 Apply exactly one matching guarded operation using the active claim. Mint a
 fresh operation id for a new intent and reuse it only when retrying the exact
