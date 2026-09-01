@@ -106,6 +106,12 @@
       "targets": []
     },
     {
+      "kind": "path",
+      "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/migrate-postgres.test.ts",
+      "sha256": "557ceb58d56fee48c0f9260073c91a711fc39b978e1acfb1c34f23d2102caff5",
+      "targets": []
+    },
+    {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-cli/test/gateRun.test.ts",
       "sha256": "8fc12fb53dd538ee564cbc8db21b6d255aa8132797f92d1cdd41486f5e70c91c",

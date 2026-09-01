@@ -1185,6 +1185,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
           await tx`DELETE FROM workset_roots WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM plan_operations WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM plan_claims WHERE project_key = ${this.projectKey}`;
+          await tx`DELETE FROM mcp_usage_stats WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM archived_items WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM archive_pointers WHERE project_key = ${this.projectKey}`;
           await tx`DELETE FROM items WHERE project_key = ${this.projectKey}`;

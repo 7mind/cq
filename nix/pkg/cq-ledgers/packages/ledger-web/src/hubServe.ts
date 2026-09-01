@@ -687,7 +687,11 @@ export function serveHub(
           if (provided === null || !tokensMatch(provided, opts.adminToken)) {
             return unauthorized();
           }
-          const runtime = await getRuntime(adminRoute.projectKey);
+          // A valid project-admin credential carries tenant-provisioning
+          // authority: remote migration needs to import into a fresh canonical
+          // tenant before any ordinary MCP session exists. migrate-empty still
+          // enforces that this bootstrap-only target contains no user state.
+          const runtime = await getRuntime(adminRoute.projectKey, adminRoute.projectKey);
           if (runtime === null || runtime.admin === null) {
             return new Response("unknown project", { status: 404 });
           }

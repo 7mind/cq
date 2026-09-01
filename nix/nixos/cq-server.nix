@@ -43,13 +43,14 @@ let
     effective_cache_size = "${toString (tune.totalMemoryMB * 3 / 4)}MB";
     maintenance_work_mem = "${toString (clampHi 2048 (tune.totalMemoryMB / 16))}MB";
     work_mem = "${toString (clampLo 4 (tune.totalMemoryMB / (tune.maxConnections * 4)))}MB";
-    wal_buffers = "16MB";
+    wal_buffers = "-1";
     min_wal_size = "1GB";
     max_wal_size = "4GB";
     checkpoint_completion_target = "0.9";
     default_statistics_target = 100;
     random_page_cost = if tune.ssd then "1.1" else "4.0";
-    effective_io_concurrency = if tune.ssd then 200 else 2;
+    effective_io_concurrency = if tune.ssd then 16 else 2;
+    maintenance_io_concurrency = if tune.ssd then 16 else 2;
     synchronous_commit = "on";
   };
 
@@ -83,6 +84,11 @@ let
     ${lib.optionalString (cfg.managementTokenFile != null) ''
       CQ_SERVE_MANAGEMENT_TOKEN="$(cat "$CREDENTIALS_DIRECTORY/management-token")"
       export CQ_SERVE_MANAGEMENT_TOKEN
+    ''}
+
+    ${lib.optionalString (cfg.adminTokenFile != null) ''
+      CQ_SERVE_ADMIN_TOKEN="$(cat "$CREDENTIALS_DIRECTORY/admin-token")"
+      export CQ_SERVE_ADMIN_TOKEN
     ''}
 
     export LEDGER_WEB_OUTDIR="$STATE_DIRECTORY/web"
@@ -149,6 +155,18 @@ in
         Path to the distinct workset management bearer token. Injected through
         `CQ_SERVE_MANAGEMENT_TOKEN` using a systemd credential, never argv.
         Leaving this null disables HTTP workset management.
+      '';
+    };
+
+    adminTokenFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      example = "/run/secrets/cq-server-admin-token";
+      description = ''
+        Path to the distinct project-administration bearer token required by
+        remote backup, restore, migration, reset, and erase operations.
+        Injected through `CQ_SERVE_ADMIN_TOKEN` using a systemd credential,
+        never argv. Leaving this null disables the project-admin surface.
       '';
     };
 
@@ -234,7 +252,10 @@ in
         default = true;
         description = ''
           Assume SSD/NVMe storage: sets random_page_cost = 1.1 and
-          effective_io_concurrency = 200 (vs 4.0 / 2 for spinning disks).
+          effective_io_concurrency = maintenance_io_concurrency = 16
+          (vs 4.0 / 2 / 2 for spinning disks). The SSD concurrency default
+          follows PostgreSQL 18's asynchronous-I/O baseline; override it only
+          from measured workload evidence.
         '';
       };
     };
@@ -305,7 +326,9 @@ in
         LoadCredential =
           lib.optional (cfg.tokenFile != null) "token:${toString cfg.tokenFile}"
           ++ lib.optional (cfg.managementTokenFile != null)
-            "management-token:${toString cfg.managementTokenFile}";
+            "management-token:${toString cfg.managementTokenFile}"
+          ++ lib.optional (cfg.adminTokenFile != null)
+            "admin-token:${toString cfg.adminTokenFile}";
 
         # Hardening — the hub only needs loopback (or outbound) TCP + its state dir.
         NoNewPrivileges = true;
