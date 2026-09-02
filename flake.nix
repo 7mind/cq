@@ -1342,7 +1342,7 @@ EOF
                     printf '%s\n' \
                       '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"codex-mcp-harness-selection","version":"1"}}}' \
                       '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_config","arguments":{"section":"planners"}}}' \
-                      '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"prepare_dispatch","arguments":{"roleId":"plan-advance","input":{"goalId":"G1627"},"idempotencyKey":"T1627-nix-codex-provenance","timeoutMs":600000,"expectedChild":{"childId":"nix-check-child","runId":"nix-check-run"}}}}'
+                      '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"prepare_dispatch","arguments":{"roleId":"plan-advance","input":{"goalId":"G1627","activeClaim":{"goalId":"G1627","claimId":"claim_G1627_1","generation":1,"purpose":"initial"},"currentDraftIdentity":null,"latestReviewId":null},"idempotencyKey":"T1627-nix-codex-provenance","timeoutMs":600000,"expectedChild":{"childId":"nix-check-child","runId":"nix-check-run"}}}}'
                   } >&"$serverWriteFd"
                   for responseIndex in 1 2 3; do
                     if ! IFS= read -r -t "$responseTimeoutSeconds" -u "$serverReadFd" response; then
@@ -1375,6 +1375,7 @@ EOF
                     .command == ${builtins.toJSON registration.command}
                     and .args == [
                       "mcp",
+                      "--management",
                       "--prompt-surface",
                       "codex",
                       "--prompt-root",
@@ -1386,7 +1387,7 @@ EOF
                       "CQ_PROMPT_SURFACE":"codex"
                     }
                   ' ${registrationJson} >/dev/null || {
-                    echo "materialized registration omitted exact Codex prompt selectors/environment" >&2
+                    echo "materialized registration omitted Codex management/prompt selectors/environment" >&2
                     printf '%s\n' "$planner_payload" >&2
                     exit 1
                   }

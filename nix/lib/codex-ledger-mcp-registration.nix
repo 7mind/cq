@@ -2,6 +2,7 @@
 registration:
 lib.recursiveUpdate registration {
   args = (registration.args or [ ]) ++ [
+    "--management"
     "--prompt-surface"
     "codex"
     "--prompt-root"
