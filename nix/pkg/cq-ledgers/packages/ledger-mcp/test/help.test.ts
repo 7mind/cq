@@ -19,9 +19,10 @@ describe("TOP_LEVEL_USAGE export", () => {
     expect(TOP_LEVEL_USAGE.length).toBeGreaterThan(0);
   });
 
-  it("contains --cwd, --http, and --tool-prefix", () => {
+  it("contains --cwd, --http, --management, and --tool-prefix", () => {
     expect(TOP_LEVEL_USAGE).toContain("--cwd");
     expect(TOP_LEVEL_USAGE).toContain("--http");
+    expect(TOP_LEVEL_USAGE).toContain("--management");
     expect(TOP_LEVEL_USAGE).toContain("--tool-prefix");
   });
 });
@@ -49,6 +50,7 @@ describe("main --help / -h (D56)", () => {
     const out = written.join("");
     expect(out).toContain("--cwd");
     expect(out).toContain("--http");
+    expect(out).toContain("--management");
     expect(out).toContain("--tool-prefix");
   });
 

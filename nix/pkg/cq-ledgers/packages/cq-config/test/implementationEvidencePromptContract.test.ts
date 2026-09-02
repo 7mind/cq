@@ -23,6 +23,10 @@ function assertContract(source: string): void {
     "supersedes_completion_ref",
     "blocks every other repository merge",
     "manifest-derived bootstrap mode",
+    "global implementation-evidence authority",
+    "independent of the current workset roots",
+    "Never require or synthesize these keys on a selected workset goal",
+    "service-returned `goalRef`",
     "process only the exact mapped `t-evidence` task",
     "Stop `user-action-required` after recording its terminal completion",
     '`{ kind: "verdict", verdict }`',
@@ -52,6 +56,7 @@ function assertContract(source: string): void {
     "cq gate git-effect --operation merge --cwd <repositoryRoot> --task-id <taskId> --commit <resultCommit> ```",
   );
   expect(compact).not.toContain("activate-evidence-implementation");
+  expect(compact).not.toContain("selected goal's exact current finalized-manifest mappings");
 }
 
 describe("implementation evidence orchestration prompt contract [BA]", () => {

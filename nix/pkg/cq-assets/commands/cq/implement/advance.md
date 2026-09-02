@@ -120,11 +120,16 @@ the effect boundaries required by the shared contract.
 
 ## 0. Activate protected historical implementation evidence
 
-Before the ordinary activation probe, resolve the selected goal's exact current
-finalized-manifest mappings for `t-evidence`, `t-historical-evidence`, and
-`t-activate-evidence` and read those three tasks. When replacement evidence is
-not active, use this **manifest-derived bootstrap mode** and no other readiness
-path:
+Before the ordinary activation probe, call
+`get_implementation_evidence_service_status` with no caller-supplied identity.
+Treat its service-returned `goalRef`, manifest, digest, and mappings as the
+global implementation-evidence authority. Resolve that goal, including its
+archive when terminal, and read its exact finalized-manifest mappings for
+`t-evidence`, `t-historical-evidence`, and `t-activate-evidence` plus those
+three tasks. This authority is independent of the current workset roots and
+selected implementation goals. Never require or synthesize these keys on a
+selected workset goal. When replacement evidence is not active, use this
+**manifest-derived bootstrap mode** and no other readiness path:
 
 - while the exact mapped `t-evidence` task is `planned`, derive the ready set
   through the ordinary §1 rules, require that task to be ready, and process only
@@ -162,7 +167,7 @@ path:
 
 This bootstrap mode never treats task prose, a local checkout, a generic write,
 or patch/tree equivalence as authority. A missing or ambiguous mapping, a
-non-strict activation envelope, a surplus selected task, or any task-state
+non-strict activation envelope, a surplus global bootstrap task, or any task-state
 combination outside the three cases above stops closed. Once the exact
 activation action is verified and complete, leave bootstrap mode and require
 the ordinary active probe below.
@@ -171,8 +176,8 @@ After the user deploys/restarts the historical task result, call
 `get_implementation_evidence_service_status` and require
 `startupBuildCommit` to equal that exact result. Complete, in order, **arm,
 audit, apply, active proof, operator evidence, and typed completion**. Probe the
-exact implementation-evidence activation manifest selected by the current
-finalized mapping with the current goal reference, manifest id, and expected
+exact implementation-evidence activation manifest selected by the global
+finalized mapping with the service-returned `goalRef`, manifest id, and expected
 repository head, binding the full observed integration HEAD. Never fall back
 to an older packaged manifest. Reject every noncanonical action key and require
 the `activate-implementation-evidence` envelope. Continue to ordinary

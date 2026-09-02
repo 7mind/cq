@@ -91,6 +91,23 @@ describe("parseArgs --tool-prefix (T379)", () => {
   });
 });
 
+// Regression origin: defects:D436 (2026-09-02).
+describe("parseArgs --management", () => {
+  it("defaults to the ordinary surface", () => {
+    expect(parseArgs([]).management).toBe(false);
+  });
+
+  it("enables the explicit local stdio management surface", () => {
+    expect(parseArgs(["--management"]).management).toBe(true);
+  });
+
+  it("rejects management mode over unauthenticated single-project HTTP", () => {
+    expect(() => parseArgs(["--management", "--http", "7777"])).toThrow(
+      "--management is local-stdio-only",
+    );
+  });
+});
+
 // Regression origin: tasks:T1329 acceptance (2026-07-31).
 describe("parseArgs --tool-profile (T1329)", () => {
   it("defaults to the full compatibility profile", () => {

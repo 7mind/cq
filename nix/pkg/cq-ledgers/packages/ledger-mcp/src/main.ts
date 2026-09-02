@@ -217,6 +217,8 @@ export interface HttpOpts {
 export interface ParsedArgs {
   cwd: string;
   http: HttpOpts | null;
+  /** Explicitly expose the trusted management surface over local stdio. */
+  management: boolean;
   /** Optional ledger-tool name prefix (default `''` = unprefixed). */
   toolPrefix: string;
   /** Full compatibility surface or one fail-closed prompt-catalog role profile. */
@@ -260,6 +262,7 @@ function resolveRoot(cwdArg: string | undefined): string {
 export function parseArgs(argv: readonly string[]): ParsedArgs {
   let cwd: string | undefined;
   let http: HttpOpts | null = null;
+  let management = false;
   let toolPrefix = "";
   let toolProfile: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE;
   let promptSurface: PromptSurface | undefined;
@@ -269,6 +272,8 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     const a = argv[i];
     if (a === "--parent-gate-finalize") {
       parentGateFinalize = true;
+    } else if (a === "--management") {
+      management = true;
     } else if (a === "--cwd") {
       i += 1;
       const v = argv[i];
@@ -331,11 +336,17 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   // Resolve before constructing the store or transport. Unknown role names
   // cannot fall through to the compatibility surface.
   ledgerToolNamesForProfile(toolProfile);
+  if (management && http !== null) {
+    throw new Error(
+      "ledger-mcp: --management is local-stdio-only; HTTP management requires a management credential",
+    );
+  }
   // Ledger root precedence: --cwd > $LEDGER_ROOT > process CWD; a relative
   // value resolves against the CWD. (See file header for the rationale.)
   return {
     cwd: resolveRoot(cwd),
     http,
+    management,
     toolPrefix,
     toolProfile,
     promptSurface,
@@ -429,6 +440,7 @@ export const TOP_LEVEL_USAGE = [
   "options:",
   "  --cwd <path>          Ledger root (default: $LEDGER_ROOT or current working directory)",
   "  --http [host:]port    Serve Streamable HTTP instead of stdio (default host: 127.0.0.1)",
+  "  --management          Expose trusted management tools over local stdio only",
   '  --tool-prefix <p>     Prefix all tool names with "<p>_"',
   "  --tool-profile <role> Expose only the named role's ledger capability profile",
   "  --prompt-surface <s>  Select claude, codex, or pi (default: $CQ_PROMPT_SURFACE or claude)",
@@ -1244,8 +1256,16 @@ export async function main(argv: readonly string[]): Promise<void> {
     return;
   }
 
-  const { cwd, http, toolPrefix, toolProfile, promptSurface, promptRoot, parentGateFinalize } =
-    parseArgs(argv);
+  const {
+    cwd,
+    http,
+    management,
+    toolPrefix,
+    toolProfile,
+    promptSurface,
+    promptRoot,
+    parentGateFinalize,
+  } = parseArgs(argv);
   const displayName = path.basename(cwd);
   const resolvedPromptSurface = resolvePromptSurface({
     promptSurface,
@@ -1254,6 +1274,9 @@ export async function main(argv: readonly string[]): Promise<void> {
   });
 
   if (resolveLedgerBackend(cwd).backend === "remote") {
+    if (management) {
+      throw new Error("ledger-mcp: --management requires a local ledger backend");
+    }
     if (http !== null) {
       throw new Error(
         "ledger-mcp: backend=remote does not serve local HTTP; connect clients to cq serve",
@@ -1361,7 +1384,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     return;
   }
 
-  const server = createLedgerMcpServer({
+  const serverOptions = {
     store,
     displayName,
     toolPrefix,
@@ -1374,7 +1397,10 @@ export async function main(argv: readonly string[]): Promise<void> {
     repositoryRoot: cwd,
     toolProfile,
     ...(implementationEvidence === undefined ? {} : { implementationEvidence }),
-  });
+  };
+  const server = management
+    ? createManagementLedgerMcpServer(serverOptions)
+    : createLedgerMcpServer(serverOptions);
   // Even on stdio, watch the ledger so this server's cache stays fresh when
   // another process writes the same ledgers (file watch for fs, ref-sha poll
   // for git-object).

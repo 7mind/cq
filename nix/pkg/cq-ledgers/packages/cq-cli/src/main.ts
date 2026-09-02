@@ -171,7 +171,7 @@ export const USAGE = [
   "usage: cq <mode|command> [options]",
   "",
   "modes (delegate verbatim to the product binary):",
-  "  mcp         [--cwd <path>] [--http [host:]port] [--tool-prefix <p>]",
+  "  mcp         [--cwd <path>] [--http [host:]port] [--management] [--tool-prefix <p>]",
   "                                                  run the MCP server (stdio or HTTP)",
   "  tui         [--cwd <path>] [--mcp-url <url>]    run the terminal UI",
   "  web         [--port <n>] [--host <h>] [--cwd <path>] [--mcp-url <url>]",

@@ -88,6 +88,7 @@ describe("dispatch", () => {
   it("USAGE text includes all four modes and all six native subcommands", () => {
     // modes
     expect(USAGE).toContain("mcp");
+    expect(USAGE).toContain("--management");
     expect(USAGE).toContain("tui");
     expect(USAGE).toContain("web");
     expect(USAGE).toContain("serve");
@@ -145,6 +146,14 @@ describe("dispatch MODE routing (mcp|tui|web|serve)", () => {
     const outcome = await dispatch(["mcp", "--tool-prefix", "myproj"], io, modes);
     expect(outcome.longRunning).toBe(true);
     expect(modes.calls["mcp"]).toEqual([["--tool-prefix", "myproj"]]);
+  });
+
+  it("passes the explicit management selector to ledger-mcp verbatim", async () => {
+    const io = recordingDispatchIo();
+    const modes = recordingModes();
+    const outcome = await dispatch(["mcp", "--management"], io, modes);
+    expect(outcome.longRunning).toBe(true);
+    expect(modes.calls["mcp"]).toEqual([["--management"]]);
   });
 
   it("forwards a bare mode (cq tui) as an empty argv", async () => {

@@ -1061,7 +1061,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/implementationEvidencePromptContract.test.ts",
-      "sha256": "10af9a2454a2576153ce2515358368f3fa5bb0944bd7ebca1792d942121ff19f",
+      "sha256": "72b337b9e47dea0b984da74f9bc6f8c61d50f51108f1a93c1b7630f56f0523f1",
       "targets": []
     },
     {

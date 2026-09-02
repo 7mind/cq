@@ -29,6 +29,7 @@ import {
   CANONICAL_LEDGERS,
   IDEAS_LEDGER,
   LEDGER_TOOL_NAMES,
+  MANAGEMENT_LEDGER_TOOL_NAMES,
   MILESTONES_AMBIENT_ID,
   NON_DISPATCH_LEDGER_TOOL_NAMES,
 } from "@cq/ledger";
@@ -149,11 +150,12 @@ afterAll(async () => {
 async function withClient(
   fn: (client: Client) => Promise<void>,
   envOverrides: Readonly<Record<string, string>> = {},
+  extraArgs: readonly string[] = [],
 ): Promise<void> {
   const { command, args } = resolveBinPath();
   const transport = new StdioClientTransport({
     command,
-    args: [...args, "--cwd", tmpRoot],
+    args: [...args, "--cwd", tmpRoot, ...extraArgs],
     env: { ...childEnv(), ...envOverrides },
     stderr: "inherit",
   });
@@ -203,6 +205,19 @@ describe("ledger-mcp stdio binary", () => {
       expect(names).not.toContain("ask_user_question");
       expect(names).not.toContain("submit_workflow_phase");
     });
+  });
+
+  // Regression origin: defects:D436 (2026-09-02).
+  it("exposes protected evidence operations in explicit management stdio mode", async () => {
+    await withClient(
+      async (client) => {
+        const names = (await client.listTools()).tools.map((tool) => tool.name).sort();
+        expect(names).toEqual([...MANAGEMENT_LEDGER_TOOL_NAMES].sort());
+        expect(names).toContain("get_implementation_evidence_service_status");
+      },
+      { CQ_PROMPT_ROOT: dispatchPromptRoot },
+      ["--management"],
+    );
   });
 
   it("enumerate_ledgers returns the bootstrapped + seeded ledgers", async () => {
