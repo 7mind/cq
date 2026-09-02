@@ -9,15 +9,22 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { FsLedgerStore, type FieldValue } from "../packages/ledger/src/index.ts";
+import {
+  buildBackupDump,
+  exportBackupInTree,
+  InMemoryLedgerStore,
+  type FieldValue,
+} from "../packages/ledger/src/index.ts";
 
 const ROOT = path.resolve(import.meta.dir, "sample-ledger");
+const SAMPLE_NOW = "2026-06-01T12:00:00.000Z";
 
 async function main(): Promise<void> {
   await fs.rm(path.join(ROOT, "docs"), { recursive: true, force: true });
+  await fs.rm(path.join(ROOT, ".cq"), { recursive: true, force: true });
   await fs.mkdir(ROOT, { recursive: true });
 
-  const store = new FsLedgerStore({ root: ROOT });
+  const store = new InMemoryLedgerStore({ now: () => SAMPLE_NOW });
   await store.init(); // bootstraps milestones + canonical ledgers (tasks, defects, …)
 
   // ── Milestones: a small dependency DAG ────────────────────────────────
@@ -154,19 +161,18 @@ async function main(): Promise<void> {
       "All data lives as plain Markdown — *diffable* and `git`-friendly.",
   });
 
-  await store.dispose();
+  await exportBackupInTree(ROOT, await buildBackupDump(store, null));
+  await fs.rename(path.join(ROOT, ".cq"), path.join(ROOT, "docs"));
 
   // Report what landed.
-  const fresh = new FsLedgerStore({ root: ROOT });
-  await fresh.init();
-  const ledgers = fresh.enumerate();
+  const ledgers = store.enumerate();
   process.stdout.write(`seeded ${ROOT}/docs\n`);
   for (const name of ledgers) {
-    const v = fresh.fetch(name);
+    const v = store.fetch(name);
     const n = v.milestones.reduce((acc, g) => acc + g.items.length, 0);
     process.stdout.write(`  ${name}: ${n} item(s)\n`);
   }
-  await fresh.dispose();
+  await store.dispose();
 }
 
 void main().catch((e: unknown) => {

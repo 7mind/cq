@@ -1,7 +1,7 @@
 /**
  * Tests for the normalize-suggestions script:
  *  - The pure `normalizeSuggestions` logic function.
- *  - End-to-end store-level normalization via FsLedgerStore + the
+ *  - End-to-end store-level normalization via SqliteLedgerStore + the
  *    `needsNormalization` helper (exercises the same path the script takes).
  *  - Idempotence: a second normalization pass produces no structural change.
  */
@@ -11,10 +11,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  FsLedgerStore,
   QUESTIONS_LEDGER,
   MILESTONES_AMBIENT_ID,
 } from "../src/index.js";
+import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
 import {
   normalizeSuggestions,
   needsNormalization,
@@ -97,16 +97,16 @@ describe("needsNormalization", () => {
 
 const tmpDirs: string[] = [];
 
-async function makeStore(): Promise<{ store: FsLedgerStore; root: string }> {
+async function makeStore(): Promise<{ store: SqliteLedgerStore }> {
   const dir = await mkdtemp(path.join(tmpdir(), "normalize-suggestions-"));
   tmpDirs.push(dir);
-  const store = new FsLedgerStore({ root: dir });
+  const store = new SqliteLedgerStore({ dbPath: path.join(dir, "ledger.db") });
   await store.init();
-  return { store, root: dir };
+  return { store };
 }
 
 /** Run the normalization pass over the questions ledger in `store`. */
-async function runNormalizationPass(store: FsLedgerStore): Promise<number> {
+async function runNormalizationPass(store: SqliteLedgerStore): Promise<number> {
   const ledger = store.fetch(QUESTIONS_LEDGER);
   let writes = 0;
   for (const group of ledger.milestones) {
@@ -124,7 +124,7 @@ async function runNormalizationPass(store: FsLedgerStore): Promise<number> {
   return writes;
 }
 
-describe("normalize-suggestions — store-level (FsLedgerStore)", () => {
+describe("normalize-suggestions — store-level (SqliteLedgerStore)", () => {
   it("normalizes semicolon-joined suggestions and is idempotent", async () => {
     const { store } = await makeStore();
 

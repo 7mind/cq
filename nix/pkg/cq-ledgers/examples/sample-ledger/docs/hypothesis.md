@@ -12,8 +12,8 @@ archives: []
 
 ### H1 — open
 
-- createdAt: 2026-06-01T12:16:25.682Z
-- updatedAt: 2026-06-01T12:16:25.682Z
+- createdAt: 2026-06-01T12:00:00.000Z
+- updatedAt: 2026-06-01T12:00:00.000Z
 - author: "opus-4.8[1m]"
 - session: seed-20260601
 - headline: Lock contention degrades parallel writes
@@ -22,8 +22,8 @@ archives: []
 
 ### H2 — uncertain
 
-- createdAt: 2026-06-01T12:16:25.693Z
-- updatedAt: 2026-06-01T12:16:25.693Z
+- createdAt: 2026-06-01T12:00:00.000Z
+- updatedAt: 2026-06-01T12:00:00.000Z
 - author: "opus-4.8[1m]"
 - session: seed-20260601
 - headline: minisearch splits ids on punctuation

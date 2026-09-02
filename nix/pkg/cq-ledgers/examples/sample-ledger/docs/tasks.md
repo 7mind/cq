@@ -12,8 +12,8 @@ archives: []
 
 ### T1 — done
 
-- createdAt: 2026-06-01T12:16:25.534Z
-- updatedAt: 2026-06-01T12:16:25.534Z
+- createdAt: 2026-06-01T12:00:00.000Z
+- updatedAt: 2026-06-01T12:00:00.000Z
 - author: "opus-4.8[1m]"
 - session: seed-20260601
 - headline: Bootstrap the repository
@@ -22,8 +22,8 @@ archives: []
 
 ### T2 — done
 
-- createdAt: 2026-06-01T12:16:25.546Z
-- updatedAt: 2026-06-01T12:16:25.546Z
+- createdAt: 2026-06-01T12:00:00.000Z
+- updatedAt: 2026-06-01T12:00:00.000Z
 - author: "opus-4.8[1m]"
 - session: seed-20260601
 - headline: Define the ledger data model
@@ -31,8 +31,8 @@ archives: []
 
 ### T3 — wip
 
-- createdAt: 2026-06-01T12:16:25.556Z
-- updatedAt: 2026-06-01T12:16:25.556Z
+- createdAt: 2026-06-01T12:00:00.000Z
+- updatedAt: 2026-06-01T12:00:00.000Z
 - author: user
 - session: seed-20260601
 - headline: Wire up CI
@@ -43,8 +43,8 @@ archives: []
 
 ### T4 — wip
 
-- createdAt: 2026-06-01T12:16:25.568Z
-- updatedAt: 2026-06-01T12:16:25.568Z
+- createdAt: 2026-06-01T12:00:00.000Z
+- updatedAt: 2026-06-01T12:00:00.000Z
 - author: "opus-4.8[1m]"
 - session: seed-20260601
 - headline: Implement the markdown parser
@@ -66,8 +66,8 @@ archives: []
 
 ### T5 — planned
 
-- createdAt: 2026-06-01T12:16:25.583Z
-- updatedAt: 2026-06-01T12:16:25.583Z
+- createdAt: 2026-06-01T12:00:00.000Z
+- updatedAt: 2026-06-01T12:00:00.000Z
 - author: "opus-4.8[1m]"
 - session: seed-20260601
 - headline: Add the file-store mutex + lockfile
@@ -75,20 +75,20 @@ archives: []
 
 ### T6 — planned
 
-- createdAt: 2026-06-01T12:16:25.594Z
-- updatedAt: 2026-06-01T12:16:25.594Z
+- createdAt: 2026-06-01T12:00:00.000Z
+- updatedAt: 2026-06-01T12:00:00.000Z
 - author: "opus-4.8[1m]"
 - session: seed-20260601
 - headline: Build the full-text search index
 - description: Cross-ledger ranked search over item fields, backed by minisearch.
-- dependsOn: ["T4"]
+- dependsOn: ["tasks:T4"]
 
 ## M3
 
 ### T7 — planned
 
-- createdAt: 2026-06-01T12:16:25.606Z
-- updatedAt: 2026-06-01T12:16:25.606Z
+- createdAt: 2026-06-01T12:00:00.000Z
+- updatedAt: 2026-06-01T12:00:00.000Z
 - author: "opus-4.8[1m]"
 - session: seed-20260601
 - headline: Item table + detail panel
@@ -96,20 +96,20 @@ archives: []
 
 ### T8 — blocked
 
-- createdAt: 2026-06-01T12:16:25.617Z
-- updatedAt: 2026-06-01T12:16:25.617Z
+- createdAt: 2026-06-01T12:00:00.000Z
+- updatedAt: 2026-06-01T12:00:00.000Z
 - author: "opus-4.8[1m]"
 - session: seed-20260601
 - headline: Milestone DAG layout
 - description: Lay out the milestone dependency graph (dependsOn/blockedBy) as a left-to-right DAG.
-- blockedBy: ["T7"]
+- blockedBy: ["tasks:T7"]
 
 ## M4
 
 ### T9 — planned
 
-- createdAt: 2026-06-01T12:16:25.633Z
-- updatedAt: 2026-06-01T12:16:25.633Z
+- createdAt: 2026-06-01T12:00:00.000Z
+- updatedAt: 2026-06-01T12:00:00.000Z
 - author: "opus-4.8[1m]"
 - session: seed-20260601
 - headline: Marketing landing page

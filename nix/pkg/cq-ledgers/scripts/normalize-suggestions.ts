@@ -20,7 +20,7 @@
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  FsLedgerStore,
+  createManagementLedgerStore,
   QUESTIONS_LEDGER,
 } from "../packages/ledger/src/index.js";
 import {
@@ -39,8 +39,8 @@ const root =
         "..",
       );
 
-const store = new FsLedgerStore({ root });
-await store.init();
+const resolved = await createManagementLedgerStore(root);
+const { store } = resolved;
 
 const ledger = store.fetch(QUESTIONS_LEDGER);
 
@@ -66,6 +66,7 @@ for (const group of ledger.milestones) {
   }
 }
 
+resolved.backup?.close();
 await store.dispose();
 
 console.log(

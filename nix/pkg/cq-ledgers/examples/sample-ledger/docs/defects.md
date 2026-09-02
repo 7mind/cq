@@ -12,8 +12,8 @@ archives: []
 
 ### D1 — open
 
-- createdAt: 2026-06-01T12:16:25.645Z
-- updatedAt: 2026-06-01T12:16:25.645Z
+- createdAt: 2026-06-01T12:00:00.000Z
+- updatedAt: 2026-06-01T12:00:00.000Z
 - author: "opus-4.8[1m]"
 - session: seed-20260601
 - headline: Parser drops a trailing newline on serialize
@@ -22,8 +22,8 @@ archives: []
 
 ### D3 — resolved
 
-- createdAt: 2026-06-01T12:16:25.668Z
-- updatedAt: 2026-06-01T12:16:25.668Z
+- createdAt: 2026-06-01T12:00:00.000Z
+- updatedAt: 2026-06-01T12:00:00.000Z
 - author: "opus-4.8[1m]"
 - session: seed-20260601
 - headline: FTS ignores hyphenated ids
@@ -35,8 +35,8 @@ archives: []
 
 ### D2 — wip
 
-- createdAt: 2026-06-01T12:16:25.657Z
-- updatedAt: 2026-06-01T12:16:25.657Z
+- createdAt: 2026-06-01T12:00:00.000Z
+- updatedAt: 2026-06-01T12:00:00.000Z
 - author: "opus-4.8[1m]"
 - session: seed-20260601
 - headline: Status filter resets on page reload

@@ -5,7 +5,7 @@
  *
  * `docs/ledgers.yaml` is a PURE schema registry (version + ledgers[].schema);
  * item data lives in `docs/*.md` and is NOT touched here. The on-disk registry
- * must match canon exactly — `FsLedgerStore.init` runs a strict, order-
+ * must match canon exactly — store initialization runs a strict, order-
  * significant divergence guard (`schemasEqual`) and refuses to start if any
  * on-disk schema differs from its canonical bootstrap schema.
  *

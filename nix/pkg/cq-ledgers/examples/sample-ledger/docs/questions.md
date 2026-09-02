@@ -12,8 +12,8 @@ archives: []
 
 ### Q1 — open
 
-- createdAt: 2026-06-01T12:16:25.704Z
-- updatedAt: 2026-06-01T12:16:25.704Z
+- createdAt: 2026-06-01T12:00:00.000Z
+- updatedAt: 2026-06-01T12:00:00.000Z
 - author: user
 - session: seed-20260601
 - question: Which authentication model for the web console?
@@ -23,8 +23,8 @@ archives: []
 
 ### Q2 — answered
 
-- createdAt: 2026-06-01T12:16:25.716Z
-- updatedAt: 2026-06-01T12:16:25.716Z
+- createdAt: 2026-06-01T12:00:00.000Z
+- updatedAt: 2026-06-01T12:00:00.000Z
 - author: "opus-4.8[1m]"
 - session: seed-20260601
 - question: SSR or SPA for the console?
