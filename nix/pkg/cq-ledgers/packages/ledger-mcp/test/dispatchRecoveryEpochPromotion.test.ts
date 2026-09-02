@@ -838,6 +838,82 @@ describe("journal recovery epoch promotion", () => {
       const responseLossReplay = await capability.prepare(generation19Request);
       expect(responseLossReplay).toEqual(generation19);
       expect(store.snapshot()).toHaveLength(rowCount);
+
+      // Regression: D440 — a consumed recovery successor must be able to leave
+      // the recovery-only fence through its exact one-shot continuation.
+      await capability.fetchInput({
+        ...generation19.handle,
+        inputCapability: generation19.prepared.inputCapability,
+      });
+      await capability.storeResult({
+        resultCapability: generation19.prepared.resultCapability,
+        output: {
+          taskId: TASK_ID,
+          status: "fail",
+          resultCommit: null,
+          branch: managed.handle.branch,
+          actualWorktreePath: managed.handle.absolutePath,
+          filesTouched: [],
+          checkSummary: "controlled recovered-generation failure",
+          summary: "exercise the consumed continuation boundary",
+          baseVerification: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit,
+            headCommit: generation18Receipt.newHead,
+          },
+          blockedReason: "controlled",
+        },
+      });
+      const parentGateCapability = generation19.prepared.parentGateCapability;
+      if (capability.finalizeParentGate === undefined || parentGateCapability === undefined) {
+        throw new Error("parent gate finalization is unavailable");
+      }
+      await capability.finalizeParentGate({
+        ...generation19.handle,
+        parentGateCapability,
+      });
+      const provenance = generation19.prepared.promptProvenance;
+      const confirmed19 = await capability.confirmCompletion({
+          ...generation19.handle,
+          nativeCompletion: {
+            kind: "native-completion",
+            actor: "trusted-parent",
+            childId: "generation-19",
+            runId: "generation-19",
+            completedAt: LATER,
+          },
+          expectedProvenance: {
+            roleId: provenance.roleId,
+            version: provenance.version,
+            promptDigest: provenance.promptDigest,
+            inputDigest: provenance.inputDigest,
+          },
+        });
+      expect(confirmed19).toMatchObject({ state: "consumed" });
+      if (capability.resolveContinuation === undefined) {
+        throw new Error("dispatch continuation resolution is unavailable");
+      }
+      const continuation = await capability.resolveContinuation(
+        binding,
+        generation18Receipt.newHead,
+      );
+      const generation20 = await capability.prepare({
+        roleId: "implement-worker",
+        input: {
+          ...input17,
+          round: 20,
+          startingCommit: generation18Receipt.newHead,
+          priorResultCommit: generation18Receipt.newHead,
+        },
+        idempotencyKey: "T2345-generation-20-continuation",
+        timeoutMs: 600_000,
+        expectedChild: { childId: "generation-20", runId: "generation-20" },
+        continuation: continuation.continuationReference,
+      });
+      expect(generation20).toMatchObject({ accepted: true });
+      if (!generation20.accepted) throw new Error(generation20.detail);
+      expect(generation20.handle).toEqual({ attestationId, generation: 20 });
     } finally {
       await backend.close();
       await fs.rm(repositoryRoot, { recursive: true, force: true });

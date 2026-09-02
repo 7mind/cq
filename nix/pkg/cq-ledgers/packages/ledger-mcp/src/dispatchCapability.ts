@@ -321,6 +321,61 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       : null;
   }
 
+  async function continuationExitsRecoveryFence(
+    fence: DispatchLineageCutoverFence,
+    binding: ManagedWorktreeDispatchBinding,
+    continuationReference: string | undefined,
+  ): Promise<boolean> {
+    if (continuationReference === undefined) return false;
+    try {
+      const liveTip = await observeManagedWorktreeLiveTip(
+        binding,
+        options.worktreeStateDir === undefined ? {} : { stateDir: options.worktreeStateDir },
+      );
+      const continuation = await resolveDispatchContinuationOn(
+        options.backend,
+        {
+          namespace,
+          actor: "trusted-parent",
+          continuationReference,
+          gitEffectBinding: binding,
+          liveTip,
+        },
+        { now },
+      );
+      return (
+        continuation.reprepareOf.attestationId === fence.sourceAttestationId &&
+        continuation.reprepareOf.generation === fence.lineageMaximumGeneration + 1
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  async function recoveryFenceAuthorizesPrepare(
+    fence: DispatchLineageCutoverFence,
+    binding: ManagedWorktreeDispatchBinding,
+    input: Parameters<DispatchCapability["prepare"]>[0],
+  ): Promise<boolean> {
+    return (
+      dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation) ||
+      (await continuationExitsRecoveryFence(fence, binding, input.continuation))
+    );
+  }
+
+  function hasExclusiveContinuationAuthority(
+    input: Parameters<DispatchCapability["prepare"]>[0],
+  ): boolean {
+    return (
+      input.continuation !== undefined &&
+      input.reprepareOf === undefined &&
+      input.guardedRebase === undefined &&
+      input.recovery === undefined &&
+      input.recoveryPreparation === undefined &&
+      input.implementationEvidenceBootstrap === undefined
+    );
+  }
+
   function callerPrepareFingerprint(
     input: Parameters<DispatchCapability["prepare"]>[0],
   ): string | undefined {
@@ -592,7 +647,8 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                 lineageBinding.handleFingerprint,
               );
               return fence !== null &&
-                !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)
+                !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation) &&
+                !hasExclusiveContinuationAuthority(input)
                 ? journalRecoveryRequiredForFence(fence)
                 : undefined;
             },
@@ -695,10 +751,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                 );
               }
               const fence = await matchingFence(binding.taskId, binding.handleFingerprint);
-              if (
-                fence !== null &&
-                !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)
-              ) {
+              if (fence !== null && !(await recoveryFenceAuthorizesPrepare(fence, binding, input))) {
                 return journalRecoveryRequiredForFence(fence);
               }
               if (callerFingerprint === undefined) return undefined;
@@ -984,7 +1037,10 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         }
         prepareLockBinding = resolvedGitEffectBinding;
         const fence = await matchingFence(taskId, resolvedGitEffectBinding.handleFingerprint);
-        if (fence !== null && !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)) {
+        if (
+          fence !== null &&
+          !(await recoveryFenceAuthorizesPrepare(fence, resolvedGitEffectBinding, input))
+        ) {
           return journalRecoveryRequiredForFence(fence);
         }
         if (roleId === "implement-conflict-resolver") {
@@ -1443,7 +1499,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             );
           }
           const fence = await matchingFence(binding.taskId, binding.handleFingerprint);
-          if (fence !== null && !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)) {
+          if (fence !== null && !(await recoveryFenceAuthorizesPrepare(fence, binding, input))) {
             return journalRecoveryRequiredForFence(fence);
           }
         }
@@ -1478,7 +1534,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                       prepareLockBinding.handleFingerprint,
                     );
                     return fence !== null &&
-                      !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)
+                      !(await recoveryFenceAuthorizesPrepare(fence, prepareLockBinding, input))
                       ? journalRecoveryRequiredForFence(fence)
                       : null;
                   },
