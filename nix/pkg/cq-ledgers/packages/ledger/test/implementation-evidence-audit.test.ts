@@ -553,6 +553,61 @@ describe("protected historical implementation evidence [BA]", () => {
     });
   });
 
+  test("treats historical-review archival as a semantic no-op when re-arming", async () => {
+    const base = manifest();
+    const reviewed = {
+      ...base,
+      records: base.records.map((entry) => ({
+        ...entry,
+        historicalReview: protectedCompletionReview(entry.taskRef, entry.resultCommit),
+      })),
+    };
+    const f = fixture(reviewed);
+    const first = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: reviewed.manifestId,
+      expectedRepositoryHead: HEAD,
+      operationId: "arm-before-review-archival",
+      author: "parent",
+    });
+    await f.service.applyAuditManifest({
+      manifestId: reviewed.manifestId,
+      manifestDigest: implementationAuditManifestDigest(reviewed),
+      expectedRepositoryHead: HEAD,
+      auditAttemptRefs: [],
+      operationId: "apply-before-review-archival",
+      author: "parent",
+    });
+    f.setTaskStatus("tasks:T12", "done");
+    f.setHead(NEXT_HEAD);
+    f.replacePackaged({
+      ...reviewed,
+      records: reviewed.records.map((entry) => ({
+        ...entry,
+        repositoryHead: NEXT_HEAD,
+        historicalReview: {
+          ...(entry.historicalReview as Record<string, DispatchJSONValue>),
+          source: "archive",
+          archiveId: "M176",
+        },
+      })),
+    });
+
+    const replacement = await f.service.armEvidenceActivation({
+      goalRef: "goals:G176",
+      manifestId: reviewed.manifestId,
+      expectedRepositoryHead: NEXT_HEAD,
+      operationId: "arm-after-review-archival",
+      author: "parent",
+    });
+
+    expect(replacement).toMatchObject({
+      status: "armed",
+      boundaryCommit: NEXT_HEAD,
+      supersededRequirementRef: first.requirementRef,
+    });
+  });
+
   test("D389 regression: supersedes the unique ancestry-maximal fulfilled lineage tip", async () => {
     const reviewed = manifest();
     const f = fixture({

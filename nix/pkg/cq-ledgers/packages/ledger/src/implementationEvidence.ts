@@ -1073,9 +1073,23 @@ export function implementationAuditManifestDigest(
   return digest(manifest);
 }
 
+function normalizeHistoricalReviewStorageLocation(
+  review: DispatchJSONValue | null,
+): DispatchJSONValue | null {
+  if (
+    !object(review) ||
+    (review["source"] !== "active" && review["source"] !== "archive") ||
+    !("archiveId" in review) ||
+    !object(review["item"])
+  )
+    return review;
+  return { ...review, source: "active", archiveId: null } as DispatchJSONValue;
+}
+
 /**
  * Bind the immutable audit meaning while excluding the two documented fields
- * that are regenerated at an integration-head transition.
+ * that are regenerated at an integration-head transition and the storage
+ * location of otherwise identical historical review authority.
  */
 export function implementationAuditManifestSemanticDigest(
   manifest: PackagedImplementationAuditManifest,
@@ -1083,9 +1097,19 @@ export function implementationAuditManifestSemanticDigest(
   return digest({
     version: manifest.version,
     manifestId: manifest.manifestId,
-    records: manifest.records.map(({ repositoryHead: _repositoryHead, ...record }) => record),
+    records: manifest.records.map(
+      ({ repositoryHead: _repositoryHead, historicalReview, ...record }) => ({
+        ...record,
+        historicalReview: normalizeHistoricalReviewStorageLocation(historicalReview),
+      }),
+    ),
     activation: manifest.activation,
-    nonAuthorizingProvenance: manifest.nonAuthorizingProvenance ?? [],
+    nonAuthorizingProvenance: (manifest.nonAuthorizingProvenance ?? []).map(
+      ({ historicalReview, ...provenance }) => ({
+        ...provenance,
+        historicalReview: normalizeHistoricalReviewStorageLocation(historicalReview),
+      }),
+    ),
   });
 }
 
