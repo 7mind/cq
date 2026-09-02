@@ -1976,6 +1976,7 @@ export class ImplementationEvidenceService {
   private async assertActivationTasksActionable(
     goalRef: string,
     cohort: ImplementationActivationCohort,
+    allowCompletedActivationTask = false,
   ): Promise<void> {
     for (const taskRef of [cohort.evidenceTaskRef, cohort.auditTaskRef, cohort.activationTaskRef])
       taskIdFromRef(taskRef);
@@ -1988,7 +1989,7 @@ export class ImplementationEvidenceService {
     if (
       activationTask.taskRef !== cohort.activationTaskRef ||
       activationTask.ownerGoalRef !== goalRef ||
-      activationTask.status === "done"
+      (activationTask.status === "done" && !allowCompletedActivationTask)
     )
       throw new Error("implementation evidence activation task is not actionable");
   }
@@ -1999,6 +2000,7 @@ export class ImplementationEvidenceService {
     manifestDigest: string,
     repositoryHead: string,
     cohort: ImplementationActivationCohort,
+    allowCompletedActivationTask = false,
   ): Promise<void> {
     const { manifest } = await this.auditManifest(manifestId, manifestDigest);
     if ((await this.deps.repositoryHead()) !== repositoryHead)
@@ -2012,7 +2014,11 @@ export class ImplementationEvidenceService {
     });
     if (canonical(current) !== canonical(cohort))
       throw new Error("finalized implementation activation authority changed before arming");
-    await this.assertActivationTasksActionable(goalRef, current);
+    await this.assertActivationTasksActionable(
+      goalRef,
+      current,
+      allowCompletedActivationTask,
+    );
   }
 
   private async assertNativeAuditApprovalBound(
@@ -2799,7 +2805,6 @@ export class ImplementationEvidenceService {
       cohort.activationTaskRef === cohort.auditTaskRef
     )
       throw new Error("activation cohort does not bind the finalized bootstrap task mappings");
-    await this.assertActivationTasksActionable(input.goalRef, cohort);
     const request = {
       ...input,
       manifestDigest,
@@ -3031,6 +3036,8 @@ export class ImplementationEvidenceService {
         manifestDigest,
         repositoryHead,
         cohort,
+        blocking?.state === "fulfilled" &&
+          supersededRequirementRef === blocking.requirementRef,
       );
       state.activationRequirements[requirementRef] = {
         version: 1,

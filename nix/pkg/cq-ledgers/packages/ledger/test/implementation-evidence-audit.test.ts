@@ -455,6 +455,21 @@ describe("protected historical implementation evidence [BA]", () => {
     });
   });
 
+  test("rejects an initial arm after the activation task is already done", async () => {
+    const f = fixture();
+    f.setTaskStatus("tasks:T12", "done");
+
+    await expect(
+      f.service.armEvidenceActivation({
+        goalRef: "goals:G176",
+        manifestId: f.packaged.manifestId,
+        expectedRepositoryHead: HEAD,
+        operationId: "arm-after-unexplained-activation-completion",
+        author: "parent",
+      }),
+    ).rejects.toThrow("implementation evidence activation task is not actionable");
+  });
+
   test("supersedes one fulfilled stale activation for a retained parent correction", async () => {
     const reviewed = manifest();
     const f = fixture({
@@ -483,6 +498,7 @@ describe("protected historical implementation evidence [BA]", () => {
       operationId: "apply-before-fulfilled-parent-correction",
       author: "parent",
     });
+    f.setTaskStatus("tasks:T12", "done");
     f.setHead(NEXT_HEAD);
     f.replacePackaged({
       ...f.packaged,
