@@ -1,7 +1,7 @@
 import type { PlanLifecycleSerializationContender } from "../src/store/planLifecycleSerialization.js";
 
 // Fixture-orchestration wait for a contender to reach its serialization hook.
-// Under full-gate parallel load (especially git-object arms) 5s collapsed into
+// Under full-gate parallel load 5s collapsed into
 // false timeouts; this is NOT a SUT timing invariant — use the T1995/T1998
 // ORCHESTRATION_WAIT_MS pattern (D281).
 const DEFAULT_BOUNDARY_TIMEOUT_MS = 120_000;

@@ -2,8 +2,9 @@
  * Abstract test suite for LedgerStore (msunify shape).
  *
  * Same suite runs against:
- *   - FsLedgerStore (against a freshly-created tmp dir per test)
  *   - InMemoryLedgerStore (dual-tests dummy)
+ *   - SqliteLedgerStore (against a freshly-created database per test)
+ *   - PostgresLedgerStore (against an environment-gated isolated tenant)
  *
  * Dual-tests principle: the production adapter and the in-memory dummy must
  * be observationally indistinguishable for the behaviours exercised here.
@@ -48,9 +49,9 @@ export interface AbstractStoreFactory {
   teardown?(store: LedgerStore): Promise<void>;
   name: string;
   /**
-   * Per-test timeout in ms. Slow backends (e.g. GitObjectLedgerBackend, which
-   * shells out to git on every op) should set this to avoid flaking under
-   * full-suite parallel load. Fs/InMemory leave it undefined → 5000ms default.
+   * Per-test timeout in ms. Networked backends can set this to avoid flaking
+   * under full-suite parallel load; in-memory tests leave it undefined →
+   * 5000ms default.
    */
   timeoutMs?: number;
 }
@@ -100,8 +101,8 @@ const notesSchema: LedgerSchema = {
 };
 
 export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
-  // Use a factory-supplied timeout for every test so slow backends (git)
-  // don't flake under full-suite parallel load while Fs/InMemory keep 5000ms.
+  // Use a factory-supplied timeout for every test so durable backends can
+  // accommodate full-suite parallel load while in-memory keeps 5000ms.
   const TIMEOUT = factory.timeoutMs ?? 5_000;
 
   describe(`LedgerStore (abstract suite, ${factory.name})`, () => {

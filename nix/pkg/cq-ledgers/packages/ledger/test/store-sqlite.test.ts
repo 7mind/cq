@@ -1,12 +1,11 @@
 /**
  * Runs the abstract LedgerStore suite against SqliteLedgerStore (bun:sqlite;
- * G67-C1/T530) — the third store alongside store-fs.test.ts and
- * store-inmemory.test.ts.
+ * G67-C1/T530) — the surviving SQLite/XDG production leg beside the
+ * in-memory contract dummy and environment-gated PostgreSQL leg.
  *
- * Each test gets a fresh tmp `ledger.db`. Unlike FsLedgerStore (which seeds a
- * `ledgers.yaml` registry file BEFORE init()) or InMemoryLedgerStore (which
+ * Each test gets a fresh tmp `ledger.db`. Unlike InMemoryLedgerStore (which
  * takes a `seed` constructor option), SqliteLedgerStore has no pre-init seed
- * mechanism — its ledgers are provisioned by calling `createLedger()` AFTER
+ * mechanism — its ledgers are provisioned by calling `createLedger()` after
  * `init()`, which is exactly the runtime path the factory below drives.
  */
 
@@ -31,10 +30,9 @@ async function freshDbDir(): Promise<string> {
 
 /**
  * Seed non-canonical ledgers by writing rows DIRECTLY (raw INSERT, no
- * store/hook involved) before the store is constructed — parity with how
- * store-fs.test.ts seeds `ledgers.yaml` and store-inmemory.test.ts passes a
- * constructor `seed` option: neither fires `onMutation` for the pre-existing
- * seed. SqliteLedgerStore has no such pre-init seed hook of its own — its
+ * store/hook involved) before the store is constructed — parity with the
+ * in-memory constructor `seed` option: neither fires `onMutation` for the
+ * pre-existing seed. SqliteLedgerStore has no such pre-init seed hook of its own — its
  * only ledger-provisioning entry point is `createLedger()`, which DOES fire
  * `onMutation` — so seeding through it would spuriously contaminate the
  * D-COHERENCE hook-firing-matrix assertions with extra seed-time events.
@@ -58,7 +56,7 @@ async function seedDbPath(seed: Array<{ name: string; schema: LedgerSchema }>): 
 runStoreAbstractSuite({
   name: "SqliteLedgerStore",
   // Each op is a real SQLite write transaction (BEGIN IMMEDIATE + COMMIT);
-  // slower than InMemory/Fs under full-suite parallel load, so a generous
+  // slower than InMemory under full-suite parallel load, so a generous
   // per-test timeout keeps the shared concurrency-parity tests deterministic.
   timeoutMs: 10_000,
   async build(seed: Array<{ name: string; schema: LedgerSchema }>): Promise<LedgerStore> {
@@ -88,7 +86,7 @@ afterAll(async () => {
 // -----------------------------------------------------------------------
 // Xdg domain-state coherence watcher: two SqliteLedgerStore instances
 // sharing one db file (the cross-PROCESS shape, modelled here as two
-// in-process instances per the LOCK-D01 / store-fs.test.ts precedent); a
+// in-process instances per the LOCK-D01 coherence shape); a
 // peer's commit is detected by the polling watcher, which invalidates the
 // long-running store, so its ftsSearch reflects the peer's write.
 // -----------------------------------------------------------------------

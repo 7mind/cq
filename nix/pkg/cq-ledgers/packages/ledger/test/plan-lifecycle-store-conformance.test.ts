@@ -1,28 +1,22 @@
 import { describe, expect, it } from "bun:test";
 import {
-  FsLedgerStore,
-  GitObjectLedgerBackend,
   PostgresLedgerStore,
   SqliteLedgerStore,
 } from "../src/index.js";
 import {
   inMemoryPlanLifecycleFactory,
 } from "./planLifecycleInMemoryAdapter.js";
-import { sqlitePlanLifecycleFactory } from "./planLifecycleSqliteAdapter.js";
+import {
+  postgresPlanLifecycleFactory,
+  sqlitePlanLifecycleFactory,
+  type PostgresTestPoolCloseable,
+  withImmediatePostgresTestPoolDisposal,
+} from "./planLifecyclePersistentAdapters.js";
 import {
   referencePlanLifecycleFactory,
   type PlanLifecycleContractFactory,
 } from "./planLifecycleReferenceAdapter.js";
 import { runPlanLifecycleStoreContract } from "./planLifecycleStoreContract.js";
-import {
-  fsPlanLifecycleFactory,
-  gitPlanLifecycleFactory,
-} from "./planLifecyclePersistentAdapters.js";
-import {
-  postgresPlanLifecycleFactory,
-  type PostgresTestPoolCloseable,
-  withImmediatePostgresTestPoolDisposal,
-} from "./planLifecyclePostgresAdapter.js";
 
 // Required-live mode (T1855): when CQ_TEST_REQUIRE_PG=1 selects it, an absent
 // DSN is fatal at module evaluation rather than a silently skipped PostgreSQL
@@ -51,8 +45,6 @@ interface ProductionRegistration {
 }
 
 const PRODUCTION_REGISTRATIONS: readonly ProductionRegistration[] = [
-  { name: "FsLedgerStore", store: FsLedgerStore },
-  { name: "GitObjectLedgerBackend", store: GitObjectLedgerBackend },
   { name: "SqliteLedgerStore", store: SqliteLedgerStore },
   { name: "PostgresLedgerStore", store: PostgresLedgerStore },
 ];
@@ -84,8 +76,6 @@ function progressionFactory(
 runPlanLifecycleStoreContract(referencePlanLifecycleFactory);
 runPlanLifecycleStoreContract(inMemoryPlanLifecycleFactory);
 runPlanLifecycleStoreContract(sqlitePlanLifecycleFactory);
-runPlanLifecycleStoreContract(fsPlanLifecycleFactory);
-runPlanLifecycleStoreContract(gitPlanLifecycleFactory);
 runPlanLifecycleStoreContract(postgresPlanLifecycleFactory);
 
 describe("PostgresLedgerStore test pool disposal", () => {
@@ -120,8 +110,6 @@ for (const registration of PRODUCTION_REGISTRATIONS.filter(
 describe("T847 production capability registry", () => {
   it("enumerates every production LedgerStore backend and the complete lifecycle surface", () => {
     expect(PRODUCTION_REGISTRATIONS.map(({ name }) => name)).toEqual([
-      "FsLedgerStore",
-      "GitObjectLedgerBackend",
       "SqliteLedgerStore",
       "PostgresLedgerStore",
     ]);
@@ -140,8 +128,6 @@ describe("T847 production capability registry", () => {
         available: hasCompletePlanLifecycleCapability(registration.store),
       })),
     ).toEqual([
-      { name: "FsLedgerStore", available: true },
-      { name: "GitObjectLedgerBackend", available: true },
       { name: "SqliteLedgerStore", available: true },
       { name: "PostgresLedgerStore", available: true },
     ]);

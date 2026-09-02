@@ -1,8 +1,7 @@
 /**
  * multiWriterStressHarness — T497 store-factory-parameterized multi-process
  * stress harness for the multi-writer concurrency contract documented on
- * `LedgerPersistence` (src/store/LedgerPersistence.ts, "Multi-writer
- * concurrency contract").
+ * the shared multi-writer concurrency contract.
  *
  * What it does: given an injected {@link MultiWriterStoreFactory} bound to a
  * store implementation, it
@@ -26,9 +25,8 @@
  * NO conforming store exists in M210 — decision K102 pins the mechanism
  * (bun:sqlite, WAL + busy_timeout) and the first conforming implementation
  * lands in T498, which wires its factory into this harness and owns the
- * PASSING run. `FsLedgerStore` gives no cross-process no-lost-update
- * guarantee, so it is deliberately not wired here. Until T498 the harness is
- * registered as an explicit `test.todo` in multi-writer-stress.test.ts.
+ * PASSING run. Until T498 the harness is registered as an explicit `test.todo`
+ * in multi-writer-stress.test.ts.
  *
  * This module must stay importable OUTSIDE `bun test` (the writer fixture
  * imports the shared constants below from a plain `bun run` subprocess), so

@@ -1,7 +1,7 @@
 /**
  * Runs the abstract LedgerStore suite against PostgresLedgerStore (T573,
- * G81/M248) — the fourth store alongside store-fs / store-inmemory /
- * store-sqlite.
+ * G81/M248) — the environment-gated PostgreSQL production leg beside the
+ * in-memory contract dummy and SQLite/XDG adapter.
  *
  * Env-gated on CQ_TEST_PG_URL (Q286, same gate as postgres-schema.test.ts):
  * there is no Postgres server in this sandbox/CI environment, so the suite

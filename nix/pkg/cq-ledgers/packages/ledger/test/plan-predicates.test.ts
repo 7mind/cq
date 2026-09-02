@@ -3,9 +3,9 @@
  * plan lifecycle: discovery (P-plan) and task start (P-implement) gated on the
  * ACTIVE CLAIM and on FINALIZED-manifest membership.
  *
- * ONE abstract suite runs against EVERY production adapter — the InMemory
- * reference (T848), Fs, Git-object, SQLite, and (env-gated on CQ_TEST_PG_URL,
- * Q286) Postgres — driving each store through its REAL `PlanLifecycleStore`
+ * ONE abstract suite runs against every surviving adapter — the InMemory
+ * reference (T848), SQLite, and (env-gated on CQ_TEST_PG_URL, Q286) Postgres
+ * — driving each store through its REAL `PlanLifecycleStore`
  * surface (claim → publish → review → finalize → release) and asserting
  * `derivePredicates(store)` after every step:
  *
@@ -48,7 +48,6 @@
  * proves no other package source re-interprets the wait statuses.
  */
 
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -58,8 +57,6 @@ import { afterAll, describe, expect, it } from "bun:test";
 import {
   derivePredicates,
   DEFECTS_LEDGER,
-  FsLedgerStore,
-  GitObjectLedgerBackend,
   GOALS_LEDGER,
   InMemoryLedgerStore,
   type Item,
@@ -79,7 +76,6 @@ import {
   TASKS_LEDGER,
 } from "../src/index.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
-import { persistDirectLedgers } from "./planLifecycleInMemoryAdapter.js";
 import {
   dropTenant,
   openTenantStore,
@@ -115,8 +111,7 @@ interface Backend {
    * active view, so removal IS the predicate-observable content of both
    * dispositions; the InMemory leg additionally records the item in its
    * archive map (proving the archived side remains fetchable), while the
-   * durable archive formats of the fs/git/sqlite/postgres backends are
-   * covered by their own archive suites.
+   * durable archive formats are covered by their own archive suites.
    */
   removeResearchFromActiveView(
     store: LifecycleStore,
@@ -135,7 +130,7 @@ interface Backend {
   dispose(store: LifecycleStore): Promise<void>;
 }
 
-/** Splice an item out of an AbstractLedgerStore-style in-memory ledgers map. */
+/** Splice an item out of the in-memory ledgers map. */
 function spliceFromLedgersMap(
   store: LifecycleStore,
   ledgerId: string,
@@ -218,49 +213,6 @@ const inMemoryBackend: Backend = {
         kind: "group",
       });
     }
-  },
-  async dispose(store) {
-    await store.dispose();
-  },
-};
-
-const fsBackend: Backend = {
-  name: "FsLedgerStore",
-  async build() {
-    const root = await tmpRoot("plan-predicates-fs-");
-    const store = new FsLedgerStore({ root });
-    await store.init();
-    return store;
-  },
-  async removeResearchFromActiveView(store, researchId) {
-    spliceFromLedgersMap(store, RESEARCHES_LEDGER, researchId);
-    await persistDirectLedgers(store, [RESEARCHES_LEDGER]);
-  },
-  async removeTaskFromActiveView(store, taskId) {
-    spliceFromLedgersMap(store, TASKS_LEDGER, taskId);
-    await persistDirectLedgers(store, [TASKS_LEDGER]);
-  },
-  async dispose(store) {
-    await store.dispose();
-  },
-};
-
-const gitBackend: Backend = {
-  name: "GitObjectLedgerBackend",
-  async build() {
-    const root = await tmpRoot("plan-predicates-git-");
-    execFileSync("git", ["init", "--quiet"], { cwd: root });
-    const store = new GitObjectLedgerBackend({ repoRoot: root });
-    await store.init();
-    return store;
-  },
-  async removeResearchFromActiveView(store, researchId) {
-    spliceFromLedgersMap(store, RESEARCHES_LEDGER, researchId);
-    await persistDirectLedgers(store, [RESEARCHES_LEDGER]);
-  },
-  async removeTaskFromActiveView(store, taskId) {
-    spliceFromLedgersMap(store, TASKS_LEDGER, taskId);
-    await persistDirectLedgers(store, [TASKS_LEDGER]);
   },
   async dispose(store) {
     await store.dispose();
@@ -357,8 +309,6 @@ const postgresBackend: Backend = {
 
 const BACKENDS: readonly Backend[] = [
   inMemoryBackend,
-  fsBackend,
-  gitBackend,
   sqliteBackend,
   postgresBackend,
 ];
@@ -515,7 +465,7 @@ async function setTaskStatus(
     return;
   }
 
-  // InMemory / Fs / Git: mutate the in-memory ledgers map directly.
+  // InMemory: mutate the in-memory ledgers map directly.
   const state = store as unknown as {
     ledgers: Map<string, { milestones: Array<{ items: Item[] }> }>;
   };
@@ -531,9 +481,6 @@ async function setTaskStatus(
     }
   }
   if (!found) throw new Error(`task not found: ${taskId}`);
-  if (name === "FsLedgerStore" || name === "GitObjectLedgerBackend") {
-    await persistDirectLedgers(store, [TASKS_LEDGER]);
-  }
 }
 
 async function publishManifest(
@@ -757,22 +704,12 @@ function expectIds(actual: readonly string[], expected: readonly string[]): void
 
 function runPlanPredicatesSuite(backend: Backend): void {
   const suiteDescribe = backend.skip === true ? describe.skip : describe;
-  // Load-sensitive: GitObject under full-suite + many linked worktrees exceeds
-  // the default 5s wall-clock (D293). SUT invariants unchanged.
-  const caseTimeoutMs =
-    backend.name === "GitObjectLedgerBackend" ? 30_000 : undefined;
   const itCase = (
     name: string,
     fn: () => Promise<void>,
     explicitTimeoutMs?: number,
   ): void => {
-    // Floor is the backend load bound; never let a smaller explicit override it.
-    const timeoutMs =
-      explicitTimeoutMs === undefined
-        ? caseTimeoutMs
-        : caseTimeoutMs === undefined
-          ? explicitTimeoutMs
-          : Math.max(explicitTimeoutMs, caseTimeoutMs);
+    const timeoutMs = explicitTimeoutMs;
     if (timeoutMs === undefined) it(name, fn);
     else it(name, fn, timeoutMs);
   };

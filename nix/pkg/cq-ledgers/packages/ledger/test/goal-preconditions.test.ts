@@ -1,9 +1,8 @@
 /**
  * F2 — server-enforced cross-ledger preconditions on `goals` phase changes.
  *
- * Runs the same assertions against BOTH adapters (FsLedgerStore over a tmp
- * dir, InMemoryLedgerStore dummy) via a per-test factory mirroring
- * transitions.test.ts.
+ * Runs the same assertions against the in-memory dummy, SQLite/XDG, and the
+ * environment-gated PostgreSQL adapter via a per-test factory.
  *
  * Two preconditions, enforced at the LedgerStore layer so NO client can
  * bypass them:
@@ -18,21 +17,23 @@
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  FsLedgerStore,
   InMemoryLedgerStore,
-  serializeRegistry,
   GOALS_LEDGER,
   QUESTIONS_LEDGER,
   DECISIONS_LEDGER,
   GoalPreconditionError,
   InvalidTransitionError,
   type LedgerStore,
-  LEDGER_STORAGE_DIRNAME,
+  PostgresLedgerStore,
+  SqliteLedgerStore,
 } from "../src/index.js";
+import { openPgPool } from "../src/store/postgres/connection.js";
+import { ensureSchema } from "../src/store/postgres/schema.js";
 
 interface StoreFactory {
   name: string;
@@ -42,19 +43,12 @@ interface StoreFactory {
 
 const dirs: string[] = [];
 
-const fsFactory: StoreFactory = {
-  name: "FsLedgerStore",
+const sqliteFactory: StoreFactory = {
+  name: "SqliteLedgerStore",
   async build() {
-    const dir = await mkdtemp(path.join(tmpdir(), "ledger-goal-precond-"));
+    const dir = await mkdtemp(path.join(tmpdir(), "ledger-goal-precond-sqlite-"));
     dirs.push(dir);
-    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
-    await mkdir(docsDir, { recursive: true });
-    await writeFile(
-      path.join(docsDir, "ledgers.yaml"),
-      serializeRegistry({ version: 1, ledgers: [] }),
-      "utf8",
-    );
-    const store = new FsLedgerStore({ root: dir });
+    const store = new SqliteLedgerStore({ dbPath: path.join(dir, "ledger.db") });
     await store.init();
     return store;
   },
@@ -84,7 +78,7 @@ async function seedGoal(store: LedgerStore, milestoneId: string): Promise<string
   return goal.id;
 }
 
-for (const factory of [fsFactory, inMemFactory]) {
+function runGoalPreconditionsContract(factory: StoreFactory): void {
   describe(`goal preconditions (${factory.name})`, () => {
     // (a) blocks: open question linking the goal blocks leaving clarifying.
     it("1. (a) blocks leaving clarifying while an open linked question exists", async () => {
@@ -353,6 +347,36 @@ for (const factory of [fsFactory, inMemFactory]) {
       }
     });
   });
+}
+
+runGoalPreconditionsContract(inMemFactory);
+runGoalPreconditionsContract(sqliteFactory);
+
+const pgUrl = process.env["CQ_TEST_PG_URL"];
+if (pgUrl === undefined || pgUrl.length === 0) {
+  describe.skip("goal preconditions (PostgresLedgerStore)", () => {
+    it("requires CQ_TEST_PG_URL", () => {});
+  });
+} else {
+  const postgresFactory: StoreFactory = {
+    name: "PostgresLedgerStore",
+    async build() {
+      const pool = openPgPool(pgUrl);
+      await ensureSchema(pool);
+      const projectKey = `goal-preconditions-${randomUUID()}`;
+      const store = new PostgresLedgerStore({
+        pool,
+        projectKey,
+        displayName: projectKey,
+      });
+      await store.init();
+      return store;
+    },
+    async teardown(store) {
+      await store.dispose();
+    },
+  };
+  runGoalPreconditionsContract(postgresFactory);
 }
 
 afterAll(async () => {

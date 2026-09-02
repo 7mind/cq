@@ -1,12 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  FsLedgerStore,
-  GitObjectLedgerBackend,
   InMemoryLedgerStore,
   MILESTONES_AMBIENT_ID,
   PostgresLedgerStore,
@@ -90,14 +87,12 @@ function inMemoryHeldMutation(
 }
 
 type PersistentRaceWorkerInput =
-  | { readonly backend: "fs"; readonly root: string; readonly taskId: string }
-  | { readonly backend: "git"; readonly root: string; readonly taskId: string }
-  | {
-      readonly backend: "postgres";
-      readonly pgUrl: string;
-      readonly projectKey: string;
-      readonly taskId: string;
-    };
+  {
+    readonly backend: "postgres";
+    readonly pgUrl: string;
+    readonly projectKey: string;
+    readonly taskId: string;
+  };
 
 async function workerHeldMutation(
   workerUrl: URL,
@@ -175,7 +170,7 @@ function persistentHeldMutation(input: PersistentRaceWorkerInput): Promise<HeldM
     new URL("./taskAdoptionPersistentRaceWorker.ts", import.meta.url),
     input,
     input.backend,
-    input.backend === "postgres" ? 15_000 : 10_000,
+    15_000,
   );
 }
 
@@ -434,52 +429,6 @@ const inMemoryFactory: AdoptionStoreFactory = {
   },
 };
 
-const fsFactory: AdoptionStoreFactory = {
-  name: "FsLedgerStore",
-  classification: "Behavioral-Active Blackbox-GoodCommunication",
-  async build() {
-    const root = await mkdtemp(path.join(tmpdir(), "task-adoption-fs-"));
-    const primary = new FsLedgerStore({ root });
-    const peer = new FsLedgerStore({ root });
-    await primary.init();
-    await peer.init();
-    return {
-      primary,
-      peer,
-      prepareHeldMutation: (taskId) =>
-        persistentHeldMutation({ backend: "fs", root, taskId }),
-      async dispose() {
-        await disposeDistinct([primary, peer]);
-        await rm(root, { recursive: true, force: true });
-      },
-    };
-  },
-};
-
-const gitFactory: AdoptionStoreFactory = {
-  name: "GitObjectLedgerBackend",
-  classification: "Behavioral-Active Blackbox-GoodCommunication",
-  timeoutMs: 60_000,
-  async build() {
-    const root = await mkdtemp(path.join(tmpdir(), "task-adoption-git-"));
-    execFileSync("git", ["init", "--quiet"], { cwd: root });
-    const primary = new GitObjectLedgerBackend({ repoRoot: root });
-    const peer = new GitObjectLedgerBackend({ repoRoot: root });
-    await primary.init();
-    await peer.init();
-    return {
-      primary,
-      peer,
-      prepareHeldMutation: (taskId) =>
-        persistentHeldMutation({ backend: "git", root, taskId }),
-      async dispose() {
-        await disposeDistinct([primary, peer]);
-        await rm(root, { recursive: true, force: true });
-      },
-    };
-  },
-};
-
 const sqliteFactory: AdoptionStoreFactory = {
   name: "SqliteLedgerStore",
   classification: "Behavioral-Active Blackbox-GoodCommunication",
@@ -504,8 +453,6 @@ const sqliteFactory: AdoptionStoreFactory = {
 };
 
 runTaskAdoptionEligibilityStoreContract(inMemoryFactory);
-runTaskAdoptionEligibilityStoreContract(fsFactory);
-runTaskAdoptionEligibilityStoreContract(gitFactory);
 runTaskAdoptionEligibilityStoreContract(sqliteFactory);
 
 const pgUrl = process.env["CQ_TEST_PG_URL"];

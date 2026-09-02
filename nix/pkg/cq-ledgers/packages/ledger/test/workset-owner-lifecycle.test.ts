@@ -2,7 +2,7 @@
  * T1976 — shared canonical-ownership lifecycle contract over real adapters.
  *
  * Constructive taxonomy: Behavioral / Active / Blackbox. The same contract
- * drives FS, Git-object, SQLite, and live PostgreSQL; adapter fault tests own
+ * drives SQLite and live PostgreSQL; adapter fault tests own
  * transaction/restart details separately.
  */
 
@@ -20,8 +20,6 @@ import {
 } from "../src/index.js";
 import type { WorksetPlanLifecycleContractFactory } from "./worksetPlanLifecycleContract.js";
 import {
-  fsPlanLifecycleFactory,
-  gitPlanLifecycleFactory,
   postgresPlanLifecycleFactory,
   sqlitePlanLifecycleFactory,
 } from "./worksetPlanLifecycleDurableFactories.js";
@@ -108,8 +106,6 @@ function register(factory: WorksetPlanLifecycleContractFactory): void {
   });
 }
 
-register(fsPlanLifecycleFactory);
-register(gitPlanLifecycleFactory);
 register(sqlitePlanLifecycleFactory);
 
 const pgUrl = process.env.CQ_TEST_PG_URL;
