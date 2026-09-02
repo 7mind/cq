@@ -7,10 +7,11 @@
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
+  createManagementLedgerStore,
   QUESTIONS_LEDGER,
   MILESTONES_AMBIENT_ID,
 } from "../src/index.js";
@@ -96,6 +97,13 @@ describe("needsNormalization", () => {
 // ---------------------------------------------------------------------------
 
 const tmpDirs: string[] = [];
+const WORKSPACE_ROOT = path.resolve(import.meta.dir, "..", "..", "..");
+const NORMALIZE_SCRIPT = path.join(WORKSPACE_ROOT, "scripts", "normalize-suggestions.ts");
+
+function runGit(cwd: string, args: string[]): void {
+  const result = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  expect(result.exitCode).toBe(0);
+}
 
 async function makeStore(): Promise<{ store: SqliteLedgerStore }> {
   const dir = await mkdtemp(path.join(tmpdir(), "normalize-suggestions-"));
@@ -204,6 +212,62 @@ describe("normalize-suggestions — store-level (SqliteLedgerStore)", () => {
     expect(after.fields["suggestions"]).toEqual(["React", "Vue", "Svelte"]);
 
     await store.dispose();
+  });
+});
+
+describe("normalize-suggestions — backup durability [Behavioral-Active Effectual-GoodCommunication]", () => {
+  // Regression-origin: the command must drain its managed backup before exit.
+  it('flushes a configured backup="in-tree" after normalization', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "normalize-suggestions-backup-"));
+    const xdgStateHome = await mkdtemp(path.join(tmpdir(), "normalize-suggestions-xdg-"));
+    tmpDirs.push(root, xdgStateHome);
+    await writeFile(path.join(root, "README.md"), "# normalize fixture\n");
+    await writeFile(
+      path.join(root, "cq.toml"),
+      '[ledger]\nbackend = "xdg"\nbackup = "in-tree"\n',
+    );
+    runGit(root, ["init", "-q"]);
+    runGit(root, ["config", "user.email", "test@example.com"]);
+    runGit(root, ["config", "user.name", "test"]);
+    runGit(root, ["add", "README.md", "cq.toml"]);
+    runGit(root, ["commit", "-qm", "fixture"]);
+
+    const originalXdgStateHome = process.env["XDG_STATE_HOME"];
+    process.env["XDG_STATE_HOME"] = xdgStateHome;
+    try {
+      const seeded = await createManagementLedgerStore(root);
+      try {
+        await seeded.store.createItem(QUESTIONS_LEDGER, MILESTONES_AMBIENT_ID, {
+          status: "open",
+          fields: { question: "Choose", suggestions: ["a; b"] },
+          author: "test-seed",
+        });
+      } finally {
+        seeded.backup?.close();
+        await seeded.store.dispose();
+      }
+
+      const child = Bun.spawn([process.execPath, "run", NORMALIZE_SCRIPT, "--cwd", root], {
+        cwd: WORKSPACE_ROOT,
+        env: { ...process.env, XDG_STATE_HOME: xdgStateHome },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [exitCode, stdout, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      expect(exitCode).toBe(0);
+      expect(`${stdout}\n${stderr}`).toContain("1 updated");
+      await access(path.join(root, ".cq", "ledgers.yaml"));
+    } finally {
+      if (originalXdgStateHome === undefined) {
+        delete process.env["XDG_STATE_HOME"];
+      } else {
+        process.env["XDG_STATE_HOME"] = originalXdgStateHome;
+      }
+    }
   });
 });
 

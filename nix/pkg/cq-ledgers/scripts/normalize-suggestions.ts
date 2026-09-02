@@ -66,6 +66,7 @@ for (const group of ledger.milestones) {
   }
 }
 
+await resolved.backup?.flush();
 resolved.backup?.close();
 await store.dispose();
 
