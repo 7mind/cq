@@ -1457,7 +1457,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/currentRecoverySeal.ts",
-      "sha256": "e52da699a7d60dbdb5bbfb02bde8941a1618b93cdf6432678fcdeb498f77be56",
+      "sha256": "41c9fa3a824181e74c61d191816c22a7d3b063e1192b20c83b1b517c1e70b4c5",
       "targets": []
     },
     {

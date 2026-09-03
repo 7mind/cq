@@ -8,6 +8,7 @@ import {
   CurrentRecoveryStatusSchema,
   FsCurrentRecoverySealJournalStore,
   InMemoryCurrentRecoverySealJournalStore,
+  createCurrentRecoverySeal,
   createCurrentRecoverySeed,
   createDispatchLineageCutoverFence,
   currentRecoveryStatus,
@@ -18,9 +19,12 @@ import {
 } from "../src/index.js";
 import {
   RECOVERY_BINDING,
+  RECOVERY_LATER,
   RECOVERY_TASK,
+  RECOVERY_TIP,
   committedJournal,
   provisionalJournal,
+  receipt,
   recoverySeal,
 } from "./recoverySealTestSupport.js";
 
@@ -153,6 +157,69 @@ for (const factory of factories) {
       await store.migrateCommittedTaskIdentity(legacy, next);
       expect(await store.read(RECOVERY_TASK)).toEqual(next);
       expect(next.seal.seed.taskIdentityScheme).toBe(CURRENT_RECOVERY_TASK_IDENTITY_SCHEME);
+    });
+
+    test("committed promotion accepts an intermediate generation's appended receipt", async () => {
+      const store = await factory.make();
+      const current = taskIdentityMigrationJournals().next;
+      await store.put(current);
+      const nextTip = "4".repeat(40);
+      const nextSnapshotDigest = "e".repeat(64);
+      const seal = createCurrentRecoverySeal(
+        createCurrentRecoverySeed({
+          selectedSourceHandle: {
+            attestationId: current.seal.seed.selectedSourceHandle.attestationId,
+            generation: 21,
+          },
+          lineageMaximumGeneration: 21,
+          snapshotDigest: nextSnapshotDigest,
+          source: { kind: "aborted", version: 1, abortReason: "parent-lost" },
+          sourceTerminalDigest: "f".repeat(64),
+          namespace: current.seal.seed.namespace,
+          taskId: current.taskId,
+          taskDigest: current.seal.seed.taskDigest,
+          finalizedManifestDigest: current.seal.seed.finalizedManifestDigest,
+          promptProvenance: current.seal.seed.promptProvenance,
+          prepareRequestDigest: current.seal.seed.prepareRequestDigest,
+          inputRecipe: current.seal.seed.inputRecipe,
+          overlays: current.seal.seed.overlays,
+          gitBinding: {
+            ...current.seal.seed.gitBinding,
+            handleFingerprint: current.seal.seed.managedFingerprint,
+          },
+          gitReceipts: [
+            ...current.seal.seed.gitReceipts,
+            receipt(20, RECOVERY_TIP, nextTip),
+          ],
+          liveTip: nextTip,
+          capturedAt: RECOVERY_LATER,
+        }),
+      );
+      if (seal.version !== 1) throw new Error("aborted promotion did not create a v1 seal");
+      const next = {
+        ...current,
+        snapshotDigest: nextSnapshotDigest,
+        seal,
+        writtenAt: RECOVERY_LATER,
+        committedAt: RECOVERY_LATER,
+        fence: createDispatchLineageCutoverFence({
+          namespace: seal.seed.namespace,
+          taskId: current.taskId,
+          managedFingerprint: seal.seed.managedFingerprint,
+          sourceAttestationId: seal.seed.selectedSourceHandle.attestationId,
+          selectedSourceGeneration: seal.seed.selectedSourceHandle.generation,
+          lineageMaximumGeneration: seal.seed.lineageMaximumGeneration,
+          recoverySeedRef: seal.sealReference,
+          fenceCapability: {
+            scope: "dispatch-lineage-fence",
+            token: RECOVERY_BINDING.handleToken,
+          },
+          installedAt: RECOVERY_LATER,
+        }),
+      } as const;
+
+      await store.put(next);
+      expect(await store.read(RECOVERY_TASK)).toEqual(next);
     });
   });
 }

@@ -442,9 +442,11 @@ function isCommittedRecoveryEpochPromotion(
     receiptsAdvanceOrPreserveTip &&
     chainIsPrefix(currentSeed.gitReceipts, nextSeed.gitReceipts) &&
     suffix.every(
-      (receipt) =>
+      (receipt, index) =>
         receipt.attestationId === nextSeed.selectedSourceHandle.attestationId &&
-        receipt.generation === promotedGeneration,
+        receipt.generation > currentSeed.lineageMaximumGeneration &&
+        receipt.generation <= promotedGeneration &&
+        (index === 0 || suffix[index - 1]!.generation <= receipt.generation),
     ) &&
     currentFence.fenceCapabilityHash === nextFence.fenceCapabilityHash &&
     currentFence.sourceAttestationId === nextFence.sourceAttestationId
