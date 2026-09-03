@@ -447,7 +447,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/dispatchRecoveryEpochPromotion.test.ts",
-      "sha256": "6b8b92ad426f6e83e9cda3aea9a03c111bb54802e21b49a02fa7ae5b267563e2",
+      "sha256": "1fbfb53a6083e5b34aa140f67e494c09569d713cb3a15985c08656d7e715890b",
       "targets": []
     },
     {

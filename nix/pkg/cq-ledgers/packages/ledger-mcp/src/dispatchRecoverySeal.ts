@@ -632,20 +632,116 @@ async function journalSuccessorSource(
   deps: CurrentRecoveryCaptureDeps,
 ): Promise<CurrentRecoverySourceCandidate | null> {
   assertCommittedCoordinates(journal, coordinates);
-  const successors = journalSuccessorRows(rows, journal, coordinates.binding);
+  const successors = [...journalSuccessorRows(rows, journal, coordinates.binding)].sort(
+    (left, right) => left.generation - right.generation,
+  );
   if (successors.length === 0) return null;
-  if (successors.length !== 1) {
+  const seed = journal.seal.seed;
+  const onlySuccessor = successors.length === 1 ? successors[0] : undefined;
+  if (
+    onlySuccessor !== undefined &&
+    (isAttestationTombstone(onlySuccessor) ||
+      onlySuccessor.attestationId !== seed.selectedSourceHandle.attestationId ||
+      onlySuccessor.promptProvenance.roleId !== "implement-worker")
+  ) {
     throw new CurrentRecoverySealError(
-      "source-ambiguous",
-      "competing terminal rows claim the next committed recovery epoch",
+      "source-not-found",
+      "the next journal recovery epoch is not one eligible terminal worker abort",
     );
   }
-  const row = successors[0]!;
-  const seed = journal.seal.seed;
+  const successorEnvelopes: AttestationEnvelope[] = [];
+  for (const [index, successor] of successors.entries()) {
+    if (
+      isAttestationTombstone(successor) ||
+      successor.attestationId !== seed.selectedSourceHandle.attestationId ||
+      successor.generation !== seed.lineageMaximumGeneration + index + 1 ||
+      successor.promptProvenance.roleId !== "implement-worker"
+    ) {
+      throw new CurrentRecoverySealError(
+        "source-ambiguous",
+        "competing terminal rows claim the next committed recovery epoch",
+      );
+    }
+    successorEnvelopes.push(successor);
+  }
+  let inheritedReceipts: readonly GitChangeBrokerReceipt[] = seed.gitReceipts;
+  let inheritedTip = seed.liveTip;
+  for (const [index, successor] of successorEnvelopes.entries()) {
+    if (!bindingMatches(successor.gitEffectBinding, coordinates.binding)) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "journal recovery successor carries a foreign or stale managed binding",
+      );
+    }
+    const inherited = successor.gitEffectBinding?.inheritedGitReceipts;
+    if (inherited === undefined || !receiptClosuresEqual(inherited, inheritedReceipts)) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "journal recovery successor does not inherit the preceding receipt closure",
+      );
+    }
+    if (
+      successor.promptProvenance.inputDigest !== dispatchPayloadDigest(successor.input) ||
+      successor.input === null ||
+      typeof successor.input !== "object" ||
+      Array.isArray(successor.input)
+    ) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "journal recovery successor input digest is not authentic",
+      );
+    }
+    const input = successor.input as Readonly<Record<string, DispatchJSONValue>>;
+    if (
+      input["taskId"] !== coordinates.taskId ||
+      input["branch"] !== coordinates.binding.branch ||
+      input["baseCommit"] !== coordinates.binding.baseCommit ||
+      input["startingCommit"] !== inheritedTip
+    ) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "journal recovery successor input is not bound to the preceding epoch",
+      );
+    }
+    if (
+      coordinates.taskSpecificationDigest === undefined ||
+      taskSpecificationDigest(input) !== coordinates.taskSpecificationDigest
+    ) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "journal recovery successor task specification differs from the current finalized task",
+      );
+    }
+    if (index === successorEnvelopes.length - 1) continue;
+    const continuation = successor.dispatchContinuationBinding;
+    if (successor.state !== "consumed" || continuation === undefined) {
+      throw new CurrentRecoverySealError(
+        "source-ambiguous",
+        "an intermediate recovery successor is not one consumed continuation source",
+      );
+    }
+    const closure = continuation.gitReceipts;
+    const suffix = closure.slice(inheritedReceipts.length);
+    if (
+      closure.length < inheritedReceipts.length ||
+      (closure.length === inheritedReceipts.length && continuation.liveTip !== inheritedTip) ||
+      !receiptClosuresEqual(closure.slice(0, inheritedReceipts.length), inheritedReceipts) ||
+      suffix.some(
+        (receipt) =>
+          receipt.attestationId !== successor.attestationId ||
+          receipt.generation !== successor.generation,
+      )
+    ) {
+      throw new CurrentRecoverySealError(
+        "journal-conflict",
+        "intermediate recovery continuation receipt closure is incomplete, divergent, or foreign",
+      );
+    }
+    inheritedReceipts = closure;
+    inheritedTip = continuation.liveTip;
+  }
+  const row = successorEnvelopes.at(-1)!;
   if (
-    isAttestationTombstone(row) ||
-    row.attestationId !== seed.selectedSourceHandle.attestationId ||
-    row.promptProvenance.roleId !== "implement-worker" ||
     row.state !== "aborted" ||
     row.abortReason === undefined ||
     !ELIGIBLE_ABORT_REASONS.has(row.abortReason) ||
@@ -656,51 +752,6 @@ async function journalSuccessorSource(
     throw new CurrentRecoverySealError(
       "source-not-found",
       "the next journal recovery epoch is not one eligible terminal worker abort",
-    );
-  }
-  if (!bindingMatches(row.gitEffectBinding, coordinates.binding)) {
-    throw new CurrentRecoverySealError(
-      "journal-conflict",
-      "journal recovery successor carries a foreign or stale managed binding",
-    );
-  }
-  const inherited = row.gitEffectBinding?.inheritedGitReceipts;
-  if (inherited === undefined || !receiptClosuresEqual(inherited, seed.gitReceipts)) {
-    throw new CurrentRecoverySealError(
-      "journal-conflict",
-      "journal recovery successor does not inherit the exact committed receipt closure",
-    );
-  }
-  if (
-    row.promptProvenance.inputDigest !== dispatchPayloadDigest(row.input) ||
-    row.input === null ||
-    typeof row.input !== "object" ||
-    Array.isArray(row.input)
-  ) {
-    throw new CurrentRecoverySealError(
-      "journal-conflict",
-      "journal recovery successor input digest is not authentic",
-    );
-  }
-  const input = row.input as Readonly<Record<string, DispatchJSONValue>>;
-  if (
-    input["taskId"] !== coordinates.taskId ||
-    input["branch"] !== coordinates.binding.branch ||
-    input["baseCommit"] !== coordinates.binding.baseCommit ||
-    input["startingCommit"] !== seed.liveTip
-  ) {
-    throw new CurrentRecoverySealError(
-      "journal-conflict",
-      "journal recovery successor input is not bound to the committed epoch",
-    );
-  }
-  if (
-    coordinates.taskSpecificationDigest === undefined ||
-    taskSpecificationDigest(input) !== coordinates.taskSpecificationDigest
-  ) {
-    throw new CurrentRecoverySealError(
-      "journal-conflict",
-      "journal recovery successor task specification differs from the current finalized task",
     );
   }
   const detailsDigest =
@@ -748,14 +799,14 @@ async function journalSuccessorSource(
       gitReceiptsDigest: currentRecoveryReceiptClosureDigest(receipts),
     },
   ]);
-  const suffix = candidate.gitReceipts.slice(seed.gitReceipts.length);
+  const suffix = candidate.gitReceipts.slice(inheritedReceipts.length);
   if (
-    candidate.gitReceipts.length < seed.gitReceipts.length ||
-    (candidate.gitReceipts.length === seed.gitReceipts.length &&
-      coordinates.liveTip !== seed.liveTip) ||
+    candidate.gitReceipts.length < inheritedReceipts.length ||
+    (candidate.gitReceipts.length === inheritedReceipts.length &&
+      coordinates.liveTip !== inheritedTip) ||
     !receiptClosuresEqual(
-      candidate.gitReceipts.slice(0, seed.gitReceipts.length),
-      seed.gitReceipts,
+      candidate.gitReceipts.slice(0, inheritedReceipts.length),
+      inheritedReceipts,
     ) ||
     suffix.some(
       (receipt) =>

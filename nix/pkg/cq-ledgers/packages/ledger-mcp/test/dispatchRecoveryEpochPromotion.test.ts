@@ -914,6 +914,17 @@ describe("journal recovery epoch promotion", () => {
       expect(generation20).toMatchObject({ accepted: true });
       if (!generation20.accepted) throw new Error(generation20.detail);
       expect(generation20.handle).toEqual({ attestationId, generation: 20 });
+      await capability.abort({ ...generation20.handle, reason: "parent-lost" });
+
+      const promotedContinuation = await captureCurrentRecoverySeal(
+        livePromotionCoordinates,
+        promotionDeps,
+      );
+      expect(promotedContinuation.seed.selectedSourceHandle).toEqual({
+        attestationId,
+        generation: 20,
+      });
+      expect(promotedContinuation.seed.lineageMaximumGeneration).toBe(20);
     } finally {
       await backend.close();
       await fs.rm(repositoryRoot, { recursive: true, force: true });
