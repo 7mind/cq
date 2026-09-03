@@ -5,9 +5,9 @@
  * durable broker receipt lineage the dispatch runtime relies on. This module
  * journals the operation under the managed handle's Git-effect lock, binding
  * the task, the handle token/fingerprint, the canonical repository/common
- * directory, the worktree, the branch/ref, the exact terminal old worker
- * result, the onto commit, the terminal rebased head, the request digest, the
- * conflict-continuation receipt chain, the outcome, and the timestamps. The
+ * directory, the worktree, the branch/ref, the old tip, the onto commit, the
+ * terminal rebased head, the request digest, the conflict-continuation receipt
+ * chain, the outcome, and the timestamps. The
  * ONLY thing a caller ever holds is the opaque digest-backed reference
  * (`cq-guarded-rebase:v1:<requestDigest>`); the trusted manager resolves it
  * back to the terminal journal server-side and materializes the closed
@@ -680,11 +680,10 @@ export async function runGuardedRebase(
   );
 }
 
-async function readJournalByDigest(
+async function readJournals(
   binding: ManagedWorktreeDispatchBinding,
-  requestDigest: string,
   stateDir?: string,
-): Promise<GuardedRebaseJournal> {
+): Promise<readonly GuardedRebaseJournal[]> {
   const root = guardedRebaseRoot(binding, stateDir);
   let entries;
   try {
@@ -695,12 +694,13 @@ async function readJournalByDigest(
     }
     throw error;
   }
+  const journals: GuardedRebaseJournal[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const journal = await readJournal(join(root, entry.name, "journal.json"));
-    if (journal?.requestDigest === requestDigest) return journal;
+    if (journal !== null) journals.push(journal);
   }
-  throw new Error("guarded rebase reference does not resolve to a durable journal");
+  return Object.freeze(journals);
 }
 
 const BINDING_IDENTITY_FIELDS = [
@@ -726,6 +726,56 @@ function assertJournalMatchesBinding(
       throw new Error(`guarded rebase journal does not match the ${label} binding at ${field}`);
     }
   }
+}
+
+function journalMatchesBinding(
+  journal: GuardedRebaseJournal,
+  binding: ManagedWorktreeDispatchBinding,
+): boolean {
+  return BINDING_IDENTITY_FIELDS.every((field) => journal[field] === binding[field]);
+}
+
+function composeGuardedRebaseBridge(
+  journals: readonly GuardedRebaseJournal[],
+  selected: GuardedRebaseJournal,
+  binding: ManagedWorktreeDispatchBinding,
+  oldResultCommit: string,
+  reference: string,
+): DispatchGuardedRebaseBridge {
+  const chain = [selected];
+  const visited = new Set([selected.requestDigest]);
+  let cursor = selected;
+  while (cursor.oldResultCommit !== oldResultCommit) {
+    const matching = journals.filter(
+      (journal) =>
+        journal.state === "finalized" &&
+        journal.rebasedStartCommit === cursor.oldResultCommit &&
+        journalMatchesBinding(journal, binding),
+    );
+    const predecessors = matching.filter((journal) => !visited.has(journal.requestDigest));
+    if (predecessors.length === 0) {
+      if (matching.length > 0) {
+        throw new Error("guarded rebase journal chain contains a cycle");
+      }
+      throw new Error("guarded rebase journal chain has a gap before the terminal worker result");
+    }
+    if (predecessors.length > 1) {
+      throw new Error("guarded rebase journal chain forks before the terminal worker result");
+    }
+    const predecessor = predecessors[0]!;
+    visited.add(predecessor.requestDigest);
+    chain.push(predecessor);
+    cursor = predecessor;
+  }
+  const latest = bridgeOf(selected, reference);
+  return Object.freeze({
+    ...latest,
+    oldResultCommit,
+    outcome: chain.some((journal) => journal.outcome === "conflicted")
+      ? "conflicted"
+      : "clean",
+    exactTip: chain.every((journal) => journal.exactTip === true),
+  });
 }
 
 export interface MaterializeGuardedRebaseBridgeOptions {
@@ -757,8 +807,17 @@ export async function materializeGuardedRebaseBridge(
   }
   const requestDigest = options.reference.slice(GUARDED_REBASE_REFERENCE_PREFIX.length);
   let journal: GuardedRebaseJournal;
+  let journals: readonly GuardedRebaseJournal[];
   try {
-    journal = await readJournalByDigest(options.current, requestDigest, options.stateDir);
+    journals = await readJournals(options.current, options.stateDir);
+    const matches = journals.filter((candidate) => candidate.requestDigest === requestDigest);
+    if (matches.length === 0) {
+      throw new Error("guarded rebase reference does not resolve to a durable journal");
+    }
+    if (matches.length > 1) {
+      throw new Error("guarded rebase reference resolves to multiple durable journals");
+    }
+    journal = matches[0]!;
   } catch (error) {
     throw new GuardedRebaseRejection(
       "guardedRebase",
@@ -780,10 +839,42 @@ export async function materializeGuardedRebaseBridge(
       error instanceof Error ? error.message : String(error),
     );
   }
-  // The old side must be the exact terminal prior worker result: its durable
-  // receipts resolve contiguously to the journaled pre-rebase tip.
+  if (
+    options.priorResultCommitInput === undefined ||
+    options.priorResultCommitInput === null ||
+    !FULL_COMMIT.test(options.priorResultCommitInput)
+  ) {
+    throw new GuardedRebaseRejection(
+      "input.priorResultCommit",
+      "guarded rebase continuation requires one full terminal priorResultCommit",
+    );
+  }
+  let bridge: DispatchGuardedRebaseBridge;
   try {
-    await resolveInheritedGitChangeReceipts(options.prior, journal.oldResultCommit, {
+    bridge = composeGuardedRebaseBridge(
+      journals,
+      journal,
+      options.current,
+      options.priorResultCommitInput,
+      options.reference,
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    if (detail.includes("gap")) {
+      throw new GuardedRebaseRejection(
+        "input.priorResultCommit",
+        "guarded rebase continuation requires priorResultCommit to equal the bound old worker result",
+      );
+    }
+    throw new GuardedRebaseRejection(
+      detail.includes("fork") || detail.includes("cycle")
+        ? "guardedRebase"
+        : "input.priorResultCommit",
+      detail,
+    );
+  }
+  try {
+    await resolveInheritedGitChangeReceipts(options.prior, bridge.oldResultCommit, {
       ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
     });
   } catch (error) {
@@ -792,31 +883,25 @@ export async function materializeGuardedRebaseBridge(
       `guarded rebase old result is not the exact terminal prior generation result: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  if (options.baseCommitInput !== journal.ontoCommit) {
+  if (options.baseCommitInput !== bridge.ontoCommit) {
     throw new GuardedRebaseRejection(
       "input.baseCommit",
       "guarded rebase continuation requires baseCommit to equal the journaled ontoCommit",
     );
   }
-  if (options.startingCommitInput !== journal.rebasedStartCommit) {
+  if (options.startingCommitInput !== bridge.rebasedStartCommit) {
     throw new GuardedRebaseRejection(
       "input.startingCommit",
       "guarded rebase continuation requires startingCommit to equal the journaled rebased head",
     );
   }
-  if (options.priorResultCommitInput !== journal.oldResultCommit) {
-    throw new GuardedRebaseRejection(
-      "input.priorResultCommit",
-      "guarded rebase continuation requires priorResultCommit to equal the bound old worker result",
-    );
-  }
-  if ((await liveTip(options.current)) !== journal.rebasedStartCommit) {
+  if ((await liveTip(options.current)) !== bridge.rebasedStartCommit) {
     throw new GuardedRebaseRejection(
       "guardedRebase",
       "guarded rebase reference is stale: the managed ref advanced past the journaled rebased head",
     );
   }
-  return bridgeOf(journal, options.reference);
+  return bridge;
 }
 
 export interface ReverifyGuardedRebaseBridgeOptions {
@@ -847,8 +932,19 @@ export async function reverifyGuardedRebaseBridge(
     );
   }
   let journal: GuardedRebaseJournal;
+  let journals: readonly GuardedRebaseJournal[];
   try {
-    journal = await readJournalByDigest(options.current, bridge.requestDigest, options.stateDir);
+    journals = await readJournals(options.current, options.stateDir);
+    const matches = journals.filter(
+      (candidate) => candidate.requestDigest === bridge.requestDigest,
+    );
+    if (matches.length === 0) {
+      throw new Error("guarded rebase reference does not resolve to a durable journal");
+    }
+    if (matches.length > 1) {
+      throw new Error("guarded rebase reference resolves to multiple durable journals");
+    }
+    journal = matches[0]!;
   } catch (error) {
     throw new GuardedRebaseRejection(
       "guardedRebase",
@@ -875,7 +971,21 @@ export async function reverifyGuardedRebaseBridge(
       error instanceof Error ? error.message : String(error),
     );
   }
-  const materialized = bridgeOf(journal, bridge.guardedRebase);
+  let materialized: DispatchGuardedRebaseBridge;
+  try {
+    materialized = composeGuardedRebaseBridge(
+      journals,
+      journal,
+      options.current,
+      bridge.oldResultCommit,
+      bridge.guardedRebase,
+    );
+  } catch (error) {
+    throw new GuardedRebaseRejection(
+      "guardedRebase",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
   if (canonical(materialized) !== canonical(bridge)) {
     throw new GuardedRebaseRejection(
       "guardedRebase",

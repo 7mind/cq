@@ -2027,6 +2027,10 @@ describe("dispatch-bound Git change capability", () => {
     let d443RestartRebasedHead!: string;
     let d443RestartOntoCommit!: string;
     let d443RestartReference!: string;
+    let d446Consecutive!: GuardedRetryFixture;
+    let d446ConsecutiveRebasedHead!: string;
+    let d446ConsecutiveOntoCommit!: string;
+    let d446ConsecutiveReference!: string;
 
     async function runGuardedRebaseCli(
       fixture: GuardedRetryFixture,
@@ -2205,6 +2209,45 @@ describe("dispatch-bound Git change capability", () => {
       d443RestartOntoCommit = restart.ontoCommit;
       d443RestartRebasedHead = restart.rebasedHead;
       d443RestartReference = restart.reference;
+
+      d446Consecutive = await createGuardedRetryFixture("d446-consecutive", 2_156, true);
+      let consecutive = await setupGuardedRebase(
+        d446Consecutive,
+        "d446-consecutive-rebase-1",
+      );
+      for (const round of [2, 3]) {
+        await fs.writeFile(
+          path.join(d446Consecutive.repositoryRoot, `main-${String(round)}.txt`),
+          `advanced main ${String(round)}\n`,
+        );
+        await git(d446Consecutive.repositoryRoot, ["add", `main-${String(round)}.txt`]);
+        await git(d446Consecutive.repositoryRoot, [
+          "commit",
+          "-q",
+          "-m",
+          `advance main ${String(round)}`,
+        ]);
+        const ontoCommit = await git(d446Consecutive.repositoryRoot, ["rev-parse", "HEAD"]);
+        consecutive = {
+          ontoCommit,
+          ...(await runGuardedRebaseCli(
+            d446Consecutive,
+            ontoCommit,
+            `d446-consecutive-rebase-${String(round)}`,
+          )),
+        };
+      }
+      consecutive = {
+        ontoCommit: consecutive.ontoCommit,
+        ...(await runGuardedRebaseCli(
+          d446Consecutive,
+          consecutive.ontoCommit,
+          "d446-consecutive-rebase-4-no-op",
+        )),
+      };
+      d446ConsecutiveOntoCommit = consecutive.ontoCommit;
+      d446ConsecutiveRebasedHead = consecutive.rebasedHead;
+      d446ConsecutiveReference = consecutive.reference;
     }, GUARDED_REBASE_SETUP_TIMEOUT_MS);
 
     test("D332 rejects a lineage-free implement-worker retry at an advanced managed-worktree tip [Behavioral-Progression Blackbox-GoodCommunication]", async () => {
@@ -2376,6 +2419,118 @@ describe("dispatch-bound Git change capability", () => {
         attestationId: d443Restart.first.handle.attestationId,
         generation: d443Restart.first.handle.generation + 1,
       });
+    });
+
+    test("D446 composes consecutive guarded rebases back to one terminal worker generation [Behavioral-Active Effectual-GoodCommunication]", async () => {
+      const restarted = openGuardedRetryCapability(d446Consecutive, 3_156);
+      const request = {
+        roleId: "implement-worker",
+        input: {
+          taskId: "T2148",
+          headline: "resume after consecutive guarded rebases",
+          description: "resolve one terminal worker through three durable rebase journals",
+          acceptance: "the latest rebased tip retains one closed worker lineage",
+          worktreePath: d446Consecutive.managed.handle.absolutePath,
+          branch: d446Consecutive.managed.handle.branch,
+          baseCommit: d446ConsecutiveOntoCommit,
+          round: 1,
+          startingCommit: d446ConsecutiveRebasedHead,
+          priorResultCommit: d446Consecutive.firstReceipt.newHead,
+        },
+        idempotencyKey: "T2148-d446-consecutive-guarded-rebase-round-1",
+        timeoutMs: 600_000,
+        expectedChild: {
+          childId: "d446-consecutive-guarded-rebase-round-1",
+          runId: "d446-consecutive-guarded-rebase-round-1",
+        },
+        guardedRebase: d446ConsecutiveReference,
+      } as const;
+      const retry = await restarted.capability.prepare(request);
+      if (!retry.accepted) {
+        throw new Error(`D446 rejected the consecutive guarded rebase: ${retry.detail}`);
+      }
+      expect(retry.handle).toEqual({
+        attestationId: d446Consecutive.first.handle.attestationId,
+        generation: d446Consecutive.first.handle.generation + 1,
+      });
+      const materialized = await restarted.capability.fetchInput({
+        ...retry.handle,
+        inputCapability: retry.prepared.inputCapability,
+      });
+      expect(materialized.input).toMatchObject({
+        guardedRebaseLineage: {
+          oldResultCommit: d446Consecutive.firstReceipt.newHead,
+          ontoCommit: d446ConsecutiveOntoCommit,
+          rebasedStartCommit: d446ConsecutiveRebasedHead,
+          exactTip: false,
+        },
+      });
+      await restarted.capability.abort({ ...retry.handle, reason: "parent-lost" });
+
+      const journalRoot = path.join(d446Consecutive.stateDir, "guarded-rebase");
+      const journalDirs = await fs.readdir(journalRoot);
+      const journals = await Promise.all(
+        journalDirs.map(async (directory) => ({
+          directory,
+          journal: JSON.parse(
+            await fs.readFile(path.join(journalRoot, directory, "journal.json"), "utf8"),
+          ) as {
+            readonly requestDigest: string;
+            readonly oldResultCommit: string;
+            readonly rebasedStartCommit: string;
+          },
+        })),
+      );
+      const latest = journals.find(
+        ({ journal }) =>
+          journal.requestDigest ===
+          d446ConsecutiveReference.slice("cq-guarded-rebase:v1:".length),
+      );
+      if (latest === undefined) throw new Error("D446 latest journal disappeared");
+      const predecessor = journals.find(
+        ({ journal }) =>
+          journal.requestDigest !== latest.journal.requestDigest &&
+          journal.rebasedStartCommit === latest.journal.oldResultCommit,
+      );
+      if (predecessor === undefined) throw new Error("D446 predecessor journal disappeared");
+
+      const forkDirectory = path.join(journalRoot, "d446-fork");
+      await fs.mkdir(forkDirectory);
+      await fs.writeFile(
+        path.join(forkDirectory, "journal.json"),
+        `${JSON.stringify({
+          ...predecessor.journal,
+          operationId: "d446-consecutive-fork",
+          requestDigest: "f".repeat(64),
+        })}\n`,
+      );
+      expectRejection(
+        await restarted.capability.prepare({
+          ...request,
+          idempotencyKey: "T2148-d446-consecutive-fork",
+          expectedChild: {
+            childId: "d446-consecutive-fork",
+            runId: "d446-consecutive-fork",
+          },
+        }),
+        "guardedRebase",
+        "does not resolve to one terminal prior worker generation",
+      );
+
+      await fs.rm(forkDirectory, { recursive: true });
+      await fs.rm(path.join(journalRoot, predecessor.directory), { recursive: true });
+      expectRejection(
+        await restarted.capability.prepare({
+          ...request,
+          idempotencyKey: "T2148-d446-consecutive-gap",
+          expectedChild: {
+            childId: "d446-consecutive-gap",
+            runId: "d446-consecutive-gap",
+          },
+        }),
+        "guardedRebase",
+        "does not resolve to one terminal prior worker generation",
+      );
     });
 
     test("a recovery fence admits an exact server-verified guarded-rebase bridge [Behavioral-Progression Blackbox-GoodCommunication]", async () => {
