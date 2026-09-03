@@ -21,6 +21,7 @@ import {
   executeCodexRoleBoundary,
   IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   interceptCodexRoleBoundaryResult,
+  resolveCodexRoleEffectAdmissionProvider,
   type CodexRoleBoundaryPlan,
   type CodexStagedTimingPhase,
 } from "@cq/config";
@@ -100,6 +101,31 @@ function trustedStoredStream(finalMessage: string): string {
 }
 
 describe("T1330 Codex role process boundary", () => {
+  test("D444 keeps global evidence auditors capability-scoped while ordinary roles retain workset admission [Behavioral-Active Blackbox-Atomic]", async () => {
+    const worksetProvider = {
+      acquire: async () => {
+        throw new Error("workset admission refused: target-excluded");
+      },
+    };
+    const auditProvider = resolveCodexRoleEffectAdmissionProvider(
+      "implementation-auditor",
+      worksetProvider,
+    );
+    const auditAdmission = await auditProvider.acquire({
+      kind: "child-dispatch",
+      targetRef: "tasks:T2895",
+    });
+    expect(auditAdmission.targetRef).toBe("tasks:T2895");
+    await auditAdmission.abandonBeforeRegistration();
+
+    await expect(
+      resolveCodexRoleEffectAdmissionProvider("implement-worker", worksetProvider).acquire({
+        kind: "child-dispatch",
+        targetRef: "tasks:T6410",
+      }),
+    ).rejects.toThrow("workset admission refused: target-excluded");
+  });
+
   test("delivers the worker Git capability only in the private stdin envelope", () => {
     const plan = createCodexRoleBoundaryPlan({
       roleId: "implement-worker",

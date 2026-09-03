@@ -13,6 +13,7 @@ import {
   executeCodexRoleBoundary,
   formatCodexRoleBoundaryDiagnostic,
   loadConfig,
+  resolveCodexRoleEffectAdmissionProvider,
   resolveCodexRoleSandboxPolicy,
   WORKSET_CREDENTIAL_ENV_NAMES,
   type CodexRoleBoundaryDiagnostic,
@@ -108,12 +109,15 @@ export async function main(): Promise<void> {
     throw new Error("codex-role-dispatch: runner observation requires a correlation id");
   }
   const worksetEffect = {
-    provider: createProcessWorksetEffectAdmissionProvider({
-      command: process.env[LEDGER_COMMAND_ENV] ?? "cq",
-      args: ["__workset-effect-provider", "--cwd", invocation.ledgerCwd],
-      cwd: invocation.ledgerCwd,
-      env: process.env,
-    }),
+    provider: resolveCodexRoleEffectAdmissionProvider(
+      roleId,
+      createProcessWorksetEffectAdmissionProvider({
+        command: process.env[LEDGER_COMMAND_ENV] ?? "cq",
+        args: ["__workset-effect-provider", "--cwd", invocation.ledgerCwd],
+        cwd: invocation.ledgerCwd,
+        env: process.env,
+      }),
+    ),
     targetRef: effectTargetRef,
   };
   const execution =

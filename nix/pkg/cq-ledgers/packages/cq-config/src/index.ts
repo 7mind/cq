@@ -913,6 +913,7 @@ export {
   formatCodexRoleBoundaryDiagnostic,
   assertCodexBoundaryEffectTargetRef,
   assertCodexDispatchedRoleId,
+  resolveCodexRoleEffectAdmissionProvider,
   resolveCodexRoleSandboxPolicy,
   createCodexRoleBoundaryPlan,
   interceptCodexRoleBoundaryResult,

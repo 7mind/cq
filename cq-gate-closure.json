@@ -156,7 +156,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/src/codexRoleBoundary.ts",
-      "sha256": "2565b46ed096adf3344e75e93d43cb1e1a2afb0cbd622809e036166754a406ba",
+      "sha256": "98132d5fd631b6cbd15a8e4a8a58d8c76861d97514db54bb2756d98f3bfeecb2",
       "targets": []
     },
     {
@@ -246,13 +246,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRoleBoundary.test.ts",
-      "sha256": "92fe684037e69da27cb5f2ccc3e37dc39e9620e7b6d694d0964625b9e4e19e0f",
+      "sha256": "84289e17a158c21379a6b880bef69fd951f96542a5523a1744974c3bad091f42",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/codexRoleBoundary.test.ts",
-      "sha256": "92fe684037e69da27cb5f2ccc3e37dc39e9620e7b6d694d0964625b9e4e19e0f",
+      "sha256": "84289e17a158c21379a6b880bef69fd951f96542a5523a1744974c3bad091f42",
       "targets": []
     },
     {
@@ -857,7 +857,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/scripts/codex-role-dispatch.ts",
-      "sha256": "9e9832743d583a729952e4af91e0f6172885b3e92919994b8983fdfa35f5d1fb",
+      "sha256": "570b19fbf7ba25051bef24366f7a9b6392de0a0871271d453754fbf9e320e72b",
       "targets": []
     },
     {
@@ -869,7 +869,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/src/codexRoleBoundary.ts",
-      "sha256": "2565b46ed096adf3344e75e93d43cb1e1a2afb0cbd622809e036166754a406ba",
+      "sha256": "98132d5fd631b6cbd15a8e4a8a58d8c76861d97514db54bb2756d98f3bfeecb2",
       "targets": []
     },
     {

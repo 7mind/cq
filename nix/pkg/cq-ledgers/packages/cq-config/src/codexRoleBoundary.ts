@@ -4,6 +4,7 @@ import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
+  createCapabilityScopedEffectAdmissionProvider,
   WorksetEffectBroker,
   WorksetEffectLaunchDeadlineError,
   settleWorktreeGateCommands,
@@ -50,6 +51,15 @@ export const CODEX_ROLE_SANDBOX_MODES = [
 ] as const;
 
 export type CodexRoleSandboxMode = (typeof CODEX_ROLE_SANDBOX_MODES)[number];
+
+export function resolveCodexRoleEffectAdmissionProvider(
+  roleId: string,
+  worksetProvider: WorksetEffectAdmissionProvider,
+): WorksetEffectAdmissionProvider {
+  return roleId === "implementation-auditor"
+    ? createCapabilityScopedEffectAdmissionProvider()
+    : worksetProvider;
+}
 
 export interface CodexRoleSandboxPolicyResolution {
   readonly requestedMode: CodexRoleSandboxMode;

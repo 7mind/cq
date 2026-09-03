@@ -410,3 +410,11 @@ export function createStrictInMemoryWorksetEffectAdmissionProvider(): StrictInMe
     },
   };
 }
+
+/**
+ * Process-lifecycle admission for an effect already authorized by an exact
+ * single-use capability rather than by the active ledger workset.
+ */
+export function createCapabilityScopedEffectAdmissionProvider(): WorksetEffectAdmissionProvider {
+  return createStrictInMemoryWorksetEffectAdmissionProvider();
+}
