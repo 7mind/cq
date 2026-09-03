@@ -190,6 +190,19 @@ function workerResult() {
   return workerResultAt(FROM_HEAD, [receipt(FROM_HEAD, REPOSITORY_HEAD, "commit-t3003", "T3003")]);
 }
 
+function guardedExactTipWorkerResult() {
+  return {
+    ...workerResultAt(REPOSITORY_HEAD, []),
+    gitLineage: {
+      kind: "guarded-rebase",
+      guardedRebase: `cq-guarded-rebase:v1:${"a".repeat(64)}`,
+      ontoCommit: FROM_HEAD,
+      rebasedStartCommit: REPOSITORY_HEAD,
+      exactTip: true,
+    },
+  };
+}
+
 function snapshot(): ImplementationEvidenceSnapshot {
   const manifestDigest = implementationAuditManifestDigest(manifest);
   const completion = {
@@ -312,6 +325,15 @@ function fixture(
     repositoryHead: string;
     resultCommit: string;
   }) => Promise<boolean> = async () => true,
+  taskAuthority: {
+    readonly ownerGoalRef: string;
+    readonly finalizedManifest: string;
+    readonly activationTaskRefs: readonly string[];
+  } = {
+    ownerGoalRef: "goals:G176",
+    finalizedManifest: "finalized-v2\n",
+    activationTaskRefs: [...COHORT, COMPLETED_TASK_REF],
+  },
 ) {
   const store = createInMemoryImplementationEvidenceStore(initial);
   const dependencies = {
@@ -346,12 +368,20 @@ function fixture(
     fetchWorker: async () => {
       throw new Error("unused");
     },
-    readTaskAuthority: async () => ({
-      taskRef: COMPLETED_TASK_REF,
-      ownerGoalRef: "goals:G176",
-      status: "done",
-      finalizedManifest: "finalized-v2\n",
-    }),
+    readTaskAuthority: async (taskRef: string) =>
+      COHORT.includes(taskRef as (typeof COHORT)[number])
+        ? {
+            taskRef,
+            ownerGoalRef: "goals:G176",
+            status: "done",
+            finalizedManifest: "finalized-v2\n",
+          }
+        : {
+            taskRef,
+            ownerGoalRef: taskAuthority.ownerGoalRef,
+            status: "done",
+            finalizedManifest: taskAuthority.finalizedManifest,
+          },
     repositoryHead: async () => REPOSITORY_HEAD,
     verifyImplementation: async () => {
       throw new Error("unused");
@@ -366,7 +396,7 @@ function fixture(
       auditTaskRef: COHORT[1],
       activationTaskRef: "tasks:T3002",
       boundaryCommit: REPOSITORY_HEAD,
-      taskRefs: [...COHORT, COMPLETED_TASK_REF],
+      taskRefs: taskAuthority.activationTaskRefs,
     }),
     isCommitRetained,
     readCompletionReview: async () => ({
@@ -395,7 +425,7 @@ function fixtureAt(
   initial: ImplementationEvidenceSnapshot,
   currentManifest: PackagedImplementationAuditManifest,
   currentRepositoryHead: string,
-  currentCompletedTaskRef: string,
+  _currentCompletedTaskRef: string,
   currentTaskRefs: readonly string[],
 ) {
   const store = createInMemoryImplementationEvidenceStore(initial);
@@ -431,12 +461,26 @@ function fixtureAt(
     fetchWorker: async () => {
       throw new Error("unused");
     },
-    readTaskAuthority: async () => ({
-      taskRef: currentCompletedTaskRef,
-      ownerGoalRef: "goals:G176",
-      status: "done",
-      finalizedManifest: "finalized-v2\n",
-    }),
+    readTaskAuthority: async (taskRef: string) => {
+      if (COHORT.includes(taskRef as (typeof COHORT)[number]))
+        return {
+          taskRef,
+          ownerGoalRef: "goals:G176",
+          status: "done",
+          finalizedManifest: "finalized-v2\n",
+        };
+      const completion = Object.values(initial.completions).find(
+        (candidate) => candidate.taskRef === taskRef,
+      );
+      if (completion === undefined)
+        throw new Error(`test task authority is absent for ${taskRef}`);
+      return {
+        taskRef,
+        ownerGoalRef: completion.ownerGoalRef,
+        status: "done",
+        finalizedManifest: completion.finalizedManifest,
+      };
+    },
     repositoryHead: async () => currentRepositoryHead,
     verifyImplementation: async () => {
       throw new Error("unused");
@@ -494,6 +538,24 @@ function mutableSnapshot(): MutableSnapshot {
   return structuredClone(snapshot()) as MutableSnapshot;
 }
 
+const CROSS_GOAL_TASK_AUTHORITY = {
+  ownerGoalRef: "goals:G183",
+  finalizedManifest: "g183-finalized\n",
+  activationTaskRefs: COHORT,
+} as const;
+
+function crossGoalSnapshot(): MutableSnapshot {
+  const initial = mutableSnapshot();
+  initial.completions[COMPLETION_REF] = {
+    ...initial.completions[COMPLETION_REF]!,
+    ownerGoalRef: CROSS_GOAL_TASK_AUTHORITY.ownerGoalRef,
+    finalizedManifest: CROSS_GOAL_TASK_AUTHORITY.finalizedManifest,
+    startingCommit: REPOSITORY_HEAD,
+    workerResult: guardedExactTipWorkerResult(),
+  };
+  return initial;
+}
+
 const request = {
   goalRef: "goals:G176",
   manifestId: MANIFEST_ID,
@@ -526,6 +588,91 @@ describe("implementation evidence activation continuation [BG]", () => {
     expect(
       (await state.store.snapshot()).activationRequirements[PRIOR_REQUIREMENT_REF],
     ).toBeDefined();
+  });
+
+  // regression: D441 — the global activation must advance through another goal's guarded exact tip.
+  test("continues global authority through a cross-goal guarded exact-tip completion", async () => {
+    const state = fixture(
+      crossGoalSnapshot(),
+      undefined,
+      async () => true,
+      CROSS_GOAL_TASK_AUTHORITY,
+    );
+
+    let continued;
+    try {
+      continued = await state.service.continueEvidenceActivation(request);
+    } catch (error) {
+      throw new Error(`D441 reproduction rejected: ${String(error)}`);
+    }
+    expect(continued).toMatchObject({
+      status: "continued",
+      taskRef: COMPLETED_TASK_REF,
+      fromHead: FROM_HEAD,
+      repositoryHead: REPOSITORY_HEAD,
+    });
+  });
+
+  test("rejects cross-goal authority and guarded-lineage substitutions", async () => {
+    const mismatchedOwner = crossGoalSnapshot();
+    mismatchedOwner.completions[COMPLETION_REF] = {
+      ...mismatchedOwner.completions[COMPLETION_REF]!,
+      ownerGoalRef: "goals:G199",
+    };
+    await expect(
+      fixture(
+        mismatchedOwner,
+        undefined,
+        async () => true,
+        CROSS_GOAL_TASK_AUTHORITY,
+      ).service.continueEvidenceActivation(request),
+    ).rejects.toThrow("protected completion does not bind the prior activation head transition");
+
+    const mismatchedManifest = crossGoalSnapshot();
+    mismatchedManifest.completions[COMPLETION_REF] = {
+      ...mismatchedManifest.completions[COMPLETION_REF]!,
+      finalizedManifest: "substituted-finalized-manifest\n",
+    };
+    await expect(
+      fixture(
+        mismatchedManifest,
+        undefined,
+        async () => true,
+        CROSS_GOAL_TASK_AUTHORITY,
+      ).service.continueEvidenceActivation(request),
+    ).rejects.toThrow("protected completion does not bind the prior activation head transition");
+
+    const substitutedLineage = crossGoalSnapshot();
+    const guarded = guardedExactTipWorkerResult();
+    substitutedLineage.completions[COMPLETION_REF] = {
+      ...substitutedLineage.completions[COMPLETION_REF]!,
+      workerResult: {
+        ...guarded,
+        gitLineage: { ...guarded.gitLineage, ontoCommit: "0".repeat(40) },
+      },
+    };
+    await expect(
+      fixture(
+        substitutedLineage,
+        undefined,
+        async () => true,
+        CROSS_GOAL_TASK_AUTHORITY,
+      ).service.continueEvidenceActivation(request),
+    ).rejects.toThrow("protected completion guarded lineage is invalid");
+
+    const missingLineage = crossGoalSnapshot();
+    missingLineage.completions[COMPLETION_REF] = {
+      ...missingLineage.completions[COMPLETION_REF]!,
+      workerResult: workerResultAt(REPOSITORY_HEAD, []),
+    };
+    await expect(
+      fixture(
+        missingLineage,
+        undefined,
+        async () => true,
+        CROSS_GOAL_TASK_AUTHORITY,
+      ).service.continueEvidenceActivation(request),
+    ).rejects.toThrow("protected completion lacks a result receipt chain");
   });
 
   // regression: round 6 rejected a second distinct protected completion after the first append.

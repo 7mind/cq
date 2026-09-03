@@ -73,6 +73,7 @@ const ACTIVATION_REQUIREMENT_REF =
 const ACTIVATION_REF = /^cq-implementation-evidence-activation:v1:[0-9a-f]{64}$/u;
 const ACTIVATION_CONTINUATION_REF =
   /^cq-implementation-evidence-activation-continuation:v1:[0-9a-f]{64}$/u;
+const GUARDED_REBASE_REF = /^cq-guarded-rebase:v1:[0-9a-f]{64}$/u;
 
 export const IMPLEMENTATION_EVIDENCE_ACTIVATION_MANIFEST_V2 =
   "d347-implementation-evidence-activation-v2" as const;
@@ -3652,6 +3653,12 @@ export class ImplementationEvidenceService {
       )
         throw new Error("prior v2 activation ordered audit set is incomplete or unauthenticated");
     }
+    const expectedCurrentTaskRefs = [...prior.taskRefs, input.completedTaskRef].sort(
+      (left, right) => left.localeCompare(right, undefined, { numeric: true }),
+    );
+    const task = await this.deps.readTaskAuthority(input.completedTaskRef);
+    if (task.taskRef !== input.completedTaskRef || task.status !== "done")
+      throw new Error("completed task does not retain exact finalized-manifest authority");
     if (this.deps.resolveActivationCohort === undefined)
       throw new Error("finalized-manifest activation resolver is unavailable");
     const currentCohort = await this.deps.resolveActivationCohort({
@@ -3659,12 +3666,19 @@ export class ImplementationEvidenceService {
       manifest,
       repositoryHead,
     });
-    const expectedCurrentTaskRefs = [...prior.taskRefs, input.completedTaskRef].sort(
-      (left, right) => left.localeCompare(right, undefined, { numeric: true }),
-    );
+    const expectedActivationTaskRefs: string[] = [];
+    for (const taskRef of expectedCurrentTaskRefs) {
+      const authority =
+        taskRef === input.completedTaskRef
+          ? task
+          : await this.deps.readTaskAuthority(taskRef);
+      if (authority.taskRef !== taskRef || authority.status !== "done")
+        throw new Error("prior activation task authority changed before continuation");
+      if (authority.ownerGoalRef === input.goalRef) expectedActivationTaskRefs.push(taskRef);
+    }
     if (
       prior.taskRefs.includes(input.completedTaskRef) ||
-      canonical(currentCohort.taskRefs) !== canonical(expectedCurrentTaskRefs) ||
+      canonical(currentCohort.taskRefs) !== canonical(expectedActivationTaskRefs) ||
       currentCohort.boundaryCommit !== repositoryHead ||
       currentCohort.finalizedManifestDigest !== prior.finalizedManifestDigest ||
       currentCohort.evidenceTaskRef !== prior.evidenceTaskRef ||
@@ -3672,18 +3686,6 @@ export class ImplementationEvidenceService {
       currentCohort.activationTaskRef !== prior.activationTaskRef
     )
       throw new Error("completed task is not the unique next finalized-manifest Git member");
-    const task = await this.deps.readTaskAuthority(input.completedTaskRef);
-    const finalizedManifestBytes = new Set(
-      manifest.records.map((record) => record.finalizedManifest),
-    );
-    if (
-      task.taskRef !== input.completedTaskRef ||
-      task.ownerGoalRef !== input.goalRef ||
-      task.status !== "done" ||
-      finalizedManifestBytes.size !== 1 ||
-      !finalizedManifestBytes.has(task.finalizedManifest)
-    )
-      throw new Error("completed task does not retain exact finalized-manifest authority");
     const completions = Object.values(initial.completions).filter(
       (completion) => completion.taskRef === input.completedTaskRef,
     );
@@ -3693,7 +3695,8 @@ export class ImplementationEvidenceService {
     if (
       completion.state !== "recorded" ||
       completion.reviewRef === null ||
-      completion.ownerGoalRef !== input.goalRef ||
+      completion.ownerGoalRef !== task.ownerGoalRef ||
+      completion.finalizedManifest !== task.finalizedManifest ||
       completion.repositoryHead !== input.expectedFromHead ||
       completion.baseCommit !== input.expectedFromHead ||
       !FULL_SHA.test(completion.startingCommit) ||
@@ -3725,9 +3728,32 @@ export class ImplementationEvidenceService {
     )
       throw new Error("protected completion lacks runner-owned green gate evidence");
     const receipts = workerResult["gitReceipts"];
-    if (!Array.isArray(receipts) || receipts.length === 0)
+    const gitLineage = workerResult["gitLineage"];
+    const guarded = gitLineage !== undefined;
+    if (guarded) {
+      if (
+        !object(gitLineage) ||
+        canonical(Object.keys(gitLineage).sort()) !==
+          canonical(["exactTip", "guardedRebase", "kind", "ontoCommit", "rebasedStartCommit"]) ||
+        gitLineage["kind"] !== "guarded-rebase" ||
+        typeof gitLineage["guardedRebase"] !== "string" ||
+        !GUARDED_REBASE_REF.test(gitLineage["guardedRebase"]) ||
+        gitLineage["ontoCommit"] !== input.expectedFromHead ||
+        gitLineage["rebasedStartCommit"] !== completion.startingCommit ||
+        typeof gitLineage["exactTip"] !== "boolean"
+      )
+        throw new Error("protected completion guarded lineage is invalid");
+    }
+    if (!Array.isArray(receipts))
       throw new Error("protected completion lacks a result receipt chain");
-    let receiptHead = input.expectedFromHead;
+    if (
+      receipts.length === 0 &&
+      (!guarded ||
+        (gitLineage as Record<string, unknown>)["exactTip"] !== true ||
+        completion.startingCommit !== repositoryHead)
+    )
+      throw new Error("protected completion lacks a result receipt chain");
+    let receiptHead = guarded ? completion.startingCommit : input.expectedFromHead;
     const receiptLineage = new Set([receiptHead]);
     for (const value of receipts) {
       if (
@@ -3744,7 +3770,7 @@ export class ImplementationEvidenceService {
     }
     if (receiptHead !== repositoryHead)
       throw new Error("protected completion result receipt chain skips the repository head");
-    if (!receiptLineage.has(completion.startingCommit))
+    if (!guarded && !receiptLineage.has(completion.startingCommit))
       throw new Error(
         "protected completion starting commit is absent from the result receipt lineage",
       );
