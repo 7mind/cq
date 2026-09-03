@@ -339,41 +339,49 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     const startingCommit = record["startingCommit"];
     if (typeof baseCommit !== "string" || typeof startingCommit !== "string") return null;
 
-    const handles = await options.backend.transact({ kind: "namespace" }, (store) =>
-      store
-        .rows()
-        .filter(
-          (row) =>
-            !isAttestationTombstone(row) &&
-            (row.state === "aborted" || row.state === "consumed") &&
-            row.promptProvenance.roleId === "implement-worker" &&
-            row.gitEffectBinding !== undefined &&
-            [
-              "taskId",
-              "handleToken",
-              "handleFingerprint",
-              "repositoryRoot",
-              "repositoryId",
-              "commonDir",
-              "worktreePath",
-              "branch",
-              "ref",
-              "baseCommit",
-            ].every(
-              (field) =>
-                row.gitEffectBinding?.[field as keyof typeof row.gitEffectBinding] ===
-                binding[field as keyof ManagedWorktreeDispatchBinding],
-            ),
-        )
-        .map((row) => ({ attestationId: row.attestationId, generation: row.generation })),
+    const sources = await options.backend.transact({ kind: "namespace" }, (store) =>
+      store.rows().flatMap((row) => {
+        const priorBinding = isAttestationTombstone(row)
+          ? row.terminalKind === "aborted"
+            ? row.dispatchRecoveryBinding?.gitEffectBinding
+            : row.terminalKind === "consumed"
+              ? row.dispatchContinuationBinding?.gitEffectBinding
+              : undefined
+          : (row.state === "aborted" || row.state === "consumed") &&
+              row.promptProvenance.roleId === "implement-worker"
+            ? row.gitEffectBinding
+            : undefined;
+        if (
+          priorBinding === undefined ||
+          ![
+            "taskId",
+            "handleToken",
+            "handleFingerprint",
+            "repositoryRoot",
+            "repositoryId",
+            "commonDir",
+            "worktreePath",
+            "branch",
+            "ref",
+            "baseCommit",
+          ].every(
+            (field) =>
+              priorBinding[field as keyof typeof priorBinding] ===
+              binding[field as keyof ManagedWorktreeDispatchBinding],
+          )
+        ) {
+          return [];
+        }
+        return [
+          {
+            handle: { attestationId: row.attestationId, generation: row.generation },
+            priorBinding,
+          },
+        ];
+      }),
     );
     const candidates = [];
-    for (const handle of handles) {
-      const priorBinding = await resolveDispatchGitEffectBindingForHandleOn(
-        options.backend,
-        handle,
-      );
-      if (priorBinding === undefined) continue;
+    for (const { handle, priorBinding } of sources) {
       try {
         const bridge = await materializeGuardedRebaseBridge({
           reference: input.guardedRebase,
@@ -1437,10 +1445,12 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           }
           gitEffectBinding = resolvedGitEffectBinding;
         } else {
-          const priorBinding = await resolveDispatchGitEffectBindingForHandleOn(
-            options.backend,
-            resolvedReprepareOf,
-          );
+          const priorBinding =
+            inferredGuardedRebasePrior?.priorBinding ??
+            (await resolveDispatchGitEffectBindingForHandleOn(
+              options.backend,
+              resolvedReprepareOf,
+            ));
           if (priorBinding === undefined) {
             return rejectLaunch(
               "reprepareOf",

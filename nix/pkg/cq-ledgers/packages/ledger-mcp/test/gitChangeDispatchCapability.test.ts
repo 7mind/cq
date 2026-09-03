@@ -13,8 +13,10 @@ import {
   InMemoryAttestationBackend,
   InMemoryAttestationStore,
   FsAttestationBackend,
+  TERMINAL_ENVELOPE_RETENTION_MS,
   codexCompletionActor,
   sequentialDispatchRandomBytes,
+  sweepAttestationsOn,
   type AttestationNamespace,
   type DispatchJSONValue,
 } from "@cq/config";
@@ -382,6 +384,7 @@ async function createGuardedRetryFixture(
   label: string,
   randomSeed: number,
   productionManagerState = false,
+  terminalState: "parent-lost" | "consumed" = "parent-lost",
 ): Promise<GuardedRetryFixture> {
   const repositoryRoot = await fs.mkdtemp(path.join(tmpdir(), `t2148-${label}-`));
   roots.push(repositoryRoot);
@@ -461,7 +464,67 @@ async function createGuardedRetryFixture(
       },
     ],
   });
-  await opened.capability.abort({ ...first.handle, reason: "parent-lost" });
+  if (terminalState === "parent-lost") {
+    await opened.capability.abort({ ...first.handle, reason: "parent-lost" });
+  } else {
+    if (first.prepared.parentGateCapability === undefined) {
+      throw new Error(`${label}: initial worker lacks parent gate authority`);
+    }
+    const stored = await opened.capability.storeResult({
+      resultCapability: first.prepared.resultCapability,
+      output: {
+        taskId: "T2148",
+        status: "pass",
+        resultCommit: firstReceipt.newHead,
+        branch: managed.handle.branch,
+        actualWorktreePath: managed.handle.absolutePath,
+        filesTouched: [GUARDED_FIXTURE_PATH],
+        gitReceipts: [firstReceipt],
+        checkSummary: "trusted gate delegated to result storage",
+        baseVerification: {
+          status: "verified",
+          relation: "descendant",
+          baseCommit,
+          headCommit: firstReceipt.newHead,
+        },
+        summary: "completed the initial managed worker generation",
+        mutationTable: [
+          {
+            mutation: `${GUARDED_FIXTURE_PATH}: replaced the initial content`,
+            observed: "the durable broker receipt pins the exact change",
+            restored: "the initial worker content is committed verbatim by the broker",
+          },
+        ],
+      } as unknown as DispatchJSONValue,
+    });
+    if (stored.state !== "gate-pending") {
+      throw new Error(`${label}: unexpected initial stored state ${stored.state}`);
+    }
+    if (opened.capability.finalizeParentGate === undefined) {
+      throw new Error(`${label}: initial worker lacks parent gate finalization`);
+    }
+    const finalized = await opened.capability.finalizeParentGate({
+      ...first.handle,
+      parentGateCapability: first.prepared.parentGateCapability,
+    });
+    if (finalized.state !== "result-stored") {
+      throw new Error(`${label}: unexpected initial finalized state ${finalized.state}`);
+    }
+    const confirmed = await opened.capability.confirmCompletion({
+      ...first.handle,
+      nativeCompletion: {
+        kind: "native-completion",
+        actor: "trusted-parent",
+        childId: `${label}-round-0`,
+        runId: `${label}-round-0`,
+        completedAt: "2026-08-18T12:00:02.000Z",
+      },
+      expectedProvenance: first.prepared.promptProvenance,
+    });
+    if (confirmed.state !== "consumed") {
+      throw new Error(`${label}: unexpected initial confirmation ${confirmed.state}`);
+    }
+  }
   return { ...partial, first, firstReceipt };
 }
 
@@ -2031,6 +2094,10 @@ describe("dispatch-bound Git change capability", () => {
     let d446ConsecutiveRebasedHead!: string;
     let d446ConsecutiveOntoCommit!: string;
     let d446ConsecutiveReference!: string;
+    let d447Consumed!: GuardedRetryFixture;
+    let d447ConsumedRebasedHead!: string;
+    let d447ConsumedOntoCommit!: string;
+    let d447ConsumedReference!: string;
 
     async function runGuardedRebaseCli(
       fixture: GuardedRetryFixture,
@@ -2248,6 +2315,12 @@ describe("dispatch-bound Git change capability", () => {
       d446ConsecutiveOntoCommit = consecutive.ontoCommit;
       d446ConsecutiveRebasedHead = consecutive.rebasedHead;
       d446ConsecutiveReference = consecutive.reference;
+
+      d447Consumed = await createGuardedRetryFixture("d447-consumed", 2_157, true, "consumed");
+      const consumed = await setupGuardedRebase(d447Consumed, "d447-consumed-rebase");
+      d447ConsumedOntoCommit = consumed.ontoCommit;
+      d447ConsumedRebasedHead = consumed.rebasedHead;
+      d447ConsumedReference = consumed.reference;
     }, GUARDED_REBASE_SETUP_TIMEOUT_MS);
 
     test("D332 rejects a lineage-free implement-worker retry at an advanced managed-worktree tip [Behavioral-Progression Blackbox-GoodCommunication]", async () => {
@@ -2422,6 +2495,20 @@ describe("dispatch-bound Git change capability", () => {
     });
 
     test("D446 composes consecutive guarded rebases back to one terminal worker generation [Behavioral-Active Effectual-GoodCommunication]", async () => {
+      const retentionBackend = new FsAttestationBackend({
+        namespace: d446Consecutive.namespace,
+        root: d446Consecutive.attestationRoot,
+      });
+      openBackends.add(retentionBackend);
+      expect(
+        await sweepAttestationsOn(retentionBackend, {
+          now: () =>
+            new Date(
+              Date.parse("2026-08-18T12:00:00.000Z") + TERMINAL_ENVELOPE_RETENTION_MS,
+            ).toISOString(),
+        }),
+      ).toMatchObject({ envelopesCollapsed: [d446Consecutive.first.handle] });
+      await closeGuardedRetryBackend(retentionBackend);
       const restarted = openGuardedRetryCapability(d446Consecutive, 3_156);
       const request = {
         roleId: "implement-worker",
@@ -2531,6 +2618,55 @@ describe("dispatch-bound Git change capability", () => {
         "guardedRebase",
         "does not resolve to one terminal prior worker generation",
       );
+    });
+
+    test("D447 resolves a guarded rebase from collapsed consumed-worker authority [Behavioral-Active Effectual-GoodCommunication]", async () => {
+      const retentionBackend = new FsAttestationBackend({
+        namespace: d447Consumed.namespace,
+        root: d447Consumed.attestationRoot,
+      });
+      openBackends.add(retentionBackend);
+      expect(
+        await sweepAttestationsOn(retentionBackend, {
+          now: () =>
+            new Date(
+              Date.parse("2026-08-18T12:00:02.000Z") + TERMINAL_ENVELOPE_RETENTION_MS,
+            ).toISOString(),
+        }),
+      ).toMatchObject({ envelopesCollapsed: [d447Consumed.first.handle] });
+      await closeGuardedRetryBackend(retentionBackend);
+
+      const restarted = openGuardedRetryCapability(d447Consumed, 3_157);
+      const retry = await restarted.capability.prepare({
+        roleId: "implement-worker",
+        input: {
+          taskId: "T2148",
+          headline: "resume from collapsed consumed-worker authority",
+          description: "resolve the retained continuation Git binding",
+          acceptance: "terminal envelope collapse does not strand the guarded rebase",
+          worktreePath: d447Consumed.managed.handle.absolutePath,
+          branch: d447Consumed.managed.handle.branch,
+          baseCommit: d447ConsumedOntoCommit,
+          round: 1,
+          startingCommit: d447ConsumedRebasedHead,
+          priorResultCommit: d447Consumed.firstReceipt.newHead,
+        },
+        idempotencyKey: "T2148-d447-consumed-tombstone-round-1",
+        timeoutMs: 600_000,
+        expectedChild: {
+          childId: "d447-consumed-tombstone-round-1",
+          runId: "d447-consumed-tombstone-round-1",
+        },
+        guardedRebase: d447ConsumedReference,
+      });
+      if (!retry.accepted) {
+        throw new Error(`D447 rejected the consumed tombstone: ${retry.detail}`);
+      }
+      expect(retry.handle).toEqual({
+        attestationId: d447Consumed.first.handle.attestationId,
+        generation: d447Consumed.first.handle.generation + 1,
+      });
+      await restarted.capability.abort({ ...retry.handle, reason: "parent-lost" });
     });
 
     test("a recovery fence admits an exact server-verified guarded-rebase bridge [Behavioral-Progression Blackbox-GoodCommunication]", async () => {
