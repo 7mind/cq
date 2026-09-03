@@ -2909,6 +2909,7 @@ export class ImplementationEvidenceService {
       }
       const blocking = armedRequirements[0] ?? fulfilledTip;
       let supersededRequirementRef: string | null = null;
+      let allowCompletedActivationTask = false;
       if (blocking !== undefined) {
         const matchingPanels = Object.values(state.auditPanels).filter(
           (panel) =>
@@ -3044,6 +3045,8 @@ export class ImplementationEvidenceService {
         )
           throw new Error("a different implementation evidence activation requirement is pending");
         supersededRequirementRef = blocking.requirementRef;
+        allowCompletedActivationTask =
+          blocking.state === "fulfilled" || terminalInconclusiveAuditCohort;
         state.activationRequirements[blocking.requirementRef] = {
           ...blocking,
           state: "superseded",
@@ -3061,8 +3064,7 @@ export class ImplementationEvidenceService {
         manifestDigest,
         repositoryHead,
         cohort,
-        blocking?.state === "fulfilled" &&
-          supersededRequirementRef === blocking.requirementRef,
+        allowCompletedActivationTask,
       );
       state.activationRequirements[requirementRef] = {
         version: 1,

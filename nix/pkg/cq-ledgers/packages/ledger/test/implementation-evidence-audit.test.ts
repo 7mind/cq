@@ -985,6 +985,7 @@ describe("protected historical implementation evidence [BA]", () => {
       operationId: "arm-before-terminal-inconclusive-audit",
       author: "parent",
     });
+    f.setTaskStatus("tasks:T12", "done");
     for (const [index, record] of f.packaged.records.entries()) {
       f.setNativeAuditOutputMode(index === 0 ? "approve" : "invalid");
       const panel = await f.service.prepareAuditPanel({
