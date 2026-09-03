@@ -322,6 +322,87 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       : null;
   }
 
+  async function resolveDurableGuardedRebasePrior(
+    binding: ManagedWorktreeDispatchBinding,
+    input: Parameters<DispatchCapability["prepare"]>[0],
+  ) {
+    if (
+      input.guardedRebase === undefined ||
+      input.input === null ||
+      typeof input.input !== "object" ||
+      Array.isArray(input.input)
+    ) {
+      return null;
+    }
+    const record = input.input as Readonly<Record<string, DispatchJSONValue>>;
+    const baseCommit = record["baseCommit"];
+    const startingCommit = record["startingCommit"];
+    if (typeof baseCommit !== "string" || typeof startingCommit !== "string") return null;
+
+    const handles = await options.backend.transact({ kind: "namespace" }, (store) =>
+      store
+        .rows()
+        .filter(
+          (row) =>
+            !isAttestationTombstone(row) &&
+            (row.state === "aborted" || row.state === "consumed") &&
+            row.promptProvenance.roleId === "implement-worker" &&
+            row.gitEffectBinding !== undefined &&
+            [
+              "taskId",
+              "handleToken",
+              "handleFingerprint",
+              "repositoryRoot",
+              "repositoryId",
+              "commonDir",
+              "worktreePath",
+              "branch",
+              "ref",
+              "baseCommit",
+            ].every(
+              (field) =>
+                row.gitEffectBinding?.[field as keyof typeof row.gitEffectBinding] ===
+                binding[field as keyof ManagedWorktreeDispatchBinding],
+            ),
+        )
+        .map((row) => ({ attestationId: row.attestationId, generation: row.generation })),
+    );
+    const candidates = [];
+    for (const handle of handles) {
+      const priorBinding = await resolveDispatchGitEffectBindingForHandleOn(
+        options.backend,
+        handle,
+      );
+      if (priorBinding === undefined) continue;
+      try {
+        const bridge = await materializeGuardedRebaseBridge({
+          reference: input.guardedRebase,
+          prior: { ...priorBinding, ...handle },
+          current: binding,
+          baseCommitInput: baseCommit,
+          startingCommitInput: startingCommit,
+          priorResultCommitInput:
+            (record["priorResultCommit"] as string | null | undefined) ?? null,
+          ...(options.worktreeStateDir === undefined
+            ? {}
+            : { stateDir: options.worktreeStateDir }),
+        });
+        candidates.push({ handle, priorBinding, bridge });
+      } catch {
+        continue;
+      }
+    }
+    if (candidates.length === 0) return null;
+    if (new Set(candidates.map((candidate) => candidate.handle.attestationId)).size !== 1) {
+      throw new GuardedRebaseRejection(
+        "guardedRebase",
+        "guarded-rebase reference resolves to multiple terminal worker lineages",
+      );
+    }
+    candidates.sort((left, right) => right.handle.generation - left.handle.generation);
+    return candidates[0]!;
+  }
+
   async function continuationExitsRecoveryFence(
     fence: DispatchLineageCutoverFence,
     binding: ManagedWorktreeDispatchBinding,
@@ -373,13 +454,10 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     if (
       input.roleId !== "implement-worker" ||
       input.guardedRebase === undefined ||
-      input.reprepareOf === undefined ||
       input.continuation !== undefined ||
       input.recovery !== undefined ||
       input.recoveryPreparation !== undefined ||
       input.implementationEvidenceBootstrap !== undefined ||
-      input.reprepareOf.attestationId !== fence.sourceAttestationId ||
-      input.reprepareOf.generation < fence.lineageMaximumGeneration ||
       input.input === null ||
       typeof input.input !== "object" ||
       Array.isArray(input.input)
@@ -390,18 +468,30 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     const baseCommit = record["baseCommit"];
     const startingCommit = record["startingCommit"];
     if (typeof baseCommit !== "string" || typeof startingCommit !== "string") return false;
-    const prior = await resolveDispatchGitEffectBindingForHandleOn(
-      options.backend,
-      input.reprepareOf,
-    );
-    if (prior === undefined) return false;
+    const resolved =
+      input.reprepareOf === undefined
+        ? await resolveDurableGuardedRebasePrior(binding, input)
+        : null;
+    const reprepareOf = input.reprepareOf ?? resolved?.handle;
+    const prior =
+      resolved?.priorBinding ??
+      (reprepareOf === undefined
+        ? undefined
+        : await resolveDispatchGitEffectBindingForHandleOn(options.backend, reprepareOf));
+    if (
+      prior === undefined ||
+      reprepareOf === undefined ||
+      reprepareOf.attestationId !== fence.sourceAttestationId ||
+      reprepareOf.generation < fence.lineageMaximumGeneration
+    )
+      return false;
     try {
       await materializeGuardedRebaseBridge({
         reference: input.guardedRebase,
         prior: {
           ...prior,
-          attestationId: input.reprepareOf.attestationId,
-          generation: input.reprepareOf.generation,
+          attestationId: reprepareOf.attestationId,
+          generation: reprepareOf.generation,
         },
         current: binding,
         baseCommitInput: baseCommit,
@@ -434,8 +524,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     const guardedRebase =
       noOtherAuthority &&
       input.continuation === undefined &&
-      input.guardedRebase !== undefined &&
-      input.reprepareOf !== undefined;
+      input.guardedRebase !== undefined;
     return continuation || guardedRebase;
   }
 
@@ -739,12 +828,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           `expected an integer timeout within [${DISPATCH_TIMEOUT_MIN_MS}, ${DISPATCH_TIMEOUT_MAX_MS}] ms`,
         );
       }
-      if (input.guardedRebase !== undefined && input.reprepareOf === undefined) {
-        return rejectLaunch(
-          "guardedRebase",
-          "a guarded-rebase reference requires an implement-worker reprepareOf naming the exact terminal prior worker generation on a local repository",
-        );
-      }
       if (
         input.recovery !== undefined &&
         (input.reprepareOf !== undefined ||
@@ -909,7 +992,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       ) {
         return rejectLaunch(
           "guardedRebase",
-          "a guarded-rebase reference requires an implement-worker reprepareOf naming the exact terminal prior worker generation on a local repository",
+          "a guarded-rebase reference requires an implement-worker on a local repository",
         );
       }
 
@@ -1105,6 +1188,31 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           !(await recoveryFenceAuthorizesPrepare(fence, resolvedGitEffectBinding, input))
         ) {
           return journalRecoveryRequiredForFence(fence);
+        }
+        let inferredGuardedRebasePrior;
+        if (
+          roleId === "implement-worker" &&
+          input.guardedRebase !== undefined &&
+          input.reprepareOf === undefined
+        ) {
+          try {
+            inferredGuardedRebasePrior = await resolveDurableGuardedRebasePrior(
+              resolvedGitEffectBinding,
+              input,
+            );
+          } catch (error) {
+            return rejectLaunch(
+              error instanceof GuardedRebaseRejection ? error.path : "guardedRebase",
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+          if (inferredGuardedRebasePrior === null) {
+            return rejectLaunch(
+              "guardedRebase",
+              "guarded-rebase reference does not resolve to one terminal prior worker generation",
+            );
+          }
+          resolvedReprepareOf = inferredGuardedRebasePrior.handle;
         }
         if (roleId === "implement-conflict-resolver") {
           const resolverState = conflictState as unknown as GitRebaseConflictState;
@@ -1303,7 +1411,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             recovery.gitReceipts.length === 0
               ? resolvedGitEffectBinding
               : { ...resolvedGitEffectBinding, inheritedGitReceipts: recovery.gitReceipts };
-        } else if (input.reprepareOf === undefined) {
+        } else if (resolvedReprepareOf === undefined) {
           // D332: a lineage-free prepare may only build on the tip it declares as
           // its diff base. When startingCommit has advanced past baseCommit, the
           // base-to-result diff spans commits no receipt of this generation could
@@ -1331,7 +1439,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         } else {
           const priorBinding = await resolveDispatchGitEffectBindingForHandleOn(
             options.backend,
-            input.reprepareOf,
+            resolvedReprepareOf,
           );
           if (priorBinding === undefined) {
             return rejectLaunch(
@@ -1390,8 +1498,8 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                 reference: input.guardedRebase,
                 prior: {
                   ...priorBinding,
-                  attestationId: input.reprepareOf.attestationId,
-                  generation: input.reprepareOf.generation,
+                  attestationId: resolvedReprepareOf.attestationId,
+                  generation: resolvedReprepareOf.generation,
                 },
                 current: resolvedGitEffectBinding,
                 baseCommitInput,
@@ -1419,8 +1527,8 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               inheritedGitReceipts = await resolveInheritedGitChangeReceipts(
                 {
                   ...priorBinding,
-                  attestationId: input.reprepareOf.attestationId,
-                  generation: input.reprepareOf.generation,
+                  attestationId: resolvedReprepareOf.attestationId,
+                  generation: resolvedReprepareOf.generation,
                 },
                 startingCommit,
                 options.worktreeStateDir === undefined

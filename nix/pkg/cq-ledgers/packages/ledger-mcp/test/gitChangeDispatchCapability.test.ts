@@ -2023,6 +2023,10 @@ describe("dispatch-bound Git change capability", () => {
     let d438RecoveryFenceRebasedHead!: string;
     let d438RecoveryFenceOntoCommit!: string;
     let d438RecoveryFenceReference!: string;
+    let d443Restart!: GuardedRetryFixture;
+    let d443RestartRebasedHead!: string;
+    let d443RestartOntoCommit!: string;
+    let d443RestartReference!: string;
 
     async function runGuardedRebaseCli(
       fixture: GuardedRetryFixture,
@@ -2192,6 +2196,15 @@ describe("dispatch-bound Git change capability", () => {
       d438RecoveryFenceOntoCommit = recoveryFence.ontoCommit;
       d438RecoveryFenceRebasedHead = recoveryFence.rebasedHead;
       d438RecoveryFenceReference = recoveryFence.reference;
+
+      d443Restart = await createGuardedRetryFixture("d443-restart", 2_155, true);
+      const restart = await setupGuardedRebase(
+        d443Restart,
+        "d443-restart-rebase-operation",
+      );
+      d443RestartOntoCommit = restart.ontoCommit;
+      d443RestartRebasedHead = restart.rebasedHead;
+      d443RestartReference = restart.reference;
     }, GUARDED_REBASE_SETUP_TIMEOUT_MS);
 
     test("D332 rejects a lineage-free implement-worker retry at an advanced managed-worktree tip [Behavioral-Progression Blackbox-GoodCommunication]", async () => {
@@ -2314,6 +2327,54 @@ describe("dispatch-bound Git change capability", () => {
       await completeGuardedContinuation(d334, restarted.capability, corrected, context, 2, {
         content: "corrected\n",
         baseReceipts: first.receipts,
+      });
+    });
+
+    test("D443 resumes an exact guarded-rebase continuation after parent context loss [Behavioral-Active Effectual-GoodCommunication]", async () => {
+      const restarted = openGuardedRetryCapability(d443Restart, 3_155);
+      const request = {
+        roleId: "implement-worker",
+        input: {
+          taskId: "T2148",
+          headline: "resume one durable guarded-rebase continuation",
+          description: "resolve the terminal generation from durable guarded authority",
+          acceptance: "parent context loss does not strand the managed task",
+          worktreePath: d443Restart.managed.handle.absolutePath,
+          branch: d443Restart.managed.handle.branch,
+          baseCommit: d443RestartOntoCommit,
+          round: 1,
+          startingCommit: d443RestartRebasedHead,
+          priorResultCommit: d443Restart.firstReceipt.newHead,
+        },
+        idempotencyKey: "T2148-d443-guarded-rebase-round-1",
+        timeoutMs: 600_000,
+        expectedChild: {
+          childId: "d443-guarded-rebase-round-1",
+          runId: "d443-guarded-rebase-round-1",
+        },
+      } as const;
+      const foreign = await restarted.capability.prepare({
+        ...request,
+        idempotencyKey: "T2148-d443-foreign-guarded-rebase",
+        guardedRebase: d334NegativeReference,
+      });
+      expectRejection(
+        foreign,
+        "guardedRebase",
+        "guarded-rebase reference does not resolve to one terminal prior worker generation",
+      );
+      const retry = await restarted.capability.prepare({
+        ...request,
+        guardedRebase: d443RestartReference,
+      });
+      if (!retry.accepted) {
+        throw new Error(
+          `D443 rejected durable guarded-rebase resumption at ${retry.path}: ${retry.detail}`,
+        );
+      }
+      expect(retry.handle).toEqual({
+        attestationId: d443Restart.first.handle.attestationId,
+        generation: d443Restart.first.handle.generation + 1,
       });
     });
 
