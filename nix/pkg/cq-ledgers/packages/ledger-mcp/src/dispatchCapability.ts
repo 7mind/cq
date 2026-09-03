@@ -203,6 +203,22 @@ function brokerResultEvidence(
   };
 }
 
+function guardedRebaseLineageOf(bridge: {
+  readonly guardedRebase: string;
+  readonly oldResultCommit: string;
+  readonly ontoCommit: string;
+  readonly rebasedStartCommit: string;
+  readonly exactTip: boolean;
+}): DispatchJSONValue {
+  return {
+    guardedRebase: bridge.guardedRebase,
+    oldResultCommit: bridge.oldResultCommit,
+    ontoCommit: bridge.ontoCommit,
+    rebasedStartCommit: bridge.rebasedStartCommit,
+    exactTip: bridge.exactTip,
+  } as unknown as DispatchJSONValue;
+}
+
 function conflictResultEvidence(output: DispatchJSONValue): GitConflictContinuationResultEvidence {
   if (output === null || typeof output !== "object" || Array.isArray(output)) {
     throw new Error("broker-capable resolver result must carry conflict receipt evidence");
@@ -1355,10 +1371,13 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               error instanceof Error ? error.message : String(error),
             );
           }
-          if (baseCommitInput !== continuation.gitEffectBinding.baseCommit) {
+          const guardedRebaseBridge = continuation.gitEffectBinding.guardedRebaseBridge;
+          const logicalBaseCommit =
+            guardedRebaseBridge?.ontoCommit ?? continuation.gitEffectBinding.baseCommit;
+          if (baseCommitInput !== logicalBaseCommit) {
             return rejectLaunch(
               "input.baseCommit",
-              "worker continuation baseCommit differs from the consumed managed binding",
+              "worker continuation baseCommit differs from the consumed logical binding",
             );
           }
           resolvedReprepareOf = continuation.reprepareOf;
@@ -1369,13 +1388,45 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             actor: "trusted-parent" as const,
             liveTip,
           };
-          gitEffectBinding =
-            continuation.gitReceipts.length === 0
-              ? resolvedGitEffectBinding
-              : {
-                  ...resolvedGitEffectBinding,
-                  inheritedGitReceipts: continuation.gitReceipts,
-                };
+          if (guardedRebaseBridge === undefined) {
+            gitEffectBinding =
+              continuation.gitReceipts.length === 0
+                ? resolvedGitEffectBinding
+                : {
+                    ...resolvedGitEffectBinding,
+                    inheritedGitReceipts: continuation.gitReceipts,
+                  };
+          } else {
+            let bridge;
+            try {
+              bridge = await reverifyGuardedRebaseBridge({
+                bridge: guardedRebaseBridge,
+                current: resolvedGitEffectBinding,
+                baseCommitInput,
+                startingCommitInput: startingCommit,
+                firstInheritedOldHead: continuation.gitReceipts[0]?.oldHead ?? null,
+                ...(options.worktreeStateDir === undefined
+                  ? {}
+                  : { stateDir: options.worktreeStateDir }),
+              });
+            } catch (error) {
+              return rejectLaunch(
+                error instanceof GuardedRebaseRejection ? error.path : "guardedRebase",
+                error instanceof Error ? error.message : String(error),
+              );
+            }
+            gitEffectBinding = {
+              ...resolvedGitEffectBinding,
+              ...(continuation.gitReceipts.length === 0
+                ? {}
+                : { inheritedGitReceipts: continuation.gitReceipts }),
+              guardedRebaseBridge: bridge,
+            };
+            dispatchInput = {
+              ...dispatchRecord,
+              guardedRebaseLineage: guardedRebaseLineageOf(bridge),
+            };
+          }
         } else if (input.recovery !== undefined) {
           if (manifestSurface !== "codex") {
             return rejectLaunch(
@@ -1484,20 +1535,6 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           if (typeof baseCommitInput !== "string") {
             return rejectLaunch("input.baseCommit", "worker reprepare requires baseCommit");
           }
-          const guardedRebaseLineageOf = (bridge: {
-            readonly guardedRebase: string;
-            readonly oldResultCommit: string;
-            readonly ontoCommit: string;
-            readonly rebasedStartCommit: string;
-            readonly exactTip: boolean;
-          }): DispatchJSONValue =>
-            ({
-              guardedRebase: bridge.guardedRebase,
-              oldResultCommit: bridge.oldResultCommit,
-              ontoCommit: bridge.ontoCommit,
-              rebasedStartCommit: bridge.rebasedStartCommit,
-              exactTip: bridge.exactTip,
-            }) as unknown as DispatchJSONValue;
           if (input.guardedRebase !== undefined) {
             // D334 initial bridge round: the opaque reference is resolved
             // against the terminal durable journal; the caller can never mint

@@ -45,7 +45,10 @@ if (
     "The protected inherited receipt prefix is never placed in fetched input",
   ) ||
   !normalizedRoleInstructions.includes(
-    "the result reports the lineage verbatim as `gitLineage`",
+    '`gitLineage` contains exactly `kind: "guarded-rebase"`, `guardedRebase`, `ontoCommit`, `rebasedStartCommit`, and `exactTip`; it omits the input-only `oldResultCommit`',
+  ) ||
+  !normalizedRoleInstructions.includes(
+    "For a later guarded correction, the server-owned inherited receipt suffix begins at `rebasedStartCommit` and `startingCommit` is that suffix's current tip",
   ) ||
   !normalizedRoleInstructions.includes(
     "an empty fresh suffix, and performs no `git_commit` call",

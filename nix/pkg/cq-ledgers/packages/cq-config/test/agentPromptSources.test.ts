@@ -76,6 +76,19 @@ describe("dispatched-role prompt sources", () => {
     expect(source).toMatch(/status `unmeasured` until trusted finalization/u);
   });
 
+  test("defines the guarded-rebase output projection and both correction states", () => {
+    const source = readFileSync(path.join(ASSETS_ROOT, "agents", "implement-worker.md"), "utf8");
+    expect(source).toMatch(
+      /`gitLineage` contains exactly `kind: "guarded-rebase"`, `guardedRebase`,\s+`ontoCommit`, `rebasedStartCommit`, and `exactTip`; it omits the input-only\s+`oldResultCommit`/u,
+    );
+    expect(source).toMatch(
+      /initial\s+guarded bridge, `startingCommit` equals `rebasedStartCommit`/u,
+    );
+    expect(source).toMatch(
+      /later\s+guarded correction, the server-owned inherited receipt suffix begins at\s+`rebasedStartCommit` and `startingCommit` is that suffix's current tip/u,
+    );
+  });
+
   test("renders the complete typed-sidecar roster on every surface", () => {
     const catalogJson = evaluateNixJson("agentCatalogJson");
     const catalog = JSON.parse(catalogJson) as readonly CatalogRole[];

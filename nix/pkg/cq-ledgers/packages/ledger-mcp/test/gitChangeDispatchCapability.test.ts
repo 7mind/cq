@@ -2362,7 +2362,7 @@ describe("dispatch-bound Git change capability", () => {
       }
     });
 
-    test("D334 accepts an exact guarded-rebase continuation after broker restart [Behavioral-Progression Blackbox-GoodCommunication]", async () => {
+    test("D334 and D450 preserve guarded lineage through a consumed continuation after broker restart [Behavioral-Progression Blackbox-GoodCommunication]", async () => {
       const restarted = openGuardedRetryCapability(d334, 3_149);
       const retry = await restarted.capability.prepare({
         roleId: "implement-worker",
@@ -2410,9 +2410,25 @@ describe("dispatch-bound Git change capability", () => {
         },
       );
 
-      // A later correction round carries the verified bridge from the
-      // persisted prior binding: no caller reference, early persistence, and
-      // a non-empty contiguous suffix beginning at the rebased head.
+      // A later correction round carries the verified bridge through the
+      // consumed worker's single-use continuation: no caller reprepare handle,
+      // early persistence, and a contiguous suffix beginning at the rebased head.
+      const liveBinding = await resolveManagedWorktreeDispatchBinding(
+        {
+          repositoryRoot: d334.repositoryRoot,
+          taskId: d334.managed.handle.taskId,
+          worktreePath: d334.managed.handle.absolutePath,
+          branch: d334.managed.handle.branch,
+        },
+        { stateDir: d334.stateDir },
+      );
+      if (liveBinding === null || restarted.capability.resolveContinuation === undefined) {
+        throw new Error("guarded consumed continuation resolution was not wired");
+      }
+      const continuation = await restarted.capability.resolveContinuation(
+        liveBinding,
+        first.resultCommit,
+      );
       const corrected = await restarted.capability.prepare({
         roleId: "implement-worker",
         input: {
@@ -2433,7 +2449,7 @@ describe("dispatch-bound Git change capability", () => {
           childId: "d334-guarded-rebase-round-2",
           runId: "d334-guarded-rebase-round-2",
         },
-        reprepareOf: first.handle,
+        continuation: continuation.continuationReference,
       });
       if (!corrected.accepted) {
         throw new Error(

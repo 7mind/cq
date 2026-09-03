@@ -168,7 +168,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/agentPromptSources.test.ts",
-      "sha256": "7f39bd271edecf9f9d947a59bb19e55e7e0ddde364acd474ff46c461883fd6da",
+      "sha256": "5e6f03036225924c7b46acc1cf2315293c6217405811a5057e69b5217beccb01",
       "targets": []
     },
     {
@@ -408,13 +408,13 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/codexBrokerWorker.ts",
-      "sha256": "10b3c24d8aeac6e1de85b6edc9b98d26f85c91776b7b09ef5c18592a19933bb9",
+      "sha256": "4bd8fbbbd6b92c4b45c8a70393d8f651f0bcd054cb74dbcdbe7aacda0789e86f",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/codexBrokerWorker.ts",
-      "sha256": "10b3c24d8aeac6e1de85b6edc9b98d26f85c91776b7b09ef5c18592a19933bb9",
+      "sha256": "4bd8fbbbd6b92c4b45c8a70393d8f651f0bcd054cb74dbcdbe7aacda0789e86f",
       "targets": []
     },
     {
@@ -467,13 +467,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts",
-      "sha256": "80a8c40fd6adb07dce355b0c3de894554138bde96bec0c208129a7b2f7b5a20b",
+      "sha256": "432936db6b15540bfabc43bee68841e13ebbb9a0f1b78ed91aef017400c2d275",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts",
-      "sha256": "80a8c40fd6adb07dce355b0c3de894554138bde96bec0c208129a7b2f7b5a20b",
+      "sha256": "432936db6b15540bfabc43bee68841e13ebbb9a0f1b78ed91aef017400c2d275",
       "targets": []
     },
     {
@@ -911,7 +911,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/test/agentPromptSources.test.ts",
-      "sha256": "7f39bd271edecf9f9d947a59bb19e55e7e0ddde364acd474ff46c461883fd6da",
+      "sha256": "5e6f03036225924c7b46acc1cf2315293c6217405811a5057e69b5217beccb01",
       "targets": []
     },
     {

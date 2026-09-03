@@ -48,12 +48,16 @@ guarded-rebase continuation: the server resolved the opaque
 `guardedRebase` reference against a terminal durable journal and verified the
 bridge. The lineage binds `oldResultCommit` (the exact terminal pre-rebase
 worker result), `ontoCommit`, `rebasedStartCommit`, and the server-resolved
-`exactTip` mode. On this arm `baseCommit` equals `ontoCommit`, `startingCommit`
-equals `rebasedStartCommit`, the result reports the lineage verbatim as
-`gitLineage`, `gitReceipts` carries ONLY this lineage's fresh post-rebase
-suffix (never a pre-rebase receipt), and `filesTouched` equals the sorted
-`git diff --name-only <ontoCommit>..<resultCommit>` set rather than a receipt
-path union.
+`exactTip` mode. On this arm `baseCommit` equals `ontoCommit`. For the initial
+guarded bridge, `startingCommit` equals `rebasedStartCommit`. For a later
+guarded correction, the server-owned inherited receipt suffix begins at
+`rebasedStartCommit` and `startingCommit` is that suffix's current tip.
+`gitLineage` contains exactly `kind: "guarded-rebase"`, `guardedRebase`,
+`ontoCommit`, `rebasedStartCommit`, and `exactTip`; it omits the input-only
+`oldResultCommit`. `gitReceipts` carries ONLY this generation's fresh
+post-rebase suffix (never a pre-rebase receipt), and `filesTouched` equals the
+sorted `git diff --name-only <ontoCommit>..<resultCommit>` set rather than a
+receipt path union.
 
 ## Procedure
 
@@ -86,13 +90,15 @@ path union.
 
    On a guarded-rebase continuation (the fetched input carries
    `guardedRebaseLineage`) Step 0 instead requires `baseCommit` to equal the
-   lineage `ontoCommit` and `HEAD` to equal both `startingCommit` and the
-   lineage `rebasedStartCommit`. On the initial bridge round
-   `priorResultCommit` must equal the bound `oldResultCommit` exactly; that
-   equality is the ONLY ancestry exemption — the pre-rebase result does not
-   descend from the rewritten `HEAD` and must not be claimed to. Any later
-   correction round's `priorResultCommit` is again equal to or an ancestor of
-   `HEAD`. Record `baseVerification` with `baseCommit` set to `ontoCommit`.
+   lineage `ontoCommit` and `HEAD` to equal `startingCommit`. When
+   `startingCommit` equals the lineage `rebasedStartCommit`, this is the initial
+   bridge round: `priorResultCommit` must equal the bound `oldResultCommit`
+   exactly. That equality is the ONLY ancestry exemption — the pre-rebase
+   result does not descend from the rewritten `HEAD` and must not be claimed
+   to. When `startingCommit` is beyond `rebasedStartCommit`, this is a later
+   correction whose server-owned inherited suffix already binds that ancestry;
+   `priorResultCommit` is again equal to or an ancestor of `HEAD`. Record
+   `baseVerification` with `baseCommit` set to `ontoCommit`.
 
    On any mismatch STOP immediately with `status: "fail"`, a precise
    `blockedReason`, and `baseVerification` set to the matching unresolvable arm
@@ -236,7 +242,7 @@ path union.
   "actualWorktreePath": "<absolute git rev-parse --show-toplevel>",
   "filesTouched": ["<path>"],
   "gitReceipts": [{ "kind": "cq-git-change-receipt", "version": 1, "attestationId": "<id>", "generation": 1, "taskId": "<task id>", "operationId": "<stable id>", "requestDigest": "<sha256>", "oldHead": "<commit>", "newHead": "<commit>", "tree": "<tree>", "objectOids": ["<oid>"], "paths": ["<path>"], "committedAt": "<utc timestamp>" }],
-  "gitLineage": "<guarded-rebase continuations only: the exact server-injected lineage object plus kind: \"guarded-rebase\"; omitted by ordinary workers>",
+  "gitLineage": "<guarded-rebase continuations only: kind, guardedRebase, ontoCommit, rebasedStartCommit, and exactTip projected from the server-injected lineage; omit oldResultCommit; omitted by ordinary workers>",
   "checkSummary": "<legacy REAL_CHECK_EXIT plus tail, or trusted-gate delegation summary>",
   "gateDurationMs": "<legacy dispatches only>",
   "baseVerification": {
