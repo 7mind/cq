@@ -1104,12 +1104,15 @@ export function currentRecoveryTaskEvidence(
       `task ${taskId} does not belong to the finalized manifest`,
     );
   }
+  const taskFields = Object.fromEntries(
+    Object.entries(task.fields).filter(([field]) => field !== "sessionLogs"),
+  );
   const taskIdentity = {
     kind: "cq-current-recovery-task-identity",
     version: 1,
     taskId: task.id,
     milestoneId: task.milestoneId,
-    taskFields: task.fields,
+    taskFields,
     finalizedGoalRef: goalRefs[0]!,
     manifestMembership,
   } as const;

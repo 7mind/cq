@@ -232,6 +232,7 @@ describe("protected current dispatch-recovery capture", () => {
     } as unknown as LedgerStore;
 
     const planned = currentRecoveryTaskEvidence(store, RECOVERY_TASK);
+    const plannedEvidence = { ...planned };
     expect(planned).toMatchObject({
       taskDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
       finalizedManifestDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
@@ -241,16 +242,24 @@ describe("protected current dispatch-recovery capture", () => {
     task.updatedAt = RECOVERY_LATER;
     task.author = "implementer";
     task.session = "implement-session";
-    expect(currentRecoveryTaskEvidence(store, RECOVERY_TASK)).toEqual(planned);
+    expect(currentRecoveryTaskEvidence(store, RECOVERY_TASK)).toEqual(plannedEvidence);
+
+    Object.assign(task.fields, {
+      sessionLogs: ["logs/raw/20260903T000657Z-T6415-g3-recovery.md"],
+    });
+    expect(currentRecoveryTaskEvidence(store, RECOVERY_TASK).taskDigest).toBe(
+      plannedEvidence.taskDigest,
+    );
+    delete (task.fields as Record<string, unknown>)["sessionLogs"];
 
     task.fields.headline = "changed specification";
     expect(currentRecoveryTaskEvidence(store, RECOVERY_TASK).taskDigest).not.toBe(
-      planned.taskDigest,
+      plannedEvidence.taskDigest,
     );
     task.fields.headline = "protected recovery";
     task.fields.worksetOwnerRef = "goals:G2";
     expect(currentRecoveryTaskEvidence(store, RECOVERY_TASK).taskDigest).not.toBe(
-      planned.taskDigest,
+      plannedEvidence.taskDigest,
     );
     task.fields.worksetOwnerRef = "goals:G1";
     manifestTaskId = "T9999";

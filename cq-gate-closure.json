@@ -453,7 +453,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/dispatchRecoverySeal.test.ts",
-      "sha256": "6dbd0d2802450c107b762812ee5889da7586c5f30ef0b767fe5dc1aed7cb0087",
+      "sha256": "71fbe9af8058c57f9dafbd51e97a883958661b8f344eaf33dfe2fee5aa288774",
       "targets": [
         "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/legacy-aborted-attestation-no-overlays.json"
       ]
