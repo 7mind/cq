@@ -610,6 +610,12 @@
     },
     {
       "kind": "spawn",
+      "source": "nix/pkg/cq-ledgers/packages/ledger/test/normalize-suggestions.test.ts",
+      "sha256": "8c4f5a2e1cb7905ec862b5b9d4d6ecdf331eb7ff1f9064e763659f265f3dbf79",
+      "targets": []
+    },
+    {
+      "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/sqlite-connection-contention.test.ts",
       "sha256": "22785c5bc2db39ef5a76f2eb87db4389c662e8d1296ea29f0d6391cdc9eeb60e",
       "targets": []
