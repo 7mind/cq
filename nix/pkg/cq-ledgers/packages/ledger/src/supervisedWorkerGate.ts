@@ -3,9 +3,13 @@ import { join, resolve } from "node:path";
 import {
   CODEX_STAGED_TIMING_BASIS,
   IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+  IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_KIND,
+  IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT,
   dispatchPayloadDigest,
+  isImplementWorkerSupervisedGateRejectionDetails,
   type AuthorizedSupervisedWorkerGateContext,
   type DispatchJSONValue,
+  type ImplementWorkerSupervisedGateRejectionDetails,
   type ImplementWorkerSupervisedGateEvidence,
 } from "@cq/config";
 import {
@@ -31,7 +35,8 @@ const FAILURE_IDENTITY_LINE_LIMIT = 4;
 const FAILURE_IDENTITY_BYTE_LIMIT = 192;
 const FAILURE_SUMMARY_CONTEXT_LINE_COUNT = 2;
 const FAILURE_SUMMARY_WINDOW_BYTE_LIMIT = 256;
-const FAILURE_OUTPUT_TAIL_BYTE_LIMIT = 896;
+const FAILURE_OUTPUT_TAIL_BYTE_LIMIT =
+  IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT;
 
 /** Host-owned bounds begin only after the child has submitted its result. */
 export const SUPERVISED_WORKER_GATE_ADMISSION_TIMEOUT_MS =
@@ -92,6 +97,42 @@ export interface SuperviseImplementWorkerGateDeps {
   readonly runner?: SupervisedWorkerGateRunner;
   readonly stateDir?: string;
   readonly now?: () => Date;
+}
+
+function supervisedGateRejectionDetails(
+  run: SupervisedWorkerGateRunResult,
+): ImplementWorkerSupervisedGateRejectionDetails {
+  const details = {
+    kind: IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_KIND,
+    version: 1,
+    command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+    gateExitCode: run.gateExitCode,
+    passCount: run.passCount,
+    failCount: run.failCount,
+    outputTail: truncateUtf8(
+      run.outputTail,
+      IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT,
+    ),
+  } as const;
+  if (!isImplementWorkerSupervisedGateRejectionDetails(details)) {
+    throw new Error("supervised worker gate runner returned invalid rejection evidence");
+  }
+  return Object.freeze(details);
+}
+
+/** A completed host gate whose deterministic result rejects the candidate. */
+export class SupervisedWorkerGateRejectedError extends Error {
+  readonly details: ImplementWorkerSupervisedGateRejectionDetails;
+
+  constructor(run: SupervisedWorkerGateRunResult) {
+    const details = supervisedGateRejectionDetails(run);
+    super(
+      `supervised worker gate rejected exit=${String(details.gateExitCode)} ` +
+        `pass=${String(details.passCount)} fail=${String(details.failCount)}\n${details.outputTail}`,
+    );
+    this.name = "SupervisedWorkerGateRejectedError";
+    this.details = details;
+  }
 }
 
 function record(value: DispatchJSONValue, label: string): Record<string, DispatchJSONValue> {
@@ -560,9 +601,7 @@ export async function superviseImplementWorkerGate(
     executionTimeoutMs: SUPERVISED_WORKER_GATE_EXECUTION_TIMEOUT_MS,
   });
   if (run.gateExitCode !== 0 || run.failCount !== 0 || run.passCount <= 0) {
-    throw new Error(
-      `supervised worker gate rejected exit=${String(run.gateExitCode)} pass=${String(run.passCount)} fail=${String(run.failCount)}\n${run.outputTail}`,
-    );
+    throw new SupervisedWorkerGateRejectedError(run);
   }
   if (
     (await checkedGit(context.worktreePath, ["rev-parse", "--verify", context.ref])) !==

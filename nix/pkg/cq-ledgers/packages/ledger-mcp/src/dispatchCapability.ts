@@ -70,6 +70,7 @@ import {
   observeManagedWorktreeLiveTip,
   resolveInheritedGitChangeReceipts,
   runLedgerWorksetGitEffect,
+  SupervisedWorkerGateRejectedError,
   withManagedWorktreeEffectLock,
   superviseImplementWorkerGate,
   resolveSingleProjectAttestationNamespace,
@@ -1765,6 +1766,9 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           if (claimed.state === "result-stored") {
             return Object.freeze({ state: "result-stored" as const, result: claimed.result });
           }
+          if (claimed.state === "aborted") {
+            return Object.freeze({ state: "aborted" as const, result: claimed.result });
+          }
           let output: DispatchJSONValue;
           try {
             output = await superviseImplementWorkerGate(
@@ -1779,6 +1783,19 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               },
             );
           } catch (error) {
+            if (error instanceof SupervisedWorkerGateRejectedError) {
+              const rejected = await abortWithRecovery(
+                {
+                  attestationId: input.attestationId,
+                  generation: input.generation,
+                  reason: "gate-rejected",
+                  details: error.details as unknown as DispatchJSONValue,
+                },
+                binding,
+                true,
+              );
+              return Object.freeze({ state: "aborted" as const, result: rejected });
+            }
             const message = error instanceof Error ? error.message : String(error);
             try {
               await abortWithRecovery(

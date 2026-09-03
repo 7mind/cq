@@ -90,13 +90,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 63525,
-        "tokens": 15296,
-        "sha256": "89f6681724f2ea4a8c260873701c4afcb80bb3e3d53e62f63497e920a847c134"
+        "utf8Bytes": 63541,
+        "tokens": 15300,
+        "sha256": "67384522173f13418636cc193b43e60c9b21071c0d6a85755ae3d21ffe27c607"
       },
-      "surfaceTokens": 15464,
+      "surfaceTokens": 15468,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3682,
+      "deltaTokens": 3686,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -129,8 +129,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8066,
-      "baselineComparableDeltaTokens": -3716,
+      "baselineComparableSurfaceTokens": 8070,
+      "baselineComparableDeltaTokens": -3712,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -330,13 +330,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 63525,
-        "tokens": 15296,
-        "sha256": "89f6681724f2ea4a8c260873701c4afcb80bb3e3d53e62f63497e920a847c134"
+        "utf8Bytes": 63541,
+        "tokens": 15300,
+        "sha256": "67384522173f13418636cc193b43e60c9b21071c0d6a85755ae3d21ffe27c607"
       },
-      "surfaceTokens": 15464,
+      "surfaceTokens": 15468,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3682,
+      "deltaTokens": 3686,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -369,8 +369,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8066,
-      "baselineComparableDeltaTokens": -3716,
+      "baselineComparableSurfaceTokens": 8070,
+      "baselineComparableDeltaTokens": -3712,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -455,13 +455,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 63525,
-        "tokens": 15296,
-        "sha256": "89f6681724f2ea4a8c260873701c4afcb80bb3e3d53e62f63497e920a847c134"
+        "utf8Bytes": 63541,
+        "tokens": 15300,
+        "sha256": "67384522173f13418636cc193b43e60c9b21071c0d6a85755ae3d21ffe27c607"
       },
-      "surfaceTokens": 15464,
+      "surfaceTokens": 15468,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3682,
+      "deltaTokens": 3686,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -494,8 +494,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8066,
-      "baselineComparableDeltaTokens": -3716,
+      "baselineComparableSurfaceTokens": 8070,
+      "baselineComparableDeltaTokens": -3712,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -742,13 +742,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 63525,
-        "tokens": 15296,
-        "sha256": "89f6681724f2ea4a8c260873701c4afcb80bb3e3d53e62f63497e920a847c134"
+        "utf8Bytes": 63541,
+        "tokens": 15300,
+        "sha256": "67384522173f13418636cc193b43e60c9b21071c0d6a85755ae3d21ffe27c607"
       },
-      "surfaceTokens": 15464,
+      "surfaceTokens": 15468,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3682,
+      "deltaTokens": 3686,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -781,8 +781,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8066,
-      "baselineComparableDeltaTokens": -3716,
+      "baselineComparableSurfaceTokens": 8070,
+      "baselineComparableDeltaTokens": -3712,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -867,13 +867,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 63525,
-        "tokens": 15296,
-        "sha256": "89f6681724f2ea4a8c260873701c4afcb80bb3e3d53e62f63497e920a847c134"
+        "utf8Bytes": 63541,
+        "tokens": 15300,
+        "sha256": "67384522173f13418636cc193b43e60c9b21071c0d6a85755ae3d21ffe27c607"
       },
-      "surfaceTokens": 15464,
+      "surfaceTokens": 15468,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3682,
+      "deltaTokens": 3686,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -906,8 +906,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8066,
-      "baselineComparableDeltaTokens": -3716,
+      "baselineComparableSurfaceTokens": 8070,
+      "baselineComparableDeltaTokens": -3712,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1032,13 +1032,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 63525,
-        "tokens": 15296,
-        "sha256": "89f6681724f2ea4a8c260873701c4afcb80bb3e3d53e62f63497e920a847c134"
+        "utf8Bytes": 63541,
+        "tokens": 15300,
+        "sha256": "67384522173f13418636cc193b43e60c9b21071c0d6a85755ae3d21ffe27c607"
       },
-      "surfaceTokens": 15464,
+      "surfaceTokens": 15468,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3682,
+      "deltaTokens": 3686,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1071,8 +1071,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8066,
-      "baselineComparableDeltaTokens": -3716,
+      "baselineComparableSurfaceTokens": 8070,
+      "baselineComparableDeltaTokens": -3712,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1237,13 +1237,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 63525,
-        "tokens": 15296,
-        "sha256": "89f6681724f2ea4a8c260873701c4afcb80bb3e3d53e62f63497e920a847c134"
+        "utf8Bytes": 63541,
+        "tokens": 15300,
+        "sha256": "67384522173f13418636cc193b43e60c9b21071c0d6a85755ae3d21ffe27c607"
       },
-      "surfaceTokens": 15464,
+      "surfaceTokens": 15468,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3682,
+      "deltaTokens": 3686,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1276,8 +1276,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8066,
-      "baselineComparableDeltaTokens": -3716,
+      "baselineComparableSurfaceTokens": 8070,
+      "baselineComparableDeltaTokens": -3712,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1362,13 +1362,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 63525,
-        "tokens": 15296,
-        "sha256": "89f6681724f2ea4a8c260873701c4afcb80bb3e3d53e62f63497e920a847c134"
+        "utf8Bytes": 63541,
+        "tokens": 15300,
+        "sha256": "67384522173f13418636cc193b43e60c9b21071c0d6a85755ae3d21ffe27c607"
       },
-      "surfaceTokens": 15464,
+      "surfaceTokens": 15468,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3682,
+      "deltaTokens": 3686,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1401,8 +1401,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8066,
-      "baselineComparableDeltaTokens": -3716,
+      "baselineComparableSurfaceTokens": 8070,
+      "baselineComparableDeltaTokens": -3712,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1610,13 +1610,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 63525,
-        "tokens": 15296,
-        "sha256": "89f6681724f2ea4a8c260873701c4afcb80bb3e3d53e62f63497e920a847c134"
+        "utf8Bytes": 63541,
+        "tokens": 15300,
+        "sha256": "67384522173f13418636cc193b43e60c9b21071c0d6a85755ae3d21ffe27c607"
       },
-      "surfaceTokens": 15464,
+      "surfaceTokens": 15468,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3682,
+      "deltaTokens": 3686,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1649,8 +1649,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8066,
-      "baselineComparableDeltaTokens": -3716,
+      "baselineComparableSurfaceTokens": 8070,
+      "baselineComparableDeltaTokens": -3712,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1735,13 +1735,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 63525,
-        "tokens": 15296,
-        "sha256": "89f6681724f2ea4a8c260873701c4afcb80bb3e3d53e62f63497e920a847c134"
+        "utf8Bytes": 63541,
+        "tokens": 15300,
+        "sha256": "67384522173f13418636cc193b43e60c9b21071c0d6a85755ae3d21ffe27c607"
       },
-      "surfaceTokens": 15464,
+      "surfaceTokens": 15468,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3682,
+      "deltaTokens": 3686,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1774,8 +1774,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8066,
-      "baselineComparableDeltaTokens": -3716,
+      "baselineComparableSurfaceTokens": 8070,
+      "baselineComparableDeltaTokens": -3712,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -1898,13 +1898,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 63525,
-        "tokens": 15296,
-        "sha256": "89f6681724f2ea4a8c260873701c4afcb80bb3e3d53e62f63497e920a847c134"
+        "utf8Bytes": 63541,
+        "tokens": 15300,
+        "sha256": "67384522173f13418636cc193b43e60c9b21071c0d6a85755ae3d21ffe27c607"
       },
-      "surfaceTokens": 15464,
+      "surfaceTokens": 15468,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3682,
+      "deltaTokens": 3686,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -1937,8 +1937,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8066,
-      "baselineComparableDeltaTokens": -3716,
+      "baselineComparableSurfaceTokens": 8070,
+      "baselineComparableDeltaTokens": -3712,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -2103,13 +2103,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 63525,
-        "tokens": 15296,
-        "sha256": "89f6681724f2ea4a8c260873701c4afcb80bb3e3d53e62f63497e920a847c134"
+        "utf8Bytes": 63541,
+        "tokens": 15300,
+        "sha256": "67384522173f13418636cc193b43e60c9b21071c0d6a85755ae3d21ffe27c607"
       },
-      "surfaceTokens": 15464,
+      "surfaceTokens": 15468,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3682,
+      "deltaTokens": 3686,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -2142,8 +2142,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8066,
-      "baselineComparableDeltaTokens": -3716,
+      "baselineComparableSurfaceTokens": 8070,
+      "baselineComparableDeltaTokens": -3712,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -2266,13 +2266,13 @@
         "sha256": "0cfff8bd497911674a7657c9424449c09dd5434ee405aa8963bd02ad8aaece7e"
       },
       "toolsList": {
-        "utf8Bytes": 63525,
-        "tokens": 15296,
-        "sha256": "89f6681724f2ea4a8c260873701c4afcb80bb3e3d53e62f63497e920a847c134"
+        "utf8Bytes": 63541,
+        "tokens": 15300,
+        "sha256": "67384522173f13418636cc193b43e60c9b21071c0d6a85755ae3d21ffe27c607"
       },
-      "surfaceTokens": 15464,
+      "surfaceTokens": 15468,
       "baselineSurfaceTokens": 11782,
-      "deltaTokens": 3682,
+      "deltaTokens": 3686,
       "additiveToolsExcludedFromBaselineComparison": [
         "acknowledge_operator_action",
         "advance_implementation_evidence_bootstrap",
@@ -2305,8 +2305,8 @@
         "workset",
         "worktree_manage"
       ],
-      "baselineComparableSurfaceTokens": 8066,
-      "baselineComparableDeltaTokens": -3716,
+      "baselineComparableSurfaceTokens": 8070,
+      "baselineComparableDeltaTokens": -3712,
       "smallerThanBaseline": true,
       "contractRequiredTools": [],
       "requiredCallInventoryCovered": true,
@@ -2326,8 +2326,8 @@
       "name": "abort_dispatch",
       "whole": {
         "baselineTokens": 221,
-        "afterTokens": 204,
-        "deltaTokens": -17
+        "afterTokens": 208,
+        "deltaTokens": -13
       },
       "fields": {
         "name": {
@@ -2364,12 +2364,12 @@
             "marginalTokens": 184
           },
           "after": {
-            "serializedTokens": 173,
-            "marginalTokens": 174
+            "serializedTokens": 177,
+            "marginalTokens": 178
           },
           "delta": {
-            "serializedTokens": -9,
-            "marginalTokens": -10
+            "serializedTokens": -5,
+            "marginalTokens": -6
           }
         }
       }

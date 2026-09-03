@@ -1336,7 +1336,10 @@ export async function main(argv: readonly string[]): Promise<void> {
       const outcome = await dispatchCapability.finalizeParentGate(
         await readParentGateFinalizeRequest(process.stdin),
       );
-      if (outcome.state !== "result-stored") {
+      if (
+        outcome.state !== "result-stored" &&
+        (outcome.state !== "aborted" || outcome.result.reason !== "gate-rejected")
+      ) {
         throw new Error(`ledger-mcp: parent gate finalized as ${outcome.state}`);
       }
       process.stdout.write(`${JSON.stringify(outcome.result)}\n`);

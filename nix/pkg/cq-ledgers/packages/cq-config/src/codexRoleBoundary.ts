@@ -23,6 +23,10 @@ import {
   type ResultCapability,
 } from "./compactDispatchProtocol.js";
 import {
+  isImplementWorkerSupervisedGateRejectionDetails,
+  type ImplementWorkerSupervisedGateRejectionDetails,
+} from "./schemas/implement-worker.js";
+import {
   validateManagedWorktreeHandle,
   type ManagedWorktreeHandle,
 } from "./managedWorktreeHandle.js";
@@ -272,6 +276,13 @@ async function executeCodexParentGateFinalizerAttempt(
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new CodexRoleBoundaryError("parent gate emitted a malformed acknowledgement");
   }
+  const aborted = abortedDispatchAcknowledgement(stdout.trim(), input.handle);
+  if (
+    aborted?.reason === "gate-rejected" &&
+    isImplementWorkerSupervisedGateRejectionDetails(aborted.details)
+  ) {
+    throw new CodexParentGateRejectedError(aborted.details);
+  }
   const acknowledgement = parsed as Record<string, unknown>;
   if (
     Object.keys(acknowledgement).sort().join(",") !==
@@ -310,6 +321,7 @@ export async function executeCodexParentGateFinalizer(
       await executeCodexParentGateFinalizerAttempt(input, attemptTimeoutMs, terminationGraceMs);
       return;
     } catch (error) {
+      if (error instanceof CodexParentGateRejectedError) throw error;
       failures.push(error);
     }
   }
@@ -472,6 +484,21 @@ export class CodexRoleBoundaryError extends Error {
     super(`Codex role boundary: ${message}`);
     this.name = "CodexRoleBoundaryError";
     this.diagnostic = diagnostic;
+  }
+}
+
+/** A durable deterministic parent-gate rejection already stored by the broker. */
+export class CodexParentGateRejectedError extends CodexRoleBoundaryError {
+  readonly reason = "gate-rejected" as const;
+  readonly details: ImplementWorkerSupervisedGateRejectionDetails;
+
+  constructor(details: ImplementWorkerSupervisedGateRejectionDetails) {
+    super(
+      `parent gate rejected exit=${String(details.gateExitCode)} ` +
+        `pass=${String(details.passCount)} fail=${String(details.failCount)}\n${details.outputTail}`,
+    );
+    this.name = "CodexParentGateRejectedError";
+    this.details = Object.freeze({ ...details });
   }
 }
 

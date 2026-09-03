@@ -10,6 +10,7 @@ import {
 import {
   CODEX_STAGED_TIMING_BASIS,
   CODEX_STAGED_TIMING_PHASES,
+  CodexParentGateRejectedError,
   DISPATCHED_ROLE_IDS,
   DOMAIN_LEDGER_TOOL_NAMES,
   ROLE_TOOL_CAPABILITY_MATRIX,
@@ -18,6 +19,7 @@ import {
   calculateCodexStagedTimingBasis,
   executeCodexParentGateFinalizer,
   executeCodexRoleBoundary,
+  IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
   interceptCodexRoleBoundaryResult,
   type CodexRoleBoundaryPlan,
   type CodexStagedTimingPhase,
@@ -208,6 +210,67 @@ process.stdout.write(JSON.stringify({ state: "result-stored", attestationId: ${J
           environment: { CQ_PARENT_GATE_FIXTURE_STATE: statePath },
         }),
       ).resolves.toBeUndefined();
+      expect(JSON.parse(readFileSync(statePath, "utf8"))).toEqual({
+        attempts: 2,
+        gateRuns: 1,
+        committed: true,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("parent finalization preserves a durable gate rejection after a lost acknowledgement without rerunning", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cq-parent-gate-rejected-reconcile-"));
+    const command = join(root, "parent-gate-fixture");
+    const statePath = join(root, "state.json");
+    const details = {
+      kind: "cq-supervised-gate-rejection",
+      version: 1,
+      command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+      gateExitCode: 1,
+      passCount: 16,
+      failCount: 1,
+      outputTail: "controlled red gate",
+    } as const;
+    writeFileSync(statePath, JSON.stringify({ attempts: 0, gateRuns: 0, committed: false }));
+    writeFileSync(
+      command,
+      `#!/usr/bin/env bun
+import { readFileSync, writeFileSync } from "node:fs";
+await Bun.stdin.text();
+const statePath = process.env["CQ_PARENT_GATE_FIXTURE_STATE"];
+if (statePath === undefined) throw new Error("missing fixture state");
+const state = JSON.parse(readFileSync(statePath, "utf8"));
+state.attempts += 1;
+if (!state.committed) {
+  state.committed = true;
+  state.gateRuns += 1;
+  writeFileSync(statePath, JSON.stringify(state));
+  process.exit(1);
+}
+writeFileSync(statePath, JSON.stringify(state));
+process.stdout.write(JSON.stringify({ state: "aborted", attestationId: ${JSON.stringify(HANDLE.attestationId)}, generation: ${String(HANDLE.generation)}, abortedAt: "2026-08-17T16:00:00.000Z", reason: "gate-rejected", details: ${JSON.stringify(details)} }) + "\\n");
+`,
+    );
+    chmodSync(command, 0o755);
+    try {
+      let observed: unknown;
+      try {
+        await executeCodexParentGateFinalizer({
+          command,
+          ledgerCwd: root,
+          promptRoot: root,
+          handle: HANDLE,
+          parentGateCapability: PARENT_GATE_CAPABILITY,
+          timeoutMs: 2_000,
+          environment: { CQ_PARENT_GATE_FIXTURE_STATE: statePath },
+        });
+      } catch (error) {
+        observed = error;
+      }
+      expect(observed).toBeInstanceOf(CodexParentGateRejectedError);
+      expect(observed).toMatchObject({ reason: "gate-rejected", details });
       expect(JSON.parse(readFileSync(statePath, "utf8"))).toEqual({
         attempts: 2,
         gateRuns: 1,

@@ -1531,8 +1531,10 @@ describe("abort wins, from every non-terminal state", () => {
     expect(fetchDispatchResult(fetchRequest(p), h.deps).state).toBe("aborted");
   });
 
-  test("every declared abort reason is accepted, and nothing else is", () => {
-    for (const reason of DISPATCH_ABORT_REASONS) {
+  test("every ordinary abort reason is accepted from prepared, and nothing undeclared is", () => {
+    for (const reason of DISPATCH_ABORT_REASONS.filter(
+      (candidate) => candidate !== "gate-rejected",
+    )) {
       const h = harness();
       const p = prepared(h);
       expect(abortDispatch(abortRequest(p, { reason }), h.deps).reason, reason).toBe(reason);

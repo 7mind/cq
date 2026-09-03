@@ -142,6 +142,7 @@ export const DISPATCH_ABORT_REASONS = [
   "missing-result",
   "deadline-exceeded",
   "parent-lost",
+  "gate-rejected",
   "operational-abstention",
 ] as const;
 

@@ -1118,7 +1118,7 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
     ]);
   });
 
-  test("rejects caller-minted, red, zero-pass, and nonzero-fail evidence", async () => {
+  test("rejects caller-minted evidence", async () => {
     const fabricated = await fixture();
     await expect(
       fabricated.capability.storeResult({
@@ -1126,7 +1126,9 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
         output: { ...fabricated.output, supervisedGateEvidence: {} },
       }),
     ).rejects.toThrow("caller-minted");
+  });
 
+  test("terminalizes and replays deterministic gate rejection without rerunning the gate", async () => {
     for (const result of [
       { gateExitCode: 1, passCount: 16, failCount: 1 },
       { gateExitCode: 0, passCount: 0, failCount: 0 },
@@ -1140,7 +1142,24 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       });
       const subject = await fixture(runner);
       expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
-      await expect(finalize(subject)).rejects.toThrow("supervised worker gate rejected");
+      const rejected = await finalize(subject);
+      expect(rejected).toMatchObject({
+        state: "aborted",
+        result: {
+          state: "aborted",
+          reason: "gate-rejected",
+          details: {
+            kind: "cq-supervised-gate-rejection",
+            version: 1,
+            command:
+              'cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check',
+            ...result,
+            outputTail: "controlled red gate",
+          },
+        },
+      });
+      expect(await finalize(subject)).toEqual(rejected);
+      expect(runner.requests).toHaveLength(1);
     }
   });
 
@@ -1176,6 +1195,16 @@ describe("T2081 supervised worker result storage [Effectual-GoodCommunication]",
       expect(await stage(subject)).toMatchObject({ state: "gate-pending" });
       await expect(finalize(subject)).rejects.toThrow(message);
       expect(runner.requests).toHaveLength(1);
+      expect(subject.store.rows()).toMatchObject([
+        {
+          state: "aborted",
+          abortReason: "parent-lost",
+          dispatchRecoveryBinding: {
+            liveTip: subject.receipt.newHead,
+            gitReceipts: [{ newHead: subject.receipt.newHead }],
+          },
+        },
+      ]);
     }
   });
 

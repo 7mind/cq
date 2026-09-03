@@ -651,6 +651,74 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
         expect((await afterComplete.fetch(handleOf(p))).state).toBe("result-stored");
       }));
 
+    test("deterministic parent-gate rejection replays after restart without recovery authority", () =>
+      withCase(async ({ fixture, driver, clock }) => {
+        const p = await driver.prepare({
+          surface: "codex",
+          gitEffectBinding: PARENT_GATE_BINDING,
+        });
+        if (p.parentGateCapability === undefined) {
+          throw new Error("Codex worker prepare omitted parent gate authority");
+        }
+        await driver.fetchInput(p);
+        expect(await driver.store(p.resultCapability, PARENT_GATE_STAGED_OUTPUT)).toMatchObject({
+          state: "gate-pending",
+        });
+        await expect(
+          driver.abort(p, {
+            reason: "gate-rejected",
+            details: { source: "caller" },
+          }),
+        ).rejects.toThrow("claimed supervised parent gate");
+        const claimed = await claimParentGateOn(
+          driver.backend,
+          { ...handleOf(p), parentGateCapability: p.parentGateCapability },
+          { now: clock.now },
+        );
+        expect(claimed.state).toBe("gate-running");
+        const details = {
+          kind: "cq-supervised-gate-rejection",
+          version: 1,
+          command: IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND,
+          gateExitCode: 1,
+          passCount: 16,
+          failCount: 1,
+          outputTail: "controlled red gate",
+        } as const;
+        await expect(
+          driver.abort(p, {
+            reason: "gate-rejected",
+            details: { ...details, command: "substituted" } as unknown as DispatchJSONValue,
+          }),
+        ).rejects.toThrow("invalid supervised gate rejection evidence");
+        const rejected = await driver.abort(p, {
+          reason: "gate-rejected",
+          details: details as unknown as DispatchJSONValue,
+        });
+        expect(rejected).toMatchObject({ reason: "gate-rejected", details });
+
+        const restarted = new AttestationDriver(await fixture.restart(), clock);
+        expect(
+          await claimParentGateOn(
+            restarted.backend,
+            { ...handleOf(p), parentGateCapability: p.parentGateCapability },
+            { now: clock.now },
+          ),
+        ).toEqual({ state: "aborted", result: rejected });
+        await expect(
+          discoverDispatchRecoveryOn(
+            restarted.backend,
+            {
+              namespace: driver.namespace,
+              actor: "trusted-parent",
+              gitEffectBinding: PARENT_GATE_BINDING,
+              liveTip: (INPUT as { startingCommit: string }).startingCommit,
+            },
+            { now: clock.now },
+          ),
+        ).rejects.toThrow("no parent-lost dispatch recovery");
+      }));
+
     // -- every abort path --------------------------------------------------
     test("every explicit abort reason wins from prepared and is terminal", () =>
       withCase(async ({ fixture, driver }) => {

@@ -487,6 +487,7 @@ export {
   createNodeSupervisedWorkerGateRunner,
   nodeSupervisedWorkerGateRunner,
   superviseImplementWorkerGate,
+  SupervisedWorkerGateRejectedError,
 } from "./supervisedWorkerGate.js";
 export type {
   NodeSupervisedWorkerGateSettlement,

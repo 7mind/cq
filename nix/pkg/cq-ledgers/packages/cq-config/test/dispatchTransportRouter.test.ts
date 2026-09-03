@@ -63,6 +63,9 @@ const CLAUDE_RECORDING_FIXTURE = fileURLToPath(
 const CODEX_RECORDING_FIXTURE = fileURLToPath(
   new URL("fixtures/codex-role-recording.ts", import.meta.url),
 );
+const STORE_RESULT_ABORT_REASONS = DISPATCH_ABORT_REASONS.filter(
+  (reason) => reason !== "gate-rejected",
+);
 const CLAUDE_CORRELATION: ClaudeChildCorrelation = {
   roleId: "implement-worker",
   launchNonce: CLAUDE_SESSION_ID,
@@ -1159,7 +1162,7 @@ describe("T1631 shared three-harness transport router", () => {
   });
 
   for (const observation of ["final", "tool"] as const) {
-    for (const [reasonIndex, reason] of DISPATCH_ABORT_REASONS.entries()) {
+    for (const [reasonIndex, reason] of STORE_RESULT_ABORT_REASONS.entries()) {
       test(`Codex process adapter reconciles ${reason} from the ${observation} store_result observation [Behavioral-Active Blackbox Good-Communication]`, async () => {
         const processFixture = createCodexRecordingFixture(`typed-abort-${observation}`, reason);
         try {

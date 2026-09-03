@@ -68,7 +68,10 @@
 import { timingSafeEqual } from "node:crypto";
 import { DISPATCHED_ROLE_SIDECARS } from "./promptCatalogStore.js";
 import { IMPLEMENT_REVIEWER_TIMING_INPUT_FIELDS } from "./schemas/implement-reviewer.js";
-import { implementWorkerStagedOutputSchema } from "./schemas/implement-worker.js";
+import {
+  implementWorkerStagedOutputSchema,
+  isImplementWorkerSupervisedGateRejectionDetails,
+} from "./schemas/implement-worker.js";
 import { validateAgainstSchema, type ValidationError } from "./validation.js";
 import { LEDGER_BACKENDS, type LedgerBackend } from "./types.js";
 import { DispatchOverlayError, type DispatchOverlayRegistry } from "./dispatchOverlays.js";
@@ -2859,6 +2862,14 @@ function consumedResultOf(row: AttestationEnvelope): ConsumedDispatchResult {
   return consumed;
 }
 
+function assertSupervisedGateRejectionDetails(
+  value: DispatchJSONValue | undefined,
+): void {
+  if (!isImplementWorkerSupervisedGateRejectionDetails(value)) {
+    throw new AttestationContractError("details", "invalid supervised gate rejection evidence");
+  }
+}
+
 /**
  * Write one atomic abort over `row`. Used by the explicit abort operation AND by
  * every internal path that must abort instead of storing or consuming: a
@@ -2888,6 +2899,15 @@ function writeAbort(
       "a manager-bound parent-lost implement-worker requires recovery evidence",
     );
   }
+  if (reason === "gate-rejected") {
+    if (row.state !== "gate-running" || row.parentGateCapabilityHash === undefined) {
+      throw new AttestationContractError(
+        "reason",
+        "gate-rejected requires a claimed supervised parent gate",
+      );
+    }
+    assertSupervisedGateRejectionDetails(details);
+  }
   const terminalDigest = terminalDigestOf("aborted", {
     reason,
     detailsDigest: details === undefined ? null : dispatchPayloadDigest(details),
@@ -2914,6 +2934,9 @@ function writeAbort(
       ? {}
       : { inputMaterializedAt: row.inputMaterializedAt }),
     resultCapabilityHash: row.resultCapabilityHash,
+    ...(reason === "gate-rejected" && row.parentGateCapabilityHash !== undefined
+      ? { parentGateCapabilityHash: row.parentGateCapabilityHash }
+      : {}),
     ...(row.gitChangeCapabilityHash === undefined
       ? {}
       : { gitChangeCapabilityHash: row.gitChangeCapabilityHash }),
@@ -3115,7 +3138,8 @@ export interface ClaimedParentGate {
 
 export type ClaimParentGateOutcome =
   | ClaimedParentGate
-  | { readonly state: "result-stored"; readonly result: StoredDispatchResultView };
+  | { readonly state: "result-stored"; readonly result: StoredDispatchResultView }
+  | { readonly state: "aborted"; readonly result: AbortedDispatchResult };
 
 export interface CompleteParentGateRequest extends ParentGateFinalizeRequest {
   readonly gateEpoch: number;
@@ -3158,6 +3182,9 @@ export function claimParentGate(
   const row = requireParentGateRow(request, deps);
   if (row.state === "result-stored") {
     return Object.freeze({ state: "result-stored" as const, result: storedViewOf(row) });
+  }
+  if (row.state === "aborted" && row.abortReason === "gate-rejected") {
+    return Object.freeze({ state: "aborted" as const, result: abortedResultOf(row) });
   }
   if (row.state !== "gate-pending" && row.state !== "gate-running") {
     throw new DispatchStateConflictError(
@@ -3746,6 +3773,7 @@ const ABORT_REASON_SET: ReadonlySet<string> = new Set([
   "missing-result",
   "deadline-exceeded",
   "parent-lost",
+  "gate-rejected",
   "operational-abstention",
 ]);
 

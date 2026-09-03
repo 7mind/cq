@@ -45,6 +45,53 @@ export const IMPLEMENT_WORKER_FULL_SHA_PATTERN = "^[0-9a-f]{40}$";
 export const IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND =
   'cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check';
 
+/** Typed terminal details for a completed deterministic parent-gate rejection. */
+export interface ImplementWorkerSupervisedGateRejectionDetails {
+  readonly kind: "cq-supervised-gate-rejection";
+  readonly version: 1;
+  readonly command: typeof IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND;
+  readonly gateExitCode: number;
+  readonly passCount: number;
+  readonly failCount: number;
+  readonly outputTail: string;
+}
+
+export const IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_KIND =
+  "cq-supervised-gate-rejection" as const;
+export const IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT = 896;
+
+export function isImplementWorkerSupervisedGateRejectionDetails(
+  value: unknown,
+): value is ImplementWorkerSupervisedGateRejectionDetails {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Readonly<Record<string, unknown>>;
+  const keys = Object.keys(record).sort();
+  const expectedKeys = [
+    "command",
+    "failCount",
+    "gateExitCode",
+    "kind",
+    "outputTail",
+    "passCount",
+    "version",
+  ];
+  const countFields = ["gateExitCode", "passCount", "failCount"] as const;
+  return (
+    keys.length === expectedKeys.length &&
+    keys.every((key, index) => key === expectedKeys[index]) &&
+    record["kind"] === IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_KIND &&
+    record["version"] === 1 &&
+    record["command"] === IMPLEMENT_WORKER_CANONICAL_GATE_COMMAND &&
+    countFields.every(
+      (field) => Number.isSafeInteger(record[field]) && (record[field] as number) >= 0,
+    ) &&
+    typeof record["outputTail"] === "string" &&
+    Buffer.byteLength(record["outputTail"], "utf8") <=
+      IMPLEMENT_WORKER_SUPERVISED_GATE_REJECTION_TAIL_BYTE_LIMIT &&
+    (record["gateExitCode"] !== 0 || record["failCount"] !== 0 || record["passCount"] === 0)
+  );
+}
+
 /** Versioned discriminator for runner-owned Codex full-gate evidence. */
 export const IMPLEMENT_WORKER_SUPERVISED_GATE_KIND = "cq-supervised-gate-evidence" as const;
 
