@@ -20,6 +20,10 @@ import {
 } from "@cq/config";
 import {
   ImplementationEvidenceService,
+  InMemoryCurrentRecoverySealJournalStore,
+  createCurrentRecoverySeal,
+  createCurrentRecoverySeed,
+  createDispatchLineageCutoverFence,
   createInMemoryImplementationEvidenceStore,
   createLedgerStore,
   fsAttestationProductionRoot,
@@ -27,6 +31,7 @@ import {
   prepareManagedWorktree,
   resolveManagedWorktreeDispatchBinding,
   TASKS_LEDGER,
+  type CurrentRecoverySealJournalStore,
 } from "@cq/ledger";
 import { createDispatchCapability } from "../src/dispatchCapability.js";
 import type { PromptArtifactStore } from "../src/promptArtifactStore.js";
@@ -315,6 +320,7 @@ function openGuardedRetryCapability(
     "repositoryRoot" | "stateDir" | "namespace" | "attestationRoot"
   >,
   randomSeed: number,
+  recoveryJournal?: CurrentRecoverySealJournalStore,
 ): {
   readonly backend: FsAttestationBackend;
   readonly capability: DispatchCapabilityInstance;
@@ -333,6 +339,7 @@ function openGuardedRetryCapability(
       worktreeStateDir: fixture.stateDir,
       now: () => "2026-08-18T12:00:00.000Z",
       randomBytes: sequentialDispatchRandomBytes(randomSeed),
+      ...(recoveryJournal === undefined ? {} : { recoveryJournal }),
       supervisedWorkerGateRunner: {
         run: async () => ({
           gateExitCode: 0,
@@ -2012,6 +2019,10 @@ describe("dispatch-bound Git change capability", () => {
     let d334ExactTipRebasedHead!: string;
     let d334ExactTipOntoCommit!: string;
     let d334ExactTipReference!: string;
+    let d438RecoveryFence!: GuardedRetryFixture;
+    let d438RecoveryFenceRebasedHead!: string;
+    let d438RecoveryFenceOntoCommit!: string;
+    let d438RecoveryFenceReference!: string;
 
     async function runGuardedRebaseCli(
       fixture: GuardedRetryFixture,
@@ -2087,6 +2098,67 @@ describe("dispatch-bound Git change capability", () => {
       return { ontoCommit, rebasedHead, reference };
     }
 
+    async function recoveryJournalForGuardedFixture(
+      fixture: GuardedRetryFixture,
+    ): Promise<CurrentRecoverySealJournalStore> {
+      const binding = await resolveManagedWorktreeDispatchBinding({
+        repositoryRoot: fixture.repositoryRoot,
+        taskId: "T2148",
+        worktreePath: fixture.managed.handle.absolutePath,
+        branch: fixture.managed.handle.branch,
+      });
+      if (binding === null) throw new Error("guarded fixture lost its managed binding");
+      const snapshotDigest = "c".repeat(64);
+      const seal = createCurrentRecoverySeal(
+        createCurrentRecoverySeed({
+          selectedSourceHandle: fixture.first.handle,
+          lineageMaximumGeneration: fixture.first.handle.generation,
+          snapshotDigest,
+          source: { kind: "aborted", version: 1, abortReason: "parent-lost" },
+          sourceTerminalDigest: "d".repeat(64),
+          namespace: fixture.namespace,
+          taskId: "T2148",
+          taskDigest: "e".repeat(64),
+          finalizedManifestDigest: "f".repeat(64),
+          promptProvenance: fixture.first.prepared.promptProvenance,
+          prepareRequestDigest: "1".repeat(64),
+          inputRecipe: guardedWorkerInput(fixture, 0, fixture.baseCommit),
+          overlays: [],
+          gitBinding: binding,
+          gitReceipts: [fixture.firstReceipt],
+          liveTip: fixture.firstReceipt.newHead,
+          capturedAt: "2026-08-18T12:00:00.000Z",
+        }),
+      );
+      if (seal.version !== 1) throw new Error("aborted source did not produce a v1 seal");
+      const journal = new InMemoryCurrentRecoverySealJournalStore();
+      await journal.put({
+        kind: "cq-current-recovery-seal-journal",
+        version: 1,
+        state: "committed",
+        taskId: "T2148",
+        snapshotDigest,
+        seal,
+        writtenAt: "2026-08-18T12:00:00.000Z",
+        committedAt: "2026-08-18T12:00:01.000Z",
+        fence: createDispatchLineageCutoverFence({
+          namespace: fixture.namespace,
+          taskId: "T2148",
+          managedFingerprint: binding.handleFingerprint,
+          sourceAttestationId: fixture.first.handle.attestationId,
+          selectedSourceGeneration: fixture.first.handle.generation,
+          lineageMaximumGeneration: fixture.first.handle.generation,
+          recoverySeedRef: seal.sealReference,
+          fenceCapability: {
+            scope: "dispatch-lineage-fence",
+            token: fixture.managed.handle.token,
+          },
+          installedAt: "2026-08-18T12:00:01.000Z",
+        }),
+      });
+      return journal;
+    }
+
     beforeAll(async () => {
       d332 = await createGuardedRetryFixture("d332-lineage-free", 2_148);
 
@@ -2107,6 +2179,19 @@ describe("dispatch-bound Git change capability", () => {
       d334ExactTipOntoCommit = exactTip.ontoCommit;
       d334ExactTipRebasedHead = exactTip.rebasedHead;
       d334ExactTipReference = exactTip.reference;
+
+      d438RecoveryFence = await createGuardedRetryFixture(
+        "d438-recovery-fence",
+        2_154,
+        true,
+      );
+      const recoveryFence = await setupGuardedRebase(
+        d438RecoveryFence,
+        "d438-recovery-fence-rebase-operation",
+      );
+      d438RecoveryFenceOntoCommit = recoveryFence.ontoCommit;
+      d438RecoveryFenceRebasedHead = recoveryFence.rebasedHead;
+      d438RecoveryFenceReference = recoveryFence.reference;
     }, GUARDED_REBASE_SETUP_TIMEOUT_MS);
 
     test("D332 rejects a lineage-free implement-worker retry at an advanced managed-worktree tip [Behavioral-Progression Blackbox-GoodCommunication]", async () => {
@@ -2230,6 +2315,42 @@ describe("dispatch-bound Git change capability", () => {
         content: "corrected\n",
         baseReceipts: first.receipts,
       });
+    });
+
+    test("a recovery fence admits an exact server-verified guarded-rebase bridge [Behavioral-Progression Blackbox-GoodCommunication]", async () => {
+      const recoveryJournal = await recoveryJournalForGuardedFixture(d438RecoveryFence);
+      const restarted = openGuardedRetryCapability(d438RecoveryFence, 3_154, recoveryJournal);
+      try {
+        const prepared = await restarted.capability.prepare({
+          roleId: "implement-worker",
+          input: {
+            taskId: "T2148",
+            headline: "reproduce the remaining current-main worker authority gaps",
+            description: "exercise one exact brokered worker continuation boundary",
+            acceptance: "the public dispatch lifecycle completes at the managed worktree tip",
+            worktreePath: d438RecoveryFence.managed.handle.absolutePath,
+            branch: d438RecoveryFence.managed.handle.branch,
+            baseCommit: d438RecoveryFenceOntoCommit,
+            round: 3,
+            startingCommit: d438RecoveryFenceRebasedHead,
+            priorResultCommit: d438RecoveryFence.firstReceipt.newHead,
+          },
+          idempotencyKey: "T2148-recovery-fenced-guarded-rebase",
+          timeoutMs: 600_000,
+          expectedChild: {
+            childId: "recovery-fenced-guarded-rebase",
+            runId: "recovery-fenced-guarded-rebase",
+          },
+          reprepareOf: d438RecoveryFence.first.handle,
+          guardedRebase: d438RecoveryFenceReference,
+        });
+        expect(prepared).toMatchObject({ accepted: true });
+        if (prepared.accepted) {
+          await restarted.capability.abort({ ...prepared.handle, reason: "parent-lost" });
+        }
+      } finally {
+        await closeGuardedRetryBackend(restarted.backend);
+      }
     });
 
     function guardedContinuationInput(

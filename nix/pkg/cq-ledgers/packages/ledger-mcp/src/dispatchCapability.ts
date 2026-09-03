@@ -359,21 +359,83 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
   ): Promise<boolean> {
     return (
       dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation) ||
-      (await continuationExitsRecoveryFence(fence, binding, input.continuation))
+      (await continuationExitsRecoveryFence(fence, binding, input.continuation)) ||
+      (await guardedRebaseExitsRecoveryFence(fence, binding, input))
     );
   }
 
-  function hasExclusiveContinuationAuthority(
+  async function guardedRebaseExitsRecoveryFence(
+    fence: DispatchLineageCutoverFence,
+    binding: ManagedWorktreeDispatchBinding,
+    input: Parameters<DispatchCapability["prepare"]>[0],
+  ): Promise<boolean> {
+    if (
+      input.roleId !== "implement-worker" ||
+      input.guardedRebase === undefined ||
+      input.reprepareOf === undefined ||
+      input.continuation !== undefined ||
+      input.recovery !== undefined ||
+      input.recoveryPreparation !== undefined ||
+      input.implementationEvidenceBootstrap !== undefined ||
+      input.reprepareOf.attestationId !== fence.sourceAttestationId ||
+      input.reprepareOf.generation < fence.lineageMaximumGeneration ||
+      input.input === null ||
+      typeof input.input !== "object" ||
+      Array.isArray(input.input)
+    ) {
+      return false;
+    }
+    const record = input.input as Readonly<Record<string, DispatchJSONValue>>;
+    const baseCommit = record["baseCommit"];
+    const startingCommit = record["startingCommit"];
+    if (typeof baseCommit !== "string" || typeof startingCommit !== "string") return false;
+    const prior = await resolveDispatchGitEffectBindingForHandleOn(
+      options.backend,
+      input.reprepareOf,
+    );
+    if (prior === undefined) return false;
+    try {
+      await materializeGuardedRebaseBridge({
+        reference: input.guardedRebase,
+        prior: {
+          ...prior,
+          attestationId: input.reprepareOf.attestationId,
+          generation: input.reprepareOf.generation,
+        },
+        current: binding,
+        baseCommitInput: baseCommit,
+        startingCommitInput: startingCommit,
+        priorResultCommitInput:
+          (record["priorResultCommit"] as string | null | undefined) ?? null,
+        ...(options.worktreeStateDir === undefined
+          ? {}
+          : { stateDir: options.worktreeStateDir }),
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function hasExclusiveLineageAuthority(
     input: Parameters<DispatchCapability["prepare"]>[0],
   ): boolean {
-    return (
+    const noOtherAuthority =
+      input.recovery === undefined &&
+      input.recoveryPreparation === undefined &&
+      input.implementationEvidenceBootstrap === undefined;
+    const continuation =
+      noOtherAuthority &&
       input.continuation !== undefined &&
       input.reprepareOf === undefined &&
       input.guardedRebase === undefined &&
-      input.recovery === undefined &&
-      input.recoveryPreparation === undefined &&
-      input.implementationEvidenceBootstrap === undefined
-    );
+      input.recovery === undefined;
+    const guardedRebase =
+      noOtherAuthority &&
+      input.continuation === undefined &&
+      input.guardedRebase !== undefined &&
+      input.reprepareOf !== undefined;
+    return continuation || guardedRebase;
   }
 
   function callerPrepareFingerprint(
@@ -648,7 +710,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
               );
               return fence !== null &&
                 !dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation) &&
-                !hasExclusiveContinuationAuthority(input)
+                !hasExclusiveLineageAuthority(input)
                 ? journalRecoveryRequiredForFence(fence)
                 : undefined;
             },
