@@ -2930,6 +2930,40 @@ describe("dispatch-bound Git change capability", () => {
       expect(retry.detail).toContain(detail);
     }
 
+    test("D456 preserves the unique guarded-rebase rejection [Behavioral-Active Blackbox-GoodCommunication]", async () => {
+      const opened = openGuardedRetryCapability(d334Negative, 3_456);
+      try {
+        const retry = await opened.capability.prepare({
+          roleId: "implement-worker",
+          input: guardedContinuationInput(
+            d334Negative,
+            d334Negative.baseCommit,
+            d334NegativeRebasedHead,
+            d334Negative.firstReceipt.newHead,
+            1,
+          ),
+          idempotencyKey: "T2148-d456-unique-typed-rejection",
+          timeoutMs: 600_000,
+          expectedChild: {
+            childId: "d456-unique-typed-rejection",
+            runId: "d456-unique-typed-rejection",
+          },
+          guardedRebase: d334NegativeReference,
+        });
+        expect(retry).toMatchObject({
+          accepted: false,
+          allocated: false,
+          path: "input.baseCommit",
+          detail: "guarded rebase continuation requires baseCommit to equal the journaled ontoCommit",
+        });
+        if (retry.accepted) return;
+        expect(Object.hasOwn(retry, "handle")).toBeFalse();
+        expect(Object.hasOwn(retry, "prepared")).toBeFalse();
+      } finally {
+        await closeGuardedRetryBackend(opened.backend);
+      }
+    });
+
     test("guarded prepare controls: caller injection, omission, substitution, and foreign coordinates reject [Behavioral-Progression Blackbox-GoodCommunication]", async () => {
       const opened = openGuardedRetryCapability(d334Negative, 3_152);
       const capability = opened.capability;
