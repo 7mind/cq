@@ -7,6 +7,7 @@ import {
   parseArguments,
   readCredential,
   sanitizeUniqueTypedRejection,
+  type Arguments,
 } from "./guardedRebaseProbeRuntime.js";
 
 const NIX_OUTPUT = /^\/nix\/store\/[a-z0-9]{32}-[^/]+$/;

@@ -32,7 +32,11 @@ export interface CredentialRuntime {
 }
 
 const nodeCredentialRuntime: CredentialRuntime = {
-  getuid: () => process.getuid(),
+  getuid: () => {
+    const getuid = process.getuid;
+    if (getuid === undefined) throw new Error("current runtime does not expose getuid");
+    return getuid.call(process);
+  },
   lstat: (file) => fs.lstat(file),
   open: (file, flags) => fs.open(file, flags),
 };

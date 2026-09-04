@@ -12,5 +12,5 @@
     }
   },
   "references": [{ "path": "../cq-config" }, { "path": "../ledger" }],
-  "include": ["src", "test"]
+  "include": ["scripts", "src", "test"]
 }
