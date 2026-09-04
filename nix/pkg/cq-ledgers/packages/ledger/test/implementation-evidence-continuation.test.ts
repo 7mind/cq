@@ -24,6 +24,7 @@ const MANIFEST_ID = "d347-implementation-evidence-activation-v2";
 const PRIOR_REQUIREMENT_REF = `cq-implementation-evidence-activation-requirement:v1:${"1".repeat(64)}`;
 const PRIOR_ACTIVATION_REF = `cq-implementation-evidence-activation:v1:${"2".repeat(64)}`;
 const COMPLETION_REF = `cq-implementation-completion:v1:${"3".repeat(64)}`;
+const SUPERSEDED_COMPLETION_REF = `cq-implementation-completion:v1:${"0".repeat(64)}`;
 const SECOND_COMPLETION_REF = `cq-implementation-completion:v1:${"4".repeat(64)}`;
 const COHORT = ["tasks:T3000", "tasks:T3001"] as const;
 const COMPLETED_TASK_REF = "tasks:T3003";
@@ -588,6 +589,27 @@ describe("implementation evidence activation continuation [BG]", () => {
     expect(
       (await state.store.snapshot()).activationRequirements[PRIOR_REQUIREMENT_REF],
     ).toBeDefined();
+  });
+
+  // regression: D454 — superseded preparation journals are not active completion candidates.
+  test("ignores a superseded journal when selecting the protected completion", async () => {
+    const initial = mutableSnapshot();
+    initial.completions[SUPERSEDED_COMPLETION_REF] = {
+      ...initial.completions[COMPLETION_REF]!,
+      completionRef: SUPERSEDED_COMPLETION_REF,
+      state: "superseded",
+    };
+
+    let continued;
+    try {
+      continued = await fixture(initial).service.continueEvidenceActivation(request);
+    } catch (error) {
+      throw new Error(`D454 reproduction rejected: ${String(error)}`);
+    }
+    expect(continued).toMatchObject({
+      status: "continued",
+      completionRef: COMPLETION_REF,
+    });
   });
 
   // regression: D441 — the global activation must advance through another goal's guarded exact tip.

@@ -3689,7 +3689,8 @@ export class ImplementationEvidenceService {
     )
       throw new Error("completed task is not the unique next finalized-manifest Git member");
     const completions = Object.values(initial.completions).filter(
-      (completion) => completion.taskRef === input.completedTaskRef,
+      (completion) =>
+        completion.taskRef === input.completedTaskRef && completion.state !== "superseded",
     );
     if (completions.length !== 1 || completions[0]!.completionRef !== input.completionRef)
       throw new Error("completed task lacks one immutable protected completion journal");
