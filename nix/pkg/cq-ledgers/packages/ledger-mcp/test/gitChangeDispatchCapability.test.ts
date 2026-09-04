@@ -2456,9 +2456,115 @@ describe("dispatch-bound Git change capability", () => {
           `D334 rejected the guarded correction round at ${corrected.path}: ${corrected.detail}`,
         );
       }
-      await completeGuardedContinuation(d334, restarted.capability, corrected, context, 2, {
-        content: "corrected\n",
-        baseReceipts: first.receipts,
+      const second = await completeGuardedContinuation(
+        d334,
+        restarted.capability,
+        corrected,
+        context,
+        2,
+        {
+          content: "corrected\n",
+          baseReceipts: first.receipts,
+        },
+      );
+
+      // D451: losing the parent after a later guarded correction must preserve
+      // the same logical post-rebase base through typed recovery.
+      const correctedBinding = await resolveManagedWorktreeDispatchBinding(
+        {
+          repositoryRoot: d334.repositoryRoot,
+          taskId: d334.managed.handle.taskId,
+          worktreePath: d334.managed.handle.absolutePath,
+          branch: d334.managed.handle.branch,
+        },
+        { stateDir: d334.stateDir },
+      );
+      if (correctedBinding === null || restarted.capability.resolveContinuation === undefined) {
+        throw new Error("guarded parent-lost source binding disappeared");
+      }
+      const next = await restarted.capability.resolveContinuation(
+        correctedBinding,
+        second.resultCommit,
+      );
+      const lost = await restarted.capability.prepare({
+        roleId: "implement-worker",
+        input: {
+          taskId: "T2148",
+          headline: "recover a guarded correction after parent loss",
+          description: "retain the guarded bridge across typed missing-result recovery",
+          acceptance: "the recovered worker keeps the post-rebase logical base",
+          worktreePath: d334.managed.handle.absolutePath,
+          branch: d334.managed.handle.branch,
+          baseCommit: d334OntoCommit,
+          round: 3,
+          startingCommit: second.resultCommit,
+          priorResultCommit: second.resultCommit,
+        },
+        idempotencyKey: "T2148-d451-parent-lost-source",
+        timeoutMs: 600_000,
+        expectedChild: {
+          childId: "d451-parent-lost-source",
+          runId: "d451-parent-lost-source",
+        },
+        continuation: next.continuationReference,
+      });
+      if (!lost.accepted) throw new Error(lost.detail);
+      await restarted.capability.abort({ ...lost.handle, reason: "parent-lost" });
+
+      const lostBinding = await resolveManagedWorktreeDispatchBinding(
+        {
+          repositoryRoot: d334.repositoryRoot,
+          taskId: d334.managed.handle.taskId,
+          worktreePath: d334.managed.handle.absolutePath,
+          branch: d334.managed.handle.branch,
+        },
+        { stateDir: d334.stateDir },
+      );
+      if (lostBinding === null || restarted.capability.resolveRecovery === undefined) {
+        throw new Error("guarded parent-lost recovery binding disappeared");
+      }
+      const recovery = await restarted.capability.resolveRecovery(
+        lostBinding,
+        second.resultCommit,
+      );
+      const recovered = await restarted.capability.prepare({
+        roleId: "implement-worker",
+        input: {
+          taskId: "T2148",
+          headline: "recover a guarded correction after parent loss",
+          description: "retain the guarded bridge across typed missing-result recovery",
+          acceptance: "the recovered worker keeps the post-rebase logical base",
+          worktreePath: d334.managed.handle.absolutePath,
+          branch: d334.managed.handle.branch,
+          baseCommit: d334OntoCommit,
+          round: 4,
+          startingCommit: second.resultCommit,
+          priorResultCommit: second.resultCommit,
+        },
+        idempotencyKey: "T2148-d451-parent-lost-recovery",
+        timeoutMs: 600_000,
+        expectedChild: {
+          childId: "d451-parent-lost-recovery",
+          runId: "d451-parent-lost-recovery",
+        },
+        recovery: recovery.recoveryReference,
+      });
+      if (!recovered.accepted) {
+        throw new Error(
+          `D451 rejected guarded parent-lost recovery at ${recovered.path}: ${recovered.detail}`,
+        );
+      }
+      const recoveredInput = await restarted.capability.fetchInput({
+        ...recovered.handle,
+        inputCapability: recovered.prepared.inputCapability,
+      });
+      expect(recoveredInput.input).toMatchObject({
+        guardedRebaseLineage: {
+          oldResultCommit: context.oldResultCommit,
+          ontoCommit: context.ontoCommit,
+          rebasedStartCommit: context.rebasedStartCommit,
+          exactTip: true,
+        },
       });
     });
 

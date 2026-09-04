@@ -1458,18 +1458,53 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
           } catch (error) {
             return rejectLaunch("recovery", error instanceof Error ? error.message : String(error));
           }
-          if (baseCommitInput !== recovery.gitEffectBinding.baseCommit) {
+          const guardedRebaseBridge = recovery.gitEffectBinding.guardedRebaseBridge;
+          const logicalBaseCommit =
+            guardedRebaseBridge?.ontoCommit ?? recovery.gitEffectBinding.baseCommit;
+          if (baseCommitInput !== logicalBaseCommit) {
             return rejectLaunch(
               "input.baseCommit",
-              "worker recovery baseCommit differs from the terminal managed binding",
+              "worker recovery baseCommit differs from the terminal logical binding",
             );
           }
           resolvedReprepareOf = recovery.reprepareOf;
           resolvedImplementationEvidenceBootstrapRef = recovery.implementationEvidenceBootstrapRef;
-          gitEffectBinding =
-            recovery.gitReceipts.length === 0
-              ? resolvedGitEffectBinding
-              : { ...resolvedGitEffectBinding, inheritedGitReceipts: recovery.gitReceipts };
+          if (guardedRebaseBridge === undefined) {
+            gitEffectBinding =
+              recovery.gitReceipts.length === 0
+                ? resolvedGitEffectBinding
+                : { ...resolvedGitEffectBinding, inheritedGitReceipts: recovery.gitReceipts };
+          } else {
+            let bridge;
+            try {
+              bridge = await reverifyGuardedRebaseBridge({
+                bridge: guardedRebaseBridge,
+                current: resolvedGitEffectBinding,
+                baseCommitInput,
+                startingCommitInput: startingCommit,
+                firstInheritedOldHead: recovery.gitReceipts[0]?.oldHead ?? null,
+                ...(options.worktreeStateDir === undefined
+                  ? {}
+                  : { stateDir: options.worktreeStateDir }),
+              });
+            } catch (error) {
+              return rejectLaunch(
+                error instanceof GuardedRebaseRejection ? error.path : "guardedRebase",
+                error instanceof Error ? error.message : String(error),
+              );
+            }
+            gitEffectBinding = {
+              ...resolvedGitEffectBinding,
+              ...(recovery.gitReceipts.length === 0
+                ? {}
+                : { inheritedGitReceipts: recovery.gitReceipts }),
+              guardedRebaseBridge: bridge,
+            };
+            dispatchInput = {
+              ...dispatchRecord,
+              guardedRebaseLineage: guardedRebaseLineageOf(bridge),
+            };
+          }
         } else if (resolvedReprepareOf === undefined) {
           // D332: a lineage-free prepare may only build on the tip it declares as
           // its diff base. When startingCommit has advanced past baseCommit, the
