@@ -445,6 +445,7 @@
             ./nix/pkg/cq-ledgers/packages/cq-config
             ./nix/pkg/cq-ledgers/packages/process-control
             ./nix/pkg/cq-ledgers/packages/ledger
+            ./nix/pkg/cq-ledgers/packages/ledger-mcp
           ];
         };
         piExtensionsTypecheckSource = pkgs.lib.fileset.toSource {
@@ -1138,7 +1139,7 @@ EOF
 
                 cqLedgersRoot="$repository/nix/pkg/cq-ledgers"
                 ln -s ${bunNodeModules}/node_modules "$cqLedgersRoot/node_modules"
-                for package in cq-cli cq-config ledger; do
+                for package in cq-cli cq-config ledger ledger-mcp; do
                   cp -r "${bunNodeModules}/packages/$package/node_modules" \
                     "$cqLedgersRoot/packages/$package/node_modules"
                   chmod -R u+w "$cqLedgersRoot/packages/$package/node_modules"
