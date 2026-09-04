@@ -343,12 +343,30 @@ export async function verifyProductionImplementation(
   const filesTouched = strings(workerOutput["filesTouched"]).slice().sort();
   const receipts = workerOutput["gitReceipts"];
   const workerTaskId = workerInput["taskId"];
+  const guardedRebase =
+    object(startingCommitValue) && startingCommitValue["kind"] === "guarded-rebase";
+  const expectedReceiptPaths = guardedRebase
+    ? strings(
+        (
+          await gitOutput(
+            repositoryRoot,
+            ["diff", "--name-only", `${startingCommit}..${resultCommit}`],
+            "guarded receipt diff",
+          )
+        )
+          .split("\n")
+          .filter((entry) => entry !== ""),
+      ).slice().sort()
+    : filesTouched;
   let receiptsVerified = false;
   if (Array.isArray(receipts)) {
     const receiptPaths = new Set<string>();
-    let previousHead: string | undefined;
-    receiptsVerified = receipts.length > 0 ||
-      (object(startingCommitValue) && startingCommitValue["exactTip"] === true);
+    let previousHead: string | undefined = guardedRebase ? startingCommit : undefined;
+    receiptsVerified =
+      receipts.length > 0 ||
+      (guardedRebase &&
+        startingCommitValue["exactTip"] === true &&
+        resultCommit === startingCommit);
     for (const value of receipts) {
       if (!object(value)) {
         receiptsVerified = false;
@@ -407,7 +425,7 @@ export async function verifyProductionImplementation(
     if (
       receipts.length > 0 &&
       (previousHead !== resultCommit ||
-        JSON.stringify([...receiptPaths].sort()) !== JSON.stringify(filesTouched))
+        JSON.stringify([...receiptPaths].sort()) !== JSON.stringify(expectedReceiptPaths))
     ) {
       receiptsVerified = false;
     }

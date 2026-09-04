@@ -278,6 +278,80 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
       ).receiptsVerified,
     ).toBe(false);
   });
+
+  test("accepts a guarded-rebase receipt suffix independently of the full result diff [Behavioral-Active Effectual-GoodCommunication]", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "implementation-evidence-runtime-guarded-"));
+    roots.push(root);
+    await git(root, ["init", "-q", "-b", "implement/T453"]);
+    await git(root, ["config", "user.name", "runtime-test"]);
+    await git(root, ["config", "user.email", "runtime-test@example.invalid"]);
+    await writeFile(path.join(root, "base.txt"), "base\n");
+    await git(root, ["add", "base.txt"]);
+    await git(root, ["commit", "-q", "-m", "base"]);
+    const ontoCommit = await git(root, ["rev-parse", "HEAD"]);
+    await writeFile(path.join(root, "prefix.ts"), "export const prefix = true;\n");
+    await git(root, ["add", "prefix.ts"]);
+    await git(root, ["commit", "-q", "-m", "rebased prefix"]);
+    const rebasedStartCommit = await git(root, ["rev-parse", "HEAD"]);
+    await writeFile(path.join(root, "correction.ts"), "export const correction = true;\n");
+    await git(root, ["add", "correction.ts"]);
+    await git(root, ["commit", "-q", "-m", "guarded correction"]);
+    const resultCommit = await git(root, ["rev-parse", "HEAD"]);
+    const tree = await git(root, ["rev-parse", "HEAD^{tree}"]);
+    const workerInput = {
+      taskId: "T453",
+      acceptance: "verify only the fresh guarded-rebase receipt suffix",
+      branch: "implement/T453",
+      baseCommit: ontoCommit,
+      round: 1,
+      startingCommit: rebasedStartCommit,
+    } as const;
+    const receipt = {
+      kind: "cq-git-change-receipt",
+      version: 1,
+      attestationId: "att_runtime_guarded_receipt",
+      generation: 1,
+      taskId: "T453",
+      operationId: "runtime-guarded-receipt",
+      requestDigest: "e".repeat(64),
+      oldHead: rebasedStartCommit,
+      newHead: resultCommit,
+      tree,
+      objectOids: [resultCommit, tree],
+      paths: ["correction.ts"],
+      committedAt: "2026-09-04T00:00:00.000Z",
+    } as const;
+    const workerOutput = {
+      taskId: "T453",
+      status: "pass",
+      resultCommit,
+      branch: "implement/T453",
+      actualWorktreePath: root,
+      filesTouched: ["correction.ts", "prefix.ts"],
+      gitReceipts: [receipt],
+      gitLineage: {
+        kind: "guarded-rebase",
+        guardedRebase: `cq-guarded-rebase:v1:${"f".repeat(64)}`,
+        ontoCommit,
+        rebasedStartCommit,
+        exactTip: false,
+      },
+      checkSummary: "REAL_CHECK_EXIT=0; 1 pass; 0 fail",
+      gateDurationMs: 100,
+      baseVerification: {
+        status: "verified",
+        relation: "descendant",
+        baseCommit: ontoCommit,
+        headCommit: resultCommit,
+      },
+      summary: "verified guarded correction",
+    } as const;
+
+    expect(
+      (await verifyProductionImplementation(root, resultCommit, workerInput, workerOutput))
+        .receiptsVerified,
+    ).toBe(true);
+  });
 });
 
 describe("versioned production evidence bootstrap [Behavioral-Active Effectual-GoodCommunication]", () => {

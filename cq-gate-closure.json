@@ -390,7 +390,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/src/implementationEvidenceRuntime.ts",
-      "sha256": "96f65e7acdb150f6891ee1024ef72491a5d14063af4015296aecacbce6dcdbdd",
+      "sha256": "5ee976d6cf4047d6806a88ad2552ad774c6428e0b82b0b436575c13dfb97a331",
       "targets": []
     },
     {
@@ -485,7 +485,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-evidence-runtime.test.ts",
-      "sha256": "08aa3c6093366ea091740fe815b3b63f6d554551efc1fe78a11a7983bc93302a",
+      "sha256": "1a70c06a8113282bc41559b72d2184af78aee1503e82ec81942c73708266062f",
       "targets": []
     },
     {
@@ -1331,7 +1331,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/implementation-evidence-runtime.test.ts",
-      "sha256": "08aa3c6093366ea091740fe815b3b63f6d554551efc1fe78a11a7983bc93302a",
+      "sha256": "1a70c06a8113282bc41559b72d2184af78aee1503e82ec81942c73708266062f",
       "targets": ["nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts"]
     },
     {
