@@ -1766,6 +1766,101 @@ function activationRequirementLineageTips(
   );
 }
 
+function fulfilledContinuationRootForBaseCohort(
+  state: ImplementationEvidenceSnapshot,
+  tip: ImplementationEvidenceActivationRequirementRecord,
+  baseTaskRefs: readonly string[],
+): ImplementationEvidenceActivationRequirementRecord | undefined {
+  if (tip.previousRequirementRef === null) return undefined;
+  const seen = new Set<string>();
+  const chain: Array<{
+    requirement: ImplementationEvidenceActivationRequirementRecord;
+    activation: ImplementationEvidenceActivationRecord;
+  }> = [];
+  let current: ImplementationEvidenceActivationRequirementRecord | undefined = tip;
+  while (current !== undefined) {
+    if (seen.has(current.requirementRef)) return undefined;
+    seen.add(current.requirementRef);
+    const activation =
+      current.activationRef === null ? undefined : state.activations[current.activationRef];
+    if (
+      current.state !== "fulfilled" ||
+      current.fulfilledAt === null ||
+      activation === undefined ||
+      activation.requirementRef !== current.requirementRef ||
+      activation.manifestId !== current.manifestId ||
+      activation.manifestDigest !== current.manifestDigest ||
+      activation.repositoryHead !== current.boundaryCommit ||
+      canonical(activation.taskRefs) !== canonical(current.taskRefs) ||
+      activation.evidenceFingerprint !==
+        digest({
+          manifestId: activation.manifestId,
+          manifestDigest: activation.manifestDigest,
+          sourceDigest: current.sourceDigest,
+          repositoryHead: activation.repositoryHead,
+          auditRefs: activation.auditRefs,
+          taskRefs: activation.taskRefs,
+        }) ||
+      current.semanticManifestDigest !== tip.semanticManifestDigest ||
+      current.goalRef !== tip.goalRef ||
+      current.finalizedManifestDigest !== tip.finalizedManifestDigest ||
+      current.evidenceTaskRef !== tip.evidenceTaskRef ||
+      current.auditTaskRef !== tip.auditTaskRef ||
+      current.activationTaskRef !== tip.activationTaskRef
+    )
+      return undefined;
+    chain.push({ requirement: current, activation });
+    if (current.previousRequirementRef === null) {
+      if (
+        current.continuationRef !== null ||
+        canonical(current.taskRefs) !== canonical(baseTaskRefs) ||
+        chain.some(
+          ({ activation: candidate }) =>
+            canonical(candidate.auditRefs) !== canonical(activation.auditRefs),
+        )
+      )
+        return undefined;
+      const application = Object.values(state.auditManifestApplications).find(
+        (candidate) =>
+          candidate.requirementRef === current!.requirementRef &&
+          candidate.manifestId === current!.manifestId &&
+          candidate.manifestDigest === current!.manifestDigest &&
+          candidate.repositoryHead === current!.boundaryCommit &&
+          candidate.activation !== "none" &&
+          candidate.evidenceFingerprint === activation.evidenceFingerprint &&
+          canonical(candidate.auditRefs) === canonical(activation.auditRefs) &&
+          canonical(candidate.taskRefs) === canonical(current!.taskRefs),
+      );
+      return application === undefined ? undefined : current;
+    }
+    if (current.continuationRef === null) return undefined;
+    const continuation = state.activationContinuations[current.continuationRef];
+    const previous: ImplementationEvidenceActivationRequirementRecord | undefined =
+      state.activationRequirements[current.previousRequirementRef];
+    if (
+      continuation === undefined ||
+      previous === undefined ||
+      continuation.continuationRef !== current.continuationRef ||
+      continuation.previousContinuationRef !== previous.continuationRef ||
+      continuation.previousRequirementRef !== previous.requirementRef ||
+      continuation.requirementRef !== current.requirementRef ||
+      continuation.activationRef !== current.activationRef ||
+      continuation.fromHead !== previous.boundaryCommit ||
+      continuation.repositoryHead !== current.boundaryCommit ||
+      previous.taskRefs.includes(continuation.taskRef) ||
+      canonical(current.taskRefs) !==
+        canonical(
+          [...previous.taskRefs, continuation.taskRef].sort((left, right) =>
+            left.localeCompare(right, undefined, { numeric: true }),
+          ),
+        )
+    )
+      return undefined;
+    current = previous;
+  }
+  return undefined;
+}
+
 function latestActivationRequirement(
   requirements: readonly ImplementationEvidenceActivationRequirementRecord[],
 ): ImplementationEvidenceActivationRequirementRecord | undefined {
@@ -2872,15 +2967,27 @@ export class ImplementationEvidenceService {
       );
       if (armedRequirements.length > 1)
         throw new Error("multiple implementation evidence activation requirements are armed");
+      const fulfilledContinuationRoots = new Map<
+        string,
+        ImplementationEvidenceActivationRequirementRecord
+      >();
       const fulfilledTips = lineageTips.filter(
-        (requirement) =>
-          requirement.state === "fulfilled" &&
-          requirement.semanticManifestDigest === semanticManifestDigest &&
-          requirement.finalizedManifestDigest === cohort.finalizedManifestDigest &&
-          requirement.evidenceTaskRef === cohort.evidenceTaskRef &&
-          requirement.auditTaskRef === cohort.auditTaskRef &&
-          requirement.activationTaskRef === cohort.activationTaskRef &&
-          canonical(requirement.taskRefs) === canonical(taskRefs),
+        (requirement) => {
+          if (
+            requirement.state !== "fulfilled" ||
+            requirement.semanticManifestDigest !== semanticManifestDigest ||
+            requirement.finalizedManifestDigest !== cohort.finalizedManifestDigest ||
+            requirement.evidenceTaskRef !== cohort.evidenceTaskRef ||
+            requirement.auditTaskRef !== cohort.auditTaskRef ||
+            requirement.activationTaskRef !== cohort.activationTaskRef
+          )
+            return false;
+          if (canonical(requirement.taskRefs) === canonical(taskRefs)) return true;
+          const root = fulfilledContinuationRootForBaseCohort(state, requirement, taskRefs);
+          if (root === undefined) return false;
+          fulfilledContinuationRoots.set(requirement.requirementRef, root);
+          return true;
+        },
       );
       let fulfilledTip = fulfilledTips[0];
       if (fulfilledTips.length > 1) {
@@ -2908,6 +3015,8 @@ export class ImplementationEvidenceService {
         fulfilledTip = maximalTips[0];
       }
       const blocking = armedRequirements[0] ?? fulfilledTip;
+      const fulfilledContinuationRoot =
+        blocking === undefined ? undefined : fulfilledContinuationRoots.get(blocking.requirementRef);
       let supersededRequirementRef: string | null = null;
       let allowCompletedActivationTask = false;
       if (blocking !== undefined) {
@@ -3028,7 +3137,8 @@ export class ImplementationEvidenceService {
           blocking.evidenceTaskRef !== cohort.evidenceTaskRef ||
           blocking.auditTaskRef !== cohort.auditTaskRef ||
           blocking.activationTaskRef !== cohort.activationTaskRef ||
-          canonical(blocking.taskRefs) !== canonical(taskRefs) ||
+          (canonical(blocking.taskRefs) !== canonical(taskRefs) &&
+            fulfilledContinuationRoot === undefined) ||
           (blocking.state === "armed" &&
             (blocking.activationRef !== null ||
               blocking.fulfilledAt !== null ||
@@ -3040,7 +3150,7 @@ export class ImplementationEvidenceService {
               blocking.fulfilledAt === null ||
               priorActivation?.requirementRef !== blocking.requirementRef ||
               priorActivation.repositoryHead !== blocking.boundaryCommit ||
-              fulfilledApplication === undefined)) ||
+              (fulfilledApplication === undefined && fulfilledContinuationRoot === undefined))) ||
           !retainedBoundary
         )
           throw new Error("a different implementation evidence activation requirement is pending");

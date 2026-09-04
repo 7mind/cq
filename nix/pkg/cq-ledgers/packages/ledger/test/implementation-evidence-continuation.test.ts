@@ -8,6 +8,7 @@ import {
   implementationAuditManifestSemanticDigest,
   type ImplementationCompletionRecord,
   type ImplementationAuditRecord,
+  type ImplementationAuditManifestApplicationRecord,
   type ImplementationEvidenceActivationContinuationRecord,
   type ImplementationEvidenceActivationRecord,
   type ImplementationEvidenceActivationRequirementRecord,
@@ -470,6 +471,13 @@ function fixtureAt(
           status: "done",
           finalizedManifest: "finalized-v2\n",
         };
+      if (taskRef === "tasks:T3002")
+        return {
+          taskRef,
+          ownerGoalRef: "goals:G176",
+          status: "done",
+          finalizedManifest: "finalized-v2\n",
+        };
       const completion = Object.values(initial.completions).find(
         (candidate) => candidate.taskRef === taskRef,
       );
@@ -530,6 +538,7 @@ function fixtureAt(
 type MutableSnapshot = ImplementationEvidenceSnapshot & {
   completions: Record<string, ImplementationCompletionRecord>;
   implementationAudits: Record<string, ImplementationAuditRecord>;
+  auditManifestApplications: Record<string, ImplementationAuditManifestApplicationRecord>;
   activations: Record<string, ImplementationEvidenceActivationRecord>;
   activationRequirements: Record<string, ImplementationEvidenceActivationRequirementRecord>;
   activationContinuations: Record<string, ImplementationEvidenceActivationContinuationRecord>;
@@ -632,6 +641,82 @@ describe("implementation evidence activation continuation [BG]", () => {
       taskRef: COMPLETED_TASK_REF,
       fromHead: FROM_HEAD,
       repositoryHead: REPOSITORY_HEAD,
+    });
+  });
+
+  // regression: D455 — a parent correction may re-arm after a fulfilled continuation lineage.
+  test("re-arms the base cohort after a fulfilled cross-goal continuation", async () => {
+    const initial = crossGoalSnapshot();
+    initial.auditManifestApplications["apply-v2"] = {
+      version: 1,
+      operationId: "apply-v2",
+      requestDigest: "b".repeat(64),
+      manifestId: MANIFEST_ID,
+      manifestDigest: implementationAuditManifestDigest(manifest),
+      repositoryHead: FROM_HEAD,
+      activation: "activated",
+      requirementRef: PRIOR_REQUIREMENT_REF,
+      evidenceFingerprint: activationEvidenceFingerprint(),
+      auditRefs: AUDIT_REFS,
+      taskRefs: COHORT,
+      author: "parent",
+      session: null,
+      appliedAt: "2026-08-29T19:00:00.000Z",
+    };
+    const continued = fixture(
+      initial,
+      undefined,
+      async () => true,
+      CROSS_GOAL_TASK_AUTHORITY,
+    );
+    const first = await continued.service.continueEvidenceActivation(request);
+    const continuationSnapshot = await continued.store.snapshot();
+    const currentManifest = manifestAt(SECOND_REPOSITORY_HEAD, "5".repeat(64));
+    const corrupted = structuredClone(continuationSnapshot) as MutableSnapshot;
+    corrupted.activationContinuations[first.continuationRef] = {
+      ...corrupted.activationContinuations[first.continuationRef]!,
+      taskRef: "tasks:T3999",
+    };
+    await expect(
+      fixtureAt(
+        corrupted,
+        currentManifest,
+        SECOND_REPOSITORY_HEAD,
+        COMPLETED_TASK_REF,
+        COHORT,
+      ).service.armEvidenceActivation({
+        goalRef: "goals:G176",
+        manifestId: MANIFEST_ID,
+        expectedRepositoryHead: SECOND_REPOSITORY_HEAD,
+        operationId: "reject-corrupt-cross-goal-continuation",
+        author: "parent",
+      }),
+    ).rejects.toThrow("implementation evidence activation task is not actionable");
+    const corrected = fixtureAt(
+      continuationSnapshot,
+      currentManifest,
+      SECOND_REPOSITORY_HEAD,
+      COMPLETED_TASK_REF,
+      COHORT,
+    );
+
+    let replacement;
+    try {
+      replacement = await corrected.service.armEvidenceActivation({
+        goalRef: "goals:G176",
+        manifestId: MANIFEST_ID,
+        expectedRepositoryHead: SECOND_REPOSITORY_HEAD,
+        operationId: "rearm-after-cross-goal-continuation",
+        author: "parent",
+      });
+    } catch (error) {
+      throw new Error(`D455 reproduction rejected: ${String(error)}`);
+    }
+    expect(replacement).toMatchObject({
+      status: "armed",
+      boundaryCommit: SECOND_REPOSITORY_HEAD,
+      supersededRequirementRef: first.requirementRef,
+      taskRefs: COHORT,
     });
   });
 
