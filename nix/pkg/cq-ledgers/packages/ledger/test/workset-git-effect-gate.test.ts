@@ -15,9 +15,9 @@ import {
   GOALS_LEDGER,
   TASKS_LEDGER,
   TASKS_SCHEMA,
+  SqliteLedgerStore,
   WorksetAdmissionError,
   createManagedWorktreeGitEffectRunner,
-  createFsWorksetStore,
   requireWorksetStore,
   resolveUniqueGoalState,
   resolveUniqueTaskState,
@@ -29,6 +29,7 @@ import { mintManagedTerminalReleaseBinding } from "../src/managedTerminalRelease
 
 const exec = promisify(execFile);
 const roots: string[] = [];
+const liveLedgers: SqliteLedgerStore[] = [];
 const BROKER_FIXTURE = fileURLToPath(new URL("./worksetGitEffectBrokerChild.ts", import.meta.url));
 
 function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
@@ -62,6 +63,19 @@ async function repository(): Promise<{ readonly root: string; readonly head: str
   await git(root, ["add", "tracked.txt"]);
   await git(root, ["commit", "--quiet", "-m", "base"]);
   return { root, head: await git(root, ["rev-parse", "HEAD"]) };
+}
+
+async function openSqliteWorksetStore(
+  root: string,
+  workset?: ConstructorParameters<typeof SqliteLedgerStore>[0]["workset"],
+) {
+  const ledger = new SqliteLedgerStore({
+    dbPath: join(root, "workset.sqlite"),
+    ...(workset === undefined ? {} : { workset }),
+  });
+  await ledger.init();
+  liveLedgers.push(ledger);
+  return ledger.worksetStore();
 }
 
 function taskItem(id: string, status: string, milestoneId: string): Item {
@@ -119,6 +133,10 @@ function taskStateReader(input: {
 }
 
 afterEach(async () => {
+  while (liveLedgers.length > 0) {
+    const ledger = liveLedgers.pop();
+    if (ledger !== undefined) await ledger.dispose();
+  }
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -298,8 +316,8 @@ describe("T1984 durable Git effect replacement ordering", () => {
 
   test("an acquired effect makes replacement wait through registered Git completion [Behavioral-Active Blackbox-GoodCommunication]", async () => {
     const repo = await repository();
-    const holder = createFsWorksetStore({ root: repo.root });
-    const peer = createFsWorksetStore({ root: repo.root });
+    const holder = await openSqliteWorksetStore(repo.root);
+    const peer = await openSqliteWorksetStore(repo.root);
     await holder.setRoots(["tasks:T1984"]);
     const beforeLaunch = deferred();
     const permitLaunch = deferred();
@@ -358,10 +376,18 @@ describe("T1984 durable Git effect replacement ordering", () => {
     );
     await chmod(hook, 0o755);
 
-    const peer = createFsWorksetStore({ root: repo.root });
+    const peer = await openSqliteWorksetStore(repo.root);
     await peer.setRoots(["tasks:T1984"]);
     const broker = Bun.spawn(
-      [process.execPath, "run", BROKER_FIXTURE, repo.root, worktreePath, ontoCommit],
+      [
+        process.execPath,
+        "run",
+        BROKER_FIXTURE,
+        repo.root,
+        worktreePath,
+        ontoCommit,
+        join(repo.root, "workset.sqlite"),
+      ],
       { stdout: "pipe", stderr: "pipe" },
     );
     let pids: number[] = [];
@@ -401,8 +427,7 @@ describe("T1984 durable Git effect replacement ordering", () => {
     const repo = await repository();
     const exclusiveReady = deferred();
     const permitReplacement = deferred();
-    const setter = createFsWorksetStore({
-      root: repo.root,
+    const setter = await openSqliteWorksetStore(repo.root, {
       hooks: {
         afterExclusiveReady: async () => {
           exclusiveReady.resolve();
@@ -410,7 +435,7 @@ describe("T1984 durable Git effect replacement ordering", () => {
         },
       },
     });
-    const holder = createFsWorksetStore({ root: repo.root });
+    const holder = await openSqliteWorksetStore(repo.root);
     await holder.setRoots(["tasks:T1984"]);
     const replacement = setter.setRoots(["tasks:T-revoked"]);
     await exclusiveReady.promise;
