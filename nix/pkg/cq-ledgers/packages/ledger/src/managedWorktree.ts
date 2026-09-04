@@ -48,6 +48,7 @@ import {
   parseWipArtifact,
   validateManagedWorktreeHandle as validateManagedWorktreeHandleContract,
   WipArtifactParseError,
+  type DispatchGuardedRebaseBridge,
   type ManagedWorktreeHandle as ConfigManagedWorktreeHandle,
   type ImplementWorkerSupervisedGateEvidence,
   type WipClosureProjection,
@@ -3147,7 +3148,9 @@ function trustedWipProjectionForRecord(
 
 /** Persist a runner-minted exact-tip projection outside the Git worktree. */
 export async function recordManagedWorktreeSupervisedGateEvidence(
-  binding: ManagedWorktreeDispatchBinding,
+  binding: ManagedWorktreeDispatchBinding & {
+    readonly guardedRebaseBridge?: DispatchGuardedRebaseBridge;
+  },
   evidence: ImplementWorkerSupervisedGateEvidence,
   deps: Pick<ManagedWorktreeDeps, "git" | "stateDir" | "prepareLockTimeoutMs"> = {},
 ): Promise<void> {
@@ -3169,9 +3172,23 @@ export async function recordManagedWorktreeSupervisedGateEvidence(
   if (head === null || head !== evidence.resultCommit) {
     throw new Error("supervised gate evidence is stale for the managed worktree tip");
   }
-  const integrationBaseCommit = await revParse(git, binding.repositoryRoot, "HEAD");
-  if (integrationBaseCommit === null) {
+  const integrationHead = await revParse(git, binding.repositoryRoot, "HEAD");
+  if (integrationHead === null) {
     throw new Error("supervised gate evidence cannot resolve the integration tip");
+  }
+  const integrationBaseCommit = binding.guardedRebaseBridge?.ontoCommit ?? integrationHead;
+  if (binding.guardedRebaseBridge !== undefined) {
+    const currentIntegrationAncestry = await git(binding.repositoryRoot, [
+      "merge-base",
+      "--is-ancestor",
+      integrationBaseCommit,
+      integrationHead,
+    ]);
+    if (currentIntegrationAncestry.code !== 0) {
+      throw new Error(
+        "supervised gate integration tip does not contain the authenticated guarded-rebase base",
+      );
+    }
   }
   const integrationAncestry = await git(binding.repositoryRoot, [
     "merge-base",

@@ -2566,6 +2566,67 @@ describe("dispatch-bound Git change capability", () => {
           exactTip: true,
         },
       });
+
+      if (recovered.prepared.parentGateCapability === undefined) {
+        throw new Error("guarded parent-lost recovery lacks parent gate authority");
+      }
+      if (restarted.capability.finalizeParentGate === undefined) {
+        throw new Error("guarded parent-lost recovery lacks parent gate finalization");
+      }
+      const finalizeRecoveredParentGate = restarted.capability.finalizeParentGate;
+      // Regression: D452 — a no-change recovery retains the authenticated
+      // guarded base even when integration advances before finalization.
+      await fs.writeFile(
+        path.join(d334.repositoryRoot, "integration-after-recovery.txt"),
+        "integration advanced after the guarded result\n",
+      );
+      await git(d334.repositoryRoot, ["add", "integration-after-recovery.txt"]);
+      await git(d334.repositoryRoot, [
+        "commit",
+        "-q",
+        "-m",
+        "advance integration after guarded recovery",
+      ]);
+      const recoveredStored = await restarted.capability.storeResult({
+        resultCapability: recovered.prepared.resultCapability,
+        output: {
+          taskId: "T2148",
+          status: "pass",
+          resultCommit: second.resultCommit,
+          branch: d334.managed.handle.branch,
+          actualWorktreePath: d334.managed.handle.absolutePath,
+          filesTouched: [],
+          gitReceipts: [],
+          gitLineage: {
+            kind: "guarded-rebase",
+            guardedRebase: context.guardedRebase,
+            ontoCommit: context.ontoCommit,
+            rebasedStartCommit: context.rebasedStartCommit,
+            exactTip: true,
+          },
+          checkSummary: "trusted gate delegated to no-change recovery result storage",
+          baseVerification: {
+            status: "verified",
+            relation: "descendant",
+            baseCommit: context.ontoCommit,
+            headCommit: second.resultCommit,
+          },
+          summary: "recovered the unchanged guarded result after parent loss",
+          mutationTable: [
+            {
+              mutation: "no-change recovery retained the guarded result",
+              observed: "the exact managed branch tip remained unchanged",
+              restored: "the inherited guarded lineage remains authoritative",
+            },
+          ],
+        } as unknown as DispatchJSONValue,
+      });
+      expect(recoveredStored.state).toBe("gate-pending");
+      const recoveredFinalized = await finalizeRecoveredParentGate({
+        ...recovered.handle,
+        parentGateCapability: recovered.prepared.parentGateCapability,
+      });
+      expect(recoveredFinalized.state).toBe("result-stored");
     });
 
     test("D443 resumes an exact guarded-rebase continuation after parent context loss [Behavioral-Active Effectual-GoodCommunication]", async () => {

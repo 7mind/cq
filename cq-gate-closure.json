@@ -467,13 +467,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts",
-      "sha256": "e45b1969c9cd167b6dd730d3b8c659aa3a953a7772044d0a33d5b526e5d10fa7",
+      "sha256": "803b57d4e7003b2a23add08161b7152cc9ac82a8308bf7a9e0e6823db703cfa4",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts",
-      "sha256": "e45b1969c9cd167b6dd730d3b8c659aa3a953a7772044d0a33d5b526e5d10fa7",
+      "sha256": "803b57d4e7003b2a23add08161b7152cc9ac82a8308bf7a9e0e6823db703cfa4",
       "targets": []
     },
     {
@@ -1523,13 +1523,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/managedWorktree.ts",
-      "sha256": "da14c677d9e2407337ba6d4a99408233b4f6a4a2b866a8784016c57b9573dc90",
+      "sha256": "3e3e6a692413875521ccdcf9a10cc71af689a2ff267cac8fe5fbf93112f1c96b",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/src/managedWorktree.ts",
-      "sha256": "da14c677d9e2407337ba6d4a99408233b4f6a4a2b866a8784016c57b9573dc90",
+      "sha256": "3e3e6a692413875521ccdcf9a10cc71af689a2ff267cac8fe5fbf93112f1c96b",
       "targets": []
     },
     {
