@@ -54,7 +54,7 @@ interface OpenedStore {
   readonly applicationName: string | null;
 }
 
-function openStore(input: PersistentRaceWorkerInput, control: Int32Array): OpenedStore {
+function openStore(input: PersistentRaceWorkerInput, _control: Int32Array): OpenedStore {
   const applicationName = `cq-task-adoption-${crypto.randomUUID()}`;
   const storeUrl = new URL(input.pgUrl);
   storeUrl.searchParams.set("application_name", applicationName);
