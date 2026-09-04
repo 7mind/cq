@@ -2660,7 +2660,7 @@ describe("dispatch-bound Git change capability", () => {
       expectRejection(
         foreign,
         "guardedRebase",
-        "guarded-rebase reference does not resolve to one terminal prior worker generation",
+        "guarded rebase reference does not resolve to a durable journal",
       );
       const retry = await restarted.capability.prepare({
         ...request,
@@ -2930,6 +2930,20 @@ describe("dispatch-bound Git change capability", () => {
       expect(retry.detail).toContain(detail);
     }
 
+    function expectGenericGuardedRebaseRejection(
+      retry: Awaited<ReturnType<DispatchCapabilityInstance["prepare"]>>,
+    ): void {
+      if (retry.accepted) throw new Error("guarded-rebase control unexpectedly prepared");
+      expect(retry).toMatchObject({
+        accepted: false,
+        allocated: false,
+        path: "guardedRebase",
+        detail: "guarded-rebase reference does not resolve to one terminal prior worker generation",
+      });
+      expect(Object.hasOwn(retry, "handle")).toBeFalse();
+      expect(Object.hasOwn(retry, "prepared")).toBeFalse();
+    }
+
     test("D456 preserves the unique guarded-rebase rejection [Behavioral-Active Blackbox-GoodCommunication]", async () => {
       const opened = openGuardedRetryCapability(d334Negative, 3_456);
       try {
@@ -2959,6 +2973,84 @@ describe("dispatch-bound Git change capability", () => {
         if (retry.accepted) return;
         expect(Object.hasOwn(retry, "handle")).toBeFalse();
         expect(Object.hasOwn(retry, "prepared")).toBeFalse();
+
+        const zeroSource = await durableDispatch("d456-zero-binding-source");
+        const zeroCapability = openGuardedRetryCapability(zeroSource, 3_457);
+        try {
+          expectGenericGuardedRebaseRejection(
+            await zeroCapability.capability.prepare({
+              roleId: "implement-worker",
+              input: {
+                taskId: "T2042",
+                headline: "zero guarded source control",
+                description: "exercise the unauthorised guarded-rebase boundary",
+                acceptance: "zero matching terminal sources stay generic",
+                worktreePath: zeroSource.managed.handle.absolutePath,
+                branch: zeroSource.managed.handle.branch,
+                baseCommit: zeroSource.baseCommit,
+                round: 1,
+                startingCommit: zeroSource.baseCommit,
+                priorResultCommit: zeroSource.baseCommit,
+              },
+              idempotencyKey: "T2042-d456-zero-binding-source",
+              timeoutMs: 600_000,
+              expectedChild: {
+                childId: "d456-zero-binding-source",
+                runId: "d456-zero-binding-source",
+              },
+              guardedRebase: `cq-guarded-rebase:v1:${"0".repeat(64)}`,
+            }),
+          );
+        } finally {
+          await closeGuardedRetryBackend(zeroCapability.backend);
+        }
+
+        const ambiguous = await createGuardedRetryFixture("d456-ambiguous", 3_458, true);
+        const ambiguousSetup = await setupGuardedRebase(ambiguous, "d456-ambiguous-rebase");
+        const ambiguousCapability = openGuardedRetryCapability(ambiguous, 9_456);
+        try {
+          const secondSource = await ambiguousCapability.capability.prepare({
+            roleId: "implement-worker",
+            input: guardedContinuationInput(
+              ambiguous,
+              ambiguousSetup.ontoCommit,
+              ambiguousSetup.rebasedHead,
+              ambiguous.firstReceipt.newHead,
+              1,
+            ),
+            idempotencyKey: "T2148-d456-ambiguous-second-source",
+            timeoutMs: 600_000,
+            expectedChild: {
+              childId: "d456-ambiguous-second-source",
+              runId: "d456-ambiguous-second-source",
+            },
+            reprepareOf: ambiguous.first.handle,
+            guardedRebase: ambiguousSetup.reference,
+          });
+          if (!secondSource.accepted) throw new Error(secondSource.detail);
+          await ambiguousCapability.capability.abort({ ...secondSource.handle, reason: "parent-lost" });
+          expectGenericGuardedRebaseRejection(
+            await ambiguousCapability.capability.prepare({
+              roleId: "implement-worker",
+              input: guardedContinuationInput(
+                ambiguous,
+                ambiguous.baseCommit,
+                ambiguousSetup.rebasedHead,
+                ambiguous.firstReceipt.newHead,
+                1,
+              ),
+              idempotencyKey: "T2148-d456-ambiguous-typed-rejections",
+              timeoutMs: 600_000,
+              expectedChild: {
+                childId: "d456-ambiguous-typed-rejections",
+                runId: "d456-ambiguous-typed-rejections",
+              },
+              guardedRebase: ambiguousSetup.reference,
+            }),
+          );
+        } finally {
+          await closeGuardedRetryBackend(ambiguousCapability.backend);
+        }
       } finally {
         await closeGuardedRetryBackend(opened.backend);
       }

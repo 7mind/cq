@@ -397,6 +397,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       }),
     );
     const candidates = [];
+    const guardedRebaseRejections: GuardedRebaseRejection[] = [];
     for (const { handle, priorBinding } of sources) {
       try {
         const bridge = await materializeGuardedRebaseBridge({
@@ -412,11 +413,16 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             : { stateDir: options.worktreeStateDir }),
         });
         candidates.push({ handle, priorBinding, bridge });
-      } catch {
-        continue;
+      } catch (error) {
+        if (error instanceof GuardedRebaseRejection) guardedRebaseRejections.push(error);
       }
     }
-    if (candidates.length === 0) return null;
+    if (candidates.length === 0) {
+      if (sources.length === 1 && guardedRebaseRejections.length === 1) {
+        throw guardedRebaseRejections[0]!;
+      }
+      return null;
+    }
     if (new Set(candidates.map((candidate) => candidate.handle.attestationId)).size !== 1) {
       throw new GuardedRebaseRejection(
         "guardedRebase",
