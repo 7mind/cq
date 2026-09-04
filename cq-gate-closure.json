@@ -605,7 +605,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/multiWriterStressHarness.ts",
-      "sha256": "7a0c88e304e43af2cd8521438f789cf1d88f4f393ffc52b996978f202efeccf8",
+      "sha256": "a78e4aa55b2a29f3060896c6da2dd7a953c637482ade1e398c6abd923ad6de4d",
       "targets": []
     },
     {
@@ -1865,19 +1865,19 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/plan-predicates.test.ts",
-      "sha256": "9e80186608c93d7bc9cf1664c7090d83bb5b56f492126b7fdcc4610750143b1b",
+      "sha256": "6ff6729f4fcba3ff499728b0e77c685cf49d2021476345279e125d5830bff159",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/plan-predicates.test.ts",
-      "sha256": "9e80186608c93d7bc9cf1664c7090d83bb5b56f492126b7fdcc4610750143b1b",
+      "sha256": "6ff6729f4fcba3ff499728b0e77c685cf49d2021476345279e125d5830bff159",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/planLifecyclePersistentAdapters.ts",
-      "sha256": "6ba0784e8c1fc8e7fafc2903e9ac22f09ceaded8f9cd6bda2d0964f2bbbc8ad6",
+      "sha256": "ddee3d5a3678bdebe38d9e8cf846a236e984fdc9b8e61db0fc6dfeec8d087c8f",
       "targets": []
     },
     {
@@ -1937,7 +1937,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/task-adoption-eligibility-store-conformance.test.ts",
-      "sha256": "ae78081b6bea722581ec7c29093c75ecac12e27b0cac8f7bc9af97458819d77c",
+      "sha256": "37c168c719b75fe4ff047398a079baadbfe1b3223e58e236a5ce91878a258788",
       "targets": []
     },
     {
