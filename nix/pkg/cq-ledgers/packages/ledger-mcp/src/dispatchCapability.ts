@@ -465,19 +465,17 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     fence: DispatchLineageCutoverFence,
     binding: ManagedWorktreeDispatchBinding,
     input: Parameters<DispatchCapability["prepare"]>[0],
-  ): Promise<boolean> {
-    return (
-      dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation) ||
-      (await continuationExitsRecoveryFence(fence, binding, input.continuation)) ||
-      (await guardedRebaseExitsRecoveryFence(fence, binding, input))
-    );
+  ): Promise<boolean | GuardedRebaseRejection> {
+    if (dispatchLineageFenceAuthorizes(fence, input.recoveryPreparation)) return true;
+    if (await continuationExitsRecoveryFence(fence, binding, input.continuation)) return true;
+    return await guardedRebaseExitsRecoveryFence(fence, binding, input);
   }
 
   async function guardedRebaseExitsRecoveryFence(
     fence: DispatchLineageCutoverFence,
     binding: ManagedWorktreeDispatchBinding,
     input: Parameters<DispatchCapability["prepare"]>[0],
-  ): Promise<boolean> {
+  ): Promise<boolean | GuardedRebaseRejection> {
     if (
       input.roleId !== "implement-worker" ||
       input.guardedRebase === undefined ||
@@ -495,10 +493,15 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
     const baseCommit = record["baseCommit"];
     const startingCommit = record["startingCommit"];
     if (typeof baseCommit !== "string" || typeof startingCommit !== "string") return false;
-    const resolved =
-      input.reprepareOf === undefined
-        ? await resolveDurableGuardedRebasePrior(binding, input)
-        : null;
+    let resolved;
+    try {
+      resolved =
+        input.reprepareOf === undefined
+          ? await resolveDurableGuardedRebasePrior(binding, input)
+          : null;
+    } catch (error) {
+      return error instanceof GuardedRebaseRejection ? error : false;
+    }
     const reprepareOf = input.reprepareOf ?? resolved?.handle;
     const prior =
       resolved?.priorBinding ??
@@ -924,8 +927,12 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                 );
               }
               const fence = await matchingFence(binding.taskId, binding.handleFingerprint);
-              if (fence !== null && !(await recoveryFenceAuthorizesPrepare(fence, binding, input))) {
-                return journalRecoveryRequiredForFence(fence);
+              if (fence !== null) {
+                const authorization = await recoveryFenceAuthorizesPrepare(fence, binding, input);
+                if (authorization instanceof GuardedRebaseRejection) {
+                  return rejectLaunch(authorization.path, authorization.message);
+                }
+                if (!authorization) return journalRecoveryRequiredForFence(fence);
               }
               if (callerFingerprint === undefined) return undefined;
               const replay = await replayCachedPrepare(
@@ -1210,11 +1217,16 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         }
         prepareLockBinding = resolvedGitEffectBinding;
         const fence = await matchingFence(taskId, resolvedGitEffectBinding.handleFingerprint);
-        if (
-          fence !== null &&
-          !(await recoveryFenceAuthorizesPrepare(fence, resolvedGitEffectBinding, input))
-        ) {
-          return journalRecoveryRequiredForFence(fence);
+        if (fence !== null) {
+          const authorization = await recoveryFenceAuthorizesPrepare(
+            fence,
+            resolvedGitEffectBinding,
+            input,
+          );
+          if (authorization instanceof GuardedRebaseRejection) {
+            return rejectLaunch(authorization.path, authorization.message);
+          }
+          if (!authorization) return journalRecoveryRequiredForFence(fence);
         }
         let inferredGuardedRebasePrior;
         if (
@@ -1755,8 +1767,12 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             );
           }
           const fence = await matchingFence(binding.taskId, binding.handleFingerprint);
-          if (fence !== null && !(await recoveryFenceAuthorizesPrepare(fence, binding, input))) {
-            return journalRecoveryRequiredForFence(fence);
+          if (fence !== null) {
+            const authorization = await recoveryFenceAuthorizesPrepare(fence, binding, input);
+            if (authorization instanceof GuardedRebaseRejection) {
+              return rejectLaunch(authorization.path, authorization.message);
+            }
+            if (!authorization) return journalRecoveryRequiredForFence(fence);
           }
         }
         while (true) {
@@ -1789,10 +1805,13 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
                       prepareLockBinding.taskId,
                       prepareLockBinding.handleFingerprint,
                     );
-                    return fence !== null &&
-                      !(await recoveryFenceAuthorizesPrepare(fence, prepareLockBinding, input))
-                      ? journalRecoveryRequiredForFence(fence)
-                      : null;
+                    if (fence === null) return null;
+                    const authorization = await recoveryFenceAuthorizesPrepare(
+                      fence,
+                      prepareLockBinding,
+                      input,
+                    );
+                    return authorization === true ? null : journalRecoveryRequiredForFence(fence);
                   },
                   // allocateOrReplay is inside this binding's effect lock below.
                   withLineageLock: async (operation) => await operation(),

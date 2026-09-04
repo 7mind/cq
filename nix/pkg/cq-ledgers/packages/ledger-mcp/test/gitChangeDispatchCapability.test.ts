@@ -2889,6 +2889,46 @@ describe("dispatch-bound Git change capability", () => {
       }
     });
 
+    test("a recovery fence returns the unique guarded-rebase rejection without allocation [Behavioral-Active Blackbox-GoodCommunication]", async () => {
+      const fixture = await createGuardedRetryFixture(
+        "recovery-fenced-typed-rejection",
+        3_457,
+        true,
+      );
+      const setup = await setupGuardedRebase(
+        fixture,
+        "recovery-fenced-typed-rejection-rebase",
+      );
+      const recoveryJournal = await recoveryJournalForGuardedFixture(fixture);
+      const restarted = openGuardedRetryCapability(fixture, 3_457, recoveryJournal);
+      try {
+        const retry = await restarted.capability.prepare({
+          roleId: "implement-worker",
+          input: guardedContinuationInput(
+            fixture,
+            fixture.baseCommit,
+            setup.rebasedHead,
+            fixture.firstReceipt.newHead,
+            1,
+          ),
+          idempotencyKey: "T2148-recovery-fenced-unique-typed-rejection",
+          timeoutMs: 600_000,
+          expectedChild: {
+            childId: "recovery-fenced-unique-typed-rejection",
+            runId: "recovery-fenced-unique-typed-rejection",
+          },
+          guardedRebase: setup.reference,
+        });
+        expectRejection(
+          retry,
+          "input.baseCommit",
+          "guarded rebase continuation requires baseCommit to equal the journaled ontoCommit",
+        );
+      } finally {
+        await closeGuardedRetryBackend(restarted.backend);
+      }
+    });
+
     function guardedContinuationInput(
       fixture: GuardedRetryFixture,
       ontoCommit: string,
