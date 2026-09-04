@@ -2354,6 +2354,7 @@ describe("dispatch-bound Git change capability", () => {
       if (
         Object.hasOwn(retry, "handle") ||
         Object.hasOwn(retry, "prepared") ||
+        Object.keys(retry).some((key) => key.toLowerCase().includes("capability")) ||
         retry.allocated !== false
       ) {
         throw new Error(
@@ -2942,6 +2943,7 @@ describe("dispatch-bound Git change capability", () => {
       });
       expect(Object.hasOwn(retry, "handle")).toBeFalse();
       expect(Object.hasOwn(retry, "prepared")).toBeFalse();
+      expect(Object.keys(retry).some((key) => key.toLowerCase().includes("capability"))).toBeFalse();
     }
 
     test("D456 preserves the unique guarded-rebase rejection [Behavioral-Active Blackbox-GoodCommunication]", async () => {

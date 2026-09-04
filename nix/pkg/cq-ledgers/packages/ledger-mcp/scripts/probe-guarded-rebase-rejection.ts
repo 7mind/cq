@@ -1,58 +1,15 @@
 #!/usr/bin/env bun
 
-import { constants as fsConstants, promises as fs } from "node:fs";
+import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  parseArguments,
+  readCredential,
+  sanitizeUniqueTypedRejection,
+} from "./guardedRebaseProbeRuntime.js";
 
 const NIX_OUTPUT = /^\/nix\/store\/[a-z0-9]{32}-[^/]+$/;
-
-interface Arguments {
-  readonly candidate: string;
-  readonly credentialFile: string;
-  readonly repository: string;
-  readonly worktree: string;
-  readonly branch: string;
-  readonly head: string;
-  readonly recoveryRef: string;
-}
-
-function required(arguments_: readonly string[], name: string): string {
-  const index = arguments_.indexOf(name);
-  const value = index < 0 ? undefined : arguments_[index + 1];
-  if (value === undefined || value.startsWith("--")) throw new Error(`missing ${name}`);
-  return value;
-}
-
-function parseArguments(arguments_: readonly string[]): Arguments {
-  return {
-    candidate: required(arguments_, "--candidate"),
-    credentialFile: required(arguments_, "--credential-file"),
-    repository: required(arguments_, "--repository"),
-    worktree: required(arguments_, "--worktree"),
-    branch: required(arguments_, "--branch"),
-    head: required(arguments_, "--head"),
-    recoveryRef: required(arguments_, "--recovery-ref"),
-  };
-}
-
-async function readCredential(file: string): Promise<string> {
-  const before = await fs.lstat(file);
-  if (!before.isFile() || before.isSymbolicLink() || (before.mode & 0o777) !== 0o600) {
-    throw new Error("credential file is not a regular mode-0600 file");
-  }
-  const handle = await fs.open(file, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-  try {
-    const opened = await handle.stat();
-    if (opened.dev !== before.dev || opened.ino !== before.ino || !opened.isFile()) {
-      throw new Error("credential file changed during no-follow open");
-    }
-    const value = (await handle.readFile()).toString("utf8").trim();
-    if (value.length === 0) throw new Error("credential file is empty");
-    return value;
-  } finally {
-    await handle.close();
-  }
-}
 
 async function git(cwd: string, arguments_: readonly string[]): Promise<string> {
   const child = Bun.spawn(["git", ...arguments_], { cwd, stdout: "pipe", stderr: "pipe" });
@@ -129,20 +86,10 @@ async function main(): Promise<void> {
     const text = response.content?.find((entry) => entry.type === "text")?.text;
     if (text === undefined) throw new Error("management server returned no decision");
     const decision = JSON.parse(text) as Record<string, unknown>;
-    if (
-      decision["accepted"] !== false ||
-      decision["allocated"] !== false ||
-      decision["path"] === "guardedRebase" ||
-      typeof decision["path"] !== "string" ||
-      typeof decision["detail"] !== "string" ||
-      Object.hasOwn(decision, "handle") ||
-      Object.hasOwn(decision, "prepared")
-    ) {
-      throw new Error("probe observed generic rejection or accidental admission");
-    }
+    const rejection = sanitizeUniqueTypedRejection(decision, credential);
     const after = await coordinates(arguments_);
     if (JSON.stringify(before) !== JSON.stringify(after)) throw new Error("candidate coordinates drifted");
-    process.stdout.write(`${JSON.stringify({ candidate: path.basename(candidate), path: decision["path"], detail: decision["detail"] })}\n`);
+    process.stdout.write(`${JSON.stringify({ candidate: path.basename(candidate), ...rejection })}\n`);
   } finally {
     await client.close();
   }

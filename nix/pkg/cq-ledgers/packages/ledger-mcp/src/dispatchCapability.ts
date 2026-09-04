@@ -424,10 +424,7 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
       return null;
     }
     if (new Set(candidates.map((candidate) => candidate.handle.attestationId)).size !== 1) {
-      throw new GuardedRebaseRejection(
-        "guardedRebase",
-        "guarded-rebase reference resolves to multiple terminal worker lineages",
-      );
+      return null;
     }
     candidates.sort((left, right) => right.handle.generation - left.handle.generation);
     return candidates[0]!;
