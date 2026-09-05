@@ -3667,9 +3667,67 @@ describe("dispatch-bound Git change capability", () => {
     );
   });
 
-  test(
-    "broker-capable result storage rejects missing or substituted receipt chains",
-    async () => {
+  test.each([
+    ["a missing receipt chain", (output: Record<string, unknown>) => {
+      delete output["gitReceipts"];
+    }],
+    ["a truncated receipt chain", (output: Record<string, unknown>) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      receipts.shift();
+    }],
+    ["a substituted receipt operation", (output: Record<string, unknown>) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      receipts[0] = { ...receipts[0], operationId: "substituted-operation" };
+    }],
+    ["a substituted receipt request digest", (output: Record<string, unknown>) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      receipts[0] = { ...receipts[0], requestDigest: "f".repeat(64) };
+    }],
+    ["a substituted receipt timestamp", (output: Record<string, unknown>) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      receipts[0] = { ...receipts[0], committedAt: "2099-01-01T00:00:00.000Z" };
+    }],
+    ["a reordered receipt object list", (output: Record<string, unknown>) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      const first = receipts[0]!;
+      receipts[0] = {
+        ...first,
+        objectOids: [first["newHead"], first["tree"]],
+      };
+    }],
+    ["a receipt object from another operation", (output: Record<string, unknown>) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      const first = receipts[0]!;
+      const second = receipts[1]!;
+      receipts[0] = {
+        ...first,
+        objectOids: [...(first["objectOids"] as string[]), second["newHead"]],
+      };
+    }],
+    ["a substituted receipt parent", (output: Record<string, unknown>) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      receipts[1] = { ...receipts[1], oldHead: "a".repeat(40) };
+    }],
+    ["a substituted receipt tree", (output: Record<string, unknown>) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      receipts[1] = { ...receipts[1], tree: "a".repeat(40) };
+    }],
+    ["a substituted receipt path", (output: Record<string, unknown>) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      receipts[1] = { ...receipts[1], paths: ["other.txt"] };
+    }],
+    ["a receipt tip substituted as the result commit", (output: Record<string, unknown>) => {
+      const receipts = output["gitReceipts"] as Record<string, unknown>[];
+      const first = receipts[0]!;
+      output["resultCommit"] = first["newHead"];
+      output["baseVerification"] = {
+        ...(output["baseVerification"] as Record<string, unknown>),
+        headCommit: first["newHead"],
+      };
+    }],
+  ])(
+    "broker-capable result storage rejects %s",
+    async (_label, mutate) => {
       let attempt = 0;
       async function storeCandidate(
         mutate: (output: Record<string, unknown>) => void,
@@ -3787,63 +3845,7 @@ describe("dispatch-bound Git change capability", () => {
         ).rejects.toThrow(/receipt/i);
       }
 
-      await storeCandidate((output) => {
-        delete output["gitReceipts"];
-      });
-      await storeCandidate((output) => {
-        const receipts = output["gitReceipts"] as Record<string, unknown>[];
-        receipts.shift();
-      });
-      await storeCandidate((output) => {
-        const receipts = output["gitReceipts"] as Record<string, unknown>[];
-        receipts[0] = { ...receipts[0], operationId: "substituted-operation" };
-      });
-      await storeCandidate((output) => {
-        const receipts = output["gitReceipts"] as Record<string, unknown>[];
-        receipts[0] = { ...receipts[0], requestDigest: "f".repeat(64) };
-      });
-      await storeCandidate((output) => {
-        const receipts = output["gitReceipts"] as Record<string, unknown>[];
-        receipts[0] = { ...receipts[0], committedAt: "2099-01-01T00:00:00.000Z" };
-      });
-      await storeCandidate((output) => {
-        const receipts = output["gitReceipts"] as Record<string, unknown>[];
-        const first = receipts[0]!;
-        receipts[0] = {
-          ...first,
-          objectOids: [first["newHead"], first["tree"]],
-        };
-      });
-      await storeCandidate((output) => {
-        const receipts = output["gitReceipts"] as Record<string, unknown>[];
-        const first = receipts[0]!;
-        const second = receipts[1]!;
-        receipts[0] = {
-          ...first,
-          objectOids: [...(first["objectOids"] as string[]), second["newHead"]],
-        };
-      });
-      await storeCandidate((output) => {
-        const receipts = output["gitReceipts"] as Record<string, unknown>[];
-        receipts[1] = { ...receipts[1], oldHead: "a".repeat(40) };
-      });
-      await storeCandidate((output) => {
-        const receipts = output["gitReceipts"] as Record<string, unknown>[];
-        receipts[1] = { ...receipts[1], tree: "a".repeat(40) };
-      });
-      await storeCandidate((output) => {
-        const receipts = output["gitReceipts"] as Record<string, unknown>[];
-        receipts[1] = { ...receipts[1], paths: ["other.txt"] };
-      });
-      await storeCandidate((output) => {
-        const receipts = output["gitReceipts"] as Record<string, unknown>[];
-        const first = receipts[0]!;
-        output["resultCommit"] = first["newHead"];
-        output["baseVerification"] = {
-          ...(output["baseVerification"] as Record<string, unknown>),
-          headCommit: first["newHead"],
-        };
-      });
+      await storeCandidate(mutate);
     },
     RECEIPT_CHAIN_MATRIX_TIMEOUT_MS,
   );
