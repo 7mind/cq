@@ -647,13 +647,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-git-effect-gate.test.ts",
-      "sha256": "5ae77d40f807d88861c089123c25332e6ee949209f59e7e68b94072739b2c506",
+      "sha256": "992499d385f6aa3dcd12a60746c2e49866c0945f88416d760b23769a4f9b4e84",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger/test/workset-git-effect-gate.test.ts",
-      "sha256": "5ae77d40f807d88861c089123c25332e6ee949209f59e7e68b94072739b2c506",
+      "sha256": "992499d385f6aa3dcd12a60746c2e49866c0945f88416d760b23769a4f9b4e84",
       "targets": []
     },
     {
