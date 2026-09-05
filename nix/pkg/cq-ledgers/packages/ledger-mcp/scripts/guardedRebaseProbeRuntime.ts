@@ -41,6 +41,11 @@ const nodeCredentialRuntime: CredentialRuntime = {
   open: (file, flags) => fs.open(file, flags),
 };
 
+export const GUARDED_REBASE_PROBE_REJECTION = {
+  path: "input.baseCommit",
+  detail: "guarded rebase continuation requires baseCommit to equal the journaled ontoCommit",
+} as const;
+
 function required(arguments_: readonly string[], name: string): string {
   const index = arguments_.indexOf(name);
   const value = index < 0 ? undefined : arguments_[index + 1];
@@ -117,6 +122,12 @@ export function sanitizeUniqueTypedRejection(
   }
   if (decision["detail"].includes(opaqueReference)) {
     throw new Error("probe observed a rejection detail containing the guarded-rebase reference");
+  }
+  if (
+    decision["path"] !== GUARDED_REBASE_PROBE_REJECTION.path ||
+    decision["detail"] !== GUARDED_REBASE_PROBE_REJECTION.detail
+  ) {
+    throw new Error("probe observed an unrelated typed rejection");
   }
   return { path: decision["path"], detail: decision["detail"] };
 }

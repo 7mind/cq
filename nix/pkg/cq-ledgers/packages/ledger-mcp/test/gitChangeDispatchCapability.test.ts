@@ -323,6 +323,9 @@ function openGuardedRetryCapability(
   >,
   randomSeed: number,
   recoveryJournal?: CurrentRecoverySealJournalStore,
+  materializeGuardedRebaseBridge?: Parameters<
+    typeof createDispatchCapability
+  >[0]["materializeGuardedRebaseBridge"],
 ): {
   readonly backend: FsAttestationBackend;
   readonly capability: DispatchCapabilityInstance;
@@ -342,6 +345,7 @@ function openGuardedRetryCapability(
       now: () => "2026-08-18T12:00:00.000Z",
       randomBytes: sequentialDispatchRandomBytes(randomSeed),
       ...(recoveryJournal === undefined ? {} : { recoveryJournal }),
+      ...(materializeGuardedRebaseBridge === undefined ? {} : { materializeGuardedRebaseBridge }),
       supervisedWorkerGateRunner: {
         run: async () => ({
           gateExitCode: 0,
@@ -3045,6 +3049,38 @@ describe("dispatch-bound Git change capability", () => {
           );
         } finally {
           await closeGuardedRetryBackend(zeroCapability.backend);
+        }
+
+        const untypedCapability = openGuardedRetryCapability(
+          d334Negative,
+          3_458,
+          undefined,
+          async () => {
+            throw new Error("unexpected guarded-rebase materialization failure");
+          },
+        );
+        try {
+          expectGenericGuardedRebaseRejection(
+            await untypedCapability.capability.prepare({
+              roleId: "implement-worker",
+              input: guardedContinuationInput(
+                d334Negative,
+                d334Negative.baseCommit,
+                d334NegativeRebasedHead,
+                d334Negative.firstReceipt.newHead,
+                1,
+              ),
+              idempotencyKey: "T2148-d456-untyped-materialization-failure",
+              timeoutMs: 600_000,
+              expectedChild: {
+                childId: "d456-untyped-materialization-failure",
+                runId: "d456-untyped-materialization-failure",
+              },
+              guardedRebase: d334NegativeReference,
+            }),
+          );
+        } finally {
+          await closeGuardedRetryBackend(untypedCapability.backend);
         }
 
         const ambiguous = await createGuardedRetryFixture("d456-ambiguous", 3_458, true);

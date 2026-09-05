@@ -6,6 +6,7 @@ import {
   parseArguments,
   readCredential,
   sanitizeUniqueTypedRejection,
+  GUARDED_REBASE_PROBE_REJECTION,
   type CredentialRuntime,
 } from "../scripts/guardedRebaseProbeRuntime.js";
 
@@ -81,12 +82,11 @@ describe("guarded-rebase rejection probe policy [Behavioral-Active Blackbox-Atom
         {
           accepted: false,
           allocated: false,
-          path: "input.baseCommit",
-          detail: "baseCommit does not equal ontoCommit",
+          ...GUARDED_REBASE_PROBE_REJECTION,
         },
         secret,
       ),
-    ).toEqual({ path: "input.baseCommit", detail: "baseCommit does not equal ontoCommit" });
+    ).toEqual(GUARDED_REBASE_PROBE_REJECTION);
     expect(() =>
       sanitizeUniqueTypedRejection(
         { accepted: false, allocated: false, path: "input.baseCommit", detail: secret },
@@ -105,6 +105,29 @@ describe("guarded-rebase rejection probe policy [Behavioral-Active Blackbox-Atom
         secret,
       ),
     ).toThrow("accidental admission");
+    expect(() =>
+      sanitizeUniqueTypedRejection(
+        {
+          accepted: false,
+          allocated: false,
+          path: "input.startingCommit",
+          detail:
+            "guarded rebase continuation requires startingCommit to equal the journaled rebased head",
+        },
+        secret,
+      ),
+    ).toThrow("unrelated typed rejection");
+    expect(() =>
+      sanitizeUniqueTypedRejection(
+        {
+          accepted: false,
+          allocated: false,
+          path: "input.baseCommit",
+          detail: "unexpected sanitized coordinate failure",
+        },
+        secret,
+      ),
+    ).toThrow("unrelated typed rejection");
   });
 
   test("uses one immutable candidate through real stdio and Git without disclosing its credential [Behavioral-Active Effectual-GoodCommunication]", async () => {

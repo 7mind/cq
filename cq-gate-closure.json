@@ -75,7 +75,7 @@
     {
       "kind": "dynamic",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/probeGuardedRebaseRejection.test.ts",
-      "sha256": "dd618f38c8679b0a3de45803b3817c6c12f5daa796c91c59457fd92cb4aed015",
+      "sha256": "1de36ae38bf0da9c0d88e62f61814684f89ae899bc3866a904189ab07fa13bc4",
       "targets": ["nix/pkg/cq-ledgers/packages/ledger-mcp/scripts/probe-guarded-rebase-rejection.ts"]
     },
     {
@@ -408,7 +408,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/probeGuardedRebaseRejection.test.ts",
-      "sha256": "dd618f38c8679b0a3de45803b3817c6c12f5daa796c91c59457fd92cb4aed015",
+      "sha256": "1de36ae38bf0da9c0d88e62f61814684f89ae899bc3866a904189ab07fa13bc4",
       "targets": []
     },
     {
@@ -491,13 +491,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts",
-      "sha256": "72e3e87887e83bcb20c2f09fe403e4b68253238f6c2ff4d0e8258451ef139749",
+      "sha256": "399cc8b4eddf4b0b238c592dce74e82f8314a28a2665a29a5a0492b234b3352a",
       "targets": []
     },
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/gitChangeDispatchCapability.test.ts",
-      "sha256": "72e3e87887e83bcb20c2f09fe403e4b68253238f6c2ff4d0e8258451ef139749",
+      "sha256": "399cc8b4eddf4b0b238c592dce74e82f8314a28a2665a29a5a0492b234b3352a",
       "targets": []
     },
     {
@@ -1313,13 +1313,13 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/scripts/guardedRebaseProbeRuntime.ts",
-      "sha256": "7558af343729c6a769603b28d0e36174abc954c1c98b760e0aab37c05cdcadf4",
+      "sha256": "24c12489ab095ef5539379442f6c9042843cbea1bfd1debcf9ef9859b02ddc42",
       "targets": []
     },
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/ledger-mcp/test/probeGuardedRebaseRejection.test.ts",
-      "sha256": "dd618f38c8679b0a3de45803b3817c6c12f5daa796c91c59457fd92cb4aed015",
+      "sha256": "1de36ae38bf0da9c0d88e62f61814684f89ae899bc3866a904189ab07fa13bc4",
       "targets": []
     },
     {

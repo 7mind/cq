@@ -144,6 +144,8 @@ export interface DispatchCapabilityOptions {
   readonly supervisedWorkerGateRunner?: SupervisedWorkerGateRunner;
   /** Recovery authority journal; defaults to the managed registry when repository-bound. */
   readonly recoveryJournal?: CurrentRecoverySealJournalStore;
+  /** Test seam for an unexpected bridge-materialization failure; production uses the ledger implementation. */
+  readonly materializeGuardedRebaseBridge?: typeof materializeGuardedRebaseBridge;
   readonly implementationEvidenceStore?: ImplementationEvidenceStore;
 }
 
@@ -301,6 +303,8 @@ if (
 export function createDispatchCapability(options: DispatchCapabilityOptions): DispatchCapability {
   const now = options.now ?? (() => new Date().toISOString());
   const randomBytes = options.randomBytes ?? defaultDispatchRandomBytes;
+  const materializeGuardedRebase =
+    options.materializeGuardedRebaseBridge ?? materializeGuardedRebaseBridge;
   const namespace = options.backend.namespace;
   interface CachedPrepare {
     readonly callerFingerprint: string | undefined;
@@ -396,11 +400,22 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         ];
       }),
     );
-    const candidates = [];
-    const guardedRebaseRejections: GuardedRebaseRejection[] = [];
+    const outcomes: (
+      | {
+          readonly kind: "materialized";
+          readonly source: (typeof sources)[number];
+          readonly bridge: Awaited<ReturnType<typeof materializeGuardedRebaseBridge>>;
+        }
+      | {
+          readonly kind: "typed-rejection";
+          readonly source: (typeof sources)[number];
+          readonly rejection: GuardedRebaseRejection;
+        }
+      | { readonly kind: "untyped-failure"; readonly source: (typeof sources)[number] }
+    )[] = [];
     for (const { handle, priorBinding } of sources) {
       try {
-        const bridge = await materializeGuardedRebaseBridge({
+        const bridge = await materializeGuardedRebase({
           reference: input.guardedRebase,
           prior: { ...priorBinding, ...handle },
           current: binding,
@@ -412,22 +427,28 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
             ? {}
             : { stateDir: options.worktreeStateDir }),
         });
-        candidates.push({ handle, priorBinding, bridge });
+        outcomes.push({ kind: "materialized", source: { handle, priorBinding }, bridge });
       } catch (error) {
-        if (error instanceof GuardedRebaseRejection) guardedRebaseRejections.push(error);
+        outcomes.push(
+          error instanceof GuardedRebaseRejection
+            ? { kind: "typed-rejection", source: { handle, priorBinding }, rejection: error }
+            : { kind: "untyped-failure", source: { handle, priorBinding } },
+        );
       }
     }
-    if (candidates.length === 0) {
-      if (sources.length === 1 && guardedRebaseRejections.length === 1) {
-        throw guardedRebaseRejections[0]!;
-      }
+    if (sources.length !== 1) return null;
+    const onlyOutcome = outcomes[0];
+    if (onlyOutcome === undefined || onlyOutcome.kind === "untyped-failure") return null;
+    if (onlyOutcome.kind === "typed-rejection") throw onlyOutcome.rejection;
+    const candidates = outcomes.filter(
+      (outcome): outcome is Extract<(typeof outcomes)[number], { readonly kind: "materialized" }> =>
+        outcome.kind === "materialized",
+    );
+    if (candidates.length !== 1) {
       return null;
     }
-    if (new Set(candidates.map((candidate) => candidate.handle.attestationId)).size !== 1) {
-      return null;
-    }
-    candidates.sort((left, right) => right.handle.generation - left.handle.generation);
-    return candidates[0]!;
+    const candidate = candidates[0]!;
+    return { ...candidate.source, bridge: candidate.bridge };
   }
 
   async function continuationExitsRecoveryFence(
