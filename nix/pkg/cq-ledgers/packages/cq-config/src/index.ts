@@ -919,6 +919,7 @@ export {
   interceptCodexRoleBoundaryResult,
   executeCodexRoleBoundary,
   executeCodexParentGateFinalizer,
+  CodexParentGateAbortedError,
   CodexParentGateRejectedError,
   executeInstalledCodexRoleBoundary,
   executeCodexProviderSandboxControl,

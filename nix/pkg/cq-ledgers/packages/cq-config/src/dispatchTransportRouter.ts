@@ -37,6 +37,7 @@ import {
 } from "./claudeDispatchProtocol.js";
 import {
   CodexBrokeredStoreResultError,
+  CodexParentGateAbortedError,
   CodexParentGateRejectedError,
   CodexRoleBoundaryError,
   CodexOperationalAbstentionError,
@@ -401,6 +402,14 @@ function codexProcessBoundaryFailure(
       storeResultAbortReason: boundaryError.reason,
     };
   }
+  if (boundaryError instanceof CodexParentGateAbortedError) {
+    return {
+      outcome: "aborted",
+      reason: boundaryError.reason,
+      storeResultAbortReason: boundaryError.reason,
+      ...(boundaryError.details === undefined ? {} : { details: boundaryError.details }),
+    };
+  }
   if (boundaryError instanceof CodexOperationalAbstentionError) {
     return {
       outcome: "aborted",
@@ -452,7 +461,12 @@ function findCodexRoleBoundaryError(error: unknown): CodexRoleBoundaryError | un
     let fallback: CodexRoleBoundaryError | undefined;
     for (const nested of error.errors) {
       const found = findCodexRoleBoundaryError(nested);
-      if (found instanceof CodexParentGateRejectedError) return found;
+      if (
+        found instanceof CodexParentGateRejectedError ||
+        found instanceof CodexParentGateAbortedError
+      ) {
+        return found;
+      }
       fallback ??= found;
     }
     return fallback;

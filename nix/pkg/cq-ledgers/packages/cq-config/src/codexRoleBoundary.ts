@@ -16,6 +16,7 @@ import {
   DISPATCH_ABORT_REASONS,
   type DispatchAbortReason,
   type DispatchHandle,
+  type DispatchJSONValue,
   type GitChangeCapability,
   type GitConflictCapability,
   type InputCapability,
@@ -293,6 +294,9 @@ async function executeCodexParentGateFinalizerAttempt(
   ) {
     throw new CodexParentGateRejectedError(aborted.details);
   }
+  if (aborted !== undefined) {
+    throw new CodexParentGateAbortedError(aborted.reason, aborted.details);
+  }
   const acknowledgement = parsed as Record<string, unknown>;
   if (
     Object.keys(acknowledgement).sort().join(",") !==
@@ -331,7 +335,12 @@ export async function executeCodexParentGateFinalizer(
       await executeCodexParentGateFinalizerAttempt(input, attemptTimeoutMs, terminationGraceMs);
       return;
     } catch (error) {
-      if (error instanceof CodexParentGateRejectedError) throw error;
+      if (
+        error instanceof CodexParentGateRejectedError ||
+        error instanceof CodexParentGateAbortedError
+      ) {
+        throw error;
+      }
       failures.push(error);
     }
   }
@@ -494,6 +503,34 @@ export class CodexRoleBoundaryError extends Error {
     super(`Codex role boundary: ${message}`);
     this.name = "CodexRoleBoundaryError";
     this.diagnostic = diagnostic;
+  }
+}
+
+function parentGateAbortDiagnostic(details: DispatchJSONValue | undefined): string | undefined {
+  if (details === undefined || details === null || typeof details !== "object" || Array.isArray(details)) {
+    return undefined;
+  }
+  const record = details as Readonly<Record<string, DispatchJSONValue>>;
+  const message = record["message"];
+  if (typeof message !== "string" || message.trim() === "") {
+    return undefined;
+  }
+  const phase = record["phase"];
+  const prefix = typeof phase === "string" && phase.trim() !== "" ? `${phase}: ` : "";
+  return `${prefix}${message.slice(0, 1_024)}`;
+}
+
+/** An authenticated durable parent-gate abort replayed after an ambiguous process outcome. */
+export class CodexParentGateAbortedError extends CodexRoleBoundaryError {
+  readonly reason: DispatchAbortReason;
+  readonly details: DispatchJSONValue | undefined;
+
+  constructor(reason: DispatchAbortReason, details: DispatchJSONValue | undefined) {
+    const diagnostic = parentGateAbortDiagnostic(details);
+    super(`parent gate finalized as ${reason}${diagnostic === undefined ? "" : `: ${diagnostic}`}`);
+    this.name = "CodexParentGateAbortedError";
+    this.reason = reason;
+    this.details = details;
   }
 }
 
@@ -1153,7 +1190,7 @@ function resultStoredAcknowledgementHandle(
 
 interface RecognizedAbortedDispatchAcknowledgement {
   readonly reason: DispatchAbortReason;
-  readonly details: unknown | undefined;
+  readonly details: DispatchJSONValue | undefined;
 }
 
 function isDispatchAbortReason(value: unknown): value is DispatchAbortReason {
@@ -1206,7 +1243,9 @@ function abortedDispatchAcknowledgement(
     }
     return Object.freeze({
       reason: candidate.reason,
-      details: Object.hasOwn(candidate, "details") ? candidate.details : undefined,
+      details: Object.hasOwn(candidate, "details")
+        ? (candidate.details as DispatchJSONValue)
+        : undefined,
     });
   };
   const flat = asAbortedBody(record);
