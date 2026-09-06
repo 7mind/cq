@@ -168,7 +168,7 @@
     {
       "kind": "spawn",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/src/codexRoleBoundary.ts",
-      "sha256": "98132d5fd631b6cbd15a8e4a8a58d8c76861d97514db54bb2756d98f3bfeecb2",
+      "sha256": "48fc1a1169ec3d796e58b478a38c0b48901c7694d2312aa293ef5b9380384d68",
       "targets": []
     },
     {
@@ -893,7 +893,7 @@
     {
       "kind": "path",
       "source": "nix/pkg/cq-ledgers/packages/cq-config/src/codexRoleBoundary.ts",
-      "sha256": "98132d5fd631b6cbd15a8e4a8a58d8c76861d97514db54bb2756d98f3bfeecb2",
+      "sha256": "48fc1a1169ec3d796e58b478a38c0b48901c7694d2312aa293ef5b9380384d68",
       "targets": []
     },
     {
