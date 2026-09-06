@@ -3134,6 +3134,62 @@ describe("dispatch-bound Git change capability", () => {
       }
     });
 
+    test("D456 selects the newest matching guarded-rebase materialization [Behavioral-Active Blackbox-GoodCommunication]", async () => {
+      const fixture = await createGuardedRetryFixture("d456-newest", 3_459, true);
+      const setup = await setupGuardedRebase(fixture, "d456-newest-rebase");
+      const opened = openGuardedRetryCapability(fixture, 9_457);
+      try {
+        const secondSource = await opened.capability.prepare({
+          roleId: "implement-worker",
+          input: guardedContinuationInput(
+            fixture,
+            setup.ontoCommit,
+            setup.rebasedHead,
+            fixture.firstReceipt.newHead,
+            1,
+          ),
+          idempotencyKey: "T2148-d456-newest-second-source",
+          timeoutMs: 600_000,
+          expectedChild: {
+            childId: "d456-newest-second-source",
+            runId: "d456-newest-second-source",
+          },
+          reprepareOf: fixture.first.handle,
+          guardedRebase: setup.reference,
+        });
+        if (!secondSource.accepted) throw new Error(secondSource.detail);
+        await opened.capability.abort({ ...secondSource.handle, reason: "parent-lost" });
+
+        const newestSource = await opened.capability.prepare({
+          roleId: "implement-worker",
+          input: guardedContinuationInput(
+            fixture,
+            setup.ontoCommit,
+            setup.rebasedHead,
+            fixture.firstReceipt.newHead,
+            1,
+          ),
+          idempotencyKey: "T2148-d456-newest-source",
+          timeoutMs: 600_000,
+          expectedChild: {
+            childId: "d456-newest-source",
+            runId: "d456-newest-source",
+          },
+          guardedRebase: setup.reference,
+        });
+        expect(newestSource.accepted).toBeTrue();
+        if (newestSource.accepted) {
+          expect(newestSource.handle).toEqual({
+            attestationId: secondSource.handle.attestationId,
+            generation: secondSource.handle.generation + 1,
+          });
+          await opened.capability.abort({ ...newestSource.handle, reason: "parent-lost" });
+        }
+      } finally {
+        await closeGuardedRetryBackend(opened.backend);
+      }
+    });
+
     test("guarded prepare controls: caller injection, omission, substitution, and foreign coordinates reject [Behavioral-Progression Blackbox-GoodCommunication]", async () => {
       const opened = openGuardedRetryCapability(d334Negative, 3_152);
       const capability = opened.capability;

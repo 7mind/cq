@@ -436,19 +436,25 @@ export function createDispatchCapability(options: DispatchCapabilityOptions): Di
         );
       }
     }
-    if (sources.length !== 1) return null;
-    const onlyOutcome = outcomes[0];
-    if (onlyOutcome === undefined || onlyOutcome.kind === "untyped-failure") return null;
-    if (onlyOutcome.kind === "typed-rejection") throw onlyOutcome.rejection;
     const candidates = outcomes.filter(
       (outcome): outcome is Extract<(typeof outcomes)[number], { readonly kind: "materialized" }> =>
         outcome.kind === "materialized",
     );
-    if (candidates.length !== 1) {
+    if (candidates.length > 0) {
+      if (candidates.length !== outcomes.length) return null;
+      const sourceAttestationIds = new Set(
+        candidates.map((candidate) => candidate.source.handle.attestationId),
+      );
+      if (sourceAttestationIds.size !== 1) return null;
+      const newest = candidates.reduce((latest, candidate) =>
+        candidate.source.handle.generation > latest.source.handle.generation ? candidate : latest,
+      );
+      return { ...newest.source, bridge: newest.bridge };
+    }
+    if (outcomes.length !== 1 || outcomes[0]?.kind !== "typed-rejection") {
       return null;
     }
-    const candidate = candidates[0]!;
-    return { ...candidate.source, bridge: candidate.bridge };
+    throw outcomes[0].rejection;
   }
 
   async function continuationExitsRecoveryFence(
