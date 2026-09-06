@@ -76,7 +76,7 @@ async function main(): Promise<void> {
           baseCommit: arguments_.head,
           round: 1,
           startingCommit: arguments_.head,
-          priorResultCommit: arguments_.head,
+          priorResultCommit: arguments_.priorResultCommit,
         },
         idempotencyKey: "T6411-guarded-rebase-probe",
         timeoutMs: 60_000,

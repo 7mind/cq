@@ -7,6 +7,7 @@ export interface Arguments {
   readonly worktree: string;
   readonly branch: string;
   readonly head: string;
+  readonly priorResultCommit: string;
   readonly recoveryRef: string;
 }
 
@@ -61,6 +62,7 @@ export function parseArguments(arguments_: readonly string[]): Arguments {
     worktree: required(arguments_, "--worktree"),
     branch: required(arguments_, "--branch"),
     head: required(arguments_, "--head"),
+    priorResultCommit: required(arguments_, "--prior-result-commit"),
     recoveryRef: required(arguments_, "--recovery-ref"),
   };
 }
