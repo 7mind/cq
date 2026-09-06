@@ -293,6 +293,10 @@ export async function verifyProductionImplementation(
   }
   const startingCommitValue = workerOutput["gitLineage"];
   const dispatchedStartingCommit = workerInput["startingCommit"];
+  const supervisedGateStartingCommit =
+    typeof dispatchedStartingCommit === "string" && FULL_SHA.test(dispatchedStartingCommit)
+      ? dispatchedStartingCommit
+      : undefined;
   const startingCommit =
     object(startingCommitValue) &&
     typeof startingCommitValue["rebasedStartCommit"] === "string" &&
@@ -438,7 +442,7 @@ export async function verifyProductionImplementation(
     gate["worktreePath"] === actualWorktreePath &&
     gate["branch"] === branch &&
     gate["baseCommit"] === baseCommit &&
-    gate["startingCommit"] === startingCommit &&
+    gate["startingCommit"] === supervisedGateStartingCommit &&
     gate["resultCommit"] === resultCommit;
   const legacyGate =
     typeof workerOutput["checkSummary"] === "string" &&
