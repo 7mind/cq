@@ -352,6 +352,143 @@ describe("production implementation evidence runtime [Behavioral-Active Blackbox
         .receiptsVerified,
     ).toBe(true);
   });
+
+  // regression: D459 rejected a valid later-correction gate by binding it to the lineage start.
+  test("D459 authenticates a later correction gate independently of cumulative guarded receipts [Behavioral-Active Blackbox-Group]", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "implementation-evidence-runtime-correction-"));
+    roots.push(root);
+    await git(root, ["init", "-q", "-b", "implement/T459"]);
+    await git(root, ["config", "user.name", "runtime-test"]);
+    await git(root, ["config", "user.email", "runtime-test@example.invalid"]);
+    await writeFile(path.join(root, "base.txt"), "base\n");
+    await git(root, ["add", "base.txt"]);
+    await git(root, ["commit", "-q", "-m", "base"]);
+    const ontoCommit = await git(root, ["rev-parse", "HEAD"]);
+    await writeFile(path.join(root, "rebased.ts"), "export const rebased = true;\n");
+    await git(root, ["add", "rebased.ts"]);
+    await git(root, ["commit", "-q", "-m", "rebased start"]);
+    const rebasedStartCommit = await git(root, ["rev-parse", "HEAD"]);
+    await writeFile(path.join(root, "prior-correction.ts"), "export const prior = true;\n");
+    await git(root, ["add", "prior-correction.ts"]);
+    await git(root, ["commit", "-q", "-m", "prior correction"]);
+    const correctionStartingCommit = await git(root, ["rev-parse", "HEAD"]);
+    const priorTree = await git(root, ["rev-parse", "HEAD^{tree}"]);
+    await writeFile(path.join(root, "current-correction.ts"), "export const current = true;\n");
+    await git(root, ["add", "current-correction.ts"]);
+    await git(root, ["commit", "-q", "-m", "current correction"]);
+    const resultCommit = await git(root, ["rev-parse", "HEAD"]);
+    const resultTree = await git(root, ["rev-parse", "HEAD^{tree}"]);
+    const guardedRebase = `cq-guarded-rebase:v1:${"f".repeat(64)}`;
+    const workerInput = {
+      taskId: "T459",
+      acceptance: "bind the cumulative receipts and correction gate to their distinct starts",
+      branch: "implement/T459",
+      baseCommit: ontoCommit,
+      round: 2,
+      startingCommit: correctionStartingCommit,
+      priorResultCommit: correctionStartingCommit,
+      guardedRebaseLineage: {
+        guardedRebase,
+        oldResultCommit: "e".repeat(40),
+        ontoCommit,
+        rebasedStartCommit,
+        exactTip: true,
+      },
+    } as const;
+    const workerOutput = {
+      taskId: "T459",
+      status: "pass",
+      resultCommit,
+      branch: "implement/T459",
+      actualWorktreePath: root,
+      filesTouched: ["current-correction.ts", "prior-correction.ts", "rebased.ts"],
+      gitReceipts: [
+        {
+          kind: "cq-git-change-receipt",
+          version: 1,
+          attestationId: `att_${"a".repeat(40)}`,
+          generation: 1,
+          taskId: "T459",
+          operationId: "runtime-prior-correction",
+          requestDigest: "a".repeat(64),
+          oldHead: rebasedStartCommit,
+          newHead: correctionStartingCommit,
+          tree: priorTree,
+          objectOids: [correctionStartingCommit, priorTree],
+          paths: ["prior-correction.ts"],
+          committedAt: "2026-09-05T00:00:00.000Z",
+        },
+        {
+          kind: "cq-git-change-receipt",
+          version: 1,
+          attestationId: `att_${"a".repeat(40)}`,
+          generation: 2,
+          taskId: "T459",
+          operationId: "runtime-current-correction",
+          requestDigest: "b".repeat(64),
+          oldHead: correctionStartingCommit,
+          newHead: resultCommit,
+          tree: resultTree,
+          objectOids: [resultCommit, resultTree],
+          paths: ["current-correction.ts"],
+          committedAt: "2026-09-06T00:00:00.000Z",
+        },
+      ],
+      gitLineage: {
+        kind: "guarded-rebase",
+        guardedRebase,
+        ontoCommit,
+        rebasedStartCommit,
+        exactTip: true,
+      },
+      checkSummary: "trusted supervised gate",
+      baseVerification: {
+        status: "verified",
+        relation: "descendant",
+        baseCommit: ontoCommit,
+        headCommit: resultCommit,
+      },
+      summary: "verified guarded correction",
+      supervisedGateEvidence: {
+        kind: "cq-supervised-gate-evidence",
+        version: 1,
+        attestationId: `att_${"a".repeat(40)}`,
+        generation: 2,
+        roleId: "implement-worker",
+        roleVersion: 10,
+        surface: "codex",
+        promptDigest: "c".repeat(64),
+        catalogHash: "d".repeat(64),
+        inputDigest: "e".repeat(64),
+        taskId: "T459",
+        worktreePath: root,
+        branch: "implement/T459",
+        baseCommit: ontoCommit,
+        startingCommit: correctionStartingCommit,
+        resultCommit,
+        clean: true,
+        command:
+          'cq gate run --worktree "$PWD" --command-cwd "$PWD/nix/pkg/cq-ledgers" -- bun run check',
+        gateExitCode: 0,
+        passCount: 1,
+        failCount: 0,
+        gateDurationMs: 100,
+        capturedAt: "2026-09-06T00:00:01.000Z",
+        filesTouchedDigest: "f".repeat(64),
+        gitReceiptsDigest: "0".repeat(64),
+        mutationTableDigest: "1".repeat(64),
+      },
+    } as const;
+
+    const verification = await verifyProductionImplementation(
+      root,
+      resultCommit,
+      workerInput,
+      workerOutput,
+    );
+    expect(verification.receiptsVerified).toBe(true);
+    expect(verification.gateVerified).toBe(true);
+  });
 });
 
 describe("versioned production evidence bootstrap [Behavioral-Active Effectual-GoodCommunication]", () => {
